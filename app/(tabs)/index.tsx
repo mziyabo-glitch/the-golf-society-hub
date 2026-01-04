@@ -1,8 +1,40 @@
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useRouter } from "expo-router";
-import { Pressable, Text, View } from "react-native";
+import { useEffect, useState } from "react";
+import { ActivityIndicator, Pressable, Text, View } from "react-native";
+
+const STORAGE_KEY = "GSOCIETY_ACTIVE";
 
 export default function HomeScreen() {
   const router = useRouter();
+  const [checking, setChecking] = useState(true);
+
+  useEffect(() => {
+    checkSociety();
+  }, []);
+
+  const checkSociety = async () => {
+    try {
+      const societyData = await AsyncStorage.getItem(STORAGE_KEY);
+      if (societyData) {
+        // Society exists, redirect to dashboard
+        router.replace("/society");
+        return;
+      }
+    } catch (error) {
+      console.error("Error checking society:", error);
+    } finally {
+      setChecking(false);
+    }
+  };
+
+  if (checking) {
+    return (
+      <View style={{ flex: 1, justifyContent: "center", alignItems: "center" }}>
+        <ActivityIndicator size="large" color="#0B6E4F" />
+      </View>
+    );
+  }
 
   return (
     <View style={{ flex: 1, padding: 24, justifyContent: "center" }}>

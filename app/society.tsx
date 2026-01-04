@@ -1,12 +1,17 @@
+import { InfoCard } from "@/components/ui/info-card";
+import { PrimaryButton } from "@/components/ui/primary-button";
+import { SecondaryActionButton } from "@/components/ui/secondary-action-button";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useFocusEffect } from "@react-navigation/native";
 import { router } from "expo-router";
 import { useCallback, useState } from "react";
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, ScrollView, StyleSheet, Text, View } from "react-native";
 
 const STORAGE_KEY = "GSOCIETY_ACTIVE";
 const EVENTS_KEY = "GSOCIETY_EVENTS";
 const MEMBERS_KEY = "GSOCIETY_MEMBERS";
+const SCORES_KEY = "GSOCIETY_SCORES";
+const DRAFT_KEY = "GSOCIETY_DRAFT";
 
 type SocietyData = {
   name: string;
@@ -30,10 +35,22 @@ type MemberData = {
   handicap?: number;
 };
 
+type ScoreData = {
+  stableford?: number;
+  strokeplay?: number;
+};
+
+type ScoresData = {
+  [eventId: string]: {
+    [memberId: string]: ScoreData;
+  };
+};
+
 export default function SocietyDashboardScreen() {
   const [society, setSociety] = useState<SocietyData | null>(null);
   const [events, setEvents] = useState<EventData[]>([]);
   const [members, setMembers] = useState<MemberData[]>([]);
+  const [scores, setScores] = useState<ScoresData>({});
   const [loading, setLoading] = useState(true);
 
   useFocusEffect(
@@ -44,22 +61,24 @@ export default function SocietyDashboardScreen() {
 
   const loadData = async () => {
     try {
-      // Load society
       const societyData = await AsyncStorage.getItem(STORAGE_KEY);
       if (societyData) {
         setSociety(JSON.parse(societyData));
       }
 
-      // Load events
       const eventsData = await AsyncStorage.getItem(EVENTS_KEY);
       if (eventsData) {
         setEvents(JSON.parse(eventsData));
       }
 
-      // Load members
       const membersData = await AsyncStorage.getItem(MEMBERS_KEY);
       if (membersData) {
         setMembers(JSON.parse(membersData));
+      }
+
+      const scoresData = await AsyncStorage.getItem(SCORES_KEY);
+      if (scoresData) {
+        setScores(JSON.parse(scoresData));
       }
     } catch (error) {
       console.error("Error loading data:", error);
@@ -68,159 +87,170 @@ export default function SocietyDashboardScreen() {
     }
   };
 
-  const handleResetSociety = async () => {
-    try {
-      await AsyncStorage.removeItem(STORAGE_KEY);
-      router.replace("/");
-    } catch (error) {
-      console.error("Error resetting society:", error);
-    }
+  const getNextEvent = (): EventData | null => {
+    if (events.length === 0) return null;
+    const now = new Date().getTime();
+    const futureEvents = events
+      .filter((e) => {
+        if (!e.date) return false;
+        const eventDate = new Date(e.date).getTime();
+        return eventDate >= now;
+      })
+      .sort((a, b) => {
+        const dateA = a.date ? new Date(a.date).getTime() : Infinity;
+        const dateB = b.date ? new Date(b.date).getTime() : Infinity;
+        return dateA - dateB;
+      });
+    return futureEvents.length > 0 ? futureEvents[0] : null;
+  };
+
+  const getLastEvent = (): EventData | null => {
+    if (events.length === 0) return null;
+    const sorted = [...events].sort((a, b) => {
+      const dateA = a.date ? new Date(a.date).getTime() : 0;
+      const dateB = b.date ? new Date(b.date).getTime() : 0;
+      return dateB - dateA;
+    });
+    return sorted[0];
+  };
+
+  const getLastWinner = (event: EventData | null): { memberName: string } | null => {
+    if (!event || !scores[event.id]) return null;
+
+    const eventScores = scores[event.id];
+    const memberScores = members
+      .map((member) => {
+        const memberScore = eventScores[member.id];
+        if (!memberScore) return null;
+
+        let score: number | null = null;
+        let useStableford = false;
+
+        if (event.format === "Stableford" && memberScore.stableford !== undefined) {
+          score = memberScore.stableford;
+          useStableford = true;
+        } else if (event.format === "Strokeplay" && memberScore.strokeplay !== undefined) {
+          score = memberScore.strokeplay;
+          useStableford = false;
+        } else if (event.format === "Both") {
+          if (memberScore.stableford !== undefined) {
+            score = memberScore.stableford;
+            useStableford = true;
+          } else if (memberScore.strokeplay !== undefined) {
+            score = memberScore.strokeplay;
+            useStableford = false;
+          }
+        }
+
+        return score !== null ? { member, score, useStableford } : null;
+      })
+      .filter((item): item is { member: MemberData; score: number; useStableford: boolean } => item !== null);
+
+    if (memberScores.length === 0) return null;
+
+    const sorted = memberScores.sort((a, b) => {
+      if (a.useStableford) {
+        return b.score - a.score;
+      } else {
+        return a.score - b.score;
+      }
+    });
+
+    return {
+      memberName: sorted[0].member.name,
+    };
   };
 
   if (loading) {
     return (
       <View style={[styles.container, styles.centerContent]}>
         <ActivityIndicator size="large" color="#0B6E4F" />
-        <Text style={styles.loadingText}>Loading society...</Text>
       </View>
     );
   }
 
   if (!society) {
     return (
-      <ScrollView style={styles.container}>
-        <View style={styles.content}>
-          <Text style={styles.title}>Society Dashboard</Text>
-          <Text style={styles.subtitle}>Manage your society, events, and members.</Text>
-
-          {/* Empty State */}
-          <View style={styles.emptyState}>
-            <Text style={styles.emptyStateTitle}>No Society Found</Text>
-            <Text style={styles.emptyStateText}>
-              You haven't created a society yet. Create one to get started!
-            </Text>
-            <Pressable
-              onPress={() => router.push("/create-society")}
-              style={styles.primaryButton}
-            >
-              <Text style={styles.buttonText}>Create a Society</Text>
-            </Pressable>
-            <Pressable
-              onPress={() => router.push("/")}
-              style={styles.tertiaryButton}
-            >
-              <Text style={styles.buttonText}>Back to Home</Text>
-            </Pressable>
-          </View>
-        </View>
-      </ScrollView>
+      <View style={[styles.container, styles.centerContent]}>
+        <Text style={styles.emptyTitle}>No Society Found</Text>
+        <Text style={styles.emptyText}>Create a society to get started</Text>
+        <PrimaryButton
+          label="Create Society"
+          onPress={() => router.push("/create-society")}
+          style={styles.emptyButton}
+        />
+      </View>
     );
   }
 
+  const nextEvent = getNextEvent();
+  const lastEvent = getLastEvent();
+  const lastWinner = lastEvent ? getLastWinner(lastEvent) : null;
+
   return (
-    <ScrollView style={styles.container}>
+    <ScrollView style={styles.container} contentContainerStyle={styles.contentContainer}>
       <View style={styles.content}>
-        <Text style={styles.title}>Society Dashboard</Text>
-        <Text style={styles.subtitle}>Manage your society, events, and members.</Text>
+        <Text style={styles.societyName}>{society.name}</Text>
 
-        {/* Society Card */}
-        <View style={styles.card}>
-          <Text style={styles.cardTitle}>Society Information</Text>
+        <PrimaryButton
+          label="Create Event"
+          onPress={() => router.push("/create-event" as any)}
+          style={styles.primaryCTA}
+        />
 
-          {/* Society Name */}
-          <View style={styles.field}>
-            <Text style={styles.fieldLabel}>Society Name</Text>
-            <Text style={styles.fieldValue}>{society.name}</Text>
-          </View>
-
-          {/* Home Course */}
-          <View style={styles.field}>
-            <Text style={styles.fieldLabel}>Home Course</Text>
-            <Text style={styles.fieldValue}>{society.homeCourse || "Not specified"}</Text>
-          </View>
-
-          {/* Country */}
-          <View style={styles.field}>
-            <Text style={styles.fieldLabel}>Country</Text>
-            <Text style={styles.fieldValue}>{society.country}</Text>
-          </View>
-
-          {/* Default Scoring Mode */}
-          <View style={styles.field}>
-            <Text style={styles.fieldLabel}>Default Scoring Mode</Text>
-            <Text style={styles.fieldValue}>{society.scoringMode}</Text>
-          </View>
-
-          {/* Handicap Rule */}
-          <View style={styles.field}>
-            <Text style={styles.fieldLabel}>Handicap Rule</Text>
-            <Text style={styles.fieldValue}>{society.handicapRule}</Text>
-          </View>
+        <View style={styles.secondaryActions}>
+          <SecondaryActionButton
+            label="Members"
+            onPress={() => router.push("/members" as any)}
+            style={styles.secondaryButton}
+          />
+          <SecondaryActionButton
+            label="History"
+            onPress={() => router.push("/history" as any)}
+            style={styles.secondaryButton}
+          />
+          <SecondaryActionButton
+            label="Settings"
+            onPress={() => router.push("/settings" as any)}
+            style={styles.secondaryButton}
+          />
         </View>
 
-        {/* Events Section */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Events</Text>
-          {events.length === 0 ? (
-            <Text style={styles.emptyText}>No events yet</Text>
-          ) : (
-            events.map((event) => (
-              <Pressable
-                key={event.id}
-                onPress={() => router.push(`/event/${event.id}` as any)}
-                style={styles.listItem}
-              >
-                <Text style={styles.listItemTitle}>{event.name}</Text>
-                <Text style={styles.listItemSubtitle}>{event.date}</Text>
-              </Pressable>
-            ))
-          )}
-          <Pressable
-            onPress={() => router.push("/create-event" as any)}
-            style={styles.sectionButton}
-          >
-            <Text style={styles.sectionButtonText}>Create Event</Text>
-          </Pressable>
-        </View>
+        {nextEvent ? (
+          <InfoCard
+            title={nextEvent.name}
+            subtitle={nextEvent.date || "No date"}
+            detail={nextEvent.courseName || undefined}
+            ctaLabel="View / Edit"
+            onPress={() => router.push(`/event/${nextEvent.id}` as any)}
+          />
+        ) : (
+          <InfoCard
+            title="No upcoming event yet"
+            subtitle="Create your first event to get started"
+            emptyState
+          />
+        )}
 
-        {/* Members Section */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Members</Text>
-          {members.length === 0 ? (
-            <Text style={styles.emptyText}>No members yet</Text>
-          ) : (
-            members.map((member) => (
-              <View key={member.id} style={styles.listItem}>
-                <Text style={styles.listItemTitle}>{member.name}</Text>
-                {member.handicap !== undefined && (
-                  <Text style={styles.listItemSubtitle}>Handicap: {member.handicap}</Text>
-                )}
-              </View>
-            ))
-          )}
-          <Pressable
-            onPress={() => router.push("/add-member" as any)}
-            style={styles.sectionButton}
-          >
-            <Text style={styles.sectionButtonText}>Add Member</Text>
-          </Pressable>
-        </View>
-
-        {/* Reset Society Button */}
-        <Pressable
-          onPress={handleResetSociety}
-          style={styles.resetButton}
-        >
-          <Text style={styles.resetButtonText}>Reset Society</Text>
-        </Pressable>
-
-        {/* Back to Home Button */}
-        <Pressable
-          onPress={() => router.push("/")}
-          style={styles.tertiaryButton}
-        >
-          <Text style={styles.buttonText}>Back to Home</Text>
-        </Pressable>
+        {lastEvent ? (
+          <InfoCard
+            title={lastEvent.name}
+            subtitle={lastEvent.date || "No date"}
+            detail={
+              lastWinner
+                ? `Winner: ${lastWinner.memberName}`
+                : lastEvent.courseName || undefined
+            }
+            ctaLabel="View Summary"
+            onPress={() => router.push(`/event/${lastEvent.id}` as any)}
+          />
+        ) : (
+          <InfoCard
+            title="No past events yet"
+            subtitle="Your event history will appear here"
+            emptyState
+          />
+        )}
       </View>
     </ScrollView>
   );
@@ -229,154 +259,53 @@ export default function SocietyDashboardScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#fff",
+    backgroundColor: "#f9fafb",
+  },
+  contentContainer: {
+    flexGrow: 1,
   },
   content: {
     flex: 1,
-    padding: 24,
+    padding: 20,
+    maxWidth: 600,
+    alignSelf: "center",
+    width: "100%",
   },
   centerContent: {
     justifyContent: "center",
     alignItems: "center",
   },
-  title: {
-    fontSize: 34,
+  societyName: {
+    fontSize: 36,
     fontWeight: "800",
-    marginBottom: 6,
-  },
-  subtitle: {
-    fontSize: 16,
-    opacity: 0.75,
-    marginBottom: 28,
-  },
-  loadingText: {
-    marginTop: 16,
-    fontSize: 16,
-    opacity: 0.7,
-  },
-  emptyState: {
-    marginTop: 40,
-    alignItems: "center",
-  },
-  emptyStateTitle: {
-    fontSize: 24,
-    fontWeight: "700",
-    marginBottom: 12,
     color: "#111827",
-  },
-  emptyStateText: {
-    fontSize: 16,
-    opacity: 0.7,
-    textAlign: "center",
-    marginBottom: 32,
-    lineHeight: 24,
-  },
-  card: {
-    backgroundColor: "#f3f4f6",
-    borderRadius: 14,
-    padding: 20,
     marginBottom: 24,
-  },
-  cardTitle: {
-    fontSize: 16,
-    fontWeight: "600",
-    marginBottom: 16,
-    color: "#111827",
-  },
-  field: {
-    marginBottom: 16,
-  },
-  fieldLabel: {
-    fontSize: 14,
-    fontWeight: "600",
-    marginBottom: 6,
-    opacity: 0.7,
-  },
-  fieldValue: {
-    fontSize: 18,
-    fontWeight: "700",
-    color: "#111827",
-  },
-  primaryButton: {
-    backgroundColor: "#0B6E4F",
-    paddingVertical: 14,
-    borderRadius: 14,
-    alignItems: "center",
-    marginBottom: 12,
-  },
-  secondaryButton: {
-    backgroundColor: "#0B6E4F",
-    paddingVertical: 14,
-    borderRadius: 14,
-    alignItems: "center",
-    marginBottom: 12,
-  },
-  resetButton: {
-    backgroundColor: "#ef4444",
-    paddingVertical: 14,
-    borderRadius: 14,
-    alignItems: "center",
-    marginBottom: 12,
-  },
-  tertiaryButton: {
-    backgroundColor: "#111827",
-    paddingVertical: 14,
-    borderRadius: 14,
-    alignItems: "center",
-    marginBottom: 12,
-  },
-  buttonText: {
-    color: "white",
-    fontSize: 18,
-    fontWeight: "700",
-  },
-  resetButtonText: {
-    color: "white",
-    fontSize: 18,
-    fontWeight: "700",
-  },
-  section: {
-    marginBottom: 24,
-  },
-  sectionTitle: {
-    fontSize: 20,
-    fontWeight: "700",
-    marginBottom: 12,
-    color: "#111827",
-  },
-  emptyText: {
-    fontSize: 14,
-    opacity: 0.6,
-    marginBottom: 12,
-    fontStyle: "italic",
-  },
-  listItem: {
-    backgroundColor: "#f3f4f6",
-    borderRadius: 10,
-    padding: 12,
-    marginBottom: 8,
-  },
-  listItemTitle: {
-    fontSize: 16,
-    fontWeight: "600",
-    color: "#111827",
-    marginBottom: 4,
-  },
-  listItemSubtitle: {
-    fontSize: 14,
-    opacity: 0.7,
-    color: "#111827",
-  },
-  sectionButton: {
-    backgroundColor: "#0B6E4F",
-    paddingVertical: 12,
-    borderRadius: 10,
-    alignItems: "center",
     marginTop: 8,
   },
-  sectionButtonText: {
-    color: "white",
+  primaryCTA: {
+    marginBottom: 16,
+  },
+  secondaryActions: {
+    flexDirection: "row",
+    gap: 8,
+    marginBottom: 24,
+  },
+  secondaryButton: {
+    flex: 1,
+  },
+  emptyTitle: {
+    fontSize: 24,
+    fontWeight: "700",
+    color: "#111827",
+    marginBottom: 8,
+  },
+  emptyText: {
     fontSize: 16,
-    fontWeight: "600",
+    opacity: 0.7,
+    color: "#111827",
+    marginBottom: 24,
+  },
+  emptyButton: {
+    minWidth: 200,
   },
 });
