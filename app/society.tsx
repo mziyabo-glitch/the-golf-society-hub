@@ -1,17 +1,39 @@
+/**
+ * HOW TO TEST:
+ * - Set member roles via Settings → Roles & Permissions
+ * - Confirm member can't create event (should show alert and redirect)
+ * - Confirm captain can create/edit events
+ * - Confirm secretary can edit venue notes only
+ * - Confirm handicapper can access results/handicaps
+ * - Verify role badge shows on dashboard (e.g., "John Doe (Captain, Treasurer)")
+ */
+
 import { InfoCard } from "@/components/ui/info-card";
 import { PrimaryButton } from "@/components/ui/primary-button";
 import { SecondaryActionButton } from "@/components/ui/secondary-action-button";
+import {
+  canAssignRoles,
+  canCreateEvents,
+  canEditHandicaps,
+  canEditVenueInfo,
+  canViewFinance,
+  normalizeMemberRoles,
+  normalizeSessionRole,
+} from "@/lib/permissions";
+import { getCurrentUserRoles, hasManCoRole } from "@/lib/roles";
+import { getSession } from "@/lib/session";
+import { STORAGE_KEYS } from "@/lib/storage";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useFocusEffect } from "@react-navigation/native";
 import { router } from "expo-router";
 import { useCallback, useState } from "react";
-import { ActivityIndicator, ScrollView, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 
-const STORAGE_KEY = "GSOCIETY_ACTIVE";
-const EVENTS_KEY = "GSOCIETY_EVENTS";
-const MEMBERS_KEY = "GSOCIETY_MEMBERS";
-const SCORES_KEY = "GSOCIETY_SCORES";
-const DRAFT_KEY = "GSOCIETY_DRAFT";
+const STORAGE_KEY = STORAGE_KEYS.SOCIETY_ACTIVE;
+const EVENTS_KEY = STORAGE_KEYS.EVENTS;
+const MEMBERS_KEY = STORAGE_KEYS.MEMBERS;
+const SCORES_KEY = STORAGE_KEYS.SCORES;
+const DRAFT_KEY = STORAGE_KEYS.SOCIETY_DRAFT;
 
 type SocietyData = {
   name: string;
@@ -27,6 +49,20 @@ type EventData = {
   date: string;
   courseName: string;
   format: "Stableford" | "Strokeplay" | "Both";
+  playerIds?: string[];
+  isCompleted?: boolean;
+  isOOM?: boolean;
+  winnerId?: string;
+  winnerName?: string;
+  rsvps?: {
+    [memberId: string]: "going" | "maybe" | "no";
+  };
+  results?: {
+    [memberId: string]: {
+      grossScore: number;
+      netScore?: number;
+    };
+  };
 };
 
 type MemberData = {
@@ -51,7 +87,17 @@ export default function SocietyDashboardScreen() {
   const [events, setEvents] = useState<EventData[]>([]);
   const [members, setMembers] = useState<MemberData[]>([]);
   const [scores, setScores] = useState<ScoresData>({});
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+  const [role, setRole] = useState<"admin" | "member">("member");
+  const [currentMember, setCurrentMember] = useState<MemberData | null>(null);
   const [loading, setLoading] = useState(true);
+  const [isManCo, setIsManCo] = useState(false);
+  const [canViewFinanceRole, setCanViewFinanceRole] = useState(false);
+  const [canEditVenueRole, setCanEditVenueRole] = useState(false);
+  const [canEditHandicapsRole, setCanEditHandicapsRole] = useState(false);
+  const [canCreateEventsRole, setCanCreateEventsRole] = useState(false);
+  const [canAssignRolesRole, setCanAssignRolesRole] = useState(false);
+  const [userRoles, setUserRoles] = useState<string[]>([]);
 
   useFocusEffect(
     useCallback(() => {
@@ -72,14 +118,41 @@ export default function SocietyDashboardScreen() {
       }
 
       const membersData = await AsyncStorage.getItem(MEMBERS_KEY);
-      if (membersData) {
-        setMembers(JSON.parse(membersData));
-      }
+      const loadedMembers = membersData ? JSON.parse(membersData) : [];
+      setMembers(loadedMembers);
 
       const scoresData = await AsyncStorage.getItem(SCORES_KEY);
       if (scoresData) {
         setScores(JSON.parse(scoresData));
       }
+
+      // Load session (single source of truth)
+      const session = await getSession();
+      setCurrentUserId(session.currentUserId);
+      setRole(session.role);
+      
+      // Find member data from loaded members
+      if (session.currentUserId) {
+        const member = loadedMembers.find((m: MemberData) => m.id === session.currentUserId);
+        setCurrentMember(member || null);
+      } else {
+        setCurrentMember(null);
+      }
+
+      // Load current user roles for display
+      const roles = await getCurrentUserRoles();
+      setUserRoles(roles);
+      const normalizedSessionRole = normalizeSessionRole(session.role);
+      const normalizedRoles = normalizeMemberRoles(roles);
+
+      // Check role permissions
+      const manCo = await hasManCoRole();
+      setIsManCo(manCo);
+      setCanViewFinanceRole(canViewFinance(normalizedSessionRole, normalizedRoles));
+      setCanEditVenueRole(canEditVenueInfo(normalizedSessionRole, normalizedRoles));
+      setCanEditHandicapsRole(canEditHandicaps(normalizedSessionRole, normalizedRoles));
+      setCanCreateEventsRole(canCreateEvents(normalizedSessionRole, normalizedRoles));
+      setCanAssignRolesRole(canAssignRoles(normalizedSessionRole, normalizedRoles));
     } catch (error) {
       console.error("Error loading data:", error);
     } finally {
@@ -92,6 +165,7 @@ export default function SocietyDashboardScreen() {
     const now = new Date().getTime();
     const futureEvents = events
       .filter((e) => {
+        if (e.isCompleted) return false;
         if (!e.date) return false;
         const eventDate = new Date(e.date).getTime();
         return eventDate >= now;
@@ -106,12 +180,14 @@ export default function SocietyDashboardScreen() {
 
   const getLastEvent = (): EventData | null => {
     if (events.length === 0) return null;
-    const sorted = [...events].sort((a, b) => {
-      const dateA = a.date ? new Date(a.date).getTime() : 0;
-      const dateB = b.date ? new Date(b.date).getTime() : 0;
-      return dateB - dateA;
-    });
-    return sorted[0];
+    const completedEvents = events
+      .filter((e) => e.isCompleted)
+      .sort((a, b) => {
+        const dateA = a.date ? new Date(a.date).getTime() : 0;
+        const dateB = b.date ? new Date(b.date).getTime() : 0;
+        return dateB - dateA;
+      });
+    return completedEvents.length > 0 ? completedEvents[0] : null;
   };
 
   const getLastWinner = (event: EventData | null): { memberName: string } | null => {
@@ -187,16 +263,51 @@ export default function SocietyDashboardScreen() {
   const lastEvent = getLastEvent();
   const lastWinner = lastEvent ? getLastWinner(lastEvent) : null;
 
+  const isAdmin = role === "admin";
+
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.contentContainer}>
       <View style={styles.content}>
-        <Text style={styles.societyName}>{society.name}</Text>
+        <View style={styles.header}>
+          <View style={styles.headerTop}>
+            <View style={styles.headerContent}>
+              <Text style={styles.societyName}>{society.name}</Text>
+              {currentMember ? (
+                <Text style={styles.userIndicator}>
+                  {currentMember.name} {userRoles.length > 0 && userRoles.filter(r => r !== "member").length > 0 
+                    ? `(${userRoles.filter(r => r !== "member").map(r => r.charAt(0).toUpperCase() + r.slice(1)).join(", ")})`
+                    : `(${role})`}
+                </Text>
+              ) : (
+                <Pressable
+                  onPress={() => router.push("/profile" as any)}
+                  style={styles.selectProfileButton}
+                >
+                  <Text style={styles.selectProfileButtonText}>
+                    Select your profile →
+                  </Text>
+                </Pressable>
+              )}
+            </View>
+            {currentMember && (
+              <Pressable
+                onPress={() => router.push("/profile" as any)}
+                style={styles.profileButton}
+              >
+                <Text style={styles.profileButtonText}>Profile</Text>
+              </Pressable>
+            )}
+          </View>
+          <View style={styles.divider} />
+        </View>
 
-        <PrimaryButton
-          label="Create Event"
-          onPress={() => router.push("/create-event" as any)}
-          style={styles.primaryCTA}
-        />
+        {canCreateEventsRole && (
+          <PrimaryButton
+            label="Create Event"
+            onPress={() => router.push("/create-event" as any)}
+            style={styles.primaryCTA}
+          />
+        )}
 
         <View style={styles.secondaryActions}>
           <SecondaryActionButton
@@ -210,47 +321,127 @@ export default function SocietyDashboardScreen() {
             style={styles.secondaryButton}
           />
           <SecondaryActionButton
-            label="Settings"
-            onPress={() => router.push("/settings" as any)}
+            label="Profile"
+            onPress={() => router.push("/profile" as any)}
             style={styles.secondaryButton}
           />
+          {isAdmin && (
+            <SecondaryActionButton
+              label="Settings"
+              onPress={() => router.push("/settings" as any)}
+              style={styles.secondaryButton}
+            />
+          )}
         </View>
 
-        {nextEvent ? (
-          <InfoCard
-            title={nextEvent.name}
-            subtitle={nextEvent.date || "No date"}
-            detail={nextEvent.courseName || undefined}
-            ctaLabel="View / Edit"
-            onPress={() => router.push(`/event/${nextEvent.id}` as any)}
-          />
-        ) : (
-          <InfoCard
-            title="No upcoming event yet"
-            subtitle="Create your first event to get started"
-            emptyState
-          />
+        <View style={styles.eventsSection}>
+          <Text style={styles.sectionLabel}>Next Event</Text>
+          {nextEvent ? (
+            <InfoCard
+              title={nextEvent.name}
+              subtitle={nextEvent.date || "No date"}
+              detail={
+                (() => {
+                  const rsvps = nextEvent.rsvps || {};
+                  const going = Object.values(rsvps).filter((r) => r === "going").length;
+                  const maybe = Object.values(rsvps).filter((r) => r === "maybe").length;
+                  const notGoing = Object.values(rsvps).filter((r) => r === "no").length;
+                  const rsvpText = going > 0 || maybe > 0 || notGoing > 0 
+                    ? `RSVP: ${going} going, ${maybe} maybe, ${notGoing} not going` 
+                    : undefined;
+                  return rsvpText || (nextEvent.playerIds && nextEvent.playerIds.length > 0
+                    ? `Players: ${nextEvent.playerIds.length}`
+                    : nextEvent.courseName || undefined);
+                })()
+              }
+              ctaLabel={isAdmin ? "View / Edit" : "View"}
+              onPress={() => router.push(`/event/${nextEvent.id}` as any)}
+            />
+          ) : (
+            <InfoCard
+              title="No upcoming event"
+              subtitle="Tap Create Event to schedule your next society day"
+              emptyState
+            />
+          )}
+        </View>
+
+        <View style={styles.eventsSection}>
+          <Text style={styles.sectionLabel}>Last Event</Text>
+          {lastEvent ? (
+            <InfoCard
+              title={lastEvent.name}
+              subtitle={lastEvent.date || "No date"}
+              detail={
+                lastEvent.winnerName
+                  ? `Winner: ${lastEvent.winnerName}`
+                  : lastWinner
+                    ? `Winner: ${lastWinner.memberName}`
+                    : lastEvent.courseName || undefined
+              }
+              ctaLabel="View Summary"
+              onPress={() => router.push(`/event/${lastEvent.id}` as any)}
+            />
+          ) : (
+            <InfoCard
+              title="No events yet"
+              subtitle="Your completed events will appear here"
+              emptyState
+            />
+          )}
+        </View>
+
+        {/* ManCo Tools Section */}
+        {isManCo && (
+          <View style={styles.mancoSection}>
+            <Text style={styles.sectionLabel}>ManCo Tools</Text>
+            <View style={styles.mancoGrid}>
+              {canViewFinanceRole && (
+                <Pressable
+                  onPress={() => router.push("/finance" as any)}
+                  style={styles.mancoTile}
+                >
+                  <Text style={styles.mancoTileTitle}>Finance</Text>
+                  <Text style={styles.mancoTileSubtitle}>Treasurer tools</Text>
+                </Pressable>
+              )}
+              {canEditVenueRole && (
+                <Pressable
+                  onPress={() => router.push("/venue-info" as any)}
+                  style={styles.mancoTile}
+                >
+                  <Text style={styles.mancoTileTitle}>Venue Info</Text>
+                  <Text style={styles.mancoTileSubtitle}>Edit venues</Text>
+                </Pressable>
+              )}
+              {canEditHandicapsRole && (
+                <Pressable
+                  onPress={() => router.push("/handicaps" as any)}
+                  style={styles.mancoTile}
+                >
+                  <Text style={styles.mancoTileTitle}>Handicaps</Text>
+                  <Text style={styles.mancoTileSubtitle}>Manage handicaps</Text>
+                </Pressable>
+              )}
+              {canEditHandicapsRole && (
+                <Pressable
+                  onPress={() => router.push("/leaderboard" as any)}
+                  style={styles.mancoTile}
+                >
+                  <Text style={styles.mancoTileTitle}>OOM / Leaderboard</Text>
+                  <Text style={styles.mancoTileSubtitle}>View standings</Text>
+                </Pressable>
+              )}
+            </View>
+          </View>
         )}
 
-        {lastEvent ? (
-          <InfoCard
-            title={lastEvent.name}
-            subtitle={lastEvent.date || "No date"}
-            detail={
-              lastWinner
-                ? `Winner: ${lastWinner.memberName}`
-                : lastEvent.courseName || undefined
-            }
-            ctaLabel="View Summary"
-            onPress={() => router.push(`/event/${lastEvent.id}` as any)}
-          />
-        ) : (
-          <InfoCard
-            title="No past events yet"
-            subtitle="Your event history will appear here"
-            emptyState
-          />
-        )}
+        <Pressable
+          onPress={() => router.push("/leaderboard" as any)}
+          style={styles.leaderboardButton}
+        >
+          <Text style={styles.leaderboardButtonText}>Season Leaderboard</Text>
+        </Pressable>
       </View>
     </ScrollView>
   );
@@ -266,7 +457,7 @@ const styles = StyleSheet.create({
   },
   content: {
     flex: 1,
-    padding: 20,
+    padding: 24,
     maxWidth: 600,
     alignSelf: "center",
     width: "100%",
@@ -275,23 +466,105 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
   },
-  societyName: {
-    fontSize: 36,
-    fontWeight: "800",
-    color: "#111827",
-    marginBottom: 24,
+  header: {
+    marginBottom: 28,
     marginTop: 8,
   },
+  headerTop: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    marginBottom: 12,
+  },
+  headerContent: {
+    flex: 1,
+  },
+  societyName: {
+    fontSize: 32,
+    fontWeight: "800",
+    color: "#111827",
+    letterSpacing: -0.5,
+    marginBottom: 4,
+  },
+  userIndicator: {
+    fontSize: 14,
+    color: "#6b7280",
+    fontWeight: "500",
+  },
+  profileButton: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+    backgroundColor: "#f3f4f6",
+  },
+  profileButtonText: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: "#0B6E4F",
+  },
+  selectProfileButton: {
+    marginTop: 4,
+  },
+  selectProfileButtonText: {
+    fontSize: 14,
+    color: "#0B6E4F",
+    fontWeight: "600",
+  },
+  divider: {
+    height: 1,
+    backgroundColor: "#e5e7eb",
+    width: "100%",
+  },
   primaryCTA: {
-    marginBottom: 16,
+    marginBottom: 20,
   },
   secondaryActions: {
     flexDirection: "row",
-    gap: 8,
-    marginBottom: 24,
+    gap: 10,
+    marginBottom: 32,
   },
   secondaryButton: {
     flex: 1,
+  },
+  eventsSection: {
+    marginBottom: 20,
+  },
+  sectionLabel: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: "#6b7280",
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+    marginBottom: 8,
+    marginLeft: 2,
+  },
+  mancoSection: {
+    marginBottom: 24,
+  },
+  mancoGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 12,
+  },
+  mancoTile: {
+    flex: 1,
+    minWidth: "47%",
+    backgroundColor: "#fff",
+    borderRadius: 12,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
+    alignItems: "center",
+  },
+  mancoTileTitle: {
+    fontSize: 16,
+    fontWeight: "700",
+    color: "#111827",
+    marginBottom: 4,
+  },
+  mancoTileSubtitle: {
+    fontSize: 12,
+    color: "#6b7280",
   },
   emptyTitle: {
     fontSize: 24,
@@ -307,5 +580,18 @@ const styles = StyleSheet.create({
   },
   emptyButton: {
     minWidth: 200,
+  },
+  leaderboardButton: {
+    paddingVertical: 14,
+    alignItems: "center",
+    marginTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: "#e5e7eb",
+    paddingTop: 20,
+  },
+  leaderboardButtonText: {
+    fontSize: 16,
+    fontWeight: "600",
+    color: "#0B6E4F",
   },
 });

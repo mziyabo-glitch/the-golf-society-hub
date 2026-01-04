@@ -103,11 +103,13 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: "600",
     color: "#9ca3af",
-    marginBottom: 4,
+    marginBottom: 6,
   },
   emptySubtitle: {
     fontSize: 13,
-    color: "#d1d5db",
+    color: "#9ca3af",
+    opacity: 0.8,
+    textAlign: "center",
   },
 });
 

@@ -1,20 +1,50 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { useFocusEffect } from "@react-navigation/native";
 import { useRouter } from "expo-router";
-import { useState } from "react";
-import { Pressable, ScrollView, Text, TextInput, View } from "react-native";
+import { useCallback, useState } from "react";
+import { Alert, Pressable, ScrollView, Text, TextInput, View } from "react-native";
+import { getSession } from "@/lib/session";
+import { canManageMembers, normalizeMemberRoles, normalizeSessionRole } from "@/lib/permissions";
+import { getCurrentUserRoles } from "@/lib/roles";
+import { STORAGE_KEYS } from "@/lib/storage";
 
-const MEMBERS_KEY = "GSOCIETY_MEMBERS";
+const MEMBERS_KEY = STORAGE_KEYS.MEMBERS;
 
 type MemberData = {
   id: string;
   name: string;
   handicap?: number;
+  roles?: string[];
 };
 
 export default function AddMemberScreen() {
   const router = useRouter();
   const [memberName, setMemberName] = useState("");
   const [handicap, setHandicap] = useState("");
+  const [role, setRole] = useState<"admin" | "member">("member");
+  const [canCreate, setCanCreate] = useState(false);
+
+  useFocusEffect(
+    useCallback(() => {
+      loadSession();
+    }, [])
+  );
+
+  const loadSession = async () => {
+    const session = await getSession();
+    setRole(session.role);
+    
+    const sessionRole = normalizeSessionRole(session.role);
+    const roles = normalizeMemberRoles(await getCurrentUserRoles());
+    const canManage = canManageMembers(sessionRole, roles);
+    setCanCreate(canManage);
+    
+    if (!canManage) {
+      Alert.alert("Access Denied", "Only Captain or Secretary can add members", [
+        { text: "OK", onPress: () => router.back() },
+      ]);
+    }
+  };
 
   const isFormValid = memberName.trim().length > 0;
 
@@ -28,16 +58,35 @@ export default function AddMemberScreen() {
         ? JSON.parse(existingMembersData)
         : [];
 
+      // Determine roles: first member gets Captain/Handicapper, others get Member
+      const isFirstMember = existingMembers.length === 0;
+      const roles: string[] = isFirstMember 
+        ? ["captain", "handicapper", "member"] 
+        : ["member"];
+
       // Create new member
       const newMember: MemberData = {
         id: Date.now().toString(),
         name: memberName.trim(),
         handicap: handicap.trim() ? parseFloat(handicap.trim()) : undefined,
+        roles,
       };
 
       // Append to array and save
       const updatedMembers = [...existingMembers, newMember];
       await AsyncStorage.setItem(MEMBERS_KEY, JSON.stringify(updatedMembers));
+      
+      // If first member OR no current user set, set as current user and admin session
+      const session = await getSession();
+      if (isFirstMember || !session.currentUserId) {
+        const { setCurrentUserId: setSessionUserId, setRole: setSessionRole } = await import("@/lib/session");
+        if (!session.currentUserId) {
+          await setSessionUserId(newMember.id);
+        }
+        if (isFirstMember) {
+          await setSessionRole("admin"); // Set session to admin for first user
+        }
+      }
 
       // Navigate back
       router.back();
@@ -45,6 +94,10 @@ export default function AddMemberScreen() {
       console.error("Error saving member:", error);
     }
   };
+
+  if (!canCreate) {
+    return null; // Will redirect via Alert
+  }
 
   return (
     <ScrollView style={{ flex: 1, backgroundColor: "#fff" }}>

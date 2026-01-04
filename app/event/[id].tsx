@@ -1,7 +1,11 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { useFocusEffect } from "@react-navigation/native";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+
+import { getSession } from "@/lib/session";
+import { hasManCoRole, canCreateEvents, canEditVenueInfo, canEditHandicaps, getCurrentMember } from "@/lib/roles";
 
 const EVENTS_KEY = "GSOCIETY_EVENTS";
 const MEMBERS_KEY = "GSOCIETY_MEMBERS";
@@ -13,6 +17,20 @@ type EventData = {
   date: string;
   courseName: string;
   format: "Stableford" | "Strokeplay" | "Both";
+  playerIds?: string[];
+  isCompleted?: boolean;
+  isOOM?: boolean;
+  winnerId?: string;
+  winnerName?: string;
+  rsvps?: {
+    [memberId: string]: "going" | "maybe" | "no";
+  };
+  results?: {
+    [memberId: string]: {
+      grossScore: number;
+      netScore?: number;
+    };
+  };
 };
 
 type MemberData = {
@@ -40,10 +58,23 @@ export default function EventDetailsScreen() {
   const [scores, setScores] = useState<{ [memberId: string]: ScoreData }>({});
   const [showLeaderboard, setShowLeaderboard] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [isOOM, setIsOOM] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
+  const [editName, setEditName] = useState("");
+  const [editDate, setEditDate] = useState("");
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+  const [role, setRole] = useState<"admin" | "member">("member");
+  const [isManCo, setIsManCo] = useState(false);
+  const [rsvpSuccess, setRsvpSuccess] = useState(false);
+  const [canEditEvent, setCanEditEvent] = useState(false);
+  const [canEditVenue, setCanEditVenue] = useState(false);
+  const [canEnterResults, setCanEnterResults] = useState(false);
 
-  useEffect(() => {
-    loadData();
-  }, [id]);
+  useFocusEffect(
+    useCallback(() => {
+      loadData();
+    }, [id])
+  );
 
   const loadData = async () => {
     try {
@@ -54,6 +85,9 @@ export default function EventDetailsScreen() {
         const foundEvent = events.find((e) => e.id === id);
         if (foundEvent) {
           setEvent(foundEvent);
+          setIsOOM(foundEvent.isOOM || false);
+          setEditName(foundEvent.name);
+          setEditDate(foundEvent.date || "");
         }
       }
 
@@ -71,6 +105,18 @@ export default function EventDetailsScreen() {
           setScores(allScores[id]);
         }
       }
+
+      // Load session (single source of truth)
+      const session = await getSession();
+      setCurrentUserId(session.currentUserId);
+      setRole(session.role);
+      
+      // Check permissions
+      const manCo = await hasManCoRole();
+      setIsManCo(manCo);
+      setCanEditEvent(await canCreateEvents()); // Captain/admin can edit event settings
+      setCanEditVenue(await canEditVenueInfo()); // Secretary/captain/admin can edit venue
+      setCanEnterResults(await canEditHandicaps()); // Handicapper/captain/admin can enter results
     } catch (error) {
       console.error("Error loading data:", error);
     } finally {
@@ -105,6 +151,128 @@ export default function EventDetailsScreen() {
       console.error("Error saving scores:", error);
       Alert.alert("Error", "Failed to save scores");
     }
+  };
+
+  const handleSaveEvent = async () => {
+    if (!event) return;
+
+    // Permission check
+    if (!canEditEvent) {
+      Alert.alert("Access Denied", "Access denied: Captain only", [
+        { text: "OK", onPress: () => setIsEditing(false) },
+      ]);
+      return;
+    }
+
+    if (!editName.trim()) {
+      Alert.alert("Error", "Event name is required");
+      return;
+    }
+
+    try {
+      const eventsData = await AsyncStorage.getItem(EVENTS_KEY);
+      if (!eventsData) {
+        Alert.alert("Error", "Event not found");
+        return;
+      }
+
+      const events: EventData[] = JSON.parse(eventsData);
+      const updatedEvents = events.map((e) =>
+        e.id === event.id
+          ? {
+              ...e,
+              name: editName.trim(),
+              date: editDate.trim(),
+              isOOM: isOOM,
+            }
+          : e
+      );
+
+      await AsyncStorage.setItem(EVENTS_KEY, JSON.stringify(updatedEvents));
+      
+      // Update local state
+      const updatedEvent = {
+        ...event,
+        name: editName.trim(),
+        date: editDate.trim(),
+        isOOM: isOOM,
+      };
+      setEvent(updatedEvent);
+      setIsEditing(false);
+      
+      Alert.alert("Success", "Event updated successfully");
+    } catch (error) {
+      console.error("Error saving event:", error);
+      Alert.alert("Error", "Failed to save event");
+    }
+  };
+
+  const handleCancelEdit = () => {
+    if (event) {
+      setEditName(event.name);
+      setEditDate(event.date || "");
+      setIsOOM(event.isOOM || false);
+    }
+    setIsEditing(false);
+  };
+
+  const handleRSVP = async (status: "going" | "maybe" | "no") => {
+    if (!event || !currentUserId) return;
+
+    try {
+      const eventsData = await AsyncStorage.getItem(EVENTS_KEY);
+      if (!eventsData) return;
+
+      const events: EventData[] = JSON.parse(eventsData);
+      const updatedEvents = events.map((e) =>
+        e.id === event.id
+          ? {
+              ...e,
+              rsvps: {
+                ...(e.rsvps || {}),
+                [currentUserId]: status,
+              },
+            }
+          : e
+      );
+
+      await AsyncStorage.setItem(EVENTS_KEY, JSON.stringify(updatedEvents));
+      
+      // Update local state
+      const updatedEvent = {
+        ...event,
+        rsvps: {
+          ...(event.rsvps || {}),
+          [currentUserId]: status,
+        },
+      };
+      setEvent(updatedEvent);
+      
+      // Show success message
+      setRsvpSuccess(true);
+      setTimeout(() => setRsvpSuccess(false), 2000);
+    } catch (error) {
+      console.error("Error saving RSVP:", error);
+      Alert.alert("Error", "Failed to save RSVP");
+    }
+  };
+
+  const getRSVPCounts = () => {
+    if (!event || !event.rsvps) return { going: 0, maybe: 0, no: 0 };
+    const rsvps = event.rsvps;
+    return {
+      going: Object.values(rsvps).filter((r) => r === "going").length,
+      maybe: Object.values(rsvps).filter((r) => r === "maybe").length,
+      no: Object.values(rsvps).filter((r) => r === "no").length,
+    };
+  };
+
+  const getRSVPList = (status: "going" | "maybe" | "no") => {
+    if (!event || !event.rsvps) return [];
+    return Object.entries(event.rsvps)
+      .filter(([_, s]) => s === status)
+      .map(([memberId]) => members.find((m) => m.id === memberId))
+      .filter((m): m is MemberData => m !== undefined);
   };
 
   const getLeaderboard = () => {
@@ -179,27 +347,286 @@ export default function EventDetailsScreen() {
   return (
     <ScrollView style={styles.container}>
       <View style={styles.content}>
-        <Text style={styles.title}>{event.name}</Text>
-        <Text style={styles.subtitle}>Event Details</Text>
+        {isEditing ? (
+          <>
+            <Text style={styles.title}>Edit Event</Text>
+            <Text style={styles.subtitle}>Update event details</Text>
 
-        {/* Event Info Card */}
-        <View style={styles.card}>
-          <Text style={styles.cardTitle}>Event Information</Text>
-          <View style={styles.field}>
-            <Text style={styles.fieldLabel}>Date</Text>
-            <Text style={styles.fieldValue}>{event.date || "Not specified"}</Text>
-          </View>
-          <View style={styles.field}>
-            <Text style={styles.fieldLabel}>Course</Text>
-            <Text style={styles.fieldValue}>{event.courseName || "Not specified"}</Text>
-          </View>
-          <View style={styles.field}>
-            <Text style={styles.fieldLabel}>Format</Text>
-            <Text style={styles.fieldValue}>{event.format}</Text>
-          </View>
-        </View>
+            {/* Edit Form */}
+            <View style={styles.card}>
+              <Text style={styles.cardTitle}>Event Information</Text>
+              
+              <View style={styles.field}>
+                <Text style={styles.fieldLabel}>Event Name <Text style={{ color: "#ef4444" }}>*</Text></Text>
+                <TextInput
+                  value={editName}
+                  onChangeText={setEditName}
+                  placeholder="Enter event name"
+                  style={styles.input}
+                />
+              </View>
 
-        {!showLeaderboard ? (
+              <View style={styles.field}>
+                <Text style={styles.fieldLabel}>Event Date</Text>
+                <TextInput
+                  value={editDate}
+                  onChangeText={setEditDate}
+                  placeholder="YYYY-MM-DD"
+                  style={styles.input}
+                />
+              </View>
+
+              <View style={styles.field}>
+                <Text style={styles.fieldLabel}>Course</Text>
+                <Text style={styles.fieldValue}>{event.courseName || "Not specified"}</Text>
+              </View>
+
+              <View style={styles.field}>
+                <Text style={styles.fieldLabel}>Format</Text>
+                <Text style={styles.fieldValue}>{event.format}</Text>
+              </View>
+
+              {event.playerIds && event.playerIds.length > 0 && (
+                <View style={styles.field}>
+                  <Text style={styles.fieldLabel}>Players</Text>
+                  <Text style={styles.fieldValue}>{event.playerIds.length} selected</Text>
+                </View>
+              )}
+
+              <View style={styles.field}>
+                <Text style={styles.fieldLabel}>OOM Event</Text>
+                <Pressable
+                  onPress={() => setIsOOM(!isOOM)}
+                  style={{
+                    flexDirection: "row",
+                    alignItems: "center",
+                    marginTop: 8,
+                  }}
+                >
+                  <View
+                    style={{
+                      width: 24,
+                      height: 24,
+                      borderRadius: 12,
+                      backgroundColor: isOOM ? "#0B6E4F" : "#d1d5db",
+                      marginRight: 12,
+                      justifyContent: "center",
+                      alignItems: "center",
+                    }}
+                  >
+                    {isOOM && (
+                      <View
+                        style={{
+                          width: 8,
+                          height: 8,
+                          borderRadius: 4,
+                          backgroundColor: "#fff",
+                        }}
+                      />
+                    )}
+                  </View>
+                  <Text style={{ fontSize: 16, color: "#111827" }}>
+                    {isOOM ? "Yes, this is an OOM event" : "No, this is not an OOM event"}
+                  </Text>
+                </Pressable>
+              </View>
+            </View>
+
+            {/* Save/Cancel Buttons */}
+            <Pressable onPress={handleSaveEvent} style={styles.primaryButton}>
+              <Text style={styles.buttonText}>Save Changes</Text>
+            </Pressable>
+
+            <Pressable onPress={handleCancelEdit} style={styles.secondaryButton}>
+              <Text style={styles.buttonText}>Cancel</Text>
+            </Pressable>
+          </>
+        ) : (
+          <>
+            <View style={styles.headerRow}>
+              <View style={styles.titleContainer}>
+                <Text style={styles.title}>{event.name}</Text>
+                <Text style={styles.subtitle}>Event Details</Text>
+              </View>
+              {canEditEvent && (
+                <Pressable
+                  onPress={() => setIsEditing(true)}
+                  style={styles.editButton}
+                >
+                  <Text style={styles.editButtonText}>Edit</Text>
+                </Pressable>
+              )}
+            </View>
+
+            {/* Event Info Card */}
+            <View style={styles.card}>
+              <Text style={styles.cardTitle}>Event Information</Text>
+              <View style={styles.field}>
+                <Text style={styles.fieldLabel}>Date</Text>
+                <Text style={styles.fieldValue}>{event.date || "Not specified"}</Text>
+              </View>
+              <View style={styles.field}>
+                <Text style={styles.fieldLabel}>Course</Text>
+                <Text style={styles.fieldValue}>{event.courseName || "Not specified"}</Text>
+              </View>
+              <View style={styles.field}>
+                <Text style={styles.fieldLabel}>Format</Text>
+                <Text style={styles.fieldValue}>{event.format}</Text>
+              </View>
+              {event.playerIds && event.playerIds.length > 0 && (
+                <View style={styles.field}>
+                  <Text style={styles.fieldLabel}>Players</Text>
+                  <Text style={styles.fieldValue}>{event.playerIds.length} selected</Text>
+                </View>
+              )}
+              <View style={styles.field}>
+                <Text style={styles.fieldLabel}>OOM Event</Text>
+                <Text style={styles.fieldValue}>{event.isOOM ? "Yes" : "No"}</Text>
+              </View>
+            </View>
+
+            {/* RSVP Section */}
+            {currentUserId && !event.isCompleted && (
+              <View style={styles.card}>
+                <Text style={styles.cardTitle}>RSVP</Text>
+                {rsvpSuccess && (
+                  <View style={styles.successMessage}>
+                    <Text style={styles.successText}>RSVP saved!</Text>
+                  </View>
+                )}
+                <View style={styles.rsvpButtons}>
+                  <Pressable
+                    onPress={() => handleRSVP("going")}
+                    style={[
+                      styles.rsvpButtonLarge,
+                      event.rsvps?.[currentUserId || ""] === "going" && styles.rsvpButtonActive,
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.rsvpButtonTextLarge,
+                        event.rsvps?.[currentUserId || ""] === "going" && styles.rsvpButtonTextActive,
+                      ]}
+                    >
+                      Going
+                    </Text>
+                  </Pressable>
+                  <Pressable
+                    onPress={() => handleRSVP("maybe")}
+                    style={[
+                      styles.rsvpButtonLarge,
+                      event.rsvps?.[currentUserId || ""] === "maybe" && styles.rsvpButtonActive,
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.rsvpButtonTextLarge,
+                        event.rsvps?.[currentUserId || ""] === "maybe" && styles.rsvpButtonTextActive,
+                      ]}
+                    >
+                      Maybe
+                    </Text>
+                  </Pressable>
+                  <Pressable
+                    onPress={() => handleRSVP("no")}
+                    style={[
+                      styles.rsvpButtonLarge,
+                      event.rsvps?.[currentUserId || ""] === "no" && styles.rsvpButtonActive,
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.rsvpButtonTextLarge,
+                        event.rsvps?.[currentUserId || ""] === "no" && styles.rsvpButtonTextActive,
+                      ]}
+                    >
+                      Not going
+                    </Text>
+                  </Pressable>
+                </View>
+                {(() => {
+                  const counts = getRSVPCounts();
+                  const goingList = getRSVPList("going");
+                  const maybeList = getRSVPList("maybe");
+                  const noList = getRSVPList("no");
+                  return (
+                    <View style={styles.rsvpCounts}>
+                      <View style={styles.rsvpSummary}>
+                        <Text style={styles.rsvpSummaryText}>
+                          {counts.going} going, {counts.maybe} maybe, {counts.no} not going
+                        </Text>
+                      </View>
+                      {/* Show detailed lists only for ManCo roles */}
+                      {isManCo && (
+                        <>
+                          {counts.going > 0 && (
+                            <View style={styles.rsvpGroup}>
+                              <Text style={styles.rsvpGroupTitle}>Going ({counts.going})</Text>
+                              {goingList.map((member) => (
+                                <Text key={member.id} style={styles.rsvpMemberName}>
+                                  {member.name}
+                                </Text>
+                              ))}
+                            </View>
+                          )}
+                          {counts.maybe > 0 && (
+                            <View style={styles.rsvpGroup}>
+                              <Text style={styles.rsvpGroupTitle}>Maybe ({counts.maybe})</Text>
+                              {maybeList.map((member) => (
+                                <Text key={member.id} style={styles.rsvpMemberName}>
+                                  {member.name}
+                                </Text>
+                              ))}
+                            </View>
+                          )}
+                          {counts.no > 0 && (
+                            <View style={styles.rsvpGroup}>
+                              <Text style={styles.rsvpGroupTitle}>Not going ({counts.no})</Text>
+                              {noList.map((member) => (
+                                <Text key={member.id} style={styles.rsvpMemberName}>
+                                  {member.name}
+                                </Text>
+                              ))}
+                            </View>
+                          )}
+                        </>
+                      )}
+                      {counts.going === 0 && counts.maybe === 0 && counts.no === 0 && (
+                        <Text style={styles.emptyText}>No RSVPs yet</Text>
+                      )}
+                    </View>
+                  );
+                })()}
+              </View>
+            )}
+          </>
+        )}
+
+        {!isEditing && (
+          <>
+            {/* Players Button - Captain/Admin only */}
+            {canEditEvent && (
+              <Pressable
+                onPress={() => router.push(`/event/${event.id}/players` as any)}
+                style={styles.secondaryButton}
+              >
+                <Text style={styles.buttonText}>Players</Text>
+              </Pressable>
+            )}
+
+            {/* Enter Results Button - Handicapper/Captain/Admin only */}
+            {canEnterResults && !event.isCompleted && (
+              <Pressable
+                onPress={() => router.push(`/event/${event.id}/results` as any)}
+                style={styles.secondaryButton}
+              >
+                <Text style={styles.buttonText}>Enter Results</Text>
+              </Pressable>
+            )}
+          </>
+        )}
+
+        {!isEditing && !showLeaderboard ? (
           <>
             {/* Scores Section */}
             <View style={styles.section}>
@@ -246,10 +673,12 @@ export default function EventDetailsScreen() {
               )}
             </View>
 
-            {/* Save Scores Button */}
-            <Pressable onPress={handleSaveScores} style={styles.primaryButton}>
-              <Text style={styles.buttonText}>Save Scores</Text>
-            </Pressable>
+            {/* Save Scores Button - Handicapper/Captain/Admin only */}
+            {canEnterResults && (
+              <Pressable onPress={handleSaveScores} style={styles.primaryButton}>
+                <Text style={styles.buttonText}>Save Scores</Text>
+              </Pressable>
+            )}
 
             {/* View Leaderboard Button */}
             {leaderboard.length > 0 && (
@@ -420,6 +849,28 @@ const styles = StyleSheet.create({
     fontSize: 16,
     borderWidth: 1,
     borderColor: "#e5e7eb",
+    marginTop: 6,
+  },
+  headerRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    marginBottom: 28,
+  },
+  titleContainer: {
+    flex: 1,
+  },
+  editButton: {
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 8,
+    backgroundColor: "#f3f4f6",
+    marginTop: 4,
+  },
+  editButtonText: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: "#0B6E4F",
   },
   leaderboardItem: {
     flexDirection: "row",
@@ -493,6 +944,88 @@ const styles = StyleSheet.create({
     color: "white",
     fontSize: 18,
     fontWeight: "700",
+  },
+  successMessage: {
+    backgroundColor: "#d1fae5",
+    padding: 12,
+    borderRadius: 8,
+    marginBottom: 16,
+    alignItems: "center",
+  },
+  successText: {
+    color: "#065f46",
+    fontSize: 14,
+    fontWeight: "600",
+  },
+  rsvpButtons: {
+    flexDirection: "row",
+    gap: 12,
+    marginBottom: 16,
+  },
+  rsvpButton: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 10,
+    alignItems: "center",
+    backgroundColor: "#f9fafb",
+    borderWidth: 2,
+    borderColor: "transparent",
+  },
+  rsvpButtonLarge: {
+    flex: 1,
+    paddingVertical: 20,
+    borderRadius: 12,
+    alignItems: "center",
+    backgroundColor: "#f9fafb",
+    borderWidth: 3,
+    borderColor: "transparent",
+  },
+  rsvpButtonActive: {
+    backgroundColor: "#f0fdf4",
+    borderColor: "#0B6E4F",
+  },
+  rsvpButtonText: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: "#6b7280",
+  },
+  rsvpButtonTextLarge: {
+    fontSize: 16,
+    fontWeight: "700",
+    color: "#6b7280",
+  },
+  rsvpButtonTextActive: {
+    color: "#0B6E4F",
+  },
+  rsvpCounts: {
+    marginTop: 8,
+  },
+  rsvpSummary: {
+    backgroundColor: "#f3f4f6",
+    padding: 12,
+    borderRadius: 8,
+    marginBottom: 12,
+  },
+  rsvpSummaryText: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: "#111827",
+    textAlign: "center",
+  },
+  rsvpGroup: {
+    marginBottom: 12,
+  },
+  rsvpGroupTitle: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: "#111827",
+    marginBottom: 4,
+  },
+  rsvpMemberName: {
+    fontSize: 13,
+    color: "#6b7280",
+    marginLeft: 8,
+    marginBottom: 2,
   },
 });
 

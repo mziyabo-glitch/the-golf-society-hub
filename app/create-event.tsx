@@ -1,9 +1,22 @@
-import AsyncStorage from "@react-native-async-storage/async-storage";
-import { useRouter } from "expo-router";
-import { useState } from "react";
-import { Pressable, ScrollView, Text, TextInput, View } from "react-native";
+/**
+ * HOW TO TEST:
+ * - As member: try to create event (should show alert "Access denied: Captain only" and redirect)
+ * - As captain: verify can create events
+ * - Create event with all fields
+ * - Verify event appears on dashboard
+ */
 
-const EVENTS_KEY = "GSOCIETY_EVENTS";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import { useFocusEffect } from "@react-navigation/native";
+import { useRouter } from "expo-router";
+import { useCallback, useState } from "react";
+import { Alert, Pressable, ScrollView, Text, TextInput, View } from "react-native";
+import { getSession } from "@/lib/session";
+import { canCreateEvents, normalizeMemberRoles, normalizeSessionRole } from "@/lib/permissions";
+import { getCurrentUserRoles } from "@/lib/roles";
+import { STORAGE_KEYS } from "@/lib/storage";
+
+const EVENTS_KEY = STORAGE_KEYS.EVENTS;
 
 type EventData = {
   id: string;
@@ -11,6 +24,20 @@ type EventData = {
   date: string;
   courseName: string;
   format: "Stableford" | "Strokeplay" | "Both";
+  playerIds?: string[];
+  isCompleted?: boolean;
+  isOOM?: boolean;
+  winnerId?: string;
+  winnerName?: string;
+  rsvps?: {
+    [memberId: string]: "going" | "maybe" | "no";
+  };
+  results?: {
+    [memberId: string]: {
+      grossScore: number;
+      netScore?: number;
+    };
+  };
 };
 
 export default function CreateEventScreen() {
@@ -19,6 +46,35 @@ export default function CreateEventScreen() {
   const [eventDate, setEventDate] = useState("");
   const [courseName, setCourseName] = useState("");
   const [format, setFormat] = useState<"Stableford" | "Strokeplay" | "Both">("Stableford");
+  const [isOOM, setIsOOM] = useState(false);
+  const [role, setRole] = useState<"admin" | "member">("member");
+  const [canCreate, setCanCreate] = useState(false);
+
+  useFocusEffect(
+    useCallback(() => {
+      loadSession();
+    }, [])
+  );
+
+  const loadSession = async () => {
+    const session = await getSession();
+    setRole(session.role);
+    
+    const sessionRole = normalizeSessionRole(session.role);
+    const roles = normalizeMemberRoles(await getCurrentUserRoles());
+    const canCreateEventsRole = canCreateEvents(sessionRole, roles);
+    setCanCreate(canCreateEventsRole);
+    
+    if (!canCreateEventsRole) {
+      Alert.alert("Access Denied", "Only Captain or Secretary can create events", [
+        { text: "OK", onPress: () => router.back() },
+      ]);
+    }
+  };
+
+  if (!canCreate) {
+    return null; // Will redirect via Alert
+  }
 
   const isFormValid = eventName.trim().length > 0;
 
@@ -39,6 +95,7 @@ export default function CreateEventScreen() {
         date: eventDate.trim(),
         courseName: courseName.trim(),
         format,
+        isOOM,
       };
 
       // Append to array and save
@@ -54,6 +111,12 @@ export default function CreateEventScreen() {
 
   return (
     <ScrollView style={{ flex: 1, backgroundColor: "#fff" }}>
+      {/* TEMPORARY DEBUG - Remove later */}
+      <View style={{ padding: 16, backgroundColor: "#f3f4f6" }}>
+        <Text style={{ fontSize: 12, color: "#6b7280" }}>
+          Role: {role}
+        </Text>
+      </View>
       <View style={{ flex: 1, padding: 24 }}>
         <Text style={{ fontSize: 34, fontWeight: "800", marginBottom: 6 }}>
           Create Event
@@ -144,6 +207,50 @@ export default function CreateEventScreen() {
               </Text>
             </Pressable>
           ))}
+        </View>
+
+        {/* OOM Event Toggle */}
+        <View style={{ marginBottom: 20 }}>
+          <Text style={{ fontSize: 16, fontWeight: "600", marginBottom: 12 }}>
+            OOM Event?
+          </Text>
+          <Pressable
+            onPress={() => setIsOOM(!isOOM)}
+            style={{
+              flexDirection: "row",
+              alignItems: "center",
+              backgroundColor: "#f3f4f6",
+              paddingVertical: 14,
+              paddingHorizontal: 16,
+              borderRadius: 14,
+            }}
+          >
+            <View
+              style={{
+                width: 24,
+                height: 24,
+                borderRadius: 12,
+                backgroundColor: isOOM ? "#0B6E4F" : "#d1d5db",
+                marginRight: 12,
+                justifyContent: "center",
+                alignItems: "center",
+              }}
+            >
+              {isOOM && (
+                <View
+                  style={{
+                    width: 8,
+                    height: 8,
+                    borderRadius: 4,
+                    backgroundColor: "#fff",
+                  }}
+                />
+              )}
+            </View>
+            <Text style={{ fontSize: 16, color: "#111827" }}>
+              {isOOM ? "Yes, this is an OOM event" : "No, this is not an OOM event"}
+            </Text>
+          </Pressable>
         </View>
 
         {/* Create Event Button */}

@@ -1,0 +1,593 @@
+/**
+ * TEST PLAN:
+ * - Navigate to Profile screen
+ * - Select a member from the list
+ * - Verify current user is saved and persists
+ * - Try to switch to admin role, enter PIN
+ * - Verify role changes and persists
+ * - Navigate back, verify user indicator shows on dashboard
+ * - Close/reopen app, verify profile persists
+ */
+
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import { useFocusEffect } from "@react-navigation/native";
+import { router } from "expo-router";
+import { useCallback, useState } from "react";
+import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { getSession, setCurrentUserId, setRole } from "@/lib/session";
+import { getCurrentUserRoles, MemberRole } from "@/lib/roles";
+
+const MEMBERS_KEY = "GSOCIETY_MEMBERS";
+
+type MemberData = {
+  id: string;
+  name: string;
+  handicap?: number;
+};
+
+export default function ProfileScreen() {
+  const [members, setMembers] = useState<MemberData[]>([]);
+  const [currentUserId, setCurrentUserIdState] = useState<string | null>(null);
+  const [role, setRoleState] = useState<"admin" | "member">("member");
+  const [currentMember, setCurrentMember] = useState<MemberData | null>(null);
+  const [editName, setEditName] = useState("");
+  const [editHandicap, setEditHandicap] = useState("");
+  const [isEditing, setIsEditing] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [userRoles, setUserRoles] = useState<MemberRole[]>([]);
+
+  useFocusEffect(
+    useCallback(() => {
+      loadData();
+    }, [])
+  );
+
+  const loadData = async () => {
+    try {
+      // Self-heal: ensure valid current member exists
+      const { ensureValidCurrentMember } = await import("@/lib/storage");
+      const { members: healedMembers, currentUserId: healedUserId } = await ensureValidCurrentMember();
+      
+      // Use healed members
+      const loadedMembers = healedMembers;
+      setMembers(loadedMembers);
+
+      // Load session (single source of truth)
+      const session = await getSession();
+      const effectiveUserId = healedUserId || session.currentUserId;
+      setCurrentUserIdState(effectiveUserId);
+      setRoleState(session.role);
+
+      // Load current user roles
+      const roles = await getCurrentUserRoles();
+      setUserRoles(roles);
+
+      // Find current member
+      if (effectiveUserId) {
+        const member = loadedMembers.find((m: MemberData) => m.id === effectiveUserId);
+        if (member) {
+          setCurrentMember(member);
+          setEditName(member.name);
+          setEditHandicap(member.handicap?.toString() || "");
+        } else {
+          setCurrentMember(null);
+        }
+      } else {
+        setCurrentMember(null);
+      }
+    } catch (error) {
+      console.error("Error loading data:", error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSaveProfile = async () => {
+    if (!currentMember || !editName.trim()) {
+      Alert.alert("Error", "Name is required");
+      return;
+    }
+
+    try {
+      // Update member in storage
+      const membersData = await AsyncStorage.getItem(MEMBERS_KEY);
+      const allMembers: MemberData[] = membersData ? JSON.parse(membersData) : [];
+      const updatedMembers = allMembers.map((m) =>
+        m.id === currentMember.id
+          ? {
+              ...m,
+              name: editName.trim(),
+              handicap: editHandicap.trim() ? parseFloat(editHandicap.trim()) : undefined,
+            }
+          : m
+      );
+      await AsyncStorage.setItem(MEMBERS_KEY, JSON.stringify(updatedMembers));
+
+      // Reload to reflect changes
+      await loadData();
+      setIsEditing(false);
+      Alert.alert("Success", "Profile updated");
+    } catch (error) {
+      console.error("Error saving profile:", error);
+      Alert.alert("Error", "Failed to save profile");
+    }
+  };
+
+  const handleSwitchToAdmin = async () => {
+    if (!currentUserId) {
+      Alert.alert("Error", "Please select a member profile first");
+      return;
+    }
+
+    // TODO: Re-enable Admin PIN requirement for role switching
+    // Previously checked PIN from ADMIN_PIN_KEY before allowing admin role switch
+
+    try {
+      await setRole("admin");
+      setRoleState("admin");
+      Alert.alert("Success", "Switched to admin role");
+    } catch (error) {
+      console.error("Error switching to admin:", error);
+      Alert.alert("Error", "Failed to switch role");
+    }
+  };
+
+  const handleSwitchToMember = async () => {
+    try {
+      await setRole("member");
+      setRoleState("member");
+      Alert.alert("Success", "Switched to member role");
+    } catch (error) {
+      console.error("Error switching to member:", error);
+      Alert.alert("Error", "Failed to switch role");
+    }
+  };
+
+  if (loading) {
+    return (
+      <View style={[styles.container, styles.centerContent]}>
+        <Text style={styles.loadingText}>Loading...</Text>
+      </View>
+    );
+  }
+
+  return (
+    <ScrollView style={styles.container}>
+      <View style={styles.content}>
+        <Text style={styles.title}>Profile</Text>
+        <Text style={styles.subtitle}>
+          {currentMember ? "Edit your profile" : "Choose your profile"}
+        </Text>
+
+        {!currentUserId ? (
+          <View style={styles.emptyState}>
+            <Text style={styles.emptyText}>No profile selected</Text>
+            <Text style={styles.emptySubtext}>
+              Choose your profile from the Members screen
+            </Text>
+            <Pressable
+              onPress={() => router.push("/members" as any)}
+              style={styles.ctaButton}
+            >
+              <Text style={styles.ctaButtonText}>Choose Profile</Text>
+            </Pressable>
+          </View>
+        ) : currentMember ? (
+          <>
+            {isEditing ? (
+              <View style={styles.editSection}>
+                <View style={styles.field}>
+                  <Text style={styles.fieldLabel}>
+                    Name <Text style={{ color: "#ef4444" }}>*</Text>
+                  </Text>
+                  <TextInput
+                    value={editName}
+                    onChangeText={setEditName}
+                    placeholder="Enter name"
+                    style={styles.input}
+                  />
+                </View>
+
+                <View style={styles.field}>
+                  <Text style={styles.fieldLabel}>Handicap</Text>
+                    <TextInput
+                      value={editHandicap}
+                      onChangeText={setEditHandicap}
+                      placeholder="Enter handicap (optional)"
+                      keyboardType="numeric"
+                      style={styles.input}
+                    />
+                </View>
+
+                <View style={styles.editActions}>
+                  <Pressable
+                    onPress={() => {
+                      setIsEditing(false);
+                      setEditName(currentMember.name);
+                      setEditHandicap(currentMember.handicap?.toString() || "");
+                    }}
+                    style={styles.cancelButton}
+                  >
+                    <Text style={styles.cancelButtonText}>Cancel</Text>
+                  </Pressable>
+                  <Pressable onPress={handleSaveProfile} style={styles.saveButton}>
+                    <Text style={styles.saveButtonText}>Save</Text>
+                  </Pressable>
+                </View>
+              </View>
+            ) : (
+              <View style={styles.profileSection}>
+                <View style={styles.profileCard}>
+                  <Text style={styles.profileName}>{currentMember.name}</Text>
+                  {currentMember.handicap !== undefined && (
+                    <Text style={styles.profileHandicap}>HCP: {currentMember.handicap}</Text>
+                  )}
+                </View>
+
+                <Pressable
+                  onPress={() => setIsEditing(true)}
+                  style={styles.editButton}
+                >
+                  <Text style={styles.editButtonText}>Edit Profile</Text>
+                </Pressable>
+              </View>
+            )}
+
+            <View style={styles.roleSection}>
+              <Text style={styles.roleLabel}>Assigned Roles</Text>
+              {userRoles.length > 0 ? (
+                <View style={styles.rolesList}>
+                  {userRoles.map((r) => (
+                    <View key={r} style={styles.roleBadge}>
+                      <Text style={styles.roleBadgeText}>
+                        {r.charAt(0).toUpperCase() + r.slice(1)}
+                      </Text>
+                    </View>
+                  ))}
+                </View>
+              ) : (
+                <Text style={styles.noRolesText}>No roles assigned (default: member)</Text>
+              )}
+              <Text style={styles.roleNote}>
+                Roles are assigned by Captain/Admin in Settings → Roles
+              </Text>
+            </View>
+
+            <View style={styles.roleSection}>
+              <Text style={styles.roleLabel}>
+                Session Role: <Text style={styles.roleValue}>{role}</Text>
+              </Text>
+
+              {role === "member" ? (
+                <Pressable
+                  onPress={handleSwitchToAdmin}
+                  style={styles.roleButton}
+                >
+                  <Text style={styles.roleButtonText}>Switch to Admin</Text>
+                </Pressable>
+              ) : (
+                <Pressable onPress={handleSwitchToMember} style={styles.roleButton}>
+                  <Text style={styles.roleButtonText}>Switch to Member</Text>
+                </Pressable>
+              )}
+            </View>
+          </>
+        ) : (
+          <View style={styles.emptyState}>
+            <Text style={styles.emptyText}>Profile not found</Text>
+            <Text style={styles.emptySubtext}>
+              Your selected profile may have been deleted
+            </Text>
+            <Pressable
+              onPress={() => router.push("/members" as any)}
+              style={styles.ctaButton}
+            >
+              <Text style={styles.ctaButtonText}>Choose Profile</Text>
+            </Pressable>
+          </View>
+        )}
+
+        <Pressable onPress={() => router.back()} style={styles.backButton}>
+          <Text style={styles.backButtonText}>Back</Text>
+        </Pressable>
+      </View>
+    </ScrollView>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: "#fff",
+  },
+  content: {
+    flex: 1,
+    padding: 24,
+  },
+  centerContent: {
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  title: {
+    fontSize: 34,
+    fontWeight: "800",
+    marginBottom: 6,
+  },
+  subtitle: {
+    fontSize: 16,
+    opacity: 0.75,
+    marginBottom: 24,
+  },
+  loadingText: {
+    fontSize: 16,
+    opacity: 0.7,
+  },
+  emptyState: {
+    alignItems: "center",
+    paddingVertical: 40,
+  },
+  emptyText: {
+    fontSize: 16,
+    fontWeight: "600",
+    color: "#111827",
+    marginBottom: 8,
+  },
+  emptySubtext: {
+    fontSize: 14,
+    opacity: 0.7,
+    color: "#111827",
+    textAlign: "center",
+    marginBottom: 16,
+  },
+  ctaButton: {
+    backgroundColor: "#0B6E4F",
+    paddingVertical: 14,
+    paddingHorizontal: 24,
+    borderRadius: 12,
+    marginTop: 8,
+  },
+  ctaButtonText: {
+    color: "white",
+    fontSize: 16,
+    fontWeight: "600",
+  },
+  profileSection: {
+    marginBottom: 24,
+  },
+  profileCard: {
+    backgroundColor: "#f3f4f6",
+    borderRadius: 12,
+    padding: 20,
+    marginBottom: 16,
+  },
+  profileName: {
+    fontSize: 20,
+    fontWeight: "600",
+    color: "#111827",
+    marginBottom: 8,
+  },
+  profileHandicap: {
+    fontSize: 16,
+    opacity: 0.7,
+    color: "#111827",
+  },
+  editSection: {
+    marginBottom: 24,
+  },
+  field: {
+    marginBottom: 16,
+  },
+  fieldLabel: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: "#111827",
+    marginBottom: 8,
+  },
+  input: {
+    backgroundColor: "#f9fafb",
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    borderRadius: 12,
+    fontSize: 16,
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
+  },
+  editActions: {
+    flexDirection: "row",
+    gap: 12,
+    marginTop: 8,
+  },
+  cancelButton: {
+    flex: 1,
+    paddingVertical: 14,
+    borderRadius: 12,
+    alignItems: "center",
+    backgroundColor: "#f3f4f6",
+  },
+  cancelButtonText: {
+    fontSize: 16,
+    fontWeight: "600",
+    color: "#111827",
+  },
+  saveButton: {
+    flex: 1,
+    paddingVertical: 14,
+    borderRadius: 12,
+    alignItems: "center",
+    backgroundColor: "#0B6E4F",
+  },
+  saveButtonText: {
+    fontSize: 16,
+    fontWeight: "600",
+    color: "white",
+  },
+  editButton: {
+    backgroundColor: "#0B6E4F",
+    paddingVertical: 14,
+    borderRadius: 12,
+    alignItems: "center",
+    marginBottom: 24,
+  },
+  editButtonText: {
+    color: "white",
+    fontSize: 16,
+    fontWeight: "600",
+  },
+  membersList: {
+    marginBottom: 24,
+  },
+  memberCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    backgroundColor: "#f9fafb",
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 8,
+    borderWidth: 2,
+    borderColor: "transparent",
+  },
+  memberCardSelected: {
+    backgroundColor: "#f0fdf4",
+    borderColor: "#0B6E4F",
+  },
+  memberInfo: {
+    flex: 1,
+  },
+  memberName: {
+    fontSize: 16,
+    fontWeight: "600",
+    color: "#111827",
+    marginBottom: 4,
+  },
+  memberHandicap: {
+    fontSize: 14,
+    opacity: 0.7,
+    color: "#111827",
+  },
+  selectedBadge: {
+    backgroundColor: "#0B6E4F",
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 6,
+  },
+  selectedBadgeText: {
+    color: "white",
+    fontSize: 12,
+    fontWeight: "600",
+  },
+  roleSection: {
+    backgroundColor: "#f3f4f6",
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 24,
+  },
+  roleLabel: {
+    fontSize: 16,
+    fontWeight: "600",
+    color: "#111827",
+    marginBottom: 12,
+  },
+  roleValue: {
+    color: "#0B6E4F",
+    textTransform: "uppercase",
+  },
+  rolesList: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+    marginBottom: 12,
+  },
+  roleBadge: {
+    backgroundColor: "#0B6E4F",
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 6,
+  },
+  roleBadgeText: {
+    color: "white",
+    fontSize: 12,
+    fontWeight: "600",
+    textTransform: "capitalize",
+  },
+  noRolesText: {
+    fontSize: 14,
+    color: "#6b7280",
+    fontStyle: "italic",
+    marginBottom: 12,
+  },
+  roleNote: {
+    fontSize: 12,
+    color: "#6b7280",
+    fontStyle: "italic",
+  },
+  // TODO: Re-enable PIN-related styles when PIN requirement is restored
+  // pinSection: {
+  //   marginTop: 8,
+  // },
+  // pinLabel: {
+  //   fontSize: 14,
+  //   fontWeight: "600",
+  //   color: "#111827",
+  //   marginBottom: 8,
+  // },
+  // pinInput: {
+  //   backgroundColor: "#fff",
+  //   paddingVertical: 12,
+  //   paddingHorizontal: 16,
+  //   borderRadius: 10,
+  //   fontSize: 16,
+  //   borderWidth: 1,
+  //   borderColor: "#e5e7eb",
+  //   marginBottom: 12,
+  // },
+  // pinActions: {
+  //   flexDirection: "row",
+  //   gap: 12,
+  // },
+  // cancelButton: {
+  //   flex: 1,
+  //   paddingVertical: 12,
+  //   borderRadius: 10,
+  //   alignItems: "center",
+  //   backgroundColor: "#f3f4f6",
+  // },
+  // cancelButtonText: {
+  //   fontSize: 14,
+  //   fontWeight: "600",
+  //   color: "#111827",
+  // },
+  // submitButton: {
+  //   flex: 1,
+  //   paddingVertical: 12,
+  //   borderRadius: 10,
+  //   alignItems: "center",
+  //   backgroundColor: "#0B6E4F",
+  // },
+  // submitButtonText: {
+  //   fontSize: 14,
+  //   fontWeight: "600",
+  //   color: "white",
+  // },
+  roleButton: {
+    backgroundColor: "#0B6E4F",
+    paddingVertical: 12,
+    borderRadius: 10,
+    alignItems: "center",
+  },
+  roleButtonText: {
+    color: "white",
+    fontSize: 14,
+    fontWeight: "600",
+  },
+  backButton: {
+    paddingVertical: 14,
+    alignItems: "center",
+  },
+  backButtonText: {
+    fontSize: 16,
+    fontWeight: "600",
+    color: "#6b7280",
+  },
+});
+

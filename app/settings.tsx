@@ -1,14 +1,30 @@
+/**
+ * HOW TO TEST:
+ * - As member: try to access settings (should show alert and redirect)
+ * - As captain: verify can access settings
+ * - Set/change Admin PIN
+ * - Access Roles & Permissions section (PIN-gated)
+ * - Assign roles to members
+ * - Verify roles persist and are enforced
+ */
+
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useFocusEffect } from "@react-navigation/native";
 import { router } from "expo-router";
 import { useCallback, useState } from "react";
 import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 
-const STORAGE_KEY = "GSOCIETY_ACTIVE";
-const EVENTS_KEY = "GSOCIETY_EVENTS";
-const MEMBERS_KEY = "GSOCIETY_MEMBERS";
-const SCORES_KEY = "GSOCIETY_SCORES";
-const DRAFT_KEY = "GSOCIETY_DRAFT";
+import { canAssignRoles, normalizeMemberRoles, normalizeSessionRole } from "@/lib/permissions";
+import { getCurrentUserRoles } from "@/lib/roles";
+import { getSession } from "@/lib/session";
+import { STORAGE_KEYS } from "@/lib/storage";
+
+const STORAGE_KEY = STORAGE_KEYS.SOCIETY_ACTIVE;
+const EVENTS_KEY = STORAGE_KEYS.EVENTS;
+const MEMBERS_KEY = STORAGE_KEYS.MEMBERS;
+const SCORES_KEY = STORAGE_KEYS.SCORES;
+const DRAFT_KEY = STORAGE_KEYS.SOCIETY_DRAFT;
+const ADMIN_PIN_KEY = STORAGE_KEYS.ADMIN_PIN;
 
 type SocietyData = {
   name: string;
@@ -22,6 +38,12 @@ export default function SettingsScreen() {
   const [society, setSociety] = useState<SocietyData | null>(null);
   const [societyName, setSocietyName] = useState("");
   const [isEditingName, setIsEditingName] = useState(false);
+  const [adminPin, setAdminPin] = useState("");
+  const [isEditingPin, setIsEditingPin] = useState(false);
+  const [newPin, setNewPin] = useState("");
+  const [confirmPin, setConfirmPin] = useState("");
+  const [role, setRole] = useState<"admin" | "member">("member");
+  const [canAssignRolesRole, setCanAssignRolesRole] = useState(false);
 
   useFocusEffect(
     useCallback(() => {
@@ -37,10 +59,36 @@ export default function SettingsScreen() {
         setSociety(parsed);
         setSocietyName(parsed.name);
       }
+
+      // Load admin PIN
+      const pin = await AsyncStorage.getItem(ADMIN_PIN_KEY);
+      if (pin) {
+        setAdminPin("****"); // Show masked PIN
+      }
+
+      // Load session (single source of truth)
+      const session = await getSession();
+      setRole(session.role);
+      
+      const sessionRole = normalizeSessionRole(session.role);
+      const roles = normalizeMemberRoles(await getCurrentUserRoles());
+      const canAssign = canAssignRoles(sessionRole, roles);
+      setCanAssignRolesRole(canAssign);
+      
+      if (session.role !== "admin" && !canAssign) {
+        Alert.alert("Access Denied", "Only admins can access settings", [
+          { text: "OK", onPress: () => router.back() },
+        ]);
+      }
     } catch (error) {
       console.error("Error loading society:", error);
     }
   };
+
+  // Allow access if admin session OR has captain role (checked in loadSociety)
+  // if (role !== "admin" && !canAssignRolesRole && society) {
+  //   return null; // Will redirect via Alert
+  // }
 
   const handleSaveName = async () => {
     if (!society || !societyName.trim()) return;
@@ -60,10 +108,34 @@ export default function SettingsScreen() {
     }
   };
 
+  const handleSavePin = async () => {
+    if (newPin.length !== 4 || !/^\d+$/.test(newPin)) {
+      Alert.alert("Error", "PIN must be exactly 4 digits");
+      return;
+    }
+
+    if (newPin !== confirmPin) {
+      Alert.alert("Error", "PINs do not match");
+      return;
+    }
+
+    try {
+      await AsyncStorage.setItem(ADMIN_PIN_KEY, newPin);
+      setAdminPin("****");
+      setNewPin("");
+      setConfirmPin("");
+      setIsEditingPin(false);
+      Alert.alert("Success", "Admin PIN saved");
+    } catch (error) {
+      console.error("Error saving PIN:", error);
+      Alert.alert("Error", "Failed to save PIN");
+    }
+  };
+
   const handleResetSociety = () => {
     Alert.alert(
       "Reset Society",
-      "This will delete all your data (society, events, members, and scores). This cannot be undone.",
+      "This will delete all your data (society, events, members, scores, and session). This cannot be undone.",
       [
         {
           text: "Cancel",
@@ -74,16 +146,10 @@ export default function SettingsScreen() {
           style: "destructive",
           onPress: async () => {
             try {
-              // Clear all storage keys
-              await AsyncStorage.multiRemove([
-                STORAGE_KEY,
-                EVENTS_KEY,
-                MEMBERS_KEY,
-                SCORES_KEY,
-                DRAFT_KEY,
-              ]);
-              // Redirect to home
-              router.replace("/");
+              const { resetAllData } = await import("@/lib/storage");
+              await resetAllData();
+              // Redirect to create-society screen
+              router.replace("/create-society");
             } catch (error) {
               console.error("Error resetting society:", error);
               Alert.alert("Error", "Failed to reset society");
@@ -149,6 +215,78 @@ export default function SettingsScreen() {
             </View>
           )}
         </View>
+
+        {/* Admin PIN */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Admin PIN</Text>
+          {isEditingPin ? (
+            <View>
+              <Text style={styles.fieldLabel}>New PIN (4 digits)</Text>
+              <TextInput
+                value={newPin}
+                onChangeText={setNewPin}
+                placeholder="0000"
+                keyboardType="numeric"
+                secureTextEntry
+                maxLength={4}
+                style={styles.input}
+              />
+              <Text style={styles.fieldLabel}>Confirm PIN</Text>
+              <TextInput
+                value={confirmPin}
+                onChangeText={setConfirmPin}
+                placeholder="0000"
+                keyboardType="numeric"
+                secureTextEntry
+                maxLength={4}
+                style={styles.input}
+              />
+              <View style={styles.editActions}>
+                <Pressable
+                  onPress={() => {
+                    setIsEditingPin(false);
+                    setNewPin("");
+                    setConfirmPin("");
+                  }}
+                  style={styles.cancelButton}
+                >
+                  <Text style={styles.cancelButtonText}>Cancel</Text>
+                </Pressable>
+                <Pressable onPress={handleSavePin} style={styles.saveButton}>
+                  <Text style={styles.saveButtonText}>Save</Text>
+                </Pressable>
+              </View>
+            </View>
+          ) : (
+            <View style={styles.nameRow}>
+              <Text style={styles.nameValue}>{adminPin || "Not set"}</Text>
+              <Pressable
+                onPress={() => setIsEditingPin(true)}
+                style={styles.editButton}
+              >
+                <Text style={styles.editButtonText}>
+                  {adminPin ? "Change" : "Set"}
+                </Text>
+              </Pressable>
+            </View>
+          )}
+        </View>
+
+        {/* Roles & Permissions - PIN Gated */}
+        {canAssignRolesRole && (
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Roles & Permissions</Text>
+            <Pressable
+              onPress={() => router.push("/roles" as any)}
+              style={styles.rolesButton}
+            >
+              <Text style={styles.rolesButtonText}>Manage Roles</Text>
+            </Pressable>
+            <Text style={styles.rolesDescription}>
+              Assign roles to members (Captain, Treasurer, Secretary, Handicapper). PIN required.
+            </Text>
+          </View>
+        )}
 
         {/* Reset Society */}
         <View style={styles.section}>
@@ -231,6 +369,12 @@ const styles = StyleSheet.create({
     color: "#111827",
     marginBottom: 12,
   },
+  fieldLabel: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: "#111827",
+    marginBottom: 8,
+  },
   editActions: {
     flexDirection: "row",
     gap: 12,
@@ -274,6 +418,24 @@ const styles = StyleSheet.create({
   warningText: {
     fontSize: 12,
     opacity: 0.6,
+    color: "#111827",
+    textAlign: "center",
+  },
+  rolesButton: {
+    backgroundColor: "#0B6E4F",
+    paddingVertical: 16,
+    borderRadius: 12,
+    alignItems: "center",
+    marginBottom: 8,
+  },
+  rolesButtonText: {
+    color: "white",
+    fontSize: 16,
+    fontWeight: "700",
+  },
+  rolesDescription: {
+    fontSize: 12,
+    opacity: 0.7,
     color: "#111827",
     textAlign: "center",
   },

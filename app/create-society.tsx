@@ -3,8 +3,10 @@ import { useRouter } from "expo-router";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Pressable, ScrollView, Text, TextInput, View } from "react-native";
 
-const DRAFT_KEY = "GSOCIETY_DRAFT";
-const ACTIVE_KEY = "GSOCIETY_ACTIVE";
+import { STORAGE_KEYS } from "@/lib/storage";
+
+const DRAFT_KEY = STORAGE_KEYS.SOCIETY_DRAFT;
+const ACTIVE_KEY = STORAGE_KEYS.SOCIETY_ACTIVE;
 
 type SocietyData = {
   name: string;
@@ -161,6 +163,15 @@ export default function CreateSocietyScreen() {
       await AsyncStorage.setItem(ACTIVE_KEY, JSON.stringify(societyData));
       // Clear draft after successful save
       await AsyncStorage.removeItem(DRAFT_KEY);
+      
+      // Create first member (creator) automatically
+      const { ensureValidCurrentMember } = await import("@/lib/storage");
+      await ensureValidCurrentMember();
+      
+      // Set session role to admin for initial setup
+      const { setRole } = await import("@/lib/session");
+      await setRole("admin");
+      
       // Navigate to dashboard
       router.replace("/society");
     } catch (error) {
