@@ -16,6 +16,7 @@ import { useCallback, useState } from "react";
 import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { getSession, setCurrentUserId, setRole } from "@/lib/session";
 import { getCurrentUserRoles, MemberRole } from "@/lib/roles";
+import { loadThemeFromStorage } from "@/lib/ui/theme";
 
 const MEMBERS_KEY = "GSOCIETY_MEMBERS";
 
@@ -39,6 +40,7 @@ export default function ProfileScreen() {
   useFocusEffect(
     useCallback(() => {
       loadData();
+      loadThemeFromStorage();
     }, [])
   );
 
