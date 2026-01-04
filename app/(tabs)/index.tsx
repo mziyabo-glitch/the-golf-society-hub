@@ -7,10 +7,10 @@ export default function HomeScreen() {
   return (
     <View style={{ flex: 1, padding: 24, justifyContent: "center" }}>
       <Text style={{ fontSize: 34, fontWeight: "800", marginBottom: 6 }}>
-        GolfSociety Pro
+        The Golf Society Hub
       </Text>
       <Text style={{ fontSize: 16, opacity: 0.75, marginBottom: 28 }}>
-        Create a society, invite members, run events, and track results.
+        Everything Golf Society
       </Text>
 
       <Pressable

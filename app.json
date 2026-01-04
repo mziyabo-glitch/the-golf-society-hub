@@ -1,8 +1,9 @@
 {
   "expo": {
-    "name": "golfsociety-pro",
-    "slug": "golfsociety-pro",
+    "name": "The Golf Society Hub",
+    "slug": "the-golf-society-hub",
     "version": "1.0.0",
+    "description": "Everything Golf Society",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "golfsocietypro",
