@@ -165,10 +165,14 @@ export default function SocietyDashboardScreen() {
             <Text style={styles.emptyText}>No events yet</Text>
           ) : (
             events.map((event) => (
-              <View key={event.id} style={styles.listItem}>
+              <Pressable
+                key={event.id}
+                onPress={() => router.push(`/event/${event.id}` as any)}
+                style={styles.listItem}
+              >
                 <Text style={styles.listItemTitle}>{event.name}</Text>
                 <Text style={styles.listItemSubtitle}>{event.date}</Text>
-              </View>
+              </Pressable>
             ))
           )}
           <Pressable
