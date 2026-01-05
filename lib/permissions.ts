@@ -91,6 +91,16 @@ export function canEditHandicaps(sessionRole: SessionRole, roles: MemberRole[]):
   return roles.includes("Captain") || roles.includes("Handicapper");
 }
 
+export function canEditResults(sessionRole: SessionRole, roles: MemberRole[]): boolean {
+  if (sessionRole === "ADMIN") return true;
+  return roles.includes("Captain") || roles.includes("Handicapper") || roles.includes("Secretary");
+}
+
+export function canManageCompetition(sessionRole: SessionRole, roles: MemberRole[]): boolean {
+  if (sessionRole === "ADMIN") return true;
+  return roles.includes("Captain") || roles.includes("Handicapper") || roles.includes("Secretary");
+}
+
 /**
  * @deprecated Back-compat alias for older code that used `canEditMembers`.
  * Prefer `canManageMembers(sessionRole, roles)`.

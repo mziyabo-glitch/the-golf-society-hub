@@ -1,12 +1,12 @@
+import { canManageMembers, normalizeMemberRoles, normalizeSessionRole } from "@/lib/permissions";
+import { getCurrentUserRoles } from "@/lib/roles";
+import { getSession } from "@/lib/session";
+import { STORAGE_KEYS } from "@/lib/storage";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useFocusEffect } from "@react-navigation/native";
 import { useRouter } from "expo-router";
 import { useCallback, useState } from "react";
 import { Alert, Pressable, ScrollView, Text, TextInput, View } from "react-native";
-import { getSession } from "@/lib/session";
-import { canManageMembers, normalizeMemberRoles, normalizeSessionRole } from "@/lib/permissions";
-import { getCurrentUserRoles } from "@/lib/roles";
-import { STORAGE_KEYS } from "@/lib/storage";
 
 const MEMBERS_KEY = STORAGE_KEYS.MEMBERS;
 
@@ -61,8 +61,8 @@ export default function AddMemberScreen() {
       // Determine roles: first member gets Captain/Handicapper, others get Member
       const isFirstMember = existingMembers.length === 0;
       const roles: string[] = isFirstMember 
-        ? ["captain", "handicapper", "member"] 
-        : ["member"];
+        ? ["Captain", "Handicapper", "Member"] 
+        : ["Member"];
 
       // Create new member
       const newMember: MemberData = {

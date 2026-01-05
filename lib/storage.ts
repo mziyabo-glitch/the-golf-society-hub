@@ -27,6 +27,9 @@ export const STORAGE_KEYS = {
   // Legacy keys (for migration cleanup)
   LEGACY_CURRENT_USER: "GSOCIETY_CURRENT_USER",
   LEGACY_ADMIN_PIN: "GSOCIETY_ADMIN_PIN",
+  
+  // Theme preference
+  THEME_MODE: "GSOCIETY_THEME_MODE",
 } as const;
 
 /**
@@ -42,6 +45,7 @@ export function getAllStorageKeys(): string[] {
     STORAGE_KEYS.ADMIN_PIN,
     STORAGE_KEYS.SESSION_USER_ID,
     STORAGE_KEYS.SESSION_ROLE,
+    STORAGE_KEYS.THEME_MODE,
     // Legacy keys
     STORAGE_KEYS.LEGACY_CURRENT_USER,
     STORAGE_KEYS.LEGACY_ADMIN_PIN,
@@ -158,7 +162,7 @@ export async function ensureValidCurrentMember(): Promise<{
       const fallbackMember: MemberData = {
         id: Date.now().toString(),
         name: "Admin", // Default name
-        roles: ["captain", "handicapper", "member"],
+        roles: ["Captain", "Handicapper", "Member"],
       };
       
       members = [fallbackMember];
@@ -174,6 +178,19 @@ export async function ensureValidCurrentMember(): Promise<{
       
       console.log("Created fallback owner member:", fallbackMember);
     } else {
+      // Ensure all members have roles array (default to ["Member"])
+      let needsSave = false;
+      members = members.map((m) => {
+        if (!m.roles || m.roles.length === 0) {
+          needsSave = true;
+          return { ...m, roles: ["Member"] };
+        }
+        return m;
+      });
+      if (needsSave) {
+        await AsyncStorage.setItem(STORAGE_KEYS.MEMBERS, JSON.stringify(members));
+      }
+      
       // If currentUserId is missing or points to non-existent member, set to first member
       if (!currentUserId || !members.find((m) => m.id === currentUserId)) {
         const firstMember = members[0];
@@ -189,6 +206,30 @@ export async function ensureValidCurrentMember(): Promise<{
   } catch (error) {
     console.error("Error ensuring valid current member:", error);
     return { members: [], currentUserId: null };
+  }
+}
+
+/**
+ * Bootstrap app state on startup
+ * Ensures app has valid state even after reset or corruption
+ * - Checks if society exists
+ * - If society exists but no members, creates admin member
+ * - Ensures currentUserId is valid
+ * - Ensures all members have roles
+ */
+export async function ensureBootstrapState(): Promise<void> {
+  try {
+    // Check if society exists
+    const hasSociety = await hasActiveSociety();
+    
+    if (hasSociety) {
+      // Society exists, ensure members and current user are valid
+      await ensureValidCurrentMember();
+    }
+    // If no society, app will show onboarding - that's fine
+  } catch (error) {
+    console.error("Error in bootstrap state:", error);
+    // Don't throw - allow app to continue
   }
 }
 

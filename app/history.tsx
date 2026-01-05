@@ -1,10 +1,15 @@
+import { AppButton } from "@/components/ui/AppButton";
+import { AppCard } from "@/components/ui/AppCard";
+import { AppText } from "@/components/ui/AppText";
+import { STORAGE_KEYS } from "@/lib/storage";
+import { loadThemeFromStorage, spacing } from "@/lib/ui/theme";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useFocusEffect } from "@react-navigation/native";
 import { router } from "expo-router";
 import { useCallback, useState } from "react";
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, View } from "react-native";
 
-const EVENTS_KEY = "GSOCIETY_EVENTS";
+const EVENTS_KEY = STORAGE_KEYS.EVENTS;
 
 type EventData = {
   id: string;
@@ -21,6 +26,7 @@ export default function HistoryScreen() {
   useFocusEffect(
     useCallback(() => {
       loadEvents();
+      loadThemeFromStorage();
     }, [])
   );
 
@@ -55,41 +61,46 @@ export default function HistoryScreen() {
   return (
     <ScrollView style={styles.container}>
       <View style={styles.content}>
-        <Text style={styles.title}>History</Text>
+        <AppText variant="title" style={styles.title}>History</AppText>
 
         {events.length === 0 ? (
           <View style={styles.emptyState}>
-            <Text style={styles.emptyText}>No events yet</Text>
-            <Text style={styles.emptySubtext}>Create your first event to get started</Text>
+            <AppText variant="h2" style={styles.emptyText}>No events yet</AppText>
+            <AppText variant="caption" color="secondary" style={styles.emptySubtext}>Create your first event to get started</AppText>
           </View>
         ) : (
           events.map((event) => (
-            <Pressable
-              key={event.id}
-              onPress={() => router.push(`/event/${event.id}` as any)}
-              style={styles.eventCard}
-            >
-              <Text style={styles.eventName}>{event.name}</Text>
-              <Text style={styles.eventDate}>{event.date || "No date"}</Text>
-              {event.courseName && (
-                <Text style={styles.eventCourse}>{event.courseName}</Text>
-              )}
-            </Pressable>
+            <AppCard key={event.id} style={styles.eventCard}>
+              <Pressable
+                onPress={() => router.push(`/event/${event.id}` as any)}
+                style={styles.eventPressable}
+              >
+                <AppText variant="h2" numberOfLines={1} style={styles.eventName}>{event.name}</AppText>
+                <AppText variant="caption" color="secondary" style={styles.eventDate}>{event.date || "No date"}</AppText>
+                {event.courseName && (
+                  <AppText variant="caption" color="secondary" numberOfLines={1} style={styles.eventCourse}>{event.courseName}</AppText>
+                )}
+              </Pressable>
+            </AppCard>
           ))
         )}
 
-        <Pressable
+        <AppButton
+          label={events.length === 0 ? "Create First Event" : "Create Event"}
           onPress={() => router.push("/create-event" as any)}
+          variant="primary"
+          size="lg"
+          fullWidth
           style={styles.addButton}
-        >
-          <Text style={styles.buttonText}>
-            {events.length === 0 ? "Create First Event" : "Create Event"}
-          </Text>
-        </Pressable>
+        />
 
-        <Pressable onPress={() => router.back()} style={styles.backButton}>
-          <Text style={styles.backButtonText}>Back</Text>
-        </Pressable>
+        <AppButton
+          label="Back"
+          onPress={() => router.back()}
+          variant="ghost"
+          size="md"
+          style={styles.backButton}
+        />
       </View>
     </ScrollView>
   );
@@ -102,77 +113,47 @@ const styles = StyleSheet.create({
   },
   content: {
     flex: 1,
-    padding: 24,
+    padding: spacing.xl,
   },
   centerContent: {
     justifyContent: "center",
     alignItems: "center",
   },
   title: {
-    fontSize: 34,
-    fontWeight: "800",
-    marginBottom: 24,
+    marginBottom: spacing.xl,
   },
   emptyState: {
     alignItems: "center",
-    marginTop: 40,
-    marginBottom: 24,
+    marginTop: spacing["3xl"],
+    marginBottom: spacing.xl,
   },
   emptyText: {
-    fontSize: 18,
-    fontWeight: "600",
-    color: "#111827",
-    marginBottom: 8,
+    marginBottom: spacing.sm,
   },
   emptySubtext: {
-    fontSize: 14,
-    opacity: 0.6,
-    color: "#111827",
+    marginBottom: spacing.base,
   },
   eventCard: {
-    backgroundColor: "#f3f4f6",
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 12,
+    marginBottom: spacing.base,
+  },
+  eventPressable: {
+    width: "100%",
   },
   eventName: {
-    fontSize: 18,
-    fontWeight: "600",
-    color: "#111827",
-    marginBottom: 4,
+    marginBottom: spacing.xs,
   },
   eventDate: {
-    fontSize: 14,
-    opacity: 0.7,
-    color: "#111827",
-    marginBottom: 2,
+    marginBottom: spacing.xs,
   },
   eventCourse: {
-    fontSize: 14,
-    opacity: 0.7,
-    color: "#111827",
+    marginTop: spacing.xs,
   },
   addButton: {
-    backgroundColor: "#0B6E4F",
-    paddingVertical: 16,
-    borderRadius: 14,
-    alignItems: "center",
-    marginTop: 8,
-    marginBottom: 12,
-  },
-  buttonText: {
-    color: "white",
-    fontSize: 18,
-    fontWeight: "700",
+    marginTop: spacing.sm,
+    marginBottom: spacing.base,
   },
   backButton: {
-    paddingVertical: 12,
-    alignItems: "center",
-  },
-  backButtonText: {
-    fontSize: 16,
-    fontWeight: "600",
-    color: "#6b7280",
+    marginTop: spacing.sm,
   },
 });
 

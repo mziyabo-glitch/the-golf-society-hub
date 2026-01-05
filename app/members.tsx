@@ -5,6 +5,10 @@ import { Alert, ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View
 import { getSession, setCurrentUserId } from "@/lib/session";
 import { canManageMembers, normalizeMemberRoles, normalizeSessionRole } from "@/lib/permissions";
 import { ensureValidCurrentMember } from "@/lib/storage";
+import { AppButton } from "@/components/ui/AppButton";
+import { AppText } from "@/components/ui/AppText";
+import { AppCard } from "@/components/ui/AppCard";
+import { loadThemeFromStorage, spacing, radius } from "@/lib/ui/theme";
 
 type MemberData = {
   id: string;
@@ -23,6 +27,7 @@ export default function MembersScreen() {
   useFocusEffect(
     useCallback(() => {
       loadMembers();
+      loadThemeFromStorage();
     }, [])
   );
 
@@ -93,14 +98,20 @@ export default function MembersScreen() {
         {members.length === 0 ? (
           <View style={styles.emptyState}>
             <Text style={styles.emptyText}>No members yet</Text>
-            <Text style={styles.emptySubtext}>Add your first member to get started</Text>
-            {canManageMembersFlag && (
-              <Pressable
-                onPress={() => router.push("/add-member" as any)}
-                style={[styles.addButton, { marginTop: 16 }]}
-              >
-                <Text style={styles.buttonText}>Add First Member</Text>
-              </Pressable>
+            {canManageMembersFlag ? (
+              <>
+                <Text style={styles.emptySubtext}>Add your first member to get started</Text>
+                <Pressable
+                  onPress={() => router.push("/add-member" as any)}
+                  style={[styles.addButton, { marginTop: 16 }]}
+                >
+                  <Text style={styles.buttonText}>Add First Member</Text>
+                </Pressable>
+              </>
+            ) : (
+              <Text style={styles.emptySubtext}>
+                Ask your Captain or Secretary to add the first member
+              </Text>
             )}
           </View>
         ) : (
@@ -163,19 +174,23 @@ export default function MembersScreen() {
         )}
 
         {canManageMembersFlag && (
-          <Pressable
+          <AppButton
+            label={members.length === 0 ? "Add First Member" : "Add Member"}
             onPress={() => router.push("/add-member" as any)}
+            variant="primary"
+            size="lg"
+            fullWidth
             style={styles.addButton}
-          >
-            <Text style={styles.buttonText}>
-              {members.length === 0 ? "Add First Member" : "Add Member"}
-            </Text>
-          </Pressable>
+          />
         )}
 
-        <Pressable onPress={() => router.back()} style={styles.backButton}>
-          <Text style={styles.backButtonText}>Back</Text>
-        </Pressable>
+        <AppButton
+          label="Back"
+          onPress={() => router.back()}
+          variant="ghost"
+          size="md"
+          style={styles.backButton}
+        />
       </View>
     </ScrollView>
   );

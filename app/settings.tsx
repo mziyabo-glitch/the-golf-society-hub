@@ -18,6 +18,7 @@ import { canAssignRoles, normalizeMemberRoles, normalizeSessionRole } from "@/li
 import { getCurrentUserRoles } from "@/lib/roles";
 import { getSession } from "@/lib/session";
 import { STORAGE_KEYS } from "@/lib/storage";
+import { loadThemeFromStorage, saveThemeToStorage, ThemeMode } from "@/lib/ui/theme";
 
 const STORAGE_KEY = STORAGE_KEYS.SOCIETY_ACTIVE;
 const EVENTS_KEY = STORAGE_KEYS.EVENTS;
@@ -44,10 +45,12 @@ export default function SettingsScreen() {
   const [confirmPin, setConfirmPin] = useState("");
   const [role, setRole] = useState<"admin" | "member">("member");
   const [canAssignRolesRole, setCanAssignRolesRole] = useState(false);
+  const [themeMode, setThemeModeState] = useState<ThemeMode>("light");
 
   useFocusEffect(
     useCallback(() => {
       loadSociety();
+      loadTheme();
     }, [])
   );
 
@@ -83,6 +86,17 @@ export default function SettingsScreen() {
     } catch (error) {
       console.error("Error loading society:", error);
     }
+  };
+
+  const loadTheme = async () => {
+    const mode = await loadThemeFromStorage();
+    setThemeModeState(mode);
+  };
+
+  const handleToggleTheme = async () => {
+    const newMode: ThemeMode = themeMode === "light" ? "dark" : "light";
+    await saveThemeToStorage(newMode);
+    setThemeModeState(newMode);
   };
 
   // Allow access if admin session OR has captain role (checked in loadSociety)
@@ -270,6 +284,25 @@ export default function SettingsScreen() {
               </Pressable>
             </View>
           )}
+        </View>
+
+        {/* Theme Preference */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Appearance</Text>
+          <View style={styles.nameRow}>
+            <View>
+              <Text style={styles.nameValue}>Theme</Text>
+              <Text style={styles.fieldLabel}>{themeMode === "light" ? "Light" : "Dark"}</Text>
+            </View>
+            <Pressable
+              onPress={handleToggleTheme}
+              style={styles.editButton}
+            >
+              <Text style={styles.editButtonText}>
+                Switch to {themeMode === "light" ? "Dark" : "Light"}
+              </Text>
+            </Pressable>
+          </View>
         </View>
 
         {/* Roles & Permissions - PIN Gated */}

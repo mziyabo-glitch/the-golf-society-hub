@@ -9,8 +9,9 @@
  */
 
 import { InfoCard } from "@/components/ui/info-card";
-import { PrimaryButton } from "@/components/ui/primary-button";
-import { SecondaryActionButton } from "@/components/ui/secondary-action-button";
+import { AppButton } from "@/components/ui/AppButton";
+import { SegmentedTabs } from "@/components/ui/SegmentedTabs";
+import { loadThemeFromStorage } from "@/lib/ui/theme";
 import {
   canAssignRoles,
   canCreateEvents,
@@ -51,9 +52,14 @@ type EventData = {
   format: "Stableford" | "Strokeplay" | "Both";
   playerIds?: string[];
   isCompleted?: boolean;
+  completedAt?: string;
+  resultsStatus?: "draft" | "published";
+  publishedAt?: string;
+  resultsUpdatedAt?: string;
   isOOM?: boolean;
   winnerId?: string;
   winnerName?: string;
+  handicapSnapshot?: { [memberId: string]: number };
   rsvps?: {
     [memberId: string]: "going" | "maybe" | "no";
   };
@@ -61,6 +67,8 @@ type EventData = {
     [memberId: string]: {
       grossScore: number;
       netScore?: number;
+      stableford?: number;
+      strokeplay?: number;
     };
   };
 };
@@ -98,10 +106,12 @@ export default function SocietyDashboardScreen() {
   const [canCreateEventsRole, setCanCreateEventsRole] = useState(false);
   const [canAssignRolesRole, setCanAssignRolesRole] = useState(false);
   const [userRoles, setUserRoles] = useState<string[]>([]);
+  const [activeTab, setActiveTab] = useState<string>("members");
 
   useFocusEffect(
     useCallback(() => {
       loadData();
+      loadThemeFromStorage(); // Load theme preference
     }, [])
   );
 
@@ -180,14 +190,50 @@ export default function SocietyDashboardScreen() {
 
   const getLastEvent = (): EventData | null => {
     if (events.length === 0) return null;
+    
+    // Determine if event is completed:
+    // - has isCompleted flag, OR
+    // - has completedAt timestamp, OR
+    // - has results (results exist means event was completed)
+    const isEventCompleted = (e: EventData): boolean => {
+      if (e.isCompleted) return true;
+      if (e.completedAt) return true;
+      if (e.results && Object.keys(e.results).length > 0) return true;
+      return false;
+    };
+    
+    // Get all completed events
     const completedEvents = events
-      .filter((e) => e.isCompleted)
+      .filter(isEventCompleted)
       .sort((a, b) => {
-        const dateA = a.date ? new Date(a.date).getTime() : 0;
-        const dateB = b.date ? new Date(b.date).getTime() : 0;
-        return dateB - dateA;
+        // Sort by completedAt if available, otherwise by date
+        const dateA = a.completedAt 
+          ? new Date(a.completedAt).getTime() 
+          : (a.date ? new Date(a.date).getTime() : 0);
+        const dateB = b.completedAt 
+          ? new Date(b.completedAt).getTime() 
+          : (b.date ? new Date(b.date).getTime() : 0);
+        return dateB - dateA; // Most recent first
       });
-    return completedEvents.length > 0 ? completedEvents[0] : null;
+    
+    // If no completed events, try to find past events by date
+    if (completedEvents.length === 0) {
+      const now = new Date().getTime();
+      const pastEvents = events
+        .filter((e) => {
+          if (!e.date) return false;
+          const eventDate = new Date(e.date).getTime();
+          return eventDate < now;
+        })
+        .sort((a, b) => {
+          const dateA = a.date ? new Date(a.date).getTime() : 0;
+          const dateB = b.date ? new Date(b.date).getTime() : 0;
+          return dateB - dateA;
+        });
+      return pastEvents.length > 0 ? pastEvents[0] : null;
+    }
+    
+    return completedEvents[0];
   };
 
   const getLastWinner = (event: EventData | null): { memberName: string } | null => {
@@ -302,37 +348,35 @@ export default function SocietyDashboardScreen() {
         </View>
 
         {canCreateEventsRole && (
-          <PrimaryButton
+          <AppButton
             label="Create Event"
             onPress={() => router.push("/create-event" as any)}
+            variant="primary"
+            size="lg"
+            fullWidth
             style={styles.primaryCTA}
           />
         )}
 
-        <View style={styles.secondaryActions}>
-          <SecondaryActionButton
-            label="Members"
-            onPress={() => router.push("/members" as any)}
-            style={styles.secondaryButton}
-          />
-          <SecondaryActionButton
-            label="History"
-            onPress={() => router.push("/history" as any)}
-            style={styles.secondaryButton}
-          />
-          <SecondaryActionButton
-            label="Profile"
-            onPress={() => router.push("/profile" as any)}
-            style={styles.secondaryButton}
-          />
-          {isAdmin && (
-            <SecondaryActionButton
-              label="Settings"
-              onPress={() => router.push("/settings" as any)}
-              style={styles.secondaryButton}
-            />
-          )}
-        </View>
+        <SegmentedTabs
+          items={[
+            { id: "members", label: "Members" },
+            { id: "history", label: "History" },
+            { id: "profile", label: "Profile" },
+            ...(isAdmin ? [{ id: "settings", label: "Settings" }] : []),
+          ]}
+          selectedId={activeTab}
+          onSelect={(id) => {
+            setActiveTab(id);
+            const routes: Record<string, string> = {
+              members: "/members",
+              history: "/history",
+              profile: "/profile",
+              settings: "/settings",
+            };
+            router.push(routes[id] as any);
+          }}
+        />
 
         <View style={styles.eventsSection}>
           <Text style={styles.sectionLabel}>Next Event</Text>
@@ -360,7 +404,9 @@ export default function SocietyDashboardScreen() {
           ) : (
             <InfoCard
               title="No upcoming event"
-              subtitle="Tap Create Event to schedule your next society day"
+              subtitle={canCreateEventsRole 
+                ? "Tap Create Event to schedule your next society day"
+                : "Ask your Captain or Secretary to create an event"}
               emptyState
             />
           )}

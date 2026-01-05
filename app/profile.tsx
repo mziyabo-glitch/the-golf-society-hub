@@ -9,16 +9,17 @@
  * - Close/reopen app, verify profile persists
  */
 
+import { getCurrentUserRoles, MemberRole } from "@/lib/roles";
+import { getSession, setRole } from "@/lib/session";
+import { STORAGE_KEYS } from "@/lib/storage";
+import { loadThemeFromStorage } from "@/lib/ui/theme";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useFocusEffect } from "@react-navigation/native";
 import { router } from "expo-router";
 import { useCallback, useState } from "react";
 import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
-import { getSession, setCurrentUserId, setRole } from "@/lib/session";
-import { getCurrentUserRoles, MemberRole } from "@/lib/roles";
-import { loadThemeFromStorage } from "@/lib/ui/theme";
 
-const MEMBERS_KEY = "GSOCIETY_MEMBERS";
+const MEMBERS_KEY = STORAGE_KEYS.MEMBERS;
 
 type MemberData = {
   id: string;
@@ -39,8 +40,12 @@ export default function ProfileScreen() {
 
   useFocusEffect(
     useCallback(() => {
-      loadData();
-      loadThemeFromStorage();
+      // Bootstrap state first to prevent "Profile not found" errors
+      const { ensureBootstrapState } = require("@/lib/storage");
+      ensureBootstrapState().then(() => {
+        loadData();
+        loadThemeFromStorage();
+      });
     }, [])
   );
 

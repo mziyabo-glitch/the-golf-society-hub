@@ -10,7 +10,7 @@
 
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useFocusEffect } from "@react-navigation/native";
-import { useLocalSearchParams, router } from "expo-router";
+import { router, useLocalSearchParams } from "expo-router";
 import { useCallback, useState } from "react";
 import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 
@@ -22,11 +22,13 @@ import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from "react-nati
  * - Verify player count updates on event card
  */
 
+import { canCreateEvents, normalizeMemberRoles, normalizeSessionRole } from "@/lib/permissions";
+import { getCurrentUserRoles } from "@/lib/roles";
 import { getSession } from "@/lib/session";
-import { canCreateEvents } from "@/lib/roles";
+import { STORAGE_KEYS } from "@/lib/storage";
 
-const EVENTS_KEY = "GSOCIETY_EVENTS";
-const MEMBERS_KEY = "GSOCIETY_MEMBERS";
+const EVENTS_KEY = STORAGE_KEYS.EVENTS;
+const MEMBERS_KEY = STORAGE_KEYS.MEMBERS;
 
 type EventData = {
   id: string;
@@ -81,7 +83,10 @@ export default function EventPlayersScreen() {
       const session = await getSession();
       setRole(session.role);
       
-      const canManage = await canCreateEvents();
+      // Check permissions using pure functions
+      const sessionRole = normalizeSessionRole(session.role);
+      const roles = normalizeMemberRoles(await getCurrentUserRoles());
+      const canManage = canCreateEvents(sessionRole, roles);
       setCanManagePlayers(canManage);
       
       if (!canManage) {

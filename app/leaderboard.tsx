@@ -9,14 +9,15 @@
  * - Close/reopen app, verify leaderboard persists correctly
  */
 
+import { STORAGE_KEYS } from "@/lib/storage";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useFocusEffect } from "@react-navigation/native";
 import { router } from "expo-router";
 import { useCallback, useState } from "react";
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 
-const EVENTS_KEY = "GSOCIETY_EVENTS";
-const MEMBERS_KEY = "GSOCIETY_MEMBERS";
+const EVENTS_KEY = STORAGE_KEYS.EVENTS;
+const MEMBERS_KEY = STORAGE_KEYS.MEMBERS;
 
 type EventData = {
   id: string;
@@ -26,6 +27,8 @@ type EventData = {
   format: "Stableford" | "Strokeplay" | "Both";
   playerIds?: string[];
   isCompleted?: boolean;
+  resultsStatus?: "draft" | "published";
+  publishedAt?: string;
   isOOM?: boolean;
   winnerId?: string;
   winnerName?: string;
@@ -33,6 +36,8 @@ type EventData = {
     [memberId: string]: {
       grossScore: number;
       netScore?: number;
+      stableford?: number;
+      strokeplay?: number;
     };
   };
 };
@@ -149,16 +154,14 @@ export default function LeaderboardScreen() {
   };
 
   const calculateLeaderboard = (): LeaderboardEntry[] => {
-    // Filter completed events
-    let completedEvents = events.filter((e) => {
-      // Event is completed if it has winner and/or results
-      const hasWinner = e.winnerId || e.winnerName;
-      const hasResults = e.results && Object.keys(e.results).length > 0;
-      return e.isCompleted || hasWinner || hasResults;
+    // Filter published events only (OOM only counts published results)
+    let publishedEvents = events.filter((e) => {
+      // Event must be published to count in OOM
+      return e.resultsStatus === "published";
     });
 
     // Filter by season year
-    const eventsInSeason = completedEvents.filter((e) => {
+    const eventsInSeason = publishedEvents.filter((e) => {
       const eventYear = getEventYear(e.date);
       if (eventYear === null) {
         if (__DEV__) {

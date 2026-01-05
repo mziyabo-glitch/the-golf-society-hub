@@ -1,9 +1,10 @@
+import { STORAGE_KEYS, ensureBootstrapState } from "@/lib/storage";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useRouter } from "expo-router";
 import { useEffect, useState } from "react";
 import { ActivityIndicator, Pressable, Text, View } from "react-native";
 
-const STORAGE_KEY = "GSOCIETY_ACTIVE";
+const STORAGE_KEY = STORAGE_KEYS.SOCIETY_ACTIVE;
 
 export default function HomeScreen() {
   const router = useRouter();
@@ -15,6 +16,9 @@ export default function HomeScreen() {
 
   const checkSociety = async () => {
     try {
+      // Bootstrap app state first (self-heal)
+      await ensureBootstrapState();
+      
       const societyData = await AsyncStorage.getItem(STORAGE_KEY);
       if (societyData) {
         // Society exists, redirect to dashboard

@@ -1,15 +1,17 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useFocusEffect } from "@react-navigation/native";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useState } from "react";
 import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 
+import { canCreateEvents, canEditVenueInfo, canManageCompetition, normalizeMemberRoles, normalizeSessionRole } from "@/lib/permissions";
+import { getCurrentUserRoles, hasManCoRole } from "@/lib/roles";
 import { getSession } from "@/lib/session";
-import { hasManCoRole, canCreateEvents, canEditVenueInfo, canEditHandicaps, getCurrentMember } from "@/lib/roles";
+import { STORAGE_KEYS } from "@/lib/storage";
 
-const EVENTS_KEY = "GSOCIETY_EVENTS";
-const MEMBERS_KEY = "GSOCIETY_MEMBERS";
-const SCORES_KEY = "GSOCIETY_SCORES";
+const EVENTS_KEY = STORAGE_KEYS.EVENTS;
+const MEMBERS_KEY = STORAGE_KEYS.MEMBERS;
+const SCORES_KEY = STORAGE_KEYS.SCORES;
 
 type EventData = {
   id: string;
@@ -19,9 +21,14 @@ type EventData = {
   format: "Stableford" | "Strokeplay" | "Both";
   playerIds?: string[];
   isCompleted?: boolean;
+  completedAt?: string;
+  resultsStatus?: "draft" | "published";
+  publishedAt?: string;
+  resultsUpdatedAt?: string;
   isOOM?: boolean;
   winnerId?: string;
   winnerName?: string;
+  handicapSnapshot?: { [memberId: string]: number };
   rsvps?: {
     [memberId: string]: "going" | "maybe" | "no";
   };
@@ -29,6 +36,8 @@ type EventData = {
     [memberId: string]: {
       grossScore: number;
       netScore?: number;
+      stableford?: number;
+      strokeplay?: number;
     };
   };
 };
@@ -69,6 +78,7 @@ export default function EventDetailsScreen() {
   const [canEditEvent, setCanEditEvent] = useState(false);
   const [canEditVenue, setCanEditVenue] = useState(false);
   const [canEnterResults, setCanEnterResults] = useState(false);
+  const [lockHandicaps, setLockHandicaps] = useState(false);
 
   useFocusEffect(
     useCallback(() => {
@@ -111,12 +121,14 @@ export default function EventDetailsScreen() {
       setCurrentUserId(session.currentUserId);
       setRole(session.role);
       
-      // Check permissions
+      // Check permissions using pure functions
       const manCo = await hasManCoRole();
       setIsManCo(manCo);
-      setCanEditEvent(await canCreateEvents()); // Captain/admin can edit event settings
-      setCanEditVenue(await canEditVenueInfo()); // Secretary/captain/admin can edit venue
-      setCanEnterResults(await canEditHandicaps()); // Handicapper/captain/admin can enter results
+      const sessionRole = normalizeSessionRole(session.role);
+      const roles = normalizeMemberRoles(await getCurrentUserRoles());
+      setCanEditEvent(canCreateEvents(sessionRole, roles)); // Captain/admin can edit event settings
+      setCanEditVenue(canEditVenueInfo(sessionRole, roles)); // Secretary/captain/admin can edit venue
+      setCanEnterResults(canManageCompetition(sessionRole, roles)); // Handicapper/captain/secretary/admin can manage competition
     } catch (error) {
       console.error("Error loading data:", error);
     } finally {
@@ -177,6 +189,22 @@ export default function EventDetailsScreen() {
       }
 
       const events: EventData[] = JSON.parse(eventsData);
+      
+      // If locking handicaps, create snapshot from current member handicaps
+      let handicapSnapshot: { [memberId: string]: number } | undefined = undefined;
+      if (lockHandicaps) {
+        const membersData = await AsyncStorage.getItem(MEMBERS_KEY);
+        if (membersData) {
+          const allMembers: MemberData[] = JSON.parse(membersData);
+          handicapSnapshot = {};
+          allMembers.forEach((member) => {
+            if (member.handicap !== undefined) {
+              handicapSnapshot![member.id] = member.handicap;
+            }
+          });
+        }
+      }
+      
       const updatedEvents = events.map((e) =>
         e.id === event.id
           ? {
@@ -184,6 +212,7 @@ export default function EventDetailsScreen() {
               name: editName.trim(),
               date: editDate.trim(),
               isOOM: isOOM,
+              handicapSnapshot: lockHandicaps ? handicapSnapshot : undefined,
             }
           : e
       );
@@ -430,6 +459,47 @@ export default function EventDetailsScreen() {
                   </Text>
                 </Pressable>
               </View>
+
+              <View style={styles.field}>
+                <Text style={styles.fieldLabel}>Lock Handicaps for This Event</Text>
+                <Text style={{ fontSize: 12, color: "#6b7280", marginBottom: 8 }}>
+                  Lock current handicaps to prevent changes after the round
+                </Text>
+                <Pressable
+                  onPress={() => setLockHandicaps(!lockHandicaps)}
+                  style={{
+                    flexDirection: "row",
+                    alignItems: "center",
+                    marginTop: 8,
+                  }}
+                >
+                  <View
+                    style={{
+                      width: 24,
+                      height: 24,
+                      borderRadius: 12,
+                      backgroundColor: lockHandicaps ? "#0B6E4F" : "#d1d5db",
+                      marginRight: 12,
+                      justifyContent: "center",
+                      alignItems: "center",
+                    }}
+                  >
+                    {lockHandicaps && (
+                      <View
+                        style={{
+                          width: 8,
+                          height: 8,
+                          borderRadius: 4,
+                          backgroundColor: "#fff",
+                        }}
+                      />
+                    )}
+                  </View>
+                  <Text style={{ fontSize: 16, color: "#111827" }}>
+                    {lockHandicaps ? "Handicaps locked" : "Handicaps not locked"}
+                  </Text>
+                </Pressable>
+              </View>
             </View>
 
             {/* Save/Cancel Buttons */}
@@ -614,13 +684,29 @@ export default function EventDetailsScreen() {
               </Pressable>
             )}
 
-            {/* Enter Results Button - Handicapper/Captain/Admin only */}
-            {canEnterResults && !event.isCompleted && (
+            {/* Enter Scores / View Results Button */}
+            {canEnterResults && event.resultsStatus !== "published" && (
               <Pressable
                 onPress={() => router.push(`/event/${event.id}/results` as any)}
                 style={styles.secondaryButton}
               >
-                <Text style={styles.buttonText}>Enter Results</Text>
+                <Text style={styles.buttonText}>Enter Scores</Text>
+              </Pressable>
+            )}
+            {!canEnterResults && event.resultsStatus === "published" && (
+              <Pressable
+                onPress={() => router.push(`/event/${event.id}/results` as any)}
+                style={styles.secondaryButton}
+              >
+                <Text style={styles.buttonText}>View Results</Text>
+              </Pressable>
+            )}
+            {!canEnterResults && event.resultsStatus !== "published" && (
+              <Pressable
+                onPress={() => router.push(`/event/${event.id}/results` as any)}
+                style={styles.secondaryButton}
+              >
+                <Text style={styles.buttonText}>Results Pending</Text>
               </Pressable>
             )}
           </>
@@ -628,7 +714,153 @@ export default function EventDetailsScreen() {
 
         {!isEditing && !showLeaderboard ? (
           <>
-            {/* Scores Section */}
+            {/* Published Results Section */}
+            {event.resultsStatus === "published" && event.results && Object.keys(event.results).length > 0 && (
+              <View style={styles.section}>
+                <Text style={styles.sectionTitle}>Results</Text>
+                {(() => {
+                  // Helper to get handicap (from snapshot or current)
+                  const getHandicap = (memberId: string) => {
+                    return event.handicapSnapshot?.[memberId] ?? members.find(m => m.id === memberId)?.handicap;
+                  };
+
+                  // Build Stableford table if format includes Stableford
+                  const buildStablefordTable = () => {
+                    const stablefordTable = members
+                      .map((member) => {
+                        const result = event.results?.[member.id];
+                        if (!result || result.stableford === undefined) return null;
+                        
+                        return {
+                          member,
+                          score: result.stableford,
+                          scoreLabel: `${result.stableford} pts`,
+                          handicap: getHandicap(member.id),
+                        };
+                      })
+                      .filter((item): item is NonNullable<typeof item> => item !== null)
+                      .sort((a, b) => b.score - a.score); // Higher is better
+                    
+                    if (stablefordTable.length === 0) return null;
+                    
+                    const winningScore = stablefordTable[0].score;
+                    const winners = stablefordTable.filter((r) => r.score === winningScore);
+                    const isTie = winners.length > 1;
+                    
+                    return {
+                      table: stablefordTable,
+                      winners,
+                      isTie,
+                      winningScore,
+                    };
+                  };
+
+                  // Build Strokeplay table if format includes Strokeplay
+                  const buildStrokeplayTable = () => {
+                    const strokeplayTable = members
+                      .map((member) => {
+                        const result = event.results?.[member.id];
+                        if (!result || result.strokeplay === undefined) return null;
+                        
+                        const handicap = getHandicap(member.id);
+                        const netScore = result.netScore ?? (handicap !== undefined ? result.strokeplay - handicap : undefined);
+                        const scoreLabel = netScore !== undefined ? `${result.strokeplay} (${netScore} net)` : `${result.strokeplay}`;
+                        
+                        return {
+                          member,
+                          score: result.strokeplay,
+                          netScore,
+                          scoreLabel,
+                          handicap,
+                        };
+                      })
+                      .filter((item): item is NonNullable<typeof item> => item !== null)
+                      .sort((a, b) => {
+                        // Sort by net if available, otherwise gross
+                        const aScore = a.netScore ?? a.score;
+                        const bScore = b.netScore ?? b.score;
+                        return aScore - bScore; // Lower is better
+                      });
+                    
+                    if (strokeplayTable.length === 0) return null;
+                    
+                    const winningNet = strokeplayTable[0].netScore ?? strokeplayTable[0].score;
+                    const winners = strokeplayTable.filter((r) => (r.netScore ?? r.score) === winningNet);
+                    const isTie = winners.length > 1;
+                    
+                    return {
+                      table: strokeplayTable,
+                      winners,
+                      isTie,
+                      winningScore: winningNet,
+                    };
+                  };
+
+                  // Render table component
+                  const renderTable = (tableData: { table: any[]; winners: any[]; isTie: boolean; winningScore: number }, title: string) => {
+                    if (!tableData) return null;
+                    return (
+                      <>
+                        <Text style={styles.formatTitle}>{title}</Text>
+                        <View style={styles.winnersCard}>
+                          <Text style={styles.winnersTitle}>
+                            {tableData.isTie 
+                              ? `Tied 1st: ${tableData.winners.map((w) => w.member.name).join(", ")}` 
+                              : `Winner: ${tableData.winners[0].member.name}`}
+                          </Text>
+                          <Text style={styles.winnersScore}>{tableData.table[0].scoreLabel}</Text>
+                        </View>
+                        <View style={styles.resultsTable}>
+                          <View style={styles.tableHeader}>
+                            <Text style={styles.tableHeaderText}>Pos</Text>
+                            <Text style={[styles.tableHeaderText, { flex: 1 }]}>Player</Text>
+                            <Text style={styles.tableHeaderText}>Score</Text>
+                          </View>
+                          {tableData.table.map((row, index) => {
+                            const position = index + 1;
+                            const isWinner = tableData.winners.some((w) => w.member.id === row.member.id);
+                            return (
+                              <View key={row.member.id} style={[styles.tableRow, isWinner && styles.tableRowWinner]}>
+                                <Text style={styles.tableCell}>{position}</Text>
+                                <View style={{ flex: 1 }}>
+                                  <Text style={styles.tableCell}>{row.member.name}</Text>
+                                  {row.handicap !== undefined && (
+                                    <Text style={styles.tableCellSmall}>HCP: {row.handicap}</Text>
+                                  )}
+                                </View>
+                                <Text style={styles.tableCell}>{row.scoreLabel}</Text>
+                              </View>
+                            );
+                          })}
+                        </View>
+                      </>
+                    );
+                  };
+
+                  // Render based on format
+                  if (event.format === "Stableford") {
+                    const stablefordData = buildStablefordTable();
+                    return stablefordData ? renderTable(stablefordData, "Stableford") : null;
+                  } else if (event.format === "Strokeplay") {
+                    const strokeplayData = buildStrokeplayTable();
+                    return strokeplayData ? renderTable(strokeplayData, "Strokeplay") : null;
+                  } else if (event.format === "Both") {
+                    const stablefordData = buildStablefordTable();
+                    const strokeplayData = buildStrokeplayTable();
+                    return (
+                      <>
+                        {stablefordData && renderTable(stablefordData, "Stableford")}
+                        {strokeplayData && renderTable(strokeplayData, "Strokeplay")}
+                      </>
+                    );
+                  }
+                  return null;
+                })()}
+              </View>
+            )}
+            
+            {/* Scores Section (for draft/unpublished) */}
+            {event.resultsStatus !== "published" && (
             <View style={styles.section}>
               <Text style={styles.sectionTitle}>Scores</Text>
               {members.length === 0 ? (
@@ -672,9 +904,10 @@ export default function EventDetailsScreen() {
                 ))
               )}
             </View>
+            )}
 
             {/* Save Scores Button - Handicapper/Captain/Admin only */}
-            {canEnterResults && (
+            {canEnterResults && event.resultsStatus !== "published" && (
               <Pressable onPress={handleSaveScores} style={styles.primaryButton}>
                 <Text style={styles.buttonText}>Save Scores</Text>
               </Pressable>
@@ -911,6 +1144,74 @@ const styles = StyleSheet.create({
     fontSize: 14,
     opacity: 0.7,
     color: "#111827",
+  },
+  formatTitle: {
+    fontSize: 20,
+    fontWeight: "700",
+    color: "#111827",
+    marginTop: 16,
+    marginBottom: 12,
+  },
+  winnersCard: {
+    backgroundColor: "#f0fdf4",
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 16,
+    borderWidth: 2,
+    borderColor: "#0B6E4F",
+  },
+  winnersTitle: {
+    fontSize: 18,
+    fontWeight: "700",
+    color: "#0B6E4F",
+    marginBottom: 4,
+  },
+  winnersScore: {
+    fontSize: 16,
+    fontWeight: "600",
+    color: "#111827",
+  },
+  resultsTable: {
+    backgroundColor: "#fff",
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
+    overflow: "hidden",
+  },
+  tableHeader: {
+    flexDirection: "row",
+    backgroundColor: "#f3f4f6",
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: "#e5e7eb",
+  },
+  tableHeaderText: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: "#111827",
+    minWidth: 50,
+  },
+  tableRow: {
+    flexDirection: "row",
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: "#f3f4f6",
+    alignItems: "center",
+  },
+  tableRowWinner: {
+    backgroundColor: "#f0fdf4",
+  },
+  tableCell: {
+    fontSize: 16,
+    color: "#111827",
+    minWidth: 50,
+  },
+  tableCellSmall: {
+    fontSize: 12,
+    color: "#6b7280",
+    marginTop: 2,
   },
   primaryButton: {
     backgroundColor: "#0B6E4F",
