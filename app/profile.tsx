@@ -25,6 +25,7 @@ type MemberData = {
   id: string;
   name: string;
   handicap?: number;
+  sex?: "male" | "female";
 };
 
 export default function ProfileScreen() {
@@ -34,6 +35,7 @@ export default function ProfileScreen() {
   const [currentMember, setCurrentMember] = useState<MemberData | null>(null);
   const [editName, setEditName] = useState("");
   const [editHandicap, setEditHandicap] = useState("");
+  const [editSex, setEditSex] = useState<"male" | "female" | "">("");
   const [isEditing, setIsEditing] = useState(false);
   const [loading, setLoading] = useState(true);
   const [userRoles, setUserRoles] = useState<MemberRole[]>([]);
@@ -76,6 +78,7 @@ export default function ProfileScreen() {
           setCurrentMember(member);
           setEditName(member.name);
           setEditHandicap(member.handicap?.toString() || "");
+          setEditSex(member.sex || "");
         } else {
           setCurrentMember(null);
         }
@@ -94,6 +97,10 @@ export default function ProfileScreen() {
       Alert.alert("Error", "Name is required");
       return;
     }
+    if (!editSex || (editSex !== "male" && editSex !== "female")) {
+      Alert.alert("Error", "Sex is required (Male or Female)");
+      return;
+    }
 
     try {
       // Update member in storage
@@ -105,6 +112,7 @@ export default function ProfileScreen() {
               ...m,
               name: editName.trim(),
               handicap: editHandicap.trim() ? parseFloat(editHandicap.trim()) : undefined,
+              sex: editSex as "male" | "female",
             }
           : m
       );
@@ -206,12 +214,43 @@ export default function ProfileScreen() {
                     />
                 </View>
 
+                <View style={styles.field}>
+                  <Text style={styles.fieldLabel}>Sex <Text style={{ color: "#ef4444" }}>*</Text></Text>
+                  <View style={styles.sexButtons}>
+                    <Pressable
+                      onPress={() => setEditSex("male")}
+                      style={[
+                        styles.sexButton,
+                        editSex === "male" && styles.sexButtonActive,
+                      ]}
+                    >
+                      <Text style={[
+                        styles.sexButtonText,
+                        editSex === "male" && styles.sexButtonTextActive,
+                      ]}>Male</Text>
+                    </Pressable>
+                    <Pressable
+                      onPress={() => setEditSex("female")}
+                      style={[
+                        styles.sexButton,
+                        editSex === "female" && styles.sexButtonActive,
+                      ]}
+                    >
+                      <Text style={[
+                        styles.sexButtonText,
+                        editSex === "female" && styles.sexButtonTextActive,
+                      ]}>Female</Text>
+                    </Pressable>
+                  </View>
+                </View>
+
                 <View style={styles.editActions}>
                   <Pressable
                     onPress={() => {
                       setIsEditing(false);
                       setEditName(currentMember.name);
                       setEditHandicap(currentMember.handicap?.toString() || "");
+                      setEditSex(currentMember.sex || "");
                     }}
                     style={styles.cancelButton}
                   >
@@ -398,6 +437,32 @@ const styles = StyleSheet.create({
     fontSize: 16,
     borderWidth: 1,
     borderColor: "#e5e7eb",
+  },
+  sexButtons: {
+    flexDirection: "row",
+    gap: 12,
+  },
+  sexButton: {
+    flex: 1,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 10,
+    backgroundColor: "#f3f4f6",
+    alignItems: "center",
+    borderWidth: 2,
+    borderColor: "transparent",
+  },
+  sexButtonActive: {
+    backgroundColor: "#f0fdf4",
+    borderColor: "#0B6E4F",
+  },
+  sexButtonText: {
+    fontSize: 16,
+    fontWeight: "600",
+    color: "#6b7280",
+  },
+  sexButtonTextActive: {
+    color: "#0B6E4F",
   },
   editActions: {
     flexDirection: "row",

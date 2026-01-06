@@ -14,6 +14,7 @@ type MemberData = {
   id: string;
   name: string;
   handicap?: number;
+  sex?: "male" | "female";
   roles?: string[];
 };
 
@@ -21,6 +22,7 @@ export default function AddMemberScreen() {
   const router = useRouter();
   const [memberName, setMemberName] = useState("");
   const [handicap, setHandicap] = useState("");
+  const [sex, setSex] = useState<"male" | "female" | "">("");
   const [role, setRole] = useState<"admin" | "member">("member");
   const [canCreate, setCanCreate] = useState(false);
 
@@ -40,13 +42,13 @@ export default function AddMemberScreen() {
     setCanCreate(canManage);
     
     if (!canManage) {
-      Alert.alert("Access Denied", "Only Captain or Secretary can add members", [
+      Alert.alert("Access Denied", "Only Captain, Secretary, or Treasurer can add members", [
         { text: "OK", onPress: () => router.back() },
       ]);
     }
   };
 
-  const isFormValid = memberName.trim().length > 0;
+  const isFormValid = memberName.trim().length > 0 && (sex === "male" || sex === "female");
 
   const handleSubmit = async () => {
     if (!isFormValid) return;
@@ -69,6 +71,7 @@ export default function AddMemberScreen() {
         id: Date.now().toString(),
         name: memberName.trim(),
         handicap: handicap.trim() ? parseFloat(handicap.trim()) : undefined,
+        sex: sex as "male" | "female",
         roles,
       };
 
@@ -145,6 +148,51 @@ export default function AddMemberScreen() {
             marginBottom: 20,
           }}
         />
+
+        {/* Sex */}
+        <Text style={{ fontSize: 16, fontWeight: "600", marginBottom: 8 }}>
+          Sex <Text style={{ color: "#ef4444" }}>*</Text>
+        </Text>
+        <View style={{ flexDirection: "row", gap: 12, marginBottom: 20 }}>
+          <Pressable
+            onPress={() => setSex("male")}
+            style={{
+              flex: 1,
+              paddingVertical: 14,
+              paddingHorizontal: 16,
+              borderRadius: 14,
+              backgroundColor: sex === "male" ? "#f0fdf4" : "#f3f4f6",
+              alignItems: "center",
+              borderWidth: 2,
+              borderColor: sex === "male" ? "#0B6E4F" : "transparent",
+            }}
+          >
+            <Text style={{
+              fontSize: 16,
+              fontWeight: "600",
+              color: sex === "male" ? "#0B6E4F" : "#6b7280",
+            }}>Male</Text>
+          </Pressable>
+          <Pressable
+            onPress={() => setSex("female")}
+            style={{
+              flex: 1,
+              paddingVertical: 14,
+              paddingHorizontal: 16,
+              borderRadius: 14,
+              backgroundColor: sex === "female" ? "#f0fdf4" : "#f3f4f6",
+              alignItems: "center",
+              borderWidth: 2,
+              borderColor: sex === "female" ? "#0B6E4F" : "transparent",
+            }}
+          >
+            <Text style={{
+              fontSize: 16,
+              fontWeight: "600",
+              color: sex === "female" ? "#0B6E4F" : "#6b7280",
+            }}>Female</Text>
+          </Pressable>
+        </View>
 
         {/* Add Member Button */}
         <Pressable

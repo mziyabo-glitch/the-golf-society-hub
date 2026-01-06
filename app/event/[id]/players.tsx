@@ -22,6 +22,8 @@ import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from "react-nati
  * - Verify player count updates on event card
  */
 
+import { getCourseHandicap, getPlayingHandicap } from "@/lib/handicap";
+import type { Course, TeeSet } from "@/lib/models";
 import { canCreateEvents, normalizeMemberRoles, normalizeSessionRole } from "@/lib/permissions";
 import { getCurrentUserRoles } from "@/lib/roles";
 import { getSession } from "@/lib/session";
@@ -29,12 +31,18 @@ import { STORAGE_KEYS } from "@/lib/storage";
 
 const EVENTS_KEY = STORAGE_KEYS.EVENTS;
 const MEMBERS_KEY = STORAGE_KEYS.MEMBERS;
+const COURSES_KEY = STORAGE_KEYS.COURSES;
 
 type EventData = {
   id: string;
   name: string;
   date: string;
   courseName: string;
+  courseId?: string;
+  maleTeeSetId?: string;
+  femaleTeeSetId?: string;
+  handicapAllowance?: 0.9 | 1.0;
+  handicapAllowancePct?: number;
   format: "Stableford" | "Strokeplay" | "Both";
   playerIds?: string[];
 };
@@ -43,6 +51,7 @@ type MemberData = {
   id: string;
   name: string;
   handicap?: number;
+  sex?: "male" | "female";
 };
 
 export default function EventPlayersScreen() {
@@ -53,6 +62,10 @@ export default function EventPlayersScreen() {
   const [loading, setLoading] = useState(true);
   const [role, setRole] = useState<"admin" | "member">("member");
   const [canManagePlayers, setCanManagePlayers] = useState(false);
+  const [courses, setCourses] = useState<Course[]>([]);
+  const [selectedCourse, setSelectedCourse] = useState<Course | null>(null);
+  const [selectedMaleTeeSet, setSelectedMaleTeeSet] = useState<TeeSet | null>(null);
+  const [selectedFemaleTeeSet, setSelectedFemaleTeeSet] = useState<TeeSet | null>(null);
 
   useFocusEffect(
     useCallback(() => {
@@ -62,6 +75,14 @@ export default function EventPlayersScreen() {
 
   const loadData = async () => {
     try {
+      // Load courses
+      const coursesData = await AsyncStorage.getItem(COURSES_KEY);
+      let loadedCourses: Course[] = [];
+      if (coursesData) {
+        loadedCourses = JSON.parse(coursesData);
+        setCourses(loadedCourses);
+      }
+
       // Load event
       const eventsData = await AsyncStorage.getItem(EVENTS_KEY);
       if (eventsData) {
@@ -70,6 +91,22 @@ export default function EventPlayersScreen() {
         if (currentEvent) {
           setEvent(currentEvent);
           setSelectedPlayerIds(new Set(currentEvent.playerIds || []));
+          
+          // Load course and tee sets for this event
+          if (currentEvent.courseId) {
+            const course = loadedCourses.find((c) => c.id === currentEvent.courseId);
+            if (course) {
+              setSelectedCourse(course);
+              if (currentEvent.maleTeeSetId) {
+                const maleTee = course.teeSets.find((t) => t.id === currentEvent.maleTeeSetId);
+                setSelectedMaleTeeSet(maleTee || null);
+              }
+              if (currentEvent.femaleTeeSetId) {
+                const femaleTee = course.teeSets.find((t) => t.id === currentEvent.femaleTeeSetId);
+                setSelectedFemaleTeeSet(femaleTee || null);
+              }
+            }
+          }
         }
       }
 
@@ -187,9 +224,23 @@ export default function EventPlayersScreen() {
                   >
                     <View style={styles.memberInfo}>
                       <Text style={styles.memberName}>{member.name}</Text>
-                      {member.handicap !== undefined && (
-                        <Text style={styles.memberHandicap}>HCP: {member.handicap}</Text>
-                      )}
+                      {(() => {
+                        const ch = getCourseHandicap(member, selectedMaleTeeSet, selectedFemaleTeeSet);
+                        const ph = event ? getPlayingHandicap(member, event, selectedCourse, selectedMaleTeeSet, selectedFemaleTeeSet) : null;
+                        return (
+                          <View style={styles.handicapInfo}>
+                            {member.handicap !== undefined && (
+                              <Text style={styles.memberHandicap}>HI: {member.handicap}</Text>
+                            )}
+                            {ch !== null && (
+                              <Text style={styles.memberHandicap}> | CH: {ch}</Text>
+                            )}
+                            {ph !== null && (
+                              <Text style={styles.memberHandicap}> | PH: {ph}</Text>
+                            )}
+                          </View>
+                        );
+                      })()}
                     </View>
                     <View style={[styles.checkbox, isSelected && styles.checkboxSelected]}>
                       {isSelected && <View style={styles.checkmark} />}
@@ -291,6 +342,11 @@ const styles = StyleSheet.create({
     fontWeight: "600",
     color: "#111827",
     marginBottom: 4,
+  },
+  handicapInfo: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    marginTop: 4,
   },
   memberHandicap: {
     fontSize: 14,

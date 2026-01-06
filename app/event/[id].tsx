@@ -4,22 +4,39 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { useCallback, useState } from "react";
 import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 
-import { canCreateEvents, canEditVenueInfo, canManageCompetition, normalizeMemberRoles, normalizeSessionRole } from "@/lib/permissions";
+import { getCourseHandicap, getPlayingHandicap } from "@/lib/handicap";
+import type { Course, TeeSet } from "@/lib/models";
+import { canCreateEvents, canEditVenueInfo, canEnterScores, normalizeMemberRoles, normalizeSessionRole } from "@/lib/permissions";
 import { getCurrentUserRoles, hasManCoRole } from "@/lib/roles";
 import { getSession } from "@/lib/session";
 import { STORAGE_KEYS } from "@/lib/storage";
+import { formatDateDDMMYYYY } from "@/utils/date";
 
 const EVENTS_KEY = STORAGE_KEYS.EVENTS;
 const MEMBERS_KEY = STORAGE_KEYS.MEMBERS;
 const SCORES_KEY = STORAGE_KEYS.SCORES;
+const COURSES_KEY = STORAGE_KEYS.COURSES;
 
 type EventData = {
   id: string;
   name: string;
   date: string;
-  courseName: string;
+  courseName: string; // Legacy field, kept for backward compatibility
+  courseId?: string; // New: reference to Course
+  maleTeeSetId?: string; // New: tee set for male players
+  femaleTeeSetId?: string; // New: tee set for female players
+  handicapAllowance?: 0.9 | 1.0; // New: default 1.0
+  handicapAllowancePct?: number; // Alternative: percentage (100 = 1.0, 90 = 0.9)
   format: "Stableford" | "Strokeplay" | "Both";
   playerIds?: string[];
+  teeSheet?: {
+    startTimeISO: string;
+    intervalMins: number;
+    groups: Array<{
+      timeISO: string;
+      players: string[]; // memberIds, max 4
+    }>;
+  };
   isCompleted?: boolean;
   completedAt?: string;
   resultsStatus?: "draft" | "published";
@@ -28,10 +45,18 @@ type EventData = {
   isOOM?: boolean;
   winnerId?: string;
   winnerName?: string;
-  handicapSnapshot?: { [memberId: string]: number };
+  handicapSnapshot?: { [memberId: string]: number }; // Legacy: stores WHS index
+  playingHandicapSnapshot?: { [memberId: string]: number }; // New: stores playing handicap
   rsvps?: {
     [memberId: string]: "going" | "maybe" | "no";
   };
+  guests?: Array<{
+    id: string;
+    name: string;
+    sex: "male" | "female";
+    handicapIndex?: number;
+    included: boolean;
+  }>;
   results?: {
     [memberId: string]: {
       grossScore: number;
@@ -79,6 +104,14 @@ export default function EventDetailsScreen() {
   const [canEditVenue, setCanEditVenue] = useState(false);
   const [canEnterResults, setCanEnterResults] = useState(false);
   const [lockHandicaps, setLockHandicaps] = useState(false);
+  const [courses, setCourses] = useState<Course[]>([]);
+  const [selectedCourseId, setSelectedCourseId] = useState<string>("");
+  const [selectedMaleTeeSetId, setSelectedMaleTeeSetId] = useState<string>("");
+  const [selectedFemaleTeeSetId, setSelectedFemaleTeeSetId] = useState<string>("");
+  const [handicapAllowance, setHandicapAllowance] = useState<0.9 | 1.0>(1.0);
+  const [selectedCourse, setSelectedCourse] = useState<Course | null>(null);
+  const [selectedMaleTeeSet, setSelectedMaleTeeSet] = useState<TeeSet | null>(null);
+  const [selectedFemaleTeeSet, setSelectedFemaleTeeSet] = useState<TeeSet | null>(null);
 
   useFocusEffect(
     useCallback(() => {
@@ -88,6 +121,14 @@ export default function EventDetailsScreen() {
 
   const loadData = async () => {
     try {
+      // Load courses
+      const coursesData = await AsyncStorage.getItem(COURSES_KEY);
+      let loadedCourses: Course[] = [];
+      if (coursesData) {
+        loadedCourses = JSON.parse(coursesData);
+        setCourses(loadedCourses);
+      }
+
       // Load event
       const eventsData = await AsyncStorage.getItem(EVENTS_KEY);
       if (eventsData) {
@@ -98,6 +139,27 @@ export default function EventDetailsScreen() {
           setIsOOM(foundEvent.isOOM || false);
           setEditName(foundEvent.name);
           setEditDate(foundEvent.date || "");
+          setSelectedCourseId(foundEvent.courseId || "");
+          setSelectedMaleTeeSetId(foundEvent.maleTeeSetId || "");
+          setSelectedFemaleTeeSetId(foundEvent.femaleTeeSetId || "");
+          setHandicapAllowance(foundEvent.handicapAllowance || 1.0);
+          setLockHandicaps(foundEvent.handicapSnapshot !== undefined && Object.keys(foundEvent.handicapSnapshot).length > 0);
+          
+          // Load course and tee sets
+          if (foundEvent.courseId) {
+            const course = loadedCourses.find((c) => c.id === foundEvent.courseId);
+            if (course) {
+              setSelectedCourse(course);
+              if (foundEvent.maleTeeSetId) {
+                const maleTee = course.teeSets.find((t) => t.id === foundEvent.maleTeeSetId);
+                setSelectedMaleTeeSet(maleTee || null);
+              }
+              if (foundEvent.femaleTeeSetId) {
+                const femaleTee = course.teeSets.find((t) => t.id === foundEvent.femaleTeeSetId);
+                setSelectedFemaleTeeSet(femaleTee || null);
+              }
+            }
+          }
         }
       }
 
@@ -128,7 +190,7 @@ export default function EventDetailsScreen() {
       const roles = normalizeMemberRoles(await getCurrentUserRoles());
       setCanEditEvent(canCreateEvents(sessionRole, roles)); // Captain/admin can edit event settings
       setCanEditVenue(canEditVenueInfo(sessionRole, roles)); // Secretary/captain/admin can edit venue
-      setCanEnterResults(canManageCompetition(sessionRole, roles)); // Handicapper/captain/secretary/admin can manage competition
+      setCanEnterResults(canEnterScores(sessionRole, roles)); // Captain/Secretary/Handicapper can enter results
     } catch (error) {
       console.error("Error loading data:", error);
     } finally {
@@ -212,7 +274,13 @@ export default function EventDetailsScreen() {
               name: editName.trim(),
               date: editDate.trim(),
               isOOM: isOOM,
+              courseId: selectedCourseId || undefined,
+              maleTeeSetId: selectedMaleTeeSetId || undefined,
+              femaleTeeSetId: selectedFemaleTeeSetId || undefined,
+              handicapAllowance: handicapAllowance,
               handicapSnapshot: lockHandicaps ? handicapSnapshot : undefined,
+              // Keep courseName for backward compatibility
+              courseName: selectedCourseId ? courses.find(c => c.id === selectedCourseId)?.name || e.courseName : e.courseName,
             }
           : e
       );
@@ -397,17 +465,146 @@ export default function EventDetailsScreen() {
 
               <View style={styles.field}>
                 <Text style={styles.fieldLabel}>Event Date</Text>
-                <TextInput
+                <DatePicker
                   value={editDate}
-                  onChangeText={setEditDate}
-                  placeholder="YYYY-MM-DD"
+                  onChange={setEditDate}
+                  placeholder="Select date"
                   style={styles.input}
                 />
               </View>
 
               <View style={styles.field}>
                 <Text style={styles.fieldLabel}>Course</Text>
-                <Text style={styles.fieldValue}>{event.courseName || "Not specified"}</Text>
+                {courses.length === 0 ? (
+                  <View style={styles.warningBox}>
+                    <Text style={styles.warningText}>No courses available. </Text>
+                    <Pressable
+                      onPress={() => router.push("/venue-info" as any)}
+                      style={styles.linkButton}
+                    >
+                      <Text style={styles.linkText}>Create a course first</Text>
+                    </Pressable>
+                  </View>
+                ) : (
+                  <>
+                    <Pressable
+                      onPress={() => {
+                        Alert.alert(
+                          "Select Course",
+                          "",
+                          [
+                            { text: "Cancel", style: "cancel" },
+                            ...courses.map((course) => ({
+                              text: course.name,
+                              onPress: () => {
+                                setSelectedCourseId(course.id);
+                                setSelectedMaleTeeSetId("");
+                                setSelectedFemaleTeeSetId("");
+                              },
+                            })),
+                          ]
+                        );
+                      }}
+                      style={styles.selectButton}
+                    >
+                      <Text style={styles.selectButtonText}>
+                        {selectedCourseId
+                          ? courses.find((c) => c.id === selectedCourseId)?.name || "Select course"
+                          : event.courseName || "Select course"}
+                      </Text>
+                    </Pressable>
+                    {selectedCourseId && (() => {
+                      const selectedCourse = courses.find((c) => c.id === selectedCourseId);
+                      const maleTees = selectedCourse?.teeSets.filter((t) => t.appliesTo === "male") || [];
+                      const femaleTees = selectedCourse?.teeSets.filter((t) => t.appliesTo === "female") || [];
+                      return (
+                        <>
+                          <Text style={[styles.fieldLabel, { marginTop: 16 }]}>Male Tee Set</Text>
+                          {maleTees.length === 0 ? (
+                            <Text style={styles.warningText}>No male tee sets. Add in Venue Info.</Text>
+                          ) : (
+                            <Pressable
+                              onPress={() => {
+                                Alert.alert(
+                                  "Select Male Tee Set",
+                                  "",
+                                  [
+                                    { text: "Cancel", style: "cancel" },
+                                    ...maleTees.map((tee) => ({
+                                      text: `${tee.teeColor} (Par ${tee.par}, CR ${tee.courseRating}, SR ${tee.slopeRating})`,
+                                      onPress: () => setSelectedMaleTeeSetId(tee.id),
+                                    })),
+                                  ]
+                                );
+                              }}
+                              style={styles.selectButton}
+                            >
+                              <Text style={styles.selectButtonText}>
+                                {selectedMaleTeeSetId
+                                  ? maleTees.find((t) => t.id === selectedMaleTeeSetId)?.teeColor || "Select"
+                                  : "Select male tee set"}
+                              </Text>
+                            </Pressable>
+                          )}
+                          <Text style={[styles.fieldLabel, { marginTop: 16 }]}>Female Tee Set</Text>
+                          {femaleTees.length === 0 ? (
+                            <Text style={styles.warningText}>No female tee sets. Add in Venue Info.</Text>
+                          ) : (
+                            <Pressable
+                              onPress={() => {
+                                Alert.alert(
+                                  "Select Female Tee Set",
+                                  "",
+                                  [
+                                    { text: "Cancel", style: "cancel" },
+                                    ...femaleTees.map((tee) => ({
+                                      text: `${tee.teeColor} (Par ${tee.par}, CR ${tee.courseRating}, SR ${tee.slopeRating})`,
+                                      onPress: () => setSelectedFemaleTeeSetId(tee.id),
+                                    })),
+                                  ]
+                                );
+                              }}
+                              style={styles.selectButton}
+                            >
+                              <Text style={styles.selectButtonText}>
+                                {selectedFemaleTeeSetId
+                                  ? femaleTees.find((t) => t.id === selectedFemaleTeeSetId)?.teeColor || "Select"
+                                  : "Select female tee set"}
+                              </Text>
+                            </Pressable>
+                          )}
+                          <Text style={[styles.fieldLabel, { marginTop: 16 }]}>Handicap Allowance</Text>
+                          <View style={styles.allowanceButtons}>
+                            <Pressable
+                              onPress={() => setHandicapAllowance(1.0)}
+                              style={[
+                                styles.allowanceButton,
+                                handicapAllowance === 1.0 && styles.allowanceButtonActive,
+                              ]}
+                            >
+                              <Text style={[
+                                styles.allowanceButtonText,
+                                handicapAllowance === 1.0 && styles.allowanceButtonTextActive,
+                              ]}>100%</Text>
+                            </Pressable>
+                            <Pressable
+                              onPress={() => setHandicapAllowance(0.9)}
+                              style={[
+                                styles.allowanceButton,
+                                handicapAllowance === 0.9 && styles.allowanceButtonActive,
+                              ]}
+                            >
+                              <Text style={[
+                                styles.allowanceButtonText,
+                                handicapAllowance === 0.9 && styles.allowanceButtonTextActive,
+                              ]}>90%</Text>
+                            </Pressable>
+                          </View>
+                        </>
+                      );
+                    })()}
+                  </>
+                )}
               </View>
 
               <View style={styles.field}>
@@ -533,7 +730,7 @@ export default function EventDetailsScreen() {
               <Text style={styles.cardTitle}>Event Information</Text>
               <View style={styles.field}>
                 <Text style={styles.fieldLabel}>Date</Text>
-                <Text style={styles.fieldValue}>{event.date || "Not specified"}</Text>
+                <Text style={styles.fieldValue}>{formatDateDDMMYYYY(event.date)}</Text>
               </View>
               <View style={styles.field}>
                 <Text style={styles.fieldLabel}>Course</Text>
@@ -632,11 +829,22 @@ export default function EventDetailsScreen() {
                           {counts.going > 0 && (
                             <View style={styles.rsvpGroup}>
                               <Text style={styles.rsvpGroupTitle}>Going ({counts.going})</Text>
-                              {goingList.map((member) => (
-                                <Text key={member.id} style={styles.rsvpMemberName}>
-                                  {member.name}
-                                </Text>
-                              ))}
+                              {goingList.map((member) => {
+                                const ch = getCourseHandicap(member, selectedMaleTeeSet, selectedFemaleTeeSet);
+                                const ph = getPlayingHandicap(member, event, selectedCourse, selectedMaleTeeSet, selectedFemaleTeeSet);
+                                return (
+                                  <View key={member.id} style={styles.rsvpMemberRow}>
+                                    <Text style={styles.rsvpMemberName}>{member.name}</Text>
+                                    {member.handicap !== undefined && (
+                                      <Text style={styles.rsvpHandicapInfo}>
+                                        HI: {member.handicap}
+                                        {ch !== null && ` | CH: ${ch}`}
+                                        {ph !== null && ` | PH: ${ph}`}
+                                      </Text>
+                                    )}
+                                  </View>
+                                );
+                              })}
                             </View>
                           )}
                           {counts.maybe > 0 && (
@@ -684,13 +892,13 @@ export default function EventDetailsScreen() {
               </Pressable>
             )}
 
-            {/* Enter Scores / View Results Button */}
+            {/* Enter Results / View Results Button */}
             {canEnterResults && event.resultsStatus !== "published" && (
               <Pressable
                 onPress={() => router.push(`/event/${event.id}/results` as any)}
                 style={styles.secondaryButton}
               >
-                <Text style={styles.buttonText}>Enter Scores</Text>
+                <Text style={styles.buttonText}>Enter Results</Text>
               </Pressable>
             )}
             {!canEnterResults && event.resultsStatus === "published" && (
@@ -709,6 +917,65 @@ export default function EventDetailsScreen() {
                 <Text style={styles.buttonText}>Results Pending</Text>
               </Pressable>
             )}
+
+            {/* Tee Sheet View */}
+            {event.teeSheet && event.teeSheet.groups.length > 0 ? (
+              <View style={styles.section}>
+                <Text style={styles.sectionTitle}>Tee Sheet</Text>
+                {event.teeSheet.groups.map((group, groupIdx) => {
+                  const timeStr = new Date(group.timeISO).toLocaleTimeString("en-US", {
+                    hour: "2-digit",
+                    minute: "2-digit",
+                    hour12: false,
+                  });
+                  return (
+                    <View key={groupIdx} style={styles.teeGroupCard}>
+                      <Text style={styles.teeGroupTime}>
+                        {timeStr} - Group {groupIdx + 1}
+                      </Text>
+                      {group.players.map((playerId) => {
+                        const member = members.find((m) => m.id === playerId);
+                        if (!member) return null;
+                        const ph = getPlayingHandicap(
+                          member,
+                          event,
+                          selectedCourse,
+                          selectedMaleTeeSet,
+                          selectedFemaleTeeSet
+                        );
+                        const isCurrentUser = member.id === currentUserId;
+                        return (
+                          <View key={playerId} style={[styles.playerRow, isCurrentUser && styles.currentUserRow]}>
+                            <Text style={styles.playerName}>
+                              {member.name}
+                              {isCurrentUser && " (You)"}
+                            </Text>
+                            {member.handicap !== undefined && (
+                              <Text style={styles.playerHandicapInfo}>
+                                HI: {member.handicap} | PH: {ph ?? "-"}
+                              </Text>
+                            )}
+                          </View>
+                        );
+                      })}
+                    </View>
+                  );
+                })}
+                <Pressable
+                  onPress={() => router.push("/tees-teesheet" as any)}
+                  style={styles.secondaryButton}
+                >
+                  <Text style={styles.buttonText}>{canEnterResults ? "Edit Tee Sheet" : "View Tee Sheet"}</Text>
+                </Pressable>
+              </View>
+            ) : canEnterResults ? (
+              <Pressable
+                onPress={() => router.push("/tees-teesheet" as any)}
+                style={styles.secondaryButton}
+              >
+                <Text style={styles.buttonText}>Create Tee Sheet</Text>
+              </Pressable>
+            ) : null}
           </>
         )}
 
@@ -1322,11 +1589,115 @@ const styles = StyleSheet.create({
     color: "#111827",
     marginBottom: 4,
   },
+  rsvpMemberRow: {
+    marginLeft: 8,
+    marginBottom: 4,
+  },
   rsvpMemberName: {
     fontSize: 13,
     color: "#6b7280",
+    fontWeight: "600",
+  },
+  rsvpHandicapInfo: {
+    fontSize: 11,
+    color: "#9ca3af",
+    marginTop: 2,
+  },
+  teeGroupCard: {
+    backgroundColor: "#f9fafb",
+    borderRadius: 10,
+    padding: 12,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
+  },
+  teeGroupTime: {
+    fontSize: 16,
+    fontWeight: "700",
+    color: "#111827",
+    marginBottom: 8,
+  },
+  playerRow: {
+    paddingVertical: 4,
+  },
+  currentUserRow: {
+    backgroundColor: "#f0fdf4",
+    padding: 6,
+    borderRadius: 6,
+    marginVertical: 2,
+  },
+  playerName: {
+    fontSize: 14,
+    color: "#111827",
+    fontWeight: "600",
+  },
+  playerHandicapInfo: {
+    fontSize: 12,
+    color: "#6b7280",
+    marginTop: 2,
+  },
+  warningBox: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#fef3c7",
+    padding: 12,
+    borderRadius: 8,
+    marginTop: 8,
+    flexWrap: "wrap",
+  },
+  warningText: {
+    fontSize: 14,
+    color: "#92400e",
+    flex: 1,
+  },
+  linkButton: {
     marginLeft: 8,
-    marginBottom: 2,
+  },
+  linkText: {
+    fontSize: 14,
+    color: "#0B6E4F",
+    fontWeight: "600",
+    textDecorationLine: "underline",
+  },
+  selectButton: {
+    backgroundColor: "#f3f4f6",
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
+    marginTop: 8,
+  },
+  selectButtonText: {
+    fontSize: 16,
+    color: "#111827",
+  },
+  allowanceButtons: {
+    flexDirection: "row",
+    gap: 12,
+    marginTop: 8,
+  },
+  allowanceButton: {
+    flex: 1,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 10,
+    backgroundColor: "#f3f4f6",
+    alignItems: "center",
+    borderWidth: 2,
+    borderColor: "transparent",
+  },
+  allowanceButtonActive: {
+    backgroundColor: "#f0fdf4",
+    borderColor: "#0B6E4F",
+  },
+  allowanceButtonText: {
+    fontSize: 16,
+    fontWeight: "600",
+    color: "#6b7280",
+  },
+  allowanceButtonTextActive: {
+    color: "#0B6E4F",
   },
 });
 

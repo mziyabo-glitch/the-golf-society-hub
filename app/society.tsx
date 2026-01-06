@@ -12,6 +12,7 @@ import { InfoCard } from "@/components/ui/info-card";
 import { AppButton } from "@/components/ui/AppButton";
 import { SegmentedTabs } from "@/components/ui/SegmentedTabs";
 import { loadThemeFromStorage } from "@/lib/ui/theme";
+import { formatDateDDMMYYYY } from "@/utils/date";
 import {
   canAssignRoles,
   canCreateEvents,
@@ -383,7 +384,7 @@ export default function SocietyDashboardScreen() {
           {nextEvent ? (
             <InfoCard
               title={nextEvent.name}
-              subtitle={nextEvent.date || "No date"}
+              subtitle={formatDateDDMMYYYY(nextEvent.date)}
               detail={
                 (() => {
                   const rsvps = nextEvent.rsvps || {};
@@ -417,7 +418,7 @@ export default function SocietyDashboardScreen() {
           {lastEvent ? (
             <InfoCard
               title={lastEvent.name}
-              subtitle={lastEvent.date || "No date"}
+              subtitle={formatDateDDMMYYYY(lastEvent.date)}
               detail={
                 lastEvent.winnerName
                   ? `Winner: ${lastEvent.winnerName}`
@@ -476,6 +477,15 @@ export default function SocietyDashboardScreen() {
                 >
                   <Text style={styles.mancoTileTitle}>OOM / Leaderboard</Text>
                   <Text style={styles.mancoTileSubtitle}>View standings</Text>
+                </Pressable>
+              )}
+              {canEditHandicapsRole && (
+                <Pressable
+                  onPress={() => router.push("/tees-teesheet" as any)}
+                  style={styles.mancoTile}
+                >
+                  <Text style={styles.mancoTileTitle}>Tees & Tee Sheet</Text>
+                  <Text style={styles.mancoTileSubtitle}>Manage tees & schedule</Text>
                 </Pressable>
               )}
             </View>

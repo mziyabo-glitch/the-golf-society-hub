@@ -61,12 +61,19 @@ export function normalizeMemberRoles(rawRoles: unknown): MemberRole[] {
 
 export function canManageMembers(sessionRole: SessionRole, roles: MemberRole[]): boolean {
   if (sessionRole === "ADMIN") return true;
-  return roles.includes("Captain") || roles.includes("Secretary");
+  return roles.includes("Captain") || roles.includes("Secretary") || roles.includes("Treasurer");
 }
 
 export function canCreateEvents(sessionRole: SessionRole, roles: MemberRole[]): boolean {
   if (sessionRole === "ADMIN") return true;
   return roles.includes("Captain") || roles.includes("Secretary");
+}
+
+/**
+ * Check if user can manage events (create/edit) - Captain OR Secretary
+ */
+export function canManageEvents(sessionRole: SessionRole, roles: MemberRole[]): boolean {
+  return canCreateEvents(sessionRole, roles);
 }
 
 export function canAssignRoles(sessionRole: SessionRole, roles: MemberRole[]): boolean {
@@ -94,6 +101,14 @@ export function canEditHandicaps(sessionRole: SessionRole, roles: MemberRole[]):
 export function canEditResults(sessionRole: SessionRole, roles: MemberRole[]): boolean {
   if (sessionRole === "ADMIN") return true;
   return roles.includes("Captain") || roles.includes("Handicapper") || roles.includes("Secretary");
+}
+
+/**
+ * Check if user can enter scores/results (Captain OR Secretary OR Handicapper)
+ * This is the same as canEditResults but with a clearer name for score entry.
+ */
+export function canEnterScores(sessionRole: SessionRole, roles: MemberRole[]): boolean {
+  return canEditResults(sessionRole, roles);
 }
 
 export function canManageCompetition(sessionRole: SessionRole, roles: MemberRole[]): boolean {

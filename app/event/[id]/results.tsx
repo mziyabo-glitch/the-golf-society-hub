@@ -17,19 +17,28 @@ import { router, useLocalSearchParams } from "expo-router";
 import { useCallback, useState } from "react";
 import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 
-import { canManageCompetition, normalizeMemberRoles, normalizeSessionRole } from "@/lib/permissions";
+import { getCourseHandicap, getPlayingHandicap } from "@/lib/handicap";
+import type { Course, TeeSet, MemberData as MemberDataType } from "@/lib/models";
+import { canEnterScores, normalizeMemberRoles, normalizeSessionRole } from "@/lib/permissions";
 import { getCurrentUserRoles } from "@/lib/roles";
 import { getSession } from "@/lib/session";
 import { STORAGE_KEYS } from "@/lib/storage";
+import { formatDateDDMMYYYY } from "@/utils/date";
 
 const EVENTS_KEY = STORAGE_KEYS.EVENTS;
 const MEMBERS_KEY = STORAGE_KEYS.MEMBERS;
+const COURSES_KEY = STORAGE_KEYS.COURSES;
 
 type EventData = {
   id: string;
   name: string;
   date: string;
   courseName: string;
+  courseId?: string;
+  maleTeeSetId?: string;
+  femaleTeeSetId?: string;
+  handicapAllowance?: 0.9 | 1.0;
+  handicapAllowancePct?: number;
   format: "Stableford" | "Strokeplay" | "Both";
   playerIds?: string[];
   isCompleted?: boolean;
@@ -55,6 +64,7 @@ type MemberData = {
   id: string;
   name: string;
   handicap?: number;
+  sex?: "male" | "female";
 };
 
 export default function EventResultsScreen() {
@@ -66,6 +76,10 @@ export default function EventResultsScreen() {
   const [loading, setLoading] = useState(true);
   const [role, setRole] = useState<"admin" | "member">("member");
   const [canEdit, setCanEdit] = useState(false);
+  const [courses, setCourses] = useState<Course[]>([]);
+  const [selectedCourse, setSelectedCourse] = useState<Course | null>(null);
+  const [selectedMaleTeeSet, setSelectedMaleTeeSet] = useState<TeeSet | null>(null);
+  const [selectedFemaleTeeSet, setSelectedFemaleTeeSet] = useState<TeeSet | null>(null);
 
   useFocusEffect(
     useCallback(() => {
@@ -75,6 +89,14 @@ export default function EventResultsScreen() {
 
   const loadData = async () => {
     try {
+      // Load courses
+      const coursesData = await AsyncStorage.getItem(COURSES_KEY);
+      let loadedCourses: Course[] = [];
+      if (coursesData) {
+        loadedCourses = JSON.parse(coursesData);
+        setCourses(loadedCourses);
+      }
+
       // Load event
       const eventsData = await AsyncStorage.getItem(EVENTS_KEY);
       let currentEvent: EventData | null = null;
@@ -93,6 +115,22 @@ export default function EventResultsScreen() {
               };
             });
             setResults(resultsMap);
+          }
+
+          // Load course and tee sets
+          if (currentEvent.courseId) {
+            const course = loadedCourses.find((c) => c.id === currentEvent!.courseId);
+            if (course) {
+              setSelectedCourse(course);
+              if (currentEvent.maleTeeSetId) {
+                const maleTee = course.teeSets.find((t) => t.id === currentEvent!.maleTeeSetId);
+                setSelectedMaleTeeSet(maleTee || null);
+              }
+              if (currentEvent.femaleTeeSetId) {
+                const femaleTee = course.teeSets.find((t) => t.id === currentEvent!.femaleTeeSetId);
+                setSelectedFemaleTeeSet(femaleTee || null);
+              }
+            }
           }
         }
       }
@@ -120,8 +158,15 @@ export default function EventResultsScreen() {
       // Check permissions using pure functions
       const sessionRole = normalizeSessionRole(session.role);
       const roles = normalizeMemberRoles(await getCurrentUserRoles());
-      const canManage = canManageCompetition(sessionRole, roles);
-      setCanEdit(canManage);
+      const canEnter = canEnterScores(sessionRole, roles);
+      setCanEdit(canEnter);
+      
+      // Block unauthorized access - redirect if not authorized
+      if (!canEnter) {
+        Alert.alert("Access Denied", "Only Captain, Secretary, or Handicapper can enter results", [
+          { text: "OK", onPress: () => router.back() },
+        ]);
+      }
     } catch (error) {
       console.error("Error loading data:", error);
       Alert.alert("Error", "Failed to load data");
@@ -208,8 +253,19 @@ export default function EventResultsScreen() {
   };
 
   const handleSaveResults = async () => {
-    if (!event || !canEdit) {
-      Alert.alert("Access Denied", "Only Handicapper, Captain, Secretary, or Admin can enter scores");
+    if (!event) {
+      Alert.alert("Error", "Event not found");
+      return;
+    }
+    
+    // Double-check permission at write time (defense in depth)
+    const session = await getSession();
+    const sessionRole = normalizeSessionRole(session.role);
+    const roles = normalizeMemberRoles(await getCurrentUserRoles());
+    const canEnter = canEnterScores(sessionRole, roles);
+    
+    if (!canEnter) {
+      Alert.alert("Access Denied", "Only Captain, Secretary, or Handicapper can enter results");
       return;
     }
 
@@ -352,8 +408,19 @@ export default function EventResultsScreen() {
   };
 
   const handlePublishResults = async () => {
-    if (!event || !canEdit) {
-      Alert.alert("Access Denied", "Only Handicapper, Captain, Secretary, or Admin can publish results");
+    if (!event) {
+      Alert.alert("Error", "Event not found");
+      return;
+    }
+    
+    // Double-check permission at write time
+    const session = await getSession();
+    const sessionRole = normalizeSessionRole(session.role);
+    const roles = normalizeMemberRoles(await getCurrentUserRoles());
+    const canEnter = canEnterScores(sessionRole, roles);
+    
+    if (!canEnter) {
+      Alert.alert("Access Denied", "Only Captain, Secretary, or Handicapper can publish results");
       return;
     }
 
@@ -453,9 +520,23 @@ export default function EventResultsScreen() {
                   <View key={player.id} style={[styles.resultCard, styles.readOnlyCard]}>
                     <View style={styles.playerInfo}>
                       <Text style={styles.playerName}>{player.name}</Text>
-                      {player.handicap !== undefined && (
-                        <Text style={styles.playerHandicap}>HCP: {player.handicap}</Text>
-                      )}
+                      {(() => {
+                        const ch = getCourseHandicap(player, selectedMaleTeeSet, selectedFemaleTeeSet);
+                        const ph = getPlayingHandicap(player, event, selectedCourse, selectedMaleTeeSet, selectedFemaleTeeSet);
+                        return (
+                          <View style={styles.handicapInfo}>
+                            {player.handicap !== undefined && (
+                              <Text style={styles.playerHandicap}>HI: {player.handicap}</Text>
+                            )}
+                            {ch !== null && (
+                              <Text style={styles.playerHandicap}> | CH: {ch}</Text>
+                            )}
+                            {ph !== null && (
+                              <Text style={styles.playerHandicap}> | PH: {ph}</Text>
+                            )}
+                          </View>
+                        );
+                      })()}
                     </View>
                     <View style={styles.scoreInput}>
                       {event.format === "Stableford" || event.format === "Both" ? (
@@ -493,7 +574,7 @@ export default function EventResultsScreen() {
   return (
     <ScrollView style={styles.container}>
       <View style={styles.content}>
-        <Text style={styles.title}>Enter Scores</Text>
+        <Text style={styles.title}>Enter Results</Text>
         <Text style={styles.subtitle}>{event.name}</Text>
         {isDraft && (
           <Text style={styles.draftHelper}>Draft — not counted in OOM until published.</Text>
@@ -511,9 +592,23 @@ export default function EventResultsScreen() {
                 <View key={player.id} style={styles.resultCard}>
                   <View style={styles.playerInfo}>
                     <Text style={styles.playerName}>{player.name}</Text>
-                    {player.handicap !== undefined && (
-                      <Text style={styles.playerHandicap}>HCP: {player.handicap}</Text>
-                    )}
+                    {(() => {
+                      const ch = getCourseHandicap(player, selectedMaleTeeSet, selectedFemaleTeeSet);
+                      const ph = getPlayingHandicap(player, event, selectedCourse, selectedMaleTeeSet, selectedFemaleTeeSet);
+                      return (
+                        <View style={styles.handicapInfo}>
+                          {player.handicap !== undefined && (
+                            <Text style={styles.playerHandicap}>HI: {player.handicap}</Text>
+                          )}
+                          {ch !== null && (
+                            <Text style={styles.playerHandicap}> | CH: {ch}</Text>
+                          )}
+                          {ph !== null && (
+                            <Text style={styles.playerHandicap}> | PH: {ph}</Text>
+                          )}
+                        </View>
+                      );
+                    })()}
                   </View>
                   {(event.format === "Stableford" || event.format === "Both") && (
                     <View style={styles.scoreInput}>
@@ -644,6 +739,11 @@ const styles = StyleSheet.create({
     fontWeight: "600",
     color: "#111827",
     marginBottom: 4,
+  },
+  handicapInfo: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    marginTop: 4,
   },
   playerHandicap: {
     fontSize: 14,

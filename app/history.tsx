@@ -3,6 +3,7 @@ import { AppCard } from "@/components/ui/AppCard";
 import { AppText } from "@/components/ui/AppText";
 import { STORAGE_KEYS } from "@/lib/storage";
 import { loadThemeFromStorage, spacing } from "@/lib/ui/theme";
+import { formatDateDDMMYYYY } from "@/utils/date";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useFocusEffect } from "@react-navigation/native";
 import { router } from "expo-router";
@@ -76,7 +77,7 @@ export default function HistoryScreen() {
                 style={styles.eventPressable}
               >
                 <AppText variant="h2" numberOfLines={1} style={styles.eventName}>{event.name}</AppText>
-                <AppText variant="caption" color="secondary" style={styles.eventDate}>{event.date || "No date"}</AppText>
+                <AppText variant="caption" color="secondary" style={styles.eventDate}>{formatDateDDMMYYYY(event.date)}</AppText>
                 {event.courseName && (
                   <AppText variant="caption" color="secondary" numberOfLines={1} style={styles.eventCourse}>{event.courseName}</AppText>
                 )}

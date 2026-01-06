@@ -15,6 +15,7 @@ import { getSession } from "@/lib/session";
 import { canCreateEvents, normalizeMemberRoles, normalizeSessionRole } from "@/lib/permissions";
 import { getCurrentUserRoles } from "@/lib/roles";
 import { STORAGE_KEYS } from "@/lib/storage";
+import { DatePicker } from "@/components/DatePicker";
 
 const EVENTS_KEY = STORAGE_KEYS.EVENTS;
 
@@ -22,7 +23,11 @@ type EventData = {
   id: string;
   name: string;
   date: string;
-  courseName: string;
+  courseName: string; // Legacy field
+  courseId?: string;
+  maleTeeSetId?: string;
+  femaleTeeSetId?: string;
+  handicapAllowance?: 0.9 | 1.0;
   format: "Stableford" | "Strokeplay" | "Both";
   playerIds?: string[];
   isCompleted?: boolean;
@@ -147,16 +152,11 @@ export default function CreateEventScreen() {
         <Text style={{ fontSize: 16, fontWeight: "600", marginBottom: 8 }}>
           Event Date
         </Text>
-        <TextInput
+        <DatePicker
           value={eventDate}
-          onChangeText={setEventDate}
-          placeholder="YYYY-MM-DD"
+          onChange={setEventDate}
+          placeholder="Select date"
           style={{
-            backgroundColor: "#f3f4f6",
-            paddingVertical: 14,
-            paddingHorizontal: 16,
-            borderRadius: 14,
-            fontSize: 16,
             marginBottom: 20,
           }}
         />

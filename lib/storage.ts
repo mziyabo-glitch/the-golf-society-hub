@@ -16,6 +16,7 @@ export const STORAGE_KEYS = {
   MEMBERS: "GSOCIETY_MEMBERS",
   EVENTS: "GSOCIETY_EVENTS",
   SCORES: "GSOCIETY_SCORES",
+  COURSES: "GSOCIETY_COURSES",
   
   // Admin & Security
   ADMIN_PIN: "GSOCIETY_ADMIN_PIN",
@@ -42,6 +43,7 @@ export function getAllStorageKeys(): string[] {
     STORAGE_KEYS.MEMBERS,
     STORAGE_KEYS.EVENTS,
     STORAGE_KEYS.SCORES,
+    STORAGE_KEYS.COURSES,
     STORAGE_KEYS.ADMIN_PIN,
     STORAGE_KEYS.SESSION_USER_ID,
     STORAGE_KEYS.SESSION_ROLE,
@@ -163,6 +165,7 @@ export async function ensureValidCurrentMember(): Promise<{
         id: Date.now().toString(),
         name: "Admin", // Default name
         roles: ["Captain", "Handicapper", "Member"],
+        sex: "male", // Default sex for fallback member
       };
       
       members = [fallbackMember];
@@ -179,13 +182,20 @@ export async function ensureValidCurrentMember(): Promise<{
       console.log("Created fallback owner member:", fallbackMember);
     } else {
       // Ensure all members have roles array (default to ["Member"])
+      // Also migrate: add sex field if missing (default to "male" for backward compatibility)
       let needsSave = false;
       members = members.map((m) => {
-        if (!m.roles || m.roles.length === 0) {
+        let updated = { ...m };
+        if (!updated.roles || updated.roles.length === 0) {
           needsSave = true;
-          return { ...m, roles: ["Member"] };
+          updated.roles = ["Member"];
         }
-        return m;
+        // Migration: add sex if missing (will be required in UI, but default for existing records)
+        if (!updated.sex) {
+          needsSave = true;
+          updated.sex = "male"; // Default for existing records
+        }
+        return updated;
       });
       if (needsSave) {
         await AsyncStorage.setItem(STORAGE_KEYS.MEMBERS, JSON.stringify(members));
