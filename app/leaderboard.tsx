@@ -14,7 +14,9 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useFocusEffect } from "@react-navigation/native";
 import { router } from "expo-router";
 import { useCallback, useState } from "react";
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View, Platform, Alert } from "react-native";
+import * as Print from "expo-print";
+import * as Sharing from "expo-sharing";
 
 const EVENTS_KEY = STORAGE_KEYS.EVENTS;
 const MEMBERS_KEY = STORAGE_KEYS.MEMBERS;
@@ -179,7 +181,7 @@ export default function LeaderboardScreen() {
 
     if (__DEV__) {
       console.log(
-        `[Leaderboard] Season ${seasonYear}, ${showOOMOnly ? "OOM only" : "All events"}: ${filteredEvents.length} events`
+        `[Leaderboard] Season ${seasonYear}, ${showOOMOnly ? "Order of Merit only" : "All events"}: ${filteredEvents.length} events`
       );
       filteredEvents.forEach((e) => {
         const hasResults = e.results && Object.keys(e.results).length > 0;
@@ -257,6 +259,123 @@ export default function LeaderboardScreen() {
     }, [members, events, loading, seasonYear, showOOMOnly])
   );
 
+  const handleShareOrderOfMerit = async () => {
+    try {
+      // Filter to only members with points > 0
+      const filteredLeaderboard = leaderboard.filter((entry) => (entry.totalPoints ?? 0) > 0);
+      
+      if (filteredLeaderboard.length === 0) {
+        Alert.alert("Nothing to share", "No members have points yet.");
+        return;
+      }
+
+      // Load society for logo and name
+      const societyData = await AsyncStorage.getItem(STORAGE_KEYS.SOCIETY_ACTIVE);
+      const society = societyData ? JSON.parse(societyData) : null;
+
+      const logoHtml = society?.logoUrl 
+        ? `<img src="${society.logoUrl}" alt="Society Logo" style="max-width: 100px; max-height: 100px; margin-bottom: 15px;" />`
+        : "";
+
+      // Create HTML for PDF
+      const html = `
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <meta charset="utf-8">
+          <style>
+            body { font-family: Arial, sans-serif; font-size: 14px; padding: 20px; }
+            .header { text-align: center; margin-bottom: 20px; }
+            .header h1 { margin: 10px 0; font-size: 24px; font-weight: bold; }
+            .header p { margin: 5px 0; font-size: 14px; color: #666; }
+            table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+            th, td { border: 1px solid #000; padding: 10px; text-align: left; }
+            th { background-color: #0B6E4F; color: white; font-weight: bold; }
+            .position { text-align: center; font-weight: bold; width: 60px; }
+            .points { text-align: center; font-weight: bold; }
+            .wins, .played { text-align: center; }
+          </style>
+        </head>
+        <body>
+          <div class="header">
+            ${logoHtml}
+            <h1>Order of Merit</h1>
+            <p>${society?.name || "Golf Society"} — ${seasonYear}</p>
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th class="position">Pos</th>
+                <th>Member</th>
+                <th class="points">Points</th>
+                <th class="wins">Wins</th>
+                <th class="played">Played</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${filteredLeaderboard
+                .map(
+                  (entry, index) => `
+                <tr>
+                  <td class="position">${index + 1}</td>
+                  <td>${entry.member.name || "Unknown"}${entry.member.handicap !== undefined ? ` (HCP: ${entry.member.handicap})` : ""}</td>
+                  <td class="points">${entry.totalPoints}</td>
+                  <td class="wins">${entry.totalWins}</td>
+                  <td class="played">${entry.eventsPlayed}</td>
+                </tr>
+              `
+                )
+                .join("")}
+            </tbody>
+          </table>
+        </body>
+        </html>
+      `;
+
+      // Web platform: open in new window for print
+      if (Platform.OS === "web") {
+        try {
+          if (typeof window !== "undefined" && window.open) {
+            const printWindow = window.open("", "_blank");
+            if (printWindow) {
+              printWindow.document.write(html);
+              printWindow.document.close();
+              printWindow.focus();
+              setTimeout(() => {
+                printWindow.print();
+              }, 250);
+            } else {
+              Alert.alert("Info", "PDF export not supported on this web build");
+            }
+          } else {
+            Alert.alert("Info", "PDF export not supported on this web build");
+          }
+        } catch (webError) {
+          console.error("Error with web print:", webError);
+          Alert.alert("Error", "Failed to generate PDF on web. Please try again.");
+        }
+        return;
+      }
+
+      // Mobile: use expo-print + expo-sharing
+      try {
+        const { uri } = await Print.printToFileAsync({ html });
+        const sharingAvailable = await Sharing.isAvailableAsync();
+        if (sharingAvailable) {
+          await Sharing.shareAsync(uri);
+        } else {
+          Alert.alert("Success", `PDF saved to: ${uri}`);
+        }
+      } catch (printError) {
+        console.error("Error with print/sharing:", printError);
+        Alert.alert("Error", "Failed to generate or share PDF. Please try again.");
+      }
+    } catch (error) {
+      console.error("Error sharing Order of Merit:", error);
+      Alert.alert("Share failed", "Please try again.");
+    }
+  };
+
   if (loading) {
     return (
       <View style={[styles.container, styles.centerContent]}>
@@ -268,8 +387,19 @@ export default function LeaderboardScreen() {
   return (
     <ScrollView style={styles.container}>
       <View style={styles.content}>
-        <Text style={styles.title}>Season Leaderboard</Text>
-        <Text style={styles.subtitle}>Wins and events played this season</Text>
+        <View style={styles.headerRow}>
+          <View style={styles.headerText}>
+            <Text style={styles.title}>Season Leaderboard</Text>
+            <Text style={styles.subtitle}>
+              {showOOMOnly ? "Order of Merit Events" : "All Events"} — {seasonYear}
+            </Text>
+          </View>
+          {showOOMOnly && leaderboard.filter((e) => e.totalPoints > 0).length > 0 && (
+            <Pressable onPress={handleShareOrderOfMerit} style={styles.shareButton}>
+              <Text style={styles.shareButtonText}>Share</Text>
+            </Pressable>
+          )}
+        </View>
 
         {/* Year Selector */}
         <View style={styles.filterSection}>
@@ -323,7 +453,7 @@ export default function LeaderboardScreen() {
                   showOOMOnly && styles.toggleButtonTextActive,
                 ]}
               >
-                OOM Only
+                Order of Merit Only
               </Text>
             </Pressable>
           </View>
@@ -331,9 +461,11 @@ export default function LeaderboardScreen() {
 
         {leaderboard.length === 0 ? (
           <View style={styles.emptyState}>
-            <Text style={styles.emptyText}>No completed events yet</Text>
+            <Text style={styles.emptyText}>No published events yet</Text>
             <Text style={styles.emptySubtext}>
-              Complete events to see leaderboard rankings
+              {showOOMOnly 
+                ? `No Order of Merit events published for ${seasonYear}`
+                : `No events published for ${seasonYear}`}
             </Text>
           </View>
         ) : (
@@ -565,6 +697,27 @@ const styles = StyleSheet.create({
   },
   toggleButtonTextActive: {
     color: "#fff",
+  },
+  headerRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    marginBottom: 8,
+  },
+  headerText: {
+    flex: 1,
+  },
+  shareButton: {
+    backgroundColor: "#0B6E4F",
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 8,
+    marginTop: 4,
+  },
+  shareButtonText: {
+    color: "#fff",
+    fontSize: 14,
+    fontWeight: "600",
   },
 });
 

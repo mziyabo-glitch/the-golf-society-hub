@@ -399,7 +399,7 @@ export default function EventResultsScreen() {
       );
 
       await AsyncStorage.setItem(EVENTS_KEY, JSON.stringify(updatedEvents));
-      Alert.alert("Success", "Draft saved — not counted in OOM until published");
+      Alert.alert("Success", "Draft saved — not counted in Order of Merit until published");
       router.back();
     } catch (error) {
       console.error("Error saving results:", error);
@@ -467,7 +467,7 @@ export default function EventResultsScreen() {
       );
 
       await AsyncStorage.setItem(EVENTS_KEY, JSON.stringify(updatedEvents));
-      Alert.alert("Success", "Results published — OOM updated");
+      Alert.alert("Success", "Results published — Order of Merit updated");
       router.back();
     } catch (error) {
       console.error("Error publishing results:", error);
@@ -577,7 +577,7 @@ export default function EventResultsScreen() {
         <Text style={styles.title}>Enter Results</Text>
         <Text style={styles.subtitle}>{event.name}</Text>
         {isDraft && (
-          <Text style={styles.draftHelper}>Draft — not counted in OOM until published.</Text>
+          <Text style={styles.draftHelper}>Draft — not counted in Order of Merit until published.</Text>
         )}
 
         {selectedPlayers.length === 0 ? (

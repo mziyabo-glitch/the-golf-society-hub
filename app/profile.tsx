@@ -12,7 +12,6 @@
 import { getCurrentUserRoles, MemberRole } from "@/lib/roles";
 import { getSession, setRole } from "@/lib/session";
 import { STORAGE_KEYS } from "@/lib/storage";
-import { loadThemeFromStorage } from "@/lib/ui/theme";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useFocusEffect } from "@react-navigation/native";
 import { router } from "expo-router";
@@ -46,7 +45,6 @@ export default function ProfileScreen() {
       const { ensureBootstrapState } = require("@/lib/storage");
       ensureBootstrapState().then(() => {
         loadData();
-        loadThemeFromStorage();
       });
     }, [])
   );

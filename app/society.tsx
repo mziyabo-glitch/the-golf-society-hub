@@ -11,7 +11,6 @@
 import { InfoCard } from "@/components/ui/info-card";
 import { AppButton } from "@/components/ui/AppButton";
 import { SegmentedTabs } from "@/components/ui/SegmentedTabs";
-import { loadThemeFromStorage } from "@/lib/ui/theme";
 import { formatDateDDMMYYYY } from "@/utils/date";
 import {
   canAssignRoles,
@@ -112,7 +111,6 @@ export default function SocietyDashboardScreen() {
   useFocusEffect(
     useCallback(() => {
       loadData();
-      loadThemeFromStorage(); // Load theme preference
     }, [])
   );
 
@@ -475,7 +473,7 @@ export default function SocietyDashboardScreen() {
                   onPress={() => router.push("/leaderboard" as any)}
                   style={styles.mancoTile}
                 >
-                  <Text style={styles.mancoTileTitle}>OOM / Leaderboard</Text>
+                  <Text style={styles.mancoTileTitle}>Order of Merit / Leaderboard</Text>
                   <Text style={styles.mancoTileSubtitle}>View standings</Text>
                 </Pressable>
               )}

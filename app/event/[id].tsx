@@ -620,7 +620,7 @@ export default function EventDetailsScreen() {
               )}
 
               <View style={styles.field}>
-                <Text style={styles.fieldLabel}>OOM Event</Text>
+                <Text style={styles.fieldLabel}>Order of Merit Event</Text>
                 <Pressable
                   onPress={() => setIsOOM(!isOOM)}
                   style={{
@@ -652,7 +652,7 @@ export default function EventDetailsScreen() {
                     )}
                   </View>
                   <Text style={{ fontSize: 16, color: "#111827" }}>
-                    {isOOM ? "Yes, this is an OOM event" : "No, this is not an OOM event"}
+                    {isOOM ? "Yes, this is an Order of Merit event" : "No, this is not an Order of Merit event"}
                   </Text>
                 </Pressable>
               </View>
@@ -747,7 +747,7 @@ export default function EventDetailsScreen() {
                 </View>
               )}
               <View style={styles.field}>
-                <Text style={styles.fieldLabel}>OOM Event</Text>
+                <Text style={styles.fieldLabel}>Order of Merit Event</Text>
                 <Text style={styles.fieldValue}>{event.isOOM ? "Yes" : "No"}</Text>
               </View>
             </View>

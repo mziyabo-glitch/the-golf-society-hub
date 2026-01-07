@@ -82,51 +82,51 @@ export const colors = {
   },
 } as const;
 
-// Spacing scale (4px base unit)
+// Spacing scale (premium UI requirements)
 export const spacing = {
-  xs: 4,
-  sm: 8,
-  md: 12,
+  xs: 6,
+  sm: 10,
+  md: 14,
   base: 16,
-  lg: 20,
+  lg: 18,
   xl: 24,
   "2xl": 32,
   "3xl": 48,
 } as const;
 
-// Border radius
+// Border radius (premium UI requirements)
 export const radius = {
-  sm: 8,
-  md: 12,
-  lg: 16,
+  sm: 10,
+  md: 14,
+  lg: 18,
   xl: 20,
   full: 9999,
 } as const;
 
-// Typography
+// Typography (premium UI requirements)
 export const typography = {
   title: {
-    fontSize: 34,
-    fontWeight: "800" as const,
-    lineHeight: 40,
-    letterSpacing: -0.5,
-  },
-  h1: {
-    fontSize: 28,
-    fontWeight: "700" as const,
-    lineHeight: 34,
-    letterSpacing: -0.3,
-  },
-  h2: {
     fontSize: 22,
-    fontWeight: "600" as const,
+    fontWeight: "700" as const,
     lineHeight: 28,
     letterSpacing: -0.2,
   },
-  body: {
-    fontSize: 16,
-    fontWeight: "400" as const,
+  h1: {
+    fontSize: 20,
+    fontWeight: "700" as const,
+    lineHeight: 26,
+    letterSpacing: -0.1,
+  },
+  h2: {
+    fontSize: 18,
+    fontWeight: "600" as const,
     lineHeight: 24,
+    letterSpacing: 0,
+  },
+  body: {
+    fontSize: 15,
+    fontWeight: "400" as const,
+    lineHeight: 22,
     letterSpacing: 0,
   },
   bodyBold: {
@@ -148,9 +148,9 @@ export const typography = {
     letterSpacing: 0,
   },
   small: {
-    fontSize: 12,
+    fontSize: 13,
     fontWeight: "400" as const,
-    lineHeight: 16,
+    lineHeight: 18,
     letterSpacing: 0,
   },
   button: {

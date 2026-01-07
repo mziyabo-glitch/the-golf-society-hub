@@ -4,18 +4,18 @@
  * - Members can view tee sheet
  */
 
-import { canManageCompetition, normalizeMemberRoles, normalizeSessionRole } from "@/lib/permissions";
-import { getCurrentUserRoles } from "@/lib/roles";
-import { getSession } from "@/lib/session";
 import { STORAGE_KEYS } from "@/lib/storage";
 import type { Course, TeeSet, EventData, MemberData } from "@/lib/models";
 import { getPlayingHandicap, getCourseHandicap } from "@/lib/handicap";
 import { formatDateDDMMYYYY } from "@/utils/date";
+import { getPermissions, type Permissions } from "@/lib/rbac";
+import { guard } from "@/lib/guards";
+import { getArray, ensureArray } from "@/lib/storage-helpers";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useFocusEffect } from "@react-navigation/native";
 import { router } from "expo-router";
 import { useCallback, useState, useRef } from "react";
-import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View, Modal, Platform } from "react-native";
+import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View, Modal, Platform, ActivityIndicator } from "react-native";
 import * as Print from "expo-print";
 import * as Sharing from "expo-sharing";
 
@@ -26,7 +26,8 @@ const MEMBERS_KEY = STORAGE_KEYS.MEMBERS;
 type TabType = "tees" | "teesheet";
 
 export default function TeesTeeSheetScreen() {
-  const [hasAccess, setHasAccess] = useState(false);
+  const [permissions, setPermissions] = useState<Permissions | null>(null);
+  const [permissionsLoading, setPermissionsLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<TabType>("tees");
   const [courses, setCourses] = useState<Course[]>([]);
   const [events, setEvents] = useState<EventData[]>([]);
@@ -60,43 +61,55 @@ export default function TeesTeeSheetScreen() {
   // PDF sharing guard
   const isSharing = useRef(false);
 
+  const [society, setSociety] = useState<{ name: string; logoUrl?: string } | null>(null);
+
+  // Derived permission flag
+  const canManageTeeSheet = permissions?.canManageTeeSheet ?? false;
+
   useFocusEffect(
     useCallback(() => {
-      checkAccess();
+      loadPermissions();
       loadData();
     }, [])
   );
 
-  const checkAccess = async () => {
-    const session = await getSession();
-    const sessionRole = normalizeSessionRole(session.role);
-    const roles = normalizeMemberRoles(await getCurrentUserRoles());
-    const canManage = canManageCompetition(sessionRole, roles);
-    setHasAccess(canManage);
+  const loadPermissions = async () => {
+    try {
+      setPermissionsLoading(true);
+      const perms = await getPermissions();
+      setPermissions(perms);
+    } catch (error) {
+      console.error("Error loading permissions:", error);
+      setPermissions(null);
+    } finally {
+      setPermissionsLoading(false);
+    }
   };
 
   const loadData = async () => {
     try {
-      // Load courses
-      const coursesData = await AsyncStorage.getItem(COURSES_KEY);
-      if (coursesData) {
-        const loaded: Course[] = JSON.parse(coursesData);
-        setCourses(loaded);
+      // Load society (for logo and name)
+      const societyData = await AsyncStorage.getItem(STORAGE_KEYS.SOCIETY_ACTIVE);
+      if (societyData) {
+        try {
+          const loaded = JSON.parse(societyData);
+          setSociety(loaded);
+        } catch (e) {
+          console.error("Error parsing society data:", e);
+        }
       }
+
+      // Load courses
+      const loadedCourses = await getArray<Course>(COURSES_KEY, []);
+      setCourses(loadedCourses);
 
       // Load events
-      const eventsData = await AsyncStorage.getItem(EVENTS_KEY);
-      if (eventsData) {
-        const loaded: EventData[] = JSON.parse(eventsData);
-        setEvents(loaded);
-      }
+      const loadedEvents = await getArray<EventData>(EVENTS_KEY, []);
+      setEvents(loadedEvents);
 
       // Load members
-      const membersData = await AsyncStorage.getItem(MEMBERS_KEY);
-      if (membersData) {
-        const loaded: MemberData[] = JSON.parse(membersData);
-        setMembers(loaded);
-      }
+      const loadedMembers = await getArray<MemberData>(MEMBERS_KEY, []);
+      setMembers(loadedMembers);
     } catch (error) {
       console.error("Error loading data:", error);
     }
@@ -165,6 +178,9 @@ export default function TeesTeeSheetScreen() {
   };
 
   const handleSaveTees = async () => {
+    if (!guard(canManageTeeSheet, "Only Captain or Handicapper can save tee sets.")) {
+      return;
+    }
     if (!selectedEvent || !selectedCourse) {
       Alert.alert("Error", "Please select an event and course first");
       return;
@@ -200,6 +216,9 @@ export default function TeesTeeSheetScreen() {
   };
 
   const handleGenerateTeeSheet = () => {
+    if (!guard(canManageTeeSheet, "Only Captain or Handicapper can generate tee sheets.")) {
+      return;
+    }
     if (!selectedEvent) {
       Alert.alert("Error", "Please select an event first");
       return;
@@ -300,6 +319,9 @@ export default function TeesTeeSheetScreen() {
   };
 
   const handleSaveTeeSheet = async () => {
+    if (!guard(canManageTeeSheet, "Only Captain or Handicapper can save tee sheets.")) {
+      return;
+    }
     if (!selectedEvent) {
       Alert.alert("Error", "Please select an event first");
       return;
@@ -339,6 +361,9 @@ export default function TeesTeeSheetScreen() {
   };
 
   const handleMovePlayer = (playerId: string, fromGroupIndex: number, toGroupIndex: number) => {
+    if (!guard(canManageTeeSheet, "Only Captain or Handicapper can modify groups.")) {
+      return;
+    }
     if (toGroupIndex === -1) {
       // Move to unassigned
       const newGroups = [...teeGroups];
@@ -392,6 +417,9 @@ export default function TeesTeeSheetScreen() {
   };
 
   const handleDeleteGroup = (groupIndex: number) => {
+    if (!guard(canManageTeeSheet, "Only Captain or Handicapper can delete groups.")) {
+      return;
+    }
     const group = teeGroups[groupIndex];
     if (group.players.length > 0) {
       // Move players to unassigned
@@ -432,6 +460,9 @@ export default function TeesTeeSheetScreen() {
   };
 
   const handleSaveRsvps = async () => {
+    if (!guard(canManageTeeSheet, "Only Captain or Handicapper can save RSVPs.")) {
+      return;
+    }
     if (!selectedEvent) return;
     try {
       // Update RSVPs for selected members
@@ -464,6 +495,22 @@ export default function TeesTeeSheetScreen() {
     isSharing.current = true;
 
     try {
+      // Get ManCo members
+      const captain = members.find((m) => m.roles?.includes("captain") || m.roles?.includes("admin"));
+      const secretary = members.find((m) => m.roles?.includes("secretary"));
+      const treasurer = members.find((m) => m.roles?.includes("treasurer"));
+      const handicapper = members.find((m) => m.roles?.includes("handicapper"));
+
+      const manCoDetails: string[] = [];
+      if (captain) manCoDetails.push(`Captain: ${captain.name}`);
+      if (secretary) manCoDetails.push(`Secretary: ${secretary.name}`);
+      if (treasurer) manCoDetails.push(`Treasurer: ${treasurer.name}`);
+      if (handicapper) manCoDetails.push(`Handicapper: ${handicapper.name}`);
+
+      const logoHtml = society?.logoUrl 
+        ? `<img src="${society.logoUrl}" alt="Society Logo" style="max-width: 80px; max-height: 80px; margin-bottom: 10px;" />`
+        : "";
+
       // Build HTML for PDF
       const html = `
         <!DOCTYPE html>
@@ -472,9 +519,14 @@ export default function TeesTeeSheetScreen() {
           <meta charset="utf-8">
           <style>
             body { font-family: Arial, sans-serif; font-size: 10px; padding: 10px; }
-            .header { text-align: center; margin-bottom: 15px; }
+            .top-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 15px; }
+            .logo-container { flex-shrink: 0; }
+            .header { flex: 1; text-align: center; }
             .header h1 { margin: 0; font-size: 18px; font-weight: bold; }
             .header p { margin: 5px 0; font-size: 12px; }
+            .manco { margin-top: 10px; font-size: 9px; color: #555; }
+            .manco p { margin: 2px 0; }
+            .produced-by { text-align: right; font-size: 8px; color: #666; margin-top: 5px; }
             .tee-info { float: right; width: 200px; border: 1px solid #000; padding: 8px; font-size: 9px; }
             .tee-info h3 { margin: 0 0 8px 0; font-size: 11px; }
             .tee-info p { margin: 3px 0; }
@@ -488,9 +540,17 @@ export default function TeesTeeSheetScreen() {
           </style>
         </head>
         <body>
-          <div class="header">
-            <h1>${selectedEvent.name || "Tee Sheet"}</h1>
-            <p>${selectedEvent.date || "Date TBD"} | ${selectedCourse?.name || "Course TBD"}</p>
+          <div class="top-header">
+            <div class="logo-container">
+              ${logoHtml}
+            </div>
+            <div class="header">
+              <h1>${selectedEvent.name || "Tee Sheet"}</h1>
+              <p>${selectedEvent.date || "Date TBD"} | ${selectedCourse?.name || "Course TBD"}</p>
+              ${manCoDetails.length > 0 ? `<div class="manco">${manCoDetails.map(d => `<p>${d}</p>`).join("")}</div>` : ""}
+              <div class="produced-by">Produced by The Golf Society Hub</div>
+            </div>
+            <div style="width: 80px;"></div>
           </div>
           <div class="tee-info">
             <h3>Tee Information</h3>
@@ -588,12 +648,17 @@ export default function TeesTeeSheetScreen() {
       }
 
       // Mobile: use expo-print + expo-sharing
-      const { uri } = await Print.printToFileAsync({ html });
-      const sharingAvailable = await Sharing.isAvailableAsync();
-      if (sharingAvailable) {
-        await Sharing.shareAsync(uri);
-      } else {
-        Alert.alert("Success", `PDF saved to: ${uri}`);
+      try {
+        const { uri } = await Print.printToFileAsync({ html });
+        const sharingAvailable = await Sharing.isAvailableAsync();
+        if (sharingAvailable) {
+          await Sharing.shareAsync(uri);
+        } else {
+          Alert.alert("Success", `PDF saved to: ${uri}`);
+        }
+      } catch (printError) {
+        console.error("Error with print/sharing:", printError);
+        Alert.alert("Error", "Failed to generate or share PDF. Please try again.");
       }
     } catch (error) {
       console.error("Error generating PDF:", error);
@@ -603,19 +668,16 @@ export default function TeesTeeSheetScreen() {
     }
   };
 
-  if (!hasAccess) {
+  if (permissionsLoading) {
     return (
-      <View style={styles.container}>
-        <View style={styles.content}>
-          <Text style={styles.title}>Access Denied</Text>
-          <Text style={styles.subtitle}>Only Handicapper, Captain, or Secretary can access this screen</Text>
-          <Pressable onPress={() => router.back()} style={styles.backButton}>
-            <Text style={styles.buttonText}>Back</Text>
-          </Pressable>
-        </View>
+      <View style={[styles.container, { justifyContent: "center", alignItems: "center" }]}>
+        <ActivityIndicator size="large" color="#0B6E4F" />
       </View>
     );
   }
+
+  // Members can view but not edit
+  const isReadOnly = !canManageTeeSheet;
 
 
   return (
@@ -869,7 +931,7 @@ export default function TeesTeeSheetScreen() {
                       <Pressable
                         key={member.id}
                         onPress={() => {
-                          if (hasAccess) {
+                          if (canManageTeeSheet) {
                             const newSet = new Set(selectedPlayerIds);
                             if (isIncluded) {
                               newSet.delete(member.id);
@@ -879,7 +941,7 @@ export default function TeesTeeSheetScreen() {
                             setSelectedPlayerIds(newSet);
                           }
                         }}
-                        style={[styles.playerSelectRow, !hasAccess && styles.playerSelectRowReadOnly]}
+                        style={[styles.playerSelectRow, !canManageTeeSheet && styles.playerSelectRowReadOnly]}
                       >
                         <View style={styles.checkbox}>
                           {isIncluded && <View style={styles.checkmark} />}
@@ -899,7 +961,7 @@ export default function TeesTeeSheetScreen() {
                       <View key={guest.id} style={styles.guestRow}>
                         <Pressable
                           onPress={() => {
-                            if (hasAccess) {
+                            if (canManageTeeSheet) {
                               setGuests((prev) =>
                                 prev.map((g) =>
                                   g.id === guest.id ? { ...g, included: !g.included } : g
@@ -907,12 +969,12 @@ export default function TeesTeeSheetScreen() {
                               );
                             }
                           }}
-                          style={[styles.playerSelectRow, !hasAccess && styles.playerSelectRowReadOnly, { flex: 1 }]}
+                          style={[styles.playerSelectRow, !canManageTeeSheet && styles.playerSelectRowReadOnly, { flex: 1 }]}
                         >
                           <View style={styles.checkbox}>
                             {isIncluded && <View style={styles.checkmark} />}
                           </View>
-                          {hasAccess ? (
+                          {canManageTeeSheet ? (
                             <View>
                               <TextInput
                                 value={guest.name}
@@ -1009,7 +1071,7 @@ export default function TeesTeeSheetScreen() {
                   })}
                   
                   {/* Add Guest Button */}
-                  {hasAccess && (
+                  {canManageTeeSheet && (
                     <Pressable
                       onPress={() => setShowAddGuestModal(true)}
                       style={styles.addGuestButton}
@@ -1019,7 +1081,7 @@ export default function TeesTeeSheetScreen() {
                   )}
                   
                   {/* Save RSVP Button */}
-                  {hasAccess && selectedPlayerIds.size > 0 && (
+                  {canManageTeeSheet && selectedPlayerIds.size > 0 && (
                     <Pressable
                       onPress={handleSaveRsvps}
                       style={styles.saveRsvpButton}
@@ -1072,7 +1134,7 @@ export default function TeesTeeSheetScreen() {
                       <View>
                         <View style={styles.sectionHeader}>
                           <Text style={styles.sectionTitle}>Tee Times</Text>
-                          {hasAccess && (
+                          {canManageTeeSheet && (
                             <Pressable
                               onPress={() => setEditMode(!editMode)}
                               style={[styles.editModeButton, editMode && styles.editModeButtonActive]}
@@ -1128,7 +1190,7 @@ export default function TeesTeeSheetScreen() {
                                 <Text style={styles.teeGroupTime}>
                                   {timeStr} - Group {groupIdx + 1}
                                 </Text>
-                                {editMode && hasAccess && group.players.length === 0 && (
+                                {editMode && canManageTeeSheet && group.players.length === 0 && (
                                   <Pressable
                                     onPress={() => handleDeleteGroup(groupIdx)}
                                     style={styles.deleteGroupButton}
@@ -1166,7 +1228,7 @@ export default function TeesTeeSheetScreen() {
                                         HI: {player.handicap ?? "-"} | PH: {ph ?? "-"}
                                       </Text>
                                     </View>
-                                    {editMode && hasAccess && (
+                                    {editMode && canManageTeeSheet && (
                                       <View style={styles.playerEditActions}>
                                         <Pressable
                                           onPress={() => {
@@ -1220,7 +1282,7 @@ export default function TeesTeeSheetScreen() {
                         })}
 
                         {/* Add Group Button */}
-                        {editMode && hasAccess && (
+                        {editMode && canManageTeeSheet && (
                           <Pressable onPress={handleAddGroup} style={styles.addGroupButton}>
                             <Text style={styles.addGroupButtonText}>+ Add Group</Text>
                           </Pressable>

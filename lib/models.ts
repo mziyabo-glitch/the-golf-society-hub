@@ -29,6 +29,10 @@ export type MemberData = {
   handicap?: number;
   sex?: "male" | "female";
   roles?: string[];
+  // Payment fields (Treasurer-managed)
+  paid?: boolean;
+  amountPaid?: number;
+  paidDate?: string;
 };
 
 export type GuestData = {

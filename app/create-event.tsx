@@ -212,7 +212,7 @@ export default function CreateEventScreen() {
         {/* OOM Event Toggle */}
         <View style={{ marginBottom: 20 }}>
           <Text style={{ fontSize: 16, fontWeight: "600", marginBottom: 12 }}>
-            OOM Event?
+            Order of Merit Event?
           </Text>
           <Pressable
             onPress={() => setIsOOM(!isOOM)}
@@ -248,7 +248,7 @@ export default function CreateEventScreen() {
               )}
             </View>
             <Text style={{ fontSize: 16, color: "#111827" }}>
-              {isOOM ? "Yes, this is an OOM event" : "No, this is not an OOM event"}
+              {isOOM ? "Yes, this is an Order of Merit event" : "No, this is not an Order of Merit event"}
             </Text>
           </Pressable>
         </View>
