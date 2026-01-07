@@ -134,6 +134,7 @@ export type MemberData = {
   id: string;
   name: string;
   handicap?: number;
+  sex?: "male" | "female";
   roles?: string[];
 };
 

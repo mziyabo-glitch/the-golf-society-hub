@@ -88,6 +88,14 @@ export function canViewFinance(sessionRole: SessionRole, roles: MemberRole[]): b
   return roles.includes("Captain") || roles.includes("Treasurer");
 }
 
+/**
+ * Check if user can manage finance (set fees, mark payments) - Captain OR Treasurer
+ * Same as canViewFinance but with clearer name for write operations.
+ */
+export function canManageFinance(sessionRole: SessionRole, roles: MemberRole[]): boolean {
+  return canViewFinance(sessionRole, roles);
+}
+
 export function canEditVenueInfo(sessionRole: SessionRole, roles: MemberRole[]): boolean {
   if (sessionRole === "ADMIN") return true;
   return roles.includes("Captain") || roles.includes("Secretary");

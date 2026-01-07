@@ -69,3 +69,7 @@ Removed ALL references to `loadThemeFromStorage` from app screens.
 - For v1, static light theme is sufficient
 - All screens now use `getColors()` which returns the static light theme colors
 
+
+
+
+

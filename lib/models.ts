@@ -75,6 +75,15 @@ export type EventData = {
   playingHandicapSnapshot?: { [memberId: string]: number };
   rsvps?: { [memberId: string]: string };
   guests?: GuestData[];
+  // Event fee and payment tracking (Treasurer-managed)
+  eventFee?: number; // Competition fee for this event
+  payments?: {
+    [memberId: string]: {
+      paid: boolean;
+      paidAtISO?: string; // ISO date string
+      method?: "cash" | "bank" | "other";
+    };
+  };
   results?: {
     [memberId: string]: {
       grossScore: number;

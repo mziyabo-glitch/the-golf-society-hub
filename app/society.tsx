@@ -10,6 +10,7 @@
 
 import { InfoCard } from "@/components/ui/info-card";
 import { AppButton } from "@/components/ui/AppButton";
+import { PrimaryButton } from "@/components/ui/Button";
 import { SegmentedTabs } from "@/components/ui/SegmentedTabs";
 import { formatDateDDMMYYYY } from "@/utils/date";
 import {
@@ -296,10 +297,11 @@ export default function SocietyDashboardScreen() {
         <Text style={styles.emptyTitle}>No Society Found</Text>
         <Text style={styles.emptyText}>Create a society to get started</Text>
         <PrimaryButton
-          label="Create Society"
           onPress={() => router.push("/create-society")}
           style={styles.emptyButton}
-        />
+        >
+          Create Society
+        </PrimaryButton>
       </View>
     );
   }

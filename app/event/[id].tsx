@@ -5,12 +5,13 @@ import { useCallback, useState } from "react";
 import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 
 import { getCourseHandicap, getPlayingHandicap } from "@/lib/handicap";
-import type { Course, TeeSet } from "@/lib/models";
-import { canCreateEvents, canEditVenueInfo, canEnterScores, normalizeMemberRoles, normalizeSessionRole } from "@/lib/permissions";
+import type { Course, TeeSet, EventData as EventDataModel } from "@/lib/models";
+import { canCreateEvents, canEditVenueInfo, canEnterScores, canManageFinance, normalizeMemberRoles, normalizeSessionRole } from "@/lib/permissions";
 import { getCurrentUserRoles, hasManCoRole } from "@/lib/roles";
 import { getSession } from "@/lib/session";
 import { STORAGE_KEYS } from "@/lib/storage";
 import { formatDateDDMMYYYY } from "@/utils/date";
+import { DatePicker } from "@/components/DatePicker";
 
 const EVENTS_KEY = STORAGE_KEYS.EVENTS;
 const MEMBERS_KEY = STORAGE_KEYS.MEMBERS;
@@ -65,6 +66,15 @@ type EventData = {
       strokeplay?: number;
     };
   };
+  // Event fee and payment tracking (Treasurer-managed)
+  eventFee?: number; // Competition fee for this event
+  payments?: {
+    [memberId: string]: {
+      paid: boolean;
+      paidAtISO?: string; // ISO date string
+      method?: "cash" | "bank" | "other";
+    };
+  };
 };
 
 type MemberData = {
@@ -103,6 +113,9 @@ export default function EventDetailsScreen() {
   const [canEditEvent, setCanEditEvent] = useState(false);
   const [canEditVenue, setCanEditVenue] = useState(false);
   const [canEnterResults, setCanEnterResults] = useState(false);
+  const [canManageFinanceFlag, setCanManageFinanceFlag] = useState(false);
+  const [editingEventFee, setEditingEventFee] = useState(false);
+  const [eventFeeInput, setEventFeeInput] = useState<string>("");
   const [lockHandicaps, setLockHandicaps] = useState(false);
   const [courses, setCourses] = useState<Course[]>([]);
   const [selectedCourseId, setSelectedCourseId] = useState<string>("");
@@ -144,6 +157,9 @@ export default function EventDetailsScreen() {
           setSelectedFemaleTeeSetId(foundEvent.femaleTeeSetId || "");
           setHandicapAllowance(foundEvent.handicapAllowance || 1.0);
           setLockHandicaps(foundEvent.handicapSnapshot !== undefined && Object.keys(foundEvent.handicapSnapshot).length > 0);
+          
+          // Initialize event fee input
+          setEventFeeInput(foundEvent.eventFee?.toString() || "");
           
           // Load course and tee sets
           if (foundEvent.courseId) {
@@ -191,6 +207,7 @@ export default function EventDetailsScreen() {
       setCanEditEvent(canCreateEvents(sessionRole, roles)); // Captain/admin can edit event settings
       setCanEditVenue(canEditVenueInfo(sessionRole, roles)); // Secretary/captain/admin can edit venue
       setCanEnterResults(canEnterScores(sessionRole, roles)); // Captain/Secretary/Handicapper can enter results
+      setCanManageFinanceFlag(canManageFinance(sessionRole, roles)); // Captain/Treasurer can manage finance
     } catch (error) {
       console.error("Error loading data:", error);
     } finally {
@@ -311,6 +328,121 @@ export default function EventDetailsScreen() {
       setIsOOM(event.isOOM || false);
     }
     setIsEditing(false);
+  };
+
+  const handleSaveEventFee = async () => {
+    if (!event) return;
+
+    // Guard: must have permission
+    if (!canManageFinanceFlag) {
+      Alert.alert("Access Denied", "Only Captain or Treasurer can set event fees.");
+      return;
+    }
+
+    // Validate input
+    const feeValue = parseFloat(eventFeeInput.trim());
+    if (isNaN(feeValue) || feeValue < 0) {
+      Alert.alert("Invalid Input", "Event fee must be a number >= 0");
+      return;
+    }
+
+    try {
+      const eventsData = await AsyncStorage.getItem(EVENTS_KEY);
+      if (!eventsData) {
+        Alert.alert("Error", "Event not found");
+        return;
+      }
+
+      const events: EventData[] = JSON.parse(eventsData);
+      const updatedEvents = events.map((e) =>
+        e.id === event.id
+          ? {
+              ...e,
+              eventFee: feeValue > 0 ? feeValue : undefined, // Store undefined if 0
+            }
+          : e
+      );
+
+      await AsyncStorage.setItem(EVENTS_KEY, JSON.stringify(updatedEvents));
+
+      // Update local state
+      const updatedEvent = {
+        ...event,
+        eventFee: feeValue > 0 ? feeValue : undefined,
+      };
+      setEvent(updatedEvent);
+      setEditingEventFee(false);
+      
+      Alert.alert("Success", "Event fee updated successfully");
+    } catch (error) {
+      console.error("Error saving event fee:", error);
+      Alert.alert("Error", "Failed to save event fee");
+    }
+  };
+
+  const handleToggleEventPayment = async (memberId: string) => {
+    if (!event) return;
+
+    // Guard: must have permission
+    if (!canManageFinanceFlag) {
+      Alert.alert("Access Denied", "Only Captain or Treasurer can manage payments.");
+      return;
+    }
+
+    // Guard: must have event fee set
+    const eventFee = event.eventFee ?? 0;
+    if (eventFee === 0) {
+      Alert.alert("No Event Fee", "Please set an event fee first.");
+      return;
+    }
+
+    try {
+      const eventsData = await AsyncStorage.getItem(EVENTS_KEY);
+      if (!eventsData) {
+        Alert.alert("Error", "Event not found");
+        return;
+      }
+
+      const events: EventData[] = JSON.parse(eventsData);
+      const currentPayment = event.payments?.[memberId];
+      const newPaidStatus = !(currentPayment?.paid ?? false);
+      const nowISO = new Date().toISOString();
+
+      const updatedEvents = events.map((e) =>
+        e.id === event.id
+          ? {
+              ...e,
+              payments: {
+                ...(e.payments || {}),
+                [memberId]: {
+                  paid: newPaidStatus,
+                  paidAtISO: newPaidStatus ? nowISO : undefined,
+                  method: currentPayment?.method || "cash",
+                },
+              },
+            }
+          : e
+      );
+
+      await AsyncStorage.setItem(EVENTS_KEY, JSON.stringify(updatedEvents));
+
+      // Update local state
+      const updatedEvent = {
+        ...event,
+        payments: {
+          ...(event.payments || {}),
+          [memberId]: {
+            paid: newPaidStatus,
+            paidAtISO: newPaidStatus ? nowISO : undefined,
+            method: currentPayment?.method || "cash",
+          },
+        },
+      };
+      setEvent(updatedEvent);
+    } catch (error) {
+      console.error("Error toggling payment:", error);
+      Alert.alert("Error", "Failed to update payment status");
+    }
   };
 
   const handleRSVP = async (status: "going" | "maybe" | "no") => {
@@ -751,6 +883,122 @@ export default function EventDetailsScreen() {
                 <Text style={styles.fieldValue}>{event.isOOM ? "Yes" : "No"}</Text>
               </View>
             </View>
+
+            {/* Competition Fee Section */}
+            <View style={styles.card}>
+              <Text style={styles.cardTitle}>Competition Fee</Text>
+              {editingEventFee ? (
+                <View style={styles.field}>
+                  <Text style={styles.fieldLabel}>Event Fee (£)</Text>
+                  <TextInput
+                    value={eventFeeInput}
+                    onChangeText={setEventFeeInput}
+                    placeholder="0.00"
+                    keyboardType="decimal-pad"
+                    style={styles.input}
+                  />
+                  <View style={{ flexDirection: "row", gap: 8, marginTop: 8 }}>
+                    <Pressable onPress={handleSaveEventFee} style={styles.primaryButton}>
+                      <Text style={styles.buttonText}>Save</Text>
+                    </Pressable>
+                    <Pressable
+                      onPress={() => {
+                        setEditingEventFee(false);
+                        setEventFeeInput(event.eventFee?.toString() || "");
+                      }}
+                      style={styles.secondaryButton}
+                    >
+                      <Text style={styles.buttonText}>Cancel</Text>
+                    </Pressable>
+                  </View>
+                </View>
+              ) : (
+                <View style={styles.field}>
+                  <Text style={styles.fieldLabel}>Event Fee</Text>
+                  <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+                    <Text style={styles.fieldValue}>
+                      {event.eventFee !== undefined && event.eventFee > 0 ? `£${event.eventFee.toFixed(2)}` : "No fee set"}
+                    </Text>
+                    {canManageFinanceFlag && (
+                      <Pressable
+                        onPress={() => {
+                          setEditingEventFee(true);
+                          setEventFeeInput(event.eventFee?.toString() || "");
+                        }}
+                        style={styles.editButton}
+                      >
+                        <Text style={styles.editButtonText}>{event.eventFee !== undefined && event.eventFee > 0 ? "Edit" : "Set Fee"}</Text>
+                      </Pressable>
+                    )}
+                  </View>
+                </View>
+              )}
+            </View>
+
+            {/* Event Payments Section */}
+            {event.eventFee !== undefined && event.eventFee > 0 && (
+              <View style={styles.card}>
+                <Text style={styles.cardTitle}>Event Payments</Text>
+                {(() => {
+                  // Get event participants (players or RSVP going)
+                  const playerIds = event.playerIds || [];
+                  const rsvpGoing = event.rsvps
+                    ? Object.entries(event.rsvps)
+                        .filter(([_, status]) => status === "going")
+                        .map(([memberId]) => memberId)
+                    : [];
+                  const participantIds = Array.from(new Set([...playerIds, ...rsvpGoing]));
+                  const participants = members.filter((m) => participantIds.includes(m.id));
+                  const safeParticipants = Array.isArray(participants) ? participants : [];
+
+                  if (safeParticipants.length === 0) {
+                    return <Text style={styles.emptyText}>No participants yet</Text>;
+                  }
+
+                  return (
+                    <View style={styles.paymentList}>
+                      {safeParticipants.map((member) => {
+                        const payment = event.payments?.[member.id];
+                        const isPaid = payment?.paid ?? false;
+                        const paidDate = payment?.paidAtISO ? new Date(payment.paidAtISO).toLocaleDateString() : null;
+
+                        return (
+                          <View key={member.id} style={[styles.paymentRow, { borderBottomColor: "#e5e7eb" }]}>
+                            <View style={{ flex: 1 }}>
+                              <Text style={styles.paymentMemberName}>{member.name}</Text>
+                              <Text style={styles.paymentAmount}>£{(event.eventFee || 0).toFixed(2)}</Text>
+                              {paidDate && (
+                                <Text style={styles.paymentDate}>Paid: {paidDate}</Text>
+                              )}
+                            </View>
+                            {canManageFinanceFlag ? (
+                              <Pressable
+                                onPress={() => handleToggleEventPayment(member.id)}
+                                style={[
+                                  styles.paymentButton,
+                                  isPaid ? { backgroundColor: "#10b981" } : { backgroundColor: "#ef4444" },
+                                ]}
+                              >
+                                <Text style={styles.paymentButtonText}>{isPaid ? "Paid" : "Unpaid"}</Text>
+                              </Pressable>
+                            ) : (
+                              <View
+                                style={[
+                                  styles.paymentBadge,
+                                  isPaid ? { backgroundColor: "#10b981" } : { backgroundColor: "#ef4444" },
+                                ]}
+                              >
+                                <Text style={styles.paymentButtonText}>{isPaid ? "Paid" : "Unpaid"}</Text>
+                              </View>
+                            )}
+                          </View>
+                        );
+                      })}
+                    </View>
+                  );
+                })()}
+              </View>
+            )}
 
             {/* RSVP Section */}
             {currentUserId && !event.isCompleted && (
@@ -1698,6 +1946,51 @@ const styles = StyleSheet.create({
   },
   allowanceButtonTextActive: {
     color: "#0B6E4F",
+  },
+  paymentList: {
+    marginTop: 8,
+  },
+  paymentRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingVertical: 12,
+    paddingHorizontal: 0,
+    borderBottomWidth: 1,
+  },
+  paymentMemberName: {
+    fontSize: 16,
+    fontWeight: "600",
+    color: "#111827",
+    marginBottom: 4,
+  },
+  paymentAmount: {
+    fontSize: 14,
+    color: "#6b7280",
+    marginBottom: 2,
+  },
+  paymentDate: {
+    fontSize: 12,
+    color: "#9ca3af",
+  },
+  paymentButton: {
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    minWidth: 80,
+    alignItems: "center",
+  },
+  paymentBadge: {
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    minWidth: 80,
+    alignItems: "center",
+  },
+  paymentButtonText: {
+    color: "white",
+    fontSize: 14,
+    fontWeight: "600",
   },
 });
 

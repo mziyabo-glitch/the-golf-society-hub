@@ -26,7 +26,7 @@ export type MemberData = {
   id: string;
   name: string;
   handicap?: number;
-  roles?: MemberRole[]; // Array of roles (member can have multiple)
+  roles?: string[]; // Array of roles (member can have multiple) - using string[] for compatibility
 };
 
 /**
@@ -148,7 +148,7 @@ export async function getCurrentMember(): Promise<MemberData | null> {
 /**
  * Get current user's roles
  */
-export async function getCurrentUserRoles(): Promise<MemberRole[]> {
+export async function getCurrentUserRoles(): Promise<string[]> {
   const member = await getCurrentMember();
   if (!member) return ["member"];
   return member.roles && member.roles.length > 0 ? member.roles : ["member"];

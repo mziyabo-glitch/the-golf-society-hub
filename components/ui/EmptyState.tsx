@@ -22,7 +22,7 @@ type EmptyStateProps = {
 
 export function EmptyState({ title, message, action, style }: EmptyStateProps) {
   return (
-    <AppCard style={[styles.container, style]}>
+    <AppCard style={style ? StyleSheet.flatten([styles.container, style]) : styles.container}>
       <View style={styles.content}>
         <AppText variant="h2" style={styles.title}>
           {title}
@@ -63,4 +63,5 @@ const styles = StyleSheet.create({
     maxWidth: 300,
   },
 });
+
 

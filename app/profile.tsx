@@ -9,7 +9,7 @@
  * - Close/reopen app, verify profile persists
  */
 
-import { getCurrentUserRoles, MemberRole } from "@/lib/roles";
+import { getCurrentUserRoles } from "@/lib/roles";
 import { getSession, setRole } from "@/lib/session";
 import { STORAGE_KEYS } from "@/lib/storage";
 import AsyncStorage from "@react-native-async-storage/async-storage";
@@ -17,14 +17,19 @@ import { useFocusEffect } from "@react-navigation/native";
 import { router } from "expo-router";
 import { useCallback, useState } from "react";
 import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import type { EventData } from "@/lib/models";
 
 const MEMBERS_KEY = STORAGE_KEYS.MEMBERS;
+const EVENTS_KEY = STORAGE_KEYS.EVENTS;
 
 type MemberData = {
   id: string;
   name: string;
   handicap?: number;
   sex?: "male" | "female";
+  paid?: boolean;
+  amountPaid?: number;
+  paidDate?: string;
 };
 
 export default function ProfileScreen() {
@@ -37,7 +42,8 @@ export default function ProfileScreen() {
   const [editSex, setEditSex] = useState<"male" | "female" | "">("");
   const [isEditing, setIsEditing] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [userRoles, setUserRoles] = useState<MemberRole[]>([]);
+  const [userRoles, setUserRoles] = useState<string[]>([]);
+  const [upcomingEventsWithFees, setUpcomingEventsWithFees] = useState<EventData[]>([]);
 
   useFocusEffect(
     useCallback(() => {
@@ -82,6 +88,20 @@ export default function ProfileScreen() {
         }
       } else {
         setCurrentMember(null);
+      }
+
+      // Load upcoming events with fees
+      const eventsData = await AsyncStorage.getItem(EVENTS_KEY);
+      if (eventsData) {
+        const allEvents: EventData[] = JSON.parse(eventsData);
+        const now = new Date();
+        const upcoming = allEvents
+          .filter((e) => {
+            const eventDate = new Date(e.date);
+            return eventDate >= now && !e.isCompleted && e.eventFee && e.eventFee > 0;
+          })
+          .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+        setUpcomingEventsWithFees(upcoming);
       }
     } catch (error) {
       console.error("Error loading data:", error);
@@ -294,6 +314,70 @@ export default function ProfileScreen() {
               )}
               <Text style={styles.roleNote}>
                 Roles are assigned by Captain/Admin in Settings → Roles
+              </Text>
+            </View>
+
+            {/* Payment Status Section */}
+            <View style={styles.roleSection}>
+              <Text style={styles.roleLabel}>Payment Status</Text>
+              
+              {/* Season Fee Status */}
+              <View style={styles.paymentItem}>
+                <Text style={styles.paymentLabel}>Season Fee:</Text>
+                <View style={[
+                  styles.paymentStatusBadge,
+                  { backgroundColor: currentMember?.paid ? "#d1fae5" : "#fee2e2" }
+                ]}>
+                  <Text style={[
+                    styles.paymentStatusText,
+                    { color: currentMember?.paid ? "#065f46" : "#991b1b" }
+                  ]}>
+                    {currentMember?.paid ? "Paid" : "Unpaid"}
+                  </Text>
+                </View>
+                {currentMember?.paidDate && (
+                  <Text style={styles.paymentDate}>Paid: {currentMember.paidDate}</Text>
+                )}
+                {currentMember?.amountPaid !== undefined && currentMember.amountPaid > 0 && (
+                  <Text style={styles.paymentAmount}>Amount: £{currentMember.amountPaid.toFixed(2)}</Text>
+                )}
+              </View>
+
+              {/* Event Fee Status */}
+              {upcomingEventsWithFees.length > 0 && (
+                <View style={styles.paymentItem}>
+                  <Text style={styles.paymentLabel}>Competition Fees:</Text>
+                  {upcomingEventsWithFees.map((event) => {
+                    const paymentStatus = event.payments?.[currentMember?.id || ""];
+                    const isPaid = paymentStatus?.paid ?? false;
+                    return (
+                      <View key={event.id} style={styles.eventPaymentItem}>
+                        <Text style={styles.eventName}>{event.name}</Text>
+                        <Text style={styles.eventFee}>Fee: £{event.eventFee?.toFixed(2)}</Text>
+                        <View style={[
+                          styles.paymentStatusBadge,
+                          { backgroundColor: isPaid ? "#d1fae5" : "#fee2e2" }
+                        ]}>
+                          <Text style={[
+                            styles.paymentStatusText,
+                            { color: isPaid ? "#065f46" : "#991b1b" }
+                          ]}>
+                            {isPaid ? "Paid" : "Unpaid"}
+                          </Text>
+                        </View>
+                        {paymentStatus?.paidAtISO && (
+                          <Text style={styles.paymentDate}>
+                            Paid: {new Date(paymentStatus.paidAtISO).toLocaleDateString()}
+                          </Text>
+                        )}
+                      </View>
+                    );
+                  })}
+                </View>
+              )}
+
+              <Text style={styles.roleNote}>
+                Payment status is managed by Captain or Treasurer
               </Text>
             </View>
 
@@ -590,6 +674,53 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: "#6b7280",
     fontStyle: "italic",
+  },
+  paymentItem: {
+    marginBottom: 16,
+  },
+  paymentLabel: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: "#111827",
+    marginBottom: 8,
+  },
+  paymentStatusBadge: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 6,
+    alignSelf: "flex-start",
+    marginBottom: 4,
+  },
+  paymentStatusText: {
+    fontSize: 12,
+    fontWeight: "600",
+  },
+  paymentDate: {
+    fontSize: 12,
+    color: "#6b7280",
+    marginTop: 4,
+  },
+  paymentAmount: {
+    fontSize: 12,
+    color: "#6b7280",
+    marginTop: 2,
+  },
+  eventPaymentItem: {
+    marginTop: 12,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: "#e5e7eb",
+  },
+  eventName: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: "#111827",
+    marginBottom: 4,
+  },
+  eventFee: {
+    fontSize: 12,
+    color: "#6b7280",
+    marginBottom: 4,
   },
   // TODO: Re-enable PIN-related styles when PIN requirement is restored
   // pinSection: {

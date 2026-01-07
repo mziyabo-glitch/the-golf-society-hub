@@ -18,9 +18,11 @@ import { AppCard } from "@/components/ui/AppCard";
 import { getColors, spacing, typography } from "@/lib/ui/theme";
 import * as Print from "expo-print";
 import * as Sharing from "expo-sharing";
+import type { EventData } from "@/lib/models";
 
 const MEMBERS_KEY = STORAGE_KEYS.MEMBERS;
 const SOCIETY_KEY = STORAGE_KEYS.SOCIETY_ACTIVE;
+const EVENTS_KEY = STORAGE_KEYS.EVENTS;
 
 type MemberData = {
   id: string;
@@ -45,6 +47,7 @@ export default function FinanceScreen() {
   const [editingMemberId, setEditingMemberId] = useState<string | null>(null);
   const [editAmount, setEditAmount] = useState<string>("");
   const [editPaidDate, setEditPaidDate] = useState<string>("");
+  const [events, setEvents] = useState<EventData[]>([]);
 
   useFocusEffect(
     useCallback(() => {
@@ -76,6 +79,13 @@ export default function FinanceScreen() {
         const loaded: SocietyData = JSON.parse(societyData);
         setSociety(loaded);
         setAnnualFee(loaded.annualFee?.toString() || "");
+      }
+
+      // Load events for event fees summary
+      const eventsData = await AsyncStorage.getItem(EVENTS_KEY);
+      if (eventsData) {
+        const loaded: EventData[] = JSON.parse(eventsData);
+        setEvents(loaded);
       }
     } catch (error) {
       console.error("Error loading finance data:", error);
@@ -137,6 +147,27 @@ export default function FinanceScreen() {
   const expected = (society?.annualFee || 0) * activeMembers.length;
   const received = members.reduce((sum, m) => sum + (m.amountPaid || 0), 0);
   const outstanding = expected - received;
+
+  // Calculate event fees summary
+  const now = new Date();
+  const upcomingEvents = events.filter((e) => {
+    const eventDate = new Date(e.date);
+    return eventDate >= now && !e.isCompleted && e.eventFee && e.eventFee > 0;
+  });
+
+  const eventFeesExpected = upcomingEvents.reduce((sum, event) => {
+    const participants = event.playerIds?.length || members.length; // Use playerIds if available, otherwise all members
+    return sum + (event.eventFee || 0) * participants;
+  }, 0);
+
+  const eventFeesReceived = upcomingEvents.reduce((sum, event) => {
+    if (!event.payments) return sum;
+    return sum + Object.values(event.payments).reduce((eventSum, payment) => {
+      return eventSum + (payment.paid ? (event.eventFee || 0) : 0);
+    }, 0);
+  }, 0);
+
+  const eventFeesOutstanding = eventFeesExpected - eventFeesReceived;
 
   const handleExport = async () => {
     try {
@@ -299,7 +330,10 @@ export default function FinanceScreen() {
               <AppText variant="caption" color="secondary">
                 Received
               </AppText>
-              <AppText variant="h2" style={[styles.totalValue, { color: colors.success }]}>
+              <AppText 
+                variant="h2" 
+                style={StyleSheet.flatten([styles.totalValue, { color: colors.success }])}
+              >
                 £{received.toFixed(2)}
               </AppText>
             </View>
@@ -307,12 +341,90 @@ export default function FinanceScreen() {
               <AppText variant="caption" color="secondary">
                 Outstanding
               </AppText>
-              <AppText variant="h2" style={[styles.totalValue, { color: outstanding > 0 ? colors.error : colors.success }]}>
+              <AppText 
+                variant="h2" 
+                style={StyleSheet.flatten([styles.totalValue, { color: outstanding > 0 ? colors.error : colors.success }])}
+              >
                 £{outstanding.toFixed(2)}
               </AppText>
             </View>
           </View>
         </AppCard>
+
+        {/* Event Fees Summary */}
+        {upcomingEvents.length > 0 && (
+          <AppCard style={styles.section}>
+            <AppText variant="h2" style={styles.sectionTitle}>
+              Event Fees Summary
+            </AppText>
+            <View style={styles.totalsGrid}>
+              <View style={styles.totalItem}>
+                <AppText variant="caption" color="secondary">
+                  Expected
+                </AppText>
+                <AppText variant="h2" style={styles.totalValue}>
+                  £{eventFeesExpected.toFixed(2)}
+                </AppText>
+              </View>
+              <View style={styles.totalItem}>
+                <AppText variant="caption" color="secondary">
+                  Received
+                </AppText>
+                <AppText 
+                  variant="h2" 
+                  style={StyleSheet.flatten([styles.totalValue, { color: colors.success }])}
+                >
+                  £{eventFeesReceived.toFixed(2)}
+                </AppText>
+              </View>
+              <View style={styles.totalItem}>
+                <AppText variant="caption" color="secondary">
+                  Outstanding
+                </AppText>
+                <AppText 
+                  variant="h2" 
+                  style={StyleSheet.flatten([styles.totalValue, { color: eventFeesOutstanding > 0 ? colors.error : colors.success }])}
+                >
+                  £{eventFeesOutstanding.toFixed(2)}
+                </AppText>
+              </View>
+            </View>
+            <View style={styles.eventsList}>
+              {upcomingEvents.map((event) => {
+                const eventParticipants = event.playerIds?.length || members.length;
+                const eventExpected = (event.eventFee || 0) * eventParticipants;
+                const eventReceived = event.payments
+                  ? Object.values(event.payments).reduce((sum, payment) => sum + (payment.paid ? (event.eventFee || 0) : 0), 0)
+                  : 0;
+                const eventOutstanding = eventExpected - eventReceived;
+                return (
+                  <View key={event.id} style={[styles.eventRow, { borderBottomColor: colors.border }]}>
+                    <View style={styles.eventInfo}>
+                      <AppText variant="bodyBold">{event.name}</AppText>
+                      <AppText variant="caption" color="secondary">
+                        {new Date(event.date).toLocaleDateString()} • £{(event.eventFee || 0).toFixed(2)} per person
+                      </AppText>
+                    </View>
+                    <View style={styles.eventAmounts}>
+                      <AppText variant="caption" color="secondary">
+                        Expected: £{eventExpected.toFixed(2)}
+                      </AppText>
+                      <AppText variant="caption" color="secondary">
+                        Received: £{eventReceived.toFixed(2)}
+                      </AppText>
+                      <AppText 
+                        variant="caption" 
+                        style={{ color: eventOutstanding > 0 ? colors.error : colors.success }}
+                      >
+                        Outstanding: £{eventOutstanding.toFixed(2)}
+                      </AppText>
+                    </View>
+                  </View>
+                );
+              })}
+            </View>
+          </AppCard>
+        )}
 
         {/* Member Payments */}
         <AppCard style={styles.section}>
@@ -571,6 +683,23 @@ const styles = StyleSheet.create({
   emptyText: {
     textAlign: "center",
     padding: spacing.xl,
+  },
+  eventsList: {
+    marginTop: spacing.base,
+  },
+  eventRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    paddingVertical: spacing.base,
+    borderBottomWidth: 1,
+  },
+  eventInfo: {
+    flex: 1,
+    marginRight: spacing.base,
+  },
+  eventAmounts: {
+    alignItems: "flex-end",
   },
   backButton: {
     paddingVertical: spacing.base,
