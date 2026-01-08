@@ -56,3 +56,12 @@ export function calculatePlayingHandicapFromIndex(
 
 
 
+
+
+
+
+
+
+
+
+

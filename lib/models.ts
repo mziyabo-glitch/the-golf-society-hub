@@ -84,6 +84,10 @@ export type EventData = {
       method?: "cash" | "bank" | "other";
     };
   };
+  // Tee Sheet enhancements
+  teeSheetNotes?: string; // Free text notes shown on tee sheet + PDF
+  nearestToPinHoles?: number[]; // Array of hole numbers (1-18) for Nearest to Pin
+  longestDriveHoles?: number[]; // Array of hole numbers (1-18) for Longest Drive
   results?: {
     [memberId: string]: {
       grossScore: number;

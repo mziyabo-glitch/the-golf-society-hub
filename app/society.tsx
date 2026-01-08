@@ -10,7 +10,7 @@
 
 import { InfoCard } from "@/components/ui/info-card";
 import { AppButton } from "@/components/ui/AppButton";
-import { PrimaryButton } from "@/components/ui/Button";
+import { PrimaryButton, SecondaryButton } from "@/components/ui/Button";
 import { SegmentedTabs } from "@/components/ui/SegmentedTabs";
 import { formatDateDDMMYYYY } from "@/utils/date";
 import {
@@ -29,7 +29,12 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useFocusEffect } from "@react-navigation/native";
 import { router } from "expo-router";
 import { useCallback, useState } from "react";
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, Pressable, StyleSheet, View } from "react-native";
+import { Screen } from "@/components/ui/Screen";
+import { AppText } from "@/components/ui/AppText";
+import { AppCard } from "@/components/ui/AppCard";
+import { SectionHeader } from "@/components/ui/SectionHeader";
+import { getColors, spacing } from "@/lib/ui/theme";
 
 const STORAGE_KEY = STORAGE_KEYS.SOCIETY_ACTIVE;
 const EVENTS_KEY = STORAGE_KEYS.EVENTS;
@@ -43,6 +48,7 @@ type SocietyData = {
   country: string;
   scoringMode: "Stableford" | "Strokeplay" | "Both";
   handicapRule: "Allow WHS" | "Fixed HCP" | "No HCP";
+  logoUrl?: string | null;
 };
 
 type EventData = {
@@ -283,26 +289,32 @@ export default function SocietyDashboardScreen() {
     };
   };
 
+  const colors = getColors();
+
   if (loading) {
     return (
-      <View style={[styles.container, styles.centerContent]}>
-        <ActivityIndicator size="large" color="#0B6E4F" />
-      </View>
+      <Screen scrollable={false}>
+        <View style={styles.centerContent}>
+          <ActivityIndicator size="large" color={colors.primary} />
+        </View>
+      </Screen>
     );
   }
 
   if (!society) {
     return (
-      <View style={[styles.container, styles.centerContent]}>
-        <Text style={styles.emptyTitle}>No Society Found</Text>
-        <Text style={styles.emptyText}>Create a society to get started</Text>
+      <Screen>
+        <AppText variant="h1">No Society Found</AppText>
+        <AppText variant="body" color="secondary" style={styles.emptyText}>
+          Create a society to get started
+        </AppText>
         <PrimaryButton
           onPress={() => router.push("/create-society")}
           style={styles.emptyButton}
         >
           Create Society
         </PrimaryButton>
-      </View>
+      </Screen>
     );
   }
 
@@ -313,40 +325,38 @@ export default function SocietyDashboardScreen() {
   const isAdmin = role === "admin";
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.contentContainer}>
-      <View style={styles.content}>
-        <View style={styles.header}>
+    <Screen>
+        <AppCard style={styles.headerCard}>
           <View style={styles.headerTop}>
             <View style={styles.headerContent}>
-              <Text style={styles.societyName}>{society.name}</Text>
+              <AppText variant="title">{society.name}</AppText>
               {currentMember ? (
-                <Text style={styles.userIndicator}>
+                <AppText variant="small" color="secondary" style={styles.userIndicator}>
                   {currentMember.name} {userRoles.length > 0 && userRoles.filter(r => r !== "member").length > 0 
                     ? `(${userRoles.filter(r => r !== "member").map(r => r.charAt(0).toUpperCase() + r.slice(1)).join(", ")})`
                     : `(${role})`}
-                </Text>
+                </AppText>
               ) : (
                 <Pressable
                   onPress={() => router.push("/profile" as any)}
                   style={styles.selectProfileButton}
                 >
-                  <Text style={styles.selectProfileButtonText}>
+                  <AppText variant="small" style={styles.selectProfileButtonText}>
                     Select your profile →
-                  </Text>
+                  </AppText>
                 </Pressable>
               )}
             </View>
             {currentMember && (
-              <Pressable
+              <SecondaryButton
                 onPress={() => router.push("/profile" as any)}
-                style={styles.profileButton}
+                size="sm"
               >
-                <Text style={styles.profileButtonText}>Profile</Text>
-              </Pressable>
+                Profile
+              </SecondaryButton>
             )}
           </View>
-          <View style={styles.divider} />
-        </View>
+        </AppCard>
 
         {canCreateEventsRole && (
           <AppButton
@@ -379,141 +389,156 @@ export default function SocietyDashboardScreen() {
           }}
         />
 
-        <View style={styles.eventsSection}>
-          <Text style={styles.sectionLabel}>Next Event</Text>
-          {nextEvent ? (
-            <InfoCard
-              title={nextEvent.name}
-              subtitle={formatDateDDMMYYYY(nextEvent.date)}
-              detail={
-                (() => {
-                  const rsvps = nextEvent.rsvps || {};
-                  const going = Object.values(rsvps).filter((r) => r === "going").length;
-                  const maybe = Object.values(rsvps).filter((r) => r === "maybe").length;
-                  const notGoing = Object.values(rsvps).filter((r) => r === "no").length;
-                  const rsvpText = going > 0 || maybe > 0 || notGoing > 0 
-                    ? `RSVP: ${going} going, ${maybe} maybe, ${notGoing} not going` 
-                    : undefined;
-                  return rsvpText || (nextEvent.playerIds && nextEvent.playerIds.length > 0
-                    ? `Players: ${nextEvent.playerIds.length}`
-                    : nextEvent.courseName || undefined);
-                })()
-              }
-              ctaLabel={isAdmin ? "View / Edit" : "View"}
-              onPress={() => router.push(`/event/${nextEvent.id}` as any)}
-            />
-          ) : (
-            <InfoCard
-              title="No upcoming event"
-              subtitle={canCreateEventsRole 
+        <SectionHeader title="Next Event" />
+        {nextEvent ? (
+          <AppCard style={styles.eventCard}>
+            <Pressable onPress={() => router.push(`/event/${nextEvent.id}` as any)}>
+              <AppText variant="h2" style={styles.eventTitle}>{nextEvent.name}</AppText>
+              <AppText variant="body" color="secondary" style={styles.eventSubtitle}>
+                {formatDateDDMMYYYY(nextEvent.date)}
+              </AppText>
+              {(() => {
+                const rsvps = nextEvent.rsvps || {};
+                const going = Object.values(rsvps).filter((r) => r === "going").length;
+                const maybe = Object.values(rsvps).filter((r) => r === "maybe").length;
+                const notGoing = Object.values(rsvps).filter((r) => r === "no").length;
+                const rsvpText = going > 0 || maybe > 0 || notGoing > 0 
+                  ? `RSVP: ${going} going, ${maybe} maybe, ${notGoing} not going` 
+                  : undefined;
+                const detail = rsvpText || (nextEvent.playerIds && nextEvent.playerIds.length > 0
+                  ? `Players: ${nextEvent.playerIds.length}`
+                  : nextEvent.courseName || undefined);
+                return detail ? (
+                  <AppText variant="small" color="secondary" style={styles.eventDetail}>
+                    {detail}
+                  </AppText>
+                ) : null;
+              })()}
+              <SecondaryButton
+                onPress={() => router.push(`/event/${nextEvent.id}` as any)}
+                size="sm"
+                style={styles.eventButton}
+              >
+                {isAdmin ? "View / Edit" : "View"}
+              </SecondaryButton>
+            </Pressable>
+          </AppCard>
+        ) : (
+          <AppCard style={styles.eventCard}>
+            <AppText variant="body" color="secondary" style={styles.emptyText}>
+              {canCreateEventsRole 
                 ? "Tap Create Event to schedule your next society day"
                 : "Ask your Captain or Secretary to create an event"}
-              emptyState
-            />
-          )}
-        </View>
+            </AppText>
+          </AppCard>
+        )}
 
-        <View style={styles.eventsSection}>
-          <Text style={styles.sectionLabel}>Last Event</Text>
-          {lastEvent ? (
-            <InfoCard
-              title={lastEvent.name}
-              subtitle={formatDateDDMMYYYY(lastEvent.date)}
-              detail={
-                lastEvent.winnerName
-                  ? `Winner: ${lastEvent.winnerName}`
-                  : lastWinner
-                    ? `Winner: ${lastWinner.memberName}`
-                    : lastEvent.courseName || undefined
-              }
-              ctaLabel="View Summary"
-              onPress={() => router.push(`/event/${lastEvent.id}` as any)}
-            />
-          ) : (
-            <InfoCard
-              title="No events yet"
-              subtitle="Your completed events will appear here"
-              emptyState
-            />
-          )}
-        </View>
+        <SectionHeader title="Last Event" style={styles.sectionHeader} />
+        {lastEvent ? (
+          <AppCard style={styles.eventCard}>
+            <Pressable onPress={() => router.push(`/event/${lastEvent.id}` as any)}>
+              <AppText variant="h2" style={styles.eventTitle}>{lastEvent.name}</AppText>
+              <AppText variant="body" color="secondary" style={styles.eventSubtitle}>
+                {formatDateDDMMYYYY(lastEvent.date)}
+              </AppText>
+              {(lastEvent.winnerName || lastWinner) && (
+                <AppText variant="small" color="secondary" style={styles.eventDetail}>
+                  Winner: {lastEvent.winnerName || lastWinner?.memberName}
+                </AppText>
+              )}
+              <SecondaryButton
+                onPress={() => router.push(`/event/${lastEvent.id}` as any)}
+                size="sm"
+                style={styles.eventButton}
+              >
+                View Summary
+              </SecondaryButton>
+            </Pressable>
+          </AppCard>
+        ) : (
+          <AppCard style={styles.eventCard}>
+            <AppText variant="body" color="secondary" style={styles.emptyText}>
+              Your completed events will appear here
+            </AppText>
+          </AppCard>
+        )}
 
         {/* ManCo Tools Section */}
         {isManCo && (
-          <View style={styles.mancoSection}>
-            <Text style={styles.sectionLabel}>ManCo Tools</Text>
+          <>
+            <SectionHeader title="ManCo Tools" style={styles.sectionHeader} />
             <View style={styles.mancoGrid}>
               {canViewFinanceRole && (
-                <Pressable
-                  onPress={() => router.push("/finance" as any)}
-                  style={styles.mancoTile}
-                >
-                  <Text style={styles.mancoTileTitle}>Finance</Text>
-                  <Text style={styles.mancoTileSubtitle}>Treasurer tools</Text>
-                </Pressable>
+                <AppCard style={styles.mancoTile}>
+                  <Pressable
+                    onPress={() => router.push("/finance" as any)}
+                    style={styles.mancoTilePressable}
+                  >
+                    <AppText variant="bodyBold">Finance</AppText>
+                    <AppText variant="small" color="secondary">Treasurer tools</AppText>
+                  </Pressable>
+                </AppCard>
               )}
               {canEditVenueRole && (
-                <Pressable
-                  onPress={() => router.push("/venue-info" as any)}
-                  style={styles.mancoTile}
-                >
-                  <Text style={styles.mancoTileTitle}>Venue Info</Text>
-                  <Text style={styles.mancoTileSubtitle}>Edit venues</Text>
-                </Pressable>
+                <AppCard style={styles.mancoTile}>
+                  <Pressable
+                    onPress={() => router.push("/venue-info" as any)}
+                    style={styles.mancoTilePressable}
+                  >
+                    <AppText variant="bodyBold">Venue Info</AppText>
+                    <AppText variant="small" color="secondary">Edit venues</AppText>
+                  </Pressable>
+                </AppCard>
               )}
               {canEditHandicapsRole && (
-                <Pressable
-                  onPress={() => router.push("/handicaps" as any)}
-                  style={styles.mancoTile}
-                >
-                  <Text style={styles.mancoTileTitle}>Handicaps</Text>
-                  <Text style={styles.mancoTileSubtitle}>Manage handicaps</Text>
-                </Pressable>
+                <AppCard style={styles.mancoTile}>
+                  <Pressable
+                    onPress={() => router.push("/handicaps" as any)}
+                    style={styles.mancoTilePressable}
+                  >
+                    <AppText variant="bodyBold">Handicaps</AppText>
+                    <AppText variant="small" color="secondary">Manage handicaps</AppText>
+                  </Pressable>
+                </AppCard>
               )}
               {canEditHandicapsRole && (
-                <Pressable
-                  onPress={() => router.push("/leaderboard" as any)}
-                  style={styles.mancoTile}
-                >
-                  <Text style={styles.mancoTileTitle}>Order of Merit / Leaderboard</Text>
-                  <Text style={styles.mancoTileSubtitle}>View standings</Text>
-                </Pressable>
+                <AppCard style={styles.mancoTile}>
+                  <Pressable
+                    onPress={() => router.push("/leaderboard" as any)}
+                    style={styles.mancoTilePressable}
+                  >
+                    <AppText variant="bodyBold">Order of Merit / Leaderboard</AppText>
+                    <AppText variant="small" color="secondary">View standings</AppText>
+                  </Pressable>
+                </AppCard>
               )}
               {canEditHandicapsRole && (
-                <Pressable
-                  onPress={() => router.push("/tees-teesheet" as any)}
-                  style={styles.mancoTile}
-                >
-                  <Text style={styles.mancoTileTitle}>Tees & Tee Sheet</Text>
-                  <Text style={styles.mancoTileSubtitle}>Manage tees & schedule</Text>
-                </Pressable>
+                <AppCard style={styles.mancoTile}>
+                  <Pressable
+                    onPress={() => router.push("/tees-teesheet" as any)}
+                    style={styles.mancoTilePressable}
+                  >
+                    <AppText variant="bodyBold">Tees & Tee Sheet</AppText>
+                    <AppText variant="small" color="secondary">Manage tees & schedule</AppText>
+                  </Pressable>
+                </AppCard>
               )}
             </View>
-          </View>
+          </>
         )}
 
-        <Pressable
+        <SecondaryButton
           onPress={() => router.push("/leaderboard" as any)}
           style={styles.leaderboardButton}
         >
-          <Text style={styles.leaderboardButtonText}>Season Leaderboard</Text>
-        </Pressable>
-      </View>
-    </ScrollView>
+          Season Leaderboard
+        </SecondaryButton>
+    </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: "#f9fafb",
-  },
-  contentContainer: {
-    flexGrow: 1,
-  },
   content: {
-    flex: 1,
-    padding: 24,
     maxWidth: 600,
     alignSelf: "center",
     width: "100%",
@@ -522,94 +547,76 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
   },
-  header: {
-    marginBottom: 28,
-    marginTop: 8,
+  headerCard: {
+    marginBottom: spacing.lg,
+    marginTop: spacing.xs,
   },
   headerTop: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "flex-start",
-    marginBottom: 12,
   },
   headerContent: {
     flex: 1,
-  },
-  societyName: {
-    fontSize: 32,
-    fontWeight: "800",
-    color: "#111827",
-    letterSpacing: -0.5,
-    marginBottom: 4,
+    marginRight: spacing.md,
   },
   userIndicator: {
-    fontSize: 14,
-    color: "#6b7280",
-    fontWeight: "500",
-  },
-  profileButton: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 8,
-    backgroundColor: "#f3f4f6",
-  },
-  profileButtonText: {
-    fontSize: 14,
-    fontWeight: "600",
-    color: "#0B6E4F",
+    marginTop: spacing.xs,
   },
   selectProfileButton: {
-    marginTop: 4,
+    marginTop: spacing.xs,
   },
   selectProfileButtonText: {
-    fontSize: 14,
     color: "#0B6E4F",
-    fontWeight: "600",
-  },
-  divider: {
-    height: 1,
-    backgroundColor: "#e5e7eb",
-    width: "100%",
   },
   primaryCTA: {
-    marginBottom: 20,
+    marginBottom: spacing.lg,
   },
   secondaryActions: {
     flexDirection: "row",
-    gap: 10,
-    marginBottom: 32,
+    gap: spacing.sm,
+    marginBottom: spacing.xl,
   },
   secondaryButton: {
     flex: 1,
   },
-  eventsSection: {
-    marginBottom: 20,
+  sectionHeader: {
+    marginTop: spacing.lg,
+    marginBottom: spacing.md,
   },
-  sectionLabel: {
-    fontSize: 13,
-    fontWeight: "600",
-    color: "#6b7280",
-    textTransform: "uppercase",
-    letterSpacing: 0.5,
-    marginBottom: 8,
-    marginLeft: 2,
+  eventCard: {
+    marginBottom: spacing.base,
   },
-  mancoSection: {
-    marginBottom: 24,
+  eventTitle: {
+    marginBottom: spacing.xs,
+  },
+  eventSubtitle: {
+    marginBottom: spacing.xs,
+  },
+  eventDetail: {
+    marginTop: spacing.xs,
+    marginBottom: spacing.md,
+  },
+  eventButton: {
+    marginTop: spacing.sm,
+  },
+  emptyText: {
+    textAlign: "center",
+    paddingVertical: spacing.md,
   },
   mancoGrid: {
     flexDirection: "row",
     flexWrap: "wrap",
-    gap: 12,
+    gap: spacing.sm,
+    marginBottom: spacing.xl,
   },
   mancoTile: {
     flex: 1,
     minWidth: "47%",
-    backgroundColor: "#fff",
-    borderRadius: 12,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: "#e5e7eb",
+    alignItems: "center",
+  },
+  mancoTilePressable: {
+    width: "100%",
     alignItems: "center",
   },
   mancoTileTitle: {
@@ -622,32 +629,10 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: "#6b7280",
   },
-  emptyTitle: {
-    fontSize: 24,
-    fontWeight: "700",
-    color: "#111827",
-    marginBottom: 8,
-  },
-  emptyText: {
-    fontSize: 16,
-    opacity: 0.7,
-    color: "#111827",
-    marginBottom: 24,
-  },
   emptyButton: {
     minWidth: 200,
   },
   leaderboardButton: {
-    paddingVertical: 14,
-    alignItems: "center",
-    marginTop: 8,
-    borderTopWidth: 1,
-    borderTopColor: "#e5e7eb",
-    paddingTop: 20,
-  },
-  leaderboardButtonText: {
-    fontSize: 16,
-    fontWeight: "600",
-    color: "#0B6E4F",
+    marginTop: spacing.xl,
   },
 });

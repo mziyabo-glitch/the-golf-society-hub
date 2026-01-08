@@ -14,12 +14,22 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useFocusEffect } from "@react-navigation/native";
 import { router } from "expo-router";
 import { useCallback, useState } from "react";
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View, Platform, Alert } from "react-native";
+import { ActivityIndicator, Pressable, StyleSheet, TextInput, View, Platform, Alert } from "react-native";
 import * as Print from "expo-print";
 import * as Sharing from "expo-sharing";
+import { Screen } from "@/components/ui/Screen";
+import { SectionHeader } from "@/components/ui/SectionHeader";
+import { AppText } from "@/components/ui/AppText";
+import { AppCard } from "@/components/ui/AppCard";
+import { PrimaryButton, SecondaryButton } from "@/components/ui/Button";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { Row } from "@/components/ui/Row";
+import { SocietyHeader } from "@/components/ui/SocietyHeader";
+import { getColors, spacing } from "@/lib/ui/theme";
 
 const EVENTS_KEY = STORAGE_KEYS.EVENTS;
 const MEMBERS_KEY = STORAGE_KEYS.MEMBERS;
+const SOCIETY_KEY = STORAGE_KEYS.SOCIETY_ACTIVE;
 
 type EventData = {
   id: string;
@@ -57,6 +67,11 @@ type LeaderboardEntry = {
   totalPoints: number;
 };
 
+type SocietyData = {
+  name: string;
+  logoUrl?: string | null;
+};
+
 export default function LeaderboardScreen() {
   const [members, setMembers] = useState<MemberData[]>([]);
   const [events, setEvents] = useState<EventData[]>([]);
@@ -64,6 +79,7 @@ export default function LeaderboardScreen() {
   const [loading, setLoading] = useState(true);
   const [seasonYear, setSeasonYear] = useState<number>(new Date().getFullYear());
   const [showOOMOnly, setShowOOMOnly] = useState(false);
+  const [society, setSociety] = useState<SocietyData | null>(null);
 
   useFocusEffect(
     useCallback(() => {
@@ -73,6 +89,17 @@ export default function LeaderboardScreen() {
 
   const loadData = async () => {
     try {
+      // Load society
+      const societyData = await AsyncStorage.getItem(SOCIETY_KEY);
+      if (societyData) {
+        try {
+          const loaded: SocietyData = JSON.parse(societyData);
+          setSociety(loaded);
+        } catch (e) {
+          console.error("Error parsing society data:", e);
+        }
+      }
+
       // Load members
       const membersData = await AsyncStorage.getItem(MEMBERS_KEY);
       if (membersData) {
@@ -376,210 +403,241 @@ export default function LeaderboardScreen() {
     }
   };
 
+  const colors = getColors();
+  const hasPoints = leaderboard.filter((e) => e.totalPoints > 0).length > 0;
+
   if (loading) {
     return (
-      <View style={[styles.container, styles.centerContent]}>
-        <ActivityIndicator size="large" color="#0B6E4F" />
-      </View>
+      <Screen scrollable={false}>
+        <View style={styles.centerContent}>
+          <ActivityIndicator size="large" color={colors.primary} />
+        </View>
+      </Screen>
     );
   }
 
   return (
-    <ScrollView style={styles.container}>
-      <View style={styles.content}>
-        <View style={styles.headerRow}>
-          <View style={styles.headerText}>
-            <Text style={styles.title}>Season Leaderboard</Text>
-            <Text style={styles.subtitle}>
-              {showOOMOnly ? "Order of Merit Events" : "All Events"} — {seasonYear}
-            </Text>
-          </View>
-          {showOOMOnly && leaderboard.filter((e) => e.totalPoints > 0).length > 0 && (
-            <Pressable onPress={handleShareOrderOfMerit} style={styles.shareButton}>
-              <Text style={styles.shareButtonText}>Share</Text>
-            </Pressable>
-          )}
-        </View>
+    <Screen>
+      {society && (
+        <SocietyHeader
+          societyName={society.name}
+          logoUrl={society.logoUrl}
+          subtitle={showOOMOnly ? "Order of Merit" : "Season Leaderboard"}
+        />
+      )}
+      <SectionHeader
+        title={showOOMOnly ? "Order of Merit" : "Season Leaderboard"}
+        rightAction={
+          showOOMOnly && hasPoints
+            ? {
+                label: "Share",
+                onPress: handleShareOrderOfMerit,
+              }
+            : undefined
+        }
+      />
+      <AppText variant="caption" color="secondary" style={styles.subtitle}>
+        {showOOMOnly ? "Order of Merit Events" : "All Events"} — {seasonYear}
+      </AppText>
 
-        {/* Year Selector */}
-        <View style={styles.filterSection}>
-          <Text style={styles.filterLabel}>Season Year</Text>
-          <View style={styles.yearInputContainer}>
-            <TextInput
-              value={seasonYear.toString()}
-              onChangeText={(text) => {
-                const year = parseInt(text, 10);
-                if (!isNaN(year) && year > 1900 && year < 2100) {
-                  setSeasonYear(year);
-                }
-              }}
-              keyboardType="numeric"
-              style={styles.yearInput}
-              placeholder="YYYY"
-            />
-          </View>
-        </View>
+      {/* Summary Card */}
+      {hasPoints && (
+        <AppCard style={styles.summaryCard}>
+          <AppText variant="h2" style={styles.summaryTitle}>
+            {showOOMOnly ? "Order of Merit" : "Season Leaderboard"}
+          </AppText>
+          <AppText variant="body" color="secondary" style={styles.summaryDescription}>
+            {showOOMOnly
+              ? "Points awarded for Order of Merit events only. F1-style scoring: 1st=25pts, 2nd=18pts, 3rd=15pts, etc."
+              : "Points awarded for all published events. F1-style scoring: 1st=25pts, 2nd=18pts, 3rd=15pts, etc."}
+          </AppText>
+        </AppCard>
+      )}
 
-        {/* OOM Filter Toggle */}
-        <View style={styles.filterSection}>
-          <Text style={styles.filterLabel}>Event Filter</Text>
-          <View style={styles.toggleContainer}>
-            <Pressable
-              onPress={() => setShowOOMOnly(false)}
-              style={[
-                styles.toggleButton,
-                !showOOMOnly && styles.toggleButtonActive,
-              ]}
+      {/* Filters */}
+      <AppCard style={styles.filterCard}>
+        <AppText variant="bodyBold" style={styles.filterLabel}>
+          Season Year
+        </AppText>
+        <TextInput
+          value={seasonYear.toString()}
+          onChangeText={(text) => {
+            const year = parseInt(text, 10);
+            if (!isNaN(year) && year > 1900 && year < 2100) {
+              setSeasonYear(year);
+            }
+          }}
+          keyboardType="numeric"
+          style={[styles.yearInput, { borderColor: colors.border, color: colors.text }]}
+          placeholder="YYYY"
+        />
+      </AppCard>
+
+      <AppCard style={styles.filterCard}>
+        <AppText variant="bodyBold" style={styles.filterLabel}>
+          Event Filter
+        </AppText>
+        <Row gap="sm" style={styles.toggleContainer}>
+          <Pressable
+            onPress={() => setShowOOMOnly(false)}
+            style={[
+              styles.toggleButton,
+              !showOOMOnly && { backgroundColor: colors.primary },
+            ]}
+          >
+            <AppText
+              variant="button"
+              style={!showOOMOnly ? { color: colors.textInverse } : undefined}
             >
-              <Text
-                style={[
-                  styles.toggleButtonText,
-                  !showOOMOnly && styles.toggleButtonTextActive,
-                ]}
-              >
-                All
-              </Text>
-            </Pressable>
-            <Pressable
-              onPress={() => setShowOOMOnly(true)}
-              style={[
-                styles.toggleButton,
-                showOOMOnly && styles.toggleButtonActive,
-              ]}
+              All Events
+            </AppText>
+          </Pressable>
+          <Pressable
+            onPress={() => setShowOOMOnly(true)}
+            style={[
+              styles.toggleButton,
+              showOOMOnly && { backgroundColor: colors.primary },
+            ]}
+          >
+            <AppText
+              variant="button"
+              style={showOOMOnly ? { color: colors.textInverse } : undefined}
             >
-              <Text
-                style={[
-                  styles.toggleButtonText,
-                  showOOMOnly && styles.toggleButtonTextActive,
-                ]}
-              >
-                Order of Merit Only
-              </Text>
-            </Pressable>
-          </View>
-        </View>
+              Order of Merit Only
+            </AppText>
+          </Pressable>
+        </Row>
+      </AppCard>
 
-        {leaderboard.length === 0 ? (
-          <View style={styles.emptyState}>
-            <Text style={styles.emptyText}>No published events yet</Text>
-            <Text style={styles.emptySubtext}>
-              {showOOMOnly 
-                ? `No Order of Merit events published for ${seasonYear}`
-                : `No events published for ${seasonYear}`}
-            </Text>
-          </View>
-        ) : (
-          <View style={styles.leaderboardList}>
-            {leaderboard.map((entry, index) => (
-              <View key={entry.member.id} style={styles.leaderboardItem}>
-                <View style={styles.positionContainer}>
-                  <View
-                    style={[
-                      styles.positionBadge,
-                      index === 0 && styles.positionBadgeFirst,
-                      index === 1 && styles.positionBadgeSecond,
-                      index === 2 && styles.positionBadgeThird,
-                    ]}
+      {/* Leaderboard */}
+      {leaderboard.length === 0 || !hasPoints ? (
+        <EmptyState
+          title="No published events yet"
+          message={
+            showOOMOnly
+              ? `No Order of Merit events published for ${seasonYear}`
+              : `No events published for ${seasonYear}`
+          }
+        />
+      ) : (
+        <>
+          {leaderboard.map((entry, index) => (
+            <AppCard key={entry.member.id} style={styles.leaderboardItem}>
+              <Row gap="md" alignItems="center">
+                <View
+                  style={[
+                    styles.positionBadge,
+                    index === 0 && { backgroundColor: "#fbbf24" },
+                    index === 1 && { backgroundColor: "#9ca3af" },
+                    index === 2 && { backgroundColor: "#cd7f32" },
+                  ]}
+                >
+                  <AppText
+                    variant="h2"
+                    style={StyleSheet.flatten([
+                      styles.positionText,
+                      index < 3 && { color: "#fff" },
+                    ])}
                   >
-                    <Text
-                      style={[
-                        styles.positionText,
-                        index < 3 && styles.positionTextWhite,
-                      ]}
-                    >
-                      {index + 1}
-                    </Text>
-                  </View>
+                    {index + 1}
+                  </AppText>
                 </View>
                 <View style={styles.entryContent}>
-                  <Text style={styles.memberName}>{entry.member.name}</Text>
+                  <AppText variant="bodyBold" numberOfLines={1} ellipsizeMode="tail" style={styles.memberName}>
+                    {entry.member.name}
+                  </AppText>
                   {entry.member.handicap !== undefined && (
-                    <Text style={styles.memberHandicap}>HCP: {entry.member.handicap}</Text>
+                    <AppText variant="small" color="secondary" numberOfLines={1}>
+                      HCP: {entry.member.handicap}
+                    </AppText>
                   )}
                 </View>
-                <View style={styles.statsContainer}>
+                <Row gap="md">
                   <View style={styles.stat}>
-                    <Text style={styles.statValue}>{entry.totalPoints}</Text>
-                    <Text style={styles.statLabel}>Points</Text>
+                    <AppText variant="h2" style={{ color: colors.primary }}>
+                      {entry.totalPoints}
+                    </AppText>
+                    <AppText variant="caption" color="secondary">
+                      Points
+                    </AppText>
                   </View>
                   <View style={styles.stat}>
-                    <Text style={styles.statValue}>{entry.totalWins}</Text>
-                    <Text style={styles.statLabel}>Wins</Text>
+                    <AppText variant="h2" style={{ color: colors.primary }}>
+                      {entry.totalWins}
+                    </AppText>
+                    <AppText variant="caption" color="secondary">
+                      Wins
+                    </AppText>
                   </View>
                   <View style={styles.stat}>
-                    <Text style={styles.statValue}>{entry.eventsPlayed}</Text>
-                    <Text style={styles.statLabel}>Played</Text>
+                    <AppText variant="h2" style={{ color: colors.primary }}>
+                      {entry.eventsPlayed}
+                    </AppText>
+                    <AppText variant="caption" color="secondary">
+                      Played
+                    </AppText>
                   </View>
-                </View>
-              </View>
-            ))}
-          </View>
-        )}
+                </Row>
+              </Row>
+            </AppCard>
+          ))}
+        </>
+      )}
 
-        <View style={styles.backButtonContainer}>
-          <Text style={styles.backButtonText} onPress={() => router.back()}>
-            Back to Dashboard
-          </Text>
-        </View>
-      </View>
-    </ScrollView>
+      <SecondaryButton onPress={() => router.back()} style={styles.backButton}>
+        Back to Dashboard
+      </SecondaryButton>
+    </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: "#f9fafb",
-  },
-  content: {
-    flex: 1,
-    padding: 24,
-  },
   centerContent: {
+    flex: 1,
     justifyContent: "center",
     alignItems: "center",
   },
-  title: {
-    fontSize: 34,
-    fontWeight: "800",
-    marginBottom: 6,
-  },
   subtitle: {
+    marginBottom: spacing.lg,
+  },
+  summaryCard: {
+    marginBottom: spacing.base,
+  },
+  summaryTitle: {
+    marginBottom: spacing.xs,
+  },
+  summaryDescription: {
+    marginTop: spacing.xs,
+  },
+  filterCard: {
+    marginBottom: spacing.base,
+  },
+  filterLabel: {
+    marginBottom: spacing.sm,
+  },
+  yearInput: {
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.base,
     fontSize: 16,
-    opacity: 0.75,
-    marginBottom: 28,
+    minHeight: 44,
   },
-  emptyState: {
+  toggleContainer: {
+    marginTop: spacing.sm,
+  },
+  toggleButton: {
+    flex: 1,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.base,
+    borderRadius: 8,
     alignItems: "center",
-    paddingVertical: 60,
-  },
-  emptyText: {
-    fontSize: 18,
-    fontWeight: "600",
-    color: "#111827",
-    marginBottom: 8,
-  },
-  emptySubtext: {
-    fontSize: 14,
-    opacity: 0.7,
-    color: "#111827",
-    textAlign: "center",
-  },
-  leaderboardList: {
-    marginBottom: 24,
+    justifyContent: "center",
+    minHeight: 44,
+    backgroundColor: "#f3f4f6",
   },
   leaderboardItem: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "#fff",
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 12,
-    borderWidth: 1,
-    borderColor: "#e5e7eb",
-  },
-  positionContainer: {
-    marginRight: 16,
+    marginBottom: spacing.base,
   },
   positionBadge: {
     width: 48,
@@ -589,135 +647,23 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
   },
-  positionBadgeFirst: {
-    backgroundColor: "#fbbf24",
-  },
-  positionBadgeSecond: {
-    backgroundColor: "#9ca3af",
-  },
-  positionBadgeThird: {
-    backgroundColor: "#cd7f32",
-  },
   positionText: {
-    fontSize: 20,
     fontWeight: "700",
-    color: "#111827",
-  },
-  positionTextWhite: {
-    color: "#fff",
   },
   entryContent: {
     flex: 1,
+    minWidth: 0,
+    marginRight: spacing.sm,
   },
   memberName: {
-    fontSize: 18,
-    fontWeight: "600",
-    color: "#111827",
-    marginBottom: 4,
-  },
-  memberHandicap: {
-    fontSize: 14,
-    opacity: 0.7,
-    color: "#111827",
-  },
-  statsContainer: {
-    flexDirection: "row",
-    gap: 12,
+    flexShrink: 1,
   },
   stat: {
     alignItems: "center",
+    minWidth: 60,
   },
-  statValue: {
-    fontSize: 20,
-    fontWeight: "700",
-    color: "#0B6E4F",
-    marginBottom: 2,
-  },
-  statLabel: {
-    fontSize: 12,
-    opacity: 0.7,
-    color: "#111827",
-  },
-  backButtonContainer: {
-    alignItems: "center",
-    paddingVertical: 20,
-  },
-  backButtonText: {
-    fontSize: 16,
-    fontWeight: "600",
-    color: "#0B6E4F",
-  },
-  filterSection: {
-    marginBottom: 20,
-    backgroundColor: "#fff",
-    borderRadius: 12,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: "#e5e7eb",
-  },
-  filterLabel: {
-    fontSize: 14,
-    fontWeight: "600",
-    color: "#111827",
-    marginBottom: 8,
-  },
-  yearInputContainer: {
-    flexDirection: "row",
-  },
-  yearInput: {
-    flex: 1,
-    backgroundColor: "#f9fafb",
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    borderRadius: 10,
-    fontSize: 16,
-    borderWidth: 1,
-    borderColor: "#e5e7eb",
-  },
-  toggleContainer: {
-    flexDirection: "row",
-    backgroundColor: "#f9fafb",
-    borderRadius: 10,
-    padding: 4,
-  },
-  toggleButton: {
-    flex: 1,
-    paddingVertical: 10,
-    paddingHorizontal: 16,
-    borderRadius: 8,
-    alignItems: "center",
-  },
-  toggleButtonActive: {
-    backgroundColor: "#0B6E4F",
-  },
-  toggleButtonText: {
-    fontSize: 14,
-    fontWeight: "600",
-    color: "#6b7280",
-  },
-  toggleButtonTextActive: {
-    color: "#fff",
-  },
-  headerRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "flex-start",
-    marginBottom: 8,
-  },
-  headerText: {
-    flex: 1,
-  },
-  shareButton: {
-    backgroundColor: "#0B6E4F",
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 8,
-    marginTop: 4,
-  },
-  shareButtonText: {
-    color: "#fff",
-    fontSize: 14,
-    fontWeight: "600",
+  backButton: {
+    marginTop: spacing.xl,
   },
 });
 

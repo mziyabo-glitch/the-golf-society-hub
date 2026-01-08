@@ -12,12 +12,16 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useFocusEffect } from "@react-navigation/native";
 import { router } from "expo-router";
 import { useCallback, useState } from "react";
-import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View, Image, ActivityIndicator, Platform } from "react-native";
 
-import { canAssignRoles, normalizeMemberRoles, normalizeSessionRole } from "@/lib/permissions";
+import { canAssignRoles, normalizeMemberRoles, normalizeSessionRole, canEditVenueInfo } from "@/lib/permissions";
 import { getCurrentUserRoles } from "@/lib/roles";
 import { getSession } from "@/lib/session";
 import { STORAGE_KEYS } from "@/lib/storage";
+import { pickImage } from "@/utils/imagePicker";
+import { AppCard } from "@/components/ui/AppCard";
+import { AppText } from "@/components/ui/AppText";
+import { spacing } from "@/lib/ui/theme";
 
 const STORAGE_KEY = STORAGE_KEYS.SOCIETY_ACTIVE;
 const EVENTS_KEY = STORAGE_KEYS.EVENTS;
@@ -32,6 +36,7 @@ type SocietyData = {
   country: string;
   scoringMode: "Stableford" | "Strokeplay" | "Both";
   handicapRule: "Allow WHS" | "Fixed HCP" | "No HCP";
+  logoUrl?: string | null;
 };
 
 export default function SettingsScreen() {
@@ -44,6 +49,8 @@ export default function SettingsScreen() {
   const [confirmPin, setConfirmPin] = useState("");
   const [role, setRole] = useState<"admin" | "member">("member");
   const [canAssignRolesRole, setCanAssignRolesRole] = useState(false);
+  const [canEditLogo, setCanEditLogo] = useState(false);
+  const [uploadingLogo, setUploadingLogo] = useState(false);
 
   useFocusEffect(
     useCallback(() => {
@@ -74,6 +81,10 @@ export default function SettingsScreen() {
       const roles = normalizeMemberRoles(await getCurrentUserRoles());
       const canAssign = canAssignRoles(sessionRole, roles);
       setCanAssignRolesRole(canAssign);
+      
+      // Check if user can edit logo (Captain or Secretary)
+      const canEdit = canEditVenueInfo(sessionRole, roles);
+      setCanEditLogo(canEdit);
       
       if (session.role !== "admin" && !canAssign) {
         Alert.alert("Access Denied", "Only admins can access settings", [
@@ -133,6 +144,114 @@ export default function SettingsScreen() {
     }
   };
 
+  const handleLogoUpload = async () => {
+    if (!canEditLogo) {
+      Alert.alert("Access Denied", "Only Captain or Secretary can upload logo");
+      return;
+    }
+
+    if (!society) {
+      Alert.alert("Error", "No society found");
+      return;
+    }
+
+    try {
+      setUploadingLogo(true);
+      
+      // Pick image using expo-image-picker
+      const result = await pickImage();
+      if (!result || !result.uri) {
+        setUploadingLogo(false);
+        return;
+      }
+
+      // Convert image to base64 data URL for storage in AsyncStorage
+      // Note: For production with Firebase Storage, upload to /societies/{societyId}/logo and store download URL
+      let logoUrl: string;
+      
+      try {
+        // Fetch image and convert to base64 data URL for cross-platform compatibility
+        const response = await fetch(result.uri);
+        if (!response.ok) {
+          throw new Error("Failed to fetch image");
+        }
+        
+        const blob = await response.blob();
+        
+        // Convert blob to base64 data URL
+        const reader = new FileReader();
+        logoUrl = await new Promise<string>((resolve, reject) => {
+          reader.onloadend = () => {
+            if (typeof reader.result === "string") {
+              resolve(reader.result);
+            } else {
+              reject(new Error("Failed to convert image to base64"));
+            }
+          };
+          reader.onerror = () => reject(new Error("FileReader error"));
+          reader.readAsDataURL(blob);
+        });
+      } catch (error) {
+        console.error("Error processing image:", error);
+        // Fallback: use local URI (works but may not persist across app restarts/updates)
+        // TODO: Implement Firebase Storage upload for production use
+        logoUrl = result.uri;
+        console.warn("Using local URI - consider implementing Firebase Storage for production");
+      }
+
+      // Save logo URL to society
+      const updatedSociety: SocietyData = {
+        ...society,
+        logoUrl: logoUrl,
+      };
+      await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(updatedSociety));
+      setSociety(updatedSociety);
+      Alert.alert("Success", "Logo uploaded successfully");
+    } catch (error) {
+      console.error("Error uploading logo:", error);
+      Alert.alert("Error", "Failed to upload logo");
+    } finally {
+      setUploadingLogo(false);
+    }
+  };
+
+  const handleRemoveLogo = async () => {
+    if (!canEditLogo) {
+      Alert.alert("Access Denied", "Only Captain or Secretary can remove logo");
+      return;
+    }
+
+    if (!society) {
+      return;
+    }
+
+    Alert.alert(
+      "Remove Logo",
+      "Are you sure you want to remove the society logo?",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Remove",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              const updatedSociety: SocietyData = {
+                ...society,
+                logoUrl: null,
+              };
+              await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(updatedSociety));
+              setSociety(updatedSociety);
+              Alert.alert("Success", "Logo removed");
+            } catch (error) {
+              console.error("Error removing logo:", error);
+              Alert.alert("Error", "Failed to remove logo");
+            }
+          },
+        },
+      ]
+    );
+  };
+
   const handleResetSociety = () => {
     Alert.alert(
       "Reset Society",
@@ -176,6 +295,50 @@ export default function SettingsScreen() {
     <ScrollView style={styles.container}>
       <View style={styles.content}>
         <Text style={styles.title}>Society Settings</Text>
+
+        {/* Society Logo */}
+        <AppCard style={styles.section}>
+          <Text style={styles.sectionTitle}>Society Logo</Text>
+          <View style={styles.logoContainer}>
+            {society.logoUrl ? (
+              <Image source={{ uri: society.logoUrl }} style={styles.logo} resizeMode="contain" />
+            ) : (
+              <View style={styles.logoPlaceholder}>
+                <Text style={styles.logoPlaceholderText}>Logo</Text>
+              </View>
+            )}
+            {canEditLogo && (
+              <View style={styles.logoActions}>
+                <Pressable
+                  onPress={handleLogoUpload}
+                  disabled={uploadingLogo}
+                  style={[styles.logoButton, uploadingLogo && styles.logoButtonDisabled]}
+                >
+                  {uploadingLogo ? (
+                    <ActivityIndicator size="small" color="#0B6E4F" />
+                  ) : (
+                    <Text style={styles.logoButtonText}>
+                      {society.logoUrl ? "Change Logo" : "Upload Logo"}
+                    </Text>
+                  )}
+                </Pressable>
+                {society.logoUrl && (
+                  <Pressable
+                    onPress={handleRemoveLogo}
+                    style={[styles.logoButton, styles.logoButtonRemove]}
+                  >
+                    <Text style={styles.logoButtonTextRemove}>Remove</Text>
+                  </Pressable>
+                )}
+              </View>
+            )}
+          </View>
+          {!canEditLogo && (
+            <Text style={styles.permissionText}>
+              Only Captain or Secretary can upload logo
+            </Text>
+          )}
+        </AppCard>
 
         {/* Rename Society */}
         <View style={styles.section}>
@@ -459,6 +622,71 @@ const styles = StyleSheet.create({
     color: "white",
     fontSize: 18,
     fontWeight: "700",
+  },
+  logoContainer: {
+    alignItems: "center",
+    marginTop: spacing.base,
+  },
+  logo: {
+    width: 120,
+    height: 120,
+    borderRadius: spacing.sm,
+    marginBottom: spacing.base,
+    backgroundColor: "#f3f4f6",
+  },
+  logoPlaceholder: {
+    width: 120,
+    height: 120,
+    borderRadius: spacing.sm,
+    backgroundColor: "#f3f4f6",
+    justifyContent: "center",
+    alignItems: "center",
+    marginBottom: spacing.base,
+    borderWidth: 2,
+    borderStyle: "dashed",
+    borderColor: "#d1d5db",
+  },
+  logoPlaceholderText: {
+    fontSize: 16,
+    fontWeight: "600",
+    color: "#9ca3af",
+  },
+  logoActions: {
+    flexDirection: "row",
+    gap: spacing.sm,
+    width: "100%",
+  },
+  logoButton: {
+    flex: 1,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.base,
+    borderRadius: spacing.sm,
+    backgroundColor: "#0B6E4F",
+    alignItems: "center",
+    justifyContent: "center",
+    minHeight: 44,
+  },
+  logoButtonDisabled: {
+    opacity: 0.6,
+  },
+  logoButtonRemove: {
+    backgroundColor: "#ef4444",
+  },
+  logoButtonText: {
+    color: "white",
+    fontSize: 16,
+    fontWeight: "600",
+  },
+  logoButtonTextRemove: {
+    color: "white",
+    fontSize: 16,
+    fontWeight: "600",
+  },
+  permissionText: {
+    fontSize: 12,
+    color: "#6b7280",
+    marginTop: spacing.xs,
+    textAlign: "center",
   },
 });
 

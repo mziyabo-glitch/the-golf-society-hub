@@ -14,6 +14,7 @@ type SocietyData = {
   country: string;
   scoringMode: "Stableford" | "Strokeplay" | "Both";
   handicapRule: "Allow WHS" | "Fixed HCP" | "No HCP";
+  logoUrl?: string | null;
 };
 
 export default function CreateSocietyScreen() {

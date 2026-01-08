@@ -9,12 +9,16 @@
 import { useFocusEffect } from "@react-navigation/native";
 import { router } from "expo-router";
 import { useCallback, useState } from "react";
-import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View, Platform } from "react-native";
+import { Alert, Pressable, StyleSheet, TextInput, View, Platform, ActivityIndicator } from "react-native";
+import { Screen } from "@/components/ui/Screen";
+import { SectionHeader } from "@/components/ui/SectionHeader";
+import { PrimaryButton, SecondaryButton } from "@/components/ui/Button";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { STORAGE_KEYS } from "@/lib/storage";
 import { canViewFinance } from "@/lib/roles";
 import { AppText } from "@/components/ui/AppText";
 import { AppCard } from "@/components/ui/AppCard";
+import { Badge } from "@/components/ui/Badge";
 import { getColors, spacing, typography } from "@/lib/ui/theme";
 import * as Print from "expo-print";
 import * as Sharing from "expo-sharing";
@@ -254,21 +258,24 @@ export default function FinanceScreen() {
     }
   };
 
-  if (!hasAccess) {
-    return null;
-  }
-
   const colors = getColors();
 
+  if (!hasAccess) {
+    return (
+      <Screen scrollable={false}>
+        <View style={styles.centerContent}>
+          <ActivityIndicator size="large" color={colors.primary} />
+        </View>
+      </Screen>
+    );
+  }
+
   return (
-    <ScrollView style={[styles.container, { backgroundColor: colors.background }]}>
-      <View style={[styles.content, { padding: spacing.xl }]}>
-        <AppText variant="title" style={styles.title}>
-          Finance
-        </AppText>
-        <AppText variant="caption" color="secondary" style={styles.subtitle}>
-          Treasurer tools and financial management
-        </AppText>
+    <Screen>
+      <SectionHeader title="Finance" />
+      <AppText variant="caption" color="secondary" style={styles.subtitle}>
+        Treasurer tools and financial management
+      </AppText>
 
         {/* Annual Fee */}
         <AppCard style={styles.section}>
@@ -284,30 +291,31 @@ export default function FinanceScreen() {
                 placeholder="0.00"
                 style={[styles.input, { borderColor: colors.border, color: colors.text }]}
               />
-              <Pressable onPress={saveAnnualFee} style={[styles.saveButton, { backgroundColor: colors.primary }]}>
-                <Text style={[styles.saveButtonText, { color: colors.textInverse }]}>Save</Text>
-              </Pressable>
-              <Pressable
+              <PrimaryButton onPress={saveAnnualFee} size="sm" style={styles.saveButton}>
+                Save
+              </PrimaryButton>
+              <SecondaryButton
                 onPress={() => {
                   setEditingFee(false);
                   setAnnualFee(society?.annualFee?.toString() || "");
                 }}
+                size="sm"
                 style={styles.cancelButton}
               >
-                <Text style={[styles.cancelButtonText, { color: colors.textSecondary }]}>Cancel</Text>
-              </Pressable>
+                Cancel
+              </SecondaryButton>
             </View>
           ) : (
             <View style={styles.displayRow}>
               <AppText variant="body" style={styles.feeDisplay}>
                 £{society?.annualFee?.toFixed(2) || "0.00"}
               </AppText>
-              <Pressable
+              <SecondaryButton
                 onPress={() => setEditingFee(true)}
-                style={[styles.editButton, { borderColor: colors.border }]}
+                size="sm"
               >
-                <Text style={[styles.editButtonText, { color: colors.primary }]}>Edit</Text>
-              </Pressable>
+                Edit
+              </SecondaryButton>
             </View>
           )}
         </AppCard>
@@ -432,9 +440,9 @@ export default function FinanceScreen() {
             <AppText variant="h2" style={styles.sectionTitle}>
               Member Payments
             </AppText>
-            <Pressable onPress={handleExport} style={[styles.exportButton, { backgroundColor: colors.primary }]}>
-              <Text style={[styles.exportButtonText, { color: colors.textInverse }]}>Export</Text>
-            </Pressable>
+            <PrimaryButton onPress={handleExport} size="sm">
+              Export
+            </PrimaryButton>
           </View>
           {members.length === 0 ? (
             <AppText variant="body" color="secondary" style={styles.emptyText}>
@@ -462,22 +470,22 @@ export default function FinanceScreen() {
                         />
                       </View>
                       <View style={styles.editActions}>
-                        <Pressable
+                        <PrimaryButton
                           onPress={() => saveMemberPayment(member.id)}
-                          style={[styles.smallButton, { backgroundColor: colors.primary }]}
+                          size="sm"
                         >
-                          <Text style={[styles.smallButtonText, { color: colors.textInverse }]}>Save</Text>
-                        </Pressable>
-                        <Pressable
+                          Save
+                        </PrimaryButton>
+                        <SecondaryButton
                           onPress={() => {
                             setEditingMemberId(null);
                             setEditAmount("");
                             setEditPaidDate("");
                           }}
-                          style={styles.smallButton}
+                          size="sm"
                         >
-                          <Text style={[styles.smallButtonText, { color: colors.textSecondary }]}>Cancel</Text>
-                        </Pressable>
+                          Cancel
+                        </SecondaryButton>
                       </View>
                     </View>
                   ) : (
@@ -489,26 +497,17 @@ export default function FinanceScreen() {
                         </AppText>
                       </View>
                       <View style={styles.memberStatus}>
-                        <View
-                          style={[
-                            styles.statusBadge,
-                            { backgroundColor: member.paid ? colors.success : colors.error },
-                          ]}
-                        >
-                          <Text style={[styles.statusText, { color: colors.textInverse }]}>
-                            {member.paid ? "Paid" : "Unpaid"}
-                          </Text>
-                        </View>
-                        <Pressable
+                        <Badge variant={member.paid ? "paid" : "unpaid"} label={member.paid ? "Paid" : "Unpaid"} />
+                        <SecondaryButton
                           onPress={() => {
                             setEditingMemberId(member.id);
                             setEditAmount(member.amountPaid?.toString() || "");
                             setEditPaidDate(member.paidDate || "");
                           }}
-                          style={[styles.editLink, { borderColor: colors.border }]}
+                          size="sm"
                         >
-                          <Text style={[styles.editLinkText, { color: colors.primary }]}>Edit</Text>
-                        </Pressable>
+                          Edit
+                        </SecondaryButton>
                       </View>
                     </>
                   )}
@@ -518,13 +517,10 @@ export default function FinanceScreen() {
           )}
         </AppCard>
 
-        <Pressable onPress={() => router.back()} style={styles.backButton}>
-          <AppText variant="body" color="secondary">
-            Back
-          </AppText>
-        </Pressable>
-      </View>
-    </ScrollView>
+        <SecondaryButton onPress={() => router.back()}>
+          Back
+        </SecondaryButton>
+    </Screen>
   );
 }
 
@@ -534,6 +530,11 @@ const styles = StyleSheet.create({
   },
   content: {
     flex: 1,
+  },
+  centerContent: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
   },
   title: {
     marginBottom: spacing.xs,

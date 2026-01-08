@@ -15,7 +15,15 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useFocusEffect } from "@react-navigation/native";
 import { router } from "expo-router";
 import { useCallback, useState, useRef } from "react";
-import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View, Modal, Platform, ActivityIndicator } from "react-native";
+import { Alert, Pressable, StyleSheet, TextInput, View, Modal, Platform, ActivityIndicator, Text } from "react-native";
+import { Screen } from "@/components/ui/Screen";
+import { SectionHeader } from "@/components/ui/SectionHeader";
+import { AppText } from "@/components/ui/AppText";
+import { AppCard } from "@/components/ui/AppCard";
+import { Badge } from "@/components/ui/Badge";
+import { SecondaryButton, PrimaryButton } from "@/components/ui/Button";
+import { SocietyHeader } from "@/components/ui/SocietyHeader";
+import { getColors, spacing } from "@/lib/ui/theme";
 import * as Print from "expo-print";
 import * as Sharing from "expo-sharing";
 
@@ -42,6 +50,11 @@ export default function TeesTeeSheetScreen() {
   const [startTime, setStartTime] = useState("08:00");
   const [intervalMins, setIntervalMins] = useState<number>(8);
   const [teeGroups, setTeeGroups] = useState<Array<{ timeISO: string; players: string[] }>>([]);
+  const [teeSheetNotes, setTeeSheetNotes] = useState<string>("");
+  const [nearestToPinHoles, setNearestToPinHoles] = useState<number[]>([]);
+  const [longestDriveHoles, setLongestDriveHoles] = useState<number[]>([]);
+  const [newNTPHole, setNewNTPHole] = useState<string>("");
+  const [newLDHole, setNewLDHole] = useState<string>("");
   
   // Player selection (assume all coming by default)
   const [selectedPlayerIds, setSelectedPlayerIds] = useState<Set<string>>(new Set());
@@ -175,6 +188,13 @@ export default function TeesTeeSheetScreen() {
     } else {
       setGuests([]);
     }
+    
+    // Load tee sheet notes and holes (defensive guards)
+    setTeeSheetNotes(event.teeSheetNotes || "");
+    const ntp = Array.isArray(event.nearestToPinHoles) ? event.nearestToPinHoles.filter((h: number) => !isNaN(h) && h >= 1 && h <= 18) : [];
+    const ld = Array.isArray(event.longestDriveHoles) ? event.longestDriveHoles.filter((h: number) => !isNaN(h) && h >= 1 && h <= 18) : [];
+    setNearestToPinHoles([...new Set(ntp)].sort((a, b) => a - b));
+    setLongestDriveHoles([...new Set(ld)].sort((a, b) => a - b));
   };
 
   const handleSaveTees = async () => {
@@ -347,6 +367,9 @@ export default function TeesTeeSheetScreen() {
                 groups: teeGroups,
               },
               guests: guests, // Save guests with event
+              teeSheetNotes: teeSheetNotes.trim() || undefined,
+              nearestToPinHoles: nearestToPinHoles.length > 0 ? [...nearestToPinHoles].sort((a, b) => a - b) : undefined,
+              longestDriveHoles: longestDriveHoles.length > 0 ? [...longestDriveHoles].sort((a, b) => a - b) : undefined,
             }
           : e
       );
@@ -560,6 +583,18 @@ export default function TeesTeeSheetScreen() {
               Par: ${selectedFemaleTeeSet.par} | CR: ${selectedFemaleTeeSet.courseRating} | SR: ${selectedFemaleTeeSet.slopeRating}</p>` : ""}
             <p><strong>Allowance:</strong> ${handicapAllowancePct}%</p>
           </div>
+          ${teeSheetNotes && teeSheetNotes.trim() ? `
+          <div style="margin: 15px 0; padding: 10px; background-color: #f9fafb; border-left: 3px solid #0B6E4F;">
+            <p style="margin: 0; font-weight: bold; margin-bottom: 5px;">Notes:</p>
+            <p style="margin: 0; white-space: pre-wrap;">${teeSheetNotes.trim().replace(/\n/g, '<br>')}</p>
+          </div>
+          ` : ""}
+          ${(nearestToPinHoles && nearestToPinHoles.length > 0) || (longestDriveHoles && longestDriveHoles.length > 0) ? `
+          <div style="margin: 10px 0; padding: 8px; background-color: #fef3c7; border: 1px solid #fcd34d;">
+            ${nearestToPinHoles && nearestToPinHoles.length > 0 ? `<p style="margin: 3px 0;"><strong>Nearest to Pin:</strong> Hole ${nearestToPinHoles.join(", Hole ")}</p>` : ""}
+            ${longestDriveHoles && longestDriveHoles.length > 0 ? `<p style="margin: 3px 0;"><strong>Longest Drive:</strong> Hole ${longestDriveHoles.join(", Hole ")}</p>` : ""}
+          </div>
+          ` : ""}
           <table>
             <thead>
               <tr>
@@ -668,22 +703,39 @@ export default function TeesTeeSheetScreen() {
     }
   };
 
+  const colors = getColors();
+  const isReadOnly = !canManageTeeSheet;
+
   if (permissionsLoading) {
     return (
-      <View style={[styles.container, { justifyContent: "center", alignItems: "center" }]}>
-        <ActivityIndicator size="large" color="#0B6E4F" />
-      </View>
+      <Screen scrollable={false}>
+        <View style={styles.centerContent}>
+          <ActivityIndicator size="large" color={colors.primary} />
+        </View>
+      </Screen>
     );
   }
 
-  // Members can view but not edit
-  const isReadOnly = !canManageTeeSheet;
-
-
   return (
-    <ScrollView style={styles.container}>
-      <View style={styles.content}>
-        <Text style={styles.title}>Tees & Tee Sheet</Text>
+    <Screen>
+      {society && (
+        <SocietyHeader
+          societyName={society.name}
+          logoUrl={society.logoUrl}
+          subtitle="Tees & Tee Sheet"
+        />
+      )}
+      <SectionHeader 
+        title="Tees & Tee Sheet"
+      />
+      {isReadOnly && (
+        <AppCard style={styles.readOnlyCard}>
+          <Badge label="View Only" variant="status" />
+          <AppText variant="small" color="secondary" style={styles.readOnlyText}>
+            You don't have permission to edit tee sheets
+          </AppText>
+        </AppCard>
+      )}
 
         {/* Tabs */}
         <View style={styles.tabs}>
@@ -691,13 +743,13 @@ export default function TeesTeeSheetScreen() {
             onPress={() => setActiveTab("tees")}
             style={[styles.tab, activeTab === "tees" && styles.tabActive]}
           >
-            <Text style={[styles.tabText, activeTab === "tees" && styles.tabTextActive]}>Tees</Text>
+            <AppText variant="button" style={activeTab === "tees" ? styles.tabTextActive : styles.tabText}>Tees</AppText>
           </Pressable>
           <Pressable
             onPress={() => setActiveTab("teesheet")}
             style={[styles.tab, activeTab === "teesheet" && styles.tabActive]}
           >
-            <Text style={[styles.tabText, activeTab === "teesheet" && styles.tabTextActive]}>Tee Sheet</Text>
+            <AppText variant="button" style={activeTab === "teesheet" ? styles.tabTextActive : styles.tabText}>Tee Sheet</AppText>
           </Pressable>
         </View>
 
@@ -1091,6 +1143,142 @@ export default function TeesTeeSheetScreen() {
                   )}
                 </View>
                 
+                {/* Tee Sheet Notes and Hole Selections */}
+                <AppCard style={styles.section}>
+                  <AppText variant="h2" style={styles.sectionTitle}>Tee Sheet Notes</AppText>
+                  {canManageTeeSheet ? (
+                    <TextInput
+                      value={teeSheetNotes}
+                      onChangeText={setTeeSheetNotes}
+                      placeholder="Add notes that will appear on the tee sheet (optional)"
+                      multiline
+                      numberOfLines={4}
+                      style={[styles.textArea, { borderColor: colors.border, color: colors.text }]}
+                      editable={!isReadOnly}
+                    />
+                  ) : (
+                    <AppText variant="body" color="secondary" style={styles.readOnlyText}>
+                      {teeSheetNotes || "No notes added"}
+                    </AppText>
+                  )}
+                </AppCard>
+
+                <AppCard style={styles.section}>
+                  <AppText variant="h2" style={styles.sectionTitleInline}>Nearest to Pin Holes</AppText>
+                  {canManageTeeSheet ? (
+                    <>
+                      <View style={styles.holeInputRow}>
+                        <TextInput
+                          value={newNTPHole}
+                          onChangeText={setNewNTPHole}
+                          placeholder="Hole (1-18)"
+                          keyboardType="numeric"
+                          style={[styles.holeInput, { borderColor: colors.border, color: colors.text }]}
+                          editable={!isReadOnly}
+                        />
+                        <PrimaryButton
+                          onPress={() => {
+                            const hole = parseInt(newNTPHole, 10);
+                            if (!isNaN(hole) && hole >= 1 && hole <= 18) {
+                              if (!nearestToPinHoles.includes(hole)) {
+                                setNearestToPinHoles([...nearestToPinHoles, hole].sort((a, b) => a - b));
+                                setNewNTPHole("");
+                              } else {
+                                Alert.alert("Duplicate", "This hole is already added");
+                              }
+                            } else {
+                              Alert.alert("Invalid", "Please enter a hole number between 1 and 18");
+                            }
+                          }}
+                          size="sm"
+                          disabled={isReadOnly}
+                        >
+                          Add
+                        </PrimaryButton>
+                      </View>
+                      {nearestToPinHoles.length > 0 && (
+                        <View style={styles.holeChips}>
+                          {nearestToPinHoles.map((hole) => (
+                            <View key={hole} style={styles.holeChip}>
+                              <AppText variant="small">Hole {hole}</AppText>
+                              <Pressable
+                                onPress={() => setNearestToPinHoles(nearestToPinHoles.filter((h) => h !== hole))}
+                                style={styles.chipRemove}
+                              >
+                                <AppText variant="small">×</AppText>
+                              </Pressable>
+                            </View>
+                          ))}
+                        </View>
+                      )}
+                    </>
+                  ) : (
+                    <AppText variant="body" color="secondary" style={styles.readOnlyText}>
+                      {nearestToPinHoles.length > 0
+                        ? `Holes: ${nearestToPinHoles.join(", ")}`
+                        : "No holes selected"}
+                    </AppText>
+                  )}
+                </AppCard>
+
+                <AppCard style={styles.section}>
+                  <AppText variant="h2" style={styles.sectionTitleInline}>Longest Drive Holes</AppText>
+                  {canManageTeeSheet ? (
+                    <>
+                      <View style={styles.holeInputRow}>
+                        <TextInput
+                          value={newLDHole}
+                          onChangeText={setNewLDHole}
+                          placeholder="Hole (1-18)"
+                          keyboardType="numeric"
+                          style={[styles.holeInput, { borderColor: colors.border, color: colors.text }]}
+                          editable={!isReadOnly}
+                        />
+                        <PrimaryButton
+                          onPress={() => {
+                            const hole = parseInt(newLDHole, 10);
+                            if (!isNaN(hole) && hole >= 1 && hole <= 18) {
+                              if (!longestDriveHoles.includes(hole)) {
+                                setLongestDriveHoles([...longestDriveHoles, hole].sort((a, b) => a - b));
+                                setNewLDHole("");
+                              } else {
+                                Alert.alert("Duplicate", "This hole is already added");
+                              }
+                            } else {
+                              Alert.alert("Invalid", "Please enter a hole number between 1 and 18");
+                            }
+                          }}
+                          size="sm"
+                          disabled={isReadOnly}
+                        >
+                          Add
+                        </PrimaryButton>
+                      </View>
+                      {longestDriveHoles.length > 0 && (
+                        <View style={styles.holeChips}>
+                          {longestDriveHoles.map((hole) => (
+                            <View key={hole} style={styles.holeChip}>
+                              <AppText variant="small">Hole {hole}</AppText>
+                              <Pressable
+                                onPress={() => setLongestDriveHoles(longestDriveHoles.filter((h) => h !== hole))}
+                                style={styles.chipRemove}
+                              >
+                                <AppText variant="small">×</AppText>
+                              </Pressable>
+                            </View>
+                          ))}
+                        </View>
+                      )}
+                    </>
+                  ) : (
+                    <AppText variant="body" color="secondary" style={styles.readOnlyText}>
+                      {longestDriveHoles.length > 0
+                        ? `Holes: ${longestDriveHoles.join(", ")}`
+                        : "No holes selected"}
+                    </AppText>
+                  )}
+                </AppCard>
+                
                 <Text style={styles.sectionTitle}>Tee Sheet Settings</Text>
                     <View style={styles.field}>
                       <Text style={styles.fieldLabel}>Start Time</Text>
@@ -1304,10 +1492,9 @@ export default function TeesTeeSheetScreen() {
           </View>
         )}
 
-        <Pressable onPress={() => router.back()} style={styles.backButton}>
-          <Text style={styles.buttonText}>Back</Text>
-        </Pressable>
-      </View>
+        <SecondaryButton onPress={() => router.back()}>
+          Back
+        </SecondaryButton>
 
       {/* Add Guest Modal */}
       <Modal
@@ -1382,7 +1569,7 @@ export default function TeesTeeSheetScreen() {
           </View>
         </View>
       </Modal>
-    </ScrollView>
+    </Screen>
   );
 }
 
@@ -1394,6 +1581,11 @@ const styles = StyleSheet.create({
   content: {
     flex: 1,
     padding: 24,
+  },
+  centerContent: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
   },
   section: {
     marginTop: 16,
@@ -1408,6 +1600,15 @@ const styles = StyleSheet.create({
     fontSize: 16,
     opacity: 0.75,
     marginBottom: 24,
+  },
+  readOnlyCard: {
+    marginBottom: spacing.base,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+  },
+  readOnlyText: {
+    flex: 1,
   },
   tabs: {
     flexDirection: "row",
@@ -1427,8 +1628,6 @@ const styles = StyleSheet.create({
     borderBottomColor: "#0B6E4F",
   },
   tabText: {
-    fontSize: 16,
-    fontWeight: "600",
     color: "#6b7280",
   },
   tabTextActive: {
@@ -1442,6 +1641,12 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     marginBottom: 12,
     marginTop: 24,
+    color: "#111827",
+  },
+  sectionTitleInline: {
+    fontSize: 18,
+    fontWeight: "700",
+    marginBottom: spacing.sm,
     color: "#111827",
   },
   selectContainer: {
@@ -2079,6 +2284,48 @@ const styles = StyleSheet.create({
     color: "white",
     fontSize: 16,
     fontWeight: "600",
+  },
+  textArea: {
+    borderWidth: 1,
+    borderRadius: 8,
+    padding: spacing.sm,
+    fontSize: 15,
+    minHeight: 100,
+    textAlignVertical: "top",
+    marginTop: spacing.sm,
+  },
+  holeInputRow: {
+    flexDirection: "row",
+    gap: spacing.sm,
+    alignItems: "center",
+    marginTop: spacing.sm,
+  },
+  holeInput: {
+    flex: 1,
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.base,
+    fontSize: 16,
+    minHeight: 44,
+  },
+  holeChips: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: spacing.xs,
+    marginTop: spacing.sm,
+  },
+  holeChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#f3f4f6",
+    paddingVertical: spacing.xs,
+    paddingHorizontal: spacing.sm,
+    borderRadius: 16,
+    gap: spacing.xs,
+  },
+  chipRemove: {
+    paddingLeft: spacing.xs,
   },
 });
 

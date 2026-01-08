@@ -15,7 +15,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useFocusEffect } from "@react-navigation/native";
 import { router, useLocalSearchParams } from "expo-router";
 import { useCallback, useState } from "react";
-import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { Alert, Pressable, StyleSheet, TextInput, View, ActivityIndicator } from "react-native";
 
 import { getCourseHandicap, getPlayingHandicap } from "@/lib/handicap";
 import type { Course, TeeSet, MemberData as MemberDataType } from "@/lib/models";
@@ -24,6 +24,13 @@ import { getCurrentUserRoles } from "@/lib/roles";
 import { getSession } from "@/lib/session";
 import { STORAGE_KEYS } from "@/lib/storage";
 import { formatDateDDMMYYYY } from "@/utils/date";
+import { Screen } from "@/components/ui/Screen";
+import { SectionHeader } from "@/components/ui/SectionHeader";
+import { AppText } from "@/components/ui/AppText";
+import { AppCard } from "@/components/ui/AppCard";
+import { PrimaryButton, SecondaryButton } from "@/components/ui/Button";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { getColors, spacing } from "@/lib/ui/theme";
 
 const EVENTS_KEY = STORAGE_KEYS.EVENTS;
 const MEMBERS_KEY = STORAGE_KEYS.MEMBERS;
@@ -475,346 +482,333 @@ export default function EventResultsScreen() {
     }
   };
 
+  const colors = getColors();
+  const winner = calculateWinner();
+  const hasResults = event?.results && Object.keys(event.results).length > 0;
+  const isPublished = event?.resultsStatus === "published";
+  const isDraft = event?.resultsStatus === "draft" || (!event?.resultsStatus && hasResults);
+
+  // Get top scores for summary
+  const getTopScores = () => {
+    if (!event || !hasResults) return null;
+    const scores = selectedPlayers
+      .map((player) => {
+        const result = event.results?.[player.id];
+        if (!result) return null;
+        if (event.format === "Stableford" || event.format === "Both") {
+          return { name: player.name, score: result.stableford ?? result.grossScore, type: "Stableford" };
+        }
+        if (event.format === "Strokeplay" || event.format === "Both") {
+          return { name: player.name, score: result.strokeplay ?? result.grossScore, type: "Strokeplay" };
+        }
+        return null;
+      })
+      .filter((s): s is { name: string; score: number; type: string } => s !== null && s.score !== undefined);
+    
+    if (event.format === "Stableford" || (event.format === "Both" && scores.some(s => s.type === "Stableford"))) {
+      return scores.sort((a, b) => b.score - a.score).slice(0, 3);
+    }
+    return scores.sort((a, b) => a.score - b.score).slice(0, 3);
+  };
+
   if (loading) {
     return (
-      <View style={[styles.container, styles.centerContent]}>
-        <Text style={styles.loadingText}>Loading...</Text>
-      </View>
+      <Screen scrollable={false}>
+        <View style={styles.centerContent}>
+          <ActivityIndicator size="large" color={colors.primary} />
+        </View>
+      </Screen>
     );
   }
 
   if (!event) {
     return (
-      <View style={[styles.container, styles.centerContent]}>
-        <Text style={styles.errorText}>Event not found</Text>
-        <Pressable onPress={() => router.back()} style={styles.backButton}>
-          <Text style={styles.buttonText}>Back</Text>
-        </Pressable>
-      </View>
+      <Screen>
+        <EmptyState title="Event not found" message="The event you're looking for doesn't exist." />
+        <SecondaryButton onPress={() => router.back()}>Back</SecondaryButton>
+      </Screen>
     );
   }
 
   // Read-only view for users without permission
   if (!canEdit) {
-    const hasResults = event.results && Object.keys(event.results).length > 0;
-    const isPublished = event.resultsStatus === "published";
+    const topScores = getTopScores();
     return (
-      <ScrollView style={styles.container}>
-        <View style={styles.content}>
-          <Text style={styles.title}>{isPublished ? "View Results" : "Results Pending"}</Text>
-          <Text style={styles.subtitle}>{event.name}</Text>
-          
-          {!hasResults && (
-            <View style={styles.emptyState}>
-              <Text style={styles.emptyText}>Results will be entered by the Handicapper/ManCo after the round.</Text>
-            </View>
-          )}
-          
-          {hasResults ? (
-            <View style={styles.resultsList}>
-              {selectedPlayers.map((player) => {
-                const playerResult = event.results?.[player.id];
-                if (!playerResult) return null;
-                
-                return (
-                  <View key={player.id} style={[styles.resultCard, styles.readOnlyCard]}>
-                    <View style={styles.playerInfo}>
-                      <Text style={styles.playerName}>{player.name}</Text>
-                      {(() => {
-                        const ch = getCourseHandicap(player, selectedMaleTeeSet, selectedFemaleTeeSet);
-                        const ph = getPlayingHandicap(player, event, selectedCourse, selectedMaleTeeSet, selectedFemaleTeeSet);
-                        return (
-                          <View style={styles.handicapInfo}>
-                            {player.handicap !== undefined && (
-                              <Text style={styles.playerHandicap}>HI: {player.handicap}</Text>
-                            )}
-                            {ch !== null && (
-                              <Text style={styles.playerHandicap}> | CH: {ch}</Text>
-                            )}
-                            {ph !== null && (
-                              <Text style={styles.playerHandicap}> | PH: {ph}</Text>
-                            )}
-                          </View>
-                        );
-                      })()}
-                    </View>
-                    <View style={styles.scoreInput}>
-                      {event.format === "Stableford" || event.format === "Both" ? (
-                        <Text style={styles.scoreLabel}>
-                          Stableford: {playerResult.stableford ?? playerResult.grossScore ?? "N/A"}
-                        </Text>
-                      ) : null}
-                      {event.format === "Strokeplay" || event.format === "Both" ? (
-                        <Text style={styles.scoreLabel}>
-                          Strokeplay: {playerResult.strokeplay ?? playerResult.grossScore ?? "N/A"}
-                        </Text>
-                      ) : null}
-                    </View>
-                  </View>
-                );
-              })}
-            </View>
-          ) : (
-            <View style={styles.emptyState}>
-              <Text style={styles.emptyText}>Results will be entered by the Handicapper/ManCo after the round.</Text>
-            </View>
-          )}
-          
-          <Pressable onPress={() => router.back()} style={styles.backButton}>
-            <Text style={styles.buttonText}>Back</Text>
-          </Pressable>
-        </View>
-      </ScrollView>
-    );
-  }
+      <Screen>
+        <SectionHeader title={isPublished ? "View Results" : "Results Pending"} />
+        <AppText variant="caption" color="secondary" style={styles.subtitle}>
+          {event.name}
+        </AppText>
 
-  const isDraft = event.resultsStatus === "draft" || (!event.resultsStatus && event.results);
-  const isPublished = event.resultsStatus === "published";
-
-  return (
-    <ScrollView style={styles.container}>
-      <View style={styles.content}>
-        <Text style={styles.title}>Enter Results</Text>
-        <Text style={styles.subtitle}>{event.name}</Text>
-        {isDraft && (
-          <Text style={styles.draftHelper}>Draft — not counted in Order of Merit until published.</Text>
+        {/* Summary Card */}
+        {hasResults && winner && (
+          <AppCard style={styles.summaryCard}>
+            <AppText variant="h2" style={styles.summaryTitle}>
+              Winner
+            </AppText>
+            <AppText variant="h1" style={{ color: colors.primary, marginVertical: spacing.sm }}>
+              {winner.memberName}
+            </AppText>
+            {topScores && topScores.length > 0 && (
+              <View style={styles.topScores}>
+                <AppText variant="bodyBold" style={styles.topScoresTitle}>
+                  Top {Math.min(3, topScores.length)}:
+                </AppText>
+                {topScores.map((s, idx) => (
+                  <AppText key={idx} variant="body" color="secondary">
+                    {idx + 1}. {s.name} — {s.score}
+                  </AppText>
+                ))}
+              </View>
+            )}
+          </AppCard>
         )}
 
-        {selectedPlayers.length === 0 ? (
-          <View style={styles.emptyState}>
-            <Text style={styles.emptyText}>No players selected for this event</Text>
-            <Text style={styles.emptySubtext}>Go to Players screen to select players first</Text>
-          </View>
+        {!hasResults ? (
+          <EmptyState
+            title="Results Pending"
+            message="Results will be entered by the Handicapper/ManCo after the round."
+          />
         ) : (
           <>
-            <View style={styles.resultsList}>
-              {selectedPlayers.map((player) => (
-                <View key={player.id} style={styles.resultCard}>
-                  <View style={styles.playerInfo}>
-                    <Text style={styles.playerName}>{player.name}</Text>
-                    {(() => {
-                      const ch = getCourseHandicap(player, selectedMaleTeeSet, selectedFemaleTeeSet);
-                      const ph = getPlayingHandicap(player, event, selectedCourse, selectedMaleTeeSet, selectedFemaleTeeSet);
-                      return (
-                        <View style={styles.handicapInfo}>
-                          {player.handicap !== undefined && (
-                            <Text style={styles.playerHandicap}>HI: {player.handicap}</Text>
-                          )}
-                          {ch !== null && (
-                            <Text style={styles.playerHandicap}> | CH: {ch}</Text>
-                          )}
-                          {ph !== null && (
-                            <Text style={styles.playerHandicap}> | PH: {ph}</Text>
-                          )}
-                        </View>
-                      );
-                    })()}
+            {selectedPlayers.map((player) => {
+              const playerResult = event.results?.[player.id];
+              if (!playerResult) return null;
+
+              const ch = getCourseHandicap(player, selectedMaleTeeSet, selectedFemaleTeeSet);
+              const ph = getPlayingHandicap(player, event, selectedCourse, selectedMaleTeeSet, selectedFemaleTeeSet);
+
+              return (
+                <AppCard key={player.id} style={styles.resultCard}>
+                  <AppText variant="bodyBold">{player.name}</AppText>
+                  <View style={styles.handicapInfo}>
+                    {player.handicap !== undefined && (
+                      <AppText variant="small" color="secondary">
+                        HI: {player.handicap}
+                      </AppText>
+                    )}
+                    {ch !== null && (
+                      <AppText variant="small" color="secondary">
+                        {" | "}CH: {ch}
+                      </AppText>
+                    )}
+                    {ph !== null && (
+                      <AppText variant="small" color="secondary">
+                        {" | "}PH: {ph}
+                      </AppText>
+                    )}
                   </View>
-                  {(event.format === "Stableford" || event.format === "Both") && (
-                    <View style={styles.scoreInput}>
-                      <Text style={styles.scoreLabel}>Stableford Points (0-60)</Text>
-                      <TextInput
-                        value={results[player.id]?.stableford || ""}
-                        onChangeText={(value) => handleScoreChange(player.id, "stableford", value)}
-                        placeholder="Enter points"
-                        keyboardType="numeric"
-                        editable={canEdit}
-                        style={[styles.input, !canEdit && styles.inputReadOnly]}
-                      />
-                    </View>
-                  )}
-                  {(event.format === "Strokeplay" || event.format === "Both") && (
-                    <View style={styles.scoreInput}>
-                      <Text style={styles.scoreLabel}>Strokeplay Gross (50-200)</Text>
-                      <TextInput
-                        value={results[player.id]?.strokeplay || ""}
-                        onChangeText={(value) => handleScoreChange(player.id, "strokeplay", value)}
-                        placeholder="Enter score"
-                        keyboardType="numeric"
-                        editable={canEdit}
-                        style={[styles.input, !canEdit && styles.inputReadOnly]}
-                      />
-                      {(() => {
-                        const handicap = event.handicapSnapshot?.[player.id] ?? player.handicap;
-                        const strokeplay = results[player.id]?.strokeplay;
-                        if (handicap !== undefined && strokeplay) {
-                          return (
-                            <Text style={styles.netScoreLabel}>
-                              Net: {parseInt(strokeplay || "0", 10) - handicap}
-                            </Text>
-                          );
-                        }
-                        return null;
-                      })()}
-                    </View>
-                  )}
-                </View>
-              ))}
-            </View>
-
-            <Pressable onPress={handleSaveResults} style={styles.saveButton} disabled={!canEdit}>
-              <Text style={styles.buttonText}>Save Draft</Text>
-            </Pressable>
-
-            {isDraft && canEdit && (
-              <Pressable onPress={handlePublishResults} style={styles.publishButton}>
-                <Text style={styles.buttonText}>Publish Results</Text>
-              </Pressable>
-            )}
+                  <View style={styles.scoreDisplay}>
+                    {event.format === "Stableford" || event.format === "Both" ? (
+                      <AppText variant="body">
+                        Stableford: {playerResult.stableford ?? playerResult.grossScore ?? "N/A"}
+                      </AppText>
+                    ) : null}
+                    {event.format === "Strokeplay" || event.format === "Both" ? (
+                      <AppText variant="body">
+                        Strokeplay: {playerResult.strokeplay ?? playerResult.grossScore ?? "N/A"}
+                      </AppText>
+                    ) : null}
+                  </View>
+                </AppCard>
+              );
+            })}
           </>
         )}
 
-        <Pressable onPress={() => router.back()} style={styles.backButton}>
-          <Text style={styles.buttonText}>Cancel</Text>
-        </Pressable>
-      </View>
-    </ScrollView>
+        <SecondaryButton onPress={() => router.back()}>Back</SecondaryButton>
+      </Screen>
+    );
+  }
+
+  const topScores = getTopScores();
+
+  return (
+    <Screen>
+      <SectionHeader title="Enter Results" />
+      <AppText variant="caption" color="secondary" style={styles.subtitle}>
+        {event.name}
+      </AppText>
+      {isDraft && (
+        <AppCard style={styles.draftHelper}>
+          <AppText variant="small" color="secondary">
+            Draft — not counted in Order of Merit until published.
+          </AppText>
+        </AppCard>
+      )}
+
+      {/* Summary Card */}
+      {hasResults && winner && (
+        <AppCard style={styles.summaryCard}>
+          <AppText variant="h2" style={styles.summaryTitle}>
+            Current Winner
+          </AppText>
+          <AppText variant="h1" style={{ color: colors.primary, marginVertical: spacing.sm }}>
+            {winner.memberName}
+          </AppText>
+          {topScores && topScores.length > 0 && (
+            <View style={styles.topScores}>
+              <AppText variant="bodyBold" style={styles.topScoresTitle}>
+                Top {Math.min(3, topScores.length)}:
+              </AppText>
+              {topScores.map((s, idx) => (
+                <AppText key={idx} variant="body" color="secondary">
+                  {idx + 1}. {s.name} — {s.score}
+                </AppText>
+              ))}
+            </View>
+          )}
+        </AppCard>
+      )}
+
+      {selectedPlayers.length === 0 ? (
+        <EmptyState
+          title="No players selected"
+          message="Go to Players screen to select players first"
+        />
+      ) : (
+        <>
+          {selectedPlayers.map((player) => {
+            const ch = getCourseHandicap(player, selectedMaleTeeSet, selectedFemaleTeeSet);
+            const ph = getPlayingHandicap(player, event, selectedCourse, selectedMaleTeeSet, selectedFemaleTeeSet);
+
+            return (
+              <AppCard key={player.id} style={styles.resultCard}>
+                <AppText variant="bodyBold">{player.name}</AppText>
+                <View style={styles.handicapInfo}>
+                  {player.handicap !== undefined && (
+                    <AppText variant="small" color="secondary">
+                      HI: {player.handicap}
+                    </AppText>
+                  )}
+                  {ch !== null && (
+                    <AppText variant="small" color="secondary">
+                      {" | "}CH: {ch}
+                    </AppText>
+                  )}
+                  {ph !== null && (
+                    <AppText variant="small" color="secondary">
+                      {" | "}PH: {ph}
+                    </AppText>
+                  )}
+                </View>
+                {(event.format === "Stableford" || event.format === "Both") && (
+                  <View style={styles.scoreInput}>
+                    <AppText variant="caption" style={styles.scoreLabel}>
+                      Stableford Points (0-60)
+                    </AppText>
+                    <TextInput
+                      value={results[player.id]?.stableford || ""}
+                      onChangeText={(value) => handleScoreChange(player.id, "stableford", value)}
+                      placeholder="Enter points"
+                      keyboardType="numeric"
+                      editable={canEdit}
+                      style={[styles.input, { borderColor: colors.border, color: colors.text }]}
+                    />
+                  </View>
+                )}
+                {(event.format === "Strokeplay" || event.format === "Both") && (
+                  <View style={styles.scoreInput}>
+                    <AppText variant="caption" style={styles.scoreLabel}>
+                      Strokeplay Gross (50-200)
+                    </AppText>
+                    <TextInput
+                      value={results[player.id]?.strokeplay || ""}
+                      onChangeText={(value) => handleScoreChange(player.id, "strokeplay", value)}
+                      placeholder="Enter score"
+                      keyboardType="numeric"
+                      editable={canEdit}
+                      style={[styles.input, { borderColor: colors.border, color: colors.text }]}
+                    />
+                    {(() => {
+                      const handicap = event.handicapSnapshot?.[player.id] ?? player.handicap;
+                      const strokeplay = results[player.id]?.strokeplay;
+                      if (handicap !== undefined && strokeplay) {
+                        return (
+                          <AppText variant="small" color="secondary" style={styles.netScoreLabel}>
+                            Net: {parseInt(strokeplay || "0", 10) - handicap}
+                          </AppText>
+                        );
+                      }
+                      return null;
+                    })()}
+                  </View>
+                )}
+              </AppCard>
+            );
+          })}
+
+          <PrimaryButton onPress={handleSaveResults} disabled={!canEdit} style={styles.actionButton}>
+            Save Draft
+          </PrimaryButton>
+
+          {isDraft && canEdit && (
+            <PrimaryButton onPress={handlePublishResults} style={styles.actionButton}>
+              Publish Results
+            </PrimaryButton>
+          )}
+        </>
+      )}
+
+      <SecondaryButton onPress={() => router.back()}>Cancel</SecondaryButton>
+    </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: "#fff",
-  },
-  content: {
-    flex: 1,
-    padding: 24,
-  },
   centerContent: {
+    flex: 1,
     justifyContent: "center",
     alignItems: "center",
   },
-  title: {
-    fontSize: 34,
-    fontWeight: "800",
-    marginBottom: 6,
-  },
   subtitle: {
-    fontSize: 16,
-    opacity: 0.75,
-    marginBottom: 24,
+    marginBottom: spacing.lg,
   },
-  loadingText: {
-    fontSize: 16,
-    opacity: 0.7,
+  summaryCard: {
+    marginBottom: spacing.base,
   },
-  errorText: {
-    fontSize: 16,
-    color: "#ef4444",
-    marginBottom: 16,
+  summaryTitle: {
+    marginBottom: spacing.xs,
   },
-  emptyState: {
-    alignItems: "center",
-    paddingVertical: 40,
+  topScores: {
+    marginTop: spacing.sm,
   },
-  emptyText: {
-    fontSize: 16,
-    fontWeight: "600",
-    color: "#111827",
-    marginBottom: 8,
+  topScoresTitle: {
+    marginBottom: spacing.xs,
   },
-  emptySubtext: {
-    fontSize: 14,
-    opacity: 0.7,
-    color: "#111827",
-    textAlign: "center",
-  },
-  resultsList: {
-    marginBottom: 24,
+  draftHelper: {
+    marginBottom: spacing.base,
   },
   resultCard: {
-    backgroundColor: "#f9fafb",
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 12,
-    borderWidth: 1,
-    borderColor: "#e5e7eb",
-  },
-  playerInfo: {
-    marginBottom: 12,
-  },
-  playerName: {
-    fontSize: 16,
-    fontWeight: "600",
-    color: "#111827",
-    marginBottom: 4,
+    marginBottom: spacing.base,
   },
   handicapInfo: {
     flexDirection: "row",
     flexWrap: "wrap",
-    marginTop: 4,
-  },
-  playerHandicap: {
-    fontSize: 14,
-    opacity: 0.7,
-    color: "#111827",
+    marginTop: spacing.xs,
   },
   scoreInput: {
-    marginTop: 8,
+    marginTop: spacing.base,
   },
   scoreLabel: {
-    fontSize: 14,
-    fontWeight: "600",
-    marginBottom: 6,
-    opacity: 0.7,
-    color: "#111827",
+    marginBottom: spacing.xs,
   },
   input: {
-    backgroundColor: "#fff",
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    borderRadius: 10,
-    fontSize: 16,
     borderWidth: 1,
-    borderColor: "#e5e7eb",
+    borderRadius: 8,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.base,
+    fontSize: 16,
+    minHeight: 44,
   },
-  inputReadOnly: {
-    backgroundColor: "#f3f4f6",
-    opacity: 0.6,
-  },
-  readOnlyCard: {
-    opacity: 0.8,
+  scoreDisplay: {
+    marginTop: spacing.sm,
   },
   netScoreLabel: {
-    fontSize: 12,
-    color: "#6b7280",
-    marginTop: 4,
-    fontStyle: "italic",
+    marginTop: spacing.xs,
   },
-  saveButton: {
-    backgroundColor: "#0B6E4F",
-    paddingVertical: 14,
-    borderRadius: 14,
-    alignItems: "center",
-    marginBottom: 12,
-  },
-  publishButton: {
-    backgroundColor: "#059669",
-    paddingVertical: 14,
-    borderRadius: 14,
-    alignItems: "center",
-    marginBottom: 12,
-  },
-  draftHelper: {
-    fontSize: 12,
-    color: "#6b7280",
-    fontStyle: "italic",
-    marginBottom: 16,
-    padding: 8,
-    backgroundColor: "#f3f4f6",
-    borderRadius: 6,
-  },
-  backButton: {
-    backgroundColor: "#111827",
-    paddingVertical: 14,
-    borderRadius: 14,
-    alignItems: "center",
-  },
-  buttonText: {
-    color: "white",
-    fontSize: 18,
-    fontWeight: "700",
+  actionButton: {
+    marginBottom: spacing.base,
   },
 });
 
