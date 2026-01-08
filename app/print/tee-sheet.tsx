@@ -5,31 +5,34 @@
  * User-initiated printing is more reliable on mobile browsers (Android Chrome)
  * which often block auto-triggered window.print().
  * 
+ * Uses the same pure data model pattern as Season Leaderboard:
+ * 1. Build data model
+ * 2. Validate data model
+ * 3. Render HTML from data model
+ * 
  * Usage: /print/tee-sheet?eventId=xxx
  */
 
 import { STORAGE_KEYS } from "@/lib/storage";
-import type { Course, TeeSet, EventData, MemberData } from "@/lib/models";
+import type { Course, TeeSet, EventData, MemberData, GuestData } from "@/lib/models";
 import { getArray } from "@/lib/storage-helpers";
-import { generateTeeSheetHtml } from "@/lib/teeSheetPrint";
+import { 
+  buildTeeSheetDataModel, 
+  renderTeeSheetHtml, 
+  validateTeeSheetData,
+  type TeeSheetDataModel,
+} from "@/lib/teeSheetPrint";
 // Firestore read helpers (with AsyncStorage fallback)
 import { getSociety, getMembers, getEvents } from "@/lib/firestore/society";
 import { useLocalSearchParams, router } from "expo-router";
 import { useEffect, useState } from "react";
 import { View, Text, StyleSheet, Pressable, Platform } from "react-native";
 
-type GuestData = {
-  id: string;
-  name: string;
-  sex: "male" | "female";
-  handicapIndex?: number;
-  included: boolean;
-};
-
 export default function PrintTeeSheetScreen() {
   const { eventId } = useLocalSearchParams<{ eventId: string }>();
 
   const [loading, setLoading] = useState(true);
+  const [dataReady, setDataReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [teeSheetHtml, setTeeSheetHtml] = useState<string>("");
 
@@ -38,6 +41,9 @@ export default function PrintTeeSheetScreen() {
   }, [eventId]);
 
   const loadDataAndGenerateHtml = async () => {
+    setLoading(true);
+    setDataReady(false);
+    
     try {
       if (!eventId) {
         setError("No event ID provided");
@@ -89,56 +95,50 @@ export default function PrintTeeSheetScreen() {
       // Load members using Firestore helper (with AsyncStorage fallback)
       const members = await getMembers();
 
-      // Guard: members must exist
+      // Guard: members should exist
       if (!members || members.length === 0) {
-        console.warn("[Print Route] No members found");
+        console.warn("[Print Route] No members found - tee sheet may be incomplete");
       }
 
       // Get guests from event
-      const guests: GuestData[] = event.guests || [];
+      const guests: GuestData[] = (event.guests || []).map((g) => ({
+        ...g,
+        included: g.included ?? true,
+      }));
 
-      // Get tee sheet data and filter out invalid players
-      const rawTeeGroups = event.teeSheet.groups || [];
-      const teeGroups = rawTeeGroups.map((group) => ({
-        ...group,
-        players: (group.players || []).filter((playerId) => {
-          // Ensure player exists in members or guests
-          const memberExists = members.some((m) => m.id === playerId);
-          const guestExists = guests.some((g) => g.id === playerId && g.included);
-          return memberExists || guestExists;
-        }),
-      })).filter((group) => group.players.length > 0);
-
-      if (teeGroups.length === 0) {
-        setError("No valid players in tee groups.");
-        setLoading(false);
-        return;
-      }
-
-      const teeSheetNotes = event.teeSheetNotes || "";
-      const nearestToPinHoles = event.nearestToPinHoles || [];
-      const longestDriveHoles = event.longestDriveHoles || [];
-      const handicapAllowancePct = event.handicapAllowancePct ?? (event.handicapAllowance === 1.0 ? 100 : 90);
-
-      // Generate HTML using shared generator
-      const html = generateTeeSheetHtml({
+      // Build pure data model (this handles player validation internally)
+      const teeSheetData: TeeSheetDataModel = buildTeeSheetDataModel({
         society,
         event,
         course,
         maleTeeSet,
         femaleTeeSet,
         members,
-        guests: guests.filter((g) => g.included),
-        teeGroups,
-        teeSheetNotes,
-        nearestToPinHoles,
-        longestDriveHoles,
-        handicapAllowancePct,
+        guests,
+        teeGroups: event.teeSheet.groups,
+        teeSheetNotes: event.teeSheetNotes,
+        nearestToPinHoles: event.nearestToPinHoles,
+        longestDriveHoles: event.longestDriveHoles,
       });
 
+      // Validate data model
+      const validation = validateTeeSheetData(teeSheetData);
+      if (!validation.valid) {
+        const errorMsg = validation.errors.join("\n");
+        console.error("[Print Route] Validation failed:", validation.errors);
+        setError(`Cannot generate PDF:\n${errorMsg}`);
+        setLoading(false);
+        return;
+      }
+
+      // Data is ready
+      setDataReady(true);
+
+      // Render HTML from data model
+      const html = renderTeeSheetHtml(teeSheetData);
       setTeeSheetHtml(html);
     } catch (err) {
-      console.error("Error loading tee sheet data:", err);
+      console.error("[Print Route] Error loading tee sheet data:", err);
       setError("Failed to load tee sheet data. Please try again.");
     } finally {
       setLoading(false);
@@ -230,6 +230,10 @@ export default function PrintTeeSheetScreen() {
                 .print-btn:active {
                   background-color: #074a35;
                 }
+                .print-btn:disabled {
+                  background-color: #9ca3af;
+                  cursor: not-allowed;
+                }
                 .back-btn {
                   background-color: #e5e7eb;
                   color: #374151;
@@ -257,7 +261,11 @@ export default function PrintTeeSheetScreen() {
         {/* Action bar with print button - hidden in print */}
         <div className="print-action-bar">
           <div className="button-row">
-            <button className="print-btn" onClick={handlePrint}>
+            <button 
+              className="print-btn" 
+              onClick={handlePrint}
+              disabled={!dataReady}
+            >
               🖨️ Print / Save as PDF
             </button>
             <button className="back-btn" onClick={handleBack}>

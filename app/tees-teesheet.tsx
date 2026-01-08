@@ -5,13 +5,18 @@
  */
 
 import { STORAGE_KEYS } from "@/lib/storage";
-import type { Course, TeeSet, EventData, MemberData } from "@/lib/models";
+import type { Course, TeeSet, EventData, MemberData, GuestData } from "@/lib/models";
 import { getPlayingHandicap, getCourseHandicap } from "@/lib/handicap";
 import { formatDateDDMMYYYY } from "@/utils/date";
 import { getPermissions, type Permissions } from "@/lib/rbac";
 import { guard } from "@/lib/guards";
 import { getArray, ensureArray } from "@/lib/storage-helpers";
-import { generateTeeSheetHtml } from "@/lib/teeSheetPrint";
+import { 
+  buildTeeSheetDataModel, 
+  renderTeeSheetHtml, 
+  validateTeeSheetData,
+  type TeeSheetDataModel,
+} from "@/lib/teeSheetPrint";
 // Firestore read helpers (with AsyncStorage fallback)
 import { getSociety, getMembers, getEvents } from "@/lib/firestore/society";
 import AsyncStorage from "@react-native-async-storage/async-storage";
@@ -79,6 +84,9 @@ export default function TeesTeeSheetScreen() {
 
   const [society, setSociety] = useState<{ name: string; logoUrl?: string } | null>(null);
 
+  // Data loading state - buttons disabled until data is ready
+  const [dataReady, setDataReady] = useState(false);
+
   // Derived permission flag
   const canManageTeeSheet = permissions?.canManageTeeSheet ?? false;
 
@@ -103,6 +111,7 @@ export default function TeesTeeSheetScreen() {
   };
 
   const loadData = async () => {
+    setDataReady(false);
     try {
       // Load society using Firestore helper (with AsyncStorage fallback)
       const loadedSociety = await getSociety();
@@ -121,8 +130,13 @@ export default function TeesTeeSheetScreen() {
       // Load members using Firestore helper (with AsyncStorage fallback)
       const loadedMembers = await getMembers();
       setMembers(loadedMembers);
+
+      // Data is now ready
+      setDataReady(true);
     } catch (error) {
       console.error("Error loading data:", error);
+      // Still mark as ready so user can see error state
+      setDataReady(true);
     }
   };
 
@@ -350,10 +364,63 @@ export default function TeesTeeSheetScreen() {
       return;
     }
 
+    // Validate all players exist in members or guests
+    const invalidPlayers: string[] = [];
+    const validatedGroups = teeGroups.map((group) => {
+      const validPlayers = group.players.filter((playerId) => {
+        const memberExists = members.some((m) => m.id === playerId);
+        const guestExists = guests.some((g) => g.id === playerId && g.included);
+        if (!memberExists && !guestExists) {
+          invalidPlayers.push(playerId);
+          return false;
+        }
+        return true;
+      });
+      return { ...group, players: validPlayers };
+    });
+
+    if (invalidPlayers.length > 0) {
+      console.warn("[Save Tee Sheet] Removed invalid player IDs:", invalidPlayers);
+    }
+
+    // Check if any valid players remain
+    const totalPlayers = validatedGroups.reduce((sum, g) => sum + g.players.length, 0);
+    if (totalPlayers === 0) {
+      Alert.alert("Error", "No valid players in tee sheet. Please add players first.");
+      return;
+    }
+
     try {
       const [hours, minutes] = startTime.split(":").map(Number);
       const startDate = new Date();
       startDate.setHours(hours, minutes, 0, 0);
+
+      // Build playing handicap snapshot for all players
+      const playingHandicapSnapshot: { [memberId: string]: number } = {};
+      validatedGroups.forEach((group) => {
+        group.players.forEach((playerId) => {
+          const member = members.find((m) => m.id === playerId);
+          const guest = guests.find((g) => g.id === playerId);
+          
+          if (member) {
+            const ph = getPlayingHandicap(member, selectedEvent, selectedCourse, selectedMaleTeeSet, selectedFemaleTeeSet);
+            if (ph !== null) {
+              playingHandicapSnapshot[playerId] = ph;
+            }
+          } else if (guest) {
+            const guestAsMember = {
+              id: guest.id,
+              name: guest.name,
+              handicap: guest.handicapIndex,
+              sex: guest.sex,
+            };
+            const ph = getPlayingHandicap(guestAsMember, selectedEvent, selectedCourse, selectedMaleTeeSet, selectedFemaleTeeSet);
+            if (ph !== null) {
+              playingHandicapSnapshot[playerId] = ph;
+            }
+          }
+        });
+      });
 
       const updatedEvents = events.map((e) =>
         e.id === selectedEvent.id
@@ -362,17 +429,19 @@ export default function TeesTeeSheetScreen() {
               teeSheet: {
                 startTimeISO: startDate.toISOString(),
                 intervalMins: intervalMins,
-                groups: teeGroups,
+                groups: validatedGroups,
               },
               guests: guests, // Save guests with event
               teeSheetNotes: teeSheetNotes.trim() || undefined,
               nearestToPinHoles: nearestToPinHoles.length > 0 ? [...nearestToPinHoles].sort((a, b) => a - b) : undefined,
               longestDriveHoles: longestDriveHoles.length > 0 ? [...longestDriveHoles].sort((a, b) => a - b) : undefined,
+              playingHandicapSnapshot, // Store PH at time of save
             }
           : e
       );
 
       await AsyncStorage.setItem(EVENTS_KEY, JSON.stringify(updatedEvents));
+      setTeeGroups(validatedGroups); // Update local state with validated groups
       await loadData();
       Alert.alert("Success", "Tee sheet saved");
     } catch (error) {
@@ -509,6 +578,13 @@ export default function TeesTeeSheetScreen() {
    * - Native: Uses expo-print + expo-sharing (no Sharing on web)
    */
   const handleExportTeeSheet = async () => {
+    // Guard: data must be ready
+    if (!dataReady) {
+      Alert.alert("Error", "Data is still loading. Please wait.");
+      console.warn("[PDF Export] Data not ready");
+      return;
+    }
+
     // Validate required data
     if (!selectedEvent) {
       Alert.alert("Error", "Please select an event first");
@@ -558,40 +634,36 @@ export default function TeesTeeSheetScreen() {
         return;
       }
 
-      // Native (iOS/Android): Use expo-print + expo-sharing
-      // Filter out tee groups with undefined/invalid players
-      const validTeeGroups = teeGroups.map((group) => ({
-        ...group,
-        players: group.players.filter((playerId) => {
-          // Ensure player exists in members or guests
-          const memberExists = members.some((m) => m.id === playerId);
-          const guestExists = guests.some((g) => g.id === playerId && g.included);
-          return memberExists || guestExists;
-        }),
-      })).filter((group) => group.players.length > 0);
+      // Native (iOS/Android): Build data model first, then render
+      // This follows the same pattern as Season Leaderboard PDF
 
-      if (validTeeGroups.length === 0) {
-        Alert.alert("Error", "No valid players in tee groups. Please add players first.");
-        console.warn("[PDF Export] All tee groups are empty after validation");
-        isSharing.current = false;
-        return;
-      }
-
-      // Generate HTML using shared generator
-      const html = generateTeeSheetHtml({
+      // Build pure data model
+      const teeSheetData: TeeSheetDataModel = buildTeeSheetDataModel({
         society,
         event: selectedEvent,
         course: selectedCourse,
         maleTeeSet: selectedMaleTeeSet,
         femaleTeeSet: selectedFemaleTeeSet,
         members,
-        guests: guests.filter((g) => g.included),
-        teeGroups: validTeeGroups,
+        guests: guests.filter((g) => g.included) as GuestData[],
+        teeGroups,
         teeSheetNotes,
         nearestToPinHoles,
         longestDriveHoles,
-        handicapAllowancePct,
       });
+
+      // Validate data model
+      const validation = validateTeeSheetData(teeSheetData);
+      if (!validation.valid) {
+        const errorMsg = validation.errors.join("\n");
+        console.error("[PDF Export] Validation failed:", validation.errors);
+        Alert.alert("Error", `Cannot generate PDF:\n${errorMsg}`);
+        isSharing.current = false;
+        return;
+      }
+
+      // Render HTML from data model
+      const html = renderTeeSheetHtml(teeSheetData);
 
       try {
         // Use printToFileAsync on native
