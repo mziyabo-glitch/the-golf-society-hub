@@ -2,15 +2,13 @@
  * Tee Sheet Print Route (Web Only)
  * 
  * This route renders the tee sheet HTML and provides a user-initiated print button.
- * User-initiated printing is more reliable on mobile browsers (Android Chrome)
- * which often block auto-triggered window.print().
  * 
- * Uses the same pure data model pattern as Season Leaderboard:
- * 1. Build data model
- * 2. Validate data model
- * 3. Render HTML from data model
+ * Data loading priority:
+ * 1. First try to parse payload param (passed from tee sheet screen)
+ * 2. If no payload, load from Firestore using societyId + eventId
+ * 3. Only show error if both methods fail
  * 
- * Usage: /print/tee-sheet?eventId=xxx
+ * Usage: /print/tee-sheet?eventId=xxx&payload=xxx
  */
 
 import { STORAGE_KEYS } from "@/lib/storage";
@@ -22,14 +20,15 @@ import {
   validateTeeSheetData,
   type TeeSheetDataModel,
 } from "@/lib/teeSheetPrint";
-// Firestore read helpers (with AsyncStorage fallback)
-import { getSociety, getMembers, getEvents } from "@/lib/firestore/society";
+import { decodeTeeSheetPayload, type TeeSheetPayload } from "@/lib/teeSheetPayload";
+// Firestore read helpers
+import { getSociety, getMembers, getEvents, getCourse } from "@/lib/firestore/society";
 import { useLocalSearchParams, router } from "expo-router";
 import { useEffect, useState } from "react";
 import { View, Text, StyleSheet, Pressable, Platform } from "react-native";
 
 export default function PrintTeeSheetScreen() {
-  const { eventId } = useLocalSearchParams<{ eventId: string }>();
+  const { eventId, payload } = useLocalSearchParams<{ eventId: string; payload?: string }>();
 
   const [loading, setLoading] = useState(true);
   const [dataReady, setDataReady] = useState(false);
@@ -38,50 +37,179 @@ export default function PrintTeeSheetScreen() {
 
   useEffect(() => {
     loadDataAndGenerateHtml();
-  }, [eventId]);
+  }, [eventId, payload]);
 
   const loadDataAndGenerateHtml = async () => {
     setLoading(true);
     setDataReady(false);
+    setError(null);
     
+    console.log("[Print Route] Loading with eventId:", eventId, "payload:", payload ? "present" : "absent");
+
     try {
+      // STEP 1: Try to use payload if present
+      if (payload) {
+        const decodedPayload = decodeTeeSheetPayload(payload);
+        if (decodedPayload && decodedPayload.teeSheet?.groups?.length > 0) {
+          console.log("[Print Route] Using payload data");
+          await renderFromPayload(decodedPayload);
+          return;
+        }
+        console.log("[Print Route] Payload invalid or empty, falling back to Firestore");
+      }
+
+      // STEP 2: Load from Firestore
       if (!eventId) {
         setError("No event ID provided");
         setLoading(false);
         return;
       }
 
-      // Load society using Firestore helper (with AsyncStorage fallback)
+      await renderFromFirestore(eventId);
+    } catch (err) {
+      console.error("[Print Route] Error:", err);
+      setError("Failed to load tee sheet data. Please try again.");
+      setLoading(false);
+    }
+  };
+
+  /**
+   * Render from payload (passed from tee sheet screen)
+   */
+  const renderFromPayload = async (payload: TeeSheetPayload) => {
+    try {
+      // Load members from Firestore (needed for player names)
+      const members = await getMembers();
+      console.log("[Print Route] Loaded", members.length, "members for payload render");
+
+      // Build society info from payload
+      const society = payload.societyName 
+        ? { name: payload.societyName, logoUrl: payload.societyLogoUrl }
+        : null;
+
+      // Build course info from payload
+      const course: Course | null = payload.courseId ? {
+        id: payload.courseId,
+        name: payload.courseName || "",
+        teeSets: [],
+      } : null;
+
+      // Build tee sets from payload
+      const maleTeeSet: TeeSet | null = payload.maleTeeSet ? {
+        id: payload.maleTeeSet.id,
+        courseId: payload.courseId || "",
+        teeColor: payload.maleTeeSet.teeColor,
+        par: payload.maleTeeSet.par,
+        courseRating: payload.maleTeeSet.courseRating,
+        slopeRating: payload.maleTeeSet.slopeRating,
+        appliesTo: "male",
+      } : null;
+
+      const femaleTeeSet: TeeSet | null = payload.femaleTeeSet ? {
+        id: payload.femaleTeeSet.id,
+        courseId: payload.courseId || "",
+        teeColor: payload.femaleTeeSet.teeColor,
+        par: payload.femaleTeeSet.par,
+        courseRating: payload.femaleTeeSet.courseRating,
+        slopeRating: payload.femaleTeeSet.slopeRating,
+        appliesTo: "female",
+      } : null;
+
+      // Build event-like object from payload
+      const event: EventData = {
+        id: payload.eventId,
+        name: payload.eventName,
+        date: payload.eventDate,
+        courseName: payload.courseName,
+        courseId: payload.courseId,
+        maleTeeSetId: payload.maleTeeSetId,
+        femaleTeeSetId: payload.femaleTeeSetId,
+        handicapAllowancePct: payload.handicapAllowancePct,
+        format: "Stableford",
+        teeSheet: payload.teeSheet,
+        teeSheetNotes: payload.teeSheetNotes,
+        nearestToPinHoles: payload.nearestToPinHoles,
+        longestDriveHoles: payload.longestDriveHoles,
+        guests: payload.guests,
+      };
+
+      // Build and render
+      const teeSheetData = buildTeeSheetDataModel({
+        society,
+        event,
+        course,
+        maleTeeSet,
+        femaleTeeSet,
+        members,
+        guests: payload.guests || [],
+        teeGroups: payload.teeSheet.groups,
+        teeSheetNotes: payload.teeSheetNotes,
+        nearestToPinHoles: payload.nearestToPinHoles,
+        longestDriveHoles: payload.longestDriveHoles,
+      });
+
+      const validation = validateTeeSheetData(teeSheetData);
+      if (!validation.valid) {
+        console.error("[Print Route] Payload validation failed:", validation.errors);
+        setError(`Cannot generate PDF:\n${validation.errors.join("\n")}`);
+        setLoading(false);
+        return;
+      }
+
+      const html = renderTeeSheetHtml(teeSheetData);
+      setTeeSheetHtml(html);
+      setDataReady(true);
+      setLoading(false);
+      console.log("[Print Route] Rendered from payload successfully");
+    } catch (err) {
+      console.error("[Print Route] Error rendering from payload:", err);
+      // Fall back to Firestore
+      if (payload.eventId) {
+        await renderFromFirestore(payload.eventId);
+      } else {
+        setError("Failed to render tee sheet from payload");
+        setLoading(false);
+      }
+    }
+  };
+
+  /**
+   * Render from Firestore
+   */
+  const renderFromFirestore = async (eventId: string) => {
+    try {
+      // Load society
       const societyData = await getSociety();
       const society = societyData ? { 
         name: societyData.name, 
         logoUrl: societyData.logoUrl 
       } : null;
 
-      // Load events using Firestore helper (with AsyncStorage fallback)
+      // Load events and find the one we need
       const events = await getEvents();
       const event = events.find((e) => e.id === eventId);
 
       if (!event) {
-        setError("Event not found");
+        setError("Event not found in Firestore");
         setLoading(false);
         return;
       }
+
+      console.log("[Print Route] Loaded event:", event.id, "teeSheet groups:", event.teeSheet?.groups?.length || 0);
 
       if (!event.teeSheet || !event.teeSheet.groups || event.teeSheet.groups.length === 0) {
-        setError("No tee sheet found for this event. Please generate a tee sheet first.");
+        setError("No tee sheet found for this event. Please generate and save a tee sheet first.");
         setLoading(false);
         return;
       }
 
-      // Load courses (still from AsyncStorage - not in Firestore yet)
-      const courses = await getArray<Course>(STORAGE_KEYS.COURSES, []);
+      // Load course and tee sets
       let course: Course | null = null;
       let maleTeeSet: TeeSet | null = null;
       let femaleTeeSet: TeeSet | null = null;
 
       if (event.courseId) {
-        course = courses.find((c) => c.id === event.courseId) || null;
+        course = await getCourse(event.courseId);
         if (course) {
           if (event.maleTeeSetId) {
             maleTeeSet = course.teeSets.find((t) => t.id === event.maleTeeSetId) || null;
@@ -92,13 +220,9 @@ export default function PrintTeeSheetScreen() {
         }
       }
 
-      // Load members using Firestore helper (with AsyncStorage fallback)
+      // Load members
       const members = await getMembers();
-
-      // Guard: members should exist
-      if (!members || members.length === 0) {
-        console.warn("[Print Route] No members found - tee sheet may be incomplete");
-      }
+      console.log("[Print Route] Loaded", members.length, "members");
 
       // Get guests from event
       const guests: GuestData[] = (event.guests || []).map((g) => ({
@@ -106,8 +230,8 @@ export default function PrintTeeSheetScreen() {
         included: g.included ?? true,
       }));
 
-      // Build pure data model (this handles player validation internally)
-      const teeSheetData: TeeSheetDataModel = buildTeeSheetDataModel({
+      // Build data model
+      const teeSheetData = buildTeeSheetDataModel({
         society,
         event,
         course,
@@ -121,26 +245,24 @@ export default function PrintTeeSheetScreen() {
         longestDriveHoles: event.longestDriveHoles,
       });
 
-      // Validate data model
+      // Validate
       const validation = validateTeeSheetData(teeSheetData);
       if (!validation.valid) {
-        const errorMsg = validation.errors.join("\n");
-        console.error("[Print Route] Validation failed:", validation.errors);
-        setError(`Cannot generate PDF:\n${errorMsg}`);
+        console.error("[Print Route] Firestore validation failed:", validation.errors);
+        setError(`Cannot generate PDF:\n${validation.errors.join("\n")}`);
         setLoading(false);
         return;
       }
 
-      // Data is ready
-      setDataReady(true);
-
-      // Render HTML from data model
+      // Render
       const html = renderTeeSheetHtml(teeSheetData);
       setTeeSheetHtml(html);
+      setDataReady(true);
+      setLoading(false);
+      console.log("[Print Route] Rendered from Firestore successfully");
     } catch (err) {
-      console.error("[Print Route] Error loading tee sheet data:", err);
-      setError("Failed to load tee sheet data. Please try again.");
-    } finally {
+      console.error("[Print Route] Error loading from Firestore:", err);
+      setError("Failed to load tee sheet from Firestore. Please try again.");
       setLoading(false);
     }
   };
@@ -192,6 +314,8 @@ export default function PrintTeeSheetScreen() {
               @media print {
                 .print-action-bar { display: none !important; }
                 .no-print { display: none !important; }
+                body { margin: 0; padding: 0; }
+                @page { size: A4; margin: 10mm; }
               }
               @media screen {
                 .print-action-bar {
@@ -224,16 +348,9 @@ export default function PrintTeeSheetScreen() {
                   cursor: pointer;
                   min-width: 220px;
                 }
-                .print-btn:hover {
-                  background-color: #095c42;
-                }
-                .print-btn:active {
-                  background-color: #074a35;
-                }
-                .print-btn:disabled {
-                  background-color: #9ca3af;
-                  cursor: not-allowed;
-                }
+                .print-btn:hover { background-color: #095c42; }
+                .print-btn:active { background-color: #074a35; }
+                .print-btn:disabled { background-color: #9ca3af; cursor: not-allowed; }
                 .back-btn {
                   background-color: #e5e7eb;
                   color: #374151;
@@ -244,9 +361,7 @@ export default function PrintTeeSheetScreen() {
                   border-radius: 6px;
                   cursor: pointer;
                 }
-                .back-btn:hover {
-                  background-color: #d1d5db;
-                }
+                .back-btn:hover { background-color: #d1d5db; }
                 .help-text {
                   font-size: 13px;
                   color: #6b7280;

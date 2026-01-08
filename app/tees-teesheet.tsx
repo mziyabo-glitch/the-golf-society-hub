@@ -20,6 +20,8 @@ import {
   validateTeeSheetData,
   type TeeSheetDataModel,
 } from "@/lib/teeSheetPrint";
+import { buildTeeSheetPayload, encodeTeeSheetPayload } from "@/lib/teeSheetPayload";
+import { getActiveSocietyId } from "@/lib/firebase";
 // Firestore helpers - NO AsyncStorage fallback for tee sheet
 import { 
   getSociety, 
@@ -353,7 +355,68 @@ export default function TeesTeeSheetScreen() {
   };
 
   /**
-   * Save tee sheet to Firestore
+   * Save tee sheet to Firestore (internal, no UI alerts)
+   * Used for best-effort save before PDF export
+   */
+  const saveTeeSheetToFirestore = async (): Promise<boolean> => {
+    if (!selectedEvent || teeGroups.length === 0) {
+      return false;
+    }
+
+    // Validate all players
+    const validatedGroups = teeGroups.map((group) => {
+      const validPlayers = group.players.filter((playerId) => {
+        const memberExists = members.some((m) => m.id === playerId);
+        const guestExists = guests.some((g) => g.id === playerId && g.included);
+        return memberExists || guestExists;
+      });
+      return { ...group, players: validPlayers };
+    });
+
+    const [hours, mins] = startTime.split(":").map(Number);
+    const startDate = new Date();
+    startDate.setHours(hours, mins, 0, 0);
+
+    // Build playing handicap snapshot
+    const playingHandicapSnapshot: Record<string, number> = {};
+    validatedGroups.forEach((group) => {
+      group.players.forEach((playerId) => {
+        const member = members.find((m) => m.id === playerId);
+        const guest = guests.find((g) => g.id === playerId);
+        
+        if (member) {
+          const ph = getPlayingHandicap(member, selectedEvent, selectedCourse, selectedMaleTeeSet, selectedFemaleTeeSet);
+          if (ph !== null) playingHandicapSnapshot[playerId] = ph;
+        } else if (guest) {
+          const guestAsMember = { id: guest.id, name: guest.name, handicap: guest.handicapIndex, sex: guest.sex };
+          const ph = getPlayingHandicap(guestAsMember, selectedEvent, selectedCourse, selectedMaleTeeSet, selectedFemaleTeeSet);
+          if (ph !== null) playingHandicapSnapshot[playerId] = ph;
+        }
+      });
+    });
+
+    const success = await updateEventTeeSheet(
+      selectedEvent.id,
+      { startTimeISO: startDate.toISOString(), intervalMins, groups: validatedGroups },
+      guests,
+      {
+        teeSheetNotes: teeSheetNotes.trim() || undefined,
+        nearestToPinHoles: nearestToPinHoles.length > 0 ? [...nearestToPinHoles].sort((a, b) => a - b) : undefined,
+        longestDriveHoles: longestDriveHoles.length > 0 ? [...longestDriveHoles].sort((a, b) => a - b) : undefined,
+        playingHandicapSnapshot,
+      }
+    );
+
+    if (success) {
+      const societyId = getActiveSocietyId();
+      console.log("TEE_SHEET_SAVED", { societyId, eventId: selectedEvent.id });
+    }
+
+    return success;
+  };
+
+  /**
+   * Save tee sheet to Firestore (with UI feedback)
    * NO AsyncStorage is used
    */
   const handleSaveTeeSheet = async () => {
@@ -446,10 +509,11 @@ export default function TeesTeeSheetScreen() {
       );
 
       if (success) {
+        const societyId = getActiveSocietyId();
+        console.log("TEE_SHEET_SAVED", { societyId, eventId: selectedEvent.id });
         setTeeGroups(validatedGroups);
         await loadData(); // Refresh data from Firestore
         Alert.alert("Success", "Tee sheet saved to Firestore");
-        console.log("[Firestore] Tee sheet saved successfully");
       } else {
         Alert.alert("Error", "Failed to save tee sheet to Firestore");
         console.error("[Firestore] Failed to save tee sheet");
@@ -518,12 +582,56 @@ export default function TeesTeeSheetScreen() {
     isSharing.current = true;
 
     try {
-      // Web platform: Navigate to print route
+      // Build payload with current state (as fallback if Firestore save fails)
+      const [hours, mins] = startTime.split(":").map(Number);
+      const startDate = new Date();
+      startDate.setHours(hours, mins, 0, 0);
+
+      const payload = buildTeeSheetPayload({
+        event: {
+          id: selectedEvent.id,
+          name: selectedEvent.name,
+          date: selectedEvent.date,
+          courseName: selectedCourse?.name || selectedEvent.courseName,
+          courseId: selectedEvent.courseId,
+          maleTeeSetId: selectedEvent.maleTeeSetId,
+          femaleTeeSetId: selectedEvent.femaleTeeSetId,
+        },
+        society,
+        course: selectedCourse,
+        maleTeeSet: selectedMaleTeeSet,
+        femaleTeeSet: selectedFemaleTeeSet,
+        handicapAllowancePct,
+        teeSheet: {
+          startTimeISO: startDate.toISOString(),
+          intervalMins,
+          groups: teeGroups,
+        },
+        teeSheetNotes,
+        nearestToPinHoles,
+        longestDriveHoles,
+        guests: guests.filter((g) => g.included),
+      });
+
+      const encodedPayload = encodeTeeSheetPayload(payload);
+      console.log("[PDF Export] Payload built, size:", encodedPayload.length);
+
+      // Web platform: Navigate to print route with payload
       if (Platform.OS === "web") {
-        await handleSaveTeeSheet();
+        // Best-effort save to Firestore (don't block navigation if it fails)
+        try {
+          await saveTeeSheetToFirestore();
+        } catch (saveError) {
+          console.warn("[PDF Export] Best-effort save failed, using payload fallback:", saveError);
+        }
+
+        // Navigate with payload as fallback
         router.push({
           pathname: "/print/tee-sheet",
-          params: { eventId: selectedEvent.id },
+          params: { 
+            eventId: selectedEvent.id,
+            payload: encodedPayload,
+          },
         } as never);
         isSharing.current = false;
         return;
