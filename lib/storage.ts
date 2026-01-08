@@ -161,11 +161,14 @@ export async function ensureValidCurrentMember(): Promise<{
     let currentUserId = session.currentUserId;
     
     // If members array is empty, create fallback owner member
+    // NOTE: This is a recovery mechanism only - in normal flow, the society creator
+    // provides their name during onboarding. "Owner" is a placeholder that should
+    // be changed by the user via Profile screen.
     if (members.length === 0) {
       const fallbackMember: MemberData = {
         id: Date.now().toString(),
-        name: "Admin", // Default name
-        roles: ["Captain", "Handicapper", "Member"],
+        name: "Owner", // Placeholder - user should update via Profile
+        roles: ["captain", "handicapper", "member"], // Use lowercase role names
         sex: "male", // Default sex for fallback member
       };
       
