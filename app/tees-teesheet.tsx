@@ -707,7 +707,12 @@ export default function TeesTeeSheetScreen() {
     `;
   };
 
-  const handleGeneratePDF = async () => {
+  /**
+   * Export tee sheet as PDF
+   * - Web: Uses window.open + document.write + window.print
+   * - Native: Uses expo-print + expo-sharing
+   */
+  const handleExportTeeSheet = async () => {
     if (!selectedEvent || !selectedCourse || teeGroups.length === 0) {
       Alert.alert("Error", "Please ensure event, course, and tee sheet are set");
       return;
@@ -720,19 +725,52 @@ export default function TeesTeeSheetScreen() {
     isSharing.current = true;
 
     try {
-      // Web platform: navigate to print route
+      // Generate tee sheet HTML
+      const html = generateTeeSheetHtml();
+
+      // Web platform: Use window.open + document.write + window.print
       if (Platform.OS === "web") {
-        // Save tee sheet first to ensure latest data is available
-        await handleSaveTeeSheet();
-        
-        // Navigate to print route - this avoids popup blockers
-        router.push(`/print/tee-sheet?eventId=${selectedEvent.id}` as any);
+        try {
+          const printWindow = window.open("", "_blank", "width=800,height=600");
+          
+          if (printWindow) {
+            // Write the HTML content
+            printWindow.document.write(html);
+            printWindow.document.close();
+            printWindow.focus();
+            
+            // Wait for content to render, then trigger print
+            setTimeout(() => {
+              try {
+                printWindow.print();
+              } catch (printErr) {
+                console.error("Print dialog error:", printErr);
+                // Window is still open - user can manually print via Ctrl+P
+              }
+            }, 500);
+          } else {
+            // Popup was blocked
+            Alert.alert(
+              "Popup Blocked",
+              "Your browser blocked the print window. Please allow popups for this site and try again.\n\n" +
+              "Alternatively, you can:\n" +
+              "1. Click the button again after allowing popups\n" +
+              "2. Use your browser's print function (Ctrl+P / Cmd+P)",
+              [{ text: "OK" }]
+            );
+          }
+        } catch (webError) {
+          console.error("Web export error:", webError);
+          Alert.alert(
+            "Export Error", 
+            "Failed to open print window. Please check your popup blocker settings."
+          );
+        }
         isSharing.current = false;
         return;
       }
 
-      // Mobile: use expo-print + expo-sharing
-      const html = generateTeeSheetHtml();
+      // Native (iOS/Android): Use expo-print + expo-sharing
       try {
         const { uri } = await Print.printToFileAsync({ html });
         const sharingAvailable = await Sharing.isAvailableAsync();
@@ -752,6 +790,9 @@ export default function TeesTeeSheetScreen() {
       isSharing.current = false;
     }
   };
+
+  // Alias for backward compatibility
+  const handleGeneratePDF = handleExportTeeSheet;
 
   const colors = getColors();
   const isReadOnly = !canManageTeeSheet;
