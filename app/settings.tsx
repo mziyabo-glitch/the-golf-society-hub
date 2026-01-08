@@ -34,6 +34,8 @@ import {
   loadAppData,
   DATA_VERSION 
 } from "@/lib/data-store";
+// Use shared Firestore helper (same as other screens)
+import { getSociety as getFirestoreSociety } from "@/lib/firestore/society";
 
 // Storage keys for backward compatibility during migration
 const STORAGE_KEY = STORAGE_KEYS.SOCIETY_ACTIVE;
@@ -60,6 +62,7 @@ export default function SettingsScreen() {
   const [canAssignRolesRole, setCanAssignRolesRole] = useState(false);
   const [canEditLogo, setCanEditLogo] = useState(false);
   const [uploadingLogo, setUploadingLogo] = useState(false);
+  const [loading, setLoading] = useState(true);
   
   // Export/Import state
   const [isExporting, setIsExporting] = useState(false);
@@ -76,13 +79,58 @@ export default function SettingsScreen() {
     }, [])
   );
 
+  /**
+   * Load society using the same getSociety() helper as other screens
+   * This ensures consistent behavior across the app
+   */
   const loadSociety = async () => {
+    setLoading(true);
     try {
-      const societyData = await AsyncStorage.getItem(STORAGE_KEY);
+      // Use the shared Firestore helper (with AsyncStorage fallback)
+      // This is the same function used by leaderboard, tee sheet, etc.
+      const societyData = await getFirestoreSociety();
+      
       if (societyData) {
-        const parsed: SocietyData = JSON.parse(societyData);
-        setSociety(parsed);
-        setSocietyName(parsed.name);
+        // Map Firestore society data to local SocietyData type
+        const localSociety: SocietyData = {
+          name: societyData.name || "Golf Society",
+          homeCourse: "", // Not stored in Firestore yet
+          country: "", // Not stored in Firestore yet
+          scoringMode: "Stableford", // Default
+          handicapRule: "Allow WHS", // Default
+          logoUrl: societyData.logoUrl || null,
+        };
+        
+        // Try to load additional fields from AsyncStorage (backward compatibility)
+        try {
+          const localData = await AsyncStorage.getItem(STORAGE_KEY);
+          if (localData) {
+            const parsed = JSON.parse(localData);
+            localSociety.homeCourse = parsed.homeCourse || "";
+            localSociety.country = parsed.country || "";
+            localSociety.scoringMode = parsed.scoringMode || "Stableford";
+            localSociety.handicapRule = parsed.handicapRule || "Allow WHS";
+            // Use local logoUrl if Firestore doesn't have one
+            if (!localSociety.logoUrl && parsed.logoUrl) {
+              localSociety.logoUrl = parsed.logoUrl;
+            }
+          }
+        } catch (localError) {
+          console.warn("[Settings] Error loading local society data:", localError);
+        }
+        
+        setSociety(localSociety);
+        setSocietyName(localSociety.name);
+        console.log("[Settings] Society loaded:", localSociety.name);
+      } else {
+        // No society found - redirect to onboarding
+        console.log("[Settings] No society found, redirecting to create-society");
+        Alert.alert(
+          "No Society Found",
+          "Please create or join a society first.",
+          [{ text: "OK", onPress: () => router.replace("/create-society") }]
+        );
+        return;
       }
 
       // Load admin PIN
@@ -110,7 +158,14 @@ export default function SettingsScreen() {
         ]);
       }
     } catch (error) {
-      console.error("Error loading society:", error);
+      console.error("[Settings] Error loading society:", error);
+      Alert.alert(
+        "Error",
+        "Failed to load society data. Please try again.",
+        [{ text: "OK", onPress: () => router.back() }]
+      );
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -457,12 +512,30 @@ export default function SettingsScreen() {
     handleResetClick();
   };
 
+  // Show loading state
+  if (loading) {
+    return (
+      <View style={[styles.container, styles.centerContent]}>
+        <ActivityIndicator size="large" color="#0B6E4F" />
+        <Text style={styles.loadingText}>Loading settings...</Text>
+      </View>
+    );
+  }
+
+  // No society found - should have redirected, but show fallback
   if (!society) {
     return (
       <View style={[styles.container, styles.centerContent]}>
         <Text style={styles.errorText}>No society found</Text>
+        <Text style={styles.errorSubtext}>Please create or join a society first.</Text>
+        <Pressable 
+          onPress={() => router.replace("/create-society")} 
+          style={styles.primaryButton}
+        >
+          <Text style={styles.primaryButtonText}>Create Society</Text>
+        </Pressable>
         <Pressable onPress={() => router.back()} style={styles.backButton}>
-          <Text style={styles.buttonText}>Back</Text>
+          <Text style={styles.backButtonText}>Back</Text>
         </Pressable>
       </View>
     );
@@ -925,10 +998,34 @@ const styles = StyleSheet.create({
     color: "#111827",
     textAlign: "center",
   },
-  errorText: {
+  loadingText: {
     fontSize: 16,
+    color: "#6b7280",
+    marginTop: 16,
+  },
+  errorText: {
+    fontSize: 18,
+    fontWeight: "600",
     color: "#ef4444",
-    marginBottom: 16,
+    marginBottom: 8,
+  },
+  errorSubtext: {
+    fontSize: 14,
+    color: "#6b7280",
+    marginBottom: 24,
+    textAlign: "center",
+  },
+  primaryButton: {
+    backgroundColor: "#0B6E4F",
+    paddingVertical: 14,
+    paddingHorizontal: 32,
+    borderRadius: 12,
+    marginBottom: 12,
+  },
+  primaryButtonText: {
+    color: "white",
+    fontSize: 16,
+    fontWeight: "600",
   },
   backButton: {
     paddingVertical: 14,
