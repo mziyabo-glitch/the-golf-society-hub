@@ -1,12 +1,9 @@
 /**
- * TEST PLAN:
- * - Navigate to leaderboard from dashboard
- * - Verify all members are listed with wins and events played
- * - Verify sorting: highest wins first
- * - Create multiple events, mark some as completed with winners
- * - Verify win counts update correctly
- * - Verify events played counts only completed events where player participated
- * - Close/reopen app, verify leaderboard persists correctly
+ * Order of Merit / Season Leaderboard Screen
+ * 
+ * Shows rankings based on published event results.
+ * Uses F1-style points: 1st=25, 2nd=18, 3rd=15, etc.
+ * Only shows members with points > 0.
  */
 
 import { STORAGE_KEYS } from "@/lib/storage";
@@ -21,51 +18,17 @@ import { Screen } from "@/components/ui/Screen";
 import { SectionHeader } from "@/components/ui/SectionHeader";
 import { AppText } from "@/components/ui/AppText";
 import { AppCard } from "@/components/ui/AppCard";
-import { PrimaryButton, SecondaryButton } from "@/components/ui/Button";
+import { SecondaryButton } from "@/components/ui/Button";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { Row } from "@/components/ui/Row";
 import { SocietyHeader } from "@/components/ui/SocietyHeader";
 import { getColors, spacing } from "@/lib/ui/theme";
+import { computeOrderOfMerit, generateOOMHtml, OOM_POINTS_MAP, type OOMEntry } from "@/lib/oom";
+import type { EventData, MemberData } from "@/lib/models";
 
 const EVENTS_KEY = STORAGE_KEYS.EVENTS;
 const MEMBERS_KEY = STORAGE_KEYS.MEMBERS;
 const SOCIETY_KEY = STORAGE_KEYS.SOCIETY_ACTIVE;
-
-type EventData = {
-  id: string;
-  name: string;
-  date: string;
-  courseName: string;
-  format: "Stableford" | "Strokeplay" | "Both";
-  playerIds?: string[];
-  isCompleted?: boolean;
-  resultsStatus?: "draft" | "published";
-  publishedAt?: string;
-  isOOM?: boolean;
-  winnerId?: string;
-  winnerName?: string;
-  results?: {
-    [memberId: string]: {
-      grossScore: number;
-      netScore?: number;
-      stableford?: number;
-      strokeplay?: number;
-    };
-  };
-};
-
-type MemberData = {
-  id: string;
-  name: string;
-  handicap?: number;
-};
-
-type LeaderboardEntry = {
-  member: MemberData;
-  totalWins: number;
-  eventsPlayed: number;
-  totalPoints: number;
-};
 
 type SocietyData = {
   name: string;
@@ -75,11 +38,12 @@ type SocietyData = {
 export default function LeaderboardScreen() {
   const [members, setMembers] = useState<MemberData[]>([]);
   const [events, setEvents] = useState<EventData[]>([]);
-  const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
+  const [leaderboard, setLeaderboard] = useState<OOMEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [seasonYear, setSeasonYear] = useState<number>(new Date().getFullYear());
   const [showOOMOnly, setShowOOMOnly] = useState(false);
   const [society, setSociety] = useState<SocietyData | null>(null);
+  const [isExporting, setIsExporting] = useState(false);
 
   useFocusEffect(
     useCallback(() => {
@@ -100,16 +64,26 @@ export default function LeaderboardScreen() {
         }
       }
 
-      // Load members
+      // Load members with defensive guard
       const membersData = await AsyncStorage.getItem(MEMBERS_KEY);
       if (membersData) {
-        setMembers(JSON.parse(membersData));
+        try {
+          const parsed = JSON.parse(membersData);
+          setMembers(Array.isArray(parsed) ? parsed : []);
+        } catch {
+          setMembers([]);
+        }
       }
 
-      // Load events
+      // Load events with defensive guard
       const eventsData = await AsyncStorage.getItem(EVENTS_KEY);
       if (eventsData) {
-        setEvents(JSON.parse(eventsData));
+        try {
+          const parsed = JSON.parse(eventsData);
+          setEvents(Array.isArray(parsed) ? parsed : []);
+        } catch {
+          setEvents([]);
+        }
       }
     } catch (error) {
       console.error("Error loading data:", error);
@@ -118,246 +92,45 @@ export default function LeaderboardScreen() {
     }
   };
 
-  const getEventYear = (eventDate: string): number | null => {
-    if (!eventDate || eventDate.trim() === "") return null;
-    
-    try {
-      // Try parsing as YYYY-MM-DD or ISO format
-      const date = new Date(eventDate);
-      if (isNaN(date.getTime())) {
-        // Try extracting year from YYYY-MM-DD format directly
-        const yearMatch = eventDate.match(/^(\d{4})/);
-        if (yearMatch) {
-          const year = parseInt(yearMatch[1], 10);
-          if (!isNaN(year) && year > 1900 && year < 2100) {
-            return year;
-          }
-        }
-        if (__DEV__) {
-          console.warn(`[Leaderboard] Failed to parse event date: ${eventDate}`);
-        }
-        return null;
-      }
-      return date.getFullYear();
-    } catch (error) {
-      if (__DEV__) {
-        console.warn(`[Leaderboard] Error parsing event date: ${eventDate}`, error);
-      }
-      return null;
-    }
-  };
-
-  // F1-style points: 1st=25, 2nd=18, 3rd=15, 4th=12, 5th=10, 6th=8, 7th=6, 8th=4, 9th=2, 10th=1, 11+=0
-  const getPointsForPosition = (position: number): number => {
-    const pointsMap: { [key: number]: number } = {
-      1: 25,
-      2: 18,
-      3: 15,
-      4: 12,
-      5: 10,
-      6: 8,
-      7: 6,
-      8: 4,
-      9: 2,
-      10: 1,
-    };
-    return pointsMap[position] || 0;
-  };
-
-  // Calculate event leaderboard using same logic as event page
-  // Uses event.results with grossScore (lowest wins)
-  const getEventLeaderboard = (event: EventData): Array<{ memberId: string; grossScore: number }> => {
-    if (!event.results || Object.keys(event.results).length === 0) {
-      return [];
-    }
-
-    // Convert results to array and sort by grossScore (ascending - lowest wins)
-    const leaderboard = Object.entries(event.results)
-      .map(([memberId, result]) => ({
-        memberId,
-        grossScore: result.grossScore,
-      }))
-      .sort((a, b) => a.grossScore - b.grossScore);
-
-    return leaderboard;
-  };
-
-  const calculateLeaderboard = (): LeaderboardEntry[] => {
-    // Filter published events only (OOM only counts published results)
-    let publishedEvents = events.filter((e) => {
-      // Event must be published to count in OOM
-      return e.resultsStatus === "published";
+  // Compute leaderboard using centralized OOM function
+  const calculateLeaderboard = useCallback((): OOMEntry[] => {
+    return computeOrderOfMerit({
+      events,
+      members,
+      seasonYear,
+      oomOnly: showOOMOnly,
     });
-
-    // Filter by season year
-    const eventsInSeason = publishedEvents.filter((e) => {
-      const eventYear = getEventYear(e.date);
-      if (eventYear === null) {
-        if (__DEV__) {
-          console.log(`[Leaderboard] Excluding event "${e.name}" - invalid date: ${e.date}`);
-        }
-        return false;
-      }
-      return eventYear === seasonYear;
-    });
-
-    // Filter by OOM if requested
-    const filteredEvents = showOOMOnly
-      ? eventsInSeason.filter((e) => e.isOOM === true)
-      : eventsInSeason;
-
-    if (__DEV__) {
-      console.log(
-        `[Leaderboard] Season ${seasonYear}, ${showOOMOnly ? "Order of Merit only" : "All events"}: ${filteredEvents.length} events`
-      );
-      filteredEvents.forEach((e) => {
-        const hasResults = e.results && Object.keys(e.results).length > 0;
-        console.log(
-          `[Leaderboard] Event "${e.name}": isOOM=${e.isOOM}, hasResults=${hasResults}, resultsCount=${hasResults ? Object.keys(e.results!).length : 0}`
-        );
-      });
-    }
-
-    // Initialize member stats
-    const memberStats: { [memberId: string]: { wins: number; played: number; points: number } } = {};
-
-    // Process each event
-    filteredEvents.forEach((event) => {
-      const eventLeaderboard = getEventLeaderboard(event);
-      
-      if (eventLeaderboard.length === 0) {
-        return; // Skip events with no results
-      }
-
-      // Award points based on position
-      eventLeaderboard.forEach((entry, index) => {
-        const position = index + 1;
-        const points = getPointsForPosition(position);
-        const memberId = entry.memberId;
-
-        // Initialize if not exists
-        if (!memberStats[memberId]) {
-          memberStats[memberId] = { wins: 0, played: 0, points: 0 };
-        }
-
-        // Add points
-        memberStats[memberId].points += points;
-        
-        // Count as played
-        memberStats[memberId].played += 1;
-
-        // Count win if 1st place
-        if (position === 1) {
-          memberStats[memberId].wins += 1;
-        }
-      });
-    });
-
-    // Convert to LeaderboardEntry array
-    const entries: LeaderboardEntry[] = members.map((member) => {
-      const stats = memberStats[member.id] || { wins: 0, played: 0, points: 0 };
-      return {
-        member,
-        totalWins: stats.wins,
-        eventsPlayed: stats.played,
-        totalPoints: stats.points,
-      };
-    });
-
-    // Sort by Points desc, then Wins desc, then Played desc
-    return entries.sort((a, b) => {
-      if (b.totalPoints !== a.totalPoints) {
-        return b.totalPoints - a.totalPoints;
-      }
-      if (b.totalWins !== a.totalWins) {
-        return b.totalWins - a.totalWins;
-      }
-      return b.eventsPlayed - a.eventsPlayed;
-    });
-  };
+  }, [events, members, seasonYear, showOOMOnly]);
 
   // Update leaderboard when data changes
   useFocusEffect(
     useCallback(() => {
-      if (!loading && members.length > 0) {
+      if (!loading) {
         const calculated = calculateLeaderboard();
         setLeaderboard(calculated);
       }
-    }, [members, events, loading, seasonYear, showOOMOnly])
+    }, [loading, calculateLeaderboard])
   );
 
   const handleShareOrderOfMerit = async () => {
+    if (isExporting) return;
+    
     try {
-      // Filter to only members with points > 0
-      const filteredLeaderboard = leaderboard.filter((entry) => (entry.totalPoints ?? 0) > 0);
+      setIsExporting(true);
       
-      if (filteredLeaderboard.length === 0) {
-        Alert.alert("Nothing to share", "No members have points yet.");
+      if (leaderboard.length === 0) {
+        Alert.alert("Nothing to export", "No members have points yet.");
         return;
       }
 
-      // Load society for logo and name
-      const societyData = await AsyncStorage.getItem(STORAGE_KEYS.SOCIETY_ACTIVE);
-      const society = societyData ? JSON.parse(societyData) : null;
-
-      const logoHtml = society?.logoUrl 
-        ? `<img src="${society.logoUrl}" alt="Society Logo" style="max-width: 100px; max-height: 100px; margin-bottom: 15px;" />`
-        : "";
-
-      // Create HTML for PDF
-      const html = `
-        <!DOCTYPE html>
-        <html>
-        <head>
-          <meta charset="utf-8">
-          <style>
-            body { font-family: Arial, sans-serif; font-size: 14px; padding: 20px; }
-            .header { text-align: center; margin-bottom: 20px; }
-            .header h1 { margin: 10px 0; font-size: 24px; font-weight: bold; }
-            .header p { margin: 5px 0; font-size: 14px; color: #666; }
-            table { width: 100%; border-collapse: collapse; margin-top: 20px; }
-            th, td { border: 1px solid #000; padding: 10px; text-align: left; }
-            th { background-color: #0B6E4F; color: white; font-weight: bold; }
-            .position { text-align: center; font-weight: bold; width: 60px; }
-            .points { text-align: center; font-weight: bold; }
-            .wins, .played { text-align: center; }
-          </style>
-        </head>
-        <body>
-          <div class="header">
-            ${logoHtml}
-            <h1>Order of Merit</h1>
-            <p>${society?.name || "Golf Society"} — ${seasonYear}</p>
-          </div>
-          <table>
-            <thead>
-              <tr>
-                <th class="position">Pos</th>
-                <th>Member</th>
-                <th class="points">Points</th>
-                <th class="wins">Wins</th>
-                <th class="played">Played</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${filteredLeaderboard
-                .map(
-                  (entry, index) => `
-                <tr>
-                  <td class="position">${index + 1}</td>
-                  <td>${entry.member.name || "Unknown"}${entry.member.handicap !== undefined ? ` (HCP: ${entry.member.handicap})` : ""}</td>
-                  <td class="points">${entry.totalPoints}</td>
-                  <td class="wins">${entry.totalWins}</td>
-                  <td class="played">${entry.eventsPlayed}</td>
-                </tr>
-              `
-                )
-                .join("")}
-            </tbody>
-          </table>
-        </body>
-        </html>
-      `;
+      // Generate HTML using centralized function
+      const html = generateOOMHtml({
+        entries: leaderboard,
+        societyName: society?.name ?? "Golf Society",
+        seasonYear,
+        logoUrl: society?.logoUrl,
+        oomOnly: showOOMOnly,
+      });
 
       // Web platform: open in new window for print
       if (Platform.OS === "web") {
@@ -372,7 +145,17 @@ export default function LeaderboardScreen() {
                 printWindow.print();
               }, 250);
             } else {
-              Alert.alert("Info", "PDF export not supported on this web build");
+              // Fallback: create downloadable blob
+              const blob = new Blob([html], { type: "text/html" });
+              const url = URL.createObjectURL(blob);
+              const a = document.createElement("a");
+              a.href = url;
+              a.download = `oom-${seasonYear}.html`;
+              document.body.appendChild(a);
+              a.click();
+              document.body.removeChild(a);
+              URL.revokeObjectURL(url);
+              Alert.alert("Success", "Order of Merit downloaded as HTML. Open and print to save as PDF.");
             }
           } else {
             Alert.alert("Info", "PDF export not supported on this web build");
@@ -399,12 +182,14 @@ export default function LeaderboardScreen() {
       }
     } catch (error) {
       console.error("Error sharing Order of Merit:", error);
-      Alert.alert("Share failed", "Please try again.");
+      Alert.alert("Export failed", "Please try again.");
+    } finally {
+      setIsExporting(false);
     }
   };
 
   const colors = getColors();
-  const hasPoints = leaderboard.filter((e) => e.totalPoints > 0).length > 0;
+  const hasPoints = leaderboard.length > 0;
 
   if (loading) {
     return (
@@ -428,9 +213,9 @@ export default function LeaderboardScreen() {
       <SectionHeader
         title={showOOMOnly ? "Order of Merit" : "Season Leaderboard"}
         rightAction={
-          showOOMOnly && hasPoints
+          hasPoints
             ? {
-                label: "Share",
+                label: isExporting ? "Exporting..." : "Export PDF",
                 onPress: handleShareOrderOfMerit,
               }
             : undefined
@@ -440,7 +225,7 @@ export default function LeaderboardScreen() {
         {showOOMOnly ? "Order of Merit Events" : "All Events"} — {seasonYear}
       </AppText>
 
-      {/* Summary Card */}
+      {/* Points Legend */}
       {hasPoints && (
         <AppCard style={styles.summaryCard}>
           <AppText variant="h2" style={styles.summaryTitle}>
@@ -448,9 +233,15 @@ export default function LeaderboardScreen() {
           </AppText>
           <AppText variant="body" color="secondary" style={styles.summaryDescription}>
             {showOOMOnly
-              ? "Points awarded for Order of Merit events only. F1-style scoring: 1st=25pts, 2nd=18pts, 3rd=15pts, etc."
-              : "Points awarded for all published events. F1-style scoring: 1st=25pts, 2nd=18pts, 3rd=15pts, etc."}
+              ? "Points awarded for Order of Merit events only."
+              : "Points awarded for all published events."}
           </AppText>
+          <View style={styles.pointsLegend}>
+            <AppText variant="caption" color="secondary">
+              Points: 1st={OOM_POINTS_MAP[1]}, 2nd={OOM_POINTS_MAP[2]}, 3rd={OOM_POINTS_MAP[3]}, 
+              4th={OOM_POINTS_MAP[4]}, 5th={OOM_POINTS_MAP[5]}, 6th-10th=8-1
+            </AppText>
+          </View>
         </AppCard>
       )}
 
@@ -503,27 +294,47 @@ export default function LeaderboardScreen() {
               variant="button"
               style={showOOMOnly ? { color: colors.textInverse } : undefined}
             >
-              Order of Merit Only
+              OOM Only
             </AppText>
           </Pressable>
         </Row>
       </AppCard>
 
-      {/* Leaderboard */}
-      {leaderboard.length === 0 || !hasPoints ? (
+      {/* Leaderboard Table - Always visible in-app */}
+      {!hasPoints ? (
         <EmptyState
-          title="No published events yet"
+          title="No results yet"
           message={
             showOOMOnly
-              ? `No Order of Merit events published for ${seasonYear}`
-              : `No events published for ${seasonYear}`
+              ? `No Order of Merit events published for ${seasonYear}. Publish event results to see the leaderboard.`
+              : `No events published for ${seasonYear}. Publish event results to see the leaderboard.`
           }
         />
       ) : (
         <>
+          {/* Table Header */}
+          <View style={styles.tableHeader}>
+            <View style={styles.tableHeaderPos}>
+              <AppText variant="captionBold" color="secondary">Pos</AppText>
+            </View>
+            <View style={styles.tableHeaderName}>
+              <AppText variant="captionBold" color="secondary">Member</AppText>
+            </View>
+            <View style={styles.tableHeaderStat}>
+              <AppText variant="captionBold" color="secondary">Pts</AppText>
+            </View>
+            <View style={styles.tableHeaderStat}>
+              <AppText variant="captionBold" color="secondary">Wins</AppText>
+            </View>
+            <View style={styles.tableHeaderStat}>
+              <AppText variant="captionBold" color="secondary">Played</AppText>
+            </View>
+          </View>
+
+          {/* Table Rows */}
           {leaderboard.map((entry, index) => (
-            <AppCard key={entry.member.id} style={styles.leaderboardItem}>
-              <Row gap="md" alignItems="center">
+            <AppCard key={entry.memberId} style={styles.leaderboardItem}>
+              <Row gap="sm" alignItems="center">
                 <View
                   style={[
                     styles.positionBadge,
@@ -533,7 +344,7 @@ export default function LeaderboardScreen() {
                   ]}
                 >
                   <AppText
-                    variant="h2"
+                    variant="bodyBold"
                     style={StyleSheet.flatten([
                       styles.positionText,
                       index < 3 && { color: "#fff" },
@@ -544,40 +355,29 @@ export default function LeaderboardScreen() {
                 </View>
                 <View style={styles.entryContent}>
                   <AppText variant="bodyBold" numberOfLines={1} ellipsizeMode="tail" style={styles.memberName}>
-                    {entry.member.name}
+                    {entry.memberName}
                   </AppText>
-                  {entry.member.handicap !== undefined && (
+                  {entry.handicap !== undefined && (
                     <AppText variant="small" color="secondary" numberOfLines={1}>
-                      HCP: {entry.member.handicap}
+                      HCP: {entry.handicap}
                     </AppText>
                   )}
                 </View>
-                <Row gap="md">
-                  <View style={styles.stat}>
-                    <AppText variant="h2" style={{ color: colors.primary }}>
-                      {entry.totalPoints}
-                    </AppText>
-                    <AppText variant="caption" color="secondary">
-                      Points
-                    </AppText>
-                  </View>
-                  <View style={styles.stat}>
-                    <AppText variant="h2" style={{ color: colors.primary }}>
-                      {entry.totalWins}
-                    </AppText>
-                    <AppText variant="caption" color="secondary">
-                      Wins
-                    </AppText>
-                  </View>
-                  <View style={styles.stat}>
-                    <AppText variant="h2" style={{ color: colors.primary }}>
-                      {entry.eventsPlayed}
-                    </AppText>
-                    <AppText variant="caption" color="secondary">
-                      Played
-                    </AppText>
-                  </View>
-                </Row>
+                <View style={styles.stat}>
+                  <AppText variant="h2" style={{ color: colors.primary }}>
+                    {entry.totalPoints}
+                  </AppText>
+                </View>
+                <View style={styles.stat}>
+                  <AppText variant="body" style={{ color: colors.text }}>
+                    {entry.wins}
+                  </AppText>
+                </View>
+                <View style={styles.stat}>
+                  <AppText variant="body" color="secondary">
+                    {entry.played}
+                  </AppText>
+                </View>
               </Row>
             </AppCard>
           ))}
@@ -609,6 +409,12 @@ const styles = StyleSheet.create({
   summaryDescription: {
     marginTop: spacing.xs,
   },
+  pointsLegend: {
+    marginTop: spacing.sm,
+    paddingTop: spacing.sm,
+    borderTopWidth: 1,
+    borderTopColor: "#e5e7eb",
+  },
   filterCard: {
     marginBottom: spacing.base,
   },
@@ -636,13 +442,34 @@ const styles = StyleSheet.create({
     minHeight: 44,
     backgroundColor: "#f3f4f6",
   },
+  tableHeader: {
+    flexDirection: "row",
+    paddingHorizontal: spacing.base,
+    paddingVertical: spacing.sm,
+    backgroundColor: "#f9fafb",
+    borderRadius: 8,
+    marginBottom: spacing.sm,
+    alignItems: "center",
+  },
+  tableHeaderPos: {
+    width: 40,
+    alignItems: "center",
+  },
+  tableHeaderName: {
+    flex: 1,
+    paddingLeft: spacing.sm,
+  },
+  tableHeaderStat: {
+    width: 50,
+    alignItems: "center",
+  },
   leaderboardItem: {
-    marginBottom: spacing.base,
+    marginBottom: spacing.sm,
   },
   positionBadge: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
     backgroundColor: "#f3f4f6",
     justifyContent: "center",
     alignItems: "center",
@@ -653,14 +480,14 @@ const styles = StyleSheet.create({
   entryContent: {
     flex: 1,
     minWidth: 0,
-    marginRight: spacing.sm,
+    marginRight: spacing.xs,
   },
   memberName: {
     flexShrink: 1,
   },
   stat: {
     alignItems: "center",
-    minWidth: 60,
+    minWidth: 50,
   },
   backButton: {
     marginTop: spacing.xl,
