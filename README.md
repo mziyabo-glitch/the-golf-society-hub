@@ -177,10 +177,16 @@ The tee sheet can be exported to PDF on both web and mobile platforms.
 
 On web (Expo Web / Vercel deployment):
 1. Click "Print / Download PDF" button
-2. A new window opens with the formatted tee sheet
-3. Browser print dialog appears (Ctrl+P / Cmd+P)
-4. Select "Save as PDF" in the print destination
-5. If popup is blocked, an HTML file is downloaded instead
+2. App navigates to a dedicated print route (`/print/tee-sheet?eventId=...`)
+3. The tee sheet HTML renders in the browser
+4. Browser print dialog appears automatically (or use Ctrl+P / Cmd+P)
+5. Select "Save as PDF" in the print destination
+
+The print route approach is more reliable than popup windows because:
+- No popup blocker issues
+- Consistent rendering across browsers
+- Better print preview experience
+- "Print Again" button available if needed
 
 The export includes:
 - App branding: "Produced by The Golf Society Hub"
@@ -188,6 +194,7 @@ The export includes:
 - ManCo details: Captain, Secretary, Treasurer, Handicapper
 - Nearest to Pin and Longest Drive hole designations
 - Full tee time schedule with player handicaps
+- Tee sheet notes
 
 ### Mobile Export (iOS/Android)
 
