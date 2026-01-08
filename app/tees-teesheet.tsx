@@ -1,29 +1,38 @@
 /**
  * Tees & Tee Sheet Management Screen
+ * 
+ * FULLY MIGRATED TO FIRESTORE - NO AsyncStorage
+ * 
  * - Handicapper/Captain/Secretary can manage tee sets and create tee sheets
  * - Members can view tee sheet
+ * - All data loaded from Firestore
+ * - Tee sheet saved to Firestore
  */
 
-import { STORAGE_KEYS } from "@/lib/storage";
 import type { Course, TeeSet, EventData, MemberData, GuestData } from "@/lib/models";
-import { getPlayingHandicap, getCourseHandicap } from "@/lib/handicap";
+import { getPlayingHandicap } from "@/lib/handicap";
 import { formatDateDDMMYYYY } from "@/utils/date";
 import { getPermissions, type Permissions } from "@/lib/rbac";
 import { guard } from "@/lib/guards";
-import { getArray, ensureArray } from "@/lib/storage-helpers";
 import { 
   buildTeeSheetDataModel, 
   renderTeeSheetHtml, 
   validateTeeSheetData,
   type TeeSheetDataModel,
 } from "@/lib/teeSheetPrint";
-// Firestore read helpers (with AsyncStorage fallback)
-import { getSociety, getMembers, getEvents } from "@/lib/firestore/society";
-import AsyncStorage from "@react-native-async-storage/async-storage";
+// Firestore helpers - NO AsyncStorage fallback for tee sheet
+import { 
+  getSociety, 
+  getMembers, 
+  getEvents, 
+  getCourses,
+  getCourse,
+  updateEventTeeSheet,
+} from "@/lib/firestore/society";
 import { useFocusEffect } from "@react-navigation/native";
 import { router } from "expo-router";
 import { useCallback, useState, useRef } from "react";
-import { Alert, Pressable, StyleSheet, TextInput, View, Modal, Platform, ActivityIndicator, Text } from "react-native";
+import { Alert, Pressable, StyleSheet, TextInput, View, Modal, Platform, ActivityIndicator, Text, ScrollView } from "react-native";
 import { Screen } from "@/components/ui/Screen";
 import { SectionHeader } from "@/components/ui/SectionHeader";
 import { AppText } from "@/components/ui/AppText";
@@ -35,19 +44,23 @@ import { getColors, spacing } from "@/lib/ui/theme";
 import * as Print from "expo-print";
 import * as Sharing from "expo-sharing";
 
-const COURSES_KEY = STORAGE_KEYS.COURSES;
-const EVENTS_KEY = STORAGE_KEYS.EVENTS;
-const MEMBERS_KEY = STORAGE_KEYS.MEMBERS;
-
 type TabType = "tees" | "teesheet";
 
 export default function TeesTeeSheetScreen() {
+  // Permissions
   const [permissions, setPermissions] = useState<Permissions | null>(null);
   const [permissionsLoading, setPermissionsLoading] = useState(true);
+  
+  // UI state
   const [activeTab, setActiveTab] = useState<TabType>("tees");
+  
+  // Data from Firestore
   const [courses, setCourses] = useState<Course[]>([]);
   const [events, setEvents] = useState<EventData[]>([]);
   const [members, setMembers] = useState<MemberData[]>([]);
+  const [society, setSociety] = useState<{ name: string; logoUrl?: string } | null>(null);
+  
+  // Selected entities (resolved from Firestore)
   const [selectedCourse, setSelectedCourse] = useState<Course | null>(null);
   const [selectedEvent, setSelectedEvent] = useState<EventData | null>(null);
   const [selectedMaleTeeSet, setSelectedMaleTeeSet] = useState<TeeSet | null>(null);
@@ -64,9 +77,9 @@ export default function TeesTeeSheetScreen() {
   const [newNTPHole, setNewNTPHole] = useState<string>("");
   const [newLDHole, setNewLDHole] = useState<string>("");
   
-  // Player selection (assume all coming by default)
+  // Player selection
   const [selectedPlayerIds, setSelectedPlayerIds] = useState<Set<string>>(new Set());
-  const [guests, setGuests] = useState<Array<{ id: string; name: string; sex: "male" | "female"; handicapIndex?: number; included: boolean }>>([]);
+  const [guests, setGuests] = useState<GuestData[]>([]);
 
   // Add Guest Modal state
   const [showAddGuestModal, setShowAddGuestModal] = useState(false);
@@ -79,16 +92,27 @@ export default function TeesTeeSheetScreen() {
   const [movePlayerData, setMovePlayerData] = useState<{ playerId: string; fromGroup: number } | null>(null);
   const [unassignedPlayers, setUnassignedPlayers] = useState<string[]>([]);
 
+  // Loading states
+  const [dataReady, setDataReady] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
   // PDF sharing guard
   const isSharing = useRef(false);
 
-  const [society, setSociety] = useState<{ name: string; logoUrl?: string } | null>(null);
-
-  // Data loading state - buttons disabled until data is ready
-  const [dataReady, setDataReady] = useState(false);
-
   // Derived permission flag
   const canManageTeeSheet = permissions?.canManageTeeSheet ?? false;
+
+  // Check if all required data is loaded for tee sheet generation
+  const canGenerateTeeSheet = Boolean(
+    dataReady &&
+    selectedCourse &&
+    selectedMaleTeeSet &&
+    selectedFemaleTeeSet &&
+    handicapAllowancePct > 0 &&
+    members.length > 0
+  );
 
   useFocusEffect(
     useCallback(() => {
@@ -103,77 +127,80 @@ export default function TeesTeeSheetScreen() {
       const perms = await getPermissions();
       setPermissions(perms);
     } catch (error) {
-      console.error("Error loading permissions:", error);
+      console.error("[Permissions] Error loading:", error);
       setPermissions(null);
     } finally {
       setPermissionsLoading(false);
     }
   };
 
+  /**
+   * Load ALL data from Firestore
+   * NO AsyncStorage is used
+   */
   const loadData = async () => {
+    setLoading(true);
     setDataReady(false);
+    setLoadError(null);
+
     try {
-      // Load society using Firestore helper (with AsyncStorage fallback)
+      console.log("[Firestore] Loading all data...");
+
+      // Load society
       const loadedSociety = await getSociety();
       if (loadedSociety) {
         setSociety({ name: loadedSociety.name, logoUrl: loadedSociety.logoUrl || undefined });
+        console.log("[Firestore] Society loaded:", loadedSociety.name);
       }
 
-      // Load courses (still from AsyncStorage - not in Firestore yet)
-      const loadedCourses = await getArray<Course>(COURSES_KEY, []);
+      // Load courses from Firestore
+      const loadedCourses = await getCourses();
       setCourses(loadedCourses);
+      console.log("[Firestore] Courses loaded:", loadedCourses.length);
 
-      // Load events using Firestore helper (with AsyncStorage fallback)
+      // Load events from Firestore
       const loadedEvents = await getEvents();
       setEvents(loadedEvents);
+      console.log("[Firestore] Events loaded:", loadedEvents.length);
 
-      // Load members using Firestore helper (with AsyncStorage fallback)
+      // Load members from Firestore
       const loadedMembers = await getMembers();
       setMembers(loadedMembers);
+      console.log("[Firestore] Members loaded:", loadedMembers.length);
 
       // Data is now ready
       setDataReady(true);
+      console.log("[Firestore] All data loaded successfully");
     } catch (error) {
-      console.error("Error loading data:", error);
-      // Still mark as ready so user can see error state
-      setDataReady(true);
+      console.error("[Firestore] Error loading data:", error);
+      setLoadError("Failed to load data from Firestore. Please check your connection.");
+    } finally {
+      setLoading(false);
     }
   };
 
-  const handleSelectCourse = (course: Course) => {
-    setSelectedCourse(course);
-    // Find tee sets for this course
-    const maleTee = course.teeSets.find((t) => t.appliesTo === "male");
-    const femaleTee = course.teeSets.find((t) => t.appliesTo === "female");
-    setSelectedMaleTeeSet(maleTee || null);
-    setSelectedFemaleTeeSet(femaleTee || null);
-  };
-
-  const handleSelectEvent = (event: EventData) => {
+  /**
+   * Handle event selection - load course and tee sets from Firestore
+   */
+  const handleSelectEvent = async (event: EventData) => {
     setSelectedEvent(event);
-    // Load event's tee sheet if exists
-    if (event.teeSheet) {
-      setStartTime(new Date(event.teeSheet.startTimeISO).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false }));
-      setIntervalMins(event.teeSheet.intervalMins);
-      setTeeGroups(event.teeSheet.groups);
-    } else {
-      setTeeGroups([]);
-    }
+    console.log("[Event Selected]", event.id, event.name);
 
-    // Load course and tee sets for this event
-    if (event.courseId) {
-      const course = courses.find((c) => c.id === event.courseId);
-      if (course) {
-        setSelectedCourse(course);
-        if (event.maleTeeSetId) {
-          const maleTee = course.teeSets.find((t) => t.id === event.maleTeeSetId);
-          setSelectedMaleTeeSet(maleTee || null);
-        }
-        if (event.femaleTeeSetId) {
-          const femaleTee = course.teeSets.find((t) => t.id === event.femaleTeeSetId);
-          setSelectedFemaleTeeSet(femaleTee || null);
-        }
-      }
+    // Reset tee sheet state
+    setTeeGroups([]);
+    setSelectedCourse(null);
+    setSelectedMaleTeeSet(null);
+    setSelectedFemaleTeeSet(null);
+
+    // Load tee sheet data if exists
+    if (event.teeSheet) {
+      setStartTime(new Date(event.teeSheet.startTimeISO).toLocaleTimeString("en-US", { 
+        hour: "2-digit", 
+        minute: "2-digit", 
+        hour12: false 
+      }));
+      setIntervalMins(event.teeSheet.intervalMins);
+      setTeeGroups(event.teeSheet.groups || []);
     }
 
     // Load allowance
@@ -181,175 +208,154 @@ export default function TeesTeeSheetScreen() {
       setHandicapAllowancePct(event.handicapAllowancePct);
     } else if (event.handicapAllowance !== undefined) {
       setHandicapAllowancePct(event.handicapAllowance === 1.0 ? 100 : 90);
+    } else {
+      setHandicapAllowancePct(100);
     }
+
+    // Load course and tee sets from Firestore
+    if (event.courseId) {
+      console.log("[Loading Course]", event.courseId);
+      const course = await getCourse(event.courseId);
+      
+      if (course) {
+        setSelectedCourse(course);
+        console.log("[Course Loaded]", course.name, "with", course.teeSets.length, "tee sets");
+
+        // Find male tee set
+        if (event.maleTeeSetId) {
+          const maleTee = course.teeSets.find((t) => t.id === event.maleTeeSetId);
+          setSelectedMaleTeeSet(maleTee || null);
+          console.log("[Male Tee Set]", maleTee ? `${maleTee.teeColor} (SR: ${maleTee.slopeRating}, CR: ${maleTee.courseRating})` : "NOT FOUND");
+        }
+
+        // Find female tee set
+        if (event.femaleTeeSetId) {
+          const femaleTee = course.teeSets.find((t) => t.id === event.femaleTeeSetId);
+          setSelectedFemaleTeeSet(femaleTee || null);
+          console.log("[Female Tee Set]", femaleTee ? `${femaleTee.teeColor} (SR: ${femaleTee.slopeRating}, CR: ${femaleTee.courseRating})` : "NOT FOUND");
+        }
+      } else {
+        console.warn("[Course Not Found]", event.courseId);
+      }
+    }
+
+    // Load notes and competitions
+    setTeeSheetNotes(event.teeSheetNotes || "");
+    setNearestToPinHoles(event.nearestToPinHoles || []);
+    setLongestDriveHoles(event.longestDriveHoles || []);
     
-    // Initialize player selection: assume all coming unless RSVP says otherwise
+    // Initialize player selection
     const includedIds = new Set<string>();
     members.forEach((member) => {
       const rsvp = event.rsvps?.[member.id];
-      // Default to true (coming) unless RSVP explicitly says "no"
       if (rsvp !== "no") {
         includedIds.add(member.id);
       }
     });
     setSelectedPlayerIds(includedIds);
     
-    // Load guests if they exist
-    if (event.guests && Array.isArray(event.guests)) {
-      setGuests(event.guests);
-    } else {
-      setGuests([]);
-    }
-    
-    // Load tee sheet notes and holes (defensive guards)
-    setTeeSheetNotes(event.teeSheetNotes || "");
-    const ntp = Array.isArray(event.nearestToPinHoles) ? event.nearestToPinHoles.filter((h: number) => !isNaN(h) && h >= 1 && h <= 18) : [];
-    const ld = Array.isArray(event.longestDriveHoles) ? event.longestDriveHoles.filter((h: number) => !isNaN(h) && h >= 1 && h <= 18) : [];
-    setNearestToPinHoles([...new Set(ntp)].sort((a, b) => a - b));
-    setLongestDriveHoles([...new Set(ld)].sort((a, b) => a - b));
+    // Load guests
+    setGuests(event.guests || []);
+
+    // Defensive logging
+    console.log("=== Event Selection Complete ===");
+    console.log("Course:", selectedCourse?.name || "Loading...");
+    console.log("Male tee:", selectedMaleTeeSet?.teeColor || "Loading...");
+    console.log("Female tee:", selectedFemaleTeeSet?.teeColor || "Loading...");
+    console.log("Allowance:", handicapAllowancePct, "%");
   };
 
-  const handleSaveTees = async () => {
-    if (!guard(canManageTeeSheet, "Only Captain or Handicapper can save tee sets.")) {
-      return;
-    }
-    if (!selectedEvent || !selectedCourse) {
-      Alert.alert("Error", "Please select an event and course first");
-      return;
-    }
-
-    if (!selectedMaleTeeSet || !selectedFemaleTeeSet) {
-      Alert.alert("Error", "Both male and female tee sets must be selected");
-      return;
-    }
-
-    try {
-      const updatedEvents = events.map((e) =>
-        e.id === selectedEvent.id
-          ? {
-              ...e,
-              courseId: selectedCourse.id,
-              maleTeeSetId: selectedMaleTeeSet.id,
-              femaleTeeSetId: selectedFemaleTeeSet.id,
-              handicapAllowancePct: handicapAllowancePct,
-              handicapAllowance: handicapAllowancePct === 100 ? 1.0 : 0.9,
-              courseName: selectedCourse.name, // Keep for backward compat
-            }
-          : e
-      );
-
-      await AsyncStorage.setItem(EVENTS_KEY, JSON.stringify(updatedEvents));
-      await loadData();
-      Alert.alert("Success", "Tee sets saved for event");
-    } catch (error) {
-      console.error("Error saving tees:", error);
-      Alert.alert("Error", "Failed to save tee sets");
-    }
-  };
-
+  /**
+   * Generate tee sheet - BLOCKED unless all data is loaded
+   */
   const handleGenerateTeeSheet = () => {
     if (!guard(canManageTeeSheet, "Only Captain or Handicapper can generate tee sheets.")) {
       return;
     }
-    if (!selectedEvent) {
-      Alert.alert("Error", "Please select an event first");
+
+    // Defensive logging before generation
+    console.log("=== Generating Tee Sheet ===");
+    console.log("Course:", selectedCourse);
+    console.log("Male tee:", selectedMaleTeeSet);
+    console.log("Female tee:", selectedFemaleTeeSet);
+    console.log("Allowance:", handicapAllowancePct);
+
+    // BLOCK if data is not ready
+    if (!canGenerateTeeSheet) {
+      const missing: string[] = [];
+      if (!selectedCourse) missing.push("Course");
+      if (!selectedMaleTeeSet) missing.push("Male Tee Set");
+      if (!selectedFemaleTeeSet) missing.push("Female Tee Set");
+      if (!handicapAllowancePct) missing.push("Handicap Allowance");
+      if (members.length === 0) missing.push("Members");
+
+      Alert.alert(
+        "Cannot Generate Tee Sheet",
+        `Missing required data:\n• ${missing.join("\n• ")}\n\nPlease ensure all data is loaded from Firestore.`
+      );
+      console.error("[Generate Tee Sheet] Missing data:", missing);
       return;
     }
 
-    // Get selected players (members + guests that are included)
-    const selectedMembers = members.filter((m) => selectedPlayerIds.has(m.id));
-    const selectedGuests = guests.filter((g) => g.included && g.handicapIndex !== undefined);
+    // Get players who are selected
+    const playerIds: string[] = [];
     
-    // Combine members and guests
-    const allPlayers = [
-      ...selectedMembers.map((m) => ({ id: m.id, name: m.name, sex: m.sex || "male", handicap: m.handicap, isGuest: false })),
-      ...selectedGuests.map((g) => ({ id: g.id, name: g.name, sex: g.sex, handicap: g.handicapIndex, isGuest: true })),
-    ];
+    // Add members who are selected
+    members.forEach((m) => {
+      if (selectedPlayerIds.has(m.id)) {
+        playerIds.push(m.id);
+      }
+    });
+    
+    // Add guests who are included
+    guests.forEach((g) => {
+      if (g.included) {
+        playerIds.push(g.id);
+      }
+    });
 
-    if (allPlayers.length === 0) {
-      Alert.alert("Error", "No players selected. Please include at least one player.");
+    if (playerIds.length === 0) {
+      Alert.alert("Error", "Please select at least one player");
       return;
     }
-
-    // Calculate playing handicaps and sort by PH descending (for snake draft)
-    const playersWithPH = allPlayers
-      .map((player) => {
-        const memberData: MemberData = {
-          id: player.id,
-          name: player.name,
-          handicap: player.handicap,
-          sex: player.sex as "male" | "female",
-        };
-        const ph = getPlayingHandicap(
-          memberData,
-          selectedEvent,
-          selectedCourse,
-          selectedMaleTeeSet,
-          selectedFemaleTeeSet
-        );
-        return { ...player, playingHandicap: ph ?? 0 };
-      })
-      .sort((a, b) => b.playingHandicap - a.playingHandicap); // Sort by PH descending
-
-    // Calculate number of groups needed
-    const maxPerGroup = 4;
-    const playerCount = playersWithPH.length;
-    const groupCount = Math.ceil(playerCount / maxPerGroup);
 
     // Parse start time
     const [hours, minutes] = startTime.split(":").map(Number);
+    if (isNaN(hours) || isNaN(minutes)) {
+      Alert.alert("Error", "Invalid start time format. Use HH:MM");
+      return;
+    }
+
+    // Create groups
     const startDate = new Date();
-    startDate.setHours(hours || 8, minutes || 0, 0, 0);
+    startDate.setHours(hours, minutes, 0, 0);
 
-    // Generate groups using snake draft
     const groups: Array<{ timeISO: string; players: string[] }> = [];
-    for (let groupIdx = 0; groupIdx < groupCount; groupIdx++) {
-      groups.push({
-        timeISO: new Date(startDate.getTime() + groupIdx * intervalMins * 60000).toISOString(),
-        players: [],
-      });
-    }
+    let currentTime = startDate.getTime();
+    let currentGroup: string[] = [];
 
-    // Snake draft: fill groups 0..n-1 then n-1..0 repeating
-    let direction = 1; // 1 = forward, -1 = backward
-    let currentGroup = 0;
-    
-    for (const player of playersWithPH) {
-      groups[currentGroup].players.push(player.id);
+    playerIds.forEach((playerId, idx) => {
+      currentGroup.push(playerId);
       
-      // Move to next group
-      currentGroup += direction;
-      
-      // Reverse direction at boundaries
-      if (currentGroup >= groupCount) {
-        currentGroup = groupCount - 1;
-        direction = -1;
-      } else if (currentGroup < 0) {
-        currentGroup = 0;
-        direction = 1;
+      if (currentGroup.length === 4 || idx === playerIds.length - 1) {
+        groups.push({
+          timeISO: new Date(currentTime).toISOString(),
+          players: [...currentGroup],
+        });
+        currentGroup = [];
+        currentTime += intervalMins * 60 * 1000;
       }
-    }
+    });
 
-    // RULE: No 3-ball (or smaller) BEHIND a 4-ball
-    // Sort groups so smaller groups go first, then 4-balls
-    groups.sort((a, b) => a.players.length - b.players.length);
-
-    // Recalculate tee times after reordering
-    for (let i = 0; i < groups.length; i++) {
-      groups[i].timeISO = new Date(startDate.getTime() + i * intervalMins * 60000).toISOString();
-    }
-
-    // Debug guard: verify all players are included
-    const totalInGroups = groups.reduce((sum, g) => sum + g.players.length, 0);
-    if (totalInGroups !== playersWithPH.length) {
-      Alert.alert("Warning", `Player count mismatch: ${totalInGroups} in groups vs ${playersWithPH.length} selected`);
-    }
-
-    // Clear unassigned when generating new groups
     setUnassignedPlayers([]);
     setTeeGroups(groups);
+    console.log("[Tee Sheet Generated]", groups.length, "groups with", playerIds.length, "players");
   };
 
+  /**
+   * Save tee sheet to Firestore
+   * NO AsyncStorage is used
+   */
   const handleSaveTeeSheet = async () => {
     if (!guard(canManageTeeSheet, "Only Captain or Handicapper can save tee sheets.")) {
       return;
@@ -358,7 +364,6 @@ export default function TeesTeeSheetScreen() {
       Alert.alert("Error", "Please select an event first");
       return;
     }
-
     if (teeGroups.length === 0) {
       Alert.alert("Error", "Please generate or create tee groups first");
       return;
@@ -383,20 +388,21 @@ export default function TeesTeeSheetScreen() {
       console.warn("[Save Tee Sheet] Removed invalid player IDs:", invalidPlayers);
     }
 
-    // Check if any valid players remain
     const totalPlayers = validatedGroups.reduce((sum, g) => sum + g.players.length, 0);
     if (totalPlayers === 0) {
       Alert.alert("Error", "No valid players in tee sheet. Please add players first.");
       return;
     }
 
-    try {
-      const [hours, minutes] = startTime.split(":").map(Number);
-      const startDate = new Date();
-      startDate.setHours(hours, minutes, 0, 0);
+    setSaving(true);
 
-      // Build playing handicap snapshot for all players
-      const playingHandicapSnapshot: { [memberId: string]: number } = {};
+    try {
+      const [hours, mins] = startTime.split(":").map(Number);
+      const startDate = new Date();
+      startDate.setHours(hours, mins, 0, 0);
+
+      // Build playing handicap snapshot
+      const playingHandicapSnapshot: Record<string, number> = {};
       validatedGroups.forEach((group) => {
         group.players.forEach((playerId) => {
           const member = members.find((m) => m.id === playerId);
@@ -422,40 +428,173 @@ export default function TeesTeeSheetScreen() {
         });
       });
 
-      const updatedEvents = events.map((e) =>
-        e.id === selectedEvent.id
-          ? {
-              ...e,
-              teeSheet: {
-                startTimeISO: startDate.toISOString(),
-                intervalMins: intervalMins,
-                groups: validatedGroups,
-              },
-              guests: guests, // Save guests with event
-              teeSheetNotes: teeSheetNotes.trim() || undefined,
-              nearestToPinHoles: nearestToPinHoles.length > 0 ? [...nearestToPinHoles].sort((a, b) => a - b) : undefined,
-              longestDriveHoles: longestDriveHoles.length > 0 ? [...longestDriveHoles].sort((a, b) => a - b) : undefined,
-              playingHandicapSnapshot, // Store PH at time of save
-            }
-          : e
+      // Save to Firestore
+      const success = await updateEventTeeSheet(
+        selectedEvent.id,
+        {
+          startTimeISO: startDate.toISOString(),
+          intervalMins,
+          groups: validatedGroups,
+        },
+        guests,
+        {
+          teeSheetNotes: teeSheetNotes.trim() || undefined,
+          nearestToPinHoles: nearestToPinHoles.length > 0 ? [...nearestToPinHoles].sort((a, b) => a - b) : undefined,
+          longestDriveHoles: longestDriveHoles.length > 0 ? [...longestDriveHoles].sort((a, b) => a - b) : undefined,
+          playingHandicapSnapshot,
+        }
       );
 
-      await AsyncStorage.setItem(EVENTS_KEY, JSON.stringify(updatedEvents));
-      setTeeGroups(validatedGroups); // Update local state with validated groups
-      await loadData();
-      Alert.alert("Success", "Tee sheet saved");
+      if (success) {
+        setTeeGroups(validatedGroups);
+        await loadData(); // Refresh data from Firestore
+        Alert.alert("Success", "Tee sheet saved to Firestore");
+        console.log("[Firestore] Tee sheet saved successfully");
+      } else {
+        Alert.alert("Error", "Failed to save tee sheet to Firestore");
+        console.error("[Firestore] Failed to save tee sheet");
+      }
     } catch (error) {
-      console.error("Error saving tee sheet:", error);
+      console.error("[Firestore] Error saving tee sheet:", error);
       Alert.alert("Error", "Failed to save tee sheet");
+    } finally {
+      setSaving(false);
     }
   };
 
-  const handleMovePlayer = (playerId: string, fromGroupIndex: number, toGroupIndex: number) => {
-    if (!guard(canManageTeeSheet, "Only Captain or Handicapper can modify groups.")) {
+  /**
+   * Export tee sheet as PDF
+   * Uses same pattern as Leaderboard
+   */
+  const handleExportTeeSheet = async () => {
+    // Guard: data must be ready
+    if (!dataReady) {
+      Alert.alert("Error", "Data is still loading. Please wait.");
+      console.error("[PDF Export] Data not ready");
       return;
     }
+
+    // Defensive logging
+    console.log("=== PDF Export Starting ===");
+    console.log("Course:", selectedCourse);
+    console.log("Male tee:", selectedMaleTeeSet);
+    console.log("Female tee:", selectedFemaleTeeSet);
+    console.log("Allowance:", handicapAllowancePct);
+
+    // Validate required data
+    if (!selectedEvent) {
+      Alert.alert("Error", "Please select an event first");
+      console.error("[PDF Export] No event selected");
+      return;
+    }
+    
+    if (!selectedCourse) {
+      Alert.alert("Error", "Course not loaded. Please wait for Firestore data.");
+      console.error("[PDF Export] No course");
+      return;
+    }
+
+    if (!selectedMaleTeeSet || !selectedFemaleTeeSet) {
+      Alert.alert("Error", "Tee sets not loaded. Please wait for Firestore data.");
+      console.error("[PDF Export] Missing tee sets");
+      return;
+    }
+
+    if (teeGroups.length === 0) {
+      Alert.alert("Error", "No tee groups found. Please generate a tee sheet first.");
+      console.error("[PDF Export] No tee groups");
+      return;
+    }
+
+    if (members.length === 0) {
+      Alert.alert("Error", "No members found. Cannot generate PDF.");
+      console.error("[PDF Export] No members");
+      return;
+    }
+
+    if (isSharing.current) {
+      return;
+    }
+    isSharing.current = true;
+
+    try {
+      // Web platform: Navigate to print route
+      if (Platform.OS === "web") {
+        await handleSaveTeeSheet();
+        router.push({
+          pathname: "/print/tee-sheet",
+          params: { eventId: selectedEvent.id },
+        } as never);
+        isSharing.current = false;
+        return;
+      }
+
+      // Native: Build data model (same as Leaderboard pattern)
+      const teeSheetData: TeeSheetDataModel = buildTeeSheetDataModel({
+        society,
+        event: selectedEvent,
+        course: selectedCourse,
+        maleTeeSet: selectedMaleTeeSet,
+        femaleTeeSet: selectedFemaleTeeSet,
+        members,
+        guests: guests.filter((g) => g.included),
+        teeGroups,
+        teeSheetNotes,
+        nearestToPinHoles,
+        longestDriveHoles,
+      });
+
+      // Validate data model
+      const validation = validateTeeSheetData(teeSheetData);
+      if (!validation.valid) {
+        const errorMsg = validation.errors.join("\n");
+        console.error("[PDF Export] Validation failed:", validation.errors);
+        Alert.alert("Error", `Cannot generate PDF:\n${errorMsg}`);
+        isSharing.current = false;
+        return;
+      }
+
+      // Render HTML from data model
+      const html = renderTeeSheetHtml(teeSheetData);
+
+      // Guard: HTML must not be empty
+      if (!html || html.trim().length === 0) {
+        console.error("[PDF Export] Generated HTML is empty!");
+        Alert.alert("Error", "Failed to generate PDF content");
+        isSharing.current = false;
+        return;
+      }
+
+      console.log("[PDF Export] HTML generated, length:", html.length);
+
+      // Generate PDF and share (expo-print + expo-sharing)
+      try {
+        const { uri } = await Print.printToFileAsync({ html });
+        console.log("[PDF Export] PDF created:", uri);
+        
+        const sharingAvailable = await Sharing.isAvailableAsync();
+        if (sharingAvailable) {
+          await Sharing.shareAsync(uri);
+        } else {
+          Alert.alert("Success", `PDF saved to: ${uri}`);
+        }
+      } catch (printError) {
+        console.error("[PDF Export] Print/sharing error:", printError);
+        Alert.alert("Error", "Failed to generate or share PDF. Please try again.");
+      }
+    } catch (error) {
+      console.error("[PDF Export] Error:", error);
+      Alert.alert("Error", "Failed to generate tee sheet. Please try again.");
+    } finally {
+      isSharing.current = false;
+    }
+  };
+
+  // Helper handlers
+  const handleMovePlayer = (playerId: string, fromGroupIndex: number, toGroupIndex: number) => {
+    if (!guard(canManageTeeSheet, "Only Captain or Handicapper can modify groups.")) return;
+    
     if (toGroupIndex === -1) {
-      // Move to unassigned
       const newGroups = [...teeGroups];
       newGroups[fromGroupIndex].players = newGroups[fromGroupIndex].players.filter((p) => p !== playerId);
       setTeeGroups(newGroups);
@@ -464,10 +603,8 @@ export default function TeesTeeSheetScreen() {
       return;
     }
 
-    // Moving to a group
     const newGroups = [...teeGroups];
     
-    // Check if coming from unassigned
     if (fromGroupIndex === -1) {
       if (newGroups[toGroupIndex].players.length >= 4) {
         Alert.alert("Error", "Group is full (max 4 players)");
@@ -480,20 +617,13 @@ export default function TeesTeeSheetScreen() {
       return;
     }
 
-    const player = newGroups[fromGroupIndex].players.find((p) => p === playerId);
-    if (!player) return;
-
-    // Check if destination is full
     if (newGroups[toGroupIndex].players.length >= 4) {
       Alert.alert("Error", "Group is full (max 4 players)");
       return;
     }
 
-    // Remove from old group
     newGroups[fromGroupIndex].players = newGroups[fromGroupIndex].players.filter((p) => p !== playerId);
-    // Add to new group
-    newGroups[toGroupIndex].players.push(player);
-
+    newGroups[toGroupIndex].players.push(playerId);
     setTeeGroups(newGroups);
     setMovePlayerData(null);
   };
@@ -507,12 +637,9 @@ export default function TeesTeeSheetScreen() {
   };
 
   const handleDeleteGroup = (groupIndex: number) => {
-    if (!guard(canManageTeeSheet, "Only Captain or Handicapper can delete groups.")) {
-      return;
-    }
+    if (!guard(canManageTeeSheet, "Only Captain or Handicapper can delete groups.")) return;
     const group = teeGroups[groupIndex];
     if (group.players.length > 0) {
-      // Move players to unassigned
       setUnassignedPlayers((prev) => [...prev, ...group.players]);
     }
     setTeeGroups(teeGroups.filter((_, idx) => idx !== groupIndex));
@@ -535,7 +662,7 @@ export default function TeesTeeSheetScreen() {
       Alert.alert("Error", "Valid handicap index (0-54) is required");
       return;
     }
-    const newGuest = {
+    const newGuest: GuestData = {
       id: Date.now().toString(),
       name: newGuestName.trim(),
       sex: newGuestSex,
@@ -549,156 +676,74 @@ export default function TeesTeeSheetScreen() {
     setNewGuestSex("male");
   };
 
-  const handleSaveRsvps = async () => {
-    if (!guard(canManageTeeSheet, "Only Captain or Handicapper can save RSVPs.")) {
-      return;
-    }
-    if (!selectedEvent) return;
-    try {
-      // Update RSVPs for selected members
-      const newRsvps: Record<string, string> = { ...selectedEvent.rsvps };
-      members.forEach((member) => {
-        if (selectedPlayerIds.has(member.id)) {
-          newRsvps[member.id] = "yes"; // Coming
-        }
-      });
-      const updatedEvents = events.map((e) =>
-        e.id === selectedEvent.id ? { ...e, rsvps: newRsvps, guests } : e
-      );
-      await AsyncStorage.setItem(EVENTS_KEY, JSON.stringify(updatedEvents));
-      setEvents(updatedEvents);
-    } catch (error) {
-      console.error("Error saving RSVPs:", error);
-    }
-  };
-
-  /**
-   * Export tee sheet as PDF
-   * - Web: Navigates to print route which calls window.print()
-   * - Native: Uses expo-print + expo-sharing (no Sharing on web)
-   */
-  const handleExportTeeSheet = async () => {
-    // Guard: data must be ready
-    if (!dataReady) {
-      Alert.alert("Error", "Data is still loading. Please wait.");
-      console.warn("[PDF Export] Data not ready");
-      return;
-    }
-
-    // Validate required data
-    if (!selectedEvent) {
-      Alert.alert("Error", "Please select an event first");
-      console.warn("[PDF Export] No event selected");
-      return;
-    }
+  const handleSelectCourse = (course: Course) => {
+    setSelectedCourse(course);
+    const maleTee = course.teeSets.find((t) => t.appliesTo === "male");
+    const femaleTee = course.teeSets.find((t) => t.appliesTo === "female");
+    setSelectedMaleTeeSet(maleTee || null);
+    setSelectedFemaleTeeSet(femaleTee || null);
     
-    if (!selectedCourse) {
-      Alert.alert("Error", "Please select a course first");
-      console.warn("[PDF Export] No course selected");
-      return;
-    }
-
-    // Guard: tee groups must exist and not be empty
-    if (!teeGroups || teeGroups.length === 0) {
-      Alert.alert("Error", "No tee groups found. Please generate a tee sheet first.");
-      console.warn("[PDF Export] No tee groups");
-      return;
-    }
-
-    // Guard: members must be loaded
-    if (!members || members.length === 0) {
-      Alert.alert("Error", "No members found. Cannot generate PDF.");
-      console.warn("[PDF Export] No members loaded");
-      return;
-    }
-
-    // Guard against double-tap
-    if (isSharing.current) {
-      return;
-    }
-    isSharing.current = true;
-
-    try {
-      // Web platform: Navigate to print route for reliable printing
-      if (Platform.OS === "web") {
-        // Save tee sheet first to ensure latest data is available
-        await handleSaveTeeSheet();
-        
-        // Navigate to print route - this is more reliable than window.open popup
-        router.push({
-          pathname: "/print/tee-sheet",
-          params: { eventId: selectedEvent.id },
-        } as any);
-        
-        isSharing.current = false;
-        return;
-      }
-
-      // Native (iOS/Android): Build data model first, then render
-      // This follows the same pattern as Season Leaderboard PDF
-
-      // Build pure data model
-      const teeSheetData: TeeSheetDataModel = buildTeeSheetDataModel({
-        society,
-        event: selectedEvent,
-        course: selectedCourse,
-        maleTeeSet: selectedMaleTeeSet,
-        femaleTeeSet: selectedFemaleTeeSet,
-        members,
-        guests: guests.filter((g) => g.included) as GuestData[],
-        teeGroups,
-        teeSheetNotes,
-        nearestToPinHoles,
-        longestDriveHoles,
-      });
-
-      // Validate data model
-      const validation = validateTeeSheetData(teeSheetData);
-      if (!validation.valid) {
-        const errorMsg = validation.errors.join("\n");
-        console.error("[PDF Export] Validation failed:", validation.errors);
-        Alert.alert("Error", `Cannot generate PDF:\n${errorMsg}`);
-        isSharing.current = false;
-        return;
-      }
-
-      // Render HTML from data model
-      const html = renderTeeSheetHtml(teeSheetData);
-
-      try {
-        // Use printToFileAsync on native
-        const { uri } = await Print.printToFileAsync({ html });
-        
-        // Only use Sharing on native (NOT on web)
-        const sharingAvailable = await Sharing.isAvailableAsync();
-        if (sharingAvailable) {
-          await Sharing.shareAsync(uri);
-        } else {
-          Alert.alert("Success", `PDF saved to: ${uri}`);
-        }
-      } catch (printError) {
-        console.error("[PDF Export] Error with print/sharing:", printError);
-        Alert.alert("Error", "Failed to generate or share PDF. Please try again.");
-      }
-    } catch (error) {
-      console.error("[PDF Export] Error generating PDF:", error);
-      Alert.alert("Error", "Failed to generate tee sheet. Please try again.");
-    } finally {
-      isSharing.current = false;
-    }
+    console.log("[Course Selected]", course.name);
+    console.log("[Male Tee]", maleTee);
+    console.log("[Female Tee]", femaleTee);
   };
 
-  // Alias for backward compatibility
-  const handleGeneratePDF = handleExportTeeSheet;
+  // Get player display info with Playing Handicap
+  const getPlayerDisplay = (playerId: string): { name: string; hi: string; ph: string } => {
+    const member = members.find((m) => m.id === playerId);
+    const guest = guests.find((g) => g.id === playerId);
+
+    if (member) {
+      const ph = canGenerateTeeSheet
+        ? getPlayingHandicap(member, selectedEvent, selectedCourse, selectedMaleTeeSet, selectedFemaleTeeSet)
+        : null;
+      return {
+        name: member.name,
+        hi: member.handicap !== undefined ? member.handicap.toString() : "-",
+        ph: ph !== null ? ph.toString() : "-",
+      };
+    }
+
+    if (guest) {
+      const guestAsMember = { id: guest.id, name: guest.name, handicap: guest.handicapIndex, sex: guest.sex };
+      const ph = canGenerateTeeSheet
+        ? getPlayingHandicap(guestAsMember, selectedEvent, selectedCourse, selectedMaleTeeSet, selectedFemaleTeeSet)
+        : null;
+      return {
+        name: `${guest.name} (G)`,
+        hi: guest.handicapIndex !== undefined ? guest.handicapIndex.toString() : "-",
+        ph: ph !== null ? ph.toString() : "-",
+      };
+    }
+
+    return { name: "Unknown", hi: "-", ph: "-" };
+  };
 
   const colors = getColors();
   const isReadOnly = !canManageTeeSheet;
 
-  if (permissionsLoading) {
+  // Loading state
+  if (loading || permissionsLoading) {
     return (
       <Screen scrollable={false}>
         <View style={styles.centerContent}>
           <ActivityIndicator size="large" color={colors.primary} />
+          <AppText style={{ marginTop: 12 }}>Loading from Firestore...</AppText>
+        </View>
+      </Screen>
+    );
+  }
+
+  // Error state
+  if (loadError) {
+    return (
+      <Screen scrollable={false}>
+        <View style={styles.centerContent}>
+          <Text style={{ fontSize: 18, fontWeight: "700", color: colors.error, marginBottom: 12 }}>
+            Error Loading Data
+          </Text>
+          <AppText style={{ textAlign: "center", marginBottom: 20 }}>{loadError}</AppText>
+          <PrimaryButton onPress={loadData}>Retry</PrimaryButton>
         </View>
       </Screen>
     );
@@ -713,9 +758,8 @@ export default function TeesTeeSheetScreen() {
           subtitle="Tees & Tee Sheet"
         />
       )}
-      <SectionHeader 
-        title="Tees & Tee Sheet"
-      />
+      <SectionHeader title="Tees & Tee Sheet" />
+      
       {isReadOnly && (
         <AppCard style={styles.readOnlyCard}>
           <Badge label="View Only" variant="status" />
@@ -725,764 +769,279 @@ export default function TeesTeeSheetScreen() {
         </AppCard>
       )}
 
-        {/* Tabs */}
-        <View style={styles.tabs}>
-          <Pressable
-            onPress={() => setActiveTab("tees")}
-            style={[styles.tab, activeTab === "tees" && styles.tabActive]}
-          >
-            <AppText variant="button" style={activeTab === "tees" ? styles.tabTextActive : styles.tabText}>Tees</AppText>
-          </Pressable>
-          <Pressable
-            onPress={() => setActiveTab("teesheet")}
-            style={[styles.tab, activeTab === "teesheet" && styles.tabActive]}
-          >
-            <AppText variant="button" style={activeTab === "teesheet" ? styles.tabTextActive : styles.tabText}>Tee Sheet</AppText>
-          </Pressable>
-        </View>
+      {/* Data Status */}
+      {!canGenerateTeeSheet && selectedEvent && (
+        <AppCard style={styles.warningCard}>
+          <Text style={{ fontSize: 13, color: "#b45309" }}>
+            ⚠️ Some data is missing. PH values may show as &quot;-&quot;
+          </Text>
+          <AppText variant="small" color="secondary" style={{ marginTop: 4 }}>
+            {!selectedCourse && "• Course not loaded\n"}
+            {!selectedMaleTeeSet && "• Male tee set not loaded\n"}
+            {!selectedFemaleTeeSet && "• Female tee set not loaded"}
+          </AppText>
+        </AppCard>
+      )}
 
-        {activeTab === "tees" ? (
-          <View style={styles.tabContent}>
-            <Text style={styles.sectionTitle}>Select Event</Text>
-            {events.length === 0 ? (
-              <Text style={styles.emptyText}>No events found. Create an event first.</Text>
-            ) : (
-              <View style={styles.selectContainer}>
-                {events.map((event) => (
-                  <Pressable
-                    key={event.id}
-                    onPress={() => handleSelectEvent(event)}
-                    style={[
-                      styles.selectButton,
-                      selectedEvent?.id === event.id && styles.selectButtonActive,
-                    ]}
-                  >
-                    <Text
-                      style={[
-                        styles.selectButtonText,
-                        selectedEvent?.id === event.id && styles.selectButtonTextActive,
-                      ]}
-                    >
-                      {event.name} ({formatDateDDMMYYYY(event.date)})
-                    </Text>
-                  </Pressable>
-                ))}
-              </View>
-            )}
+      {/* Tabs */}
+      <View style={styles.tabs}>
+        <Pressable
+          onPress={() => setActiveTab("tees")}
+          style={[styles.tab, activeTab === "tees" && styles.tabActive]}
+        >
+          <AppText variant="button" style={activeTab === "tees" ? styles.tabTextActive : styles.tabText}>
+            Tees
+          </AppText>
+        </Pressable>
+        <Pressable
+          onPress={() => setActiveTab("teesheet")}
+          style={[styles.tab, activeTab === "teesheet" && styles.tabActive]}
+        >
+          <AppText variant="button" style={activeTab === "teesheet" ? styles.tabTextActive : styles.tabText}>
+            Tee Sheet
+          </AppText>
+        </Pressable>
+      </View>
 
-            {selectedEvent && (
-              <View>
-                <Text style={styles.sectionTitle}>Select Course</Text>
-                {courses.length === 0 ? (
-                  <View style={styles.warningBox}>
-                    <Text style={styles.warningText}>No courses available. </Text>
-                    <Pressable
-                      onPress={() => router.push("/venue-info" as any)}
-                      style={styles.linkButton}
-                    >
-                      <Text style={styles.linkText}>Create a course first</Text>
-                    </Pressable>
-                  </View>
-                ) : (
-                  <View style={styles.selectContainer}>
-                    {courses.map((course) => (
-                      <Pressable
-                        key={course.id}
-                        onPress={() => handleSelectCourse(course)}
-                        style={[
-                          styles.selectButton,
-                          selectedCourse?.id === course.id && styles.selectButtonActive,
-                        ]}
-                      >
-                        <Text
-                          style={[
-                            styles.selectButtonText,
-                            selectedCourse?.id === course.id && styles.selectButtonTextActive,
-                          ]}
-                        >
-                          {course.name}
-                        </Text>
-                      </Pressable>
-                    ))}
-                  </View>
-                )}
-
-                {selectedCourse && (
-                  <View>
-                    <Text style={styles.sectionTitle}>Male Tee Set</Text>
-                    {selectedCourse.teeSets.filter((t) => t.appliesTo === "male").length === 0 ? (
-                      <Text style={styles.warningText}>No male tee sets. Add in Venue Info.</Text>
-                    ) : (
-                      <View style={styles.selectContainer}>
-                        {selectedCourse.teeSets
-                          .filter((t) => t.appliesTo === "male")
-                          .map((tee) => (
-                            <Pressable
-                              key={tee.id}
-                              onPress={() => setSelectedMaleTeeSet(tee)}
-                              style={[
-                                styles.selectButton,
-                                selectedMaleTeeSet?.id === tee.id && styles.selectButtonActive,
-                              ]}
-                            >
-                              <Text
-                                style={[
-                                  styles.selectButtonText,
-                                  selectedMaleTeeSet?.id === tee.id && styles.selectButtonTextActive,
-                                ]}
-                              >
-                                {tee.teeColor} (Par {tee.par}, CR {tee.courseRating}, SR {tee.slopeRating})
-                              </Text>
-                            </Pressable>
-                          ))}
-                      </View>
-                    )}
-
-                    <Text style={styles.sectionTitle}>Female Tee Set</Text>
-                    {selectedCourse.teeSets.filter((t) => t.appliesTo === "female").length === 0 ? (
-                      <Text style={styles.warningText}>No female tee sets. Add in Venue Info.</Text>
-                    ) : (
-                      <View style={styles.selectContainer}>
-                        {selectedCourse.teeSets
-                          .filter((t) => t.appliesTo === "female")
-                          .map((tee) => (
-                            <Pressable
-                              key={tee.id}
-                              onPress={() => setSelectedFemaleTeeSet(tee)}
-                              style={[
-                                styles.selectButton,
-                                selectedFemaleTeeSet?.id === tee.id && styles.selectButtonActive,
-                              ]}
-                            >
-                              <Text
-                                style={[
-                                  styles.selectButtonText,
-                                  selectedFemaleTeeSet?.id === tee.id && styles.selectButtonTextActive,
-                                ]}
-                              >
-                                {tee.teeColor} (Par {tee.par}, CR {tee.courseRating}, SR {tee.slopeRating})
-                              </Text>
-                            </Pressable>
-                          ))}
-                      </View>
-                    )}
-
-                    <Text style={styles.sectionTitle}>Handicap Allowance (%)</Text>
-                    <TextInput
-                      value={handicapAllowancePct.toString()}
-                      onChangeText={(value) => {
-                        // Sanitize: trim, replace commas with dots, parseFloat, clamp 0-100
-                        const sanitized = value.trim().replace(/,/g, ".");
-                        const parsed = parseFloat(sanitized);
-                        if (!isNaN(parsed)) {
-                          const clamped = Math.max(0, Math.min(100, parsed));
-                          setHandicapAllowancePct(clamped);
-                        } else if (sanitized === "") {
-                          // Allow empty for user to type
-                          setHandicapAllowancePct(100); // Will be set on blur if empty
-                        }
-                      }}
-                      onBlur={() => {
-                        // Fallback to 100 if empty
-                        if (isNaN(handicapAllowancePct) || handicapAllowancePct === 0) {
-                          setHandicapAllowancePct(100);
-                        }
-                      }}
-                      placeholder="100"
-                      keyboardType="numeric"
-                      style={styles.input}
-                    />
-                    <Text style={styles.helperText}>Common: 95% / 100%</Text>
-
-                    <Pressable onPress={handleSaveTees} style={styles.saveButton}>
-                      <Text style={styles.saveButtonText}>Save Tee Sets for Event</Text>
-                    </Pressable>
-
-                    <Pressable
-                      onPress={() => router.push("/venue-info" as any)}
-                      style={styles.secondaryButton}
-                    >
-                      <Text style={styles.secondaryButtonText}>Edit Tee Sets in Venue Info</Text>
-                    </Pressable>
-                  </View>
-                )}
-              </View>
-            )}
-          </View>
-        ) : (
-          <View style={styles.tabContent} key="teesheet-tab">
-            <Text style={styles.sectionTitle}>Select Event</Text>
-            {events.length === 0 ? (
-              <Text style={styles.emptyText}>No events found. Create an event first.</Text>
-            ) : (
-              <View style={styles.selectContainer}>
-                {events.map((event) => (
-                  <Pressable
-                    key={event.id}
-                    onPress={() => handleSelectEvent(event)}
-                    style={[
-                      styles.selectButton,
-                      selectedEvent?.id === event.id && styles.selectButtonActive,
-                    ]}
-                  >
-                    <Text
-                      style={[
-                        styles.selectButtonText,
-                        selectedEvent?.id === event.id && styles.selectButtonTextActive,
-                      ]}
-                    >
-                      {event.name} ({formatDateDDMMYYYY(event.date)})
-                    </Text>
-                  </Pressable>
-                ))}
-              </View>
-            )}
-
-            {selectedEvent && (
-              <View>
-                {/* Players Included Section */}
-                <View style={styles.section}>
-                  <Text style={styles.sectionTitle}>Players Included</Text>
-                  <View style={styles.quickActions}>
-                    <Pressable
-                      onPress={() => {
-                        const allIds = new Set(members.map((m) => m.id));
-                        setSelectedPlayerIds(allIds);
-                      }}
-                      style={styles.quickActionButton}
-                    >
-                      <Text style={styles.quickActionText}>Select All</Text>
-                    </Pressable>
-                    <Pressable
-                      onPress={() => setSelectedPlayerIds(new Set())}
-                      style={styles.quickActionButton}
-                    >
-                      <Text style={styles.quickActionText}>Select None</Text>
-                    </Pressable>
-                  </View>
-                  <Text style={styles.countText}>
-                    Included: {selectedPlayerIds.size + guests.filter((g) => g.included).length} of {members.length + guests.length}
+      {activeTab === "tees" ? (
+        <View style={styles.tabContent}>
+          <Text style={styles.sectionTitle}>Select Event</Text>
+          {events.length === 0 ? (
+            <Text style={styles.emptyText}>No events found in Firestore.</Text>
+          ) : (
+            <ScrollView style={styles.selectContainer} horizontal={false}>
+              {events.map((event) => (
+                <Pressable
+                  key={event.id}
+                  onPress={() => handleSelectEvent(event)}
+                  style={[
+                    styles.selectButton,
+                    selectedEvent?.id === event.id && styles.selectButtonActive,
+                  ]}
+                >
+                  <Text style={[
+                    styles.selectButtonText,
+                    selectedEvent?.id === event.id && styles.selectButtonTextActive,
+                  ]}>
+                    {event.name} ({formatDateDDMMYYYY(event.date)})
                   </Text>
-                  
-                  {/* Members List */}
-                  {members.map((member) => {
-                    const isIncluded = selectedPlayerIds.has(member.id);
-                    return (
-                      <Pressable
-                        key={member.id}
-                        onPress={() => {
-                          if (canManageTeeSheet) {
-                            const newSet = new Set(selectedPlayerIds);
-                            if (isIncluded) {
-                              newSet.delete(member.id);
-                            } else {
-                              newSet.add(member.id);
-                            }
-                            setSelectedPlayerIds(newSet);
-                          }
-                        }}
-                        style={[styles.playerSelectRow, !canManageTeeSheet && styles.playerSelectRowReadOnly]}
-                      >
-                        <View style={styles.checkbox}>
-                          {isIncluded && <View style={styles.checkmark} />}
-                        </View>
-                        <Text style={styles.playerSelectName}>{member.name}</Text>
-                        {member.handicap !== undefined && (
-                          <Text style={styles.playerSelectHandicap}>HI: {member.handicap}</Text>
-                        )}
-                      </Pressable>
-                    );
-                  })}
-                  
-                  {/* Guests List */}
-                  {guests.map((guest) => {
-                    const isIncluded = guest.included;
-                    return (
-                      <View key={guest.id} style={styles.guestRow}>
-                        <Pressable
-                          onPress={() => {
-                            if (canManageTeeSheet) {
-                              setGuests((prev) =>
-                                prev.map((g) =>
-                                  g.id === guest.id ? { ...g, included: !g.included } : g
-                                )
-                              );
-                            }
-                          }}
-                          style={[styles.playerSelectRow, !canManageTeeSheet && styles.playerSelectRowReadOnly, { flex: 1 }]}
-                        >
-                          <View style={styles.checkbox}>
-                            {isIncluded && <View style={styles.checkmark} />}
-                          </View>
-                          {canManageTeeSheet ? (
-                            <View>
-                              <TextInput
-                                value={guest.name}
-                                onChangeText={(text) => {
-                                  setGuests((prev) =>
-                                    prev.map((g) => (g.id === guest.id ? { ...g, name: text } : g))
-                                  );
-                                }}
-                                style={[styles.guestNameInput, { flex: 1 }]}
-                                placeholder="Guest name"
-                              />
-                              <TextInput
-                                value={guest.handicapIndex?.toString() || ""}
-                                onChangeText={(text) => {
-                                  const hi = parseFloat(text);
-                                  if (!isNaN(hi) && hi >= 0 && hi <= 54) {
-                                    setGuests((prev) =>
-                                      prev.map((g) => (g.id === guest.id ? { ...g, handicapIndex: hi } : g))
-                                    );
-                                  } else if (text === "") {
-                                    setGuests((prev) =>
-                                      prev.map((g) => (g.id === guest.id ? { ...g, handicapIndex: undefined } : g))
-                                    );
-                                  }
-                                }}
-                                keyboardType="numeric"
-                                style={styles.guestHIInput}
-                                placeholder="HI"
-                              />
-                              <Pressable
-                                onPress={() => {
-                                  Alert.alert(
-                                    "Select Sex",
-                                    "",
-                                    [
-                                      { text: "Cancel", style: "cancel" },
-                                      {
-                                        text: "Male",
-                                        onPress: () => {
-                                          setGuests((prev) =>
-                                            prev.map((g) => (g.id === guest.id ? { ...g, sex: "male" } : g))
-                                          );
-                                        },
-                                      },
-                                      {
-                                        text: "Female",
-                                        onPress: () => {
-                                          setGuests((prev) =>
-                                            prev.map((g) => (g.id === guest.id ? { ...g, sex: "female" } : g))
-                                          );
-                                        },
-                                      },
-                                    ],
-                                    { cancelable: true }
-                                  );
-                                }}
-                                style={styles.sexButton}
-                              >
-                                <Text style={styles.sexButtonText}>{guest.sex === "male" ? "M" : "F"}</Text>
-                              </Pressable>
-                              <Pressable
-                                onPress={() => {
-                                  Alert.alert("Delete Guest", `Remove ${guest.name}?`, [
-                                    { text: "Cancel", style: "cancel" },
-                                    {
-                                      text: "Delete",
-                                      style: "destructive",
-                                      onPress: () => {
-                                        setGuests((prev) => prev.filter((g) => g.id !== guest.id));
-                                      },
-                                    },
-                                  ]);
-                                }}
-                                style={styles.deleteGuestButton}
-                              >
-                                <Text style={styles.deleteGuestButtonText}>×</Text>
-                              </Pressable>
-                            </View>
-                          ) : (
-                            <View>
-                              <Text style={styles.playerSelectName}>
-                                {guest.name} <Text style={styles.guestLabel}>(Guest)</Text>
-                              </Text>
-                              {guest.handicapIndex !== undefined ? (
-                                <Text style={styles.playerSelectHandicap}>HI: {guest.handicapIndex}</Text>
-                              ) : (
-                                <Text style={styles.warningTextSmall}>HI required</Text>
-                              )}
-                            </View>
-                          )}
-                        </Pressable>
-                      </View>
-                    );
-                  })}
-                  
-                  {/* Add Guest Button */}
-                  {canManageTeeSheet && (
+                </Pressable>
+              ))}
+            </ScrollView>
+          )}
+
+          {selectedEvent && (
+            <>
+              <Text style={[styles.sectionTitle, { marginTop: 16 }]}>Select Course</Text>
+              {courses.length === 0 ? (
+                <Text style={styles.emptyText}>No courses found in Firestore.</Text>
+              ) : (
+                <ScrollView style={styles.selectContainer} horizontal={false}>
+                  {courses.map((course) => (
                     <Pressable
-                      onPress={() => setShowAddGuestModal(true)}
-                      style={styles.addGuestButton}
+                      key={course.id}
+                      onPress={() => handleSelectCourse(course)}
+                      style={[
+                        styles.selectButton,
+                        selectedCourse?.id === course.id && styles.selectButtonActive,
+                      ]}
                     >
-                      <Text style={styles.addGuestButtonText}>+ Add Guest</Text>
+                      <Text style={[
+                        styles.selectButtonText,
+                        selectedCourse?.id === course.id && styles.selectButtonTextActive,
+                      ]}>
+                        {course.name}
+                      </Text>
                     </Pressable>
-                  )}
-                  
-                  {/* Save RSVP Button */}
-                  {canManageTeeSheet && selectedPlayerIds.size > 0 && (
-                    <Pressable
-                      onPress={handleSaveRsvps}
-                      style={styles.saveRsvpButton}
-                    >
-                      <Text style={styles.saveRsvpButtonText}>Save Attendees</Text>
-                    </Pressable>
-                  )}
-                </View>
-                
-                {/* Tee Sheet Notes and Hole Selections */}
-                <AppCard style={styles.section}>
-                  <AppText variant="h2" style={styles.sectionTitle}>Tee Sheet Notes</AppText>
-                  {canManageTeeSheet ? (
+                  ))}
+                </ScrollView>
+              )}
+
+              {selectedCourse && (
+                <>
+                  <Text style={[styles.sectionTitle, { marginTop: 16 }]}>Tee Sets</Text>
+                  <View style={styles.teeSetInfo}>
+                    <Text style={styles.teeSetLabel}>
+                      Male: {selectedMaleTeeSet ? `${selectedMaleTeeSet.teeColor} (SR: ${selectedMaleTeeSet.slopeRating}, CR: ${selectedMaleTeeSet.courseRating})` : "None"}
+                    </Text>
+                    <Text style={styles.teeSetLabel}>
+                      Female: {selectedFemaleTeeSet ? `${selectedFemaleTeeSet.teeColor} (SR: ${selectedFemaleTeeSet.slopeRating}, CR: ${selectedFemaleTeeSet.courseRating})` : "None"}
+                    </Text>
+                  </View>
+
+                  <Text style={[styles.sectionTitle, { marginTop: 16 }]}>Handicap Allowance</Text>
+                  <View style={styles.allowanceRow}>
                     <TextInput
-                      value={teeSheetNotes}
-                      onChangeText={setTeeSheetNotes}
-                      placeholder="Add notes that will appear on the tee sheet (optional)"
-                      multiline
-                      numberOfLines={4}
-                      style={[styles.textArea, { borderColor: colors.border, color: colors.text }]}
+                      style={styles.allowanceInput}
+                      value={handicapAllowancePct.toString()}
+                      onChangeText={(v) => setHandicapAllowancePct(parseInt(v) || 100)}
+                      keyboardType="numeric"
                       editable={!isReadOnly}
                     />
-                  ) : (
-                    <AppText variant="body" color="secondary" style={styles.readOnlyText}>
-                      {teeSheetNotes || "No notes added"}
-                    </AppText>
-                  )}
-                </AppCard>
-
-                <AppCard style={styles.section}>
-                  <AppText variant="h2" style={styles.sectionTitleInline}>Nearest to Pin Holes</AppText>
-                  {canManageTeeSheet ? (
-                    <>
-                      <View style={styles.holeInputRow}>
-                        <TextInput
-                          value={newNTPHole}
-                          onChangeText={setNewNTPHole}
-                          placeholder="Hole (1-18)"
-                          keyboardType="numeric"
-                          style={[styles.holeInput, { borderColor: colors.border, color: colors.text }]}
-                          editable={!isReadOnly}
-                        />
-                        <PrimaryButton
-                          onPress={() => {
-                            const hole = parseInt(newNTPHole, 10);
-                            if (!isNaN(hole) && hole >= 1 && hole <= 18) {
-                              if (!nearestToPinHoles.includes(hole)) {
-                                setNearestToPinHoles([...nearestToPinHoles, hole].sort((a, b) => a - b));
-                                setNewNTPHole("");
-                              } else {
-                                Alert.alert("Duplicate", "This hole is already added");
-                              }
-                            } else {
-                              Alert.alert("Invalid", "Please enter a hole number between 1 and 18");
-                            }
-                          }}
-                          size="sm"
-                          disabled={isReadOnly}
-                        >
-                          Add
-                        </PrimaryButton>
-                      </View>
-                      {nearestToPinHoles.length > 0 && (
-                        <View style={styles.holeChips}>
-                          {nearestToPinHoles.map((hole) => (
-                            <View key={hole} style={styles.holeChip}>
-                              <AppText variant="small">Hole {hole}</AppText>
-                              <Pressable
-                                onPress={() => setNearestToPinHoles(nearestToPinHoles.filter((h) => h !== hole))}
-                                style={styles.chipRemove}
-                              >
-                                <AppText variant="small">×</AppText>
-                              </Pressable>
-                            </View>
-                          ))}
-                        </View>
-                      )}
-                    </>
-                  ) : (
-                    <AppText variant="body" color="secondary" style={styles.readOnlyText}>
-                      {nearestToPinHoles.length > 0
-                        ? `Holes: ${nearestToPinHoles.join(", ")}`
-                        : "No holes selected"}
-                    </AppText>
-                  )}
-                </AppCard>
-
-                <AppCard style={styles.section}>
-                  <AppText variant="h2" style={styles.sectionTitleInline}>Longest Drive Holes</AppText>
-                  {canManageTeeSheet ? (
-                    <>
-                      <View style={styles.holeInputRow}>
-                        <TextInput
-                          value={newLDHole}
-                          onChangeText={setNewLDHole}
-                          placeholder="Hole (1-18)"
-                          keyboardType="numeric"
-                          style={[styles.holeInput, { borderColor: colors.border, color: colors.text }]}
-                          editable={!isReadOnly}
-                        />
-                        <PrimaryButton
-                          onPress={() => {
-                            const hole = parseInt(newLDHole, 10);
-                            if (!isNaN(hole) && hole >= 1 && hole <= 18) {
-                              if (!longestDriveHoles.includes(hole)) {
-                                setLongestDriveHoles([...longestDriveHoles, hole].sort((a, b) => a - b));
-                                setNewLDHole("");
-                              } else {
-                                Alert.alert("Duplicate", "This hole is already added");
-                              }
-                            } else {
-                              Alert.alert("Invalid", "Please enter a hole number between 1 and 18");
-                            }
-                          }}
-                          size="sm"
-                          disabled={isReadOnly}
-                        >
-                          Add
-                        </PrimaryButton>
-                      </View>
-                      {longestDriveHoles.length > 0 && (
-                        <View style={styles.holeChips}>
-                          {longestDriveHoles.map((hole) => (
-                            <View key={hole} style={styles.holeChip}>
-                              <AppText variant="small">Hole {hole}</AppText>
-                              <Pressable
-                                onPress={() => setLongestDriveHoles(longestDriveHoles.filter((h) => h !== hole))}
-                                style={styles.chipRemove}
-                              >
-                                <AppText variant="small">×</AppText>
-                              </Pressable>
-                            </View>
-                          ))}
-                        </View>
-                      )}
-                    </>
-                  ) : (
-                    <AppText variant="body" color="secondary" style={styles.readOnlyText}>
-                      {longestDriveHoles.length > 0
-                        ? `Holes: ${longestDriveHoles.join(", ")}`
-                        : "No holes selected"}
-                    </AppText>
-                  )}
-                </AppCard>
-                
-                <Text style={styles.sectionTitle}>Tee Sheet Settings</Text>
-                    <View style={styles.field}>
-                      <Text style={styles.fieldLabel}>Start Time</Text>
-                      <TextInput
-                        value={startTime}
-                        onChangeText={setStartTime}
-                        placeholder="HH:MM (e.g., 08:00)"
-                        style={styles.input}
-                      />
-                    </View>
-                    <View style={styles.field}>
-                      <Text style={styles.fieldLabel}>Interval (minutes)</Text>
-                      <View style={styles.intervalButtons}>
-                        {[7, 8, 9, 10, 12].map((mins) => (
-                          <Pressable
-                            key={mins}
-                            onPress={() => setIntervalMins(mins)}
-                            style={[
-                              styles.intervalButton,
-                              intervalMins === mins && styles.intervalButtonActive,
-                            ]}
-                          >
-                            <Text
-                              style={[
-                                styles.intervalButtonText,
-                                intervalMins === mins && styles.intervalButtonTextActive,
-                              ]}
-                            >
-                              {mins}
-                            </Text>
-                          </Pressable>
-                        ))}
-                      </View>
-                    </View>
-
-                    <Pressable onPress={handleGenerateTeeSheet} style={styles.generateButton}>
-                      <Text style={styles.generateButtonText}>Generate Draft Tee Sheet</Text>
-                    </Pressable>
-
-                    {teeGroups.length > 0 && (
-                      <View>
-                        <View style={styles.sectionHeader}>
-                          <Text style={styles.sectionTitle}>Tee Times</Text>
-                          {canManageTeeSheet && (
-                            <Pressable
-                              onPress={() => setEditMode(!editMode)}
-                              style={[styles.editModeButton, editMode && styles.editModeButtonActive]}
-                            >
-                              <Text style={[styles.editModeButtonText, editMode && styles.editModeButtonTextActive]}>
-                                {editMode ? "Done Editing" : "Edit Groups"}
-                              </Text>
-                            </Pressable>
-                          )}
-                        </View>
-
-                        {/* Unassigned Players */}
-                        {editMode && unassignedPlayers.length > 0 && (
-                          <View style={styles.unassignedCard}>
-                            <Text style={styles.unassignedTitle}>Unassigned Players</Text>
-                            {unassignedPlayers.map((playerId) => {
-                              const member = members.find((m) => m.id === playerId);
-                              const guest = guests.find((g) => g.id === playerId);
-                              const playerName = member?.name || guest?.name || "Unknown";
-                              return (
-                                <View key={playerId} style={styles.unassignedPlayerRow}>
-                                  <Text style={styles.unassignedPlayerName}>{playerName}</Text>
-                                  <View style={styles.moveToGroupButtons}>
-                                    {teeGroups.map((_, gIdx) => (
-                                      <Pressable
-                                        key={gIdx}
-                                        onPress={() => handleMovePlayer(playerId, -1, gIdx)}
-                                        style={[
-                                          styles.moveToGroupButton,
-                                          teeGroups[gIdx].players.length >= 4 && styles.moveToGroupButtonDisabled,
-                                        ]}
-                                        disabled={teeGroups[gIdx].players.length >= 4}
-                                      >
-                                        <Text style={styles.moveToGroupButtonText}>→G{gIdx + 1}</Text>
-                                      </Pressable>
-                                    ))}
-                                  </View>
-                                </View>
-                              );
-                            })}
-                          </View>
-                        )}
-
-                        {teeGroups.map((group, groupIdx) => {
-                          const timeStr = new Date(group.timeISO).toLocaleTimeString("en-US", {
-                            hour: "2-digit",
-                            minute: "2-digit",
-                            hour12: false,
-                          });
-                          return (
-                            <View key={groupIdx} style={styles.teeGroupCard}>
-                              <View style={styles.teeGroupHeader}>
-                                <Text style={styles.teeGroupTime}>
-                                  {timeStr} - Group {groupIdx + 1}
-                                </Text>
-                                {editMode && canManageTeeSheet && group.players.length === 0 && (
-                                  <Pressable
-                                    onPress={() => handleDeleteGroup(groupIdx)}
-                                    style={styles.deleteGroupButton}
-                                  >
-                                    <Text style={styles.deleteGroupButtonText}>×</Text>
-                                  </Pressable>
-                                )}
-                              </View>
-                              {group.players.map((playerId) => {
-                                const member = members.find((m) => m.id === playerId);
-                                const guest = guests.find((g) => g.id === playerId);
-                                if (!member && !guest) return null;
-                                
-                                const player = member || {
-                                  id: guest!.id,
-                                  name: guest!.name,
-                                  handicap: guest!.handicapIndex,
-                                  sex: guest!.sex,
-                                };
-                                const ph = getPlayingHandicap(
-                                  player,
-                                  selectedEvent,
-                                  selectedCourse,
-                                  selectedMaleTeeSet,
-                                  selectedFemaleTeeSet
-                                );
-                                return (
-                                  <View key={playerId} style={styles.playerRow}>
-                                    <View style={styles.playerInfo}>
-                                      <Text style={styles.playerName} numberOfLines={1}>
-                                        {player.name || "Unknown"}
-                                        {guest && <Text style={styles.guestLabel}> (Guest)</Text>}
-                                      </Text>
-                                      <Text style={styles.playerHandicaps}>
-                                        HI: {player.handicap ?? "-"} | PH: {ph ?? "-"}
-                                      </Text>
-                                    </View>
-                                    {editMode && canManageTeeSheet && (
-                                      <View style={styles.playerEditActions}>
-                                        <Pressable
-                                          onPress={() => {
-                                            if (movePlayerData?.playerId === playerId) {
-                                              setMovePlayerData(null);
-                                            } else {
-                                              setMovePlayerData({ playerId, fromGroup: groupIdx });
-                                            }
-                                          }}
-                                          style={[
-                                            styles.moveButton,
-                                            movePlayerData?.playerId === playerId && styles.moveButtonActive,
-                                          ]}
-                                        >
-                                          <Text style={styles.moveButtonText}>
-                                            {movePlayerData?.playerId === playerId ? "Cancel" : "Move"}
-                                          </Text>
-                                        </Pressable>
-                                        <Pressable
-                                          onPress={() => handleRemovePlayerFromGroup(playerId, groupIdx)}
-                                          style={styles.removeButton}
-                                        >
-                                          <Text style={styles.removeButtonText}>×</Text>
-                                        </Pressable>
-                                      </View>
-                                    )}
-                                  </View>
-                                );
-                              })}
-                              
-                              {/* Move target buttons when a player is selected */}
-                              {editMode && movePlayerData && movePlayerData.fromGroup !== groupIdx && group.players.length < 4 && (
-                                <Pressable
-                                  onPress={() => handleMovePlayer(movePlayerData.playerId, movePlayerData.fromGroup, groupIdx)}
-                                  style={styles.moveTargetButton}
-                                >
-                                  <Text style={styles.moveTargetButtonText}>Move Here</Text>
-                                </Pressable>
-                              )}
-                              
-                              {group.players.length < 4 && !editMode && (
-                                <Text style={styles.emptySlot}>
-                                  {4 - group.players.length} slot(s) available
-                                </Text>
-                              )}
-                              {group.players.length >= 4 && editMode && (
-                                <Text style={styles.fullSlot}>Group full (4/4)</Text>
-                              )}
-                            </View>
-                          );
-                        })}
-
-                        {/* Add Group Button */}
-                        {editMode && canManageTeeSheet && (
-                          <Pressable onPress={handleAddGroup} style={styles.addGroupButton}>
-                            <Text style={styles.addGroupButtonText}>+ Add Group</Text>
-                          </Pressable>
-                        )}
-
-                        <Pressable onPress={handleSaveTeeSheet} style={styles.saveButton}>
-                          <Text style={styles.saveButtonText}>Save Tee Sheet</Text>
-                        </Pressable>
-
-                        <Pressable onPress={handleGeneratePDF} style={styles.pdfButton}>
-                          <Text style={styles.pdfButtonText}>
-                            {Platform.OS === "web" ? "Print / Download PDF" : "Share PDF"}
-                          </Text>
-                        </Pressable>
-                      </View>
-                    )}
+                    <Text style={styles.allowanceLabel}>%</Text>
                   </View>
-                )}
-          </View>
-        )}
+                </>
+              )}
+            </>
+          )}
+        </View>
+      ) : (
+        <View style={styles.tabContent}>
+          {!selectedEvent ? (
+            <Text style={styles.emptyText}>Please select an event from the Tees tab first.</Text>
+          ) : (
+            <>
+              {/* Time Settings */}
+              <View style={styles.timeRow}>
+                <View style={styles.timeField}>
+                  <Text style={styles.fieldLabel}>Start Time</Text>
+                  <TextInput
+                    style={styles.timeInput}
+                    value={startTime}
+                    onChangeText={setStartTime}
+                    placeholder="08:00"
+                    editable={!isReadOnly}
+                  />
+                </View>
+                <View style={styles.timeField}>
+                  <Text style={styles.fieldLabel}>Interval (mins)</Text>
+                  <TextInput
+                    style={styles.timeInput}
+                    value={intervalMins.toString()}
+                    onChangeText={(v) => setIntervalMins(parseInt(v) || 8)}
+                    keyboardType="numeric"
+                    editable={!isReadOnly}
+                  />
+                </View>
+              </View>
 
-        <SecondaryButton onPress={() => router.back()}>
-          Back
-        </SecondaryButton>
+              {/* Player Selection */}
+              <Text style={[styles.sectionTitle, { marginTop: 16 }]}>Players ({selectedPlayerIds.size + guests.filter(g => g.included).length})</Text>
+              <ScrollView style={styles.playerList} nestedScrollEnabled>
+                {members.map((member) => {
+                  const isSelected = selectedPlayerIds.has(member.id);
+                  return (
+                    <Pressable
+                      key={member.id}
+                      onPress={() => {
+                        if (isReadOnly) return;
+                        const newSet = new Set(selectedPlayerIds);
+                        if (isSelected) {
+                          newSet.delete(member.id);
+                        } else {
+                          newSet.add(member.id);
+                        }
+                        setSelectedPlayerIds(newSet);
+                      }}
+                      style={[styles.playerRow, isSelected && styles.playerRowSelected]}
+                    >
+                      <Text style={styles.playerName}>{member.name}</Text>
+                      <Text style={styles.playerHI}>HI: {member.handicap ?? "-"}</Text>
+                    </Pressable>
+                  );
+                })}
+                {guests.map((guest) => (
+                  <Pressable
+                    key={guest.id}
+                    onPress={() => {
+                      if (isReadOnly) return;
+                      setGuests(guests.map((g) => 
+                        g.id === guest.id ? { ...g, included: !g.included } : g
+                      ));
+                    }}
+                    style={[styles.playerRow, guest.included && styles.playerRowSelected]}
+                  >
+                    <Text style={styles.playerName}>{guest.name} (Guest)</Text>
+                    <Text style={styles.playerHI}>HI: {guest.handicapIndex ?? "-"}</Text>
+                  </Pressable>
+                ))}
+              </ScrollView>
+
+              {!isReadOnly && (
+                <Pressable onPress={() => setShowAddGuestModal(true)} style={styles.addGuestButton}>
+                  <Text style={styles.addGuestButtonText}>+ Add Guest</Text>
+                </Pressable>
+              )}
+
+              {/* Generate Button */}
+              {!isReadOnly && (
+                <Pressable 
+                  onPress={handleGenerateTeeSheet} 
+                  style={[styles.generateButton, !canGenerateTeeSheet && styles.buttonDisabled]}
+                  disabled={!canGenerateTeeSheet}
+                >
+                  <Text style={styles.generateButtonText}>Generate Tee Sheet</Text>
+                </Pressable>
+              )}
+
+              {/* Tee Groups */}
+              {teeGroups.length > 0 && (
+                <View style={styles.teeGroupsContainer}>
+                  <Text style={[styles.sectionTitle, { marginTop: 16 }]}>Tee Groups</Text>
+                  
+                  {teeGroups.map((group, groupIdx) => {
+                    const teeTime = new Date(group.timeISO).toLocaleTimeString("en-US", {
+                      hour: "2-digit",
+                      minute: "2-digit",
+                      hour12: false,
+                    });
+
+                    return (
+                      <View key={groupIdx} style={styles.groupCard}>
+                        <View style={styles.groupHeader}>
+                          <Text style={styles.groupTime}>{teeTime}</Text>
+                          <Text style={styles.groupNumber}>Group {groupIdx + 1}</Text>
+                        </View>
+                        {group.players.length === 0 ? (
+                          <Text style={styles.emptyGroup}>No players</Text>
+                        ) : (
+                          group.players.map((playerId) => {
+                            const display = getPlayerDisplay(playerId);
+                            return (
+                              <View key={playerId} style={styles.groupPlayer}>
+                                <Text style={styles.groupPlayerName}>{display.name}</Text>
+                                <Text style={styles.groupPlayerHI}>HI: {display.hi}</Text>
+                                <Text style={styles.groupPlayerPH}>PH: {display.ph}</Text>
+                              </View>
+                            );
+                          })
+                        )}
+                      </View>
+                    );
+                  })}
+
+                  {/* Action Buttons */}
+                  {!isReadOnly && (
+                    <View style={styles.actionButtons}>
+                      <Pressable onPress={handleAddGroup} style={styles.addGroupButton}>
+                        <Text style={styles.addGroupButtonText}>+ Add Group</Text>
+                      </Pressable>
+
+                      <Pressable 
+                        onPress={handleSaveTeeSheet} 
+                        style={[styles.saveButton, saving && styles.buttonDisabled]}
+                        disabled={saving}
+                      >
+                        <Text style={styles.saveButtonText}>
+                          {saving ? "Saving..." : "Save Tee Sheet"}
+                        </Text>
+                      </Pressable>
+
+                      <Pressable onPress={handleExportTeeSheet} style={styles.pdfButton}>
+                        <Text style={styles.pdfButtonText}>
+                          {Platform.OS === "web" ? "Print / Download PDF" : "Share PDF"}
+                        </Text>
+                      </Pressable>
+                    </View>
+                  )}
+                </View>
+              )}
+            </>
+          )}
+        </View>
+      )}
+
+      <SecondaryButton onPress={() => router.back()}>Back</SecondaryButton>
 
       {/* Add Guest Modal */}
       <Modal
@@ -1547,11 +1106,8 @@ export default function TeesTeeSheetScreen() {
               >
                 <Text style={styles.modalCancelButtonText}>Cancel</Text>
               </Pressable>
-              <Pressable
-                onPress={handleAddGuestSubmit}
-                style={styles.modalSubmitButton}
-              >
-                <Text style={styles.modalSubmitButtonText}>Add Guest</Text>
+              <Pressable onPress={handleAddGuestSubmit} style={styles.modalSubmitButton}>
+                <Text style={styles.modalSubmitButtonText}>Add</Text>
               </Pressable>
             </View>
           </View>
@@ -1562,643 +1118,298 @@ export default function TeesTeeSheetScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: "#fff",
-  },
-  content: {
-    flex: 1,
-    padding: 24,
-  },
   centerContent: {
     flex: 1,
     justifyContent: "center",
     alignItems: "center",
-  },
-  section: {
-    marginTop: 16,
-    marginBottom: 16,
-  },
-  title: {
-    fontSize: 34,
-    fontWeight: "800",
-    marginBottom: 6,
-  },
-  subtitle: {
-    fontSize: 16,
-    opacity: 0.75,
-    marginBottom: 24,
+    padding: 24,
   },
   readOnlyCard: {
-    marginBottom: spacing.base,
     flexDirection: "row",
     alignItems: "center",
-    gap: spacing.sm,
+    gap: 8,
+    marginBottom: 12,
+    backgroundColor: "#fef3c7",
+    borderColor: "#fcd34d",
+    borderWidth: 1,
   },
   readOnlyText: {
     flex: 1,
   },
+  warningCard: {
+    backgroundColor: "#fef3c7",
+    borderColor: "#fcd34d",
+    borderWidth: 1,
+    marginBottom: 12,
+    padding: 12,
+  },
   tabs: {
     flexDirection: "row",
-    gap: 8,
-    marginBottom: 24,
-    borderBottomWidth: 1,
-    borderBottomColor: "#e5e7eb",
+    marginBottom: 16,
+    borderRadius: 8,
+    backgroundColor: "#f3f4f6",
+    padding: 4,
   },
   tab: {
     flex: 1,
-    paddingVertical: 12,
+    paddingVertical: 10,
     alignItems: "center",
-    borderBottomWidth: 2,
-    borderBottomColor: "transparent",
+    borderRadius: 6,
   },
   tabActive: {
-    borderBottomColor: "#0B6E4F",
+    backgroundColor: "#0B6E4F",
   },
   tabText: {
     color: "#6b7280",
   },
   tabTextActive: {
-    color: "#0B6E4F",
+    color: "#fff",
   },
   tabContent: {
-    marginTop: 16,
+    flex: 1,
   },
   sectionTitle: {
-    fontSize: 20,
-    fontWeight: "700",
-    marginBottom: 12,
-    marginTop: 24,
-    color: "#111827",
+    fontSize: 16,
+    fontWeight: "600",
+    color: "#1f2937",
+    marginBottom: 8,
   },
-  sectionTitleInline: {
-    fontSize: 18,
-    fontWeight: "700",
-    marginBottom: spacing.sm,
-    color: "#111827",
+  emptyText: {
+    color: "#6b7280",
+    fontStyle: "italic",
+    textAlign: "center",
+    padding: 20,
   },
   selectContainer: {
-    gap: 8,
-    marginBottom: 16,
+    maxHeight: 150,
+    marginBottom: 8,
   },
   selectButton: {
-    backgroundColor: "#f3f4f6",
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    borderRadius: 10,
-    borderWidth: 2,
-    borderColor: "transparent",
+    padding: 12,
+    backgroundColor: "#f9fafb",
+    borderRadius: 8,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
   },
   selectButtonActive: {
-    backgroundColor: "#f0fdf4",
+    backgroundColor: "#0B6E4F",
     borderColor: "#0B6E4F",
   },
   selectButtonText: {
-    fontSize: 16,
-    color: "#111827",
+    color: "#1f2937",
   },
   selectButtonTextActive: {
-    color: "#0B6E4F",
-    fontWeight: "600",
+    color: "#fff",
   },
-  field: {
-    marginBottom: 16,
+  teeSetInfo: {
+    padding: 12,
+    backgroundColor: "#f9fafb",
+    borderRadius: 8,
+  },
+  teeSetLabel: {
+    fontSize: 14,
+    color: "#374151",
+    marginBottom: 4,
+  },
+  allowanceRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  allowanceInput: {
+    width: 80,
+    padding: 10,
+    borderWidth: 1,
+    borderColor: "#d1d5db",
+    borderRadius: 8,
+    backgroundColor: "#fff",
+    textAlign: "center",
+  },
+  allowanceLabel: {
+    fontSize: 16,
+    color: "#374151",
+  },
+  timeRow: {
+    flexDirection: "row",
+    gap: 16,
+  },
+  timeField: {
+    flex: 1,
   },
   fieldLabel: {
     fontSize: 14,
-    fontWeight: "600",
-    marginBottom: 6,
-    color: "#111827",
+    color: "#6b7280",
+    marginBottom: 4,
   },
-  input: {
-    backgroundColor: "#f9fafb",
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    borderRadius: 10,
-    fontSize: 16,
+  timeInput: {
+    padding: 10,
     borderWidth: 1,
-    borderColor: "#e5e7eb",
-  },
-  allowanceButtons: {
-    flexDirection: "row",
-    gap: 12,
-    marginBottom: 16,
-  },
-  allowanceButton: {
-    flex: 1,
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    borderRadius: 10,
-    backgroundColor: "#f3f4f6",
-    alignItems: "center",
-    borderWidth: 2,
-    borderColor: "transparent",
-  },
-  allowanceButtonActive: {
-    backgroundColor: "#f0fdf4",
-    borderColor: "#0B6E4F",
-  },
-  allowanceButtonText: {
-    fontSize: 16,
-    fontWeight: "600",
-    color: "#6b7280",
-  },
-  allowanceButtonTextActive: {
-    color: "#0B6E4F",
-  },
-  intervalButtons: {
-    flexDirection: "row",
-    gap: 8,
-    flexWrap: "wrap",
-  },
-  intervalButton: {
-    paddingVertical: 10,
-    paddingHorizontal: 16,
+    borderColor: "#d1d5db",
     borderRadius: 8,
-    backgroundColor: "#f3f4f6",
-    borderWidth: 2,
-    borderColor: "transparent",
+    backgroundColor: "#fff",
   },
-  intervalButtonActive: {
-    backgroundColor: "#f0fdf4",
-    borderColor: "#0B6E4F",
+  playerList: {
+    maxHeight: 200,
+    marginBottom: 12,
   },
-  intervalButtonText: {
+  playerRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    padding: 10,
+    backgroundColor: "#f9fafb",
+    borderRadius: 6,
+    marginBottom: 6,
+  },
+  playerRowSelected: {
+    backgroundColor: "#d1fae5",
+    borderColor: "#10b981",
+    borderWidth: 1,
+  },
+  playerName: {
+    flex: 1,
     fontSize: 14,
-    fontWeight: "600",
+  },
+  playerHI: {
+    fontSize: 14,
     color: "#6b7280",
   },
-  intervalButtonTextActive: {
+  addGuestButton: {
+    padding: 10,
+    borderWidth: 1,
+    borderColor: "#0B6E4F",
+    borderRadius: 8,
+    alignItems: "center",
+    marginBottom: 12,
+  },
+  addGuestButtonText: {
     color: "#0B6E4F",
+    fontWeight: "600",
   },
   generateButton: {
     backgroundColor: "#0B6E4F",
-    paddingVertical: 14,
-    borderRadius: 10,
-    alignItems: "center",
-    marginTop: 8,
-    marginBottom: 24,
-  },
-  generateButtonText: {
-    color: "white",
-    fontSize: 16,
-    fontWeight: "600",
-  },
-  teeGroupCard: {
-    backgroundColor: "#f9fafb",
-    borderRadius: 10,
-    padding: 12,
-    marginBottom: 12,
-    borderWidth: 1,
-    borderColor: "#e5e7eb",
-  },
-  teeGroupTime: {
-    fontSize: 16,
-    fontWeight: "700",
-    color: "#111827",
-    marginBottom: 8,
-  },
-  playerRow: {
-    paddingVertical: 4,
-  },
-  playerName: {
-    fontSize: 14,
-    color: "#111827",
-  },
-  emptySlot: {
-    fontSize: 12,
-    color: "#9ca3af",
-    fontStyle: "italic",
-    marginTop: 4,
-  },
-  saveButton: {
-    backgroundColor: "#0B6E4F",
-    paddingVertical: 14,
-    borderRadius: 10,
-    alignItems: "center",
-    marginTop: 16,
-    marginBottom: 12,
-  },
-  saveButtonText: {
-    color: "white",
-    fontSize: 16,
-    fontWeight: "600",
-  },
-  secondaryButton: {
-    backgroundColor: "#f3f4f6",
-    paddingVertical: 14,
-    borderRadius: 10,
-    alignItems: "center",
-    marginBottom: 12,
-  },
-  secondaryButtonText: {
-    color: "#111827",
-    fontSize: 16,
-    fontWeight: "600",
-  },
-  pdfButton: {
-    backgroundColor: "#059669",
-    paddingVertical: 14,
-    borderRadius: 10,
-    alignItems: "center",
-    marginBottom: 12,
-  },
-  pdfButtonText: {
-    color: "white",
-    fontSize: 16,
-    fontWeight: "600",
-  },
-  warningBox: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "#fef3c7",
-    padding: 12,
+    padding: 14,
     borderRadius: 8,
-    marginTop: 8,
-    flexWrap: "wrap",
-  },
-  warningText: {
-    fontSize: 14,
-    color: "#92400e",
-    flex: 1,
-  },
-  linkButton: {
-    marginLeft: 8,
-  },
-  linkText: {
-    fontSize: 14,
-    color: "#0B6E4F",
-    fontWeight: "600",
-    textDecorationLine: "underline",
-  },
-  emptyText: {
-    fontSize: 14,
-    color: "#6b7280",
-    fontStyle: "italic",
-    marginTop: 8,
-  },
-  backButton: {
-    backgroundColor: "#111827",
-    paddingVertical: 14,
-    borderRadius: 10,
-    alignItems: "center",
-    marginTop: 24,
-  },
-  buttonText: {
-    color: "white",
-    fontSize: 16,
-    fontWeight: "600",
-  },
-  quickActions: {
-    flexDirection: "row",
-    gap: 8,
-    marginBottom: 12,
-  },
-  quickActionButton: {
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    borderRadius: 8,
-    backgroundColor: "#f3f4f6",
-  },
-  quickActionText: {
-    fontSize: 14,
-    fontWeight: "600",
-    color: "#111827",
-  },
-  countText: {
-    fontSize: 14,
-    fontWeight: "600",
-    color: "#6b7280",
-    marginBottom: 12,
-  },
-  playerSelectRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    backgroundColor: "#f9fafb",
-    borderRadius: 8,
-    marginBottom: 6,
-  },
-  playerSelectRowReadOnly: {
-    opacity: 0.7,
-  },
-  checkbox: {
-    width: 20,
-    height: 20,
-    borderRadius: 4,
-    borderWidth: 2,
-    borderColor: "#d1d5db",
-    backgroundColor: "#fff",
-    justifyContent: "center",
-    alignItems: "center",
-    marginRight: 12,
-  },
-  checkmark: {
-    width: 6,
-    height: 10,
-    borderBottomWidth: 2,
-    borderRightWidth: 2,
-    borderColor: "#0B6E4F",
-    transform: [{ rotate: "45deg" }],
-  },
-  playerSelectName: {
-    flex: 1,
-    fontSize: 14,
-    fontWeight: "600",
-    color: "#111827",
-  },
-  playerSelectHandicap: {
-    fontSize: 12,
-    color: "#6b7280",
-    marginLeft: 8,
-  },
-  guestLabel: {
-    fontSize: 12,
-    color: "#059669",
-    fontStyle: "italic",
-  },
-  warningTextSmall: {
-    fontSize: 12,
-    color: "#ef4444",
-    marginLeft: 8,
-  },
-  addGuestButton: {
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    borderRadius: 8,
-    backgroundColor: "#0B6E4F",
-    alignItems: "center",
-    marginTop: 8,
-  },
-  addGuestButtonText: {
-    color: "white",
-    fontSize: 14,
-    fontWeight: "600",
-  },
-  helperText: {
-    fontSize: 12,
-    color: "#6b7280",
-    marginTop: 4,
-    fontStyle: "italic",
-  },
-  guestRow: {
-    marginBottom: 6,
-  },
-  guestNameInput: {
-    fontSize: 14,
-    fontWeight: "600",
-    color: "#111827",
-    paddingVertical: 4,
-    paddingHorizontal: 8,
-    backgroundColor: "#fff",
-    borderRadius: 4,
-    borderWidth: 1,
-    borderColor: "#e5e7eb",
-    minWidth: 100,
-  },
-  guestHIInput: {
-    fontSize: 12,
-    color: "#6b7280",
-    paddingVertical: 4,
-    paddingHorizontal: 8,
-    backgroundColor: "#fff",
-    borderRadius: 4,
-    borderWidth: 1,
-    borderColor: "#e5e7eb",
-    width: 50,
-    textAlign: "center",
-    marginLeft: 8,
-  },
-  sexButton: {
-    paddingVertical: 4,
-    paddingHorizontal: 8,
-    borderRadius: 4,
-    backgroundColor: "#f3f4f6",
-    marginLeft: 8,
-  },
-  sexButtonText: {
-    fontSize: 12,
-    fontWeight: "600",
-    color: "#111827",
-  },
-  deleteGuestButton: {
-    paddingVertical: 4,
-    paddingHorizontal: 8,
-    borderRadius: 4,
-    backgroundColor: "#ef4444",
-    marginLeft: 8,
-  },
-  deleteGuestButtonText: {
-    fontSize: 16,
-    fontWeight: "700",
-    color: "white",
-  },
-  // Save RSVP Button
-  saveRsvpButton: {
-    paddingVertical: 10,
-    paddingHorizontal: 16,
-    borderRadius: 8,
-    backgroundColor: "#059669",
-    alignItems: "center",
-    marginTop: 12,
-  },
-  saveRsvpButtonText: {
-    color: "white",
-    fontSize: 14,
-    fontWeight: "600",
-  },
-  // Edit Mode
-  sectionHeader: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginTop: 24,
-    marginBottom: 12,
-  },
-  editModeButton: {
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    borderRadius: 8,
-    backgroundColor: "#f3f4f6",
-    borderWidth: 1,
-    borderColor: "#d1d5db",
-  },
-  editModeButtonActive: {
-    backgroundColor: "#0B6E4F",
-    borderColor: "#0B6E4F",
-  },
-  editModeButtonText: {
-    fontSize: 13,
-    fontWeight: "600",
-    color: "#111827",
-  },
-  editModeButtonTextActive: {
-    color: "white",
-  },
-  // Tee Group Header
-  teeGroupHeader: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: 8,
-  },
-  deleteGroupButton: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    backgroundColor: "#ef4444",
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  deleteGroupButtonText: {
-    color: "white",
-    fontSize: 16,
-    fontWeight: "700",
-  },
-  // Player Row Updates
-  playerInfo: {
-    flex: 1,
-  },
-  playerHandicaps: {
-    fontSize: 12,
-    color: "#6b7280",
-    marginTop: 2,
-  },
-  playerEditActions: {
-    flexDirection: "row",
-    gap: 6,
-    marginLeft: 8,
-  },
-  moveButton: {
-    paddingVertical: 4,
-    paddingHorizontal: 8,
-    borderRadius: 4,
-    backgroundColor: "#3b82f6",
-  },
-  moveButtonActive: {
-    backgroundColor: "#1d4ed8",
-  },
-  moveButtonText: {
-    color: "white",
-    fontSize: 11,
-    fontWeight: "600",
-  },
-  removeButton: {
-    paddingVertical: 4,
-    paddingHorizontal: 8,
-    borderRadius: 4,
-    backgroundColor: "#ef4444",
-  },
-  removeButtonText: {
-    color: "white",
-    fontSize: 14,
-    fontWeight: "700",
-  },
-  moveTargetButton: {
-    paddingVertical: 10,
-    borderRadius: 6,
-    backgroundColor: "#dbeafe",
-    borderWidth: 2,
-    borderColor: "#3b82f6",
-    borderStyle: "dashed",
-    alignItems: "center",
-    marginTop: 8,
-  },
-  moveTargetButtonText: {
-    color: "#3b82f6",
-    fontSize: 13,
-    fontWeight: "600",
-  },
-  fullSlot: {
-    fontSize: 12,
-    color: "#059669",
-    fontWeight: "600",
-    marginTop: 4,
-  },
-  // Unassigned Players
-  unassignedCard: {
-    backgroundColor: "#fef3c7",
-    borderRadius: 10,
-    padding: 12,
-    marginBottom: 12,
-    borderWidth: 1,
-    borderColor: "#fcd34d",
-  },
-  unassignedTitle: {
-    fontSize: 14,
-    fontWeight: "700",
-    color: "#92400e",
-    marginBottom: 8,
-  },
-  unassignedPlayerRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    paddingVertical: 6,
-    borderBottomWidth: 1,
-    borderBottomColor: "#fcd34d",
-  },
-  unassignedPlayerName: {
-    fontSize: 14,
-    fontWeight: "600",
-    color: "#111827",
-    flex: 1,
-  },
-  moveToGroupButtons: {
-    flexDirection: "row",
-    gap: 4,
-  },
-  moveToGroupButton: {
-    paddingVertical: 4,
-    paddingHorizontal: 6,
-    borderRadius: 4,
-    backgroundColor: "#0B6E4F",
-  },
-  moveToGroupButtonDisabled: {
-    backgroundColor: "#9ca3af",
-  },
-  moveToGroupButtonText: {
-    color: "white",
-    fontSize: 10,
-    fontWeight: "600",
-  },
-  // Add Group Button
-  addGroupButton: {
-    paddingVertical: 12,
-    borderRadius: 8,
-    backgroundColor: "#f3f4f6",
-    borderWidth: 2,
-    borderColor: "#d1d5db",
-    borderStyle: "dashed",
     alignItems: "center",
     marginBottom: 16,
   },
-  addGroupButtonText: {
+  generateButtonText: {
+    color: "#fff",
+    fontWeight: "600",
+    fontSize: 16,
+  },
+  buttonDisabled: {
+    opacity: 0.5,
+  },
+  teeGroupsContainer: {
+    marginTop: 8,
+  },
+  groupCard: {
+    backgroundColor: "#fff",
+    borderRadius: 8,
+    padding: 12,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
+  },
+  groupHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginBottom: 8,
+    paddingBottom: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: "#e5e7eb",
+  },
+  groupTime: {
+    fontSize: 16,
+    fontWeight: "700",
+    color: "#0B6E4F",
+  },
+  groupNumber: {
+    fontSize: 14,
     color: "#6b7280",
+  },
+  emptyGroup: {
+    color: "#9ca3af",
+    fontStyle: "italic",
+  },
+  groupPlayer: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: 6,
+  },
+  groupPlayerName: {
+    flex: 1,
+    fontSize: 14,
+  },
+  groupPlayerHI: {
+    width: 60,
+    fontSize: 12,
+    color: "#6b7280",
+    textAlign: "center",
+  },
+  groupPlayerPH: {
+    width: 50,
     fontSize: 14,
     fontWeight: "600",
+    color: "#0B6E4F",
+    textAlign: "center",
   },
-  // Modal Styles
+  actionButtons: {
+    gap: 10,
+    marginTop: 16,
+  },
+  addGroupButton: {
+    padding: 10,
+    borderWidth: 1,
+    borderColor: "#0B6E4F",
+    borderRadius: 8,
+    alignItems: "center",
+  },
+  addGroupButtonText: {
+    color: "#0B6E4F",
+    fontWeight: "600",
+  },
+  saveButton: {
+    backgroundColor: "#0B6E4F",
+    padding: 14,
+    borderRadius: 8,
+    alignItems: "center",
+  },
+  saveButtonText: {
+    color: "#fff",
+    fontWeight: "600",
+    fontSize: 16,
+  },
+  pdfButton: {
+    backgroundColor: "#1e40af",
+    padding: 14,
+    borderRadius: 8,
+    alignItems: "center",
+  },
+  pdfButtonText: {
+    color: "#fff",
+    fontWeight: "600",
+    fontSize: 16,
+  },
   modalOverlay: {
     flex: 1,
     backgroundColor: "rgba(0,0,0,0.5)",
     justifyContent: "center",
     alignItems: "center",
-    padding: 24,
+    padding: 20,
   },
   modalContent: {
-    backgroundColor: "white",
-    borderRadius: 16,
-    padding: 24,
+    backgroundColor: "#fff",
+    borderRadius: 12,
+    padding: 20,
     width: "100%",
     maxWidth: 400,
   },
   modalTitle: {
-    fontSize: 20,
+    fontSize: 18,
     fontWeight: "700",
-    color: "#111827",
-    marginBottom: 20,
+    marginBottom: 16,
     textAlign: "center",
   },
   modalField: {
@@ -2207,17 +1418,15 @@ const styles = StyleSheet.create({
   modalLabel: {
     fontSize: 14,
     fontWeight: "600",
-    color: "#374151",
     marginBottom: 6,
+    color: "#374151",
   },
   modalInput: {
-    backgroundColor: "#f9fafb",
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    borderRadius: 10,
-    fontSize: 16,
     borderWidth: 1,
-    borderColor: "#e5e7eb",
+    borderColor: "#d1d5db",
+    borderRadius: 8,
+    padding: 12,
+    fontSize: 16,
   },
   sexToggle: {
     flexDirection: "row",
@@ -2225,95 +1434,49 @@ const styles = StyleSheet.create({
   },
   sexToggleButton: {
     flex: 1,
-    paddingVertical: 12,
-    borderRadius: 10,
-    backgroundColor: "#f3f4f6",
+    padding: 12,
+    borderWidth: 1,
+    borderColor: "#d1d5db",
+    borderRadius: 8,
     alignItems: "center",
-    borderWidth: 2,
-    borderColor: "transparent",
   },
   sexToggleButtonActive: {
-    backgroundColor: "#f0fdf4",
+    backgroundColor: "#0B6E4F",
     borderColor: "#0B6E4F",
   },
   sexToggleText: {
-    fontSize: 16,
-    fontWeight: "600",
-    color: "#6b7280",
+    color: "#374151",
   },
   sexToggleTextActive: {
-    color: "#0B6E4F",
+    color: "#fff",
+    fontWeight: "600",
   },
   modalActions: {
     flexDirection: "row",
     gap: 12,
-    marginTop: 20,
+    marginTop: 8,
   },
   modalCancelButton: {
     flex: 1,
-    paddingVertical: 14,
-    borderRadius: 10,
-    backgroundColor: "#f3f4f6",
+    padding: 12,
+    borderWidth: 1,
+    borderColor: "#d1d5db",
+    borderRadius: 8,
     alignItems: "center",
   },
   modalCancelButtonText: {
-    color: "#374151",
-    fontSize: 16,
+    color: "#6b7280",
     fontWeight: "600",
   },
   modalSubmitButton: {
     flex: 1,
-    paddingVertical: 14,
-    borderRadius: 10,
+    padding: 12,
     backgroundColor: "#0B6E4F",
+    borderRadius: 8,
     alignItems: "center",
   },
   modalSubmitButtonText: {
-    color: "white",
-    fontSize: 16,
+    color: "#fff",
     fontWeight: "600",
   },
-  textArea: {
-    borderWidth: 1,
-    borderRadius: 8,
-    padding: spacing.sm,
-    fontSize: 15,
-    minHeight: 100,
-    textAlignVertical: "top",
-    marginTop: spacing.sm,
-  },
-  holeInputRow: {
-    flexDirection: "row",
-    gap: spacing.sm,
-    alignItems: "center",
-    marginTop: spacing.sm,
-  },
-  holeInput: {
-    flex: 1,
-    borderWidth: 1,
-    borderRadius: 8,
-    paddingVertical: spacing.sm,
-    paddingHorizontal: spacing.base,
-    fontSize: 16,
-    minHeight: 44,
-  },
-  holeChips: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: spacing.xs,
-    marginTop: spacing.sm,
-  },
-  holeChip: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "#f3f4f6",
-    paddingVertical: spacing.xs,
-    paddingHorizontal: spacing.sm,
-    borderRadius: 16,
-    gap: spacing.xs,
-  },
-  chipRemove: {
-    paddingLeft: spacing.xs,
-  },
 });
-
