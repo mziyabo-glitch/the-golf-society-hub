@@ -11,10 +11,11 @@
  */
 
 import { db, getActiveSocietyId, isFirebaseConfigured } from "../firebase";
-import { doc, getDoc, setDoc, updateDoc, collection, getDocs } from "firebase/firestore";
+import { doc, getDoc, setDoc, updateDoc, collection, getDocs, orderBy, query } from "firebase/firestore";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { STORAGE_KEYS } from "../storage";
 import type { MemberData, EventData, Course, TeeSet, GuestData } from "../models";
+import { toJsDate } from "../../utils/date";
 
 // ============================================================================
 // TYPES
@@ -199,15 +200,33 @@ export async function getEvents(): Promise<EventData[]> {
     if (isFirebaseConfigured()) {
       const societyId = getActiveSocietyId();
       const eventsRef = collection(db, "societies", societyId, "events");
-      const eventsSnap = await getDocs(eventsRef);
+
+      // Prefer server-side ordering, but mixed Firestore types for `date`
+      // (Timestamp vs string) can cause the query to fail. Fall back to
+      // unordered fetch + JS sort.
+      let eventsSnap;
+      try {
+        eventsSnap = await getDocs(query(eventsRef, orderBy("date", "asc")));
+      } catch (error) {
+        console.warn("[Firestore] orderBy(date) failed, falling back to unordered fetch:", error);
+        eventsSnap = await getDocs(eventsRef);
+      }
 
       if (!eventsSnap.empty) {
         const events: EventData[] = eventsSnap.docs.map((docSnap) => {
           const data = docSnap.data();
           return mapFirestoreEvent(docSnap.id, data);
         });
-        console.log(`[Firestore] Loaded ${events.length} events`);
-        return events;
+        // Always sort client-side using robust parsing (avoids mixed-type issues)
+        const sorted = [...events].sort((a, b) => {
+          const aDate = toJsDate((a as any).date);
+          const bDate = toJsDate((b as any).date);
+          const aTime = aDate ? aDate.getTime() : Number.POSITIVE_INFINITY;
+          const bTime = bDate ? bDate.getTime() : Number.POSITIVE_INFINITY;
+          return aTime - bTime;
+        });
+        console.log(`[Firestore] Loaded ${sorted.length} events`);
+        return sorted;
       }
       console.log("[Firestore] No events found, falling back to AsyncStorage");
     }
@@ -263,10 +282,19 @@ export async function getEvent(eventId: string): Promise<EventData | null> {
  * Map Firestore document data to EventData type
  */
 function mapFirestoreEvent(id: string, data: Record<string, unknown>): EventData {
+  const rawDate = data.date as unknown;
+  const parsed = toJsDate(rawDate);
+  const normalizedDate =
+    (typeof rawDate === "string" && rawDate.trim() !== "" ? rawDate : null) ||
+    (parsed ? parsed.toISOString().slice(0, 10) : null) ||
+    new Date().toISOString().slice(0, 10);
+
   return {
     id,
     name: (data.name as string) || "Unnamed Event",
-    date: (data.date as string) || new Date().toISOString(),
+    // Keep app-wide `date` as a string for backward compatibility, but allow
+    // mixed Firestore types on read.
+    date: normalizedDate,
     courseName: (data.courseName as string) || "",
     courseId: data.courseId as string | undefined,
     maleTeeSetId: data.maleTeeSetId as string | undefined,

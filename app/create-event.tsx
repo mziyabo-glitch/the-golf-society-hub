@@ -11,11 +11,13 @@ import { useFocusEffect } from "@react-navigation/native";
 import { useRouter } from "expo-router";
 import { useCallback, useState } from "react";
 import { Alert, Pressable, ScrollView, Text, TextInput, View } from "react-native";
+import { Timestamp, doc, setDoc } from "firebase/firestore";
 import { getSession } from "@/lib/session";
 import { canCreateEvents, normalizeMemberRoles, normalizeSessionRole } from "@/lib/permissions";
 import { getCurrentUserRoles } from "@/lib/roles";
 import { STORAGE_KEYS } from "@/lib/storage";
 import { DatePicker } from "@/components/DatePicker";
+import { db, getActiveSocietyId, isFirebaseConfigured } from "@/lib/firebase";
 
 const EVENTS_KEY = STORAGE_KEYS.EVENTS;
 
@@ -102,6 +104,34 @@ export default function CreateEventScreen() {
         format,
         isOOM,
       };
+
+      // Best-effort Firestore write (forward-compatible):
+      // store `date` as Firestore Timestamp to prevent mixed-type issues going forward.
+      if (isFirebaseConfigured()) {
+        try {
+          const societyId = getActiveSocietyId();
+          const selectedDate = new Date(`${eventDate.trim()}T00:00:00`);
+          if (!isNaN(selectedDate.getTime())) {
+            const eventRef = doc(db, "societies", societyId, "events", newEvent.id);
+            await setDoc(
+              eventRef,
+              {
+                name: newEvent.name,
+                date: Timestamp.fromDate(selectedDate),
+                courseName: newEvent.courseName,
+                format: newEvent.format,
+                isOOM: newEvent.isOOM,
+                createdAt: Timestamp.now(),
+              },
+              { merge: true }
+            );
+          } else {
+            console.warn("[CreateEvent] Invalid eventDate, skipping Firestore Timestamp write:", eventDate);
+          }
+        } catch (error) {
+          console.warn("[CreateEvent] Firestore save failed (continuing with local save):", error);
+        }
+      }
 
       // Append to array and save
       const updatedEvents = [...existingEvents, newEvent];
