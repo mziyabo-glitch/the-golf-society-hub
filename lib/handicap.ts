@@ -21,14 +21,21 @@ export class WHSCalculationError extends Error {
 
 /**
  * Get the appropriate tee set for a player based on sex
+ * - male -> male tee set
+ * - female -> female tee set
+ * - undefined -> defaults to male (with dev warning)
  */
 export function getTeeSetForPlayer(
   playerSex: "male" | "female" | undefined,
   maleTeeSet: TeeSet | null,
   femaleTeeSet: TeeSet | null
 ): TeeSet | null {
+  // If sex is missing, default to male but log in dev
   if (!playerSex) {
-    return null;
+    if (__DEV__) {
+      console.warn("[WHS] Player sex is undefined, defaulting to male tee set");
+    }
+    return maleTeeSet;
   }
   return playerSex === "male" ? maleTeeSet : femaleTeeSet;
 }
@@ -77,7 +84,11 @@ export function validateWHSInputs(
 }
 
 /**
- * Get playing handicap for a member in an event
+ * Get playing handicap for a member in an event using WHS formula
+ * 
+ * WHS Formula:
+ * - Course Handicap = round(HI × (Slope Rating / 113) + (Course Rating − Par))
+ * - Playing Handicap = round(Course Handicap × (Handicap Allowance % / 100))
  * 
  * @param member - Member data with handicap and sex
  * @param event - Event data with allowance settings
@@ -98,12 +109,7 @@ export function getPlayingHandicap(
     return null;
   }
 
-  // Member must have sex for tee set selection
-  if (!member.sex) {
-    return null;
-  }
-
-  // Get appropriate tee set based on sex
+  // Get appropriate tee set based on sex (defaults to male if sex missing)
   const teeSet = getTeeSetForPlayer(member.sex, maleTeeSet, femaleTeeSet);
   if (!teeSet) {
     return null;

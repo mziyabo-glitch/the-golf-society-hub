@@ -22,7 +22,7 @@ import {
 } from "@/lib/teeSheetPrint";
 import { decodeTeeSheetPayload, type TeeSheetPayload } from "@/lib/teeSheetPayload";
 // Firestore read helpers
-import { getSociety, getMembers, getEvents, getCourse } from "@/lib/firestore/society";
+import { getSociety, getMembers, getEvents, getCourse, findTeeSetsForEvent } from "@/lib/firestore/society";
 import { useLocalSearchParams, router } from "expo-router";
 import { useEffect, useState } from "react";
 import { View, Text, StyleSheet, Pressable, Platform } from "react-native";
@@ -203,7 +203,7 @@ export default function PrintTeeSheetScreen() {
         return;
       }
 
-      // Load course and tee sets
+      // Load course and tee sets (with case-insensitive matching)
       let course: Course | null = null;
       let maleTeeSet: TeeSet | null = null;
       let femaleTeeSet: TeeSet | null = null;
@@ -211,12 +211,10 @@ export default function PrintTeeSheetScreen() {
       if (event.courseId) {
         course = await getCourse(event.courseId);
         if (course) {
-          if (event.maleTeeSetId) {
-            maleTeeSet = course.teeSets.find((t) => t.id === event.maleTeeSetId) || null;
-          }
-          if (event.femaleTeeSetId) {
-            femaleTeeSet = course.teeSets.find((t) => t.id === event.femaleTeeSetId) || null;
-          }
+          // Use case-insensitive matching for tee set IDs
+          const teeSets = findTeeSetsForEvent(course, event);
+          maleTeeSet = teeSets.maleTeeSet;
+          femaleTeeSet = teeSets.femaleTeeSet;
         }
       }
 

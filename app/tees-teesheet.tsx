@@ -30,6 +30,8 @@ import {
   getCourses,
   getCourse,
   updateEventTeeSheet,
+  findTeeSetById,
+  findTeeSetsForEvent,
 } from "@/lib/firestore/society";
 import { useFocusEffect } from "@react-navigation/native";
 import { router } from "expo-router";
@@ -223,18 +225,21 @@ export default function TeesTeeSheetScreen() {
         setSelectedCourse(course);
         console.log("[Course Loaded]", course.name, "with", course.teeSets.length, "tee sets");
 
-        // Find male tee set
-        if (event.maleTeeSetId) {
-          const maleTee = course.teeSets.find((t) => t.id === event.maleTeeSetId);
-          setSelectedMaleTeeSet(maleTee || null);
-          console.log("[Male Tee Set]", maleTee ? `${maleTee.teeColor} (SR: ${maleTee.slopeRating}, CR: ${maleTee.courseRating})` : "NOT FOUND");
+        // Find tee sets using case-insensitive matching
+        const { maleTeeSet, femaleTeeSet } = findTeeSetsForEvent(course, event);
+        
+        setSelectedMaleTeeSet(maleTeeSet);
+        if (maleTeeSet) {
+          console.log("[Male Tee Set]", `${maleTeeSet.teeColor} (SR: ${maleTeeSet.slopeRating}, CR: ${maleTeeSet.courseRating})`);
+        } else if (event.maleTeeSetId) {
+          console.warn("[Male Tee Set] NOT FOUND:", event.maleTeeSetId);
         }
 
-        // Find female tee set
-        if (event.femaleTeeSetId) {
-          const femaleTee = course.teeSets.find((t) => t.id === event.femaleTeeSetId);
-          setSelectedFemaleTeeSet(femaleTee || null);
-          console.log("[Female Tee Set]", femaleTee ? `${femaleTee.teeColor} (SR: ${femaleTee.slopeRating}, CR: ${femaleTee.courseRating})` : "NOT FOUND");
+        setSelectedFemaleTeeSet(femaleTeeSet);
+        if (femaleTeeSet) {
+          console.log("[Female Tee Set]", `${femaleTeeSet.teeColor} (SR: ${femaleTeeSet.slopeRating}, CR: ${femaleTeeSet.courseRating})`);
+        } else if (event.femaleTeeSetId) {
+          console.warn("[Female Tee Set] NOT FOUND:", event.femaleTeeSetId);
         }
       } else {
         console.warn("[Course Not Found]", event.courseId);
@@ -877,17 +882,41 @@ export default function TeesTeeSheetScreen() {
         </AppCard>
       )}
 
-      {/* Data Status */}
+      {/* Data Status - PH Calculation Warning */}
       {!canGenerateTeeSheet && selectedEvent && (
         <AppCard style={styles.warningCard}>
-          <Text style={{ fontSize: 13, color: "#b45309" }}>
-            ⚠️ Some data is missing. PH values may show as &quot;-&quot;
+          <Text style={{ fontSize: 13, fontWeight: "600", color: "#b45309" }}>
+            ⚠️ Select course + tee sets to calculate PH
           </Text>
-          <AppText variant="small" color="secondary" style={{ marginTop: 4 }}>
-            {!selectedCourse && "• Course not loaded\n"}
-            {!selectedMaleTeeSet && "• Male tee set not loaded\n"}
-            {!selectedFemaleTeeSet && "• Female tee set not loaded"}
-          </AppText>
+          <Text style={{ fontSize: 12, color: "#78716c", marginTop: 6 }}>
+            Playing Handicap (PH) requires:
+          </Text>
+          <Text style={{ fontSize: 12, color: selectedCourse ? "#059669" : "#b45309", marginTop: 2 }}>
+            {selectedCourse ? "✓" : "•"} Course: {selectedCourse?.name || "Not selected"}
+          </Text>
+          <Text style={{ fontSize: 12, color: selectedMaleTeeSet ? "#059669" : "#b45309", marginTop: 2 }}>
+            {selectedMaleTeeSet ? "✓" : "•"} Male tee set: {selectedMaleTeeSet ? `${selectedMaleTeeSet.teeColor} (SR: ${selectedMaleTeeSet.slopeRating}, CR: ${selectedMaleTeeSet.courseRating})` : "Not selected"}
+          </Text>
+          <Text style={{ fontSize: 12, color: selectedFemaleTeeSet ? "#059669" : "#b45309", marginTop: 2 }}>
+            {selectedFemaleTeeSet ? "✓" : "•"} Female tee set: {selectedFemaleTeeSet ? `${selectedFemaleTeeSet.teeColor} (SR: ${selectedFemaleTeeSet.slopeRating}, CR: ${selectedFemaleTeeSet.courseRating})` : "Not selected"}
+          </Text>
+          <Text style={{ fontSize: 11, fontStyle: "italic", color: "#78716c", marginTop: 8 }}>
+            WHS Formula: PH = round(HI × (SR/113) + (CR−Par)) × Allowance%
+          </Text>
+        </AppCard>
+      )}
+      
+      {/* PH Ready Indicator */}
+      {canGenerateTeeSheet && selectedEvent && (
+        <AppCard style={styles.successCard}>
+          <Text style={{ fontSize: 13, fontWeight: "600", color: "#059669" }}>
+            ✓ Playing Handicaps (PH) will be calculated using WHS formula
+          </Text>
+          <Text style={{ fontSize: 12, color: "#78716c", marginTop: 4 }}>
+            Male: {selectedMaleTeeSet?.teeColor} (SR: {selectedMaleTeeSet?.slopeRating}, CR: {selectedMaleTeeSet?.courseRating}) | 
+            Female: {selectedFemaleTeeSet?.teeColor} (SR: {selectedFemaleTeeSet?.slopeRating}, CR: {selectedFemaleTeeSet?.courseRating}) | 
+            Allowance: {handicapAllowancePct}%
+          </Text>
         </AppCard>
       )}
 
@@ -1247,6 +1276,13 @@ const styles = StyleSheet.create({
   warningCard: {
     backgroundColor: "#fef3c7",
     borderColor: "#fcd34d",
+    borderWidth: 1,
+    marginBottom: 12,
+    padding: 12,
+  },
+  successCard: {
+    backgroundColor: "#d1fae5",
+    borderColor: "#10b981",
     borderWidth: 1,
     marginBottom: 12,
     padding: 12,

@@ -519,3 +519,58 @@ export async function getTeeSet(courseId: string, teeSetId: string): Promise<Tee
 
   return null;
 }
+
+/**
+ * Find a tee set in a course by ID (case-insensitive)
+ * 
+ * This handles mismatches like:
+ * - event.maleTeeSetId = "white" but doc.id = "White"
+ * - event.femaleTeeSetId = "RED" but doc.id = "red"
+ */
+export function findTeeSetById(
+  course: Course | null,
+  teeSetId: string | undefined
+): TeeSet | null {
+  if (!course || !teeSetId) {
+    return null;
+  }
+  
+  // First try exact match
+  const exactMatch = course.teeSets.find((t) => t.id === teeSetId);
+  if (exactMatch) {
+    return exactMatch;
+  }
+  
+  // Try case-insensitive match
+  const lowerTeeSetId = teeSetId.toLowerCase();
+  const caseInsensitiveMatch = course.teeSets.find(
+    (t) => t.id.toLowerCase() === lowerTeeSetId
+  );
+  
+  if (caseInsensitiveMatch) {
+    console.log(
+      `[Firestore] Matched tee set case-insensitively: "${teeSetId}" -> "${caseInsensitiveMatch.id}"`
+    );
+    return caseInsensitiveMatch;
+  }
+  
+  console.warn(`[Firestore] Tee set not found (case-insensitive): ${teeSetId}`);
+  return null;
+}
+
+/**
+ * Find male and female tee sets for an event (case-insensitive matching)
+ */
+export function findTeeSetsForEvent(
+  course: Course | null,
+  event: { maleTeeSetId?: string; femaleTeeSetId?: string } | null
+): { maleTeeSet: TeeSet | null; femaleTeeSet: TeeSet | null } {
+  if (!course || !event) {
+    return { maleTeeSet: null, femaleTeeSet: null };
+  }
+  
+  return {
+    maleTeeSet: findTeeSetById(course, event.maleTeeSetId),
+    femaleTeeSet: findTeeSetById(course, event.femaleTeeSetId),
+  };
+}
