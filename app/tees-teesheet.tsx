@@ -720,51 +720,19 @@ export default function TeesTeeSheetScreen() {
     isSharing.current = true;
 
     try {
-      const html = generateTeeSheetHtml();
-
-      // Web platform: open in new window for print
+      // Web platform: navigate to print route
       if (Platform.OS === "web") {
-        try {
-          const printWindow = window.open("", "_blank");
-          if (printWindow) {
-            printWindow.document.write(html);
-            printWindow.document.close();
-            printWindow.focus();
-            // Give the page time to render before printing
-            setTimeout(() => {
-              try {
-                printWindow.print();
-              } catch (printErr) {
-                console.error("Print dialog error:", printErr);
-                // Even if print fails, the window is open and user can manually print
-              }
-            }, 500);
-          } else {
-            // Popup blocked - fallback to downloadable HTML file
-            console.warn("Popup blocked, falling back to download");
-            const blob = new Blob([html], { type: "text/html" });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement("a");
-            a.href = url;
-            a.download = `tee-sheet-${selectedEvent.name?.replace(/[^a-z0-9]/gi, "-") || "export"}.html`;
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-            URL.revokeObjectURL(url);
-            Alert.alert(
-              "Downloaded",
-              "Tee sheet saved as HTML. Open the file and use your browser's print function (Ctrl+P / Cmd+P) to save as PDF."
-            );
-          }
-        } catch (webError) {
-          console.error("Web export error:", webError);
-          Alert.alert("Export Error", "Failed to open print dialog. Please try again or disable popup blocker.");
-        }
+        // Save tee sheet first to ensure latest data is available
+        await handleSaveTeeSheet();
+        
+        // Navigate to print route - this avoids popup blockers
+        router.push(`/print/tee-sheet?eventId=${selectedEvent.id}` as any);
         isSharing.current = false;
         return;
       }
 
       // Mobile: use expo-print + expo-sharing
+      const html = generateTeeSheetHtml();
       try {
         const { uri } = await Print.printToFileAsync({ html });
         const sharingAvailable = await Sharing.isAvailableAsync();

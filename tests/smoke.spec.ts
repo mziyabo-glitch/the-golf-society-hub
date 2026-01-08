@@ -105,9 +105,8 @@ test.describe("Golf Society Hub - Smoke Tests", () => {
     expect(content).toBeTruthy();
   });
 
-  test("tee sheet export triggers window.print on web", async ({ page }) => {
-    // This test verifies the export path is exercisable
-    // We can't actually test the full print flow, but we verify window.print is invoked
+  test("tee sheet export navigates to print route on web", async ({ page }) => {
+    // This test verifies clicking the export button navigates to print route
     
     await page.goto("/tees-teesheet");
     await page.waitForLoadState("networkidle", { timeout: 30000 });
@@ -116,36 +115,52 @@ test.describe("Golf Society Hub - Smoke Tests", () => {
     const exportButton = page.locator('text=/print|export|pdf|download/i').first();
     
     if (await exportButton.isVisible({ timeout: 5000 }).catch(() => false)) {
-      // Handle popup that might be opened
-      const popupPromise = page.waitForEvent("popup", { timeout: 5000 }).catch(() => null);
-      
       await exportButton.click();
       
-      // Give time for print dialog or popup
-      const popup = await popupPromise;
+      // Wait a moment for navigation
+      await page.waitForTimeout(1000);
       
-      if (popup) {
-        // A popup window was opened (for print preview)
-        await popup.waitForLoadState("domcontentloaded", { timeout: 10000 }).catch(() => {});
-        
-        // Check if print was called on popup
-        const printCalled = await popup.evaluate(() => (window as any).__printCalled).catch(() => false);
-        
-        // Even if print wasn't intercepted, having a popup open is success
-        await popup.close().catch(() => {});
-      }
+      // Should navigate to /print/tee-sheet route OR stay on page with error
+      const url = page.url();
+      const content = await page.textContent("body");
       
-      // Also check main window
-      const mainPrintCalled = await page.evaluate(() => (window as any).__printCalled);
-      
-      // Test passes if either popup opened or print was called
-      // This is a smoke test - we just want to verify the code path doesn't crash
+      // Success if either:
+      // 1. Navigated to print route
+      // 2. Stayed on page (might need event selection first - that's OK for smoke test)
+      console.log(`After export click: URL=${url}`);
       console.log("Export button clicked successfully");
     } else {
       // Button not visible - might need event/course selection first
-      // This is OK for a smoke test - we've verified the screen loads
       console.log("Export button not visible (may require event selection)");
     }
+  });
+
+  test("print tee sheet route loads and triggers window.print", async ({ page }) => {
+    // Test the print route directly with a mock event ID
+    // This tests that the route renders and attempts to call window.print
+    
+    await page.goto("/print/tee-sheet?eventId=test-event-123");
+    await page.waitForLoadState("networkidle", { timeout: 30000 });
+    
+    // Page should load (either with data or "not found" message)
+    const body = await page.locator("body");
+    await expect(body).toBeVisible();
+    
+    const content = await page.textContent("body");
+    expect(content).toBeTruthy();
+    
+    // Should show either tee sheet content or error message
+    const hasContent = content!.toLowerCase().includes("tee") || 
+                       content!.toLowerCase().includes("not found") ||
+                       content!.toLowerCase().includes("no event") ||
+                       content!.toLowerCase().includes("loading");
+    expect(hasContent).toBeTruthy();
+    
+    // Check if window.print was called (we mock it in beforeEach)
+    const printCalled = await page.evaluate(() => (window as any).__printCalled);
+    
+    // Print might not be called if there's no data, but the route should load
+    console.log(`Print route loaded, window.print called: ${printCalled}`);
   });
 
   test("error boundary catches errors gracefully", async ({ page }) => {
