@@ -3,9 +3,23 @@
   "buildCommand": "npx expo export --platform web",
   "outputDirectory": "dist",
   "framework": null,
+  "cleanUrls": true,
+  "trailingSlash": false,
   "rewrites": [
     {
-      "source": "/((?!_expo|assets|favicon\\.ico).*)",
+      "source": "/event/:id/players",
+      "destination": "/event/[id]/players.html"
+    },
+    {
+      "source": "/event/:id/results",
+      "destination": "/event/[id]/results.html"
+    },
+    {
+      "source": "/event/:id",
+      "destination": "/event/[id].html"
+    },
+    {
+      "source": "/((?!_expo|assets|favicon\\.ico|.*\\.html$).*)",
       "destination": "/index.html"
     }
   ],

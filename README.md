@@ -77,7 +77,9 @@ This project is configured for deployment to Vercel using Expo Web (static expor
 The `vercel.json` file is pre-configured with:
 - Build command: `npx expo export --platform web`
 - Output directory: `dist`
-- SPA rewrites for client-side routing
+- `cleanUrls: true` - Serves `.html` files without extensions (fixes 404 on refresh)
+- Dynamic route rewrites for `/event/[id]` paths
+- SPA fallback rewrites for client-side routing
 - Cache headers for static assets
 
 #### Option 2: Deploy via Vercel CLI
