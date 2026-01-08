@@ -20,7 +20,6 @@ import {
   validateTeeSheetData,
   type TeeSheetDataModel,
 } from "@/lib/teeSheetPrint";
-import { buildTeeSheetPayload, encodeTeeSheetPayload } from "@/lib/teeSheetPayload";
 import { getActiveSocietyId } from "@/lib/firebase";
 // Firestore helpers - NO AsyncStorage fallback for tee sheet
 import { 
@@ -510,7 +509,9 @@ export default function TeesTeeSheetScreen() {
 
   /**
    * Export tee sheet as PDF
-   * Uses same pattern as Leaderboard
+   * Uses same pattern as Leaderboard:
+   * - Web: window.open + document.write + print()
+   * - Native: expo-print + expo-sharing
    */
   const handleExportTeeSheet = async () => {
     // Guard: data must be ready
@@ -520,41 +521,29 @@ export default function TeesTeeSheetScreen() {
       return;
     }
 
-    // Defensive logging
-    console.log("=== PDF Export Starting ===");
-    console.log("Course:", selectedCourse);
-    console.log("Male tee:", selectedMaleTeeSet);
-    console.log("Female tee:", selectedFemaleTeeSet);
-    console.log("Allowance:", handicapAllowancePct);
-
     // Validate required data
     if (!selectedEvent) {
       Alert.alert("Error", "Please select an event first");
-      console.error("[PDF Export] No event selected");
       return;
     }
     
     if (!selectedCourse) {
       Alert.alert("Error", "Course not loaded. Please wait for Firestore data.");
-      console.error("[PDF Export] No course");
       return;
     }
 
     if (!selectedMaleTeeSet || !selectedFemaleTeeSet) {
       Alert.alert("Error", "Tee sets not loaded. Please wait for Firestore data.");
-      console.error("[PDF Export] Missing tee sets");
       return;
     }
 
     if (teeGroups.length === 0) {
       Alert.alert("Error", "No tee groups found. Please generate a tee sheet first.");
-      console.error("[PDF Export] No tee groups");
       return;
     }
 
     if (members.length === 0) {
       Alert.alert("Error", "No members found. Cannot generate PDF.");
-      console.error("[PDF Export] No members");
       return;
     }
 
@@ -564,42 +553,7 @@ export default function TeesTeeSheetScreen() {
     isSharing.current = true;
 
     try {
-      // Build payload with current state (as fallback if Firestore save fails)
-      const [hours, mins] = startTime.split(":").map(Number);
-      const startDate = new Date();
-      startDate.setHours(hours, mins, 0, 0);
-
-      const payload = buildTeeSheetPayload({
-        event: {
-          id: selectedEvent.id,
-          name: selectedEvent.name,
-          date: selectedEvent.date,
-          courseName: selectedCourse?.name || selectedEvent.courseName,
-          courseId: selectedEvent.courseId,
-          maleTeeSetId: selectedEvent.maleTeeSetId,
-          femaleTeeSetId: selectedEvent.femaleTeeSetId,
-        },
-        society,
-        course: selectedCourse,
-        maleTeeSet: selectedMaleTeeSet,
-        femaleTeeSet: selectedFemaleTeeSet,
-        handicapAllowancePct,
-        teeSheet: {
-          startTimeISO: startDate.toISOString(),
-          intervalMins,
-          groups: teeGroups,
-        },
-        teeSheetNotes,
-        nearestToPinHoles,
-        longestDriveHoles,
-        guests: guests.filter((g) => g.included),
-      });
-
-      const encodedPayload = encodeTeeSheetPayload(payload);
-      console.log("[PDF Export] Payload built, size:", encodedPayload.length);
-
-      // AUTO-SAVE before print: Check if event.teeSheet is missing or outdated
-      // This ensures the print route can also load from Firestore if payload fails
+      // AUTO-SAVE before print (best effort)
       const needsAutoSave = !selectedEvent.teeSheet || 
         !selectedEvent.teeSheet.groups || 
         selectedEvent.teeSheet.groups.length === 0 ||
@@ -608,30 +562,14 @@ export default function TeesTeeSheetScreen() {
       if (needsAutoSave) {
         console.log("[PDF Export] Auto-saving tee sheet before print...");
         const saveResult = await saveTeeSheetToFirestore();
-        
         if (saveResult.success && saveResult.verified) {
-          console.log("[PDF Export] Auto-save successful:", saveResult);
+          console.log("[PDF Export] Auto-save successful");
         } else {
-          console.warn("[PDF Export] Auto-save failed, continuing with payload:", saveResult);
-          // Don't block - payload will be used as fallback
+          console.warn("[PDF Export] Auto-save failed, continuing anyway");
         }
       }
 
-      // Web platform: Navigate to print route with payload
-      if (Platform.OS === "web") {
-        // Navigate with payload as fallback
-        router.push({
-          pathname: "/print/tee-sheet",
-          params: { 
-            eventId: selectedEvent.id,
-            payload: encodedPayload,
-          },
-        } as never);
-        isSharing.current = false;
-        return;
-      }
-
-      // Native: Build data model (same as Leaderboard pattern)
+      // Build data model (same for web and native)
       const teeSheetData: TeeSheetDataModel = buildTeeSheetDataModel({
         society,
         event: selectedEvent,
@@ -659,7 +597,6 @@ export default function TeesTeeSheetScreen() {
       // Render HTML from data model
       const html = renderTeeSheetHtml(teeSheetData);
 
-      // Guard: HTML must not be empty
       if (!html || html.trim().length === 0) {
         console.error("[PDF Export] Generated HTML is empty!");
         Alert.alert("Error", "Failed to generate PDF content");
@@ -669,7 +606,48 @@ export default function TeesTeeSheetScreen() {
 
       console.log("[PDF Export] HTML generated, length:", html.length);
 
-      // Generate PDF and share (expo-print + expo-sharing)
+      // ==========================================
+      // WEB: Use window.open + document.write + print() (like Leaderboard)
+      // ==========================================
+      if (Platform.OS === "web") {
+        try {
+          if (typeof window !== "undefined" && window.open) {
+            const printWindow = window.open("", "_blank");
+            if (printWindow) {
+              printWindow.document.write(html);
+              printWindow.document.close();
+              printWindow.focus();
+              // Delay print to ensure content is rendered
+              setTimeout(() => {
+                printWindow.print();
+              }, 250);
+            } else {
+              // Fallback: create downloadable blob
+              const blob = new Blob([html], { type: "text/html" });
+              const url = URL.createObjectURL(blob);
+              const a = document.createElement("a");
+              a.href = url;
+              a.download = `tee-sheet-${selectedEvent.name.replace(/\s+/g, "-")}.html`;
+              document.body.appendChild(a);
+              a.click();
+              document.body.removeChild(a);
+              URL.revokeObjectURL(url);
+              Alert.alert("Success", "Tee sheet downloaded as HTML. Open and print to save as PDF.");
+            }
+          } else {
+            Alert.alert("Error", "PDF export not supported on this web build");
+          }
+        } catch (webError) {
+          console.error("[PDF Export] Web print error:", webError);
+          Alert.alert("Error", "Failed to generate PDF on web. Please try again.");
+        }
+        isSharing.current = false;
+        return;
+      }
+
+      // ==========================================
+      // NATIVE: Use expo-print + expo-sharing
+      // ==========================================
       try {
         const { uri } = await Print.printToFileAsync({ html });
         console.log("[PDF Export] PDF created:", uri);
