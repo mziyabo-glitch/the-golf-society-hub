@@ -732,7 +732,7 @@ export default function TeesTeeSheetScreen() {
         <AppCard style={styles.readOnlyCard}>
           <Badge label="View Only" variant="status" />
           <AppText variant="small" color="secondary" style={styles.readOnlyText}>
-            You don't have permission to edit tee sheets
+            You do not have permission to edit tee sheets
           </AppText>
         </AppCard>
       )}

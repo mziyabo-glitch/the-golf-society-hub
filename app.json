@@ -23,8 +23,14 @@
       "predictiveBackGestureEnabled": false
     },
     "web": {
+      "bundler": "metro",
       "output": "static",
-      "favicon": "./assets/images/favicon.png"
+      "favicon": "./assets/images/favicon.png",
+      "name": "The Golf Society Hub",
+      "shortName": "Golf Hub",
+      "description": "Everything Golf Society - Manage your golf society, events, handicaps and more",
+      "themeColor": "#0B6E4F",
+      "backgroundColor": "#ffffff"
     },
     "plugins": [
       "expo-router",
