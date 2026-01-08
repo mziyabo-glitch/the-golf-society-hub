@@ -123,6 +123,133 @@ No environment variables are required for basic deployment. If you add backend s
 2. Navigate to Settings > Domains
 3. Add your custom domain and follow the DNS configuration instructions
 
+## Order of Merit (OOM) System
+
+The Order of Merit tracks player rankings across events in a season.
+
+### Points Mapping
+
+Points are awarded using F1-style scoring:
+
+| Position | Points |
+|----------|--------|
+| 1st      | 25     |
+| 2nd      | 18     |
+| 3rd      | 15     |
+| 4th      | 12     |
+| 5th      | 10     |
+| 6th      | 8      |
+| 7th      | 6      |
+| 8th      | 4      |
+| 9th      | 2      |
+| 10th     | 1      |
+| 11th+    | 0      |
+
+### OOM Rules
+
+- Only **published** event results count toward OOM
+- Draft results do not affect the leaderboard
+- Filter by season year (defaults to current year)
+- Filter by OOM events only (events marked as `isOOM: true`)
+- Only members with points > 0 are displayed
+- Tie-breaker: Points desc → Wins desc → Events played asc → Name asc
+
+### Computation
+
+OOM is computed using `lib/oom.ts`:
+
+```typescript
+import { computeOrderOfMerit } from "@/lib/oom";
+
+const results = computeOrderOfMerit({
+  events,
+  members,
+  seasonYear: 2026,
+  oomOnly: true, // Only count OOM-flagged events
+});
+```
+
+## Tee Sheet Export
+
+The tee sheet can be exported to PDF on both web and mobile platforms.
+
+### Web Export
+
+On web (Expo Web / Vercel deployment):
+1. Click "Print / Download PDF" button
+2. A new window opens with the formatted tee sheet
+3. Browser print dialog appears (Ctrl+P / Cmd+P)
+4. Select "Save as PDF" in the print destination
+5. If popup is blocked, an HTML file is downloaded instead
+
+The export includes:
+- App branding: "Produced by The Golf Society Hub"
+- Society logo (if configured)
+- ManCo details: Captain, Secretary, Treasurer, Handicapper
+- Nearest to Pin and Longest Drive hole designations
+- Full tee time schedule with player handicaps
+
+### Mobile Export (iOS/Android)
+
+On native platforms:
+1. Click "Share PDF" button
+2. `expo-print` generates a PDF file
+3. `expo-sharing` opens the share sheet
+4. Save to Files, email, or share via apps
+
+## Testing
+
+### Stress Test
+
+Simulates 100 societies with 20 members and 12 events each:
+
+```bash
+npm run test:stress
+```
+
+This verifies:
+- OOM computation completes quickly (<5 seconds total)
+- No crashes with large datasets
+- Memory efficiency
+
+### Smoke Tests (Playwright)
+
+End-to-end tests for web deployment:
+
+```bash
+# Run smoke tests (starts Expo web server automatically)
+npm run test:smoke
+
+# Run with visible browser
+npm run test:smoke:headed
+```
+
+Tests verify:
+- App loads without crashing
+- Navigation works
+- Key screens render (leaderboard, tee sheet, events)
+- Export triggers window.print path
+- Error boundary catches errors gracefully
+
+### Running Tests in CI
+
+```bash
+# Install Playwright browsers (first time)
+npx playwright install chromium
+
+# Run tests with CI-friendly settings
+CI=true npm run test:smoke
+```
+
+## Error Handling
+
+The app includes an ErrorBoundary that catches JavaScript errors and displays a friendly fallback:
+
+- Wraps the entire app in `app/_layout.tsx`
+- Shows "Something went wrong" message instead of white screen
+- Provides "Try Again" button to recover
+- In development, shows error details and stack trace
+
 ## Learn more
 
 - [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
