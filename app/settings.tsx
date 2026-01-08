@@ -6,13 +6,18 @@
  * - Access Roles & Permissions section (PIN-gated)
  * - Assign roles to members
  * - Verify roles persist and are enforced
+ * - Export data (web: download JSON, native: share)
+ * - Import data (validates JSON schema, confirms overwrite)
+ * - Reset data (danger action with confirm modal)
  */
 
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useFocusEffect } from "@react-navigation/native";
 import { router } from "expo-router";
-import { useCallback, useState } from "react";
-import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View, Image, ActivityIndicator, Platform } from "react-native";
+import { useCallback, useState, useRef } from "react";
+import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View, Image, ActivityIndicator, Platform, Modal } from "react-native";
+import * as Sharing from "expo-sharing";
+import { Paths, File as ExpoFile } from "expo-file-system";
 
 import { canAssignRoles, normalizeMemberRoles, normalizeSessionRole, canEditVenueInfo } from "@/lib/permissions";
 import { getCurrentUserRoles } from "@/lib/roles";
@@ -22,12 +27,16 @@ import { pickImage } from "@/utils/imagePicker";
 import { AppCard } from "@/components/ui/AppCard";
 import { AppText } from "@/components/ui/AppText";
 import { spacing } from "@/lib/ui/theme";
+import { 
+  exportAppData, 
+  importAppData, 
+  resetAppData, 
+  loadAppData,
+  DATA_VERSION 
+} from "@/lib/data-store";
 
+// Storage keys for backward compatibility during migration
 const STORAGE_KEY = STORAGE_KEYS.SOCIETY_ACTIVE;
-const EVENTS_KEY = STORAGE_KEYS.EVENTS;
-const MEMBERS_KEY = STORAGE_KEYS.MEMBERS;
-const SCORES_KEY = STORAGE_KEYS.SCORES;
-const DRAFT_KEY = STORAGE_KEYS.SOCIETY_DRAFT;
 const ADMIN_PIN_KEY = STORAGE_KEYS.ADMIN_PIN;
 
 type SocietyData = {
@@ -51,6 +60,15 @@ export default function SettingsScreen() {
   const [canAssignRolesRole, setCanAssignRolesRole] = useState(false);
   const [canEditLogo, setCanEditLogo] = useState(false);
   const [uploadingLogo, setUploadingLogo] = useState(false);
+  
+  // Export/Import state
+  const [isExporting, setIsExporting] = useState(false);
+  const [isImporting, setIsImporting] = useState(false);
+  const [showImportModal, setShowImportModal] = useState(false);
+  const [importJsonText, setImportJsonText] = useState("");
+  const [showResetModal, setShowResetModal] = useState(false);
+  const [resetConfirmText, setResetConfirmText] = useState("");
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   useFocusEffect(
     useCallback(() => {
@@ -252,32 +270,191 @@ export default function SettingsScreen() {
     );
   };
 
-  const handleResetSociety = () => {
-    Alert.alert(
-      "Reset Society",
-      "This will delete all your data (society, events, members, scores, and session). This cannot be undone.",
-      [
-        {
-          text: "Cancel",
-          style: "cancel",
-        },
-        {
-          text: "Reset",
-          style: "destructive",
-          onPress: async () => {
-            try {
-              const { resetAllData } = await import("@/lib/storage");
-              await resetAllData();
-              // Redirect to create-society screen
-              router.replace("/create-society");
-            } catch (error) {
-              console.error("Error resetting society:", error);
-              Alert.alert("Error", "Failed to reset society");
-            }
+  // ============================================
+  // Export Data
+  // ============================================
+  const handleExportData = async () => {
+    if (isExporting) return;
+    setIsExporting(true);
+
+    try {
+      const jsonData = await exportAppData();
+      const fileName = `golf-society-backup-${new Date().toISOString().slice(0, 10)}.json`;
+
+      if (Platform.OS === "web") {
+        // Web: Download as file
+        try {
+          const blob = new Blob([jsonData], { type: "application/json" });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement("a");
+          a.href = url;
+          a.download = fileName;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          URL.revokeObjectURL(url);
+          Alert.alert("Success", "Data exported successfully. Check your downloads folder.");
+        } catch (webError) {
+          console.error("Web export error:", webError);
+          // Fallback: show in modal for copy
+          setImportJsonText(jsonData);
+          Alert.alert("Export", "Copy the data below:", [
+            { text: "OK" }
+          ]);
+        }
+      } else {
+        // Native: Share JSON file
+        try {
+          const file = new ExpoFile(Paths.cache, fileName);
+          await file.write(jsonData);
+          
+          const canShare = await Sharing.isAvailableAsync();
+          if (canShare) {
+            await Sharing.shareAsync(file.uri, {
+              mimeType: "application/json",
+              dialogTitle: "Export Golf Society Data",
+            });
+          } else {
+            Alert.alert("Export", `Data saved to: ${file.uri}`);
+          }
+        } catch (fsError) {
+          console.error("FileSystem error:", fsError);
+          Alert.alert("Error", "Failed to export data on this device");
+        }
+      }
+    } catch (error) {
+      console.error("Export error:", error);
+      Alert.alert("Error", "Failed to export data");
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
+  // ============================================
+  // Import Data
+  // ============================================
+  const handleImportClick = () => {
+    if (Platform.OS === "web") {
+      // Web: Use file input
+      if (fileInputRef.current) {
+        fileInputRef.current.click();
+      }
+    } else {
+      // Native: Show modal for paste
+      setImportJsonText("");
+      setShowImportModal(true);
+    }
+  };
+
+  const handleFileSelected = async (event: any) => {
+    const file = event.target?.files?.[0];
+    if (!file) return;
+
+    try {
+      const text = await file.text();
+      await processImport(text);
+    } catch (error) {
+      console.error("File read error:", error);
+      Alert.alert("Error", "Failed to read file");
+    }
+    
+    // Reset file input
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+    }
+  };
+
+  const processImport = async (jsonText: string) => {
+    setIsImporting(true);
+    
+    try {
+      // Validate JSON first
+      let parsed;
+      try {
+        parsed = JSON.parse(jsonText);
+      } catch {
+        Alert.alert("Error", "Invalid JSON format");
+        setIsImporting(false);
+        return;
+      }
+
+      // Check version
+      const dataVersion = parsed.version || "unknown";
+      const memberCount = parsed.members?.length || 0;
+      const eventCount = parsed.events?.length || 0;
+
+      Alert.alert(
+        "Confirm Import",
+        `This will replace all existing data with:\n\n` +
+        `• Version: ${dataVersion}\n` +
+        `• Members: ${memberCount}\n` +
+        `• Events: ${eventCount}\n\n` +
+        `This cannot be undone. Continue?`,
+        [
+          { text: "Cancel", style: "cancel", onPress: () => setIsImporting(false) },
+          {
+            text: "Import",
+            style: "destructive",
+            onPress: async () => {
+              const result = await importAppData(jsonText);
+              if (result.success) {
+                Alert.alert("Success", "Data imported successfully. Reloading...", [
+                  { text: "OK", onPress: () => {
+                    setShowImportModal(false);
+                    loadSociety(); // Reload data
+                  }}
+                ]);
+              } else {
+                Alert.alert("Import Failed", result.error || "Unknown error");
+              }
+              setIsImporting(false);
+            },
           },
-        },
-      ]
-    );
+        ]
+      );
+    } catch (error) {
+      console.error("Import error:", error);
+      Alert.alert("Error", "Failed to import data");
+      setIsImporting(false);
+    }
+  };
+
+  const handleImportFromModal = () => {
+    if (!importJsonText.trim()) {
+      Alert.alert("Error", "Please paste JSON data");
+      return;
+    }
+    processImport(importJsonText);
+  };
+
+  // ============================================
+  // Reset Data
+  // ============================================
+  const handleResetClick = () => {
+    setResetConfirmText("");
+    setShowResetModal(true);
+  };
+
+  const handleConfirmReset = async () => {
+    if (resetConfirmText !== "DELETE") {
+      Alert.alert("Error", "Please type DELETE to confirm");
+      return;
+    }
+
+    try {
+      await resetAppData();
+      setShowResetModal(false);
+      Alert.alert("Success", "All data has been reset", [
+        { text: "OK", onPress: () => router.replace("/create-society") }
+      ]);
+    } catch (error) {
+      console.error("Reset error:", error);
+      Alert.alert("Error", "Failed to reset data");
+    }
+  };
+
+  const handleResetSociety = () => {
+    handleResetClick();
   };
 
   if (!society) {
@@ -452,11 +629,58 @@ export default function SettingsScreen() {
           </View>
         )}
 
+        {/* Data Management */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Data Management</Text>
+          <Text style={styles.dataVersionText}>Data Version: {DATA_VERSION}</Text>
+          
+          {/* Export Button */}
+          <Pressable 
+            onPress={handleExportData} 
+            style={[styles.dataButton, isExporting && styles.dataButtonDisabled]}
+            disabled={isExporting}
+          >
+            {isExporting ? (
+              <ActivityIndicator size="small" color="#fff" />
+            ) : (
+              <Text style={styles.dataButtonText}>
+                {Platform.OS === "web" ? "Download Backup" : "Export Data"}
+              </Text>
+            )}
+          </Pressable>
+          
+          {/* Import Button */}
+          <Pressable 
+            onPress={handleImportClick} 
+            style={[styles.dataButton, styles.dataButtonSecondary]}
+            disabled={isImporting}
+          >
+            <Text style={styles.dataButtonTextSecondary}>
+              {Platform.OS === "web" ? "Import from File" : "Import Data"}
+            </Text>
+          </Pressable>
+          
+          {/* Hidden file input for web */}
+          {Platform.OS === "web" && (
+            <input
+              ref={fileInputRef as any}
+              type="file"
+              accept=".json,application/json"
+              onChange={handleFileSelected}
+              style={{ display: "none" }}
+            />
+          )}
+          
+          <Text style={styles.dataHelpText}>
+            Export your data to back it up. Import to restore from a backup file.
+          </Text>
+        </View>
+
         {/* Reset Society */}
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Danger Zone</Text>
           <Pressable onPress={handleResetSociety} style={styles.resetButton}>
-            <Text style={styles.resetButtonText}>Reset Society</Text>
+            <Text style={styles.resetButtonText}>Reset All Data</Text>
           </Pressable>
           <Text style={styles.warningText}>
             This will permanently delete all your data
@@ -468,6 +692,104 @@ export default function SettingsScreen() {
           <Text style={styles.backButtonText}>Back</Text>
         </Pressable>
       </View>
+
+      {/* Import Modal (for native) */}
+      <Modal
+        visible={showImportModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowImportModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <Text style={styles.modalTitle}>Import Data</Text>
+            <Text style={styles.modalSubtitle}>Paste your backup JSON below:</Text>
+            
+            <TextInput
+              value={importJsonText}
+              onChangeText={setImportJsonText}
+              placeholder='{"version": 1, "society": {...}}'
+              multiline
+              numberOfLines={10}
+              style={styles.importTextArea}
+            />
+            
+            <View style={styles.modalActions}>
+              <Pressable 
+                onPress={() => setShowImportModal(false)} 
+                style={styles.modalCancelButton}
+              >
+                <Text style={styles.modalCancelButtonText}>Cancel</Text>
+              </Pressable>
+              <Pressable 
+                onPress={handleImportFromModal}
+                disabled={isImporting}
+                style={[styles.modalImportButton, isImporting && styles.dataButtonDisabled]}
+              >
+                {isImporting ? (
+                  <ActivityIndicator size="small" color="#fff" />
+                ) : (
+                  <Text style={styles.modalImportButtonText}>Import</Text>
+                )}
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Reset Confirmation Modal */}
+      <Modal
+        visible={showResetModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowResetModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <Text style={styles.modalTitle}>⚠️ Reset All Data</Text>
+            <Text style={styles.modalWarningText}>
+              This will permanently delete ALL your data including:
+            </Text>
+            <View style={styles.resetList}>
+              <Text style={styles.resetListItem}>• Society information</Text>
+              <Text style={styles.resetListItem}>• All members</Text>
+              <Text style={styles.resetListItem}>• All events and results</Text>
+              <Text style={styles.resetListItem}>• All courses and tee sets</Text>
+              <Text style={styles.resetListItem}>• Admin PIN</Text>
+            </View>
+            <Text style={styles.modalWarningText}>
+              This cannot be undone. Type DELETE to confirm:
+            </Text>
+            
+            <TextInput
+              value={resetConfirmText}
+              onChangeText={setResetConfirmText}
+              placeholder="Type DELETE"
+              autoCapitalize="characters"
+              style={styles.resetConfirmInput}
+            />
+            
+            <View style={styles.modalActions}>
+              <Pressable 
+                onPress={() => setShowResetModal(false)} 
+                style={styles.modalCancelButton}
+              >
+                <Text style={styles.modalCancelButtonText}>Cancel</Text>
+              </Pressable>
+              <Pressable 
+                onPress={handleConfirmReset}
+                style={[
+                  styles.modalResetButton,
+                  resetConfirmText !== "DELETE" && styles.dataButtonDisabled
+                ]}
+                disabled={resetConfirmText !== "DELETE"}
+              >
+                <Text style={styles.modalResetButtonText}>Reset Everything</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </ScrollView>
   );
 }
@@ -687,6 +1009,154 @@ const styles = StyleSheet.create({
     color: "#6b7280",
     marginTop: spacing.xs,
     textAlign: "center",
+  },
+  // Data Management styles
+  dataVersionText: {
+    fontSize: 12,
+    color: "#6b7280",
+    marginBottom: 12,
+  },
+  dataButton: {
+    backgroundColor: "#0B6E4F",
+    paddingVertical: 14,
+    borderRadius: 12,
+    alignItems: "center",
+    marginBottom: 8,
+    minHeight: 48,
+    justifyContent: "center",
+  },
+  dataButtonSecondary: {
+    backgroundColor: "#f3f4f6",
+    borderWidth: 2,
+    borderColor: "#0B6E4F",
+  },
+  dataButtonDisabled: {
+    opacity: 0.5,
+  },
+  dataButtonText: {
+    color: "white",
+    fontSize: 16,
+    fontWeight: "600",
+  },
+  dataButtonTextSecondary: {
+    color: "#0B6E4F",
+    fontSize: 16,
+    fontWeight: "600",
+  },
+  dataHelpText: {
+    fontSize: 12,
+    color: "#6b7280",
+    textAlign: "center",
+    marginTop: 8,
+  },
+  // Modal styles
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.5)",
+    justifyContent: "center",
+    alignItems: "center",
+    padding: 24,
+  },
+  modalContent: {
+    backgroundColor: "white",
+    borderRadius: 16,
+    padding: 24,
+    width: "100%",
+    maxWidth: 400,
+    maxHeight: "80%",
+  },
+  modalTitle: {
+    fontSize: 20,
+    fontWeight: "700",
+    color: "#111827",
+    marginBottom: 8,
+    textAlign: "center",
+  },
+  modalSubtitle: {
+    fontSize: 14,
+    color: "#6b7280",
+    marginBottom: 16,
+    textAlign: "center",
+  },
+  modalWarningText: {
+    fontSize: 14,
+    color: "#dc2626",
+    marginBottom: 12,
+    textAlign: "center",
+  },
+  importTextArea: {
+    backgroundColor: "#f9fafb",
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
+    borderRadius: 8,
+    padding: 12,
+    fontSize: 12,
+    fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
+    minHeight: 150,
+    textAlignVertical: "top",
+    marginBottom: 16,
+  },
+  modalActions: {
+    flexDirection: "row",
+    gap: 12,
+  },
+  modalCancelButton: {
+    flex: 1,
+    paddingVertical: 14,
+    borderRadius: 10,
+    backgroundColor: "#f3f4f6",
+    alignItems: "center",
+  },
+  modalCancelButtonText: {
+    color: "#374151",
+    fontSize: 16,
+    fontWeight: "600",
+  },
+  modalImportButton: {
+    flex: 1,
+    paddingVertical: 14,
+    borderRadius: 10,
+    backgroundColor: "#0B6E4F",
+    alignItems: "center",
+  },
+  modalImportButtonText: {
+    color: "white",
+    fontSize: 16,
+    fontWeight: "600",
+  },
+  modalResetButton: {
+    flex: 1,
+    paddingVertical: 14,
+    borderRadius: 10,
+    backgroundColor: "#dc2626",
+    alignItems: "center",
+  },
+  modalResetButtonText: {
+    color: "white",
+    fontSize: 16,
+    fontWeight: "600",
+  },
+  resetList: {
+    backgroundColor: "#fef2f2",
+    borderRadius: 8,
+    padding: 12,
+    marginBottom: 16,
+  },
+  resetListItem: {
+    fontSize: 14,
+    color: "#991b1b",
+    marginVertical: 2,
+  },
+  resetConfirmInput: {
+    backgroundColor: "#f9fafb",
+    borderWidth: 2,
+    borderColor: "#dc2626",
+    borderRadius: 8,
+    padding: 12,
+    fontSize: 18,
+    fontWeight: "700",
+    textAlign: "center",
+    marginBottom: 16,
   },
 });
 
