@@ -297,12 +297,33 @@ export default function TeesTeeSheetScreen() {
 
   /**
    * Generate tee sheet - BLOCKED unless all data is loaded
+   * Shows confirmation if groups already exist
    */
   const handleGenerateTeeSheet = () => {
     if (!guard(canManageTeeSheet, "Only Captain or Handicapper can generate tee sheets.")) {
       return;
     }
 
+    // CONFIRMATION if tee sheet already exists
+    if (teeGroups.length > 0) {
+      Alert.alert(
+        "Regenerate Tee Sheet?",
+        "This will replace your current tee groups. Any unsaved changes will be lost.",
+        [
+          { text: "Cancel", style: "cancel" },
+          { text: "Regenerate", style: "destructive", onPress: doGenerateTeeSheet },
+        ]
+      );
+      return;
+    }
+
+    doGenerateTeeSheet();
+  };
+
+  /**
+   * Actually generate the tee sheet (called after confirmation if needed)
+   */
+  const doGenerateTeeSheet = () => {
     // Defensive logging before generation
     console.log("=== Generating Tee Sheet ===");
     console.log("Course:", selectedCourse);
@@ -379,6 +400,8 @@ export default function TeesTeeSheetScreen() {
 
     setUnassignedPlayers([]);
     setTeeGroups(groups);
+    setIsEditing(true); // Enable editing after generation
+    setHasSavedTeeSheet(false); // Mark as not yet saved
     console.log("[Tee Sheet Generated]", groups.length, "groups with", playerIds.length, "players");
   };
 
@@ -753,11 +776,112 @@ export default function TeesTeeSheetScreen() {
 
   const handleDeleteGroup = (groupIndex: number) => {
     if (!guard(canManageTeeSheet, "Only Captain or Handicapper can delete groups.")) return;
+    
     const group = teeGroups[groupIndex];
-    if (group.players.length > 0) {
-      setUnassignedPlayers((prev) => [...prev, ...group.players]);
+    const playerCount = group.players.length;
+    
+    // Confirm if group has players
+    if (playerCount > 0) {
+      Alert.alert(
+        "Delete Group?",
+        `This group has ${playerCount} player(s). They will be moved to unassigned.`,
+        [
+          { text: "Cancel", style: "cancel" },
+          { 
+            text: "Delete", 
+            style: "destructive", 
+            onPress: () => {
+              setUnassignedPlayers((prev) => [...prev, ...group.players]);
+              setTeeGroups(teeGroups.filter((_, idx) => idx !== groupIndex));
+            }
+          },
+        ]
+      );
+      return;
     }
+    
     setTeeGroups(teeGroups.filter((_, idx) => idx !== groupIndex));
+  };
+
+  /**
+   * Update the tee time for a specific group
+   */
+  const handleUpdateGroupTime = (groupIndex: number, newTime: string) => {
+    if (!guard(canManageTeeSheet, "Only Captain or Handicapper can modify groups.")) return;
+    
+    const [hours, minutes] = newTime.split(":").map(Number);
+    if (isNaN(hours) || isNaN(minutes)) return;
+    
+    const newDate = new Date();
+    newDate.setHours(hours, minutes, 0, 0);
+    
+    const newGroups = [...teeGroups];
+    newGroups[groupIndex] = {
+      ...newGroups[groupIndex],
+      timeISO: newDate.toISOString(),
+    };
+    setTeeGroups(newGroups);
+  };
+
+  /**
+   * Move a player up within their group
+   */
+  const handleMovePlayerUp = (groupIndex: number, playerIndex: number) => {
+    if (!guard(canManageTeeSheet, "Only Captain or Handicapper can modify groups.")) return;
+    if (playerIndex === 0) return; // Already at top
+    
+    const newGroups = [...teeGroups];
+    const players = [...newGroups[groupIndex].players];
+    [players[playerIndex - 1], players[playerIndex]] = [players[playerIndex], players[playerIndex - 1]];
+    newGroups[groupIndex] = { ...newGroups[groupIndex], players };
+    setTeeGroups(newGroups);
+  };
+
+  /**
+   * Move a player down within their group
+   */
+  const handleMovePlayerDown = (groupIndex: number, playerIndex: number) => {
+    if (!guard(canManageTeeSheet, "Only Captain or Handicapper can modify groups.")) return;
+    const players = teeGroups[groupIndex].players;
+    if (playerIndex >= players.length - 1) return; // Already at bottom
+    
+    const newGroups = [...teeGroups];
+    const newPlayers = [...newGroups[groupIndex].players];
+    [newPlayers[playerIndex], newPlayers[playerIndex + 1]] = [newPlayers[playerIndex + 1], newPlayers[playerIndex]];
+    newGroups[groupIndex] = { ...newGroups[groupIndex], players: newPlayers };
+    setTeeGroups(newGroups);
+  };
+
+  /**
+   * Remove a guest from a group (members protected)
+   */
+  const handleRemoveGuest = (guestId: string, groupIndex: number) => {
+    if (!guard(canManageTeeSheet, "Only Captain or Handicapper can modify groups.")) return;
+    
+    const newGroups = [...teeGroups];
+    newGroups[groupIndex].players = newGroups[groupIndex].players.filter((p) => p !== guestId);
+    setTeeGroups(newGroups);
+    
+    // Also remove from guests list
+    setGuests(guests.filter((g) => g.id !== guestId));
+  };
+
+  /**
+   * Show move player picker
+   */
+  const [showMovePlayerModal, setShowMovePlayerModal] = useState(false);
+  const [movePlayerContext, setMovePlayerContext] = useState<{ playerId: string; fromGroup: number; playerName: string } | null>(null);
+
+  const handleShowMovePlayer = (playerId: string, fromGroup: number, playerName: string) => {
+    setMovePlayerContext({ playerId, fromGroup, playerName });
+    setShowMovePlayerModal(true);
+  };
+
+  const handleConfirmMovePlayer = (toGroup: number) => {
+    if (!movePlayerContext) return;
+    handleMovePlayer(movePlayerContext.playerId, movePlayerContext.fromGroup, toGroup);
+    setShowMovePlayerModal(false);
+    setMovePlayerContext(null);
   };
 
   const handleRemovePlayerFromGroup = (playerId: string, groupIndex: number) => {
@@ -1157,9 +1281,14 @@ export default function TeesTeeSheetScreen() {
               {/* Tee Groups - always shown when they exist */}
               {teeGroups.length > 0 && (
                 <View style={styles.teeGroupsContainer}>
-                  <Text style={[styles.sectionTitle, { marginTop: 16 }]}>
-                    Tee Groups {hasSavedTeeSheet && !isEditing && "(Saved)"}
-                  </Text>
+                  <View style={styles.teeGroupsHeader}>
+                    <Text style={[styles.sectionTitle, { marginTop: 16, marginBottom: 0 }]}>
+                      Tee Groups {hasSavedTeeSheet && !isEditing && "(Saved)"}
+                    </Text>
+                    {isEditing && (
+                      <Text style={styles.editHint}>Tap players to move or reorder</Text>
+                    )}
+                  </View>
                   
                   {teeGroups.map((group, groupIdx) => {
                     const teeTime = new Date(group.timeISO).toLocaleTimeString("en-US", {
@@ -1171,19 +1300,94 @@ export default function TeesTeeSheetScreen() {
                     return (
                       <View key={groupIdx} style={styles.groupCard}>
                         <View style={styles.groupHeader}>
-                          <Text style={styles.groupTime}>{teeTime}</Text>
-                          <Text style={styles.groupNumber}>Group {groupIdx + 1}</Text>
+                          {/* Editable tee time in edit mode */}
+                          {isEditing && canManageTeeSheet ? (
+                            <TextInput
+                              style={styles.groupTimeInput}
+                              value={teeTime}
+                              onChangeText={(value) => handleUpdateGroupTime(groupIdx, value)}
+                              placeholder="HH:MM"
+                              keyboardType="numbers-and-punctuation"
+                            />
+                          ) : (
+                            <Text style={styles.groupTime}>{teeTime}</Text>
+                          )}
+                          <View style={styles.groupHeaderRight}>
+                            <Text style={styles.groupNumber}>Group {groupIdx + 1}</Text>
+                            {/* Delete group button in edit mode */}
+                            {isEditing && canManageTeeSheet && (
+                              <Pressable 
+                                onPress={() => handleDeleteGroup(groupIdx)}
+                                style={styles.deleteGroupButton}
+                              >
+                                <Text style={styles.deleteGroupButtonText}>✕</Text>
+                              </Pressable>
+                            )}
+                          </View>
                         </View>
+                        
                         {group.players.length === 0 ? (
-                          <Text style={styles.emptyGroup}>No players</Text>
+                          <Text style={styles.emptyGroup}>No players - add from unassigned or delete group</Text>
                         ) : (
-                          group.players.map((playerId) => {
+                          group.players.map((playerId, playerIdx) => {
                             const display = getPlayerDisplay(playerId);
+                            const isGuest = guests.some((g) => g.id === playerId);
+                            const isFirst = playerIdx === 0;
+                            const isLast = playerIdx === group.players.length - 1;
+
                             return (
                               <View key={playerId} style={styles.groupPlayer}>
-                                <Text style={styles.groupPlayerName}>{display.name}</Text>
-                                <Text style={styles.groupPlayerHI}>HI: {display.hi}</Text>
-                                <Text style={styles.groupPlayerPH}>PH: {display.ph}</Text>
+                                <View style={styles.groupPlayerInfo}>
+                                  <Text style={styles.groupPlayerName}>
+                                    {display.name}
+                                    {isGuest && <Text style={styles.guestTag}> (G)</Text>}
+                                  </Text>
+                                  <View style={styles.groupPlayerStats}>
+                                    <Text style={styles.groupPlayerHI}>HI: {display.hi}</Text>
+                                    <Text style={styles.groupPlayerPH}>PH: {display.ph}</Text>
+                                  </View>
+                                </View>
+                                
+                                {/* Edit controls when in edit mode */}
+                                {isEditing && canManageTeeSheet && (
+                                  <View style={styles.playerEditControls}>
+                                    {/* Move up */}
+                                    <Pressable
+                                      onPress={() => handleMovePlayerUp(groupIdx, playerIdx)}
+                                      style={[styles.playerControlBtn, isFirst && styles.playerControlBtnDisabled]}
+                                      disabled={isFirst}
+                                    >
+                                      <Text style={styles.playerControlBtnText}>↑</Text>
+                                    </Pressable>
+                                    
+                                    {/* Move down */}
+                                    <Pressable
+                                      onPress={() => handleMovePlayerDown(groupIdx, playerIdx)}
+                                      style={[styles.playerControlBtn, isLast && styles.playerControlBtnDisabled]}
+                                      disabled={isLast}
+                                    >
+                                      <Text style={styles.playerControlBtnText}>↓</Text>
+                                    </Pressable>
+                                    
+                                    {/* Move to another group */}
+                                    <Pressable
+                                      onPress={() => handleShowMovePlayer(playerId, groupIdx, display.name)}
+                                      style={styles.playerControlBtn}
+                                    >
+                                      <Text style={styles.playerControlBtnText}>→</Text>
+                                    </Pressable>
+                                    
+                                    {/* Remove guest (only for guests) */}
+                                    {isGuest && (
+                                      <Pressable
+                                        onPress={() => handleRemoveGuest(playerId, groupIdx)}
+                                        style={[styles.playerControlBtn, styles.playerControlBtnDanger]}
+                                      >
+                                        <Text style={[styles.playerControlBtnText, styles.playerControlBtnTextDanger]}>✕</Text>
+                                      </Pressable>
+                                    )}
+                                  </View>
+                                )}
                               </View>
                             );
                           })
@@ -1191,6 +1395,27 @@ export default function TeesTeeSheetScreen() {
                       </View>
                     );
                   })}
+                  
+                  {/* Unassigned players section */}
+                  {isEditing && unassignedPlayers.length > 0 && (
+                    <View style={styles.unassignedSection}>
+                      <Text style={styles.unassignedTitle}>Unassigned Players ({unassignedPlayers.length})</Text>
+                      {unassignedPlayers.map((playerId) => {
+                        const display = getPlayerDisplay(playerId);
+                        return (
+                          <View key={playerId} style={styles.unassignedPlayer}>
+                            <Text style={styles.unassignedPlayerName}>{display.name}</Text>
+                            <Pressable
+                              onPress={() => handleShowMovePlayer(playerId, -1, display.name)}
+                              style={styles.assignButton}
+                            >
+                              <Text style={styles.assignButtonText}>Assign to Group</Text>
+                            </Pressable>
+                          </View>
+                        );
+                      })}
+                    </View>
+                  )}
 
                   {/* Action Buttons */}
                   <View style={styles.actionButtons}>
@@ -1310,6 +1535,83 @@ export default function TeesTeeSheetScreen() {
               </Pressable>
               <Pressable onPress={handleAddGuestSubmit} style={styles.modalSubmitButton}>
                 <Text style={styles.modalSubmitButtonText}>Add</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Move Player Modal */}
+      <Modal
+        visible={showMovePlayerModal}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setShowMovePlayerModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <Text style={styles.modalTitle}>Move Player</Text>
+            <Text style={styles.movePlayerName}>{movePlayerContext?.playerName}</Text>
+            
+            <Text style={styles.modalLabel}>Select destination group:</Text>
+            
+            <ScrollView style={styles.groupSelectList}>
+              {teeGroups.map((group, idx) => {
+                const isFull = group.players.length >= 4;
+                const isCurrent = idx === movePlayerContext?.fromGroup;
+                const teeTime = new Date(group.timeISO).toLocaleTimeString("en-US", {
+                  hour: "2-digit",
+                  minute: "2-digit",
+                  hour12: false,
+                });
+                
+                return (
+                  <Pressable
+                    key={idx}
+                    onPress={() => !isFull && !isCurrent && handleConfirmMovePlayer(idx)}
+                    style={[
+                      styles.groupSelectItem,
+                      isCurrent && styles.groupSelectItemCurrent,
+                      isFull && styles.groupSelectItemDisabled,
+                    ]}
+                    disabled={isFull || isCurrent}
+                  >
+                    <Text style={styles.groupSelectItemText}>
+                      Group {idx + 1} • {teeTime}
+                    </Text>
+                    <Text style={styles.groupSelectItemCount}>
+                      {group.players.length}/4 {isFull ? "(Full)" : isCurrent ? "(Current)" : ""}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+              
+              {/* Option to move to unassigned */}
+              {movePlayerContext?.fromGroup !== -1 && (
+                <Pressable
+                  onPress={() => {
+                    if (movePlayerContext) {
+                      handleMovePlayer(movePlayerContext.playerId, movePlayerContext.fromGroup, -1);
+                      setShowMovePlayerModal(false);
+                      setMovePlayerContext(null);
+                    }
+                  }}
+                  style={[styles.groupSelectItem, styles.groupSelectItemUnassigned]}
+                >
+                  <Text style={styles.groupSelectItemText}>Move to Unassigned</Text>
+                </Pressable>
+              )}
+            </ScrollView>
+
+            <View style={styles.modalActions}>
+              <Pressable
+                onPress={() => {
+                  setShowMovePlayerModal(false);
+                  setMovePlayerContext(null);
+                }}
+                style={styles.modalCancelButton}
+              >
+                <Text style={styles.modalCancelButtonText}>Cancel</Text>
               </Pressable>
             </View>
           </View>
@@ -1739,5 +2041,173 @@ const styles = StyleSheet.create({
     textAlign: "center",
     marginTop: 8,
     fontStyle: "italic",
+  },
+  // Tee Groups Header
+  teeGroupsHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 8,
+  },
+  editHint: {
+    fontSize: 11,
+    color: "#6b7280",
+    fontStyle: "italic",
+  },
+  // Editable Group Time
+  groupTimeInput: {
+    fontSize: 16,
+    fontWeight: "700",
+    color: "#0B6E4F",
+    backgroundColor: "#f3f4f6",
+    borderWidth: 1,
+    borderColor: "#d1d5db",
+    borderRadius: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    minWidth: 70,
+  },
+  groupHeaderRight: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  deleteGroupButton: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: "#fee2e2",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  deleteGroupButtonText: {
+    color: "#dc2626",
+    fontWeight: "700",
+    fontSize: 12,
+  },
+  // Player Info Layout
+  groupPlayerInfo: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  groupPlayerStats: {
+    flexDirection: "row",
+    gap: 8,
+  },
+  guestTag: {
+    color: "#6b7280",
+    fontSize: 12,
+  },
+  // Player Edit Controls
+  playerEditControls: {
+    flexDirection: "row",
+    gap: 4,
+    marginLeft: 8,
+  },
+  playerControlBtn: {
+    width: 28,
+    height: 28,
+    borderRadius: 4,
+    backgroundColor: "#e5e7eb",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  playerControlBtnDisabled: {
+    opacity: 0.3,
+  },
+  playerControlBtnText: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: "#374151",
+  },
+  playerControlBtnDanger: {
+    backgroundColor: "#fee2e2",
+  },
+  playerControlBtnTextDanger: {
+    color: "#dc2626",
+  },
+  // Unassigned Players
+  unassignedSection: {
+    backgroundColor: "#fef3c7",
+    borderRadius: 8,
+    padding: 12,
+    marginTop: 12,
+    borderWidth: 1,
+    borderColor: "#fcd34d",
+  },
+  unassignedTitle: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: "#b45309",
+    marginBottom: 8,
+  },
+  unassignedPlayer: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingVertical: 6,
+    borderBottomWidth: 1,
+    borderBottomColor: "#fcd34d",
+  },
+  unassignedPlayerName: {
+    fontSize: 14,
+    color: "#374151",
+  },
+  assignButton: {
+    backgroundColor: "#0B6E4F",
+    paddingVertical: 4,
+    paddingHorizontal: 10,
+    borderRadius: 4,
+  },
+  assignButtonText: {
+    color: "#fff",
+    fontSize: 12,
+    fontWeight: "600",
+  },
+  // Move Player Modal
+  movePlayerName: {
+    fontSize: 16,
+    fontWeight: "600",
+    textAlign: "center",
+    marginBottom: 16,
+    color: "#0B6E4F",
+  },
+  groupSelectList: {
+    maxHeight: 250,
+    marginBottom: 16,
+  },
+  groupSelectItem: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    padding: 12,
+    borderRadius: 8,
+    backgroundColor: "#f9fafb",
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
+  },
+  groupSelectItemCurrent: {
+    backgroundColor: "#d1fae5",
+    borderColor: "#10b981",
+  },
+  groupSelectItemDisabled: {
+    backgroundColor: "#f3f4f6",
+    opacity: 0.6,
+  },
+  groupSelectItemUnassigned: {
+    backgroundColor: "#fef3c7",
+    borderColor: "#fcd34d",
+  },
+  groupSelectItemText: {
+    fontSize: 14,
+    fontWeight: "500",
+    color: "#374151",
+  },
+  groupSelectItemCount: {
+    fontSize: 12,
+    color: "#6b7280",
   },
 });
