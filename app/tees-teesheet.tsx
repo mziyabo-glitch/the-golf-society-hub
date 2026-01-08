@@ -11,6 +11,7 @@ import { formatDateDDMMYYYY } from "@/utils/date";
 import { getPermissions, type Permissions } from "@/lib/rbac";
 import { guard } from "@/lib/guards";
 import { getArray, ensureArray } from "@/lib/storage-helpers";
+import { generateTeeSheetHtml } from "@/lib/teeSheetPrint";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useFocusEffect } from "@react-navigation/native";
 import { router } from "expo-router";
@@ -506,210 +507,8 @@ export default function TeesTeeSheetScreen() {
   };
 
   /**
-   * Generate tee sheet HTML for PDF/print export
-   */
-  const generateTeeSheetHtml = (): string => {
-    // Get ManCo members (check both capitalized and lowercase role names)
-    const captain = members.find((m) => 
-      m.roles?.some(r => r.toLowerCase() === "captain" || r.toLowerCase() === "admin")
-    );
-    const secretary = members.find((m) => 
-      m.roles?.some(r => r.toLowerCase() === "secretary")
-    );
-    const treasurer = members.find((m) => 
-      m.roles?.some(r => r.toLowerCase() === "treasurer")
-    );
-    const handicapper = members.find((m) => 
-      m.roles?.some(r => r.toLowerCase() === "handicapper")
-    );
-
-    const manCoDetails: string[] = [];
-    if (captain) manCoDetails.push(`Captain: ${captain.name}`);
-    if (secretary) manCoDetails.push(`Secretary: ${secretary.name}`);
-    if (treasurer) manCoDetails.push(`Treasurer: ${treasurer.name}`);
-    if (handicapper) manCoDetails.push(`Handicapper: ${handicapper.name}`);
-
-    const logoHtml = society?.logoUrl 
-      ? `<img src="${society.logoUrl}" alt="Society Logo" style="max-width: 80px; max-height: 80px; margin-bottom: 10px;" onerror="this.style.display='none'" />`
-      : "";
-
-    const eventDate = selectedEvent?.date 
-      ? formatDateDDMMYYYY(selectedEvent.date)
-      : "Date TBD";
-
-    return `
-      <!DOCTYPE html>
-      <html>
-      <head>
-        <meta charset="utf-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1">
-        <title>Tee Sheet - ${selectedEvent?.name || "Export"}</title>
-        <style>
-          * { box-sizing: border-box; }
-          body { 
-            font-family: Arial, Helvetica, sans-serif; 
-            font-size: 11px; 
-            padding: 15px; 
-            margin: 0;
-            line-height: 1.4;
-          }
-          .top-header { 
-            display: flex; 
-            justify-content: space-between; 
-            align-items: flex-start; 
-            margin-bottom: 15px;
-            border-bottom: 2px solid #0B6E4F;
-            padding-bottom: 10px;
-          }
-          .logo-container { flex-shrink: 0; width: 100px; }
-          .header { flex: 1; text-align: center; padding: 0 15px; }
-          .header h1 { margin: 0; font-size: 20px; font-weight: bold; color: #0B6E4F; }
-          .header .event-details { margin: 8px 0; font-size: 13px; color: #333; }
-          .manco { margin-top: 8px; font-size: 10px; color: #555; display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; }
-          .manco span { white-space: nowrap; }
-          .produced-by { font-size: 9px; color: #888; margin-top: 8px; }
-          .tee-info { 
-            width: 220px; 
-            border: 1px solid #0B6E4F; 
-            border-radius: 6px;
-            padding: 10px; 
-            font-size: 10px;
-            background: #f9fafb;
-          }
-          .tee-info h3 { margin: 0 0 8px 0; font-size: 12px; color: #0B6E4F; border-bottom: 1px solid #0B6E4F; padding-bottom: 4px; }
-          .tee-info p { margin: 4px 0; }
-          .notes-box {
-            margin: 12px 0;
-            padding: 10px 12px;
-            background-color: #f0fdf4;
-            border-left: 4px solid #0B6E4F;
-            border-radius: 0 6px 6px 0;
-          }
-          .notes-box strong { color: #0B6E4F; }
-          .competitions-box {
-            margin: 12px 0;
-            padding: 10px 12px;
-            background-color: #fef3c7;
-            border: 1px solid #fcd34d;
-            border-radius: 6px;
-          }
-          .competitions-box p { margin: 3px 0; }
-          table { 
-            width: 100%; 
-            border-collapse: collapse; 
-            margin-top: 12px; 
-            font-size: 10px; 
-          }
-          th, td { border: 1px solid #333; padding: 5px 6px; text-align: left; }
-          th { background-color: #0B6E4F; color: white; font-weight: bold; }
-          .time-col { width: 55px; text-align: center; }
-          .group-col { width: 45px; text-align: center; }
-          .name-col { min-width: 140px; }
-          .hi-col, .ph-col { width: 45px; text-align: center; }
-          .empty-group { font-style: italic; color: #666; }
-          tr:nth-child(even) { background-color: #f9fafb; }
-          @media print { 
-            body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-            .no-print { display: none; }
-          }
-        </style>
-      </head>
-      <body>
-        <div class="top-header">
-          <div class="logo-container">
-            ${logoHtml}
-          </div>
-          <div class="header">
-            <h1>${selectedEvent?.name || "Tee Sheet"}</h1>
-            <div class="event-details">${eventDate} — ${selectedCourse?.name || "Course TBD"}</div>
-            ${manCoDetails.length > 0 ? `<div class="manco">${manCoDetails.map(d => `<span>${d}</span>`).join("")}</div>` : ""}
-            <div class="produced-by">Produced by The Golf Society Hub</div>
-          </div>
-          <div class="tee-info">
-            <h3>Tee Information</h3>
-            ${selectedMaleTeeSet ? `<p><strong>Male:</strong> ${selectedMaleTeeSet.teeColor}<br>
-              Par ${selectedMaleTeeSet.par} | CR ${selectedMaleTeeSet.courseRating} | SR ${selectedMaleTeeSet.slopeRating}</p>` : ""}
-            ${selectedFemaleTeeSet ? `<p><strong>Female:</strong> ${selectedFemaleTeeSet.teeColor}<br>
-              Par ${selectedFemaleTeeSet.par} | CR ${selectedFemaleTeeSet.courseRating} | SR ${selectedFemaleTeeSet.slopeRating}</p>` : ""}
-            <p><strong>Allowance:</strong> ${handicapAllowancePct}%</p>
-          </div>
-        </div>
-        ${teeSheetNotes && teeSheetNotes.trim() ? `
-        <div class="notes-box">
-          <p style="margin: 0;"><strong>Notes:</strong></p>
-          <p style="margin: 4px 0 0 0; white-space: pre-wrap;">${teeSheetNotes.trim().replace(/\n/g, '<br>')}</p>
-        </div>
-        ` : ""}
-        ${(nearestToPinHoles && nearestToPinHoles.length > 0) || (longestDriveHoles && longestDriveHoles.length > 0) ? `
-        <div class="competitions-box">
-          ${nearestToPinHoles && nearestToPinHoles.length > 0 ? `<p><strong>Nearest to Pin:</strong> Hole ${nearestToPinHoles.join(", Hole ")}</p>` : ""}
-          ${longestDriveHoles && longestDriveHoles.length > 0 ? `<p><strong>Longest Drive:</strong> Hole ${longestDriveHoles.join(", Hole ")}</p>` : ""}
-        </div>
-        ` : ""}
-        <table>
-          <thead>
-            <tr>
-              <th class="time-col">Time</th>
-              <th class="group-col">Group</th>
-              <th class="name-col">Player Name</th>
-              <th class="hi-col">HI</th>
-              <th class="ph-col">PH</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${teeGroups
-              .map((group, groupIdx) => {
-                const timeStr = new Date(group.timeISO).toLocaleTimeString("en-US", {
-                  hour: "2-digit",
-                  minute: "2-digit",
-                  hour12: false,
-                });
-                if (group.players.length === 0) {
-                  return `<tr><td class="time-col">${timeStr}</td><td class="group-col">${groupIdx + 1}</td><td colspan="3" class="empty-group">Empty group</td></tr>`;
-                }
-                return group.players
-                  .map((playerId, playerIdx) => {
-                    const member = members.find((m) => m.id === playerId);
-                    const guest = guests.find((g) => g.id === playerId);
-                    if (!member && !guest) return "";
-                    
-                    const player = member || {
-                      id: guest!.id,
-                      name: guest!.name,
-                      handicap: guest!.handicapIndex,
-                      sex: guest!.sex,
-                    };
-                    const ph = getPlayingHandicap(
-                      player,
-                      selectedEvent!,
-                      selectedCourse,
-                      selectedMaleTeeSet,
-                      selectedFemaleTeeSet
-                    );
-                    const displayName = guest ? `${player.name || "Guest"} (Guest)` : (player.name || "Unknown");
-                    return `
-                      <tr>
-                        ${playerIdx === 0 ? `<td class="time-col" rowspan="${group.players.length}">${timeStr}</td>` : ""}
-                        ${playerIdx === 0 ? `<td class="group-col" rowspan="${group.players.length}">${groupIdx + 1}</td>` : ""}
-                        <td class="name-col">${displayName}</td>
-                        <td class="hi-col">${player.handicap ?? "-"}</td>
-                        <td class="ph-col">${ph ?? "-"}</td>
-                      </tr>
-                    `;
-                  })
-                  .join("");
-              })
-              .join("")}
-          </tbody>
-        </table>
-      </body>
-      </html>
-    `;
-  };
-
-  /**
    * Export tee sheet as PDF
-   * - Web: Uses window.open + document.write + window.print
+   * - Web: Navigates to print route which calls window.print()
    * - Native: Uses expo-print + expo-sharing
    */
   const handleExportTeeSheet = async () => {
@@ -725,52 +524,38 @@ export default function TeesTeeSheetScreen() {
     isSharing.current = true;
 
     try {
-      // Generate tee sheet HTML
-      const html = generateTeeSheetHtml();
-
-      // Web platform: Use window.open + document.write + window.print
+      // Web platform: Navigate to print route for reliable printing
       if (Platform.OS === "web") {
-        try {
-          const printWindow = window.open("", "_blank", "width=800,height=600");
-          
-          if (printWindow) {
-            // Write the HTML content
-            printWindow.document.write(html);
-            printWindow.document.close();
-            printWindow.focus();
-            
-            // Wait for content to render, then trigger print
-            setTimeout(() => {
-              try {
-                printWindow.print();
-              } catch (printErr) {
-                console.error("Print dialog error:", printErr);
-                // Window is still open - user can manually print via Ctrl+P
-              }
-            }, 500);
-          } else {
-            // Popup was blocked
-            Alert.alert(
-              "Popup Blocked",
-              "Your browser blocked the print window. Please allow popups for this site and try again.\n\n" +
-              "Alternatively, you can:\n" +
-              "1. Click the button again after allowing popups\n" +
-              "2. Use your browser's print function (Ctrl+P / Cmd+P)",
-              [{ text: "OK" }]
-            );
-          }
-        } catch (webError) {
-          console.error("Web export error:", webError);
-          Alert.alert(
-            "Export Error", 
-            "Failed to open print window. Please check your popup blocker settings."
-          );
-        }
+        // Save tee sheet first to ensure latest data is available
+        await handleSaveTeeSheet();
+        
+        // Navigate to print route - this is more reliable than window.open popup
+        router.push({
+          pathname: "/print/tee-sheet",
+          params: { eventId: selectedEvent.id },
+        } as any);
+        
         isSharing.current = false;
         return;
       }
 
       // Native (iOS/Android): Use expo-print + expo-sharing
+      // Generate HTML using shared generator
+      const html = generateTeeSheetHtml({
+        society,
+        event: selectedEvent,
+        course: selectedCourse,
+        maleTeeSet: selectedMaleTeeSet,
+        femaleTeeSet: selectedFemaleTeeSet,
+        members,
+        guests: guests.filter((g) => g.included),
+        teeGroups,
+        teeSheetNotes,
+        nearestToPinHoles,
+        longestDriveHoles,
+        handicapAllowancePct,
+      });
+
       try {
         const { uri } = await Print.printToFileAsync({ html });
         const sharingAvailable = await Sharing.isAvailableAsync();
