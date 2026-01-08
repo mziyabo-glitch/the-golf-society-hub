@@ -49,10 +49,84 @@ You can start developing by editing the files inside the **app** directory. This
 - [React Native](https://reactnative.dev) - Mobile app framework
 - [AsyncStorage](https://react-native-async-storage.github.io/async-storage/) - Local data persistence
 
+## Web Deployment
+
+### Building for Web
+
+To build the web version locally:
+
+```bash
+npm run build:web
+```
+
+This will output static files to the `dist/` folder.
+
+### Deploying to Vercel
+
+This project is configured for deployment to Vercel using Expo Web (static export).
+
+#### Option 1: Deploy via Vercel Dashboard (Recommended)
+
+1. Push your code to a GitHub/GitLab/Bitbucket repository
+2. Go to [vercel.com](https://vercel.com) and sign in
+3. Click "Add New Project"
+4. Import your repository
+5. Vercel will automatically detect the `vercel.json` configuration
+6. Click "Deploy"
+
+The `vercel.json` file is pre-configured with:
+- Build command: `npx expo export --platform web`
+- Output directory: `dist`
+- SPA rewrites for client-side routing
+- Cache headers for static assets
+
+#### Option 2: Deploy via Vercel CLI
+
+1. Install Vercel CLI:
+   ```bash
+   npm install -g vercel
+   ```
+
+2. Login to Vercel:
+   ```bash
+   vercel login
+   ```
+
+3. Deploy:
+   ```bash
+   vercel
+   ```
+
+4. For production deployment:
+   ```bash
+   vercel --prod
+   ```
+
+### Manual Steps in Vercel UI
+
+If you need to configure manually in the Vercel dashboard:
+
+1. **Framework Preset**: Select "Other"
+2. **Build Command**: `npx expo export --platform web`
+3. **Output Directory**: `dist`
+4. **Install Command**: `npm install`
+
+### Environment Variables
+
+No environment variables are required for basic deployment. If you add backend services, configure them in the Vercel dashboard under Project Settings > Environment Variables.
+
+### Custom Domain
+
+1. Go to your project in the Vercel dashboard
+2. Navigate to Settings > Domains
+3. Add your custom domain and follow the DNS configuration instructions
+
 ## Learn more
 
 - [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
+- [Expo Web documentation](https://docs.expo.dev/workflow/web/): Learn about building web apps with Expo.
 - [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
+- [Vercel documentation](https://vercel.com/docs): Learn about deploying to Vercel.
 
 ## Join the community
 
