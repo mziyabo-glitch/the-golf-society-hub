@@ -1,8 +1,9 @@
 /**
  * Tee Sheet Print Route (Web Only)
  * 
- * This route renders the tee sheet HTML and auto-triggers window.print().
- * It's designed for reliable web printing on Chrome/Android and desktop browsers.
+ * This route renders the tee sheet HTML and provides a user-initiated print button.
+ * User-initiated printing is more reliable on mobile browsers (Android Chrome)
+ * which often block auto-triggered window.print().
  * 
  * Usage: /print/tee-sheet?eventId=xxx
  */
@@ -13,7 +14,7 @@ import { getArray } from "@/lib/storage-helpers";
 import { generateTeeSheetHtml } from "@/lib/teeSheetPrint";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useLocalSearchParams, router } from "expo-router";
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState } from "react";
 import { View, Text, StyleSheet, Pressable, Platform } from "react-native";
 
 type GuestData = {
@@ -35,26 +36,10 @@ export default function PrintTeeSheetScreen() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [teeSheetHtml, setTeeSheetHtml] = useState<string>("");
-  const printTriggered = useRef(false);
 
   useEffect(() => {
     loadDataAndGenerateHtml();
   }, [eventId]);
-
-  // Auto-trigger print after HTML is rendered (web only)
-  useEffect(() => {
-    if (!loading && !error && teeSheetHtml && Platform.OS === "web" && !printTriggered.current) {
-      printTriggered.current = true;
-      // Use requestAnimationFrame + setTimeout for reliable rendering
-      requestAnimationFrame(() => {
-        setTimeout(() => {
-          if (typeof window !== "undefined" && window.print) {
-            window.print();
-          }
-        }, 400);
-      });
-    }
-  }, [loading, error, teeSheetHtml]);
 
   const loadDataAndGenerateHtml = async () => {
     try {
@@ -151,8 +136,8 @@ export default function PrintTeeSheetScreen() {
     router.back();
   };
 
-  const handlePrintAgain = () => {
-    if (Platform.OS === "web" && typeof window !== "undefined") {
+  const handlePrint = () => {
+    if (Platform.OS === "web" && typeof window !== "undefined" && window.print) {
       window.print();
     }
   };
@@ -183,35 +168,98 @@ export default function PrintTeeSheetScreen() {
     );
   }
 
-  // Web: Render HTML with dangerouslySetInnerHTML
+  // Web: Render HTML with dangerouslySetInnerHTML and user-initiated print button
   if (Platform.OS === "web") {
     return (
       <View style={styles.webContainer}>
-        {/* Back bar - hidden in print */}
-        <View style={styles.noPrintBar}>
-          <Pressable onPress={handleBack} style={styles.backLink}>
-            <Text style={styles.backLinkText}>← Back to Tee Sheet</Text>
-          </Pressable>
-          <Pressable onPress={handlePrintAgain} style={styles.printAgainButton}>
-            <Text style={styles.printAgainText}>Print Again</Text>
-          </Pressable>
-        </View>
-
-        {/* Tee Sheet HTML Content */}
-        <div
-          dangerouslySetInnerHTML={{ __html: teeSheetHtml }}
-          style={{ flex: 1 }}
-        />
-
-        {/* Print-specific CSS */}
+        {/* Print-specific CSS - hide action bar when printing */}
         <style
           dangerouslySetInnerHTML={{
             __html: `
               @media print {
-                .no-print-bar { display: none !important; }
+                .print-action-bar { display: none !important; }
+                .no-print { display: none !important; }
+              }
+              @media screen {
+                .print-action-bar {
+                  position: sticky;
+                  top: 0;
+                  z-index: 100;
+                  background: #f9fafb;
+                  border-bottom: 1px solid #e5e7eb;
+                  padding: 16px;
+                  display: flex;
+                  flex-direction: column;
+                  align-items: center;
+                  gap: 12px;
+                }
+                .print-action-bar .button-row {
+                  display: flex;
+                  gap: 12px;
+                  align-items: center;
+                  flex-wrap: wrap;
+                  justify-content: center;
+                }
+                .print-btn {
+                  background-color: #0B6E4F;
+                  color: white;
+                  font-size: 18px;
+                  font-weight: 700;
+                  padding: 16px 32px;
+                  border: none;
+                  border-radius: 8px;
+                  cursor: pointer;
+                  min-width: 220px;
+                }
+                .print-btn:hover {
+                  background-color: #095c42;
+                }
+                .print-btn:active {
+                  background-color: #074a35;
+                }
+                .back-btn {
+                  background-color: #e5e7eb;
+                  color: #374151;
+                  font-size: 14px;
+                  font-weight: 600;
+                  padding: 12px 20px;
+                  border: none;
+                  border-radius: 6px;
+                  cursor: pointer;
+                }
+                .back-btn:hover {
+                  background-color: #d1d5db;
+                }
+                .help-text {
+                  font-size: 13px;
+                  color: #6b7280;
+                  text-align: center;
+                  margin: 0;
+                }
               }
             `,
           }}
+        />
+
+        {/* Action bar with print button - hidden in print */}
+        <div className="print-action-bar">
+          <div className="button-row">
+            <button className="print-btn" onClick={handlePrint}>
+              🖨️ Print / Save as PDF
+            </button>
+            <button className="back-btn" onClick={handleBack}>
+              ← Back
+            </button>
+          </div>
+          <p className="help-text">
+            If the print dialog doesn&apos;t open, tap the button again.
+          </p>
+        </div>
+
+        {/* Tee Sheet HTML Content - rendered into DOM */}
+        <div
+          dangerouslySetInnerHTML={{ __html: teeSheetHtml }}
+          style={{ flex: 1 }}
         />
       </View>
     );
@@ -275,36 +323,6 @@ const styles = StyleSheet.create({
   backButtonText: {
     color: "#fff",
     fontSize: 16,
-    fontWeight: "600",
-  },
-  noPrintBar: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    padding: 12,
-    backgroundColor: "#f9fafb",
-    borderBottomWidth: 1,
-    borderBottomColor: "#e5e7eb",
-    // @ts-ignore - web className for print hiding
-    className: "no-print-bar",
-  },
-  backLink: {
-    padding: 8,
-  },
-  backLinkText: {
-    fontSize: 14,
-    color: "#0B6E4F",
-    fontWeight: "600",
-  },
-  printAgainButton: {
-    backgroundColor: "#0B6E4F",
-    paddingVertical: 8,
-    paddingHorizontal: 16,
-    borderRadius: 6,
-  },
-  printAgainText: {
-    color: "#fff",
-    fontSize: 14,
     fontWeight: "600",
   },
 });

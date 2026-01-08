@@ -135,9 +135,9 @@ test.describe("Golf Society Hub - Smoke Tests", () => {
     }
   });
 
-  test("print tee sheet route loads and triggers window.print", async ({ page }) => {
+  test("print tee sheet route loads with print button", async ({ page }) => {
     // Test the print route directly with a mock event ID
-    // This tests that the route renders and attempts to call window.print
+    // This tests that the route renders with user-initiated print button
     
     await page.goto("/print/tee-sheet?eventId=test-event-123");
     await page.waitForLoadState("networkidle", { timeout: 30000 });
@@ -149,19 +149,41 @@ test.describe("Golf Society Hub - Smoke Tests", () => {
     const content = await page.textContent("body");
     expect(content).toBeTruthy();
     
-    // Should show either tee sheet content or error message
-    const hasContent = content!.toLowerCase().includes("tee") || 
+    // Should show either tee sheet content with print button, or error message
+    const hasContent = content!.toLowerCase().includes("print") || 
                        content!.toLowerCase().includes("not found") ||
                        content!.toLowerCase().includes("no event") ||
                        content!.toLowerCase().includes("loading") ||
                        content!.toLowerCase().includes("back");
     expect(hasContent).toBeTruthy();
     
-    // Check if window.print was called (we mock it in beforeEach)
+    // Print should NOT be auto-called (user-initiated only)
     const printCalled = await page.evaluate(() => (window as any).__printCalled);
+    expect(printCalled).toBeFalsy();
+    console.log(`Print route loaded, auto-print correctly disabled: ${!printCalled}`);
+  });
+
+  test("print button triggers window.print when clicked", async ({ page }) => {
+    // Test that clicking the print button triggers window.print
     
-    // Print might not be called if there's no data, but the route should load
-    console.log(`Print route loaded, window.print called: ${printCalled}`);
+    await page.goto("/print/tee-sheet?eventId=test-event-123");
+    await page.waitForLoadState("networkidle", { timeout: 30000 });
+    
+    // Look for the print button
+    const printButton = page.locator('button:has-text("Print")').first();
+    
+    if (await printButton.isVisible({ timeout: 3000 }).catch(() => false)) {
+      // Click the print button
+      await printButton.click();
+      
+      // Check if window.print was called
+      const printCalled = await page.evaluate(() => (window as any).__printCalled);
+      expect(printCalled).toBeTruthy();
+      console.log("✓ Print button clicked and window.print was called");
+    } else {
+      // Button not visible - might be error state (no event data)
+      console.log("Print button not visible (expected if no event data)");
+    }
   });
 
   test("print tee sheet route contains branding when data present", async ({ page, context }) => {
