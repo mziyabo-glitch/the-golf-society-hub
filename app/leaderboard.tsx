@@ -6,8 +6,6 @@
  * Only shows members with points > 0.
  */
 
-import { STORAGE_KEYS } from "@/lib/storage";
-import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useFocusEffect } from "@react-navigation/native";
 import { router } from "expo-router";
 import { useCallback, useState } from "react";
@@ -25,10 +23,8 @@ import { SocietyHeader } from "@/components/ui/SocietyHeader";
 import { getColors, spacing } from "@/lib/ui/theme";
 import { computeOrderOfMerit, generateOOMHtml, OOM_POINTS_MAP, type OOMEntry } from "@/lib/oom";
 import type { EventData, MemberData } from "@/lib/models";
-
-const EVENTS_KEY = STORAGE_KEYS.EVENTS;
-const MEMBERS_KEY = STORAGE_KEYS.MEMBERS;
-const SOCIETY_KEY = STORAGE_KEYS.SOCIETY_ACTIVE;
+// Firestore read helpers (with AsyncStorage fallback)
+import { getSociety, getMembers, getEvents } from "@/lib/firestore/society";
 
 type SocietyData = {
   name: string;
@@ -53,38 +49,19 @@ export default function LeaderboardScreen() {
 
   const loadData = async () => {
     try {
-      // Load society
-      const societyData = await AsyncStorage.getItem(SOCIETY_KEY);
+      // Load society using Firestore helper (with AsyncStorage fallback)
+      const societyData = await getSociety();
       if (societyData) {
-        try {
-          const loaded: SocietyData = JSON.parse(societyData);
-          setSociety(loaded);
-        } catch (e) {
-          console.error("Error parsing society data:", e);
-        }
+        setSociety({ name: societyData.name, logoUrl: societyData.logoUrl });
       }
 
-      // Load members with defensive guard
-      const membersData = await AsyncStorage.getItem(MEMBERS_KEY);
-      if (membersData) {
-        try {
-          const parsed = JSON.parse(membersData);
-          setMembers(Array.isArray(parsed) ? parsed : []);
-        } catch {
-          setMembers([]);
-        }
-      }
+      // Load members using Firestore helper (with AsyncStorage fallback)
+      const loadedMembers = await getMembers();
+      setMembers(Array.isArray(loadedMembers) ? loadedMembers : []);
 
-      // Load events with defensive guard
-      const eventsData = await AsyncStorage.getItem(EVENTS_KEY);
-      if (eventsData) {
-        try {
-          const parsed = JSON.parse(eventsData);
-          setEvents(Array.isArray(parsed) ? parsed : []);
-        } catch {
-          setEvents([]);
-        }
-      }
+      // Load events using Firestore helper (with AsyncStorage fallback)
+      const loadedEvents = await getEvents();
+      setEvents(Array.isArray(loadedEvents) ? loadedEvents : []);
     } catch (error) {
       console.error("Error loading data:", error);
     } finally {

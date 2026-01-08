@@ -12,7 +12,8 @@ import { STORAGE_KEYS } from "@/lib/storage";
 import type { Course, TeeSet, EventData, MemberData } from "@/lib/models";
 import { getArray } from "@/lib/storage-helpers";
 import { generateTeeSheetHtml } from "@/lib/teeSheetPrint";
-import AsyncStorage from "@react-native-async-storage/async-storage";
+// Firestore read helpers (with AsyncStorage fallback)
+import { getSociety, getMembers, getEvents } from "@/lib/firestore/society";
 import { useLocalSearchParams, router } from "expo-router";
 import { useEffect, useState } from "react";
 import { View, Text, StyleSheet, Pressable, Platform } from "react-native";
@@ -23,11 +24,6 @@ type GuestData = {
   sex: "male" | "female";
   handicapIndex?: number;
   included: boolean;
-};
-
-type SocietyData = {
-  name: string;
-  logoUrl?: string | null;
 };
 
 export default function PrintTeeSheetScreen() {
@@ -49,19 +45,15 @@ export default function PrintTeeSheetScreen() {
         return;
       }
 
-      // Load society
-      let society: SocietyData | null = null;
-      const societyData = await AsyncStorage.getItem(STORAGE_KEYS.SOCIETY_ACTIVE);
-      if (societyData) {
-        try {
-          society = JSON.parse(societyData);
-        } catch (e) {
-          console.error("Error parsing society:", e);
-        }
-      }
+      // Load society using Firestore helper (with AsyncStorage fallback)
+      const societyData = await getSociety();
+      const society = societyData ? { 
+        name: societyData.name, 
+        logoUrl: societyData.logoUrl 
+      } : null;
 
-      // Load events
-      const events = await getArray<EventData>(STORAGE_KEYS.EVENTS, []);
+      // Load events using Firestore helper (with AsyncStorage fallback)
+      const events = await getEvents();
       const event = events.find((e) => e.id === eventId);
 
       if (!event) {
@@ -76,7 +68,7 @@ export default function PrintTeeSheetScreen() {
         return;
       }
 
-      // Load courses
+      // Load courses (still from AsyncStorage - not in Firestore yet)
       const courses = await getArray<Course>(STORAGE_KEYS.COURSES, []);
       let course: Course | null = null;
       let maleTeeSet: TeeSet | null = null;
@@ -94,14 +86,35 @@ export default function PrintTeeSheetScreen() {
         }
       }
 
-      // Load members
-      const members = await getArray<MemberData>(STORAGE_KEYS.MEMBERS, []);
+      // Load members using Firestore helper (with AsyncStorage fallback)
+      const members = await getMembers();
+
+      // Guard: members must exist
+      if (!members || members.length === 0) {
+        console.warn("[Print Route] No members found");
+      }
 
       // Get guests from event
       const guests: GuestData[] = event.guests || [];
 
-      // Get tee sheet data
-      const teeGroups = event.teeSheet.groups || [];
+      // Get tee sheet data and filter out invalid players
+      const rawTeeGroups = event.teeSheet.groups || [];
+      const teeGroups = rawTeeGroups.map((group) => ({
+        ...group,
+        players: (group.players || []).filter((playerId) => {
+          // Ensure player exists in members or guests
+          const memberExists = members.some((m) => m.id === playerId);
+          const guestExists = guests.some((g) => g.id === playerId && g.included);
+          return memberExists || guestExists;
+        }),
+      })).filter((group) => group.players.length > 0);
+
+      if (teeGroups.length === 0) {
+        setError("No valid players in tee groups.");
+        setLoading(false);
+        return;
+      }
+
       const teeSheetNotes = event.teeSheetNotes || "";
       const nearestToPinHoles = event.nearestToPinHoles || [];
       const longestDriveHoles = event.longestDriveHoles || [];

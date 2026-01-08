@@ -12,6 +12,8 @@ import { getPermissions, type Permissions } from "@/lib/rbac";
 import { guard } from "@/lib/guards";
 import { getArray, ensureArray } from "@/lib/storage-helpers";
 import { generateTeeSheetHtml } from "@/lib/teeSheetPrint";
+// Firestore read helpers (with AsyncStorage fallback)
+import { getSociety, getMembers, getEvents } from "@/lib/firestore/society";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useFocusEffect } from "@react-navigation/native";
 import { router } from "expo-router";
@@ -102,27 +104,22 @@ export default function TeesTeeSheetScreen() {
 
   const loadData = async () => {
     try {
-      // Load society (for logo and name)
-      const societyData = await AsyncStorage.getItem(STORAGE_KEYS.SOCIETY_ACTIVE);
-      if (societyData) {
-        try {
-          const loaded = JSON.parse(societyData);
-          setSociety(loaded);
-        } catch (e) {
-          console.error("Error parsing society data:", e);
-        }
+      // Load society using Firestore helper (with AsyncStorage fallback)
+      const loadedSociety = await getSociety();
+      if (loadedSociety) {
+        setSociety({ name: loadedSociety.name, logoUrl: loadedSociety.logoUrl || undefined });
       }
 
-      // Load courses
+      // Load courses (still from AsyncStorage - not in Firestore yet)
       const loadedCourses = await getArray<Course>(COURSES_KEY, []);
       setCourses(loadedCourses);
 
-      // Load events
-      const loadedEvents = await getArray<EventData>(EVENTS_KEY, []);
+      // Load events using Firestore helper (with AsyncStorage fallback)
+      const loadedEvents = await getEvents();
       setEvents(loadedEvents);
 
-      // Load members
-      const loadedMembers = await getArray<MemberData>(MEMBERS_KEY, []);
+      // Load members using Firestore helper (with AsyncStorage fallback)
+      const loadedMembers = await getMembers();
       setMembers(loadedMembers);
     } catch (error) {
       console.error("Error loading data:", error);
@@ -509,11 +506,33 @@ export default function TeesTeeSheetScreen() {
   /**
    * Export tee sheet as PDF
    * - Web: Navigates to print route which calls window.print()
-   * - Native: Uses expo-print + expo-sharing
+   * - Native: Uses expo-print + expo-sharing (no Sharing on web)
    */
   const handleExportTeeSheet = async () => {
-    if (!selectedEvent || !selectedCourse || teeGroups.length === 0) {
-      Alert.alert("Error", "Please ensure event, course, and tee sheet are set");
+    // Validate required data
+    if (!selectedEvent) {
+      Alert.alert("Error", "Please select an event first");
+      console.warn("[PDF Export] No event selected");
+      return;
+    }
+    
+    if (!selectedCourse) {
+      Alert.alert("Error", "Please select a course first");
+      console.warn("[PDF Export] No course selected");
+      return;
+    }
+
+    // Guard: tee groups must exist and not be empty
+    if (!teeGroups || teeGroups.length === 0) {
+      Alert.alert("Error", "No tee groups found. Please generate a tee sheet first.");
+      console.warn("[PDF Export] No tee groups");
+      return;
+    }
+
+    // Guard: members must be loaded
+    if (!members || members.length === 0) {
+      Alert.alert("Error", "No members found. Cannot generate PDF.");
+      console.warn("[PDF Export] No members loaded");
       return;
     }
 
@@ -540,6 +559,24 @@ export default function TeesTeeSheetScreen() {
       }
 
       // Native (iOS/Android): Use expo-print + expo-sharing
+      // Filter out tee groups with undefined/invalid players
+      const validTeeGroups = teeGroups.map((group) => ({
+        ...group,
+        players: group.players.filter((playerId) => {
+          // Ensure player exists in members or guests
+          const memberExists = members.some((m) => m.id === playerId);
+          const guestExists = guests.some((g) => g.id === playerId && g.included);
+          return memberExists || guestExists;
+        }),
+      })).filter((group) => group.players.length > 0);
+
+      if (validTeeGroups.length === 0) {
+        Alert.alert("Error", "No valid players in tee groups. Please add players first.");
+        console.warn("[PDF Export] All tee groups are empty after validation");
+        isSharing.current = false;
+        return;
+      }
+
       // Generate HTML using shared generator
       const html = generateTeeSheetHtml({
         society,
@@ -549,7 +586,7 @@ export default function TeesTeeSheetScreen() {
         femaleTeeSet: selectedFemaleTeeSet,
         members,
         guests: guests.filter((g) => g.included),
-        teeGroups,
+        teeGroups: validTeeGroups,
         teeSheetNotes,
         nearestToPinHoles,
         longestDriveHoles,
@@ -557,7 +594,10 @@ export default function TeesTeeSheetScreen() {
       });
 
       try {
+        // Use printToFileAsync on native
         const { uri } = await Print.printToFileAsync({ html });
+        
+        // Only use Sharing on native (NOT on web)
         const sharingAvailable = await Sharing.isAvailableAsync();
         if (sharingAvailable) {
           await Sharing.shareAsync(uri);
@@ -565,11 +605,11 @@ export default function TeesTeeSheetScreen() {
           Alert.alert("Success", `PDF saved to: ${uri}`);
         }
       } catch (printError) {
-        console.error("Error with print/sharing:", printError);
+        console.error("[PDF Export] Error with print/sharing:", printError);
         Alert.alert("Error", "Failed to generate or share PDF. Please try again.");
       }
     } catch (error) {
-      console.error("Error generating PDF:", error);
+      console.error("[PDF Export] Error generating PDF:", error);
       Alert.alert("Error", "Failed to generate tee sheet. Please try again.");
     } finally {
       isSharing.current = false;
