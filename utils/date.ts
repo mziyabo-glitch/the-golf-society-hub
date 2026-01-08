@@ -6,28 +6,68 @@
  */
 
 /**
+ * Convert mixed date-like values into a JS Date.
+ *
+ * Supports:
+ * - Firestore Timestamp (has toDate())
+ * - ISO string / other string (Date.parse)
+ * - Date (returned as-is)
+ * - null/undefined (null)
+ */
+export function toJsDate(value: unknown): Date | null {
+  if (value === null || value === undefined) return null;
+
+  if (value instanceof Date) {
+    return isNaN(value.getTime()) ? null : value;
+  }
+
+  // Firestore Timestamp (or compatible shape)
+  if (typeof value === "object" && value !== null) {
+    const maybeTimestamp = value as { toDate?: () => Date; seconds?: number; nanoseconds?: number };
+    if (typeof maybeTimestamp.toDate === "function") {
+      const d = maybeTimestamp.toDate();
+      return d instanceof Date && !isNaN(d.getTime()) ? d : null;
+    }
+    // Timestamp-like object that may have been serialized (best-effort)
+    if (typeof maybeTimestamp.seconds === "number") {
+      const ms =
+        maybeTimestamp.seconds * 1000 +
+        (typeof maybeTimestamp.nanoseconds === "number" ? maybeTimestamp.nanoseconds / 1_000_000 : 0);
+      const d = new Date(ms);
+      return isNaN(d.getTime()) ? null : d;
+    }
+  }
+
+  if (typeof value === "string") {
+    if (value.trim() === "") return null;
+    // ISO string
+    const isoDate = new Date(value);
+    if (!isNaN(isoDate.getTime())) return isoDate;
+
+    // Other string - fallback to Date.parse
+    const parsed = Date.parse(value);
+    if (!isNaN(parsed)) return new Date(parsed);
+
+    return null;
+  }
+
+  return null;
+}
+
+/**
  * Format a date string (YYYY-MM-DD or ISO) to DD-MM-YYYY for display
- * @param dateStr - Date string in YYYY-MM-DD or ISO format
+ * @param dateValue - Date-like value (string/Date/Timestamp/etc)
  * @returns Formatted date string DD-MM-YYYY, or original string if invalid
  */
-export function formatDateDDMMYYYY(dateStr: string | null | undefined): string {
-  if (!dateStr || dateStr.trim() === "") return "No date";
+export function formatDateDDMMYYYY(dateValue: unknown): string {
+  if (dateValue === null || dateValue === undefined) return "No date";
   
   try {
-    // Try parsing as ISO date
-    const date = new Date(dateStr);
-    if (isNaN(date.getTime())) {
-      // Try parsing as YYYY-MM-DD directly
-      const parts = dateStr.trim().split("-");
-      if (parts.length === 3) {
-        const year = parseInt(parts[0], 10);
-        const month = parseInt(parts[1], 10);
-        const day = parseInt(parts[2], 10);
-        if (!isNaN(year) && !isNaN(month) && !isNaN(day)) {
-          return `${String(day).padStart(2, "0")}-${String(month).padStart(2, "0")}-${year}`;
-        }
-      }
-      return dateStr; // Return original if can't parse
+    const date = toJsDate(dateValue);
+    if (!date) {
+      // Preserve legacy behavior: if it's a string we couldn't parse, return it
+      if (typeof dateValue === "string") return dateValue;
+      return "No date";
     }
     
     // Format as DD-MM-YYYY
@@ -36,8 +76,8 @@ export function formatDateDDMMYYYY(dateStr: string | null | undefined): string {
     const year = date.getFullYear();
     return `${day}-${month}-${year}`;
   } catch (error) {
-    console.warn("Error formatting date:", dateStr, error);
-    return dateStr; // Return original on error
+    console.warn("Error formatting date:", dateValue, error);
+    return typeof dateValue === "string" ? dateValue : "No date";
   }
 }
 
