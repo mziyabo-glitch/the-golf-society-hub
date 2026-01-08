@@ -92,8 +92,9 @@ export default function TeesTeeSheetScreen() {
   const [newGuestHI, setNewGuestHI] = useState("");
   const [newGuestSex, setNewGuestSex] = useState<"male" | "female">("male");
 
-  // Manual Edit Mode state
-  const [editMode, setEditMode] = useState(false);
+  // Edit Mode state - View mode by default when tee sheet exists
+  const [isEditing, setIsEditing] = useState(false);
+  const [hasSavedTeeSheet, setHasSavedTeeSheet] = useState(false);
   const [movePlayerData, setMovePlayerData] = useState<{ playerId: string; fromGroup: number } | null>(null);
   const [unassignedPlayers, setUnassignedPlayers] = useState<string[]>([]);
 
@@ -102,6 +103,7 @@ export default function TeesTeeSheetScreen() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [exporting, setExporting] = useState(false);
 
   // PDF sharing guard
   const isSharing = useRef(false);
@@ -185,27 +187,50 @@ export default function TeesTeeSheetScreen() {
   };
 
   /**
-   * Handle event selection - load course and tee sets from Firestore
+   * Handle event selection - load course, tee sets, and existing tee sheet from Firestore
    */
   const handleSelectEvent = async (event: EventData) => {
     setSelectedEvent(event);
     console.log("[Event Selected]", event.id, event.name);
 
-    // Reset tee sheet state
+    // Reset state
     setTeeGroups([]);
     setSelectedCourse(null);
     setSelectedMaleTeeSet(null);
     setSelectedFemaleTeeSet(null);
+    setIsEditing(false); // Default to view mode
+
+    // Check if tee sheet exists in Firestore
+    const hasTeeSheet = Boolean(
+      event.teeSheet && 
+      event.teeSheet.groups && 
+      event.teeSheet.groups.length > 0
+    );
+    setHasSavedTeeSheet(hasTeeSheet);
 
     // Load tee sheet data if exists
-    if (event.teeSheet) {
-      setStartTime(new Date(event.teeSheet.startTimeISO).toLocaleTimeString("en-US", { 
-        hour: "2-digit", 
-        minute: "2-digit", 
-        hour12: false 
-      }));
-      setIntervalMins(event.teeSheet.intervalMins);
-      setTeeGroups(event.teeSheet.groups || []);
+    if (hasTeeSheet && event.teeSheet) {
+      console.log("[Tee Sheet] Loading existing tee sheet with", event.teeSheet.groups.length, "groups");
+      
+      // Parse start time from saved data
+      try {
+        const savedTime = new Date(event.teeSheet.startTimeISO);
+        setStartTime(savedTime.toLocaleTimeString("en-US", { 
+          hour: "2-digit", 
+          minute: "2-digit", 
+          hour12: false 
+        }));
+      } catch {
+        setStartTime("08:00");
+      }
+      
+      setIntervalMins(event.teeSheet.intervalMins || 8);
+      setTeeGroups(event.teeSheet.groups);
+    } else {
+      console.log("[Tee Sheet] No existing tee sheet found, allowing generation");
+      setStartTime("08:00");
+      setIntervalMins(8);
+      setIsEditing(true); // No tee sheet, so allow editing
     }
 
     // Load allowance
@@ -252,7 +277,7 @@ export default function TeesTeeSheetScreen() {
     setNearestToPinHoles(event.nearestToPinHoles || []);
     setLongestDriveHoles(event.longestDriveHoles || []);
     
-    // Initialize player selection
+    // Initialize player selection from RSVPs
     const includedIds = new Set<string>();
     members.forEach((member) => {
       const rsvp = event.rsvps?.[member.id];
@@ -265,12 +290,9 @@ export default function TeesTeeSheetScreen() {
     // Load guests
     setGuests(event.guests || []);
 
-    // Defensive logging
     console.log("=== Event Selection Complete ===");
-    console.log("Course:", selectedCourse?.name || "Loading...");
-    console.log("Male tee:", selectedMaleTeeSet?.teeColor || "Loading...");
-    console.log("Female tee:", selectedFemaleTeeSet?.teeColor || "Loading...");
-    console.log("Allowance:", handicapAllowancePct, "%");
+    console.log("Has saved tee sheet:", hasTeeSheet);
+    console.log("Edit mode:", !hasTeeSheet);
   };
 
   /**
@@ -472,9 +494,11 @@ export default function TeesTeeSheetScreen() {
         const reloadedEvent = await getEvent(selectedEvent.id);
         
         if (reloadedEvent && reloadedEvent.teeSheet?.groups) {
-          // Update local state with confirmed data
+          // Update local state with confirmed data from Firestore
           setTeeGroups(reloadedEvent.teeSheet.groups);
           setSelectedEvent(reloadedEvent);
+          setHasSavedTeeSheet(true);
+          setIsEditing(false); // Switch to view mode after save
           
           Alert.alert(
             "Success", 
@@ -509,79 +533,93 @@ export default function TeesTeeSheetScreen() {
 
   /**
    * Export tee sheet as PDF
-   * Uses same pattern as Leaderboard:
+   * 
+   * IMPORTANT: Reads ONLY from saved Firestore teeSheet (single source of truth)
+   * NOT from in-memory state. This matches the Leaderboard architecture.
+   * 
    * - Web: window.open + document.write + print()
    * - Native: expo-print + expo-sharing
    */
   const handleExportTeeSheet = async () => {
-    // Guard: data must be ready
-    if (!dataReady) {
-      Alert.alert("Error", "Data is still loading. Please wait.");
-      console.error("[PDF Export] Data not ready");
-      return;
-    }
-
-    // Validate required data
     if (!selectedEvent) {
       Alert.alert("Error", "Please select an event first");
       return;
     }
-    
-    if (!selectedCourse) {
-      Alert.alert("Error", "Course not loaded. Please wait for Firestore data.");
-      return;
-    }
 
-    if (!selectedMaleTeeSet || !selectedFemaleTeeSet) {
-      Alert.alert("Error", "Tee sets not loaded. Please wait for Firestore data.");
-      return;
-    }
-
-    if (teeGroups.length === 0) {
-      Alert.alert("Error", "No tee groups found. Please generate a tee sheet first.");
-      return;
-    }
-
-    if (members.length === 0) {
-      Alert.alert("Error", "No members found. Cannot generate PDF.");
-      return;
-    }
-
-    if (isSharing.current) {
+    if (isSharing.current || exporting) {
       return;
     }
     isSharing.current = true;
+    setExporting(true);
 
     try {
-      // AUTO-SAVE before print (best effort)
-      const needsAutoSave = !selectedEvent.teeSheet || 
-        !selectedEvent.teeSheet.groups || 
-        selectedEvent.teeSheet.groups.length === 0 ||
-        selectedEvent.teeSheet.groups.length !== teeGroups.length;
+      console.log("[PDF Export] Loading tee sheet from Firestore (single source of truth)...");
+      
+      // ==========================================
+      // STEP 1: Reload event from Firestore (single source of truth)
+      // ==========================================
+      const firestoreEvent = await getEvent(selectedEvent.id);
+      
+      if (!firestoreEvent) {
+        Alert.alert("Error", "Event not found in Firestore. Please try again.");
+        return;
+      }
 
-      if (needsAutoSave) {
-        console.log("[PDF Export] Auto-saving tee sheet before print...");
-        const saveResult = await saveTeeSheetToFirestore();
-        if (saveResult.success && saveResult.verified) {
-          console.log("[PDF Export] Auto-save successful");
-        } else {
-          console.warn("[PDF Export] Auto-save failed, continuing anyway");
+      // Check if tee sheet exists in Firestore
+      if (!firestoreEvent.teeSheet || !firestoreEvent.teeSheet.groups || firestoreEvent.teeSheet.groups.length === 0) {
+        Alert.alert(
+          "No Saved Tee Sheet",
+          "Please save the tee sheet first before exporting to PDF.",
+          [{ text: "OK" }]
+        );
+        return;
+      }
+
+      console.log("[PDF Export] Loaded tee sheet from Firestore:", {
+        groups: firestoreEvent.teeSheet.groups.length,
+        players: firestoreEvent.teeSheet.groups.reduce((sum, g) => sum + g.players.length, 0),
+      });
+
+      // ==========================================
+      // STEP 2: Load related data from Firestore
+      // ==========================================
+      let course: Course | null = null;
+      let maleTeeSet: TeeSet | null = null;
+      let femaleTeeSet: TeeSet | null = null;
+
+      if (firestoreEvent.courseId) {
+        course = await getCourse(firestoreEvent.courseId);
+        if (course) {
+          const teeSets = findTeeSetsForEvent(course, firestoreEvent);
+          maleTeeSet = teeSets.maleTeeSet;
+          femaleTeeSet = teeSets.femaleTeeSet;
         }
       }
 
-      // Build data model (same for web and native)
+      // Load fresh members list
+      const firestoreMembers = await getMembers();
+      
+      // Load society for branding
+      const firestoreSociety = await getSociety();
+      const societyInfo = firestoreSociety 
+        ? { name: firestoreSociety.name, logoUrl: firestoreSociety.logoUrl }
+        : null;
+
+      // ==========================================
+      // STEP 3: Build data model from Firestore data
+      // ==========================================
       const teeSheetData: TeeSheetDataModel = buildTeeSheetDataModel({
-        society,
-        event: selectedEvent,
-        course: selectedCourse,
-        maleTeeSet: selectedMaleTeeSet,
-        femaleTeeSet: selectedFemaleTeeSet,
-        members,
-        guests: guests.filter((g) => g.included),
-        teeGroups,
-        teeSheetNotes,
-        nearestToPinHoles,
-        longestDriveHoles,
+        society: societyInfo,
+        event: firestoreEvent,
+        course,
+        maleTeeSet,
+        femaleTeeSet,
+        members: firestoreMembers,
+        guests: (firestoreEvent.guests || []).filter((g) => g.included),
+        teeGroups: firestoreEvent.teeSheet.groups,
+        teeSheetNotes: firestoreEvent.teeSheetNotes,
+        nearestToPinHoles: firestoreEvent.nearestToPinHoles,
+        longestDriveHoles: firestoreEvent.longestDriveHoles,
       });
 
       // Validate data model
@@ -590,7 +628,6 @@ export default function TeesTeeSheetScreen() {
         const errorMsg = validation.errors.join("\n");
         console.error("[PDF Export] Validation failed:", validation.errors);
         Alert.alert("Error", `Cannot generate PDF:\n${errorMsg}`);
-        isSharing.current = false;
         return;
       }
 
@@ -600,11 +637,10 @@ export default function TeesTeeSheetScreen() {
       if (!html || html.trim().length === 0) {
         console.error("[PDF Export] Generated HTML is empty!");
         Alert.alert("Error", "Failed to generate PDF content");
-        isSharing.current = false;
         return;
       }
 
-      console.log("[PDF Export] HTML generated, length:", html.length);
+      console.log("[PDF Export] HTML generated from Firestore data, length:", html.length);
 
       // ==========================================
       // WEB: Use window.open + document.write + print() (like Leaderboard)
@@ -617,7 +653,6 @@ export default function TeesTeeSheetScreen() {
               printWindow.document.write(html);
               printWindow.document.close();
               printWindow.focus();
-              // Delay print to ensure content is rendered
               setTimeout(() => {
                 printWindow.print();
               }, 250);
@@ -627,7 +662,7 @@ export default function TeesTeeSheetScreen() {
               const url = URL.createObjectURL(blob);
               const a = document.createElement("a");
               a.href = url;
-              a.download = `tee-sheet-${selectedEvent.name.replace(/\s+/g, "-")}.html`;
+              a.download = `tee-sheet-${firestoreEvent.name.replace(/\s+/g, "-")}.html`;
               document.body.appendChild(a);
               a.click();
               document.body.removeChild(a);
@@ -641,7 +676,6 @@ export default function TeesTeeSheetScreen() {
           console.error("[PDF Export] Web print error:", webError);
           Alert.alert("Error", "Failed to generate PDF on web. Please try again.");
         }
-        isSharing.current = false;
         return;
       }
 
@@ -667,6 +701,7 @@ export default function TeesTeeSheetScreen() {
       Alert.alert("Error", "Failed to generate tee sheet. Please try again.");
     } finally {
       isSharing.current = false;
+      setExporting(false);
     }
   };
 
@@ -995,93 +1030,136 @@ export default function TeesTeeSheetScreen() {
             <Text style={styles.emptyText}>Please select an event from the Tees tab first.</Text>
           ) : (
             <>
-              {/* Time Settings */}
-              <View style={styles.timeRow}>
-                <View style={styles.timeField}>
-                  <Text style={styles.fieldLabel}>Start Time</Text>
-                  <TextInput
-                    style={styles.timeInput}
-                    value={startTime}
-                    onChangeText={setStartTime}
-                    placeholder="08:00"
-                    editable={!isReadOnly}
-                  />
-                </View>
-                <View style={styles.timeField}>
-                  <Text style={styles.fieldLabel}>Interval (mins)</Text>
-                  <TextInput
-                    style={styles.timeInput}
-                    value={intervalMins.toString()}
-                    onChangeText={(v) => setIntervalMins(parseInt(v) || 8)}
-                    keyboardType="numeric"
-                    editable={!isReadOnly}
-                  />
-                </View>
-              </View>
+              {/* View/Edit Mode Indicator */}
+              {hasSavedTeeSheet && (
+                <AppCard style={isEditing ? styles.editModeCard : styles.viewModeCard}>
+                  <View style={styles.modeHeader}>
+                    <Badge 
+                      label={isEditing ? "Edit Mode" : "View Mode"} 
+                      variant={isEditing ? "status" : "paid"} 
+                    />
+                    {canManageTeeSheet && !isEditing && (
+                      <Pressable 
+                        onPress={() => setIsEditing(true)} 
+                        style={styles.editToggleButton}
+                      >
+                        <Text style={styles.editToggleButtonText}>Edit Tee Sheet</Text>
+                      </Pressable>
+                    )}
+                    {canManageTeeSheet && isEditing && (
+                      <Pressable 
+                        onPress={() => setIsEditing(false)} 
+                        style={styles.cancelEditButton}
+                      >
+                        <Text style={styles.cancelEditButtonText}>Cancel</Text>
+                      </Pressable>
+                    )}
+                  </View>
+                  {!isEditing && (
+                    <Text style={styles.modeDescription}>
+                      Tee sheet loaded from Firestore. Tap Edit to make changes.
+                    </Text>
+                  )}
+                </AppCard>
+              )}
 
-              {/* Player Selection */}
-              <Text style={[styles.sectionTitle, { marginTop: 16 }]}>Players ({selectedPlayerIds.size + guests.filter(g => g.included).length})</Text>
-              <ScrollView style={styles.playerList} nestedScrollEnabled>
-                {members.map((member) => {
-                  const isSelected = selectedPlayerIds.has(member.id);
-                  return (
-                    <Pressable
-                      key={member.id}
-                      onPress={() => {
-                        if (isReadOnly) return;
-                        const newSet = new Set(selectedPlayerIds);
-                        if (isSelected) {
-                          newSet.delete(member.id);
-                        } else {
-                          newSet.add(member.id);
-                        }
-                        setSelectedPlayerIds(newSet);
-                      }}
-                      style={[styles.playerRow, isSelected && styles.playerRowSelected]}
-                    >
-                      <Text style={styles.playerName}>{member.name}</Text>
-                      <Text style={styles.playerHI}>HI: {member.handicap ?? "-"}</Text>
+              {/* Time Settings - only in edit mode or when no saved tee sheet */}
+              {(isEditing || !hasSavedTeeSheet) && (
+                <View style={styles.timeRow}>
+                  <View style={styles.timeField}>
+                    <Text style={styles.fieldLabel}>Start Time</Text>
+                    <TextInput
+                      style={styles.timeInput}
+                      value={startTime}
+                      onChangeText={setStartTime}
+                      placeholder="08:00"
+                      editable={!isReadOnly && isEditing}
+                    />
+                  </View>
+                  <View style={styles.timeField}>
+                    <Text style={styles.fieldLabel}>Interval (mins)</Text>
+                    <TextInput
+                      style={styles.timeInput}
+                      value={intervalMins.toString()}
+                      onChangeText={(v) => setIntervalMins(parseInt(v) || 8)}
+                      keyboardType="numeric"
+                      editable={!isReadOnly && isEditing}
+                    />
+                  </View>
+                </View>
+              )}
+
+              {/* Player Selection - only in edit mode */}
+              {(isEditing || !hasSavedTeeSheet) && (
+                <>
+                  <Text style={[styles.sectionTitle, { marginTop: 16 }]}>Players ({selectedPlayerIds.size + guests.filter(g => g.included).length})</Text>
+                  <ScrollView style={styles.playerList} nestedScrollEnabled>
+                    {members.map((member) => {
+                      const isSelected = selectedPlayerIds.has(member.id);
+                      return (
+                        <Pressable
+                          key={member.id}
+                          onPress={() => {
+                            if (isReadOnly || !isEditing) return;
+                            const newSet = new Set(selectedPlayerIds);
+                            if (isSelected) {
+                              newSet.delete(member.id);
+                            } else {
+                              newSet.add(member.id);
+                            }
+                            setSelectedPlayerIds(newSet);
+                          }}
+                          style={[styles.playerRow, isSelected && styles.playerRowSelected]}
+                        >
+                          <Text style={styles.playerName}>{member.name}</Text>
+                          <Text style={styles.playerHI}>HI: {member.handicap ?? "-"}</Text>
+                        </Pressable>
+                      );
+                    })}
+                    {guests.map((guest) => (
+                      <Pressable
+                        key={guest.id}
+                        onPress={() => {
+                          if (isReadOnly || !isEditing) return;
+                          setGuests(guests.map((g) => 
+                            g.id === guest.id ? { ...g, included: !g.included } : g
+                          ));
+                        }}
+                        style={[styles.playerRow, guest.included && styles.playerRowSelected]}
+                      >
+                        <Text style={styles.playerName}>{guest.name} (Guest)</Text>
+                        <Text style={styles.playerHI}>HI: {guest.handicapIndex ?? "-"}</Text>
+                      </Pressable>
+                    ))}
+                  </ScrollView>
+
+                  {!isReadOnly && isEditing && (
+                    <Pressable onPress={() => setShowAddGuestModal(true)} style={styles.addGuestButton}>
+                      <Text style={styles.addGuestButtonText}>+ Add Guest</Text>
                     </Pressable>
-                  );
-                })}
-                {guests.map((guest) => (
-                  <Pressable
-                    key={guest.id}
-                    onPress={() => {
-                      if (isReadOnly) return;
-                      setGuests(guests.map((g) => 
-                        g.id === guest.id ? { ...g, included: !g.included } : g
-                      ));
-                    }}
-                    style={[styles.playerRow, guest.included && styles.playerRowSelected]}
-                  >
-                    <Text style={styles.playerName}>{guest.name} (Guest)</Text>
-                    <Text style={styles.playerHI}>HI: {guest.handicapIndex ?? "-"}</Text>
-                  </Pressable>
-                ))}
-              </ScrollView>
+                  )}
 
-              {!isReadOnly && (
-                <Pressable onPress={() => setShowAddGuestModal(true)} style={styles.addGuestButton}>
-                  <Text style={styles.addGuestButtonText}>+ Add Guest</Text>
-                </Pressable>
+                  {/* Generate Button - only when no saved tee sheet or in edit mode */}
+                  {!isReadOnly && isEditing && (
+                    <Pressable 
+                      onPress={handleGenerateTeeSheet} 
+                      style={[styles.generateButton, !canGenerateTeeSheet && styles.buttonDisabled]}
+                      disabled={!canGenerateTeeSheet}
+                    >
+                      <Text style={styles.generateButtonText}>
+                        {hasSavedTeeSheet ? "Regenerate Tee Sheet" : "Generate Tee Sheet"}
+                      </Text>
+                    </Pressable>
+                  )}
+                </>
               )}
 
-              {/* Generate Button */}
-              {!isReadOnly && (
-                <Pressable 
-                  onPress={handleGenerateTeeSheet} 
-                  style={[styles.generateButton, !canGenerateTeeSheet && styles.buttonDisabled]}
-                  disabled={!canGenerateTeeSheet}
-                >
-                  <Text style={styles.generateButtonText}>Generate Tee Sheet</Text>
-                </Pressable>
-              )}
-
-              {/* Tee Groups */}
+              {/* Tee Groups - always shown when they exist */}
               {teeGroups.length > 0 && (
                 <View style={styles.teeGroupsContainer}>
-                  <Text style={[styles.sectionTitle, { marginTop: 16 }]}>Tee Groups</Text>
+                  <Text style={[styles.sectionTitle, { marginTop: 16 }]}>
+                    Tee Groups {hasSavedTeeSheet && !isEditing && "(Saved)"}
+                  </Text>
                   
                   {teeGroups.map((group, groupIdx) => {
                     const teeTime = new Date(group.timeISO).toLocaleTimeString("en-US", {
@@ -1115,29 +1193,49 @@ export default function TeesTeeSheetScreen() {
                   })}
 
                   {/* Action Buttons */}
-                  {!isReadOnly && (
-                    <View style={styles.actionButtons}>
-                      <Pressable onPress={handleAddGroup} style={styles.addGroupButton}>
-                        <Text style={styles.addGroupButtonText}>+ Add Group</Text>
-                      </Pressable>
+                  <View style={styles.actionButtons}>
+                    {/* Edit mode actions */}
+                    {!isReadOnly && isEditing && (
+                      <>
+                        <Pressable onPress={handleAddGroup} style={styles.addGroupButton}>
+                          <Text style={styles.addGroupButtonText}>+ Add Group</Text>
+                        </Pressable>
 
-                      <Pressable 
-                        onPress={handleSaveTeeSheet} 
-                        style={[styles.saveButton, saving && styles.buttonDisabled]}
-                        disabled={saving}
-                      >
-                        <Text style={styles.saveButtonText}>
-                          {saving ? "Saving..." : "Save Tee Sheet"}
-                        </Text>
-                      </Pressable>
+                        <Pressable 
+                          onPress={handleSaveTeeSheet} 
+                          style={[styles.saveButton, saving && styles.buttonDisabled]}
+                          disabled={saving}
+                        >
+                          <Text style={styles.saveButtonText}>
+                            {saving ? "Saving..." : "Save Tee Sheet"}
+                          </Text>
+                        </Pressable>
+                      </>
+                    )}
 
-                      <Pressable onPress={handleExportTeeSheet} style={styles.pdfButton}>
-                        <Text style={styles.pdfButtonText}>
-                          {Platform.OS === "web" ? "Print / Download PDF" : "Share PDF"}
-                        </Text>
-                      </Pressable>
-                    </View>
-                  )}
+                    {/* PDF Export - always available when tee sheet exists (reads from Firestore) */}
+                    <Pressable 
+                      onPress={handleExportTeeSheet} 
+                      style={[styles.pdfButton, exporting && styles.buttonDisabled]}
+                      disabled={exporting}
+                    >
+                      <Text style={styles.pdfButtonText}>
+                        {exporting 
+                          ? "Loading..." 
+                          : Platform.OS === "web" 
+                            ? "Print / Download PDF" 
+                            : "Share PDF"
+                        }
+                      </Text>
+                    </Pressable>
+                    
+                    {/* Reminder to save in edit mode */}
+                    {isEditing && !hasSavedTeeSheet && (
+                      <Text style={styles.saveReminder}>
+                        ⚠️ Save the tee sheet before exporting PDF
+                      </Text>
+                    )}
+                  </View>
                 </View>
               )}
             </>
@@ -1589,5 +1687,57 @@ const styles = StyleSheet.create({
   modalSubmitButtonText: {
     color: "#fff",
     fontWeight: "600",
+  },
+  // View/Edit Mode Styles
+  viewModeCard: {
+    backgroundColor: "#d1fae5",
+    borderColor: "#10b981",
+    borderWidth: 1,
+    marginBottom: 16,
+  },
+  editModeCard: {
+    backgroundColor: "#fef3c7",
+    borderColor: "#f59e0b",
+    borderWidth: 1,
+    marginBottom: 16,
+  },
+  modeHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
+  modeDescription: {
+    fontSize: 12,
+    color: "#6b7280",
+    marginTop: 8,
+  },
+  editToggleButton: {
+    backgroundColor: "#0B6E4F",
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    borderRadius: 6,
+  },
+  editToggleButtonText: {
+    color: "#fff",
+    fontWeight: "600",
+    fontSize: 14,
+  },
+  cancelEditButton: {
+    backgroundColor: "#6b7280",
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    borderRadius: 6,
+  },
+  cancelEditButtonText: {
+    color: "#fff",
+    fontWeight: "600",
+    fontSize: 14,
+  },
+  saveReminder: {
+    fontSize: 12,
+    color: "#b45309",
+    textAlign: "center",
+    marginTop: 8,
+    fontStyle: "italic",
   },
 });

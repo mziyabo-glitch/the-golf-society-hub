@@ -11,7 +11,7 @@
  */
 
 import { db, getActiveSocietyId, isFirebaseConfigured } from "../firebase";
-import { doc, getDoc, setDoc, updateDoc, collection, getDocs } from "firebase/firestore";
+import { doc, getDoc, setDoc, collection, getDocs } from "firebase/firestore";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { STORAGE_KEYS } from "../storage";
 import type { MemberData, EventData, Course, TeeSet, GuestData } from "../models";
@@ -386,8 +386,8 @@ export async function saveAndVerifyTeeSheet(
       updateData.playingHandicapSnapshot = options.playingHandicapSnapshot;
     }
 
-    // Perform the save
-    await updateDoc(eventRef, updateData);
+    // Perform the save using setDoc with merge:true (as per locked schema)
+    await setDoc(eventRef, updateData, { merge: true });
     console.log(`[Firestore] Saved tee sheet for event: ${eventId}`, {
       groups: teeSheet.groups.length,
       players: allPlayerIds.length,
