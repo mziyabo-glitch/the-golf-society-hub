@@ -298,7 +298,18 @@ function mapFirestoreEvent(id: string, data: Record<string, unknown>): EventData
 }
 
 /**
- * Update event's tee sheet in Firestore
+ * Result of a tee sheet save operation
+ */
+export interface TeeSheetSaveResult {
+  success: boolean;
+  verified: boolean;
+  error?: string;
+  savedGroupCount?: number;
+  savedPlayerCount?: number;
+}
+
+/**
+ * Update event's tee sheet in Firestore with verification
  */
 export async function updateEventTeeSheet(
   eventId: string,
@@ -311,44 +322,128 @@ export async function updateEventTeeSheet(
     playingHandicapSnapshot?: Record<string, number>;
   }
 ): Promise<boolean> {
+  const result = await saveAndVerifyTeeSheet(eventId, teeSheet, guests, options);
+  return result.success && result.verified;
+}
+
+/**
+ * Save tee sheet to Firestore and verify it was persisted
+ * Returns detailed result including verification status
+ */
+export async function saveAndVerifyTeeSheet(
+  eventId: string,
+  teeSheet: TeeSheetData,
+  guests: GuestData[],
+  options?: {
+    teeSheetNotes?: string;
+    nearestToPinHoles?: number[];
+    longestDriveHoles?: number[];
+    playingHandicapSnapshot?: Record<string, number>;
+  }
+): Promise<TeeSheetSaveResult> {
   if (!eventId) {
-    console.error("[Firestore] updateEventTeeSheet: eventId is required");
-    return false;
+    console.error("[Firestore] saveAndVerifyTeeSheet: eventId is required");
+    return { success: false, verified: false, error: "Event ID is required" };
+  }
+
+  if (!teeSheet || !teeSheet.groups || teeSheet.groups.length === 0) {
+    console.error("[Firestore] saveAndVerifyTeeSheet: teeSheet.groups is empty");
+    return { success: false, verified: false, error: "Tee sheet groups are empty" };
+  }
+
+  // Validate that player IDs look like IDs (not names)
+  const allPlayerIds = teeSheet.groups.flatMap((g) => g.players);
+  const suspiciousIds = allPlayerIds.filter((id) => id.includes(" ") || id.length > 50);
+  if (suspiciousIds.length > 0) {
+    console.warn("[Firestore] Suspicious player IDs (may be names instead of IDs):", suspiciousIds);
   }
 
   try {
-    if (isFirebaseConfigured()) {
-      const societyId = getActiveSocietyId();
-      const eventRef = doc(db, "societies", societyId, "events", eventId);
-
-      const updateData: Record<string, unknown> = {
-        teeSheet,
-        guests,
-        teeSheetUpdatedAt: new Date().toISOString(),
-      };
-
-      if (options?.teeSheetNotes !== undefined) {
-        updateData.teeSheetNotes = options.teeSheetNotes || null;
-      }
-      if (options?.nearestToPinHoles !== undefined) {
-        updateData.nearestToPinHoles = options.nearestToPinHoles;
-      }
-      if (options?.longestDriveHoles !== undefined) {
-        updateData.longestDriveHoles = options.longestDriveHoles;
-      }
-      if (options?.playingHandicapSnapshot !== undefined) {
-        updateData.playingHandicapSnapshot = options.playingHandicapSnapshot;
-      }
-
-      await updateDoc(eventRef, updateData);
-      console.log(`[Firestore] Updated tee sheet for event: ${eventId}`);
-      return true;
+    if (!isFirebaseConfigured()) {
+      console.error("[Firestore] Firebase not configured");
+      return { success: false, verified: false, error: "Firebase not configured" };
     }
-    console.error("[Firestore] Firebase not configured");
-    return false;
+
+    const societyId = getActiveSocietyId();
+    const eventRef = doc(db, "societies", societyId, "events", eventId);
+
+    const updateData: Record<string, unknown> = {
+      teeSheet,
+      guests,
+      teeSheetUpdatedAt: new Date().toISOString(),
+    };
+
+    if (options?.teeSheetNotes !== undefined) {
+      updateData.teeSheetNotes = options.teeSheetNotes || null;
+    }
+    if (options?.nearestToPinHoles !== undefined) {
+      updateData.nearestToPinHoles = options.nearestToPinHoles;
+    }
+    if (options?.longestDriveHoles !== undefined) {
+      updateData.longestDriveHoles = options.longestDriveHoles;
+    }
+    if (options?.playingHandicapSnapshot !== undefined) {
+      updateData.playingHandicapSnapshot = options.playingHandicapSnapshot;
+    }
+
+    // Perform the save
+    await updateDoc(eventRef, updateData);
+    console.log(`[Firestore] Saved tee sheet for event: ${eventId}`, {
+      groups: teeSheet.groups.length,
+      players: allPlayerIds.length,
+    });
+
+    // VERIFICATION: Immediately reload and confirm teeSheet exists
+    const verifiedEvent = await getEvent(eventId);
+    
+    if (!verifiedEvent) {
+      console.error("[Firestore] VERIFICATION FAILED: Event not found after save");
+      return { 
+        success: true, 
+        verified: false, 
+        error: "Event not found after save" 
+      };
+    }
+
+    if (!verifiedEvent.teeSheet || !verifiedEvent.teeSheet.groups) {
+      console.error("[Firestore] VERIFICATION FAILED: teeSheet.groups missing after save");
+      return { 
+        success: true, 
+        verified: false, 
+        error: "Tee sheet not found after save" 
+      };
+    }
+
+    const savedGroupCount = verifiedEvent.teeSheet.groups.length;
+    const savedPlayerCount = verifiedEvent.teeSheet.groups.reduce(
+      (sum, g) => sum + (g.players?.length || 0), 
+      0
+    );
+
+    if (savedGroupCount === 0) {
+      console.error("[Firestore] VERIFICATION FAILED: Saved teeSheet has 0 groups");
+      return { 
+        success: true, 
+        verified: false, 
+        error: "Saved tee sheet has no groups" 
+      };
+    }
+
+    console.log(`[Firestore] VERIFIED: Tee sheet saved with ${savedGroupCount} groups, ${savedPlayerCount} players`);
+    
+    return { 
+      success: true, 
+      verified: true,
+      savedGroupCount,
+      savedPlayerCount,
+    };
   } catch (error) {
-    console.error("[Firestore] Error updating tee sheet:", error);
-    return false;
+    console.error("[Firestore] Error saving tee sheet:", error);
+    return { 
+      success: false, 
+      verified: false, 
+      error: error instanceof Error ? error.message : "Unknown error" 
+    };
   }
 }
 

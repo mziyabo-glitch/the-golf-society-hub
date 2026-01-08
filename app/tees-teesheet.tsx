@@ -27,11 +27,13 @@ import {
   getSociety, 
   getMembers, 
   getEvents, 
+  getEvent,
   getCourses,
   getCourse,
-  updateEventTeeSheet,
+  saveAndVerifyTeeSheet,
   findTeeSetById,
   findTeeSetsForEvent,
+  type TeeSheetSaveResult,
 } from "@/lib/firestore/society";
 import { useFocusEffect } from "@react-navigation/native";
 import { router } from "expo-router";
@@ -360,23 +362,38 @@ export default function TeesTeeSheetScreen() {
   };
 
   /**
-   * Save tee sheet to Firestore (internal, no UI alerts)
-   * Used for best-effort save before PDF export
+   * Save tee sheet to Firestore with verification
+   * Returns detailed result for error handling
    */
-  const saveTeeSheetToFirestore = async (): Promise<boolean> => {
-    if (!selectedEvent || teeGroups.length === 0) {
-      return false;
+  const saveTeeSheetToFirestore = async (): Promise<TeeSheetSaveResult> => {
+    if (!selectedEvent) {
+      return { success: false, verified: false, error: "No event selected" };
+    }
+    
+    if (teeGroups.length === 0) {
+      return { success: false, verified: false, error: "No tee groups to save" };
     }
 
-    // Validate all players
+    // Validate all players - ensure we're saving IDs not names
     const validatedGroups = teeGroups.map((group) => {
       const validPlayers = group.players.filter((playerId) => {
+        // Sanity check: player ID should not contain spaces (names do)
+        if (playerId.includes(" ")) {
+          console.error("[Save] Invalid player ID (looks like a name):", playerId);
+          return false;
+        }
         const memberExists = members.some((m) => m.id === playerId);
         const guestExists = guests.some((g) => g.id === playerId && g.included);
         return memberExists || guestExists;
       });
       return { ...group, players: validPlayers };
     });
+
+    // Check if we have any valid players
+    const totalPlayers = validatedGroups.reduce((sum, g) => sum + g.players.length, 0);
+    if (totalPlayers === 0) {
+      return { success: false, verified: false, error: "No valid players in tee sheet" };
+    }
 
     const [hours, mins] = startTime.split(":").map(Number);
     const startDate = new Date();
@@ -400,7 +417,8 @@ export default function TeesTeeSheetScreen() {
       });
     });
 
-    const success = await updateEventTeeSheet(
+    // Save with verification
+    const result = await saveAndVerifyTeeSheet(
       selectedEvent.id,
       { startTimeISO: startDate.toISOString(), intervalMins, groups: validatedGroups },
       guests,
@@ -412,17 +430,24 @@ export default function TeesTeeSheetScreen() {
       }
     );
 
-    if (success) {
+    if (result.success && result.verified) {
       const societyId = getActiveSocietyId();
-      console.log("TEE_SHEET_SAVED", { societyId, eventId: selectedEvent.id });
+      console.log("TEE_SHEET_SAVED", { 
+        societyId, 
+        eventId: selectedEvent.id,
+        groups: result.savedGroupCount,
+        players: result.savedPlayerCount,
+      });
+    } else {
+      console.error("TEE_SHEET_SAVE_FAILED", result);
     }
 
-    return success;
+    return result;
   };
 
   /**
-   * Save tee sheet to Firestore (with UI feedback)
-   * NO AsyncStorage is used
+   * Save tee sheet to Firestore (with UI feedback and verification)
+   * After save, immediately verifies the tee sheet was persisted
    */
   const handleSaveTeeSheet = async () => {
     if (!guard(canManageTeeSheet, "Only Captain or Handicapper can save tee sheets.")) {
@@ -437,95 +462,47 @@ export default function TeesTeeSheetScreen() {
       return;
     }
 
-    // Validate all players exist in members or guests
-    const invalidPlayers: string[] = [];
-    const validatedGroups = teeGroups.map((group) => {
-      const validPlayers = group.players.filter((playerId) => {
-        const memberExists = members.some((m) => m.id === playerId);
-        const guestExists = guests.some((g) => g.id === playerId && g.included);
-        if (!memberExists && !guestExists) {
-          invalidPlayers.push(playerId);
-          return false;
-        }
-        return true;
-      });
-      return { ...group, players: validPlayers };
-    });
-
-    if (invalidPlayers.length > 0) {
-      console.warn("[Save Tee Sheet] Removed invalid player IDs:", invalidPlayers);
-    }
-
-    const totalPlayers = validatedGroups.reduce((sum, g) => sum + g.players.length, 0);
-    if (totalPlayers === 0) {
-      Alert.alert("Error", "No valid players in tee sheet. Please add players first.");
-      return;
-    }
-
     setSaving(true);
 
     try {
-      const [hours, mins] = startTime.split(":").map(Number);
-      const startDate = new Date();
-      startDate.setHours(hours, mins, 0, 0);
+      // Save with verification
+      const result = await saveTeeSheetToFirestore();
 
-      // Build playing handicap snapshot
-      const playingHandicapSnapshot: Record<string, number> = {};
-      validatedGroups.forEach((group) => {
-        group.players.forEach((playerId) => {
-          const member = members.find((m) => m.id === playerId);
-          const guest = guests.find((g) => g.id === playerId);
+      if (result.success && result.verified) {
+        // Reload the specific event to confirm and update state
+        const reloadedEvent = await getEvent(selectedEvent.id);
+        
+        if (reloadedEvent && reloadedEvent.teeSheet?.groups) {
+          // Update local state with confirmed data
+          setTeeGroups(reloadedEvent.teeSheet.groups);
+          setSelectedEvent(reloadedEvent);
           
-          if (member) {
-            const ph = getPlayingHandicap(member, selectedEvent, selectedCourse, selectedMaleTeeSet, selectedFemaleTeeSet);
-            if (ph !== null) {
-              playingHandicapSnapshot[playerId] = ph;
-            }
-          } else if (guest) {
-            const guestAsMember = {
-              id: guest.id,
-              name: guest.name,
-              handicap: guest.handicapIndex,
-              sex: guest.sex,
-            };
-            const ph = getPlayingHandicap(guestAsMember, selectedEvent, selectedCourse, selectedMaleTeeSet, selectedFemaleTeeSet);
-            if (ph !== null) {
-              playingHandicapSnapshot[playerId] = ph;
-            }
-          }
-        });
-      });
-
-      // Save to Firestore
-      const success = await updateEventTeeSheet(
-        selectedEvent.id,
-        {
-          startTimeISO: startDate.toISOString(),
-          intervalMins,
-          groups: validatedGroups,
-        },
-        guests,
-        {
-          teeSheetNotes: teeSheetNotes.trim() || undefined,
-          nearestToPinHoles: nearestToPinHoles.length > 0 ? [...nearestToPinHoles].sort((a, b) => a - b) : undefined,
-          longestDriveHoles: longestDriveHoles.length > 0 ? [...longestDriveHoles].sort((a, b) => a - b) : undefined,
-          playingHandicapSnapshot,
+          Alert.alert(
+            "Success", 
+            `Tee sheet saved!\n${result.savedGroupCount} groups, ${result.savedPlayerCount} players`
+          );
+        } else {
+          // Edge case: verification passed but reload failed
+          Alert.alert(
+            "Warning",
+            "Tee sheet saved but reload failed. Please refresh the page."
+          );
         }
-      );
-
-      if (success) {
-        const societyId = getActiveSocietyId();
-        console.log("TEE_SHEET_SAVED", { societyId, eventId: selectedEvent.id });
-        setTeeGroups(validatedGroups);
-        await loadData(); // Refresh data from Firestore
-        Alert.alert("Success", "Tee sheet saved to Firestore");
+      } else if (result.success && !result.verified) {
+        // Save returned success but verification failed
+        Alert.alert(
+          "Error",
+          `Save completed but verification failed:\n${result.error}\n\nPlease try again.`
+        );
+        console.error("[Save Tee Sheet] Verification failed:", result);
       } else {
-        Alert.alert("Error", "Failed to save tee sheet to Firestore");
-        console.error("[Firestore] Failed to save tee sheet");
+        // Save itself failed
+        Alert.alert("Error", result.error || "Failed to save tee sheet");
+        console.error("[Save Tee Sheet] Save failed:", result);
       }
     } catch (error) {
       console.error("[Firestore] Error saving tee sheet:", error);
-      Alert.alert("Error", "Failed to save tee sheet");
+      Alert.alert("Error", "Failed to save tee sheet. Please check your connection.");
     } finally {
       setSaving(false);
     }
@@ -621,15 +598,27 @@ export default function TeesTeeSheetScreen() {
       const encodedPayload = encodeTeeSheetPayload(payload);
       console.log("[PDF Export] Payload built, size:", encodedPayload.length);
 
+      // AUTO-SAVE before print: Check if event.teeSheet is missing or outdated
+      // This ensures the print route can also load from Firestore if payload fails
+      const needsAutoSave = !selectedEvent.teeSheet || 
+        !selectedEvent.teeSheet.groups || 
+        selectedEvent.teeSheet.groups.length === 0 ||
+        selectedEvent.teeSheet.groups.length !== teeGroups.length;
+
+      if (needsAutoSave) {
+        console.log("[PDF Export] Auto-saving tee sheet before print...");
+        const saveResult = await saveTeeSheetToFirestore();
+        
+        if (saveResult.success && saveResult.verified) {
+          console.log("[PDF Export] Auto-save successful:", saveResult);
+        } else {
+          console.warn("[PDF Export] Auto-save failed, continuing with payload:", saveResult);
+          // Don't block - payload will be used as fallback
+        }
+      }
+
       // Web platform: Navigate to print route with payload
       if (Platform.OS === "web") {
-        // Best-effort save to Firestore (don't block navigation if it fails)
-        try {
-          await saveTeeSheetToFirestore();
-        } catch (saveError) {
-          console.warn("[PDF Export] Best-effort save failed, using payload fallback:", saveError);
-        }
-
         // Navigate with payload as fallback
         router.push({
           pathname: "/print/tee-sheet",
