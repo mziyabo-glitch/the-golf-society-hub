@@ -133,6 +133,7 @@ export async function hasActiveSociety(): Promise<boolean> {
 export type MemberData = {
   id: string;
   name: string;
+  email?: string; // For auth-to-member mapping
   handicap?: number;
   sex?: "male" | "female";
   roles?: string[];
@@ -141,9 +142,13 @@ export type MemberData = {
 /**
  * Ensure valid current member exists
  * Self-healing function that:
- * - Creates fallback member if members array is empty
+ * - Removes ghost "Owner" member if other real members exist
  * - Sets currentUserId to first member if missing or invalid
+ * - Tries to match currentUserId by email if not found by id
  * - Returns {members, currentUserId}
+ * 
+ * NOTE: We do NOT create fallback members anymore. If members array is empty,
+ * the app should show onboarding flow to create a real member.
  */
 export async function ensureValidCurrentMember(): Promise<{
   members: MemberData[];
@@ -160,58 +165,61 @@ export async function ensureValidCurrentMember(): Promise<{
     const session = await getSession();
     let currentUserId = session.currentUserId;
     
-    // If members array is empty, create fallback owner member
-    // NOTE: This is a recovery mechanism only - in normal flow, the society creator
-    // provides their name during onboarding. "Owner" is a placeholder that should
-    // be changed by the user via Profile screen.
-    if (members.length === 0) {
-      const fallbackMember: MemberData = {
-        id: Date.now().toString(),
-        name: "Owner", // Placeholder - user should update via Profile
-        roles: ["captain", "handicapper", "member"], // Use lowercase role names
-        sex: "male", // Default sex for fallback member
-      };
-      
-      members = [fallbackMember];
+    // Run healing/migration to remove ghost "Owner" member
+    const healed = await healGhostOwnerMember(members);
+    if (healed.changed) {
+      members = healed.members;
       await AsyncStorage.setItem(STORAGE_KEYS.MEMBERS, JSON.stringify(members));
-      
-      // Set as current user
-      await setCurrentUserId(fallbackMember.id);
-      currentUserId = fallbackMember.id;
-      
-      // Set session to admin for initial setup
-      const { setRole } = await import("./session");
-      await setRole("admin");
-      
-      console.log("Created fallback owner member:", fallbackMember);
-    } else {
-      // Ensure all members have roles array (default to ["Member"])
-      // Also migrate: add sex field if missing (default to "male" for backward compatibility)
-      let needsSave = false;
-      members = members.map((m) => {
-        let updated = { ...m };
-        if (!updated.roles || updated.roles.length === 0) {
-          needsSave = true;
-          updated.roles = ["Member"];
-        }
-        // Migration: add sex if missing (will be required in UI, but default for existing records)
-        if (!updated.sex) {
-          needsSave = true;
-          updated.sex = "male"; // Default for existing records
-        }
-        return updated;
-      });
-      if (needsSave) {
-        await AsyncStorage.setItem(STORAGE_KEYS.MEMBERS, JSON.stringify(members));
+      console.log("[Storage] Removed ghost Owner member during healing");
+    }
+    
+    // If members array is empty, just return empty - let onboarding handle it
+    if (members.length === 0) {
+      console.log("[Storage] No members found - app should show onboarding");
+      return { members: [], currentUserId: null };
+    }
+    
+    // Ensure all members have roles array (default to ["member"])
+    // Also migrate: add sex field if missing (default to "male" for backward compatibility)
+    let needsSave = false;
+    members = members.map((m) => {
+      let updated = { ...m };
+      if (!updated.roles || updated.roles.length === 0) {
+        needsSave = true;
+        updated.roles = ["member"];
       }
-      
-      // If currentUserId is missing or points to non-existent member, set to first member
-      if (!currentUserId || !members.find((m) => m.id === currentUserId)) {
+      // Normalize roles to lowercase
+      const normalizedRoles = updated.roles.map((r) => r.toLowerCase());
+      if (JSON.stringify(normalizedRoles) !== JSON.stringify(updated.roles)) {
+        needsSave = true;
+        updated.roles = normalizedRoles;
+      }
+      // Migration: add sex if missing (will be required in UI, but default for existing records)
+      if (!updated.sex) {
+        needsSave = true;
+        updated.sex = "male"; // Default for existing records
+      }
+      return updated;
+    });
+    if (needsSave) {
+      await AsyncStorage.setItem(STORAGE_KEYS.MEMBERS, JSON.stringify(members));
+    }
+    
+    // If currentUserId is missing or points to non-existent member
+    if (!currentUserId || !members.find((m) => m.id === currentUserId)) {
+      // Try to match by email (case-insensitive) if session has email info
+      const matchedMember = await tryMatchMemberByEmail(members);
+      if (matchedMember) {
+        await setCurrentUserId(matchedMember.id);
+        currentUserId = matchedMember.id;
+        console.log("[Storage] Matched currentUserId by email:", matchedMember.id);
+      } else {
+        // Fall back to first member
         const firstMember = members[0];
         if (firstMember) {
           await setCurrentUserId(firstMember.id);
           currentUserId = firstMember.id;
-          console.log("Set currentUserId to first member:", firstMember.id);
+          console.log("[Storage] Set currentUserId to first member:", firstMember.id);
         }
       }
     }
@@ -220,6 +228,131 @@ export async function ensureValidCurrentMember(): Promise<{
   } catch (error) {
     console.error("Error ensuring valid current member:", error);
     return { members: [], currentUserId: null };
+  }
+}
+
+/**
+ * Heal/migrate ghost "Owner" member
+ * If a member named "Owner" exists AND there are other real members, remove "Owner".
+ * Also removes "Owner" references from tee sheet groups.
+ */
+async function healGhostOwnerMember(members: MemberData[]): Promise<{
+  members: MemberData[];
+  changed: boolean;
+}> {
+  // Find "Owner" member (case-insensitive)
+  const ownerIdx = members.findIndex(
+    (m) => m.name.toLowerCase() === "owner"
+  );
+  
+  if (ownerIdx === -1) {
+    return { members, changed: false };
+  }
+  
+  // Only remove if there are other real members
+  if (members.length <= 1) {
+    console.log("[Storage] Owner is the only member, not removing");
+    return { members, changed: false };
+  }
+  
+  const ownerMember = members[ownerIdx];
+  console.log("[Storage] Removing ghost Owner member:", ownerMember.id);
+  
+  // Remove Owner from members array
+  const filteredMembers = members.filter((_, idx) => idx !== ownerIdx);
+  
+  // Also clean up Owner from any saved tee sheet groups
+  await cleanupOwnerFromEvents(ownerMember.id);
+  
+  return { members: filteredMembers, changed: true };
+}
+
+/**
+ * Remove "Owner" member ID from all event tee sheet groups
+ */
+async function cleanupOwnerFromEvents(ownerId: string): Promise<void> {
+  try {
+    const eventsData = await AsyncStorage.getItem(STORAGE_KEYS.EVENTS);
+    if (!eventsData) return;
+    
+    const events = JSON.parse(eventsData);
+    let changed = false;
+    
+    for (const event of events) {
+      // Clean up teeSheet groups
+      if (event.teeSheet?.groups) {
+        for (const group of event.teeSheet.groups) {
+          if (group.players?.includes(ownerId)) {
+            group.players = group.players.filter((id: string) => id !== ownerId);
+            changed = true;
+          }
+        }
+      }
+      
+      // Clean up playerIds
+      if (event.playerIds?.includes(ownerId)) {
+        event.playerIds = event.playerIds.filter((id: string) => id !== ownerId);
+        changed = true;
+      }
+    }
+    
+    if (changed) {
+      await AsyncStorage.setItem(STORAGE_KEYS.EVENTS, JSON.stringify(events));
+      console.log("[Storage] Cleaned up Owner from event tee sheets");
+    }
+  } catch (error) {
+    console.error("[Storage] Error cleaning up Owner from events:", error);
+  }
+}
+
+/**
+ * Try to match current user to a member by email
+ * Used when currentUserId doesn't match any member.id
+ */
+async function tryMatchMemberByEmail(
+  members: MemberData[]
+): Promise<MemberData | null> {
+  try {
+    // Check if we have a stored user email to match against
+    const userEmailData = await AsyncStorage.getItem("session.userEmail");
+    if (!userEmailData) return null;
+    
+    const userEmail = userEmailData.toLowerCase().trim();
+    if (!userEmail) return null;
+    
+    // Find member with matching email (case-insensitive)
+    const matched = members.find(
+      (m) => m.email && m.email.toLowerCase().trim() === userEmail
+    );
+    
+    return matched || null;
+  } catch (error) {
+    console.error("[Storage] Error matching member by email:", error);
+    return null;
+  }
+}
+
+/**
+ * Set user email for auth-to-member mapping
+ */
+export async function setUserEmail(email: string): Promise<void> {
+  try {
+    await AsyncStorage.setItem("session.userEmail", email);
+    console.log("[Storage] Saved user email for member matching");
+  } catch (error) {
+    console.error("[Storage] Error saving user email:", error);
+  }
+}
+
+/**
+ * Get user email
+ */
+export async function getUserEmail(): Promise<string | null> {
+  try {
+    return await AsyncStorage.getItem("session.userEmail");
+  } catch (error) {
+    console.error("[Storage] Error getting user email:", error);
+    return null;
   }
 }
 

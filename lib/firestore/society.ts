@@ -98,8 +98,11 @@ export async function getSociety(): Promise<SocietyData | null> {
 
 /**
  * Get all members from Firestore (with AsyncStorage fallback)
+ * Automatically filters out ghost "Owner" member if other real members exist
  */
 export async function getMembers(): Promise<MemberData[]> {
+  let members: MemberData[] = [];
+  
   try {
     if (isFirebaseConfigured()) {
       const societyId = getActiveSocietyId();
@@ -107,41 +110,81 @@ export async function getMembers(): Promise<MemberData[]> {
       const membersSnap = await getDocs(membersRef);
 
       if (!membersSnap.empty) {
-        const members: MemberData[] = membersSnap.docs.map((doc) => {
-          const data = doc.data();
+        members = membersSnap.docs.map((docSnap) => {
+          const data = docSnap.data();
           return {
-            id: doc.id,
+            id: docSnap.id,
             name: data.name || "Unknown",
+            email: data.email,
             handicap: data.handicap,
             sex: data.sex || "male",
-            roles: data.roles || ["member"],
+            roles: normalizeRoles(data.roles),
             paid: data.paid,
             amountPaid: data.amountPaid,
             paidDate: data.paidDate,
           };
         });
         console.log(`[Firestore] Loaded ${members.length} members`);
-        return members;
+      } else {
+        console.log("[Firestore] No members found, falling back to AsyncStorage");
       }
-      console.log("[Firestore] No members found, falling back to AsyncStorage");
     }
   } catch (error) {
     console.warn("[Firestore] Error reading members:", error);
   }
 
-  // Fallback to AsyncStorage
-  try {
-    const localData = await AsyncStorage.getItem(STORAGE_KEYS.MEMBERS);
-    if (localData) {
-      const members: MemberData[] = JSON.parse(localData);
-      console.log(`[AsyncStorage] Loaded ${members.length} members from local storage`);
-      return members;
+  // Fallback to AsyncStorage if no Firestore members
+  if (members.length === 0) {
+    try {
+      const localData = await AsyncStorage.getItem(STORAGE_KEYS.MEMBERS);
+      if (localData) {
+        members = JSON.parse(localData);
+        // Normalize roles for local data
+        members = members.map(m => ({
+          ...m,
+          roles: normalizeRoles(m.roles),
+        }));
+        console.log(`[AsyncStorage] Loaded ${members.length} members from local storage`);
+      }
+    } catch (error) {
+      console.warn("[AsyncStorage] Error reading members:", error);
     }
-  } catch (error) {
-    console.warn("[AsyncStorage] Error reading members:", error);
   }
 
-  return [];
+  // Filter out ghost "Owner" member if other real members exist
+  return filterGhostOwner(members);
+}
+
+/**
+ * Normalize role strings to lowercase
+ */
+function normalizeRoles(roles: unknown): string[] {
+  if (!Array.isArray(roles)) return ["member"];
+  return roles.map((r) => (typeof r === "string" ? r.toLowerCase() : "member"));
+}
+
+/**
+ * Filter out ghost "Owner" member if other real members exist
+ */
+function filterGhostOwner(members: MemberData[]): MemberData[] {
+  if (members.length <= 1) return members;
+  
+  const hasOwner = members.some(
+    (m) => m.name.toLowerCase() === "owner"
+  );
+  
+  if (!hasOwner) return members;
+  
+  // Remove Owner since we have other real members
+  const filtered = members.filter(
+    (m) => m.name.toLowerCase() !== "owner"
+  );
+  
+  if (filtered.length < members.length) {
+    console.log("[Firestore] Filtered out ghost Owner member");
+  }
+  
+  return filtered;
 }
 
 // ============================================================================

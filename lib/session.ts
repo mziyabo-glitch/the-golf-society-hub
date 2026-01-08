@@ -7,6 +7,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 
 const SESSION_USER_ID_KEY = "session.currentUserId";
 const SESSION_ROLE_KEY = "session.role";
+const SESSION_EMAIL_KEY = "session.userEmail";
 
 // Legacy keys to migrate from (one-time migration)
 const LEGACY_USER_KEY = "GSOCIETY_CURRENT_USER";
@@ -17,6 +18,7 @@ export type UserRole = "admin" | "member";
 export type Session = {
   currentUserId: string | null;
   role: UserRole;
+  email?: string | null;
 };
 
 let migrationDone = false;
@@ -65,7 +67,7 @@ async function migrateLegacySession(): Promise<void> {
 }
 
 /**
- * Get current session (currentUserId and role)
+ * Get current session (currentUserId, role, and email)
  * Always reads from AsyncStorage (single source of truth)
  */
 export async function getSession(): Promise<Session> {
@@ -75,16 +77,19 @@ export async function getSession(): Promise<Session> {
   try {
     const currentUserId = await AsyncStorage.getItem(SESSION_USER_ID_KEY);
     const role = await AsyncStorage.getItem(SESSION_ROLE_KEY);
+    const email = await AsyncStorage.getItem(SESSION_EMAIL_KEY);
 
     return {
       currentUserId: currentUserId || null,
       role: (role === "admin" || role === "member" ? role : "member") as UserRole,
+      email: email || null,
     };
   } catch (error) {
     console.error("Error loading session:", error);
     return {
       currentUserId: null,
       role: "member",
+      email: null,
     };
   }
 }
@@ -114,11 +119,23 @@ export async function setRole(role: UserRole): Promise<void> {
 }
 
 /**
+ * Set user email (for auth-to-member matching)
+ */
+export async function setEmail(email: string): Promise<void> {
+  try {
+    await AsyncStorage.setItem(SESSION_EMAIL_KEY, email.toLowerCase().trim());
+  } catch (error) {
+    console.error("Error saving email:", error);
+    throw error;
+  }
+}
+
+/**
  * Clear session (logout)
  */
 export async function clearSession(): Promise<void> {
   try {
-    await AsyncStorage.multiRemove([SESSION_USER_ID_KEY, SESSION_ROLE_KEY]);
+    await AsyncStorage.multiRemove([SESSION_USER_ID_KEY, SESSION_ROLE_KEY, SESSION_EMAIL_KEY]);
   } catch (error) {
     console.error("Error clearing session:", error);
     throw error;

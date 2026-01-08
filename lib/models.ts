@@ -26,6 +26,7 @@ export type TeeSet = {
 export type MemberData = {
   id: string;
   name: string;
+  email?: string; // For auth-to-member mapping
   handicap?: number;
   sex?: "male" | "female";
   roles?: string[];

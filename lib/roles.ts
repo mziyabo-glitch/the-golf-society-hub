@@ -71,22 +71,27 @@ async function migrateMemberRoles(): Promise<void> {
 /**
  * SYNC helper: Check if a member object has a specific role.
  * Use this when you already have a MemberData object.
+ * Role matching is case-insensitive.
  * 
  * Example: hasRole(member, "captain")
  */
 export function hasRole(member: MemberData | null, role: MemberRole): boolean {
   if (!member) return false;
   if (!member.roles || member.roles.length === 0) return role === "member";
-  return member.roles.includes(role);
+  // Normalize both sides to lowercase for comparison
+  const normalizedRole = role.toLowerCase();
+  return member.roles.some((r) => r.toLowerCase() === normalizedRole);
 }
 
 /**
  * Check if member is admin-like (captain OR legacy admin flag)
+ * Role matching is case-insensitive.
  */
 export function isAdminLike(member: MemberData | null): boolean {
   if (!member) return false;
   if (!member.roles || member.roles.length === 0) return false;
-  return member.roles.includes("captain") || member.roles.includes("admin");
+  const lowerRoles = member.roles.map((r) => r.toLowerCase());
+  return lowerRoles.includes("captain") || lowerRoles.includes("admin");
 }
 
 /**
@@ -146,17 +151,20 @@ export async function getCurrentMember(): Promise<MemberData | null> {
 }
 
 /**
- * Get current user's roles
+ * Get current user's roles (normalized to lowercase)
  */
 export async function getCurrentUserRoles(): Promise<string[]> {
   const member = await getCurrentMember();
   if (!member) return ["member"];
-  return member.roles && member.roles.length > 0 ? member.roles : ["member"];
+  if (!member.roles || member.roles.length === 0) return ["member"];
+  // Normalize to lowercase
+  return member.roles.map((r) => r.toLowerCase());
 }
 
 /**
  * ASYNC helper: Check if the current logged-in user has a specific role.
  * This loads the current user from session and checks their roles.
+ * Role matching is case-insensitive.
  * 
  * Use this for permission checks in screens/components.
  * Example: if (await currentUserHasRole("captain")) { ... }
@@ -165,15 +173,18 @@ export async function getCurrentUserRoles(): Promise<string[]> {
  */
 export async function currentUserHasRole(role: MemberRole): Promise<boolean> {
   const roles = await getCurrentUserRoles();
-  return roles.includes(role);
+  const normalizedRole = role.toLowerCase();
+  return roles.some((r) => r.toLowerCase() === normalizedRole);
 }
 
 /**
  * Check if user has any of the specified roles
+ * Role matching is case-insensitive.
  */
 export async function hasAnyRole(rolesToCheck: MemberRole[]): Promise<boolean> {
   const roles = await getCurrentUserRoles();
-  return rolesToCheck.some((role) => roles.includes(role));
+  const lowerRoles = roles.map((r) => r.toLowerCase());
+  return rolesToCheck.some((role) => lowerRoles.includes(role.toLowerCase()));
 }
 
 /**
