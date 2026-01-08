@@ -1,46 +1,12 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "buildCommand": "npx expo export --platform web",
+  "buildCommand": "npm run build",
   "outputDirectory": "dist",
   "framework": null,
-  "cleanUrls": true,
-  "trailingSlash": false,
   "rewrites": [
     {
-      "source": "/event/:id/players",
-      "destination": "/event/[id]/players.html"
-    },
-    {
-      "source": "/event/:id/results",
-      "destination": "/event/[id]/results.html"
-    },
-    {
-      "source": "/event/:id",
-      "destination": "/event/[id].html"
-    },
-    {
-      "source": "/((?!_expo|assets|favicon\\.ico|.*\\.html$).*)",
+      "source": "/(.*)",
       "destination": "/index.html"
-    }
-  ],
-  "headers": [
-    {
-      "source": "/_expo/static/(.*)",
-      "headers": [
-        {
-          "key": "Cache-Control",
-          "value": "public, max-age=31536000, immutable"
-        }
-      ]
-    },
-    {
-      "source": "/assets/(.*)",
-      "headers": [
-        {
-          "key": "Cache-Control",
-          "value": "public, max-age=31536000, immutable"
-        }
-      ]
     }
   ]
 }
