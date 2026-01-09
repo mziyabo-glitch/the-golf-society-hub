@@ -7,10 +7,21 @@
  * WEB-ONLY PERSISTENCE:
  * - Active society ID is stored in localStorage (via active-society-web.ts)
  * - All other business data comes from Firestore only
+ * 
+ * FIREBASE AUTH:
+ * - Firebase Auth is now integrated for security rules
+ * - Member documents are keyed by auth.uid for consistent access control
  */
 
 import { initializeApp, getApps, getApp } from "firebase/app";
 import { getFirestore } from "firebase/firestore";
+import { 
+  getAuth, 
+  onAuthStateChanged, 
+  signInAnonymously,
+  type Auth, 
+  type User 
+} from "firebase/auth";
 import { Platform } from "react-native";
 import { getActiveSocietyIdWeb } from "./active-society-web";
 
@@ -48,8 +59,107 @@ const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
 // Export Firestore database instance
 export const db = getFirestore(app);
 
+// Export Firebase Auth instance
+export const auth: Auth = getAuth(app);
+
 // Default society ID for migration/testing
 const DEFAULT_SOCIETY_ID = "m4-golf-society";
+
+// ============================================================================
+// AUTH STATE MANAGEMENT
+// ============================================================================
+
+// Current authenticated user (cached in memory)
+let currentUser: User | null = null;
+let authStateInitialized = false;
+let authStatePromise: Promise<User | null> | null = null;
+
+/**
+ * Get the current authenticated user
+ * Returns null if not signed in
+ */
+export function getCurrentUser(): User | null {
+  return currentUser;
+}
+
+/**
+ * Get the current user's UID
+ * Returns null if not signed in
+ */
+export function getCurrentUserUid(): string | null {
+  return currentUser?.uid ?? null;
+}
+
+/**
+ * Check if a user is currently signed in
+ */
+export function isUserSignedIn(): boolean {
+  return currentUser !== null;
+}
+
+/**
+ * Wait for auth state to be initialized
+ * Returns the current user once auth state is determined
+ */
+export function waitForAuthState(): Promise<User | null> {
+  if (authStateInitialized) {
+    return Promise.resolve(currentUser);
+  }
+  
+  if (authStatePromise) {
+    return authStatePromise;
+  }
+  
+  authStatePromise = new Promise((resolve) => {
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      currentUser = user;
+      authStateInitialized = true;
+      unsubscribe();
+      resolve(user);
+    });
+  });
+  
+  return authStatePromise;
+}
+
+/**
+ * Sign in anonymously if not already signed in
+ * Used for initial app access before full auth is implemented
+ */
+export async function ensureSignedIn(): Promise<User> {
+  await waitForAuthState();
+  
+  if (currentUser) {
+    return currentUser;
+  }
+  
+  // Sign in anonymously
+  try {
+    const result = await signInAnonymously(auth);
+    currentUser = result.user;
+    if (__DEV__) {
+      console.log("[Auth] Signed in anonymously:", result.user.uid);
+    }
+    return result.user;
+  } catch (error) {
+    console.error("[Auth] Failed to sign in anonymously:", error);
+    throw error;
+  }
+}
+
+/**
+ * Subscribe to auth state changes
+ * Returns an unsubscribe function
+ */
+export function subscribeToAuthState(
+  callback: (user: User | null) => void
+): () => void {
+  return onAuthStateChanged(auth, (user) => {
+    currentUser = user;
+    authStateInitialized = true;
+    callback(user);
+  });
+}
 
 // ============================================================================
 // CONFIGURATION CHECKS

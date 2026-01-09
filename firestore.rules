@@ -1,0 +1,220 @@
+rules_version = '2';
+
+/**
+ * Firestore Security Rules for The Golf Society Hub
+ * 
+ * Collections structure:
+ * - societies/{societyId}
+ * - societies/{societyId}/members/{memberId}  (member.uid links to auth.uid)
+ * - societies/{societyId}/events/{eventId}
+ * - societies/{societyId}/courses/{courseId}
+ * - societies/{societyId}/teesets/{teeSetId}
+ * 
+ * Member document fields:
+ * - uid: string (Firebase Auth UID, links member to auth user)
+ * - name: string
+ * - email: string (optional)
+ * - roles: string[] (e.g., ["member"], ["captain", "admin"])
+ * - handicap: number (optional)
+ * - sex: "male" | "female"
+ * - status: "active" | "inactive"
+ */
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // ==========================================================================
+    // HELPER FUNCTIONS
+    // ==========================================================================
+    
+    /**
+     * Check if the user is signed in
+     */
+    function isSignedIn() {
+      return request.auth != null;
+    }
+    
+    /**
+     * Get the current user's UID
+     */
+    function currentUserUid() {
+      return request.auth.uid;
+    }
+    
+    /**
+     * Get the member document for the current user in a society
+     * Uses the uid field in member docs to match against auth.uid
+     */
+    function getMemberDocByUid(societyId) {
+      return getAfter(/databases/$(database)/documents/societies/$(societyId)/members/$(currentUserUid()));
+    }
+    
+    /**
+     * Check if the current user is a member of the society
+     * A user is a member if a member document with their uid exists and is active
+     */
+    function isSocietyMember(societyId) {
+      return isSignedIn() 
+        && exists(/databases/$(database)/documents/societies/$(societyId)/members/$(currentUserUid()))
+        && get(/databases/$(database)/documents/societies/$(societyId)/members/$(currentUserUid())).data.status == "active";
+    }
+    
+    /**
+     * Check if the current user has a specific role in the society
+     * Roles are stored as a lowercase string array in the member document
+     */
+    function hasRole(societyId, roleName) {
+      return isSocietyMember(societyId)
+        && roleName in get(/databases/$(database)/documents/societies/$(societyId)/members/$(currentUserUid())).data.roles;
+    }
+    
+    /**
+     * Check if the current user is an admin or captain
+     */
+    function isAdminOrCaptain(societyId) {
+      return hasRole(societyId, "admin") || hasRole(societyId, "captain");
+    }
+    
+    /**
+     * Check if the current user is the treasurer
+     */
+    function isTreasurer(societyId) {
+      return hasRole(societyId, "treasurer");
+    }
+    
+    /**
+     * Check if the current user can manage members (captain/admin/secretary)
+     */
+    function canManageMembers(societyId) {
+      return hasRole(societyId, "admin") 
+        || hasRole(societyId, "captain") 
+        || hasRole(societyId, "secretary");
+    }
+    
+    /**
+     * Check if the member document ID matches the current user's UID
+     * Used for self-profile updates
+     */
+    function isSelf(memberId) {
+      return isSignedIn() && memberId == currentUserUid();
+    }
+    
+    /**
+     * Check if the user is only updating allowed fields (not roles)
+     * Members can update their own profile fields but not roles
+     */
+    function onlyUpdatingSelfFields() {
+      // Fields members can update on their own profile
+      let allowedFields = ['name', 'handicap', 'sex', 'email', 'updatedAt'];
+      let changedFields = request.resource.data.diff(resource.data).affectedKeys();
+      return changedFields.hasOnly(allowedFields);
+    }
+    
+    /**
+     * Validate member data structure
+     */
+    function isValidMemberData() {
+      let data = request.resource.data;
+      return data.name is string
+        && data.name.size() >= 2
+        && data.roles is list
+        && data.status in ["active", "inactive"];
+    }
+    
+    // ==========================================================================
+    // SOCIETY RULES
+    // ==========================================================================
+    
+    match /societies/{societyId} {
+      // Any authenticated user can read societies they're a member of
+      allow read: if isSocietyMember(societyId);
+      
+      // Only admin/captain can update society settings
+      allow update: if isAdminOrCaptain(societyId);
+      
+      // Only admin can create or delete societies (future: adjust for onboarding)
+      allow create: if isSignedIn();
+      allow delete: if isAdminOrCaptain(societyId);
+      
+      // ========================================================================
+      // MEMBERS SUBCOLLECTION
+      // ========================================================================
+      
+      match /members/{memberId} {
+        // Members can read all members in their society
+        allow read: if isSocietyMember(societyId);
+        
+        // Self-updates: members can update their own profile (except roles)
+        // Their member doc ID must match their auth UID
+        allow update: if isSelf(memberId) 
+          && onlyUpdatingSelfFields() 
+          && isValidMemberData();
+        
+        // Admin/Captain/Secretary can create, update, delete any member
+        allow create: if canManageMembers(societyId) && isValidMemberData();
+        allow update: if canManageMembers(societyId) && isValidMemberData();
+        allow delete: if canManageMembers(societyId);
+        
+        // Special case: first member creation during society setup
+        // Allow any authenticated user to create the first member (themselves)
+        // This is needed for society onboarding
+        allow create: if isSignedIn() 
+          && memberId == currentUserUid()
+          && isValidMemberData();
+      }
+      
+      // ========================================================================
+      // EVENTS SUBCOLLECTION
+      // ========================================================================
+      
+      match /events/{eventId} {
+        // Members can read all events in their society
+        allow read: if isSocietyMember(societyId);
+        
+        // Admin/Captain can create, update, delete events
+        allow create: if isAdminOrCaptain(societyId);
+        allow update: if isAdminOrCaptain(societyId);
+        allow delete: if isAdminOrCaptain(societyId);
+        
+        // Handicapper can also update events (for tee sheet management)
+        allow update: if hasRole(societyId, "handicapper");
+      }
+      
+      // ========================================================================
+      // COURSES SUBCOLLECTION
+      // ========================================================================
+      
+      match /courses/{courseId} {
+        // Members can read all courses
+        allow read: if isSocietyMember(societyId);
+        
+        // Admin/Captain can manage courses
+        allow create, update, delete: if isAdminOrCaptain(societyId);
+        
+        // Tee sets within courses
+        match /teeSets/{teeSetId} {
+          allow read: if isSocietyMember(societyId);
+          allow create, update, delete: if isAdminOrCaptain(societyId);
+        }
+      }
+      
+      // ========================================================================
+      // TEESETS SUBCOLLECTION (if stored at society level)
+      // ========================================================================
+      
+      match /teesets/{teeSetId} {
+        allow read: if isSocietyMember(societyId);
+        allow create, update, delete: if isAdminOrCaptain(societyId);
+      }
+    }
+    
+    // ==========================================================================
+    // DENY ALL OTHER ACCESS
+    // ==========================================================================
+    
+    // Default deny for any other paths
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

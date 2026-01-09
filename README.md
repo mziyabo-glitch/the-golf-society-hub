@@ -257,6 +257,52 @@ The app includes an ErrorBoundary that catches JavaScript errors and displays a 
 - Provides "Try Again" button to recover
 - In development, shows error details and stack trace
 
+## Firestore Security Rules
+
+The app uses Firebase Firestore with proper security rules. See `firestore.rules` for the full implementation.
+
+### Deploying Security Rules
+
+Deploy security rules to Firebase:
+
+```bash
+# Install Firebase CLI if not already installed
+npm install -g firebase-tools
+
+# Login to Firebase
+firebase login
+
+# Deploy only Firestore rules
+firebase deploy --only firestore:rules
+```
+
+### Security Rule Summary
+
+| Collection | Read | Create | Update | Delete |
+|------------|------|--------|--------|--------|
+| `societies/{societyId}` | Members only | Any authenticated | Captain/Admin | Captain/Admin |
+| `societies/{societyId}/members/{memberId}` | Members only | Captain/Admin/Secretary | Self (own profile, not roles) or Captain/Admin/Secretary | Captain/Admin/Secretary |
+| `societies/{societyId}/events/{eventId}` | Members only | Captain/Admin | Captain/Admin/Handicapper | Captain/Admin |
+| `societies/{societyId}/courses/{courseId}` | Members only | Captain/Admin | Captain/Admin | Captain/Admin |
+| `societies/{societyId}/teesets/{teeSetId}` | Members only | Captain/Admin | Captain/Admin | Captain/Admin |
+
+### Key Security Concepts
+
+- **Authentication Required**: All reads/writes require Firebase Auth sign-in
+- **Membership Verification**: Users must be members of a society to access its data
+- **Role-Based Access**: Roles (captain, admin, treasurer, secretary, handicapper) control write permissions
+- **Self-Profile Updates**: Members can update their own profile fields (name, handicap, email) but not their roles
+- **Member Document ID**: Member documents should be keyed by `auth.uid` for security rule verification
+
+### Helper Functions in Rules
+
+- `isSignedIn()` - Check if user is authenticated
+- `isSocietyMember(societyId)` - Check if user is a member of the society
+- `hasRole(societyId, roleName)` - Check if user has a specific role
+- `isAdminOrCaptain(societyId)` - Check for admin/captain privileges
+- `isSelf(memberId)` - Check if the document ID matches the user's auth UID
+- `onlyUpdatingSelfFields()` - Validate self-profile updates don't include roles
+
 ## Learn more
 
 - [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).

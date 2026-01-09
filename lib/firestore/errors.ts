@@ -162,7 +162,51 @@ export function showFirestoreError(error: FirestoreError): void {
 }
 
 /**
+ * Check if an error is a permission denied error
+ */
+export function isPermissionDeniedError(error: FirestoreError | unknown): boolean {
+  if (typeof error === "object" && error !== null && "code" in error) {
+    return (error as FirestoreError).code === "PERMISSION_DENIED";
+  }
+  
+  if (error instanceof Error) {
+    const errorString = error.message.toLowerCase();
+    return errorString.includes("permission-denied") || errorString.includes("permission denied");
+  }
+  
+  return false;
+}
+
+/**
+ * Get user-friendly message for permission denied errors
+ */
+export function getPermissionDeniedMessage(operation: string): string {
+  switch (operation.toLowerCase()) {
+    case "listmembers":
+    case "getmembers":
+    case "subscribemembers":
+      return "You don't have access to view members in this society.";
+    case "upsertmember":
+    case "savemember":
+      return "You don't have permission to add or edit members.";
+    case "deletemember":
+      return "You don't have permission to remove members.";
+    case "listevents":
+    case "getevents":
+      return "You don't have access to view events in this society.";
+    case "createevent":
+    case "updateevent":
+      return "You don't have permission to create or edit events.";
+    case "getsociety":
+      return "You don't have access to this society.";
+    default:
+      return "You don't have permission to perform this action.";
+  }
+}
+
+/**
  * Show error and also log it
+ * For permission denied errors, provides a more helpful message
  */
 export function handleFirestoreError(
   error: unknown,
@@ -172,6 +216,11 @@ export function handleFirestoreError(
 ): FirestoreError {
   const parsed = parseFirestoreError(error, operation, path);
   logFirestoreError(parsed);
+  
+  // Enhance permission denied messages
+  if (parsed.code === "PERMISSION_DENIED") {
+    parsed.message = getPermissionDeniedMessage(operation);
+  }
   
   if (showAlert) {
     showFirestoreError(parsed);

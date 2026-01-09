@@ -8,7 +8,7 @@
 import { canManageMembers, normalizeMemberRoles, normalizeSessionRole } from "@/lib/permissions";
 import { getCurrentUserRoles } from "@/lib/roles";
 import { getSession } from "@/lib/session";
-import { getActiveSocietyId, isFirebaseConfigured } from "@/lib/firebase";
+import { getActiveSocietyId, isFirebaseConfigured, ensureSignedIn, getCurrentUserUid } from "@/lib/firebase";
 import { useFocusEffect } from "@react-navigation/native";
 import { useRouter } from "expo-router";
 import { useCallback, useState } from "react";
@@ -34,6 +34,17 @@ export default function AddMemberScreen() {
   );
 
   const loadSession = async () => {
+    // Ensure user is signed in (Firebase Auth)
+    try {
+      await ensureSignedIn();
+    } catch (error) {
+      console.error("[AddMember] Failed to sign in:", error);
+      Alert.alert("Authentication Error", "Failed to authenticate. Please try again.", [
+        { text: "OK", onPress: () => router.back() },
+      ]);
+      return;
+    }
+    
     // Get active society ID
     const activeSocietyId = getActiveSocietyId();
     setSocietyId(activeSocietyId);
@@ -84,6 +95,13 @@ export default function AddMemberScreen() {
     setSaving(true);
 
     try {
+      // Ensure we have an authenticated user
+      const authUid = getCurrentUserUid();
+      if (!authUid) {
+        Alert.alert("Not Signed In", "Please wait while we sign you in...");
+        await ensureSignedIn();
+      }
+      
       // Check if this is the first member
       const existingMembers = await listMembers(societyId);
       const isFirstMember = existingMembers.length === 0;
@@ -94,9 +112,14 @@ export default function AddMemberScreen() {
         ? ["captain", "handicapper", "member"] 
         : ["member"];
 
+      // For first member OR if they're adding themselves, use auth.uid as doc ID
+      // This ensures security rules can verify member identity
+      const useAuthUidAsId = isFirstMember;
+      const memberId = useAuthUidAsId ? getCurrentUserUid() || `member-${Date.now()}` : `member-${Date.now()}`;
+      
       // Create new member with unique ID
       const newMember: MemberData = {
-        id: `member-${Date.now()}`,
+        id: memberId,
         name: memberName.trim(),
         handicap: handicap.trim() ? parseFloat(handicap.trim()) : undefined,
         sex: sex as "male" | "female",
@@ -104,7 +127,8 @@ export default function AddMemberScreen() {
       };
 
       // Save to Firestore using upsertMember
-      const result = await upsertMember(newMember, societyId);
+      // Pass useAuthUidAsId to store uid field and link to auth user
+      const result = await upsertMember(newMember, societyId, useAuthUidAsId);
       
       if (!result.success) {
         console.error("[AddMember] Failed to save member:", result.error, {
@@ -118,10 +142,14 @@ export default function AddMemberScreen() {
         return;
       }
       
+      // Use the returned memberId (which may have been set to auth.uid)
+      const savedMemberId = result.memberId || newMember.id;
+      
       console.log("[AddMember] Member saved to Firestore:", {
-        memberId: newMember.id,
+        memberId: savedMemberId,
         societyId,
         name: newMember.name,
+        authUid: getCurrentUserUid(),
       });
       
       // If first member OR no current user set, set as current user and admin session
@@ -129,7 +157,7 @@ export default function AddMemberScreen() {
       if (isFirstMember || !session.currentUserId) {
         const { setCurrentUserId: setSessionUserId, setRole: setSessionRole } = await import("@/lib/session");
         if (!session.currentUserId) {
-          await setSessionUserId(newMember.id);
+          await setSessionUserId(savedMemberId);
         }
         if (isFirstMember) {
           await setSessionRole("admin");

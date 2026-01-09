@@ -25,6 +25,7 @@ export type TeeSet = {
 
 export type MemberData = {
   id: string;
+  uid?: string; // Firebase Auth UID - links member doc to auth user for security rules
   name: string;
   email?: string; // For auth-to-member mapping
   handicap?: number;

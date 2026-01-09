@@ -31,7 +31,7 @@ import {
   serverTimestamp,
   Unsubscribe,
 } from "firebase/firestore";
-import { db, getActiveSocietyId, isFirebaseConfigured, logFirestoreOp } from "../firebase";
+import { db, getActiveSocietyId, isFirebaseConfigured, logFirestoreOp, getCurrentUserUid } from "../firebase";
 import { checkOperationReady, logDataSanity, handleFirestoreError } from "./errors";
 import type { MemberData } from "../models";
 
@@ -41,6 +41,7 @@ import type { MemberData } from "../models";
 
 export interface FirestoreMember {
   id: string;
+  uid?: string; // Firebase Auth UID - links member to auth user
   name: string;
   handicap?: number;
   sex?: "male" | "female";
@@ -239,13 +240,28 @@ export function subscribeMembers(
 /**
  * Create or update a member
  * Uses setDoc with merge:true for upsert behavior
+ * 
+ * IMPORTANT: For new members, uses auth.uid as the document ID
+ * This allows security rules to verify member identity via request.auth.uid
+ * 
+ * @param member - Member data to save
+ * @param societyId - Society ID (uses active society if not provided)
+ * @param useAuthUidAsId - If true and creating new member, use auth.uid as doc ID
  */
 export async function upsertMember(
   member: MemberData,
-  societyId?: string
-): Promise<{ success: boolean; error?: string }> {
+  societyId?: string,
+  useAuthUidAsId = false
+): Promise<{ success: boolean; error?: string; memberId?: string }> {
   const effectiveSocietyId = societyId || getActiveSocietyId();
-  const memberId = member.id || `member-${Date.now()}`;
+  const authUid = getCurrentUserUid();
+  
+  // For new members, prefer auth.uid as doc ID for security rule compatibility
+  let memberId = member.id;
+  if (!memberId) {
+    memberId = useAuthUidAsId && authUid ? authUid : `member-${Date.now()}`;
+  }
+  
   const docPath = `societies/${effectiveSocietyId}/members/${memberId}`;
   
   // Pre-flight checks
@@ -289,6 +305,12 @@ export async function upsertMember(
       paidDate: member.paidDate || null,
       updatedAt: serverTimestamp(),
     };
+    
+    // Store uid for security rule compatibility
+    // This links the member document to a Firebase Auth user
+    if (authUid) {
+      payload.uid = authUid;
+    }
 
     // Check if this is a new member
     const existingDoc = await getDoc(memberRef);
@@ -296,7 +318,7 @@ export async function upsertMember(
       payload.createdAt = serverTimestamp();
     }
 
-    logFirestoreOp("write", docPath, memberId, { name: member.name });
+    logFirestoreOp("write", docPath, memberId, { name: member.name, uid: authUid });
     await setDoc(memberRef, payload, { merge: true });
 
     // Dev mode: log the document path written
@@ -305,7 +327,7 @@ export async function upsertMember(
       path: docPath,
     });
 
-    return { success: true };
+    return { success: true, memberId };
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : "Unknown error";
     console.error("[Members] Error saving member:", error, {
@@ -369,7 +391,7 @@ export async function deleteMemberById(
 /**
  * Map Firestore document data to MemberData type
  */
-function mapFirestoreMember(id: string, data: Record<string, unknown>): MemberData {
+function mapFirestoreMember(id: string, data: Record<string, unknown>): MemberData & { uid?: string } {
   // Ensure roles is always an array
   let roles: string[];
   if (Array.isArray(data.roles)) {
@@ -383,6 +405,7 @@ function mapFirestoreMember(id: string, data: Record<string, unknown>): MemberDa
 
   return {
     id,
+    uid: data.uid as string | undefined,
     name: (data.name as string) || "Unknown",
     email: data.email as string | undefined,
     handicap: data.handicap as number | undefined,
@@ -392,4 +415,79 @@ function mapFirestoreMember(id: string, data: Record<string, unknown>): MemberDa
     amountPaid: data.amountPaid as number | undefined,
     paidDate: data.paidDate as string | undefined,
   };
+}
+
+/**
+ * Get the current user's member record by their auth UID
+ * Used to find the member associated with the current Firebase Auth user
+ */
+export async function getCurrentUserMember(societyId?: string): Promise<(MemberData & { uid?: string }) | null> {
+  const authUid = getCurrentUserUid();
+  if (!authUid) {
+    console.log("[Members] No auth UID - user not signed in");
+    return null;
+  }
+  
+  // Try to get member document by auth UID (preferred - matches security rules)
+  const memberByUid = await getMember(authUid, societyId);
+  if (memberByUid) {
+    return memberByUid;
+  }
+  
+  // Fallback: search for member with matching uid field
+  // This handles legacy members that weren't created with auth.uid as doc ID
+  const effectiveSocietyId = societyId || getActiveSocietyId();
+  if (!effectiveSocietyId) {
+    return null;
+  }
+  
+  try {
+    const membersRef = collection(db, "societies", effectiveSocietyId, "members");
+    const q = query(membersRef, orderBy("name", "asc"));
+    const snapshot = await getDocs(q);
+    
+    for (const docSnap of snapshot.docs) {
+      const data = docSnap.data();
+      if (data.uid === authUid) {
+        return mapFirestoreMember(docSnap.id, data);
+      }
+    }
+    
+    return null;
+  } catch (error) {
+    console.error("[Members] Error searching for member by uid:", error);
+    return null;
+  }
+}
+
+/**
+ * Link an existing member to the current auth user
+ * Updates the member document with the current user's UID
+ */
+export async function linkMemberToCurrentUser(
+  memberId: string,
+  societyId?: string
+): Promise<{ success: boolean; error?: string }> {
+  const effectiveSocietyId = societyId || getActiveSocietyId();
+  const authUid = getCurrentUserUid();
+  
+  if (!authUid) {
+    return { success: false, error: "Not signed in" };
+  }
+  
+  if (!effectiveSocietyId) {
+    return { success: false, error: "No society selected" };
+  }
+  
+  try {
+    const memberRef = doc(db, "societies", effectiveSocietyId, "members", memberId);
+    await setDoc(memberRef, { uid: authUid, updatedAt: serverTimestamp() }, { merge: true });
+    
+    console.log("[Members] Linked member to auth user:", { memberId, authUid, societyId: effectiveSocietyId });
+    return { success: true };
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : "Unknown error";
+    console.error("[Members] Error linking member to auth user:", error);
+    return { success: false, error: errorMessage };
+  }
 }

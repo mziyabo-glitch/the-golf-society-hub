@@ -7,7 +7,7 @@ import { useColorScheme } from '@/hooks/use-color-scheme';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { useEffect, useState } from 'react';
 import { Platform, Pressable, Text, View } from 'react-native';
-import { assertFirebaseConfigured, initActiveSocietyId } from '@/lib/firebase';
+import { assertFirebaseConfigured, initActiveSocietyId, ensureSignedIn, waitForAuthState } from '@/lib/firebase';
 
 export const unstable_settings = {
   anchor: '(tabs)',
@@ -24,6 +24,11 @@ export default function RootLayout() {
       try {
         // Guard firebase config in production (throws controlled error)
         assertFirebaseConfigured();
+
+        // Initialize Firebase Auth - wait for auth state to be ready
+        // Then sign in anonymously if not already signed in
+        await waitForAuthState();
+        await ensureSignedIn();
 
         // Guard active society id (async initialization)
         const societyId = await initActiveSocietyId();

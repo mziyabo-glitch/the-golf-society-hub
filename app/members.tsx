@@ -23,7 +23,8 @@ import { Row } from "@/components/ui/Row";
 import { getColors, spacing } from "@/lib/ui/theme";
 import { getActiveSocietyId, isFirebaseConfigured } from "@/lib/firebase";
 import { subscribeMembers, deleteMemberById } from "@/lib/firestore/members";
-import { logDataSanity } from "@/lib/firestore/errors";
+import { logDataSanity, isPermissionDeniedError } from "@/lib/firestore/errors";
+import { PermissionDeniedScreen } from "@/components/PermissionDeniedScreen";
 import { getEvents } from "@/lib/firestore/society";
 import { NoSocietyGuard } from "@/components/NoSocietyGuard";
 import { FirebaseConfigGuard } from "@/components/FirebaseConfigGuard";
@@ -33,6 +34,7 @@ export default function MembersScreen() {
   const [members, setMembers] = useState<MemberData[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [permissionDenied, setPermissionDenied] = useState(false);
   const [currentUserId, setCurrentUserIdState] = useState<string | null>(null);
   const [selectedMemberId, setSelectedMemberId] = useState<string | null>(null);
   const [canManageMembersFlag, setCanManageMembersFlag] = useState(false);
@@ -65,6 +67,14 @@ export default function MembersScreen() {
       },
       (err) => {
         console.error("[Members] Subscription error:", err);
+        
+        // Check if this is a permission denied error
+        if (isPermissionDeniedError(err)) {
+          setPermissionDenied(true);
+          setLoading(false);
+          return;
+        }
+        
         setError(err.message || "Failed to load members");
         setLoading(false);
       },
@@ -241,6 +251,17 @@ export default function MembersScreen() {
           <AppText style={{ marginTop: 12 }}>Loading members...</AppText>
         </View>
       </Screen>
+    );
+  }
+
+  // Permission denied state
+  if (permissionDenied) {
+    return (
+      <PermissionDeniedScreen
+        message="You don't have access to view members in this society."
+        showContactCaptain={true}
+        errorCode="PERMISSION_DENIED"
+      />
     );
   }
 
