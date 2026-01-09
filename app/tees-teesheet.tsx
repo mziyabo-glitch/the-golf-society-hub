@@ -7,6 +7,16 @@
  * - Members can view tee sheet
  * - All data loaded from Firestore
  * - Tee sheet saved to Firestore
+ *
+ * MANUAL TEST STEPS (Edit Groups):
+ * - Select an event, generate tee sheet
+ * - Tap "Edit Groups" to unlock editing
+ * - Move: choose a player -> Move -> pick a different group
+ * - Remove: choose a player -> Remove (should appear in Unassigned)
+ * - Add: in Unassigned -> Add -> pick a group
+ * - Swap: choose a player -> Swap -> pick another player (they should swap)
+ * - Edit time: group header -> Edit time -> enter HH:MM -> Save
+ * - Save Tee Sheet -> reload screen / re-select event -> ensure edits persisted
  */
 
 import type { Course, TeeSet, EventData, MemberData, GuestData } from "@/lib/models";
@@ -96,6 +106,9 @@ export default function TeesTeeSheetScreen() {
   const [editMode, setEditMode] = useState(false);
   const [movePlayerData, setMovePlayerData] = useState<{ playerId: string; fromGroup: number } | null>(null);
   const [unassignedPlayers, setUnassignedPlayers] = useState<string[]>([]);
+  const [editTimeGroupIndex, setEditTimeGroupIndex] = useState<number | null>(null);
+  const [editTimeValue, setEditTimeValue] = useState<string>("08:00");
+  const [swapPlayerData, setSwapPlayerData] = useState<{ playerId: string; fromGroup: number } | null>(null);
 
   // Loading states
   const [dataReady, setDataReady] = useState(false);
@@ -193,6 +206,10 @@ export default function TeesTeeSheetScreen() {
 
     // Reset tee sheet state
     setTeeGroups([]);
+    setEditMode(false);
+    setMovePlayerData(null);
+    setSwapPlayerData(null);
+    setUnassignedPlayers([]);
     setSelectedCourse(null);
     setSelectedMaleTeeSet(null);
     setSelectedFemaleTeeSet(null);
@@ -271,6 +288,77 @@ export default function TeesTeeSheetScreen() {
     console.log("Male tee:", selectedMaleTeeSet?.teeColor || "Loading...");
     console.log("Female tee:", selectedFemaleTeeSet?.teeColor || "Loading...");
     console.log("Allowance:", handicapAllowancePct, "%");
+  };
+
+  const getEligiblePlayerIds = (): string[] => {
+    const ids: string[] = [];
+
+    members.forEach((m) => {
+      if (selectedPlayerIds.has(m.id)) ids.push(m.id);
+    });
+
+    guests.forEach((g) => {
+      if (g.included) ids.push(g.id);
+    });
+
+    return ids;
+  };
+
+  const recomputeUnassignedPlayers = (groups: Array<{ timeISO: string; players: string[] }>) => {
+    const eligible = getEligiblePlayerIds();
+    const assigned = new Set(groups.flatMap((g) => g.players));
+    const unassigned = eligible.filter((id) => !assigned.has(id));
+    setUnassignedPlayers(Array.from(new Set(unassigned)));
+  };
+
+  const toggleEditMode = () => {
+    if (!guard(canManageTeeSheet, "Only Captain or Handicapper can edit tee groups.")) return;
+    if (teeGroups.length === 0) {
+      Alert.alert("Nothing to edit", "Generate a tee sheet first.");
+      return;
+    }
+
+    setEditMode((prev) => {
+      const next = !prev;
+      if (next) {
+        // When enabling edit mode, derive unassigned from current selection vs groups
+        recomputeUnassignedPlayers(teeGroups);
+      } else {
+        // Clear transient edit UI
+        setMovePlayerData(null);
+        setSwapPlayerData(null);
+        setEditTimeGroupIndex(null);
+      }
+      return next;
+    });
+  };
+
+  const parseTimeHHMM = (value: string): { hours: number; minutes: number } | null => {
+    const match = value.trim().match(/^(\d{1,2}):(\d{2})$/);
+    if (!match) return null;
+    const hours = Number(match[1]);
+    const minutes = Number(match[2]);
+    if (Number.isNaN(hours) || Number.isNaN(minutes)) return null;
+    if (hours < 0 || hours > 23) return null;
+    if (minutes < 0 || minutes > 59) return null;
+    return { hours, minutes };
+  };
+
+  const setGroupTimeFromHHMM = (groupIndex: number, timeHHMM: string) => {
+    const parsed = parseTimeHHMM(timeHHMM);
+    if (!parsed) {
+      Alert.alert("Invalid time", "Use HH:MM (e.g., 08:00)");
+      return;
+    }
+    setTeeGroups((prev) => {
+      const next = [...prev];
+      const current = next[groupIndex];
+      if (!current) return prev;
+      const d = new Date(current.timeISO);
+      d.setHours(parsed.hours, parsed.minutes, 0, 0);
+      next[groupIndex] = { ...current, timeISO: d.toISOString() };
+      return next;
+    });
   };
 
   /**
@@ -356,6 +444,9 @@ export default function TeesTeeSheetScreen() {
     });
 
     setUnassignedPlayers([]);
+    setEditMode(false);
+    setMovePlayerData(null);
+    setSwapPlayerData(null);
     setTeeGroups(groups);
     console.log("[Tee Sheet Generated]", groups.length, "groups with", playerIds.length, "players");
   };
@@ -673,12 +764,13 @@ export default function TeesTeeSheetScreen() {
   // Helper handlers
   const handleMovePlayer = (playerId: string, fromGroupIndex: number, toGroupIndex: number) => {
     if (!guard(canManageTeeSheet, "Only Captain or Handicapper can modify groups.")) return;
+    if (!editMode) return;
     
     if (toGroupIndex === -1) {
       const newGroups = [...teeGroups];
       newGroups[fromGroupIndex].players = newGroups[fromGroupIndex].players.filter((p) => p !== playerId);
       setTeeGroups(newGroups);
-      setUnassignedPlayers((prev) => [...prev, playerId]);
+      setUnassignedPlayers((prev) => Array.from(new Set([...prev, playerId])));
       setMovePlayerData(null);
       return;
     }
@@ -688,6 +780,11 @@ export default function TeesTeeSheetScreen() {
     if (fromGroupIndex === -1) {
       if (newGroups[toGroupIndex].players.length >= 4) {
         Alert.alert("Error", "Group is full (max 4 players)");
+        return;
+      }
+      if (newGroups[toGroupIndex].players.includes(playerId)) {
+        console.warn("[Move] Player already in target group:", playerId, toGroupIndex);
+        setMovePlayerData(null);
         return;
       }
       newGroups[toGroupIndex].players.push(playerId);
@@ -701,6 +798,11 @@ export default function TeesTeeSheetScreen() {
       Alert.alert("Error", "Group is full (max 4 players)");
       return;
     }
+    if (newGroups[toGroupIndex].players.includes(playerId)) {
+      console.warn("[Move] Player already in target group:", playerId, toGroupIndex);
+      setMovePlayerData(null);
+      return;
+    }
 
     newGroups[fromGroupIndex].players = newGroups[fromGroupIndex].players.filter((p) => p !== playerId);
     newGroups[toGroupIndex].players.push(playerId);
@@ -709,6 +811,7 @@ export default function TeesTeeSheetScreen() {
   };
 
   const handleAddGroup = () => {
+    if (!editMode) return;
     if (teeGroups.length === 0) return;
     const lastGroup = teeGroups[teeGroups.length - 1];
     const lastTime = new Date(lastGroup.timeISO);
@@ -718,18 +821,59 @@ export default function TeesTeeSheetScreen() {
 
   const handleDeleteGroup = (groupIndex: number) => {
     if (!guard(canManageTeeSheet, "Only Captain or Handicapper can delete groups.")) return;
+    if (!editMode) return;
     const group = teeGroups[groupIndex];
     if (group.players.length > 0) {
-      setUnassignedPlayers((prev) => [...prev, ...group.players]);
+      setUnassignedPlayers((prev) => Array.from(new Set([...prev, ...group.players])));
     }
     setTeeGroups(teeGroups.filter((_, idx) => idx !== groupIndex));
   };
 
   const handleRemovePlayerFromGroup = (playerId: string, groupIndex: number) => {
+    if (!editMode) return;
     const newGroups = [...teeGroups];
     newGroups[groupIndex].players = newGroups[groupIndex].players.filter((p) => p !== playerId);
     setTeeGroups(newGroups);
-    setUnassignedPlayers((prev) => [...prev, playerId]);
+    setUnassignedPlayers((prev) => Array.from(new Set([...prev, playerId])));
+  };
+
+  const handleSwapPlayers = (aPlayerId: string, aGroupIndex: number, bPlayerId: string, bGroupIndex: number) => {
+    if (!guard(canManageTeeSheet, "Only Captain or Handicapper can swap players.")) return;
+    if (!editMode) return;
+    if (aGroupIndex === -1 || bGroupIndex === -1) return;
+    if (aGroupIndex === bGroupIndex && aPlayerId === bPlayerId) return;
+
+    setTeeGroups((prev) => {
+      const next = [...prev];
+      const gA = next[aGroupIndex];
+      const gB = next[bGroupIndex];
+      if (!gA || !gB) return prev;
+      const idxA = gA.players.indexOf(aPlayerId);
+      const idxB = gB.players.indexOf(bPlayerId);
+      if (idxA === -1 || idxB === -1) return prev;
+
+      const newGAPlayers = [...gA.players];
+      const newGBPlayers = [...gB.players];
+      newGAPlayers[idxA] = bPlayerId;
+      newGBPlayers[idxB] = aPlayerId;
+
+      // Defensive: prevent duplicates across groups
+      const seen = new Set<string>();
+      const allPlayers = [...newGAPlayers, ...newGBPlayers];
+      for (const p of allPlayers) {
+        if (seen.has(p)) {
+          console.warn("[Swap] Duplicate detected, aborting swap");
+          return prev;
+        }
+        seen.add(p);
+      }
+
+      next[aGroupIndex] = { ...gA, players: newGAPlayers };
+      next[bGroupIndex] = { ...gB, players: newGBPlayers };
+      return next;
+    });
+
+    setSwapPlayerData(null);
   };
 
   const handleAddGuestSubmit = () => {
@@ -1082,6 +1226,55 @@ export default function TeesTeeSheetScreen() {
               {teeGroups.length > 0 && (
                 <View style={styles.teeGroupsContainer}>
                   <Text style={[styles.sectionTitle, { marginTop: 16 }]}>Tee Groups</Text>
+
+                  {/* Explicit edit toggle */}
+                  {!isReadOnly && (
+                    <View style={styles.editModeRow}>
+                      <Pressable
+                        onPress={toggleEditMode}
+                        style={[styles.editModeButton, editMode && styles.editModeButtonActive]}
+                      >
+                        <Text style={[styles.editModeButtonText, editMode && styles.editModeButtonTextActive]}>
+                          {editMode ? "Done Editing" : "Edit Groups"}
+                        </Text>
+                      </Pressable>
+                      <Text style={styles.editModeHint}>
+                        {editMode ? "Editing unlocked" : "Read-only (tap to unlock editing)"}
+                      </Text>
+                    </View>
+                  )}
+
+                  {/* Unassigned players (only visible in edit mode) */}
+                  {!isReadOnly && editMode && (
+                    <View style={styles.unassignedCard}>
+                      <View style={styles.unassignedHeader}>
+                        <Text style={styles.unassignedTitle}>Unassigned</Text>
+                        <Text style={styles.unassignedCount}>{unassignedPlayers.length}</Text>
+                      </View>
+                      {unassignedPlayers.length === 0 ? (
+                        <Text style={styles.unassignedEmpty}>All selected players are assigned</Text>
+                      ) : (
+                        unassignedPlayers.map((playerId) => {
+                          const display = getPlayerDisplay(playerId);
+                          return (
+                            <View key={playerId} style={styles.groupPlayer}>
+                              <Text style={styles.groupPlayerName}>{display.name}</Text>
+                              <Text style={styles.groupPlayerHI}>HI: {display.hi}</Text>
+                              <Text style={styles.groupPlayerPH}>PH: {display.ph}</Text>
+                              <View style={styles.playerActionRow}>
+                                <Pressable
+                                  onPress={() => setMovePlayerData({ playerId, fromGroup: -1 })}
+                                  style={styles.playerActionPill}
+                                >
+                                  <Text style={styles.playerActionText}>Add</Text>
+                                </Pressable>
+                              </View>
+                            </View>
+                          );
+                        })
+                      )}
+                    </View>
+                  )}
                   
                   {teeGroups.map((group, groupIdx) => {
                     const teeTime = new Date(group.timeISO).toLocaleTimeString("en-US", {
@@ -1093,8 +1286,45 @@ export default function TeesTeeSheetScreen() {
                     return (
                       <View key={groupIdx} style={styles.groupCard}>
                         <View style={styles.groupHeader}>
-                          <Text style={styles.groupTime}>{teeTime}</Text>
-                          <Text style={styles.groupNumber}>Group {groupIdx + 1}</Text>
+                          {!isReadOnly && editMode ? (
+                            <>
+                              <View>
+                                <Text style={styles.groupTime}>{teeTime}</Text>
+                                <Text style={styles.groupNumber}>Group {groupIdx + 1}</Text>
+                              </View>
+                              <View style={styles.groupHeaderActions}>
+                                <Pressable
+                                  onPress={() => {
+                                    setEditTimeGroupIndex(groupIdx);
+                                    setEditTimeValue(teeTime);
+                                  }}
+                                  style={styles.groupHeaderPill}
+                                >
+                                  <Text style={styles.groupHeaderPillText}>Edit time</Text>
+                                </Pressable>
+                                <Pressable
+                                  onPress={() => {
+                                    Alert.alert(
+                                      "Delete group?",
+                                      "Players in this group will be moved to Unassigned.",
+                                      [
+                                        { text: "Cancel", style: "cancel" },
+                                        { text: "Delete", style: "destructive", onPress: () => handleDeleteGroup(groupIdx) },
+                                      ]
+                                    );
+                                  }}
+                                  style={[styles.groupHeaderPill, styles.groupHeaderPillDanger]}
+                                >
+                                  <Text style={[styles.groupHeaderPillText, styles.groupHeaderPillTextDanger]}>Delete</Text>
+                                </Pressable>
+                              </View>
+                            </>
+                          ) : (
+                            <>
+                              <Text style={styles.groupTime}>{teeTime}</Text>
+                              <Text style={styles.groupNumber}>Group {groupIdx + 1}</Text>
+                            </>
+                          )}
                         </View>
                         {group.players.length === 0 ? (
                           <Text style={styles.emptyGroup}>No players</Text>
@@ -1106,6 +1336,28 @@ export default function TeesTeeSheetScreen() {
                                 <Text style={styles.groupPlayerName}>{display.name}</Text>
                                 <Text style={styles.groupPlayerHI}>HI: {display.hi}</Text>
                                 <Text style={styles.groupPlayerPH}>PH: {display.ph}</Text>
+                                {!isReadOnly && editMode && (
+                                  <View style={styles.playerActionRow}>
+                                    <Pressable
+                                      onPress={() => setMovePlayerData({ playerId, fromGroup: groupIdx })}
+                                      style={styles.playerActionPill}
+                                    >
+                                      <Text style={styles.playerActionText}>Move</Text>
+                                    </Pressable>
+                                    <Pressable
+                                      onPress={() => handleRemovePlayerFromGroup(playerId, groupIdx)}
+                                      style={[styles.playerActionPill, styles.playerActionPillDanger]}
+                                    >
+                                      <Text style={[styles.playerActionText, styles.playerActionTextDanger]}>Remove</Text>
+                                    </Pressable>
+                                    <Pressable
+                                      onPress={() => setSwapPlayerData({ playerId, fromGroup: groupIdx })}
+                                      style={styles.playerActionPill}
+                                    >
+                                      <Text style={styles.playerActionText}>Swap</Text>
+                                    </Pressable>
+                                  </View>
+                                )}
                               </View>
                             );
                           })
@@ -1117,9 +1369,11 @@ export default function TeesTeeSheetScreen() {
                   {/* Action Buttons */}
                   {!isReadOnly && (
                     <View style={styles.actionButtons}>
-                      <Pressable onPress={handleAddGroup} style={styles.addGroupButton}>
-                        <Text style={styles.addGroupButtonText}>+ Add Group</Text>
-                      </Pressable>
+                      {editMode && (
+                        <Pressable onPress={handleAddGroup} style={styles.addGroupButton}>
+                          <Text style={styles.addGroupButtonText}>+ Add Group</Text>
+                        </Pressable>
+                      )}
 
                       <Pressable 
                         onPress={handleSaveTeeSheet} 
@@ -1212,6 +1466,143 @@ export default function TeesTeeSheetScreen() {
               </Pressable>
               <Pressable onPress={handleAddGuestSubmit} style={styles.modalSubmitButton}>
                 <Text style={styles.modalSubmitButtonText}>Add</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Move / Add player modal */}
+      <Modal
+        visible={!!movePlayerData}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setMovePlayerData(null)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <Text style={styles.modalTitle}>Select target</Text>
+            <Text style={styles.modalSubtitle}>
+              {movePlayerData?.fromGroup === -1 ? "Add player to a group" : "Move player to a group or Unassigned"}
+            </Text>
+
+            <ScrollView style={{ maxHeight: 280 }}>
+              {movePlayerData?.fromGroup !== -1 && (
+                <Pressable
+                  onPress={() => handleMovePlayer(movePlayerData!.playerId, movePlayerData!.fromGroup, -1)}
+                  style={styles.modalListItem}
+                >
+                  <Text style={styles.modalListItemText}>Unassigned</Text>
+                </Pressable>
+              )}
+
+              {teeGroups.map((g, idx) => (
+                <Pressable
+                  key={idx}
+                  onPress={() => handleMovePlayer(movePlayerData!.playerId, movePlayerData!.fromGroup, idx)}
+                  style={styles.modalListItem}
+                >
+                  <Text style={styles.modalListItemText}>
+                    Group {idx + 1} ({new Date(g.timeISO).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false })})
+                  </Text>
+                  <Text style={styles.modalListItemMeta}>{g.players.length}/4</Text>
+                </Pressable>
+              ))}
+            </ScrollView>
+
+            <View style={styles.modalActions}>
+              <Pressable onPress={() => setMovePlayerData(null)} style={styles.modalCancelButton}>
+                <Text style={styles.modalCancelButtonText}>Cancel</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Edit tee time modal */}
+      <Modal
+        visible={editTimeGroupIndex !== null}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setEditTimeGroupIndex(null)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <Text style={styles.modalTitle}>Edit tee time</Text>
+            <Text style={styles.modalSubtitle}>Use HH:MM (e.g., 08:00)</Text>
+
+            <View style={styles.modalField}>
+              <Text style={styles.modalLabel}>Time</Text>
+              <TextInput
+                value={editTimeValue}
+                onChangeText={setEditTimeValue}
+                placeholder="08:00"
+                style={styles.modalInput}
+                keyboardType={Platform.OS === "ios" ? "numbers-and-punctuation" : "default"}
+              />
+            </View>
+
+            <View style={styles.modalActions}>
+              <Pressable onPress={() => setEditTimeGroupIndex(null)} style={styles.modalCancelButton}>
+                <Text style={styles.modalCancelButtonText}>Cancel</Text>
+              </Pressable>
+              <Pressable
+                onPress={() => {
+                  if (editTimeGroupIndex === null) return;
+                  setGroupTimeFromHHMM(editTimeGroupIndex, editTimeValue);
+                  setEditTimeGroupIndex(null);
+                }}
+                style={styles.modalSubmitButton}
+              >
+                <Text style={styles.modalSubmitButtonText}>Save</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Swap players modal */}
+      <Modal
+        visible={!!swapPlayerData}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setSwapPlayerData(null)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <Text style={styles.modalTitle}>Swap with…</Text>
+            <Text style={styles.modalSubtitle}>Pick another player in any group</Text>
+
+            <ScrollView style={{ maxHeight: 320 }}>
+              {teeGroups.map((g, gi) =>
+                g.players.map((pid) => {
+                  if (pid === swapPlayerData?.playerId && gi === swapPlayerData?.fromGroup) return null;
+                  const display = getPlayerDisplay(pid);
+                  return (
+                    <Pressable
+                      key={`${gi}:${pid}`}
+                      onPress={() =>
+                        handleSwapPlayers(
+                          swapPlayerData!.playerId,
+                          swapPlayerData!.fromGroup,
+                          pid,
+                          gi
+                        )
+                      }
+                      style={styles.modalListItem}
+                    >
+                      <Text style={styles.modalListItemText}>
+                        {display.name} — Group {gi + 1}
+                      </Text>
+                    </Pressable>
+                  );
+                })
+              )}
+            </ScrollView>
+
+            <View style={styles.modalActions}>
+              <Pressable onPress={() => setSwapPlayerData(null)} style={styles.modalCancelButton}>
+                <Text style={styles.modalCancelButtonText}>Cancel</Text>
               </Pressable>
             </View>
           </View>
@@ -1415,6 +1806,36 @@ const styles = StyleSheet.create({
   teeGroupsContainer: {
     marginTop: 8,
   },
+  editModeRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    marginBottom: 12,
+  },
+  editModeButton: {
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: "#0B6E4F",
+    backgroundColor: "#ffffff",
+  },
+  editModeButtonActive: {
+    backgroundColor: "#0B6E4F",
+  },
+  editModeButtonText: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: "#0B6E4F",
+  },
+  editModeButtonTextActive: {
+    color: "#ffffff",
+  },
+  editModeHint: {
+    flex: 1,
+    fontSize: 12,
+    color: "#6b7280",
+  },
   groupCard: {
     backgroundColor: "#fff",
     borderRadius: 8,
@@ -1430,6 +1851,31 @@ const styles = StyleSheet.create({
     paddingBottom: 8,
     borderBottomWidth: 1,
     borderBottomColor: "#e5e7eb",
+  },
+  groupHeaderActions: {
+    flexDirection: "row",
+    gap: 8,
+    alignItems: "center",
+  },
+  groupHeaderPill: {
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: "#d1d5db",
+    backgroundColor: "#f9fafb",
+  },
+  groupHeaderPillText: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: "#111827",
+  },
+  groupHeaderPillDanger: {
+    borderColor: "#fecaca",
+    backgroundColor: "#fef2f2",
+  },
+  groupHeaderPillTextDanger: {
+    color: "#b91c1c",
   },
   groupTime: {
     fontSize: 16,
@@ -1466,6 +1912,59 @@ const styles = StyleSheet.create({
     color: "#0B6E4F",
     textAlign: "center",
   },
+  playerActionRow: {
+    flexDirection: "row",
+    gap: 6,
+    marginLeft: 8,
+  },
+  playerActionPill: {
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: "#d1d5db",
+    backgroundColor: "#f9fafb",
+  },
+  playerActionPillDanger: {
+    borderColor: "#fecaca",
+    backgroundColor: "#fef2f2",
+  },
+  playerActionText: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: "#111827",
+  },
+  playerActionTextDanger: {
+    color: "#b91c1c",
+  },
+  unassignedCard: {
+    backgroundColor: "#fff",
+    borderRadius: 8,
+    padding: 12,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
+  },
+  unassignedHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 8,
+  },
+  unassignedTitle: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: "#111827",
+  },
+  unassignedCount: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: "#6b7280",
+  },
+  unassignedEmpty: {
+    color: "#9ca3af",
+    fontStyle: "italic",
+  },
   actionButtons: {
     gap: 10,
     marginTop: 16,
@@ -1497,6 +1996,36 @@ const styles = StyleSheet.create({
     padding: 14,
     borderRadius: 8,
     alignItems: "center",
+  },
+  modalSubtitle: {
+    fontSize: 12,
+    color: "#6b7280",
+    marginBottom: 12,
+    textAlign: "center",
+  },
+  modalListItem: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+    backgroundColor: "#f9fafb",
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
+    marginBottom: 8,
+  },
+  modalListItemText: {
+    flex: 1,
+    fontSize: 13,
+    fontWeight: "600",
+    color: "#111827",
+    marginRight: 8,
+  },
+  modalListItemMeta: {
+    fontSize: 12,
+    color: "#6b7280",
+    fontWeight: "700",
   },
   pdfButtonText: {
     color: "#fff",
