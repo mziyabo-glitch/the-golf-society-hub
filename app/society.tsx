@@ -181,10 +181,19 @@ export default function SocietyDashboardScreen() {
   const todayStart = new Date();
   todayStart.setHours(0, 0, 0, 0);
 
+  const toLocalDateOnly = (d: Date): Date => {
+    const copy = new Date(d);
+    copy.setHours(0, 0, 0, 0);
+    return copy;
+  };
+
   const getEventsWithDate = (): EventWithDate[] => {
     return events.map((e) => ({
       ...e,
-      eventDate: toJsDate(e?.date),
+      eventDate: (() => {
+        const d = toJsDate(e?.date);
+        return d ? toLocalDateOnly(d) : null;
+      })(),
     }));
   };
 

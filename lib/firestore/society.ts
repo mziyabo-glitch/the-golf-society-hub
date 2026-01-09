@@ -160,8 +160,26 @@ export async function getMembers(): Promise<MemberData[]> {
  * Normalize role strings to lowercase
  */
 function normalizeRoles(roles: unknown): string[] {
-  if (!Array.isArray(roles)) return ["member"];
-  return roles.map((r) => (typeof r === "string" ? r.toLowerCase() : "member"));
+  // Accept:
+  // - string[] (preferred)
+  // - "captain, secretary" (CSV) (defensive for legacy/corrupt data)
+  if (Array.isArray(roles)) {
+    const normalized = roles
+      .flatMap((r) => (typeof r === "string" ? r.split(",") : []))
+      .map((r) => r.trim().toLowerCase())
+      .filter((r) => r.length > 0);
+    return normalized.length > 0 ? normalized : ["member"];
+  }
+
+  if (typeof roles === "string") {
+    const normalized = roles
+      .split(",")
+      .map((r) => r.trim().toLowerCase())
+      .filter((r) => r.length > 0);
+    return normalized.length > 0 ? normalized : ["member"];
+  }
+
+  return ["member"];
 }
 
 /**
@@ -372,6 +390,27 @@ export async function saveAndVerifyTeeSheet(
   if (!eventId) {
     console.error("[Firestore] saveAndVerifyTeeSheet: eventId is required");
     return { success: false, verified: false, error: "Event ID is required" };
+  }
+
+  // Lightweight runtime validation (avoid writing corrupt data)
+  const isValidTeeSheet = (value: unknown): value is TeeSheetData => {
+    const ts = value as TeeSheetData | null | undefined;
+    if (!ts || typeof ts !== "object") return false;
+    if (typeof (ts as any).startTimeISO !== "string") return false;
+    if (typeof (ts as any).intervalMins !== "number") return false;
+    if (!Array.isArray((ts as any).groups)) return false;
+    for (const g of (ts as any).groups) {
+      if (!g || typeof g !== "object") return false;
+      if (typeof (g as any).timeISO !== "string") return false;
+      if (!Array.isArray((g as any).players)) return false;
+      if (!(g as any).players.every((p: unknown) => typeof p === "string")) return false;
+    }
+    return true;
+  };
+
+  if (!isValidTeeSheet(teeSheet)) {
+    console.warn("[Firestore] Refusing to save invalid teeSheet payload:", teeSheet);
+    return { success: false, verified: false, error: "Invalid tee sheet data" };
   }
 
   if (!teeSheet || !teeSheet.groups || teeSheet.groups.length === 0) {

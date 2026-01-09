@@ -10,6 +10,8 @@ import { clearSession } from "./session";
 export const STORAGE_KEYS = {
   // Society data
   SOCIETY_ACTIVE: "GSOCIETY_ACTIVE",
+  // Active society document id (Firestore)
+  SOCIETY_ACTIVE_ID: "GSOCIETY_ACTIVE_ID",
   SOCIETY_DRAFT: "GSOCIETY_DRAFT",
   
   // Data
@@ -39,6 +41,7 @@ export const STORAGE_KEYS = {
 export function getAllStorageKeys(): string[] {
   return [
     STORAGE_KEYS.SOCIETY_ACTIVE,
+    STORAGE_KEYS.SOCIETY_ACTIVE_ID,
     STORAGE_KEYS.SOCIETY_DRAFT,
     STORAGE_KEYS.MEMBERS,
     STORAGE_KEYS.EVENTS,
