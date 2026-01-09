@@ -1,6 +1,9 @@
 /**
  * Firestore Helpers for Society Data
  * 
+ * WEB-ONLY PERSISTENCE: All business data from Firestore only.
+ * NO AsyncStorage fallback on web for: societies, members, events, courses, tee sheets.
+ * 
  * Schema:
  * societies/{societyId}
  *   ├─ name, season, joinCode, createdAt, logoUrl
@@ -11,10 +14,39 @@
  */
 
 import { db, getActiveSocietyId, isFirebaseConfigured } from "../firebase";
-import { doc, getDoc, setDoc, collection, getDocs } from "firebase/firestore";
-import AsyncStorage from "@react-native-async-storage/async-storage";
-import { STORAGE_KEYS } from "../storage";
+import { doc, getDoc, setDoc, collection, getDocs, deleteDoc, Timestamp } from "firebase/firestore";
+import { Platform } from "react-native";
 import type { MemberData, EventData, Course, TeeSet, GuestData } from "../models";
+
+// ============================================================================
+// PLATFORM CHECK - Skip AsyncStorage on web
+// ============================================================================
+
+const IS_WEB = Platform.OS === "web";
+
+/**
+ * Safe import of AsyncStorage (only used on native)
+ * Returns null on web to prevent any local storage usage
+ */
+async function getAsyncStorage() {
+  if (IS_WEB) {
+    return null;
+  }
+  try {
+    const AsyncStorage = await import("@react-native-async-storage/async-storage");
+    return AsyncStorage.default;
+  } catch {
+    return null;
+  }
+}
+
+// Storage keys for native fallback only
+const STORAGE_KEYS = {
+  SOCIETY_ACTIVE: "GSOCIETY_ACTIVE",
+  MEMBERS: "GSOCIETY_MEMBERS",
+  EVENTS: "GSOCIETY_EVENTS",
+  COURSES: "GSOCIETY_COURSES",
+};
 
 // ============================================================================
 // TYPES
@@ -43,7 +75,9 @@ export interface TeeSheetData {
 // ============================================================================
 
 /**
- * Get society data from Firestore (with AsyncStorage fallback)
+ * Get society data from Firestore
+ * On web: Firestore only (no fallback)
+ * On native: Firestore with AsyncStorage fallback
  */
 export async function getSociety(): Promise<SocietyData | null> {
   try {
@@ -64,29 +98,43 @@ export async function getSociety(): Promise<SocietyData | null> {
           logoUrl: data.logoUrl,
         };
       }
+      
+      if (IS_WEB) {
+        console.log("[Firestore] Society not found (web - no fallback)");
+        return null;
+      }
+      
       console.log("[Firestore] Society not found, falling back to AsyncStorage");
     }
   } catch (error) {
     console.warn("[Firestore] Error reading society:", error);
+    if (IS_WEB) {
+      return null; // No fallback on web
+    }
   }
 
-  // Fallback to AsyncStorage
-  try {
-    const localData = await AsyncStorage.getItem(STORAGE_KEYS.SOCIETY_ACTIVE);
-    if (localData) {
-      const parsed = JSON.parse(localData);
-      console.log("[AsyncStorage] Loaded society from local storage");
-      return {
-        id: "local",
-        name: parsed.name || "Golf Society",
-        season: parsed.season,
-        joinCode: parsed.joinCode,
-        createdAt: parsed.createdAt,
-        logoUrl: parsed.logoUrl,
-      };
+  // Native-only fallback to AsyncStorage
+  if (!IS_WEB) {
+    try {
+      const AsyncStorage = await getAsyncStorage();
+      if (AsyncStorage) {
+        const localData = await AsyncStorage.getItem(STORAGE_KEYS.SOCIETY_ACTIVE);
+        if (localData) {
+          const parsed = JSON.parse(localData);
+          console.log("[AsyncStorage] Loaded society from local storage (native)");
+          return {
+            id: "local",
+            name: parsed.name || "Golf Society",
+            season: parsed.season,
+            joinCode: parsed.joinCode,
+            createdAt: parsed.createdAt,
+            logoUrl: parsed.logoUrl,
+          };
+        }
+      }
+    } catch (error) {
+      console.warn("[AsyncStorage] Error reading society:", error);
     }
-  } catch (error) {
-    console.warn("[AsyncStorage] Error reading society:", error);
   }
 
   return null;
@@ -97,7 +145,9 @@ export async function getSociety(): Promise<SocietyData | null> {
 // ============================================================================
 
 /**
- * Get all members from Firestore (with AsyncStorage fallback)
+ * Get all members from Firestore
+ * On web: Firestore only (no fallback)
+ * On native: Firestore with AsyncStorage fallback
  * Automatically filters out ghost "Owner" member if other real members exist
  */
 export async function getMembers(): Promise<MemberData[]> {
@@ -125,26 +175,38 @@ export async function getMembers(): Promise<MemberData[]> {
           };
         });
         console.log(`[Firestore] Loaded ${members.length} members`);
-      } else {
-        console.log("[Firestore] No members found, falling back to AsyncStorage");
+        return filterGhostOwner(members);
       }
+      
+      if (IS_WEB) {
+        console.log("[Firestore] No members found (web - no fallback)");
+        return [];
+      }
+      
+      console.log("[Firestore] No members found, falling back to AsyncStorage");
     }
   } catch (error) {
     console.warn("[Firestore] Error reading members:", error);
+    if (IS_WEB) {
+      return []; // No fallback on web
+    }
   }
 
-  // Fallback to AsyncStorage if no Firestore members
-  if (members.length === 0) {
+  // Native-only fallback to AsyncStorage
+  if (!IS_WEB && members.length === 0) {
     try {
-      const localData = await AsyncStorage.getItem(STORAGE_KEYS.MEMBERS);
-      if (localData) {
-        members = JSON.parse(localData);
-        // Normalize roles for local data
-        members = members.map(m => ({
-          ...m,
-          roles: normalizeRoles(m.roles),
-        }));
-        console.log(`[AsyncStorage] Loaded ${members.length} members from local storage`);
+      const AsyncStorage = await getAsyncStorage();
+      if (AsyncStorage) {
+        const localData = await AsyncStorage.getItem(STORAGE_KEYS.MEMBERS);
+        if (localData) {
+          members = JSON.parse(localData);
+          // Normalize roles for local data
+          members = members.map(m => ({
+            ...m,
+            roles: normalizeRoles(m.roles),
+          }));
+          console.log(`[AsyncStorage] Loaded ${members.length} members from local storage (native)`);
+        }
       }
     } catch (error) {
       console.warn("[AsyncStorage] Error reading members:", error);
@@ -192,7 +254,9 @@ function filterGhostOwner(members: MemberData[]): MemberData[] {
 // ============================================================================
 
 /**
- * Get all events from Firestore (with AsyncStorage fallback)
+ * Get all events from Firestore
+ * On web: Firestore only (no fallback)
+ * On native: Firestore with AsyncStorage fallback
  */
 export async function getEvents(): Promise<EventData[]> {
   try {
@@ -209,22 +273,36 @@ export async function getEvents(): Promise<EventData[]> {
         console.log(`[Firestore] Loaded ${events.length} events`);
         return events;
       }
+      
+      if (IS_WEB) {
+        console.log("[Firestore] No events found (web - no fallback)");
+        return [];
+      }
+      
       console.log("[Firestore] No events found, falling back to AsyncStorage");
     }
   } catch (error) {
     console.warn("[Firestore] Error reading events:", error);
+    if (IS_WEB) {
+      return []; // No fallback on web
+    }
   }
 
-  // Fallback to AsyncStorage
-  try {
-    const localData = await AsyncStorage.getItem(STORAGE_KEYS.EVENTS);
-    if (localData) {
-      const events: EventData[] = JSON.parse(localData);
-      console.log(`[AsyncStorage] Loaded ${events.length} events from local storage`);
-      return events;
+  // Native-only fallback to AsyncStorage
+  if (!IS_WEB) {
+    try {
+      const AsyncStorage = await getAsyncStorage();
+      if (AsyncStorage) {
+        const localData = await AsyncStorage.getItem(STORAGE_KEYS.EVENTS);
+        if (localData) {
+          const events: EventData[] = JSON.parse(localData);
+          console.log(`[AsyncStorage] Loaded ${events.length} events from local storage (native)`);
+          return events;
+        }
+      }
+    } catch (error) {
+      console.warn("[AsyncStorage] Error reading events:", error);
     }
-  } catch (error) {
-    console.warn("[AsyncStorage] Error reading events:", error);
   }
 
   return [];
@@ -452,7 +530,9 @@ export async function saveAndVerifyTeeSheet(
 // ============================================================================
 
 /**
- * Get all courses from Firestore (with AsyncStorage fallback)
+ * Get all courses from Firestore
+ * On web: Firestore only (no fallback)
+ * On native: Firestore with AsyncStorage fallback
  */
 export async function getCourses(): Promise<Course[]> {
   try {
@@ -498,22 +578,36 @@ export async function getCourses(): Promise<Course[]> {
         console.log(`[Firestore] Loaded ${courses.length} courses`);
         return courses;
       }
+      
+      if (IS_WEB) {
+        console.log("[Firestore] No courses found (web - no fallback)");
+        return [];
+      }
+      
       console.log("[Firestore] No courses found, falling back to AsyncStorage");
     }
   } catch (error) {
     console.warn("[Firestore] Error reading courses:", error);
+    if (IS_WEB) {
+      return []; // No fallback on web
+    }
   }
 
-  // Fallback to AsyncStorage
-  try {
-    const localData = await AsyncStorage.getItem(STORAGE_KEYS.COURSES);
-    if (localData) {
-      const courses: Course[] = JSON.parse(localData);
-      console.log(`[AsyncStorage] Loaded ${courses.length} courses from local storage`);
-      return courses;
+  // Native-only fallback to AsyncStorage
+  if (!IS_WEB) {
+    try {
+      const AsyncStorage = await getAsyncStorage();
+      if (AsyncStorage) {
+        const localData = await AsyncStorage.getItem(STORAGE_KEYS.COURSES);
+        if (localData) {
+          const courses: Course[] = JSON.parse(localData);
+          console.log(`[AsyncStorage] Loaded ${courses.length} courses from local storage (native)`);
+          return courses;
+        }
+      }
+    } catch (error) {
+      console.warn("[AsyncStorage] Error reading courses:", error);
     }
-  } catch (error) {
-    console.warn("[AsyncStorage] Error reading courses:", error);
   }
 
   return [];
@@ -668,4 +762,293 @@ export function findTeeSetsForEvent(
     maleTeeSet: findTeeSetById(course, event.maleTeeSetId),
     femaleTeeSet: findTeeSetById(course, event.femaleTeeSetId),
   };
+}
+
+// ============================================================================
+// WRITE HELPERS
+// ============================================================================
+
+/**
+ * Save or update a member in Firestore
+ * Uses setDoc with merge:true to support partial updates
+ */
+export async function saveMember(member: MemberData): Promise<boolean> {
+  if (!member.id) {
+    console.error("[Firestore] saveMember: member.id is required");
+    return false;
+  }
+
+  try {
+    if (!isFirebaseConfigured()) {
+      console.error("[Firestore] Firebase not configured");
+      return false;
+    }
+
+    const societyId = getActiveSocietyId();
+    const memberRef = doc(db, "societies", societyId, "members", member.id);
+
+    // Ensure roles is always an array of lowercase strings
+    const roles = Array.isArray(member.roles) 
+      ? member.roles.map(r => typeof r === "string" ? r.toLowerCase() : "member")
+      : ["member"];
+
+    await setDoc(memberRef, {
+      name: member.name,
+      email: member.email || null,
+      handicap: member.handicap ?? null,
+      sex: member.sex || "male",
+      roles,
+      paid: member.paid ?? false,
+      amountPaid: member.amountPaid ?? 0,
+      paidDate: member.paidDate || null,
+      updatedAt: new Date().toISOString(),
+    }, { merge: true });
+
+    console.log(`[Firestore] Saved member: ${member.id} (${member.name})`);
+    return true;
+  } catch (error) {
+    console.error("[Firestore] Error saving member:", error);
+    return false;
+  }
+}
+
+/**
+ * Delete a member from Firestore
+ */
+export async function deleteMember(memberId: string): Promise<boolean> {
+  if (!memberId) {
+    console.error("[Firestore] deleteMember: memberId is required");
+    return false;
+  }
+
+  try {
+    if (!isFirebaseConfigured()) {
+      console.error("[Firestore] Firebase not configured");
+      return false;
+    }
+
+    const societyId = getActiveSocietyId();
+    const memberRef = doc(db, "societies", societyId, "members", memberId);
+    await deleteDoc(memberRef);
+
+    console.log(`[Firestore] Deleted member: ${memberId}`);
+    return true;
+  } catch (error) {
+    console.error("[Firestore] Error deleting member:", error);
+    return false;
+  }
+}
+
+/**
+ * Save or update an event in Firestore
+ * Uses setDoc with merge:true to support partial updates
+ */
+export async function saveEvent(event: Partial<EventData> & { id: string }): Promise<boolean> {
+  if (!event.id) {
+    console.error("[Firestore] saveEvent: event.id is required");
+    return false;
+  }
+
+  try {
+    if (!isFirebaseConfigured()) {
+      console.error("[Firestore] Firebase not configured");
+      return false;
+    }
+
+    const societyId = getActiveSocietyId();
+    const eventRef = doc(db, "societies", societyId, "events", event.id);
+
+    // Build update data, converting date to Timestamp if it's a string
+    const updateData: Record<string, unknown> = { ...event };
+    
+    // Ensure date is stored as Firestore Timestamp
+    if (event.date) {
+      if (typeof event.date === "string") {
+        updateData.date = Timestamp.fromDate(new Date(event.date));
+      }
+      // Note: EventData.date is always string, so no need for Date instanceof check
+    }
+    
+    updateData.updatedAt = new Date().toISOString();
+
+    await setDoc(eventRef, updateData, { merge: true });
+
+    console.log(`[Firestore] Saved event: ${event.id}`);
+    return true;
+  } catch (error) {
+    console.error("[Firestore] Error saving event:", error);
+    return false;
+  }
+}
+
+/**
+ * Update specific fields on an event
+ */
+export async function updateEventFields(
+  eventId: string,
+  fields: Partial<EventData>
+): Promise<boolean> {
+  if (!eventId) {
+    console.error("[Firestore] updateEventFields: eventId is required");
+    return false;
+  }
+
+  try {
+    if (!isFirebaseConfigured()) {
+      console.error("[Firestore] Firebase not configured");
+      return false;
+    }
+
+    const societyId = getActiveSocietyId();
+    const eventRef = doc(db, "societies", societyId, "events", eventId);
+
+    const updateData: Record<string, unknown> = { ...fields };
+    
+    // Ensure date is stored as Firestore Timestamp if provided
+    if (fields.date) {
+      if (typeof fields.date === "string") {
+        updateData.date = Timestamp.fromDate(new Date(fields.date));
+      }
+    }
+    
+    updateData.updatedAt = new Date().toISOString();
+
+    await setDoc(eventRef, updateData, { merge: true });
+
+    console.log(`[Firestore] Updated event fields: ${eventId}`, Object.keys(fields));
+    return true;
+  } catch (error) {
+    console.error("[Firestore] Error updating event:", error);
+    return false;
+  }
+}
+
+/**
+ * Save society data to Firestore
+ */
+export async function saveSociety(society: Partial<SocietyData> & { id: string }): Promise<boolean> {
+  if (!society.id) {
+    console.error("[Firestore] saveSociety: society.id is required");
+    return false;
+  }
+
+  try {
+    if (!isFirebaseConfigured()) {
+      console.error("[Firestore] Firebase not configured");
+      return false;
+    }
+
+    const societyRef = doc(db, "societies", society.id);
+
+    await setDoc(societyRef, {
+      name: society.name || "Golf Society",
+      season: society.season || null,
+      joinCode: society.joinCode || null,
+      logoUrl: society.logoUrl || null,
+      updatedAt: new Date().toISOString(),
+    }, { merge: true });
+
+    console.log(`[Firestore] Saved society: ${society.id}`);
+    return true;
+  } catch (error) {
+    console.error("[Firestore] Error saving society:", error);
+    return false;
+  }
+}
+
+/**
+ * Save event results to Firestore
+ */
+export async function saveEventResults(
+  eventId: string,
+  results: EventData["results"],
+  options?: {
+    isCompleted?: boolean;
+    resultsStatus?: "draft" | "published";
+    winnerId?: string;
+    winnerName?: string;
+  }
+): Promise<boolean> {
+  if (!eventId) {
+    console.error("[Firestore] saveEventResults: eventId is required");
+    return false;
+  }
+
+  try {
+    if (!isFirebaseConfigured()) {
+      console.error("[Firestore] Firebase not configured");
+      return false;
+    }
+
+    const societyId = getActiveSocietyId();
+    const eventRef = doc(db, "societies", societyId, "events", eventId);
+
+    const updateData: Record<string, unknown> = {
+      results,
+      resultsUpdatedAt: new Date().toISOString(),
+    };
+
+    if (options?.isCompleted !== undefined) {
+      updateData.isCompleted = options.isCompleted;
+      if (options.isCompleted) {
+        updateData.completedAt = new Date().toISOString();
+      }
+    }
+
+    if (options?.resultsStatus) {
+      updateData.resultsStatus = options.resultsStatus;
+      if (options.resultsStatus === "published") {
+        updateData.publishedAt = new Date().toISOString();
+      }
+    }
+
+    if (options?.winnerId) {
+      updateData.winnerId = options.winnerId;
+    }
+    if (options?.winnerName) {
+      updateData.winnerName = options.winnerName;
+    }
+
+    await setDoc(eventRef, updateData, { merge: true });
+
+    console.log(`[Firestore] Saved event results: ${eventId}`);
+    return true;
+  } catch (error) {
+    console.error("[Firestore] Error saving event results:", error);
+    return false;
+  }
+}
+
+/**
+ * Save payment status for an event
+ */
+export async function saveEventPayments(
+  eventId: string,
+  payments: EventData["payments"]
+): Promise<boolean> {
+  if (!eventId) {
+    console.error("[Firestore] saveEventPayments: eventId is required");
+    return false;
+  }
+
+  try {
+    if (!isFirebaseConfigured()) {
+      console.error("[Firestore] Firebase not configured");
+      return false;
+    }
+
+    const societyId = getActiveSocietyId();
+    const eventRef = doc(db, "societies", societyId, "events", eventId);
+
+    await setDoc(eventRef, {
+      payments,
+      paymentsUpdatedAt: new Date().toISOString(),
+    }, { merge: true });
+
+    console.log(`[Firestore] Saved event payments: ${eventId}`);
+    return true;
+  } catch (error) {
+    console.error("[Firestore] Error saving event payments:", error);
+    return false;
+  }
 }

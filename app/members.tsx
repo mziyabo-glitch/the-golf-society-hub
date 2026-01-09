@@ -1,13 +1,16 @@
+/**
+ * Members Screen
+ * 
+ * WEB-ONLY PERSISTENCE: All data via Firestore, no AsyncStorage
+ */
+
 import { useFocusEffect } from "@react-navigation/native";
 import { router } from "expo-router";
 import { useCallback, useState } from "react";
 import { Alert, ActivityIndicator, Pressable, StyleSheet, View } from "react-native";
 import { getSession, setCurrentUserId } from "@/lib/session";
 import { canManageMembers, normalizeMemberRoles, normalizeSessionRole } from "@/lib/permissions";
-import { ensureValidCurrentMember } from "@/lib/storage";
-import { STORAGE_KEYS } from "@/lib/storage";
 import { guard } from "@/lib/guards";
-import { setJson } from "@/lib/storage-helpers";
 import { Screen } from "@/components/ui/Screen";
 import { SectionHeader } from "@/components/ui/SectionHeader";
 import { AppText } from "@/components/ui/AppText";
@@ -17,20 +20,8 @@ import { PrimaryButton, SecondaryButton, DestructiveButton } from "@/components/
 import { EmptyState } from "@/components/ui/EmptyState";
 import { Row } from "@/components/ui/Row";
 import { getColors, spacing } from "@/lib/ui/theme";
-import AsyncStorage from "@react-native-async-storage/async-storage";
-import type { EventData } from "@/lib/models";
-
-type MemberData = {
-  id: string;
-  name: string;
-  handicap?: number;
-  roles?: string[];
-  paid?: boolean;
-  amountPaid?: number;
-  paidDate?: string;
-};
-
-const EVENTS_KEY = STORAGE_KEYS.EVENTS;
+import { getMembers, getEvents, saveMember, deleteMember } from "@/lib/firestore/society";
+import type { EventData, MemberData } from "@/lib/models";
 
 export default function MembersScreen() {
   const [members, setMembers] = useState<MemberData[]>([]);
@@ -48,47 +39,42 @@ export default function MembersScreen() {
 
   const loadMembers = async () => {
     try {
-      // Self-heal: ensure valid current member exists
-      const { members: healedMembers, currentUserId: healedUserId } = await ensureValidCurrentMember();
-      
-      setMembers(healedMembers);
+      // Load members from Firestore (single source of truth)
+      const firestoreMembers = await getMembers();
+      setMembers(firestoreMembers);
 
-      // Load session (single source of truth)
+      // Load session
       const session = await getSession();
-      const effectiveUserId = healedUserId || session.currentUserId;
+      const effectiveUserId = session.currentUserId;
       setCurrentUserIdState(effectiveUserId);
 
-      // Permissions should never block loading members; gate only editing UI/actions.
-      const current = healedMembers.find((m) => m.id === effectiveUserId) || null;
+      // Permissions check
+      const current = firestoreMembers.find((m) => m.id === effectiveUserId) || null;
       const sessionRole = normalizeSessionRole(session.role);
       const memberRoles = normalizeMemberRoles(current?.roles);
 
-      // Dev-only unit-style check: ensure we didn't shadow the import again
       if (__DEV__) {
-        // eslint-disable-next-line no-console
-        console.log("[Members] typeof canManageMembers:", typeof canManageMembers);
+        console.log("[Members] Loaded", firestoreMembers.length, "members from Firestore");
       }
 
       setCanManageMembersFlag(canManageMembers(sessionRole, memberRoles));
 
-      // Load events to find next upcoming event
-      const eventsData = await AsyncStorage.getItem(EVENTS_KEY);
-      if (eventsData) {
-        const allEvents: EventData[] = JSON.parse(eventsData);
-        const now = new Date();
-        const upcomingEvents = allEvents
-          .filter((e) => {
-            const eventDate = new Date(e.date);
-            return eventDate >= now && !e.isCompleted;
-          })
-          .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
-        
-        if (upcomingEvents.length > 0) {
-          setNextUpcomingEvent(upcomingEvents[0]);
-        }
+      // Load events from Firestore to find next upcoming event
+      const allEvents = await getEvents();
+      const now = new Date();
+      const upcomingEvents = allEvents
+        .filter((e) => {
+          const eventDate = new Date(e.date);
+          return eventDate >= now && !e.isCompleted;
+        })
+        .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+      
+      if (upcomingEvents.length > 0) {
+        setNextUpcomingEvent(upcomingEvents[0]);
       }
     } catch (error) {
       console.error("Error loading members:", error);
+      Alert.alert("Error", "Failed to load members. Please check your connection.");
     } finally {
       setLoading(false);
     }
@@ -163,22 +149,21 @@ export default function MembersScreen() {
           style: "destructive",
           onPress: async () => {
             try {
-              // Remove from local state immediately
+              // Delete from Firestore
+              const success = await deleteMember(memberId);
+              
+              if (!success) {
+                Alert.alert("Error", "Failed to remove member. Please try again.");
+                return;
+              }
+
+              // Update local state
               const updatedMembers = members.filter((m) => m.id !== memberId);
               setMembers(updatedMembers);
               
               // Clear selection if needed
               if (selectedMemberId === memberId) {
                 setSelectedMemberId(null);
-              }
-
-              // Persist to storage
-              const success = await setJson(STORAGE_KEYS.MEMBERS, updatedMembers);
-              if (!success) {
-                // Rollback on failure
-                setMembers(members);
-                Alert.alert("Error", "Failed to save changes. Please try again.");
-                return;
               }
 
               // If removed member was current user, switch to first remaining member

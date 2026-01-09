@@ -3,10 +3,16 @@
  * 
  * Initializes Firebase SDK for Expo and exports Firestore database instance.
  * This is the single source of truth for Firebase configuration.
+ * 
+ * WEB-ONLY PERSISTENCE:
+ * - Active society ID is stored in localStorage (via active-society-web.ts)
+ * - All other business data comes from Firestore only
  */
 
 import { initializeApp, getApps, getApp } from "firebase/app";
 import { getFirestore } from "firebase/firestore";
+import { Platform } from "react-native";
+import { getActiveSocietyIdWeb } from "./active-society-web";
 
 // Firebase configuration
 // In production, these should come from environment variables
@@ -25,18 +31,26 @@ const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
 // Export Firestore database instance
 export const db = getFirestore(app);
 
+// Default society ID for migration/testing
+const DEFAULT_SOCIETY_ID = "m4-golf-society";
+
 /**
  * Get the active society ID
  * 
- * During migration phase, this returns a hardcoded value.
- * In production, this will read from user session/auth context.
+ * On web: reads from localStorage
+ * On native: uses default (will be replaced with AsyncStorage later)
  * 
  * @returns The active society document ID
  */
 export function getActiveSocietyId(): string {
-  // TODO: Replace with dynamic society ID from user session
-  // For now, return hardcoded value for migration testing
-  return "m4-golf-society";
+  if (Platform.OS === "web") {
+    const webSocietyId = getActiveSocietyIdWeb();
+    return webSocietyId || DEFAULT_SOCIETY_ID;
+  }
+  
+  // Native platforms use default for now
+  // TODO: Replace with AsyncStorage-based retrieval for native
+  return DEFAULT_SOCIETY_ID;
 }
 
 /**
@@ -45,4 +59,14 @@ export function getActiveSocietyId(): string {
  */
 export function isFirebaseConfigured(): boolean {
   return firebaseConfig.apiKey !== "AIzaSyDummyKey";
+}
+
+/**
+ * Check if Firebase configuration is missing in production
+ * Returns true if we're in production but using dummy config
+ */
+export function isFirebaseConfigMissing(): boolean {
+  // Check if we're in production (not __DEV__)
+  const isProduction = typeof __DEV__ !== "undefined" ? !__DEV__ : true;
+  return isProduction && !isFirebaseConfigured();
 }

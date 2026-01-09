@@ -1,22 +1,18 @@
+/**
+ * Add Member Screen
+ * 
+ * WEB-ONLY PERSISTENCE: All data via Firestore, no AsyncStorage
+ */
+
 import { canManageMembers, normalizeMemberRoles, normalizeSessionRole } from "@/lib/permissions";
 import { getCurrentUserRoles } from "@/lib/roles";
 import { getSession } from "@/lib/session";
-import { STORAGE_KEYS } from "@/lib/storage";
-import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useFocusEffect } from "@react-navigation/native";
 import { useRouter } from "expo-router";
 import { useCallback, useState } from "react";
 import { Alert, Pressable, ScrollView, Text, TextInput, View } from "react-native";
-
-const MEMBERS_KEY = STORAGE_KEYS.MEMBERS;
-
-type MemberData = {
-  id: string;
-  name: string;
-  handicap?: number;
-  sex?: "male" | "female";
-  roles?: string[];
-};
+import { getMembers, saveMember } from "@/lib/firestore/society";
+import type { MemberData } from "@/lib/models";
 
 export default function AddMemberScreen() {
   const router = useRouter();
@@ -54,30 +50,33 @@ export default function AddMemberScreen() {
     if (!isFormValid) return;
 
     try {
-      // Load existing members
-      const existingMembersData = await AsyncStorage.getItem(MEMBERS_KEY);
-      const existingMembers: MemberData[] = existingMembersData
-        ? JSON.parse(existingMembersData)
-        : [];
+      // Load existing members from Firestore
+      const existingMembers = await getMembers();
 
       // Determine roles: first member gets Captain/Handicapper, others get Member
       const isFirstMember = existingMembers.length === 0;
       const roles: string[] = isFirstMember 
-        ? ["Captain", "Handicapper", "Member"] 
-        : ["Member"];
+        ? ["captain", "handicapper", "member"] 
+        : ["member"];
 
       // Create new member
       const newMember: MemberData = {
-        id: Date.now().toString(),
+        id: `member-${Date.now()}`,
         name: memberName.trim(),
         handicap: handicap.trim() ? parseFloat(handicap.trim()) : undefined,
         sex: sex as "male" | "female",
         roles,
       };
 
-      // Append to array and save
-      const updatedMembers = [...existingMembers, newMember];
-      await AsyncStorage.setItem(MEMBERS_KEY, JSON.stringify(updatedMembers));
+      // Save to Firestore
+      const success = await saveMember(newMember);
+      
+      if (!success) {
+        Alert.alert("Error", "Failed to save member. Please try again.");
+        return;
+      }
+      
+      console.log("[AddMember] Member saved to Firestore:", newMember.id);
       
       // If first member OR no current user set, set as current user and admin session
       const session = await getSession();
@@ -95,6 +94,7 @@ export default function AddMemberScreen() {
       router.back();
     } catch (error) {
       console.error("Error saving member:", error);
+      Alert.alert("Error", "Failed to add member. Please check your connection.");
     }
   };
 

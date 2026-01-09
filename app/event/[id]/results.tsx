@@ -9,20 +9,20 @@
  * - Verify event moves from Next Event to Last Event on dashboard
  * - Verify winner name appears on Last Event card
  * - Close/reopen app, verify results persist
+ * 
+ * WEB-ONLY PERSISTENCE: All data via Firestore, no AsyncStorage
  */
 
-import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useFocusEffect } from "@react-navigation/native";
 import { router, useLocalSearchParams } from "expo-router";
 import { useCallback, useState } from "react";
 import { Alert, Pressable, StyleSheet, TextInput, View, ActivityIndicator } from "react-native";
 
 import { getCourseHandicap, getPlayingHandicap } from "@/lib/handicap";
-import type { Course, TeeSet, MemberData as MemberDataType } from "@/lib/models";
+import type { Course, TeeSet, MemberData as MemberDataType, EventData } from "@/lib/models";
 import { canEnterScores, normalizeMemberRoles, normalizeSessionRole } from "@/lib/permissions";
 import { getCurrentUserRoles } from "@/lib/roles";
 import { getSession } from "@/lib/session";
-import { STORAGE_KEYS } from "@/lib/storage";
 import { formatDateDDMMYYYY } from "@/utils/date";
 import { Screen } from "@/components/ui/Screen";
 import { SectionHeader } from "@/components/ui/SectionHeader";
@@ -31,41 +31,7 @@ import { AppCard } from "@/components/ui/AppCard";
 import { PrimaryButton, SecondaryButton } from "@/components/ui/Button";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { getColors, spacing } from "@/lib/ui/theme";
-
-const EVENTS_KEY = STORAGE_KEYS.EVENTS;
-const MEMBERS_KEY = STORAGE_KEYS.MEMBERS;
-const COURSES_KEY = STORAGE_KEYS.COURSES;
-
-type EventData = {
-  id: string;
-  name: string;
-  date: string;
-  courseName: string;
-  courseId?: string;
-  maleTeeSetId?: string;
-  femaleTeeSetId?: string;
-  handicapAllowance?: 0.9 | 1.0;
-  handicapAllowancePct?: number;
-  format: "Stableford" | "Strokeplay" | "Both";
-  playerIds?: string[];
-  isCompleted?: boolean;
-  completedAt?: string;
-  resultsStatus?: "draft" | "published";
-  publishedAt?: string;
-  resultsUpdatedAt?: string;
-  isOOM?: boolean;
-  winnerId?: string;
-  winnerName?: string;
-  handicapSnapshot?: { [memberId: string]: number };
-  results?: {
-    [memberId: string]: {
-      grossScore: number;
-      netScore?: number;
-      stableford?: number;
-      strokeplay?: number;
-    };
-  };
-};
+import { getEvent, getMembers, getCourse, saveEventResults } from "@/lib/firestore/society";
 
 type MemberData = {
   id: string;
@@ -96,87 +62,91 @@ export default function EventResultsScreen() {
 
   const loadData = async () => {
     try {
-      // Load courses
-      const coursesData = await AsyncStorage.getItem(COURSES_KEY);
-      let loadedCourses: Course[] = [];
-      if (coursesData) {
-        loadedCourses = JSON.parse(coursesData);
-        setCourses(loadedCourses);
+      if (!eventId) {
+        Alert.alert("Error", "Event ID is missing");
+        router.back();
+        return;
       }
 
-      // Load event
-      const eventsData = await AsyncStorage.getItem(EVENTS_KEY);
-      let currentEvent: EventData | null = null;
-      if (eventsData) {
-        const allEvents: EventData[] = JSON.parse(eventsData);
-        currentEvent = allEvents.find((e) => e.id === eventId) || null;
-        if (currentEvent) {
-          setEvent(currentEvent);
-          // Load existing results
-          if (currentEvent.results) {
-            const resultsMap: { [memberId: string]: { stableford?: string; strokeplay?: string } } = {};
-            Object.entries(currentEvent.results).forEach(([memberId, result]) => {
-              resultsMap[memberId] = {
-                stableford: result.stableford?.toString() || result.grossScore?.toString(),
-                strokeplay: result.strokeplay?.toString() || result.grossScore?.toString(),
-              };
-            });
-            setResults(resultsMap);
-          }
+      // Load event from Firestore
+      const currentEvent = await getEvent(eventId);
+      if (!currentEvent) {
+        Alert.alert("Error", "Event not found");
+        router.back();
+        return;
+      }
 
-          // Load course and tee sets
-          if (currentEvent.courseId) {
-            const course = loadedCourses.find((c) => c.id === currentEvent!.courseId);
-            if (course) {
-              setSelectedCourse(course);
-              if (currentEvent.maleTeeSetId) {
-                const maleTee = course.teeSets.find((t) => t.id === currentEvent!.maleTeeSetId);
-                setSelectedMaleTeeSet(maleTee || null);
-              }
-              if (currentEvent.femaleTeeSetId) {
-                const femaleTee = course.teeSets.find((t) => t.id === currentEvent!.femaleTeeSetId);
-                setSelectedFemaleTeeSet(femaleTee || null);
-              }
-            }
+      setEvent(currentEvent);
+      
+      // Load existing results
+      if (currentEvent.results) {
+        const resultsMap: { [memberId: string]: { stableford?: string; strokeplay?: string } } = {};
+        Object.entries(currentEvent.results).forEach(([memberId, result]) => {
+          resultsMap[memberId] = {
+            stableford: result.stableford?.toString() || result.grossScore?.toString(),
+            strokeplay: result.strokeplay?.toString() || result.grossScore?.toString(),
+          };
+        });
+        setResults(resultsMap);
+      }
+
+      // Load course and tee sets from Firestore
+      if (currentEvent.courseId) {
+        const course = await getCourse(currentEvent.courseId);
+        if (course) {
+          setSelectedCourse(course);
+          setCourses([course]);
+          
+          if (currentEvent.maleTeeSetId) {
+            const maleTee = course.teeSets.find((t) => 
+              t.id.toLowerCase() === currentEvent.maleTeeSetId?.toLowerCase()
+            );
+            setSelectedMaleTeeSet(maleTee || null);
+          }
+          if (currentEvent.femaleTeeSetId) {
+            const femaleTee = course.teeSets.find((t) => 
+              t.id.toLowerCase() === currentEvent.femaleTeeSetId?.toLowerCase()
+            );
+            setSelectedFemaleTeeSet(femaleTee || null);
           }
         }
       }
 
-      // Load members
-      const membersData = await AsyncStorage.getItem(MEMBERS_KEY);
-      if (membersData) {
-        const allMembers: MemberData[] = JSON.parse(membersData);
-        setMembers(allMembers);
+      // Load members from Firestore
+      const allMembers = await getMembers();
+      setMembers(allMembers);
 
-        // Filter to only selected players (use currentEvent from above, not event state)
-        if (currentEvent?.playerIds && currentEvent.playerIds.length > 0) {
-          const players = allMembers.filter((m) => currentEvent!.playerIds!.includes(m.id));
-          setSelectedPlayers(players);
-        } else {
-          // If no players selected, show all members
-          setSelectedPlayers(allMembers);
-        }
+      // Filter to only selected players
+      if (currentEvent.playerIds && currentEvent.playerIds.length > 0) {
+        const players = allMembers.filter((m) => currentEvent.playerIds!.includes(m.id));
+        setSelectedPlayers(players);
+      } else {
+        setSelectedPlayers(allMembers);
       }
 
-      // Load session (single source of truth)
+      // Load session and check permissions
       const session = await getSession();
       setRole(session.role);
       
-      // Check permissions using pure functions
       const sessionRole = normalizeSessionRole(session.role);
       const roles = normalizeMemberRoles(await getCurrentUserRoles());
       const canEnter = canEnterScores(sessionRole, roles);
       setCanEdit(canEnter);
       
-      // Block unauthorized access - redirect if not authorized
       if (!canEnter) {
         Alert.alert("Access Denied", "Only Captain, Secretary, or Handicapper can enter results", [
           { text: "OK", onPress: () => router.back() },
         ]);
       }
+      
+      console.log("[Results] Loaded from Firestore:", {
+        event: currentEvent.name,
+        members: allMembers.length,
+        players: currentEvent.playerIds?.length || 0,
+      });
     } catch (error) {
       console.error("Error loading data:", error);
-      Alert.alert("Error", "Failed to load data");
+      Alert.alert("Error", "Failed to load data. Please check your connection.");
     } finally {
       setLoading(false);
     }
@@ -337,13 +307,6 @@ export default function EventResultsScreen() {
     }
 
     try {
-      const eventsData = await AsyncStorage.getItem(EVENTS_KEY);
-      if (!eventsData) {
-        Alert.alert("Error", "Event not found");
-        return;
-      }
-
-      const allEvents: EventData[] = JSON.parse(eventsData);
       const winner = calculateWinner();
 
       // Build results object with format-specific scores
@@ -390,24 +353,19 @@ export default function EventResultsScreen() {
         }
       });
 
-      // Save as DRAFT only (not published)
-      const updatedEvents = allEvents.map((e) =>
-        e.id === event.id
-          ? {
-              ...e,
-              results: resultsObj,
-              winnerId: winner?.memberId,
-              winnerName: winner?.memberName,
-              resultsStatus: "draft" as const,
-              resultsUpdatedAt: new Date().toISOString(),
-              // Don't mark as completed until published
-            }
-          : e
-      );
+      // Save as DRAFT to Firestore
+      const success = await saveEventResults(event.id, resultsObj, {
+        resultsStatus: "draft",
+        winnerId: winner?.memberId,
+        winnerName: winner?.memberName,
+      });
 
-      await AsyncStorage.setItem(EVENTS_KEY, JSON.stringify(updatedEvents));
-      Alert.alert("Success", "Draft saved — not counted in Order of Merit until published");
-      router.back();
+      if (success) {
+        Alert.alert("Success", "Draft saved — not counted in Order of Merit until published");
+        router.back();
+      } else {
+        Alert.alert("Error", "Failed to save results. Please try again.");
+      }
     } catch (error) {
       console.error("Error saving results:", error);
       Alert.alert("Error", "Failed to save results");
@@ -454,28 +412,18 @@ export default function EventResultsScreen() {
     }
 
     try {
-      const eventsData = await AsyncStorage.getItem(EVENTS_KEY);
-      if (!eventsData) {
-        Alert.alert("Error", "Event not found");
-        return;
+      // Publish results to Firestore
+      const success = await saveEventResults(event.id, event.results, {
+        resultsStatus: "published",
+        isCompleted: true,
+      });
+
+      if (success) {
+        Alert.alert("Success", "Results published — Order of Merit updated");
+        router.back();
+      } else {
+        Alert.alert("Error", "Failed to publish results. Please try again.");
       }
-
-      const allEvents: EventData[] = JSON.parse(eventsData);
-      const updatedEvents = allEvents.map((e) =>
-        e.id === event.id
-          ? {
-              ...e,
-              resultsStatus: "published" as const,
-              publishedAt: new Date().toISOString(),
-              isCompleted: true,
-              completedAt: new Date().toISOString(),
-            }
-          : e
-      );
-
-      await AsyncStorage.setItem(EVENTS_KEY, JSON.stringify(updatedEvents));
-      Alert.alert("Success", "Results published — Order of Merit updated");
-      router.back();
     } catch (error) {
       console.error("Error publishing results:", error);
       Alert.alert("Error", "Failed to publish results");

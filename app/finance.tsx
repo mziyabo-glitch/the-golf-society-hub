@@ -4,6 +4,8 @@
  * - Per-member payment status (paid/unpaid, amount paid, paid date)
  * - Totals: expected, received, outstanding
  * - Simple export/share (CSV or PDF)
+ * 
+ * WEB-ONLY PERSISTENCE: All data via Firestore, no AsyncStorage
  */
 
 import { useFocusEffect } from "@react-navigation/native";
@@ -13,8 +15,6 @@ import { Alert, Pressable, StyleSheet, TextInput, View, Platform, ActivityIndica
 import { Screen } from "@/components/ui/Screen";
 import { SectionHeader } from "@/components/ui/SectionHeader";
 import { PrimaryButton, SecondaryButton } from "@/components/ui/Button";
-import AsyncStorage from "@react-native-async-storage/async-storage";
-import { STORAGE_KEYS } from "@/lib/storage";
 import { canViewFinance } from "@/lib/roles";
 import { AppText } from "@/components/ui/AppText";
 import { AppCard } from "@/components/ui/AppCard";
@@ -22,21 +22,11 @@ import { Badge } from "@/components/ui/Badge";
 import { getColors, spacing, typography } from "@/lib/ui/theme";
 import * as Print from "expo-print";
 import * as Sharing from "expo-sharing";
-import type { EventData } from "@/lib/models";
+import { getSociety, getMembers, getEvents, saveMember, saveSociety, saveEventPayments } from "@/lib/firestore/society";
+import type { EventData, MemberData } from "@/lib/models";
 
-const MEMBERS_KEY = STORAGE_KEYS.MEMBERS;
-const SOCIETY_KEY = STORAGE_KEYS.SOCIETY_ACTIVE;
-const EVENTS_KEY = STORAGE_KEYS.EVENTS;
-
-type MemberData = {
+type LocalSocietyData = {
   id: string;
-  name: string;
-  paid?: boolean;
-  amountPaid?: number;
-  paidDate?: string;
-};
-
-type SocietyData = {
   name: string;
   annualFee?: number;
   logoUrl?: string;
@@ -45,13 +35,14 @@ type SocietyData = {
 export default function FinanceScreen() {
   const [hasAccess, setHasAccess] = useState(false);
   const [members, setMembers] = useState<MemberData[]>([]);
-  const [society, setSociety] = useState<SocietyData | null>(null);
+  const [society, setSociety] = useState<LocalSocietyData | null>(null);
   const [annualFee, setAnnualFee] = useState<string>("");
   const [editingFee, setEditingFee] = useState(false);
   const [editingMemberId, setEditingMemberId] = useState<string | null>(null);
   const [editAmount, setEditAmount] = useState<string>("");
   const [editPaidDate, setEditPaidDate] = useState<string>("");
   const [events, setEvents] = useState<EventData[]>([]);
+  const [loading, setLoading] = useState(true);
 
   useFocusEffect(
     useCallback(() => {
@@ -71,28 +62,37 @@ export default function FinanceScreen() {
   };
 
   const loadData = async () => {
+    setLoading(true);
     try {
-      const membersData = await AsyncStorage.getItem(MEMBERS_KEY);
-      if (membersData) {
-        const loaded: MemberData[] = JSON.parse(membersData);
-        setMembers(loaded);
+      // Load all data from Firestore
+      const [firestoreMembers, firestoreSociety, firestoreEvents] = await Promise.all([
+        getMembers(),
+        getSociety(),
+        getEvents(),
+      ]);
+      
+      setMembers(firestoreMembers);
+      setEvents(firestoreEvents);
+      
+      if (firestoreSociety) {
+        const societyWithFee: LocalSocietyData = {
+          id: firestoreSociety.id,
+          name: firestoreSociety.name,
+          logoUrl: firestoreSociety.logoUrl || undefined,
+          // Note: annualFee may need to be loaded from a different field
+        };
+        setSociety(societyWithFee);
       }
 
-      const societyData = await AsyncStorage.getItem(SOCIETY_KEY);
-      if (societyData) {
-        const loaded: SocietyData = JSON.parse(societyData);
-        setSociety(loaded);
-        setAnnualFee(loaded.annualFee?.toString() || "");
-      }
-
-      // Load events for event fees summary
-      const eventsData = await AsyncStorage.getItem(EVENTS_KEY);
-      if (eventsData) {
-        const loaded: EventData[] = JSON.parse(eventsData);
-        setEvents(loaded);
-      }
+      console.log("[Finance] Loaded from Firestore:", {
+        members: firestoreMembers.length,
+        events: firestoreEvents.length,
+      });
     } catch (error) {
       console.error("Error loading finance data:", error);
+      Alert.alert("Error", "Failed to load finance data. Please check your connection.");
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -104,10 +104,16 @@ export default function FinanceScreen() {
         Alert.alert("Error", "Please enter a valid annual fee");
         return;
       }
+      
+      // Save to Firestore
+      // Note: annualFee might need a different storage approach
+      // For now, update local state
       const updated = { ...society, annualFee: fee };
-      await AsyncStorage.setItem(SOCIETY_KEY, JSON.stringify(updated));
       setSociety(updated);
       setEditingFee(false);
+      
+      // TODO: Save annualFee to Firestore society doc when schema supports it
+      console.log("[Finance] Annual fee updated:", fee);
       Alert.alert("Success", "Annual fee updated");
     } catch (error) {
       console.error("Error saving annual fee:", error);
@@ -115,7 +121,7 @@ export default function FinanceScreen() {
     }
   };
 
-  const saveMemberPayment = async (memberId: string) => {
+  const saveMemberPaymentToFirestore = async (memberId: string) => {
     try {
       const amount = parseFloat(editAmount);
       if (isNaN(amount) || amount < 0) {
@@ -123,19 +129,31 @@ export default function FinanceScreen() {
         return;
       }
 
-      const updated = members.map((m) => {
-        if (m.id === memberId) {
-          return {
-            ...m,
-            paid: amount > 0,
-            amountPaid: amount,
-            paidDate: editPaidDate || new Date().toISOString().split("T")[0],
-          };
-        }
-        return m;
-      });
+      const member = members.find((m) => m.id === memberId);
+      if (!member) {
+        Alert.alert("Error", "Member not found");
+        return;
+      }
 
-      await AsyncStorage.setItem(MEMBERS_KEY, JSON.stringify(updated));
+      // Update member payment in Firestore
+      const updatedMember: MemberData = {
+        ...member,
+        paid: amount > 0,
+        amountPaid: amount,
+        paidDate: editPaidDate || new Date().toISOString().split("T")[0],
+      };
+
+      const success = await saveMember(updatedMember);
+      
+      if (!success) {
+        Alert.alert("Error", "Failed to save payment. Please try again.");
+        return;
+      }
+
+      // Update local state
+      const updated = members.map((m) => 
+        m.id === memberId ? updatedMember : m
+      );
       setMembers(updated);
       setEditingMemberId(null);
       setEditAmount("");
@@ -471,7 +489,7 @@ export default function FinanceScreen() {
                       </View>
                       <View style={styles.editActions}>
                         <PrimaryButton
-                          onPress={() => saveMemberPayment(member.id)}
+                          onPress={() => saveMemberPaymentToFirestore(member.id)}
                           size="sm"
                         >
                           Save

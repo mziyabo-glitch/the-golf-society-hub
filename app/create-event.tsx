@@ -4,9 +4,10 @@
  * - As captain: verify can create events
  * - Create event with all fields
  * - Verify event appears on dashboard
+ * 
+ * WEB-ONLY PERSISTENCE: All data via Firestore, no AsyncStorage
  */
 
-import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useFocusEffect } from "@react-navigation/native";
 import { useRouter } from "expo-router";
 import { useCallback, useState } from "react";
@@ -14,36 +15,9 @@ import { Alert, Pressable, ScrollView, Text, TextInput, View } from "react-nativ
 import { getSession } from "@/lib/session";
 import { canCreateEvents, normalizeMemberRoles, normalizeSessionRole } from "@/lib/permissions";
 import { getCurrentUserRoles } from "@/lib/roles";
-import { STORAGE_KEYS } from "@/lib/storage";
 import { DatePicker } from "@/components/DatePicker";
-
-const EVENTS_KEY = STORAGE_KEYS.EVENTS;
-
-type EventData = {
-  id: string;
-  name: string;
-  date: string;
-  courseName: string; // Legacy field
-  courseId?: string;
-  maleTeeSetId?: string;
-  femaleTeeSetId?: string;
-  handicapAllowance?: 0.9 | 1.0;
-  format: "Stableford" | "Strokeplay" | "Both";
-  playerIds?: string[];
-  isCompleted?: boolean;
-  isOOM?: boolean;
-  winnerId?: string;
-  winnerName?: string;
-  rsvps?: {
-    [memberId: string]: "going" | "maybe" | "no";
-  };
-  results?: {
-    [memberId: string]: {
-      grossScore: number;
-      netScore?: number;
-    };
-  };
-};
+import { saveEvent } from "@/lib/firestore/society";
+import type { EventData } from "@/lib/models";
 
 export default function CreateEventScreen() {
   const router = useRouter();
@@ -87,30 +61,30 @@ export default function CreateEventScreen() {
     if (!isFormValid) return;
 
     try {
-      // Load existing events
-      const existingEventsData = await AsyncStorage.getItem(EVENTS_KEY);
-      const existingEvents: EventData[] = existingEventsData
-        ? JSON.parse(existingEventsData)
-        : [];
-
-      // Create new event
-      const newEvent: EventData = {
-        id: Date.now().toString(),
+      // Create new event with unique ID
+      const newEvent: Partial<EventData> & { id: string } = {
+        id: `event-${Date.now()}`,
         name: eventName.trim(),
-        date: eventDate.trim(),
+        date: eventDate.trim() || new Date().toISOString(),
         courseName: courseName.trim(),
         format,
         isOOM,
+        playerIds: [],
+        isCompleted: false,
       };
 
-      // Append to array and save
-      const updatedEvents = [...existingEvents, newEvent];
-      await AsyncStorage.setItem(EVENTS_KEY, JSON.stringify(updatedEvents));
-
-      // Navigate back
-      router.back();
+      // Save directly to Firestore
+      const success = await saveEvent(newEvent);
+      
+      if (success) {
+        console.log("[CreateEvent] Event saved to Firestore:", newEvent.id);
+        router.back();
+      } else {
+        Alert.alert("Error", "Failed to save event. Please try again.");
+      }
     } catch (error) {
       console.error("Error saving event:", error);
+      Alert.alert("Error", "Failed to create event. Please check your connection.");
     }
   };
 
