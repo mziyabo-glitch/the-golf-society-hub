@@ -44,6 +44,11 @@ export default function ProfileScreen() {
   const [loading, setLoading] = useState(true);
   const [userRoles, setUserRoles] = useState<string[]>([]);
   const [upcomingEventsWithFees, setUpcomingEventsWithFees] = useState<EventData[]>([]);
+  const [showRoleSwitchModal, setShowRoleSwitchModal] = useState(false);
+  const [roleSwitchTarget, setRoleSwitchTarget] = useState<"admin" | "member">("member");
+  const [adminPinInput, setAdminPinInput] = useState("");
+
+  const roleSwitchAllowed = __DEV__ || process.env.EXPO_PUBLIC_ENABLE_ROLE_SWITCH === "true";
 
   useFocusEffect(
     useCallback(() => {
@@ -146,35 +151,66 @@ export default function ProfileScreen() {
     }
   };
 
-  const handleSwitchToAdmin = async () => {
+  const beginRoleSwitch = async (target: "admin" | "member") => {
+    if (!roleSwitchAllowed) {
+      Alert.alert("Unavailable", "Role switching is disabled in this build.");
+      return;
+    }
     if (!currentUserId) {
       Alert.alert("Error", "Please select a member profile first");
       return;
     }
 
-    // TODO: Re-enable Admin PIN requirement for role switching
-    // Previously checked PIN from ADMIN_PIN_KEY before allowing admin role switch
+    Alert.alert(
+      "Switch session role?",
+      `Switch session role to "${target}"? This is for testing and does not change member permissions.`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Continue",
+          style: target === "admin" ? "destructive" : "default",
+          onPress: async () => {
+            setRoleSwitchTarget(target);
+            setAdminPinInput("");
+            setShowRoleSwitchModal(true);
+          },
+        },
+      ]
+    );
+  };
 
+  const performRoleSwitch = async () => {
     try {
-      await setRole("admin");
-      setRoleState("admin");
-      Alert.alert("Success", "Switched to admin role");
+      if (!roleSwitchAllowed) {
+        Alert.alert("Unavailable", "Role switching is disabled in this build.");
+        return;
+      }
+
+      // Require Admin PIN when role switching is enabled
+      const storedPin = await AsyncStorage.getItem(STORAGE_KEYS.ADMIN_PIN);
+      const expected = storedPin?.trim();
+      if (!expected) {
+        Alert.alert("Admin PIN required", "Set an Admin PIN in Settings before switching roles.");
+        return;
+      }
+      if (adminPinInput.trim() !== expected) {
+        Alert.alert("Incorrect PIN", "The Admin PIN you entered is incorrect.");
+        return;
+      }
+
+      await setRole(roleSwitchTarget);
+      setRoleState(roleSwitchTarget);
+      setShowRoleSwitchModal(false);
+      setAdminPinInput("");
+      Alert.alert("Success", `Switched to ${roleSwitchTarget} role`);
     } catch (error) {
-      console.error("Error switching to admin:", error);
+      console.error("Error switching role:", error);
       Alert.alert("Error", "Failed to switch role");
     }
   };
 
-  const handleSwitchToMember = async () => {
-    try {
-      await setRole("member");
-      setRoleState("member");
-      Alert.alert("Success", "Switched to member role");
-    } catch (error) {
-      console.error("Error switching to member:", error);
-      Alert.alert("Error", "Failed to switch role");
-    }
-  };
+  const handleSwitchToAdmin = () => beginRoleSwitch("admin");
+  const handleSwitchToMember = () => beginRoleSwitch("member");
 
   if (loading) {
     return (
@@ -386,17 +422,20 @@ export default function ProfileScreen() {
                 Session Role: <Text style={styles.roleValue}>{role}</Text>
               </Text>
 
-              {role === "member" ? (
-                <Pressable
-                  onPress={handleSwitchToAdmin}
-                  style={styles.roleButton}
-                >
-                  <Text style={styles.roleButtonText}>Switch to Admin</Text>
-                </Pressable>
+              {roleSwitchAllowed ? (
+                role === "member" ? (
+                  <Pressable onPress={handleSwitchToAdmin} style={styles.roleButton}>
+                    <Text style={styles.roleButtonText}>Switch to Admin</Text>
+                  </Pressable>
+                ) : (
+                  <Pressable onPress={handleSwitchToMember} style={styles.roleButton}>
+                    <Text style={styles.roleButtonText}>Switch to Member</Text>
+                  </Pressable>
+                )
               ) : (
-                <Pressable onPress={handleSwitchToMember} style={styles.roleButton}>
-                  <Text style={styles.roleButtonText}>Switch to Member</Text>
-                </Pressable>
+                <Text style={styles.roleNote}>
+                  Role switching disabled (enable in dev or set EXPO_PUBLIC_ENABLE_ROLE_SWITCH="true")
+                </Text>
               )}
             </View>
           </>
@@ -418,6 +457,40 @@ export default function ProfileScreen() {
         <Pressable onPress={() => router.back()} style={styles.backButton}>
           <Text style={styles.backButtonText}>Back</Text>
         </Pressable>
+
+        {/* Role switch modal (PIN gated) */}
+        {showRoleSwitchModal && (
+          <View style={styles.pinModalOverlay}>
+            <View style={styles.pinModal}>
+              <Text style={styles.pinTitle}>Enter Admin PIN</Text>
+              <Text style={styles.pinSubtitle}>
+                Required to switch session role to "{roleSwitchTarget}"
+              </Text>
+              <TextInput
+                value={adminPinInput}
+                onChangeText={setAdminPinInput}
+                placeholder="Admin PIN"
+                secureTextEntry
+                style={styles.pinInput}
+                keyboardType="numeric"
+              />
+              <View style={styles.pinActions}>
+                <Pressable
+                  onPress={() => {
+                    setShowRoleSwitchModal(false);
+                    setAdminPinInput("");
+                  }}
+                  style={styles.pinCancelButton}
+                >
+                  <Text style={styles.pinCancelText}>Cancel</Text>
+                </Pressable>
+                <Pressable onPress={performRoleSwitch} style={styles.pinSubmitButton}>
+                  <Text style={styles.pinSubmitText}>Confirm</Text>
+                </Pressable>
+              </View>
+            </View>
+          </View>
+        )}
       </View>
     </ScrollView>
   );
@@ -789,6 +862,75 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: "600",
     color: "#6b7280",
+  },
+  pinModalOverlay: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    top: 0,
+    bottom: 0,
+    backgroundColor: "rgba(0,0,0,0.45)",
+    justifyContent: "center",
+    alignItems: "center",
+    padding: 24,
+  },
+  pinModal: {
+    width: "100%",
+    maxWidth: 420,
+    backgroundColor: "#fff",
+    borderRadius: 16,
+    padding: 20,
+  },
+  pinTitle: {
+    fontSize: 18,
+    fontWeight: "800",
+    color: "#111827",
+    marginBottom: 6,
+    textAlign: "center",
+  },
+  pinSubtitle: {
+    fontSize: 13,
+    color: "#6b7280",
+    textAlign: "center",
+    marginBottom: 12,
+  },
+  pinInput: {
+    backgroundColor: "#f9fafb",
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    borderRadius: 12,
+    fontSize: 16,
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
+    marginBottom: 12,
+  },
+  pinActions: {
+    flexDirection: "row",
+    gap: 12,
+  },
+  pinCancelButton: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 12,
+    alignItems: "center",
+    backgroundColor: "#f3f4f6",
+  },
+  pinCancelText: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: "#111827",
+  },
+  pinSubmitButton: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 12,
+    alignItems: "center",
+    backgroundColor: "#0B6E4F",
+  },
+  pinSubmitText: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: "white",
   },
 });
 

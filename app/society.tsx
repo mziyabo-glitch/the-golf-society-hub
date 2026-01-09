@@ -12,7 +12,7 @@ import { InfoCard } from "@/components/ui/info-card";
 import { AppButton } from "@/components/ui/AppButton";
 import { PrimaryButton, SecondaryButton } from "@/components/ui/Button";
 import { SegmentedTabs } from "@/components/ui/SegmentedTabs";
-import { formatDateDDMMYYYY } from "@/utils/date";
+import { formatDateDDMMYYYY, toJsDate } from "@/utils/date";
 import {
   canAssignRoles,
   canCreateEvents,
@@ -54,7 +54,7 @@ type SocietyData = {
 type EventData = {
   id: string;
   name: string;
-  date: string;
+  date: any;
   courseName: string;
   format: "Stableford" | "Strokeplay" | "Both";
   playerIds?: string[];
@@ -176,70 +176,49 @@ export default function SocietyDashboardScreen() {
     }
   };
 
-  const getNextEvent = (): EventData | null => {
-    if (events.length === 0) return null;
-    const now = new Date().getTime();
-    const futureEvents = events
-      .filter((e) => {
-        if (e.isCompleted) return false;
-        if (!e.date) return false;
-        const eventDate = new Date(e.date).getTime();
-        return eventDate >= now;
-      })
-      .sort((a, b) => {
-        const dateA = a.date ? new Date(a.date).getTime() : Infinity;
-        const dateB = b.date ? new Date(b.date).getTime() : Infinity;
-        return dateA - dateB;
-      });
-    return futureEvents.length > 0 ? futureEvents[0] : null;
+  type EventWithDate = EventData & { eventDate: Date | null };
+
+  const todayStart = new Date();
+  todayStart.setHours(0, 0, 0, 0);
+
+  const toLocalDateOnly = (d: Date): Date => {
+    const copy = new Date(d);
+    copy.setHours(0, 0, 0, 0);
+    return copy;
   };
 
-  const getLastEvent = (): EventData | null => {
-    if (events.length === 0) return null;
-    
-    // Determine if event is completed:
-    // - has isCompleted flag, OR
-    // - has completedAt timestamp, OR
-    // - has results (results exist means event was completed)
-    const isEventCompleted = (e: EventData): boolean => {
-      if (e.isCompleted) return true;
-      if (e.completedAt) return true;
-      if (e.results && Object.keys(e.results).length > 0) return true;
-      return false;
-    };
-    
-    // Get all completed events
-    const completedEvents = events
-      .filter(isEventCompleted)
+  const getEventsWithDate = (): EventWithDate[] => {
+    return events.map((e) => ({
+      ...e,
+      eventDate: (() => {
+        const d = toJsDate(e?.date);
+        return d ? toLocalDateOnly(d) : null;
+      })(),
+    }));
+  };
+
+  const getNextEvent = (): EventWithDate | null => {
+    const withDate = getEventsWithDate();
+    const next = withDate
+      .filter((e) => e.eventDate && e.eventDate.getTime() >= todayStart.getTime())
       .sort((a, b) => {
-        // Sort by completedAt if available, otherwise by date
-        const dateA = a.completedAt 
-          ? new Date(a.completedAt).getTime() 
-          : (a.date ? new Date(a.date).getTime() : 0);
-        const dateB = b.completedAt 
-          ? new Date(b.completedAt).getTime() 
-          : (b.date ? new Date(b.date).getTime() : 0);
-        return dateB - dateA; // Most recent first
-      });
-    
-    // If no completed events, try to find past events by date
-    if (completedEvents.length === 0) {
-      const now = new Date().getTime();
-      const pastEvents = events
-        .filter((e) => {
-          if (!e.date) return false;
-          const eventDate = new Date(e.date).getTime();
-          return eventDate < now;
-        })
-        .sort((a, b) => {
-          const dateA = a.date ? new Date(a.date).getTime() : 0;
-          const dateB = b.date ? new Date(b.date).getTime() : 0;
-          return dateB - dateA;
-        });
-      return pastEvents.length > 0 ? pastEvents[0] : null;
-    }
-    
-    return completedEvents[0];
+        const aTime = a.eventDate ? a.eventDate.getTime() : Number.POSITIVE_INFINITY;
+        const bTime = b.eventDate ? b.eventDate.getTime() : Number.POSITIVE_INFINITY;
+        return aTime - bTime;
+      })[0];
+    return next || null;
+  };
+
+  const getLastEvent = (): EventWithDate | null => {
+    const withDate = getEventsWithDate();
+    const last = withDate
+      .filter((e) => e.eventDate && e.eventDate.getTime() < todayStart.getTime())
+      .sort((a, b) => {
+        const aTime = a.eventDate ? a.eventDate.getTime() : 0;
+        const bTime = b.eventDate ? b.eventDate.getTime() : 0;
+        return bTime - aTime;
+      })[0];
+    return last || null;
   };
 
   const getLastWinner = (event: EventData | null): { memberName: string } | null => {
@@ -395,7 +374,7 @@ export default function SocietyDashboardScreen() {
             <Pressable onPress={() => router.push(`/event/${nextEvent.id}` as any)}>
               <AppText variant="h2" style={styles.eventTitle}>{nextEvent.name}</AppText>
               <AppText variant="body" color="secondary" style={styles.eventSubtitle}>
-                {formatDateDDMMYYYY(nextEvent.date)}
+                {formatDateDDMMYYYY(nextEvent.eventDate ?? nextEvent.date)}
               </AppText>
               {(() => {
                 const rsvps = nextEvent.rsvps || {};
@@ -439,7 +418,7 @@ export default function SocietyDashboardScreen() {
             <Pressable onPress={() => router.push(`/event/${lastEvent.id}` as any)}>
               <AppText variant="h2" style={styles.eventTitle}>{lastEvent.name}</AppText>
               <AppText variant="body" color="secondary" style={styles.eventSubtitle}>
-                {formatDateDDMMYYYY(lastEvent.date)}
+                {formatDateDDMMYYYY(lastEvent.eventDate ?? lastEvent.date)}
               </AppText>
               {(lastEvent.winnerName || lastWinner) && (
                 <AppText variant="small" color="secondary" style={styles.eventDetail}>
@@ -447,7 +426,7 @@ export default function SocietyDashboardScreen() {
                 </AppText>
               )}
               <SecondaryButton
-                onPress={() => router.push(`/event/${lastEvent.id}` as any)}
+                onPress={() => router.push(`/event/${lastEvent.id}/results` as any)}
                 size="sm"
                 style={styles.eventButton}
               >
@@ -458,7 +437,7 @@ export default function SocietyDashboardScreen() {
         ) : (
           <AppCard style={styles.eventCard}>
             <AppText variant="body" color="secondary" style={styles.emptyText}>
-              Your completed events will appear here
+              No past events yet
             </AppText>
           </AppCard>
         )}

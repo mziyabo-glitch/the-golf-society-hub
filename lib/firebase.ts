@@ -70,3 +70,36 @@ export function isFirebaseConfigMissing(): boolean {
   const isProduction = typeof __DEV__ !== "undefined" ? !__DEV__ : true;
   return isProduction && !isFirebaseConfigured();
 }
+
+/**
+ * Throw a controlled error if Firebase is not configured in production.
+ */
+export function assertFirebaseConfigured(): void {
+  const isProd = process.env.NODE_ENV === "production";
+  if (!isFirebaseConfigured() && isProd) {
+    console.error(
+      "[Firebase] Firebase is not configured for production. " +
+        "Set EXPO_PUBLIC_FIREBASE_* environment variables (apiKey, projectId, etc.)."
+    );
+    throw new Error("FIREBASE_NOT_CONFIGURED");
+  }
+}
+
+/**
+ * Initialize the active society id (async).
+ * On web, this reads from localStorage.
+ * Returns the society ID or null if not set.
+ */
+export async function initActiveSocietyId(): Promise<string | null> {
+  if (Platform.OS === "web") {
+    const webSocietyId = getActiveSocietyIdWeb();
+    if (webSocietyId) {
+      console.log("[Firebase] Initialized active society from localStorage:", webSocietyId);
+      return webSocietyId;
+    }
+  }
+  
+  // Return default for now
+  console.log("[Firebase] Using default society ID:", DEFAULT_SOCIETY_ID);
+  return DEFAULT_SOCIETY_ID;
+}
