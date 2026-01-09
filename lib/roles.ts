@@ -11,62 +11,27 @@
 /**
  * Role management utilities
  * Manages member roles: captain, treasurer, secretary, handicapper, member, admin
+ * 
+ * FIRESTORE-ONLY: All member data now comes from Firestore
  */
 
-import AsyncStorage from "@react-native-async-storage/async-storage";
+import { Platform } from "react-native";
 import { getSession } from "./session";
-import { STORAGE_KEYS } from "./storage";
+import { listMembers, getMember, upsertMember } from "./firestore/members";
 
 export type MemberRole = "captain" | "treasurer" | "secretary" | "handicapper" | "member" | "admin";
-
-const MEMBERS_KEY = STORAGE_KEYS.MEMBERS;
-let migrationDone = false;
 
 export type MemberData = {
   id: string;
   name: string;
   handicap?: number;
+  sex?: "male" | "female";
+  email?: string;
   roles?: string[]; // Array of roles (member can have multiple) - using string[] for compatibility
+  paid?: boolean;
+  amountPaid?: number;
+  paidDate?: string;
 };
-
-/**
- * Migrate existing members to include roles field
- * Defaults to ["member"] if missing
- */
-async function migrateMemberRoles(): Promise<void> {
-  if (migrationDone) return;
-
-  try {
-    const membersData = await AsyncStorage.getItem(MEMBERS_KEY);
-    if (!membersData) {
-      migrationDone = true;
-      return;
-    }
-
-    const members: MemberData[] = JSON.parse(membersData);
-    let needsUpdate = false;
-
-    const migratedMembers = members.map((member) => {
-      if (!member.roles || member.roles.length === 0) {
-        needsUpdate = true;
-        return {
-          ...member,
-          roles: ["member"] as MemberRole[],
-        };
-      }
-      return member;
-    });
-
-    if (needsUpdate) {
-      await AsyncStorage.setItem(MEMBERS_KEY, JSON.stringify(migratedMembers));
-    }
-
-    migrationDone = true;
-  } catch (error) {
-    console.error("Error migrating member roles:", error);
-    migrationDone = true; // Prevent retry loops
-  }
-}
 
 /**
  * SYNC helper: Check if a member object has a specific role.
@@ -95,48 +60,40 @@ export function isAdminLike(member: MemberData | null): boolean {
 }
 
 /**
- * Get member data by ID
+ * Get member data by ID from Firestore
  */
 export async function getMemberById(memberId: string): Promise<MemberData | null> {
   try {
-    await migrateMemberRoles(); // Ensure migration runs
+    const member = await getMember(memberId);
     
-    const membersData = await AsyncStorage.getItem(MEMBERS_KEY);
-    if (!membersData) return null;
-    
-    const members: MemberData[] = JSON.parse(membersData);
-    const member = members.find((m) => m.id === memberId) || null;
+    if (!member) return null;
     
     // Ensure member has roles
-    if (member && (!member.roles || member.roles.length === 0)) {
+    if (!member.roles || member.roles.length === 0) {
       return { ...member, roles: ["member"] };
     }
     
     return member;
   } catch (error) {
-    console.error("Error loading member:", error);
+    console.error("[Roles] Error loading member:", error);
     return null;
   }
 }
 
 /**
- * Get all members with migration
+ * Get all members from Firestore
  */
 export async function getAllMembers(): Promise<MemberData[]> {
   try {
-    await migrateMemberRoles();
+    const members = await listMembers();
     
-    const membersData = await AsyncStorage.getItem(MEMBERS_KEY);
-    if (!membersData) return [];
-    
-    const members: MemberData[] = JSON.parse(membersData);
     // Ensure all members have roles
     return members.map((m) => ({
       ...m,
       roles: m.roles && m.roles.length > 0 ? m.roles : ["member"],
     }));
   } catch (error) {
-    console.error("Error loading members:", error);
+    console.error("[Roles] Error loading members:", error);
     return [];
   }
 }
@@ -147,85 +104,105 @@ export async function getAllMembers(): Promise<MemberData[]> {
 export async function getCurrentMember(): Promise<MemberData | null> {
   const session = await getSession();
   if (!session.currentUserId) return null;
-  return await getMemberById(session.currentUserId);
+  return getMemberById(session.currentUserId);
 }
 
 /**
- * Get current user's roles (normalized to lowercase)
+ * Get current user's roles as an array
  */
 export async function getCurrentUserRoles(): Promise<string[]> {
   const member = await getCurrentMember();
   if (!member) return ["member"];
-  if (!member.roles || member.roles.length === 0) return ["member"];
-  // Normalize to lowercase
-  return member.roles.map((r) => r.toLowerCase());
+  return member.roles && member.roles.length > 0 ? member.roles : ["member"];
 }
 
 /**
- * ASYNC helper: Check if the current logged-in user has a specific role.
- * This loads the current user from session and checks their roles.
- * Role matching is case-insensitive.
- * 
- * Use this for permission checks in screens/components.
- * Example: if (await currentUserHasRole("captain")) { ... }
- * 
- * For checking a specific member object, use the sync hasRole(member, role) instead.
+ * Update a member's roles in Firestore
+ * Ensures roles is always a string array
  */
-export async function currentUserHasRole(role: MemberRole): Promise<boolean> {
-  const roles = await getCurrentUserRoles();
-  const normalizedRole = role.toLowerCase();
-  return roles.some((r) => r.toLowerCase() === normalizedRole);
+export async function updateMemberRoles(
+  memberId: string,
+  roles: MemberRole[]
+): Promise<boolean> {
+  try {
+    const member = await getMemberById(memberId);
+    if (!member) {
+      console.error("[Roles] Member not found:", memberId);
+      return false;
+    }
+
+    // Normalize roles to lowercase strings
+    const normalizedRoles = roles.map((r) => r.toLowerCase());
+    
+    // Ensure "member" is always included
+    if (!normalizedRoles.includes("member")) {
+      normalizedRoles.push("member");
+    }
+
+    // Update member with new roles
+    const updatedMember: MemberData = {
+      ...member,
+      roles: normalizedRoles,
+    };
+
+    const result = await upsertMember(updatedMember);
+    
+    if (!result.success) {
+      console.error("[Roles] Failed to update roles:", result.error);
+      return false;
+    }
+
+    console.log("[Roles] Updated roles for member:", memberId, normalizedRoles);
+    return true;
+  } catch (error) {
+    console.error("[Roles] Error updating member roles:", error);
+    return false;
+  }
 }
 
 /**
- * Check if user has any of the specified roles
+ * Check if member has any ManCo role (Captain, Secretary, Treasurer, Handicapper, Admin)
  * Role matching is case-insensitive.
+ * SYNC version - use when you already have a member object
  */
-export async function hasAnyRole(rolesToCheck: MemberRole[]): Promise<boolean> {
-  const roles = await getCurrentUserRoles();
-  const lowerRoles = roles.map((r) => r.toLowerCase());
-  return rolesToCheck.some((role) => lowerRoles.includes(role.toLowerCase()));
+export function hasMemberManCoRole(member: MemberData | null): boolean {
+  if (!member) return false;
+  if (!member.roles || member.roles.length === 0) return false;
+  
+  const manCoRoles = ["captain", "secretary", "treasurer", "handicapper", "admin"];
+  const lowerRoles = member.roles.map((r) => r.toLowerCase());
+  
+  return lowerRoles.some((r) => manCoRoles.includes(r));
 }
 
 /**
- * Check if user has ManCo role (captain, treasurer, secretary, handicapper, admin)
+ * Check if current user has any ManCo role
+ * ASYNC version - loads current member from Firestore
  */
 export async function hasManCoRole(): Promise<boolean> {
-  return hasAnyRole(["captain", "treasurer", "secretary", "handicapper", "admin"]);
+  const member = await getCurrentMember();
+  return hasMemberManCoRole(member);
 }
 
 /**
- * Check if user can create events (captain or admin)
+ * Check if member can view finance (Treasurer, Captain, or Admin)
+ * SYNC version - use when you already have a member object
  */
-export async function canCreateEvents(): Promise<boolean> {
-  return hasAnyRole(["captain", "admin"]);
+export function canMemberViewFinance(member: MemberData | null): boolean {
+  if (!member) return false;
+  if (!member.roles || member.roles.length === 0) return false;
+  
+  const financeRoles = ["treasurer", "captain", "admin"];
+  const lowerRoles = member.roles.map((r) => r.toLowerCase());
+  
+  return lowerRoles.some((r) => financeRoles.includes(r));
 }
 
 /**
- * Check if user can assign roles (captain or admin)
- */
-export async function canAssignRoles(): Promise<boolean> {
-  return hasAnyRole(["captain", "admin"]);
-}
-
-/**
- * Check if user can view finance (treasurer, captain, admin)
+ * Check if current user can view finance
+ * ASYNC version - loads current member from Firestore
  */
 export async function canViewFinance(): Promise<boolean> {
-  return hasAnyRole(["treasurer", "captain", "admin"]);
+  const member = await getCurrentMember();
+  return canMemberViewFinance(member);
 }
-
-/**
- * Check if user can edit venue info (secretary, captain, admin)
- */
-export async function canEditVenueInfo(): Promise<boolean> {
-  return hasAnyRole(["secretary", "captain", "admin"]);
-}
-
-/**
- * Check if user can edit handicaps/results (handicapper, captain, admin)
- */
-export async function canEditHandicaps(): Promise<boolean> {
-  return hasAnyRole(["handicapper", "captain", "admin"]);
-}
-

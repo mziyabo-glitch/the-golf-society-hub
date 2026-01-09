@@ -1,12 +1,13 @@
 /**
  * Members Screen
  * 
- * WEB-ONLY PERSISTENCE: All data via Firestore, no AsyncStorage
+ * FIRESTORE-ONLY: Members are loaded from societies/{societyId}/members
+ * Uses onSnapshot for real-time updates. No AsyncStorage for member data.
  */
 
 import { useFocusEffect } from "@react-navigation/native";
 import { router } from "expo-router";
-import { useCallback, useState } from "react";
+import { useCallback, useState, useEffect } from "react";
 import { Alert, ActivityIndicator, Pressable, StyleSheet, View } from "react-native";
 import { getSession, setCurrentUserId } from "@/lib/session";
 import { canManageMembers, normalizeMemberRoles, normalizeSessionRole } from "@/lib/permissions";
@@ -20,46 +21,87 @@ import { PrimaryButton, SecondaryButton, DestructiveButton } from "@/components/
 import { EmptyState } from "@/components/ui/EmptyState";
 import { Row } from "@/components/ui/Row";
 import { getColors, spacing } from "@/lib/ui/theme";
-import { getMembers, getEvents, saveMember, deleteMember } from "@/lib/firestore/society";
+import { getActiveSocietyId } from "@/lib/firebase";
+import { subscribeMembers, deleteMemberById } from "@/lib/firestore/members";
+import { getEvents } from "@/lib/firestore/society";
 import type { EventData, MemberData } from "@/lib/models";
 
 export default function MembersScreen() {
   const [members, setMembers] = useState<MemberData[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [currentUserId, setCurrentUserIdState] = useState<string | null>(null);
   const [selectedMemberId, setSelectedMemberId] = useState<string | null>(null);
   const [canManageMembersFlag, setCanManageMembersFlag] = useState(false);
   const [nextUpcomingEvent, setNextUpcomingEvent] = useState<EventData | null>(null);
+  const [societyId, setSocietyId] = useState<string | null>(null);
 
+  // Subscribe to members on mount
+  useEffect(() => {
+    const activeSocietyId = getActiveSocietyId();
+    setSocietyId(activeSocietyId);
+
+    if (!activeSocietyId) {
+      setLoading(false);
+      setError("No society selected");
+      return;
+    }
+
+    // Set up real-time subscription to members
+    const unsubscribe = subscribeMembers(
+      (firestoreMembers) => {
+        setMembers(firestoreMembers);
+        setLoading(false);
+        setError(null);
+        console.log("[Members] Real-time update received:", firestoreMembers.length, "members");
+      },
+      (err) => {
+        console.error("[Members] Subscription error:", err);
+        setError(err.message || "Failed to load members");
+        setLoading(false);
+      },
+      activeSocietyId
+    );
+
+    // Load session and permissions
+    loadSessionAndPermissions();
+
+    // Load upcoming events
+    loadUpcomingEvents();
+
+    // Cleanup subscription on unmount
+    return () => {
+      unsubscribe();
+    };
+  }, []);
+
+  // Reload permissions when screen is focused
   useFocusEffect(
     useCallback(() => {
-      loadMembers();
-    }, [])
+      loadSessionAndPermissions();
+      loadUpcomingEvents();
+    }, [members])
   );
 
-  const loadMembers = async () => {
+  const loadSessionAndPermissions = async () => {
     try {
-      // Load members from Firestore (single source of truth)
-      const firestoreMembers = await getMembers();
-      setMembers(firestoreMembers);
-
-      // Load session
       const session = await getSession();
       const effectiveUserId = session.currentUserId;
       setCurrentUserIdState(effectiveUserId);
 
-      // Permissions check
-      const current = firestoreMembers.find((m) => m.id === effectiveUserId) || null;
+      // Permissions check based on current members
+      const current = members.find((m) => m.id === effectiveUserId) || null;
       const sessionRole = normalizeSessionRole(session.role);
       const memberRoles = normalizeMemberRoles(current?.roles);
 
-      if (__DEV__) {
-        console.log("[Members] Loaded", firestoreMembers.length, "members from Firestore");
-      }
-
       setCanManageMembersFlag(canManageMembers(sessionRole, memberRoles));
+    } catch (err) {
+      console.error("[Members] Error loading session:", err);
+    }
+  };
 
-      // Load events from Firestore to find next upcoming event
+  const loadUpcomingEvents = async () => {
+    try {
       const allEvents = await getEvents();
       const now = new Date();
       const upcomingEvents = allEvents
@@ -72,11 +114,8 @@ export default function MembersScreen() {
       if (upcomingEvents.length > 0) {
         setNextUpcomingEvent(upcomingEvents[0]);
       }
-    } catch (error) {
-      console.error("Error loading members:", error);
-      Alert.alert("Error", "Failed to load members. Please check your connection.");
-    } finally {
-      setLoading(false);
+    } catch (err) {
+      console.error("[Members] Error loading events:", err);
     }
   };
 
@@ -124,7 +163,6 @@ export default function MembersScreen() {
     const isCaptain = roles.some((r) => r.toLowerCase() === "captain" || r.toLowerCase() === "admin");
     
     if (isCaptain) {
-      // Check if there are other Captains
       const otherCaptains = members.filter(
         (m) => m.id !== memberId && m.roles?.some((r) => r.toLowerCase() === "captain" || r.toLowerCase() === "admin")
       );
@@ -150,35 +188,33 @@ export default function MembersScreen() {
           onPress: async () => {
             try {
               // Delete from Firestore
-              const success = await deleteMember(memberId);
+              const result = await deleteMemberById(memberId, societyId || undefined);
               
-              if (!success) {
-                Alert.alert("Error", "Failed to remove member. Please try again.");
+              if (!result.success) {
+                console.error("[Members] Delete failed:", result.error, { societyId, memberId });
+                Alert.alert("Error", `Failed to remove member: ${result.error || "Unknown error"}`);
                 return;
               }
 
-              // Update local state
-              const updatedMembers = members.filter((m) => m.id !== memberId);
-              setMembers(updatedMembers);
-              
               // Clear selection if needed
               if (selectedMemberId === memberId) {
                 setSelectedMemberId(null);
               }
 
               // If removed member was current user, switch to first remaining member
-              if (memberId === currentUserId && updatedMembers.length > 0) {
-                const firstMember = updatedMembers[0];
+              const remainingMembers = members.filter((m) => m.id !== memberId);
+              if (memberId === currentUserId && remainingMembers.length > 0) {
+                const firstMember = remainingMembers[0];
                 await setCurrentUserId(firstMember.id);
                 setCurrentUserIdState(firstMember.id);
               }
 
               Alert.alert("Success", `${targetMember.name} has been removed.`);
+              // Note: UI will update automatically via onSnapshot subscription
             } catch (error) {
-              console.error("Error removing member:", error);
-              // Rollback on error
-              setMembers(members);
-              Alert.alert("Error", "Failed to remove member. Please try again.");
+              const errorMessage = error instanceof Error ? error.message : "Unknown error";
+              console.error("[Members] Error removing member:", error, { societyId, memberId });
+              Alert.alert("Error", `Failed to remove member: ${errorMessage}`);
             }
           },
         },
@@ -188,11 +224,70 @@ export default function MembersScreen() {
 
   const colors = getColors();
 
+  // Loading state
   if (loading) {
     return (
       <Screen scrollable={false}>
         <View style={styles.centerContent}>
           <ActivityIndicator size="large" color={colors.primary} />
+          <AppText style={{ marginTop: 12 }}>Loading members...</AppText>
+        </View>
+      </Screen>
+    );
+  }
+
+  // Error state - no society selected
+  if (!societyId) {
+    return (
+      <Screen scrollable={false}>
+        <View style={styles.centerContent}>
+          <AppText style={{ fontSize: 18, fontWeight: "600", marginBottom: 12 }}>
+            No Society Selected
+          </AppText>
+          <AppText style={{ color: "#6b7280", textAlign: "center", marginBottom: 20 }}>
+            Please select or create a society to view members.
+          </AppText>
+          <PrimaryButton onPress={() => router.push("/create-society")}>
+            Create Society
+          </PrimaryButton>
+        </View>
+      </Screen>
+    );
+  }
+
+  // Error state - Firestore error
+  if (error) {
+    return (
+      <Screen scrollable={false}>
+        <View style={styles.centerContent}>
+          <AppText style={{ fontSize: 18, fontWeight: "600", marginBottom: 12, color: colors.error }}>
+            Error Loading Members
+          </AppText>
+          <AppText style={{ color: "#6b7280", textAlign: "center", marginBottom: 20 }}>
+            {error}
+          </AppText>
+          <PrimaryButton onPress={() => {
+            setLoading(true);
+            setError(null);
+            // Re-trigger subscription by remounting
+            const activeSocietyId = getActiveSocietyId();
+            if (activeSocietyId) {
+              subscribeMembers(
+                (firestoreMembers) => {
+                  setMembers(firestoreMembers);
+                  setLoading(false);
+                  setError(null);
+                },
+                (err) => {
+                  setError(err.message);
+                  setLoading(false);
+                },
+                activeSocietyId
+              );
+            }
+          }}>
+            Retry
+          </PrimaryButton>
         </View>
       </Screen>
     );
@@ -218,7 +313,6 @@ export default function MembersScreen() {
   const getPaymentBadges = (member: MemberData) => {
     const badges: React.ReactElement[] = [];
 
-    // Season fee status
     if (member.paid !== undefined) {
       badges.push(
         <Badge
@@ -230,7 +324,6 @@ export default function MembersScreen() {
       );
     }
 
-    // Event fee status for next upcoming event
     if (nextUpcomingEvent && nextUpcomingEvent.eventFee && nextUpcomingEvent.eventFee > 0) {
       const paymentStatus = nextUpcomingEvent.payments?.[member.id];
       const isPaid = paymentStatus?.paid ?? false;
@@ -249,102 +342,89 @@ export default function MembersScreen() {
 
   return (
     <Screen>
-      <SectionHeader
-        title="Members"
-        rightAction={
-          canManageMembersFlag
-            ? {
-                label: "Add Member",
-                onPress: () => router.push("/add-member" as any),
-              }
-            : undefined
-        }
-      />
+      <SectionHeader title="Members" />
 
       {members.length === 0 ? (
         <EmptyState
-          title="No members yet"
-          message={
-            canManageMembersFlag
-              ? "Add your first member to get started"
-              : "Ask your Captain or Secretary to add the first member"
-          }
-          action={
-            canManageMembersFlag
-              ? {
-                  label: "Add First Member",
-                  onPress: () => router.push("/add-member" as any),
-                }
-              : undefined
-          }
+          title="No Members Yet"
+          message="Add your first member to get started."
         />
       ) : (
-        <>
-          {members.map((member) => (
-            <AppCard key={member.id} style={currentUserId === member.id ? styles.activeCard : undefined}>
-              <Pressable onPress={() => handleMemberPress(member.id)}>
-                <Row gap="sm" alignItems="flex-start">
+        members.map((member) => {
+          const isSelected = selectedMemberId === member.id;
+          const isCurrentUser = currentUserId === member.id;
+
+          return (
+            <Pressable key={member.id} onPress={() => handleMemberPress(member.id)}>
+              <AppCard style={isCurrentUser ? styles.currentUserCard : undefined}>
+                <Row style={styles.memberHeader}>
                   <View style={styles.memberInfo}>
-                    <Row gap="sm" alignItems="center" style={styles.memberHeader}>
-                      <AppText variant="bodyBold">{member.name}</AppText>
-                      {currentUserId === member.id && <Badge label="My Profile" variant="status" />}
-                    </Row>
-                    <Row gap="sm" alignItems="center" style={styles.memberMeta}>
-                      {member.handicap !== undefined && (
-                        <AppText variant="small" color="secondary">
-                          HCP: {member.handicap}
-                        </AppText>
+                    <AppText variant="title" style={styles.memberName}>
+                      {member.name}
+                      {isCurrentUser && (
+                        <AppText variant="small" color="primary"> (You)</AppText>
                       )}
+                    </AppText>
+                    <View style={styles.badgesRow}>
                       {getRoleBadges(member.roles)}
-                    </Row>
-                    {getPaymentBadges(member).length > 0 && (
-                      <Row gap="sm" alignItems="center" style={styles.paymentRow}>
-                        {getPaymentBadges(member)}
-                      </Row>
-                    )}
+                      {getPaymentBadges(member)}
+                    </View>
+                  </View>
+                  <View style={styles.handicapContainer}>
+                    <AppText variant="small" color="secondary">HI</AppText>
+                    <AppText variant="title" style={styles.handicapValue}>
+                      {member.handicap !== undefined ? member.handicap.toFixed(1) : "-"}
+                    </AppText>
                   </View>
                 </Row>
-              </Pressable>
-              {selectedMemberId === member.id && (
-                <View style={styles.memberActions}>
-                  <SecondaryButton
-                    onPress={() => {
-                      setSelectedMemberId(null);
-                      router.push("/profile" as any);
-                    }}
-                    style={styles.actionButton}
-                  >
-                    {currentUserId === member.id ? "View / Edit" : "View"}
-                  </SecondaryButton>
-                  <PrimaryButton
-                    onPress={() => handleSetAsProfile(member.id)}
-                    style={styles.actionButton}
-                  >
-                    Set as My Profile
-                  </PrimaryButton>
-                  {canManageMembersFlag && (
-                    <DestructiveButton
-                      onPress={() => handleRemoveMember(member.id)}
+
+                {isSelected && (
+                  <View style={styles.actionButtons}>
+                    {!isCurrentUser && (
+                      <PrimaryButton
+                        onPress={() => handleSetAsProfile(member.id)}
+                        size="sm"
+                        style={styles.actionButton}
+                      >
+                        Set as My Profile
+                      </PrimaryButton>
+                    )}
+                    <SecondaryButton
+                      onPress={() => router.push(`/profile?memberId=${member.id}`)}
+                      size="sm"
                       style={styles.actionButton}
                     >
-                      Remove Member
-                    </DestructiveButton>
-                  )}
-                </View>
-              )}
-            </AppCard>
-          ))}
-
-          {canManageMembersFlag && (
-            <PrimaryButton
-              onPress={() => router.push("/add-member" as any)}
-              style={styles.addButton}
-            >
-              Add Member
-            </PrimaryButton>
-          )}
-        </>
+                      Edit
+                    </SecondaryButton>
+                    {canManageMembersFlag && !isCurrentUser && (
+                      <DestructiveButton
+                        onPress={() => handleRemoveMember(member.id)}
+                        size="sm"
+                        style={styles.actionButton}
+                      >
+                        Remove
+                      </DestructiveButton>
+                    )}
+                  </View>
+                )}
+              </AppCard>
+            </Pressable>
+          );
+        })
       )}
+
+      {canManageMembersFlag && (
+        <PrimaryButton
+          onPress={() => router.push("/add-member")}
+          style={styles.addButton}
+        >
+          Add Member
+        </PrimaryButton>
+      )}
+
+      <SecondaryButton onPress={() => router.back()} style={styles.backButton}>
+        Back
+      </SecondaryButton>
     </Screen>
   );
 }
@@ -354,43 +434,59 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: "center",
     alignItems: "center",
+    padding: spacing.lg,
   },
-  activeCard: {
-    borderWidth: 2,
-    borderColor: "#0B6E4F",
-    backgroundColor: "#f0fdf4",
+  memberCard: {
+    // Empty style since AppCard has marginBottom built-in
+  },
+  currentUserCard: {
+    borderLeftWidth: 3,
+    borderLeftColor: "#0B6E4F",
+  },
+  memberHeader: {
+    justifyContent: "space-between",
+    alignItems: "flex-start",
   },
   memberInfo: {
     flex: 1,
   },
-  memberHeader: {
+  memberName: {
     marginBottom: spacing.xs,
   },
-  memberMeta: {
+  badgesRow: {
+    flexDirection: "row",
     flexWrap: "wrap",
+    gap: 4,
   },
   roleBadge: {
-    marginRight: spacing.xs,
-  },
-  paymentRow: {
-    marginTop: spacing.xs,
-    flexWrap: "wrap",
+    marginRight: 4,
   },
   paymentBadge: {
-    marginRight: spacing.xs,
+    marginRight: 4,
   },
-  memberActions: {
+  handicapContainer: {
+    alignItems: "center",
+    minWidth: 50,
+  },
+  handicapValue: {
+    fontSize: 20,
+  },
+  actionButtons: {
     flexDirection: "row",
     flexWrap: "wrap",
     gap: spacing.sm,
     marginTop: spacing.md,
+    paddingTop: spacing.md,
+    borderTopWidth: 1,
+    borderTopColor: "#e5e7eb",
   },
   actionButton: {
-    flex: 1,
+    minWidth: 100,
   },
   addButton: {
     marginTop: spacing.lg,
   },
+  backButton: {
+    marginTop: spacing.sm,
+  },
 });
-
-

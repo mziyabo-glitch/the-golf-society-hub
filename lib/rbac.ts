@@ -2,20 +2,18 @@
  * Centralized RBAC (Role-Based Access Control)
  * Single source of truth for all permissions
  * 
+ * FIRESTORE-ONLY: Member data comes from Firestore
+ * 
  * Inputs: session (current user), members list, optional society config
  * Output: Permissions object with boolean flags
  */
 
 import { getSession } from "./session";
-import { getCurrentUserRoles } from "./roles";
+import { getCurrentUserRoles, getMemberById } from "./roles";
 import { 
   normalizeSessionRole, 
   normalizeMemberRoles,
-  type SessionRole,
-  type MemberRole 
 } from "./permissions";
-import { STORAGE_KEYS } from "./storage";
-import AsyncStorage from "@react-native-async-storage/async-storage";
 
 export type Permissions = {
   canManageRoles: boolean;        // Captain only
@@ -69,6 +67,7 @@ export async function getPermissions(): Promise<Permissions> {
 
 /**
  * Get permissions for a specific member (for checking if user can edit another member)
+ * Loads member from Firestore
  */
 export async function getPermissionsForMember(memberId: string): Promise<Permissions> {
   try {
@@ -77,14 +76,8 @@ export async function getPermissionsForMember(memberId: string): Promise<Permiss
       return getDefaultPermissions();
     }
 
-    // Load member data
-    const membersData = await AsyncStorage.getItem(STORAGE_KEYS.MEMBERS);
-    if (!membersData) {
-      return getDefaultPermissions();
-    }
-
-    const members: Array<{ id: string; roles?: unknown }> = JSON.parse(membersData);
-    const member = members.find((m) => m.id === memberId);
+    // Load member data from Firestore
+    const member = await getMemberById(memberId);
     
     if (!member) {
       return getDefaultPermissions();
@@ -144,17 +137,3 @@ function getDefaultPermissions(): Permissions {
     isHandicapper: false,
   };
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-

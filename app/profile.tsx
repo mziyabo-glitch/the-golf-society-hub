@@ -16,10 +16,11 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useFocusEffect } from "@react-navigation/native";
 import { router } from "expo-router";
 import { useCallback, useState } from "react";
-import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View, ActivityIndicator } from "react-native";
 import type { EventData } from "@/lib/models";
+import { listMembers, upsertMember } from "@/lib/firestore/members";
+import { getActiveSocietyId } from "@/lib/firebase";
 
-const MEMBERS_KEY = STORAGE_KEYS.MEMBERS;
 const EVENTS_KEY = STORAGE_KEYS.EVENTS;
 
 type MemberData = {
@@ -52,27 +53,19 @@ export default function ProfileScreen() {
 
   useFocusEffect(
     useCallback(() => {
-      // Bootstrap state first to prevent "Profile not found" errors
-      const { ensureBootstrapState } = require("@/lib/storage");
-      ensureBootstrapState().then(() => {
-        loadData();
-      });
+      loadData();
     }, [])
   );
 
   const loadData = async () => {
     try {
-      // Self-heal: ensure valid current member exists
-      const { ensureValidCurrentMember } = await import("@/lib/storage");
-      const { members: healedMembers, currentUserId: healedUserId } = await ensureValidCurrentMember();
-      
-      // Use healed members
-      const loadedMembers = healedMembers;
+      // Load members from Firestore
+      const loadedMembers = await listMembers();
       setMembers(loadedMembers);
 
       // Load session (single source of truth)
       const session = await getSession();
-      const effectiveUserId = healedUserId || session.currentUserId;
+      const effectiveUserId = session.currentUserId;
       setCurrentUserIdState(effectiveUserId);
       setRoleState(session.role);
 
@@ -82,7 +75,7 @@ export default function ProfileScreen() {
 
       // Find current member
       if (effectiveUserId) {
-        const member = loadedMembers.find((m: MemberData) => m.id === effectiveUserId);
+        const member = loadedMembers.find((m) => m.id === effectiveUserId);
         if (member) {
           setCurrentMember(member);
           setEditName(member.name);
@@ -126,28 +119,31 @@ export default function ProfileScreen() {
     }
 
     try {
-      // Update member in storage
-      const membersData = await AsyncStorage.getItem(MEMBERS_KEY);
-      const allMembers: MemberData[] = membersData ? JSON.parse(membersData) : [];
-      const updatedMembers = allMembers.map((m) =>
-        m.id === currentMember.id
-          ? {
-              ...m,
-              name: editName.trim(),
-              handicap: editHandicap.trim() ? parseFloat(editHandicap.trim()) : undefined,
-              sex: editSex as "male" | "female",
-            }
-          : m
-      );
-      await AsyncStorage.setItem(MEMBERS_KEY, JSON.stringify(updatedMembers));
+      // Update member in Firestore
+      const updatedMember = {
+        ...currentMember,
+        name: editName.trim(),
+        handicap: editHandicap.trim() ? parseFloat(editHandicap.trim()) : undefined,
+        sex: editSex as "male" | "female",
+      };
+
+      const societyId = getActiveSocietyId();
+      const result = await upsertMember(updatedMember, societyId || undefined);
+      
+      if (!result.success) {
+        console.error("[Profile] Failed to save:", result.error);
+        Alert.alert("Error", `Failed to save profile: ${result.error || "Unknown error"}`);
+        return;
+      }
 
       // Reload to reflect changes
       await loadData();
       setIsEditing(false);
       Alert.alert("Success", "Profile updated");
     } catch (error) {
-      console.error("Error saving profile:", error);
-      Alert.alert("Error", "Failed to save profile");
+      const errorMessage = error instanceof Error ? error.message : "Unknown error";
+      console.error("[Profile] Error saving profile:", error);
+      Alert.alert("Error", `Failed to save profile: ${errorMessage}`);
     }
   };
 

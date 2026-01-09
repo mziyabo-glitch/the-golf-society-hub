@@ -3,26 +3,20 @@
  * - Navigate to Handicaps screen (should only be visible to Handicapper/Captain/Admin)
  * - Verify access denied alert if user doesn't have permission
  * - Add handicap management features as needed
+ * 
+ * FIRESTORE-ONLY: Member data comes from Firestore
  */
 
 import { canManageCompetition, normalizeMemberRoles, normalizeSessionRole } from "@/lib/permissions";
 import { getCurrentUserRoles } from "@/lib/roles";
 import { getSession } from "@/lib/session";
-import { STORAGE_KEYS } from "@/lib/storage";
-import AsyncStorage from "@react-native-async-storage/async-storage";
+import { getActiveSocietyId } from "@/lib/firebase";
+import { listMembers, upsertMember } from "@/lib/firestore/members";
 import { useFocusEffect } from "@react-navigation/native";
 import { router } from "expo-router";
 import { useCallback, useState } from "react";
-import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
-
-const MEMBERS_KEY = STORAGE_KEYS.MEMBERS;
-
-type MemberData = {
-  id: string;
-  name: string;
-  handicap?: number;
-  roles?: string[];
-};
+import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View, ActivityIndicator } from "react-native";
+import type { MemberData } from "@/lib/models";
 
 export default function HandicapsScreen() {
   const [hasAccess, setHasAccess] = useState(false);
@@ -30,11 +24,16 @@ export default function HandicapsScreen() {
   const [isBulkEdit, setIsBulkEdit] = useState(false);
   const [editedHandicaps, setEditedHandicaps] = useState<{ [memberId: string]: string }>({});
   const [searchQuery, setSearchQuery] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [societyId, setSocietyId] = useState<string | null>(null);
 
   useFocusEffect(
     useCallback(() => {
+      const activeSocietyId = getActiveSocietyId();
+      setSocietyId(activeSocietyId);
       checkAccess();
-      loadMembers();
+      loadMembers(activeSocietyId);
     }, [])
   );
 
@@ -51,21 +50,23 @@ export default function HandicapsScreen() {
     }
   };
 
-  const loadMembers = async () => {
+  const loadMembers = async (activeSocietyId: string | null) => {
     try {
-      const membersData = await AsyncStorage.getItem(MEMBERS_KEY);
-      if (membersData) {
-        const loaded = JSON.parse(membersData);
-        setMembers(loaded);
-        // Initialize edited handicaps
-        const initial: { [memberId: string]: string } = {};
-        loaded.forEach((m: MemberData) => {
-          initial[m.id] = m.handicap?.toString() || "";
-        });
-        setEditedHandicaps(initial);
-      }
+      setLoading(true);
+      const loaded = await listMembers(activeSocietyId || undefined);
+      setMembers(loaded);
+      
+      // Initialize edited handicaps
+      const initial: { [memberId: string]: string } = {};
+      loaded.forEach((m) => {
+        initial[m.id] = m.handicap?.toString() || "";
+      });
+      setEditedHandicaps(initial);
     } catch (error) {
-      console.error("Error loading members:", error);
+      console.error("[Handicaps] Error loading members:", error);
+      Alert.alert("Error", "Failed to load members");
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -77,29 +78,54 @@ export default function HandicapsScreen() {
   };
 
   const handleSaveBulk = async () => {
+    if (!societyId) {
+      Alert.alert("Error", "No society selected");
+      return;
+    }
+
     try {
-      const updatedMembers = members.map((member) => {
+      setSaving(true);
+      let hasErrors = false;
+
+      for (const member of members) {
         const newValue = editedHandicaps[member.id];
         if (newValue === undefined || newValue === member.handicap?.toString()) {
-          return member;
+          continue; // No change
         }
+        
         const handicap = newValue.trim() === "" ? undefined : parseFloat(newValue);
         if (handicap !== undefined && (isNaN(handicap) || handicap < 0 || handicap > 54)) {
-          return member; // Invalid, skip
+          continue; // Invalid, skip
         }
-        return {
+
+        const updatedMember = {
           ...member,
           handicap,
         };
-      });
 
-      await AsyncStorage.setItem(MEMBERS_KEY, JSON.stringify(updatedMembers));
-      setMembers(updatedMembers);
+        const result = await upsertMember(updatedMember, societyId);
+        
+        if (!result.success) {
+          console.error("[Handicaps] Failed to save handicap for:", member.id, result.error);
+          hasErrors = true;
+        }
+      }
+
+      if (hasErrors) {
+        Alert.alert("Warning", "Some handicaps may not have been saved. Please try again.");
+      } else {
+        Alert.alert("Success", "Handicaps updated");
+      }
+
+      // Reload to ensure sync
+      await loadMembers(societyId);
       setIsBulkEdit(false);
-      Alert.alert("Success", "Handicaps updated");
     } catch (error) {
-      console.error("Error saving handicaps:", error);
-      Alert.alert("Error", "Failed to save handicaps");
+      const errorMessage = error instanceof Error ? error.message : "Unknown error";
+      console.error("[Handicaps] Error saving handicaps:", error);
+      Alert.alert("Error", `Failed to save handicaps: ${errorMessage}`);
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -111,6 +137,15 @@ export default function HandicapsScreen() {
     return null;
   }
 
+  if (loading) {
+    return (
+      <View style={styles.centerContainer}>
+        <ActivityIndicator size="large" color="#0B6E4F" />
+        <Text style={styles.loadingText}>Loading members...</Text>
+      </View>
+    );
+  }
+
   return (
     <ScrollView style={styles.container}>
       <View style={styles.content}>
@@ -120,73 +155,80 @@ export default function HandicapsScreen() {
         {/* Info Banner */}
         <View style={styles.infoBanner}>
           <Text style={styles.infoText}>
-            All members are expected to be registered with England Golf.
+            Handicaps should be updated regularly based on official WHS calculations.
+            This screen allows bulk editing of handicap indexes.
           </Text>
         </View>
-        
+
         {/* Search */}
-        {members.length > 0 && (
-          <TextInput
-            value={searchQuery}
-            onChangeText={setSearchQuery}
-            placeholder="Search members..."
-            style={styles.searchInput}
-          />
-        )}
-        
+        <TextInput
+          value={searchQuery}
+          onChangeText={setSearchQuery}
+          placeholder="Search members..."
+          style={styles.searchInput}
+        />
+
         {/* Bulk Edit Toggle */}
-        {members.length > 0 && (
-          <Pressable
-            onPress={() => setIsBulkEdit(!isBulkEdit)}
-            style={styles.bulkEditButton}
-          >
-            <Text style={styles.bulkEditButtonText}>
-              {isBulkEdit ? "Cancel Bulk Edit" : "Bulk Update"}
-            </Text>
-          </Pressable>
-        )}
-        
+        <Pressable
+          onPress={() => setIsBulkEdit(!isBulkEdit)}
+          style={[styles.toggleButton, isBulkEdit && styles.toggleButtonActive]}
+        >
+          <Text style={[styles.toggleButtonText, isBulkEdit && styles.toggleButtonTextActive]}>
+            {isBulkEdit ? "Cancel Edit" : "Bulk Edit Handicaps"}
+          </Text>
+        </Pressable>
+
+        {/* Members List */}
         {filteredMembers.length === 0 ? (
-          <View style={styles.placeholder}>
-            <Text style={styles.placeholderText}>
-              {searchQuery ? "No members found" : "No members found"}
-            </Text>
+          <View style={styles.emptyState}>
+            <Text style={styles.emptyStateText}>No members found</Text>
           </View>
         ) : (
-          <View style={styles.membersList}>
-            {filteredMembers.map((member) => (
-              <View key={member.id} style={styles.memberCard}>
-                <View style={styles.memberInfo}>
-                  <Text style={styles.memberName}>{member.name}</Text>
-                  {!isBulkEdit && (
-                    <Text style={styles.memberHandicap}>
-                      HCP: {member.handicap !== undefined ? member.handicap : "Not set"}
-                    </Text>
-                  )}
-                </View>
-                {isBulkEdit && (
-                  <View style={styles.handicapInput}>
-                    <Text style={styles.handicapLabel}>Handicap (0-54)</Text>
-                    <TextInput
-                      value={editedHandicaps[member.id] || ""}
-                      onChangeText={(value) => handleHandicapChange(member.id, value)}
-                      placeholder="Enter handicap"
-                      keyboardType="numeric"
-                      style={styles.input}
-                    />
-                  </View>
+          filteredMembers.map((member) => (
+            <View key={member.id} style={styles.memberCard}>
+              <View style={styles.memberInfo}>
+                <Text style={styles.memberName}>{member.name}</Text>
+                {member.sex && (
+                  <Text style={styles.memberSex}>{member.sex === "male" ? "♂" : "♀"}</Text>
                 )}
               </View>
-            ))}
-          </View>
+              
+              {isBulkEdit ? (
+                <TextInput
+                  value={editedHandicaps[member.id] || ""}
+                  onChangeText={(value) => handleHandicapChange(member.id, value)}
+                  placeholder="HI"
+                  keyboardType="decimal-pad"
+                  style={styles.handicapInput}
+                />
+              ) : (
+                <View style={styles.handicapDisplay}>
+                  <Text style={styles.handicapLabel}>HI</Text>
+                  <Text style={styles.handicapValue}>
+                    {member.handicap !== undefined ? member.handicap.toFixed(1) : "-"}
+                  </Text>
+                </View>
+              )}
+            </View>
+          ))
         )}
 
-        {isBulkEdit && filteredMembers.length > 0 && (
-          <Pressable onPress={handleSaveBulk} style={styles.saveButton}>
-            <Text style={styles.saveButtonText}>Save All Changes</Text>
+        {/* Save Button (when editing) */}
+        {isBulkEdit && (
+          <Pressable 
+            onPress={handleSaveBulk} 
+            style={[styles.saveButton, saving && styles.saveButtonDisabled]}
+            disabled={saving}
+          >
+            {saving ? (
+              <ActivityIndicator size="small" color="#fff" />
+            ) : (
+              <Text style={styles.saveButtonText}>Save All Handicaps</Text>
+            )}
           </Pressable>
         )}
 
+        {/* Back Button */}
         <Pressable onPress={() => router.back()} style={styles.backButton}>
           <Text style={styles.backButtonText}>Back</Text>
         </Pressable>
@@ -200,8 +242,19 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: "#fff",
   },
-  content: {
+  centerContainer: {
     flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+    backgroundColor: "#fff",
+    padding: 24,
+  },
+  loadingText: {
+    marginTop: 12,
+    fontSize: 16,
+    color: "#6b7280",
+  },
+  content: {
     padding: 24,
   },
   title: {
@@ -212,116 +265,127 @@ const styles = StyleSheet.create({
   subtitle: {
     fontSize: 16,
     opacity: 0.75,
-    marginBottom: 24,
-  },
-  placeholder: {
-    padding: 40,
-    alignItems: "center",
-  },
-  placeholderText: {
-    fontSize: 16,
-    color: "#6b7280",
-  },
-  membersList: {
-    marginBottom: 24,
+    marginBottom: 20,
   },
   infoBanner: {
-    backgroundColor: "#eff6ff",
-    borderRadius: 8,
-    padding: 12,
-    marginBottom: 16,
+    backgroundColor: "#f0fdf4",
+    padding: 16,
+    borderRadius: 14,
+    marginBottom: 20,
     borderLeftWidth: 4,
-    borderLeftColor: "#3b82f6",
+    borderLeftColor: "#0B6E4F",
   },
   infoText: {
     fontSize: 14,
-    color: "#1e40af",
-    fontStyle: "italic",
+    color: "#374151",
+    lineHeight: 20,
   },
   searchInput: {
     backgroundColor: "#f3f4f6",
-    paddingVertical: 12,
+    paddingVertical: 14,
     paddingHorizontal: 16,
-    borderRadius: 10,
+    borderRadius: 14,
     fontSize: 16,
     marginBottom: 16,
-    borderWidth: 1,
-    borderColor: "#e5e7eb",
   },
-  bulkEditButton: {
-    backgroundColor: "#0B6E4F",
+  toggleButton: {
+    backgroundColor: "#f3f4f6",
     paddingVertical: 12,
-    paddingHorizontal: 16,
-    borderRadius: 10,
+    borderRadius: 14,
     alignItems: "center",
-    marginBottom: 16,
+    marginBottom: 20,
   },
-  bulkEditButtonText: {
-    color: "white",
+  toggleButtonActive: {
+    backgroundColor: "#ef4444",
+  },
+  toggleButtonText: {
     fontSize: 16,
     fontWeight: "600",
+    color: "#374151",
+  },
+  toggleButtonTextActive: {
+    color: "#fff",
+  },
+  emptyState: {
+    padding: 40,
+    alignItems: "center",
+  },
+  emptyStateText: {
+    fontSize: 16,
+    color: "#6b7280",
   },
   memberCard: {
-    backgroundColor: "#f3f4f6",
-    borderRadius: 12,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
     padding: 16,
+    backgroundColor: "#f9fafb",
+    borderRadius: 14,
     marginBottom: 12,
   },
   memberInfo: {
-    marginBottom: 8,
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
   },
   memberName: {
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: "600",
-    color: "#111827",
-    marginBottom: 4,
   },
-  memberHandicap: {
+  memberSex: {
     fontSize: 14,
     color: "#6b7280",
   },
   handicapInput: {
-    marginTop: 8,
-  },
-  handicapLabel: {
-    fontSize: 14,
-    fontWeight: "600",
-    marginBottom: 6,
-    color: "#111827",
-  },
-  input: {
     backgroundColor: "#fff",
-    paddingVertical: 10,
+    paddingVertical: 8,
     paddingHorizontal: 12,
     borderRadius: 8,
     fontSize: 16,
+    textAlign: "center",
+    width: 80,
     borderWidth: 1,
     borderColor: "#e5e7eb",
+  },
+  handicapDisplay: {
+    alignItems: "center",
+    minWidth: 60,
+  },
+  handicapLabel: {
+    fontSize: 12,
+    color: "#6b7280",
+  },
+  handicapValue: {
+    fontSize: 20,
+    fontWeight: "700",
+    color: "#0B6E4F",
   },
   saveButton: {
     backgroundColor: "#0B6E4F",
     paddingVertical: 14,
     borderRadius: 14,
     alignItems: "center",
-    marginTop: 16,
     marginBottom: 12,
+    marginTop: 8,
+  },
+  saveButtonDisabled: {
+    opacity: 0.6,
   },
   saveButtonText: {
-    color: "white",
+    color: "#fff",
     fontSize: 18,
     fontWeight: "700",
   },
   backButton: {
+    backgroundColor: "#111827",
     paddingVertical: 14,
+    borderRadius: 14,
     alignItems: "center",
-    marginTop: 24,
   },
   backButtonText: {
-    fontSize: 16,
-    fontWeight: "600",
-    color: "#6b7280",
+    color: "#fff",
+    fontSize: 18,
+    fontWeight: "700",
   },
 });
-
-
-

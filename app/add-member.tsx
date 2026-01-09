@@ -1,17 +1,19 @@
 /**
  * Add Member Screen
  * 
- * WEB-ONLY PERSISTENCE: All data via Firestore, no AsyncStorage
+ * FIRESTORE-ONLY: Members are stored in societies/{societyId}/members/{memberId}
+ * No AsyncStorage usage for member data.
  */
 
 import { canManageMembers, normalizeMemberRoles, normalizeSessionRole } from "@/lib/permissions";
 import { getCurrentUserRoles } from "@/lib/roles";
 import { getSession } from "@/lib/session";
+import { getActiveSocietyId } from "@/lib/firebase";
 import { useFocusEffect } from "@react-navigation/native";
 import { useRouter } from "expo-router";
 import { useCallback, useState } from "react";
-import { Alert, Pressable, ScrollView, Text, TextInput, View } from "react-native";
-import { getMembers, saveMember } from "@/lib/firestore/society";
+import { Alert, Pressable, ScrollView, Text, TextInput, View, ActivityIndicator } from "react-native";
+import { listMembers, upsertMember, validateMember } from "@/lib/firestore/members";
 import type { MemberData } from "@/lib/models";
 
 export default function AddMemberScreen() {
@@ -19,8 +21,9 @@ export default function AddMemberScreen() {
   const [memberName, setMemberName] = useState("");
   const [handicap, setHandicap] = useState("");
   const [sex, setSex] = useState<"male" | "female" | "">("");
-  const [role, setRole] = useState<"admin" | "member">("member");
   const [canCreate, setCanCreate] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [societyId, setSocietyId] = useState<string | null>(null);
 
   useFocusEffect(
     useCallback(() => {
@@ -29,8 +32,18 @@ export default function AddMemberScreen() {
   );
 
   const loadSession = async () => {
+    // Get active society ID
+    const activeSocietyId = getActiveSocietyId();
+    setSocietyId(activeSocietyId);
+
+    if (!activeSocietyId) {
+      Alert.alert("No Society Selected", "Please select or create a society first.", [
+        { text: "OK", onPress: () => router.back() },
+      ]);
+      return;
+    }
+
     const session = await getSession();
-    setRole(session.role);
     
     const sessionRole = normalizeSessionRole(session.role);
     const roles = normalizeMemberRoles(await getCurrentUserRoles());
@@ -44,22 +57,42 @@ export default function AddMemberScreen() {
     }
   };
 
-  const isFormValid = memberName.trim().length > 0 && (sex === "male" || sex === "female");
+  // Validation: name must be at least 2 characters
+  const nameValid = memberName.trim().length >= 2;
+  const sexValid = sex === "male" || sex === "female";
+  const handicapValid = handicap.trim() === "" || (!isNaN(parseFloat(handicap)) && parseFloat(handicap) >= 0);
+  const isFormValid = nameValid && sexValid && handicapValid;
 
   const handleSubmit = async () => {
-    if (!isFormValid) return;
+    if (!isFormValid || !societyId) return;
+
+    // Pre-validate with our helper
+    const member: Partial<MemberData> = {
+      name: memberName.trim(),
+      handicap: handicap.trim() ? parseFloat(handicap.trim()) : undefined,
+      sex: sex as "male" | "female",
+    };
+
+    const validation = validateMember(member);
+    if (!validation.valid) {
+      Alert.alert("Validation Error", validation.errors.join("\n"));
+      return;
+    }
+
+    setSaving(true);
 
     try {
-      // Load existing members from Firestore
-      const existingMembers = await getMembers();
+      // Check if this is the first member
+      const existingMembers = await listMembers(societyId);
+      const isFirstMember = existingMembers.length === 0;
 
       // Determine roles: first member gets Captain/Handicapper, others get Member
-      const isFirstMember = existingMembers.length === 0;
+      // Roles must be stored as an ARRAY of strings
       const roles: string[] = isFirstMember 
         ? ["captain", "handicapper", "member"] 
         : ["member"];
 
-      // Create new member
+      // Create new member with unique ID
       const newMember: MemberData = {
         id: `member-${Date.now()}`,
         name: memberName.trim(),
@@ -68,15 +101,26 @@ export default function AddMemberScreen() {
         roles,
       };
 
-      // Save to Firestore
-      const success = await saveMember(newMember);
+      // Save to Firestore using upsertMember
+      const result = await upsertMember(newMember, societyId);
       
-      if (!success) {
-        Alert.alert("Error", "Failed to save member. Please try again.");
+      if (!result.success) {
+        console.error("[AddMember] Failed to save member:", result.error, {
+          societyId,
+          memberId: newMember.id,
+        });
+        Alert.alert(
+          "Error", 
+          `Failed to save member: ${result.error || "Unknown error"}. Please try again.`
+        );
         return;
       }
       
-      console.log("[AddMember] Member saved to Firestore:", newMember.id);
+      console.log("[AddMember] Member saved to Firestore:", {
+        memberId: newMember.id,
+        societyId,
+        name: newMember.name,
+      });
       
       // If first member OR no current user set, set as current user and admin session
       const session = await getSession();
@@ -86,20 +130,38 @@ export default function AddMemberScreen() {
           await setSessionUserId(newMember.id);
         }
         if (isFirstMember) {
-          await setSessionRole("admin"); // Set session to admin for first user
+          await setSessionRole("admin");
         }
       }
 
-      // Navigate back
+      // Navigate back on success
       router.back();
     } catch (error) {
-      console.error("Error saving member:", error);
-      Alert.alert("Error", "Failed to add member. Please check your connection.");
+      const errorMessage = error instanceof Error ? error.message : "Unknown error";
+      console.error("[AddMember] Error saving member:", error, { societyId });
+      Alert.alert("Error", `Failed to add member: ${errorMessage}`);
+    } finally {
+      setSaving(false);
     }
   };
 
+  // Show nothing while checking permissions (will redirect via Alert)
   if (!canCreate) {
-    return null; // Will redirect via Alert
+    return null;
+  }
+
+  // Show "No society" message if societyId is missing
+  if (!societyId) {
+    return (
+      <View style={{ flex: 1, justifyContent: "center", alignItems: "center", padding: 24 }}>
+        <Text style={{ fontSize: 18, fontWeight: "600", marginBottom: 12 }}>
+          No Society Selected
+        </Text>
+        <Text style={{ fontSize: 14, color: "#6b7280", textAlign: "center" }}>
+          Please select or create a society first.
+        </Text>
+      </View>
+    );
   }
 
   return (
@@ -119,35 +181,51 @@ export default function AddMemberScreen() {
         <TextInput
           value={memberName}
           onChangeText={setMemberName}
-          placeholder="Enter member name"
+          placeholder="Enter member name (min 2 characters)"
           style={{
             backgroundColor: "#f3f4f6",
             paddingVertical: 14,
             paddingHorizontal: 16,
             borderRadius: 14,
             fontSize: 16,
-            marginBottom: 20,
+            marginBottom: 4,
+            borderWidth: memberName.length > 0 && !nameValid ? 1 : 0,
+            borderColor: "#ef4444",
           }}
         />
+        {memberName.length > 0 && !nameValid && (
+          <Text style={{ color: "#ef4444", fontSize: 12, marginBottom: 16 }}>
+            Name must be at least 2 characters
+          </Text>
+        )}
+        {(memberName.length === 0 || nameValid) && <View style={{ marginBottom: 16 }} />}
 
         {/* Handicap */}
         <Text style={{ fontSize: 16, fontWeight: "600", marginBottom: 8 }}>
-          Handicap
+          Handicap Index
         </Text>
         <TextInput
           value={handicap}
           onChangeText={setHandicap}
-          placeholder="Enter handicap (optional)"
-          keyboardType="numeric"
+          placeholder="Enter handicap (optional, e.g., 12.5)"
+          keyboardType="decimal-pad"
           style={{
             backgroundColor: "#f3f4f6",
             paddingVertical: 14,
             paddingHorizontal: 16,
             borderRadius: 14,
             fontSize: 16,
-            marginBottom: 20,
+            marginBottom: 4,
+            borderWidth: handicap.length > 0 && !handicapValid ? 1 : 0,
+            borderColor: "#ef4444",
           }}
         />
+        {handicap.length > 0 && !handicapValid && (
+          <Text style={{ color: "#ef4444", fontSize: 12, marginBottom: 16 }}>
+            Handicap must be a number &gt;= 0
+          </Text>
+        )}
+        {(handicap.length === 0 || handicapValid) && <View style={{ marginBottom: 16 }} />}
 
         {/* Sex */}
         <Text style={{ fontSize: 16, fontWeight: "600", marginBottom: 8 }}>
@@ -197,30 +275,36 @@ export default function AddMemberScreen() {
         {/* Add Member Button */}
         <Pressable
           onPress={handleSubmit}
-          disabled={!isFormValid}
+          disabled={!isFormValid || saving}
           style={{
-            backgroundColor: isFormValid ? "#0B6E4F" : "#9ca3af",
+            backgroundColor: isFormValid && !saving ? "#0B6E4F" : "#9ca3af",
             paddingVertical: 14,
             borderRadius: 14,
             alignItems: "center",
             marginBottom: 12,
             marginTop: 8,
+            flexDirection: "row",
+            justifyContent: "center",
+            gap: 8,
           }}
         >
+          {saving && <ActivityIndicator size="small" color="#fff" />}
           <Text style={{ color: "white", fontSize: 18, fontWeight: "700" }}>
-            Add Member
+            {saving ? "Saving..." : "Add Member"}
           </Text>
         </Pressable>
 
         {/* Back Button */}
         <Pressable
           onPress={() => router.back()}
+          disabled={saving}
           style={{
             backgroundColor: "#111827",
             paddingVertical: 14,
             borderRadius: 14,
             alignItems: "center",
             marginBottom: 12,
+            opacity: saving ? 0.5 : 1,
           }}
         >
           <Text style={{ color: "white", fontSize: 18, fontWeight: "700" }}>
@@ -231,4 +315,3 @@ export default function AddMemberScreen() {
     </ScrollView>
   );
 }
-

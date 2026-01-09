@@ -38,9 +38,11 @@ import { getColors, spacing } from "@/lib/ui/theme";
 
 const STORAGE_KEY = STORAGE_KEYS.SOCIETY_ACTIVE;
 const EVENTS_KEY = STORAGE_KEYS.EVENTS;
-const MEMBERS_KEY = STORAGE_KEYS.MEMBERS;
 const SCORES_KEY = STORAGE_KEYS.SCORES;
 const DRAFT_KEY = STORAGE_KEYS.SOCIETY_DRAFT;
+
+// Import Firestore members helper
+import { listMembers } from "@/lib/firestore/members";
 
 type SocietyData = {
   name: string;
@@ -133,8 +135,8 @@ export default function SocietyDashboardScreen() {
         setEvents(JSON.parse(eventsData));
       }
 
-      const membersData = await AsyncStorage.getItem(MEMBERS_KEY);
-      const loadedMembers = membersData ? JSON.parse(membersData) : [];
+      // Load members from Firestore
+      const loadedMembers = await listMembers();
       setMembers(loadedMembers);
 
       const scoresData = await AsyncStorage.getItem(SCORES_KEY);
