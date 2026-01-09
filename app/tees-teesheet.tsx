@@ -20,7 +20,8 @@ import {
   validateTeeSheetData,
   type TeeSheetDataModel,
 } from "@/lib/teeSheetPrint";
-import { getActiveSocietyId } from "@/lib/firebase";
+import { getActiveSocietyId, hasRealActiveSociety } from "@/lib/firebase";
+import { logDataSanity } from "@/lib/firestore/errors";
 // Firestore helpers - NO AsyncStorage fallback for tee sheet
 import { 
   getSociety, 

@@ -31,7 +31,8 @@ import {
   serverTimestamp,
   Unsubscribe,
 } from "firebase/firestore";
-import { db, getActiveSocietyId, isFirebaseConfigured } from "../firebase";
+import { db, getActiveSocietyId, isFirebaseConfigured, logFirestoreOp } from "../firebase";
+import { checkOperationReady, logDataSanity, handleFirestoreError } from "./errors";
 import type { MemberData } from "../models";
 
 // ============================================================================
@@ -108,18 +109,23 @@ export function validateMember(member: Partial<MemberData>): MemberValidationRes
  */
 export async function listMembers(societyId?: string): Promise<MemberData[]> {
   const effectiveSocietyId = societyId || getActiveSocietyId();
+  const collectionPath = `societies/${effectiveSocietyId}/members`;
   
+  // Pre-flight checks
+  const readyError = checkOperationReady("listMembers");
+  if (readyError) {
+    console.error("[Members] Operation not ready:", readyError.message);
+    return [];
+  }
+
   if (!effectiveSocietyId) {
     console.error("[Members] No society ID provided or available");
     return [];
   }
 
-  if (!isFirebaseConfigured()) {
-    console.error("[Members] Firebase not configured");
-    return [];
-  }
-
   try {
+    logFirestoreOp("read", collectionPath);
+    
     const membersRef = collection(db, "societies", effectiveSocietyId, "members");
     const q = query(membersRef, orderBy("name", "asc"));
     const snapshot = await getDocs(q);
@@ -129,10 +135,16 @@ export async function listMembers(societyId?: string): Promise<MemberData[]> {
       return mapFirestoreMember(docSnap.id, data);
     });
 
-    console.log(`[Members] Loaded ${members.length} members from Firestore`);
+    // Dev mode sanity check
+    logDataSanity("listMembers", {
+      societyId: effectiveSocietyId,
+      memberCount: members.length,
+      path: collectionPath,
+    });
+
     return members;
   } catch (error) {
-    console.error("[Members] Error listing members:", error, { societyId: effectiveSocietyId });
+    handleFirestoreError(error, "listMembers", collectionPath, false);
     throw error;
   }
 }
@@ -233,15 +245,18 @@ export async function upsertMember(
   societyId?: string
 ): Promise<{ success: boolean; error?: string }> {
   const effectiveSocietyId = societyId || getActiveSocietyId();
+  const memberId = member.id || `member-${Date.now()}`;
+  const docPath = `societies/${effectiveSocietyId}/members/${memberId}`;
+  
+  // Pre-flight checks
+  const readyError = checkOperationReady("upsertMember");
+  if (readyError) {
+    console.error("[Members] upsertMember failed:", readyError.message);
+    return { success: false, error: readyError.message };
+  }
   
   if (!effectiveSocietyId) {
     const error = "No society ID available";
-    console.error("[Members] upsertMember failed:", error);
-    return { success: false, error };
-  }
-
-  if (!isFirebaseConfigured()) {
-    const error = "Firebase not configured";
     console.error("[Members] upsertMember failed:", error);
     return { success: false, error };
   }
@@ -253,9 +268,6 @@ export async function upsertMember(
     console.error("[Members] Validation failed:", error);
     return { success: false, error };
   }
-
-  // Generate ID if not provided
-  const memberId = member.id || `member-${Date.now()}`;
 
   try {
     const memberRef = doc(db, "societies", effectiveSocietyId, "members", memberId);
@@ -284,10 +296,13 @@ export async function upsertMember(
       payload.createdAt = serverTimestamp();
     }
 
+    logFirestoreOp("write", docPath, memberId, { name: member.name });
     await setDoc(memberRef, payload, { merge: true });
 
-    console.log(`[Members] Saved member: ${memberId} (${member.name})`, {
+    // Dev mode: log the document path written
+    logDataSanity("upsertMember", {
       societyId: effectiveSocietyId,
+      path: docPath,
     });
 
     return { success: true };

@@ -17,6 +17,9 @@ import { canCreateEvents, normalizeMemberRoles, normalizeSessionRole } from "@/l
 import { getCurrentUserRoles } from "@/lib/roles";
 import { DatePicker } from "@/components/DatePicker";
 import { saveEvent } from "@/lib/firestore/society";
+import { getActiveSocietyId } from "@/lib/firebase";
+import { NoSocietyGuard } from "@/components/NoSocietyGuard";
+import { FirebaseConfigGuard } from "@/components/FirebaseConfigGuard";
 import type { EventData } from "@/lib/models";
 
 export default function CreateEventScreen() {
@@ -28,6 +31,7 @@ export default function CreateEventScreen() {
   const [isOOM, setIsOOM] = useState(false);
   const [role, setRole] = useState<"admin" | "member">("member");
   const [canCreate, setCanCreate] = useState(false);
+  const [societyId, setSocietyId] = useState<string | null>(null);
 
   useFocusEffect(
     useCallback(() => {
@@ -36,6 +40,17 @@ export default function CreateEventScreen() {
   );
 
   const loadSession = async () => {
+    // Check active society first
+    const activeSocietyId = getActiveSocietyId();
+    setSocietyId(activeSocietyId);
+
+    if (!activeSocietyId) {
+      Alert.alert("No Society Selected", "Please select or create a society first.", [
+        { text: "OK", onPress: () => router.back() },
+      ]);
+      return;
+    }
+
     const session = await getSession();
     setRole(session.role);
     
@@ -50,6 +65,11 @@ export default function CreateEventScreen() {
       ]);
     }
   };
+
+  // Show NoSocietyGuard if no society selected
+  if (!societyId) {
+    return <NoSocietyGuard message="You need to select a society before creating events." />;
+  }
 
   if (!canCreate) {
     return null; // Will redirect via Alert

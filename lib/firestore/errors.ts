@@ -1,0 +1,262 @@
+/**
+ * Firestore Error Handling Utilities
+ * 
+ * Provides centralized error handling, logging, and user-friendly messages
+ * for all Firestore operations.
+ */
+
+import { Alert, Platform } from "react-native";
+import { isFirebaseConfigured, getFirebaseConfigStatus, hasActiveSociety, getActiveSocietyId } from "../firebase";
+
+// ============================================================================
+// ERROR TYPES
+// ============================================================================
+
+export type FirestoreErrorCode =
+  | "FIREBASE_NOT_CONFIGURED"
+  | "NO_SOCIETY_SELECTED"
+  | "PERMISSION_DENIED"
+  | "NOT_FOUND"
+  | "NETWORK_ERROR"
+  | "QUOTA_EXCEEDED"
+  | "UNKNOWN";
+
+export interface FirestoreError {
+  code: FirestoreErrorCode;
+  message: string;
+  operation: string;
+  path?: string;
+  originalError?: unknown;
+}
+
+// ============================================================================
+// PRE-OPERATION GUARDS
+// ============================================================================
+
+/**
+ * Check if Firebase is ready for operations
+ * Returns an error object if not ready, null if OK
+ */
+export function checkFirebaseReady(operation: string): FirestoreError | null {
+  if (!isFirebaseConfigured()) {
+    const status = getFirebaseConfigStatus();
+    return {
+      code: "FIREBASE_NOT_CONFIGURED",
+      message: `Firebase is not configured. Missing: ${status.missingVars.join(", ")}`,
+      operation,
+    };
+  }
+  return null;
+}
+
+/**
+ * Check if a society is selected
+ * Returns an error object if not selected, null if OK
+ */
+export function checkSocietySelected(operation: string): FirestoreError | null {
+  if (!hasActiveSociety()) {
+    return {
+      code: "NO_SOCIETY_SELECTED",
+      message: "No society selected. Please select or create a society first.",
+      operation,
+    };
+  }
+  return null;
+}
+
+/**
+ * Full pre-operation check (Firebase configured + society selected)
+ * Returns an error object if not ready, null if OK
+ */
+export function checkOperationReady(operation: string): FirestoreError | null {
+  const firebaseError = checkFirebaseReady(operation);
+  if (firebaseError) return firebaseError;
+  
+  const societyError = checkSocietySelected(operation);
+  if (societyError) return societyError;
+  
+  return null;
+}
+
+// ============================================================================
+// ERROR PARSING
+// ============================================================================
+
+/**
+ * Parse a Firestore error into a user-friendly format
+ */
+export function parseFirestoreError(
+  error: unknown,
+  operation: string,
+  path?: string
+): FirestoreError {
+  const originalError = error;
+  let code: FirestoreErrorCode = "UNKNOWN";
+  let message = "An unexpected error occurred";
+  
+  if (error instanceof Error) {
+    message = error.message;
+    
+    // Parse Firebase error codes
+    const errorString = error.message.toLowerCase();
+    
+    if (errorString.includes("permission-denied") || errorString.includes("permission denied")) {
+      code = "PERMISSION_DENIED";
+      message = "You don't have permission to perform this action.";
+    } else if (errorString.includes("not-found") || errorString.includes("not found")) {
+      code = "NOT_FOUND";
+      message = "The requested data was not found.";
+    } else if (errorString.includes("unavailable") || errorString.includes("network")) {
+      code = "NETWORK_ERROR";
+      message = "Network error. Please check your connection and try again.";
+    } else if (errorString.includes("quota") || errorString.includes("resource-exhausted")) {
+      code = "QUOTA_EXCEEDED";
+      message = "Service limit reached. Please try again later.";
+    }
+  }
+  
+  return {
+    code,
+    message,
+    operation,
+    path,
+    originalError,
+  };
+}
+
+// ============================================================================
+// ERROR LOGGING
+// ============================================================================
+
+/**
+ * Log a Firestore error with full context
+ */
+export function logFirestoreError(error: FirestoreError): void {
+  const societyId = getActiveSocietyId();
+  
+  console.error(
+    `[Firestore Error] ${error.operation}`,
+    {
+      code: error.code,
+      message: error.message,
+      path: error.path,
+      societyId,
+      originalError: error.originalError,
+    }
+  );
+}
+
+// ============================================================================
+// USER FEEDBACK
+// ============================================================================
+
+/**
+ * Show a user-friendly error alert
+ */
+export function showFirestoreError(error: FirestoreError): void {
+  const title = getErrorTitle(error.code);
+  
+  Alert.alert(title, error.message, [
+    { text: "OK", style: "default" }
+  ]);
+}
+
+/**
+ * Show error and also log it
+ */
+export function handleFirestoreError(
+  error: unknown,
+  operation: string,
+  path?: string,
+  showAlert = true
+): FirestoreError {
+  const parsed = parseFirestoreError(error, operation, path);
+  logFirestoreError(parsed);
+  
+  if (showAlert) {
+    showFirestoreError(parsed);
+  }
+  
+  return parsed;
+}
+
+function getErrorTitle(code: FirestoreErrorCode): string {
+  switch (code) {
+    case "FIREBASE_NOT_CONFIGURED":
+      return "Configuration Error";
+    case "NO_SOCIETY_SELECTED":
+      return "No Society Selected";
+    case "PERMISSION_DENIED":
+      return "Access Denied";
+    case "NOT_FOUND":
+      return "Not Found";
+    case "NETWORK_ERROR":
+      return "Connection Error";
+    case "QUOTA_EXCEEDED":
+      return "Service Limit";
+    default:
+      return "Error";
+  }
+}
+
+// ============================================================================
+// WRAPPED OPERATIONS
+// ============================================================================
+
+/**
+ * Wrap an async Firestore operation with error handling
+ * Returns { success, data, error } object
+ */
+export async function safeFirestoreOp<T>(
+  operation: string,
+  path: string,
+  fn: () => Promise<T>,
+  showAlertOnError = true
+): Promise<{ success: boolean; data?: T; error?: FirestoreError }> {
+  // Pre-flight check
+  const readyError = checkOperationReady(operation);
+  if (readyError) {
+    logFirestoreError(readyError);
+    if (showAlertOnError) {
+      showFirestoreError(readyError);
+    }
+    return { success: false, error: readyError };
+  }
+  
+  try {
+    const data = await fn();
+    return { success: true, data };
+  } catch (error) {
+    const parsed = handleFirestoreError(error, operation, path, showAlertOnError);
+    return { success: false, error: parsed };
+  }
+}
+
+// ============================================================================
+// DEV MODE SANITY CHECKS
+// ============================================================================
+
+/**
+ * Log data sanity info in dev mode
+ */
+export function logDataSanity(
+  screen: string,
+  data: {
+    societyId?: string | null;
+    memberCount?: number;
+    eventCount?: number;
+    path?: string;
+  }
+): void {
+  if (!__DEV__) return;
+  
+  console.log(
+    `[DataSanity] ${screen}`,
+    {
+      societyId: data.societyId || "(none)",
+      memberCount: data.memberCount,
+      eventCount: data.eventCount,
+      path: data.path,
+    }
+  );
+}

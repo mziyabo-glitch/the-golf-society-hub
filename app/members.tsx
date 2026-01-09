@@ -21,9 +21,12 @@ import { PrimaryButton, SecondaryButton, DestructiveButton } from "@/components/
 import { EmptyState } from "@/components/ui/EmptyState";
 import { Row } from "@/components/ui/Row";
 import { getColors, spacing } from "@/lib/ui/theme";
-import { getActiveSocietyId } from "@/lib/firebase";
+import { getActiveSocietyId, isFirebaseConfigured } from "@/lib/firebase";
 import { subscribeMembers, deleteMemberById } from "@/lib/firestore/members";
+import { logDataSanity } from "@/lib/firestore/errors";
 import { getEvents } from "@/lib/firestore/society";
+import { NoSocietyGuard } from "@/components/NoSocietyGuard";
+import { FirebaseConfigGuard } from "@/components/FirebaseConfigGuard";
 import type { EventData, MemberData } from "@/lib/models";
 
 export default function MembersScreen() {
@@ -53,7 +56,12 @@ export default function MembersScreen() {
         setMembers(firestoreMembers);
         setLoading(false);
         setError(null);
-        console.log("[Members] Real-time update received:", firestoreMembers.length, "members");
+        
+        // Dev mode sanity check
+        logDataSanity("MembersScreen", {
+          societyId: activeSocietyId,
+          memberCount: firestoreMembers.length,
+        });
       },
       (err) => {
         console.error("[Members] Subscription error:", err);
@@ -238,21 +246,7 @@ export default function MembersScreen() {
 
   // Error state - no society selected
   if (!societyId) {
-    return (
-      <Screen scrollable={false}>
-        <View style={styles.centerContent}>
-          <AppText style={{ fontSize: 18, fontWeight: "600", marginBottom: 12 }}>
-            No Society Selected
-          </AppText>
-          <AppText style={{ color: "#6b7280", textAlign: "center", marginBottom: 20 }}>
-            Please select or create a society to view members.
-          </AppText>
-          <PrimaryButton onPress={() => router.push("/create-society")}>
-            Create Society
-          </PrimaryButton>
-        </View>
-      </Screen>
-    );
+    return <NoSocietyGuard message="Please select or create a society to view members." />;
   }
 
   // Error state - Firestore error

@@ -8,12 +8,14 @@
 import { canManageMembers, normalizeMemberRoles, normalizeSessionRole } from "@/lib/permissions";
 import { getCurrentUserRoles } from "@/lib/roles";
 import { getSession } from "@/lib/session";
-import { getActiveSocietyId } from "@/lib/firebase";
+import { getActiveSocietyId, isFirebaseConfigured } from "@/lib/firebase";
 import { useFocusEffect } from "@react-navigation/native";
 import { useRouter } from "expo-router";
 import { useCallback, useState } from "react";
 import { Alert, Pressable, ScrollView, Text, TextInput, View, ActivityIndicator } from "react-native";
 import { listMembers, upsertMember, validateMember } from "@/lib/firestore/members";
+import { NoSocietyGuard } from "@/components/NoSocietyGuard";
+import { FirebaseConfigGuard } from "@/components/FirebaseConfigGuard";
 import type { MemberData } from "@/lib/models";
 
 export default function AddMemberScreen() {
@@ -152,19 +154,12 @@ export default function AddMemberScreen() {
 
   // Show "No society" message if societyId is missing
   if (!societyId) {
-    return (
-      <View style={{ flex: 1, justifyContent: "center", alignItems: "center", padding: 24 }}>
-        <Text style={{ fontSize: 18, fontWeight: "600", marginBottom: 12 }}>
-          No Society Selected
-        </Text>
-        <Text style={{ fontSize: 14, color: "#6b7280", textAlign: "center" }}>
-          Please select or create a society first.
-        </Text>
-      </View>
-    );
+    return <NoSocietyGuard message="You need to select a society before adding members." />;
   }
 
+  // Wrap in FirebaseConfigGuard
   return (
+    <FirebaseConfigGuard>
     <ScrollView style={{ flex: 1, backgroundColor: "#fff" }}>
       <View style={{ flex: 1, padding: 24 }}>
         <Text style={{ fontSize: 34, fontWeight: "800", marginBottom: 6 }}>
@@ -313,5 +308,6 @@ export default function AddMemberScreen() {
         </Pressable>
       </View>
     </ScrollView>
+    </FirebaseConfigGuard>
   );
 }
