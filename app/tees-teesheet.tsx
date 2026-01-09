@@ -48,6 +48,7 @@ import { useFocusEffect } from "@react-navigation/native";
 import { router } from "expo-router";
 import { useCallback, useState, useRef } from "react";
 import { Alert, Pressable, StyleSheet, TextInput, View, Modal, Platform, ActivityIndicator, Text, ScrollView } from "react-native";
+import type { DropResult } from "@hello-pangea/dnd";
 import { Screen } from "@/components/ui/Screen";
 import { SectionHeader } from "@/components/ui/SectionHeader";
 import { AppText } from "@/components/ui/AppText";
@@ -60,6 +61,26 @@ import * as Print from "expo-print";
 import * as Sharing from "expo-sharing";
 
 type TabType = "tees" | "teesheet";
+type PlayerRef = {
+  id: string;
+  name: string;
+  isGuest?: boolean;
+  handicapIndex?: number;
+  sex?: "male" | "female";
+};
+type TeeGroup = { id: string; timeISO: string; players: PlayerRef[] };
+
+// Web-only DnD library (do not require on native)
+let DragDropContext: any;
+let Droppable: any;
+let Draggable: any;
+if (Platform.OS === "web") {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const dnd = require("@hello-pangea/dnd");
+  DragDropContext = dnd.DragDropContext;
+  Droppable = dnd.Droppable;
+  Draggable = dnd.Draggable;
+}
 
 export default function TeesTeeSheetScreen() {
   // Permissions
@@ -85,7 +106,7 @@ export default function TeesTeeSheetScreen() {
   // Tee Sheet fields
   const [startTime, setStartTime] = useState("08:00");
   const [intervalMins, setIntervalMins] = useState<number>(8);
-  const [teeGroups, setTeeGroups] = useState<Array<{ timeISO: string; players: string[] }>>([]);
+  const [groups, setGroups] = useState<TeeGroup[]>([]);
   const [teeSheetNotes, setTeeSheetNotes] = useState<string>("");
   const [nearestToPinHoles, setNearestToPinHoles] = useState<number[]>([]);
   const [longestDriveHoles, setLongestDriveHoles] = useState<number[]>([]);
@@ -103,12 +124,12 @@ export default function TeesTeeSheetScreen() {
   const [newGuestSex, setNewGuestSex] = useState<"male" | "female">("male");
 
   // Manual Edit Mode state
-  const [editMode, setEditMode] = useState(false);
-  const [movePlayerData, setMovePlayerData] = useState<{ playerId: string; fromGroup: number } | null>(null);
-  const [unassignedPlayers, setUnassignedPlayers] = useState<string[]>([]);
-  const [editTimeGroupIndex, setEditTimeGroupIndex] = useState<number | null>(null);
-  const [editTimeValue, setEditTimeValue] = useState<string>("08:00");
-  const [swapPlayerData, setSwapPlayerData] = useState<{ playerId: string; fromGroup: number } | null>(null);
+  const [isEditMode, setIsEditMode] = useState(false);
+  const [movePlayerData, setMovePlayerData] = useState<{ playerId: string; fromGroupId: string | "unassigned" } | null>(null);
+  const [swapPlayerData, setSwapPlayerData] = useState<{ playerId: string; fromGroupId: string } | null>(null);
+  const [unassignedPlayers, setUnassignedPlayers] = useState<PlayerRef[]>([]);
+  const [groupTimeDrafts, setGroupTimeDrafts] = useState<Record<string, string>>({});
+  const [isDirty, setIsDirty] = useState(false);
 
   // Loading states
   const [dataReady, setDataReady] = useState(false);
@@ -118,9 +139,12 @@ export default function TeesTeeSheetScreen() {
 
   // PDF sharing guard
   const isSharing = useRef(false);
+  const savedSignatureRef = useRef<string>("");
+  const groupIdCounterRef = useRef(0);
 
   // Derived permission flag
   const canManageTeeSheet = permissions?.canManageTeeSheet ?? false;
+  const isWeb = Platform.OS === "web";
 
   // Check if all required data is loaded for tee sheet generation
   const canGenerateTeeSheet = Boolean(
@@ -131,6 +155,91 @@ export default function TeesTeeSheetScreen() {
     handicapAllowancePct > 0 &&
     members.length > 0
   );
+
+  const makeGroupId = (seed?: string) => {
+    groupIdCounterRef.current += 1;
+    return `g-${seed || "x"}-${Date.now()}-${groupIdCounterRef.current}`;
+  };
+
+  const formatHHMMFromISO = (iso: string): string => {
+    const d = new Date(iso);
+    const hh = String(d.getHours()).padStart(2, "0");
+    const mm = String(d.getMinutes()).padStart(2, "0");
+    return `${hh}:${mm}`;
+  };
+
+  const parseTimeHHMM = (value: string): { hours: number; minutes: number } | null => {
+    const match = value.trim().match(/^(\d{1,2}):(\d{2})$/);
+    if (!match) return null;
+    const hours = Number(match[1]);
+    const minutes = Number(match[2]);
+    if (Number.isNaN(hours) || Number.isNaN(minutes)) return null;
+    if (hours < 0 || hours > 23) return null;
+    if (minutes < 0 || minutes > 59) return null;
+    return { hours, minutes };
+  };
+
+  const resolvePlayerRef = (playerId: string): PlayerRef => {
+    const member = members.find((m) => m.id === playerId);
+    if (member) {
+      return {
+        id: member.id,
+        name: member.name,
+        isGuest: false,
+        handicapIndex: member.handicap,
+        sex: member.sex,
+      };
+    }
+    const guest = guests.find((g) => g.id === playerId);
+    if (guest) {
+      return {
+        id: guest.id,
+        name: guest.name,
+        isGuest: true,
+        handicapIndex: guest.handicapIndex,
+        sex: guest.sex,
+      };
+    }
+    return { id: playerId, name: "Unknown", isGuest: false };
+  };
+
+  const toFirestoreGroups = (nextGroups: TeeGroup[]): Array<{ timeISO: string; players: string[] }> => {
+    return nextGroups.map((g) => ({
+      timeISO: g.timeISO,
+      players: g.players.map((p) => p.id),
+    }));
+  };
+
+  const computeSignature = (nextGroups: TeeGroup[]): string => {
+    return JSON.stringify(toFirestoreGroups(nextGroups));
+  };
+
+  const markSaved = (nextGroups: TeeGroup[]) => {
+    const sig = computeSignature(nextGroups);
+    savedSignatureRef.current = sig;
+    setIsDirty(false);
+  };
+
+  const markDirtyIfChanged = (nextGroups: TeeGroup[]) => {
+    const sig = computeSignature(nextGroups);
+    setIsDirty(sig !== savedSignatureRef.current);
+  };
+
+  const setGroupsAndTrack = (nextGroups: TeeGroup[]) => {
+    setGroups(nextGroups);
+    markDirtyIfChanged(nextGroups);
+  };
+
+  const validateNoDuplicates = (nextGroups: TeeGroup[]): boolean => {
+    const seen = new Set<string>();
+    for (const g of nextGroups) {
+      for (const p of g.players) {
+        if (seen.has(p.id)) return false;
+        seen.add(p.id);
+      }
+    }
+    return true;
+  };
 
   useFocusEffect(
     useCallback(() => {
@@ -205,24 +314,37 @@ export default function TeesTeeSheetScreen() {
     console.log("[Event Selected]", event.id, event.name);
 
     // Reset tee sheet state
-    setTeeGroups([]);
-    setEditMode(false);
+    setGroups([]);
+    setIsEditMode(false);
     setMovePlayerData(null);
     setSwapPlayerData(null);
     setUnassignedPlayers([]);
+    setGroupTimeDrafts({});
+    setIsDirty(false);
     setSelectedCourse(null);
     setSelectedMaleTeeSet(null);
     setSelectedFemaleTeeSet(null);
 
+    // Load guests early (used for player resolution below)
+    setGuests(event.guests || []);
+
     // Load tee sheet data if exists
     if (event.teeSheet) {
-      setStartTime(new Date(event.teeSheet.startTimeISO).toLocaleTimeString("en-US", { 
-        hour: "2-digit", 
-        minute: "2-digit", 
-        hour12: false 
-      }));
+      setStartTime(
+        new Date(event.teeSheet.startTimeISO).toLocaleTimeString("en-US", {
+          hour: "2-digit",
+          minute: "2-digit",
+          hour12: false,
+        })
+      );
       setIntervalMins(event.teeSheet.intervalMins);
-      setTeeGroups(event.teeSheet.groups || []);
+      const loadedGroups: TeeGroup[] = (event.teeSheet.groups || []).map((g, idx) => ({
+        id: `g-${event.id}-${idx}-${g.timeISO}`,
+        timeISO: g.timeISO,
+        players: (g.players || []).map((pid) => resolvePlayerRef(pid)),
+      }));
+      setGroups(loadedGroups);
+      markSaved(loadedGroups);
     }
 
     // Load allowance
@@ -279,9 +401,6 @@ export default function TeesTeeSheetScreen() {
     });
     setSelectedPlayerIds(includedIds);
     
-    // Load guests
-    setGuests(event.guests || []);
-
     // Defensive logging
     console.log("=== Event Selection Complete ===");
     console.log("Course:", selectedCourse?.name || "Loading...");
@@ -290,75 +409,59 @@ export default function TeesTeeSheetScreen() {
     console.log("Allowance:", handicapAllowancePct, "%");
   };
 
-  const getEligiblePlayerIds = (): string[] => {
+  const getEligiblePlayerRefs = (): PlayerRef[] => {
     const ids: string[] = [];
 
     members.forEach((m) => {
       if (selectedPlayerIds.has(m.id)) ids.push(m.id);
     });
-
     guests.forEach((g) => {
       if (g.included) ids.push(g.id);
     });
 
-    return ids;
+    return ids.map((id) => resolvePlayerRef(id));
   };
 
-  const recomputeUnassignedPlayers = (groups: Array<{ timeISO: string; players: string[] }>) => {
-    const eligible = getEligiblePlayerIds();
-    const assigned = new Set(groups.flatMap((g) => g.players));
-    const unassigned = eligible.filter((id) => !assigned.has(id));
-    setUnassignedPlayers(Array.from(new Set(unassigned)));
+  const recomputeUnassignedFromGroups = (nextGroups: TeeGroup[]) => {
+    const eligible = getEligiblePlayerRefs();
+    const assigned = new Set(nextGroups.flatMap((g) => g.players.map((p) => p.id)));
+    const unassigned = eligible.filter((p) => !assigned.has(p.id));
+    setUnassignedPlayers(unassigned);
   };
 
   const toggleEditMode = () => {
     if (!guard(canManageTeeSheet, "Only Captain or Handicapper can edit tee groups.")) return;
-    if (teeGroups.length === 0) {
+    if (groups.length === 0) {
       Alert.alert("Nothing to edit", "Generate a tee sheet first.");
       return;
     }
 
-    setEditMode((prev) => {
+    setIsEditMode((prev) => {
       const next = !prev;
       if (next) {
-        // When enabling edit mode, derive unassigned from current selection vs groups
-        recomputeUnassignedPlayers(teeGroups);
+        recomputeUnassignedFromGroups(groups);
       } else {
-        // Clear transient edit UI
         setMovePlayerData(null);
         setSwapPlayerData(null);
-        setEditTimeGroupIndex(null);
       }
       return next;
     });
   };
 
-  const parseTimeHHMM = (value: string): { hours: number; minutes: number } | null => {
-    const match = value.trim().match(/^(\d{1,2}):(\d{2})$/);
-    if (!match) return null;
-    const hours = Number(match[1]);
-    const minutes = Number(match[2]);
-    if (Number.isNaN(hours) || Number.isNaN(minutes)) return null;
-    if (hours < 0 || hours > 23) return null;
-    if (minutes < 0 || minutes > 59) return null;
-    return { hours, minutes };
-  };
-
-  const setGroupTimeFromHHMM = (groupIndex: number, timeHHMM: string) => {
+  const setGroupTimeFromHHMM = (groupId: string, timeHHMM: string, options?: { silent?: boolean }) => {
     const parsed = parseTimeHHMM(timeHHMM);
     if (!parsed) {
-      Alert.alert("Invalid time", "Use HH:MM (e.g., 08:00)");
+      if (!options?.silent) Alert.alert("Invalid time", "Use HH:MM (e.g., 08:00)");
       return;
     }
-    setTeeGroups((prev) => {
-      const next = [...prev];
-      const current = next[groupIndex];
-      if (!current) return prev;
-      const d = new Date(current.timeISO);
+
+    const next = groups.map((g) => {
+      if (g.id !== groupId) return g;
+      const d = new Date(g.timeISO);
       d.setHours(parsed.hours, parsed.minutes, 0, 0);
-      next[groupIndex] = { ...current, timeISO: d.toISOString() };
-      return next;
+      return { ...g, timeISO: d.toISOString() };
     });
+    setGroupsAndTrack(next);
   };
 
   /**
@@ -369,6 +472,22 @@ export default function TeesTeeSheetScreen() {
       return;
     }
 
+    if (groups.length > 0) {
+      Alert.alert(
+        "Regenerate tee sheet?",
+        "Regenerate will replace your current groups. Continue?",
+        [
+          { text: "Cancel", style: "cancel" },
+          { text: "Regenerate", style: "destructive", onPress: () => handleGenerateTeeSheetConfirmed() },
+        ]
+      );
+      return;
+    }
+
+    handleGenerateTeeSheetConfirmed();
+  };
+
+  const handleGenerateTeeSheetConfirmed = () => {
     // Defensive logging before generation
     console.log("=== Generating Tee Sheet ===");
     console.log("Course:", selectedCourse);
@@ -422,20 +541,22 @@ export default function TeesTeeSheetScreen() {
       return;
     }
 
-    // Create groups
+    // Create groups (single source of truth)
     const startDate = new Date();
     startDate.setHours(hours, minutes, 0, 0);
 
-    const groups: Array<{ timeISO: string; players: string[] }> = [];
+    const nextGroups: TeeGroup[] = [];
     let currentTime = startDate.getTime();
-    let currentGroup: string[] = [];
+    let currentGroup: PlayerRef[] = [];
 
     playerIds.forEach((playerId, idx) => {
-      currentGroup.push(playerId);
+      currentGroup.push(resolvePlayerRef(playerId));
       
       if (currentGroup.length === 4 || idx === playerIds.length - 1) {
-        groups.push({
-          timeISO: new Date(currentTime).toISOString(),
+        const timeISO = new Date(currentTime).toISOString();
+        nextGroups.push({
+          id: makeGroupId(timeISO),
+          timeISO,
           players: [...currentGroup],
         });
         currentGroup = [];
@@ -444,11 +565,20 @@ export default function TeesTeeSheetScreen() {
     });
 
     setUnassignedPlayers([]);
-    setEditMode(false);
     setMovePlayerData(null);
     setSwapPlayerData(null);
-    setTeeGroups(groups);
-    console.log("[Tee Sheet Generated]", groups.length, "groups with", playerIds.length, "players");
+    setGroupTimeDrafts({});
+    setGroups(nextGroups);
+    savedSignatureRef.current = ""; // force dirty
+    setIsDirty(true);
+
+    // Web-first: default edit mode ON after generation
+    setIsEditMode(isWeb);
+    if (isWeb) {
+      recomputeUnassignedFromGroups(nextGroups);
+    }
+
+    console.log("[Tee Sheet Generated]", nextGroups.length, "groups with", playerIds.length, "players");
   };
 
   /**
@@ -460,12 +590,13 @@ export default function TeesTeeSheetScreen() {
       return { success: false, verified: false, error: "No event selected" };
     }
     
-    if (teeGroups.length === 0) {
+    if (groups.length === 0) {
       return { success: false, verified: false, error: "No tee groups to save" };
     }
 
     // Validate all players - ensure we're saving IDs not names
-    const validatedGroups = teeGroups.map((group) => {
+    const payloadGroups = toFirestoreGroups(groups);
+    const validatedGroups = payloadGroups.map((group) => {
       const validPlayers = group.players.filter((playerId) => {
         // Sanity check: player ID should not contain spaces (names do)
         if (playerId.includes(" ")) {
@@ -473,7 +604,7 @@ export default function TeesTeeSheetScreen() {
           return false;
         }
         const memberExists = members.some((m) => m.id === playerId);
-        const guestExists = guests.some((g) => g.id === playerId && g.included);
+        const guestExists = guests.some((g) => g.id === playerId);
         return memberExists || guestExists;
       });
       return { ...group, players: validPlayers };
@@ -547,7 +678,7 @@ export default function TeesTeeSheetScreen() {
       Alert.alert("Error", "Please select an event first");
       return;
     }
-    if (teeGroups.length === 0) {
+    if (groups.length === 0) {
       Alert.alert("Error", "Please generate or create tee groups first");
       return;
     }
@@ -564,7 +695,15 @@ export default function TeesTeeSheetScreen() {
         
         if (reloadedEvent && reloadedEvent.teeSheet?.groups) {
           // Update local state with confirmed data
-          setTeeGroups(reloadedEvent.teeSheet.groups);
+          const reloadedGroups: TeeGroup[] = (reloadedEvent.teeSheet.groups || []).map((g, idx) => ({
+            id: `g-${reloadedEvent.id}-${idx}-${g.timeISO}`,
+            timeISO: g.timeISO,
+            players: (g.players || []).map((pid) => resolvePlayerRef(pid)),
+          }));
+          setGroups(reloadedGroups);
+          setGroupTimeDrafts({});
+          setUnassignedPlayers([]);
+          markSaved(reloadedGroups);
           setSelectedEvent(reloadedEvent);
           
           Alert.alert(
@@ -628,7 +767,7 @@ export default function TeesTeeSheetScreen() {
       return;
     }
 
-    if (teeGroups.length === 0) {
+    if (groups.length === 0) {
       Alert.alert("Error", "No tee groups found. Please generate a tee sheet first.");
       return;
     }
@@ -638,42 +777,54 @@ export default function TeesTeeSheetScreen() {
       return;
     }
 
-    if (isSharing.current) {
-      return;
-    }
-    isSharing.current = true;
-
-    try {
-      // AUTO-SAVE before print (best effort)
-      const needsAutoSave = !selectedEvent.teeSheet || 
-        !selectedEvent.teeSheet.groups || 
-        selectedEvent.teeSheet.groups.length === 0 ||
-        selectedEvent.teeSheet.groups.length !== teeGroups.length;
-
-      if (needsAutoSave) {
-        console.log("[PDF Export] Auto-saving tee sheet before print...");
-        const saveResult = await saveTeeSheetToFirestore();
-        if (saveResult.success && saveResult.verified) {
-          console.log("[PDF Export] Auto-save successful");
-        } else {
-          console.warn("[PDF Export] Auto-save failed, continuing anyway");
+    // Print consistency:
+    // - Default safest path: Save & Print if there are unsaved edits.
+    // - If user prints anyway, we print CURRENT STATE (groups state).
+    const runExport = async (options?: { saveFirst?: boolean }) => {
+      if (isSharing.current) return;
+      isSharing.current = true;
+      try {
+        let groupsForPrint: TeeGroup[] = groups;
+        if (options?.saveFirst) {
+          console.log("[PDF Export] Saving before print (requested)...");
+          const saveResult = await saveTeeSheetToFirestore();
+          if (!(saveResult.success && saveResult.verified)) {
+            Alert.alert("Error", saveResult.error || "Failed to save before printing");
+            return;
+          }
+          // Reload event for verified state and clear dirty flag
+          const reloadedEvent = await getEvent(selectedEvent.id);
+          if (reloadedEvent?.teeSheet?.groups) {
+            const reloadedGroups: TeeGroup[] = (reloadedEvent.teeSheet.groups || []).map((g, idx) => ({
+              id: `g-${reloadedEvent.id}-${idx}-${g.timeISO}`,
+              timeISO: g.timeISO,
+              players: (g.players || []).map((pid) => resolvePlayerRef(pid)),
+            }));
+            setGroups(reloadedGroups);
+            setSelectedEvent(reloadedEvent);
+            setGroupTimeDrafts({});
+            setUnassignedPlayers([]);
+            markSaved(reloadedGroups);
+            groupsForPrint = reloadedGroups;
+          }
         }
-      }
 
-      // Build data model (same for web and native)
-      const teeSheetData: TeeSheetDataModel = buildTeeSheetDataModel({
-        society,
-        event: selectedEvent,
-        course: selectedCourse,
-        maleTeeSet: selectedMaleTeeSet,
-        femaleTeeSet: selectedFemaleTeeSet,
-        members,
-        guests: guests.filter((g) => g.included),
-        teeGroups,
-        teeSheetNotes,
-        nearestToPinHoles,
-        longestDriveHoles,
-      });
+        const teeGroupsForModel = toFirestoreGroups(groupsForPrint);
+
+        // Build data model (same for web and native)
+        const teeSheetData: TeeSheetDataModel = buildTeeSheetDataModel({
+          society,
+          event: selectedEvent,
+          course: selectedCourse,
+          maleTeeSet: selectedMaleTeeSet,
+          femaleTeeSet: selectedFemaleTeeSet,
+          members,
+          guests: guests.filter((g) => g.included),
+          teeGroups: teeGroupsForModel,
+          teeSheetNotes,
+          nearestToPinHoles,
+          longestDriveHoles,
+        });
 
       // Validate data model
       const validation = validateTeeSheetData(teeSheetData);
@@ -697,44 +848,43 @@ export default function TeesTeeSheetScreen() {
 
       console.log("[PDF Export] HTML generated, length:", html.length);
 
-      // ==========================================
-      // WEB: Use window.open + document.write + print() (like Leaderboard)
-      // ==========================================
-      if (Platform.OS === "web") {
-        try {
-          if (typeof window !== "undefined" && window.open) {
-            const printWindow = window.open("", "_blank");
-            if (printWindow) {
-              printWindow.document.write(html);
-              printWindow.document.close();
-              printWindow.focus();
-              // Delay print to ensure content is rendered
-              setTimeout(() => {
-                printWindow.print();
-              }, 250);
+        // ==========================================
+        // WEB: Use window.open + document.write + print() (like Leaderboard)
+        // ==========================================
+        if (Platform.OS === "web") {
+          try {
+            if (typeof window !== "undefined" && window.open) {
+              const printWindow = window.open("", "_blank");
+              if (printWindow) {
+                printWindow.document.write(html);
+                printWindow.document.close();
+                printWindow.focus();
+                // Delay print to ensure content is rendered
+                setTimeout(() => {
+                  printWindow.print();
+                }, 250);
+              } else {
+                // Fallback: create downloadable blob
+                const blob = new Blob([html], { type: "text/html" });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement("a");
+                a.href = url;
+                a.download = `tee-sheet-${selectedEvent.name.replace(/\s+/g, "-")}.html`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+                Alert.alert("Success", "Tee sheet downloaded as HTML. Open and print to save as PDF.");
+              }
             } else {
-              // Fallback: create downloadable blob
-              const blob = new Blob([html], { type: "text/html" });
-              const url = URL.createObjectURL(blob);
-              const a = document.createElement("a");
-              a.href = url;
-              a.download = `tee-sheet-${selectedEvent.name.replace(/\s+/g, "-")}.html`;
-              document.body.appendChild(a);
-              a.click();
-              document.body.removeChild(a);
-              URL.revokeObjectURL(url);
-              Alert.alert("Success", "Tee sheet downloaded as HTML. Open and print to save as PDF.");
+              Alert.alert("Error", "PDF export not supported on this web build");
             }
-          } else {
-            Alert.alert("Error", "PDF export not supported on this web build");
+          } catch (webError) {
+            console.error("[PDF Export] Web print error:", webError);
+            Alert.alert("Error", "Failed to generate PDF on web. Please try again.");
           }
-        } catch (webError) {
-          console.error("[PDF Export] Web print error:", webError);
-          Alert.alert("Error", "Failed to generate PDF on web. Please try again.");
+          return;
         }
-        isSharing.current = false;
-        return;
-      }
 
       // ==========================================
       // NATIVE: Use expo-print + expo-sharing
@@ -753,127 +903,212 @@ export default function TeesTeeSheetScreen() {
         console.error("[PDF Export] Print/sharing error:", printError);
         Alert.alert("Error", "Failed to generate or share PDF. Please try again.");
       }
-    } catch (error) {
-      console.error("[PDF Export] Error:", error);
-      Alert.alert("Error", "Failed to generate tee sheet. Please try again.");
-    } finally {
-      isSharing.current = false;
+      } catch (error) {
+        console.error("[PDF Export] Error:", error);
+        Alert.alert("Error", "Failed to generate tee sheet. Please try again.");
+      } finally {
+        isSharing.current = false;
+      }
+    };
+
+    if (isDirty) {
+      Alert.alert(
+        "Unsaved edits",
+        "You have unsaved edits. Save before printing?",
+        [
+          { text: "Cancel", style: "cancel" },
+          { text: "Print Anyway", onPress: () => void runExport({ saveFirst: false }) },
+          { text: "Save & Print", onPress: () => void runExport({ saveFirst: true }) },
+        ]
+      );
+      return;
     }
+
+    await runExport({ saveFirst: false });
   };
 
   // Helper handlers
-  const handleMovePlayer = (playerId: string, fromGroupIndex: number, toGroupIndex: number) => {
+  const syncUnassignedIfEditing = (nextGroups: TeeGroup[]) => {
+    if (isEditMode) {
+      recomputeUnassignedFromGroups(nextGroups);
+    }
+  };
+
+  const handleMovePlayer = (
+    playerId: string,
+    fromGroupId: string | "unassigned",
+    toGroupId: string | "unassigned"
+  ) => {
     if (!guard(canManageTeeSheet, "Only Captain or Handicapper can modify groups.")) return;
-    if (!editMode) return;
-    
-    if (toGroupIndex === -1) {
-      const newGroups = [...teeGroups];
-      newGroups[fromGroupIndex].players = newGroups[fromGroupIndex].players.filter((p) => p !== playerId);
-      setTeeGroups(newGroups);
-      setUnassignedPlayers((prev) => Array.from(new Set([...prev, playerId])));
-      setMovePlayerData(null);
-      return;
-    }
+    if (!isEditMode) return;
+    if (fromGroupId === toGroupId) return;
 
-    const newGroups = [...teeGroups];
-    
-    if (fromGroupIndex === -1) {
-      if (newGroups[toGroupIndex].players.length >= 4) {
+    const playerRef = resolvePlayerRef(playerId);
+    const next = groups.map((g) => ({ ...g, players: [...g.players] }));
+
+    const removeFromGroup = (gid: string) => {
+      const idx = next.findIndex((g) => g.id === gid);
+      if (idx === -1) return;
+      next[idx].players = next[idx].players.filter((p) => p.id !== playerId);
+    };
+    const addToGroup = (gid: string, insertIndex?: number) => {
+      const idx = next.findIndex((g) => g.id === gid);
+      if (idx === -1) return;
+      if (next[idx].players.length >= 4) {
         Alert.alert("Error", "Group is full (max 4 players)");
-        return;
+        throw new Error("GROUP_FULL");
       }
-      if (newGroups[toGroupIndex].players.includes(playerId)) {
-        console.warn("[Move] Player already in target group:", playerId, toGroupIndex);
-        setMovePlayerData(null);
-        return;
-      }
-      newGroups[toGroupIndex].players.push(playerId);
-      setUnassignedPlayers((prev) => prev.filter((p) => p !== playerId));
-      setTeeGroups(newGroups);
-      setMovePlayerData(null);
+      if (next[idx].players.some((p) => p.id === playerId)) return;
+      if (insertIndex === undefined) next[idx].players.push(playerRef);
+      else next[idx].players.splice(insertIndex, 0, playerRef);
+    };
+
+    try {
+      if (fromGroupId !== "unassigned") removeFromGroup(fromGroupId);
+      if (toGroupId !== "unassigned") addToGroup(toGroupId);
+    } catch {
       return;
     }
 
-    if (newGroups[toGroupIndex].players.length >= 4) {
-      Alert.alert("Error", "Group is full (max 4 players)");
-      return;
-    }
-    if (newGroups[toGroupIndex].players.includes(playerId)) {
-      console.warn("[Move] Player already in target group:", playerId, toGroupIndex);
-      setMovePlayerData(null);
+    if (!validateNoDuplicates(next)) {
+      Alert.alert("Error", "Duplicate player detected. Move cancelled.");
       return;
     }
 
-    newGroups[fromGroupIndex].players = newGroups[fromGroupIndex].players.filter((p) => p !== playerId);
-    newGroups[toGroupIndex].players.push(playerId);
-    setTeeGroups(newGroups);
+    setGroupsAndTrack(next);
+    syncUnassignedIfEditing(next);
     setMovePlayerData(null);
   };
 
+  const moveWithinGroup = (groupId: string, fromIndex: number, toIndex: number) => {
+    const idx = groups.findIndex((g) => g.id === groupId);
+    if (idx === -1) return;
+    const g = groups[idx];
+    const players = [...g.players];
+    const [moved] = players.splice(fromIndex, 1);
+    players.splice(toIndex, 0, moved);
+    const next = groups.map((gg) => (gg.id === groupId ? { ...gg, players } : gg));
+    setGroupsAndTrack(next);
+  };
+
+  const movePlayerUpDown = (groupId: string, playerId: string, dir: -1 | 1) => {
+    if (!isEditMode) return;
+    const g = groups.find((gg) => gg.id === groupId);
+    if (!g) return;
+    const idx = g.players.findIndex((p) => p.id === playerId);
+    if (idx === -1) return;
+    const nextIdx = idx + dir;
+    if (nextIdx < 0 || nextIdx >= g.players.length) return;
+    moveWithinGroup(groupId, idx, nextIdx);
+  };
+
   const handleAddGroup = () => {
-    if (!editMode) return;
-    if (teeGroups.length === 0) return;
-    const lastGroup = teeGroups[teeGroups.length - 1];
+    if (!isEditMode) return;
+    if (groups.length === 0) return;
+    const lastGroup = groups[groups.length - 1];
     const lastTime = new Date(lastGroup.timeISO);
     const newTime = new Date(lastTime.getTime() + intervalMins * 60000);
-    setTeeGroups([...teeGroups, { timeISO: newTime.toISOString(), players: [] }]);
+    const next = [...groups, { id: makeGroupId(newTime.toISOString()), timeISO: newTime.toISOString(), players: [] }];
+    setGroupsAndTrack(next);
+    syncUnassignedIfEditing(next);
   };
 
-  const handleDeleteGroup = (groupIndex: number) => {
+  const handleDeleteGroup = (groupId: string) => {
     if (!guard(canManageTeeSheet, "Only Captain or Handicapper can delete groups.")) return;
-    if (!editMode) return;
-    const group = teeGroups[groupIndex];
-    if (group.players.length > 0) {
-      setUnassignedPlayers((prev) => Array.from(new Set([...prev, ...group.players])));
-    }
-    setTeeGroups(teeGroups.filter((_, idx) => idx !== groupIndex));
+    if (!isEditMode) return;
+    const next = groups.filter((g) => g.id !== groupId);
+    setGroupsAndTrack(next);
+    syncUnassignedIfEditing(next);
   };
 
-  const handleRemovePlayerFromGroup = (playerId: string, groupIndex: number) => {
-    if (!editMode) return;
-    const newGroups = [...teeGroups];
-    newGroups[groupIndex].players = newGroups[groupIndex].players.filter((p) => p !== playerId);
-    setTeeGroups(newGroups);
-    setUnassignedPlayers((prev) => Array.from(new Set([...prev, playerId])));
-  };
-
-  const handleSwapPlayers = (aPlayerId: string, aGroupIndex: number, bPlayerId: string, bGroupIndex: number) => {
-    if (!guard(canManageTeeSheet, "Only Captain or Handicapper can swap players.")) return;
-    if (!editMode) return;
-    if (aGroupIndex === -1 || bGroupIndex === -1) return;
-    if (aGroupIndex === bGroupIndex && aPlayerId === bPlayerId) return;
-
-    setTeeGroups((prev) => {
-      const next = [...prev];
-      const gA = next[aGroupIndex];
-      const gB = next[bGroupIndex];
-      if (!gA || !gB) return prev;
-      const idxA = gA.players.indexOf(aPlayerId);
-      const idxB = gB.players.indexOf(bPlayerId);
-      if (idxA === -1 || idxB === -1) return prev;
-
-      const newGAPlayers = [...gA.players];
-      const newGBPlayers = [...gB.players];
-      newGAPlayers[idxA] = bPlayerId;
-      newGBPlayers[idxB] = aPlayerId;
-
-      // Defensive: prevent duplicates across groups
-      const seen = new Set<string>();
-      const allPlayers = [...newGAPlayers, ...newGBPlayers];
-      for (const p of allPlayers) {
-        if (seen.has(p)) {
-          console.warn("[Swap] Duplicate detected, aborting swap");
-          return prev;
-        }
-        seen.add(p);
-      }
-
-      next[aGroupIndex] = { ...gA, players: newGAPlayers };
-      next[bGroupIndex] = { ...gB, players: newGBPlayers };
-      return next;
+  const handleRemovePlayerFromGroup = (groupId: string, playerId: string) => {
+    if (!isEditMode) return;
+    const next = groups.map((g) =>
+      g.id === groupId ? { ...g, players: g.players.filter((p) => p.id !== playerId) } : g
+    );
+    setGroupsAndTrack(next);
+    setUnassignedPlayers((prev) => {
+      if (prev.some((p) => p.id === playerId)) return prev;
+      return [...prev, resolvePlayerRef(playerId)];
     });
+  };
 
+  const handleSwapPlayers = (aPlayerId: string, aGroupId: string, bPlayerId: string, bGroupId: string) => {
+    if (!guard(canManageTeeSheet, "Only Captain or Handicapper can swap players.")) return;
+    if (!isEditMode) return;
+    if (aGroupId === bGroupId && aPlayerId === bPlayerId) return;
+
+    const next = groups.map((g) => ({ ...g, players: [...g.players] }));
+    const gA = next.find((g) => g.id === aGroupId);
+    const gB = next.find((g) => g.id === bGroupId);
+    if (!gA || !gB) return;
+    const idxA = gA.players.findIndex((p) => p.id === aPlayerId);
+    const idxB = gB.players.findIndex((p) => p.id === bPlayerId);
+    if (idxA === -1 || idxB === -1) return;
+
+    const temp = gA.players[idxA];
+    gA.players[idxA] = gB.players[idxB];
+    gB.players[idxB] = temp;
+
+    if (!validateNoDuplicates(next)) {
+      Alert.alert("Error", "Duplicate player detected. Swap cancelled.");
+      return;
+    }
+
+    setGroupsAndTrack(next);
+    syncUnassignedIfEditing(next);
     setSwapPlayerData(null);
+  };
+
+  const handleDragEnd = (result: DropResult) => {
+    if (!isWeb || !isEditMode) return;
+    if (!result.destination) return;
+
+    const sourceId = result.source.droppableId;
+    const destId = result.destination.droppableId;
+    const sourceIndex = result.source.index;
+    const destIndex = result.destination.index;
+
+    const next = groups.map((g) => ({ ...g, players: [...g.players] }));
+
+    const getList = (droppableId: string): PlayerRef[] => {
+      if (droppableId === "unassigned") return [...unassignedPlayers];
+      const g = next.find((x) => x.id === droppableId);
+      return g ? g.players : [];
+    };
+
+    const setList = (droppableId: string, list: PlayerRef[]) => {
+      if (droppableId === "unassigned") {
+        setUnassignedPlayers(list);
+        return;
+      }
+      const idx = next.findIndex((x) => x.id === droppableId);
+      if (idx !== -1) next[idx].players = list;
+    };
+
+    const sourceList = getList(sourceId);
+    const destList = sourceId === destId ? sourceList : getList(destId);
+    const [moved] = sourceList.splice(sourceIndex, 1);
+
+    // Enforce max 4 players per group (for group droppables)
+    if (destId !== "unassigned") {
+      if (destList.length >= 4) {
+        Alert.alert("Error", "Group is full (max 4 players)");
+        return;
+      }
+    }
+
+    destList.splice(destIndex, 0, moved);
+
+    setList(sourceId, sourceList);
+    setList(destId, destList);
+
+    if (!validateNoDuplicates(next)) {
+      Alert.alert("Error", "Duplicate player detected. Move cancelled.");
+      return;
+    }
+
+    setGroupsAndTrack(next);
   };
 
   const handleAddGuestSubmit = () => {
@@ -1223,7 +1458,7 @@ export default function TeesTeeSheetScreen() {
               )}
 
               {/* Tee Groups */}
-              {teeGroups.length > 0 && (
+              {groups.length > 0 && (
                 <View style={styles.teeGroupsContainer}>
                   <Text style={[styles.sectionTitle, { marginTop: 16 }]}>Tee Groups</Text>
 
@@ -1232,144 +1467,357 @@ export default function TeesTeeSheetScreen() {
                     <View style={styles.editModeRow}>
                       <Pressable
                         onPress={toggleEditMode}
-                        style={[styles.editModeButton, editMode && styles.editModeButtonActive]}
+                        style={[styles.editModeButton, isEditMode && styles.editModeButtonActive]}
                       >
-                        <Text style={[styles.editModeButtonText, editMode && styles.editModeButtonTextActive]}>
-                          {editMode ? "Done Editing" : "Edit Groups"}
+                        <Text style={[styles.editModeButtonText, isEditMode && styles.editModeButtonTextActive]}>
+                          {isEditMode ? "Done Editing" : "Edit Groups"}
                         </Text>
                       </Pressable>
                       <Text style={styles.editModeHint}>
-                        {editMode ? "Editing unlocked" : "Read-only (tap to unlock editing)"}
+                        {isEditMode
+                          ? isWeb
+                            ? "Drag & drop enabled (web)"
+                            : "Editing unlocked"
+                          : "Read-only (tap to unlock editing)"}
                       </Text>
                     </View>
                   )}
 
-                  {/* Unassigned players (only visible in edit mode) */}
-                  {!isReadOnly && editMode && (
-                    <View style={styles.unassignedCard}>
-                      <View style={styles.unassignedHeader}>
-                        <Text style={styles.unassignedTitle}>Unassigned</Text>
-                        <Text style={styles.unassignedCount}>{unassignedPlayers.length}</Text>
-                      </View>
-                      {unassignedPlayers.length === 0 ? (
-                        <Text style={styles.unassignedEmpty}>All selected players are assigned</Text>
-                      ) : (
-                        unassignedPlayers.map((playerId) => {
-                          const display = getPlayerDisplay(playerId);
-                          return (
-                            <View key={playerId} style={styles.groupPlayer}>
-                              <Text style={styles.groupPlayerName}>{display.name}</Text>
-                              <Text style={styles.groupPlayerHI}>HI: {display.hi}</Text>
-                              <Text style={styles.groupPlayerPH}>PH: {display.ph}</Text>
-                              <View style={styles.playerActionRow}>
-                                <Pressable
-                                  onPress={() => setMovePlayerData({ playerId, fromGroup: -1 })}
-                                  style={styles.playerActionPill}
-                                >
-                                  <Text style={styles.playerActionText}>Add</Text>
-                                </Pressable>
+                  {isWeb && isEditMode && DragDropContext && Droppable && Draggable ? (
+                    <DragDropContext onDragEnd={handleDragEnd}>
+                      {/* Unassigned droppable (web) */}
+                      {!isReadOnly && (
+                        <Droppable droppableId="unassigned">
+                          {(provided: any) => (
+                            <View
+                              ref={provided.innerRef}
+                              {...provided.droppableProps}
+                              style={styles.unassignedCard}
+                            >
+                              <View style={styles.unassignedHeader}>
+                                <Text style={styles.unassignedTitle}>Unassigned</Text>
+                                <Text style={styles.unassignedCount}>{unassignedPlayers.length}</Text>
                               </View>
+                              {unassignedPlayers.length === 0 ? (
+                                <Text style={styles.unassignedEmpty}>All selected players are assigned</Text>
+                              ) : (
+                                unassignedPlayers.map((p, idx) => {
+                                  const display = getPlayerDisplay(p.id);
+                                  return (
+                                    <Draggable draggableId={p.id} index={idx} key={`u:${p.id}`}>
+                                      {(dragProvided: any) => (
+                                        <View
+                                          ref={dragProvided.innerRef}
+                                          {...dragProvided.draggableProps}
+                                          style={styles.groupPlayer}
+                                        >
+                                          <Pressable
+                                            {...dragProvided.dragHandleProps}
+                                            style={styles.playerActionPill}
+                                          >
+                                            <Text style={styles.playerActionText}>≡</Text>
+                                          </Pressable>
+                                          <Text style={styles.groupPlayerName}>{display.name}</Text>
+                                          <Text style={styles.groupPlayerHI}>HI: {display.hi}</Text>
+                                          <Text style={styles.groupPlayerPH}>PH: {display.ph}</Text>
+                                          <View style={styles.playerActionRow}>
+                                            <Pressable
+                                              onPress={() => setMovePlayerData({ playerId: p.id, fromGroupId: "unassigned" })}
+                                              style={styles.playerActionPill}
+                                            >
+                                              <Text style={styles.playerActionText}>Add</Text>
+                                            </Pressable>
+                                          </View>
+                                        </View>
+                                      )}
+                                    </Draggable>
+                                  );
+                                })
+                              )}
+                              {provided.placeholder}
                             </View>
-                          );
-                        })
-                      )}
-                    </View>
-                  )}
-                  
-                  {teeGroups.map((group, groupIdx) => {
-                    const teeTime = new Date(group.timeISO).toLocaleTimeString("en-US", {
-                      hour: "2-digit",
-                      minute: "2-digit",
-                      hour12: false,
-                    });
-
-                    return (
-                      <View key={groupIdx} style={styles.groupCard}>
-                        <View style={styles.groupHeader}>
-                          {!isReadOnly && editMode ? (
-                            <>
-                              <View>
-                                <Text style={styles.groupTime}>{teeTime}</Text>
-                                <Text style={styles.groupNumber}>Group {groupIdx + 1}</Text>
-                              </View>
-                              <View style={styles.groupHeaderActions}>
-                                <Pressable
-                                  onPress={() => {
-                                    setEditTimeGroupIndex(groupIdx);
-                                    setEditTimeValue(teeTime);
-                                  }}
-                                  style={styles.groupHeaderPill}
-                                >
-                                  <Text style={styles.groupHeaderPillText}>Edit time</Text>
-                                </Pressable>
-                                <Pressable
-                                  onPress={() => {
-                                    Alert.alert(
-                                      "Delete group?",
-                                      "Players in this group will be moved to Unassigned.",
-                                      [
-                                        { text: "Cancel", style: "cancel" },
-                                        { text: "Delete", style: "destructive", onPress: () => handleDeleteGroup(groupIdx) },
-                                      ]
-                                    );
-                                  }}
-                                  style={[styles.groupHeaderPill, styles.groupHeaderPillDanger]}
-                                >
-                                  <Text style={[styles.groupHeaderPillText, styles.groupHeaderPillTextDanger]}>Delete</Text>
-                                </Pressable>
-                              </View>
-                            </>
-                          ) : (
-                            <>
-                              <Text style={styles.groupTime}>{teeTime}</Text>
-                              <Text style={styles.groupNumber}>Group {groupIdx + 1}</Text>
-                            </>
                           )}
-                        </View>
-                        {group.players.length === 0 ? (
-                          <Text style={styles.emptyGroup}>No players</Text>
-                        ) : (
-                          group.players.map((playerId) => {
-                            const display = getPlayerDisplay(playerId);
-                            return (
-                              <View key={playerId} style={styles.groupPlayer}>
-                                <Text style={styles.groupPlayerName}>{display.name}</Text>
-                                <Text style={styles.groupPlayerHI}>HI: {display.hi}</Text>
-                                <Text style={styles.groupPlayerPH}>PH: {display.ph}</Text>
-                                {!isReadOnly && editMode && (
+                        </Droppable>
+                      )}
+
+                      {groups.map((group, groupIdx) => {
+                        const teeTime = formatHHMMFromISO(group.timeISO);
+                        const timeDraft = groupTimeDrafts[group.id] ?? teeTime;
+                        return (
+                          <Droppable droppableId={group.id} key={group.id}>
+                            {(provided: any) => (
+                              <View
+                                ref={provided.innerRef}
+                                {...provided.droppableProps}
+                                style={styles.groupCard}
+                              >
+                                <View style={styles.groupHeader}>
+                                  <View>
+                                    <Text style={styles.groupNumber}>Group {groupIdx + 1}</Text>
+                                    <TextInput
+                                      style={styles.timeInput}
+                                      value={timeDraft}
+                                      onChangeText={(v) => {
+                                        setGroupTimeDrafts((prev) => ({ ...prev, [group.id]: v }));
+                                        setGroupTimeFromHHMM(group.id, v, { silent: true });
+                                      }}
+                                      onBlur={() => {
+                                        const v = (groupTimeDrafts[group.id] ?? timeDraft).trim();
+                                        const parsed = parseTimeHHMM(v);
+                                        if (!parsed) {
+                                          setGroupTimeDrafts((prev) => ({ ...prev, [group.id]: formatHHMMFromISO(group.timeISO) }));
+                                          return;
+                                        }
+                                        setGroupTimeFromHHMM(group.id, v, { silent: true });
+                                        setGroupTimeDrafts((prev) => {
+                                          const next = { ...prev };
+                                          delete next[group.id];
+                                          return next;
+                                        });
+                                      }}
+                                      editable={!isReadOnly}
+                                      {...({ type: "time" } as any)}
+                                    />
+                                  </View>
+
+                                  {!isReadOnly && (
+                                    <View style={styles.groupHeaderActions}>
+                                      <Pressable
+                                        onPress={() => {
+                                          Alert.alert(
+                                            "Delete group?",
+                                            "Players in this group will be moved to Unassigned.",
+                                            [
+                                              { text: "Cancel", style: "cancel" },
+                                              { text: "Delete", style: "destructive", onPress: () => handleDeleteGroup(group.id) },
+                                            ]
+                                          );
+                                        }}
+                                        style={[styles.groupHeaderPill, styles.groupHeaderPillDanger]}
+                                      >
+                                        <Text style={[styles.groupHeaderPillText, styles.groupHeaderPillTextDanger]}>Delete</Text>
+                                      </Pressable>
+                                    </View>
+                                  )}
+                                </View>
+
+                                {group.players.length === 0 ? (
+                                  <Text style={styles.emptyGroup}>No players</Text>
+                                ) : (
+                                  group.players.map((p, idx) => {
+                                    const display = getPlayerDisplay(p.id);
+                                    return (
+                                      <Draggable draggableId={p.id} index={idx} key={`${group.id}:${p.id}`}>
+                                        {(dragProvided: any) => (
+                                          <View
+                                            ref={dragProvided.innerRef}
+                                            {...dragProvided.draggableProps}
+                                            style={styles.groupPlayer}
+                                          >
+                                            <Pressable
+                                              {...dragProvided.dragHandleProps}
+                                              style={styles.playerActionPill}
+                                            >
+                                              <Text style={styles.playerActionText}>≡</Text>
+                                            </Pressable>
+                                            <Text style={styles.groupPlayerName}>{display.name}</Text>
+                                            <Text style={styles.groupPlayerHI}>HI: {display.hi}</Text>
+                                            <Text style={styles.groupPlayerPH}>PH: {display.ph}</Text>
+                                            <View style={styles.playerActionRow}>
+                                              <Pressable
+                                                onPress={() => setMovePlayerData({ playerId: p.id, fromGroupId: group.id })}
+                                                style={styles.playerActionPill}
+                                              >
+                                                <Text style={styles.playerActionText}>Move</Text>
+                                              </Pressable>
+                                              <Pressable
+                                                onPress={() => movePlayerUpDown(group.id, p.id, -1)}
+                                                style={styles.playerActionPill}
+                                              >
+                                                <Text style={styles.playerActionText}>↑</Text>
+                                              </Pressable>
+                                              <Pressable
+                                                onPress={() => movePlayerUpDown(group.id, p.id, 1)}
+                                                style={styles.playerActionPill}
+                                              >
+                                                <Text style={styles.playerActionText}>↓</Text>
+                                              </Pressable>
+                                              <Pressable
+                                                onPress={() => handleRemovePlayerFromGroup(group.id, p.id)}
+                                                style={[styles.playerActionPill, styles.playerActionPillDanger]}
+                                              >
+                                                <Text style={[styles.playerActionText, styles.playerActionTextDanger]}>Remove</Text>
+                                              </Pressable>
+                                              <Pressable
+                                                onPress={() => setSwapPlayerData({ playerId: p.id, fromGroupId: group.id })}
+                                                style={styles.playerActionPill}
+                                              >
+                                                <Text style={styles.playerActionText}>Swap</Text>
+                                              </Pressable>
+                                            </View>
+                                          </View>
+                                        )}
+                                      </Draggable>
+                                    );
+                                  })
+                                )}
+                                {provided.placeholder}
+                              </View>
+                            )}
+                          </Droppable>
+                        );
+                      })}
+                    </DragDropContext>
+                  ) : (
+                    <>
+                      {/* Unassigned players (mobile + fallback) */}
+                      {!isReadOnly && isEditMode && (
+                        <View style={styles.unassignedCard}>
+                          <View style={styles.unassignedHeader}>
+                            <Text style={styles.unassignedTitle}>Unassigned</Text>
+                            <Text style={styles.unassignedCount}>{unassignedPlayers.length}</Text>
+                          </View>
+                          {unassignedPlayers.length === 0 ? (
+                            <Text style={styles.unassignedEmpty}>All selected players are assigned</Text>
+                          ) : (
+                            unassignedPlayers.map((p) => {
+                              const display = getPlayerDisplay(p.id);
+                              return (
+                                <View key={`u:${p.id}`} style={styles.groupPlayer}>
+                                  <Text style={styles.groupPlayerName}>{display.name}</Text>
+                                  <Text style={styles.groupPlayerHI}>HI: {display.hi}</Text>
+                                  <Text style={styles.groupPlayerPH}>PH: {display.ph}</Text>
                                   <View style={styles.playerActionRow}>
                                     <Pressable
-                                      onPress={() => setMovePlayerData({ playerId, fromGroup: groupIdx })}
+                                      onPress={() => setMovePlayerData({ playerId: p.id, fromGroupId: "unassigned" })}
                                       style={styles.playerActionPill}
                                     >
-                                      <Text style={styles.playerActionText}>Move</Text>
-                                    </Pressable>
-                                    <Pressable
-                                      onPress={() => handleRemovePlayerFromGroup(playerId, groupIdx)}
-                                      style={[styles.playerActionPill, styles.playerActionPillDanger]}
-                                    >
-                                      <Text style={[styles.playerActionText, styles.playerActionTextDanger]}>Remove</Text>
-                                    </Pressable>
-                                    <Pressable
-                                      onPress={() => setSwapPlayerData({ playerId, fromGroup: groupIdx })}
-                                      style={styles.playerActionPill}
-                                    >
-                                      <Text style={styles.playerActionText}>Swap</Text>
+                                      <Text style={styles.playerActionText}>Add</Text>
                                     </Pressable>
                                   </View>
-                                )}
-                              </View>
-                            );
-                          })
-                        )}
-                      </View>
-                    );
-                  })}
+                                </View>
+                              );
+                            })
+                          )}
+                        </View>
+                      )}
+
+                      {groups.map((group, groupIdx) => {
+                        const teeTime = formatHHMMFromISO(group.timeISO);
+                        return (
+                          <View key={group.id} style={styles.groupCard}>
+                            <View style={styles.groupHeader}>
+                              {isEditMode && !isReadOnly ? (
+                                <>
+                                  <View>
+                                    <Text style={styles.groupNumber}>Group {groupIdx + 1}</Text>
+                                    <TextInput
+                                      style={styles.timeInput}
+                                      value={groupTimeDrafts[group.id] ?? teeTime}
+                                      onChangeText={(v) => {
+                                        setGroupTimeDrafts((prev) => ({ ...prev, [group.id]: v }));
+                                        setGroupTimeFromHHMM(group.id, v, { silent: true });
+                                      }}
+                                      onBlur={() => {
+                                        const v = (groupTimeDrafts[group.id] ?? teeTime).trim();
+                                        const parsed = parseTimeHHMM(v);
+                                        if (!parsed) {
+                                          setGroupTimeDrafts((prev) => ({ ...prev, [group.id]: formatHHMMFromISO(group.timeISO) }));
+                                          return;
+                                        }
+                                        setGroupTimeFromHHMM(group.id, v, { silent: true });
+                                        setGroupTimeDrafts((prev) => {
+                                          const next = { ...prev };
+                                          delete next[group.id];
+                                          return next;
+                                        });
+                                      }}
+                                    />
+                                  </View>
+                                  <View style={styles.groupHeaderActions}>
+                                    <Pressable
+                                      onPress={() => {
+                                        Alert.alert(
+                                          "Delete group?",
+                                          "Players in this group will be moved to Unassigned.",
+                                          [
+                                            { text: "Cancel", style: "cancel" },
+                                            { text: "Delete", style: "destructive", onPress: () => handleDeleteGroup(group.id) },
+                                          ]
+                                        );
+                                      }}
+                                      style={[styles.groupHeaderPill, styles.groupHeaderPillDanger]}
+                                    >
+                                      <Text style={[styles.groupHeaderPillText, styles.groupHeaderPillTextDanger]}>Delete</Text>
+                                    </Pressable>
+                                  </View>
+                                </>
+                              ) : (
+                                <>
+                                  <Text style={styles.groupTime}>{teeTime}</Text>
+                                  <Text style={styles.groupNumber}>Group {groupIdx + 1}</Text>
+                                </>
+                              )}
+                            </View>
+
+                            {group.players.length === 0 ? (
+                              <Text style={styles.emptyGroup}>No players</Text>
+                            ) : (
+                              group.players.map((p) => {
+                                const display = getPlayerDisplay(p.id);
+                                return (
+                                  <View key={`${group.id}:${p.id}`} style={styles.groupPlayer}>
+                                    <Text style={styles.groupPlayerName}>{display.name}</Text>
+                                    <Text style={styles.groupPlayerHI}>HI: {display.hi}</Text>
+                                    <Text style={styles.groupPlayerPH}>PH: {display.ph}</Text>
+                                    {!isReadOnly && isEditMode && (
+                                      <View style={styles.playerActionRow}>
+                                        <Pressable
+                                          onPress={() => setMovePlayerData({ playerId: p.id, fromGroupId: group.id })}
+                                          style={styles.playerActionPill}
+                                        >
+                                          <Text style={styles.playerActionText}>Move</Text>
+                                        </Pressable>
+                                        <Pressable
+                                          onPress={() => movePlayerUpDown(group.id, p.id, -1)}
+                                          style={styles.playerActionPill}
+                                        >
+                                          <Text style={styles.playerActionText}>↑</Text>
+                                        </Pressable>
+                                        <Pressable
+                                          onPress={() => movePlayerUpDown(group.id, p.id, 1)}
+                                          style={styles.playerActionPill}
+                                        >
+                                          <Text style={styles.playerActionText}>↓</Text>
+                                        </Pressable>
+                                        <Pressable
+                                          onPress={() => handleRemovePlayerFromGroup(group.id, p.id)}
+                                          style={[styles.playerActionPill, styles.playerActionPillDanger]}
+                                        >
+                                          <Text style={[styles.playerActionText, styles.playerActionTextDanger]}>Remove</Text>
+                                        </Pressable>
+                                        <Pressable
+                                          onPress={() => setSwapPlayerData({ playerId: p.id, fromGroupId: group.id })}
+                                          style={styles.playerActionPill}
+                                        >
+                                          <Text style={styles.playerActionText}>Swap</Text>
+                                        </Pressable>
+                                      </View>
+                                    )}
+                                  </View>
+                                );
+                              })
+                            )}
+                          </View>
+                        );
+                      })}
+                    </>
+                  )}
 
                   {/* Action Buttons */}
                   {!isReadOnly && (
                     <View style={styles.actionButtons}>
-                      {editMode && (
+                      {isEditMode && (
                         <Pressable onPress={handleAddGroup} style={styles.addGroupButton}>
                           <Text style={styles.addGroupButtonText}>+ Add Group</Text>
                         </Pressable>
@@ -1483,27 +1931,33 @@ export default function TeesTeeSheetScreen() {
           <View style={styles.modalContent}>
             <Text style={styles.modalTitle}>Select target</Text>
             <Text style={styles.modalSubtitle}>
-              {movePlayerData?.fromGroup === -1 ? "Add player to a group" : "Move player to a group or Unassigned"}
+              {movePlayerData?.fromGroupId === "unassigned"
+                ? "Add player to a group"
+                : "Move player to a group or Unassigned"}
             </Text>
 
             <ScrollView style={{ maxHeight: 280 }}>
-              {movePlayerData?.fromGroup !== -1 && (
+              {movePlayerData?.fromGroupId !== "unassigned" && (
                 <Pressable
-                  onPress={() => handleMovePlayer(movePlayerData!.playerId, movePlayerData!.fromGroup, -1)}
+                  onPress={() =>
+                    handleMovePlayer(movePlayerData!.playerId, movePlayerData!.fromGroupId, "unassigned")
+                  }
                   style={styles.modalListItem}
                 >
                   <Text style={styles.modalListItemText}>Unassigned</Text>
                 </Pressable>
               )}
 
-              {teeGroups.map((g, idx) => (
+              {groups.map((g, idx) => (
                 <Pressable
-                  key={idx}
-                  onPress={() => handleMovePlayer(movePlayerData!.playerId, movePlayerData!.fromGroup, idx)}
+                  key={g.id}
+                  onPress={() =>
+                    handleMovePlayer(movePlayerData!.playerId, movePlayerData!.fromGroupId, g.id)
+                  }
                   style={styles.modalListItem}
                 >
                   <Text style={styles.modalListItemText}>
-                    Group {idx + 1} ({new Date(g.timeISO).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false })})
+                    Group {idx + 1} ({formatHHMMFromISO(g.timeISO)})
                   </Text>
                   <Text style={styles.modalListItemMeta}>{g.players.length}/4</Text>
                 </Pressable>
@@ -1513,48 +1967,6 @@ export default function TeesTeeSheetScreen() {
             <View style={styles.modalActions}>
               <Pressable onPress={() => setMovePlayerData(null)} style={styles.modalCancelButton}>
                 <Text style={styles.modalCancelButtonText}>Cancel</Text>
-              </Pressable>
-            </View>
-          </View>
-        </View>
-      </Modal>
-
-      {/* Edit tee time modal */}
-      <Modal
-        visible={editTimeGroupIndex !== null}
-        transparent={true}
-        animationType="fade"
-        onRequestClose={() => setEditTimeGroupIndex(null)}
-      >
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
-            <Text style={styles.modalTitle}>Edit tee time</Text>
-            <Text style={styles.modalSubtitle}>Use HH:MM (e.g., 08:00)</Text>
-
-            <View style={styles.modalField}>
-              <Text style={styles.modalLabel}>Time</Text>
-              <TextInput
-                value={editTimeValue}
-                onChangeText={setEditTimeValue}
-                placeholder="08:00"
-                style={styles.modalInput}
-                keyboardType={Platform.OS === "ios" ? "numbers-and-punctuation" : "default"}
-              />
-            </View>
-
-            <View style={styles.modalActions}>
-              <Pressable onPress={() => setEditTimeGroupIndex(null)} style={styles.modalCancelButton}>
-                <Text style={styles.modalCancelButtonText}>Cancel</Text>
-              </Pressable>
-              <Pressable
-                onPress={() => {
-                  if (editTimeGroupIndex === null) return;
-                  setGroupTimeFromHHMM(editTimeGroupIndex, editTimeValue);
-                  setEditTimeGroupIndex(null);
-                }}
-                style={styles.modalSubmitButton}
-              >
-                <Text style={styles.modalSubmitButtonText}>Save</Text>
               </Pressable>
             </View>
           </View>
@@ -1574,19 +1986,19 @@ export default function TeesTeeSheetScreen() {
             <Text style={styles.modalSubtitle}>Pick another player in any group</Text>
 
             <ScrollView style={{ maxHeight: 320 }}>
-              {teeGroups.map((g, gi) =>
-                g.players.map((pid) => {
-                  if (pid === swapPlayerData?.playerId && gi === swapPlayerData?.fromGroup) return null;
-                  const display = getPlayerDisplay(pid);
+              {groups.map((g, gi) =>
+                g.players.map((p) => {
+                  if (p.id === swapPlayerData?.playerId && g.id === swapPlayerData?.fromGroupId) return null;
+                  const display = getPlayerDisplay(p.id);
                   return (
                     <Pressable
-                      key={`${gi}:${pid}`}
+                      key={`${g.id}:${p.id}`}
                       onPress={() =>
                         handleSwapPlayers(
                           swapPlayerData!.playerId,
-                          swapPlayerData!.fromGroup,
-                          pid,
-                          gi
+                          swapPlayerData!.fromGroupId,
+                          p.id,
+                          g.id
                         )
                       }
                       style={styles.modalListItem}
