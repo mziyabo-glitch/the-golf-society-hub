@@ -28,21 +28,23 @@ import { STORAGE_KEYS } from "@/lib/storage";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useFocusEffect } from "@react-navigation/native";
 import { router } from "expo-router";
-import { useCallback, useState } from "react";
+import { useCallback, useState, useEffect } from "react";
 import { ActivityIndicator, Pressable, StyleSheet, View } from "react-native";
 import { Screen } from "@/components/ui/Screen";
 import { AppText } from "@/components/ui/AppText";
 import { AppCard } from "@/components/ui/AppCard";
 import { SectionHeader } from "@/components/ui/SectionHeader";
 import { getColors, spacing } from "@/lib/ui/theme";
+import { getActiveSocietyId } from "@/lib/firebase";
 
 const STORAGE_KEY = STORAGE_KEYS.SOCIETY_ACTIVE;
-const EVENTS_KEY = STORAGE_KEYS.EVENTS;
 const SCORES_KEY = STORAGE_KEYS.SCORES;
 const DRAFT_KEY = STORAGE_KEYS.SOCIETY_DRAFT;
 
-// Import Firestore members helper
+// Import Firestore helpers
 import { listMembers } from "@/lib/firestore/members";
+import { listEvents, getNextEvent, getLastEvent } from "@/lib/firestore/events";
+import { getSociety } from "@/lib/firestore/society";
 
 type SocietyData = {
   name: string;
@@ -53,34 +55,8 @@ type SocietyData = {
   logoUrl?: string | null;
 };
 
-type EventData = {
-  id: string;
-  name: string;
-  date: any;
-  courseName: string;
-  format: "Stableford" | "Strokeplay" | "Both";
-  playerIds?: string[];
-  isCompleted?: boolean;
-  completedAt?: string;
-  resultsStatus?: "draft" | "published";
-  publishedAt?: string;
-  resultsUpdatedAt?: string;
-  isOOM?: boolean;
-  winnerId?: string;
-  winnerName?: string;
-  handicapSnapshot?: { [memberId: string]: number };
-  rsvps?: {
-    [memberId: string]: "going" | "maybe" | "no";
-  };
-  results?: {
-    [memberId: string]: {
-      grossScore: number;
-      netScore?: number;
-      stableford?: number;
-      strokeplay?: number;
-    };
-  };
-};
+// Use EventData from models.ts
+import type { EventData } from "@/lib/models";
 
 type MemberData = {
   id: string;
@@ -125,14 +101,31 @@ export default function SocietyDashboardScreen() {
 
   const loadData = async () => {
     try {
-      const societyData = await AsyncStorage.getItem(STORAGE_KEY);
-      if (societyData) {
-        setSociety(JSON.parse(societyData));
+      // Load society from Firestore (with AsyncStorage fallback for name/settings)
+      const firestoreSociety = await getSociety();
+      if (firestoreSociety) {
+        setSociety({
+          name: firestoreSociety.name || "Golf Society",
+          homeCourse: "",
+          country: "",
+          scoringMode: "Stableford",
+          handicapRule: "Allow WHS",
+          logoUrl: firestoreSociety.logoUrl || null,
+        });
+      } else {
+        // Fallback to AsyncStorage for legacy data
+        const societyData = await AsyncStorage.getItem(STORAGE_KEY);
+        if (societyData) {
+          setSociety(JSON.parse(societyData));
+        }
       }
 
-      const eventsData = await AsyncStorage.getItem(EVENTS_KEY);
-      if (eventsData) {
-        setEvents(JSON.parse(eventsData));
+      // Load events from Firestore
+      const loadedEvents = await listEvents();
+      setEvents(loadedEvents);
+      
+      if (__DEV__) {
+        console.log("[Society] Loaded", loadedEvents.length, "events from Firestore");
       }
 
       // Load members from Firestore
@@ -178,49 +171,15 @@ export default function SocietyDashboardScreen() {
     }
   };
 
-  type EventWithDate = EventData & { eventDate: Date | null };
-
-  const todayStart = new Date();
-  todayStart.setHours(0, 0, 0, 0);
-
-  const toLocalDateOnly = (d: Date): Date => {
-    const copy = new Date(d);
-    copy.setHours(0, 0, 0, 0);
-    return copy;
+  // Use the centralized getNextEvent/getLastEvent from events.ts
+  // These functions now handle Firestore Timestamp parsing correctly
+  
+  const computeNextEvent = () => {
+    return getNextEvent(events);
   };
 
-  const getEventsWithDate = (): EventWithDate[] => {
-    return events.map((e) => ({
-      ...e,
-      eventDate: (() => {
-        const d = toJsDate(e?.date);
-        return d ? toLocalDateOnly(d) : null;
-      })(),
-    }));
-  };
-
-  const getNextEvent = (): EventWithDate | null => {
-    const withDate = getEventsWithDate();
-    const next = withDate
-      .filter((e) => e.eventDate && e.eventDate.getTime() >= todayStart.getTime())
-      .sort((a, b) => {
-        const aTime = a.eventDate ? a.eventDate.getTime() : Number.POSITIVE_INFINITY;
-        const bTime = b.eventDate ? b.eventDate.getTime() : Number.POSITIVE_INFINITY;
-        return aTime - bTime;
-      })[0];
-    return next || null;
-  };
-
-  const getLastEvent = (): EventWithDate | null => {
-    const withDate = getEventsWithDate();
-    const last = withDate
-      .filter((e) => e.eventDate && e.eventDate.getTime() < todayStart.getTime())
-      .sort((a, b) => {
-        const aTime = a.eventDate ? a.eventDate.getTime() : 0;
-        const bTime = b.eventDate ? b.eventDate.getTime() : 0;
-        return bTime - aTime;
-      })[0];
-    return last || null;
+  const computeLastEvent = () => {
+    return getLastEvent(events);
   };
 
   const getLastWinner = (event: EventData | null): { memberName: string } | null => {
@@ -299,8 +258,8 @@ export default function SocietyDashboardScreen() {
     );
   }
 
-  const nextEvent = getNextEvent();
-  const lastEvent = getLastEvent();
+  const nextEvent = computeNextEvent();
+  const lastEvent = computeLastEvent();
   const lastWinner = lastEvent ? getLastWinner(lastEvent) : null;
 
   const isAdmin = role === "admin";
@@ -376,7 +335,7 @@ export default function SocietyDashboardScreen() {
             <Pressable onPress={() => router.push(`/event/${nextEvent.id}` as any)}>
               <AppText variant="h2" style={styles.eventTitle}>{nextEvent.name}</AppText>
               <AppText variant="body" color="secondary" style={styles.eventSubtitle}>
-                {formatDateDDMMYYYY(nextEvent.eventDate ?? nextEvent.date)}
+                {formatDateDDMMYYYY(nextEvent.date)}
               </AppText>
               {(() => {
                 const rsvps = nextEvent.rsvps || {};
@@ -420,7 +379,7 @@ export default function SocietyDashboardScreen() {
             <Pressable onPress={() => router.push(`/event/${lastEvent.id}` as any)}>
               <AppText variant="h2" style={styles.eventTitle}>{lastEvent.name}</AppText>
               <AppText variant="body" color="secondary" style={styles.eventSubtitle}>
-                {formatDateDDMMYYYY(lastEvent.eventDate ?? lastEvent.date)}
+                {formatDateDDMMYYYY(lastEvent.date)}
               </AppText>
               {(lastEvent.winnerName || lastWinner) && (
                 <AppText variant="small" color="secondary" style={styles.eventDetail}>

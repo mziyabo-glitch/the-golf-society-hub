@@ -8,11 +8,10 @@
  * - Close/reopen app, verify player selection persists
  */
 
-import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useFocusEffect } from "@react-navigation/native";
 import { router, useLocalSearchParams } from "expo-router";
 import { useCallback, useState } from "react";
-import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Alert, Pressable, ScrollView, StyleSheet, Text, View, ActivityIndicator } from "react-native";
 
 /**
  * HOW TO TEST:
@@ -20,6 +19,8 @@ import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from "react-nati
  * - As captain: verify can manage players
  * - Select/deselect players and save
  * - Verify player count updates on event card
+ * 
+ * FIRESTORE-ONLY: Events are loaded from Firestore
  */
 
 import { getCourseHandicap, getPlayingHandicap } from "@/lib/handicap";
@@ -27,11 +28,10 @@ import type { Course, TeeSet } from "@/lib/models";
 import { canCreateEvents, normalizeMemberRoles, normalizeSessionRole } from "@/lib/permissions";
 import { getCurrentUserRoles } from "@/lib/roles";
 import { getSession } from "@/lib/session";
-import { STORAGE_KEYS } from "@/lib/storage";
-
-const EVENTS_KEY = STORAGE_KEYS.EVENTS;
-const MEMBERS_KEY = STORAGE_KEYS.MEMBERS;
-const COURSES_KEY = STORAGE_KEYS.COURSES;
+import { getActiveSocietyId } from "@/lib/firebase";
+import { getEventById, updateEvent } from "@/lib/firestore/events";
+import { listMembers } from "@/lib/firestore/members";
+import { getCourses } from "@/lib/firestore/society";
 
 type EventData = {
   id: string;
@@ -75,46 +75,61 @@ export default function EventPlayersScreen() {
 
   const loadData = async () => {
     try {
-      // Load courses
-      const coursesData = await AsyncStorage.getItem(COURSES_KEY);
-      let loadedCourses: Course[] = [];
-      if (coursesData) {
-        loadedCourses = JSON.parse(coursesData);
-        setCourses(loadedCourses);
+      const societyId = getActiveSocietyId();
+      if (!societyId || !eventId) {
+        setLoading(false);
+        return;
       }
 
-      // Load event
-      const eventsData = await AsyncStorage.getItem(EVENTS_KEY);
-      if (eventsData) {
-        const allEvents: EventData[] = JSON.parse(eventsData);
-        const currentEvent = allEvents.find((e) => e.id === eventId);
-        if (currentEvent) {
-          setEvent(currentEvent);
-          setSelectedPlayerIds(new Set(currentEvent.playerIds || []));
-          
-          // Load course and tee sets for this event
-          if (currentEvent.courseId) {
-            const course = loadedCourses.find((c) => c.id === currentEvent.courseId);
-            if (course) {
-              setSelectedCourse(course);
-              if (currentEvent.maleTeeSetId) {
-                const maleTee = course.teeSets.find((t) => t.id === currentEvent.maleTeeSetId);
-                setSelectedMaleTeeSet(maleTee || null);
-              }
-              if (currentEvent.femaleTeeSetId) {
-                const femaleTee = course.teeSets.find((t) => t.id === currentEvent.femaleTeeSetId);
-                setSelectedFemaleTeeSet(femaleTee || null);
-              }
+      // Load courses from Firestore
+      let loadedCourses: Course[] = [];
+      try {
+        loadedCourses = await getCourses();
+        setCourses(loadedCourses);
+      } catch (error) {
+        console.error("[Players] Error loading courses:", error);
+      }
+
+      // Load event from Firestore
+      const currentEvent = await getEventById(eventId, societyId);
+      if (currentEvent) {
+        const eventData: EventData = {
+          id: currentEvent.id,
+          name: currentEvent.name,
+          date: currentEvent.date,
+          courseName: currentEvent.courseName || "",
+          courseId: currentEvent.courseId,
+          maleTeeSetId: currentEvent.maleTeeSetId,
+          femaleTeeSetId: currentEvent.femaleTeeSetId,
+          handicapAllowance: currentEvent.handicapAllowance,
+          handicapAllowancePct: currentEvent.handicapAllowancePct,
+          format: currentEvent.format || "Stableford",
+          playerIds: currentEvent.playerIds,
+        };
+        
+        setEvent(eventData);
+        setSelectedPlayerIds(new Set(eventData.playerIds || []));
+        
+        // Load course and tee sets for this event
+        if (eventData.courseId) {
+          const course = loadedCourses.find((c) => c.id === eventData.courseId);
+          if (course) {
+            setSelectedCourse(course);
+            if (eventData.maleTeeSetId) {
+              const maleTee = course.teeSets.find((t) => t.id === eventData.maleTeeSetId);
+              setSelectedMaleTeeSet(maleTee || null);
+            }
+            if (eventData.femaleTeeSetId) {
+              const femaleTee = course.teeSets.find((t) => t.id === eventData.femaleTeeSetId);
+              setSelectedFemaleTeeSet(femaleTee || null);
             }
           }
         }
       }
 
-      // Load members
-      const membersData = await AsyncStorage.getItem(MEMBERS_KEY);
-      if (membersData) {
-        setMembers(JSON.parse(membersData));
-      }
+      // Load members from Firestore
+      const loadedMembers = await listMembers(societyId);
+      setMembers(loadedMembers);
 
       // Load session (single source of truth)
       const session = await getSession();
@@ -159,24 +174,20 @@ export default function EventPlayersScreen() {
     if (!event) return;
 
     try {
-      const eventsData = await AsyncStorage.getItem(EVENTS_KEY);
-      if (!eventsData) {
-        Alert.alert("Error", "Event not found");
+      // Update playerIds in Firestore
+      const result = await updateEvent(event.id, {
+        playerIds: Array.from(selectedPlayerIds),
+      });
+
+      if (!result.success) {
+        Alert.alert("Error", result.error || "Failed to save players");
         return;
       }
 
-      const allEvents: EventData[] = JSON.parse(eventsData);
-      const updatedEvents = allEvents.map((e) =>
-        e.id === event.id
-          ? { ...e, playerIds: Array.from(selectedPlayerIds) }
-          : e
-      );
-
-      await AsyncStorage.setItem(EVENTS_KEY, JSON.stringify(updatedEvents));
       Alert.alert("Success", "Players saved successfully");
       router.back();
     } catch (error) {
-      console.error("Error saving players:", error);
+      console.error("[Players] Error saving players:", error);
       Alert.alert("Error", "Failed to save players");
     }
   };

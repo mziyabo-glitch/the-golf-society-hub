@@ -2,7 +2,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useFocusEffect } from "@react-navigation/native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useCallback, useState } from "react";
-import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View, ActivityIndicator } from "react-native";
 
 import { getCourseHandicap, getPlayingHandicap } from "@/lib/handicap";
 import type { Course, TeeSet, EventData as EventDataModel } from "@/lib/models";
@@ -12,11 +12,13 @@ import { getSession } from "@/lib/session";
 import { STORAGE_KEYS } from "@/lib/storage";
 import { formatDateDDMMYYYY } from "@/utils/date";
 import { DatePicker } from "@/components/DatePicker";
+import { getActiveSocietyId } from "@/lib/firebase";
+import { getEventById, updateEvent } from "@/lib/firestore/events";
+import { listMembers } from "@/lib/firestore/members";
+import { getCourses } from "@/lib/firestore/society";
+import { NoSocietyGuard } from "@/components/NoSocietyGuard";
 
-const EVENTS_KEY = STORAGE_KEYS.EVENTS;
-const MEMBERS_KEY = STORAGE_KEYS.MEMBERS;
 const SCORES_KEY = STORAGE_KEYS.SCORES;
-const COURSES_KEY = STORAGE_KEYS.COURSES;
 
 type EventData = {
   id: string;
@@ -134,56 +136,69 @@ export default function EventDetailsScreen() {
 
   const loadData = async () => {
     try {
-      // Load courses
-      const coursesData = await AsyncStorage.getItem(COURSES_KEY);
-      let loadedCourses: Course[] = [];
-      if (coursesData) {
-        loadedCourses = JSON.parse(coursesData);
-        setCourses(loadedCourses);
+      const societyId = getActiveSocietyId();
+      if (!societyId) {
+        console.error("[Event] No society ID available");
+        setLoading(false);
+        return;
       }
 
-      // Load event
-      const eventsData = await AsyncStorage.getItem(EVENTS_KEY);
-      if (eventsData) {
-        const events: EventData[] = JSON.parse(eventsData);
-        const foundEvent = events.find((e) => e.id === id);
-        if (foundEvent) {
-          setEvent(foundEvent);
-          setIsOOM(foundEvent.isOOM || false);
-          setEditName(foundEvent.name);
-          setEditDate(foundEvent.date || "");
-          setSelectedCourseId(foundEvent.courseId || "");
-          setSelectedMaleTeeSetId(foundEvent.maleTeeSetId || "");
-          setSelectedFemaleTeeSetId(foundEvent.femaleTeeSetId || "");
-          setHandicapAllowance(foundEvent.handicapAllowance || 1.0);
-          setLockHandicaps(foundEvent.handicapSnapshot !== undefined && Object.keys(foundEvent.handicapSnapshot).length > 0);
-          
-          // Initialize event fee input
-          setEventFeeInput(foundEvent.eventFee?.toString() || "");
-          
-          // Load course and tee sets
-          if (foundEvent.courseId) {
-            const course = loadedCourses.find((c) => c.id === foundEvent.courseId);
-            if (course) {
-              setSelectedCourse(course);
-              if (foundEvent.maleTeeSetId) {
-                const maleTee = course.teeSets.find((t) => t.id === foundEvent.maleTeeSetId);
-                setSelectedMaleTeeSet(maleTee || null);
-              }
-              if (foundEvent.femaleTeeSetId) {
-                const femaleTee = course.teeSets.find((t) => t.id === foundEvent.femaleTeeSetId);
-                setSelectedFemaleTeeSet(femaleTee || null);
-              }
+      // Load courses from Firestore
+      let loadedCourses: Course[] = [];
+      try {
+        loadedCourses = await getCourses();
+        setCourses(loadedCourses);
+      } catch (error) {
+        console.error("[Event] Error loading courses:", error);
+      }
+
+      // Load event from Firestore
+      const foundEvent = await getEventById(id, societyId);
+      if (foundEvent) {
+        // Map to local EventData type (cast rsvps to proper type)
+        const eventData: EventData = {
+          ...foundEvent,
+          date: foundEvent.date || "",
+          courseName: foundEvent.courseName || "",
+          format: foundEvent.format || "Stableford",
+          rsvps: foundEvent.rsvps as EventData["rsvps"],
+        };
+        
+        setEvent(eventData);
+        setIsOOM(eventData.isOOM || false);
+        setEditName(eventData.name);
+        setEditDate(eventData.date || "");
+        setSelectedCourseId(eventData.courseId || "");
+        setSelectedMaleTeeSetId(eventData.maleTeeSetId || "");
+        setSelectedFemaleTeeSetId(eventData.femaleTeeSetId || "");
+        setHandicapAllowance(eventData.handicapAllowance || 1.0);
+        setLockHandicaps(eventData.handicapSnapshot !== undefined && Object.keys(eventData.handicapSnapshot).length > 0);
+        
+        // Initialize event fee input
+        setEventFeeInput(eventData.eventFee?.toString() || "");
+        
+        // Load course and tee sets
+        if (eventData.courseId) {
+          const course = loadedCourses.find((c) => c.id === eventData.courseId);
+          if (course) {
+            setSelectedCourse(course);
+            if (eventData.maleTeeSetId) {
+              const maleTee = course.teeSets.find((t) => t.id === eventData.maleTeeSetId);
+              setSelectedMaleTeeSet(maleTee || null);
+            }
+            if (eventData.femaleTeeSetId) {
+              const femaleTee = course.teeSets.find((t) => t.id === eventData.femaleTeeSetId);
+              setSelectedFemaleTeeSet(femaleTee || null);
             }
           }
         }
+      } else {
+        console.warn("[Event] Event not found:", id);
       }
 
-      // Load members
-      const membersData = await AsyncStorage.getItem(MEMBERS_KEY);
-      if (membersData) {
-        setMembers(JSON.parse(membersData));
-      }
+      // Load members from Firestore
+      const loadedMembers = await listMembers(societyId);
+      setMembers(loadedMembers);
 
       // Load scores
       const scoresData = await AsyncStorage.getItem(SCORES_KEY);
@@ -261,48 +276,34 @@ export default function EventDetailsScreen() {
     }
 
     try {
-      const eventsData = await AsyncStorage.getItem(EVENTS_KEY);
-      if (!eventsData) {
-        Alert.alert("Error", "Event not found");
-        return;
-      }
-
-      const events: EventData[] = JSON.parse(eventsData);
-      
-      // If locking handicaps, create snapshot from current member handicaps
+      // Build handicap snapshot if locking
       let handicapSnapshot: { [memberId: string]: number } | undefined = undefined;
       if (lockHandicaps) {
-        const membersData = await AsyncStorage.getItem(MEMBERS_KEY);
-        if (membersData) {
-          const allMembers: MemberData[] = JSON.parse(membersData);
-          handicapSnapshot = {};
-          allMembers.forEach((member) => {
-            if (member.handicap !== undefined) {
-              handicapSnapshot![member.id] = member.handicap;
-            }
-          });
-        }
+        handicapSnapshot = {};
+        members.forEach((member) => {
+          if (member.handicap !== undefined) {
+            handicapSnapshot![member.id] = member.handicap;
+          }
+        });
       }
-      
-      const updatedEvents = events.map((e) =>
-        e.id === event.id
-          ? {
-              ...e,
-              name: editName.trim(),
-              date: editDate.trim(),
-              isOOM: isOOM,
-              courseId: selectedCourseId || undefined,
-              maleTeeSetId: selectedMaleTeeSetId || undefined,
-              femaleTeeSetId: selectedFemaleTeeSetId || undefined,
-              handicapAllowance: handicapAllowance,
-              handicapSnapshot: lockHandicaps ? handicapSnapshot : undefined,
-              // Keep courseName for backward compatibility
-              courseName: selectedCourseId ? courses.find(c => c.id === selectedCourseId)?.name || e.courseName : e.courseName,
-            }
-          : e
-      );
 
-      await AsyncStorage.setItem(EVENTS_KEY, JSON.stringify(updatedEvents));
+      // Update event in Firestore
+      const result = await updateEvent(event.id, {
+        name: editName.trim(),
+        date: editDate.trim(),
+        isOOM: isOOM,
+        courseId: selectedCourseId || undefined,
+        maleTeeSetId: selectedMaleTeeSetId || undefined,
+        femaleTeeSetId: selectedFemaleTeeSetId || undefined,
+        handicapAllowance: handicapAllowance,
+        handicapSnapshot: lockHandicaps ? handicapSnapshot : undefined,
+        courseName: selectedCourseId ? courses.find(c => c.id === selectedCourseId)?.name || event.courseName : event.courseName,
+      });
+
+      if (!result.success) {
+        Alert.alert("Error", result.error || "Failed to save event");
+        return;
+      }
       
       // Update local state
       const updatedEvent = {
@@ -347,23 +348,15 @@ export default function EventDetailsScreen() {
     }
 
     try {
-      const eventsData = await AsyncStorage.getItem(EVENTS_KEY);
-      if (!eventsData) {
-        Alert.alert("Error", "Event not found");
+      // Update event fee in Firestore
+      const result = await updateEvent(event.id, {
+        eventFee: feeValue > 0 ? feeValue : undefined,
+      });
+
+      if (!result.success) {
+        Alert.alert("Error", result.error || "Failed to save event fee");
         return;
       }
-
-      const events: EventData[] = JSON.parse(eventsData);
-      const updatedEvents = events.map((e) =>
-        e.id === event.id
-          ? {
-              ...e,
-              eventFee: feeValue > 0 ? feeValue : undefined, // Store undefined if 0
-            }
-          : e
-      );
-
-      await AsyncStorage.setItem(EVENTS_KEY, JSON.stringify(updatedEvents));
 
       // Update local state
       const updatedEvent = {
@@ -397,46 +390,33 @@ export default function EventDetailsScreen() {
     }
 
     try {
-      const eventsData = await AsyncStorage.getItem(EVENTS_KEY);
-      if (!eventsData) {
-        Alert.alert("Error", "Event not found");
-        return;
-      }
-
-      const events: EventData[] = JSON.parse(eventsData);
       const currentPayment = event.payments?.[memberId];
       const newPaidStatus = !(currentPayment?.paid ?? false);
       const nowISO = new Date().toISOString();
 
-      const updatedEvents = events.map((e) =>
-        e.id === event.id
-          ? {
-              ...e,
-              payments: {
-                ...(e.payments || {}),
-                [memberId]: {
-                  paid: newPaidStatus,
-                  paidAtISO: newPaidStatus ? nowISO : undefined,
-                  method: currentPayment?.method || "cash",
-                },
-              },
-            }
-          : e
-      );
+      const newPayments = {
+        ...(event.payments || {}),
+        [memberId]: {
+          paid: newPaidStatus,
+          paidAtISO: newPaidStatus ? nowISO : undefined,
+          method: currentPayment?.method || "cash",
+        },
+      };
 
-      await AsyncStorage.setItem(EVENTS_KEY, JSON.stringify(updatedEvents));
+      // Update payments in Firestore
+      const result = await updateEvent(event.id, {
+        payments: newPayments,
+      });
+
+      if (!result.success) {
+        Alert.alert("Error", result.error || "Failed to update payment status");
+        return;
+      }
 
       // Update local state
       const updatedEvent = {
         ...event,
-        payments: {
-          ...(event.payments || {}),
-          [memberId]: {
-            paid: newPaidStatus,
-            paidAtISO: newPaidStatus ? nowISO : undefined,
-            method: currentPayment?.method || "cash",
-          },
-        },
+        payments: newPayments,
       };
       setEvent(updatedEvent);
     } catch (error) {
@@ -449,31 +429,25 @@ export default function EventDetailsScreen() {
     if (!event || !currentUserId) return;
 
     try {
-      const eventsData = await AsyncStorage.getItem(EVENTS_KEY);
-      if (!eventsData) return;
+      const newRsvps = {
+        ...(event.rsvps || {}),
+        [currentUserId]: status,
+      };
 
-      const events: EventData[] = JSON.parse(eventsData);
-      const updatedEvents = events.map((e) =>
-        e.id === event.id
-          ? {
-              ...e,
-              rsvps: {
-                ...(e.rsvps || {}),
-                [currentUserId]: status,
-              },
-            }
-          : e
-      );
+      // Update RSVP in Firestore
+      const result = await updateEvent(event.id, {
+        rsvps: newRsvps,
+      });
 
-      await AsyncStorage.setItem(EVENTS_KEY, JSON.stringify(updatedEvents));
+      if (!result.success) {
+        Alert.alert("Error", result.error || "Failed to save RSVP");
+        return;
+      }
       
       // Update local state
       const updatedEvent = {
         ...event,
-        rsvps: {
-          ...(event.rsvps || {}),
-          [currentUserId]: status,
-        },
+        rsvps: newRsvps,
       };
       setEvent(updatedEvent);
       

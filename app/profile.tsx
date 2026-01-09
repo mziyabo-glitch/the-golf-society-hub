@@ -19,9 +19,8 @@ import { useCallback, useState } from "react";
 import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View, ActivityIndicator } from "react-native";
 import type { EventData } from "@/lib/models";
 import { listMembers, upsertMember } from "@/lib/firestore/members";
+import { listEvents } from "@/lib/firestore/events";
 import { getActiveSocietyId } from "@/lib/firebase";
-
-const EVENTS_KEY = STORAGE_KEYS.EVENTS;
 
 type MemberData = {
   id: string;
@@ -88,10 +87,9 @@ export default function ProfileScreen() {
         setCurrentMember(null);
       }
 
-      // Load upcoming events with fees
-      const eventsData = await AsyncStorage.getItem(EVENTS_KEY);
-      if (eventsData) {
-        const allEvents: EventData[] = JSON.parse(eventsData);
+      // Load upcoming events with fees from Firestore
+      try {
+        const allEvents = await listEvents();
         const now = new Date();
         const upcoming = allEvents
           .filter((e) => {
@@ -100,6 +98,8 @@ export default function ProfileScreen() {
           })
           .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
         setUpcomingEventsWithFees(upcoming);
+      } catch (error) {
+        console.error("[Profile] Error loading events:", error);
       }
     } catch (error) {
       console.error("Error loading data:", error);

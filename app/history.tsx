@@ -1,28 +1,27 @@
+/**
+ * History Screen - Shows all events sorted by date
+ * 
+ * FIRESTORE-ONLY: Events are loaded from societies/{societyId}/events
+ */
+
 import { AppButton } from "@/components/ui/AppButton";
 import { AppCard } from "@/components/ui/AppCard";
 import { AppText } from "@/components/ui/AppText";
-import { STORAGE_KEYS } from "@/lib/storage";
 import { spacing } from "@/lib/ui/theme";
 import { formatDateDDMMYYYY } from "@/utils/date";
-import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useFocusEffect } from "@react-navigation/native";
 import { router } from "expo-router";
 import { useCallback, useState } from "react";
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, View } from "react-native";
-
-const EVENTS_KEY = STORAGE_KEYS.EVENTS;
-
-type EventData = {
-  id: string;
-  name: string;
-  date: string;
-  courseName: string;
-  format: "Stableford" | "Strokeplay" | "Both";
-};
+import { listEvents } from "@/lib/firestore/events";
+import { getActiveSocietyId } from "@/lib/firebase";
+import { NoSocietyGuard } from "@/components/NoSocietyGuard";
+import type { EventData } from "@/lib/models";
 
 export default function HistoryScreen() {
   const [events, setEvents] = useState<EventData[]>([]);
   const [loading, setLoading] = useState(true);
+  const [societyId, setSocietyId] = useState<string | null>(null);
 
   useFocusEffect(
     useCallback(() => {
@@ -32,19 +31,31 @@ export default function HistoryScreen() {
 
   const loadEvents = async () => {
     try {
-      const eventsData = await AsyncStorage.getItem(EVENTS_KEY);
-      if (eventsData) {
-        const allEvents: EventData[] = JSON.parse(eventsData);
-        // Sort by date (most recent first)
-        const sorted = allEvents.sort((a, b) => {
-          const dateA = a.date ? new Date(a.date).getTime() : 0;
-          const dateB = b.date ? new Date(b.date).getTime() : 0;
-          return dateB - dateA;
-        });
-        setEvents(sorted);
+      const activeSocietyId = getActiveSocietyId();
+      setSocietyId(activeSocietyId);
+      
+      if (!activeSocietyId) {
+        setLoading(false);
+        return;
+      }
+
+      // Load events from Firestore
+      const allEvents = await listEvents(activeSocietyId);
+      
+      // Sort by date (most recent first)
+      const sorted = [...allEvents].sort((a, b) => {
+        const dateA = a.date ? new Date(a.date).getTime() : 0;
+        const dateB = b.date ? new Date(b.date).getTime() : 0;
+        return dateB - dateA;
+      });
+      
+      setEvents(sorted);
+      
+      if (__DEV__) {
+        console.log("[History] Loaded", sorted.length, "events from Firestore");
       }
     } catch (error) {
-      console.error("Error loading events:", error);
+      console.error("[History] Error loading events:", error);
     } finally {
       setLoading(false);
     }
@@ -54,8 +65,13 @@ export default function HistoryScreen() {
     return (
       <View style={[styles.container, styles.centerContent]}>
         <ActivityIndicator size="large" color="#0B6E4F" />
+        <AppText style={{ marginTop: 12 }}>Loading events...</AppText>
       </View>
     );
+  }
+
+  if (!societyId) {
+    return <NoSocietyGuard message="Please select a society to view event history." />;
   }
 
   return (
@@ -156,6 +172,3 @@ const styles = StyleSheet.create({
     marginTop: spacing.sm,
   },
 });
-
-
-
