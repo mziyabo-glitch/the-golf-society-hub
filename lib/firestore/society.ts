@@ -712,6 +712,114 @@ export async function loadTeeSetsFromGlobal(courseId: string): Promise<TeeSet[]>
 }
 
 /**
+ * Load ALL courses for a society from the GLOBAL courses collection
+ * 
+ * CANONICAL QUERY: 
+ *   collection(db, "courses")
+ *   where("societyId", "==", activeSocietyId)
+ *   where("status", "==", "active")
+ * 
+ * This is the SAME source as Venue Info uses.
+ * Returns courses with tee sets loaded from global teesets collection.
+ */
+export async function getCoursesForSociety(societyId?: string): Promise<Course[]> {
+  const effectiveSocietyId = societyId || getActiveSocietyId();
+  
+  // ==========================================================================
+  // RUNTIME GUARD: Block if societyId is undefined
+  // ==========================================================================
+  if (!effectiveSocietyId) {
+    console.error("[Courses] BLOCKED: getCoursesForSociety - societyId is undefined");
+    return [];
+  }
+  
+  if (!isFirebaseConfigured()) {
+    console.error("[Courses] BLOCKED: Firebase not configured");
+    return [];
+  }
+  
+  console.log(`[Courses] Loading courses from global collection for society: ${effectiveSocietyId}`);
+  
+  try {
+    const courses: Course[] = [];
+    
+    // Query global courses collection filtered by societyId and status
+    const coursesRef = collection(db, "courses");
+    const coursesQuery = query(
+      coursesRef,
+      where("societyId", "==", effectiveSocietyId),
+      where("status", "==", "active")
+    );
+    const coursesSnap = await getDocs(coursesQuery);
+    
+    if (!coursesSnap.empty) {
+      for (const courseDoc of coursesSnap.docs) {
+        const data = courseDoc.data();
+        
+        // Load tee sets from global teesets collection
+        const teeSets = await loadTeeSetsFromGlobal(courseDoc.id);
+        
+        courses.push({
+          id: courseDoc.id,
+          name: data.name || "Unknown Course",
+          address: data.address,
+          postcode: data.postcode,
+          notes: data.notes,
+          googlePlaceId: data.googlePlaceId,
+          mapsUrl: data.mapsUrl,
+          teeSets,
+        });
+      }
+      
+      console.log(`[Courses] Loaded ${courses.length} courses for society ${effectiveSocietyId}`);
+      return courses;
+    }
+    
+    // Try without status filter in case status field doesn't exist
+    console.log("[Courses] No active courses found, trying without status filter...");
+    const coursesQueryNoStatus = query(
+      coursesRef,
+      where("societyId", "==", effectiveSocietyId)
+    );
+    const coursesSnapNoStatus = await getDocs(coursesQueryNoStatus);
+    
+    if (!coursesSnapNoStatus.empty) {
+      for (const courseDoc of coursesSnapNoStatus.docs) {
+        const data = courseDoc.data();
+        
+        // Skip if explicitly marked inactive
+        if (data.status === "inactive") continue;
+        
+        const teeSets = await loadTeeSetsFromGlobal(courseDoc.id);
+        
+        courses.push({
+          id: courseDoc.id,
+          name: data.name || "Unknown Course",
+          address: data.address,
+          postcode: data.postcode,
+          notes: data.notes,
+          googlePlaceId: data.googlePlaceId,
+          mapsUrl: data.mapsUrl,
+          teeSets,
+        });
+      }
+      
+      console.log(`[Courses] Loaded ${courses.length} courses (no status filter) for society ${effectiveSocietyId}`);
+      return courses;
+    }
+    
+    console.warn("[Courses] No courses found for society", {
+      societyId: effectiveSocietyId,
+      query: "courses where societyId == societyId",
+    });
+    return [];
+  } catch (error) {
+    console.error("[Courses] Error loading courses for society:", error, { societyId: effectiveSocietyId });
+    return [];
+  }
+}
+
+/**
  * Get all courses from Firestore
  * 
  * CANONICAL PATH: societies/{societyId}/courses

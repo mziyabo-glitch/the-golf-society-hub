@@ -28,6 +28,7 @@ import {
   getMembers, 
   getEvents, 
   getEvent,
+  getCoursesForSociety,
   getCourseFromGlobal,
   loadTeeSetsFromGlobal,
   saveAndVerifyTeeSheet,
@@ -61,7 +62,8 @@ export default function TeesTeeSheetScreen() {
   const [activeTab, setActiveTab] = useState<TabType>("tees");
   
   // Data from Firestore
-  // NOTE: courses are NOT loaded upfront - they are loaded per-event from event.courseId
+  // Courses are loaded from GLOBAL courses collection filtered by societyId
+  const [courses, setCourses] = useState<Course[]>([]);
   const [events, setEvents] = useState<EventData[]>([]);
   const [members, setMembers] = useState<MemberData[]>([]);
   const [society, setSociety] = useState<{ name: string; logoUrl?: string } | null>(null);
@@ -146,8 +148,10 @@ export default function TeesTeeSheetScreen() {
    * Load ALL data from Firestore
    * NO AsyncStorage is used
    * 
-   * NOTE: Courses are NOT loaded here. They are loaded per-event from the global
-   * courses collection using event.courseId when an event is selected.
+   * Courses are loaded from GLOBAL courses collection:
+   *   query(collection(db, "courses"), where("societyId", "==", activeSocietyId), where("status", "==", "active"))
+   * 
+   * This is the SAME source as Venue Info uses.
    */
   const loadData = async () => {
     setLoading(true);
@@ -157,15 +161,19 @@ export default function TeesTeeSheetScreen() {
     const societyId = getActiveSocietyId();
 
     try {
-      if (__DEV__) {
-        console.log("[TeeSheet] Loading data for society:", societyId);
-      }
+      console.log("[TeeSheet] Loading data for society:", societyId);
 
       // Load society
       const loadedSociety = await getSociety();
       if (loadedSociety) {
         setSociety({ name: loadedSociety.name, logoUrl: loadedSociety.logoUrl || undefined });
       }
+
+      // Load courses from GLOBAL courses collection filtered by societyId
+      // This is the SAME source as Venue Info uses
+      const loadedCourses = await getCoursesForSociety(societyId);
+      setCourses(loadedCourses);
+      console.log(`[TeeSheet] Loaded ${loadedCourses.length} courses for society ${societyId}`);
 
       // Load events from Firestore
       const loadedEvents = await getEvents();
@@ -176,16 +184,14 @@ export default function TeesTeeSheetScreen() {
       setMembers(loadedMembers);
 
       // Dev logging - summary of all loaded data
-      // NOTE: Courses are loaded per-event, not upfront
-      if (__DEV__) {
-        console.log("[TeeSheet] Data loaded:", {
-          societyId,
-          societyName: loadedSociety?.name || "(none)",
-          eventCount: loadedEvents.length,
-          memberCount: loadedMembers.length,
-          note: "Courses loaded per-event from global courses/{courseId}",
-        });
-      }
+      console.log("[TeeSheet] Data loaded:", {
+        societyId,
+        societyName: loadedSociety?.name || "(none)",
+        courseCount: loadedCourses.length,
+        eventCount: loadedEvents.length,
+        memberCount: loadedMembers.length,
+        coursesSource: "global courses collection where societyId == " + societyId,
+      });
 
       // Data is now ready
       setDataReady(true);
@@ -253,17 +259,19 @@ export default function TeesTeeSheetScreen() {
       setHandicapAllowancePct(100);
     }
 
-    // Load course from GLOBAL courses collection using event.courseId
+    // Preselect course from loaded courses list if event.courseId exists
+    console.log("[TeeSheet] Event courseId:", event.courseId || "(not set)");
+    
     if (event.courseId) {
-      console.log("[TeeSheet] Loading course from global: courses/" + event.courseId);
-      const course = await getCourseFromGlobal(event.courseId);
+      // First, try to find the course in our already-loaded courses list
+      const courseFromList = courses.find(c => c.id === event.courseId);
       
-      if (course) {
-        setSelectedCourse(course);
-        console.log("[TeeSheet] Course loaded:", course.name, "with", course.teeSets.length, "tee sets");
+      if (courseFromList) {
+        setSelectedCourse(courseFromList);
+        console.log("[TeeSheet] Course preselected from loaded list:", courseFromList.name, "with", courseFromList.teeSets.length, "tee sets");
 
         // Find tee sets using case-insensitive matching
-        const { maleTeeSet, femaleTeeSet } = findTeeSetsForEvent(course, event);
+        const { maleTeeSet, femaleTeeSet } = findTeeSetsForEvent(courseFromList, event);
         
         setSelectedMaleTeeSet(maleTeeSet);
         if (maleTeeSet) {
@@ -279,15 +287,28 @@ export default function TeesTeeSheetScreen() {
           console.warn("[TeeSheet] Female tee set NOT FOUND:", event.femaleTeeSetId);
         }
       } else {
-        console.error("[TeeSheet] Course NOT FOUND in global collection:", {
-          courseId: event.courseId,
-          path: `courses/${event.courseId}`,
-          hint: "Verify course exists in Firestore or update event settings",
-        });
-        setLoadError(`Course not found: ${event.courseId}. Please update event settings.`);
+        // Course not in list - try loading directly from Firestore
+        console.log("[TeeSheet] Course not in loaded list, fetching from global: courses/" + event.courseId);
+        const course = await getCourseFromGlobal(event.courseId);
+        
+        if (course) {
+          setSelectedCourse(course);
+          console.log("[TeeSheet] Course loaded from global:", course.name, "with", course.teeSets.length, "tee sets");
+
+          const { maleTeeSet, femaleTeeSet } = findTeeSetsForEvent(course, event);
+          setSelectedMaleTeeSet(maleTeeSet);
+          setSelectedFemaleTeeSet(femaleTeeSet);
+        } else {
+          console.error("[TeeSheet] Course NOT FOUND:", {
+            courseId: event.courseId,
+            path: `courses/${event.courseId}`,
+            hint: "Verify course exists in Firestore or update event settings",
+          });
+          setLoadError(`Course not found: ${event.courseId}. Please update event settings.`);
+        }
       }
     } else {
-      console.warn("[TeeSheet] Event has no courseId - cannot load tee sheet", {
+      console.warn("[TeeSheet] Event has no courseId configured", {
         eventId: event.id,
         eventName: event.name,
         hint: "Configure course in Event Settings",
