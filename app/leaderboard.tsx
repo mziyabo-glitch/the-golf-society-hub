@@ -32,8 +32,8 @@ import type { EventData, MemberData } from "@/lib/models";
 // Firestore read helpers
 import { getSociety, getMembers } from "@/lib/firestore/society";
 import { listEvents } from "@/lib/firestore/events";
-import { aggregateSeasonPoints, type AggregatedMemberPoints } from "@/lib/firestore/results";
-import { getActiveSocietyId, isFirebaseConfigured } from "@/lib/firebase";
+import { aggregateSeasonPoints } from "@/lib/firestore/results";
+import { getActiveSocietyId } from "@/lib/firebase";
 import { NoSocietyGuard } from "@/components/NoSocietyGuard";
 import { FirebaseConfigGuard } from "@/components/FirebaseConfigGuard";
 
@@ -49,6 +49,7 @@ export default function LeaderboardScreen() {
   const [loading, setLoading] = useState(true);
   const [calculating, setCalculating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [calculationError, setCalculationError] = useState<string | null>(null);
   const [seasonYear, setSeasonYear] = useState<number>(new Date().getFullYear());
   const [showOOMOnly, setShowOOMOnly] = useState(false);
   const [society, setSociety] = useState<SocietyData | null>(null);
@@ -122,11 +123,15 @@ export default function LeaderboardScreen() {
   };
 
   // Compute leaderboard - uses subcollection first, falls back to inline results
+  // Wrapped in try/catch to prevent crashes and show friendly error
   const calculateLeaderboard = useCallback(async (): Promise<OOMEntry[]> => {
     // Defensive guards
     if (!Array.isArray(events) || !Array.isArray(members)) {
       if (__DEV__) {
-        console.log("[Leaderboard] calculateLeaderboard: No data available");
+        console.log("[Leaderboard] calculateLeaderboard: No data available", {
+          eventsType: typeof events,
+          membersType: typeof members,
+        });
       }
       return [];
     }
@@ -135,70 +140,93 @@ export default function LeaderboardScreen() {
       // Filter events for OOM if needed
       let filteredEvents = events;
       if (showOOMOnly) {
-        filteredEvents = events.filter((e) => e.isOOM === true);
+        filteredEvents = events.filter((e) => e?.isOOM === true);
       }
       
       // Try subcollection-based aggregation first
       if (useSubcollection && societyId) {
-        const aggregated = await aggregateSeasonPoints(
-          filteredEvents,
-          members,
-          seasonYear,
-          societyId
-        );
-        
-        if (aggregated.length > 0) {
-          if (__DEV__) {
-            console.log("[Leaderboard] Using subcollection results:", {
-              societyId,
-              season: seasonYear,
-              entriesWithPoints: aggregated.length,
-            });
-          }
+        try {
+          const aggregated = await aggregateSeasonPoints(
+            filteredEvents,
+            members,
+            seasonYear,
+            societyId
+          );
           
-          // Convert to OOMEntry format
-          return aggregated.map((entry) => ({
-            memberId: entry.memberId,
-            memberName: entry.memberName,
-            handicap: entry.handicap,
-            totalPoints: entry.totalPoints,
-            wins: entry.wins,
-            played: entry.played,
-          }));
+          if (aggregated.length > 0) {
+            if (__DEV__) {
+              console.log("[Leaderboard] Using subcollection results:", {
+                societyId,
+                season: seasonYear,
+                entriesWithPoints: aggregated.length,
+              });
+            }
+            
+            // Convert to OOMEntry format with safe defaults
+            return aggregated.map((entry) => ({
+              memberId: entry?.memberId || "unknown",
+              memberName: entry?.memberName || "Unknown Member",
+              handicap: entry?.handicap,
+              totalPoints: entry?.totalPoints ?? 0,
+              wins: entry?.wins ?? 0,
+              played: entry?.played ?? 0,
+            }));
+          }
+        } catch (subcollectionError) {
+          console.error("[Leaderboard] Subcollection aggregation failed, falling back to inline:", subcollectionError, {
+            societyId,
+            seasonYear,
+          });
+          // Continue to inline fallback
         }
       }
       
       // Fallback to inline results computation (for legacy data)
-      const result = computeOrderOfMerit({
-        events: filteredEvents,
-        members,
-        seasonYear,
-        oomOnly: showOOMOnly,
-      });
-      
-      if (__DEV__) {
-        // Count results aggregated from inline data
-        const publishedEvents = filteredEvents.filter(e => e?.resultsStatus === "published");
-        const resultsCount = publishedEvents.reduce((acc, e) => {
-          if (e?.results) {
-            return acc + Object.keys(e.results).length;
-          }
-          return acc;
-        }, 0);
-        
-        console.log("[Leaderboard] OOM computed (inline fallback):", {
-          societyId,
-          season: seasonYear,
+      try {
+        const result = computeOrderOfMerit({
+          events: filteredEvents,
+          members,
+          seasonYear,
           oomOnly: showOOMOnly,
-          eventsConsidered: publishedEvents.length,
-          resultsAggregated: resultsCount,
-          entriesWithPoints: result.length,
         });
+        
+        if (__DEV__) {
+          // Count results aggregated from inline data
+          const publishedEvents = filteredEvents.filter(e => e?.resultsStatus === "published");
+          const resultsCount = publishedEvents.reduce((acc, e) => {
+            if (e?.results) {
+              return acc + Object.keys(e.results).length;
+            }
+            return acc;
+          }, 0);
+          
+          console.log("[Leaderboard] OOM computed (inline fallback):", {
+            societyId,
+            season: seasonYear,
+            oomOnly: showOOMOnly,
+            eventsConsidered: publishedEvents.length,
+            resultsAggregated: resultsCount,
+            entriesWithPoints: result.length,
+          });
+        }
+        
+        return result;
+      } catch (oomError) {
+        console.error("[Leaderboard] computeOrderOfMerit failed:", oomError, {
+          societyId,
+          seasonYear,
+          eventsCount: filteredEvents?.length,
+          membersCount: members?.length,
+        });
+        return [];
       }
-      
-      return result;
     } catch (err) {
-      console.error("[Leaderboard] Error computing OOM:", err);
+      console.error("[Leaderboard] Error computing leaderboard:", err, {
+        societyId,
+        seasonYear,
+        eventsCount: events?.length,
+        membersCount: members?.length,
+      });
       return [];
     }
   }, [events, members, seasonYear, showOOMOnly, societyId, useSubcollection]);
@@ -208,13 +236,21 @@ export default function LeaderboardScreen() {
     useCallback(() => {
       if (!loading && !error && societyId) {
         setCalculating(true);
+        setCalculationError(null);
         calculateLeaderboard()
           .then((result) => {
             setLeaderboard(result);
+            setCalculationError(null);
           })
           .catch((err) => {
-            console.error("[Leaderboard] Error in calculateLeaderboard:", err);
+            console.error("[Leaderboard] Error in calculateLeaderboard:", err, {
+              societyId,
+              seasonYear,
+              eventsCount: events?.length,
+              membersCount: members?.length,
+            });
             setLeaderboard([]);
+            setCalculationError("Unable to compute leaderboard. Please try again.");
           })
           .finally(() => {
             setCalculating(false);
@@ -227,9 +263,20 @@ export default function LeaderboardScreen() {
   useEffect(() => {
     if (!loading && !error && societyId && events.length > 0) {
       setCalculating(true);
+      setCalculationError(null);
       calculateLeaderboard()
         .then((result) => {
           setLeaderboard(result);
+          setCalculationError(null);
+        })
+        .catch((err) => {
+          console.error("[Leaderboard] Error recalculating:", err, {
+            societyId,
+            seasonYear,
+            showOOMOnly,
+          });
+          setLeaderboard([]);
+          setCalculationError("Unable to compute leaderboard. Please try again.");
         })
         .finally(() => {
           setCalculating(false);
@@ -351,6 +398,45 @@ export default function LeaderboardScreen() {
               {error}
             </AppText>
             <SecondaryButton onPress={loadData}>
+              Retry
+            </SecondaryButton>
+            <SecondaryButton onPress={() => router.back()} style={{ marginTop: spacing.sm }}>
+              Back
+            </SecondaryButton>
+          </View>
+        </Screen>
+      </FirebaseConfigGuard>
+    );
+  }
+
+  // Calculation error state - show friendly message instead of crashing
+  if (calculationError && !calculating) {
+    return (
+      <FirebaseConfigGuard>
+        <Screen scrollable={false}>
+          <View style={styles.centerContent}>
+            <AppText style={{ fontSize: 18, fontWeight: "600", marginBottom: 12, color: colors.error }}>
+              Leaderboard Unavailable
+            </AppText>
+            <AppText style={{ color: "#6b7280", textAlign: "center", marginBottom: 20, paddingHorizontal: 20 }}>
+              {calculationError}
+            </AppText>
+            <SecondaryButton onPress={() => {
+              setCalculationError(null);
+              setCalculating(true);
+              calculateLeaderboard()
+                .then((result) => {
+                  setLeaderboard(result);
+                  setCalculationError(null);
+                })
+                .catch((err) => {
+                  console.error("[Leaderboard] Retry failed:", err);
+                  setCalculationError("Still unable to compute leaderboard. Please check your data.");
+                })
+                .finally(() => {
+                  setCalculating(false);
+                });
+            }}>
               Retry
             </SecondaryButton>
             <SecondaryButton onPress={() => router.back()} style={{ marginTop: spacing.sm }}>

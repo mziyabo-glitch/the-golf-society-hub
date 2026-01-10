@@ -26,7 +26,7 @@ import {
   orderBy,
 } from "firebase/firestore";
 import { db, getActiveSocietyId, isFirebaseConfigured, logFirestoreOp } from "../firebase";
-import { getPointsForPosition, calculateEventLeaderboard } from "../oom";
+import { getPointsForPosition, calculateEventLeaderboard, toTrimmedString, toNumber } from "../oom";
 import type { EventData, MemberData } from "../models";
 
 // ============================================================================
@@ -205,18 +205,23 @@ export async function clearEventResultsSubcollection(
 // ============================================================================
 
 /**
- * Read results subcollection for a single event
+ * Read results subcollection for a single event.
+ * Uses safe coercion to prevent crashes from malformed data.
  */
 export async function getEventResultsSubcollection(
   eventId: string,
   societyId?: string
 ): Promise<EventResultDoc[]> {
-  const effectiveSocietyId = societyId || getActiveSocietyId();
-  const collectionPath = `societies/${effectiveSocietyId}/events/${eventId}/results`;
+  const effectiveSocietyId = toTrimmedString(societyId) || getActiveSocietyId();
+  const safeEventId = toTrimmedString(eventId);
+  const collectionPath = `societies/${effectiveSocietyId}/events/${safeEventId}/results`;
   
-  if (!effectiveSocietyId || !eventId) {
+  if (!effectiveSocietyId || !safeEventId) {
     if (__DEV__) {
-      console.log("[Results] Missing societyId or eventId");
+      console.log("[Results] Missing societyId or eventId", { 
+        eventIdType: typeof eventId, 
+        societyIdType: typeof societyId 
+      });
     }
     return [];
   }
@@ -231,25 +236,29 @@ export async function getEventResultsSubcollection(
   try {
     logFirestoreOp("read", collectionPath);
     
-    const resultsRef = collection(db, "societies", effectiveSocietyId, "events", eventId, "results");
+    const resultsRef = collection(db, "societies", effectiveSocietyId, "events", safeEventId, "results");
     const q = query(resultsRef, orderBy("position", "asc"));
     const snapshot = await getDocs(q);
     
     const results: EventResultDoc[] = snapshot.docs.map((docSnap) => {
       const data = docSnap.data();
       return {
-        memberId: data.memberId || docSnap.id,
-        memberName: data.memberName || "Unknown",
-        points: data.points ?? 0,
-        position: data.position ?? 0,
-        score: data.score ?? 0,
+        memberId: toTrimmedString(data.memberId) || toTrimmedString(docSnap.id),
+        memberName: toTrimmedString(data.memberName) || "Unknown Member",
+        points: toNumber(data.points, 0),
+        position: toNumber(data.position, 0),
+        score: toNumber(data.score, 0),
         scoreType: data.scoreType || "stableford",
       };
-    });
+    }).filter((r) => r.memberId.length > 0); // Skip entries without valid memberId
     
     return results;
   } catch (error) {
-    console.error("[Results] Error reading results subcollection:", error, { eventId, societyId: effectiveSocietyId });
+    console.error("[Results] Error reading results subcollection:", error, { 
+      eventId: safeEventId, 
+      societyId: effectiveSocietyId,
+      eventIdType: typeof eventId,
+    });
     return [];
   }
 }
@@ -257,6 +266,7 @@ export async function getEventResultsSubcollection(
 /**
  * Aggregate points across all published events for a season.
  * Returns sorted array of members with total points.
+ * Uses safe coercion throughout to prevent crashes.
  * 
  * @param events - All events (will filter to published only)
  * @param members - All members for metadata lookup
@@ -269,7 +279,7 @@ export async function aggregateSeasonPoints(
   seasonYear?: number,
   societyId?: string
 ): Promise<AggregatedMemberPoints[]> {
-  const effectiveSocietyId = societyId || getActiveSocietyId();
+  const effectiveSocietyId = toTrimmedString(societyId) || getActiveSocietyId();
   
   if (!effectiveSocietyId) {
     if (__DEV__) {
@@ -280,7 +290,7 @@ export async function aggregateSeasonPoints(
   
   if (!Array.isArray(events) || events.length === 0) {
     if (__DEV__) {
-      console.log("[Results] No events for aggregation");
+      console.log("[Results] No events for aggregation", { eventsType: typeof events });
     }
     return [];
   }
@@ -291,10 +301,14 @@ export async function aggregateSeasonPoints(
     
     // Filter by season year if specified
     if (seasonYear !== undefined) {
+      const safeSeasonYear = toNumber(seasonYear, new Date().getFullYear());
       publishedEvents = publishedEvents.filter((e) => {
         if (!e.date) return false;
-        const eventDate = new Date(e.date);
-        return !isNaN(eventDate.getTime()) && eventDate.getFullYear() === seasonYear;
+        // Use safe coercion for date
+        const dateStr = toTrimmedString(e.date);
+        if (!dateStr) return false;
+        const eventDate = new Date(dateStr);
+        return !isNaN(eventDate.getTime()) && eventDate.getFullYear() === safeSeasonYear;
       });
     }
     
@@ -316,18 +330,34 @@ export async function aggregateSeasonPoints(
     let totalResultsAggregated = 0;
     
     for (const event of publishedEvents) {
-      const results = await getEventResultsSubcollection(event.id, effectiveSocietyId);
+      const safeEventId = toTrimmedString(event.id);
+      if (!safeEventId) {
+        if (__DEV__) {
+          console.warn("[Results] Skipping event with missing ID", { eventIdType: typeof event.id });
+        }
+        continue;
+      }
+      
+      const results = await getEventResultsSubcollection(safeEventId, effectiveSocietyId);
       
       for (const result of results) {
-        if (!memberStats[result.memberId]) {
-          memberStats[result.memberId] = { points: 0, wins: 0, played: 0 };
+        const safeMemberId = toTrimmedString(result.memberId);
+        if (!safeMemberId) {
+          if (__DEV__) {
+            console.warn("[Results] Skipping result with missing memberId in event", { eventId: safeEventId });
+          }
+          continue;
         }
         
-        memberStats[result.memberId].points += result.points || 0;
-        memberStats[result.memberId].played += 1;
+        if (!memberStats[safeMemberId]) {
+          memberStats[safeMemberId] = { points: 0, wins: 0, played: 0 };
+        }
         
-        if (result.position === 1) {
-          memberStats[result.memberId].wins += 1;
+        memberStats[safeMemberId].points += toNumber(result.points, 0);
+        memberStats[safeMemberId].played += 1;
+        
+        if (toNumber(result.position, 0) === 1) {
+          memberStats[safeMemberId].wins += 1;
         }
         
         totalResultsAggregated++;
@@ -338,22 +368,26 @@ export async function aggregateSeasonPoints(
     const memberLookup = new Map<string, MemberData>();
     const safeMembers = Array.isArray(members) ? members : [];
     safeMembers.forEach((m) => {
-      if (m?.id) {
-        memberLookup.set(m.id, m);
+      const safeMemberId = toTrimmedString(m?.id);
+      if (safeMemberId) {
+        memberLookup.set(safeMemberId, m);
       }
     });
     
     // Convert to array and filter out members with 0 points
     const aggregated: AggregatedMemberPoints[] = Object.entries(memberStats)
+      .filter(([memberId]) => toTrimmedString(memberId).length > 0)
       .map(([memberId, stats]) => {
-        const member = memberLookup.get(memberId);
+        const safeMemberId = toTrimmedString(memberId);
+        const member = memberLookup.get(safeMemberId);
+        const memberName = toTrimmedString(member?.name) || "Unknown Member";
         return {
-          memberId,
-          memberName: member?.name || "Unknown",
-          totalPoints: stats.points,
-          wins: stats.wins,
-          played: stats.played,
-          handicap: member?.handicap,
+          memberId: safeMemberId,
+          memberName,
+          totalPoints: toNumber(stats.points, 0),
+          wins: toNumber(stats.wins, 0),
+          played: toNumber(stats.played, 0),
+          handicap: member?.handicap !== undefined ? toNumber(member.handicap) : undefined,
         };
       })
       .filter((entry) => entry.totalPoints > 0);
@@ -383,7 +417,11 @@ export async function aggregateSeasonPoints(
     
     return aggregated;
   } catch (error) {
-    console.error("[Results] Error aggregating season points:", error);
+    console.error("[Results] Error aggregating season points:", error, {
+      societyId: effectiveSocietyId,
+      eventsCount: events?.length,
+      seasonYear,
+    });
     return [];
   }
 }
