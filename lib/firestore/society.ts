@@ -604,132 +604,74 @@ async function loadTeeSetsForCourse(courseId: string, societyId: string): Promis
  * 
  * CANONICAL PATH: societies/{societyId}/courses
  * 
+ * FIRESTORE IS THE SINGLE SOURCE OF TRUTH - NO FALLBACK
+ * 
  * - Always queries from societies/{societyId}/courses subcollection
  * - Does NOT query the global "courses" collection
  * - Does NOT require a societyId field inside the course doc
- * - No status filter (all courses are returned)
  * - Skip only if status === "inactive" explicitly
- * 
- * On web: Firestore only (no fallback)
- * On native: Firestore with AsyncStorage fallback
+ * - NO localStorage or in-memory fallback
  */
 export async function getCourses(): Promise<Course[]> {
   const societyId = getActiveSocietyId();
+  
+  // ==========================================================================
+  // RUNTIME GUARD: Block query if societyId is undefined
+  // ==========================================================================
+  if (!societyId) {
+    console.error("[Courses] BLOCKED: Cannot load courses - societyId is undefined", {
+      societyId,
+      hint: "Ensure a society is selected before loading courses",
+    });
+    return [];
+  }
+  
   const coursesPath = `societies/${societyId}/courses`;
+  const appliedFilters = "status !== 'inactive'";
   
   // Log the resolved Firestore path
   console.log(`[Courses] Loading courses from: ${coursesPath}`);
   
-  if (!societyId) {
-    console.warn("[Courses] No society ID available");
+  // ==========================================================================
+  // RUNTIME GUARD: Block query if Firebase not configured
+  // ==========================================================================
+  if (!isFirebaseConfigured()) {
+    console.error("[Courses] BLOCKED: Firebase not configured", {
+      societyId,
+      path: coursesPath,
+    });
     return [];
   }
   
   try {
-    if (isFirebaseConfigured()) {
-      const courses: Course[] = [];
-      
-      // Query courses from society subcollection only
-      const coursesRef = collection(db, "societies", societyId, "courses");
-      const coursesSnap = await getDocs(coursesRef);
+    const courses: Course[] = [];
+    let totalDocsFound = 0;
+    let skippedInactive = 0;
+    
+    // Query courses from society subcollection only
+    const coursesRef = collection(db, "societies", societyId, "courses");
+    const coursesSnap = await getDocs(coursesRef);
+    
+    totalDocsFound = coursesSnap.size;
 
-      if (!coursesSnap.empty) {
-        for (const courseDoc of coursesSnap.docs) {
-          const data = courseDoc.data();
-          
-          // Skip only if explicitly marked as inactive
-          if (data.status === "inactive") {
-            if (__DEV__) {
-              console.log(`[Courses] Skipping inactive course: ${data.name || courseDoc.id}`);
-            }
-            continue;
+    if (!coursesSnap.empty) {
+      for (const courseDoc of coursesSnap.docs) {
+        const data = courseDoc.data();
+        
+        // Skip only if explicitly marked as inactive
+        if (data.status === "inactive") {
+          skippedInactive++;
+          if (__DEV__) {
+            console.log(`[Courses] Skipping inactive course: ${data.name || courseDoc.id}`);
           }
-          
-          // Load tee sets for this course
-          const teeSets = await loadTeeSetsForCourse(courseDoc.id, societyId);
-
-          courses.push({
-            id: courseDoc.id,
-            name: data.name || "Unknown Course",
-            address: data.address,
-            postcode: data.postcode,
-            notes: data.notes,
-            googlePlaceId: data.googlePlaceId,
-            mapsUrl: data.mapsUrl,
-            teeSets,
-          });
+          continue;
         }
         
-        console.log(`[Courses] Loaded ${courses.length} courses from ${coursesPath}`);
-        return courses;
-      }
-      
-      // No courses found - this is not an error, just empty data
-      console.log(`[Courses] No courses found at ${coursesPath}`);
-      return [];
-    }
-  } catch (error) {
-    console.error("[Courses] Error reading courses:", error, { path: coursesPath });
-    if (IS_WEB) {
-      return []; // No fallback on web
-    }
-  }
+        // Load tee sets for this course
+        const teeSets = await loadTeeSetsForCourse(courseDoc.id, societyId);
 
-  // Native-only fallback to AsyncStorage
-  if (!IS_WEB) {
-    try {
-      const AsyncStorage = await getAsyncStorage();
-      if (AsyncStorage) {
-        const localData = await AsyncStorage.getItem(STORAGE_KEYS.COURSES);
-        if (localData) {
-          const courses: Course[] = JSON.parse(localData);
-          console.log(`[AsyncStorage] Loaded ${courses.length} courses from local storage (native)`);
-          return courses;
-        }
-      }
-    } catch (error) {
-      console.warn("[AsyncStorage] Error reading courses:", error);
-    }
-  }
-
-  return [];
-}
-
-/**
- * Get a single course by ID from Firestore
- * 
- * CANONICAL PATH: societies/{societyId}/courses/{courseId}
- * 
- * - Always queries from societies/{societyId}/courses subcollection
- * - Does NOT query the global "courses" collection
- */
-export async function getCourse(courseId: string): Promise<Course | null> {
-  if (!courseId) {
-    console.error("[Courses] getCourse: courseId is required");
-    return null;
-  }
-
-  const societyId = getActiveSocietyId();
-  const coursePath = `societies/${societyId}/courses/${courseId}`;
-  
-  if (!societyId) {
-    console.warn("[Courses] No society ID available");
-    return null;
-  }
-  
-  console.log(`[Courses] Loading course from: ${coursePath}`);
-
-  try {
-    if (isFirebaseConfigured()) {
-      const courseRef = doc(db, "societies", societyId, "courses", courseId);
-      const courseSnap = await getDoc(courseRef);
-
-      if (courseSnap.exists()) {
-        const data = courseSnap.data();
-        const teeSets = await loadTeeSetsForCourse(courseId, societyId);
-
-        const course: Course = {
-          id: courseSnap.id,
+        courses.push({
+          id: courseDoc.id,
           name: data.name || "Unknown Course",
           address: data.address,
           postcode: data.postcode,
@@ -737,18 +679,133 @@ export async function getCourse(courseId: string): Promise<Course | null> {
           googlePlaceId: data.googlePlaceId,
           mapsUrl: data.mapsUrl,
           teeSets,
-        };
-        console.log(`[Courses] Loaded course: ${courseId} with ${teeSets.length} tee sets`);
-        return course;
+        });
       }
       
-      console.log(`[Courses] Course not found at ${coursePath}`);
+      console.log(`[Courses] Loaded ${courses.length} courses from ${coursesPath}`, {
+        totalDocsFound,
+        skippedInactive,
+        activeCourses: courses.length,
+      });
+      return courses;
     }
+    
+    // ==========================================================================
+    // DETAILED LOGGING: 0 courses returned
+    // ==========================================================================
+    console.warn("[Courses] Query returned 0 courses", {
+      societyId,
+      collectionPath: coursesPath,
+      appliedFilters,
+      totalDocsFound: 0,
+      hint: "Add courses via Venue Info screen or Firebase Console",
+    });
+    
+    return [];
   } catch (error) {
-    console.error("[Courses] Error reading course:", error, { path: coursePath });
+    console.error("[Courses] Error reading courses:", error, {
+      societyId,
+      path: coursesPath,
+      appliedFilters,
+    });
+    return [];
+  }
+  
+  // NO FALLBACK - Firestore is the single source of truth
+}
+
+/**
+ * Get a single course by ID from Firestore
+ * 
+ * CANONICAL PATH: societies/{societyId}/courses/{courseId}
+ * 
+ * FIRESTORE IS THE SINGLE SOURCE OF TRUTH - NO FALLBACK
+ * 
+ * - Always queries from societies/{societyId}/courses subcollection
+ * - Does NOT query the global "courses" collection
+ */
+export async function getCourse(courseId: string): Promise<Course | null> {
+  // ==========================================================================
+  // RUNTIME GUARD: Block query if courseId is missing
+  // ==========================================================================
+  if (!courseId) {
+    console.error("[Courses] BLOCKED: getCourse called without courseId", {
+      courseId,
+      hint: "Ensure courseId is provided",
+    });
+    return null;
   }
 
-  return null;
+  const societyId = getActiveSocietyId();
+  
+  // ==========================================================================
+  // RUNTIME GUARD: Block query if societyId is undefined
+  // ==========================================================================
+  if (!societyId) {
+    console.error("[Courses] BLOCKED: Cannot load course - societyId is undefined", {
+      courseId,
+      societyId,
+      hint: "Ensure a society is selected before loading courses",
+    });
+    return null;
+  }
+  
+  const coursePath = `societies/${societyId}/courses/${courseId}`;
+  
+  // ==========================================================================
+  // RUNTIME GUARD: Block query if Firebase not configured
+  // ==========================================================================
+  if (!isFirebaseConfigured()) {
+    console.error("[Courses] BLOCKED: Firebase not configured", {
+      courseId,
+      societyId,
+      path: coursePath,
+    });
+    return null;
+  }
+  
+  console.log(`[Courses] Loading course from: ${coursePath}`);
+
+  try {
+    const courseRef = doc(db, "societies", societyId, "courses", courseId);
+    const courseSnap = await getDoc(courseRef);
+
+    if (courseSnap.exists()) {
+      const data = courseSnap.data();
+      const teeSets = await loadTeeSetsForCourse(courseId, societyId);
+
+      const course: Course = {
+        id: courseSnap.id,
+        name: data.name || "Unknown Course",
+        address: data.address,
+        postcode: data.postcode,
+        notes: data.notes,
+        googlePlaceId: data.googlePlaceId,
+        mapsUrl: data.mapsUrl,
+        teeSets,
+      };
+      console.log(`[Courses] Loaded course: ${courseId} with ${teeSets.length} tee sets`);
+      return course;
+    }
+    
+    // Course not found
+    console.warn("[Courses] Course not found", {
+      courseId,
+      societyId,
+      path: coursePath,
+      hint: "Verify course exists in Firestore",
+    });
+    return null;
+  } catch (error) {
+    console.error("[Courses] Error reading course:", error, {
+      courseId,
+      societyId,
+      path: coursePath,
+    });
+    return null;
+  }
+  
+  // NO FALLBACK - Firestore is the single source of truth
 }
 
 /**
