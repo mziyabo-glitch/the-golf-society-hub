@@ -79,11 +79,23 @@ export function getEventYear(eventDate: string): number | null {
 /**
  * Calculate event leaderboard from results
  * Returns sorted array of entries with positions
+ * 
+ * DEFENSIVE: Never throws, always returns empty array on invalid input
  */
 export function calculateEventLeaderboard(event: EventData): EventResultEntry[] {
-  if (!event?.results || Object.keys(event.results).length === 0) {
-    return [];
-  }
+  try {
+    // Defensive guards
+    if (!event) {
+      return [];
+    }
+    
+    if (!event.results || typeof event.results !== "object") {
+      return [];
+    }
+    
+    if (Object.keys(event.results).length === 0) {
+      return [];
+    }
 
   // Determine scoring type based on event format and available data
   const entries: Array<{ memberId: string; score: number; scoreType: "stableford" | "strokeplay" }> = [];
@@ -120,6 +132,13 @@ export function calculateEventLeaderboard(event: EventData): EventResultEntry[] 
     score: entry.score,
     scoreType: entry.scoreType,
   }));
+  } catch (error) {
+    // Never crash - return empty array on error
+    if (__DEV__) {
+      console.error("[OOM] calculateEventLeaderboard error:", error);
+    }
+    return [];
+  }
 }
 
 /**
@@ -139,17 +158,30 @@ export type ComputeOOMOptions = {
  * 2. Wins desc
  * 3. Played asc (fewer events = better efficiency)
  * 4. Name asc (alphabetical tiebreaker)
+ * 
+ * DEFENSIVE: Never throws, always returns empty array on invalid input
  */
 export function computeOrderOfMerit(options: ComputeOOMOptions): OOMEntry[] {
-  const { events, members, seasonYear, oomOnly = false } = options;
+  try {
+    const { events, members, seasonYear, oomOnly = false } = options;
 
-  // Defensive guards
-  if (!Array.isArray(events) || !Array.isArray(members)) {
-    return [];
-  }
+    // Defensive guards - ensure we have valid arrays
+    if (!events || !Array.isArray(events)) {
+      if (__DEV__) {
+        console.log("[OOM] computeOrderOfMerit: events is not an array");
+      }
+      return [];
+    }
+    
+    if (!members || !Array.isArray(members)) {
+      if (__DEV__) {
+        console.log("[OOM] computeOrderOfMerit: members is not an array");
+      }
+      return [];
+    }
 
-  // Filter to published events only
-  let filteredEvents = events.filter((e) => e?.resultsStatus === "published");
+    // Filter to published events only (with null check)
+    let filteredEvents = events.filter((e) => e && e.resultsStatus === "published");
 
   // Filter by season year if specified
   if (seasonYear !== undefined) {
@@ -229,10 +261,17 @@ export function computeOrderOfMerit(options: ComputeOOMOptions): OOMEntry[] {
     if (a.played !== b.played) {
       return a.played - b.played; // Fewer events = better efficiency
     }
-    return a.memberName.localeCompare(b.memberName);
+    return (a.memberName || "").localeCompare(b.memberName || "");
   });
 
   return entries;
+  } catch (error) {
+    // Never crash - return empty array on error
+    if (__DEV__) {
+      console.error("[OOM] computeOrderOfMerit error:", error);
+    }
+    return [];
+  }
 }
 
 /**

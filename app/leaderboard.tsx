@@ -1,9 +1,15 @@
 /**
- * Order of Merit / Season Leaderboard Screen
+ * Season Leaderboard / Order of Merit Screen
  * 
  * Shows rankings based on published event results.
  * Uses F1-style points: 1st=25, 2nd=18, 3rd=15, etc.
  * Only shows members with points > 0.
+ * 
+ * DEFENSIVE GUARDS:
+ * - No society → empty state
+ * - No events → empty state
+ * - No results → empty leaderboard
+ * - Never crashes with missing data
  */
 
 import { useFocusEffect } from "@react-navigation/native";
@@ -23,8 +29,12 @@ import { SocietyHeader } from "@/components/ui/SocietyHeader";
 import { getColors, spacing } from "@/lib/ui/theme";
 import { computeOrderOfMerit, generateOOMHtml, OOM_POINTS_MAP, type OOMEntry } from "@/lib/oom";
 import type { EventData, MemberData } from "@/lib/models";
-// Firestore read helpers (with AsyncStorage fallback)
-import { getSociety, getMembers, getEvents } from "@/lib/firestore/society";
+// Firestore read helpers
+import { getSociety, getMembers } from "@/lib/firestore/society";
+import { listEvents } from "@/lib/firestore/events";
+import { getActiveSocietyId, isFirebaseConfigured } from "@/lib/firebase";
+import { NoSocietyGuard } from "@/components/NoSocietyGuard";
+import { FirebaseConfigGuard } from "@/components/FirebaseConfigGuard";
 
 type SocietyData = {
   name: string;
@@ -36,9 +46,11 @@ export default function LeaderboardScreen() {
   const [events, setEvents] = useState<EventData[]>([]);
   const [leaderboard, setLeaderboard] = useState<OOMEntry[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [seasonYear, setSeasonYear] = useState<number>(new Date().getFullYear());
   const [showOOMOnly, setShowOOMOnly] = useState(false);
   const [society, setSociety] = useState<SocietyData | null>(null);
+  const [societyId, setSocietyId] = useState<string | null>(null);
   const [isExporting, setIsExporting] = useState(false);
 
   useFocusEffect(
@@ -48,22 +60,59 @@ export default function LeaderboardScreen() {
   );
 
   const loadData = async () => {
+    setLoading(true);
+    setError(null);
+    
     try {
-      // Load society using Firestore helper (with AsyncStorage fallback)
+      // Check society ID first
+      const activeSocietyId = getActiveSocietyId();
+      setSocietyId(activeSocietyId);
+      
+      if (!activeSocietyId) {
+        if (__DEV__) {
+          console.log("[Leaderboard] No active society ID");
+        }
+        setLoading(false);
+        return;
+      }
+
+      // Load society
       const societyData = await getSociety();
       if (societyData) {
         setSociety({ name: societyData.name, logoUrl: societyData.logoUrl });
+      } else {
+        setSociety(null);
       }
 
-      // Load members using Firestore helper (with AsyncStorage fallback)
+      // Load members using Firestore helper
       const loadedMembers = await getMembers();
-      setMembers(Array.isArray(loadedMembers) ? loadedMembers : []);
+      const safeMembers = Array.isArray(loadedMembers) ? loadedMembers : [];
+      setMembers(safeMembers);
 
-      // Load events using Firestore helper (with AsyncStorage fallback)
-      const loadedEvents = await getEvents();
-      setEvents(Array.isArray(loadedEvents) ? loadedEvents : []);
-    } catch (error) {
-      console.error("Error loading data:", error);
+      // Load events using Firestore helper
+      const loadedEvents = await listEvents(activeSocietyId);
+      const safeEvents = Array.isArray(loadedEvents) ? loadedEvents : [];
+      setEvents(safeEvents);
+
+      // Dev logging
+      if (__DEV__) {
+        const publishedEvents = safeEvents.filter(e => e?.resultsStatus === "published");
+        const eventsWithResults = safeEvents.filter(e => e?.results && Object.keys(e.results).length > 0);
+        console.log("[Leaderboard] Data loaded:", {
+          societyId: activeSocietyId,
+          season: seasonYear,
+          totalEvents: safeEvents.length,
+          publishedEvents: publishedEvents.length,
+          eventsWithResults: eventsWithResults.length,
+          totalMembers: safeMembers.length,
+        });
+      }
+    } catch (err) {
+      console.error("[Leaderboard] Error loading data:", err);
+      setError(err instanceof Error ? err.message : "Failed to load leaderboard data");
+      // Still set empty arrays to prevent crashes
+      setMembers([]);
+      setEvents([]);
     } finally {
       setLoading(false);
     }
@@ -71,22 +120,57 @@ export default function LeaderboardScreen() {
 
   // Compute leaderboard using centralized OOM function
   const calculateLeaderboard = useCallback((): OOMEntry[] => {
-    return computeOrderOfMerit({
-      events,
-      members,
-      seasonYear,
-      oomOnly: showOOMOnly,
-    });
-  }, [events, members, seasonYear, showOOMOnly]);
+    // Defensive guards
+    if (!Array.isArray(events) || !Array.isArray(members)) {
+      if (__DEV__) {
+        console.log("[Leaderboard] calculateLeaderboard: No data available");
+      }
+      return [];
+    }
+    
+    try {
+      const result = computeOrderOfMerit({
+        events,
+        members,
+        seasonYear,
+        oomOnly: showOOMOnly,
+      });
+      
+      if (__DEV__) {
+        // Count results aggregated
+        const publishedEvents = events.filter(e => e?.resultsStatus === "published");
+        const resultsCount = publishedEvents.reduce((acc, e) => {
+          if (e?.results) {
+            return acc + Object.keys(e.results).length;
+          }
+          return acc;
+        }, 0);
+        
+        console.log("[Leaderboard] OOM computed:", {
+          societyId,
+          season: seasonYear,
+          oomOnly: showOOMOnly,
+          eventsConsidered: publishedEvents.length,
+          resultsAggregated: resultsCount,
+          entriesWithPoints: result.length,
+        });
+      }
+      
+      return result;
+    } catch (err) {
+      console.error("[Leaderboard] Error computing OOM:", err);
+      return [];
+    }
+  }, [events, members, seasonYear, showOOMOnly, societyId]);
 
   // Update leaderboard when data changes
   useFocusEffect(
     useCallback(() => {
-      if (!loading) {
+      if (!loading && !error) {
         const calculated = calculateLeaderboard();
         setLeaderboard(calculated);
       }
-    }, [loading, calculateLeaderboard])
+    }, [loading, error, calculateLeaderboard])
   );
 
   const handleShareOrderOfMerit = async () => {
@@ -167,18 +251,52 @@ export default function LeaderboardScreen() {
 
   const colors = getColors();
   const hasPoints = leaderboard.length > 0;
+  const hasEvents = events.length > 0;
+  const hasPublishedEvents = events.some(e => e?.resultsStatus === "published");
 
+  // Loading state
   if (loading) {
     return (
       <Screen scrollable={false}>
         <View style={styles.centerContent}>
           <ActivityIndicator size="large" color={colors.primary} />
+          <AppText style={{ marginTop: 12 }}>Loading leaderboard...</AppText>
         </View>
       </Screen>
     );
   }
 
+  // No society selected
+  if (!societyId) {
+    return <NoSocietyGuard message="Please select or create a society to view the Season Leaderboard." />;
+  }
+
+  // Error state
+  if (error) {
+    return (
+      <FirebaseConfigGuard>
+        <Screen scrollable={false}>
+          <View style={styles.centerContent}>
+            <AppText style={{ fontSize: 18, fontWeight: "600", marginBottom: 12, color: colors.error }}>
+              Error Loading Leaderboard
+            </AppText>
+            <AppText style={{ color: "#6b7280", textAlign: "center", marginBottom: 20 }}>
+              {error}
+            </AppText>
+            <SecondaryButton onPress={loadData}>
+              Retry
+            </SecondaryButton>
+            <SecondaryButton onPress={() => router.back()} style={{ marginTop: spacing.sm }}>
+              Back
+            </SecondaryButton>
+          </View>
+        </Screen>
+      </FirebaseConfigGuard>
+    );
+  }
+
   return (
+    <FirebaseConfigGuard>
     <Screen>
       {society && (
         <SocietyHeader
@@ -278,13 +396,23 @@ export default function LeaderboardScreen() {
       </AppCard>
 
       {/* Leaderboard Table - Always visible in-app */}
-      {!hasPoints ? (
+      {!hasEvents ? (
         <EmptyState
-          title="No results yet"
+          title="No Events Yet"
+          message={`No events have been created for ${seasonYear}. Create an event to get started.`}
+        />
+      ) : !hasPublishedEvents ? (
+        <EmptyState
+          title="No Published Results"
+          message={`No event results have been published for ${seasonYear}. Complete an event and publish the results to see the Season Leaderboard.`}
+        />
+      ) : !hasPoints ? (
+        <EmptyState
+          title="No Points Awarded Yet"
           message={
             showOOMOnly
-              ? `No Order of Merit events published for ${seasonYear}. Publish event results to see the leaderboard.`
-              : `No events published for ${seasonYear}. Publish event results to see the leaderboard.`
+              ? `No Order of Merit events have awarded points for ${seasonYear}. Publish event results with final positions to see the leaderboard.`
+              : `No events have awarded points for ${seasonYear}. Publish event results with final positions to see the leaderboard.`
           }
         />
       ) : (
@@ -365,6 +493,7 @@ export default function LeaderboardScreen() {
         Back to Dashboard
       </SecondaryButton>
     </Screen>
+    </FirebaseConfigGuard>
   );
 }
 
