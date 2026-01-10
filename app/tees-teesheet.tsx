@@ -28,8 +28,8 @@ import {
   getMembers, 
   getEvents, 
   getEvent,
-  getCourses,
-  getCourse,
+  getCourseFromGlobal,
+  loadTeeSetsFromGlobal,
   saveAndVerifyTeeSheet,
   findTeeSetById,
   findTeeSetsForEvent,
@@ -61,7 +61,7 @@ export default function TeesTeeSheetScreen() {
   const [activeTab, setActiveTab] = useState<TabType>("tees");
   
   // Data from Firestore
-  const [courses, setCourses] = useState<Course[]>([]);
+  // NOTE: courses are NOT loaded upfront - they are loaded per-event from event.courseId
   const [events, setEvents] = useState<EventData[]>([]);
   const [members, setMembers] = useState<MemberData[]>([]);
   const [society, setSociety] = useState<{ name: string; logoUrl?: string } | null>(null);
@@ -145,6 +145,9 @@ export default function TeesTeeSheetScreen() {
   /**
    * Load ALL data from Firestore
    * NO AsyncStorage is used
+   * 
+   * NOTE: Courses are NOT loaded here. They are loaded per-event from the global
+   * courses collection using event.courseId when an event is selected.
    */
   const loadData = async () => {
     setLoading(true);
@@ -164,10 +167,6 @@ export default function TeesTeeSheetScreen() {
         setSociety({ name: loadedSociety.name, logoUrl: loadedSociety.logoUrl || undefined });
       }
 
-      // Load courses from Firestore
-      const loadedCourses = await getCourses();
-      setCourses(loadedCourses);
-
       // Load events from Firestore
       const loadedEvents = await getEvents();
       setEvents(loadedEvents);
@@ -177,22 +176,15 @@ export default function TeesTeeSheetScreen() {
       setMembers(loadedMembers);
 
       // Dev logging - summary of all loaded data
+      // NOTE: Courses are loaded per-event, not upfront
       if (__DEV__) {
-        const coursesPath = `societies/${societyId}/courses`;
         console.log("[TeeSheet] Data loaded:", {
           societyId,
           societyName: loadedSociety?.name || "(none)",
-          coursesPath,
-          courseCount: loadedCourses.length,
           eventCount: loadedEvents.length,
           memberCount: loadedMembers.length,
+          note: "Courses loaded per-event from global courses/{courseId}",
         });
-        
-        if (loadedCourses.length > 0) {
-          console.log("[TeeSheet] Courses:", loadedCourses.map(c => `${c.name} (${c.teeSets.length} tee sets)`).join(", "));
-        } else {
-          console.log(`[TeeSheet] No courses found at ${coursesPath}. Add courses via Venue Info screen.`);
-        }
       }
 
       // Data is now ready
@@ -261,34 +253,45 @@ export default function TeesTeeSheetScreen() {
       setHandicapAllowancePct(100);
     }
 
-    // Load course and tee sets from Firestore
+    // Load course from GLOBAL courses collection using event.courseId
     if (event.courseId) {
-      console.log("[Loading Course]", event.courseId);
-      const course = await getCourse(event.courseId);
+      console.log("[TeeSheet] Loading course from global: courses/" + event.courseId);
+      const course = await getCourseFromGlobal(event.courseId);
       
       if (course) {
         setSelectedCourse(course);
-        console.log("[Course Loaded]", course.name, "with", course.teeSets.length, "tee sets");
+        console.log("[TeeSheet] Course loaded:", course.name, "with", course.teeSets.length, "tee sets");
 
         // Find tee sets using case-insensitive matching
         const { maleTeeSet, femaleTeeSet } = findTeeSetsForEvent(course, event);
         
         setSelectedMaleTeeSet(maleTeeSet);
         if (maleTeeSet) {
-          console.log("[Male Tee Set]", `${maleTeeSet.teeColor} (SR: ${maleTeeSet.slopeRating}, CR: ${maleTeeSet.courseRating})`);
+          console.log("[TeeSheet] Male tee set:", `${maleTeeSet.teeColor} (SR: ${maleTeeSet.slopeRating}, CR: ${maleTeeSet.courseRating})`);
         } else if (event.maleTeeSetId) {
-          console.warn("[Male Tee Set] NOT FOUND:", event.maleTeeSetId);
+          console.warn("[TeeSheet] Male tee set NOT FOUND:", event.maleTeeSetId);
         }
 
         setSelectedFemaleTeeSet(femaleTeeSet);
         if (femaleTeeSet) {
-          console.log("[Female Tee Set]", `${femaleTeeSet.teeColor} (SR: ${femaleTeeSet.slopeRating}, CR: ${femaleTeeSet.courseRating})`);
+          console.log("[TeeSheet] Female tee set:", `${femaleTeeSet.teeColor} (SR: ${femaleTeeSet.slopeRating}, CR: ${femaleTeeSet.courseRating})`);
         } else if (event.femaleTeeSetId) {
-          console.warn("[Female Tee Set] NOT FOUND:", event.femaleTeeSetId);
+          console.warn("[TeeSheet] Female tee set NOT FOUND:", event.femaleTeeSetId);
         }
       } else {
-        console.warn("[Course Not Found]", event.courseId);
+        console.error("[TeeSheet] Course NOT FOUND in global collection:", {
+          courseId: event.courseId,
+          path: `courses/${event.courseId}`,
+          hint: "Verify course exists in Firestore or update event settings",
+        });
+        setLoadError(`Course not found: ${event.courseId}. Please update event settings.`);
       }
+    } else {
+      console.warn("[TeeSheet] Event has no courseId - cannot load tee sheet", {
+        eventId: event.id,
+        eventName: event.name,
+        hint: "Configure course in Event Settings",
+      });
     }
 
     // Load notes and competitions
@@ -630,7 +633,7 @@ export default function TeesTeeSheetScreen() {
       let femaleTeeSet: TeeSet | null = null;
 
       if (firestoreEvent.courseId) {
-        course = await getCourse(firestoreEvent.courseId);
+        course = await getCourseFromGlobal(firestoreEvent.courseId);
         if (course) {
           const teeSets = findTeeSetsForEvent(course, firestoreEvent);
           maleTeeSet = teeSets.maleTeeSet;
@@ -934,17 +937,8 @@ export default function TeesTeeSheetScreen() {
     setNewGuestSex("male");
   };
 
-  const handleSelectCourse = (course: Course) => {
-    setSelectedCourse(course);
-    const maleTee = course.teeSets.find((t) => t.appliesTo === "male");
-    const femaleTee = course.teeSets.find((t) => t.appliesTo === "female");
-    setSelectedMaleTeeSet(maleTee || null);
-    setSelectedFemaleTeeSet(femaleTee || null);
-    
-    console.log("[Course Selected]", course.name);
-    console.log("[Male Tee]", maleTee);
-    console.log("[Female Tee]", femaleTee);
-  };
+  // NOTE: handleSelectCourse removed - courses are now loaded from event.courseId
+  // and displayed as read-only. Course selection happens in Event Settings.
 
   // Get player display info with Playing Handicap
   const getPlayerDisplay = (playerId: string): { name: string; hi: string; ph: string } => {
@@ -1114,59 +1108,98 @@ export default function TeesTeeSheetScreen() {
 
           {selectedEvent && (
             <>
-              <Text style={[styles.sectionTitle, { marginTop: 16 }]}>Select Course</Text>
-              {courses.length === 0 ? (
+              {/* Course Display - Read-only, linked from event.courseId */}
+              <Text style={[styles.sectionTitle, { marginTop: 16 }]}>Course</Text>
+              
+              {/* GUARD: No courseId on event */}
+              {!selectedEvent.courseId ? (
                 <View style={{ padding: 12, backgroundColor: '#fef3c7', borderRadius: 8, marginVertical: 8 }}>
-                  <Text style={[styles.emptyText, { color: '#92400e', marginBottom: 4, fontWeight: '600' }]}>
-                    No courses found
+                  <Text style={{ color: '#92400e', fontWeight: '600', marginBottom: 4 }}>
+                    ⚠️ No Course Configured
                   </Text>
                   <Text style={{ fontSize: 13, color: '#92400e', lineHeight: 18 }}>
-                    {canManageTeeSheet 
-                      ? "Go to Venue Info to add a course and tee sets before creating a tee sheet."
-                      : "Ask your Captain or Secretary to add courses via Venue Info."}
+                    This event doesn't have a course assigned. Configure the course in Event Settings before creating a tee sheet.
                   </Text>
                   {canManageTeeSheet && (
                     <Pressable 
-                      onPress={() => router.push("/venue-info")}
+                      onPress={() => router.push(`/event/${selectedEvent.id}`)}
                       style={{ marginTop: 10, backgroundColor: '#0B6E4F', paddingVertical: 10, paddingHorizontal: 16, borderRadius: 8, alignSelf: 'flex-start' }}
                     >
-                      <Text style={{ color: 'white', fontWeight: '600', fontSize: 14 }}>Add Course</Text>
+                      <Text style={{ color: 'white', fontWeight: '600', fontSize: 14 }}>Go to Event Settings</Text>
+                    </Pressable>
+                  )}
+                </View>
+              ) : !selectedCourse ? (
+                /* GUARD: courseId exists but course doc not found */
+                <View style={{ padding: 12, backgroundColor: '#fee2e2', borderRadius: 8, marginVertical: 8 }}>
+                  <Text style={{ color: '#991b1b', fontWeight: '600', marginBottom: 4 }}>
+                    ❌ Course Not Found
+                  </Text>
+                  <Text style={{ fontSize: 13, color: '#991b1b', lineHeight: 18 }}>
+                    Course ID "{selectedEvent.courseId}" was not found in Firestore. The course may have been deleted or the ID is incorrect.
+                  </Text>
+                  {canManageTeeSheet && (
+                    <Pressable 
+                      onPress={() => router.push(`/event/${selectedEvent.id}`)}
+                      style={{ marginTop: 10, backgroundColor: '#dc2626', paddingVertical: 10, paddingHorizontal: 16, borderRadius: 8, alignSelf: 'flex-start' }}
+                    >
+                      <Text style={{ color: 'white', fontWeight: '600', fontSize: 14 }}>Update Event Settings</Text>
                     </Pressable>
                   )}
                 </View>
               ) : (
-                <ScrollView style={styles.selectContainer} horizontal={false}>
-                  {courses.map((course) => (
-                    <Pressable
-                      key={course.id}
-                      onPress={() => handleSelectCourse(course)}
-                      style={[
-                        styles.selectButton,
-                        selectedCourse?.id === course.id && styles.selectButtonActive,
-                      ]}
-                    >
-                      <Text style={[
-                        styles.selectButtonText,
-                        selectedCourse?.id === course.id && styles.selectButtonTextActive,
-                      ]}>
-                        {course.name}
-                      </Text>
-                    </Pressable>
-                  ))}
-                </ScrollView>
+                /* Course loaded successfully - display as read-only */
+                <View style={{ padding: 12, backgroundColor: '#f0fdf4', borderRadius: 8, marginVertical: 8, borderWidth: 1, borderColor: '#0B6E4F' }}>
+                  <Text style={{ fontSize: 16, fontWeight: '600', color: '#0B6E4F' }}>
+                    {selectedCourse.name}
+                  </Text>
+                  {selectedCourse.address && (
+                    <Text style={{ fontSize: 13, color: '#6b7280', marginTop: 2 }}>
+                      {selectedCourse.address}
+                    </Text>
+                  )}
+                  <Text style={{ fontSize: 12, color: '#9ca3af', marginTop: 4 }}>
+                    {selectedCourse.teeSets.length} tee set{selectedCourse.teeSets.length !== 1 ? 's' : ''} configured
+                  </Text>
+                </View>
               )}
 
               {selectedCourse && (
                 <>
                   <Text style={[styles.sectionTitle, { marginTop: 16 }]}>Tee Sets</Text>
-                  <View style={styles.teeSetInfo}>
-                    <Text style={styles.teeSetLabel}>
-                      Male: {selectedMaleTeeSet ? `${selectedMaleTeeSet.teeColor} (SR: ${selectedMaleTeeSet.slopeRating}, CR: ${selectedMaleTeeSet.courseRating})` : "None"}
-                    </Text>
-                    <Text style={styles.teeSetLabel}>
-                      Female: {selectedFemaleTeeSet ? `${selectedFemaleTeeSet.teeColor} (SR: ${selectedFemaleTeeSet.slopeRating}, CR: ${selectedFemaleTeeSet.courseRating})` : "None"}
-                    </Text>
-                  </View>
+                  
+                  {/* GUARD: No tee sets configured */}
+                  {(!selectedMaleTeeSet && !selectedFemaleTeeSet) ? (
+                    <View style={{ padding: 12, backgroundColor: '#fef3c7', borderRadius: 8, marginVertical: 8 }}>
+                      <Text style={{ color: '#92400e', fontWeight: '600', marginBottom: 4 }}>
+                        ⚠️ No Tee Sets Configured
+                      </Text>
+                      <Text style={{ fontSize: 13, color: '#92400e', lineHeight: 18 }}>
+                        This event doesn't have tee sets assigned. Configure tee sets in Event Settings.
+                      </Text>
+                      {canManageTeeSheet && (
+                        <Pressable 
+                          onPress={() => router.push(`/event/${selectedEvent?.id}`)}
+                          style={{ marginTop: 10, backgroundColor: '#0B6E4F', paddingVertical: 10, paddingHorizontal: 16, borderRadius: 8, alignSelf: 'flex-start' }}
+                        >
+                          <Text style={{ color: 'white', fontWeight: '600', fontSize: 14 }}>Configure Tee Sets</Text>
+                        </Pressable>
+                      )}
+                    </View>
+                  ) : (
+                    <View style={styles.teeSetInfo}>
+                      <Text style={styles.teeSetLabel}>
+                        Male: {selectedMaleTeeSet 
+                          ? `${selectedMaleTeeSet.teeColor} (SR: ${selectedMaleTeeSet.slopeRating}, CR: ${selectedMaleTeeSet.courseRating})` 
+                          : <Text style={{ color: '#dc2626' }}>Not configured</Text>}
+                      </Text>
+                      <Text style={styles.teeSetLabel}>
+                        Female: {selectedFemaleTeeSet 
+                          ? `${selectedFemaleTeeSet.teeColor} (SR: ${selectedFemaleTeeSet.slopeRating}, CR: ${selectedFemaleTeeSet.courseRating})` 
+                          : <Text style={{ color: '#dc2626' }}>Not configured</Text>}
+                      </Text>
+                    </View>
+                  )}
 
                   <Text style={[styles.sectionTitle, { marginTop: 16 }]}>Handicap Allowance</Text>
                   <View style={styles.allowanceRow}>

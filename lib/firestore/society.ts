@@ -599,6 +599,118 @@ async function loadTeeSetsForCourse(courseId: string, societyId: string): Promis
   return teeSets;
 }
 
+// ============================================================================
+// GLOBAL COURSE LOADING (for Tee Sheet - uses event.courseId)
+// ============================================================================
+
+/**
+ * Load a course by ID from the GLOBAL courses collection
+ * 
+ * CANONICAL PATH: courses/{courseId}
+ * 
+ * Use this when loading a course referenced by event.courseId.
+ * This does NOT query society subcollections.
+ * 
+ * Also loads tee sets from global teesets collection filtered by courseId.
+ */
+export async function getCourseFromGlobal(courseId: string): Promise<Course | null> {
+  // ==========================================================================
+  // RUNTIME GUARD: Block if courseId is missing
+  // ==========================================================================
+  if (!courseId) {
+    console.error("[Courses] BLOCKED: getCourseFromGlobal called without courseId");
+    return null;
+  }
+  
+  const coursePath = `courses/${courseId}`;
+  console.log(`[Courses] Loading course from global: ${coursePath}`);
+  
+  if (!isFirebaseConfigured()) {
+    console.error("[Courses] BLOCKED: Firebase not configured");
+    return null;
+  }
+  
+  try {
+    const courseRef = doc(db, "courses", courseId);
+    const courseSnap = await getDoc(courseRef);
+    
+    if (courseSnap.exists()) {
+      const data = courseSnap.data();
+      
+      // Load tee sets from global teesets collection
+      const teeSets = await loadTeeSetsFromGlobal(courseId);
+      
+      const course: Course = {
+        id: courseSnap.id,
+        name: data.name || "Unknown Course",
+        address: data.address,
+        postcode: data.postcode,
+        notes: data.notes,
+        googlePlaceId: data.googlePlaceId,
+        mapsUrl: data.mapsUrl,
+        teeSets,
+      };
+      
+      console.log(`[Courses] Loaded from global: ${course.name} with ${teeSets.length} tee sets`);
+      return course;
+    }
+    
+    console.warn("[Courses] Course not found in global collection", {
+      courseId,
+      path: coursePath,
+    });
+    return null;
+  } catch (error) {
+    console.error("[Courses] Error loading from global:", error, { courseId, path: coursePath });
+    return null;
+  }
+}
+
+/**
+ * Load tee sets from the GLOBAL teesets collection filtered by courseId
+ * 
+ * CANONICAL PATH: teesets where courseId == {courseId}
+ */
+export async function loadTeeSetsFromGlobal(courseId: string): Promise<TeeSet[]> {
+  if (!courseId) {
+    console.error("[TeeSets] BLOCKED: loadTeeSetsFromGlobal called without courseId");
+    return [];
+  }
+  
+  const teeSets: TeeSet[] = [];
+  
+  try {
+    console.log(`[TeeSets] Loading from global teesets where courseId == ${courseId}`);
+    
+    const teeSetsRef = collection(db, "teesets");
+    const teeSetsQuery = query(teeSetsRef, where("courseId", "==", courseId));
+    const teeSetsSnap = await getDocs(teeSetsQuery);
+    
+    if (!teeSetsSnap.empty) {
+      teeSetsSnap.docs.forEach((docSnap) => {
+        const data = docSnap.data();
+        teeSets.push({
+          id: docSnap.id,
+          courseId,
+          teeColor: data.teeColor || data.name || "Unknown",
+          par: data.par || 72,
+          courseRating: data.courseRating || 72.0,
+          slopeRating: data.slopeRating || 113,
+          appliesTo: data.appliesTo || data.gender || "male",
+        });
+      });
+      console.log(`[TeeSets] Loaded ${teeSets.length} tee sets from global collection`);
+    } else {
+      console.warn("[TeeSets] No tee sets found for course", { courseId });
+    }
+    
+    return teeSets;
+  } catch (error) {
+    console.error("[TeeSets] Error loading from global:", error, { courseId });
+    return [];
+  }
+}
+
 /**
  * Get all courses from Firestore
  * 
