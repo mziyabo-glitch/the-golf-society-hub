@@ -178,9 +178,11 @@ export default function TeesTeeSheetScreen() {
 
       // Dev logging - summary of all loaded data
       if (__DEV__) {
+        const coursesPath = `societies/${societyId}/courses`;
         console.log("[TeeSheet] Data loaded:", {
           societyId,
           societyName: loadedSociety?.name || "(none)",
+          coursesPath,
           courseCount: loadedCourses.length,
           eventCount: loadedEvents.length,
           memberCount: loadedMembers.length,
@@ -189,7 +191,7 @@ export default function TeesTeeSheetScreen() {
         if (loadedCourses.length > 0) {
           console.log("[TeeSheet] Courses:", loadedCourses.map(c => `${c.name} (${c.teeSets.length} tee sets)`).join(", "));
         } else {
-          console.log("[TeeSheet] No courses found. Check Firestore paths: courses/ or societies/{societyId}/courses/");
+          console.log(`[TeeSheet] No courses found at ${coursesPath}. Add courses via Venue Info screen.`);
         }
       }
 
@@ -1115,14 +1117,22 @@ export default function TeesTeeSheetScreen() {
               <Text style={[styles.sectionTitle, { marginTop: 16 }]}>Select Course</Text>
               {courses.length === 0 ? (
                 <View style={{ padding: 12, backgroundColor: '#fef3c7', borderRadius: 8, marginVertical: 8 }}>
-                  <Text style={[styles.emptyText, { color: '#92400e', marginBottom: 4 }]}>
-                    No courses found for this society.
+                  <Text style={[styles.emptyText, { color: '#92400e', marginBottom: 4, fontWeight: '600' }]}>
+                    No courses found
                   </Text>
-                  <Text style={{ fontSize: 13, color: '#92400e' }}>
+                  <Text style={{ fontSize: 13, color: '#92400e', lineHeight: 18 }}>
                     {canManageTeeSheet 
-                      ? "Add a course via the Firebase console or contact your admin."
-                      : "Ask your Captain or Secretary to add courses."}
+                      ? "Go to Venue Info to add a course and tee sets before creating a tee sheet."
+                      : "Ask your Captain or Secretary to add courses via Venue Info."}
                   </Text>
+                  {canManageTeeSheet && (
+                    <Pressable 
+                      onPress={() => router.push("/venue-info")}
+                      style={{ marginTop: 10, backgroundColor: '#0B6E4F', paddingVertical: 10, paddingHorizontal: 16, borderRadius: 8, alignSelf: 'flex-start' }}
+                    >
+                      <Text style={{ color: 'white', fontWeight: '600', fontSize: 14 }}>Add Course</Text>
+                    </Pressable>
+                  )}
                 </View>
               ) : (
                 <ScrollView style={styles.selectContainer} horizontal={false}>

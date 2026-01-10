@@ -601,96 +601,51 @@ async function loadTeeSetsForCourse(courseId: string, societyId: string): Promis
 
 /**
  * Get all courses from Firestore
- * Tries multiple locations:
- * 1. Global courses collection filtered by societyId
- * 2. Subcollection at societies/{societyId}/courses (legacy)
+ * 
+ * CANONICAL PATH: societies/{societyId}/courses
+ * 
+ * - Always queries from societies/{societyId}/courses subcollection
+ * - Does NOT query the global "courses" collection
+ * - Does NOT require a societyId field inside the course doc
+ * - No status filter (all courses are returned)
+ * - Skip only if status === "inactive" explicitly
  * 
  * On web: Firestore only (no fallback)
  * On native: Firestore with AsyncStorage fallback
  */
 export async function getCourses(): Promise<Course[]> {
   const societyId = getActiveSocietyId();
+  const coursesPath = `societies/${societyId}/courses`;
+  
+  // Log the resolved Firestore path
+  console.log(`[Courses] Loading courses from: ${coursesPath}`);
+  
+  if (!societyId) {
+    console.warn("[Courses] No society ID available");
+    return [];
+  }
   
   try {
     if (isFirebaseConfigured()) {
       const courses: Course[] = [];
       
-      // First, try global courses collection filtered by societyId
-      try {
-        const globalCoursesRef = collection(db, "courses");
-        const globalQuery = query(
-          globalCoursesRef, 
-          where("societyId", "==", societyId),
-          where("status", "==", "active")
-        );
-        const globalSnap = await getDocs(globalQuery);
-        
-        if (!globalSnap.empty) {
-          for (const courseDoc of globalSnap.docs) {
-            const data = courseDoc.data();
-            const teeSets = await loadTeeSetsForCourse(courseDoc.id, societyId);
-            
-            courses.push({
-              id: courseDoc.id,
-              name: data.name || "Unknown Course",
-              address: data.address,
-              postcode: data.postcode,
-              notes: data.notes,
-              googlePlaceId: data.googlePlaceId,
-              mapsUrl: data.mapsUrl,
-              teeSets,
-            });
-          }
-          console.log(`[Firestore] Loaded ${courses.length} courses from global collection (societyId: ${societyId})`);
-          return courses;
-        }
-        
-        // Also try without status filter (in case status field doesn't exist)
-        const globalQueryNoStatus = query(
-          globalCoursesRef, 
-          where("societyId", "==", societyId)
-        );
-        const globalSnapNoStatus = await getDocs(globalQueryNoStatus);
-        
-        if (!globalSnapNoStatus.empty) {
-          for (const courseDoc of globalSnapNoStatus.docs) {
-            const data = courseDoc.data();
-            // Skip if explicitly inactive
-            if (data.status === "inactive") continue;
-            
-            const teeSets = await loadTeeSetsForCourse(courseDoc.id, societyId);
-            
-            courses.push({
-              id: courseDoc.id,
-              name: data.name || "Unknown Course",
-              address: data.address,
-              postcode: data.postcode,
-              notes: data.notes,
-              googlePlaceId: data.googlePlaceId,
-              mapsUrl: data.mapsUrl,
-              teeSets,
-            });
+      // Query courses from society subcollection only
+      const coursesRef = collection(db, "societies", societyId, "courses");
+      const coursesSnap = await getDocs(coursesRef);
+
+      if (!coursesSnap.empty) {
+        for (const courseDoc of coursesSnap.docs) {
+          const data = courseDoc.data();
+          
+          // Skip only if explicitly marked as inactive
+          if (data.status === "inactive") {
+            if (__DEV__) {
+              console.log(`[Courses] Skipping inactive course: ${data.name || courseDoc.id}`);
+            }
+            continue;
           }
           
-          if (courses.length > 0) {
-            console.log(`[Firestore] Loaded ${courses.length} courses from global collection (no status filter)`);
-            return courses;
-          }
-        }
-      } catch (globalError) {
-        // If global query fails (e.g., missing index), fall through to legacy
-        if (__DEV__) {
-          console.warn("[Firestore] Global courses query failed, trying legacy path:", globalError);
-        }
-      }
-      
-      // Fallback: try legacy subcollection at societies/{societyId}/courses
-      const legacyCoursesRef = collection(db, "societies", societyId, "courses");
-      const legacySnap = await getDocs(legacyCoursesRef);
-
-      if (!legacySnap.empty) {
-        for (const courseDoc of legacySnap.docs) {
-          const data = courseDoc.data();
+          // Load tee sets for this course
           const teeSets = await loadTeeSetsForCourse(courseDoc.id, societyId);
 
           courses.push({
@@ -704,19 +659,17 @@ export async function getCourses(): Promise<Course[]> {
             teeSets,
           });
         }
-        console.log(`[Firestore] Loaded ${courses.length} courses from legacy subcollection`);
+        
+        console.log(`[Courses] Loaded ${courses.length} courses from ${coursesPath}`);
         return courses;
       }
       
-      if (IS_WEB) {
-        console.log("[Firestore] No courses found in Firestore (web - no fallback)");
-        return [];
-      }
-      
-      console.log("[Firestore] No courses found, falling back to AsyncStorage");
+      // No courses found - this is not an error, just empty data
+      console.log(`[Courses] No courses found at ${coursesPath}`);
+      return [];
     }
   } catch (error) {
-    console.warn("[Firestore] Error reading courses:", error);
+    console.error("[Courses] Error reading courses:", error, { path: coursesPath });
     if (IS_WEB) {
       return []; // No fallback on web
     }
@@ -744,58 +697,39 @@ export async function getCourses(): Promise<Course[]> {
 
 /**
  * Get a single course by ID from Firestore
- * Tries multiple locations:
- * 1. Global courses collection by doc ID
- * 2. Legacy subcollection at societies/{societyId}/courses
+ * 
+ * CANONICAL PATH: societies/{societyId}/courses/{courseId}
+ * 
+ * - Always queries from societies/{societyId}/courses subcollection
+ * - Does NOT query the global "courses" collection
  */
 export async function getCourse(courseId: string): Promise<Course | null> {
   if (!courseId) {
-    console.error("[Firestore] getCourse: courseId is required");
+    console.error("[Courses] getCourse: courseId is required");
     return null;
   }
 
   const societyId = getActiveSocietyId();
+  const coursePath = `societies/${societyId}/courses/${courseId}`;
+  
+  if (!societyId) {
+    console.warn("[Courses] No society ID available");
+    return null;
+  }
+  
+  console.log(`[Courses] Loading course from: ${coursePath}`);
 
   try {
     if (isFirebaseConfigured()) {
-      // First, try global courses collection
-      try {
-        const globalCourseRef = doc(db, "courses", courseId);
-        const globalCourseSnap = await getDoc(globalCourseRef);
-        
-        if (globalCourseSnap.exists()) {
-          const data = globalCourseSnap.data();
-          const teeSets = await loadTeeSetsForCourse(courseId, societyId);
-          
-          const course: Course = {
-            id: globalCourseSnap.id,
-            name: data.name || "Unknown Course",
-            address: data.address,
-            postcode: data.postcode,
-            notes: data.notes,
-            googlePlaceId: data.googlePlaceId,
-            mapsUrl: data.mapsUrl,
-            teeSets,
-          };
-          console.log(`[Firestore] Loaded course from global: ${courseId} with ${teeSets.length} tee sets`);
-          return course;
-        }
-      } catch (globalError) {
-        if (__DEV__) {
-          console.warn(`[Firestore] Error reading global course ${courseId}:`, globalError);
-        }
-      }
-      
-      // Fallback: try legacy subcollection
-      const legacyCourseRef = doc(db, "societies", societyId, "courses", courseId);
-      const legacyCourseSnap = await getDoc(legacyCourseRef);
+      const courseRef = doc(db, "societies", societyId, "courses", courseId);
+      const courseSnap = await getDoc(courseRef);
 
-      if (legacyCourseSnap.exists()) {
-        const data = legacyCourseSnap.data();
+      if (courseSnap.exists()) {
+        const data = courseSnap.data();
         const teeSets = await loadTeeSetsForCourse(courseId, societyId);
 
         const course: Course = {
-          id: legacyCourseSnap.id,
+          id: courseSnap.id,
           name: data.name || "Unknown Course",
           address: data.address,
           postcode: data.postcode,
@@ -804,13 +738,14 @@ export async function getCourse(courseId: string): Promise<Course | null> {
           mapsUrl: data.mapsUrl,
           teeSets,
         };
-        console.log(`[Firestore] Loaded course from legacy: ${courseId} with ${teeSets.length} tee sets`);
+        console.log(`[Courses] Loaded course: ${courseId} with ${teeSets.length} tee sets`);
         return course;
       }
-      console.log(`[Firestore] Course not found: ${courseId}`);
+      
+      console.log(`[Courses] Course not found at ${coursePath}`);
     }
   } catch (error) {
-    console.error("[Firestore] Error reading course:", error);
+    console.error("[Courses] Error reading course:", error, { path: coursePath });
   }
 
   return null;
