@@ -151,36 +151,52 @@ export default function TeesTeeSheetScreen() {
     setDataReady(false);
     setLoadError(null);
 
+    const societyId = getActiveSocietyId();
+
     try {
-      console.log("[Firestore] Loading all data...");
+      if (__DEV__) {
+        console.log("[TeeSheet] Loading data for society:", societyId);
+      }
 
       // Load society
       const loadedSociety = await getSociety();
       if (loadedSociety) {
         setSociety({ name: loadedSociety.name, logoUrl: loadedSociety.logoUrl || undefined });
-        console.log("[Firestore] Society loaded:", loadedSociety.name);
       }
 
       // Load courses from Firestore
       const loadedCourses = await getCourses();
       setCourses(loadedCourses);
-      console.log("[Firestore] Courses loaded:", loadedCourses.length);
 
       // Load events from Firestore
       const loadedEvents = await getEvents();
       setEvents(loadedEvents);
-      console.log("[Firestore] Events loaded:", loadedEvents.length);
 
       // Load members from Firestore
       const loadedMembers = await getMembers();
       setMembers(loadedMembers);
-      console.log("[Firestore] Members loaded:", loadedMembers.length);
+
+      // Dev logging - summary of all loaded data
+      if (__DEV__) {
+        console.log("[TeeSheet] Data loaded:", {
+          societyId,
+          societyName: loadedSociety?.name || "(none)",
+          courseCount: loadedCourses.length,
+          eventCount: loadedEvents.length,
+          memberCount: loadedMembers.length,
+        });
+        
+        if (loadedCourses.length > 0) {
+          console.log("[TeeSheet] Courses:", loadedCourses.map(c => `${c.name} (${c.teeSets.length} tee sets)`).join(", "));
+        } else {
+          console.log("[TeeSheet] No courses found. Check Firestore paths: courses/ or societies/{societyId}/courses/");
+        }
+      }
 
       // Data is now ready
       setDataReady(true);
-      console.log("[Firestore] All data loaded successfully");
     } catch (error) {
-      console.error("[Firestore] Error loading data:", error);
+      console.error("[TeeSheet] Error loading data:", error);
       setLoadError("Failed to load data from Firestore. Please check your connection.");
     } finally {
       setLoading(false);
@@ -1098,7 +1114,16 @@ export default function TeesTeeSheetScreen() {
             <>
               <Text style={[styles.sectionTitle, { marginTop: 16 }]}>Select Course</Text>
               {courses.length === 0 ? (
-                <Text style={styles.emptyText}>No courses found in Firestore.</Text>
+                <View style={{ padding: 12, backgroundColor: '#fef3c7', borderRadius: 8, marginVertical: 8 }}>
+                  <Text style={[styles.emptyText, { color: '#92400e', marginBottom: 4 }]}>
+                    No courses found for this society.
+                  </Text>
+                  <Text style={{ fontSize: 13, color: '#92400e' }}>
+                    {canManageTeeSheet 
+                      ? "Add a course via the Firebase console or contact your admin."
+                      : "Ask your Captain or Secretary to add courses."}
+                  </Text>
+                </View>
               ) : (
                 <ScrollView style={styles.selectContainer} horizontal={false}>
                   {courses.map((course) => (
