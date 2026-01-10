@@ -69,10 +69,31 @@ const DEFAULT_SOCIETY_ID = "m4-golf-society";
 // AUTH STATE MANAGEMENT
 // ============================================================================
 
+/**
+ * Auth status types for graceful handling of auth failures
+ */
+export type AuthStatus = 
+  | "initializing"    // Auth state not yet determined
+  | "signedIn"        // User is signed in (anonymous or authenticated)
+  | "signedOut"       // User is not signed in but can sign in
+  | "needsLogin"      // Anonymous auth failed, needs manual login
+  | "configError";    // Firebase config is invalid
+
+export interface AuthState {
+  status: AuthStatus;
+  user: User | null;
+  error?: {
+    code: string;
+    message: string;
+  };
+}
+
 // Current authenticated user (cached in memory)
 let currentUser: User | null = null;
 let authStateInitialized = false;
 let authStatePromise: Promise<User | null> | null = null;
+let authStatus: AuthStatus = "initializing";
+let authError: { code: string; message: string } | undefined = undefined;
 
 /**
  * Get the current authenticated user
@@ -95,6 +116,24 @@ export function getCurrentUserUid(): string | null {
  */
 export function isUserSignedIn(): boolean {
   return currentUser !== null;
+}
+
+/**
+ * Get the current auth state including status and any error
+ */
+export function getAuthState(): AuthState {
+  return {
+    status: authStatus,
+    user: currentUser,
+    error: authError,
+  };
+}
+
+/**
+ * Check if auth requires manual login (anonymous auth failed)
+ */
+export function needsManualLogin(): boolean {
+  return authStatus === "needsLogin";
 }
 
 /**
@@ -123,27 +162,101 @@ export function waitForAuthState(): Promise<User | null> {
 }
 
 /**
- * Sign in anonymously if not already signed in
- * Used for initial app access before full auth is implemented
+ * Result of ensureSignedIn attempt
  */
-export async function ensureSignedIn(): Promise<User> {
+export interface SignInResult {
+  success: boolean;
+  user: User | null;
+  status: AuthStatus;
+  error?: {
+    code: string;
+    message: string;
+  };
+}
+
+/**
+ * Sign in anonymously if not already signed in.
+ * Does NOT throw on failure - returns a result object instead.
+ * Used for initial app access before full auth is implemented.
+ */
+export async function ensureSignedIn(): Promise<SignInResult> {
   await waitForAuthState();
   
   if (currentUser) {
-    return currentUser;
+    authStatus = "signedIn";
+    return { 
+      success: true, 
+      user: currentUser, 
+      status: "signedIn" 
+    };
+  }
+  
+  // Check Firebase config first
+  const configStatus = getFirebaseConfigStatus();
+  if (!configStatus.configured) {
+    authStatus = "configError";
+    authError = {
+      code: "config/missing",
+      message: `Missing Firebase config: ${configStatus.missingVars.join(", ")}`,
+    };
+    console.error("[Auth] Firebase config error:", {
+      missingVars: configStatus.missingVars,
+      usingDummyConfig: configStatus.usingDummyConfig,
+    });
+    return {
+      success: false,
+      user: null,
+      status: "configError",
+      error: authError,
+    };
   }
   
   // Sign in anonymously
   try {
     const result = await signInAnonymously(auth);
     currentUser = result.user;
+    authStatus = "signedIn";
+    authError = undefined;
+    
     if (__DEV__) {
       console.log("[Auth] Signed in anonymously:", result.user.uid);
     }
-    return result.user;
+    
+    return { 
+      success: true, 
+      user: result.user, 
+      status: "signedIn" 
+    };
   } catch (error) {
-    console.error("[Auth] Failed to sign in anonymously:", error);
-    throw error;
+    // Extract error details for logging and state
+    const firebaseError = error as { code?: string; message?: string };
+    const errorCode = firebaseError.code || "unknown";
+    const errorMessage = firebaseError.message || String(error);
+    
+    // Detailed logging for debugging
+    console.error("[Auth] Anonymous sign-in failed:", {
+      code: errorCode,
+      message: errorMessage,
+      projectId: firebaseConfig.projectId,
+      authDomain: firebaseConfig.authDomain,
+      hint: errorCode === "auth/admin-restricted-operation" 
+        ? "Anonymous auth may be disabled in Firebase Console. Enable it in Authentication > Sign-in method."
+        : undefined,
+    });
+    
+    // Set auth state to needsLogin (don't throw)
+    authStatus = "needsLogin";
+    authError = {
+      code: errorCode,
+      message: errorMessage,
+    };
+    
+    return {
+      success: false,
+      user: null,
+      status: "needsLogin",
+      error: authError,
+    };
   }
 }
 
