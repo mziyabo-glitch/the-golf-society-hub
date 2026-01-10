@@ -32,7 +32,7 @@ import {
   Unsubscribe,
 } from "firebase/firestore";
 import { db, getActiveSocietyId, isFirebaseConfigured, logFirestoreOp, getCurrentUserUid } from "../firebase";
-import { checkOperationReady, logDataSanity, handleFirestoreError } from "./errors";
+import { checkOperationReady, logDataSanity, handleFirestoreError, getFirestoreErrorCode } from "./errors";
 import type { MemberData } from "../models";
 
 // ============================================================================
@@ -220,7 +220,20 @@ export function subscribeMembers(
         callback(members);
       },
       (error) => {
-        console.error("[Members] Subscription error:", error, { societyId: effectiveSocietyId });
+        // Detailed error logging for debugging permission issues
+        const errorCode = getFirestoreErrorCode(error);
+        const authUid = getCurrentUserUid();
+        
+        console.error("[Members] Subscription error:", {
+          code: errorCode,
+          message: error.message,
+          societyId: effectiveSocietyId,
+          authUid,
+          hint: errorCode.includes("permission") 
+            ? `Member doc should exist at societies/${effectiveSocietyId}/members/${authUid} with status='active'`
+            : undefined,
+        });
+        
         if (onError) onError(error);
       }
     );

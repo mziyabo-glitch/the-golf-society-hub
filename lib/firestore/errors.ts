@@ -166,7 +166,9 @@ export function showFirestoreError(error: FirestoreError): void {
  */
 export function isPermissionDeniedError(error: FirestoreError | unknown): boolean {
   if (typeof error === "object" && error !== null && "code" in error) {
-    return (error as FirestoreError).code === "PERMISSION_DENIED";
+    const errObj = error as { code?: string };
+    if (errObj.code === "PERMISSION_DENIED") return true;
+    if (typeof errObj.code === "string" && errObj.code.includes("permission-denied")) return true;
   }
   
   if (error instanceof Error) {
@@ -178,6 +180,26 @@ export function isPermissionDeniedError(error: FirestoreError | unknown): boolea
 }
 
 /**
+ * Extract Firestore error code from error object
+ */
+export function getFirestoreErrorCode(error: unknown): string {
+  if (typeof error === "object" && error !== null) {
+    const errObj = error as { code?: string };
+    if (errObj.code) {
+      return errObj.code;
+    }
+  }
+  if (error instanceof Error && error.message) {
+    // Try to extract code from message like "FirebaseError: [code/subcode] message"
+    const match = error.message.match(/\[([^\]]+)\]/);
+    if (match) {
+      return match[1];
+    }
+  }
+  return "UNKNOWN";
+}
+
+/**
  * Get user-friendly message for permission denied errors
  */
 export function getPermissionDeniedMessage(operation: string): string {
@@ -185,22 +207,25 @@ export function getPermissionDeniedMessage(operation: string): string {
     case "listmembers":
     case "getmembers":
     case "subscribemembers":
-      return "You don't have access to view members in this society.";
+      return "You don't have access to view members in this society. Ask your Captain to add you.";
     case "upsertmember":
     case "savemember":
-      return "You don't have permission to add or edit members.";
+      return "You don't have permission to add or edit members. Only Captain, Secretary, or Admin can manage members.";
     case "deletemember":
-      return "You don't have permission to remove members.";
+      return "You don't have permission to remove members. Only Captain or Admin can remove members.";
     case "listevents":
     case "getevents":
-      return "You don't have access to view events in this society.";
+      return "You don't have access to view events in this society. Ask your Captain to add you.";
     case "createevent":
     case "updateevent":
-      return "You don't have permission to create or edit events.";
+      return "You don't have permission to create or edit events. Only Captain, Admin, or Handicapper can manage events.";
     case "getsociety":
-      return "You don't have access to this society.";
+      return "You don't have access to this society. Ask your Captain to add you as a member.";
+    case "getcourses":
+    case "listcourses":
+      return "You don't have access to view courses. Ask your Captain to add you to the society.";
     default:
-      return "You don't have permission to perform this action.";
+      return "You don't have permission to perform this action. Ask your Captain to check your access.";
   }
 }
 
@@ -215,6 +240,23 @@ export function handleFirestoreError(
   showAlert = true
 ): FirestoreError {
   const parsed = parseFirestoreError(error, operation, path);
+  
+  // Extract detailed error code for debugging
+  const detailedCode = getFirestoreErrorCode(error);
+  
+  // Log with detailed context for debugging
+  console.error(`[Firestore] ${operation} failed:`, {
+    code: parsed.code,
+    detailedCode,
+    message: parsed.message,
+    path,
+    societyId: getActiveSocietyId(),
+    hint: parsed.code === "PERMISSION_DENIED" 
+      ? "Check: 1) User is signed in, 2) Member doc exists with auth.uid as doc ID, 3) Member status is 'active'"
+      : undefined,
+  });
+  
+  // Also log the original error for full stack trace
   logFirestoreError(parsed);
   
   // Enhance permission denied messages
