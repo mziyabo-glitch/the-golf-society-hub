@@ -958,6 +958,9 @@ export async function saveSociety(society: Partial<SocietyData> & { id: string }
 
 /**
  * Save event results to Firestore
+ * 
+ * When publishing (resultsStatus === "published"), also writes to the
+ * results subcollection for Season Leaderboard aggregation.
  */
 export async function saveEventResults(
   eventId: string,
@@ -1012,6 +1015,48 @@ export async function saveEventResults(
     await setDoc(eventRef, updateData, { merge: true });
 
     console.log(`[Firestore] Saved event results: ${eventId}`);
+    
+    // When publishing, also write to results subcollection for Season Leaderboard
+    if (options?.resultsStatus === "published" && results) {
+      try {
+        // Import results helpers dynamically to avoid circular dependency
+        const { writeEventResultsToSubcollection } = await import("./results");
+        
+        // Get the full event data and members for subcollection write
+        const eventSnap = await getDoc(eventRef);
+        if (eventSnap.exists()) {
+          const eventData = eventSnap.data();
+          const fullEvent: EventData = {
+            id: eventId,
+            name: eventData.name || "",
+            date: eventData.date?.toDate?.()?.toISOString?.() || eventData.date || "",
+            courseName: eventData.courseName || "",
+            format: eventData.format || "Stableford",
+            results,
+          };
+          
+          // Get members for name lookup
+          const members = await getMembers();
+          
+          // Write to subcollection
+          const subcollectionResult = await writeEventResultsToSubcollection(
+            fullEvent,
+            members,
+            societyId
+          );
+          
+          if (subcollectionResult.success) {
+            console.log(`[Firestore] Wrote ${subcollectionResult.resultsWritten} results to subcollection`);
+          } else {
+            console.warn(`[Firestore] Failed to write results subcollection: ${subcollectionResult.error}`);
+          }
+        }
+      } catch (subcollectionError) {
+        // Log but don't fail - the main event update succeeded
+        console.warn("[Firestore] Error writing results subcollection:", subcollectionError);
+      }
+    }
+    
     return true;
   } catch (error) {
     console.error("[Firestore] Error saving event results:", error);

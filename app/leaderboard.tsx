@@ -14,7 +14,7 @@
 
 import { useFocusEffect } from "@react-navigation/native";
 import { router } from "expo-router";
-import { useCallback, useState } from "react";
+import { useCallback, useState, useEffect } from "react";
 import { ActivityIndicator, Pressable, StyleSheet, TextInput, View, Platform, Alert } from "react-native";
 import * as Print from "expo-print";
 import * as Sharing from "expo-sharing";
@@ -32,6 +32,7 @@ import type { EventData, MemberData } from "@/lib/models";
 // Firestore read helpers
 import { getSociety, getMembers } from "@/lib/firestore/society";
 import { listEvents } from "@/lib/firestore/events";
+import { aggregateSeasonPoints, type AggregatedMemberPoints } from "@/lib/firestore/results";
 import { getActiveSocietyId, isFirebaseConfigured } from "@/lib/firebase";
 import { NoSocietyGuard } from "@/components/NoSocietyGuard";
 import { FirebaseConfigGuard } from "@/components/FirebaseConfigGuard";
@@ -46,12 +47,14 @@ export default function LeaderboardScreen() {
   const [events, setEvents] = useState<EventData[]>([]);
   const [leaderboard, setLeaderboard] = useState<OOMEntry[]>([]);
   const [loading, setLoading] = useState(true);
+  const [calculating, setCalculating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [seasonYear, setSeasonYear] = useState<number>(new Date().getFullYear());
   const [showOOMOnly, setShowOOMOnly] = useState(false);
   const [society, setSociety] = useState<SocietyData | null>(null);
   const [societyId, setSocietyId] = useState<string | null>(null);
   const [isExporting, setIsExporting] = useState(false);
+  const [useSubcollection, setUseSubcollection] = useState(true); // Use new subcollection structure
 
   useFocusEffect(
     useCallback(() => {
@@ -118,8 +121,8 @@ export default function LeaderboardScreen() {
     }
   };
 
-  // Compute leaderboard using centralized OOM function
-  const calculateLeaderboard = useCallback((): OOMEntry[] => {
+  // Compute leaderboard - uses subcollection first, falls back to inline results
+  const calculateLeaderboard = useCallback(async (): Promise<OOMEntry[]> => {
     // Defensive guards
     if (!Array.isArray(events) || !Array.isArray(members)) {
       if (__DEV__) {
@@ -129,16 +132,53 @@ export default function LeaderboardScreen() {
     }
     
     try {
+      // Filter events for OOM if needed
+      let filteredEvents = events;
+      if (showOOMOnly) {
+        filteredEvents = events.filter((e) => e.isOOM === true);
+      }
+      
+      // Try subcollection-based aggregation first
+      if (useSubcollection && societyId) {
+        const aggregated = await aggregateSeasonPoints(
+          filteredEvents,
+          members,
+          seasonYear,
+          societyId
+        );
+        
+        if (aggregated.length > 0) {
+          if (__DEV__) {
+            console.log("[Leaderboard] Using subcollection results:", {
+              societyId,
+              season: seasonYear,
+              entriesWithPoints: aggregated.length,
+            });
+          }
+          
+          // Convert to OOMEntry format
+          return aggregated.map((entry) => ({
+            memberId: entry.memberId,
+            memberName: entry.memberName,
+            handicap: entry.handicap,
+            totalPoints: entry.totalPoints,
+            wins: entry.wins,
+            played: entry.played,
+          }));
+        }
+      }
+      
+      // Fallback to inline results computation (for legacy data)
       const result = computeOrderOfMerit({
-        events,
+        events: filteredEvents,
         members,
         seasonYear,
         oomOnly: showOOMOnly,
       });
       
       if (__DEV__) {
-        // Count results aggregated
-        const publishedEvents = events.filter(e => e?.resultsStatus === "published");
+        // Count results aggregated from inline data
+        const publishedEvents = filteredEvents.filter(e => e?.resultsStatus === "published");
         const resultsCount = publishedEvents.reduce((acc, e) => {
           if (e?.results) {
             return acc + Object.keys(e.results).length;
@@ -146,7 +186,7 @@ export default function LeaderboardScreen() {
           return acc;
         }, 0);
         
-        console.log("[Leaderboard] OOM computed:", {
+        console.log("[Leaderboard] OOM computed (inline fallback):", {
           societyId,
           season: seasonYear,
           oomOnly: showOOMOnly,
@@ -161,17 +201,41 @@ export default function LeaderboardScreen() {
       console.error("[Leaderboard] Error computing OOM:", err);
       return [];
     }
-  }, [events, members, seasonYear, showOOMOnly, societyId]);
+  }, [events, members, seasonYear, showOOMOnly, societyId, useSubcollection]);
 
-  // Update leaderboard when data changes
+  // Update leaderboard when data or filters change
   useFocusEffect(
     useCallback(() => {
-      if (!loading && !error) {
-        const calculated = calculateLeaderboard();
-        setLeaderboard(calculated);
+      if (!loading && !error && societyId) {
+        setCalculating(true);
+        calculateLeaderboard()
+          .then((result) => {
+            setLeaderboard(result);
+          })
+          .catch((err) => {
+            console.error("[Leaderboard] Error in calculateLeaderboard:", err);
+            setLeaderboard([]);
+          })
+          .finally(() => {
+            setCalculating(false);
+          });
       }
-    }, [loading, error, calculateLeaderboard])
+    }, [loading, error, societyId, calculateLeaderboard])
   );
+  
+  // Recalculate when season year or OOM filter changes
+  useEffect(() => {
+    if (!loading && !error && societyId && events.length > 0) {
+      setCalculating(true);
+      calculateLeaderboard()
+        .then((result) => {
+          setLeaderboard(result);
+        })
+        .finally(() => {
+          setCalculating(false);
+        });
+    }
+  }, [seasonYear, showOOMOnly]);
 
   const handleShareOrderOfMerit = async () => {
     if (isExporting) return;
@@ -265,6 +329,9 @@ export default function LeaderboardScreen() {
       </Screen>
     );
   }
+  
+  // Calculating state (show spinner but keep content visible)
+  const showCalculating = calculating && !loading;
 
   // No society selected
   if (!societyId) {
