@@ -272,7 +272,7 @@ export default function SocietyDashboardScreen() {
               <AppText variant="title">{society.name}</AppText>
               {currentMember ? (
                 <AppText variant="small" color="secondary" style={styles.userIndicator}>
-                  {currentMember.name} {userRoles.length > 0 && userRoles.filter(r => r !== "member").length > 0 
+                  {currentMember.name} {Array.isArray(userRoles) && userRoles.filter(r => r !== "member").length > 0 
                     ? `(${userRoles.filter(r => r !== "member").map(r => r.charAt(0).toUpperCase() + r.slice(1)).join(", ")})`
                     : `(${role})`}
                 </AppText>

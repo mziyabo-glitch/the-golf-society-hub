@@ -33,17 +33,20 @@ export type Permissions = {
 /**
  * Get current user's permissions
  * Returns all false if not loaded yet (safe default)
+ * 
+ * DEFENSIVE: Always returns a valid Permissions object, never throws.
  */
 export async function getPermissions(): Promise<Permissions> {
   try {
     const session = await getSession();
-    if (!session.currentUserId) {
+    if (!session || !session.currentUserId) {
       return getDefaultPermissions();
     }
 
     const sessionRole = normalizeSessionRole(session.role);
     const rawRoles = await getCurrentUserRoles();
-    const roles = normalizeMemberRoles(rawRoles);
+    // Ensure rawRoles is an array before normalization
+    const roles = normalizeMemberRoles(Array.isArray(rawRoles) ? rawRoles : []);
 
     return {
       canManageRoles: sessionRole === "ADMIN" || roles.includes("Captain"),

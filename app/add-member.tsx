@@ -26,6 +26,7 @@ export default function AddMemberScreen() {
   const [canCreate, setCanCreate] = useState(false);
   const [saving, setSaving] = useState(false);
   const [societyId, setSocietyId] = useState<string | null>(null);
+  const [initializing, setInitializing] = useState(true); // Track initial load state
 
   useFocusEffect(
     useCallback(() => {
@@ -34,39 +35,51 @@ export default function AddMemberScreen() {
   );
 
   const loadSession = async () => {
-    // Ensure user is signed in (Firebase Auth)
+    setInitializing(true);
+    
     try {
-      await ensureSignedIn();
+      // Ensure user is signed in (Firebase Auth)
+      try {
+        await ensureSignedIn();
+      } catch (error) {
+        console.error("[AddMember] Failed to sign in:", error);
+        Alert.alert("Authentication Error", "Failed to authenticate. Please try again.", [
+          { text: "OK", onPress: () => router.back() },
+        ]);
+        return;
+      }
+      
+      // Get active society ID
+      const activeSocietyId = getActiveSocietyId();
+      setSocietyId(activeSocietyId);
+
+      if (!activeSocietyId) {
+        Alert.alert("No Society Selected", "Please select or create a society first.", [
+          { text: "OK", onPress: () => router.back() },
+        ]);
+        return;
+      }
+
+      const session = await getSession();
+      
+      const sessionRole = normalizeSessionRole(session.role);
+      const rawRoles = await getCurrentUserRoles();
+      const roles = normalizeMemberRoles(rawRoles ?? []);
+      const canManage = canManageMembers(sessionRole, roles);
+      setCanCreate(canManage);
+      
+      if (!canManage) {
+        Alert.alert("Access Denied", "Only Captain, Secretary, or Treasurer can add members", [
+          { text: "OK", onPress: () => router.back() },
+        ]);
+      }
     } catch (error) {
-      console.error("[AddMember] Failed to sign in:", error);
-      Alert.alert("Authentication Error", "Failed to authenticate. Please try again.", [
+      console.error("[AddMember] Error loading session:", error);
+      Alert.alert("Error", "Failed to load. Please try again.", [
         { text: "OK", onPress: () => router.back() },
       ]);
-      return;
-    }
-    
-    // Get active society ID
-    const activeSocietyId = getActiveSocietyId();
-    setSocietyId(activeSocietyId);
-
-    if (!activeSocietyId) {
-      Alert.alert("No Society Selected", "Please select or create a society first.", [
-        { text: "OK", onPress: () => router.back() },
-      ]);
-      return;
-    }
-
-    const session = await getSession();
-    
-    const sessionRole = normalizeSessionRole(session.role);
-    const roles = normalizeMemberRoles(await getCurrentUserRoles());
-    const canManage = canManageMembers(sessionRole, roles);
-    setCanCreate(canManage);
-    
-    if (!canManage) {
-      Alert.alert("Access Denied", "Only Captain, Secretary, or Treasurer can add members", [
-        { text: "OK", onPress: () => router.back() },
-      ]);
+    } finally {
+      setInitializing(false);
     }
   };
 
@@ -175,14 +188,34 @@ export default function AddMemberScreen() {
     }
   };
 
-  // Show nothing while checking permissions (will redirect via Alert)
-  if (!canCreate) {
-    return null;
+  // Show loading state while initializing
+  if (initializing) {
+    return (
+      <ScrollView style={{ flex: 1, backgroundColor: "#fff" }}>
+        <View style={{ flex: 1, padding: 24, justifyContent: "center", alignItems: "center", minHeight: 300 }}>
+          <ActivityIndicator size="large" color="#0B6E4F" />
+          <Text style={{ marginTop: 12, color: "#6b7280" }}>Loading...</Text>
+        </View>
+      </ScrollView>
+    );
   }
 
   // Show "No society" message if societyId is missing
   if (!societyId) {
     return <NoSocietyGuard message="You need to select a society before adding members." />;
+  }
+
+  // Show nothing if user doesn't have permission (will redirect via Alert)
+  if (!canCreate) {
+    return (
+      <ScrollView style={{ flex: 1, backgroundColor: "#fff" }}>
+        <View style={{ flex: 1, padding: 24, justifyContent: "center", alignItems: "center", minHeight: 300 }}>
+          <Text style={{ fontSize: 16, color: "#6b7280", textAlign: "center" }}>
+            Checking permissions...
+          </Text>
+        </View>
+      </ScrollView>
+    );
   }
 
   // Wrap in FirebaseConfigGuard

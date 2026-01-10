@@ -503,8 +503,8 @@ export default function LeaderboardScreen() {
             </View>
           </View>
 
-          {/* Table Rows */}
-          {leaderboard.map((entry, index) => (
+          {/* Table Rows - Safe render with fallback */}
+          {(Array.isArray(leaderboard) ? leaderboard : []).map((entry, index) => (
             <AppCard key={entry.memberId} style={styles.leaderboardItem}>
               <Row gap="sm" alignItems="center">
                 <View

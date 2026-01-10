@@ -117,9 +117,10 @@ export default function RolesScreen() {
 
       // Prevent removing captain if it's the last one
       if (role === "captain" && rolesSet.has("captain")) {
-        const captainCount = members.filter((m) => 
-          m.id !== memberId && m.roles && (m.roles.includes("captain") || m.roles.includes("admin"))
-        ).length;
+        const captainCount = members.filter((m) => {
+          const memberRoles = m.roles ?? [];
+          return m.id !== memberId && (memberRoles.includes("captain") || memberRoles.includes("admin"));
+        }).length;
         
         if (captainCount === 0) {
           Alert.alert("Cannot Remove", "There must be at least one Captain or Admin");
@@ -166,9 +167,10 @@ export default function RolesScreen() {
       console.log("Saving roles for members:", members.map(m => ({ name: m.name, roles: m.roles })));
       
       // Check if there's at least one captain/admin
-      const captainCount = members.filter((m) => 
-        m.roles && (m.roles.includes("captain") || m.roles.includes("admin"))
-      ).length;
+      const captainCount = members.filter((m) => {
+        const memberRoles = m.roles ?? [];
+        return memberRoles.includes("captain") || memberRoles.includes("admin");
+      }).length;
       
       if (captainCount === 0) {
         Alert.alert("Cannot Save", "There must be at least one Captain or Admin in the society");

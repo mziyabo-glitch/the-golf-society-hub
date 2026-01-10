@@ -100,8 +100,10 @@ export function calculateEventLeaderboard(event: EventData): EventResultEntry[] 
   // Determine scoring type based on event format and available data
   const entries: Array<{ memberId: string; score: number; scoreType: "stableford" | "strokeplay" }> = [];
 
-  Object.entries(event.results).forEach(([memberId, result]) => {
-    if (!result) return;
+  // Safe iteration over results object
+  const resultsObj = event.results || {};
+  Object.entries(resultsObj).forEach(([memberId, result]) => {
+    if (!result || !memberId) return;
 
     // Prefer stableford for Stableford/Both formats, otherwise use strokeplay/grossScore
     if ((event.format === "Stableford" || event.format === "Both") && result.stableford !== undefined) {

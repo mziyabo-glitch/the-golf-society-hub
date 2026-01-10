@@ -43,15 +43,21 @@ const ROLE_MAP: Record<string, MemberRole> = {
 /**
  * Normalize stored member roles (unknown input; possibly lowercase strings) into MemberRole[].
  * Always includes "Member" at minimum.
+ * 
+ * DEFENSIVE: Always returns a safe array, never crashes on invalid input.
  */
 export function normalizeMemberRoles(rawRoles: unknown): MemberRole[] {
   const out = new Set<MemberRole>();
   out.add("Member");
 
-  if (!Array.isArray(rawRoles)) return Array.from(out);
+  // Handle null, undefined, or non-array inputs
+  if (rawRoles == null || !Array.isArray(rawRoles)) {
+    return Array.from(out);
+  }
 
   for (const r of rawRoles) {
-    if (typeof r !== "string") continue;
+    // Skip non-string entries
+    if (typeof r !== "string" || !r) continue;
     const mapped = ROLE_MAP[r];
     if (mapped) out.add(mapped);
   }

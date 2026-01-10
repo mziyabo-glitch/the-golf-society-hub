@@ -334,9 +334,10 @@ export async function aggregateSeasonPoints(
       }
     }
     
-    // Build member lookup for metadata
+    // Build member lookup for metadata (defensive: handle non-array)
     const memberLookup = new Map<string, MemberData>();
-    members.forEach((m) => {
+    const safeMembers = Array.isArray(members) ? members : [];
+    safeMembers.forEach((m) => {
       if (m?.id) {
         memberLookup.set(m.id, m);
       }

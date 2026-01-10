@@ -109,11 +109,19 @@ export async function getCurrentMember(): Promise<MemberData | null> {
 
 /**
  * Get current user's roles as an array
+ * Always returns a safe array (never undefined/null)
  */
 export async function getCurrentUserRoles(): Promise<string[]> {
-  const member = await getCurrentMember();
-  if (!member) return ["member"];
-  return member.roles && member.roles.length > 0 ? member.roles : ["member"];
+  try {
+    const member = await getCurrentMember();
+    if (!member) return ["member"];
+    const roles = member.roles;
+    if (!Array.isArray(roles) || roles.length === 0) return ["member"];
+    return roles;
+  } catch (error) {
+    console.error("[Roles] Error getting current user roles:", error);
+    return ["member"];
+  }
 }
 
 /**
