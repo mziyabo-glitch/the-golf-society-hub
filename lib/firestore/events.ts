@@ -450,3 +450,48 @@ export async function deleteEvent(
     return { success: false, error: errorMessage };
   }
 }
+
+/**
+ * Delete an event AND its results subcollection (best-effort cascade).
+ *
+ * Firestore does not cascade deletes automatically, so we explicitly delete:
+ * societies/{societyId}/events/{eventId}/results/*
+ * then delete the event doc itself.
+ */
+export async function deleteEventCascade(
+  eventId: string,
+  societyId?: string
+): Promise<{ success: boolean; error?: string; deletedResultsCount?: number }> {
+  const effectiveSocietyId = societyId || getActiveSocietyId();
+  const resultsPath = `societies/${effectiveSocietyId}/events/${eventId}/results`;
+
+  if (!effectiveSocietyId || !eventId) {
+    return { success: false, error: "Missing societyId or eventId" };
+  }
+
+  if (!isFirebaseConfigured()) {
+    return { success: false, error: "Firebase not configured" };
+  }
+
+  try {
+    // Delete results subcollection docs first (if any)
+    const resultsRef = collection(db, "societies", effectiveSocietyId, "events", eventId, "results");
+    const resultsSnap = await getDocs(resultsRef);
+
+    let deletedResultsCount = 0;
+    for (const docSnap of resultsSnap.docs) {
+      await deleteDoc(docSnap.ref);
+      deletedResultsCount += 1;
+    }
+
+    // Then delete the event doc using the existing helper
+    const res = await deleteEvent(eventId, effectiveSocietyId);
+    if (!res.success) return res;
+
+    return { success: true, deletedResultsCount };
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : "Unknown error";
+    handleFirestoreError(error, "deleteEventCascade", resultsPath, false);
+    return { success: false, error: errorMessage };
+  }
+}

@@ -1,24 +1,22 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { ActivityIndicator, Alert, ScrollView, View } from "react-native";
 import { router, useLocalSearchParams } from "expo-router";
 
 import { Screen } from "@/components/ui/Screen";
-import { AppCard } from "@/components/ui/AppCard";
 import { AppText } from "@/components/ui/AppText";
+import { AppCard } from "@/components/ui/AppCard";
 import { DestructiveButton, SecondaryButton } from "@/components/ui/Button";
-import { formatDateDDMMYYYY } from "@/utils/date";
-import { getPermissions } from "@/lib/rbac";
-import type { EventData } from "@/lib/models";
-import { getEventById, deleteEvent } from "@/lib/firestore/events";
+import { getPermissions, type Permissions } from "@/lib/rbac";
 import { getActiveSocietyId } from "@/lib/firebase";
+import { deleteEventCascade, getEventById } from "@/lib/firestore/events";
+import type { EventData } from "@/lib/models";
+import { formatDateDDMMYYYY } from "@/utils/date";
 
-export default function EventDetailsScreen() {
-  const { id } = useLocalSearchParams<{ id: string }>();
-  const eventId = useMemo(() => (id ? String(id) : ""), [id]);
-
-  const [loading, setLoading] = useState(true);
+export default function EventDetailScreen() {
+  const { id: eventId } = useLocalSearchParams<{ id: string }>();
   const [event, setEvent] = useState<EventData | null>(null);
-  const [canDelete, setCanDelete] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [permissions, setPermissions] = useState<Permissions | null>(null);
 
   useEffect(() => {
     const load = async () => {
@@ -26,20 +24,26 @@ export default function EventDetailsScreen() {
         setLoading(true);
 
         const perms = await getPermissions();
-        setCanDelete(Boolean(perms.isCaptain || perms.canManageEvents));
+        setPermissions(perms);
 
         const societyId = getActiveSocietyId();
-        if (!eventId || !societyId) {
+        if (!societyId || !eventId) {
           setEvent(null);
           return;
         }
 
-        const loaded = await getEventById(eventId, societyId);
-        setEvent(loaded);
+        const loaded = await getEventById(String(eventId), societyId);
+        if (!loaded) {
+          Alert.alert("Error", "Event not found", [
+            { text: "OK", onPress: () => router.replace("/history" as any) },
+          ]);
+          return;
+        }
 
-        console.log("[EventDetails] Loaded event:", eventId);
-      } catch (e) {
-        console.error("[EventDetails] Load failed:", e);
+        setEvent(loaded);
+        console.log("[EventDetails] Loaded event:", String(eventId));
+      } catch (err) {
+        console.error("[EventDetails] Load failed", err);
         Alert.alert("Error", "Failed to load event");
       } finally {
         setLoading(false);
@@ -49,31 +53,52 @@ export default function EventDetailsScreen() {
     void load();
   }, [eventId]);
 
-  const onDelete = () => {
+  const confirmDelete = () => {
+    Alert.alert(
+      "Delete Event",
+      "This will permanently delete this event and its results. This cannot be undone.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Delete Event",
+          style: "destructive",
+          onPress: handleDelete,
+        },
+      ]
+    );
+  };
+
+  const handleDelete = async () => {
     if (!eventId) return;
 
-    Alert.alert("Delete Event", "This will permanently delete this event. This cannot be undone.", [
-      { text: "Cancel", style: "cancel" },
-      {
-        text: "Delete",
-        style: "destructive",
-        onPress: async () => {
-          try {
-            console.log("[DeleteEvent] Deleting event:", eventId);
-            const res = await deleteEvent(eventId);
-            if (!res.success) {
-              Alert.alert("Error", res.error || "Failed to delete event");
-              return;
-            }
-            console.log("[DeleteEvent] Deleted OK:", eventId);
-            router.replace("/society" as any);
-          } catch (e) {
-            console.error("[DeleteEvent] Failed:", e);
-            Alert.alert("Error", "Failed to delete event");
-          }
-        },
-      },
-    ]);
+    // Visible only when Captain/Admin-ish, but guard again at write time
+    if (!permissions?.isCaptain && !permissions?.canManageEvents) {
+      Alert.alert("Not allowed", "You don't have permission to delete events.");
+      return;
+    }
+
+    try {
+      const societyId = getActiveSocietyId();
+      if (!societyId) {
+        Alert.alert("Error", "No active society selected");
+        return;
+      }
+
+      console.log("[DeleteEvent] Deleting event:", String(eventId));
+      const result = await deleteEventCascade(String(eventId), societyId);
+      if (!result.success) {
+        Alert.alert("Error", result.error || "Failed to delete event");
+        return;
+      }
+
+      console.log("[DeleteEvent] Deleted OK:", String(eventId));
+      Alert.alert("Deleted", "Event has been deleted", [
+        { text: "OK", onPress: () => router.replace("/history" as any) },
+      ]);
+    } catch (err) {
+      console.error("[DeleteEvent] Failed", err);
+      Alert.alert("Error", "Failed to delete event");
+    }
   };
 
   if (loading) {
@@ -92,11 +117,11 @@ export default function EventDetailsScreen() {
       <Screen>
         <AppCard>
           <AppText variant="h2">Event not found</AppText>
-          <AppText variant="body" color="secondary" style={{ marginTop: 8 }}>
+          <AppText variant="body" color="secondary" style={{ marginTop: 6 }}>
             This event may have been deleted, or you may not have access.
           </AppText>
-          <SecondaryButton onPress={() => router.replace("/society" as any)} style={{ marginTop: 16 }}>
-            Back
+          <SecondaryButton onPress={() => router.replace("/history" as any)} style={{ marginTop: 16 }}>
+            Back to Events
           </SecondaryButton>
         </AppCard>
       </Screen>
@@ -108,34 +133,15 @@ export default function EventDetailsScreen() {
       <ScrollView contentContainerStyle={{ paddingBottom: 40 }}>
         <AppCard>
           <AppText variant="title">{event.name}</AppText>
-          <AppText variant="body" color="secondary" style={{ marginTop: 6 }}>
-            {formatDateDDMMYYYY(event.date)}
-          </AppText>
-          {event.courseName ? (
-            <AppText variant="body" color="secondary" style={{ marginTop: 6 }}>
-              Course: {event.courseName}
-            </AppText>
-          ) : null}
-          {event.format ? (
-            <AppText variant="body" color="secondary" style={{ marginTop: 6 }}>
-              Format: {event.format}
-            </AppText>
-          ) : null}
+          <AppText>{formatDateDDMMYYYY(event.date)}</AppText>
+          {event.courseName ? <AppText>{event.courseName}</AppText> : null}
+          {event.format ? <AppText>Format: {event.format}</AppText> : null}
           {typeof (event as any).eventFee === "number" ? (
-            <AppText variant="body" color="secondary" style={{ marginTop: 6 }}>
-              Fee: £{(event as any).eventFee.toFixed(2)}
-            </AppText>
+            <AppText>Fee: £{(event as any).eventFee.toFixed(2)}</AppText>
           ) : null}
         </AppCard>
 
         <View style={{ marginTop: 16, gap: 12 }}>
-          <SecondaryButton
-            onPress={() =>
-              router.push({ pathname: "/event/[id]/results", params: { id: event.id } } as any)
-            }
-          >
-            Results
-          </SecondaryButton>
           <SecondaryButton
             onPress={() =>
               router.push({ pathname: "/event/[id]/players", params: { id: event.id } } as any)
@@ -143,11 +149,19 @@ export default function EventDetailsScreen() {
           >
             Players
           </SecondaryButton>
+          <SecondaryButton
+            onPress={() =>
+              router.push({ pathname: "/event/[id]/results", params: { id: event.id } } as any)
+            }
+          >
+            Results
+          </SecondaryButton>
+          <SecondaryButton onPress={() => router.push("/tees-teesheet" as any)}>Tee Sheet</SecondaryButton>
         </View>
 
-        {canDelete && (
+        {(permissions?.isCaptain || permissions?.canManageEvents) && (
           <View style={{ marginTop: 24 }}>
-            <DestructiveButton onPress={onDelete}>Delete Event</DestructiveButton>
+            <DestructiveButton onPress={confirmDelete}>Delete Event</DestructiveButton>
           </View>
         )}
       </ScrollView>
