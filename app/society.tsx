@@ -334,7 +334,7 @@ export default function SocietyDashboardScreen() {
           <AppCard style={styles.eventCard}>
             <Pressable
               onPress={() =>
-                router.push({ pathname: "/(tabs)/event/[id]", params: { id: nextEvent.id } } as any)
+                router.push({ pathname: "/event/[id]", params: { id: nextEvent.id } } as any)
               }
             >
               <AppText variant="h2" style={styles.eventTitle}>{nextEvent.name}</AppText>
@@ -360,7 +360,7 @@ export default function SocietyDashboardScreen() {
               })()}
               <SecondaryButton
                 onPress={() =>
-                  router.push({ pathname: "/(tabs)/event/[id]", params: { id: nextEvent.id } } as any)
+                  router.push({ pathname: "/event/[id]", params: { id: nextEvent.id } } as any)
                 }
                 size="sm"
                 style={styles.eventButton}
@@ -384,7 +384,7 @@ export default function SocietyDashboardScreen() {
           <AppCard style={styles.eventCard}>
             <Pressable
               onPress={() =>
-                router.push({ pathname: "/(tabs)/event/[id]", params: { id: lastEvent.id } } as any)
+                router.push({ pathname: "/event/[id]", params: { id: lastEvent.id } } as any)
               }
             >
               <AppText variant="h2" style={styles.eventTitle}>{lastEvent.name}</AppText>
@@ -399,7 +399,7 @@ export default function SocietyDashboardScreen() {
               <SecondaryButton
                 onPress={() =>
                   router.push({
-                    pathname: "/(tabs)/event/[id]/results",
+                    pathname: "/event/[id]/results",
                     params: { id: lastEvent.id },
                   } as any)
                 }

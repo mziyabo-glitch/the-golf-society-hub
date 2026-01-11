@@ -1400,7 +1400,7 @@ export default function TeesTeeSheetScreen() {
                     <Pressable 
                       onPress={() =>
                         router.push({
-                          pathname: "/(tabs)/event/[id]",
+                          pathname: "/event/[id]",
                           params: { id: selectedEvent.id },
                         } as any)
                       }
@@ -1423,7 +1423,7 @@ export default function TeesTeeSheetScreen() {
                     <Pressable 
                       onPress={() =>
                         router.push({
-                          pathname: "/(tabs)/event/[id]",
+                          pathname: "/event/[id]",
                           params: { id: selectedEvent.id },
                         } as any)
                       }
@@ -1468,7 +1468,7 @@ export default function TeesTeeSheetScreen() {
                           onPress={() =>
                             selectedEvent?.id
                               ? router.push({
-                                  pathname: "/(tabs)/event/[id]",
+                                  pathname: "/event/[id]",
                                   params: { id: selectedEvent.id },
                                 } as any)
                               : undefined

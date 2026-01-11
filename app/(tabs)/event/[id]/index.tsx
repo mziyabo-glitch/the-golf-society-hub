@@ -135,14 +135,14 @@ export default function EventDetailScreen() {
         <View style={{ marginTop: 16, gap: 12 }}>
           <SecondaryButton
             onPress={() =>
-              router.push({ pathname: "/(tabs)/event/[id]/players", params: { id: event.id } } as any)
+              router.push({ pathname: "/event/[id]/players", params: { id: event.id } } as any)
             }
           >
             Players
           </SecondaryButton>
           <SecondaryButton
             onPress={() =>
-              router.push({ pathname: "/(tabs)/event/[id]/results", params: { id: event.id } } as any)
+              router.push({ pathname: "/event/[id]/results", params: { id: event.id } } as any)
             }
           >
             Results

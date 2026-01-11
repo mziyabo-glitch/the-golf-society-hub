@@ -89,7 +89,7 @@ export default function HistoryScreen() {
             <AppCard key={event.id} style={styles.eventCard}>
               <Pressable
                 onPress={() =>
-                  router.push({ pathname: "/(tabs)/event/[id]", params: { id: event.id } } as any)
+                  router.push({ pathname: "/event/[id]", params: { id: event.id } } as any)
                 }
                 style={styles.eventPressable}
               >
