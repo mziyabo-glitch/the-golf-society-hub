@@ -6,7 +6,7 @@ import { db } from "@/lib/firebase";
 import { Screen } from "@/components/ui/Screen";
 import { AppText } from "@/components/ui/AppText";
 import { AppCard } from "@/components/ui/AppCard";
-import { PrimaryButton, SecondaryButton } from "@/components/ui/Button";
+import { SecondaryButton } from "@/components/ui/Button";
 import { getPermissions } from "@/lib/rbac";
 
 export default function EventDetailScreen() {
@@ -14,6 +14,10 @@ export default function EventDetailScreen() {
   const [event, setEvent] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [canDelete, setCanDelete] = useState(false);
+
+  // ✅ IMPORTANT: Set this to the route that actually exists in your app.
+  // If you’re unsure, "/" will always exist.
+  const EVENTS_ROUTE = "/(tabs)/events"; // OR "/"
 
   useEffect(() => {
     if (!eventId) return;
@@ -28,7 +32,7 @@ export default function EventDetailScreen() {
 
         if (!snap.exists()) {
           Alert.alert("Error", "Event not found");
-          router.replace("/events");
+          router.replace(EVENTS_ROUTE);
           return;
         }
 
@@ -62,6 +66,12 @@ export default function EventDetailScreen() {
   const handleDelete = async () => {
     if (!eventId) return;
 
+    // ✅ Guard (don’t rely only on hiding the button)
+    if (!canDelete) {
+      Alert.alert("Not allowed", "You don't have permission to delete events.");
+      return;
+    }
+
     try {
       console.log("[DeleteEvent] Starting delete:", eventId);
 
@@ -77,11 +87,10 @@ export default function EventDetailScreen() {
       // Delete event
       const eventRef = doc(db, "events", String(eventId));
       await deleteDoc(eventRef);
-
       console.log("[DeleteEvent] Event deleted");
 
       Alert.alert("Deleted", "Event has been deleted");
-      router.replace("/events");
+      router.replace(EVENTS_ROUTE);
     } catch (err) {
       console.error("[DeleteEvent] Failed", err);
       Alert.alert("Error", "Failed to delete event");
@@ -105,15 +114,9 @@ export default function EventDetailScreen() {
           {event.courseName && <AppText>{event.courseName}</AppText>}
         </AppCard>
 
-        {/* EXISTING EVENT ACTIONS CAN STAY ABOVE */}
-
         {canDelete && (
           <View style={{ marginTop: 24 }}>
-            <SecondaryButton
-              label="Delete Event"
-              onPress={confirmDelete}
-              danger
-            />
+            <SecondaryButton label="Delete Event" onPress={confirmDelete} danger />
           </View>
         )}
       </ScrollView>
