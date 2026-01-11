@@ -92,8 +92,9 @@ export default function EventDetailScreen() {
       }
 
       console.log("[DeleteEvent] Deleted OK:", String(eventId));
+      console.log("[DeleteEvent] Success - navigating to /society");
       Alert.alert("Deleted", "Event has been deleted", [
-        { text: "OK", onPress: () => router.replace("/history" as any) },
+        { text: "OK", onPress: () => router.replace("/society" as any) },
       ]);
     } catch (err) {
       console.error("[DeleteEvent] Failed", err);

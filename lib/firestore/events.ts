@@ -35,6 +35,7 @@ import {
   serverTimestamp,
   Timestamp,
   Unsubscribe,
+  writeBatch,
 } from "firebase/firestore";
 import { db, getActiveSocietyId, isFirebaseConfigured, logFirestoreOp } from "../firebase";
 import { logDataSanity, handleFirestoreError, checkOperationReady } from "./errors";
@@ -452,18 +453,22 @@ export async function deleteEvent(
 }
 
 /**
- * Delete an event AND its results subcollection (best-effort cascade).
+ * Delete an event AND its subcollections (cascade delete).
  *
  * Firestore does not cascade deletes automatically, so we explicitly delete:
- * societies/{societyId}/events/{eventId}/results/*
- * then delete the event doc itself.
+ * - societies/{societyId}/events/{eventId}/results/*
+ * - societies/{societyId}/events/{eventId}/players/* (if exists)
+ * - societies/{societyId}/events/{eventId}/payments/* (if exists)
+ * Then delete the event doc itself.
+ * 
+ * Uses batched writes for safe deletion of >500 docs.
  */
 export async function deleteEventCascade(
   eventId: string,
   societyId?: string
-): Promise<{ success: boolean; error?: string; deletedResultsCount?: number }> {
+): Promise<{ success: boolean; error?: string; deletedCounts?: { results: number; players: number; payments: number } }> {
   const effectiveSocietyId = societyId || getActiveSocietyId();
-  const resultsPath = `societies/${effectiveSocietyId}/events/${eventId}/results`;
+  const eventPath = `societies/${effectiveSocietyId}/events/${eventId}`;
 
   if (!effectiveSocietyId || !eventId) {
     return { success: false, error: "Missing societyId or eventId" };
@@ -473,25 +478,72 @@ export async function deleteEventCascade(
     return { success: false, error: "Firebase not configured" };
   }
 
-  try {
-    // Delete results subcollection docs first (if any)
-    const resultsRef = collection(db, "societies", effectiveSocietyId, "events", eventId, "results");
-    const resultsSnap = await getDocs(resultsRef);
+  console.log("[DeleteEvent] Deleting event:", { societyId: effectiveSocietyId, eventId });
 
-    let deletedResultsCount = 0;
-    for (const docSnap of resultsSnap.docs) {
-      await deleteDoc(docSnap.ref);
-      deletedResultsCount += 1;
+  // Track deletion counts
+  const deletedCounts = { results: 0, players: 0, payments: 0 };
+
+  // Helper to delete a subcollection using batched writes (safe for >500 docs)
+  const deleteSubcollection = async (subcollectionName: string): Promise<number> => {
+    let deleted = 0;
+    try {
+      const subRef = collection(db, "societies", effectiveSocietyId, "events", eventId, subcollectionName);
+      const snapshot = await getDocs(subRef);
+      
+      if (snapshot.empty) return 0;
+      
+      // Batch delete (400 per batch for safety)
+      const BATCH_SIZE = 400;
+      let batch = writeBatch(db);
+      let batchCount = 0;
+      
+      for (const docSnap of snapshot.docs) {
+        batch.delete(docSnap.ref);
+        batchCount++;
+        deleted++;
+        
+        if (batchCount >= BATCH_SIZE) {
+          await batch.commit();
+          batch = writeBatch(db);
+          batchCount = 0;
+        }
+      }
+      
+      if (batchCount > 0) {
+        await batch.commit();
+      }
+    } catch (err) {
+      console.warn(`[DeleteEvent] Error deleting ${subcollectionName}:`, err);
     }
+    return deleted;
+  };
 
-    // Then delete the event doc using the existing helper
+  try {
+    // Delete subcollections first
+    deletedCounts.results = await deleteSubcollection("results");
+    deletedCounts.players = await deleteSubcollection("players");
+    deletedCounts.payments = await deleteSubcollection("payments");
+    
+    console.log("[DeleteEvent] Deleted results/players/payments:", deletedCounts);
+
+    // Delete the event doc
     const res = await deleteEvent(eventId, effectiveSocietyId);
     if (!res.success) return res;
 
-    return { success: true, deletedResultsCount };
+    console.log("[DeleteEvent] Deleted event doc");
+
+    // Attempt to delete legacy global teesheet doc (ignore errors)
+    try {
+      const legacyTeeSheetRef = doc(db, "teesheets", eventId);
+      await deleteDoc(legacyTeeSheetRef);
+    } catch {
+      // Ignore - legacy doc might not exist
+    }
+
+    return { success: true, deletedCounts };
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : "Unknown error";
-    handleFirestoreError(error, "deleteEventCascade", resultsPath, false);
+    handleFirestoreError(error, "deleteEventCascade", eventPath, false);
     return { success: false, error: errorMessage };
   }
 }
