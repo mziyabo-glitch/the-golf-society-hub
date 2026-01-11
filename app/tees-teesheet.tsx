@@ -273,6 +273,12 @@ export default function TeesTeeSheetScreen() {
       femaleTeeSetId: event.femaleTeeSetId,
     });
     
+    // === LOG TEE SET IDs FROM EVENT ===
+    console.log("[TeeSheet] Using tee sets:", {
+      male: event.maleTeeSetId,
+      female: event.femaleTeeSetId,
+    });
+    
     // Preselect course from loaded courses list if event.courseId exists
     if (event.courseId) {
       // First, try to find the course in our already-loaded courses list
@@ -282,10 +288,17 @@ export default function TeesTeeSheetScreen() {
         setSelectedCourse(courseFromList);
         console.log("[TeeSheet] Course preselected from loaded list:", courseFromList.name, "with", courseFromList.teeSets.length, "tee sets");
 
-        // Find tee sets using case-insensitive matching
-        let { maleTeeSet, femaleTeeSet } = findTeeSetsForEvent(courseFromList, event);
+        // === RESOLVE TEE SETS BY ID ===
+        // First try to find in course.teeSets, then fallback to direct Firestore lookup
+        let maleTeeSet: TeeSet | null = null;
+        let femaleTeeSet: TeeSet | null = null;
         
-        // FALLBACK: If tee sets not found in course, try loading directly with fallback
+        // Try course.teeSets first
+        const courseTeeSetMatch = findTeeSetsForEvent(courseFromList, event);
+        maleTeeSet = courseTeeSetMatch.maleTeeSet;
+        femaleTeeSet = courseTeeSetMatch.femaleTeeSet;
+        
+        // FALLBACK: Direct lookup by ID if not found in course.teeSets
         if (!maleTeeSet && event.maleTeeSetId) {
           console.log("[TeeSheet] Male tee set not in course.teeSets, trying direct lookup:", event.maleTeeSetId);
           maleTeeSet = await getTeeSetById(event.maleTeeSetId);
@@ -308,18 +321,21 @@ export default function TeesTeeSheetScreen() {
           }
         }
         
+        // Set state - these are the resolved tee set objects
         setSelectedMaleTeeSet(maleTeeSet);
+        setSelectedFemaleTeeSet(femaleTeeSet);
+        
+        // Log results
         if (maleTeeSet) {
-          console.log("[TeeSheet] Male tee set:", `${maleTeeSet.teeColor} (SR: ${maleTeeSet.slopeRating}, CR: ${maleTeeSet.courseRating})`);
+          console.log("[TeeSheet] Male tee set RESOLVED:", `${maleTeeSet.teeColor} (SR: ${maleTeeSet.slopeRating}, CR: ${maleTeeSet.courseRating})`);
         } else if (event.maleTeeSetId) {
           console.warn("[TeeSheet] Male tee set NOT FOUND anywhere:", event.maleTeeSetId, {
             hint: "Check teesets collection in Firestore. Tee set doc must include 'courseId' field.",
           });
         }
 
-        setSelectedFemaleTeeSet(femaleTeeSet);
         if (femaleTeeSet) {
-          console.log("[TeeSheet] Female tee set:", `${femaleTeeSet.teeColor} (SR: ${femaleTeeSet.slopeRating}, CR: ${femaleTeeSet.courseRating})`);
+          console.log("[TeeSheet] Female tee set RESOLVED:", `${femaleTeeSet.teeColor} (SR: ${femaleTeeSet.slopeRating}, CR: ${femaleTeeSet.courseRating})`);
         } else if (event.femaleTeeSetId) {
           console.warn("[TeeSheet] Female tee set NOT FOUND anywhere:", event.femaleTeeSetId, {
             hint: "Check teesets collection in Firestore. Tee set doc must include 'courseId' field.",
@@ -384,12 +400,34 @@ export default function TeesTeeSheetScreen() {
           setSelectedEvent(updatedEvent);
           setSelectedCourse(courseByName);
           
-          // Try to load tee sets for this course
-          const { maleTeeSet, femaleTeeSet } = findTeeSetsForEvent(courseByName, updatedEvent);
+          // === RESOLVE TEE SETS BY ID (same as primary path) ===
+          let maleTeeSet: TeeSet | null = null;
+          let femaleTeeSet: TeeSet | null = null;
+          
+          // Try course.teeSets first
+          const courseTeeSetMatch = findTeeSetsForEvent(courseByName, updatedEvent);
+          maleTeeSet = courseTeeSetMatch.maleTeeSet;
+          femaleTeeSet = courseTeeSetMatch.femaleTeeSet;
+          
+          // FALLBACK: Direct lookup by ID if not found in course.teeSets
+          if (!maleTeeSet && updatedEvent.maleTeeSetId) {
+            console.log("[TeeSheet] FALLBACK Male tee set lookup:", updatedEvent.maleTeeSetId);
+            maleTeeSet = await getTeeSetById(updatedEvent.maleTeeSetId);
+          }
+          
+          if (!femaleTeeSet && updatedEvent.femaleTeeSetId) {
+            console.log("[TeeSheet] FALLBACK Female tee set lookup:", updatedEvent.femaleTeeSetId);
+            femaleTeeSet = await getTeeSetById(updatedEvent.femaleTeeSetId);
+          }
+          
           setSelectedMaleTeeSet(maleTeeSet);
           setSelectedFemaleTeeSet(femaleTeeSet);
           
           console.log("[TeeSheet] Final courseId:", updatedEvent.courseId);
+          console.log("[TeeSheet] Final tee sets:", {
+            male: maleTeeSet?.teeColor || "(not found)",
+            female: femaleTeeSet?.teeColor || "(not found)",
+          });
         } else {
           console.warn("[TeeSheet] FALLBACK FAILED: No course found matching name:", event.courseName);
         }
