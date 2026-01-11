@@ -701,7 +701,12 @@ export async function loadTeeSetsFromGlobal(courseId: string): Promise<TeeSet[]>
       });
       console.log(`[TeeSets] Loaded ${teeSets.length} tee sets from global collection`);
     } else {
-      console.warn("[TeeSets] No tee sets found for course", { courseId });
+      console.warn("[TeeSets] No tee sets found for courseId", {
+        courseId,
+        collectionPath: "teesets",
+        queryFilter: `where("courseId", "==", "${courseId}")`,
+        hint: "Tee set documents must include 'courseId' field. Check teesets/{teeSetId} docs in Firestore.",
+      });
     }
     
     return teeSets;
@@ -1451,6 +1456,313 @@ export async function saveEventPayments(
     return true;
   } catch (error) {
     console.error("[Firestore] Error saving event payments:", error);
+    return false;
+  }
+}
+
+// ============================================================================
+// TEE SET WRITE HELPERS (for Venue Info)
+// ============================================================================
+
+/**
+ * Save a tee set to the GLOBAL teesets collection
+ * 
+ * CANONICAL PATH: teesets/{teeSetId}
+ * 
+ * Each tee set MUST include:
+ * - courseId (string) - Required for querying
+ * - appliesTo ("male"|"female")
+ * - par (number)
+ * - courseRating (number)
+ * - slopeRating (number)
+ * - teeColor/name (string)
+ * 
+ * Optional:
+ * - societyId (string) - For filtering by society
+ */
+export async function saveTeeSetToGlobal(teeSet: TeeSet, societyId?: string): Promise<boolean> {
+  if (!teeSet.id) {
+    console.error("[TeeSets] saveTeeSetToGlobal: teeSet.id is required");
+    return false;
+  }
+  
+  if (!teeSet.courseId) {
+    console.error("[TeeSets] saveTeeSetToGlobal: teeSet.courseId is required");
+    return false;
+  }
+  
+  if (!isFirebaseConfigured()) {
+    console.error("[TeeSets] Firebase not configured");
+    return false;
+  }
+  
+  try {
+    const teeSetRef = doc(db, "teesets", teeSet.id);
+    
+    const data = {
+      courseId: teeSet.courseId,
+      teeColor: teeSet.teeColor,
+      name: teeSet.teeColor, // Duplicate for backward compatibility
+      par: teeSet.par,
+      courseRating: teeSet.courseRating,
+      slopeRating: teeSet.slopeRating,
+      appliesTo: teeSet.appliesTo,
+      societyId: societyId || getActiveSocietyId(),
+      updatedAt: new Date().toISOString(),
+    };
+    
+    await setDoc(teeSetRef, data, { merge: true });
+    
+    console.log(`[TeeSets] Saved tee set to global: ${teeSet.id} for course ${teeSet.courseId}`, data);
+    return true;
+  } catch (error) {
+    console.error("[TeeSets] Error saving to global:", error, { teeSetId: teeSet.id, courseId: teeSet.courseId });
+    return false;
+  }
+}
+
+/**
+ * Delete a tee set from the GLOBAL teesets collection
+ */
+export async function deleteTeeSetFromGlobal(teeSetId: string): Promise<boolean> {
+  if (!teeSetId) {
+    console.error("[TeeSets] deleteTeeSetFromGlobal: teeSetId is required");
+    return false;
+  }
+  
+  if (!isFirebaseConfigured()) {
+    console.error("[TeeSets] Firebase not configured");
+    return false;
+  }
+  
+  try {
+    const teeSetRef = doc(db, "teesets", teeSetId);
+    await deleteDoc(teeSetRef);
+    
+    console.log(`[TeeSets] Deleted tee set from global: ${teeSetId}`);
+    return true;
+  } catch (error) {
+    console.error("[TeeSets] Error deleting from global:", error, { teeSetId });
+    return false;
+  }
+}
+
+/**
+ * Save a course to the GLOBAL courses collection
+ * 
+ * CANONICAL PATH: courses/{courseId}
+ */
+export async function saveCourseToGlobal(course: Omit<Course, "teeSets"> & { teeSets?: TeeSet[] }, societyId?: string): Promise<boolean> {
+  if (!course.id) {
+    console.error("[Courses] saveCourseToGlobal: course.id is required");
+    return false;
+  }
+  
+  if (!isFirebaseConfigured()) {
+    console.error("[Courses] Firebase not configured");
+    return false;
+  }
+  
+  try {
+    const effectiveSocietyId = societyId || getActiveSocietyId();
+    const courseRef = doc(db, "courses", course.id);
+    
+    const data = {
+      name: course.name,
+      address: course.address || null,
+      postcode: course.postcode || null,
+      notes: course.notes || null,
+      googlePlaceId: course.googlePlaceId || null,
+      mapsUrl: course.mapsUrl || null,
+      societyId: effectiveSocietyId,
+      status: "active",
+      updatedAt: new Date().toISOString(),
+    };
+    
+    await setDoc(courseRef, data, { merge: true });
+    
+    console.log(`[Courses] Saved course to global: ${course.id} (${course.name})`);
+    return true;
+  } catch (error) {
+    console.error("[Courses] Error saving to global:", error, { courseId: course.id });
+    return false;
+  }
+}
+
+/**
+ * Delete a course from the GLOBAL courses collection
+ */
+export async function deleteCourseFromGlobal(courseId: string): Promise<boolean> {
+  if (!courseId) {
+    console.error("[Courses] deleteCourseFromGlobal: courseId is required");
+    return false;
+  }
+  
+  if (!isFirebaseConfigured()) {
+    console.error("[Courses] Firebase not configured");
+    return false;
+  }
+  
+  try {
+    const courseRef = doc(db, "courses", courseId);
+    await deleteDoc(courseRef);
+    
+    console.log(`[Courses] Deleted course from global: ${courseId}`);
+    return true;
+  } catch (error) {
+    console.error("[Courses] Error deleting from global:", error, { courseId });
+    return false;
+  }
+}
+
+// ============================================================================
+// TEE SET DIRECT LOOKUP FALLBACK
+// ============================================================================
+
+/**
+ * Load a single tee set directly by ID from the GLOBAL teesets collection
+ * 
+ * FALLBACK: Used when courseId query returns empty but event has teeSetId
+ */
+export async function getTeeSetById(teeSetId: string): Promise<TeeSet | null> {
+  if (!teeSetId) {
+    return null;
+  }
+  
+  if (!isFirebaseConfigured()) {
+    console.error("[TeeSets] Firebase not configured");
+    return null;
+  }
+  
+  try {
+    const teeSetRef = doc(db, "teesets", teeSetId);
+    const teeSetSnap = await getDoc(teeSetRef);
+    
+    if (teeSetSnap.exists()) {
+      const data = teeSetSnap.data();
+      const teeSet: TeeSet = {
+        id: teeSetSnap.id,
+        courseId: data.courseId || "",
+        teeColor: data.teeColor || data.name || "Unknown",
+        par: data.par || 72,
+        courseRating: data.courseRating || 72.0,
+        slopeRating: data.slopeRating || 113,
+        appliesTo: data.appliesTo || data.gender || "male",
+      };
+      console.log(`[TeeSets] Loaded by direct ID: ${teeSetId}`, teeSet);
+      return teeSet;
+    }
+    
+    console.warn(`[TeeSets] Tee set not found by ID: ${teeSetId}`);
+    return null;
+  } catch (error) {
+    console.error("[TeeSets] Error loading by ID:", error, { teeSetId });
+    return null;
+  }
+}
+
+/**
+ * Load tee sets with fallback: try courseId query first, then direct ID lookup
+ * 
+ * This handles the case where tee set docs exist but don't have courseId field.
+ */
+export async function loadTeeSetsWithFallback(
+  courseId: string,
+  maleTeeSetId?: string,
+  femaleTeeSetId?: string
+): Promise<TeeSet[]> {
+  // First try courseId query
+  const teeSetsFromQuery = await loadTeeSetsFromGlobal(courseId);
+  
+  if (teeSetsFromQuery.length > 0) {
+    return teeSetsFromQuery;
+  }
+  
+  console.log("[TeeSets] No tee sets found by courseId query, trying direct ID lookup...", {
+    courseId,
+    maleTeeSetId,
+    femaleTeeSetId,
+  });
+  
+  // Fallback: try direct ID lookup
+  const teeSets: TeeSet[] = [];
+  
+  if (maleTeeSetId) {
+    const maleTeeSet = await getTeeSetById(maleTeeSetId);
+    if (maleTeeSet) {
+      teeSets.push(maleTeeSet);
+    }
+  }
+  
+  if (femaleTeeSetId) {
+    const femaleTeeSet = await getTeeSetById(femaleTeeSetId);
+    if (femaleTeeSet) {
+      teeSets.push(femaleTeeSet);
+    }
+  }
+  
+  if (teeSets.length > 0) {
+    console.log(`[TeeSets] Loaded ${teeSets.length} tee sets via direct ID fallback`);
+  } else {
+    console.warn("[TeeSets] No tee sets found for courseId or by direct IDs", {
+      courseId,
+      maleTeeSetId,
+      femaleTeeSetId,
+      hint: "Tee set documents must include 'courseId' field for query. Check Firestore teesets collection.",
+    });
+  }
+  
+  return teeSets;
+}
+
+/**
+ * Migration helper: Patch tee set with courseId if missing
+ * 
+ * Only runs in dev mode. Patches existing teeset doc if:
+ * - teeset doc exists but missing courseId
+ * - event.courseId exists
+ */
+export async function patchTeeSetWithCourseId(
+  teeSetId: string,
+  courseId: string
+): Promise<boolean> {
+  if (!teeSetId || !courseId) {
+    return false;
+  }
+  
+  // Only run in development
+  if (!__DEV__) {
+    return false;
+  }
+  
+  if (!isFirebaseConfigured()) {
+    return false;
+  }
+  
+  try {
+    const teeSetRef = doc(db, "teesets", teeSetId);
+    const teeSetSnap = await getDoc(teeSetRef);
+    
+    if (teeSetSnap.exists()) {
+      const data = teeSetSnap.data();
+      
+      if (!data.courseId) {
+        console.log(`[TeeSets] MIGRATION: Patching tee set ${teeSetId} with courseId ${courseId}`);
+        
+        await setDoc(teeSetRef, {
+          courseId,
+          patchedAt: new Date().toISOString(),
+          patchReason: "Migration: added missing courseId",
+        }, { merge: true });
+        
+        console.log(`[TeeSets] MIGRATION: Successfully patched tee set ${teeSetId}`);
+        return true;
+      }
+    }
+    
+    return false;
+  } catch (error) {
+    console.error("[TeeSets] MIGRATION: Error patching tee set:", error, { teeSetId, courseId });
     return false;
   }
 }

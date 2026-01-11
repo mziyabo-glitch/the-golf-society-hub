@@ -31,6 +31,9 @@ import {
   getCoursesForSociety,
   getCourseFromGlobal,
   loadTeeSetsFromGlobal,
+  loadTeeSetsWithFallback,
+  getTeeSetById,
+  patchTeeSetWithCourseId,
   saveAndVerifyTeeSheet,
   findTeeSetById,
   findTeeSetsForEvent,
@@ -271,20 +274,47 @@ export default function TeesTeeSheetScreen() {
         console.log("[TeeSheet] Course preselected from loaded list:", courseFromList.name, "with", courseFromList.teeSets.length, "tee sets");
 
         // Find tee sets using case-insensitive matching
-        const { maleTeeSet, femaleTeeSet } = findTeeSetsForEvent(courseFromList, event);
+        let { maleTeeSet, femaleTeeSet } = findTeeSetsForEvent(courseFromList, event);
+        
+        // FALLBACK: If tee sets not found in course, try loading directly with fallback
+        if (!maleTeeSet && event.maleTeeSetId) {
+          console.log("[TeeSheet] Male tee set not in course.teeSets, trying direct lookup:", event.maleTeeSetId);
+          maleTeeSet = await getTeeSetById(event.maleTeeSetId);
+          
+          // DEV: If found but missing courseId, patch it
+          if (maleTeeSet && !maleTeeSet.courseId && event.courseId) {
+            await patchTeeSetWithCourseId(event.maleTeeSetId, event.courseId);
+            maleTeeSet.courseId = event.courseId;
+          }
+        }
+        
+        if (!femaleTeeSet && event.femaleTeeSetId) {
+          console.log("[TeeSheet] Female tee set not in course.teeSets, trying direct lookup:", event.femaleTeeSetId);
+          femaleTeeSet = await getTeeSetById(event.femaleTeeSetId);
+          
+          // DEV: If found but missing courseId, patch it
+          if (femaleTeeSet && !femaleTeeSet.courseId && event.courseId) {
+            await patchTeeSetWithCourseId(event.femaleTeeSetId, event.courseId);
+            femaleTeeSet.courseId = event.courseId;
+          }
+        }
         
         setSelectedMaleTeeSet(maleTeeSet);
         if (maleTeeSet) {
           console.log("[TeeSheet] Male tee set:", `${maleTeeSet.teeColor} (SR: ${maleTeeSet.slopeRating}, CR: ${maleTeeSet.courseRating})`);
         } else if (event.maleTeeSetId) {
-          console.warn("[TeeSheet] Male tee set NOT FOUND:", event.maleTeeSetId);
+          console.warn("[TeeSheet] Male tee set NOT FOUND anywhere:", event.maleTeeSetId, {
+            hint: "Check teesets collection in Firestore. Tee set doc must include 'courseId' field.",
+          });
         }
 
         setSelectedFemaleTeeSet(femaleTeeSet);
         if (femaleTeeSet) {
           console.log("[TeeSheet] Female tee set:", `${femaleTeeSet.teeColor} (SR: ${femaleTeeSet.slopeRating}, CR: ${femaleTeeSet.courseRating})`);
         } else if (event.femaleTeeSetId) {
-          console.warn("[TeeSheet] Female tee set NOT FOUND:", event.femaleTeeSetId);
+          console.warn("[TeeSheet] Female tee set NOT FOUND anywhere:", event.femaleTeeSetId, {
+            hint: "Check teesets collection in Firestore. Tee set doc must include 'courseId' field.",
+          });
         }
       } else {
         // Course not in list - try loading directly from Firestore
@@ -292,6 +322,17 @@ export default function TeesTeeSheetScreen() {
         const course = await getCourseFromGlobal(event.courseId);
         
         if (course) {
+          // If course has no teeSets, try loading with fallback
+          if (course.teeSets.length === 0 && (event.maleTeeSetId || event.femaleTeeSetId)) {
+            console.log("[TeeSheet] Course loaded but has no tee sets, loading with fallback...");
+            const fallbackTeeSets = await loadTeeSetsWithFallback(
+              event.courseId,
+              event.maleTeeSetId,
+              event.femaleTeeSetId
+            );
+            course.teeSets = fallbackTeeSets;
+          }
+          
           setSelectedCourse(course);
           console.log("[TeeSheet] Course loaded from global:", course.name, "with", course.teeSets.length, "tee sets");
 
@@ -1139,7 +1180,7 @@ export default function TeesTeeSheetScreen() {
                     ⚠️ No Course Configured
                   </Text>
                   <Text style={{ fontSize: 13, color: '#92400e', lineHeight: 18 }}>
-                    This event doesn't have a course assigned. Configure the course in Event Settings before creating a tee sheet.
+                    This event does not have a course assigned. Configure the course in Event Settings before creating a tee sheet.
                   </Text>
                   {canManageTeeSheet && (
                     <Pressable 
@@ -1157,7 +1198,7 @@ export default function TeesTeeSheetScreen() {
                     ❌ Course Not Found
                   </Text>
                   <Text style={{ fontSize: 13, color: '#991b1b', lineHeight: 18 }}>
-                    Course ID "{selectedEvent.courseId}" was not found in Firestore. The course may have been deleted or the ID is incorrect.
+                    Course ID &quot;{selectedEvent.courseId}&quot; was not found in Firestore. The course may have been deleted or the ID is incorrect.
                   </Text>
                   {canManageTeeSheet && (
                     <Pressable 
@@ -1196,7 +1237,7 @@ export default function TeesTeeSheetScreen() {
                         ⚠️ No Tee Sets Configured
                       </Text>
                       <Text style={{ fontSize: 13, color: '#92400e', lineHeight: 18 }}>
-                        This event doesn't have tee sets assigned. Configure tee sets in Event Settings.
+                        This event does not have tee sets assigned. Configure tee sets in Event Settings.
                       </Text>
                       {canManageTeeSheet && (
                         <Pressable 

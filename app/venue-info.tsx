@@ -2,24 +2,32 @@
  * Venue Info / Course Management Screen
  * - Captain/Secretary can create/edit courses and tee sets
  * - Members can view courses only
+ * 
+ * FIRESTORE BACKED:
+ * - Courses are stored in global "courses" collection with societyId field
+ * - Tee sets are stored in global "teesets" collection with courseId field
  */
 
 import { canEditVenueInfo, canEditHandicaps, normalizeMemberRoles, normalizeSessionRole } from "@/lib/permissions";
 import { getCurrentUserRoles } from "@/lib/roles";
 import { getSession } from "@/lib/session";
-import { STORAGE_KEYS } from "@/lib/storage";
 import type { Course, TeeSet } from "@/lib/models";
-import AsyncStorage from "@react-native-async-storage/async-storage";
-import { Linking } from "react-native";
 import { useFocusEffect } from "@react-navigation/native";
 import { router } from "expo-router";
 import { useCallback, useState } from "react";
-import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
-
-const COURSES_KEY = STORAGE_KEYS.COURSES;
+import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View, Linking } from "react-native";
+// Firestore imports
+import { 
+  getCoursesForSociety, 
+  saveCourseToGlobal, 
+  deleteCourseFromGlobal,
+  saveTeeSetToGlobal,
+  deleteTeeSetFromGlobal,
+  loadTeeSetsFromGlobal,
+} from "@/lib/firestore/society";
+import { getActiveSocietyId, isFirebaseConfigured } from "@/lib/firebase";
 
 export default function VenueInfoScreen() {
-  const [hasEditAccess, setHasEditAccess] = useState(false);
   const [canEditCourses, setCanEditCourses] = useState(false);
   const [canEditTeeSets, setCanEditTeeSets] = useState(false);
   const [courses, setCourses] = useState<Course[]>([]);
@@ -55,7 +63,6 @@ export default function VenueInfoScreen() {
     const canEditCourse = canEditVenueInfo(sessionRole, roles); // Captain/Secretary
     const canEditTees = canEditHandicaps(sessionRole, roles); // Captain/Handicapper
     const hasAccess = canEditCourse || canEditTees; // Allow if can edit either
-    setHasEditAccess(hasAccess);
     setCanEditCourses(canEditCourse);
     setCanEditTeeSets(canEditTees);
     
@@ -68,13 +75,24 @@ export default function VenueInfoScreen() {
 
   const loadCourses = async () => {
     try {
-      const coursesData = await AsyncStorage.getItem(COURSES_KEY);
-      if (coursesData) {
-        const loaded: Course[] = JSON.parse(coursesData);
-        setCourses(loaded);
+      const societyId = getActiveSocietyId();
+      
+      if (!isFirebaseConfigured()) {
+        console.error("[VenueInfo] Firebase not configured");
+        Alert.alert("Error", "Firebase not configured. Cannot load courses.");
+        return;
       }
+      
+      console.log(`[VenueInfo] Loading courses for society: ${societyId}`);
+      
+      // Load courses from Firestore global courses collection
+      const firestoreCourses = await getCoursesForSociety(societyId);
+      
+      console.log(`[VenueInfo] Loaded ${firestoreCourses.length} courses from Firestore`);
+      setCourses(firestoreCourses);
     } catch (error) {
-      console.error("Error loading courses:", error);
+      console.error("[VenueInfo] Error loading courses:", error);
+      Alert.alert("Error", "Failed to load courses. Please try again.");
     }
   };
 
@@ -85,43 +103,40 @@ export default function VenueInfoScreen() {
     }
 
     try {
-      let updatedCourses: Course[];
-      if (selectedCourse) {
-        // Update existing
-        updatedCourses = courses.map((c) =>
-          c.id === selectedCourse.id
-            ? {
-                ...c,
-                name: courseName.trim(),
-                address: courseAddress.trim() || undefined,
-                postcode: coursePostcode.trim() || undefined,
-                notes: courseNotes.trim() || undefined,
-                mapsUrl: c.mapsUrl, // Preserve existing
-              }
-            : c
-        );
-      } else {
-        // Create new
-        const newCourse: Course = {
-          id: Date.now().toString(),
-          name: courseName.trim(),
-          address: courseAddress.trim() || undefined,
-          postcode: coursePostcode.trim() || undefined,
-          notes: courseNotes.trim() || undefined,
-          teeSets: [],
-        };
-        updatedCourses = [...courses, newCourse];
+      const societyId = getActiveSocietyId();
+      
+      if (!isFirebaseConfigured()) {
+        Alert.alert("Error", "Firebase not configured. Cannot save course.");
+        return;
       }
-
-      await AsyncStorage.setItem(COURSES_KEY, JSON.stringify(updatedCourses));
-      await loadCourses();
-      setIsEditingCourse(false);
-      setSelectedCourse(null);
-      resetCourseForm();
-      Alert.alert("Success", selectedCourse ? "Course updated" : "Course created");
+      
+      const courseId = selectedCourse?.id || Date.now().toString();
+      
+      const courseData: Omit<Course, "teeSets"> = {
+        id: courseId,
+        name: courseName.trim(),
+        address: courseAddress.trim() || undefined,
+        postcode: coursePostcode.trim() || undefined,
+        notes: courseNotes.trim() || undefined,
+        mapsUrl: selectedCourse?.mapsUrl, // Preserve existing
+      };
+      
+      console.log(`[VenueInfo] Saving course to Firestore: ${courseId}`);
+      
+      const success = await saveCourseToGlobal(courseData, societyId);
+      
+      if (success) {
+        await loadCourses();
+        setIsEditingCourse(false);
+        setSelectedCourse(null);
+        resetCourseForm();
+        Alert.alert("Success", selectedCourse ? "Course updated" : "Course created");
+      } else {
+        throw new Error("Failed to save course to Firestore");
+      }
     } catch (error) {
-      console.error("Error saving course:", error);
-      Alert.alert("Error", "Failed to save course");
+      console.error("[VenueInfo] Error saving course:", error);
+      Alert.alert("Error", "Failed to save course. Please try again.");
     }
   };
 
@@ -130,7 +145,7 @@ export default function VenueInfoScreen() {
     
     Alert.alert(
       "Delete Course",
-      `Are you sure you want to delete "${selectedCourse.name}"?`,
+      `Are you sure you want to delete "${selectedCourse.name}"? This will also delete all tee sets for this course.`,
       [
         { text: "Cancel", style: "cancel" },
         {
@@ -138,14 +153,26 @@ export default function VenueInfoScreen() {
           style: "destructive",
           onPress: async () => {
             try {
-              const updatedCourses = courses.filter((c) => c.id !== selectedCourse.id);
-              await AsyncStorage.setItem(COURSES_KEY, JSON.stringify(updatedCourses));
-              await loadCourses();
-              setSelectedCourse(null);
-              resetCourseForm();
+              console.log(`[VenueInfo] Deleting course: ${selectedCourse.id}`);
+              
+              // Delete all tee sets for this course first
+              for (const teeSet of selectedCourse.teeSets) {
+                await deleteTeeSetFromGlobal(teeSet.id);
+              }
+              
+              // Delete the course
+              const success = await deleteCourseFromGlobal(selectedCourse.id);
+              
+              if (success) {
+                await loadCourses();
+                setSelectedCourse(null);
+                resetCourseForm();
+              } else {
+                throw new Error("Failed to delete course from Firestore");
+              }
             } catch (error) {
-              console.error("Error deleting course:", error);
-              Alert.alert("Error", "Failed to delete course");
+              console.error("[VenueInfo] Error deleting course:", error);
+              Alert.alert("Error", "Failed to delete course. Please try again.");
             }
           },
         },
@@ -182,76 +209,87 @@ export default function VenueInfoScreen() {
     }
 
     try {
-      const updatedCourses = courses.map((c) => {
-        if (c.id !== selectedCourse.id) return c;
+      const societyId = getActiveSocietyId();
+      
+      if (!isFirebaseConfigured()) {
+        Alert.alert("Error", "Firebase not configured. Cannot save tee set.");
+        return;
+      }
+      
+      // Generate tee set ID - use lowercase teeColor for consistency
+      const teeSetId = editingTeeSet?.id || `${selectedCourse.id}_${teeColor.trim().toLowerCase()}_${Date.now()}`;
+      
+      const teeSetData: TeeSet = {
+        id: teeSetId,
+        courseId: selectedCourse.id, // REQUIRED: Links teeset to course
+        teeColor: teeColor.trim(),
+        par,
+        courseRating,
+        slopeRating,
+        appliesTo: teeAppliesTo,
+      };
+      
+      console.log(`[VenueInfo] Saving tee set to Firestore: ${teeSetId} for course ${selectedCourse.id}`, teeSetData);
+      
+      // Write to Firestore global teesets collection
+      const success = await saveTeeSetToGlobal(teeSetData, societyId);
+      
+      if (success) {
+        // Reload courses to get fresh tee set data
+        await loadCourses();
         
-        let updatedTeeSets: TeeSet[];
-        if (editingTeeSet) {
-          // Update existing
-          updatedTeeSets = c.teeSets.map((t) =>
-            t.id === editingTeeSet.id
-              ? {
-                  ...t,
-                  teeColor: teeColor.trim(),
-                  par,
-                  courseRating,
-                  slopeRating,
-                  appliesTo: teeAppliesTo,
-                }
-              : t
-          );
-        } else {
-          // Create new
-          const newTeeSet: TeeSet = {
-            id: Date.now().toString(),
-            courseId: c.id,
-            teeColor: teeColor.trim(),
-            par,
-            courseRating,
-            slopeRating,
-            appliesTo: teeAppliesTo,
-          };
-          updatedTeeSets = [...c.teeSets, newTeeSet];
+        // Re-select the course to refresh its tee sets
+        const updatedCourse = courses.find((c) => c.id === selectedCourse.id);
+        if (updatedCourse) {
+          // Manually load tee sets for updated display
+          const freshTeeSets = await loadTeeSetsFromGlobal(selectedCourse.id);
+          setSelectedCourse({ ...updatedCourse, teeSets: freshTeeSets });
         }
         
-        return { ...c, teeSets: updatedTeeSets };
-      });
-
-      await AsyncStorage.setItem(COURSES_KEY, JSON.stringify(updatedCourses));
-      await loadCourses();
-      const updated = updatedCourses.find((c) => c.id === selectedCourse.id);
-      if (updated) setSelectedCourse(updated);
-      setIsEditingTeeSet(false);
-      setEditingTeeSet(null);
-      resetTeeSetForm();
-      Alert.alert("Success", editingTeeSet ? "Tee set updated" : "Tee set created");
+        setIsEditingTeeSet(false);
+        setEditingTeeSet(null);
+        resetTeeSetForm();
+        Alert.alert("Success", editingTeeSet ? "Tee set updated" : "Tee set created");
+      } else {
+        throw new Error("Failed to save tee set to Firestore");
+      }
     } catch (error) {
-      console.error("Error saving tee set:", error);
-      Alert.alert("Error", "Failed to save tee set");
+      console.error("[VenueInfo] Error saving tee set:", error);
+      Alert.alert("Error", "Failed to save tee set. Please try again.");
     }
   };
 
   const handleDeleteTeeSet = async (teeSetId: string) => {
     if (!selectedCourse) return;
     
-    Alert.alert("Delete Tee Set", "Are you sure?", [
+    Alert.alert("Delete Tee Set", "Are you sure you want to delete this tee set?", [
       { text: "Cancel", style: "cancel" },
       {
         text: "Delete",
         style: "destructive",
         onPress: async () => {
           try {
-            const updatedCourses = courses.map((c) => {
-              if (c.id !== selectedCourse.id) return c;
-              return { ...c, teeSets: c.teeSets.filter((t) => t.id !== teeSetId) };
-            });
-            await AsyncStorage.setItem(COURSES_KEY, JSON.stringify(updatedCourses));
-            await loadCourses();
-            const updated = updatedCourses.find((c) => c.id === selectedCourse.id);
-            if (updated) setSelectedCourse(updated);
+            console.log(`[VenueInfo] Deleting tee set: ${teeSetId}`);
+            
+            // Delete from Firestore global teesets collection
+            const success = await deleteTeeSetFromGlobal(teeSetId);
+            
+            if (success) {
+              // Reload courses and refresh selected course
+              await loadCourses();
+              
+              // Manually load fresh tee sets for the selected course
+              const freshTeeSets = await loadTeeSetsFromGlobal(selectedCourse.id);
+              const updatedCourse = courses.find((c) => c.id === selectedCourse.id);
+              if (updatedCourse) {
+                setSelectedCourse({ ...updatedCourse, teeSets: freshTeeSets });
+              }
+            } else {
+              throw new Error("Failed to delete tee set from Firestore");
+            }
           } catch (error) {
-            console.error("Error deleting tee set:", error);
-            Alert.alert("Error", "Failed to delete tee set");
+            console.error("[VenueInfo] Error deleting tee set:", error);
+            Alert.alert("Error", "Failed to delete tee set. Please try again.");
           }
         },
       },
@@ -290,6 +328,21 @@ export default function VenueInfoScreen() {
     setTeeSlopeRating(teeSet.slopeRating.toString());
     setTeeAppliesTo(teeSet.appliesTo);
     setIsEditingTeeSet(true);
+  };
+
+  /**
+   * Select a course and load its tee sets from Firestore
+   */
+  const handleSelectCourse = async (course: Course) => {
+    console.log(`[VenueInfo] Selecting course: ${course.id} (${course.name})`);
+    
+    // Load fresh tee sets from Firestore
+    const freshTeeSets = await loadTeeSetsFromGlobal(course.id);
+    console.log(`[VenueInfo] Loaded ${freshTeeSets.length} tee sets for course ${course.id}`);
+    
+    // Update selected course with fresh tee sets
+    setSelectedCourse({ ...course, teeSets: freshTeeSets });
+    setIsEditingCourse(false);
   };
 
   const openGoogleMaps = (course: Course) => {
@@ -359,10 +412,7 @@ export default function VenueInfoScreen() {
                     )}
                     {canEditTeeSets && (
                       <Pressable
-                        onPress={() => {
-                          setSelectedCourse(course);
-                          setIsEditingCourse(false);
-                        }}
+                        onPress={() => handleSelectCourse(course)}
                         style={styles.editButton}
                       >
                         <Text style={styles.editButtonText}>Manage Tees</Text>
