@@ -373,13 +373,25 @@ export default function TeesTeeSheetScreen() {
           c.name.toLowerCase() === event.courseName?.toLowerCase()
         );
         if (courseByName) {
-          console.log("[TeeSheet] FALLBACK: Found course by name match:", courseByName.name);
+          console.log("[TeeSheet] FALLBACK: Found course by name match:", courseByName.name, "id:", courseByName.id);
+          
+          // CRITICAL: Persist fallback result into event state
+          // Update event with the matched courseId so UI guards don't block
+          const updatedEvent: EventData = {
+            ...event,
+            courseId: courseByName.id, // Set courseId from matched course
+          };
+          setSelectedEvent(updatedEvent);
           setSelectedCourse(courseByName);
           
           // Try to load tee sets for this course
-          const { maleTeeSet, femaleTeeSet } = findTeeSetsForEvent(courseByName, event);
+          const { maleTeeSet, femaleTeeSet } = findTeeSetsForEvent(courseByName, updatedEvent);
           setSelectedMaleTeeSet(maleTeeSet);
           setSelectedFemaleTeeSet(femaleTeeSet);
+          
+          console.log("[TeeSheet] Final courseId:", updatedEvent.courseId);
+        } else {
+          console.warn("[TeeSheet] FALLBACK FAILED: No course found matching name:", event.courseName);
         }
       } else {
         console.warn("[TeeSheet] Event has no courseId configured", {
@@ -408,9 +420,13 @@ export default function TeesTeeSheetScreen() {
     // Load guests
     setGuests(event.guests || []);
 
+    // === FINAL STATE LOG ===
     console.log("=== Event Selection Complete ===");
     console.log("Has saved tee sheet:", hasTeeSheet);
     console.log("Edit mode:", !hasTeeSheet);
+    // Note: selectedEvent state may have been updated during this function
+    // The courseId logged here is from the original event parameter
+    // If fallback was used, selectedEvent state now has the updated courseId
   };
 
   /**
