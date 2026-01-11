@@ -339,14 +339,50 @@ export async function getEvent(eventId: string): Promise<EventData | null> {
 
 /**
  * Map Firestore document data to EventData type
+ * 
+ * IMPORTANT: Preserves courseId EXACTLY as stored in Firestore
  */
 function mapFirestoreEvent(id: string, data: Record<string, unknown>): EventData {
-  return {
+  // === DEBUG: Log raw Firestore data for courseId troubleshooting ===
+  if (__DEV__ || true) {
+    console.log(`[mapFirestoreEvent] RAW event data for ${id}:`, {
+      courseId: data.courseId,
+      courseIdType: typeof data.courseId,
+      courseName: data.courseName,
+      maleTeeSetId: data.maleTeeSetId,
+      femaleTeeSetId: data.femaleTeeSetId,
+      allKeys: Object.keys(data),
+    });
+  }
+  
+  // Handle date - could be Timestamp, string, or Date
+  let dateStr: string = new Date().toISOString();
+  if (data.date) {
+    if (typeof data.date === "string") {
+      dateStr = data.date;
+    } else if (typeof data.date === "object" && "toDate" in data.date) {
+      // Firestore Timestamp
+      try {
+        dateStr = (data.date as { toDate: () => Date }).toDate().toISOString();
+      } catch {
+        dateStr = new Date().toISOString();
+      }
+    } else if (data.date instanceof Date) {
+      dateStr = data.date.toISOString();
+    }
+  }
+  
+  // Extract courseId - ensure it's preserved as string
+  const courseId = typeof data.courseId === "string" && data.courseId.trim() !== "" 
+    ? data.courseId 
+    : undefined;
+  
+  const event: EventData = {
     id,
     name: (data.name as string) || "Unnamed Event",
-    date: (data.date as string) || new Date().toISOString(),
+    date: dateStr,
     courseName: (data.courseName as string) || "",
-    courseId: data.courseId as string | undefined,
+    courseId, // Preserved from raw data
     maleTeeSetId: data.maleTeeSetId as string | undefined,
     femaleTeeSetId: data.femaleTeeSetId as string | undefined,
     handicapAllowance: data.handicapAllowance as 0.9 | 1.0 | undefined,
@@ -373,6 +409,11 @@ function mapFirestoreEvent(id: string, data: Record<string, unknown>): EventData
     longestDriveHoles: (data.longestDriveHoles as number[]) || [],
     results: data.results as EventData["results"],
   };
+  
+  // Log final mapped event courseId
+  console.log(`[mapFirestoreEvent] Mapped event ${id}: courseId = "${event.courseId || "(undefined)"}"`);
+  
+  return event;
 }
 
 /**

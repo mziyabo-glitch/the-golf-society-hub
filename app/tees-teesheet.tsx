@@ -262,9 +262,18 @@ export default function TeesTeeSheetScreen() {
       setHandicapAllowancePct(100);
     }
 
-    // Preselect course from loaded courses list if event.courseId exists
-    console.log("[TeeSheet] Event courseId:", event.courseId || "(not set)");
+    // === CRITICAL: Log event courseId for debugging ===
+    console.log("[TeeSheet] Using courseId:", event.courseId);
+    console.log("[TeeSheet] Event course data:", {
+      courseId: event.courseId,
+      courseIdType: typeof event.courseId,
+      courseIdTruthy: Boolean(event.courseId),
+      courseName: event.courseName,
+      maleTeeSetId: event.maleTeeSetId,
+      femaleTeeSetId: event.femaleTeeSetId,
+    });
     
+    // Preselect course from loaded courses list if event.courseId exists
     if (event.courseId) {
       // First, try to find the course in our already-loaded courses list
       const courseFromList = courses.find(c => c.id === event.courseId);
@@ -349,11 +358,36 @@ export default function TeesTeeSheetScreen() {
         }
       }
     } else {
-      console.warn("[TeeSheet] Event has no courseId configured", {
-        eventId: event.id,
-        eventName: event.name,
-        hint: "Configure course in Event Settings",
-      });
+      // DEFENSIVE FALLBACK: courseId is missing
+      if (event.courseName) {
+        // courseName exists but courseId doesn't - warn but don't block
+        console.warn("[TeeSheet] Event has courseName but no courseId", {
+          eventId: event.id,
+          eventName: event.name,
+          courseName: event.courseName,
+          hint: "Event was created before courseId linking was implemented. Update event settings to link a course.",
+        });
+        
+        // Try to find course by name as fallback
+        const courseByName = courses.find(c => 
+          c.name.toLowerCase() === event.courseName?.toLowerCase()
+        );
+        if (courseByName) {
+          console.log("[TeeSheet] FALLBACK: Found course by name match:", courseByName.name);
+          setSelectedCourse(courseByName);
+          
+          // Try to load tee sets for this course
+          const { maleTeeSet, femaleTeeSet } = findTeeSetsForEvent(courseByName, event);
+          setSelectedMaleTeeSet(maleTeeSet);
+          setSelectedFemaleTeeSet(femaleTeeSet);
+        }
+      } else {
+        console.warn("[TeeSheet] Event has no courseId configured", {
+          eventId: event.id,
+          eventName: event.name,
+          hint: "Configure course in Event Settings",
+        });
+      }
     }
 
     // Load notes and competitions
