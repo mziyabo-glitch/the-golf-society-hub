@@ -13,8 +13,8 @@
  *       └─ teeSets/{teeSetId}
  */
 
-import { db, getActiveSocietyId, isFirebaseConfigured } from "../firebase";
-import { doc, getDoc, setDoc, collection, getDocs, deleteDoc, Timestamp, query, where } from "firebase/firestore";
+import { db, getActiveSocietyId, isFirebaseConfigured, setActiveSocietyId } from "../firebase";
+import { doc, getDoc, setDoc, collection, getDocs, deleteDoc, Timestamp, query, where, writeBatch } from "firebase/firestore";
 import { Platform } from "react-native";
 import type { MemberData, EventData, Course, TeeSet, GuestData } from "../models";
 
@@ -64,10 +64,10 @@ export interface SocietyData {
 export interface TeeSheetData {
   startTimeISO: string;
   intervalMins: number;
-  groups: Array<{
+  groups: {
     timeISO: string;
     players: string[];
-  }>;
+  }[];
 }
 
 // ============================================================================
@@ -1807,5 +1807,146 @@ export async function patchTeeSetWithCourseId(
   } catch (error) {
     console.error("[TeeSets] MIGRATION: Error patching tee set:", error, { teeSetId, courseId });
     return false;
+  }
+}
+
+
+// ============================================================================
+// DELETE SOCIETY CASCADE
+// Deletes society and all its subcollections (members, events, courses, etc.)
+// ============================================================================
+
+/**
+ * Delete a society and ALL its data (cascade delete).
+ * 
+ * This deletes:
+ * - societies/{societyId}/members/*
+ * - societies/{societyId}/events/* (and their subcollections: results, players, payments)
+ * - societies/{societyId}/courses/* (and their subcollection: teeSets)
+ * - The society document itself
+ * - Clears the active society ID from local storage
+ * 
+ * Uses batched writes for safe deletion of >500 docs.
+ */
+export async function deleteSocietyCascade(
+  societyId: string
+): Promise<{ success: boolean; error?: string; deletedCounts?: Record<string, number> }> {
+  if (!societyId) {
+    return { success: false, error: "Missing societyId" };
+  }
+
+  if (!isFirebaseConfigured()) {
+    return { success: false, error: "Firebase not configured" };
+  }
+
+  console.log("[DeleteSociety] Starting cascade delete for society:", societyId);
+
+  // Track deletion counts
+  const deletedCounts: Record<string, number> = {
+    members: 0,
+    events: 0,
+    eventResults: 0,
+    eventPlayers: 0,
+    eventPayments: 0,
+    courses: 0,
+    courseTeeSets: 0,
+  };
+
+  // Helper to delete a subcollection using batched writes (safe for >500 docs)
+  const deleteSubcollection = async (
+    parentPath: string,
+    subcollectionName: string
+  ): Promise<number> => {
+    let deleted = 0;
+    try {
+      const subRef = collection(db, parentPath, subcollectionName);
+      const snapshot = await getDocs(subRef);
+      
+      if (snapshot.empty) return 0;
+      
+      // Batch delete (400 per batch for safety)
+      const BATCH_SIZE = 400;
+      let batch = writeBatch(db);
+      let batchCount = 0;
+      
+      for (const docSnap of snapshot.docs) {
+        batch.delete(docSnap.ref);
+        batchCount++;
+        deleted++;
+        
+        if (batchCount >= BATCH_SIZE) {
+          await batch.commit();
+          batch = writeBatch(db);
+          batchCount = 0;
+        }
+      }
+      
+      if (batchCount > 0) {
+        await batch.commit();
+      }
+    } catch (err) {
+      console.warn(`[DeleteSociety] Error deleting ${subcollectionName} at ${parentPath}:`, err);
+    }
+    return deleted;
+  };
+
+  try {
+    // 1. Delete all members
+    console.log("[DeleteSociety] Deleting members...");
+    deletedCounts.members = await deleteSubcollection(`societies/${societyId}`, "members");
+    console.log(`[DeleteSociety] Deleted ${deletedCounts.members} members`);
+
+    // 2. Delete all events and their subcollections
+    console.log("[DeleteSociety] Deleting events and their subcollections...");
+    const eventsRef = collection(db, "societies", societyId, "events");
+    const eventsSnapshot = await getDocs(eventsRef);
+    
+    for (const eventDoc of eventsSnapshot.docs) {
+      const eventPath = `societies/${societyId}/events/${eventDoc.id}`;
+      
+      // Delete event subcollections
+      deletedCounts.eventResults += await deleteSubcollection(eventPath, "results");
+      deletedCounts.eventPlayers += await deleteSubcollection(eventPath, "players");
+      deletedCounts.eventPayments += await deleteSubcollection(eventPath, "payments");
+      
+      // Delete the event doc
+      await deleteDoc(eventDoc.ref);
+      deletedCounts.events++;
+    }
+    console.log(`[DeleteSociety] Deleted ${deletedCounts.events} events`);
+
+    // 3. Delete all courses and their subcollections
+    console.log("[DeleteSociety] Deleting courses...");
+    const coursesRef = collection(db, "societies", societyId, "courses");
+    const coursesSnapshot = await getDocs(coursesRef);
+    
+    for (const courseDoc of coursesSnapshot.docs) {
+      const coursePath = `societies/${societyId}/courses/${courseDoc.id}`;
+      
+      // Delete course teeSets subcollection
+      deletedCounts.courseTeeSets += await deleteSubcollection(coursePath, "teeSets");
+      
+      // Delete the course doc
+      await deleteDoc(courseDoc.ref);
+      deletedCounts.courses++;
+    }
+    console.log(`[DeleteSociety] Deleted ${deletedCounts.courses} courses`);
+
+    // 4. Delete the society document itself
+    console.log("[DeleteSociety] Deleting society document...");
+    await deleteDoc(doc(db, "societies", societyId));
+
+    // 5. Clear active society ID from local storage
+    console.log("[DeleteSociety] Clearing active society ID...");
+    setActiveSocietyId("");
+
+    console.log("[DeleteSociety] Cascade delete complete:", deletedCounts);
+    return { success: true, deletedCounts };
+  } catch (error) {
+    console.error("[DeleteSociety] Cascade delete failed:", error);
+    return { 
+      success: false, 
+      error: error instanceof Error ? error.message : "Failed to delete society" 
+    };
   }
 }

@@ -23,7 +23,7 @@ import {
   type User 
 } from "firebase/auth";
 import { Platform } from "react-native";
-import { getActiveSocietyIdWeb } from "./active-society-web";
+import { getActiveSocietyIdWeb, setActiveSocietyIdWeb, clearActiveSocietyIdWeb } from "./active-society-web";
 
 // ============================================================================
 // REQUIRED ENVIRONMENT VARIABLES
@@ -410,6 +410,25 @@ export function hasRealActiveSociety(): boolean {
 export function hasActiveSociety(): boolean {
   const societyId = getActiveSocietyId();
   return societyId !== null && societyId.length > 0;
+}
+
+/**
+ * Set the active society ID
+ * On web: saves to localStorage
+ * Empty string clears the society ID
+ */
+export function setActiveSocietyId(societyId: string): boolean {
+  if (Platform.OS === "web") {
+    if (!societyId || societyId.trim().length === 0) {
+      return clearActiveSocietyIdWeb();
+    }
+    return setActiveSocietyIdWeb(societyId);
+  }
+  
+  // On native, this would be handled differently (AsyncStorage)
+  // For now, just log
+  console.log("[Firebase] setActiveSocietyId on native:", societyId);
+  return true;
 }
 
 /**

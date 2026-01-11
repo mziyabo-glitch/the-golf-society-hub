@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ActivityIndicator, Alert, ScrollView, View } from "react-native";
+import { ActivityIndicator, ScrollView, View } from "react-native";
 import { router, useLocalSearchParams } from "expo-router";
 
 import { Screen } from "@/components/ui/Screen";
@@ -11,6 +11,7 @@ import { getActiveSocietyId } from "@/lib/firebase";
 import { deleteEventCascade, getEventById } from "@/lib/firestore/events";
 import type { EventData } from "@/lib/models";
 import { formatDateDDMMYYYY } from "@/utils/date";
+import { showAlert, confirmAlert } from "@/lib/guards";
 
 export default function EventDetailScreen() {
   const { id: eventId } = useLocalSearchParams<{ id: string }>();
@@ -34,7 +35,7 @@ export default function EventDetailScreen() {
 
         const loaded = await getEventById(String(eventId), societyId);
         if (!loaded) {
-          Alert.alert("Error", "Event not found", [
+          showAlert("Error", "Event not found", [
             { text: "OK", onPress: () => router.replace("/history" as any) },
           ]);
           return;
@@ -44,7 +45,7 @@ export default function EventDetailScreen() {
         console.log("[EventDetails] Loaded event:", String(eventId));
       } catch (err) {
         console.error("[EventDetails] Load failed", err);
-        Alert.alert("Error", "Failed to load event");
+        showAlert("Error", "Failed to load event");
       } finally {
         setLoading(false);
       }
@@ -53,52 +54,58 @@ export default function EventDetailScreen() {
     void load();
   }, [eventId]);
 
-  const confirmDelete = () => {
-    Alert.alert(
+  const confirmDelete = async () => {
+    console.log("[DeleteEvent] Confirm delete triggered for event:", eventId);
+    
+    const confirmed = await confirmAlert(
       "Delete Event",
       "This will permanently delete this event and its results. This cannot be undone.",
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Delete Event",
-          style: "destructive",
-          onPress: handleDelete,
-        },
-      ]
+      "Delete Event",
+      "Cancel"
     );
+    
+    if (confirmed) {
+      await handleDelete();
+    }
   };
 
   const handleDelete = async () => {
-    if (!eventId) return;
+    if (!eventId) {
+      console.error("[DeleteEvent] No eventId");
+      return;
+    }
 
     // Visible only when Captain/Admin-ish, but guard again at write time
     if (!permissions?.isCaptain && !permissions?.canManageEvents) {
-      Alert.alert("Not allowed", "You don't have permission to delete events.");
+      showAlert("Not allowed", "You don't have permission to delete events.");
       return;
     }
 
     try {
       const societyId = getActiveSocietyId();
       if (!societyId) {
-        Alert.alert("Error", "No active society selected");
+        showAlert("Error", "No active society selected");
         return;
       }
 
-      console.log("[DeleteEvent] Deleting event:", String(eventId));
+      console.log("[DeleteEvent] Deleting event:", String(eventId), "from society:", societyId);
       const result = await deleteEventCascade(String(eventId), societyId);
+      
       if (!result.success) {
-        Alert.alert("Error", result.error || "Failed to delete event");
+        console.error("[DeleteEvent] Delete failed:", result.error);
+        showAlert("Error", result.error || "Failed to delete event");
         return;
       }
 
       console.log("[DeleteEvent] Deleted OK:", String(eventId));
       console.log("[DeleteEvent] Success - navigating to /society");
-      Alert.alert("Deleted", "Event has been deleted", [
+      
+      showAlert("Deleted", "Event has been deleted", [
         { text: "OK", onPress: () => router.replace("/society" as any) },
       ]);
     } catch (err) {
-      console.error("[DeleteEvent] Failed", err);
-      Alert.alert("Error", "Failed to delete event");
+      console.error("[DeleteEvent] Failed with exception:", err);
+      showAlert("Error", `Failed to delete event: ${err instanceof Error ? err.message : "Unknown error"}`);
     }
   };
 

@@ -15,7 +15,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useFocusEffect } from "@react-navigation/native";
 import { router } from "expo-router";
 import { useCallback, useState, useRef } from "react";
-import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View, Image, ActivityIndicator, Platform, Modal } from "react-native";
+import { Pressable, ScrollView, StyleSheet, Text, TextInput, View, Image, ActivityIndicator, Platform, Modal } from "react-native";
 import * as Sharing from "expo-sharing";
 import { Paths, File as ExpoFile } from "expo-file-system";
 
@@ -35,7 +35,9 @@ import {
   DATA_VERSION 
 } from "@/lib/data-store";
 // Use shared Firestore helper (same as other screens)
-import { getSociety as getFirestoreSociety } from "@/lib/firestore/society";
+import { getSociety as getFirestoreSociety, deleteSocietyCascade } from "@/lib/firestore/society";
+import { getActiveSocietyId } from "@/lib/firebase";
+import { showAlert } from "@/lib/guards";
 
 // Storage keys for backward compatibility during migration
 const STORAGE_KEY = STORAGE_KEYS.SOCIETY_ACTIVE;
@@ -125,7 +127,7 @@ export default function SettingsScreen() {
       } else {
         // No society found - redirect to onboarding
         console.log("[Settings] No society found, redirecting to create-society");
-        Alert.alert(
+        showAlert(
           "No Society Found",
           "Please create or join a society first.",
           [{ text: "OK", onPress: () => router.replace("/create-society") }]
@@ -153,13 +155,13 @@ export default function SettingsScreen() {
       setCanEditLogo(canEdit);
       
       if (session.role !== "admin" && !canAssign) {
-        Alert.alert("Access Denied", "Only admins can access settings", [
+        showAlert("Access Denied", "Only admins can access settings", [
           { text: "OK", onPress: () => router.back() },
         ]);
       }
     } catch (error) {
       console.error("[Settings] Error loading society:", error);
-      Alert.alert(
+      showAlert(
         "Error",
         "Failed to load society data. Please try again.",
         [{ text: "OK", onPress: () => router.back() }]
@@ -186,21 +188,21 @@ export default function SettingsScreen() {
       await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(updatedSociety));
       setSociety(updatedSociety);
       setIsEditingName(false);
-      Alert.alert("Success", "Society name updated");
+      showAlert("Success", "Society name updated");
     } catch (error) {
       console.error("Error saving society name:", error);
-      Alert.alert("Error", "Failed to update society name");
+      showAlert("Error", "Failed to update society name");
     }
   };
 
   const handleSavePin = async () => {
     if (newPin.length !== 4 || !/^\d+$/.test(newPin)) {
-      Alert.alert("Error", "PIN must be exactly 4 digits");
+      showAlert("Error", "PIN must be exactly 4 digits");
       return;
     }
 
     if (newPin !== confirmPin) {
-      Alert.alert("Error", "PINs do not match");
+      showAlert("Error", "PINs do not match");
       return;
     }
 
@@ -210,21 +212,21 @@ export default function SettingsScreen() {
       setNewPin("");
       setConfirmPin("");
       setIsEditingPin(false);
-      Alert.alert("Success", "Admin PIN saved");
+      showAlert("Success", "Admin PIN saved");
     } catch (error) {
       console.error("Error saving PIN:", error);
-      Alert.alert("Error", "Failed to save PIN");
+      showAlert("Error", "Failed to save PIN");
     }
   };
 
   const handleLogoUpload = async () => {
     if (!canEditLogo) {
-      Alert.alert("Access Denied", "Only Captain or Secretary can upload logo");
+      showAlert("Access Denied", "Only Captain or Secretary can upload logo");
       return;
     }
 
     if (!society) {
-      Alert.alert("Error", "No society found");
+      showAlert("Error", "No society found");
       return;
     }
 
@@ -279,10 +281,10 @@ export default function SettingsScreen() {
       };
       await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(updatedSociety));
       setSociety(updatedSociety);
-      Alert.alert("Success", "Logo uploaded successfully");
+      showAlert("Success", "Logo uploaded successfully");
     } catch (error) {
       console.error("Error uploading logo:", error);
-      Alert.alert("Error", "Failed to upload logo");
+      showAlert("Error", "Failed to upload logo");
     } finally {
       setUploadingLogo(false);
     }
@@ -290,7 +292,7 @@ export default function SettingsScreen() {
 
   const handleRemoveLogo = async () => {
     if (!canEditLogo) {
-      Alert.alert("Access Denied", "Only Captain or Secretary can remove logo");
+      showAlert("Access Denied", "Only Captain or Secretary can remove logo");
       return;
     }
 
@@ -298,7 +300,7 @@ export default function SettingsScreen() {
       return;
     }
 
-    Alert.alert(
+    showAlert(
       "Remove Logo",
       "Are you sure you want to remove the society logo?",
       [
@@ -314,10 +316,10 @@ export default function SettingsScreen() {
               };
               await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(updatedSociety));
               setSociety(updatedSociety);
-              Alert.alert("Success", "Logo removed");
+              showAlert("Success", "Logo removed");
             } catch (error) {
               console.error("Error removing logo:", error);
-              Alert.alert("Error", "Failed to remove logo");
+              showAlert("Error", "Failed to remove logo");
             }
           },
         },
@@ -348,12 +350,12 @@ export default function SettingsScreen() {
           a.click();
           document.body.removeChild(a);
           URL.revokeObjectURL(url);
-          Alert.alert("Success", "Data exported successfully. Check your downloads folder.");
+          showAlert("Success", "Data exported successfully. Check your downloads folder.");
         } catch (webError) {
           console.error("Web export error:", webError);
           // Fallback: show in modal for copy
           setImportJsonText(jsonData);
-          Alert.alert("Export", "Copy the data below:", [
+          showAlert("Export", "Copy the data below:", [
             { text: "OK" }
           ]);
         }
@@ -370,16 +372,16 @@ export default function SettingsScreen() {
               dialogTitle: "Export Golf Society Data",
             });
           } else {
-            Alert.alert("Export", `Data saved to: ${file.uri}`);
+            showAlert("Export", `Data saved to: ${file.uri}`);
           }
         } catch (fsError) {
           console.error("FileSystem error:", fsError);
-          Alert.alert("Error", "Failed to export data on this device");
+          showAlert("Error", "Failed to export data on this device");
         }
       }
     } catch (error) {
       console.error("Export error:", error);
-      Alert.alert("Error", "Failed to export data");
+      showAlert("Error", "Failed to export data");
     } finally {
       setIsExporting(false);
     }
@@ -410,7 +412,7 @@ export default function SettingsScreen() {
       await processImport(text);
     } catch (error) {
       console.error("File read error:", error);
-      Alert.alert("Error", "Failed to read file");
+      showAlert("Error", "Failed to read file");
     }
     
     // Reset file input
@@ -428,7 +430,7 @@ export default function SettingsScreen() {
       try {
         parsed = JSON.parse(jsonText);
       } catch {
-        Alert.alert("Error", "Invalid JSON format");
+        showAlert("Error", "Invalid JSON format");
         setIsImporting(false);
         return;
       }
@@ -438,7 +440,7 @@ export default function SettingsScreen() {
       const memberCount = parsed.members?.length || 0;
       const eventCount = parsed.events?.length || 0;
 
-      Alert.alert(
+      showAlert(
         "Confirm Import",
         `This will replace all existing data with:\n\n` +
         `• Version: ${dataVersion}\n` +
@@ -453,14 +455,14 @@ export default function SettingsScreen() {
             onPress: async () => {
               const result = await importAppData(jsonText);
               if (result.success) {
-                Alert.alert("Success", "Data imported successfully. Reloading...", [
+                showAlert("Success", "Data imported successfully. Reloading...", [
                   { text: "OK", onPress: () => {
                     setShowImportModal(false);
                     loadSociety(); // Reload data
                   }}
                 ]);
               } else {
-                Alert.alert("Import Failed", result.error || "Unknown error");
+                showAlert("Import Failed", result.error || "Unknown error");
               }
               setIsImporting(false);
             },
@@ -469,14 +471,14 @@ export default function SettingsScreen() {
       );
     } catch (error) {
       console.error("Import error:", error);
-      Alert.alert("Error", "Failed to import data");
+      showAlert("Error", "Failed to import data");
       setIsImporting(false);
     }
   };
 
   const handleImportFromModal = () => {
     if (!importJsonText.trim()) {
-      Alert.alert("Error", "Please paste JSON data");
+      showAlert("Error", "Please paste JSON data");
       return;
     }
     processImport(importJsonText);
@@ -492,19 +494,38 @@ export default function SettingsScreen() {
 
   const handleConfirmReset = async () => {
     if (resetConfirmText !== "DELETE") {
-      Alert.alert("Error", "Please type DELETE to confirm");
+      showAlert("Error", "Please type DELETE to confirm");
       return;
     }
 
     try {
+      console.log("[Settings] Starting society reset...");
+      
+      // 1. Delete from Firestore (if there's an active society)
+      const societyId = getActiveSocietyId();
+      if (societyId) {
+        console.log("[Settings] Deleting society from Firestore:", societyId);
+        const result = await deleteSocietyCascade(societyId);
+        if (!result.success) {
+          console.error("[Settings] Firestore delete failed:", result.error);
+          showAlert("Error", result.error || "Failed to delete society from Firestore");
+          return;
+        }
+        console.log("[Settings] Firestore delete complete:", result.deletedCounts);
+      }
+      
+      // 2. Also clear AsyncStorage (for any local data)
       await resetAppData();
+      
       setShowResetModal(false);
-      Alert.alert("Success", "All data has been reset", [
-        { text: "OK", onPress: () => router.replace("/create-society") }
+      console.log("[Settings] Society reset complete");
+      
+      showAlert("Success", "All data has been reset", [
+        { text: "OK", onPress: () => router.replace("/create-society" as any) }
       ]);
     } catch (error) {
-      console.error("Reset error:", error);
-      Alert.alert("Error", "Failed to reset data");
+      console.error("[Settings] Reset error:", error);
+      showAlert("Error", `Failed to reset data: ${error instanceof Error ? error.message : "Unknown error"}`);
     }
   };
 
