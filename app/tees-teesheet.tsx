@@ -22,6 +22,7 @@ import {
 } from "@/lib/teeSheetPrint";
 import { getActiveSocietyId, hasRealActiveSociety } from "@/lib/firebase";
 import { logDataSanity } from "@/lib/firestore/errors";
+import { updateEvent } from "@/lib/firestore/events";
 // Firestore helpers - NO AsyncStorage fallback for tee sheet
 import { 
   getSociety, 
@@ -118,13 +119,19 @@ export default function TeesTeeSheetScreen() {
   const canManageTeeSheet = permissions?.canManageTeeSheet ?? false;
 
   // Check if all required data is loaded for tee sheet generation
-  const canGenerateTeeSheet = Boolean(
-    dataReady &&
+  const hasCourse = !!selectedEvent?.courseId;
+  const hasMaleTee = !!selectedEvent?.maleTeeSetId;
+  const hasFemaleTee = !!selectedEvent?.femaleTeeSetId;
+
+  // Tee sheet generation should only block when there is really no courseId.
+  const canGenerateTeeSheet = Boolean(dataReady && selectedEvent && hasCourse && members.length > 0);
+
+  // PH calculation is separately gated by course + tee sets.
+  const canCalculatePH = Boolean(
     selectedCourse &&
-    selectedMaleTeeSet &&
-    selectedFemaleTeeSet &&
-    handicapAllowancePct > 0 &&
-    members.length > 0
+      selectedMaleTeeSet &&
+      selectedFemaleTeeSet &&
+      handicapAllowancePct > 0
   );
 
   useFocusEffect(
@@ -288,6 +295,41 @@ export default function TeesTeeSheetScreen() {
         setSelectedCourse(courseFromList);
         console.log("[TeeSheet] Course preselected from loaded list:", courseFromList.name, "with", courseFromList.teeSets.length, "tee sets");
 
+        // Tee set fallback + persistence (only when unambiguous)
+        const maleTees = courseFromList.teeSets.filter((t) => t.appliesTo === "male");
+        const femaleTees = courseFromList.teeSets.filter((t) => t.appliesTo === "female");
+        let maleTeeSetId = event.maleTeeSetId;
+        let femaleTeeSetId = event.femaleTeeSetId;
+
+        if (!maleTeeSetId && maleTees.length === 1) {
+          maleTeeSetId = maleTees[0].id;
+          console.log("[TeeSheet] Auto-selected male tee set:", maleTeeSetId);
+        }
+        if (!femaleTeeSetId && femaleTees.length === 1) {
+          femaleTeeSetId = femaleTees[0].id;
+          console.log("[TeeSheet] Auto-selected female tee set:", femaleTeeSetId);
+        }
+
+        const teeSetPatch: Record<string, unknown> = {};
+        if (maleTeeSetId && !event.maleTeeSetId) teeSetPatch.maleTeeSetId = maleTeeSetId;
+        if (femaleTeeSetId && !event.femaleTeeSetId) teeSetPatch.femaleTeeSetId = femaleTeeSetId;
+
+        if (Object.keys(teeSetPatch).length > 0) {
+          const updatedEvent = { ...event, ...teeSetPatch } as EventData;
+          setSelectedEvent(updatedEvent);
+          try {
+            const societyId = getActiveSocietyId();
+            const result = await updateEvent(event.id, teeSetPatch as any, societyId);
+            if (!result.success) {
+              console.warn("[TeeSheet] Failed to persist tee set fallback:", result.error);
+            } else {
+              console.log("[TeeSheet] Persisted tee set fallback for event", event.id, teeSetPatch);
+            }
+          } catch (e) {
+            console.warn("[TeeSheet] Failed to persist tee set fallback:", e);
+          }
+        }
+
         // === RESOLVE TEE SETS BY ID ===
         // First try to find in course.teeSets, then fallback to direct Firestore lookup
         let maleTeeSet: TeeSet | null = null;
@@ -347,6 +389,40 @@ export default function TeesTeeSheetScreen() {
         const course = await getCourseFromGlobal(event.courseId);
         
         if (course) {
+          // Tee set fallback + persistence (only when unambiguous)
+          const maleTees = course.teeSets.filter((t) => t.appliesTo === "male");
+          const femaleTees = course.teeSets.filter((t) => t.appliesTo === "female");
+          let maleTeeSetId = event.maleTeeSetId;
+          let femaleTeeSetId = event.femaleTeeSetId;
+
+          if (!maleTeeSetId && maleTees.length === 1) {
+            maleTeeSetId = maleTees[0].id;
+            console.log("[TeeSheet] Auto-selected male tee set:", maleTeeSetId);
+          }
+          if (!femaleTeeSetId && femaleTees.length === 1) {
+            femaleTeeSetId = femaleTees[0].id;
+            console.log("[TeeSheet] Auto-selected female tee set:", femaleTeeSetId);
+          }
+
+          const teeSetPatch: Record<string, unknown> = {};
+          if (maleTeeSetId && !event.maleTeeSetId) teeSetPatch.maleTeeSetId = maleTeeSetId;
+          if (femaleTeeSetId && !event.femaleTeeSetId) teeSetPatch.femaleTeeSetId = femaleTeeSetId;
+          if (Object.keys(teeSetPatch).length > 0) {
+            const updatedEvent = { ...event, ...teeSetPatch } as EventData;
+            setSelectedEvent(updatedEvent);
+            try {
+              const societyId = getActiveSocietyId();
+              const result = await updateEvent(event.id, teeSetPatch as any, societyId);
+              if (!result.success) {
+                console.warn("[TeeSheet] Failed to persist tee set fallback:", result.error);
+              } else {
+                console.log("[TeeSheet] Persisted tee set fallback for event", event.id, teeSetPatch);
+              }
+            } catch (e) {
+              console.warn("[TeeSheet] Failed to persist tee set fallback:", e);
+            }
+          }
+
           // If course has no teeSets, try loading with fallback
           if (course.teeSets.length === 0 && (event.maleTeeSetId || event.femaleTeeSetId)) {
             console.log("[TeeSheet] Course loaded but has no tee sets, loading with fallback...");
@@ -396,9 +472,61 @@ export default function TeesTeeSheetScreen() {
           const updatedEvent: EventData = {
             ...event,
             courseId: courseByName.id, // Set courseId from matched course
+            courseName: courseByName.name,
           };
           setSelectedEvent(updatedEvent);
           setSelectedCourse(courseByName);
+          
+          // Persist fallback back to Firestore (non-fatal)
+          try {
+            const societyId = getActiveSocietyId();
+            const result = await updateEvent(
+              event.id,
+              { courseId: courseByName.id, courseName: courseByName.name } as any,
+              societyId
+            );
+            if (!result.success) {
+              console.warn("[TeeSheet] Failed to persist courseId fallback:", result.error);
+            } else {
+              console.log("[TeeSheet] Persisted courseId fallback for event", event.id, courseByName.id);
+            }
+          } catch (e) {
+            console.warn("[TeeSheet] Failed to persist courseId fallback:", e);
+          }
+
+          // Tee set fallback + persistence (only when unambiguous)
+          const maleTees = courseByName.teeSets.filter((t) => t.appliesTo === "male");
+          const femaleTees = courseByName.teeSets.filter((t) => t.appliesTo === "female");
+          let maleTeeSetId = updatedEvent.maleTeeSetId;
+          let femaleTeeSetId = updatedEvent.femaleTeeSetId;
+
+          if (!maleTeeSetId && maleTees.length === 1) {
+            maleTeeSetId = maleTees[0].id;
+            console.log("[TeeSheet] Auto-selected male tee set:", maleTeeSetId);
+          }
+          if (!femaleTeeSetId && femaleTees.length === 1) {
+            femaleTeeSetId = femaleTees[0].id;
+            console.log("[TeeSheet] Auto-selected female tee set:", femaleTeeSetId);
+          }
+
+          const teeSetPatch: Record<string, unknown> = {};
+          if (maleTeeSetId && !updatedEvent.maleTeeSetId) teeSetPatch.maleTeeSetId = maleTeeSetId;
+          if (femaleTeeSetId && !updatedEvent.femaleTeeSetId) teeSetPatch.femaleTeeSetId = femaleTeeSetId;
+          if (Object.keys(teeSetPatch).length > 0) {
+            const patchedEvent = { ...updatedEvent, ...teeSetPatch } as EventData;
+            setSelectedEvent(patchedEvent);
+            try {
+              const societyId = getActiveSocietyId();
+              const result = await updateEvent(event.id, teeSetPatch as any, societyId);
+              if (!result.success) {
+                console.warn("[TeeSheet] Failed to persist tee set fallback:", result.error);
+              } else {
+                console.log("[TeeSheet] Persisted tee set fallback for event", event.id, teeSetPatch);
+              }
+            } catch (e) {
+              console.warn("[TeeSheet] Failed to persist tee set fallback:", e);
+            }
+          }
           
           // === RESOLVE TEE SETS BY ID (same as primary path) ===
           let maleTeeSet: TeeSet | null = null;
@@ -506,15 +634,12 @@ export default function TeesTeeSheetScreen() {
     // BLOCK if data is not ready
     if (!canGenerateTeeSheet) {
       const missing: string[] = [];
-      if (!selectedCourse) missing.push("Course");
-      if (!selectedMaleTeeSet) missing.push("Male Tee Set");
-      if (!selectedFemaleTeeSet) missing.push("Female Tee Set");
-      if (!handicapAllowancePct) missing.push("Handicap Allowance");
+      if (!selectedEvent?.courseId) missing.push("Course (no courseId configured)");
       if (members.length === 0) missing.push("Members");
 
       Alert.alert(
         "Cannot Generate Tee Sheet",
-        `Missing required data:\n• ${missing.join("\n• ")}\n\nPlease ensure all data is loaded from Firestore.`
+        `Missing required data:\n• ${missing.join("\n• ")}\n\nPlease configure a course for this event.`
       );
       console.error("[Generate Tee Sheet] Missing data:", missing);
       return;
@@ -1096,7 +1221,7 @@ export default function TeesTeeSheetScreen() {
     const guest = guests.find((g) => g.id === playerId);
 
     if (member) {
-      const ph = canGenerateTeeSheet
+      const ph = canCalculatePH
         ? getPlayingHandicap(member, selectedEvent, selectedCourse, selectedMaleTeeSet, selectedFemaleTeeSet)
         : null;
       return {
@@ -1108,7 +1233,7 @@ export default function TeesTeeSheetScreen() {
 
     if (guest) {
       const guestAsMember = { id: guest.id, name: guest.name, handicap: guest.handicapIndex, sex: guest.sex };
-      const ph = canGenerateTeeSheet
+      const ph = canCalculatePH
         ? getPlayingHandicap(guestAsMember, selectedEvent, selectedCourse, selectedMaleTeeSet, selectedFemaleTeeSet)
         : null;
       return {
@@ -1171,32 +1296,33 @@ export default function TeesTeeSheetScreen() {
         </AppCard>
       )}
 
-      {/* Data Status - PH Calculation Warning */}
-      {!canGenerateTeeSheet && selectedEvent && (
+      {/* Configuration warnings (generation blocks only when no courseId) */}
+      {selectedEvent && !hasCourse && (
         <AppCard style={styles.warningCard}>
           <Text style={{ fontSize: 13, fontWeight: "600", color: "#b45309" }}>
-            ⚠️ Select course + tee sets to calculate PH
+            ⚠️ No course configured
           </Text>
           <Text style={{ fontSize: 12, color: "#78716c", marginTop: 6 }}>
-            Playing Handicap (PH) requires:
+            Tee sheet generation requires a courseId. Please configure a course for this event.
           </Text>
-          <Text style={{ fontSize: 12, color: selectedCourse ? "#059669" : "#b45309", marginTop: 2 }}>
-            {selectedCourse ? "✓" : "•"} Course: {selectedCourse?.name || "Not selected"}
+        </AppCard>
+      )}
+
+      {selectedEvent && hasCourse && (!hasMaleTee || !hasFemaleTee) && (
+        <AppCard style={styles.warningCard}>
+          <Text style={{ fontSize: 13, fontWeight: "600", color: "#b45309" }}>
+            ⚠️ No Tee Sets Configured
           </Text>
-          <Text style={{ fontSize: 12, color: selectedMaleTeeSet ? "#059669" : "#b45309", marginTop: 2 }}>
-            {selectedMaleTeeSet ? "✓" : "•"} Male tee set: {selectedMaleTeeSet ? `${selectedMaleTeeSet.teeColor} (SR: ${selectedMaleTeeSet.slopeRating}, CR: ${selectedMaleTeeSet.courseRating})` : "Not selected"}
-          </Text>
-          <Text style={{ fontSize: 12, color: selectedFemaleTeeSet ? "#059669" : "#b45309", marginTop: 2 }}>
-            {selectedFemaleTeeSet ? "✓" : "•"} Female tee set: {selectedFemaleTeeSet ? `${selectedFemaleTeeSet.teeColor} (SR: ${selectedFemaleTeeSet.slopeRating}, CR: ${selectedFemaleTeeSet.courseRating})` : "Not selected"}
+          <Text style={{ fontSize: 12, color: "#78716c", marginTop: 6 }}>
+            Playing Handicap (PH) requires both male + female tee sets. Configure in Event Settings.
           </Text>
           <Text style={{ fontSize: 11, fontStyle: "italic", color: "#78716c", marginTop: 8 }}>
             WHS Formula: PH = round(HI × (SR/113) + (CR−Par)) × Allowance%
           </Text>
         </AppCard>
       )}
-      
-      {/* PH Ready Indicator */}
-      {canGenerateTeeSheet && selectedEvent && (
+
+      {selectedEvent && hasCourse && hasMaleTee && hasFemaleTee && canCalculatePH && (
         <AppCard style={styles.successCard}>
           <Text style={{ fontSize: 13, fontWeight: "600", color: "#059669" }}>
             ✓ Playing Handicaps (PH) will be calculated using WHS formula

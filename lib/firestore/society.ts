@@ -343,15 +343,14 @@ export async function getEvent(eventId: string): Promise<EventData | null> {
  * IMPORTANT: Preserves courseId EXACTLY as stored in Firestore
  */
 function mapFirestoreEvent(id: string, data: Record<string, unknown>): EventData {
-  // === DEBUG: Log raw Firestore data for courseId troubleshooting ===
-  if (__DEV__ || true) {
+  // DEV/Non-prod debug only (avoid noisy production logs)
+  if (__DEV__ || process.env.NODE_ENV !== "production") {
     console.log(`[mapFirestoreEvent] RAW event data for ${id}:`, {
-      courseId: data.courseId,
-      courseIdType: typeof data.courseId,
-      courseName: data.courseName,
-      maleTeeSetId: data.maleTeeSetId,
-      femaleTeeSetId: data.femaleTeeSetId,
-      allKeys: Object.keys(data),
+      courseId: (data as any).courseId,
+      courseIdType: typeof (data as any).courseId,
+      courseName: (data as any).courseName,
+      maleTeeSetId: (data as any).maleTeeSetId,
+      femaleTeeSetId: (data as any).femaleTeeSetId,
     });
   }
   
@@ -372,10 +371,12 @@ function mapFirestoreEvent(id: string, data: Record<string, unknown>): EventData
     }
   }
   
-  // Extract courseId - ensure it's preserved as string
-  const courseId = typeof data.courseId === "string" && data.courseId.trim() !== "" 
-    ? data.courseId 
-    : undefined;
+  // Extract courseId safely (never coerce undefined -> "undefined"/"(undefined)")
+  const rawCourseId = (data as any).courseId as unknown;
+  let courseId: string | undefined;
+  if (typeof rawCourseId === "string" && rawCourseId.trim() !== "") {
+    courseId = rawCourseId.trim();
+  }
   
   const event: EventData = {
     id,
@@ -409,10 +410,11 @@ function mapFirestoreEvent(id: string, data: Record<string, unknown>): EventData
     longestDriveHoles: (data.longestDriveHoles as number[]) || [],
     results: data.results as EventData["results"],
   };
-  
-  // Log final mapped event courseId
-  console.log(`[mapFirestoreEvent] Mapped event ${id}: courseId = "${event.courseId || "(undefined)"}"`);
-  
+
+  if (__DEV__ || process.env.NODE_ENV !== "production") {
+    console.log("[mapFirestoreEvent] Mapped event", id, event.name, "courseId:", courseId);
+  }
+
   return event;
 }
 
@@ -959,12 +961,12 @@ export async function getCourses(): Promise<Course[]> {
     // ==========================================================================
     // DETAILED LOGGING: 0 courses returned
     // ==========================================================================
-    console.warn("[Courses] Query returned 0 courses", {
+    console.info("[Courses] Query returned 0 courses (society subcollection)", {
       societyId,
       collectionPath: coursesPath,
       appliedFilters,
       totalDocsFound: 0,
-      hint: "Add courses via Venue Info screen or Firebase Console",
+      note: "This does not necessarily mean there are no global courses. Venue Info uses the global courses collection.",
     });
     
     return [];
