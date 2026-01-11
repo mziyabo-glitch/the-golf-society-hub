@@ -1398,7 +1398,12 @@ export default function TeesTeeSheetScreen() {
                   </Text>
                   {canManageTeeSheet && (
                     <Pressable 
-                      onPress={() => router.push(`/event/${selectedEvent.id}`)}
+                      onPress={() =>
+                        router.push({
+                          pathname: "/(tabs)/event/[id]",
+                          params: { id: selectedEvent.id },
+                        } as any)
+                      }
                       style={{ marginTop: 10, backgroundColor: '#0B6E4F', paddingVertical: 10, paddingHorizontal: 16, borderRadius: 8, alignSelf: 'flex-start' }}
                     >
                       <Text style={{ color: 'white', fontWeight: '600', fontSize: 14 }}>Go to Event Settings</Text>
@@ -1416,7 +1421,12 @@ export default function TeesTeeSheetScreen() {
                   </Text>
                   {canManageTeeSheet && (
                     <Pressable 
-                      onPress={() => router.push(`/event/${selectedEvent.id}`)}
+                      onPress={() =>
+                        router.push({
+                          pathname: "/(tabs)/event/[id]",
+                          params: { id: selectedEvent.id },
+                        } as any)
+                      }
                       style={{ marginTop: 10, backgroundColor: '#dc2626', paddingVertical: 10, paddingHorizontal: 16, borderRadius: 8, alignSelf: 'flex-start' }}
                     >
                       <Text style={{ color: 'white', fontWeight: '600', fontSize: 14 }}>Update Event Settings</Text>
@@ -1455,7 +1465,14 @@ export default function TeesTeeSheetScreen() {
                       </Text>
                       {canManageTeeSheet && (
                         <Pressable 
-                          onPress={() => router.push(`/event/${selectedEvent?.id}`)}
+                          onPress={() =>
+                            selectedEvent?.id
+                              ? router.push({
+                                  pathname: "/(tabs)/event/[id]",
+                                  params: { id: selectedEvent.id },
+                                } as any)
+                              : undefined
+                          }
                           style={{ marginTop: 10, backgroundColor: '#0B6E4F', paddingVertical: 10, paddingHorizontal: 16, borderRadius: 8, alignSelf: 'flex-start' }}
                         >
                           <Text style={{ color: 'white', fontWeight: '600', fontSize: 14 }}>Configure Tee Sets</Text>

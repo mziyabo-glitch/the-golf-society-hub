@@ -759,4 +759,3 @@ const styles = StyleSheet.create({
     marginBottom: spacing.base,
   },
 });
-

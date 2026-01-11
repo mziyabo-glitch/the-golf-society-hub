@@ -332,7 +332,11 @@ export default function SocietyDashboardScreen() {
         <SectionHeader title="Next Event" />
         {nextEvent ? (
           <AppCard style={styles.eventCard}>
-            <Pressable onPress={() => router.push(`/event/${nextEvent.id}` as any)}>
+            <Pressable
+              onPress={() =>
+                router.push({ pathname: "/(tabs)/event/[id]", params: { id: nextEvent.id } } as any)
+              }
+            >
               <AppText variant="h2" style={styles.eventTitle}>{nextEvent.name}</AppText>
               <AppText variant="body" color="secondary" style={styles.eventSubtitle}>
                 {formatDateDDMMYYYY(nextEvent.date)}
@@ -355,7 +359,9 @@ export default function SocietyDashboardScreen() {
                 ) : null;
               })()}
               <SecondaryButton
-                onPress={() => router.push(`/event/${nextEvent.id}` as any)}
+                onPress={() =>
+                  router.push({ pathname: "/(tabs)/event/[id]", params: { id: nextEvent.id } } as any)
+                }
                 size="sm"
                 style={styles.eventButton}
               >
@@ -376,7 +382,11 @@ export default function SocietyDashboardScreen() {
         <SectionHeader title="Last Event" style={styles.sectionHeader} />
         {lastEvent ? (
           <AppCard style={styles.eventCard}>
-            <Pressable onPress={() => router.push(`/event/${lastEvent.id}` as any)}>
+            <Pressable
+              onPress={() =>
+                router.push({ pathname: "/(tabs)/event/[id]", params: { id: lastEvent.id } } as any)
+              }
+            >
               <AppText variant="h2" style={styles.eventTitle}>{lastEvent.name}</AppText>
               <AppText variant="body" color="secondary" style={styles.eventSubtitle}>
                 {formatDateDDMMYYYY(lastEvent.date)}
@@ -387,7 +397,12 @@ export default function SocietyDashboardScreen() {
                 </AppText>
               )}
               <SecondaryButton
-                onPress={() => router.push(`/event/${lastEvent.id}/results` as any)}
+                onPress={() =>
+                  router.push({
+                    pathname: "/(tabs)/event/[id]/results",
+                    params: { id: lastEvent.id },
+                  } as any)
+                }
                 size="sm"
                 style={styles.eventButton}
               >
