@@ -7,18 +7,28 @@ import {
   type Auth,
   type User,
 } from "firebase/auth";
-import { getFirestore, type Firestore } from "firebase/firestore";
-import { doc, setDoc, serverTimestamp } from "firebase/firestore";
+import {
+  getFirestore,
+  type Firestore,
+  doc,
+  setDoc,
+  getDoc,
+  serverTimestamp,
+} from "firebase/firestore";
 
 // -------------------------
 // Environment / Config
+// (accept common key variants)
 // -------------------------
 const firebaseConfig = {
   apiKey: process.env.EXPO_PUBLIC_FIREBASE_API_KEY,
   authDomain: process.env.EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN,
   projectId: process.env.EXPO_PUBLIC_FIREBASE_PROJECT_ID,
   storageBucket: process.env.EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET,
-  messagingSenderId: process.env.EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER,
+  // allow both variants:
+  messagingSenderId:
+    process.env.EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER ||
+    process.env.EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID,
   appId: process.env.EXPO_PUBLIC_FIREBASE_APP_ID,
 };
 
@@ -38,10 +48,6 @@ export function isFirebaseConfigured() {
 // -------------------------
 let app: FirebaseApp;
 if (getApps().length === 0) {
-  if (!isFirebaseConfigured()) {
-    // Don't throw here - let UI show your "not configured" screen.
-    console.warn("[firebase] Not configured. Missing EXPO_PUBLIC_FIREBASE_* env vars.");
-  }
   app = initializeApp(firebaseConfig as any);
 } else {
   app = getApp();
@@ -49,13 +55,12 @@ if (getApps().length === 0) {
 
 // -------------------------
 // Auth init (web + native)
-// IMPORTANT: DO NOT statically import firebase/auth/react-native
-// because web builds will fail.
+// IMPORTANT: do NOT statically import firebase/auth/react-native
 // -------------------------
 let auth: Auth | null = null;
 
 function dynamicRequire(moduleName: string) {
-  // Avoid bundlers trying to resolve the module at build time (web).
+  // Avoid web bundler resolving RN-only modules
   // eslint-disable-next-line no-eval
   const req = eval("require");
   return req(moduleName);
@@ -64,83 +69,67 @@ function dynamicRequire(moduleName: string) {
 function initAuth(): Auth {
   if (auth) return auth;
 
-  // Default safe auth (works everywhere)
   const baseAuth = getAuth(app);
 
-  // On native, attempt to use react-native persistence if available.
-  // If anything fails, keep baseAuth.
   if (Platform.OS !== "web") {
     try {
       const rnAuth = dynamicRequire("firebase/auth/react-native");
       const initializeAuth = rnAuth.initializeAuth as (app: FirebaseApp, opts: any) => Auth;
       const getReactNativePersistence = rnAuth.getReactNativePersistence as (storage: any) => any;
-
       const AsyncStorage = dynamicRequire("@react-native-async-storage/async-storage").default;
 
       auth = initializeAuth(app, {
         persistence: getReactNativePersistence(AsyncStorage),
       });
-
       return auth;
-    } catch (e) {
-      console.warn("[firebase] Native persistence not enabled, falling back to default auth.", e);
+    } catch {
       auth = baseAuth;
       return auth;
     }
   }
 
-  // Web: default auth persistence works fine (IndexedDB/localStorage)
   auth = baseAuth;
   return auth;
 }
 
 export const getFirebaseApp = () => app;
 export const getFirebaseAuth = () => initAuth();
-
 export const db: Firestore = getFirestore(app);
 
 // -------------------------
-// "Active society" helpers
-// You want it ONLINE for persistence, but many screens need a quick
-// synchronous value for routing. We'll store both:
-//  - Firestore: users/{uid}.activeSocietyId
-//  - Local cache: for immediate app startup routing
+// Active society helpers
+// ONLINE (Firestore) + local cache (web + native)
 // -------------------------
 const ACTIVE_SOCIETY_KEY = "gsh_active_society_id";
 
-function setLocalActiveSocietyId(id: string) {
+async function cacheActiveSocietyIdLocal(id: string | null) {
   try {
     if (Platform.OS === "web") {
-      window?.localStorage?.setItem(ACTIVE_SOCIETY_KEY, id);
+      if (id) window?.localStorage?.setItem(ACTIVE_SOCIETY_KEY, id);
+      else window?.localStorage?.removeItem(ACTIVE_SOCIETY_KEY);
       return;
     }
-    // Native: avoid importing AsyncStorage in web bundle paths.
     const AsyncStorage = dynamicRequire("@react-native-async-storage/async-storage").default;
-    AsyncStorage.setItem(ACTIVE_SOCIETY_KEY, id);
-  } catch (e) {
-    console.warn("[firebase] Failed to cache activeSocietyId locally", e);
+    if (id) await AsyncStorage.setItem(ACTIVE_SOCIETY_KEY, id);
+    else await AsyncStorage.removeItem(ACTIVE_SOCIETY_KEY);
+  } catch {
+    // ignore cache failures
   }
 }
 
 export function getActiveSocietyId(): string | null {
+  // Synchronous read (web only). Native should use init/getActiveSocietyIdAsync.
+  if (Platform.OS !== "web") return null;
   try {
-    if (Platform.OS === "web") {
-      return window?.localStorage?.getItem(ACTIVE_SOCIETY_KEY) ?? null;
-    }
-    // Native sync read isn't possible with AsyncStorage, so return null here.
-    // (Your screens currently call this synchronously; web is the main case.)
-    return null;
+    return window?.localStorage?.getItem(ACTIVE_SOCIETY_KEY) ?? null;
   } catch {
     return null;
   }
 }
 
-// If you need native to get it, use this async helper:
 export async function getActiveSocietyIdAsync(): Promise<string | null> {
   try {
-    if (Platform.OS === "web") {
-      return window?.localStorage?.getItem(ACTIVE_SOCIETY_KEY) ?? null;
-    }
+    if (Platform.OS === "web") return window?.localStorage?.getItem(ACTIVE_SOCIETY_KEY) ?? null;
     const AsyncStorage = dynamicRequire("@react-native-async-storage/async-storage").default;
     return await AsyncStorage.getItem(ACTIVE_SOCIETY_KEY);
   } catch {
@@ -151,28 +140,42 @@ export async function getActiveSocietyIdAsync(): Promise<string | null> {
 export async function ensureSignedIn(): Promise<User> {
   const a = initAuth();
   if (a.currentUser) return a.currentUser;
-
   const cred = await signInAnonymously(a);
   return cred.user;
 }
 
-/**
- * Persists active society ONLINE (Firestore) + caches locally for routing.
- */
 export async function setActiveSocietyId(societyId: string): Promise<void> {
+  if (!isFirebaseConfigured()) throw new Error("Firebase not configured");
+
   const user = await ensureSignedIn();
   const uid = user.uid;
 
-  // Online persistence
   await setDoc(
     doc(db, "users", uid),
-    {
-      activeSocietyId: societyId,
-      updatedAt: serverTimestamp(),
-    },
+    { activeSocietyId: societyId, updatedAt: serverTimestamp() },
     { merge: true }
   );
 
-  // Local cache (helps routing/boot)
-  setLocalActiveSocietyId(societyId);
+  await cacheActiveSocietyIdLocal(societyId);
+}
+
+/**
+ * ✅ This is what your app is calling (RootLayout/startup)
+ * It hydrates activeSocietyId from Firestore into local cache.
+ */
+export async function initActiveSocietyId(): Promise<string | null> {
+  if (!isFirebaseConfigured()) {
+    console.warn("[firebase] Not configured. Missing EXPO_PUBLIC_FIREBASE_* env vars.");
+    return null;
+  }
+
+  const user = await ensureSignedIn();
+  const uid = user.uid;
+
+  const snap = await getDoc(doc(db, "users", uid));
+  const activeSocietyId =
+    (snap.exists() ? (snap.data() as any).activeSocietyId : null) ?? null;
+
+  await cacheActiveSocietyIdLocal(activeSocietyId);
+  return activeSocietyId;
 }
