@@ -1,181 +1,184 @@
 // lib/firebase.ts
-import { Platform } from "react-native";
-import { initializeApp, getApp, getApps, type FirebaseApp } from "firebase/app";
+import { initializeApp, getApps, getApp, type FirebaseApp } from "firebase/app";
 import {
   getAuth,
+  onAuthStateChanged,
   signInAnonymously,
   type Auth,
   type User,
 } from "firebase/auth";
 import {
   getFirestore,
-  type Firestore,
   doc,
-  setDoc,
   getDoc,
+  setDoc,
   serverTimestamp,
+  type Firestore,
 } from "firebase/firestore";
 
-// -------------------------
-// Environment / Config
-// (accept common key variants)
-// -------------------------
-const firebaseConfig = {
-  apiKey: process.env.EXPO_PUBLIC_FIREBASE_API_KEY,
-  authDomain: process.env.EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN,
-  projectId: process.env.EXPO_PUBLIC_FIREBASE_PROJECT_ID,
-  storageBucket: process.env.EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET,
-  // allow both variants:
-  messagingSenderId:
-    process.env.EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER ||
-    process.env.EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID,
-  appId: process.env.EXPO_PUBLIC_FIREBASE_APP_ID,
+/**
+ * IMPORTANT:
+ * - No localStorage
+ * - No AsyncStorage
+ * - No firebase/auth/react-native (breaks Vercel/Expo web builds)
+ * - Active society is stored online: users/{uid}.activeSocietyId
+ */
+
+type FirebaseEnv = {
+  apiKey: string;
+  authDomain: string;
+  projectId: string;
+  storageBucket?: string;
+  messagingSenderId?: string;
+  appId?: string;
 };
 
-export function isFirebaseConfigured() {
-  return Boolean(
-    firebaseConfig.apiKey &&
-      firebaseConfig.authDomain &&
-      firebaseConfig.projectId &&
-      firebaseConfig.storageBucket &&
-      firebaseConfig.messagingSenderId &&
-      firebaseConfig.appId
-  );
+function readFirebaseEnv(): FirebaseEnv | null {
+  const apiKey = process.env.EXPO_PUBLIC_FIREBASE_API_KEY;
+  const authDomain = process.env.EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN;
+  const projectId = process.env.EXPO_PUBLIC_FIREBASE_PROJECT_ID;
+
+  // optional but recommended
+  const storageBucket = process.env.EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET;
+  const messagingSenderId = process.env.EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID;
+  const appId = process.env.EXPO_PUBLIC_FIREBASE_APP_ID;
+
+  if (!apiKey || !authDomain || !projectId) return null;
+
+  return { apiKey, authDomain, projectId, storageBucket, messagingSenderId, appId };
 }
 
-// -------------------------
-// App init (safe singleton)
-// -------------------------
-let app: FirebaseApp;
-if (getApps().length === 0) {
-  app = initializeApp(firebaseConfig as any);
-} else {
-  app = getApp();
+export function isFirebaseConfigured(): boolean {
+  return !!readFirebaseEnv();
 }
 
-// -------------------------
-// Auth init (web + native)
-// IMPORTANT: do NOT statically import firebase/auth/react-native
-// -------------------------
+let firebaseApp: FirebaseApp | null = null;
 let auth: Auth | null = null;
+let db: Firestore | null = null;
 
-function dynamicRequire(moduleName: string) {
-  // Avoid web bundler resolving RN-only modules
-  // eslint-disable-next-line no-eval
-  const req = eval("require");
-  return req(moduleName);
-}
+// in-memory cache (NOT persisted locally)
+let activeSocietyIdCache: string | null = null;
 
-function initAuth(): Auth {
-  if (auth) return auth;
-
-  const baseAuth = getAuth(app);
-
-  if (Platform.OS !== "web") {
-    try {
-      const rnAuth = dynamicRequire("firebase/auth/react-native");
-      const initializeAuth = rnAuth.initializeAuth as (app: FirebaseApp, opts: any) => Auth;
-      const getReactNativePersistence = rnAuth.getReactNativePersistence as (storage: any) => any;
-      const AsyncStorage = dynamicRequire("@react-native-async-storage/async-storage").default;
-
-      auth = initializeAuth(app, {
-        persistence: getReactNativePersistence(AsyncStorage),
-      });
-      return auth;
-    } catch {
-      auth = baseAuth;
-      return auth;
-    }
+export function getFirebaseApp(): FirebaseApp {
+  const env = readFirebaseEnv();
+  if (!env) {
+    throw new Error(
+      "Firebase not configured: missing EXPO_PUBLIC_FIREBASE_API_KEY / AUTH_DOMAIN / PROJECT_ID"
+    );
   }
 
-  auth = baseAuth;
+  if (firebaseApp) return firebaseApp;
+  firebaseApp = getApps().length ? getApp() : initializeApp(env);
+  return firebaseApp;
+}
+
+export function getFirebaseAuth(): Auth {
+  if (auth) return auth;
+  auth = getAuth(getFirebaseApp());
   return auth;
 }
 
-export const getFirebaseApp = () => app;
-export const getFirebaseAuth = () => initAuth();
-export const db: Firestore = getFirestore(app);
-
-// -------------------------
-// Active society helpers
-// ONLINE (Firestore) + local cache (web + native)
-// -------------------------
-const ACTIVE_SOCIETY_KEY = "gsh_active_society_id";
-
-async function cacheActiveSocietyIdLocal(id: string | null) {
-  try {
-    if (Platform.OS === "web") {
-      if (id) window?.localStorage?.setItem(ACTIVE_SOCIETY_KEY, id);
-      else window?.localStorage?.removeItem(ACTIVE_SOCIETY_KEY);
-      return;
-    }
-    const AsyncStorage = dynamicRequire("@react-native-async-storage/async-storage").default;
-    if (id) await AsyncStorage.setItem(ACTIVE_SOCIETY_KEY, id);
-    else await AsyncStorage.removeItem(ACTIVE_SOCIETY_KEY);
-  } catch {
-    // ignore cache failures
-  }
+export function getFirebaseDb(): Firestore {
+  if (db) return db;
+  db = getFirestore(getFirebaseApp());
+  return db;
 }
 
-export function getActiveSocietyId(): string | null {
-  // Synchronous read (web only). Native should use init/getActiveSocietyIdAsync.
-  if (Platform.OS !== "web") return null;
-  try {
-    return window?.localStorage?.getItem(ACTIVE_SOCIETY_KEY) ?? null;
-  } catch {
-    return null;
-  }
-}
+// Named exports used across the app
+export const app = getFirebaseApp();
+export const db = getFirebaseDb();
 
-export async function getActiveSocietyIdAsync(): Promise<string | null> {
-  try {
-    if (Platform.OS === "web") return window?.localStorage?.getItem(ACTIVE_SOCIETY_KEY) ?? null;
-    const AsyncStorage = dynamicRequire("@react-native-async-storage/async-storage").default;
-    return await AsyncStorage.getItem(ACTIVE_SOCIETY_KEY);
-  } catch {
-    return null;
-  }
-}
-
+/**
+ * Ensure user is signed in (anonymous is fine).
+ * Returns the Firebase User (so callers can do user.uid safely).
+ */
 export async function ensureSignedIn(): Promise<User> {
-  const a = initAuth();
-  if (a.currentUser) return a.currentUser;
+  const a = getFirebaseAuth();
+
+  // If already signed in, return immediately
+  const existing = a.currentUser;
+  if (existing) return existing;
+
+  // Wait briefly for auth state (in case it’s restoring)
+  const userFromState = await new Promise<User | null>((resolve) => {
+    const unsub = onAuthStateChanged(a, (u) => {
+      unsub();
+      resolve(u);
+    });
+    // if nothing happens quickly, resolve null and we sign in anon
+    setTimeout(() => resolve(null), 800);
+  });
+
+  if (userFromState) return userFromState;
+
+  // Otherwise sign in anonymously
   const cred = await signInAnonymously(a);
   return cred.user;
 }
 
-export async function setActiveSocietyId(societyId: string): Promise<void> {
-  if (!isFirebaseConfigured()) throw new Error("Firebase not configured");
-
-  const user = await ensureSignedIn();
-  const uid = user.uid;
-
-  await setDoc(
-    doc(db, "users", uid),
-    { activeSocietyId: societyId, updatedAt: serverTimestamp() },
-    { merge: true }
-  );
-
-  await cacheActiveSocietyIdLocal(societyId);
+export function getCurrentUserUid(): string | null {
+  try {
+    return getFirebaseAuth().currentUser?.uid ?? null;
+  } catch {
+    return null;
+  }
 }
 
 /**
- * ✅ This is what your app is calling (RootLayout/startup)
- * It hydrates activeSocietyId from Firestore into local cache.
+ * Online persistence:
+ * users/{uid}.activeSocietyId
  */
-export async function initActiveSocietyId(): Promise<string | null> {
-  if (!isFirebaseConfigured()) {
-    console.warn("[firebase] Not configured. Missing EXPO_PUBLIC_FIREBASE_* env vars.");
-    return null;
+async function ensureUserDoc(uid: string) {
+  const ref = doc(getFirebaseDb(), "users", uid);
+  const snap = await getDoc(ref);
+  if (!snap.exists()) {
+    await setDoc(
+      ref,
+      { createdAt: serverTimestamp(), updatedAt: serverTimestamp(), activeSocietyId: null },
+      { merge: true }
+    );
   }
+}
 
+export async function initActiveSocietyId(): Promise<string | null> {
   const user = await ensureSignedIn();
   const uid = user.uid;
 
-  const snap = await getDoc(doc(db, "users", uid));
-  const activeSocietyId =
-    (snap.exists() ? (snap.data() as any).activeSocietyId : null) ?? null;
+  await ensureUserDoc(uid);
 
-  await cacheActiveSocietyIdLocal(activeSocietyId);
-  return activeSocietyId;
+  const ref = doc(getFirebaseDb(), "users", uid);
+  const snap = await getDoc(ref);
+
+  const data = snap.data() as any;
+  activeSocietyIdCache = (data?.activeSocietyId as string | null) ?? null;
+
+  return activeSocietyIdCache;
+}
+
+export function getActiveSocietyId(): string | null {
+  return activeSocietyIdCache;
+}
+
+export function hasActiveSociety(): boolean {
+  return !!activeSocietyIdCache;
+}
+
+export async function setActiveSocietyId(societyId: string | null): Promise<void> {
+  const user = await ensureSignedIn();
+  const uid = user.uid;
+
+  await ensureUserDoc(uid);
+
+  const ref = doc(getFirebaseDb(), "users", uid);
+  await setDoc(
+    ref,
+    { activeSocietyId: societyId ?? null, updatedAt: serverTimestamp() },
+    { merge: true }
+  );
+
+  activeSocietyIdCache = societyId ?? null;
+}
+
+export async function clearActiveSocietyId(): Promise<void> {
+  await setActiveSocietyId(null);
 }
