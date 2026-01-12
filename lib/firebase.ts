@@ -1,415 +1,287 @@
 /**
  * Firebase Client Setup
- * 
- * Initializes Firebase SDK for Expo and exports Firestore database instance.
- * This is the single source of truth for Firebase configuration.
- * 
- * WEB-ONLY PERSISTENCE:
- * - Active society ID is stored in localStorage (via active-society-web.ts)
- * - All other business data comes from Firestore only
- * 
- * FIREBASE AUTH:
- * - Firebase Auth is now integrated for security rules
- * - Member documents are keyed by auth.uid for consistent access control
+ *
+ * Initializes Firebase SDK...
+ * Uses Firestore as the canonical store.
+ * Anonymous auth is used for now, user docs keyed by auth.uid for consistent access control
  */
 
-import { initializeApp, getApps, getApp } from "firebase/app";
-import { getFirestore } from "firebase/firestore";
-import { 
-  getAuth, 
-  onAuthStateChanged, 
-  signInAnonymously,
-  type Auth, 
-  type User 
-} from "firebase/auth";
 import { Platform } from "react-native";
-import { getActiveSocietyIdWeb, setActiveSocietyIdWeb, clearActiveSocietyIdWeb } from "./active-society-web";
+import {
+  initializeApp,
+  type FirebaseApp,
+  getApps,
+  getApp,
+} from "firebase/app";
+import {
+  getAuth,
+  signInAnonymously,
+  onAuthStateChanged,
+  type Auth,
+  type User,
+} from "firebase/auth";
+import {
+  getFirestore,
+  type Firestore,
+  doc,
+  getDoc,
+} from "firebase/firestore";
 
-// ============================================================================
-// REQUIRED ENVIRONMENT VARIABLES
-// ============================================================================
+/**
+ * Firebase environment variables (Expo / Vercel)
+ * NOTE: these are read from process.env for web builds.
+ */
+const FIREBASE_API_KEY = process.env.EXPO_PUBLIC_FIREBASE_API_KEY;
+const FIREBASE_AUTH_DOMAIN = process.env.EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN;
+const FIREBASE_PROJECT_ID = process.env.EXPO_PUBLIC_FIREBASE_PROJECT_ID;
+const FIREBASE_STORAGE_BUCKET = process.env.EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET;
+const FIREBASE_MESSAGING_SENDER_ID =
+  process.env.EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID;
+const FIREBASE_APP_ID = process.env.EXPO_PUBLIC_FIREBASE_APP_ID;
 
-const REQUIRED_ENV_VARS = [
-  "EXPO_PUBLIC_FIREBASE_API_KEY",
-  "EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN",
-  "EXPO_PUBLIC_FIREBASE_PROJECT_ID",
-  "EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET",
-  "EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID",
-  "EXPO_PUBLIC_FIREBASE_APP_ID",
-] as const;
-
-// ============================================================================
-// FIREBASE CONFIGURATION
-// ============================================================================
-
-// Firebase configuration
-// In production, these MUST come from environment variables
-const firebaseConfig = {
-  apiKey: process.env.EXPO_PUBLIC_FIREBASE_API_KEY || "AIzaSyDummyKey",
-  authDomain: process.env.EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN || "golf-society-hub.firebaseapp.com",
-  projectId: process.env.EXPO_PUBLIC_FIREBASE_PROJECT_ID || "golf-society-hub",
-  storageBucket: process.env.EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET || "golf-society-hub.appspot.com",
-  messagingSenderId: process.env.EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID || "123456789",
-  appId: process.env.EXPO_PUBLIC_FIREBASE_APP_ID || "1:123456789:web:abc123",
-};
-
-// Initialize Firebase (prevent re-initialization in hot reload)
-const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
-
-// Export Firestore database instance
-export const db = getFirestore(app);
-
-// Export Firebase Auth instance
-export const auth: Auth = getAuth(app);
-
-// Default society ID for migration/testing
+// Dev fallback for older builds / convenience only
 const DEFAULT_SOCIETY_ID = "m4-golf-society";
 
-// ============================================================================
-// AUTH STATE MANAGEMENT
-// ============================================================================
+// Storage key used on web
+const ACTIVE_SOCIETY_STORAGE_KEY = "activeSocietyId";
 
-/**
- * Auth status types for graceful handling of auth failures
- */
-export type AuthStatus = 
-  | "initializing"    // Auth state not yet determined
-  | "signedIn"        // User is signed in (anonymous or authenticated)
-  | "signedOut"       // User is not signed in but can sign in
-  | "needsLogin"      // Anonymous auth failed, needs manual login
-  | "configError";    // Firebase config is invalid
-
-export interface AuthState {
-  status: AuthStatus;
-  user: User | null;
-  error?: {
-    code: string;
-    message: string;
-  };
-}
-
-// Current authenticated user (cached in memory)
-let currentUser: User | null = null;
-let authStateInitialized = false;
-let authStatePromise: Promise<User | null> | null = null;
-let authStatus: AuthStatus = "initializing";
-let authError: { code: string; message: string } | undefined = undefined;
-
-/**
- * Get the current authenticated user
- * Returns null if not signed in
- */
-export function getCurrentUser(): User | null {
-  return currentUser;
-}
-
-/**
- * Get the current user's UID
- * Returns null if not signed in
- */
-export function getCurrentUserUid(): string | null {
-  return currentUser?.uid ?? null;
-}
-
-/**
- * Check if a user is currently signed in
- */
-export function isUserSignedIn(): boolean {
-  return currentUser !== null;
-}
-
-/**
- * Get the current auth state including status and any error
- */
-export function getAuthState(): AuthState {
-  return {
-    status: authStatus,
-    user: currentUser,
-    error: authError,
-  };
-}
-
-/**
- * Check if auth requires manual login (anonymous auth failed)
- */
-export function needsManualLogin(): boolean {
-  return authStatus === "needsLogin";
-}
-
-/**
- * Wait for auth state to be initialized
- * Returns the current user once auth state is determined
- */
-export function waitForAuthState(): Promise<User | null> {
-  if (authStateInitialized) {
-    return Promise.resolve(currentUser);
-  }
-  
-  if (authStatePromise) {
-    return authStatePromise;
-  }
-  
-  authStatePromise = new Promise((resolve) => {
-    const unsubscribe = onAuthStateChanged(auth, (user) => {
-      currentUser = user;
-      authStateInitialized = true;
-      unsubscribe();
-      resolve(user);
-    });
-  });
-  
-  return authStatePromise;
-}
-
-/**
- * Result of ensureSignedIn attempt
- */
-export interface SignInResult {
-  success: boolean;
-  user: User | null;
-  status: AuthStatus;
-  error?: {
-    code: string;
-    message: string;
-  };
-}
-
-/**
- * Sign in anonymously if not already signed in.
- * Does NOT throw on failure - returns a result object instead.
- * Used for initial app access before full auth is implemented.
- */
-export async function ensureSignedIn(): Promise<SignInResult> {
-  await waitForAuthState();
-  
-  if (currentUser) {
-    authStatus = "signedIn";
-    return { 
-      success: true, 
-      user: currentUser, 
-      status: "signedIn" 
-    };
-  }
-  
-  // Check Firebase config first
-  const configStatus = getFirebaseConfigStatus();
-  if (!configStatus.configured) {
-    authStatus = "configError";
-    authError = {
-      code: "config/missing",
-      message: `Missing Firebase config: ${configStatus.missingVars.join(", ")}`,
-    };
-    console.error("[Auth] Firebase config error:", {
-      missingVars: configStatus.missingVars,
-      usingDummyConfig: configStatus.usingDummyConfig,
-    });
-    return {
-      success: false,
-      user: null,
-      status: "configError",
-      error: authError,
-    };
-  }
-  
-  // Sign in anonymously
-  try {
-    const result = await signInAnonymously(auth);
-    currentUser = result.user;
-    authStatus = "signedIn";
-    authError = undefined;
-    
-    if (__DEV__) {
-      console.log("[Auth] Signed in anonymously:", result.user.uid);
-    }
-    
-    return { 
-      success: true, 
-      user: result.user, 
-      status: "signedIn" 
-    };
-  } catch (error) {
-    // Extract error details for logging and state
-    const firebaseError = error as { code?: string; message?: string };
-    const errorCode = firebaseError.code || "unknown";
-    const errorMessage = firebaseError.message || String(error);
-    
-    // Detailed logging for debugging
-    console.error("[Auth] Anonymous sign-in failed:", {
-      code: errorCode,
-      message: errorMessage,
-      projectId: firebaseConfig.projectId,
-      authDomain: firebaseConfig.authDomain,
-      hint: errorCode === "auth/admin-restricted-operation" 
-        ? "Anonymous auth may be disabled in Firebase Console. Enable it in Authentication > Sign-in method."
-        : undefined,
-    });
-    
-    // Set auth state to needsLogin (don't throw)
-    authStatus = "needsLogin";
-    authError = {
-      code: errorCode,
-      message: errorMessage,
-    };
-    
-    return {
-      success: false,
-      user: null,
-      status: "needsLogin",
-      error: authError,
-    };
-  }
-}
-
-/**
- * Subscribe to auth state changes
- * Returns an unsubscribe function
- */
-export function subscribeToAuthState(
-  callback: (user: User | null) => void
-): () => void {
-  return onAuthStateChanged(auth, (user) => {
-    currentUser = user;
-    authStateInitialized = true;
-    callback(user);
-  });
-}
-
-// ============================================================================
-// CONFIGURATION CHECKS
-// ============================================================================
+export type AuthStatus =
+  | "initializing" // Auth state not yet determined
+  | "signedIn" // Signed in (anon or real)
+  | "signedOut" // Explicitly signed out
+  | "needsLogin" // Anonymous auth disabled / requires login
+  | "configError"; // Firebase config missing/invalid
 
 export interface FirebaseConfigStatus {
   configured: boolean;
-  missingVars: string[];
   usingDummyConfig: boolean;
+  missingVars: string[];
 }
 
 /**
- * Get detailed Firebase configuration status
- * Returns which env vars are missing and whether using dummy config
+ * Get detailed Firebase config status (used in RootLayout to show helpful UI)
  */
 export function getFirebaseConfigStatus(): FirebaseConfigStatus {
   const missingVars: string[] = [];
-  
-  // Check each required env var
-  if (!process.env.EXPO_PUBLIC_FIREBASE_API_KEY || process.env.EXPO_PUBLIC_FIREBASE_API_KEY === "AIzaSyDummyKey") {
-    missingVars.push("EXPO_PUBLIC_FIREBASE_API_KEY");
+  const required = [
+    ["EXPO_PUBLIC_FIREBASE_API_KEY", FIREBASE_API_KEY],
+    ["EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN", FIREBASE_AUTH_DOMAIN],
+    ["EXPO_PUBLIC_FIREBASE_PROJECT_ID", FIREBASE_PROJECT_ID],
+    ["EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET", FIREBASE_STORAGE_BUCKET],
+    ["EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID", FIREBASE_MESSAGING_SENDER_ID],
+    ["EXPO_PUBLIC_FIREBASE_APP_ID", FIREBASE_APP_ID],
+  ] as const;
+
+  for (const [name, value] of required) {
+    if (!value || value.trim().length === 0) missingVars.push(name);
   }
-  if (!process.env.EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN) {
-    missingVars.push("EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN");
-  }
-  if (!process.env.EXPO_PUBLIC_FIREBASE_PROJECT_ID) {
-    missingVars.push("EXPO_PUBLIC_FIREBASE_PROJECT_ID");
-  }
-  if (!process.env.EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET) {
-    missingVars.push("EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET");
-  }
-  if (!process.env.EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID) {
-    missingVars.push("EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID");
-  }
-  if (!process.env.EXPO_PUBLIC_FIREBASE_APP_ID) {
-    missingVars.push("EXPO_PUBLIC_FIREBASE_APP_ID");
-  }
-  
-  const usingDummyConfig = firebaseConfig.apiKey === "AIzaSyDummyKey";
-  
+
+  const usingDummyConfig =
+    (FIREBASE_API_KEY || "").includes("dummy") ||
+    (FIREBASE_PROJECT_ID || "").includes("dummy") ||
+    (FIREBASE_APP_ID || "").includes("dummy");
+
   return {
     configured: missingVars.length === 0 && !usingDummyConfig,
-    missingVars,
     usingDummyConfig,
+    missingVars,
   };
 }
 
 /**
- * Check if Firebase is properly configured
- * Returns true if ALL required env vars are set with real values
- */
-export function isFirebaseConfigured(): boolean {
-  const status = getFirebaseConfigStatus();
-  return status.configured;
-}
-
-/**
- * Check if Firebase configuration is missing in production
- * Returns true if we're in production but using dummy config
- */
-export function isFirebaseConfigMissing(): boolean {
-  const isProduction = process.env.NODE_ENV === "production";
-  return isProduction && !isFirebaseConfigured();
-}
-
-/**
- * Throw a controlled error if Firebase is not configured in production.
- * Logs which specific env vars are missing for debugging.
+ * Throws if Firebase is not configured (legacy helper)
  */
 export function assertFirebaseConfigured(): void {
-  const isProd = process.env.NODE_ENV === "production";
   const status = getFirebaseConfigStatus();
-  
-  if (!status.configured && isProd) {
-    console.error(
-      "[Firebase] Firebase is not configured for production.\n" +
-      "Missing environment variables: " + status.missingVars.join(", ") + "\n" +
-      "Using dummy config: " + status.usingDummyConfig
-    );
+  if (!status.configured) {
     throw new Error("FIREBASE_NOT_CONFIGURED");
   }
-  
-  // Log warning in dev if using dummy config
-  if (__DEV__ && status.usingDummyConfig) {
-    console.warn(
-      "[Firebase] Using dummy configuration. Set EXPO_PUBLIC_FIREBASE_* env vars for production."
-    );
+}
+
+const firebaseConfig = {
+  apiKey: FIREBASE_API_KEY,
+  authDomain: FIREBASE_AUTH_DOMAIN,
+  projectId: FIREBASE_PROJECT_ID,
+  storageBucket: FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: FIREBASE_MESSAGING_SENDER_ID,
+  appId: FIREBASE_APP_ID,
+};
+
+let app: FirebaseApp;
+let auth: Auth;
+let db: Firestore;
+
+/**
+ * Initialize Firebase safely (idempotent for web hot reload)
+ */
+export function getFirebaseApp(): FirebaseApp {
+  assertFirebaseConfigured();
+
+  if (!app) {
+    const apps = getApps();
+    app = apps.length ? getApp() : initializeApp(firebaseConfig);
+  }
+  return app;
+}
+
+export function getFirebaseAuth(): Auth {
+  if (!auth) {
+    auth = getAuth(getFirebaseApp());
+  }
+  return auth;
+}
+
+export function getFirebaseDb(): Firestore {
+  if (!db) {
+    db = getFirestore(getFirebaseApp());
+  }
+  return db;
+}
+
+// Backward-compatible named exports
+export const firebaseApp = () => getFirebaseApp();
+export const firebaseAuth = () => getFirebaseAuth();
+export const dbInstance = () => getFirebaseDb();
+
+// Common exports used throughout your repo
+export const db = getFirebaseDb();
+export const authInstance = getFirebaseAuth();
+
+/**
+ * Wait for Firebase Auth state to be ready.
+ * Used during startup to prevent race conditions.
+ */
+export function waitForAuthState(): Promise<User | null> {
+  return new Promise((resolve) => {
+    const auth = getFirebaseAuth();
+    const unsub = onAuthStateChanged(auth, (user) => {
+      unsub();
+      resolve(user);
+    });
+  });
+}
+
+/**
+ * Ensure user is signed in.
+ * This does NOT throw on failure; returns status instead.
+ */
+export async function ensureSignedIn(): Promise<{
+  success: boolean;
+  status: AuthStatus;
+  error?: any;
+}> {
+  try {
+    assertFirebaseConfigured();
+
+    const auth = getFirebaseAuth();
+    if (auth.currentUser) {
+      return { success: true, status: "signedIn" };
+    }
+
+    // Attempt anonymous sign-in
+    try {
+      await signInAnonymously(auth);
+      return { success: true, status: "signedIn" };
+    } catch (err: any) {
+      // If anonymous auth not enabled, Firebase throws operation-not-allowed
+      if (err?.code === "auth/operation-not-allowed") {
+        return { success: false, status: "needsLogin", error: err };
+      }
+      return { success: false, status: "signedOut", error: err };
+    }
+  } catch (err: any) {
+    return { success: false, status: "configError", error: err };
   }
 }
 
-// ============================================================================
-// ACTIVE SOCIETY
-// ============================================================================
+/**
+ * Active Society Helpers (Web localStorage + future AsyncStorage)
+ */
+
+// Web storage helpers
+function getActiveSocietyIdWeb(): string | null {
+  try {
+    if (typeof window === "undefined") return null;
+    const v = window.localStorage.getItem(ACTIVE_SOCIETY_STORAGE_KEY);
+    return v && v.trim().length > 0 ? v : null;
+  } catch {
+    return null;
+  }
+}
+
+function setActiveSocietyIdWeb(id: string): boolean {
+  try {
+    if (typeof window === "undefined") return false;
+    window.localStorage.setItem(ACTIVE_SOCIETY_STORAGE_KEY, id);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function clearActiveSocietyIdWeb(): boolean {
+  try {
+    if (typeof window === "undefined") return false;
+    window.localStorage.removeItem(ACTIVE_SOCIETY_STORAGE_KEY);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 /**
- * Get the active society ID
- * 
- * On web: reads from localStorage
- * On native: uses default (will be replaced with AsyncStorage later)
- * 
- * @returns The active society document ID (always returns a string, defaults to DEFAULT_SOCIETY_ID)
+ * Get active society id.
+ *
+ * IMPORTANT CHANGE:
+ * - Production must NOT force DEFAULT_SOCIETY_ID when nothing is selected.
+ * - To keep compatibility (existing code expects string), return "" when none selected.
+ * - Dev-only convenience fallback to DEFAULT_SOCIETY_ID is allowed.
  */
 export function getActiveSocietyId(): string {
+  // Web: prefer persisted value in localStorage
   if (Platform.OS === "web") {
     const webSocietyId = getActiveSocietyIdWeb();
-    if (webSocietyId) {
+    if (webSocietyId && webSocietyId.trim().length > 0) {
       return webSocietyId;
     }
-    // Fall back to default during migration
+
+    // Dev-only convenience fallback
     if (__DEV__) {
-      console.log("[Firebase] Using default society ID on web:", DEFAULT_SOCIETY_ID);
+      console.log(
+        "[Firebase] No active society on web, using dev default:",
+        DEFAULT_SOCIETY_ID
+      );
+      return DEFAULT_SOCIETY_ID;
     }
+
+    // Production: no society selected yet
+    return "";
+  }
+
+  // Native: until AsyncStorage is wired, avoid forcing a default in production
+  if (__DEV__) {
+    console.log(
+      "[Firebase] No active society on native, using dev default:",
+      DEFAULT_SOCIETY_ID
+    );
     return DEFAULT_SOCIETY_ID;
   }
-  
-  // Native platforms use default for now
-  return DEFAULT_SOCIETY_ID;
+  return "";
 }
 
 /**
- * Check if a real active society is selected (not just the default)
+ * Check if a real active society is selected (not just dev default)
  */
 export function hasRealActiveSociety(): boolean {
-  if (Platform.OS === "web") {
-    const webSocietyId = getActiveSocietyIdWeb();
-    return !!webSocietyId;
-  }
-  // On native, we always have a default
-  return true;
+  const societyId = getActiveSocietyId();
+  return societyId.length > 0 && societyId !== DEFAULT_SOCIETY_ID;
 }
 
 /**
  * Check if an active society is selected
  */
 export function hasActiveSociety(): boolean {
-  const societyId = getActiveSocietyId();
-  return societyId !== null && societyId.length > 0;
+  return getActiveSocietyId().length > 0;
 }
 
 /**
@@ -424,7 +296,7 @@ export function setActiveSocietyId(societyId: string): boolean {
     }
     return setActiveSocietyIdWeb(societyId);
   }
-  
+
   // On native, this would be handled differently (AsyncStorage)
   // For now, just log
   console.log("[Firebase] setActiveSocietyId on native:", societyId);
@@ -434,44 +306,53 @@ export function setActiveSocietyId(societyId: string): boolean {
 /**
  * Initialize the active society id (async).
  * On web, this reads from localStorage.
- * Returns the society ID or null if not set.
+ * Returns the society ID or "" if not set (production).
  */
-export async function initActiveSocietyId(): Promise<string | null> {
+export async function initActiveSocietyId(): Promise<string> {
   if (Platform.OS === "web") {
     const webSocietyId = getActiveSocietyIdWeb();
-    if (webSocietyId) {
+    if (webSocietyId && webSocietyId.trim().length > 0) {
       if (__DEV__) {
-        console.log("[Firebase] Initialized active society from localStorage:", webSocietyId);
+        console.log(
+          "[Firebase] Initialized active society from localStorage:",
+          webSocietyId
+        );
       }
       return webSocietyId;
     }
+
+    // Production/web: no society selected yet is expected during onboarding
+    if (!__DEV__) {
+      console.log("[ActiveSociety] No active society yet (expected)");
+      return "";
+    }
+
+    // Dev-only fallback
+    console.log("[Firebase] Using dev default society ID:", DEFAULT_SOCIETY_ID);
+    return DEFAULT_SOCIETY_ID;
   }
-  
-  // Return default for now
-  if (__DEV__) {
-    console.log("[Firebase] Using default society ID:", DEFAULT_SOCIETY_ID);
-  }
-  return DEFAULT_SOCIETY_ID;
+
+  // Native: until AsyncStorage is wired, match the same behavior
+  return __DEV__ ? DEFAULT_SOCIETY_ID : "";
 }
 
-// ============================================================================
-// DEV MODE LOGGING
-// ============================================================================
-
 /**
- * Log Firestore operation in dev mode
- * Helps track what's being written/read
+ * Helper: read the active society doc (safe)
+ * Returns null if no active society selected, or if doc missing.
  */
-export function logFirestoreOp(
-  operation: "read" | "write" | "delete" | "subscribe",
-  collection: string,
-  docId?: string,
-  data?: unknown
-): void {
-  if (!__DEV__) return;
-  
-  const path = docId ? `${collection}/${docId}` : collection;
-  const timestamp = new Date().toISOString().split("T")[1].slice(0, 8);
-  
-  console.log(`[Firestore ${timestamp}] ${operation.toUpperCase()} ${path}`, data ? { data } : "");
+export async function getActiveSocietyDoc(): Promise<any | null> {
+  const societyId = getActiveSocietyId();
+  if (!societyId || societyId.trim().length === 0) {
+    return null;
+  }
+
+  try {
+    const ref = doc(getFirebaseDb(), "societies", societyId);
+    const snap = await getDoc(ref);
+    if (!snap.exists()) return null;
+    return { id: snap.id, ...snap.data() };
+  } catch (err) {
+    console.error("[Firestore] getActiveSocietyDoc failed", err);
+    return null;
+  }
 }
