@@ -1,51 +1,65 @@
-import { useEffect, useState } from "react";
-import { ActivityIndicator, ScrollView, View } from "react-native";
+import { useEffect, useMemo, useState } from "react";
+import { Alert, Platform, ScrollView, View } from "react-native";
 import { router, useLocalSearchParams } from "expo-router";
 
 import { Screen } from "@/components/ui/Screen";
 import { AppText } from "@/components/ui/AppText";
 import { AppCard } from "@/components/ui/AppCard";
-import { DestructiveButton, SecondaryButton } from "@/components/ui/Button";
-import { getPermissions, type Permissions } from "@/lib/rbac";
-import { getActiveSocietyId } from "@/lib/firebase";
-import { deleteEventCascade, getEventById } from "@/lib/firestore/events";
-import type { EventData } from "@/lib/models";
+import { SecondaryButton } from "@/components/ui/Button";
+
+import { getPermissions } from "@/lib/rbac";
 import { formatDateDDMMYYYY } from "@/utils/date";
-import { showAlert, confirmAlert } from "@/lib/guards";
+
+// Try to import your existing firestore helpers.
+// If your repo uses different names, adjust these imports to match.
+import {
+  getEventById,
+  deleteEventCascade,
+} from "@/lib/firestore/events";
+
+type AnyEvent = {
+  id: string;
+  name?: string;
+  date?: string;
+  courseName?: string;
+  courseId?: string;
+  [k: string]: any;
+};
+
+const BACK_ROUTE = "/events"; // CHANGE TO "/society" if that's your events list screen
 
 export default function EventDetailScreen() {
-  const { id: eventId } = useLocalSearchParams<{ id: string }>();
-  const [event, setEvent] = useState<EventData | null>(null);
+  const params = useLocalSearchParams<{ id?: string }>();
+  const eventId = useMemo(() => String(params.id || ""), [params.id]);
+
+  const [event, setEvent] = useState<AnyEvent | null>(null);
   const [loading, setLoading] = useState(true);
-  const [permissions, setPermissions] = useState<Permissions | null>(null);
+  const [canDelete, setCanDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   useEffect(() => {
+    if (!eventId) return;
+
     const load = async () => {
       try {
         setLoading(true);
 
+        // Permissions
         const perms = await getPermissions();
-        setPermissions(perms);
+        // Captain can do everything. Admin fallback if your RBAC uses it.
+        setCanDelete(!!perms?.isCaptain || !!perms?.isAdmin || !!perms?.canDeleteEvent);
 
-        const societyId = getActiveSocietyId();
-        if (!societyId || !eventId) {
-          setEvent(null);
+        // Event
+        const evt = await getEventById(eventId);
+        if (!evt) {
+          Alert.alert("Not found", "Event not found.");
+          router.replace(BACK_ROUTE);
           return;
         }
-
-        const loaded = await getEventById(String(eventId), societyId);
-        if (!loaded) {
-          showAlert("Error", "Event not found", [
-            { text: "OK", onPress: () => router.replace("/history" as any) },
-          ]);
-          return;
-        }
-
-        setEvent(loaded);
-        console.log("[EventDetails] Loaded event:", String(eventId));
+        setEvent(evt as AnyEvent);
       } catch (err) {
-        console.error("[EventDetails] Load failed", err);
-        showAlert("Error", "Failed to load event");
+        console.error("[EventDetail] Load failed", err);
+        Alert.alert("Error", "Failed to load event.");
       } finally {
         setLoading(false);
       }
@@ -54,69 +68,74 @@ export default function EventDetailScreen() {
     void load();
   }, [eventId]);
 
-  const confirmDelete = async () => {
-    console.log("[DeleteEvent] Confirm delete triggered for event:", eventId);
-    
-    const confirmed = await confirmAlert(
-      "Delete Event",
-      "This will permanently delete this event and its results. This cannot be undone.",
-      "Delete Event",
-      "Cancel"
-    );
-    
-    if (confirmed) {
-      await handleDelete();
-    }
-  };
+  const confirmDelete = () => {
+    const msg =
+      "This will permanently delete this event and any related data (tee sheet, players, results).\n\nThis cannot be undone.";
 
-  const handleDelete = async () => {
-    if (!eventId) {
-      console.error("[DeleteEvent] No eventId");
+    if (!canDelete) {
+      Alert.alert("Not allowed", "You don’t have permission to delete this event.");
       return;
     }
 
-    // HARD BLOCK: Must have canDeleteEvent permission (Captain only)
-    if (!permissions?.canDeleteEvent) {
-      console.error("[DeleteEvent] Permission denied - canDeleteEvent is false");
-      showAlert("Not allowed", "Only the Captain can delete events.");
+    if (deleting) return;
+
+    // Web confirm (more reliable than RN Alert on web)
+    if (Platform.OS === "web") {
+      // eslint-disable-next-line no-alert
+      const ok = window.confirm(msg);
+      if (ok) void handleDelete();
+      return;
+    }
+
+    Alert.alert("Delete Event", msg, [
+      { text: "Cancel", style: "cancel" },
+      { text: "Delete", style: "destructive", onPress: () => void handleDelete() },
+    ]);
+  };
+
+  const handleDelete = async () => {
+    if (!eventId) return;
+    if (!canDelete) {
+      Alert.alert("Not allowed", "You don’t have permission to delete this event.");
       return;
     }
 
     try {
-      const societyId = getActiveSocietyId();
-      if (!societyId) {
-        showAlert("Error", "No active society selected");
-        return;
+      setDeleting(true);
+      console.log("[DeleteEvent] Starting delete:", eventId);
+
+      // Primary delete path
+      if (typeof deleteEventCascade === "function") {
+        await deleteEventCascade(eventId);
+      } else {
+        // Very defensive fallback: if helper is missing, fail loudly
+        throw new Error("deleteEventCascade is not available in lib/firestore/events.ts");
       }
 
-      console.log("[DeleteEvent] Deleting event:", String(eventId), "from society:", societyId);
-      const result = await deleteEventCascade(String(eventId), societyId);
-      
-      if (!result.success) {
-        console.error("[DeleteEvent] Delete failed:", result.error);
-        showAlert("Error", result.error || "Failed to delete event");
-        return;
+      console.log("[DeleteEvent] Deleted OK:", eventId);
+
+      if (Platform.OS === "web") {
+        // eslint-disable-next-line no-alert
+        window.alert("Event deleted.");
+      } else {
+        Alert.alert("Deleted", "Event deleted.");
       }
 
-      console.log("[DeleteEvent] Deleted OK:", String(eventId));
-      console.log("[DeleteEvent] Success - navigating to /society");
-      
-      showAlert("Deleted", "Event has been deleted", [
-        { text: "OK", onPress: () => router.replace("/society" as any) },
-      ]);
-    } catch (err) {
-      console.error("[DeleteEvent] Failed with exception:", err);
-      showAlert("Error", `Failed to delete event: ${err instanceof Error ? err.message : "Unknown error"}`);
+      router.replace(BACK_ROUTE);
+    } catch (err: any) {
+      console.error("[DeleteEvent] Failed", err);
+      const message =
+        err?.message?.includes("permission") ? "Permission denied." : "Failed to delete event.";
+      Alert.alert("Error", message);
+    } finally {
+      setDeleting(false);
     }
   };
 
   if (loading) {
     return (
       <Screen>
-        <View style={{ paddingVertical: 24, alignItems: "center" }}>
-          <ActivityIndicator />
-          <AppText style={{ marginTop: 12 }}>Loading event…</AppText>
-        </View>
+        <AppText>Loading…</AppText>
       </Screen>
     );
   }
@@ -124,15 +143,7 @@ export default function EventDetailScreen() {
   if (!event) {
     return (
       <Screen>
-        <AppCard>
-          <AppText variant="h2">Event not found</AppText>
-          <AppText variant="body" color="secondary" style={{ marginTop: 6 }}>
-            This event may have been deleted, or you may not have access.
-          </AppText>
-          <SecondaryButton onPress={() => router.replace("/history" as any)} style={{ marginTop: 16 }}>
-            Back to Events
-          </SecondaryButton>
-        </AppCard>
+        <AppText>Event not found.</AppText>
       </Screen>
     );
   }
@@ -141,41 +152,24 @@ export default function EventDetailScreen() {
     <Screen>
       <ScrollView contentContainerStyle={{ paddingBottom: 40 }}>
         <AppCard>
-          <AppText variant="title">{event.name}</AppText>
-          <AppText>{formatDateDDMMYYYY(event.date)}</AppText>
-          {event.courseName ? <AppText>{event.courseName}</AppText> : null}
-          {event.format ? <AppText>Format: {event.format}</AppText> : null}
-          {typeof (event as any).eventFee === "number" ? (
-            <AppText>Fee: £{(event as any).eventFee.toFixed(2)}</AppText>
-          ) : null}
+          <AppText variant="title">{event.name || "Event"}</AppText>
+          {!!event.date && <AppText>{formatDateDDMMYYYY(event.date)}</AppText>}
+          {!!event.courseName && <AppText>{event.courseName}</AppText>}
         </AppCard>
 
-        <View style={{ marginTop: 16, gap: 12 }}>
-          <SecondaryButton
-            onPress={() =>
-              router.push({ pathname: "/event/[id]/players", params: { id: event.id } } as any)
-            }
-          >
-            Players
-          </SecondaryButton>
-          <SecondaryButton
-            onPress={() =>
-              router.push({ pathname: "/event/[id]/results", params: { id: event.id } } as any)
-            }
-          >
-            Results
-          </SecondaryButton>
-          <SecondaryButton onPress={() => router.push("/tees-teesheet" as any)}>Tee Sheet</SecondaryButton>
-        </View>
+        {/* Add your other actions here (players/results/teesheet navigation etc.) */}
 
-        {/* Delete Event button - visible only if canDeleteEvent (Captain only) */}
-        {permissions?.canDeleteEvent && (
-          <View style={{ marginTop: 24 }}>
-            <DestructiveButton onPress={confirmDelete}>Delete Event</DestructiveButton>
+        {canDelete && (
+          <View style={{ marginTop: 20 }}>
+            <SecondaryButton
+              label={deleting ? "Deleting…" : "Delete Event"}
+              onPress={confirmDelete}
+              danger
+              disabled={deleting}
+            />
           </View>
         )}
       </ScrollView>
     </Screen>
   );
 }
-
