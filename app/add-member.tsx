@@ -15,7 +15,6 @@ import { useCallback, useState } from "react";
 import { Alert, Pressable, ScrollView, Text, TextInput, View, ActivityIndicator } from "react-native";
 import { listMembers, upsertMember, validateMember } from "@/lib/firestore/members";
 import { NoSocietyGuard } from "@/components/NoSocietyGuard";
-import { FirebaseConfigGuard } from "@/components/FirebaseConfigGuard";
 import type { MemberData } from "@/lib/models";
 
 export default function AddMemberScreen() {
@@ -218,9 +217,7 @@ export default function AddMemberScreen() {
     );
   }
 
-  // Wrap in FirebaseConfigGuard
   return (
-    <FirebaseConfigGuard>
     <ScrollView style={{ flex: 1, backgroundColor: "#fff" }}>
       <View style={{ flex: 1, padding: 24 }}>
         <Text style={{ fontSize: 34, fontWeight: "800", marginBottom: 6 }}>
@@ -369,6 +366,5 @@ export default function AddMemberScreen() {
         </Pressable>
       </View>
     </ScrollView>
-    </FirebaseConfigGuard>
   );
 }

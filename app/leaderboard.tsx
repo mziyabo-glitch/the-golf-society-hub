@@ -35,7 +35,6 @@ import { listEvents } from "@/lib/firestore/events";
 import { aggregateSeasonPoints } from "@/lib/firestore/results";
 import { getActiveSocietyId } from "@/lib/firebase";
 import { NoSocietyGuard } from "@/components/NoSocietyGuard";
-import { FirebaseConfigGuard } from "@/components/FirebaseConfigGuard";
 
 type SocietyData = {
   name: string;
@@ -388,7 +387,6 @@ export default function LeaderboardScreen() {
   // Error state
   if (error) {
     return (
-      <FirebaseConfigGuard>
         <Screen scrollable={false}>
           <View style={styles.centerContent}>
             <AppText style={{ fontSize: 18, fontWeight: "600", marginBottom: 12, color: colors.error }}>
@@ -405,14 +403,12 @@ export default function LeaderboardScreen() {
             </SecondaryButton>
           </View>
         </Screen>
-      </FirebaseConfigGuard>
     );
   }
 
   // Calculation error state - show friendly message instead of crashing
   if (calculationError && !calculating) {
     return (
-      <FirebaseConfigGuard>
         <Screen scrollable={false}>
           <View style={styles.centerContent}>
             <AppText style={{ fontSize: 18, fontWeight: "600", marginBottom: 12, color: colors.error }}>
@@ -444,12 +440,10 @@ export default function LeaderboardScreen() {
             </SecondaryButton>
           </View>
         </Screen>
-      </FirebaseConfigGuard>
     );
   }
 
   return (
-    <FirebaseConfigGuard>
     <Screen>
       {society && (
         <SocietyHeader
@@ -646,7 +640,6 @@ export default function LeaderboardScreen() {
         Back to Dashboard
       </SecondaryButton>
     </Screen>
-    </FirebaseConfigGuard>
   );
 }
 

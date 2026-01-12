@@ -46,8 +46,8 @@ export default function EventDetailScreen() {
 
         // Permissions
         const perms = await getPermissions();
-        // Captain can do everything. Admin fallback if your RBAC uses it.
-        setCanDelete(!!perms?.isCaptain || !!perms?.isAdmin || !!perms?.canDeleteEvent);
+        // Captain can delete events
+        setCanDelete(!!perms?.isCaptain || !!perms?.canDeleteEvent);
 
         // Event
         const evt = await getEventById(eventId);
@@ -162,11 +162,11 @@ export default function EventDetailScreen() {
         {canDelete && (
           <View style={{ marginTop: 20 }}>
             <SecondaryButton
-              label={deleting ? "Deleting…" : "Delete Event"}
               onPress={confirmDelete}
-              danger
               disabled={deleting}
-            />
+            >
+              {deleting ? "Deleting…" : "Delete Event"}
+            </SecondaryButton>
           </View>
         )}
       </ScrollView>

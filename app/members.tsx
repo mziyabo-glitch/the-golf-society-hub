@@ -28,7 +28,6 @@ import { logDataSanity, isPermissionDeniedError } from "@/lib/firestore/errors";
 import { PermissionDeniedScreen } from "@/components/PermissionDeniedScreen";
 import { getEvents } from "@/lib/firestore/society";
 import { NoSocietyGuard } from "@/components/NoSocietyGuard";
-import { FirebaseConfigGuard } from "@/components/FirebaseConfigGuard";
 import type { EventData, MemberData } from "@/lib/models";
 
 export default function MembersScreen() {

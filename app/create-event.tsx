@@ -20,7 +20,6 @@ import { DatePicker } from "@/components/DatePicker";
 import { getActiveSocietyId, isFirebaseConfigured } from "@/lib/firebase";
 import { createEvent } from "@/lib/firestore/events";
 import { NoSocietyGuard } from "@/components/NoSocietyGuard";
-import { FirebaseConfigGuard } from "@/components/FirebaseConfigGuard";
 
 export default function CreateEventScreen() {
   const router = useRouter();
@@ -167,7 +166,6 @@ export default function CreateEventScreen() {
   const isFormValid = eventName.trim().length > 0 && eventDate.length > 0;
 
   return (
-    <FirebaseConfigGuard>
       <ScrollView style={{ flex: 1, backgroundColor: "#fff" }}>
         <View style={{ flex: 1, padding: 24 }}>
           <Text style={{ fontSize: 34, fontWeight: "800", marginBottom: 6 }}>
@@ -341,6 +339,5 @@ export default function CreateEventScreen() {
           </Pressable>
         </View>
       </ScrollView>
-    </FirebaseConfigGuard>
   );
 }

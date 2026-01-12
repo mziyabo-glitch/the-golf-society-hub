@@ -5,8 +5,8 @@
  * for all Firestore operations.
  */
 
-import { Alert, Platform } from "react-native";
-import { isFirebaseConfigured, getFirebaseConfigStatus, hasActiveSociety, getActiveSocietyId } from "../firebase";
+import { Alert } from "react-native";
+import { isFirebaseConfigured, hasActiveSociety, getActiveSocietyId } from "../firebase";
 
 // ============================================================================
 // ERROR TYPES
@@ -39,10 +39,9 @@ export interface FirestoreError {
  */
 export function checkFirebaseReady(operation: string): FirestoreError | null {
   if (!isFirebaseConfigured()) {
-    const status = getFirebaseConfigStatus();
     return {
       code: "FIREBASE_NOT_CONFIGURED",
-      message: `Firebase is not configured. Missing: ${status.missingVars.join(", ")}`,
+      message: "Firebase is not configured.",
       operation,
     };
   }
