@@ -1,101 +1,233 @@
 // lib/firebase.ts
-import { initializeApp, getApp, getApps } from "firebase/app";
+import { initializeApp, getApps, getApp, type FirebaseApp } from "firebase/app";
 import {
   getAuth,
+  initializeAuth,
   signInAnonymously,
   onAuthStateChanged,
   type Auth,
-  type User,
 } from "firebase/auth";
-import { getFirestore, doc, getDoc, setDoc, serverTimestamp } from "firebase/firestore";
+import { getReactNativePersistence } from "firebase/auth/react-native";
+import { getFirestore, type Firestore } from "firebase/firestore";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import { Platform } from "react-native";
 
-type FirebaseConfig = {
-  apiKey: string;
-  authDomain: string;
-  projectId: string;
-  storageBucket?: string;
-  messagingSenderId?: string;
-  appId: string;
-};
+/**
+ * Firebase config (Expo public env vars)
+ */
+type FirebaseConfigStatus =
+  | { ok: true; config: Record<string, string> }
+  | { ok: false; missing: string[] };
 
-function getFirebaseConfig(): FirebaseConfig {
-  const cfg: FirebaseConfig = {
-    apiKey: process.env.EXPO_PUBLIC_FIREBASE_API_KEY as string,
-    authDomain: process.env.EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN as string,
-    projectId: process.env.EXPO_PUBLIC_FIREBASE_PROJECT_ID as string,
-    storageBucket: process.env.EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET as string,
-    messagingSenderId: process.env.EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID as string,
-    appId: process.env.EXPO_PUBLIC_FIREBASE_APP_ID as string,
-  };
+const ENV_KEYS = [
+  "EXPO_PUBLIC_FIREBASE_API_KEY",
+  "EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN",
+  "EXPO_PUBLIC_FIREBASE_PROJECT_ID",
+  "EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET",
+  "EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID",
+  "EXPO_PUBLIC_FIREBASE_APP_ID",
+] as const;
 
-  // Hard fail early with a clear message (prevents “FIREBASE_NOT_CONFIGURED” mystery errors)
-  const missing = Object.entries(cfg)
-    .filter(([k, v]) => (k === "storageBucket" || k === "messagingSenderId" ? false : !v))
-    .map(([k]) => k);
+export function getFirebaseConfigStatus(): FirebaseConfigStatus {
+  const missing: string[] = [];
+  const config: Record<string, string> = {};
 
-  if (missing.length > 0) {
-    throw new Error(
-      `FIREBASE_NOT_CONFIGURED: Missing env vars: ${missing.join(", ")}. ` +
-        `Check Vercel Environment Variables + Expo env.`
-    );
+  for (const k of ENV_KEYS) {
+    const v = (process.env as any)?.[k];
+    if (!v || typeof v !== "string" || !v.trim()) missing.push(k);
+    else config[k] = v.trim();
   }
 
-  return cfg;
+  if (missing.length) return { ok: false, missing };
+  return { ok: true, config };
 }
 
-export const firebaseApp = getApps().length ? getApp() : initializeApp(getFirebaseConfig());
-export const auth = getAuth(firebaseApp);
-export const db = getFirestore(firebaseApp);
+function buildFirebaseConfig(config: Record<string, string>) {
+  return {
+    apiKey: config.EXPO_PUBLIC_FIREBASE_API_KEY,
+    authDomain: config.EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN,
+    projectId: config.EXPO_PUBLIC_FIREBASE_PROJECT_ID,
+    storageBucket: config.EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET,
+    messagingSenderId: config.EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID,
+    appId: config.EXPO_PUBLIC_FIREBASE_APP_ID,
+  };
+}
 
 /**
- * Ensures we always have a signed-in user (anonymous is fine).
- * This keeps Firestore writes consistent and allows per-user prefs (like activeSocietyId).
+ * Singletons
  */
-export async function ensureSignedIn(): Promise<User> {
-  const existing = auth.currentUser;
-  if (existing) return existing;
+let app: FirebaseApp | null = null;
+let auth: Auth | null = null;
+let db: Firestore | null = null;
 
-  // Wait briefly for auth to hydrate, otherwise sign in anonymously
-  const hydrated = await new Promise<User | null>((resolve) => {
-    const unsub = onAuthStateChanged(auth, (u) => {
-      unsub();
-      resolve(u ?? null);
+/**
+ * Active Society persistence (NO MORE "return true" on native)
+ */
+const ACTIVE_SOCIETY_KEY = "activeSocietyId";
+let activeSocietyIdCache: string | null = null;
+
+function readActiveSocietyIdWeb(): string | null {
+  try {
+    if (typeof window === "undefined") return null;
+    return window.localStorage.getItem(ACTIVE_SOCIETY_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function writeActiveSocietyIdWeb(id: string | null) {
+  try {
+    if (typeof window === "undefined") return;
+    if (!id) window.localStorage.removeItem(ACTIVE_SOCIETY_KEY);
+    else window.localStorage.setItem(ACTIVE_SOCIETY_KEY, id);
+  } catch {
+    // ignore
+  }
+}
+
+async function readActiveSocietyIdNative(): Promise<string | null> {
+  try {
+    return await AsyncStorage.getItem(ACTIVE_SOCIETY_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function writeActiveSocietyIdNative(id: string | null) {
+  // fire-and-forget; we don’t want routing blocked by storage timing
+  (async () => {
+    try {
+      if (!id) await AsyncStorage.removeItem(ACTIVE_SOCIETY_KEY);
+      else await AsyncStorage.setItem(ACTIVE_SOCIETY_KEY, id);
+    } catch {
+      // ignore
+    }
+  })();
+}
+
+/**
+ * Call this once early (RootLayout) if you want guaranteed cache hydration on native.
+ * Safe to call multiple times.
+ */
+export async function initActiveSocietyCache(): Promise<void> {
+  if (Platform.OS === "web") {
+    activeSocietyIdCache = readActiveSocietyIdWeb();
+    return;
+  }
+  activeSocietyIdCache = await readActiveSocietyIdNative();
+}
+
+export function getActiveSocietyId(): string | null {
+  // Web can hydrate synchronously
+  if (Platform.OS === "web") {
+    if (activeSocietyIdCache == null) activeSocietyIdCache = readActiveSocietyIdWeb();
+    return activeSocietyIdCache;
+  }
+
+  // Native: we only return cache (call initActiveSocietyCache at startup)
+  return activeSocietyIdCache;
+}
+
+export function hasRealActiveSociety(): boolean {
+  return !!getActiveSocietyId();
+}
+
+/**
+ * Keep same signature to avoid breaking other files.
+ */
+export function setActiveSocietyId(societyId: string): boolean {
+  activeSocietyIdCache = societyId;
+
+  if (Platform.OS === "web") writeActiveSocietyIdWeb(societyId);
+  else writeActiveSocietyIdNative(societyId);
+
+  return true;
+}
+
+export function clearActiveSocietyId(): boolean {
+  activeSocietyIdCache = null;
+
+  if (Platform.OS === "web") writeActiveSocietyIdWeb(null);
+  else writeActiveSocietyIdNative(null);
+
+  return true;
+}
+
+/**
+ * Firebase init
+ */
+function initFirebase() {
+  const status = getFirebaseConfigStatus();
+  if (!status.ok) {
+    console.error("FIREBASE_NOT_CONFIGURED. Missing:", status.missing);
+    app = null;
+    auth = null;
+    db = null;
+    return;
+  }
+
+  const firebaseConfig = buildFirebaseConfig(status.config);
+
+  // App
+  app = getApps().length ? getApp() : initializeApp(firebaseConfig);
+
+  // Auth
+  if (Platform.OS === "web") {
+    auth = getAuth(app);
+  } else {
+    // RN requires initializeAuth + persistence
+    auth = initializeAuth(app, {
+      persistence: getReactNativePersistence(AsyncStorage),
     });
+  }
+
+  // Firestore
+  db = getFirestore(app);
+}
+
+initFirebase();
+
+export { app, auth, db };
+
+/**
+ * Ensure signed in (anonymous is fine)
+ */
+export async function ensureSignedIn(): Promise<void> {
+  if (!auth) throw new Error("FIREBASE_NOT_CONFIGURED");
+
+  if (auth.currentUser) return;
+
+  await new Promise<void>((resolve, reject) => {
+    const unsub = onAuthStateChanged(
+      auth,
+      async (user) => {
+        unsub();
+        try {
+          if (user) return resolve();
+          await signInAnonymously(auth);
+          resolve();
+        } catch (e) {
+          reject(e);
+        }
+      },
+      (err) => {
+        unsub();
+        reject(err);
+      }
+    );
   });
-
-  if (hydrated) return hydrated;
-
-  const res = await signInAnonymously(auth);
-  return res.user;
 }
 
 /**
- * Store activeSocietyId ONLINE (Firestore) — no AsyncStorage.
- * Path: users/{uid}
+ * Dev logging helper (keep)
  */
-export async function setActiveSocietyId(societyId: string): Promise<void> {
-  const user = await ensureSignedIn();
-  const ref = doc(db, "users", user.uid);
-
-  await setDoc(
-    ref,
-    {
-      activeSocietyId: societyId,
-      updatedAt: serverTimestamp(),
-    },
-    { merge: true }
-  );
-}
-
-/**
- * Read activeSocietyId ONLINE (Firestore) — no AsyncStorage.
- * Returns null if not set.
- */
-export async function getActiveSocietyId(): Promise<string | null> {
-  const user = await ensureSignedIn();
-  const ref = doc(db, "users", user.uid);
-  const snap = await getDoc(ref);
-  if (!snap.exists()) return null;
-  const data = snap.data() as any;
-  return typeof data.activeSocietyId === "string" ? data.activeSocietyId : null;
+export function logFirestoreOp(
+  operation: "read" | "write" | "delete" | "subscribe",
+  collection: string,
+  docId?: string,
+  data?: unknown
+): void {
+  if (!__DEV__) return;
+  const path = docId ? `${collection}/${docId}` : collection;
+  console.log(`[Firestore] ${operation.toUpperCase()} ${path}`, data ? { data } : "");
 }
