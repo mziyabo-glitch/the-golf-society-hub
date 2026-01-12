@@ -1,8 +1,5 @@
 import { initializeApp, getApps, getApp } from "firebase/app";
-import {
-  getFirestore,
-  Firestore,
-} from "firebase/firestore";
+import { getFirestore, Firestore } from "firebase/firestore";
 import {
   getAuth,
   Auth,
@@ -12,7 +9,7 @@ import {
 import { Platform } from "react-native";
 
 /* ------------------------------------------------------------------ */
-/* ENV + CONFIG                                                        */
+/* FIREBASE CONFIG                                                     */
 /* ------------------------------------------------------------------ */
 
 const firebaseConfig = {
@@ -24,12 +21,28 @@ const firebaseConfig = {
   appId: process.env.EXPO_PUBLIC_FIREBASE_APP_ID,
 };
 
+/* ------------------------------------------------------------------ */
+/* CONFIG CHECKS (THIS FIXES YOUR CRASH)                               */
+/* ------------------------------------------------------------------ */
+
 export function isFirebaseConfigured(): boolean {
   return !!(
     firebaseConfig.apiKey &&
     firebaseConfig.projectId &&
     firebaseConfig.appId
   );
+}
+
+export function getFirebaseConfigStatus() {
+  const missingVars = Object.entries(firebaseConfig)
+    .filter(([_, v]) => !v)
+    .map(([k]) => k);
+
+  return {
+    configured: missingVars.length === 0,
+    missingVars,
+    usingDummyConfig: false,
+  };
 }
 
 /* ------------------------------------------------------------------ */
@@ -64,7 +77,7 @@ export const db = getFirebaseDb();
 export const authInstance = getFirebaseAuth();
 
 /* ------------------------------------------------------------------ */
-/* AUTH BOOTSTRAP                                                     */
+/* AUTH                                                               */
 /* ------------------------------------------------------------------ */
 
 export async function waitForAuthState(): Promise<void> {
@@ -92,7 +105,7 @@ export async function ensureSignedIn() {
 }
 
 /* ------------------------------------------------------------------ */
-/* ACTIVE SOCIETY (WEB-ONLY, SAFE)                                    */
+/* ACTIVE SOCIETY (WEB FIRST)                                          */
 /* ------------------------------------------------------------------ */
 
 const STORAGE_KEY = "activeSocietyId";
