@@ -17,11 +17,11 @@ import {
 } from "firebase/firestore";
 
 /**
- * IMPORTANT:
- * - No localStorage
- * - No AsyncStorage
- * - No firebase/auth/react-native (breaks Vercel/Expo web builds)
- * - Active society is stored online: users/{uid}.activeSocietyId
+ * RULES for this project:
+ * - NO localStorage
+ * - NO AsyncStorage
+ * - NO firebase/auth/react-native (breaks Expo Web/Vercel)
+ * - Active society persisted ONLINE at: users/{uid}.activeSocietyId
  */
 
 type FirebaseEnv = {
@@ -38,7 +38,6 @@ function readFirebaseEnv(): FirebaseEnv | null {
   const authDomain = process.env.EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN;
   const projectId = process.env.EXPO_PUBLIC_FIREBASE_PROJECT_ID;
 
-  // optional but recommended
   const storageBucket = process.env.EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET;
   const messagingSenderId = process.env.EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID;
   const appId = process.env.EXPO_PUBLIC_FIREBASE_APP_ID;
@@ -52,11 +51,11 @@ export function isFirebaseConfigured(): boolean {
   return !!readFirebaseEnv();
 }
 
-let firebaseApp: FirebaseApp | null = null;
-let auth: Auth | null = null;
-let db: Firestore | null = null;
+let _app: FirebaseApp | null = null;
+let _auth: Auth | null = null;
+let _db: Firestore | null = null;
 
-// in-memory cache (NOT persisted locally)
+// in-memory cache only (NOT persisted locally)
 let activeSocietyIdCache: string | null = null;
 
 export function getFirebaseApp(): FirebaseApp {
@@ -66,52 +65,47 @@ export function getFirebaseApp(): FirebaseApp {
       "Firebase not configured: missing EXPO_PUBLIC_FIREBASE_API_KEY / AUTH_DOMAIN / PROJECT_ID"
     );
   }
-
-  if (firebaseApp) return firebaseApp;
-  firebaseApp = getApps().length ? getApp() : initializeApp(env);
-  return firebaseApp;
+  if (_app) return _app;
+  _app = getApps().length ? getApp() : initializeApp(env);
+  return _app;
 }
 
 export function getFirebaseAuth(): Auth {
-  if (auth) return auth;
-  auth = getAuth(getFirebaseApp());
-  return auth;
+  if (_auth) return _auth;
+  _auth = getAuth(getFirebaseApp());
+  return _auth;
 }
 
 export function getFirebaseDb(): Firestore {
-  if (db) return db;
-  db = getFirestore(getFirebaseApp());
-  return db;
+  if (_db) return _db;
+  _db = getFirestore(getFirebaseApp());
+  return _db;
 }
 
-// Named exports used across the app
+// Export SINGLETONS once (NO duplicates)
 export const app = getFirebaseApp();
+export const auth = getFirebaseAuth();
 export const db = getFirebaseDb();
 
 /**
  * Ensure user is signed in (anonymous is fine).
- * Returns the Firebase User (so callers can do user.uid safely).
+ * Returns Firebase User (callers can safely do user.uid).
  */
 export async function ensureSignedIn(): Promise<User> {
   const a = getFirebaseAuth();
 
-  // If already signed in, return immediately
-  const existing = a.currentUser;
-  if (existing) return existing;
+  if (a.currentUser) return a.currentUser;
 
-  // Wait briefly for auth state (in case it’s restoring)
   const userFromState = await new Promise<User | null>((resolve) => {
     const unsub = onAuthStateChanged(a, (u) => {
       unsub();
       resolve(u);
     });
-    // if nothing happens quickly, resolve null and we sign in anon
     setTimeout(() => resolve(null), 800);
   });
 
   if (userFromState) return userFromState;
 
-  // Otherwise sign in anonymously
   const cred = await signInAnonymously(a);
   return cred.user;
 }
@@ -124,10 +118,6 @@ export function getCurrentUserUid(): string | null {
   }
 }
 
-/**
- * Online persistence:
- * users/{uid}.activeSocietyId
- */
 async function ensureUserDoc(uid: string) {
   const ref = doc(getFirebaseDb(), "users", uid);
   const snap = await getDoc(ref);
@@ -140,6 +130,9 @@ async function ensureUserDoc(uid: string) {
   }
 }
 
+/**
+ * Loads activeSocietyId from Firestore into memory cache.
+ */
 export async function initActiveSocietyId(): Promise<string | null> {
   const user = await ensureSignedIn();
   const uid = user.uid;
@@ -148,10 +141,9 @@ export async function initActiveSocietyId(): Promise<string | null> {
 
   const ref = doc(getFirebaseDb(), "users", uid);
   const snap = await getDoc(ref);
-
   const data = snap.data() as any;
-  activeSocietyIdCache = (data?.activeSocietyId as string | null) ?? null;
 
+  activeSocietyIdCache = (data?.activeSocietyId as string | null) ?? null;
   return activeSocietyIdCache;
 }
 
