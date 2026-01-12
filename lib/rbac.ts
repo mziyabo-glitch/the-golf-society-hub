@@ -48,17 +48,52 @@ export type Permissions = {
  * Returns all false if not loaded yet (safe default)
  * 
  * IMPORTANT: Captain ALWAYS returns true for ALL permissions.
+ * IMPORTANT: Session role "admin" also gets ALL permissions (for initial setup).
  * 
  * DEFENSIVE: Always returns a valid Permissions object, never throws.
  */
 export async function getPermissions(): Promise<Permissions> {
   try {
     const session = await getSession();
+    
+    // If no session at all, use session role to determine permissions
+    // This handles the case where a society was just created (no members yet)
+    const sessionRole = normalizeSessionRole(session?.role);
+    
+    // IMPORTANT: If session role is ADMIN, grant all permissions
+    // This is for initial setup when no members exist yet
+    if (sessionRole === "ADMIN") {
+      if (__DEV__) {
+        console.log("[RBAC] Session role is ADMIN - granting all permissions", {
+          sessionRole,
+          currentUserId: session?.currentUserId,
+        });
+      }
+      return {
+        canManageRoles: true,
+        canManageMembers: true,
+        canManageEvents: true,
+        canManageTeeSheet: true,
+        canManageHandicaps: true,
+        canManageFinance: true,
+        canEnterResults: true,
+        canEditOwnProfile: true,
+        canDeleteEvent: true,
+        canDeleteMember: true,
+        canResetTeeSheet: true,
+        canPublishResults: true,
+        isCaptain: true,
+        isTreasurer: false,
+        isSecretary: false,
+        isHandicapper: false,
+      };
+    }
+    
+    // If no current user ID, return default (but session role check above handles admin)
     if (!session || !session.currentUserId) {
       return getDefaultPermissions();
     }
 
-    const sessionRole = normalizeSessionRole(session.role);
     const rawRoles = await getCurrentUserRoles();
     // Ensure rawRoles is an array before normalization
     const roles = normalizeMemberRoles(Array.isArray(rawRoles) ? rawRoles : []);

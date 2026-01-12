@@ -79,11 +79,22 @@ export async function getSession(): Promise<Session> {
     const role = await AsyncStorage.getItem(SESSION_ROLE_KEY);
     const email = await AsyncStorage.getItem(SESSION_EMAIL_KEY);
 
-    return {
+    const session: Session = {
       currentUserId: currentUserId || null,
       role: (role === "admin" || role === "member" ? role : "member") as UserRole,
       email: email || null,
     };
+    
+    // DEV: Log session for debugging
+    if (__DEV__) {
+      console.log("[Session] getSession:", { 
+        currentUserId: session.currentUserId, 
+        role: session.role,
+        rawRole: role,
+      });
+    }
+    
+    return session;
   } catch (error) {
     console.error("Error loading session:", error);
     return {
