@@ -2,12 +2,10 @@
 import { initializeApp, getApps, getApp, type FirebaseApp } from "firebase/app";
 import {
   getAuth,
-  initializeAuth,
   signInAnonymously,
   onAuthStateChanged,
   type Auth,
 } from "firebase/auth";
-import { getReactNativePersistence } from "firebase/auth/react-native";
 import { getFirestore, type Firestore } from "firebase/firestore";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Platform } from "react-native";
@@ -61,7 +59,9 @@ let auth: Auth | null = null;
 let db: Firestore | null = null;
 
 /**
- * Active Society persistence (NO MORE "return true" on native)
+ * Active Society persistence
+ * - Web: localStorage
+ * - Native: AsyncStorage
  */
 const ACTIVE_SOCIETY_KEY = "activeSocietyId";
 let activeSocietyIdCache: string | null = null;
@@ -94,7 +94,6 @@ async function readActiveSocietyIdNative(): Promise<string | null> {
 }
 
 function writeActiveSocietyIdNative(id: string | null) {
-  // fire-and-forget; we don’t want routing blocked by storage timing
   (async () => {
     try {
       if (!id) await AsyncStorage.removeItem(ACTIVE_SOCIETY_KEY);
@@ -105,10 +104,6 @@ function writeActiveSocietyIdNative(id: string | null) {
   })();
 }
 
-/**
- * Call this once early (RootLayout) if you want guaranteed cache hydration on native.
- * Safe to call multiple times.
- */
 export async function initActiveSocietyCache(): Promise<void> {
   if (Platform.OS === "web") {
     activeSocietyIdCache = readActiveSocietyIdWeb();
@@ -118,13 +113,10 @@ export async function initActiveSocietyCache(): Promise<void> {
 }
 
 export function getActiveSocietyId(): string | null {
-  // Web can hydrate synchronously
   if (Platform.OS === "web") {
     if (activeSocietyIdCache == null) activeSocietyIdCache = readActiveSocietyIdWeb();
     return activeSocietyIdCache;
   }
-
-  // Native: we only return cache (call initActiveSocietyCache at startup)
   return activeSocietyIdCache;
 }
 
@@ -132,9 +124,6 @@ export function hasRealActiveSociety(): boolean {
   return !!getActiveSocietyId();
 }
 
-/**
- * Keep same signature to avoid breaking other files.
- */
 export function setActiveSocietyId(societyId: string): boolean {
   activeSocietyIdCache = societyId;
 
@@ -155,8 +144,13 @@ export function clearActiveSocietyId(): boolean {
 
 /**
  * Firebase init
+ * IMPORTANT:
+ * - Do not import "firebase/auth/react-native" at top-level (breaks web build).
+ * - Use default web Auth on web.
+ * - On native, we can still run without RN persistence if the submodule isn't available,
+ *   but we try to enable it via dynamic import (safe for Vercel).
  */
-function initFirebase() {
+async function initFirebase() {
   const status = getFirebaseConfigStatus();
   if (!status.ok) {
     console.error("FIREBASE_NOT_CONFIGURED. Missing:", status.missing);
@@ -175,17 +169,28 @@ function initFirebase() {
   if (Platform.OS === "web") {
     auth = getAuth(app);
   } else {
-    // RN requires initializeAuth + persistence
-    auth = initializeAuth(app, {
-      persistence: getReactNativePersistence(AsyncStorage),
-    });
+    // Native: try to enable persistence via dynamic import (won't be bundled on web)
+    try {
+      const mod = await import("firebase/auth/react-native");
+      const { getReactNativePersistence } = mod as any;
+
+      const { initializeAuth } = await import("firebase/auth");
+      auth = initializeAuth(app, {
+        persistence: getReactNativePersistence(AsyncStorage),
+      });
+    } catch (e) {
+      // Fallback: still works, just less persistent across app restarts until we have RN persistence
+      console.warn("RN auth persistence not available, falling back to default auth:", e);
+      auth = getAuth(app);
+    }
   }
 
   // Firestore
   db = getFirestore(app);
 }
 
-initFirebase();
+// Kick off init immediately (but don't block module import)
+void initFirebase();
 
 export { app, auth, db };
 
@@ -193,18 +198,22 @@ export { app, auth, db };
  * Ensure signed in (anonymous is fine)
  */
 export async function ensureSignedIn(): Promise<void> {
+  if (!auth) {
+    // Wait a tick in case initFirebase hasn't completed yet
+    await new Promise((r) => setTimeout(r, 0));
+  }
   if (!auth) throw new Error("FIREBASE_NOT_CONFIGURED");
 
   if (auth.currentUser) return;
 
   await new Promise<void>((resolve, reject) => {
     const unsub = onAuthStateChanged(
-      auth,
+      auth!,
       async (user) => {
         unsub();
         try {
           if (user) return resolve();
-          await signInAnonymously(auth);
+          await signInAnonymously(auth!);
           resolve();
         } catch (e) {
           reject(e);
