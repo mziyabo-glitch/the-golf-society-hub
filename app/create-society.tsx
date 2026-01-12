@@ -1,179 +1,162 @@
 import { useState } from "react";
-import {
-  View,
-  Text,
-  TextInput,
-  ScrollView,
-  Alert,
-  Pressable,
-  ActivityIndicator,
-} from "react-native";
+import { View, TextInput, Alert, StyleSheet, Platform } from "react-native";
 import { router } from "expo-router";
 import { addDoc, collection, doc, serverTimestamp, setDoc } from "firebase/firestore";
+
+import { Screen } from "@/components/ui/Screen";
+import { AppText } from "@/components/ui/AppText";
+import { AppCard } from "@/components/ui/AppCard";
+import { PrimaryButton, SecondaryButton } from "@/components/ui/Button";
+import { getColors, spacing } from "@/lib/ui/theme";
 
 import { db, ensureSignedIn, setActiveSocietyId } from "@/lib/firebase";
 
 export default function CreateSocietyScreen() {
+  const colors = getColors();
+
   const [name, setName] = useState("");
   const [homeCourse, setHomeCourse] = useState("");
   const [country, setCountry] = useState("UK");
-  const [scoringMode, setScoringMode] = useState<"stableford" | "strokeplay" | "both">(
-    "stableford"
-  );
-  const [submitting, setSubmitting] = useState(false);
+  const [creating, setCreating] = useState(false);
 
   const handleCreate = async () => {
     if (!name.trim()) {
-      Alert.alert("Validation error", "Society name is required.");
+      Alert.alert("Missing info", "Please enter a society name.");
       return;
     }
 
     try {
-      setSubmitting(true);
+      setCreating(true);
 
-      // 0) Ensure we have a signed-in user (anonymous is OK)
+      // Ensure signed in (anonymous ok)
       const user = await ensureSignedIn();
       const uid = user.uid;
 
-      // 1) Create society in Firestore
+      // 1) Create society
       const societyRef = await addDoc(collection(db, "societies"), {
         name: name.trim(),
         homeCourse: homeCourse.trim() || null,
-        country,
-        scoringMode,
+        country: country.trim() || "UK",
         createdAt: serverTimestamp(),
-        createdBy: uid,
         updatedAt: serverTimestamp(),
+        createdBy: uid,
       });
 
       const societyId = societyRef.id;
 
-      // 2) Create the FIRST member (the creator) as Captain/Admin
-      // Use uid as the memberId so RBAC and ownership are stable
+      // 2) Create first member = YOU as Captain/Admin
       await setDoc(doc(db, "societies", societyId, "members", uid), {
-        name: user.displayName || "Admin",
-        sex: "male", // can be edited later in profile
-        handicapIndex: 18, // placeholder; user can update later
-        roles: ["captain", "admin"], // IMPORTANT: lowercase roles
-        status: "active",
         userId: uid,
+        name: user.displayName || "Captain",
+        sex: "male", // editable later
+        handicapIndex: 18, // placeholder; editable later
+        roles: ["captain", "admin"], // LOWERCASE roles to match RBAC checks
+        status: "active",
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       });
 
-      // 3) Persist active society ONLINE (Firestore users/{uid}.activeSocietyId)
+      // 3) Persist active society ONLINE (users/{uid}.activeSocietyId)
       await setActiveSocietyId(societyId);
 
-      // 4) Go to members screen (do NOT bounce back)
+      // 4) Go to members list
       router.replace("/members");
-    } catch (err) {
-      console.error("[CreateSociety] Failed:", err);
-      Alert.alert("Error", "Failed to create society. Please try again.");
+    } catch (e) {
+      console.error("[create-society] error", e);
+      Alert.alert("Error", "Could not create society. Check Firebase config + try again.");
     } finally {
-      setSubmitting(false);
+      setCreating(false);
     }
   };
 
   return (
-    <ScrollView contentContainerStyle={{ padding: 20 }}>
-      <Text style={{ fontSize: 28, fontWeight: "700", marginBottom: 8 }}>
-        Create a Society
-      </Text>
+    <Screen>
+      <View style={{ padding: spacing.lg }}>
+        <AppText variant="title" style={{ marginBottom: spacing.xs }}>
+          Create Society
+        </AppText>
+        <AppText variant="subtle" style={{ marginBottom: spacing.lg }}>
+          This creates your society online and makes you Captain/Admin.
+        </AppText>
 
-      <Text style={{ opacity: 0.6, marginBottom: 20 }}>
-        Set up your society in under a minute.
-      </Text>
+        <AppCard style={{ padding: spacing.lg }}>
+          <AppText style={{ marginBottom: spacing.xs }}>Society name *</AppText>
+          <TextInput
+            value={name}
+            onChangeText={setName}
+            placeholder="e.g. M4 Fairways"
+            placeholderTextColor={colors.mutedText}
+            autoCapitalize="words"
+            style={[
+              styles.input,
+              {
+                borderColor: colors.border,
+                backgroundColor: colors.card,
+                color: colors.text,
+              },
+            ]}
+          />
 
-      <Text style={{ fontWeight: "600", marginBottom: 6 }}>Society Name *</Text>
-      <TextInput
-        value={name}
-        onChangeText={setName}
-        placeholder="Society name"
-        autoCapitalize="words"
-        style={{
-          borderWidth: 1,
-          borderColor: "rgba(0,0,0,0.15)",
-          borderRadius: 12,
-          padding: 12,
-          marginBottom: 14,
-        }}
-      />
+          <AppText style={{ marginTop: spacing.md, marginBottom: spacing.xs }}>
+            Home course (optional)
+          </AppText>
+          <TextInput
+            value={homeCourse}
+            onChangeText={setHomeCourse}
+            placeholder="e.g. Wrag Barn"
+            placeholderTextColor={colors.mutedText}
+            autoCapitalize="words"
+            style={[
+              styles.input,
+              {
+                borderColor: colors.border,
+                backgroundColor: colors.card,
+                color: colors.text,
+              },
+            ]}
+          />
 
-      <Text style={{ fontWeight: "600", marginBottom: 6 }}>Home Course (optional)</Text>
-      <TextInput
-        value={homeCourse}
-        onChangeText={setHomeCourse}
-        placeholder="e.g. Wrag Barn"
-        autoCapitalize="words"
-        style={{
-          borderWidth: 1,
-          borderColor: "rgba(0,0,0,0.15)",
-          borderRadius: 12,
-          padding: 12,
-          marginBottom: 14,
-        }}
-      />
+          <AppText style={{ marginTop: spacing.md, marginBottom: spacing.xs }}>
+            Country
+          </AppText>
+          <TextInput
+            value={country}
+            onChangeText={setCountry}
+            placeholder="UK"
+            placeholderTextColor={colors.mutedText}
+            autoCapitalize="characters"
+            style={[
+              styles.input,
+              {
+                borderColor: colors.border,
+                backgroundColor: colors.card,
+                color: colors.text,
+              },
+            ]}
+          />
 
-      <Text style={{ fontWeight: "600", marginBottom: 6 }}>Country</Text>
-      <TextInput
-        value={country}
-        onChangeText={setCountry}
-        placeholder="UK"
-        autoCapitalize="characters"
-        style={{
-          borderWidth: 1,
-          borderColor: "rgba(0,0,0,0.15)",
-          borderRadius: 12,
-          padding: 12,
-          marginBottom: 14,
-        }}
-      />
-
-      <Text style={{ fontWeight: "600", marginBottom: 6 }}>Scoring Mode</Text>
-      <TextInput
-        value={scoringMode}
-        onChangeText={(v) => {
-          const lower = (v || "").toLowerCase();
-          if (lower === "stableford" || lower === "strokeplay" || lower === "both") {
-            setScoringMode(lower as any);
-          } else {
-            setScoringMode("stableford");
-          }
-        }}
-        placeholder="stableford | strokeplay | both"
-        autoCapitalize="none"
-        style={{
-          borderWidth: 1,
-          borderColor: "rgba(0,0,0,0.15)",
-          borderRadius: 12,
-          padding: 12,
-          marginBottom: 20,
-        }}
-      />
-
-      <Pressable
-        onPress={handleCreate}
-        disabled={submitting}
-        style={{
-          backgroundColor: submitting ? "rgba(0,0,0,0.2)" : "#111",
-          padding: 14,
-          borderRadius: 14,
-          alignItems: "center",
-        }}
-      >
-        {submitting ? (
-          <View style={{ flexDirection: "row", gap: 10, alignItems: "center" }}>
-            <ActivityIndicator color="#fff" />
-            <Text style={{ color: "#fff", fontWeight: "700" }}>Creating…</Text>
+          <View style={{ marginTop: spacing.lg }}>
+            <PrimaryButton
+              title={creating ? "Creating..." : "Create Society"}
+              onPress={handleCreate}
+              disabled={creating}
+            />
+            <View style={{ height: spacing.sm }} />
+            <SecondaryButton title="Back" onPress={() => router.back()} />
           </View>
-        ) : (
-          <Text style={{ color: "#fff", fontWeight: "700" }}>Create Society</Text>
-        )}
-      </Pressable>
-
-      <Text style={{ marginTop: 14, opacity: 0.6, fontSize: 12 }}>
-        This creates your society online and makes you Captain/Admin.
-      </Text>
-    </ScrollView>
+        </AppCard>
+      </View>
+    </Screen>
   );
 }
+
+const styles = StyleSheet.create({
+  input: {
+    width: "100%",
+    borderWidth: 1,
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: Platform.OS === "web" ? 12 : 10,
+    fontSize: 16,
+  },
+});
