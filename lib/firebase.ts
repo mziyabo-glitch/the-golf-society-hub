@@ -1,260 +1,124 @@
-/**
- * Firebase Client Setup
- * Stable version – no forced society, no duplicate exports
- */
-
-import { Platform } from "react-native";
-import {
-  initializeApp,
-  getApps,
-  getApp,
-  type FirebaseApp,
-} from "firebase/app";
-import {
-  getAuth,
-  signInAnonymously,
-  onAuthStateChanged,
-  type Auth,
-  type User,
-} from "firebase/auth";
+import { initializeApp, getApps, getApp } from "firebase/app";
 import {
   getFirestore,
-  doc,
-  getDoc,
-  type Firestore,
+  Firestore,
 } from "firebase/firestore";
+import {
+  getAuth,
+  Auth,
+  signInAnonymously,
+  onAuthStateChanged,
+} from "firebase/auth";
+import { Platform } from "react-native";
 
-/* ───────────────────────────────────────────── */
-/* ENV CONFIG                                    */
-/* ───────────────────────────────────────────── */
-
-const FIREBASE_API_KEY = process.env.EXPO_PUBLIC_FIREBASE_API_KEY!;
-const FIREBASE_AUTH_DOMAIN = process.env.EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN!;
-const FIREBASE_PROJECT_ID = process.env.EXPO_PUBLIC_FIREBASE_PROJECT_ID!;
-const FIREBASE_STORAGE_BUCKET =
-  process.env.EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET!;
-const FIREBASE_MESSAGING_SENDER_ID =
-  process.env.EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID!;
-const FIREBASE_APP_ID = process.env.EXPO_PUBLIC_FIREBASE_APP_ID!;
-
-export const DEFAULT_SOCIETY_ID = "m4-golf-society";
-const ACTIVE_SOCIETY_STORAGE_KEY = "activeSocietyId";
-
-/* ───────────────────────────────────────────── */
-/* TYPES                                        */
-/* ───────────────────────────────────────────── */
-
-export type AuthStatus =
-  | "initializing"
-  | "signedIn"
-  | "signedOut"
-  | "needsLogin"
-  | "configError";
-
-export interface FirebaseConfigStatus {
-  configured: boolean;
-  usingDummyConfig: boolean;
-  missingVars: string[];
-}
-
-/* ───────────────────────────────────────────── */
-/* CONFIG CHECK                                 */
-/* ───────────────────────────────────────────── */
-
-export function getFirebaseConfigStatus(): FirebaseConfigStatus {
-  const missingVars: string[] = [];
-
-  if (!FIREBASE_API_KEY) missingVars.push("EXPO_PUBLIC_FIREBASE_API_KEY");
-  if (!FIREBASE_AUTH_DOMAIN)
-    missingVars.push("EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN");
-  if (!FIREBASE_PROJECT_ID)
-    missingVars.push("EXPO_PUBLIC_FIREBASE_PROJECT_ID");
-  if (!FIREBASE_STORAGE_BUCKET)
-    missingVars.push("EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET");
-  if (!FIREBASE_MESSAGING_SENDER_ID)
-    missingVars.push("EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID");
-  if (!FIREBASE_APP_ID) missingVars.push("EXPO_PUBLIC_FIREBASE_APP_ID");
-
-  const usingDummyConfig =
-    FIREBASE_PROJECT_ID?.includes("dummy") ||
-    FIREBASE_API_KEY?.includes("dummy");
-
-  return {
-    configured: missingVars.length === 0 && !usingDummyConfig,
-    usingDummyConfig,
-    missingVars,
-  };
-}
-
-export function assertFirebaseConfigured() {
-  const status = getFirebaseConfigStatus();
-  if (!status.configured) {
-    throw new Error("FIREBASE_NOT_CONFIGURED");
-  }
-}
-
-/* ───────────────────────────────────────────── */
-/* INITIALISATION                               */
-/* ───────────────────────────────────────────── */
+/* ------------------------------------------------------------------ */
+/* ENV + CONFIG                                                        */
+/* ------------------------------------------------------------------ */
 
 const firebaseConfig = {
-  apiKey: FIREBASE_API_KEY,
-  authDomain: FIREBASE_AUTH_DOMAIN,
-  projectId: FIREBASE_PROJECT_ID,
-  storageBucket: FIREBASE_STORAGE_BUCKET,
-  messagingSenderId: FIREBASE_MESSAGING_SENDER_ID,
-  appId: FIREBASE_APP_ID,
+  apiKey: process.env.EXPO_PUBLIC_FIREBASE_API_KEY,
+  authDomain: process.env.EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN,
+  projectId: process.env.EXPO_PUBLIC_FIREBASE_PROJECT_ID,
+  storageBucket: process.env.EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: process.env.EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID,
+  appId: process.env.EXPO_PUBLIC_FIREBASE_APP_ID,
 };
 
-let firebaseApp: FirebaseApp;
-let firebaseAuth: Auth;
-let firestoreDb: Firestore;
+export function isFirebaseConfigured(): boolean {
+  return !!(
+    firebaseConfig.apiKey &&
+    firebaseConfig.projectId &&
+    firebaseConfig.appId
+  );
+}
 
-export function getFirebaseApp(): FirebaseApp {
-  assertFirebaseConfigured();
-  if (!firebaseApp) {
-    firebaseApp = getApps().length
-      ? getApp()
-      : initializeApp(firebaseConfig);
+/* ------------------------------------------------------------------ */
+/* APP INIT                                                           */
+/* ------------------------------------------------------------------ */
+
+function getFirebaseApp() {
+  if (!getApps().length) {
+    return initializeApp(firebaseConfig);
   }
-  return firebaseApp;
+  return getApp();
+}
+
+let _db: Firestore | null = null;
+let _auth: Auth | null = null;
+
+export function getFirebaseDb(): Firestore {
+  if (!_db) {
+    _db = getFirestore(getFirebaseApp());
+  }
+  return _db;
 }
 
 export function getFirebaseAuth(): Auth {
-  if (!firebaseAuth) {
-    firebaseAuth = getAuth(getFirebaseApp());
+  if (!_auth) {
+    _auth = getAuth(getFirebaseApp());
   }
-  return firebaseAuth;
+  return _auth;
 }
-
-export function getFirebaseDb(): Firestore {
-  if (!firestoreDb) {
-    firestoreDb = getFirestore(getFirebaseApp());
-  }
-  return firestoreDb;
-}
-
-/* ───────────────────────────────────────────── */
-/* PUBLIC EXPORTS                               */
-/* ───────────────────────────────────────────── */
 
 export const db = getFirebaseDb();
 export const authInstance = getFirebaseAuth();
 
-/* ───────────────────────────────────────────── */
-/* AUTH HELPERS                                 */
-/* ───────────────────────────────────────────── */
+/* ------------------------------------------------------------------ */
+/* AUTH BOOTSTRAP                                                     */
+/* ------------------------------------------------------------------ */
 
-export function waitForAuthState(): Promise<User | null> {
+export async function waitForAuthState(): Promise<void> {
   return new Promise((resolve) => {
-    const unsub = onAuthStateChanged(getFirebaseAuth(), (user) => {
+    const unsub = onAuthStateChanged(authInstance, () => {
       unsub();
-      resolve(user);
+      resolve();
     });
   });
 }
 
-export async function ensureSignedIn(): Promise<{
-  success: boolean;
-  status: AuthStatus;
-  error?: any;
-}> {
+export async function ensureSignedIn() {
   try {
-    assertFirebaseConfigured();
-
-    if (getFirebaseAuth().currentUser) {
-      return { success: true, status: "signedIn" };
+    if (!authInstance.currentUser) {
+      await signInAnonymously(authInstance);
     }
-
-    try {
-      await signInAnonymously(getFirebaseAuth());
-      return { success: true, status: "signedIn" };
-    } catch (err: any) {
-      if (err?.code === "auth/operation-not-allowed") {
-        return { success: false, status: "needsLogin", error: err };
-      }
-      return { success: false, status: "signedOut", error: err };
-    }
-  } catch (err) {
-    return { success: false, status: "configError", error: err };
+    return { success: true, status: "signedIn" as const };
+  } catch (error: any) {
+    return {
+      success: false,
+      status: "configError" as const,
+      error,
+    };
   }
 }
 
-/* ───────────────────────────────────────────── */
-/* ACTIVE SOCIETY                               */
-/* ───────────────────────────────────────────── */
+/* ------------------------------------------------------------------ */
+/* ACTIVE SOCIETY (WEB-ONLY, SAFE)                                    */
+/* ------------------------------------------------------------------ */
 
-function getActiveSocietyIdWeb(): string | null {
-  if (typeof window === "undefined") return null;
-  const v = window.localStorage.getItem(ACTIVE_SOCIETY_STORAGE_KEY);
-  return v && v.trim() ? v : null;
-}
-
-function setActiveSocietyIdWeb(id: string) {
-  if (typeof window !== "undefined") {
-    window.localStorage.setItem(ACTIVE_SOCIETY_STORAGE_KEY, id);
-  }
-}
-
-function clearActiveSocietyIdWeb() {
-  if (typeof window !== "undefined") {
-    window.localStorage.removeItem(ACTIVE_SOCIETY_STORAGE_KEY);
-  }
-}
+const STORAGE_KEY = "activeSocietyId";
+const DEFAULT_SOCIETY_ID = "m4_golf_society";
 
 export function getActiveSocietyId(): string {
   if (Platform.OS === "web") {
-    const id = getActiveSocietyIdWeb();
-    if (id) return id;
-    return __DEV__ ? DEFAULT_SOCIETY_ID : "";
+    const v = localStorage.getItem(STORAGE_KEY);
+    if (v) return v;
   }
-  return __DEV__ ? DEFAULT_SOCIETY_ID : "";
-}
-
-export function hasRealActiveSociety(): boolean {
-  const id = getActiveSocietyId();
-  return !!id && id !== DEFAULT_SOCIETY_ID;
+  return DEFAULT_SOCIETY_ID;
 }
 
 export function hasActiveSociety(): boolean {
-  return !!getActiveSocietyId();
+  if (Platform.OS === "web") {
+    return !!localStorage.getItem(STORAGE_KEY);
+  }
+  return true;
 }
 
 export function setActiveSocietyId(id: string) {
-  if (!id) {
-    clearActiveSocietyIdWeb();
-    return;
-  }
   if (Platform.OS === "web") {
-    setActiveSocietyIdWeb(id);
+    localStorage.setItem(STORAGE_KEY, id);
   }
 }
 
-export async function initActiveSocietyId(): Promise<string> {
-  if (Platform.OS === "web") {
-    const id = getActiveSocietyIdWeb();
-    if (id) return id;
-    console.log("[ActiveSociety] No active society yet (expected)");
-    return __DEV__ ? DEFAULT_SOCIETY_ID : "";
-  }
-  return __DEV__ ? DEFAULT_SOCIETY_ID : "";
-}
-
-/* ───────────────────────────────────────────── */
-/* SAFE READ                                   */
-/* ───────────────────────────────────────────── */
-
-export async function getActiveSocietyDoc(): Promise<any | null> {
-  const societyId = getActiveSocietyId();
-  if (!societyId) return null;
-
-  try {
-    const ref = doc(getFirebaseDb(), "societies", societyId);
-    const snap = await getDoc(ref);
-    if (!snap.exists()) return null;
-    return { id: snap.id, ...snap.data() };
-  } catch (err) {
-    console.error("[Firestore] getActiveSocietyDoc failed", err);
-    return null;
-  }
+export async function initActiveSocietyId(): Promise<string | null> {
+  return getActiveSocietyId();
 }
