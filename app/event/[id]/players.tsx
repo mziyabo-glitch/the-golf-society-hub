@@ -6,40 +6,30 @@
  * - Save and return to event details
  * - Verify selected players count appears on dashboard
  * - Close/reopen app, verify player selection persists
+ *
+ * FIRESTORE-ONLY: Events are loaded from Firestore
+ * RBAC: Uses centralized permissions from lib/rbac
  */
 
 import { useFocusEffect } from "@react-navigation/native";
 import { router, useLocalSearchParams } from "expo-router";
 import { useCallback, useState } from "react";
 import {
-  Alert,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
   View,
-  ActivityIndicator,
 } from "react-native";
-
-/**
- * HOW TO TEST:
- * - As member: try to access players screen (should show alert and redirect)
- * - As captain: verify can manage players
- * - Select/deselect players and save
- * - Verify player count updates on event card
- *
- * FIRESTORE-ONLY: Events are loaded from Firestore
- */
 
 import { getCourseHandicap, getPlayingHandicap } from "@/lib/handicap";
 import type { Course, TeeSet } from "@/lib/models";
-import { canCreateEvents, normalizeMemberRoles, normalizeSessionRole } from "@/lib/permissions";
-import { getCurrentUserRoles } from "@/lib/roles";
-import { getSession } from "@/lib/session";
+import { getPermissions, type Permissions } from "@/lib/rbac";
 import { getActiveSocietyId } from "@/lib/firebase";
 import { getEventById, updateEvent } from "@/lib/firestore/events";
 import { listMembers } from "@/lib/firestore/members";
 import { getCourses } from "@/lib/firestore/society";
+import { showAlert } from "@/lib/guards";
 
 type EventData = {
   id: string;
@@ -68,8 +58,7 @@ export default function EventPlayersScreen() {
   const [members, setMembers] = useState<MemberData[]>([]);
   const [selectedPlayerIds, setSelectedPlayerIds] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
-  const [role, setRole] = useState<"admin" | "member">("member");
-  const [canManagePlayers, setCanManagePlayers] = useState(false);
+  const [permissions, setPermissions] = useState<Permissions | null>(null);
   const [courses, setCourses] = useState<Course[]>([]);
   const [selectedCourse, setSelectedCourse] = useState<Course | null>(null);
   const [selectedMaleTeeSet, setSelectedMaleTeeSet] = useState<TeeSet | null>(null);
@@ -83,6 +72,19 @@ export default function EventPlayersScreen() {
 
   const loadData = async () => {
     try {
+      // Load permissions first (uses centralized RBAC)
+      const perms = await getPermissions();
+      setPermissions(perms);
+      
+      // Check if user can manage events (required to manage players)
+      if (!perms.canManageEvents) {
+        showAlert("Access Denied", "Only Captain or Secretary can manage players", [
+          { text: "OK", onPress: () => router.back() },
+        ]);
+        setLoading(false);
+        return;
+      }
+      
       const societyId = getActiveSocietyId();
       if (!societyId || !eventId) {
         setLoading(false);
@@ -138,32 +140,17 @@ export default function EventPlayersScreen() {
       // Load members from Firestore
       const loadedMembers = await listMembers(societyId);
       setMembers(loadedMembers);
-
-      // Load session (single source of truth)
-      const session = await getSession();
-      setRole(session.role);
-
-      // Check permissions using pure functions
-      const sessionRole = normalizeSessionRole(session.role);
-      const roles = normalizeMemberRoles(await getCurrentUserRoles());
-      const canManage = canCreateEvents(sessionRole, roles);
-      setCanManagePlayers(canManage);
-
-      if (!canManage) {
-        Alert.alert("Access Denied", "Only Captain or Admin can manage players", [
-          { text: "OK", onPress: () => router.back() },
-        ]);
-      }
     } catch (error) {
       console.error("Error loading data:", error);
-      Alert.alert("Error", "Failed to load data");
+      showAlert("Error", "Failed to load data");
     } finally {
       setLoading(false);
     }
   };
 
-  if (!canManagePlayers && !loading) {
-    return null; // Will redirect via Alert
+  // Permission guard - don't render if no permission
+  if (!permissions?.canManageEvents && !loading) {
+    return null;
   }
 
   const togglePlayer = (memberId: string) => {
@@ -180,6 +167,13 @@ export default function EventPlayersScreen() {
 
   const handleSave = async () => {
     if (!event) return;
+    
+    // HARD BLOCK: Verify permission before write
+    if (!permissions?.canManageEvents) {
+      console.error("[Players] Permission denied - cannot save players");
+      showAlert("Not allowed", "Only Captain or Secretary can save players.");
+      return;
+    }
 
     try {
       // Update playerIds in Firestore
@@ -188,15 +182,15 @@ export default function EventPlayersScreen() {
       });
 
       if (!result.success) {
-        Alert.alert("Error", result.error || "Failed to save players");
+        showAlert("Error", result.error || "Failed to save players");
         return;
       }
 
-      Alert.alert("Success", "Players saved successfully");
+      showAlert("Success", "Players saved successfully");
       router.back();
     } catch (error) {
       console.error("[Players] Error saving players:", error);
-      Alert.alert("Error", "Failed to save players");
+      showAlert("Error", "Failed to save players");
     }
   };
 

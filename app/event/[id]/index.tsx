@@ -75,9 +75,10 @@ export default function EventDetailScreen() {
       return;
     }
 
-    // Visible only when Captain/Admin-ish, but guard again at write time
-    if (!permissions?.isCaptain && !permissions?.canManageEvents) {
-      showAlert("Not allowed", "You don't have permission to delete events.");
+    // HARD BLOCK: Must have canDeleteEvent permission (Captain only)
+    if (!permissions?.canDeleteEvent) {
+      console.error("[DeleteEvent] Permission denied - canDeleteEvent is false");
+      showAlert("Not allowed", "Only the Captain can delete events.");
       return;
     }
 
@@ -167,7 +168,8 @@ export default function EventDetailScreen() {
           <SecondaryButton onPress={() => router.push("/tees-teesheet" as any)}>Tee Sheet</SecondaryButton>
         </View>
 
-        {(permissions?.isCaptain || permissions?.canManageEvents) && (
+        {/* Delete Event button - visible only if canDeleteEvent (Captain only) */}
+        {permissions?.canDeleteEvent && (
           <View style={{ marginTop: 24 }}>
             <DestructiveButton onPress={confirmDelete}>Delete Event</DestructiveButton>
           </View>

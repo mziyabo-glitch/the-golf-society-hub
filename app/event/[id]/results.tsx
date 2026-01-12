@@ -11,18 +11,17 @@
  * - Close/reopen app, verify results persist
  *
  * WEB-ONLY PERSISTENCE: All data via Firestore, no AsyncStorage
+ * RBAC: Uses centralized permissions from lib/rbac
  */
 
 import { useFocusEffect } from "@react-navigation/native";
 import { router, useLocalSearchParams } from "expo-router";
 import { useCallback, useState } from "react";
-import { Alert, Pressable, StyleSheet, TextInput, View, ActivityIndicator } from "react-native";
+import { Pressable, StyleSheet, TextInput, View, ActivityIndicator } from "react-native";
 
 import { getCourseHandicap, getPlayingHandicap } from "@/lib/handicap";
 import type { Course, TeeSet, EventData } from "@/lib/models";
-import { canEnterScores, normalizeMemberRoles, normalizeSessionRole } from "@/lib/permissions";
-import { getCurrentUserRoles } from "@/lib/roles";
-import { getSession } from "@/lib/session";
+import { getPermissions, type Permissions } from "@/lib/rbac";
 import { Screen } from "@/components/ui/Screen";
 import { SectionHeader } from "@/components/ui/SectionHeader";
 import { AppText } from "@/components/ui/AppText";
@@ -31,6 +30,7 @@ import { PrimaryButton, SecondaryButton } from "@/components/ui/Button";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { getColors, spacing } from "@/lib/ui/theme";
 import { getEvent, getMembers, getCourse, saveEventResults } from "@/lib/firestore/society";
+import { showAlert } from "@/lib/guards";
 
 type MemberData = {
   id: string;
@@ -46,8 +46,7 @@ export default function EventResultsScreen() {
   const [selectedPlayers, setSelectedPlayers] = useState<MemberData[]>([]);
   const [results, setResults] = useState<{ [memberId: string]: { stableford?: string; strokeplay?: string } }>({});
   const [loading, setLoading] = useState(true);
-  const [role, setRole] = useState<"admin" | "member">("member");
-  const [canEdit, setCanEdit] = useState(false);
+  const [permissions, setPermissions] = useState<Permissions | null>(null);
   const [courses, setCourses] = useState<Course[]>([]);
   const [selectedCourse, setSelectedCourse] = useState<Course | null>(null);
   const [selectedMaleTeeSet, setSelectedMaleTeeSet] = useState<TeeSet | null>(null);
@@ -61,8 +60,21 @@ export default function EventResultsScreen() {
 
   const loadData = async () => {
     try {
+      // Load permissions first (uses centralized RBAC)
+      const perms = await getPermissions();
+      setPermissions(perms);
+      
+      // Check if user can enter results
+      if (!perms.canEnterResults) {
+        showAlert("Access Denied", "Only Captain, Secretary, or Handicapper can enter results", [
+          { text: "OK", onPress: () => router.back() },
+        ]);
+        setLoading(false);
+        return;
+      }
+      
       if (!eventId) {
-        Alert.alert("Error", "Event ID is missing");
+        showAlert("Error", "Event ID is missing");
         router.back();
         return;
       }
@@ -70,7 +82,7 @@ export default function EventResultsScreen() {
       // Load event from Firestore
       const currentEvent = await getEvent(eventId);
       if (!currentEvent) {
-        Alert.alert("Error", "Event not found");
+        showAlert("Error", "Event not found");
         router.back();
         return;
       }
@@ -123,21 +135,6 @@ export default function EventResultsScreen() {
         setSelectedPlayers(allMembers);
       }
 
-      // Load session and check permissions
-      const session = await getSession();
-      setRole(session.role);
-
-      const sessionRole = normalizeSessionRole(session.role);
-      const roles = normalizeMemberRoles(await getCurrentUserRoles());
-      const canEnter = canEnterScores(sessionRole, roles);
-      setCanEdit(canEnter);
-
-      if (!canEnter) {
-        Alert.alert("Access Denied", "Only Captain, Secretary, or Handicapper can enter results", [
-          { text: "OK", onPress: () => router.back() },
-        ]);
-      }
-
       console.log("[Results] Loaded from Firestore:", {
         event: currentEvent.name,
         members: allMembers.length,
@@ -145,7 +142,7 @@ export default function EventResultsScreen() {
       });
     } catch (error) {
       console.error("Error loading data:", error);
-      Alert.alert("Error", "Failed to load data. Please check your connection.");
+      showAlert("Error", "Failed to load data. Please check your connection.");
     } finally {
       setLoading(false);
     }
@@ -233,18 +230,14 @@ export default function EventResultsScreen() {
 
   const handleSaveResults = async () => {
     if (!event) {
-      Alert.alert("Error", "Event not found");
+      showAlert("Error", "Event not found");
       return;
     }
 
-    // Double-check permission at write time (defense in depth)
-    const session = await getSession();
-    const sessionRole = normalizeSessionRole(session.role);
-    const roles = normalizeMemberRoles(await getCurrentUserRoles());
-    const canEnter = canEnterScores(sessionRole, roles);
-
-    if (!canEnter) {
-      Alert.alert("Access Denied", "Only Captain, Secretary, or Handicapper can enter results");
+    // HARD BLOCK: Verify permission before write (defense in depth)
+    if (!permissions?.canEnterResults) {
+      console.error("[Results] Permission denied - cannot save results");
+      showAlert("Access Denied", "Only Captain, Secretary, or Handicapper can enter results");
       return;
     }
 
@@ -301,7 +294,7 @@ export default function EventResultsScreen() {
     });
 
     if (invalidScores.length > 0) {
-      Alert.alert(
+      showAlert(
         "Invalid Scores",
         `Please enter valid scores for: ${invalidScores.join(", ")}\n\nStableford: ${STABLEFORD_MIN}-${STABLEFORD_MAX}\nStrokeplay: ${STROKEPLAY_MIN}-${STROKEPLAY_MAX}`
       );
@@ -365,37 +358,33 @@ export default function EventResultsScreen() {
       });
 
       if (success) {
-        Alert.alert("Success", "Draft saved — not counted in Order of Merit until published");
+        showAlert("Success", "Draft saved — not counted in Order of Merit until published");
         router.back();
       } else {
-        Alert.alert("Error", "Failed to save results. Please try again.");
+        showAlert("Error", "Failed to save results. Please try again.");
       }
     } catch (error) {
       console.error("Error saving results:", error);
-      Alert.alert("Error", "Failed to save results");
+      showAlert("Error", "Failed to save results");
     }
   };
 
   const handlePublishResults = async () => {
     if (!event) {
-      Alert.alert("Error", "Event not found");
+      showAlert("Error", "Event not found");
       return;
     }
 
-    // Double-check permission at write time
-    const session = await getSession();
-    const sessionRole = normalizeSessionRole(session.role);
-    const roles = normalizeMemberRoles(await getCurrentUserRoles());
-    const canEnter = canEnterScores(sessionRole, roles);
-
-    if (!canEnter) {
-      Alert.alert("Access Denied", "Only Captain, Secretary, or Handicapper can publish results");
+    // HARD BLOCK: Verify permission before write (canPublishResults required)
+    if (!permissions?.canPublishResults) {
+      console.error("[Results] Permission denied - cannot publish results");
+      showAlert("Access Denied", "Only Captain, Secretary, or Handicapper can publish results");
       return;
     }
 
     // Validate that results exist
     if (!event.results || Object.keys(event.results).length === 0) {
-      Alert.alert("Cannot Publish", "Please enter scores before publishing");
+      showAlert("Cannot Publish", "Please enter scores before publishing");
       return;
     }
 
@@ -408,7 +397,7 @@ export default function EventResultsScreen() {
     });
 
     if (missingScores.length > 0) {
-      Alert.alert("Cannot Publish", `Please enter scores for all players: ${missingScores.join(", ")}`);
+      showAlert("Cannot Publish", `Please enter scores for all players: ${missingScores.join(", ")}`);
       return;
     }
 
@@ -420,14 +409,14 @@ export default function EventResultsScreen() {
       });
 
       if (success) {
-        Alert.alert("Success", "Results published — Order of Merit updated");
+        showAlert("Success", "Results published — Order of Merit updated");
         router.back();
       } else {
-        Alert.alert("Error", "Failed to publish results. Please try again.");
+        showAlert("Error", "Failed to publish results. Please try again.");
       }
     } catch (error) {
       console.error("Error publishing results:", error);
-      Alert.alert("Error", "Failed to publish results");
+      showAlert("Error", "Failed to publish results");
     }
   };
 
@@ -480,7 +469,7 @@ export default function EventResultsScreen() {
   }
 
   // Read-only view for users without permission
-  if (!canEdit) {
+  if (!permissions?.canEnterResults) {
     const topScores = getTopScores();
     return (
       <Screen>
@@ -648,7 +637,7 @@ export default function EventResultsScreen() {
                       onChangeText={(value) => handleScoreChange(player.id, "stableford", value)}
                       placeholder="Enter points"
                       keyboardType="numeric"
-                      editable={canEdit}
+                      editable={permissions?.canEnterResults}
                       style={[styles.input, { borderColor: colors.border, color: colors.text }]}
                     />
                   </View>
@@ -663,7 +652,7 @@ export default function EventResultsScreen() {
                       onChangeText={(value) => handleScoreChange(player.id, "strokeplay", value)}
                       placeholder="Enter score"
                       keyboardType="numeric"
-                      editable={canEdit}
+                      editable={permissions?.canEnterResults}
                       style={[styles.input, { borderColor: colors.border, color: colors.text }]}
                     />
                     {(() => {
@@ -684,11 +673,11 @@ export default function EventResultsScreen() {
             );
           })}
 
-          <PrimaryButton onPress={handleSaveResults} disabled={!canEdit} style={styles.actionButton}>
+          <PrimaryButton onPress={handleSaveResults} disabled={!permissions?.canEnterResults} style={styles.actionButton}>
             Save Draft
           </PrimaryButton>
 
-          {isDraft && canEdit && (
+          {isDraft && permissions?.canEnterResults && (
             <PrimaryButton onPress={handlePublishResults} style={styles.actionButton}>
               Publish Results
             </PrimaryButton>

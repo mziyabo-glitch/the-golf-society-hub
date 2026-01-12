@@ -3,15 +3,16 @@
  * 
  * FIRESTORE-ONLY: Members are loaded from societies/{societyId}/members
  * Uses onSnapshot for real-time updates. No AsyncStorage for member data.
+ * RBAC: Uses centralized permissions from lib/rbac
  */
 
 import { useFocusEffect } from "@react-navigation/native";
 import { router } from "expo-router";
 import { useCallback, useState, useEffect } from "react";
-import { Alert, ActivityIndicator, Pressable, StyleSheet, View } from "react-native";
+import { ActivityIndicator, Pressable, StyleSheet, View } from "react-native";
 import { getSession, setCurrentUserId } from "@/lib/session";
-import { canManageMembers, normalizeMemberRoles, normalizeSessionRole } from "@/lib/permissions";
-import { guard } from "@/lib/guards";
+import { getPermissions, type Permissions } from "@/lib/rbac";
+import { showAlert } from "@/lib/guards";
 import { Screen } from "@/components/ui/Screen";
 import { SectionHeader } from "@/components/ui/SectionHeader";
 import { AppText } from "@/components/ui/AppText";
@@ -37,7 +38,7 @@ export default function MembersScreen() {
   const [permissionDenied, setPermissionDenied] = useState(false);
   const [currentUserId, setCurrentUserIdState] = useState<string | null>(null);
   const [selectedMemberId, setSelectedMemberId] = useState<string | null>(null);
-  const [canManageMembersFlag, setCanManageMembersFlag] = useState(false);
+  const [permissions, setPermissions] = useState<Permissions | null>(null);
   const [nextUpcomingEvent, setNextUpcomingEvent] = useState<EventData | null>(null);
   const [societyId, setSocietyId] = useState<string | null>(null);
 
@@ -107,12 +108,9 @@ export default function MembersScreen() {
       const effectiveUserId = session.currentUserId;
       setCurrentUserIdState(effectiveUserId);
 
-      // Permissions check based on current members
-      const current = members.find((m) => m.id === effectiveUserId) || null;
-      const sessionRole = normalizeSessionRole(session.role);
-      const memberRoles = normalizeMemberRoles(current?.roles);
-
-      setCanManageMembersFlag(canManageMembers(sessionRole, memberRoles));
+      // Load permissions using centralized RBAC
+      const perms = await getPermissions();
+      setPermissions(perms);
     } catch (err) {
       console.error("[Members] Error loading session:", err);
     }
@@ -142,10 +140,10 @@ export default function MembersScreen() {
       await setCurrentUserId(memberId);
       setCurrentUserIdState(memberId);
       setSelectedMemberId(null);
-      Alert.alert("Success", "Profile set successfully");
+      showAlert("Success", "Profile set successfully");
     } catch (error) {
       console.error("Error setting profile:", error);
-      Alert.alert("Error", "Failed to set profile");
+      showAlert("Error", "Failed to set profile");
     }
   };
 
@@ -158,21 +156,23 @@ export default function MembersScreen() {
   };
 
   const handleRemoveMember = async (memberId: string) => {
-    // Hard guard: must have permission
-    if (!guard(canManageMembersFlag, "Only Captain or Treasurer can remove members.")) {
+    // HARD BLOCK: Only Captain or Treasurer can delete members
+    if (!permissions?.canDeleteMember) {
+      console.error("[Members] Permission denied - canDeleteMember is false");
+      showAlert("Access Denied", "Only Captain or Treasurer can remove members.");
       return;
     }
 
     // Hard guard: cannot remove self
     if (memberId === currentUserId) {
-      Alert.alert("Cannot Remove", "You cannot remove yourself. Please switch to another profile first.");
+      showAlert("Cannot Remove", "You cannot remove yourself. Please switch to another profile first.");
       return;
     }
 
     // Find the member to check roles
     const targetMember = members.find((m) => m.id === memberId);
     if (!targetMember) {
-      Alert.alert("Error", "Member not found.");
+      showAlert("Error", "Member not found.");
       return;
     }
 
@@ -186,7 +186,7 @@ export default function MembersScreen() {
       );
       
       if (otherCaptains.length === 0) {
-        Alert.alert(
+        showAlert(
           "Cannot Remove",
           "You cannot remove the only Captain. Please transfer the Captain role to another member first."
         );
@@ -195,7 +195,7 @@ export default function MembersScreen() {
     }
 
     // Confirm deletion
-    Alert.alert(
+    showAlert(
       "Remove Member?",
       `Are you sure you want to remove ${targetMember.name}? This action cannot be undone.`,
       [
@@ -204,13 +204,20 @@ export default function MembersScreen() {
           text: "Remove",
           style: "destructive",
           onPress: async () => {
+            // HARD BLOCK: Double-check permission at delete time
+            if (!permissions?.canDeleteMember) {
+              console.error("[Members] Permission denied at delete time");
+              showAlert("Access Denied", "Only Captain or Treasurer can remove members.");
+              return;
+            }
+            
             try {
               // Delete from Firestore
               const result = await deleteMemberById(memberId, societyId || undefined);
               
               if (!result.success) {
                 console.error("[Members] Delete failed:", result.error, { societyId, memberId });
-                Alert.alert("Error", `Failed to remove member: ${result.error || "Unknown error"}`);
+                showAlert("Error", `Failed to remove member: ${result.error || "Unknown error"}`);
                 return;
               }
 
@@ -227,12 +234,12 @@ export default function MembersScreen() {
                 setCurrentUserIdState(firstMember.id);
               }
 
-              Alert.alert("Success", `${targetMember.name} has been removed.`);
+              showAlert("Success", `${targetMember.name} has been removed.`);
               // Note: UI will update automatically via onSnapshot subscription
             } catch (error) {
               const errorMessage = error instanceof Error ? error.message : "Unknown error";
               console.error("[Members] Error removing member:", error, { societyId, memberId });
-              Alert.alert("Error", `Failed to remove member: ${errorMessage}`);
+              showAlert("Error", `Failed to remove member: ${errorMessage}`);
             }
           },
         },
@@ -411,7 +418,8 @@ export default function MembersScreen() {
                     >
                       Edit
                     </SecondaryButton>
-                    {canManageMembersFlag && !isCurrentUser && (
+                    {/* Delete button - visible only if canDeleteMember (Captain/Treasurer) */}
+                    {permissions?.canDeleteMember && !isCurrentUser && (
                       <DestructiveButton
                         onPress={() => handleRemoveMember(member.id)}
                         size="sm"
@@ -428,7 +436,8 @@ export default function MembersScreen() {
         })
       )}
 
-      {canManageMembersFlag && (
+      {/* Add member button - visible if canManageMembers */}
+      {permissions?.canManageMembers && (
         <PrimaryButton
           onPress={() => router.push("/add-member")}
           style={styles.addButton}
