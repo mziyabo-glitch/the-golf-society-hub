@@ -135,3 +135,9 @@ export async function setActiveSocietyId(societyId: string | null) {
 
   activeSocietyIdCache = societyId ?? null;
 }
+export function requireActiveSocietyId(): string {
+  if (!activeSocietyIdCache) {
+    throw new Error("No active society loaded");
+  }
+  return activeSocietyIdCache;
+}
