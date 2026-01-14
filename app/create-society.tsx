@@ -1,123 +1,112 @@
-import { useState } from "react";
-import { View, TextInput, Alert, StyleSheet, Platform } from "react-native";
+import { useEffect, useState } from "react";
+import { View, TextInput, Alert, StyleSheet, Platform, ActivityIndicator } from "react-native";
 import { router } from "expo-router";
-import { 
-  writeBatch, 
-  collection, 
-  doc, 
-  serverTimestamp 
-} from "firebase/firestore";
+import { doc, getDoc } from "firebase/firestore";
 
 import { Screen } from "@/components/ui/Screen";
 import { AppText } from "@/components/ui/AppText";
 import { AppCard } from "@/components/ui/AppCard";
 import { PrimaryButton, SecondaryButton } from "@/components/ui/Button";
 import { getColors, spacing } from "@/lib/ui/theme";
+import { db, getActiveSocietyId, updateSocietyDetails } from "@/lib/firebase";
 
-import { db, ensureSignedIn, setActiveSocietyId } from "@/lib/firebase";
-
-export default function CreateSocietyScreen() {
+export default function EditSocietyScreen() {
   const colors = getColors();
 
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  
+  // Form State
   const [name, setName] = useState("");
   const [homeCourse, setHomeCourse] = useState("");
-  const [country, setCountry] = useState("UK");
-  const [creating, setCreating] = useState(false);
+  const [societyId, setSocietyId] = useState<string | null>(null);
 
-  const handleCreate = async () => {
-    if (!name.trim()) {
-      Alert.alert("Missing info", "Please enter a society name.");
+  // 1. Load current data on mount
+  useEffect(() => {
+    const loadData = async () => {
+      try {
+        const id = getActiveSocietyId();
+        if (!id) {
+          Alert.alert("Error", "No active society found.");
+          router.back();
+          return;
+        }
+        setSocietyId(id);
+
+        const snap = await getDoc(doc(db, "societies", id));
+        if (snap.exists()) {
+          const data = snap.data();
+          setName(data.name || "");
+          setHomeCourse(data.homeCourse || "");
+        } else {
+          Alert.alert("Error", "Society not found.");
+          router.back();
+        }
+      } catch (e) {
+        console.error("Failed to load society:", e);
+      } finally {
+        setLoading(false);
+      }
+    };
+    loadData();
+  }, []);
+
+  // 2. Handle Update
+  const handleSave = async () => {
+    if (!societyId || !name.trim()) {
+      Alert.alert("Required", "Society name cannot be empty.");
       return;
     }
 
     try {
-      console.log("Starting creation...");
-      setCreating(true);
-
-      const user = await ensureSignedIn();
-      const uid = user.uid;
-      console.log("User authenticated:", uid);
-
-      // --- 1. PREPARE BATCH (Atomic Write) ---
-      const batch = writeBatch(db);
+      setSaving(true);
       
-      const societyRef = doc(collection(db, "societies"));
-      const societyId = societyRef.id;
-
-      // Rule Check: request.resource.data.createdBy == request.auth.uid
-      batch.set(societyRef, {
+      // Call the function we added to lib/firebase.ts
+      await updateSocietyDetails(societyId, {
         name: name.trim(),
-        homeCourse: homeCourse.trim() || null,
-        country: country.trim() || "UK",
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-        createdBy: uid, 
+        homeCourse: homeCourse.trim()
       });
-
-      // Rule Check: isOwner(memberId)
-      const memberRef = doc(db, "societies", societyId, "members", uid);
-      batch.set(memberRef, {
-        userId: uid,
-        name: user.displayName || "Captain",
-        sex: "male", 
-        handicapIndex: 18, 
-        roles: ["captain", "admin"], 
-        status: "active",
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-      });
-
-      // Update User Profile
-      const userRef = doc(db, `users/${uid}`);
-      batch.set(userRef, { 
-        activeSocietyId: societyId,
-        updatedAt: serverTimestamp() 
-      }, { merge: true });
-
-      // --- 2. COMMIT ---
-      console.log("Committing batch...");
-      await batch.commit();
-      console.log("Batch success!");
-
-      // --- 3. UPDATE LOCAL STATE ---
-      await setActiveSocietyId(societyId);
-
-      // --- 4. NAVIGATE ---
-      // We do NOT setCreating(false) here because we are leaving the screen.
-      // This prevents the React #418 "Update on unmount" crash.
-      router.replace("/members");
-
-    } catch (e: any) {
-      console.error("CREATE FAILED:", e);
-      setCreating(false); // Only enable button again if we failed
       
-      // On Web, standard alerts are safer than native ones during crashes
-      if (Platform.OS === 'web') {
-        window.alert("Error: " + (e.message || "Create failed"));
-      } else {
-        Alert.alert("Error", e.message || "Create failed");
-      }
+      // Success on Web needs a window alert or simple console log usually, 
+      // but standard Alert works in React Native Web too.
+      Alert.alert("Success", "Society details updated!");
+      router.back(); 
+      
+    } catch (error: any) {
+      console.error(error);
+      // This catches the Permission Denied error if rules block it
+      Alert.alert("Access Denied", "Only the Captain or Admin can edit society details.");
+    } finally {
+      setSaving(false);
     }
   };
+
+  if (loading) {
+    return (
+      <Screen>
+        <View style={{ flex: 1, justifyContent: "center", alignItems: "center" }}>
+          <ActivityIndicator size="large" color={colors.primary} />
+        </View>
+      </Screen>
+    );
+  }
 
   return (
     <Screen>
       <View style={{ padding: spacing.lg }}>
-        <AppText variant="title" style={{ marginBottom: spacing.xs }}>
-          Create Society
+        <AppText variant="title" style={{ marginBottom: spacing.md }}>
+          Edit Society
         </AppText>
-        <AppText variant="subtle" style={{ marginBottom: spacing.lg }}>
-          This creates your society online and makes you Captain/Admin.
-        </AppText>
-
+        
         <AppCard style={{ padding: spacing.lg }}>
-          <AppText style={{ marginBottom: spacing.xs }}>Society name *</AppText>
+          
+          {/* Name Field */}
+          <AppText style={{ marginBottom: spacing.xs }}>Society Name</AppText>
           <TextInput
             value={name}
             onChangeText={setName}
             placeholder="e.g. M4 Fairways"
             placeholderTextColor={colors.mutedText}
-            autoCapitalize="words"
             style={[
               styles.input,
               {
@@ -128,15 +117,15 @@ export default function CreateSocietyScreen() {
             ]}
           />
 
+          {/* Home Course Field */}
           <AppText style={{ marginTop: spacing.md, marginBottom: spacing.xs }}>
-            Home course (optional)
+            Home Course
           </AppText>
           <TextInput
             value={homeCourse}
             onChangeText={setHomeCourse}
             placeholder="e.g. Wrag Barn"
             placeholderTextColor={colors.mutedText}
-            autoCapitalize="words"
             style={[
               styles.input,
               {
@@ -147,34 +136,17 @@ export default function CreateSocietyScreen() {
             ]}
           />
 
-          <AppText style={{ marginTop: spacing.md, marginBottom: spacing.xs }}>
-            Country
-          </AppText>
-          <TextInput
-            value={country}
-            onChangeText={setCountry}
-            placeholder="UK"
-            placeholderTextColor={colors.mutedText}
-            autoCapitalize="characters"
-            style={[
-              styles.input,
-              {
-                borderColor: colors.border,
-                backgroundColor: colors.card,
-                color: colors.text,
-              },
-            ]}
-          />
-
-          <View style={{ marginTop: spacing.lg }}>
-            <PrimaryButton
-              title={creating ? "Creating..." : "Create Society"}
-              onPress={handleCreate}
-              disabled={creating}
+          {/* Buttons */}
+          <View style={{ marginTop: spacing.xl }}>
+            <PrimaryButton 
+              title={saving ? "Saving..." : "Save Changes"} 
+              onPress={handleSave} 
+              disabled={saving}
             />
             <View style={{ height: spacing.sm }} />
-            <SecondaryButton title="Back" onPress={() => router.back()} />
+            <SecondaryButton title="Cancel" onPress={() => router.back()} />
           </View>
+
         </AppCard>
       </View>
     </Screen>
