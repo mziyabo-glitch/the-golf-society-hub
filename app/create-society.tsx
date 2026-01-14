@@ -1,7 +1,12 @@
 import { useState } from "react";
 import { View, TextInput, Alert, StyleSheet, Platform } from "react-native";
 import { router } from "expo-router";
-import { addDoc, collection, doc, serverTimestamp, setDoc } from "firebase/firestore";
+import { 
+  writeBatch, 
+  collection, 
+  doc, 
+  serverTimestamp 
+} from "firebase/firestore";
 
 import { Screen } from "@/components/ui/Screen";
 import { AppText } from "@/components/ui/AppText";
@@ -28,42 +33,57 @@ export default function CreateSocietyScreen() {
     try {
       setCreating(true);
 
-      // Ensure signed in (anonymous ok)
+      // 1. Ensure signed in
       const user = await ensureSignedIn();
       const uid = user.uid;
 
-      // 1) Create society
-      const societyRef = await addDoc(collection(db, "societies"), {
+      // 2. Prepare the Write Batch (Prevents "Partial Creation" errors)
+      const batch = writeBatch(db);
+
+      // A) Create Society Reference
+      const societyRef = doc(collection(db, "societies"));
+      const societyId = societyRef.id;
+
+      // B) Queue Society Data
+      // CRITICAL: 'createdBy' must match auth.uid for Security Rules to pass
+      batch.set(societyRef, {
         name: name.trim(),
         homeCourse: homeCourse.trim() || null,
         country: country.trim() || "UK",
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
-        createdBy: uid,
+        createdBy: uid, 
       });
 
-      const societyId = societyRef.id;
-
-      // 2) Create first member = YOU as Captain/Admin
-      await setDoc(doc(db, "societies", societyId, "members", uid), {
+      // C) Queue Member Data (You are the Captain)
+      const memberRef = doc(db, "societies", societyId, "members", uid);
+      batch.set(memberRef, {
         userId: uid,
         name: user.displayName || "Captain",
-        sex: "male", // editable later
-        handicapIndex: 18, // placeholder; editable later
-        roles: ["captain", "admin"], // LOWERCASE roles to match RBAC checks
+        sex: "male", 
+        handicapIndex: 18, 
+        roles: ["captain", "admin"], // Grant admin permissions immediately
         status: "active",
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       });
 
-      // 3) Persist active society ONLINE (users/{uid}.activeSocietyId)
+      // 3. Commit the Batch (Atomic write)
+      // If this fails, neither the society nor the member is created.
+      await batch.commit();
+
+      // 4. Update Local User State (Cache + Firestore Profile)
+      // We do this AFTER the batch to ensure your local 'activeSocietyIdCache' is updated
       await setActiveSocietyId(societyId);
 
-      // 4) Go to members list
+      // 5. Navigate to Members List
+      // Now safe because data exists and permissions are set
       router.replace("/members");
-    } catch (e) {
+
+    } catch (e: any) {
       console.error("[create-society] error", e);
-      Alert.alert("Error", "Could not create society. Check Firebase config + try again.");
+      // Show the actual error message if available for easier debugging
+      Alert.alert("Error", e.message || "Could not create society.");
     } finally {
       setCreating(false);
     }
