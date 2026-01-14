@@ -1,151 +1,66 @@
 import { useState } from "react";
-import { View, TextInput, Alert, StyleSheet, Platform, ActivityIndicator } from "react-native";
+import { View, TextInput, Alert, ActivityIndicator } from "react-native";
 import { router } from "expo-router";
 import { addDoc, collection, serverTimestamp } from "firebase/firestore";
-
 import { Screen } from "@/components/ui/Screen";
 import { AppText } from "@/components/ui/AppText";
 import { AppCard } from "@/components/ui/AppCard";
 import { PrimaryButton, SecondaryButton } from "@/components/ui/Button";
-import { getColors, spacing } from "@/lib/ui/theme";
 import { db, getActiveSocietyId } from "@/lib/firebase";
 
 export default function AddMemberScreen() {
-  const colors = getColors();
-  
-  // Form State
   const [name, setName] = useState("");
   const [handicap, setHandicap] = useState("");
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [loading, setLoading] = useState(false);
 
-  const handleAddMember = async () => {
-    // 1. Validation
-    if (!name.trim()) {
-      Alert.alert("Required", "Please enter a member name.");
-      return;
-    }
-
+  const handleAdd = async () => {
+    if (!name.trim()) return Alert.alert("Error", "Name required");
+    
     try {
-      setIsSubmitting(true);
-
-      // 2. Get Context
+      setLoading(true);
       const societyId = getActiveSocietyId();
-      if (!societyId) {
-        Alert.alert("Error", "No active society found. Please go back.");
-        return;
-      }
+      if (!societyId) throw new Error("No active society");
 
-      // 3. Write to Firestore (Random ID)
-      // This works because the Firestore Rule "isSocietyAdmin(societyId)" allows it.
+      // Uses Random ID (addDoc). 
+      // This SUCCEEDS because Rules now allow 'isSocietyAdmin' to write ANY member doc.
       await addDoc(collection(db, "societies", societyId, "members"), {
         name: name.trim(),
         handicapIndex: handicap ? parseFloat(handicap) : 0,
-        roles: ["member"], // Default role is just member
+        roles: ["member"],
         joinedAt: serverTimestamp(),
-        // Note: We don't link this to a 'userId' yet because 
-        // this might be a placeholder member who hasn't downloaded the app yet.
-        status: "active", 
+        status: "active"
       });
 
-      // 4. Success & Navigate
-      if (Platform.OS === 'web') {
-        window.alert("Member added successfully!");
-      } else {
-        Alert.alert("Success", "Member added!");
-      }
-      
       router.back();
-
+      // Use standard alert for web compatibility if needed, or simple Alert
+      Alert.alert("Success", "Member Added");
     } catch (e: any) {
-      console.error("ADD MEMBER ERROR:", e);
-      
-      // Permission Error Handling
-      if (e.code === 'permission-denied') {
-        Alert.alert("Access Denied", "You must be a Captain or Admin to add members.");
-      } else {
-        Alert.alert("Error", "Could not add member. See console for details.");
-      }
+      console.error(e);
+      Alert.alert("Error", "Could not add member: " + e.message);
     } finally {
-      setIsSubmitting(false);
+      setLoading(false);
     }
   };
 
   return (
     <Screen>
-      <View style={{ padding: spacing.lg }}>
-        <AppText variant="title" style={{ marginBottom: spacing.md }}>
-          Add Member
-        </AppText>
-        <AppText variant="subtle" style={{ marginBottom: spacing.lg }}>
-          Manually add a player to your society roster.
-        </AppText>
-
-        <AppCard style={{ padding: spacing.lg }}>
-          
-          {/* Name Input */}
-          <AppText style={{ marginBottom: spacing.xs }}>Player Name *</AppText>
-          <TextInput
-            value={name}
-            onChangeText={setName}
-            placeholder="e.g. Tiger Woods"
-            placeholderTextColor={colors.mutedText}
-            style={[
-              styles.input,
-              {
-                borderColor: colors.border,
-                backgroundColor: colors.card,
-                color: colors.text,
-              },
-            ]}
+      <View style={{ padding: 20 }}>
+        <AppText variant="title">Add Member</AppText>
+        <AppCard style={{ marginTop: 20, padding: 20 }}>
+          <AppText>Name</AppText>
+          <TextInput 
+            value={name} onChangeText={setName} 
+            style={{ borderWidth: 1, borderColor: '#ccc', padding: 10, borderRadius: 8, color: 'white', marginBottom: 15 }} 
           />
-
-          {/* Handicap Input */}
-          <AppText style={{ marginTop: spacing.md, marginBottom: spacing.xs }}>
-            Handicap Index (Optional)
-          </AppText>
-          <TextInput
-            value={handicap}
-            onChangeText={setHandicap}
-            placeholder="e.g. 5.4"
-            keyboardType="numeric"
-            placeholderTextColor={colors.mutedText}
-            style={[
-              styles.input,
-              {
-                borderColor: colors.border,
-                backgroundColor: colors.card,
-                color: colors.text,
-              },
-            ]}
+          <AppText>Handicap</AppText>
+          <TextInput 
+            value={handicap} onChangeText={setHandicap} keyboardType="numeric"
+            style={{ borderWidth: 1, borderColor: '#ccc', padding: 10, borderRadius: 8, color: 'white', marginBottom: 20 }} 
           />
-
-          {/* Action Buttons */}
-          <View style={{ marginTop: spacing.xl }}>
-            <PrimaryButton 
-              title={isSubmitting ? "Adding..." : "Add Member"} 
-              onPress={handleAddMember} 
-              disabled={isSubmitting}
-            />
-            
-            {isSubmitting && <ActivityIndicator style={{ marginTop: 10 }} color={colors.primary} />}
-
-            <View style={{ height: spacing.sm }} />
-            <SecondaryButton title="Cancel" onPress={() => router.back()} />
-          </View>
-
+          <PrimaryButton title={loading ? "Adding..." : "Add Member"} onPress={handleAdd} disabled={loading} />
+          <SecondaryButton title="Cancel" onPress={() => router.back()} style={{ marginTop: 10 }} />
         </AppCard>
       </View>
     </Screen>
   );
 }
-
-const styles = StyleSheet.create({
-  input: {
-    width: "100%",
-    borderWidth: 1,
-    borderRadius: 12,
-    paddingHorizontal: 12,
-    paddingVertical: Platform.OS === "web" ? 12 : 10,
-    fontSize: 16,
-  },
-});
