@@ -1,4 +1,3 @@
-// lib/firebase.ts
 import { initializeApp, getApps, getApp, type FirebaseApp } from "firebase/app";
 import {
   getAuth,
@@ -12,6 +11,9 @@ import {
   doc,
   getDoc,
   setDoc,
+  updateDoc,
+  writeBatch,
+  collection,
   serverTimestamp,
   type Firestore,
 } from "firebase/firestore";
@@ -135,15 +137,15 @@ export async function setActiveSocietyId(societyId: string | null) {
 
   activeSocietyIdCache = societyId ?? null;
 }
+
 export function requireActiveSocietyId(): string {
   if (!activeSocietyIdCache) {
     throw new Error("No active society loaded");
   }
   return activeSocietyIdCache;
 }
-// --- APPEND THIS TO THE BOTTOM OF lib/firebase.ts ---
 
-import { writeBatch, collection } from "firebase/firestore";
+// --- SOCIETY MANAGEMENT FUNCTIONS ---
 
 /**
  * Creates a new Society, adds the creator as the first Admin/Captain,
@@ -163,7 +165,7 @@ export async function createSociety(societyName: string) {
   // RULES CHECK: request.resource.data.createdBy == request.auth.uid
   batch.set(societyRef, {
     name: societyName,
-    createdBy: user.uid, // <--- CRITICAL for Security Rules
+    createdBy: user.uid,
     createdAt: serverTimestamp(),
   });
 
@@ -183,7 +185,7 @@ export async function createSociety(societyName: string) {
   batch.set(userRef, { 
     activeSocietyId: societyRef.id,
     updatedAt: serverTimestamp() 
-  }, { merge: true }); // Merge ensures we don't overwrite other fields
+  }, { merge: true }); 
 
   // 6. Commit the Batch
   await batch.commit();
@@ -193,9 +195,6 @@ export async function createSociety(societyName: string) {
 
   return societyRef.id;
 }
-// lib/firebase.ts (Append this)
-
-import { updateDoc } from "firebase/firestore";
 
 /**
  * Updates society details.
@@ -211,22 +210,3 @@ export async function updateSocietyDetails(societyId: string, updates: { name?: 
     updatedAt: serverTimestamp(),
   });
 }
-// lib/firebase.ts (Append this)
-
-import { updateDoc } from "firebase/firestore";
-
-/**
- * Updates society details.
- * Security Rules will only allow this if the current user is an 'admin' or 'captain'.
- */
-export async function updateSocietyDetails(societyId: string, updates: { name?: string; homeCourse?: string; country?: string }) {
-  const user = await ensureSignedIn(); // Safety check
-  
-  const societyRef = doc(db, "societies", societyId);
-  
-  await updateDoc(societyRef, {
-    ...updates,
-    updatedAt: serverTimestamp(),
-  });
-}
-
