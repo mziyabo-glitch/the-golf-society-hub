@@ -1,112 +1,86 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { View, TextInput, Alert, StyleSheet, Platform, ActivityIndicator } from "react-native";
 import { router } from "expo-router";
-import { doc, getDoc } from "firebase/firestore";
 
 import { Screen } from "@/components/ui/Screen";
 import { AppText } from "@/components/ui/AppText";
 import { AppCard } from "@/components/ui/AppCard";
 import { PrimaryButton, SecondaryButton } from "@/components/ui/Button";
 import { getColors, spacing } from "@/lib/ui/theme";
-import { db, getActiveSocietyId, updateSocietyDetails } from "@/lib/firebase";
 
-export default function EditSocietyScreen() {
+// Import the helper function from your updated lib/firebase.ts
+import { createSociety, ensureSignedIn } from "@/lib/firebase";
+
+export default function CreateSocietyScreen() {
   const colors = getColors();
 
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  
-  // Form State
   const [name, setName] = useState("");
   const [homeCourse, setHomeCourse] = useState("");
-  const [societyId, setSocietyId] = useState<string | null>(null);
+  const [country, setCountry] = useState("UK");
+  const [creating, setCreating] = useState(false);
 
-  // 1. Load current data on mount
-  useEffect(() => {
-    const loadData = async () => {
-      try {
-        const id = getActiveSocietyId();
-        if (!id) {
-          Alert.alert("Error", "No active society found.");
-          router.back();
-          return;
-        }
-        setSocietyId(id);
+  const handleCreate = async () => {
+    console.log("Button Pressed!"); // Debug 1: prove button works
 
-        const snap = await getDoc(doc(db, "societies", id));
-        if (snap.exists()) {
-          const data = snap.data();
-          setName(data.name || "");
-          setHomeCourse(data.homeCourse || "");
-        } else {
-          Alert.alert("Error", "Society not found.");
-          router.back();
-        }
-      } catch (e) {
-        console.error("Failed to load society:", e);
-      } finally {
-        setLoading(false);
-      }
-    };
-    loadData();
-  }, []);
-
-  // 2. Handle Update
-  const handleSave = async () => {
-    if (!societyId || !name.trim()) {
-      Alert.alert("Required", "Society name cannot be empty.");
+    // 1. Validation
+    if (!name.trim()) {
+      alertUser("Missing Info", "Please enter a society name.");
       return;
     }
 
     try {
-      setSaving(true);
+      setCreating(true);
+      console.log("Starting creation flow..."); // Debug 2
+
+      // 2. Ensure Auth is ready before trying to write
+      await ensureSignedIn();
+      console.log("Auth verified."); // Debug 3
+
+      // 3. Call the library function (Handles Batch & Permissions)
+      const newSocietyId = await createSociety(name.trim());
       
-      // Call the function we added to lib/firebase.ts
-      await updateSocietyDetails(societyId, {
-        name: name.trim(),
-        homeCourse: homeCourse.trim()
-      });
-      
-      // Success on Web needs a window alert or simple console log usually, 
-      // but standard Alert works in React Native Web too.
-      Alert.alert("Success", "Society details updated!");
-      router.back(); 
-      
-    } catch (error: any) {
-      console.error(error);
-      // This catches the Permission Denied error if rules block it
-      Alert.alert("Access Denied", "Only the Captain or Admin can edit society details.");
-    } finally {
-      setSaving(false);
+      console.log("Success! New ID:", newSocietyId); // Debug 4
+
+      // 4. Navigate
+      // We wait a tick to ensure the state update doesn't conflict with unmount
+      setTimeout(() => {
+        router.replace("/members");
+      }, 100);
+
+    } catch (e: any) {
+      console.error("CREATE FAILED:", e);
+      setCreating(false); // Reset button so you can try again
+      alertUser("Error", e.message || "Failed to create society.");
     }
   };
 
-  if (loading) {
-    return (
-      <Screen>
-        <View style={{ flex: 1, justifyContent: "center", alignItems: "center" }}>
-          <ActivityIndicator size="large" color={colors.primary} />
-        </View>
-      </Screen>
-    );
-  }
+  // Helper to handle alerts on Web vs Native
+  const alertUser = (title: string, message: string) => {
+    if (Platform.OS === 'web') {
+      window.alert(`${title}: ${message}`);
+    } else {
+      Alert.alert(title, message);
+    }
+  };
 
   return (
     <Screen>
       <View style={{ padding: spacing.lg }}>
-        <AppText variant="title" style={{ marginBottom: spacing.md }}>
-          Edit Society
+        <AppText variant="title" style={{ marginBottom: spacing.xs }}>
+          Create Society
         </AppText>
-        
+        <AppText variant="subtle" style={{ marginBottom: spacing.lg }}>
+          This creates your society online and makes you Captain/Admin.
+        </AppText>
+
         <AppCard style={{ padding: spacing.lg }}>
-          
-          {/* Name Field */}
-          <AppText style={{ marginBottom: spacing.xs }}>Society Name</AppText>
+          <AppText style={{ marginBottom: spacing.xs }}>Society name *</AppText>
           <TextInput
             value={name}
             onChangeText={setName}
             placeholder="e.g. M4 Fairways"
             placeholderTextColor={colors.mutedText}
+            autoCapitalize="words"
             style={[
               styles.input,
               {
@@ -117,15 +91,15 @@ export default function EditSocietyScreen() {
             ]}
           />
 
-          {/* Home Course Field */}
           <AppText style={{ marginTop: spacing.md, marginBottom: spacing.xs }}>
-            Home Course
+            Home course (optional)
           </AppText>
           <TextInput
             value={homeCourse}
             onChangeText={setHomeCourse}
             placeholder="e.g. Wrag Barn"
             placeholderTextColor={colors.mutedText}
+            autoCapitalize="words"
             style={[
               styles.input,
               {
@@ -136,17 +110,39 @@ export default function EditSocietyScreen() {
             ]}
           />
 
-          {/* Buttons */}
-          <View style={{ marginTop: spacing.xl }}>
-            <PrimaryButton 
-              title={saving ? "Saving..." : "Save Changes"} 
-              onPress={handleSave} 
-              disabled={saving}
-            />
-            <View style={{ height: spacing.sm }} />
-            <SecondaryButton title="Cancel" onPress={() => router.back()} />
-          </View>
+          <AppText style={{ marginTop: spacing.md, marginBottom: spacing.xs }}>
+            Country
+          </AppText>
+          <TextInput
+            value={country}
+            onChangeText={setCountry}
+            placeholder="UK"
+            placeholderTextColor={colors.mutedText}
+            autoCapitalize="characters"
+            style={[
+              styles.input,
+              {
+                borderColor: colors.border,
+                backgroundColor: colors.card,
+                color: colors.text,
+              },
+            ]}
+          />
 
+          <View style={{ marginTop: spacing.lg }}>
+            <PrimaryButton
+              // If creating is true, button shows "Creating..." and is disabled
+              title={creating ? "Creating..." : "Create Society"}
+              onPress={handleCreate}
+              disabled={creating}
+            />
+            
+            {/* Debug Indicator: If spinner shows, we know state updated */}
+            {creating && <ActivityIndicator style={{ marginTop: 10 }} color={colors.primary} />}
+
+            <View style={{ height: spacing.sm }} />
+            <SecondaryButton title="Back" onPress={() => router.back()} />
+          </View>
         </AppCard>
       </View>
     </Screen>
