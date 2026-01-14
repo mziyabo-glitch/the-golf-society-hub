@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { View, TextInput, Alert, TouchableOpacity, Text, StyleSheet, ActivityIndicator } from "react-native";
+import { View, TextInput, TouchableOpacity, Text, StyleSheet, Alert, ActivityIndicator } from "react-native";
 import { router } from "expo-router";
 import { addDoc, collection, serverTimestamp } from "firebase/firestore";
 import { Screen } from "@/components/ui/Screen";
@@ -12,30 +12,41 @@ export default function AddMemberScreen() {
   const [loading, setLoading] = useState(false);
 
   const handleAdd = async () => {
-    if (!name.trim()) return alert("Please enter a name");
+    // 1. Validation
+    if (!name.trim()) {
+      Alert.alert("Missing Info", "Please enter a player name.");
+      return;
+    }
 
     try {
       setLoading(true);
-      const societyId = getActiveSocietyId();
-      if (!societyId) throw new Error("No active society found. Go back to dashboard.");
 
-      // 1. Write to Firestore
+      // 2. Get the Current Society ID
+      const societyId = getActiveSocietyId();
+      if (!societyId) {
+        Alert.alert("Error", "No Active Society found. Please go back to the dashboard.");
+        return;
+      }
+
+      // 3. Write to the MEMBERS Subcollection
+      // Path: societies/{societyId}/members/{randomID}
       await addDoc(collection(db, "societies", societyId, "members"), {
         name: name.trim(),
         sex: sex,
         handicapIndex: handicap ? parseFloat(handicap) : 0,
-        roles: ["member"], // Default role
+        roles: ["member"], // Basic role for players you add manually
         joinedAt: serverTimestamp(),
-        status: "active"
+        status: "active",
+        isManualEntry: true // Flag to know this isn't a real App User yet
       });
 
-      // 2. Success
-      alert("Member Added Successfully!");
+      // 4. Success
+      Alert.alert("Success", "Player added to roster!");
       router.back();
 
     } catch (e: any) {
-      console.error(e);
-      alert("Error: " + e.message);
+      console.error("Add Member Failed:", e);
+      Alert.alert("Error", "Could not save member.\n" + e.message);
     } finally {
       setLoading(false);
     }
@@ -43,91 +54,94 @@ export default function AddMemberScreen() {
 
   return (
     <Screen>
-      <View style={{ padding: 20 }}>
-        <Text style={styles.header}>Add New Member</Text>
-
+      <View style={styles.container}>
+        <Text style={styles.header}>Add New Player</Text>
+        
         <View style={styles.card}>
-          {/* Name */}
-          <Text style={styles.label}>Name</Text>
+          
+          {/* NAME */}
+          <Text style={styles.label}>Player Name</Text>
           <TextInput 
-            value={name}
-            onChangeText={setName}
-            placeholder="e.g. Rory McIlroy"
-            placeholderTextColor="#888"
-            style={styles.input}
+            value={name} 
+            onChangeText={setName} 
+            placeholder="e.g. Tiger Woods"
+            placeholderTextColor="#999"
+            style={styles.input} 
           />
 
-          {/* Sex Selection */}
+          {/* SEX / GENDER */}
           <Text style={styles.label}>Sex</Text>
-          <View style={styles.row}>
+          <View style={styles.sexContainer}>
             <TouchableOpacity 
               onPress={() => setSex("male")}
-              style={[styles.sexButton, sex === "male" && styles.selectedMale]}
+              style={[styles.sexButton, sex === "male" && styles.sexMaleActive]}
             >
-              <Text style={[styles.btnText, sex === "male" && styles.selectedText]}>Male</Text>
+              <Text style={[styles.sexText, sex === "male" && styles.sexTextActive]}>Male</Text>
             </TouchableOpacity>
 
             <TouchableOpacity 
               onPress={() => setSex("female")}
-              style={[styles.sexButton, sex === "female" && styles.selectedFemale]}
+              style={[styles.sexButton, sex === "female" && styles.sexFemaleActive]}
             >
-              <Text style={[styles.btnText, sex === "female" && styles.selectedText]}>Female</Text>
+              <Text style={[styles.sexText, sex === "female" && styles.sexTextActive]}>Female</Text>
             </TouchableOpacity>
           </View>
 
-          {/* Handicap */}
+          {/* HANDICAP */}
           <Text style={styles.label}>Handicap Index</Text>
           <TextInput 
-            value={handicap}
-            onChangeText={setHandicap}
-            placeholder="0.0"
+            value={handicap} 
+            onChangeText={setHandicap} 
             keyboardType="numeric"
-            placeholderTextColor="#888"
-            style={styles.input}
+            placeholder="e.g. 5.4"
+            placeholderTextColor="#999"
+            style={styles.input} 
           />
 
-          {/* Submit Button */}
-          <TouchableOpacity 
-            onPress={handleAdd} 
-            disabled={loading}
-            style={styles.submitButton}
-          >
-            {loading ? (
-              <ActivityIndicator color="white" />
-            ) : (
-              <Text style={styles.submitText}>Add Member</Text>
-            )}
-          </TouchableOpacity>
-          
-          <TouchableOpacity onPress={() => router.back()} style={{ marginTop: 15, alignItems: 'center' }}>
-             <Text style={{ color: '#666' }}>Cancel</Text>
-          </TouchableOpacity>
+          {/* ACTION BUTTONS */}
+          <View style={styles.buttonContainer}>
+             <TouchableOpacity 
+                onPress={handleAdd} 
+                disabled={loading}
+                style={styles.primaryButton}
+             >
+                {loading ? (
+                   <ActivityIndicator color="white" />
+                ) : (
+                   <Text style={styles.primaryButtonText}>Add to Roster</Text>
+                )}
+             </TouchableOpacity>
+
+             <TouchableOpacity onPress={() => router.back()} style={styles.cancelButton}>
+                <Text style={styles.cancelText}>Cancel</Text>
+             </TouchableOpacity>
+          </View>
+
         </View>
       </View>
     </Screen>
   );
 }
 
+// STYLES - Designed for Visibility
 const styles = StyleSheet.create({
-  header: { fontSize: 24, fontWeight: 'bold', marginBottom: 20, color: '#000' }, // BLACK TEXT
-  card: { backgroundColor: 'white', padding: 20, borderRadius: 12 },
-  label: { fontSize: 14, fontWeight: '600', marginBottom: 5, color: '#333' }, // DARK GREY TEXT
-  input: { 
-    borderWidth: 1, borderColor: '#ddd', borderRadius: 8, 
-    padding: 12, marginBottom: 15, fontSize: 16, color: '#000' 
-  },
-  row: { flexDirection: 'row', gap: 10, marginBottom: 15 },
-  sexButton: { 
-    flex: 1, padding: 12, borderRadius: 8, borderWidth: 1, 
-    borderColor: '#ddd', alignItems: 'center' 
-  },
-  selectedMale: { backgroundColor: '#2196F3', borderColor: '#2196F3' },
-  selectedFemale: { backgroundColor: '#E91E63', borderColor: '#E91E63' },
-  btnText: { color: '#333', fontWeight: '600' },
-  selectedText: { color: 'white' },
-  submitButton: { 
-    backgroundColor: '#004d40', padding: 15, borderRadius: 8, 
-    alignItems: 'center', marginTop: 10 
-  },
-  submitText: { color: 'white', fontWeight: 'bold', fontSize: 16 }
+  container: { padding: 20 },
+  header: { fontSize: 24, fontWeight: 'bold', marginBottom: 20, color: '#000' },
+  card: { backgroundColor: 'white', padding: 20, borderRadius: 12, shadowColor: '#000', shadowOpacity: 0.1, shadowRadius: 10 },
+  
+  label: { fontSize: 14, fontWeight: '700', marginBottom: 8, color: '#333' },
+  input: { borderWidth: 1, borderColor: '#ccc', borderRadius: 8, padding: 14, fontSize: 16, marginBottom: 20, color: '#000', backgroundColor: '#FAFAFA' },
+  
+  sexContainer: { flexDirection: 'row', gap: 12, marginBottom: 20 },
+  sexButton: { flex: 1, padding: 14, borderRadius: 8, borderWidth: 1, borderColor: '#E0E0E0', alignItems: 'center', backgroundColor: '#FFF' },
+  sexMaleActive: { backgroundColor: '#2196F3', borderColor: '#2196F3' },
+  sexFemaleActive: { backgroundColor: '#E91E63', borderColor: '#E91E63' },
+  sexText: { color: '#666', fontWeight: '600' },
+  sexTextActive: { color: 'white' },
+
+  buttonContainer: { marginTop: 10 },
+  primaryButton: { backgroundColor: '#004d40', padding: 16, borderRadius: 10, alignItems: 'center', marginBottom: 12 },
+  primaryButtonText: { color: 'white', fontWeight: 'bold', fontSize: 16 },
+  cancelButton: { alignItems: 'center', padding: 10 },
+  cancelText: { color: '#666', fontSize: 16 }
 });
