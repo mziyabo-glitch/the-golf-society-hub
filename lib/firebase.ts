@@ -14,8 +14,12 @@ import {
   getDoc,
   setDoc,
   updateDoc,
+  addDoc,
   writeBatch,
   collection,
+  query,
+  where,
+  getDocs,
   serverTimestamp,
   type Firestore,
 } from "firebase/firestore";
@@ -81,24 +85,20 @@ export const app = getFirebaseApp();
 export const auth = getFirebaseAuth();
 export const db = getFirebaseDb();
 
-// --- AUTHENTICATION (The Loop Fix) ---
+// --- AUTHENTICATION ---
 
 export async function ensureSignedIn(): Promise<User> {
   const a = getFirebaseAuth();
-  
   if (a.currentUser) return a.currentUser;
 
-  // Set persistence to LOCAL to ensure user stays logged in across refreshes
   await setPersistence(a, browserLocalPersistence);
 
   return new Promise((resolve) => {
-    // We use a listener to wait for the INITIAL auth state from storage
     const unsub = onAuthStateChanged(a, (user) => {
       if (user) {
         unsub();
         resolve(user);
       } else {
-        // Only create a new user if we are 100% sure storage is empty
         console.log("No session found. Creating new anonymous user...");
         signInAnonymously(a).then((cred) => {
           unsub();
@@ -129,24 +129,22 @@ export async function initActiveSocietyId(): Promise<string | null> {
 
   const snap = await getDoc(doc(db, "users", user.uid));
   const data = snap.data();
-  // Update cache
   activeSocietyIdCache = (data?.activeSocietyId as string | null) ?? null;
   return activeSocietyIdCache;
 }
 
-/**
- * Waits for the initial auth/database load to complete.
- * Returns the activeSocietyId (string or null).
- */
 export async function waitForActiveSociety(): Promise<string | null> {
-  // If we already have a value, return it.
   if (activeSocietyIdCache !== null) return activeSocietyIdCache;
-  // Otherwise, load from DB
   return await initActiveSocietyId(); 
 }
 
 export function getActiveSocietyId(): string | null {
   return activeSocietyIdCache;
+}
+
+// FIX: Restored this function to stop Dashboard crashes
+export function hasActiveSociety(): boolean {
+  return activeSocietyIdCache !== null;
 }
 
 export async function setActiveSocietyId(societyId: string | null) {
@@ -170,14 +168,12 @@ export async function createSociety(societyName: string) {
   
   const societyRef = doc(collection(db, "societies"));
   
-  // 1. Create Society
   batch.set(societyRef, {
     name: societyName,
     createdBy: user.uid,
     createdAt: serverTimestamp(),
   });
 
-  // 2. Create Member
   const memberRef = doc(db, `societies/${societyRef.id}/members/${user.uid}`);
   batch.set(memberRef, {
     name: "Captain", 
@@ -186,7 +182,6 @@ export async function createSociety(societyName: string) {
     handicapIndex: 0,
   });
 
-  // 3. Update User
   const userRef = doc(db, `users/${user.uid}`);
   batch.set(userRef, { 
     activeSocietyId: societyRef.id,
@@ -205,4 +200,19 @@ export async function updateSocietyDetails(societyId: string, updates: any) {
     ...updates,
     updatedAt: serverTimestamp(),
   });
+}
+
+// FIX: Restored listEvents to stop Dashboard console errors
+export async function listEvents(societyId: string) {
+  try {
+    const q = query(
+      collection(db, "societies", societyId, "events"),
+      where("date", ">=", new Date().toISOString().split('T')[0])
+    );
+    const snap = await getDocs(q);
+    return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  } catch (e) {
+    console.warn("listEvents failed (likely no events collection yet)", e);
+    return [];
+  }
 }
