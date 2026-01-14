@@ -141,3 +141,55 @@ export function requireActiveSocietyId(): string {
   }
   return activeSocietyIdCache;
 }
+// --- APPEND THIS TO THE BOTTOM OF lib/firebase.ts ---
+
+import { writeBatch, collection } from "firebase/firestore";
+
+/**
+ * Creates a new Society, adds the creator as the first Admin/Captain,
+ * and sets it as the user's active society.
+ * * USES BATCH WRITE to prevent permission errors and invalid states.
+ */
+export async function createSociety(societyName: string) {
+  const user = await ensureSignedIn();
+  
+  // 1. Start a Batch (All or Nothing)
+  const batch = writeBatch(db);
+  
+  // 2. Create the Society Reference
+  const societyRef = doc(collection(db, "societies"));
+  
+  // 3. Queue Society Creation
+  // RULES CHECK: request.resource.data.createdBy == request.auth.uid
+  batch.set(societyRef, {
+    name: societyName,
+    createdBy: user.uid, // <--- CRITICAL for Security Rules
+    createdAt: serverTimestamp(),
+  });
+
+  // 4. Queue Member Creation (The Creator)
+  // RULES CHECK: matches allow create: if isOwner(memberId)
+  const memberRef = doc(db, `societies/${societyRef.id}/members/${user.uid}`);
+  batch.set(memberRef, {
+    name: "Captain", // You can pass a real name if you have it
+    roles: ["captain", "admin"],
+    joinedAt: serverTimestamp(),
+    handicapIndex: 0,
+  });
+
+  // 5. Queue User Profile Update
+  // RULES CHECK: matches allow write: if isOwner(userId)
+  const userRef = doc(db, `users/${user.uid}`);
+  batch.set(userRef, { 
+    activeSocietyId: societyRef.id,
+    updatedAt: serverTimestamp() 
+  }, { merge: true }); // Merge ensures we don't overwrite other fields
+
+  // 6. Commit the Batch
+  await batch.commit();
+
+  // 7. Update local cache immediately so the UI doesn't wait for a refetch
+  activeSocietyIdCache = societyRef.id;
+
+  return societyRef.id;
+}
