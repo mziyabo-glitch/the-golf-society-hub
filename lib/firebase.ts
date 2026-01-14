@@ -3,6 +3,8 @@ import {
   getAuth,
   onAuthStateChanged,
   signInAnonymously,
+  setPersistence,
+  browserLocalPersistence,
   type Auth,
   type User,
 } from "firebase/auth";
@@ -18,13 +20,7 @@ import {
   type Firestore,
 } from "firebase/firestore";
 
-/**
- * RULES for this project:
- * - NO localStorage
- * - NO AsyncStorage
- * - NO firebase/auth/react-native
- * - Active society persisted ONLINE at: users/{uid}.activeSocietyId
- */
+// --- CONFIGURATION ---
 
 type FirebaseEnv = {
   apiKey: string;
@@ -40,27 +36,30 @@ function readFirebaseEnv(): FirebaseEnv | null {
   const authDomain = process.env.EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN;
   const projectId = process.env.EXPO_PUBLIC_FIREBASE_PROJECT_ID;
 
-  const storageBucket = process.env.EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET;
-  const messagingSenderId = process.env.EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID;
-  const appId = process.env.EXPO_PUBLIC_FIREBASE_APP_ID;
-
   if (!apiKey || !authDomain || !projectId) return null;
 
-  return { apiKey, authDomain, projectId, storageBucket, messagingSenderId, appId };
+  return { apiKey, authDomain, projectId, 
+           storageBucket: process.env.EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET, 
+           messagingSenderId: process.env.EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID, 
+           appId: process.env.EXPO_PUBLIC_FIREBASE_APP_ID 
+         };
 }
 
+// --- SINGLETONS ---
 let _app: FirebaseApp | null = null;
 let _auth: Auth | null = null;
 let _db: Firestore | null = null;
+let activeSocietyIdCache: string | null = null; // In-memory cache
 
-// IN-MEMORY ONLY
-let activeSocietyIdCache: string | null = null;
+// --- INITIALIZATION HELPERS ---
+
+export function isFirebaseConfigured(): boolean {
+  return readFirebaseEnv() !== null;
+}
 
 export function getFirebaseApp(): FirebaseApp {
   const env = readFirebaseEnv();
-  if (!env) {
-    throw new Error("Firebase not configured");
-  }
+  if (!env) throw new Error("Firebase not configured");
   if (_app) return _app;
   _app = getApps().length ? getApp() : initializeApp(env);
   return _app;
@@ -82,27 +81,25 @@ export const app = getFirebaseApp();
 export const auth = getFirebaseAuth();
 export const db = getFirebaseDb();
 
-/**
- * Ensures the user is signed in.
- * FIX: This version waits for the initial Auth check to complete.
- * It prevents creating a NEW anonymous user on every page refresh.
- */
+// --- AUTHENTICATION (The Loop Fix) ---
+
 export async function ensureSignedIn(): Promise<User> {
   const a = getFirebaseAuth();
   
-  // 1. If already loaded, return immediately
   if (a.currentUser) return a.currentUser;
 
-  // 2. Wait for the initial auth state to resolve
+  // Set persistence to LOCAL to ensure user stays logged in across refreshes
+  await setPersistence(a, browserLocalPersistence);
+
   return new Promise((resolve) => {
+    // We use a listener to wait for the INITIAL auth state from storage
     const unsub = onAuthStateChanged(a, (user) => {
       if (user) {
-        // Session restored successfully
         unsub();
         resolve(user);
       } else {
-        // No session found (truly a new user), so sign in anonymously
-        console.log("No user session found. creating new anonymous user...");
+        // Only create a new user if we are 100% sure storage is empty
+        console.log("No session found. Creating new anonymous user...");
         signInAnonymously(a).then((cred) => {
           unsub();
           resolve(cred.user);
@@ -112,15 +109,17 @@ export async function ensureSignedIn(): Promise<User> {
   });
 }
 
+// --- USER PROFILE & CACHE ---
+
 async function ensureUserDoc(uid: string) {
   const ref = doc(db, "users", uid);
   const snap = await getDoc(ref);
   if (!snap.exists()) {
-    await setDoc(
-      ref,
-      { createdAt: serverTimestamp(), updatedAt: serverTimestamp(), activeSocietyId: null },
-      { merge: true }
-    );
+    await setDoc(ref, { 
+      createdAt: serverTimestamp(), 
+      updatedAt: serverTimestamp(), 
+      activeSocietyId: null 
+    }, { merge: true });
   }
 }
 
@@ -129,20 +128,20 @@ export async function initActiveSocietyId(): Promise<string | null> {
   await ensureUserDoc(user.uid);
 
   const snap = await getDoc(doc(db, "users", user.uid));
-  activeSocietyIdCache = (snap.data()?.activeSocietyId as string | null) ?? null;
+  const data = snap.data();
+  // Update cache
+  activeSocietyIdCache = (data?.activeSocietyId as string | null) ?? null;
   return activeSocietyIdCache;
 }
 
 /**
  * Waits for the initial auth/database load to complete.
  * Returns the activeSocietyId (string or null).
- * CRITICAL for Dashboard loading.
  */
 export async function waitForActiveSociety(): Promise<string | null> {
-  // If we already have a value (or explicitly null after load), return it.
+  // If we already have a value, return it.
   if (activeSocietyIdCache !== null) return activeSocietyIdCache;
-
-  // Otherwise, force the load
+  // Otherwise, load from DB
   return await initActiveSocietyId(); 
 }
 
@@ -163,73 +162,45 @@ export async function setActiveSocietyId(societyId: string | null) {
   activeSocietyIdCache = societyId ?? null;
 }
 
-export function requireActiveSocietyId(): string {
-  if (!activeSocietyIdCache) {
-    throw new Error("No active society loaded");
-  }
-  return activeSocietyIdCache;
-}
+// --- SOCIETY FUNCTIONS ---
 
-// --- SOCIETY MANAGEMENT FUNCTIONS ---
-
-/**
- * Creates a new Society, adds the creator as the first Admin/Captain,
- * and sets it as the user's active society.
- * * USES BATCH WRITE to prevent permission errors and invalid states.
- */
 export async function createSociety(societyName: string) {
   const user = await ensureSignedIn();
-  
-  // 1. Start a Batch (All or Nothing)
   const batch = writeBatch(db);
   
-  // 2. Create the Society Reference
   const societyRef = doc(collection(db, "societies"));
   
-  // 3. Queue Society Creation
-  // RULES CHECK: request.resource.data.createdBy == request.auth.uid
+  // 1. Create Society
   batch.set(societyRef, {
     name: societyName,
     createdBy: user.uid,
     createdAt: serverTimestamp(),
   });
 
-  // 4. Queue Member Creation (The Creator)
-  // RULES CHECK: matches allow create: if isOwner(memberId)
+  // 2. Create Member
   const memberRef = doc(db, `societies/${societyRef.id}/members/${user.uid}`);
   batch.set(memberRef, {
-    name: "Captain", // You can pass a real name if you have it
+    name: "Captain", 
     roles: ["captain", "admin"],
     joinedAt: serverTimestamp(),
     handicapIndex: 0,
   });
 
-  // 5. Queue User Profile Update
-  // RULES CHECK: matches allow write: if isOwner(userId)
+  // 3. Update User
   const userRef = doc(db, `users/${user.uid}`);
   batch.set(userRef, { 
     activeSocietyId: societyRef.id,
     updatedAt: serverTimestamp() 
   }, { merge: true }); 
 
-  // 6. Commit the Batch
   await batch.commit();
-
-  // 7. Update local cache immediately so the UI doesn't wait for a refetch
   activeSocietyIdCache = societyRef.id;
-
   return societyRef.id;
 }
 
-/**
- * Updates society details.
- * Security Rules will only allow this if the current user is an 'admin' or 'captain'.
- */
-export async function updateSocietyDetails(societyId: string, updates: { name?: string; homeCourse?: string; country?: string }) {
-  const user = await ensureSignedIn(); // Safety check
-  
+export async function updateSocietyDetails(societyId: string, updates: any) {
+  const user = await ensureSignedIn();
   const societyRef = doc(db, "societies", societyId);
-  
   await updateDoc(societyRef, {
     ...updates,
     updatedAt: serverTimestamp(),
