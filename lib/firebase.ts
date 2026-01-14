@@ -210,3 +210,17 @@ export async function updateSocietyDetails(societyId: string, updates: { name?: 
     updatedAt: serverTimestamp(),
   });
 }
+// Add this to lib/firebase.ts
+
+/**
+ * Waits for the initial auth/database load to complete.
+ * Returns the activeSocietyId (string or null).
+ */
+export async function waitForActiveSociety(): Promise<string | null> {
+  // 1. If we already have a value (or explicitly null after load), return it.
+  if (activeSocietyIdCache !== null) return activeSocietyIdCache;
+
+  // 2. Otherwise, force the load
+  return await initActiveSocietyId(); 
+}
+
