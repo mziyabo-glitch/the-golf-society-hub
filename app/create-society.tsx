@@ -20,8 +20,6 @@ export default function CreateSocietyScreen() {
   const [creating, setCreating] = useState(false);
 
   const handleCreate = async () => {
-    console.log("Button Pressed!"); // Debug 1: prove button works
-
     // 1. Validation
     if (!name.trim()) {
       alertUser("Missing Info", "Please enter a society name.");
@@ -30,21 +28,20 @@ export default function CreateSocietyScreen() {
 
     try {
       setCreating(true);
-      console.log("Starting creation flow..."); // Debug 2
 
       // 2. Ensure Auth is ready before trying to write
       await ensureSignedIn();
-      console.log("Auth verified."); // Debug 3
 
       // 3. Call the library function (Handles Batch & Permissions)
       const newSocietyId = await createSociety(name.trim());
       
-      console.log("Success! New ID:", newSocietyId); // Debug 4
+      console.log("Success! New ID:", newSocietyId);
 
-      // 4. Navigate
+      // 4. Navigate to the Dashboard
       // We wait a tick to ensure the state update doesn't conflict with unmount
       setTimeout(() => {
-        router.replace("/members");
+        // CHANGED: Navigates to the dashboard shown in your screenshot
+        router.replace("/society"); 
       }, 100);
 
     } catch (e: any) {
@@ -131,13 +128,11 @@ export default function CreateSocietyScreen() {
 
           <View style={{ marginTop: spacing.lg }}>
             <PrimaryButton
-              // If creating is true, button shows "Creating..." and is disabled
               title={creating ? "Creating..." : "Create Society"}
               onPress={handleCreate}
               disabled={creating}
             />
             
-            {/* Debug Indicator: If spinner shows, we know state updated */}
             {creating && <ActivityIndicator style={{ marginTop: 10 }} color={colors.primary} />}
 
             <View style={{ height: spacing.sm }} />
