@@ -82,22 +82,34 @@ export const app = getFirebaseApp();
 export const auth = getFirebaseAuth();
 export const db = getFirebaseDb();
 
+/**
+ * Ensures the user is signed in.
+ * FIX: This version waits for the initial Auth check to complete.
+ * It prevents creating a NEW anonymous user on every page refresh.
+ */
 export async function ensureSignedIn(): Promise<User> {
   const a = getFirebaseAuth();
+  
+  // 1. If already loaded, return immediately
   if (a.currentUser) return a.currentUser;
 
-  const userFromState = await new Promise<User | null>((resolve) => {
-    const unsub = onAuthStateChanged(a, (u) => {
-      unsub();
-      resolve(u);
+  // 2. Wait for the initial auth state to resolve
+  return new Promise((resolve) => {
+    const unsub = onAuthStateChanged(a, (user) => {
+      if (user) {
+        // Session restored successfully
+        unsub();
+        resolve(user);
+      } else {
+        // No session found (truly a new user), so sign in anonymously
+        console.log("No user session found. creating new anonymous user...");
+        signInAnonymously(a).then((cred) => {
+          unsub();
+          resolve(cred.user);
+        });
+      }
     });
-    setTimeout(() => resolve(null), 800);
   });
-
-  if (userFromState) return userFromState;
-
-  const cred = await signInAnonymously(a);
-  return cred.user;
 }
 
 async function ensureUserDoc(uid: string) {
@@ -119,6 +131,19 @@ export async function initActiveSocietyId(): Promise<string | null> {
   const snap = await getDoc(doc(db, "users", user.uid));
   activeSocietyIdCache = (snap.data()?.activeSocietyId as string | null) ?? null;
   return activeSocietyIdCache;
+}
+
+/**
+ * Waits for the initial auth/database load to complete.
+ * Returns the activeSocietyId (string or null).
+ * CRITICAL for Dashboard loading.
+ */
+export async function waitForActiveSociety(): Promise<string | null> {
+  // If we already have a value (or explicitly null after load), return it.
+  if (activeSocietyIdCache !== null) return activeSocietyIdCache;
+
+  // Otherwise, force the load
+  return await initActiveSocietyId(); 
 }
 
 export function getActiveSocietyId(): string | null {
@@ -210,17 +235,3 @@ export async function updateSocietyDetails(societyId: string, updates: { name?: 
     updatedAt: serverTimestamp(),
   });
 }
-// Add this to lib/firebase.ts
-
-/**
- * Waits for the initial auth/database load to complete.
- * Returns the activeSocietyId (string or null).
- */
-export async function waitForActiveSociety(): Promise<string | null> {
-  // 1. If we already have a value (or explicitly null after load), return it.
-  if (activeSocietyIdCache !== null) return activeSocietyIdCache;
-
-  // 2. Otherwise, force the load
-  return await initActiveSocietyId(); 
-}
-
