@@ -1,175 +1,138 @@
-import { useEffect, useMemo, useState } from "react";
-import { Alert, Platform, ScrollView, View } from "react-native";
-import { router, useLocalSearchParams } from "expo-router";
+import { useState, useCallback } from "react";
+import { View, ScrollView, RefreshControl, ActivityIndicator, Alert } from "react-native";
+import { router, useFocusEffect } from "expo-router";
 
 import { Screen } from "@/components/ui/Screen";
 import { AppText } from "@/components/ui/AppText";
+import { PrimaryButton, SecondaryButton } from "@/components/ui/Button";
 import { AppCard } from "@/components/ui/AppCard";
-import { SecondaryButton } from "@/components/ui/Button";
+import { getColors, spacing } from "@/lib/ui/theme";
+import { waitForActiveSociety } from "@/lib/firebase";
 
-import { getPermissions } from "@/lib/rbac";
-import { formatDateDDMMYYYY } from "@/utils/date";
-
-// Try to import your existing firestore helpers.
-// If your repo uses different names, adjust these imports to match.
-import {
-  getEventById,
-  deleteEventCascade,
-} from "@/lib/firestore/events";
-
-type AnyEvent = {
-  id: string;
-  name?: string;
-  date?: string;
-  courseName?: string;
-  courseId?: string;
-  [k: string]: any;
-};
-
-const BACK_ROUTE = "/events"; // CHANGE TO "/society" if that's your events list screen
-
-export default function EventDetailScreen() {
-  const params = useLocalSearchParams<{ id?: string }>();
-  const eventId = useMemo(() => String(params.id || ""), [params.id]);
-
-  const [event, setEvent] = useState<AnyEvent | null>(null);
+export default function SocietyDashboard() {
+  const colors = getColors();
+  const [societyId, setSocietyId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  const [canDelete, setCanDelete] = useState(false);
-  const [deleting, setDeleting] = useState(false);
 
-  useEffect(() => {
-    if (!eventId) return;
+  // 1. CRITICAL: Check for ID every time this screen is focused
+  // This ensures that when you come back from "Create Society", it picks up the new ID immediately.
+  useFocusEffect(
+    useCallback(() => {
+      let isActive = true;
 
-    const load = async () => {
-      try {
-        setLoading(true);
-
-        // Permissions
-        const perms = await getPermissions();
-        // Captain can delete events
-        setCanDelete(!!perms?.isCaptain || !!perms?.canDeleteEvent);
-
-        // Event
-        const evt = await getEventById(eventId);
-        if (!evt) {
-          Alert.alert("Not found", "Event not found.");
-          router.replace(BACK_ROUTE);
-          return;
+      const checkSociety = async () => {
+        try {
+          // Uses the safe wait function we created
+          const id = await waitForActiveSociety();
+          
+          if (isActive) {
+            setSocietyId(id);
+            setLoading(false);
+          }
+        } catch (e) {
+          console.error("Dashboard load failed", e);
         }
-        setEvent(evt as AnyEvent);
-      } catch (err) {
-        console.error("[EventDetail] Load failed", err);
-        Alert.alert("Error", "Failed to load event.");
-      } finally {
-        setLoading(false);
-      }
-    };
+      };
 
-    void load();
-  }, [eventId]);
+      checkSociety();
 
-  const confirmDelete = () => {
-    const msg =
-      "This will permanently delete this event and any related data (tee sheet, players, results).\n\nThis cannot be undone.";
+      return () => { isActive = false; };
+    }, [])
+  );
 
-    if (!canDelete) {
-      Alert.alert("Not allowed", "You don’t have permission to delete this event.");
-      return;
-    }
-
-    if (deleting) return;
-
-    // Web confirm (more reliable than RN Alert on web)
-    if (Platform.OS === "web") {
-      // eslint-disable-next-line no-alert
-      const ok = window.confirm(msg);
-      if (ok) void handleDelete();
-      return;
-    }
-
-    Alert.alert("Delete Event", msg, [
-      { text: "Cancel", style: "cancel" },
-      { text: "Delete", style: "destructive", onPress: () => void handleDelete() },
-    ]);
-  };
-
-  const handleDelete = async () => {
-    if (!eventId) return;
-    if (!canDelete) {
-      Alert.alert("Not allowed", "You don’t have permission to delete this event.");
-      return;
-    }
-
-    try {
-      setDeleting(true);
-      console.log("[DeleteEvent] Starting delete:", eventId);
-
-      // Primary delete path
-      if (typeof deleteEventCascade === "function") {
-        await deleteEventCascade(eventId);
-      } else {
-        // Very defensive fallback: if helper is missing, fail loudly
-        throw new Error("deleteEventCascade is not available in lib/firestore/events.ts");
-      }
-
-      console.log("[DeleteEvent] Deleted OK:", eventId);
-
-      if (Platform.OS === "web") {
-        // eslint-disable-next-line no-alert
-        window.alert("Event deleted.");
-      } else {
-        Alert.alert("Deleted", "Event deleted.");
-      }
-
-      router.replace(BACK_ROUTE);
-    } catch (err: any) {
-      console.error("[DeleteEvent] Failed", err);
-      const message =
-        err?.message?.includes("permission") ? "Permission denied." : "Failed to delete event.";
-      Alert.alert("Error", message);
-    } finally {
-      setDeleting(false);
-    }
-  };
-
+  // 2. Loading State
   if (loading) {
     return (
       <Screen>
-        <AppText>Loading…</AppText>
+        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+          <ActivityIndicator size="large" color={colors.primary} />
+          <AppText style={{ marginTop: 20 }}>Loading Society...</AppText>
+        </View>
       </Screen>
     );
   }
 
-  if (!event) {
+  // 3. "No Society" State (Fallback)
+  if (!societyId) {
     return (
       <Screen>
-        <AppText>Event not found.</AppText>
+        <View style={{ padding: spacing.lg, flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+          <AppText variant="title" style={{ marginBottom: spacing.md }}>No Society Found</AppText>
+          <AppText style={{ textAlign: 'center', marginBottom: spacing.xl, color: colors.mutedText }}>
+            It looks like you aren't part of a society yet.
+          </AppText>
+          <PrimaryButton 
+            title="Create Society" 
+            onPress={() => router.push("/create-society")} 
+          />
+        </View>
       </Screen>
     );
   }
 
+  // 4. MAIN DASHBOARD (Your UI)
   return (
     <Screen>
-      <ScrollView contentContainerStyle={{ paddingBottom: 40 }}>
-        <AppCard>
-          <AppText variant="title">{event.name || "Event"}</AppText>
-          {!!event.date && <AppText>{formatDateDDMMYYYY(event.date)}</AppText>}
-          {!!event.courseName && <AppText>{event.courseName}</AppText>}
+      <ScrollView 
+        contentContainerStyle={{ padding: spacing.lg, paddingBottom: 100 }}
+        refreshControl={
+          <RefreshControl refreshing={loading} onRefresh={() => { setLoading(true); waitForActiveSociety().then(id => { setSocietyId(id); setLoading(false); })}} />
+        }
+      >
+        {/* Header Button */}
+        <PrimaryButton 
+          title="Create Event" 
+          onPress={() => router.push("/create-event")}
+          style={{ marginBottom: spacing.lg }} 
+        />
+
+        {/* Navigation Pills */}
+        <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: spacing.xl }}>
+          <PillButton title="Members" onPress={() => router.push("/members")} />
+          <PillButton title="History" onPress={() => router.push("/history")} />
+          <PillButton title="Profile" onPress={() => router.push("/profile")} />
+          <PillButton title="Settings" onPress={() => router.push("/society/edit")} />
+        </View>
+
+        {/* Next Event Card */}
+        <AppText variant="title" style={{ fontSize: 20, marginBottom: spacing.sm }}>Next Event</AppText>
+        <AppCard style={{ marginBottom: spacing.xl, padding: spacing.lg, alignItems: 'center' }}>
+          <AppText style={{ textAlign: 'center', color: colors.mutedText }}>
+            Tap Create Event to schedule your next society day
+          </AppText>
         </AppCard>
 
-        {/* Add your other actions here (players/results/teesheet navigation etc.) */}
-
-        {canDelete && (
-          <View style={{ marginTop: 20 }}>
-            <SecondaryButton
-              onPress={confirmDelete}
-              disabled={deleting}
-            >
-              {deleting ? "Deleting…" : "Delete Event"}
-            </SecondaryButton>
+        {/* ManCo Tools */}
+        <AppText variant="title" style={{ fontSize: 20, marginBottom: spacing.sm }}>ManCo Tools</AppText>
+        <View style={{ flexDirection: 'row', gap: spacing.md }}>
+          <View style={{ flex: 1 }}>
+             <AppCard style={{ padding: spacing.md, alignItems: 'center' }}>
+                <AppText style={{ fontWeight: 'bold' }}>Finance</AppText>
+                <AppText variant="subtle" style={{ fontSize: 12 }}>Treasurer tools</AppText>
+             </AppCard>
           </View>
-        )}
+          <View style={{ flex: 1 }}>
+             <AppCard style={{ padding: spacing.md, alignItems: 'center' }}>
+                <AppText style={{ fontWeight: 'bold' }}>Venue Info</AppText>
+                <AppText variant="subtle" style={{ fontSize: 12 }}>Edit venues</AppText>
+             </AppCard>
+          </View>
+        </View>
+
       </ScrollView>
     </Screen>
+  );
+}
+
+// Simple helper for the pill buttons
+function PillButton({ title, onPress }: { title: string, onPress: () => void }) {
+  const colors = getColors();
+  return (
+    <SecondaryButton 
+      title={title} 
+      onPress={onPress} 
+      style={{ paddingHorizontal: 12, paddingVertical: 8, minWidth: 70 }}
+      textStyle={{ fontSize: 14 }}
+    />
   );
 }
