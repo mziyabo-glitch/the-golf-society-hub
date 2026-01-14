@@ -31,21 +31,20 @@ export default function CreateSocietyScreen() {
     }
 
     try {
+      console.log("Starting creation...");
       setCreating(true);
 
-      // 1. Ensure signed in
       const user = await ensureSignedIn();
       const uid = user.uid;
+      console.log("User authenticated:", uid);
 
-      // 2. Prepare the Write Batch (Prevents "Partial Creation" errors)
+      // --- 1. PREPARE BATCH (Atomic Write) ---
       const batch = writeBatch(db);
-
-      // A) Create Society Reference
+      
       const societyRef = doc(collection(db, "societies"));
       const societyId = societyRef.id;
 
-      // B) Queue Society Data
-      // CRITICAL: 'createdBy' must match auth.uid for Security Rules to pass
+      // Rule Check: request.resource.data.createdBy == request.auth.uid
       batch.set(societyRef, {
         name: name.trim(),
         homeCourse: homeCourse.trim() || null,
@@ -55,37 +54,49 @@ export default function CreateSocietyScreen() {
         createdBy: uid, 
       });
 
-      // C) Queue Member Data (You are the Captain)
+      // Rule Check: isOwner(memberId)
       const memberRef = doc(db, "societies", societyId, "members", uid);
       batch.set(memberRef, {
         userId: uid,
         name: user.displayName || "Captain",
         sex: "male", 
         handicapIndex: 18, 
-        roles: ["captain", "admin"], // Grant admin permissions immediately
+        roles: ["captain", "admin"], 
         status: "active",
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       });
 
-      // 3. Commit the Batch (Atomic write)
-      // If this fails, neither the society nor the member is created.
-      await batch.commit();
+      // Update User Profile
+      const userRef = doc(db, `users/${uid}`);
+      batch.set(userRef, { 
+        activeSocietyId: societyId,
+        updatedAt: serverTimestamp() 
+      }, { merge: true });
 
-      // 4. Update Local User State (Cache + Firestore Profile)
-      // We do this AFTER the batch to ensure your local 'activeSocietyIdCache' is updated
+      // --- 2. COMMIT ---
+      console.log("Committing batch...");
+      await batch.commit();
+      console.log("Batch success!");
+
+      // --- 3. UPDATE LOCAL STATE ---
       await setActiveSocietyId(societyId);
 
-      // 5. Navigate to Members List
-      // Now safe because data exists and permissions are set
+      // --- 4. NAVIGATE ---
+      // We do NOT setCreating(false) here because we are leaving the screen.
+      // This prevents the React #418 "Update on unmount" crash.
       router.replace("/members");
 
     } catch (e: any) {
-      console.error("[create-society] error", e);
-      // Show the actual error message if available for easier debugging
-      Alert.alert("Error", e.message || "Could not create society.");
-    } finally {
-      setCreating(false);
+      console.error("CREATE FAILED:", e);
+      setCreating(false); // Only enable button again if we failed
+      
+      // On Web, standard alerts are safer than native ones during crashes
+      if (Platform.OS === 'web') {
+        window.alert("Error: " + (e.message || "Create failed"));
+      } else {
+        Alert.alert("Error", e.message || "Create failed");
+      }
     }
   };
 
