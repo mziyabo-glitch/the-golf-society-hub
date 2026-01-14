@@ -211,4 +211,22 @@ export async function updateSocietyDetails(societyId: string, updates: { name?: 
     updatedAt: serverTimestamp(),
   });
 }
+// lib/firebase.ts (Append this)
+
+import { updateDoc } from "firebase/firestore";
+
+/**
+ * Updates society details.
+ * Security Rules will only allow this if the current user is an 'admin' or 'captain'.
+ */
+export async function updateSocietyDetails(societyId: string, updates: { name?: string; homeCourse?: string; country?: string }) {
+  const user = await ensureSignedIn(); // Safety check
+  
+  const societyRef = doc(db, "societies", societyId);
+  
+  await updateDoc(societyRef, {
+    ...updates,
+    updatedAt: serverTimestamp(),
+  });
+}
 
