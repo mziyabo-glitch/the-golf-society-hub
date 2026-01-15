@@ -1,156 +1,189 @@
-import { useState } from "react";
-import { View, TextInput, Alert, StyleSheet, Platform, ActivityIndicator } from "react-native";
-import { router } from "expo-router";
-
-import { Screen } from "@/components/ui/Screen";
-import { AppText } from "@/components/ui/AppText";
-import { AppCard } from "@/components/ui/AppCard";
-import { PrimaryButton, SecondaryButton } from "@/components/ui/Button";
-import { getColors, spacing } from "@/lib/ui/theme";
-
-// Import the helper function from your updated lib/firebase.ts
-import { createSociety, ensureSignedIn } from "@/lib/firebase";
+import { useState } from 'react';
+import {
+  View,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  ScrollView,
+  StyleSheet,
+  Alert,
+} from 'react-native';
+import { useRouter } from 'expo-router';
+import { db, auth } from '../lib/firebase';
+import { collection, addDoc, doc, updateDoc } from 'firebase/firestore';
+import { setActiveSocietyId } from './_layout';
 
 export default function CreateSocietyScreen() {
-  const colors = getColors();
+  const router = useRouter();
+  const [name, setName] = useState('');
+  const [homeCourse, setHomeCourse] = useState('');
+  const [country, setCountry] = useState('');
+  const [submitting, setSubmitting] = useState(false);
 
-  const [name, setName] = useState("");
-  const [homeCourse, setHomeCourse] = useState("");
-  const [country, setCountry] = useState("UK");
-  const [creating, setCreating] = useState(false);
-
-  const handleCreate = async () => {
-    // 1. Validation
-    if (!name.trim()) {
-      alertUser("Missing Info", "Please enter a society name.");
+  const handleCreateSociety = async () => {
+    if (!auth.currentUser) {
+      Alert.alert('Error', 'You must be signed in to create a society');
       return;
     }
 
-    try {
-      setCreating(true);
-
-      // 2. Ensure Auth is ready before trying to write
-      await ensureSignedIn();
-
-      // 3. Call the library function (Handles Batch & Permissions)
-      const newSocietyId = await createSociety(name.trim());
-      
-      console.log("Success! New ID:", newSocietyId);
-
-      // 4. Navigate to the Dashboard
-      // We wait a tick to ensure the state update doesn't conflict with unmount
-      setTimeout(() => {
-        // CHANGED: Navigates to the dashboard shown in your screenshot
-        router.replace("/society"); 
-      }, 100);
-
-    } catch (e: any) {
-      console.error("CREATE FAILED:", e);
-      setCreating(false); // Reset button so you can try again
-      alertUser("Error", e.message || "Failed to create society.");
+    if (!name.trim()) {
+      Alert.alert('Error', 'Please enter a society name');
+      return;
     }
-  };
 
-  // Helper to handle alerts on Web vs Native
-  const alertUser = (title: string, message: string) => {
-    if (Platform.OS === 'web') {
-      window.alert(`${title}: ${message}`);
-    } else {
-      Alert.alert(title, message);
+    setSubmitting(true);
+
+    try {
+      // Create the society
+      const societiesRef = collection(db, 'societies');
+      const societyDoc = await addDoc(societiesRef, {
+        name: name.trim(),
+        homeCourse: homeCourse.trim() || null,
+        country: country.trim() || null,
+        captainId: auth.currentUser.uid,
+        createdAt: new Date(),
+      });
+
+      console.log('✓ Society created:', societyDoc.id);
+
+      // Set as active society in user profile
+      await updateDoc(doc(db, 'users', auth.currentUser.uid), {
+        activeSocietyId: societyDoc.id,
+      });
+
+      // Update in-memory cache
+      setActiveSocietyId(societyDoc.id);
+
+      console.log('✓ Active society set to:', societyDoc.id);
+
+      Alert.alert('Success', 'Society created successfully!', [
+        {
+          text: 'OK',
+          onPress: () => router.replace('/'),
+        },
+      ]);
+    } catch (error) {
+      console.error('✗ Failed to create society:', error);
+      Alert.alert('Error', 'Failed to create society. Please try again.');
+      setSubmitting(false);
     }
   };
 
   return (
-    <Screen>
-      <View style={{ padding: spacing.lg }}>
-        <AppText variant="title" style={{ marginBottom: spacing.xs }}>
-          Create Society
-        </AppText>
-        <AppText variant="subtle" style={{ marginBottom: spacing.lg }}>
+    <ScrollView style={styles.container}>
+      <View style={styles.content}>
+        <Text style={styles.title}>Create Your Society</Text>
+        <Text style={styles.subtitle}>
           This creates your society online and makes you Captain/Admin.
-        </AppText>
+        </Text>
 
-        <AppCard style={{ padding: spacing.lg }}>
-          <AppText style={{ marginBottom: spacing.xs }}>Society name *</AppText>
-          <TextInput
-            value={name}
-            onChangeText={setName}
-            placeholder="e.g. M4 Fairways"
-            placeholderTextColor={colors.mutedText}
-            autoCapitalize="words"
-            style={[
-              styles.input,
-              {
-                borderColor: colors.border,
-                backgroundColor: colors.card,
-                color: colors.text,
-              },
-            ]}
-          />
+        <Text style={styles.label}>Society name *</Text>
+        <TextInput
+          style={styles.input}
+          placeholder="e.g., M4"
+          placeholderTextColor="#999999"
+          value={name}
+          onChangeText={setName}
+        />
 
-          <AppText style={{ marginTop: spacing.md, marginBottom: spacing.xs }}>
-            Home course (optional)
-          </AppText>
-          <TextInput
-            value={homeCourse}
-            onChangeText={setHomeCourse}
-            placeholder="e.g. Wrag Barn"
-            placeholderTextColor={colors.mutedText}
-            autoCapitalize="words"
-            style={[
-              styles.input,
-              {
-                borderColor: colors.border,
-                backgroundColor: colors.card,
-                color: colors.text,
-              },
-            ]}
-          />
+        <Text style={styles.label}>Home course (optional)</Text>
+        <TextInput
+          style={styles.input}
+          placeholder="e.g., Wrag Barn"
+          placeholderTextColor="#999999"
+          value={homeCourse}
+          onChangeText={setHomeCourse}
+        />
 
-          <AppText style={{ marginTop: spacing.md, marginBottom: spacing.xs }}>
-            Country
-          </AppText>
-          <TextInput
-            value={country}
-            onChangeText={setCountry}
-            placeholder="UK"
-            placeholderTextColor={colors.mutedText}
-            autoCapitalize="characters"
-            style={[
-              styles.input,
-              {
-                borderColor: colors.border,
-                backgroundColor: colors.card,
-                color: colors.text,
-              },
-            ]}
-          />
+        <Text style={styles.label}>Country</Text>
+        <TextInput
+          style={styles.input}
+          placeholder="e.g., UK"
+          placeholderTextColor="#999999"
+          value={country}
+          onChangeText={setCountry}
+        />
 
-          <View style={{ marginTop: spacing.lg }}>
-            <PrimaryButton
-              title={creating ? "Creating..." : "Create Society"}
-              onPress={handleCreate}
-              disabled={creating}
-            />
-            
-            {creating && <ActivityIndicator style={{ marginTop: 10 }} color={colors.primary} />}
+        <TouchableOpacity
+          style={[styles.submitButton, submitting && styles.submitButtonDisabled]}
+          onPress={handleCreateSociety}
+          disabled={submitting}
+        >
+          <Text style={styles.submitButtonText}>
+            {submitting ? 'Creating...' : 'Create Society'}
+          </Text>
+        </TouchableOpacity>
 
-            <View style={{ height: spacing.sm }} />
-            <SecondaryButton title="Back" onPress={() => router.back()} />
-          </View>
-        </AppCard>
+        <TouchableOpacity
+          style={styles.cancelButton}
+          onPress={() => router.back()}
+          disabled={submitting}
+        >
+          <Text style={styles.cancelButtonText}>Cancel</Text>
+        </TouchableOpacity>
       </View>
-    </Screen>
+    </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: '#F5F5F5',
+  },
+  content: {
+    padding: 20,
+  },
+  title: {
+    fontSize: 28,
+    fontWeight: 'bold',
+    color: '#000000',
+    marginBottom: 8,
+  },
+  subtitle: {
+    fontSize: 16,
+    color: '#666666',
+    marginBottom: 24,
+    lineHeight: 24,
+  },
+  label: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#000000',
+    marginBottom: 8,
+    marginTop: 16,
+  },
   input: {
-    width: "100%",
+    backgroundColor: '#FFFFFF',
     borderWidth: 1,
-    borderRadius: 12,
-    paddingHorizontal: 12,
-    paddingVertical: Platform.OS === "web" ? 12 : 10,
+    borderColor: '#E0E0E0',
+    borderRadius: 8,
+    padding: 14,
+    fontSize: 16,
+    color: '#000000',
+  },
+  submitButton: {
+    backgroundColor: '#007AFF',
+    padding: 16,
+    borderRadius: 8,
+    alignItems: 'center',
+    marginTop: 32,
+  },
+  submitButtonDisabled: {
+    backgroundColor: '#B0B0B0',
+  },
+  submitButtonText: {
+    color: '#FFFFFF',
+    fontSize: 18,
+    fontWeight: 'bold',
+  },
+  cancelButton: {
+    padding: 16,
+    alignItems: 'center',
+    marginTop: 12,
+  },
+  cancelButtonText: {
+    color: '#666666',
     fontSize: 16,
   },
 });
