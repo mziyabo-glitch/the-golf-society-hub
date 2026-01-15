@@ -69,7 +69,6 @@ export default function EventsScreen() {
     return () => unsubscribe();
   }, [societyId, societyLoading]);
 
-  // Loading state
   if (societyLoading || loading) {
     return (
       <View style={styles.centerContainer}>
@@ -79,7 +78,6 @@ export default function EventsScreen() {
     );
   }
 
-  // No active society
   if (!societyId) {
     return (
       <View style={styles.centerContainer}>
@@ -98,7 +96,6 @@ export default function EventsScreen() {
 
   return (
     <View style={styles.container}>
-      {/* Header */}
       <View style={styles.header}>
         <Text style={styles.headerText}>Events ({events.length})</Text>
         {canCreate && (
@@ -111,7 +108,6 @@ export default function EventsScreen() {
         )}
       </View>
 
-      {/* Events List */}
       {events.length === 0 ? (
         <View style={styles.emptyContainer}>
           <Text style={styles.emptyIcon}>📅</Text>
