@@ -56,12 +56,13 @@ export default function CreateSocietyScreen() {
 
       console.log('✓ Active society set to:', societyDoc.id);
 
-      Alert.alert('Success', 'Society created successfully!', [
-        {
-          text: 'OK',
-          onPress: () => router.replace('/'),
-        },
-      ]);
+      // Navigate back immediately without alert to prevent stuck UI
+      router.replace('/');
+      
+      // Show success message after navigation
+      setTimeout(() => {
+        Alert.alert('Success', 'Society created successfully!');
+      }, 100);
     } catch (error) {
       console.error('✗ Failed to create society:', error);
       Alert.alert('Error', 'Failed to create society. Please try again.');
