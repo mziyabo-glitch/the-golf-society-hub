@@ -1,41 +1,43 @@
-import { DarkTheme, DefaultTheme, ThemeProvider } from "@react-navigation/native";
+import { useEffect, useState } from "react";
 import { Stack } from "expo-router";
-import { StatusBar } from "expo-status-bar";
-import "react-native-reanimated";
-
-import { useColorScheme } from "@/hooks/use-color-scheme";
-import { ErrorBoundary } from "@/components/ErrorBoundary";
-import { useEffect } from "react";
 import { ensureSignedIn, initActiveSocietyId } from "@/lib/firebase";
-
-export const unstable_settings = {
-  anchor: "(tabs)",
-};
+import { View, ActivityIndicator } from "react-native";
 
 export default function RootLayout() {
-  const colorScheme = useColorScheme();
+  const [ready, setReady] = useState(false);
 
   useEffect(() => {
-    const init = async () => {
+    // RUN ONCE ON APP START
+    const startup = async () => {
       try {
-        await ensureSignedIn();
-        await initActiveSocietyId();
+        console.log("App Starting... checking auth");
+        await ensureSignedIn();      // 1. Restore User
+        await initActiveSocietyId(); // 2. Restore Society ID
+        console.log("App Ready.");
       } catch (e) {
-        console.error("[RootLayout] Init error:", e);
+        console.error("Startup failed:", e);
+      } finally {
+        setReady(true);
       }
     };
-    void init();
+    startup();
   }, []);
 
+  if (!ready) {
+    return (
+      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#f5f5f5' }}>
+        <ActivityIndicator size="large" color="#004d40" />
+      </View>
+    );
+  }
+
   return (
-    <ErrorBoundary>
-      <ThemeProvider value={colorScheme === "dark" ? DarkTheme : DefaultTheme}>
-        <Stack screenOptions={{ headerShown: false }}>
-          <Stack.Screen name="(tabs)" />
-          <Stack.Screen name="modal" options={{ presentation: "modal", title: "Modal" }} />
-        </Stack>
-        <StatusBar style="auto" />
-      </ThemeProvider>
-    </ErrorBoundary>
+    <Stack screenOptions={{ headerShown: false }}>
+      <Stack.Screen name="index" />
+      <Stack.Screen name="society/index" />
+      <Stack.Screen name="create-society" options={{ presentation: 'modal' }} />
+      <Stack.Screen name="create-event" options={{ presentation: 'modal' }} />
+      <Stack.Screen name="add-member" options={{ presentation: 'modal' }} />
+    </Stack>
   );
 }
