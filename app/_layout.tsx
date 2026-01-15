@@ -1,31 +1,28 @@
 import { useEffect, useState } from "react";
 import { Stack } from "expo-router";
-import { ensureSignedIn, initActiveSocietyId } from "@/lib/firebase";
 import { View, ActivityIndicator } from "react-native";
+import { ensureSignedIn, initActiveSocietyId } from "@/lib/firebase";
 
 export default function RootLayout() {
-  const [ready, setReady] = useState(false);
+  const [isReady, setIsReady] = useState(false);
 
   useEffect(() => {
-    // RUN ONCE ON APP START
-    const startup = async () => {
+    async function startup() {
       try {
-        console.log("App Starting... checking auth");
-        await ensureSignedIn();      // 1. Restore User
-        await initActiveSocietyId(); // 2. Restore Society ID
-        console.log("App Ready.");
+        await ensureSignedIn();
+        await initActiveSocietyId();
       } catch (e) {
-        console.error("Startup failed:", e);
+        console.error("Startup error:", e);
       } finally {
-        setReady(true);
+        setIsReady(true);
       }
-    };
+    }
     startup();
   }, []);
 
-  if (!ready) {
+  if (!isReady) {
     return (
-      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#f5f5f5' }}>
+      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#fff' }}>
         <ActivityIndicator size="large" color="#004d40" />
       </View>
     );
