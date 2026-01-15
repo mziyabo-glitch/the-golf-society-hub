@@ -1,932 +1,123 @@
-/**
- * TEST PLAN:
- * - Navigate to Profile screen
- * - Select a member from the list
- * - Verify current user is saved and persists
- * - Try to switch to admin role, enter PIN
- * - Verify role changes and persists
- * - Navigate back, verify user indicator shows on dashboard
- * - Close/reopen app, verify profile persists
- */
-
-import { getCurrentUserRoles } from "@/lib/roles";
-import { getSession, setRole } from "@/lib/session";
-import { STORAGE_KEYS } from "@/lib/storage";
-import AsyncStorage from "@react-native-async-storage/async-storage";
-import { useFocusEffect } from "@react-navigation/native";
+import { useEffect, useState } from "react";
+import { View, TextInput, Alert, StyleSheet, ActivityIndicator } from "react-native";
 import { router } from "expo-router";
-import { useCallback, useState } from "react";
-import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View, ActivityIndicator } from "react-native";
-import type { EventData } from "@/lib/models";
-import { listMembers, upsertMember } from "@/lib/firestore/members";
-import { listEvents } from "@/lib/firestore/events";
-import { getActiveSocietyId } from "@/lib/firebase";
-
-type MemberData = {
-  id: string;
-  name: string;
-  handicap?: number;
-  sex?: "male" | "female";
-  paid?: boolean;
-  amountPaid?: number;
-  paidDate?: string;
-};
+import { doc, getDoc, updateDoc } from "firebase/firestore";
+import { Screen } from "@/components/ui/Screen";
+import { AppText } from "@/components/ui/AppText";
+import { PrimaryButton, SecondaryButton } from "@/components/ui/Button";
+import { db, getActiveSocietyId, ensureSignedIn } from "@/lib/firebase";
 
 export default function ProfileScreen() {
-  const [members, setMembers] = useState<MemberData[]>([]);
-  const [currentUserId, setCurrentUserIdState] = useState<string | null>(null);
-  const [role, setRoleState] = useState<"admin" | "member">("member");
-  const [currentMember, setCurrentMember] = useState<MemberData | null>(null);
-  const [editName, setEditName] = useState("");
-  const [editHandicap, setEditHandicap] = useState("");
-  const [editSex, setEditSex] = useState<"male" | "female" | "">("");
-  const [isEditing, setIsEditing] = useState(false);
+  const [name, setName] = useState("");
+  const [handicap, setHandicap] = useState("");
   const [loading, setLoading] = useState(true);
-  const [userRoles, setUserRoles] = useState<string[]>([]);
-  const [upcomingEventsWithFees, setUpcomingEventsWithFees] = useState<EventData[]>([]);
-  const [showRoleSwitchModal, setShowRoleSwitchModal] = useState(false);
-  const [roleSwitchTarget, setRoleSwitchTarget] = useState<"admin" | "member">("member");
-  const [adminPinInput, setAdminPinInput] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [societyId, setSocietyId] = useState<string | null>(null);
+  const [userId, setUserId] = useState<string | null>(null);
 
-  const roleSwitchAllowed = __DEV__ || process.env.EXPO_PUBLIC_ENABLE_ROLE_SWITCH === "true";
+  useEffect(() => {
+    loadProfile();
+  }, []);
 
-  useFocusEffect(
-    useCallback(() => {
-      loadData();
-    }, [])
-  );
-
-  const loadData = async () => {
+  const loadProfile = async () => {
     try {
-      // Load members from Firestore
-      const loadedMembers = await listMembers();
-      setMembers(loadedMembers);
-
-      // Load session (single source of truth)
-      const session = await getSession();
-      const effectiveUserId = session.currentUserId;
-      setCurrentUserIdState(effectiveUserId);
-      setRoleState(session.role);
-
-      // Load current user roles
-      const roles = await getCurrentUserRoles();
-      setUserRoles(roles);
-
-      // Find current member
-      if (effectiveUserId) {
-        const member = loadedMembers.find((m) => m.id === effectiveUserId);
-        if (member) {
-          setCurrentMember(member);
-          setEditName(member.name);
-          setEditHandicap(member.handicap?.toString() || "");
-          setEditSex(member.sex || "");
-        } else {
-          setCurrentMember(null);
-        }
-      } else {
-        setCurrentMember(null);
+      // 1. Get User & Society
+      const user = await ensureSignedIn();
+      const sId = getActiveSocietyId();
+      
+      if (!sId) {
+        Alert.alert("Error", "No active society found.");
+        router.back();
+        return;
       }
 
-      // Load upcoming events with fees from Firestore
-      try {
-        const allEvents = await listEvents();
-        const now = new Date();
-        const upcoming = allEvents
-          .filter((e) => {
-            const eventDate = new Date(e.date);
-            return eventDate >= now && !e.isCompleted && e.eventFee && e.eventFee > 0;
-          })
-          .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
-        setUpcomingEventsWithFees(upcoming);
-      } catch (error) {
-        console.error("[Profile] Error loading events:", error);
+      setUserId(user.uid);
+      setSocietyId(sId);
+
+      // 2. Load YOUR Member Document (The "Captain" entry)
+      const memberRef = doc(db, "societies", sId, "members", user.uid);
+      const snap = await getDoc(memberRef);
+
+      if (snap.exists()) {
+        const data = snap.data();
+        setName(data.name || "");
+        setHandicap(data.handicapIndex?.toString() || "");
       }
-    } catch (error) {
-      console.error("Error loading data:", error);
+    } catch (e) {
+      console.error(e);
     } finally {
       setLoading(false);
     }
   };
 
-  const handleSaveProfile = async () => {
-    if (!currentMember || !editName.trim()) {
-      Alert.alert("Error", "Name is required");
-      return;
-    }
-    if (!editSex || (editSex !== "male" && editSex !== "female")) {
-      Alert.alert("Error", "Sex is required (Male or Female)");
-      return;
-    }
+  const handleSave = async () => {
+    if (!societyId || !userId) return;
 
     try {
-      // Update member in Firestore
-      const updatedMember = {
-        ...currentMember,
-        name: editName.trim(),
-        handicap: editHandicap.trim() ? parseFloat(editHandicap.trim()) : undefined,
-        sex: editSex as "male" | "female",
-      };
+      setSaving(true);
+      const memberRef = doc(db, "societies", societyId, "members", userId);
 
-      const societyId = getActiveSocietyId();
-      const result = await upsertMember(updatedMember, societyId || undefined);
-      
-      if (!result.success) {
-        console.error("[Profile] Failed to save:", result.error);
-        Alert.alert("Error", `Failed to save profile: ${result.error || "Unknown error"}`);
-        return;
-      }
+      // 3. Update YOUR entry
+      await updateDoc(memberRef, {
+        name: name,
+        handicapIndex: handicap ? parseFloat(handicap) : 0,
+      });
 
-      // Reload to reflect changes
-      await loadData();
-      setIsEditing(false);
-      Alert.alert("Success", "Profile updated");
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : "Unknown error";
-      console.error("[Profile] Error saving profile:", error);
-      Alert.alert("Error", `Failed to save profile: ${errorMessage}`);
+      Alert.alert("Success", "Profile Updated!");
+      router.back();
+    } catch (e: any) {
+      console.error(e);
+      Alert.alert("Error", "Could not save profile.\n" + e.message);
+    } finally {
+      setSaving(false);
     }
   };
 
-  const beginRoleSwitch = async (target: "admin" | "member") => {
-    if (!roleSwitchAllowed) {
-      Alert.alert("Unavailable", "Role switching is disabled in this build.");
-      return;
-    }
-    if (!currentUserId) {
-      Alert.alert("Error", "Please select a member profile first");
-      return;
-    }
-
-    Alert.alert(
-      "Switch session role?",
-      `Switch session role to "${target}"? This is for testing and does not change member permissions.`,
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Continue",
-          style: target === "admin" ? "destructive" : "default",
-          onPress: async () => {
-            setRoleSwitchTarget(target);
-            setAdminPinInput("");
-            setShowRoleSwitchModal(true);
-          },
-        },
-      ]
-    );
-  };
-
-  const performRoleSwitch = async () => {
-    try {
-      if (!roleSwitchAllowed) {
-        Alert.alert("Unavailable", "Role switching is disabled in this build.");
-        return;
-      }
-
-      // Require Admin PIN when role switching is enabled
-      const storedPin = await AsyncStorage.getItem(STORAGE_KEYS.ADMIN_PIN);
-      const expected = storedPin?.trim();
-      if (!expected) {
-        Alert.alert("Admin PIN required", "Set an Admin PIN in Settings before switching roles.");
-        return;
-      }
-      if (adminPinInput.trim() !== expected) {
-        Alert.alert("Incorrect PIN", "The Admin PIN you entered is incorrect.");
-        return;
-      }
-
-      await setRole(roleSwitchTarget);
-      setRoleState(roleSwitchTarget);
-      setShowRoleSwitchModal(false);
-      setAdminPinInput("");
-      Alert.alert("Success", `Switched to ${roleSwitchTarget} role`);
-    } catch (error) {
-      console.error("Error switching role:", error);
-      Alert.alert("Error", "Failed to switch role");
-    }
-  };
-
-  const handleSwitchToAdmin = () => beginRoleSwitch("admin");
-  const handleSwitchToMember = () => beginRoleSwitch("member");
-
-  if (loading) {
-    return (
-      <View style={[styles.container, styles.centerContent]}>
-        <Text style={styles.loadingText}>Loading...</Text>
-      </View>
-    );
-  }
+  if (loading) return <Screen><ActivityIndicator size="large" color="#004d40" /></Screen>;
 
   return (
-    <ScrollView style={styles.container}>
-      <View style={styles.content}>
-        <Text style={styles.title}>Profile</Text>
-        <Text style={styles.subtitle}>
-          {currentMember ? "Edit your profile" : "Choose your profile"}
-        </Text>
+    <Screen>
+      <View style={{ padding: 20 }}>
+        <AppText variant="title" style={{ color: 'black', marginBottom: 20 }}>My Profile</AppText>
+        
+        <View style={styles.card}>
+          <AppText style={styles.label}>My Name</AppText>
+          <TextInput 
+            value={name} 
+            onChangeText={setName} 
+            placeholder="Enter your name"
+            placeholderTextColor="#999"
+            style={styles.input} 
+          />
 
-        {!currentUserId ? (
-          <View style={styles.emptyState}>
-            <Text style={styles.emptyText}>No profile selected</Text>
-            <Text style={styles.emptySubtext}>
-              Choose your profile from the Members screen
-            </Text>
-            <Pressable
-              onPress={() => router.push("/members" as any)}
-              style={styles.ctaButton}
-            >
-              <Text style={styles.ctaButtonText}>Choose Profile</Text>
-            </Pressable>
-          </View>
-        ) : currentMember ? (
-          <>
-            {isEditing ? (
-              <View style={styles.editSection}>
-                <View style={styles.field}>
-                  <Text style={styles.fieldLabel}>
-                    Name <Text style={{ color: "#ef4444" }}>*</Text>
-                  </Text>
-                  <TextInput
-                    value={editName}
-                    onChangeText={setEditName}
-                    placeholder="Enter name"
-                    style={styles.input}
-                  />
-                </View>
+          <AppText style={styles.label}>My Handicap</AppText>
+          <TextInput 
+            value={handicap} 
+            onChangeText={setHandicap} 
+            keyboardType="numeric"
+            placeholder="0.0"
+            placeholderTextColor="#999"
+            style={styles.input} 
+          />
 
-                <View style={styles.field}>
-                  <Text style={styles.fieldLabel}>Handicap</Text>
-                    <TextInput
-                      value={editHandicap}
-                      onChangeText={setEditHandicap}
-                      placeholder="Enter handicap (optional)"
-                      keyboardType="numeric"
-                      style={styles.input}
-                    />
-                </View>
-
-                <View style={styles.field}>
-                  <Text style={styles.fieldLabel}>Sex <Text style={{ color: "#ef4444" }}>*</Text></Text>
-                  <View style={styles.sexButtons}>
-                    <Pressable
-                      onPress={() => setEditSex("male")}
-                      style={[
-                        styles.sexButton,
-                        editSex === "male" && styles.sexButtonActive,
-                      ]}
-                    >
-                      <Text style={[
-                        styles.sexButtonText,
-                        editSex === "male" && styles.sexButtonTextActive,
-                      ]}>Male</Text>
-                    </Pressable>
-                    <Pressable
-                      onPress={() => setEditSex("female")}
-                      style={[
-                        styles.sexButton,
-                        editSex === "female" && styles.sexButtonActive,
-                      ]}
-                    >
-                      <Text style={[
-                        styles.sexButtonText,
-                        editSex === "female" && styles.sexButtonTextActive,
-                      ]}>Female</Text>
-                    </Pressable>
-                  </View>
-                </View>
-
-                <View style={styles.editActions}>
-                  <Pressable
-                    onPress={() => {
-                      setIsEditing(false);
-                      setEditName(currentMember.name);
-                      setEditHandicap(currentMember.handicap?.toString() || "");
-                      setEditSex(currentMember.sex || "");
-                    }}
-                    style={styles.cancelButton}
-                  >
-                    <Text style={styles.cancelButtonText}>Cancel</Text>
-                  </Pressable>
-                  <Pressable onPress={handleSaveProfile} style={styles.saveButton}>
-                    <Text style={styles.saveButtonText}>Save</Text>
-                  </Pressable>
-                </View>
-              </View>
-            ) : (
-              <View style={styles.profileSection}>
-                <View style={styles.profileCard}>
-                  <Text style={styles.profileName}>{currentMember.name}</Text>
-                  {currentMember.handicap !== undefined && (
-                    <Text style={styles.profileHandicap}>HCP: {currentMember.handicap}</Text>
-                  )}
-                </View>
-
-                <Pressable
-                  onPress={() => setIsEditing(true)}
-                  style={styles.editButton}
-                >
-                  <Text style={styles.editButtonText}>Edit Profile</Text>
-                </Pressable>
-              </View>
-            )}
-
-            <View style={styles.roleSection}>
-              <Text style={styles.roleLabel}>Assigned Roles</Text>
-              {userRoles.length > 0 ? (
-                <View style={styles.rolesList}>
-                  {userRoles.map((r) => (
-                    <View key={r} style={styles.roleBadge}>
-                      <Text style={styles.roleBadgeText}>
-                        {r.charAt(0).toUpperCase() + r.slice(1)}
-                      </Text>
-                    </View>
-                  ))}
-                </View>
-              ) : (
-                <Text style={styles.noRolesText}>No roles assigned (default: member)</Text>
-              )}
-              <Text style={styles.roleNote}>
-                Roles are assigned by Captain/Admin in Settings → Roles
-              </Text>
-            </View>
-
-            {/* Payment Status Section */}
-            <View style={styles.roleSection}>
-              <Text style={styles.roleLabel}>Payment Status</Text>
-              
-              {/* Season Fee Status */}
-              <View style={styles.paymentItem}>
-                <Text style={styles.paymentLabel}>Season Fee:</Text>
-                <View style={[
-                  styles.paymentStatusBadge,
-                  { backgroundColor: currentMember?.paid ? "#d1fae5" : "#fee2e2" }
-                ]}>
-                  <Text style={[
-                    styles.paymentStatusText,
-                    { color: currentMember?.paid ? "#065f46" : "#991b1b" }
-                  ]}>
-                    {currentMember?.paid ? "Paid" : "Unpaid"}
-                  </Text>
-                </View>
-                {currentMember?.paidDate && (
-                  <Text style={styles.paymentDate}>Paid: {currentMember.paidDate}</Text>
-                )}
-                {currentMember?.amountPaid !== undefined && currentMember.amountPaid > 0 && (
-                  <Text style={styles.paymentAmount}>Amount: £{currentMember.amountPaid.toFixed(2)}</Text>
-                )}
-              </View>
-
-              {/* Event Fee Status */}
-              {upcomingEventsWithFees.length > 0 && (
-                <View style={styles.paymentItem}>
-                  <Text style={styles.paymentLabel}>Competition Fees:</Text>
-                  {upcomingEventsWithFees.map((event) => {
-                    const paymentStatus = event.payments?.[currentMember?.id || ""];
-                    const isPaid = paymentStatus?.paid ?? false;
-                    return (
-                      <View key={event.id} style={styles.eventPaymentItem}>
-                        <Text style={styles.eventName}>{event.name}</Text>
-                        <Text style={styles.eventFee}>Fee: £{event.eventFee?.toFixed(2)}</Text>
-                        <View style={[
-                          styles.paymentStatusBadge,
-                          { backgroundColor: isPaid ? "#d1fae5" : "#fee2e2" }
-                        ]}>
-                          <Text style={[
-                            styles.paymentStatusText,
-                            { color: isPaid ? "#065f46" : "#991b1b" }
-                          ]}>
-                            {isPaid ? "Paid" : "Unpaid"}
-                          </Text>
-                        </View>
-                        {paymentStatus?.paidAtISO && (
-                          <Text style={styles.paymentDate}>
-                            Paid: {new Date(paymentStatus.paidAtISO).toLocaleDateString()}
-                          </Text>
-                        )}
-                      </View>
-                    );
-                  })}
-                </View>
-              )}
-
-              <Text style={styles.roleNote}>
-                Payment status is managed by Captain or Treasurer
-              </Text>
-            </View>
-
-            <View style={styles.roleSection}>
-              <Text style={styles.roleLabel}>
-                Session Role: <Text style={styles.roleValue}>{role}</Text>
-              </Text>
-
-              {roleSwitchAllowed ? (
-                role === "member" ? (
-                  <Pressable onPress={handleSwitchToAdmin} style={styles.roleButton}>
-                    <Text style={styles.roleButtonText}>Switch to Admin</Text>
-                  </Pressable>
-                ) : (
-                  <Pressable onPress={handleSwitchToMember} style={styles.roleButton}>
-                    <Text style={styles.roleButtonText}>Switch to Member</Text>
-                  </Pressable>
-                )
-              ) : (
-                <Text style={styles.roleNote}>
-                  Role switching disabled (enable in dev or set EXPO_PUBLIC_ENABLE_ROLE_SWITCH="true")
-                </Text>
-              )}
-            </View>
-          </>
-        ) : (
-          <View style={styles.emptyState}>
-            <Text style={styles.emptyText}>Profile not found</Text>
-            <Text style={styles.emptySubtext}>
-              Your selected profile may have been deleted
-            </Text>
-            <Pressable
-              onPress={() => router.push("/members" as any)}
-              style={styles.ctaButton}
-            >
-              <Text style={styles.ctaButtonText}>Choose Profile</Text>
-            </Pressable>
-          </View>
-        )}
-
-        <Pressable onPress={() => router.back()} style={styles.backButton}>
-          <Text style={styles.backButtonText}>Back</Text>
-        </Pressable>
-
-        {/* Role switch modal (PIN gated) */}
-        {showRoleSwitchModal && (
-          <View style={styles.pinModalOverlay}>
-            <View style={styles.pinModal}>
-              <Text style={styles.pinTitle}>Enter Admin PIN</Text>
-              <Text style={styles.pinSubtitle}>
-                Required to switch session role to "{roleSwitchTarget}"
-              </Text>
-              <TextInput
-                value={adminPinInput}
-                onChangeText={setAdminPinInput}
-                placeholder="Admin PIN"
-                secureTextEntry
-                style={styles.pinInput}
-                keyboardType="numeric"
-              />
-              <View style={styles.pinActions}>
-                <Pressable
-                  onPress={() => {
-                    setShowRoleSwitchModal(false);
-                    setAdminPinInput("");
-                  }}
-                  style={styles.pinCancelButton}
-                >
-                  <Text style={styles.pinCancelText}>Cancel</Text>
-                </Pressable>
-                <Pressable onPress={performRoleSwitch} style={styles.pinSubmitButton}>
-                  <Text style={styles.pinSubmitText}>Confirm</Text>
-                </Pressable>
-              </View>
-            </View>
-          </View>
-        )}
+          <PrimaryButton 
+            title={saving ? "Saving..." : "Save Profile"} 
+            onPress={handleSave} 
+            disabled={saving} 
+          />
+          <View style={{ height: 10 }} />
+          <SecondaryButton title="Back" onPress={() => router.back()} />
+        </View>
       </View>
-    </ScrollView>
+    </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: "#fff",
-  },
-  content: {
-    flex: 1,
-    padding: 24,
-  },
-  centerContent: {
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  title: {
-    fontSize: 34,
-    fontWeight: "800",
-    marginBottom: 6,
-  },
-  subtitle: {
-    fontSize: 16,
-    opacity: 0.75,
-    marginBottom: 24,
-  },
-  loadingText: {
-    fontSize: 16,
-    opacity: 0.7,
-  },
-  emptyState: {
-    alignItems: "center",
-    paddingVertical: 40,
-  },
-  emptyText: {
-    fontSize: 16,
-    fontWeight: "600",
-    color: "#111827",
-    marginBottom: 8,
-  },
-  emptySubtext: {
-    fontSize: 14,
-    opacity: 0.7,
-    color: "#111827",
-    textAlign: "center",
-    marginBottom: 16,
-  },
-  ctaButton: {
-    backgroundColor: "#0B6E4F",
-    paddingVertical: 14,
-    paddingHorizontal: 24,
-    borderRadius: 12,
-    marginTop: 8,
-  },
-  ctaButtonText: {
-    color: "white",
-    fontSize: 16,
-    fontWeight: "600",
-  },
-  profileSection: {
-    marginBottom: 24,
-  },
-  profileCard: {
-    backgroundColor: "#f3f4f6",
-    borderRadius: 12,
-    padding: 20,
-    marginBottom: 16,
-  },
-  profileName: {
-    fontSize: 20,
-    fontWeight: "600",
-    color: "#111827",
-    marginBottom: 8,
-  },
-  profileHandicap: {
-    fontSize: 16,
-    opacity: 0.7,
-    color: "#111827",
-  },
-  editSection: {
-    marginBottom: 24,
-  },
-  field: {
-    marginBottom: 16,
-  },
-  fieldLabel: {
-    fontSize: 14,
-    fontWeight: "600",
-    color: "#111827",
-    marginBottom: 8,
-  },
-  input: {
-    backgroundColor: "#f9fafb",
-    paddingVertical: 14,
-    paddingHorizontal: 16,
-    borderRadius: 12,
-    fontSize: 16,
-    borderWidth: 1,
-    borderColor: "#e5e7eb",
-  },
-  sexButtons: {
-    flexDirection: "row",
-    gap: 12,
-  },
-  sexButton: {
-    flex: 1,
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    borderRadius: 10,
-    backgroundColor: "#f3f4f6",
-    alignItems: "center",
-    borderWidth: 2,
-    borderColor: "transparent",
-  },
-  sexButtonActive: {
-    backgroundColor: "#f0fdf4",
-    borderColor: "#0B6E4F",
-  },
-  sexButtonText: {
-    fontSize: 16,
-    fontWeight: "600",
-    color: "#6b7280",
-  },
-  sexButtonTextActive: {
-    color: "#0B6E4F",
-  },
-  editActions: {
-    flexDirection: "row",
-    gap: 12,
-    marginTop: 8,
-  },
-  cancelButton: {
-    flex: 1,
-    paddingVertical: 14,
-    borderRadius: 12,
-    alignItems: "center",
-    backgroundColor: "#f3f4f6",
-  },
-  cancelButtonText: {
-    fontSize: 16,
-    fontWeight: "600",
-    color: "#111827",
-  },
-  saveButton: {
-    flex: 1,
-    paddingVertical: 14,
-    borderRadius: 12,
-    alignItems: "center",
-    backgroundColor: "#0B6E4F",
-  },
-  saveButtonText: {
-    fontSize: 16,
-    fontWeight: "600",
-    color: "white",
-  },
-  editButton: {
-    backgroundColor: "#0B6E4F",
-    paddingVertical: 14,
-    borderRadius: 12,
-    alignItems: "center",
-    marginBottom: 24,
-  },
-  editButtonText: {
-    color: "white",
-    fontSize: 16,
-    fontWeight: "600",
-  },
-  membersList: {
-    marginBottom: 24,
-  },
-  memberCard: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    backgroundColor: "#f9fafb",
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 8,
-    borderWidth: 2,
-    borderColor: "transparent",
-  },
-  memberCardSelected: {
-    backgroundColor: "#f0fdf4",
-    borderColor: "#0B6E4F",
-  },
-  memberInfo: {
-    flex: 1,
-  },
-  memberName: {
-    fontSize: 16,
-    fontWeight: "600",
-    color: "#111827",
-    marginBottom: 4,
-  },
-  memberHandicap: {
-    fontSize: 14,
-    opacity: 0.7,
-    color: "#111827",
-  },
-  selectedBadge: {
-    backgroundColor: "#0B6E4F",
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 6,
-  },
-  selectedBadgeText: {
-    color: "white",
-    fontSize: 12,
-    fontWeight: "600",
-  },
-  roleSection: {
-    backgroundColor: "#f3f4f6",
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 24,
-  },
-  roleLabel: {
-    fontSize: 16,
-    fontWeight: "600",
-    color: "#111827",
-    marginBottom: 12,
-  },
-  roleValue: {
-    color: "#0B6E4F",
-    textTransform: "uppercase",
-  },
-  rolesList: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 8,
-    marginBottom: 12,
-  },
-  roleBadge: {
-    backgroundColor: "#0B6E4F",
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 6,
-  },
-  roleBadgeText: {
-    color: "white",
-    fontSize: 12,
-    fontWeight: "600",
-    textTransform: "capitalize",
-  },
-  noRolesText: {
-    fontSize: 14,
-    color: "#6b7280",
-    fontStyle: "italic",
-    marginBottom: 12,
-  },
-  roleNote: {
-    fontSize: 12,
-    color: "#6b7280",
-    fontStyle: "italic",
-  },
-  paymentItem: {
-    marginBottom: 16,
-  },
-  paymentLabel: {
-    fontSize: 14,
-    fontWeight: "600",
-    color: "#111827",
-    marginBottom: 8,
-  },
-  paymentStatusBadge: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 6,
-    alignSelf: "flex-start",
-    marginBottom: 4,
-  },
-  paymentStatusText: {
-    fontSize: 12,
-    fontWeight: "600",
-  },
-  paymentDate: {
-    fontSize: 12,
-    color: "#6b7280",
-    marginTop: 4,
-  },
-  paymentAmount: {
-    fontSize: 12,
-    color: "#6b7280",
-    marginTop: 2,
-  },
-  eventPaymentItem: {
-    marginTop: 12,
-    paddingTop: 12,
-    borderTopWidth: 1,
-    borderTopColor: "#e5e7eb",
-  },
-  eventName: {
-    fontSize: 14,
-    fontWeight: "600",
-    color: "#111827",
-    marginBottom: 4,
-  },
-  eventFee: {
-    fontSize: 12,
-    color: "#6b7280",
-    marginBottom: 4,
-  },
-  // TODO: Re-enable PIN-related styles when PIN requirement is restored
-  // pinSection: {
-  //   marginTop: 8,
-  // },
-  // pinLabel: {
-  //   fontSize: 14,
-  //   fontWeight: "600",
-  //   color: "#111827",
-  //   marginBottom: 8,
-  // },
-  // pinInput: {
-  //   backgroundColor: "#fff",
-  //   paddingVertical: 12,
-  //   paddingHorizontal: 16,
-  //   borderRadius: 10,
-  //   fontSize: 16,
-  //   borderWidth: 1,
-  //   borderColor: "#e5e7eb",
-  //   marginBottom: 12,
-  // },
-  // pinActions: {
-  //   flexDirection: "row",
-  //   gap: 12,
-  // },
-  // cancelButton: {
-  //   flex: 1,
-  //   paddingVertical: 12,
-  //   borderRadius: 10,
-  //   alignItems: "center",
-  //   backgroundColor: "#f3f4f6",
-  // },
-  // cancelButtonText: {
-  //   fontSize: 14,
-  //   fontWeight: "600",
-  //   color: "#111827",
-  // },
-  // submitButton: {
-  //   flex: 1,
-  //   paddingVertical: 12,
-  //   borderRadius: 10,
-  //   alignItems: "center",
-  //   backgroundColor: "#0B6E4F",
-  // },
-  // submitButtonText: {
-  //   fontSize: 14,
-  //   fontWeight: "600",
-  //   color: "white",
-  // },
-  roleButton: {
-    backgroundColor: "#0B6E4F",
-    paddingVertical: 12,
-    borderRadius: 10,
-    alignItems: "center",
-  },
-  roleButtonText: {
-    color: "white",
-    fontSize: 14,
-    fontWeight: "600",
-  },
-  backButton: {
-    paddingVertical: 14,
-    alignItems: "center",
-  },
-  backButtonText: {
-    fontSize: 16,
-    fontWeight: "600",
-    color: "#6b7280",
-  },
-  pinModalOverlay: {
-    position: "absolute",
-    left: 0,
-    right: 0,
-    top: 0,
-    bottom: 0,
-    backgroundColor: "rgba(0,0,0,0.45)",
-    justifyContent: "center",
-    alignItems: "center",
-    padding: 24,
-  },
-  pinModal: {
-    width: "100%",
-    maxWidth: 420,
-    backgroundColor: "#fff",
-    borderRadius: 16,
-    padding: 20,
-  },
-  pinTitle: {
-    fontSize: 18,
-    fontWeight: "800",
-    color: "#111827",
-    marginBottom: 6,
-    textAlign: "center",
-  },
-  pinSubtitle: {
-    fontSize: 13,
-    color: "#6b7280",
-    textAlign: "center",
-    marginBottom: 12,
-  },
-  pinInput: {
-    backgroundColor: "#f9fafb",
-    paddingVertical: 12,
-    paddingHorizontal: 14,
-    borderRadius: 12,
-    fontSize: 16,
-    borderWidth: 1,
-    borderColor: "#e5e7eb",
-    marginBottom: 12,
-  },
-  pinActions: {
-    flexDirection: "row",
-    gap: 12,
-  },
-  pinCancelButton: {
-    flex: 1,
-    paddingVertical: 12,
-    borderRadius: 12,
-    alignItems: "center",
-    backgroundColor: "#f3f4f6",
-  },
-  pinCancelText: {
-    fontSize: 14,
-    fontWeight: "700",
-    color: "#111827",
-  },
-  pinSubmitButton: {
-    flex: 1,
-    paddingVertical: 12,
-    borderRadius: 12,
-    alignItems: "center",
-    backgroundColor: "#0B6E4F",
-  },
-  pinSubmitText: {
-    fontSize: 14,
-    fontWeight: "700",
-    color: "white",
-  },
+  card: { backgroundColor: 'white', padding: 20, borderRadius: 12 },
+  label: { color: 'black', fontWeight: 'bold', marginBottom: 5 },
+  input: { 
+    borderWidth: 1, borderColor: '#ccc', borderRadius: 8, 
+    padding: 12, marginBottom: 20, color: 'black', fontSize: 16 
+  }
 });
-
