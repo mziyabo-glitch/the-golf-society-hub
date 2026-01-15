@@ -1,139 +1,165 @@
-/**
- * Permission checking utilities (PURE FUNCTIONS)
- *
- * Single source of truth for permissions. Screens are responsible for loading
- * session + current member roles, then calling these helpers.
- *
- * NOTE: Our stored data historically used lowercase roles (e.g. "captain").
- * These helpers normalize both legacy lowercase and new Title Case roles.
- */
-
-export type SessionRole = "ADMIN" | "MEMBER";
-export type MemberRole = "Captain" | "Treasurer" | "Secretary" | "Handicapper" | "Member";
+import { auth, db } from './firebase';
+import { doc, getDoc } from 'firebase/firestore';
 
 /**
- * Normalize session role coming from storage ("admin"/"member") or UI ("ADMIN"/"MEMBER")
- * into the canonical SessionRole used by permission helpers.
+ * Role definitions
  */
-export function normalizeSessionRole(role: unknown): SessionRole {
-  if (role === "ADMIN" || role === "MEMBER") return role;
-  if (role === "admin") return "ADMIN";
-  return "MEMBER";
-}
-
-const ROLE_MAP: Record<string, MemberRole> = {
-  captain: "Captain",
-  treasurer: "Treasurer",
-  secretary: "Secretary",
-  handicapper: "Handicapper",
-  member: "Member",
-
-  // Legacy/experimental role values in some local data sets:
-  // Treat "admin" as Captain-equivalent for permissions.
-  admin: "Captain",
-
-  // Title Case passthroughs
-  Captain: "Captain",
-  Treasurer: "Treasurer",
-  Secretary: "Secretary",
-  Handicapper: "Handicapper",
-  Member: "Member",
-};
+export type Role = 'CAPTAIN' | 'TREASURER' | 'SECRETARY' | 'HANDICAPPER' | 'MEMBER';
 
 /**
- * Normalize stored member roles (unknown input; possibly lowercase strings) into MemberRole[].
- * Always includes "Member" at minimum.
- * 
- * DEFENSIVE: Always returns a safe array, never crashes on invalid input.
+ * Permission matrix - single source of truth
  */
-export function normalizeMemberRoles(rawRoles: unknown): MemberRole[] {
-  const out = new Set<MemberRole>();
-  out.add("Member");
+const PERMISSIONS = {
+  // Society management
+  canCreateSociety: ['CAPTAIN', 'TREASURER', 'SECRETARY', 'HANDICAPPER', 'MEMBER'],
+  canDeleteSociety: ['CAPTAIN'],
+  canEditSocietySettings: ['CAPTAIN', 'TREASURER'],
+  
+  // Member management
+  canAddMember: ['CAPTAIN', 'TREASURER'],
+  canRemoveMember: ['CAPTAIN', 'TREASURER'],
+  canEditMemberRoles: ['CAPTAIN'],
+  canEditOwnProfile: ['CAPTAIN', 'TREASURER', 'SECRETARY', 'HANDICAPPER', 'MEMBER'],
+  
+  // Event management
+  canCreateEvent: ['CAPTAIN', 'TREASURER', 'SECRETARY'],
+  canEditEvent: ['CAPTAIN', 'TREASURER', 'SECRETARY'],
+  canDeleteEvent: ['CAPTAIN'],
+  canPublishResults: ['CAPTAIN', 'HANDICAPPER'],
+  
+  // Tee sheet
+  canUploadTeeSheet: ['CAPTAIN', 'SECRETARY'],
+  canEditTeeSheet: ['CAPTAIN', 'SECRETARY'],
+  
+  // Finances
+  canManageFinances: ['CAPTAIN', 'TREASURER'],
+  canViewFinances: ['CAPTAIN', 'TREASURER', 'SECRETARY'],
+  
+  // Handicaps
+  canEditHandicaps: ['CAPTAIN', 'HANDICAPPER'],
+} as const;
 
-  // Handle null, undefined, or non-array inputs
-  if (rawRoles == null || !Array.isArray(rawRoles)) {
-    return Array.from(out);
+/**
+ * Get user's role in the active society
+ */
+export async function getUserRole(societyId: string, uid?: string): Promise<Role | null> {
+  try {
+    const userId = uid || auth.currentUser?.uid;
+    if (!userId) return null;
+
+    const userDoc = await getDoc(doc(db, 'users', userId));
+    if (!userDoc.exists()) return null;
+
+    const societies = userDoc.data()?.societies || {};
+    return societies[societyId]?.role || null;
+  } catch (error) {
+    console.error('Error getting user role:', error);
+    return null;
   }
-
-  for (const r of rawRoles) {
-    // Skip non-string entries
-    if (typeof r !== "string" || !r) continue;
-    const mapped = ROLE_MAP[r];
-    if (mapped) out.add(mapped);
-  }
-
-  return Array.from(out);
-}
-
-export function canManageMembers(sessionRole: SessionRole, roles: MemberRole[]): boolean {
-  if (sessionRole === "ADMIN") return true;
-  return roles.includes("Captain") || roles.includes("Secretary") || roles.includes("Treasurer");
-}
-
-export function canCreateEvents(sessionRole: SessionRole, roles: MemberRole[]): boolean {
-  if (sessionRole === "ADMIN") return true;
-  return roles.includes("Captain") || roles.includes("Secretary");
 }
 
 /**
- * Check if user can manage events (create/edit) - Captain OR Secretary
+ * Check if user has a specific permission
  */
-export function canManageEvents(sessionRole: SessionRole, roles: MemberRole[]): boolean {
-  return canCreateEvents(sessionRole, roles);
-}
-
-export function canAssignRoles(sessionRole: SessionRole, roles: MemberRole[]): boolean {
-  if (sessionRole === "ADMIN") return true;
-  return roles.includes("Captain"); // Captain only
-}
-
-// ---- additional permissions used elsewhere in the app (same pattern) ----
-
-export function canViewFinance(sessionRole: SessionRole, roles: MemberRole[]): boolean {
-  if (sessionRole === "ADMIN") return true;
-  return roles.includes("Captain") || roles.includes("Treasurer");
+export function hasPermission(permission: keyof typeof PERMISSIONS, role: Role | null): boolean {
+  if (!role) return false;
+  return PERMISSIONS[permission].includes(role);
 }
 
 /**
- * Check if user can manage finance (set fees, mark payments) - Captain OR Treasurer
- * Same as canViewFinance but with clearer name for write operations.
+ * Member management permissions
  */
-export function canManageFinance(sessionRole: SessionRole, roles: MemberRole[]): boolean {
-  return canViewFinance(sessionRole, roles);
+export function canAddMember(role: Role | null): boolean {
+  return hasPermission('canAddMember', role);
 }
 
-export function canEditVenueInfo(sessionRole: SessionRole, roles: MemberRole[]): boolean {
-  if (sessionRole === "ADMIN") return true;
-  return roles.includes("Captain") || roles.includes("Secretary");
+export function canRemoveMember(role: Role | null): boolean {
+  return hasPermission('canRemoveMember', role);
 }
 
-export function canEditHandicaps(sessionRole: SessionRole, roles: MemberRole[]): boolean {
-  if (sessionRole === "ADMIN") return true;
-  return roles.includes("Captain") || roles.includes("Handicapper");
+export function canEditMemberRoles(role: Role | null): boolean {
+  return hasPermission('canEditMemberRoles', role);
 }
 
-export function canEditResults(sessionRole: SessionRole, roles: MemberRole[]): boolean {
-  if (sessionRole === "ADMIN") return true;
-  return roles.includes("Captain") || roles.includes("Handicapper") || roles.includes("Secretary");
+export function canEditMember(role: Role | null, targetUid: string): boolean {
+  // Can edit own profile OR has permission to edit members
+  const isOwnProfile = auth.currentUser?.uid === targetUid;
+  return isOwnProfile || hasPermission('canAddMember', role);
 }
 
 /**
- * Check if user can enter scores/results (Captain OR Secretary OR Handicapper)
- * This is the same as canEditResults but with a clearer name for score entry.
+ * Society management permissions
  */
-export function canEnterScores(sessionRole: SessionRole, roles: MemberRole[]): boolean {
-  return canEditResults(sessionRole, roles);
+export function canManageSociety(role: Role | null): boolean {
+  return hasPermission('canEditSocietySettings', role);
 }
 
-export function canManageCompetition(sessionRole: SessionRole, roles: MemberRole[]): boolean {
-  if (sessionRole === "ADMIN") return true;
-  return roles.includes("Captain") || roles.includes("Handicapper") || roles.includes("Secretary");
+export function canDeleteSociety(role: Role | null): boolean {
+  return hasPermission('canDeleteSociety', role);
 }
 
 /**
- * @deprecated Back-compat alias for older code that used `canEditMembers`.
- * Prefer `canManageMembers(sessionRole, roles)`.
+ * Event management permissions
  */
-export function canEditMembers(sessionRole: SessionRole, roles: MemberRole[]): boolean {
-  return canManageMembers(sessionRole, roles);
+export function canCreateEvent(role: Role | null): boolean {
+  return hasPermission('canCreateEvent', role);
+}
+
+export function canEditEvent(role: Role | null): boolean {
+  return hasPermission('canEditEvent', role);
+}
+
+export function canPublishResults(role: Role | null): boolean {
+  return hasPermission('canPublishResults', role);
+}
+
+/**
+ * Finance permissions
+ */
+export function canManageFinances(role: Role | null): boolean {
+  return hasPermission('canManageFinances', role);
+}
+
+export function canViewFinances(role: Role | null): boolean {
+  return hasPermission('canViewFinances', role);
+}
+
+/**
+ * Tee sheet permissions
+ */
+export function canManageTeeSheet(role: Role | null): boolean {
+  return hasPermission('canUploadTeeSheet', role);
+}
+
+/**
+ * Handicap permissions
+ */
+export function canEditHandicaps(role: Role | null): boolean {
+  return hasPermission('canEditHandicaps', role);
+}
+
+/**
+ * Check if role is ManCo (management committee)
+ */
+export function isManCo(role: Role | null): boolean {
+  if (!role) return false;
+  return ['CAPTAIN', 'TREASURER', 'SECRETARY', 'HANDICAPPER'].includes(role);
+}
+
+/**
+ * Check if role is Captain
+ */
+export function isCaptain(role: Role | null): boolean {
+  return role === 'CAPTAIN';
+}
+
+/**
+ * Get all permissions for a role (for debugging)
+ */
+export function getRolePermissions(role: Role | null): string[] {
+  if (!role) return [];
+  
+  return Object.entries(PERMISSIONS)
+    .filter(([_, roles]) => roles.includes(role))
+    .map(([permission]) => permission);
 }
