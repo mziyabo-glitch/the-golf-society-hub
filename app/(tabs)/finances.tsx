@@ -75,7 +75,6 @@ export default function FinancesScreen() {
     return () => unsubscribe();
   }, [societyId, societyLoading, canView]);
 
-  // Calculate balance
   const balance = transactions.reduce((acc, t) => {
     return acc + (t.type === 'income' ? t.amount : -t.amount);
   }, 0);
@@ -88,7 +87,6 @@ export default function FinancesScreen() {
     .filter(t => t.type === 'expense')
     .reduce((acc, t) => acc + t.amount, 0);
 
-  // Loading state
   if (societyLoading || loading) {
     return (
       <View style={styles.centerContainer}>
@@ -98,7 +96,6 @@ export default function FinancesScreen() {
     );
   }
 
-  // No active society
   if (!societyId) {
     return (
       <View style={styles.centerContainer}>
@@ -115,7 +112,6 @@ export default function FinancesScreen() {
     );
   }
 
-  // No permission
   if (!canView) {
     return (
       <View style={styles.centerContainer}>
@@ -136,7 +132,6 @@ export default function FinancesScreen() {
 
   return (
     <View style={styles.container}>
-      {/* Header */}
       <View style={styles.header}>
         <Text style={styles.headerText}>Finances</Text>
         {canManage && (
@@ -149,7 +144,6 @@ export default function FinancesScreen() {
         )}
       </View>
 
-      {/* Summary Cards */}
       <View style={styles.summaryContainer}>
         <View style={styles.summaryCard}>
           <Text style={styles.summaryLabel}>Balance</Text>
@@ -174,7 +168,6 @@ export default function FinancesScreen() {
         </View>
       </View>
 
-      {/* Transactions List */}
       {transactions.length === 0 ? (
         <View style={styles.emptyContainer}>
           <Text style={styles.emptyIcon}>💰</Text>
