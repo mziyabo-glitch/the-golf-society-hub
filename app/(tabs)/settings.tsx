@@ -62,7 +62,6 @@ export default function SettingsScreen() {
 
   return (
     <ScrollView style={styles.container}>
-      {/* Society Info */}
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>Society</Text>
         
@@ -84,7 +83,6 @@ export default function SettingsScreen() {
         </TouchableOpacity>
       </View>
 
-      {/* Society Management */}
       {canManage && (
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Society Management</Text>
@@ -107,7 +105,6 @@ export default function SettingsScreen() {
         </View>
       )}
 
-      {/* Account */}
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>Account</Text>
         
@@ -124,7 +121,6 @@ export default function SettingsScreen() {
         </TouchableOpacity>
       </View>
 
-      {/* App Info */}
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>About</Text>
         
@@ -148,7 +144,6 @@ export default function SettingsScreen() {
         </TouchableOpacity>
       </View>
 
-      {/* Sign Out */}
       <View style={styles.section}>
         <TouchableOpacity
           style={[styles.button, styles.dangerButton]}
