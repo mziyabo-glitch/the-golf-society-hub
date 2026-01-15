@@ -1,76 +1,53 @@
 import { useEffect, useState } from "react";
-import { View, ActivityIndicator } from "react-native";
-import { collection, onSnapshot, query } from "firebase/firestore";
-
-import { Screen } from "@/components/ui/Screen";
-import { AppText } from "@/components/ui/AppText";
+import { View, ScrollView, Text, ActivityIndicator, StyleSheet } from "react-native";
+import { collection, onSnapshot, query, orderBy } from "firebase/firestore";
 import { db, getActiveSocietyId } from "@/lib/firebase";
+import { Screen } from "@/components/ui/Screen";
 
 export default function MembersScreen() {
-  // 1. Initialize state as NULL (Safe for first render)
-  const [societyId, setSocietyId] = useState<string | null>(null);
   const [members, setMembers] = useState<any[]>([]);
-  const [isReady, setIsReady] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const societyId = getActiveSocietyId();
 
-  // 2. Load the ID safely on client mount
   useEffect(() => {
-    const id = getActiveSocietyId();
-    setSocietyId(id);
-    setIsReady(true);
-  }, []);
+    if (!societyId) {
+      setLoading(false);
+      return;
+    }
 
-  // 3. Subscribe to Firestore only when we have an ID
-  useEffect(() => {
-    if (!societyId) return;
-
-    const q = query(collection(db, "societies", societyId, "members"));
-
+    const q = query(collection(db, "societies", societyId, "members"), orderBy("name", "asc"));
+    
     const unsub = onSnapshot(q, (snap) => {
-      setMembers(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
-    }, (err) => {
-      console.error("Members listener failed:", err);
+      setMembers(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+      setLoading(false);
     });
 
     return unsub;
   }, [societyId]);
 
-  // 4. Show loading state until hydration is complete
-  if (!isReady) {
-    return (
-      <Screen>
-        <ActivityIndicator size="large" />
-      </Screen>
-    );
-  }
+  if (loading) return <Screen><ActivityIndicator size="large" color="black" /></Screen>;
 
-  // 5. Handle "No Society" case (e.g. if user refreshed page and cache was lost)
-  if (!societyId) {
-    return (
-      <Screen>
-        <AppText>No active society found. Please go back home.</AppText>
-      </Screen>
-    );
-  }
-
-  // 6. Render List
   return (
     <Screen>
-      <View style={{ padding: 20 }}>
-        <AppText variant="title" style={{ marginBottom: 16 }}>
-          Members List
-        </AppText>
-
-        {members.length === 0 && (
-          <AppText>No members found (This should not happen if you are Admin).</AppText>
-        )}
-        
+      <ScrollView contentContainerStyle={{ padding: 20 }}>
+        <Text style={{ fontSize: 24, fontWeight: 'bold', color: 'black', marginBottom: 20 }}>Members List</Text>
         {members.map((m) => (
-          <View key={m.id} style={{ marginBottom: 12, padding: 12, backgroundColor: '#f5f5f5', borderRadius: 8 }}>
-            <AppText style={{ fontWeight: 'bold' }}>{m.name}</AppText>
-            <AppText variant="subtle">Roles: {m.roles?.join(", ")}</AppText>
+          <View key={m.id} style={styles.card}>
+            <View>
+              <Text style={styles.name}>{m.name}</Text>
+              <Text style={styles.subtext}>{m.sex || "Member"} • {m.roles?.join(", ") || "No Roles"}</Text>
+            </View>
+            <Text style={styles.hcp}>{m.handicapIndex || "0.0"}</Text>
           </View>
         ))}
-      </View>
+      </ScrollView>
     </Screen>
   );
 }
+
+const styles = StyleSheet.create({
+  card: { backgroundColor: 'white', padding: 15, borderRadius: 10, marginBottom: 10, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  name: { fontSize: 16, fontWeight: 'bold', color: 'black' },
+  subtext: { color: '#666', fontSize: 12 },
+  hcp: { fontSize: 18, fontWeight: 'bold', color: '#004d40' }
+});
