@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { View, TextInput, Text, TouchableOpacity, Alert, StyleSheet, Platform } from "react-native";
+import { View, TextInput, Text, TouchableOpacity, Alert, StyleSheet } from "react-native";
 import { router } from "expo-router";
 import { addDoc, collection, serverTimestamp } from "firebase/firestore";
 import { Screen } from "@/components/ui/Screen";
@@ -12,26 +12,17 @@ export default function CreateEventScreen() {
 
   const handleCreate = async () => {
     if (!venue.trim()) return Alert.alert("Error", "Venue Name is required");
-
+    setLoading(true);
     try {
-      setLoading(true);
       const societyId = getActiveSocietyId();
-      if (!societyId) throw new Error("No society found");
-
-      // Write DIRECTLY to Firestore
-      await addDoc(collection(db, "societies", societyId, "events"), {
+      await addDoc(collection(db, "societies", societyId!, "events"), {
         venue: venue.trim(),
         date: date,
         createdAt: serverTimestamp(),
         status: "upcoming"
       });
-
-      if (Platform.OS === 'web') window.alert("Event Created!");
-      else Alert.alert("Success", "Event Created!");
-      
       router.back();
     } catch (e: any) {
-      console.error(e);
       Alert.alert("Error", e.message);
     } finally {
       setLoading(false);
@@ -41,37 +32,14 @@ export default function CreateEventScreen() {
   return (
     <Screen>
       <View style={{ padding: 20 }}>
-        <Text style={styles.header}>Create Event</Text>
-        
+        <Text style={styles.header}>Schedule Event</Text>
         <View style={styles.card}>
-          <Text style={styles.label}>Venue / Course Name</Text>
-          <TextInput 
-            value={venue}
-            onChangeText={setVenue}
-            placeholder="e.g. Augusta National"
-            placeholderTextColor="#999"
-            style={styles.input}
-          />
-
+          <Text style={styles.label}>Venue Name</Text>
+          <TextInput value={venue} onChangeText={setVenue} placeholder="e.g. Wrag Barn" placeholderTextColor="#999" style={styles.input} />
           <Text style={styles.label}>Date (YYYY-MM-DD)</Text>
-          <TextInput 
-            value={date}
-            onChangeText={setDate}
-            placeholder="2026-04-10"
-            placeholderTextColor="#999"
-            style={styles.input}
-          />
-
-          <TouchableOpacity 
-            onPress={handleCreate} 
-            disabled={loading}
-            style={styles.button}
-          >
-            <Text style={styles.buttonText}>{loading ? "Creating..." : "Create Event"}</Text>
-          </TouchableOpacity>
-          
-          <TouchableOpacity onPress={() => router.back()} style={{ marginTop: 15, alignItems: 'center' }}>
-            <Text style={{ color: '#666' }}>Cancel</Text>
+          <TextInput value={date} onChangeText={setDate} placeholder="2026-08-01" placeholderTextColor="#999" style={styles.input} />
+          <TouchableOpacity onPress={handleCreate} disabled={loading} style={styles.button}>
+            <Text style={{ color: 'white', fontWeight: 'bold' }}>{loading ? "Saving..." : "Create Event"}</Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -83,10 +51,6 @@ const styles = StyleSheet.create({
   header: { fontSize: 24, fontWeight: 'bold', color: 'black', marginBottom: 20 },
   card: { backgroundColor: 'white', padding: 20, borderRadius: 12 },
   label: { fontSize: 14, fontWeight: 'bold', color: 'black', marginBottom: 5 },
-  input: { 
-    borderWidth: 1, borderColor: '#ccc', borderRadius: 8, padding: 12, 
-    marginBottom: 20, fontSize: 16, color: 'black' 
-  },
-  button: { backgroundColor: '#004d40', padding: 15, borderRadius: 8, alignItems: 'center' },
-  buttonText: { color: 'white', fontWeight: 'bold', fontSize: 16 }
+  input: { borderWidth: 1, borderColor: '#ccc', borderRadius: 8, padding: 12, marginBottom: 20, color: 'black' },
+  button: { backgroundColor: '#004d40', padding: 15, borderRadius: 8, alignItems: 'center' }
 });
