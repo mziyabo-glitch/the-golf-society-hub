@@ -40,25 +40,21 @@ export default function LeaderboardScreen() {
       try {
         console.log('🏆 Loading leaderboard for society:', societyId);
 
-        // Load all members
         const membersRef = collection(db, 'societies', societyId, 'members');
         const membersSnap = await getDocs(membersRef);
         
-        // For now, just show members with their handicaps
-        // TODO: Calculate actual points from event results
         const entries: LeaderboardEntry[] = membersSnap.docs.map((doc) => {
           const data = doc.data();
           return {
             id: doc.id,
             name: data.displayName,
             handicap: data.handicap,
-            eventsPlayed: 0, // TODO: Calculate from events
-            wins: 0, // TODO: Calculate from event results
-            totalPoints: 0, // TODO: Calculate from event results
+            eventsPlayed: 0,
+            wins: 0,
+            totalPoints: 0,
           };
         });
 
-        // Sort by handicap for now (lower is better)
         entries.sort((a, b) => a.handicap - b.handicap);
 
         setLeaderboard(entries);
@@ -73,7 +69,6 @@ export default function LeaderboardScreen() {
     loadLeaderboard();
   }, [societyId, societyLoading]);
 
-  // Loading state
   if (societyLoading || loading) {
     return (
       <View style={styles.centerContainer}>
@@ -83,7 +78,6 @@ export default function LeaderboardScreen() {
     );
   }
 
-  // No active society
   if (!societyId) {
     return (
       <View style={styles.centerContainer}>
@@ -102,13 +96,11 @@ export default function LeaderboardScreen() {
 
   return (
     <View style={styles.container}>
-      {/* Header */}
       <View style={styles.header}>
         <Text style={styles.headerText}>Leaderboard</Text>
         <Text style={styles.headerSubtext}>Season Rankings</Text>
       </View>
 
-      {/* Leaderboard List */}
       {leaderboard.length === 0 ? (
         <View style={styles.emptyContainer}>
           <Text style={styles.emptyIcon}>🏆</Text>
