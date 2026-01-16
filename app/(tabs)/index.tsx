@@ -1,89 +1,172 @@
-import { STORAGE_KEYS, ensureBootstrapState } from "@/lib/storage";
-import AsyncStorage from "@react-native-async-storage/async-storage";
-import { useRouter } from "expo-router";
-import { useEffect, useState } from "react";
-import { ActivityIndicator, Pressable, Text, View } from "react-native";
-
-const STORAGE_KEY = STORAGE_KEYS.SOCIETY_ACTIVE;
+import { useEffect, useState } from 'react';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator } from 'react-native';
+import { useRouter } from 'expo-router';
+import { onAuthStateChanged } from 'firebase/auth';
+import { auth, db } from '@/config/firebase';
+import { collection, query, where, getDocs } from 'firebase/firestore';
 
 export default function HomeScreen() {
   const router = useRouter();
-  const [checking, setChecking] = useState(true);
+  const [loading, setLoading] = useState(true);
+  const [user, setUser] = useState<any>(null);
+  const [societies, setSocieties] = useState<any[]>([]);
 
   useEffect(() => {
-    checkSociety();
+    const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
+      setUser(currentUser);
+      
+      if (currentUser) {
+        await fetchUserSocieties(currentUser.uid);
+      }
+      
+      setLoading(false);
+    });
+
+    return unsubscribe;
   }, []);
 
-  const checkSociety = async () => {
+  const fetchUserSocieties = async (userId: string) => {
     try {
-      // Bootstrap app state first (self-heal)
-      await ensureBootstrapState();
+      const societiesRef = collection(db, 'societies');
+      const q = query(
+        societiesRef,
+        where('members', 'array-contains', userId)
+      );
       
-      const societyData = await AsyncStorage.getItem(STORAGE_KEY);
-      if (societyData) {
-        // Society exists, redirect to dashboard
-        router.replace("/society");
-        return;
-      }
+      const querySnapshot = await getDocs(q);
+      const userSocieties = querySnapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+      
+      setSocieties(userSocieties);
     } catch (error) {
-      console.error("Error checking society:", error);
-    } finally {
-      setChecking(false);
+      console.error('Error fetching societies:', error);
     }
   };
 
-  if (checking) {
+  if (loading) {
     return (
-      <View style={{ flex: 1, justifyContent: "center", alignItems: "center" }}>
-        <ActivityIndicator size="large" color="#0B6E4F" />
+      <View style={styles.container}>
+        <ActivityIndicator size="large" color="#007AFF" />
+      </View>
+    );
+  }
+
+  if (!user) {
+    return (
+      <View style={styles.container}>
+        <Text style={styles.title}>Welcome to Golf Society Hub</Text>
+        <Text style={styles.subtitle}>Please sign in to continue</Text>
+        <TouchableOpacity 
+          style={styles.button}
+          onPress={() => router.push('/login')}
+        >
+          <Text style={styles.buttonText}>Sign In</Text>
+        </TouchableOpacity>
       </View>
     );
   }
 
   return (
-    <View style={{ flex: 1, padding: 24, justifyContent: "center" }}>
-      <Text style={{ fontSize: 34, fontWeight: "800", marginBottom: 6 }}>
-        The Golf Society Hub
-      </Text>
-      <Text style={{ fontSize: 16, opacity: 0.75, marginBottom: 28 }}>
-        Everything Golf Society
-      </Text>
-
-      <Pressable
-        onPress={() => router.push("/create-society")}
-        style={{
-          backgroundColor: "#0B6E4F",
-          paddingVertical: 14,
-          borderRadius: 14,
-          alignItems: "center",
-          marginBottom: 12,
-        }}
-      >
-        <Text style={{ color: "white", fontSize: 18, fontWeight: "700" }}>
-          Create a Society
-        </Text>
-      </Pressable>
-
-      <Pressable
-        onPress={() => {}}
-        style={{
-          backgroundColor: "#111827",
-          paddingVertical: 14,
-          borderRadius: 14,
-          alignItems: "center",
-          marginBottom: 12,
-        }}
-      >
-        <Text style={{ color: "white", fontSize: 18, fontWeight: "700" }}>
-          Join a Society
-        </Text>
-      </Pressable>
-
-      <Pressable onPress={() => {}} style={{ paddingVertical: 12, alignItems: "center" }}>
-        <Text style={{ fontSize: 16, fontWeight: "600", opacity: 0.8 }}>
-          I already have an account
-        </Text>
-      </Pressable>
-    </View>
+    <ScrollView style={styles.scrollView}>
+      <View style={styles.container}>
+        <Text style={styles.title}>My Societies</Text>
+        
+        {societies.length === 0 ? (
+          <View style={styles.emptyState}>
+            <Text style={styles.emptyText}>No societies found</Text>
+            <TouchableOpacity 
+              style={styles.button}
+              onPress={() => router.push('/societies')}
+            >
+              <Text style={styles.buttonText}>Browse Societies</Text>
+            </TouchableOpacity>
+          </View>
+        ) : (
+          <View style={styles.societiesList}>
+            {societies.map((society) => (
+              <TouchableOpacity
+                key={society.id}
+                style={styles.societyCard}
+                onPress={() => router.push(`/society?id=${society.id}`)}
+              >
+                <Text style={styles.societyName}>{society.name}</Text>
+                <Text style={styles.societyDescription}>
+                  {society.description || 'No description'}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        )}
+      </View>
+    </ScrollView>
   );
 }
+
+const styles = StyleSheet.create({
+  scrollView: {
+    flex: 1,
+    backgroundColor: '#f5f5f5',
+  },
+  container: {
+    flex: 1,
+    padding: 20,
+  },
+  title: {
+    fontSize: 28,
+    fontWeight: 'bold',
+    marginBottom: 10,
+    color: '#333',
+  },
+  subtitle: {
+    fontSize: 16,
+    color: '#666',
+    marginBottom: 30,
+  },
+  button: {
+    backgroundColor: '#007AFF',
+    padding: 15,
+    borderRadius: 8,
+    alignItems: 'center',
+    marginTop: 20,
+  },
+  buttonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  emptyState: {
+    alignItems: 'center',
+    marginTop: 50,
+  },
+  emptyText: {
+    fontSize: 16,
+    color: '#666',
+    marginBottom: 20,
+  },
+  societiesList: {
+    marginTop: 20,
+  },
+  societyCard: {
+    backgroundColor: '#fff',
+    padding: 15,
+    borderRadius: 8,
+    marginBottom: 15,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  societyName: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#333',
+    marginBottom: 5,
+  },
+  societyDescription: {
+    fontSize: 14,
+    color: '#666',
+  },
+});
