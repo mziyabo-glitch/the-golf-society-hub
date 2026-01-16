@@ -8,93 +8,71 @@
  * - Verify roles persist and are enforced
  */
 
-import AsyncStorage from "@react-native-async-storage/async-storage";
-import { useFocusEffect } from "@react-navigation/native";
 import { router } from "expo-router";
-import { useCallback, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View, Image, ActivityIndicator, Platform } from "react-native";
 
 import { canAssignRoles, normalizeMemberRoles, normalizeSessionRole, canEditVenueInfo } from "@/lib/permissions";
-import { getCurrentUserRoles } from "@/lib/roles";
-import { getSession } from "@/lib/session";
-import { STORAGE_KEYS } from "@/lib/storage";
 import { pickImage } from "@/utils/imagePicker";
 import { AppCard } from "@/components/ui/AppCard";
 import { AppText } from "@/components/ui/AppText";
 import { spacing } from "@/lib/ui/theme";
-
-const STORAGE_KEY = STORAGE_KEYS.SOCIETY_ACTIVE;
-const EVENTS_KEY = STORAGE_KEYS.EVENTS;
-const MEMBERS_KEY = STORAGE_KEYS.MEMBERS;
-const SCORES_KEY = STORAGE_KEYS.SCORES;
-const DRAFT_KEY = STORAGE_KEYS.SOCIETY_DRAFT;
-const ADMIN_PIN_KEY = STORAGE_KEYS.ADMIN_PIN;
-
-type SocietyData = {
-  name: string;
-  homeCourse: string;
-  country: string;
-  scoringMode: "Stableford" | "Strokeplay" | "Both";
-  handicapRule: "Allow WHS" | "Fixed HCP" | "No HCP";
-  logoUrl?: string | null;
-};
+import { useBootstrap } from "@/lib/useBootstrap";
+import { subscribeSocietyDoc, updateSocietyDoc, type SocietyDoc } from "@/lib/db/societyRepo";
+import { subscribeMemberDoc } from "@/lib/db/memberRepo";
+import { updateUserDoc } from "@/lib/db/userRepo";
 
 export default function SettingsScreen() {
-  const [society, setSociety] = useState<SocietyData | null>(null);
+  const { user } = useBootstrap();
+  const [society, setSociety] = useState<SocietyDoc | null>(null);
   const [societyName, setSocietyName] = useState("");
   const [isEditingName, setIsEditingName] = useState(false);
   const [adminPin, setAdminPin] = useState("");
   const [isEditingPin, setIsEditingPin] = useState(false);
   const [newPin, setNewPin] = useState("");
   const [confirmPin, setConfirmPin] = useState("");
-  const [role, setRole] = useState<"admin" | "member">("member");
   const [canAssignRolesRole, setCanAssignRolesRole] = useState(false);
   const [canEditLogo, setCanEditLogo] = useState(false);
   const [uploadingLogo, setUploadingLogo] = useState(false);
+  const hasAlertedRef = useRef(false);
 
-  useFocusEffect(
-    useCallback(() => {
-      loadSociety();
-    }, [])
-  );
-
-  const loadSociety = async () => {
-    try {
-      const societyData = await AsyncStorage.getItem(STORAGE_KEY);
-      if (societyData) {
-        const parsed: SocietyData = JSON.parse(societyData);
-        setSociety(parsed);
-        setSocietyName(parsed.name);
+  useEffect(() => {
+    if (!user?.activeSocietyId) {
+      setSociety(null);
+      setSocietyName("");
+      return;
+    }
+    const unsubscribe = subscribeSocietyDoc(user.activeSocietyId, (doc) => {
+      setSociety(doc);
+      setSocietyName(doc?.name ?? "");
+      if (doc?.adminPin) {
+        setAdminPin("****");
+      } else {
+        setAdminPin("");
       }
+    });
+    return () => unsubscribe();
+  }, [user?.activeSocietyId]);
 
-      // Load admin PIN
-      const pin = await AsyncStorage.getItem(ADMIN_PIN_KEY);
-      if (pin) {
-        setAdminPin("****"); // Show masked PIN
-      }
-
-      // Load session (single source of truth)
-      const session = await getSession();
-      setRole(session.role);
-      
-      const sessionRole = normalizeSessionRole(session.role);
-      const roles = normalizeMemberRoles(await getCurrentUserRoles());
+  useEffect(() => {
+    if (!user?.activeMemberId) return;
+    const unsubscribe = subscribeMemberDoc(user.activeMemberId, (member) => {
+      const sessionRole = normalizeSessionRole("member");
+      const roles = normalizeMemberRoles(member?.roles);
       const canAssign = canAssignRoles(sessionRole, roles);
-      setCanAssignRolesRole(canAssign);
-      
-      // Check if user can edit logo (Captain or Secretary)
       const canEdit = canEditVenueInfo(sessionRole, roles);
+      setCanAssignRolesRole(canAssign);
       setCanEditLogo(canEdit);
-      
-      if (session.role !== "admin" && !canAssign) {
+
+      if (!canAssign && !hasAlertedRef.current) {
+        hasAlertedRef.current = true;
         Alert.alert("Access Denied", "Only admins can access settings", [
           { text: "OK", onPress: () => router.back() },
         ]);
       }
-    } catch (error) {
-      console.error("Error loading society:", error);
-    }
-  };
+    });
+    return () => unsubscribe();
+  }, [router, user?.activeMemberId]);
 
 
   // Allow access if admin session OR has captain role (checked in loadSociety)
@@ -106,12 +84,9 @@ export default function SettingsScreen() {
     if (!society || !societyName.trim()) return;
 
     try {
-      const updatedSociety: SocietyData = {
-        ...society,
+      await updateSocietyDoc(society.id, {
         name: societyName.trim(),
-      };
-      await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(updatedSociety));
-      setSociety(updatedSociety);
+      });
       setIsEditingName(false);
       Alert.alert("Success", "Society name updated");
     } catch (error) {
@@ -131,8 +106,10 @@ export default function SettingsScreen() {
       return;
     }
 
+    if (!society) return;
+
     try {
-      await AsyncStorage.setItem(ADMIN_PIN_KEY, newPin);
+      await updateSocietyDoc(society.id, { adminPin: newPin });
       setAdminPin("****");
       setNewPin("");
       setConfirmPin("");
@@ -165,7 +142,7 @@ export default function SettingsScreen() {
         return;
       }
 
-      // Convert image to base64 data URL for storage in AsyncStorage
+      // Convert image to base64 data URL for Firestore storage
       // Note: For production with Firebase Storage, upload to /societies/{societyId}/logo and store download URL
       let logoUrl: string;
       
@@ -199,13 +176,7 @@ export default function SettingsScreen() {
         console.warn("Using local URI - consider implementing Firebase Storage for production");
       }
 
-      // Save logo URL to society
-      const updatedSociety: SocietyData = {
-        ...society,
-        logoUrl: logoUrl,
-      };
-      await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(updatedSociety));
-      setSociety(updatedSociety);
+      await updateSocietyDoc(society.id, { logoUrl });
       Alert.alert("Success", "Logo uploaded successfully");
     } catch (error) {
       console.error("Error uploading logo:", error);
@@ -235,12 +206,7 @@ export default function SettingsScreen() {
           style: "destructive",
           onPress: async () => {
             try {
-              const updatedSociety: SocietyData = {
-                ...society,
-                logoUrl: null,
-              };
-              await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(updatedSociety));
-              setSociety(updatedSociety);
+              await updateSocietyDoc(society.id, { logoUrl: null });
               Alert.alert("Success", "Logo removed");
             } catch (error) {
               console.error("Error removing logo:", error);
@@ -266,8 +232,11 @@ export default function SettingsScreen() {
           style: "destructive",
           onPress: async () => {
             try {
-              const { resetAllData } = await import("@/lib/storage");
-              await resetAllData();
+              if (!user?.id) return;
+              await updateUserDoc(user.id, {
+                activeSocietyId: null,
+                activeMemberId: null,
+              });
               // Redirect to create-society screen
               router.replace("/create-society");
             } catch (error) {

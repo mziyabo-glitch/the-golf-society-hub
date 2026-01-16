@@ -1,38 +1,23 @@
-import { STORAGE_KEYS, ensureBootstrapState } from "@/lib/storage";
-import AsyncStorage from "@react-native-async-storage/async-storage";
+import { useBootstrap } from "@/lib/useBootstrap";
 import { useRouter } from "expo-router";
 import { useEffect, useState } from "react";
 import { ActivityIndicator, Pressable, Text, View } from "react-native";
 
-const STORAGE_KEY = STORAGE_KEYS.SOCIETY_ACTIVE;
-
 export default function HomeScreen() {
   const router = useRouter();
   const [checking, setChecking] = useState(true);
+  const { user, loading } = useBootstrap();
 
   useEffect(() => {
-    checkSociety();
-  }, []);
-
-  const checkSociety = async () => {
-    try {
-      // Bootstrap app state first (self-heal)
-      await ensureBootstrapState();
-      
-      const societyData = await AsyncStorage.getItem(STORAGE_KEY);
-      if (societyData) {
-        // Society exists, redirect to dashboard
-        router.replace("/society");
-        return;
-      }
-    } catch (error) {
-      console.error("Error checking society:", error);
-    } finally {
-      setChecking(false);
+    if (loading) return;
+    if (user?.activeSocietyId) {
+      router.replace("/society");
+      return;
     }
-  };
+    setChecking(false);
+  }, [loading, user?.activeSocietyId, router]);
 
-  if (checking) {
+  if (checking || loading) {
     return (
       <View style={{ flex: 1, justifyContent: "center", alignItems: "center" }}>
         <ActivityIndicator size="large" color="#0B6E4F" />

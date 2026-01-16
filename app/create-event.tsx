@@ -6,18 +6,14 @@
  * - Verify event appears on dashboard
  */
 
-import AsyncStorage from "@react-native-async-storage/async-storage";
-import { useFocusEffect } from "@react-navigation/native";
 import { useRouter } from "expo-router";
-import { useCallback, useState } from "react";
+import { useEffect, useState } from "react";
 import { Alert, Pressable, ScrollView, Text, TextInput, View } from "react-native";
-import { getSession } from "@/lib/session";
 import { canCreateEvents, normalizeMemberRoles, normalizeSessionRole } from "@/lib/permissions";
-import { getCurrentUserRoles } from "@/lib/roles";
-import { STORAGE_KEYS } from "@/lib/storage";
 import { DatePicker } from "@/components/DatePicker";
-
-const EVENTS_KEY = STORAGE_KEYS.EVENTS;
+import { useBootstrap } from "@/lib/useBootstrap";
+import { createEvent } from "@/lib/db/eventRepo";
+import { subscribeMemberDoc } from "@/lib/db/memberRepo";
 
 type EventData = {
   id: string;
@@ -52,30 +48,30 @@ export default function CreateEventScreen() {
   const [courseName, setCourseName] = useState("");
   const [format, setFormat] = useState<"Stableford" | "Strokeplay" | "Both">("Stableford");
   const [isOOM, setIsOOM] = useState(false);
-  const [role, setRole] = useState<"admin" | "member">("member");
   const [canCreate, setCanCreate] = useState(false);
+  const { user } = useBootstrap();
 
-  useFocusEffect(
-    useCallback(() => {
-      loadSession();
-    }, [])
-  );
-
-  const loadSession = async () => {
-    const session = await getSession();
-    setRole(session.role);
-    
-    const sessionRole = normalizeSessionRole(session.role);
-    const roles = normalizeMemberRoles(await getCurrentUserRoles());
-    const canCreateEventsRole = canCreateEvents(sessionRole, roles);
-    setCanCreate(canCreateEventsRole);
-    
-    if (!canCreateEventsRole) {
-      Alert.alert("Access Denied", "Only Captain or Secretary can create events", [
-        { text: "OK", onPress: () => router.back() },
-      ]);
+  useEffect(() => {
+    if (!user?.activeMemberId) {
+      setCanCreate(false);
+      return;
     }
-  };
+
+    const unsubscribe = subscribeMemberDoc(user.activeMemberId, (member) => {
+      const sessionRole = normalizeSessionRole("member");
+      const roles = normalizeMemberRoles(member?.roles);
+      const canCreateEventsRole = canCreateEvents(sessionRole, roles);
+      setCanCreate(canCreateEventsRole);
+
+      if (!canCreateEventsRole) {
+        Alert.alert("Access Denied", "Only Captain or Secretary can create events", [
+          { text: "OK", onPress: () => router.back() },
+        ]);
+      }
+    });
+
+    return () => unsubscribe();
+  }, [router, user?.activeMemberId]);
 
   if (!canCreate) {
     return null; // Will redirect via Alert
@@ -87,27 +83,21 @@ export default function CreateEventScreen() {
     if (!isFormValid) return;
 
     try {
-      // Load existing events
-      const existingEventsData = await AsyncStorage.getItem(EVENTS_KEY);
-      const existingEvents: EventData[] = existingEventsData
-        ? JSON.parse(existingEventsData)
-        : [];
+      if (!user?.activeSocietyId) {
+        Alert.alert("Error", "No active society found");
+        return;
+      }
 
-      // Create new event
-      const newEvent: EventData = {
-        id: Date.now().toString(),
+      await createEvent({
+        societyId: user.activeSocietyId,
         name: eventName.trim(),
         date: eventDate.trim(),
         courseName: courseName.trim(),
         format,
         isOOM,
-      };
+        status: "scheduled",
+      });
 
-      // Append to array and save
-      const updatedEvents = [...existingEvents, newEvent];
-      await AsyncStorage.setItem(EVENTS_KEY, JSON.stringify(updatedEvents));
-
-      // Navigate back
       router.back();
     } catch (error) {
       console.error("Error saving event:", error);
@@ -116,12 +106,6 @@ export default function CreateEventScreen() {
 
   return (
     <ScrollView style={{ flex: 1, backgroundColor: "#fff" }}>
-      {/* TEMPORARY DEBUG - Remove later */}
-      <View style={{ padding: 16, backgroundColor: "#f3f4f6" }}>
-        <Text style={{ fontSize: 12, color: "#6b7280" }}>
-          Role: {role}
-        </Text>
-      </View>
       <View style={{ flex: 1, padding: 24 }}>
         <Text style={{ fontSize: 34, fontWeight: "800", marginBottom: 6 }}>
           Create Event

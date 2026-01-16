@@ -7,78 +7,65 @@
  * - Check that member's roles appear correctly in other screens
  */
 
-import AsyncStorage from "@react-native-async-storage/async-storage";
-import { useFocusEffect } from "@react-navigation/native";
 import { router } from "expo-router";
-import { useCallback, useState } from "react";
+import { useEffect, useState } from "react";
 import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
-import { MemberRole, getAllMembers, isAdminLike, MemberData } from "@/lib/roles";
-import { STORAGE_KEYS } from "@/lib/storage";
+import { MemberRole } from "@/lib/roles";
 import { canAssignRoles, normalizeMemberRoles, normalizeSessionRole } from "@/lib/permissions";
-import { getCurrentUserRoles } from "@/lib/roles";
-import { getSession } from "@/lib/session";
-
-const MEMBERS_KEY = STORAGE_KEYS.MEMBERS;
-const ADMIN_PIN_KEY = STORAGE_KEYS.ADMIN_PIN;
+import { useBootstrap } from "@/lib/useBootstrap";
+import { subscribeMembersBySociety, updateMemberDoc, type MemberDoc } from "@/lib/db/memberRepo";
+import { subscribeSocietyDoc } from "@/lib/db/societyRepo";
+import { subscribeMemberDoc } from "@/lib/db/memberRepo";
 
 export default function RolesScreen() {
-  const [members, setMembers] = useState<MemberData[]>([]);
+  const { user } = useBootstrap();
+  const [members, setMembers] = useState<MemberDoc[]>([]);
   const [pinVerified, setPinVerified] = useState(false);
   const [pinInput, setPinInput] = useState("");
   const [loading, setLoading] = useState(true);
   const [hasChanges, setHasChanges] = useState(false);
+  const [adminPin, setAdminPin] = useState<string | null>(null);
 
-  useFocusEffect(
-    useCallback(() => {
-      checkAccess();
-      loadMembers();
-    }, [])
-  );
+  useEffect(() => {
+    if (!user?.activeSocietyId) {
+      setMembers([]);
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    const unsubscribe = subscribeMembersBySociety(user.activeSocietyId, (items) => {
+      setMembers(items);
+      setLoading(false);
+    });
+    return () => unsubscribe();
+  }, [user?.activeSocietyId]);
 
-  const checkAccess = async () => {
-    try {
-      const session = await getSession();
-      const sessionRole = normalizeSessionRole(session.role);
-      const roles = normalizeMemberRoles(await getCurrentUserRoles());
-      const canAssign = canAssignRoles(sessionRole, roles);
-      if (!canAssign) {
+  useEffect(() => {
+    if (!user?.activeSocietyId) return;
+    const unsubscribe = subscribeSocietyDoc(user.activeSocietyId, (doc) => {
+      setAdminPin(doc?.adminPin ?? null);
+    });
+    return () => unsubscribe();
+  }, [user?.activeSocietyId]);
+
+  useEffect(() => {
+    if (!user?.activeMemberId) return;
+    const unsubscribe = subscribeMemberDoc(user.activeMemberId, (member) => {
+      const sessionRole = normalizeSessionRole("member");
+      const roles = normalizeMemberRoles(member?.roles);
+      const canAssignRolesFlag = canAssignRoles(sessionRole, roles);
+      if (!canAssignRolesFlag) {
         Alert.alert("Access Denied", "Only Captain can assign roles", [
           { text: "OK", onPress: () => router.back() },
         ]);
-        return false;
       }
-      return true;
-    } catch (error) {
-      console.error("Error checking access:", error);
-      Alert.alert("Error", "Failed to check permissions", [
-        { text: "OK", onPress: () => router.back() },
-      ]);
-      return false;
-    }
-  };
-
-  const loadMembers = async () => {
-    try {
-      // Self-heal: ensure valid current member exists
-      const { ensureValidCurrentMember } = await import("@/lib/storage");
-      const { members: healedMembers } = await ensureValidCurrentMember();
-      
-      // Use healed members or fallback to getAllMembers
-      const allMembers = healedMembers.length > 0 ? healedMembers : await getAllMembers();
-      setMembers(allMembers);
-    } catch (error) {
-      console.error("Error loading members:", error);
-    } finally {
-      setLoading(false);
-    }
-  };
+    });
+    return () => unsubscribe();
+  }, [router, user?.activeMemberId]);
   
   const handleCreateAdminMember = async () => {
     try {
-      const { ensureValidCurrentMember } = await import("@/lib/storage");
-      await ensureValidCurrentMember();
-      await loadMembers();
-      Alert.alert("Success", "Admin member created");
+      Alert.alert("Info", "Create a member from the Members screen, then assign roles here.");
     } catch (error) {
       console.error("Error creating admin member:", error);
       Alert.alert("Error", "Failed to create admin member");
@@ -87,13 +74,12 @@ export default function RolesScreen() {
 
   const verifyPin = async () => {
     try {
-      const storedPin = await AsyncStorage.getItem(ADMIN_PIN_KEY);
-      if (!storedPin) {
+      if (!adminPin) {
         Alert.alert("Error", "Admin PIN not set. Please set it in Settings first.");
         return;
       }
 
-      if (pinInput !== storedPin) {
+      if (pinInput !== adminPin) {
         Alert.alert("Error", "Incorrect PIN");
         setPinInput("");
         return;
@@ -183,11 +169,12 @@ export default function RolesScreen() {
         roles: m.roles && m.roles.length > 0 ? m.roles : ["member"]
       }));
 
-      await AsyncStorage.setItem(MEMBERS_KEY, JSON.stringify(membersToSave));
-      console.log("Roles saved successfully to AsyncStorage");
-      
-      // Reload members to ensure sync
-      await loadMembers();
+      const updates = membersToSave.map((member) =>
+        updateMemberDoc(member.id, {
+          roles: member.roles && member.roles.length > 0 ? member.roles : ["member"],
+        })
+      );
+      await Promise.all(updates);
       setHasChanges(false);
       
       Alert.alert("Success", "Roles updated successfully");

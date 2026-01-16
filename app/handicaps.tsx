@@ -6,42 +6,44 @@
  */
 
 import { canManageCompetition, normalizeMemberRoles, normalizeSessionRole } from "@/lib/permissions";
-import { getCurrentUserRoles } from "@/lib/roles";
-import { getSession } from "@/lib/session";
-import { STORAGE_KEYS } from "@/lib/storage";
-import AsyncStorage from "@react-native-async-storage/async-storage";
-import { useFocusEffect } from "@react-navigation/native";
+import { useBootstrap } from "@/lib/useBootstrap";
+import { subscribeMembersBySociety, updateMemberDoc, type MemberDoc } from "@/lib/db/memberRepo";
 import { router } from "expo-router";
-import { useCallback, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 
-const MEMBERS_KEY = STORAGE_KEYS.MEMBERS;
-
-type MemberData = {
-  id: string;
-  name: string;
-  handicap?: number;
-  roles?: string[];
-};
-
 export default function HandicapsScreen() {
+  const { user } = useBootstrap();
   const [hasAccess, setHasAccess] = useState(false);
-  const [members, setMembers] = useState<MemberData[]>([]);
+  const [members, setMembers] = useState<MemberDoc[]>([]);
   const [isBulkEdit, setIsBulkEdit] = useState(false);
   const [editedHandicaps, setEditedHandicaps] = useState<{ [memberId: string]: string }>({});
   const [searchQuery, setSearchQuery] = useState("");
 
-  useFocusEffect(
-    useCallback(() => {
-      checkAccess();
-      loadMembers();
-    }, [])
+  const currentMember = useMemo(
+    () => members.find((m) => m.id === user?.activeMemberId) || null,
+    [members, user?.activeMemberId]
   );
 
-  const checkAccess = async () => {
-    const session = await getSession();
-    const sessionRole = normalizeSessionRole(session.role);
-    const roles = normalizeMemberRoles(await getCurrentUserRoles());
+  useEffect(() => {
+    if (!user?.activeSocietyId) {
+      setMembers([]);
+      return;
+    }
+    const unsubscribe = subscribeMembersBySociety(user.activeSocietyId, (items) => {
+      setMembers(items);
+      const initial: { [memberId: string]: string } = {};
+      items.forEach((m) => {
+        initial[m.id] = m.handicap?.toString() || "";
+      });
+      setEditedHandicaps(initial);
+    });
+    return () => unsubscribe();
+  }, [user?.activeSocietyId]);
+
+  useEffect(() => {
+    const sessionRole = normalizeSessionRole("member");
+    const roles = normalizeMemberRoles(currentMember?.roles);
     const access = canManageCompetition(sessionRole, roles);
     setHasAccess(access);
     if (!access) {
@@ -49,25 +51,7 @@ export default function HandicapsScreen() {
         { text: "OK", onPress: () => router.back() },
       ]);
     }
-  };
-
-  const loadMembers = async () => {
-    try {
-      const membersData = await AsyncStorage.getItem(MEMBERS_KEY);
-      if (membersData) {
-        const loaded = JSON.parse(membersData);
-        setMembers(loaded);
-        // Initialize edited handicaps
-        const initial: { [memberId: string]: string } = {};
-        loaded.forEach((m: MemberData) => {
-          initial[m.id] = m.handicap?.toString() || "";
-        });
-        setEditedHandicaps(initial);
-      }
-    } catch (error) {
-      console.error("Error loading members:", error);
-    }
-  };
+  }, [currentMember?.roles, router]);
 
   const handleHandicapChange = (memberId: string, value: string) => {
     setEditedHandicaps((prev) => ({
@@ -93,8 +77,12 @@ export default function HandicapsScreen() {
         };
       });
 
-      await AsyncStorage.setItem(MEMBERS_KEY, JSON.stringify(updatedMembers));
-      setMembers(updatedMembers);
+      const updates = updatedMembers.map((member) => {
+        const original = members.find((m) => m.id === member.id);
+        if (!original || original.handicap === member.handicap) return null;
+        return updateMemberDoc(member.id, { handicap: member.handicap });
+      });
+      await Promise.all(updates.filter((u): u is Promise<void> => u !== null));
       setIsBulkEdit(false);
       Alert.alert("Success", "Handicaps updated");
     } catch (error) {

@@ -4,18 +4,21 @@
 
 export type Course = {
   id: string;
+  societyId?: string;
   name: string;
   address?: string;
   postcode?: string;
   notes?: string;
   googlePlaceId?: string;
   mapsUrl?: string;
-  teeSets: TeeSet[];
+  status?: string;
 };
 
 export type TeeSet = {
   id: string;
   courseId: string;
+  societyId?: string;
+  name?: string;
   teeColor: string;
   par: number;
   courseRating: number;
@@ -25,10 +28,12 @@ export type TeeSet = {
 
 export type MemberData = {
   id: string;
+  societyId?: string;
   name: string;
   handicap?: number;
   sex?: "male" | "female";
   roles?: string[];
+  status?: string;
   // Payment fields (Treasurer-managed)
   paid?: boolean;
   amountPaid?: number;
@@ -45,7 +50,9 @@ export type GuestData = {
 
 export type EventData = {
   id: string;
+  societyId?: string;
   name: string;
+  status?: string;
   date: string;
   courseName: string; // Legacy field, kept for backward compatibility
   courseId?: string;

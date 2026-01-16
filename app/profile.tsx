@@ -9,18 +9,12 @@
  * - Close/reopen app, verify profile persists
  */
 
-import { getCurrentUserRoles } from "@/lib/roles";
-import { getSession, setRole } from "@/lib/session";
-import { STORAGE_KEYS } from "@/lib/storage";
-import AsyncStorage from "@react-native-async-storage/async-storage";
-import { useFocusEffect } from "@react-navigation/native";
+import { useBootstrap } from "@/lib/useBootstrap";
+import { subscribeMembersBySociety, updateMemberDoc, type MemberDoc } from "@/lib/db/memberRepo";
+import { subscribeEventsBySociety, type EventDoc } from "@/lib/db/eventRepo";
 import { router } from "expo-router";
-import { useCallback, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
-import type { EventData } from "@/lib/models";
-
-const MEMBERS_KEY = STORAGE_KEYS.MEMBERS;
-const EVENTS_KEY = STORAGE_KEYS.EVENTS;
 
 type MemberData = {
   id: string;
@@ -33,82 +27,74 @@ type MemberData = {
 };
 
 export default function ProfileScreen() {
+  const { user } = useBootstrap();
   const [members, setMembers] = useState<MemberData[]>([]);
+  const [events, setEvents] = useState<EventDoc[]>([]);
   const [currentUserId, setCurrentUserIdState] = useState<string | null>(null);
-  const [role, setRoleState] = useState<"admin" | "member">("member");
   const [currentMember, setCurrentMember] = useState<MemberData | null>(null);
   const [editName, setEditName] = useState("");
   const [editHandicap, setEditHandicap] = useState("");
   const [editSex, setEditSex] = useState<"male" | "female" | "">("");
   const [isEditing, setIsEditing] = useState(false);
-  const [loading, setLoading] = useState(true);
-  const [userRoles, setUserRoles] = useState<string[]>([]);
-  const [upcomingEventsWithFees, setUpcomingEventsWithFees] = useState<EventData[]>([]);
+  const [loadingMembers, setLoadingMembers] = useState(true);
+  const [loadingEvents, setLoadingEvents] = useState(true);
 
-  useFocusEffect(
-    useCallback(() => {
-      // Bootstrap state first to prevent "Profile not found" errors
-      const { ensureBootstrapState } = require("@/lib/storage");
-      ensureBootstrapState().then(() => {
-        loadData();
-      });
-    }, [])
-  );
+  const userRoles = useMemo(() => currentMember?.roles ?? ["member"], [currentMember?.roles]);
+  const upcomingEventsWithFees = useMemo(() => {
+    const now = new Date();
+    return events
+      .filter((e) => {
+        const eventDate = new Date(e.date);
+        return eventDate >= now && !e.isCompleted && e.eventFee && e.eventFee > 0;
+      })
+      .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+  }, [events]);
 
-  const loadData = async () => {
-    try {
-      // Self-heal: ensure valid current member exists
-      const { ensureValidCurrentMember } = await import("@/lib/storage");
-      const { members: healedMembers, currentUserId: healedUserId } = await ensureValidCurrentMember();
-      
-      // Use healed members
-      const loadedMembers = healedMembers;
-      setMembers(loadedMembers);
+  useEffect(() => {
+    setCurrentUserIdState(user?.activeMemberId ?? null);
+  }, [user?.activeMemberId]);
 
-      // Load session (single source of truth)
-      const session = await getSession();
-      const effectiveUserId = healedUserId || session.currentUserId;
-      setCurrentUserIdState(effectiveUserId);
-      setRoleState(session.role);
-
-      // Load current user roles
-      const roles = await getCurrentUserRoles();
-      setUserRoles(roles);
-
-      // Find current member
-      if (effectiveUserId) {
-        const member = loadedMembers.find((m: MemberData) => m.id === effectiveUserId);
-        if (member) {
-          setCurrentMember(member);
-          setEditName(member.name);
-          setEditHandicap(member.handicap?.toString() || "");
-          setEditSex(member.sex || "");
-        } else {
-          setCurrentMember(null);
-        }
-      } else {
-        setCurrentMember(null);
-      }
-
-      // Load upcoming events with fees
-      const eventsData = await AsyncStorage.getItem(EVENTS_KEY);
-      if (eventsData) {
-        const allEvents: EventData[] = JSON.parse(eventsData);
-        const now = new Date();
-        const upcoming = allEvents
-          .filter((e) => {
-            const eventDate = new Date(e.date);
-            return eventDate >= now && !e.isCompleted && e.eventFee && e.eventFee > 0;
-          })
-          .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
-        setUpcomingEventsWithFees(upcoming);
-      }
-    } catch (error) {
-      console.error("Error loading data:", error);
-    } finally {
-      setLoading(false);
+  useEffect(() => {
+    if (!user?.activeSocietyId) {
+      setMembers([]);
+      setLoadingMembers(false);
+      return;
     }
-  };
+    setLoadingMembers(true);
+    const unsubscribe = subscribeMembersBySociety(user.activeSocietyId, (items) => {
+      setMembers(items);
+      setLoadingMembers(false);
+    });
+    return () => unsubscribe();
+  }, [user?.activeSocietyId]);
+
+  useEffect(() => {
+    if (!user?.activeSocietyId) {
+      setEvents([]);
+      setLoadingEvents(false);
+      return;
+    }
+    setLoadingEvents(true);
+    const unsubscribe = subscribeEventsBySociety(user.activeSocietyId, (items) => {
+      setEvents(items);
+      setLoadingEvents(false);
+    });
+    return () => unsubscribe();
+  }, [user?.activeSocietyId]);
+
+  useEffect(() => {
+    if (!currentUserId) {
+      setCurrentMember(null);
+      return;
+    }
+    const member = members.find((m) => m.id === currentUserId) || null;
+    setCurrentMember(member);
+    if (member) {
+      setEditName(member.name);
+      setEditHandicap(member.handicap?.toString() || "");
+      setEditSex(member.sex || "");
+    }
+  }, [currentUserId, members]);
 
   const handleSaveProfile = async () => {
     if (!currentMember || !editName.trim()) {
@@ -121,23 +107,11 @@ export default function ProfileScreen() {
     }
 
     try {
-      // Update member in storage
-      const membersData = await AsyncStorage.getItem(MEMBERS_KEY);
-      const allMembers: MemberData[] = membersData ? JSON.parse(membersData) : [];
-      const updatedMembers = allMembers.map((m) =>
-        m.id === currentMember.id
-          ? {
-              ...m,
-              name: editName.trim(),
-              handicap: editHandicap.trim() ? parseFloat(editHandicap.trim()) : undefined,
-              sex: editSex as "male" | "female",
-            }
-          : m
-      );
-      await AsyncStorage.setItem(MEMBERS_KEY, JSON.stringify(updatedMembers));
-
-      // Reload to reflect changes
-      await loadData();
+      await updateMemberDoc(currentMember.id, {
+        name: editName.trim(),
+        handicap: editHandicap.trim() ? parseFloat(editHandicap.trim()) : undefined,
+        sex: editSex as "male" | "female",
+      });
       setIsEditing(false);
       Alert.alert("Success", "Profile updated");
     } catch (error) {
@@ -146,35 +120,7 @@ export default function ProfileScreen() {
     }
   };
 
-  const handleSwitchToAdmin = async () => {
-    if (!currentUserId) {
-      Alert.alert("Error", "Please select a member profile first");
-      return;
-    }
-
-    // TODO: Re-enable Admin PIN requirement for role switching
-    // Previously checked PIN from ADMIN_PIN_KEY before allowing admin role switch
-
-    try {
-      await setRole("admin");
-      setRoleState("admin");
-      Alert.alert("Success", "Switched to admin role");
-    } catch (error) {
-      console.error("Error switching to admin:", error);
-      Alert.alert("Error", "Failed to switch role");
-    }
-  };
-
-  const handleSwitchToMember = async () => {
-    try {
-      await setRole("member");
-      setRoleState("member");
-      Alert.alert("Success", "Switched to member role");
-    } catch (error) {
-      console.error("Error switching to member:", error);
-      Alert.alert("Error", "Failed to switch role");
-    }
-  };
+  const loading = loadingMembers || loadingEvents;
 
   if (loading) {
     return (
@@ -381,24 +327,6 @@ export default function ProfileScreen() {
               </Text>
             </View>
 
-            <View style={styles.roleSection}>
-              <Text style={styles.roleLabel}>
-                Session Role: <Text style={styles.roleValue}>{role}</Text>
-              </Text>
-
-              {role === "member" ? (
-                <Pressable
-                  onPress={handleSwitchToAdmin}
-                  style={styles.roleButton}
-                >
-                  <Text style={styles.roleButtonText}>Switch to Admin</Text>
-                </Pressable>
-              ) : (
-                <Pressable onPress={handleSwitchToMember} style={styles.roleButton}>
-                  <Text style={styles.roleButtonText}>Switch to Member</Text>
-                </Pressable>
-              )}
-            </View>
           </>
         ) : (
           <View style={styles.emptyState}>

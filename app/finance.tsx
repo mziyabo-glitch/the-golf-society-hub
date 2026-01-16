@@ -6,43 +6,29 @@
  * - Simple export/share (CSV or PDF)
  */
 
-import { useFocusEffect } from "@react-navigation/native";
 import { router } from "expo-router";
-import { useCallback, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Alert, Pressable, StyleSheet, TextInput, View, Platform, ActivityIndicator } from "react-native";
 import { Screen } from "@/components/ui/Screen";
 import { SectionHeader } from "@/components/ui/SectionHeader";
 import { PrimaryButton, SecondaryButton } from "@/components/ui/Button";
-import AsyncStorage from "@react-native-async-storage/async-storage";
-import { STORAGE_KEYS } from "@/lib/storage";
-import { canViewFinance } from "@/lib/roles";
+import { canViewFinance, normalizeMemberRoles, normalizeSessionRole } from "@/lib/permissions";
 import { AppText } from "@/components/ui/AppText";
 import { AppCard } from "@/components/ui/AppCard";
 import { Badge } from "@/components/ui/Badge";
 import { getColors, spacing, typography } from "@/lib/ui/theme";
 import * as Print from "expo-print";
 import * as Sharing from "expo-sharing";
-import type { EventData } from "@/lib/models";
+import { useBootstrap } from "@/lib/useBootstrap";
+import { subscribeMembersBySociety, updateMemberDoc, type MemberDoc } from "@/lib/db/memberRepo";
+import { subscribeEventsBySociety, type EventDoc } from "@/lib/db/eventRepo";
+import { subscribeSocietyDoc, updateSocietyDoc, type SocietyDoc } from "@/lib/db/societyRepo";
 
-const MEMBERS_KEY = STORAGE_KEYS.MEMBERS;
-const SOCIETY_KEY = STORAGE_KEYS.SOCIETY_ACTIVE;
-const EVENTS_KEY = STORAGE_KEYS.EVENTS;
-
-type MemberData = {
-  id: string;
-  name: string;
-  paid?: boolean;
-  amountPaid?: number;
-  paidDate?: string;
-};
-
-type SocietyData = {
-  name: string;
-  annualFee?: number;
-  logoUrl?: string;
-};
+type MemberData = MemberDoc;
+type SocietyData = SocietyDoc;
 
 export default function FinanceScreen() {
+  const { user } = useBootstrap();
   const [hasAccess, setHasAccess] = useState(false);
   const [members, setMembers] = useState<MemberData[]>([]);
   const [society, setSociety] = useState<SocietyData | null>(null);
@@ -51,50 +37,70 @@ export default function FinanceScreen() {
   const [editingMemberId, setEditingMemberId] = useState<string | null>(null);
   const [editAmount, setEditAmount] = useState<string>("");
   const [editPaidDate, setEditPaidDate] = useState<string>("");
-  const [events, setEvents] = useState<EventData[]>([]);
+  const [events, setEvents] = useState<EventDoc[]>([]);
+  const [loadingMembers, setLoadingMembers] = useState(true);
+  const [loadingEvents, setLoadingEvents] = useState(true);
+  const [loadingSociety, setLoadingSociety] = useState(true);
 
-  useFocusEffect(
-    useCallback(() => {
-      checkAccess();
-      loadData();
-    }, [])
+  const currentMember = useMemo(
+    () => members.find((m) => m.id === user?.activeMemberId) || null,
+    [members, user?.activeMemberId]
   );
 
-  const checkAccess = async () => {
-    const access = await canViewFinance();
+  useEffect(() => {
+    const sessionRole = normalizeSessionRole("member");
+    const roles = normalizeMemberRoles(currentMember?.roles);
+    const access = canViewFinance(sessionRole, roles);
     setHasAccess(access);
     if (!access) {
       Alert.alert("Access Denied", "Only Treasurer, Captain, or Admin can access Finance", [
         { text: "OK", onPress: () => router.back() },
       ]);
     }
-  };
+  }, [currentMember?.roles, router]);
 
-  const loadData = async () => {
-    try {
-      const membersData = await AsyncStorage.getItem(MEMBERS_KEY);
-      if (membersData) {
-        const loaded: MemberData[] = JSON.parse(membersData);
-        setMembers(loaded);
-      }
-
-      const societyData = await AsyncStorage.getItem(SOCIETY_KEY);
-      if (societyData) {
-        const loaded: SocietyData = JSON.parse(societyData);
-        setSociety(loaded);
-        setAnnualFee(loaded.annualFee?.toString() || "");
-      }
-
-      // Load events for event fees summary
-      const eventsData = await AsyncStorage.getItem(EVENTS_KEY);
-      if (eventsData) {
-        const loaded: EventData[] = JSON.parse(eventsData);
-        setEvents(loaded);
-      }
-    } catch (error) {
-      console.error("Error loading finance data:", error);
+  useEffect(() => {
+    if (!user?.activeSocietyId) {
+      setMembers([]);
+      setLoadingMembers(false);
+      return;
     }
-  };
+    setLoadingMembers(true);
+    const unsubscribe = subscribeMembersBySociety(user.activeSocietyId, (items) => {
+      setMembers(items);
+      setLoadingMembers(false);
+    });
+    return () => unsubscribe();
+  }, [user?.activeSocietyId]);
+
+  useEffect(() => {
+    if (!user?.activeSocietyId) {
+      setEvents([]);
+      setLoadingEvents(false);
+      return;
+    }
+    setLoadingEvents(true);
+    const unsubscribe = subscribeEventsBySociety(user.activeSocietyId, (items) => {
+      setEvents(items);
+      setLoadingEvents(false);
+    });
+    return () => unsubscribe();
+  }, [user?.activeSocietyId]);
+
+  useEffect(() => {
+    if (!user?.activeSocietyId) {
+      setSociety(null);
+      setLoadingSociety(false);
+      return;
+    }
+    setLoadingSociety(true);
+    const unsubscribe = subscribeSocietyDoc(user.activeSocietyId, (doc) => {
+      setSociety(doc);
+      setAnnualFee(doc?.annualFee?.toString() || "");
+      setLoadingSociety(false);
+    });
+    return () => unsubscribe();
+  }, [user?.activeSocietyId]);
 
   const saveAnnualFee = async () => {
     if (!society) return;
@@ -104,9 +110,7 @@ export default function FinanceScreen() {
         Alert.alert("Error", "Please enter a valid annual fee");
         return;
       }
-      const updated = { ...society, annualFee: fee };
-      await AsyncStorage.setItem(SOCIETY_KEY, JSON.stringify(updated));
-      setSociety(updated);
+      await updateSocietyDoc(society.id, { annualFee: fee });
       setEditingFee(false);
       Alert.alert("Success", "Annual fee updated");
     } catch (error) {
@@ -123,20 +127,11 @@ export default function FinanceScreen() {
         return;
       }
 
-      const updated = members.map((m) => {
-        if (m.id === memberId) {
-          return {
-            ...m,
-            paid: amount > 0,
-            amountPaid: amount,
-            paidDate: editPaidDate || new Date().toISOString().split("T")[0],
-          };
-        }
-        return m;
+      await updateMemberDoc(memberId, {
+        paid: amount > 0,
+        amountPaid: amount,
+        paidDate: editPaidDate || new Date().toISOString().split("T")[0],
       });
-
-      await AsyncStorage.setItem(MEMBERS_KEY, JSON.stringify(updated));
-      setMembers(updated);
       setEditingMemberId(null);
       setEditAmount("");
       setEditPaidDate("");
@@ -259,8 +254,9 @@ export default function FinanceScreen() {
   };
 
   const colors = getColors();
+  const loading = loadingMembers || loadingEvents || loadingSociety;
 
-  if (!hasAccess) {
+  if (loading) {
     return (
       <Screen scrollable={false}>
         <View style={styles.centerContent}>
@@ -268,6 +264,10 @@ export default function FinanceScreen() {
         </View>
       </Screen>
     );
+  }
+
+  if (!hasAccess) {
+    return null;
   }
 
   return (

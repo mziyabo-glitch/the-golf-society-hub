@@ -1,54 +1,32 @@
 import { AppButton } from "@/components/ui/AppButton";
 import { AppCard } from "@/components/ui/AppCard";
 import { AppText } from "@/components/ui/AppText";
-import { STORAGE_KEYS } from "@/lib/storage";
 import { spacing } from "@/lib/ui/theme";
 import { formatDateDDMMYYYY } from "@/utils/date";
-import AsyncStorage from "@react-native-async-storage/async-storage";
-import { useFocusEffect } from "@react-navigation/native";
 import { router } from "expo-router";
-import { useCallback, useState } from "react";
+import { useEffect, useState } from "react";
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, View } from "react-native";
-
-const EVENTS_KEY = STORAGE_KEYS.EVENTS;
-
-type EventData = {
-  id: string;
-  name: string;
-  date: string;
-  courseName: string;
-  format: "Stableford" | "Strokeplay" | "Both";
-};
+import { useBootstrap } from "@/lib/useBootstrap";
+import { subscribeEventsBySociety, type EventDoc } from "@/lib/db/eventRepo";
 
 export default function HistoryScreen() {
-  const [events, setEvents] = useState<EventData[]>([]);
+  const { user } = useBootstrap();
+  const [events, setEvents] = useState<EventDoc[]>([]);
   const [loading, setLoading] = useState(true);
 
-  useFocusEffect(
-    useCallback(() => {
-      loadEvents();
-    }, [])
-  );
-
-  const loadEvents = async () => {
-    try {
-      const eventsData = await AsyncStorage.getItem(EVENTS_KEY);
-      if (eventsData) {
-        const allEvents: EventData[] = JSON.parse(eventsData);
-        // Sort by date (most recent first)
-        const sorted = allEvents.sort((a, b) => {
-          const dateA = a.date ? new Date(a.date).getTime() : 0;
-          const dateB = b.date ? new Date(b.date).getTime() : 0;
-          return dateB - dateA;
-        });
-        setEvents(sorted);
-      }
-    } catch (error) {
-      console.error("Error loading events:", error);
-    } finally {
+  useEffect(() => {
+    if (!user?.activeSocietyId) {
+      setEvents([]);
       setLoading(false);
+      return;
     }
-  };
+    setLoading(true);
+    const unsubscribe = subscribeEventsBySociety(user.activeSocietyId, (items) => {
+      setEvents(items);
+      setLoading(false);
+    });
+    return () => unsubscribe();
+  }, [user?.activeSocietyId]);
 
   if (loading) {
     return (

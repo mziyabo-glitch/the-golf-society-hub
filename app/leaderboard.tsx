@@ -9,11 +9,8 @@
  * - Close/reopen app, verify leaderboard persists correctly
  */
 
-import { STORAGE_KEYS } from "@/lib/storage";
-import AsyncStorage from "@react-native-async-storage/async-storage";
-import { useFocusEffect } from "@react-navigation/native";
 import { router } from "expo-router";
-import { useCallback, useState } from "react";
+import { useEffect, useState } from "react";
 import { ActivityIndicator, Pressable, StyleSheet, TextInput, View, Platform, Alert } from "react-native";
 import * as Print from "expo-print";
 import * as Sharing from "expo-sharing";
@@ -26,39 +23,13 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { Row } from "@/components/ui/Row";
 import { SocietyHeader } from "@/components/ui/SocietyHeader";
 import { getColors, spacing } from "@/lib/ui/theme";
+import { useBootstrap } from "@/lib/useBootstrap";
+import { subscribeMembersBySociety, type MemberDoc } from "@/lib/db/memberRepo";
+import { subscribeEventsBySociety, type EventDoc } from "@/lib/db/eventRepo";
+import { subscribeSocietyDoc, type SocietyDoc } from "@/lib/db/societyRepo";
 
-const EVENTS_KEY = STORAGE_KEYS.EVENTS;
-const MEMBERS_KEY = STORAGE_KEYS.MEMBERS;
-const SOCIETY_KEY = STORAGE_KEYS.SOCIETY_ACTIVE;
-
-type EventData = {
-  id: string;
-  name: string;
-  date: string;
-  courseName: string;
-  format: "Stableford" | "Strokeplay" | "Both";
-  playerIds?: string[];
-  isCompleted?: boolean;
-  resultsStatus?: "draft" | "published";
-  publishedAt?: string;
-  isOOM?: boolean;
-  winnerId?: string;
-  winnerName?: string;
-  results?: {
-    [memberId: string]: {
-      grossScore: number;
-      netScore?: number;
-      stableford?: number;
-      strokeplay?: number;
-    };
-  };
-};
-
-type MemberData = {
-  id: string;
-  name: string;
-  handicap?: number;
-};
+type EventData = EventDoc;
+type MemberData = MemberDoc;
 
 type LeaderboardEntry = {
   member: MemberData;
@@ -67,56 +38,54 @@ type LeaderboardEntry = {
   totalPoints: number;
 };
 
-type SocietyData = {
-  name: string;
-  logoUrl?: string | null;
-};
-
 export default function LeaderboardScreen() {
+  const { user } = useBootstrap();
   const [members, setMembers] = useState<MemberData[]>([]);
   const [events, setEvents] = useState<EventData[]>([]);
   const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
-  const [loading, setLoading] = useState(true);
   const [seasonYear, setSeasonYear] = useState<number>(new Date().getFullYear());
   const [showOOMOnly, setShowOOMOnly] = useState(false);
-  const [society, setSociety] = useState<SocietyData | null>(null);
+  const [society, setSociety] = useState<SocietyDoc | null>(null);
+  const [loadingMembers, setLoadingMembers] = useState(true);
+  const [loadingEvents, setLoadingEvents] = useState(true);
+  const [loadingSociety, setLoadingSociety] = useState(true);
 
-  useFocusEffect(
-    useCallback(() => {
-      loadData();
-    }, [])
-  );
-
-  const loadData = async () => {
-    try {
-      // Load society
-      const societyData = await AsyncStorage.getItem(SOCIETY_KEY);
-      if (societyData) {
-        try {
-          const loaded: SocietyData = JSON.parse(societyData);
-          setSociety(loaded);
-        } catch (e) {
-          console.error("Error parsing society data:", e);
-        }
-      }
-
-      // Load members
-      const membersData = await AsyncStorage.getItem(MEMBERS_KEY);
-      if (membersData) {
-        setMembers(JSON.parse(membersData));
-      }
-
-      // Load events
-      const eventsData = await AsyncStorage.getItem(EVENTS_KEY);
-      if (eventsData) {
-        setEvents(JSON.parse(eventsData));
-      }
-    } catch (error) {
-      console.error("Error loading data:", error);
-    } finally {
-      setLoading(false);
+  useEffect(() => {
+    if (!user?.activeSocietyId) {
+      setMembers([]);
+      setEvents([]);
+      setSociety(null);
+      setLoadingMembers(false);
+      setLoadingEvents(false);
+      setLoadingSociety(false);
+      return;
     }
-  };
+
+    setLoadingMembers(true);
+    setLoadingEvents(true);
+    setLoadingSociety(true);
+
+    const unsubscribeMembers = subscribeMembersBySociety(user.activeSocietyId, (items) => {
+      setMembers(items);
+      setLoadingMembers(false);
+    });
+
+    const unsubscribeEvents = subscribeEventsBySociety(user.activeSocietyId, (items) => {
+      setEvents(items);
+      setLoadingEvents(false);
+    });
+
+    const unsubscribeSociety = subscribeSocietyDoc(user.activeSocietyId, (doc) => {
+      setSociety(doc);
+      setLoadingSociety(false);
+    });
+
+    return () => {
+      unsubscribeMembers();
+      unsubscribeEvents();
+      unsubscribeSociety();
+    };
+  }, [user?.activeSocietyId]);
 
   const getEventYear = (eventDate: string): number | null => {
     if (!eventDate || eventDate.trim() === "") return null;
@@ -276,15 +245,14 @@ export default function LeaderboardScreen() {
     });
   };
 
-  // Update leaderboard when data changes
-  useFocusEffect(
-    useCallback(() => {
-      if (!loading && members.length > 0) {
-        const calculated = calculateLeaderboard();
-        setLeaderboard(calculated);
-      }
-    }, [members, events, loading, seasonYear, showOOMOnly])
-  );
+  const loading = loadingMembers || loadingEvents || loadingSociety;
+
+  useEffect(() => {
+    if (!loading && members.length > 0) {
+      const calculated = calculateLeaderboard();
+      setLeaderboard(calculated);
+    }
+  }, [members, events, loading, seasonYear, showOOMOnly]);
 
   const handleShareOrderOfMerit = async () => {
     try {
@@ -295,10 +263,6 @@ export default function LeaderboardScreen() {
         Alert.alert("Nothing to share", "No members have points yet.");
         return;
       }
-
-      // Load society for logo and name
-      const societyData = await AsyncStorage.getItem(STORAGE_KEYS.SOCIETY_ACTIVE);
-      const society = societyData ? JSON.parse(societyData) : null;
 
       const logoHtml = society?.logoUrl 
         ? `<img src="${society.logoUrl}" alt="Society Logo" style="max-width: 100px; max-height: 100px; margin-bottom: 15px;" />`

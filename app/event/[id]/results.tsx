@@ -11,18 +11,12 @@
  * - Close/reopen app, verify results persist
  */
 
-import AsyncStorage from "@react-native-async-storage/async-storage";
-import { useFocusEffect } from "@react-navigation/native";
 import { router, useLocalSearchParams } from "expo-router";
-import { useCallback, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Alert, Pressable, StyleSheet, TextInput, View, ActivityIndicator } from "react-native";
 
 import { getCourseHandicap, getPlayingHandicap } from "@/lib/handicap";
-import type { Course, TeeSet, MemberData as MemberDataType } from "@/lib/models";
 import { canEnterScores, normalizeMemberRoles, normalizeSessionRole } from "@/lib/permissions";
-import { getCurrentUserRoles } from "@/lib/roles";
-import { getSession } from "@/lib/session";
-import { STORAGE_KEYS } from "@/lib/storage";
 import { formatDateDDMMYYYY } from "@/utils/date";
 import { Screen } from "@/components/ui/Screen";
 import { SectionHeader } from "@/components/ui/SectionHeader";
@@ -31,156 +25,139 @@ import { AppCard } from "@/components/ui/AppCard";
 import { PrimaryButton, SecondaryButton } from "@/components/ui/Button";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { getColors, spacing } from "@/lib/ui/theme";
+import { useBootstrap } from "@/lib/useBootstrap";
+import { subscribeEventDoc, updateEventDoc, type EventDoc } from "@/lib/db/eventRepo";
+import { subscribeMembersBySociety, type MemberDoc } from "@/lib/db/memberRepo";
+import { subscribeCoursesBySociety, type CourseDoc } from "@/lib/db/courseRepo";
+import { subscribeTeesetsBySociety, type TeeSetDoc } from "@/lib/db/teesetRepo";
 
-const EVENTS_KEY = STORAGE_KEYS.EVENTS;
-const MEMBERS_KEY = STORAGE_KEYS.MEMBERS;
-const COURSES_KEY = STORAGE_KEYS.COURSES;
-
-type EventData = {
-  id: string;
-  name: string;
-  date: string;
-  courseName: string;
-  courseId?: string;
-  maleTeeSetId?: string;
-  femaleTeeSetId?: string;
-  handicapAllowance?: 0.9 | 1.0;
-  handicapAllowancePct?: number;
-  format: "Stableford" | "Strokeplay" | "Both";
-  playerIds?: string[];
-  isCompleted?: boolean;
-  completedAt?: string;
-  resultsStatus?: "draft" | "published";
-  publishedAt?: string;
-  resultsUpdatedAt?: string;
-  isOOM?: boolean;
-  winnerId?: string;
-  winnerName?: string;
-  handicapSnapshot?: { [memberId: string]: number };
-  results?: {
-    [memberId: string]: {
-      grossScore: number;
-      netScore?: number;
-      stableford?: number;
-      strokeplay?: number;
-    };
-  };
-};
-
-type MemberData = {
-  id: string;
-  name: string;
-  handicap?: number;
-  sex?: "male" | "female";
-};
+type EventData = EventDoc;
+type MemberData = MemberDoc;
+type CourseWithTees = CourseDoc & { teeSets: TeeSetDoc[] };
 
 export default function EventResultsScreen() {
   const { id: eventId } = useLocalSearchParams<{ id: string }>();
+  const { user } = useBootstrap();
   const [event, setEvent] = useState<EventData | null>(null);
   const [members, setMembers] = useState<MemberData[]>([]);
   const [selectedPlayers, setSelectedPlayers] = useState<MemberData[]>([]);
   const [results, setResults] = useState<{ [memberId: string]: { stableford?: string; strokeplay?: string } }>({});
-  const [loading, setLoading] = useState(true);
-  const [role, setRole] = useState<"admin" | "member">("member");
+  const [loadingEvent, setLoadingEvent] = useState(true);
+  const [loadingMembers, setLoadingMembers] = useState(true);
+  const [loadingCourses, setLoadingCourses] = useState(true);
+  const [loadingTeesets, setLoadingTeesets] = useState(true);
   const [canEdit, setCanEdit] = useState(false);
-  const [courses, setCourses] = useState<Course[]>([]);
-  const [selectedCourse, setSelectedCourse] = useState<Course | null>(null);
-  const [selectedMaleTeeSet, setSelectedMaleTeeSet] = useState<TeeSet | null>(null);
-  const [selectedFemaleTeeSet, setSelectedFemaleTeeSet] = useState<TeeSet | null>(null);
+  const [courses, setCourses] = useState<CourseDoc[]>([]);
+  const [teeSets, setTeeSets] = useState<TeeSetDoc[]>([]);
+  const [selectedCourse, setSelectedCourse] = useState<CourseWithTees | null>(null);
+  const [selectedMaleTeeSet, setSelectedMaleTeeSet] = useState<TeeSetDoc | null>(null);
+  const [selectedFemaleTeeSet, setSelectedFemaleTeeSet] = useState<TeeSetDoc | null>(null);
 
-  useFocusEffect(
-    useCallback(() => {
-      loadData();
-    }, [eventId])
+  const coursesWithTees = useMemo<CourseWithTees[]>(
+    () =>
+      courses.map((course) => ({
+        ...course,
+        teeSets: teeSets.filter((tee) => tee.courseId === course.id),
+      })),
+    [courses, teeSets]
   );
 
-  const loadData = async () => {
-    try {
-      // Load courses
-      const coursesData = await AsyncStorage.getItem(COURSES_KEY);
-      let loadedCourses: Course[] = [];
-      if (coursesData) {
-        loadedCourses = JSON.parse(coursesData);
-        setCourses(loadedCourses);
+  useEffect(() => {
+    if (!eventId) return;
+    setLoadingEvent(true);
+    const unsubscribe = subscribeEventDoc(eventId, (doc) => {
+      setEvent(doc);
+      if (doc?.results) {
+        const resultsMap: { [memberId: string]: { stableford?: string; strokeplay?: string } } = {};
+        Object.entries(doc.results).forEach(([memberId, result]) => {
+          resultsMap[memberId] = {
+            stableford: result.stableford?.toString() || result.grossScore?.toString(),
+            strokeplay: result.strokeplay?.toString() || result.grossScore?.toString(),
+          };
+        });
+        setResults(resultsMap);
       }
+      setLoadingEvent(false);
+    });
+    return () => unsubscribe();
+  }, [eventId]);
 
-      // Load event
-      const eventsData = await AsyncStorage.getItem(EVENTS_KEY);
-      let currentEvent: EventData | null = null;
-      if (eventsData) {
-        const allEvents: EventData[] = JSON.parse(eventsData);
-        currentEvent = allEvents.find((e) => e.id === eventId) || null;
-        if (currentEvent) {
-          setEvent(currentEvent);
-          // Load existing results
-          if (currentEvent.results) {
-            const resultsMap: { [memberId: string]: { stableford?: string; strokeplay?: string } } = {};
-            Object.entries(currentEvent.results).forEach(([memberId, result]) => {
-              resultsMap[memberId] = {
-                stableford: result.stableford?.toString() || result.grossScore?.toString(),
-                strokeplay: result.strokeplay?.toString() || result.grossScore?.toString(),
-              };
-            });
-            setResults(resultsMap);
-          }
-
-          // Load course and tee sets
-          if (currentEvent.courseId) {
-            const course = loadedCourses.find((c) => c.id === currentEvent!.courseId);
-            if (course) {
-              setSelectedCourse(course);
-              if (currentEvent.maleTeeSetId) {
-                const maleTee = course.teeSets.find((t) => t.id === currentEvent!.maleTeeSetId);
-                setSelectedMaleTeeSet(maleTee || null);
-              }
-              if (currentEvent.femaleTeeSetId) {
-                const femaleTee = course.teeSets.find((t) => t.id === currentEvent!.femaleTeeSetId);
-                setSelectedFemaleTeeSet(femaleTee || null);
-              }
-            }
-          }
-        }
-      }
-
-      // Load members
-      const membersData = await AsyncStorage.getItem(MEMBERS_KEY);
-      if (membersData) {
-        const allMembers: MemberData[] = JSON.parse(membersData);
-        setMembers(allMembers);
-
-        // Filter to only selected players (use currentEvent from above, not event state)
-        if (currentEvent?.playerIds && currentEvent.playerIds.length > 0) {
-          const players = allMembers.filter((m) => currentEvent!.playerIds!.includes(m.id));
-          setSelectedPlayers(players);
-        } else {
-          // If no players selected, show all members
-          setSelectedPlayers(allMembers);
-        }
-      }
-
-      // Load session (single source of truth)
-      const session = await getSession();
-      setRole(session.role);
-      
-      // Check permissions using pure functions
-      const sessionRole = normalizeSessionRole(session.role);
-      const roles = normalizeMemberRoles(await getCurrentUserRoles());
-      const canEnter = canEnterScores(sessionRole, roles);
-      setCanEdit(canEnter);
-      
-      // Block unauthorized access - redirect if not authorized
-      if (!canEnter) {
-        Alert.alert("Access Denied", "Only Captain, Secretary, or Handicapper can enter results", [
-          { text: "OK", onPress: () => router.back() },
-        ]);
-      }
-    } catch (error) {
-      console.error("Error loading data:", error);
-      Alert.alert("Error", "Failed to load data");
-    } finally {
-      setLoading(false);
+  useEffect(() => {
+    if (!user?.activeSocietyId) {
+      setMembers([]);
+      setLoadingMembers(false);
+      return;
     }
-  };
+    setLoadingMembers(true);
+    const unsubscribe = subscribeMembersBySociety(user.activeSocietyId, (items) => {
+      setMembers(items);
+      setLoadingMembers(false);
+    });
+    return () => unsubscribe();
+  }, [user?.activeSocietyId]);
+
+  useEffect(() => {
+    if (!user?.activeSocietyId) {
+      setCourses([]);
+      setTeeSets([]);
+      setLoadingCourses(false);
+      setLoadingTeesets(false);
+      return;
+    }
+    setLoadingCourses(true);
+    setLoadingTeesets(true);
+    const unsubscribeCourses = subscribeCoursesBySociety(user.activeSocietyId, (items) => {
+      setCourses(items);
+      setLoadingCourses(false);
+    });
+    const unsubscribeTees = subscribeTeesetsBySociety(user.activeSocietyId, (items) => {
+      setTeeSets(items);
+      setLoadingTeesets(false);
+    });
+    return () => {
+      unsubscribeCourses();
+      unsubscribeTees();
+    };
+  }, [user?.activeSocietyId]);
+
+  useEffect(() => {
+    if (!event) return;
+    const course = coursesWithTees.find((c) => c.id === event.courseId) || null;
+    setSelectedCourse(course);
+    if (course && event.maleTeeSetId) {
+      setSelectedMaleTeeSet(course.teeSets.find((t) => t.id === event.maleTeeSetId) || null);
+    } else {
+      setSelectedMaleTeeSet(null);
+    }
+    if (course && event.femaleTeeSetId) {
+      setSelectedFemaleTeeSet(course.teeSets.find((t) => t.id === event.femaleTeeSetId) || null);
+    } else {
+      setSelectedFemaleTeeSet(null);
+    }
+  }, [coursesWithTees, event]);
+
+  useEffect(() => {
+    if (!event) return;
+    if (event.playerIds && event.playerIds.length > 0) {
+      const players = members.filter((m) => event.playerIds!.includes(m.id));
+      setSelectedPlayers(players);
+    } else {
+      setSelectedPlayers(members);
+    }
+  }, [event, members]);
+
+  useEffect(() => {
+    const currentMember = members.find((m) => m.id === user?.activeMemberId) || null;
+    const sessionRole = normalizeSessionRole("member");
+    const roles = normalizeMemberRoles(currentMember?.roles);
+    const canEnter = canEnterScores(sessionRole, roles);
+    setCanEdit(canEnter);
+    if (!canEnter) {
+      Alert.alert("Access Denied", "Only Captain, Secretary, or Handicapper can enter results", [
+        { text: "OK", onPress: () => router.back() },
+      ]);
+    }
+  }, [members, router, user?.activeMemberId]);
 
   // Constants for validation
   const STABLEFORD_MIN = 0;
@@ -265,10 +242,9 @@ export default function EventResultsScreen() {
       return;
     }
     
-    // Double-check permission at write time (defense in depth)
-    const session = await getSession();
-    const sessionRole = normalizeSessionRole(session.role);
-    const roles = normalizeMemberRoles(await getCurrentUserRoles());
+    const currentMember = members.find((m) => m.id === user?.activeMemberId) || null;
+    const sessionRole = normalizeSessionRole("member");
+    const roles = normalizeMemberRoles(currentMember?.roles);
     const canEnter = canEnterScores(sessionRole, roles);
     
     if (!canEnter) {
@@ -337,13 +313,6 @@ export default function EventResultsScreen() {
     }
 
     try {
-      const eventsData = await AsyncStorage.getItem(EVENTS_KEY);
-      if (!eventsData) {
-        Alert.alert("Error", "Event not found");
-        return;
-      }
-
-      const allEvents: EventData[] = JSON.parse(eventsData);
       const winner = calculateWinner();
 
       // Build results object with format-specific scores
@@ -391,21 +360,13 @@ export default function EventResultsScreen() {
       });
 
       // Save as DRAFT only (not published)
-      const updatedEvents = allEvents.map((e) =>
-        e.id === event.id
-          ? {
-              ...e,
-              results: resultsObj,
-              winnerId: winner?.memberId,
-              winnerName: winner?.memberName,
-              resultsStatus: "draft" as const,
-              resultsUpdatedAt: new Date().toISOString(),
-              // Don't mark as completed until published
-            }
-          : e
-      );
-
-      await AsyncStorage.setItem(EVENTS_KEY, JSON.stringify(updatedEvents));
+      await updateEventDoc(event.id, {
+        results: resultsObj,
+        winnerId: winner?.memberId,
+        winnerName: winner?.memberName,
+        resultsStatus: "draft",
+        resultsUpdatedAt: new Date().toISOString(),
+      });
       Alert.alert("Success", "Draft saved — not counted in Order of Merit until published");
       router.back();
     } catch (error) {
@@ -420,10 +381,9 @@ export default function EventResultsScreen() {
       return;
     }
     
-    // Double-check permission at write time
-    const session = await getSession();
-    const sessionRole = normalizeSessionRole(session.role);
-    const roles = normalizeMemberRoles(await getCurrentUserRoles());
+    const currentMember = members.find((m) => m.id === user?.activeMemberId) || null;
+    const sessionRole = normalizeSessionRole("member");
+    const roles = normalizeMemberRoles(currentMember?.roles);
     const canEnter = canEnterScores(sessionRole, roles);
     
     if (!canEnter) {
@@ -454,26 +414,12 @@ export default function EventResultsScreen() {
     }
 
     try {
-      const eventsData = await AsyncStorage.getItem(EVENTS_KEY);
-      if (!eventsData) {
-        Alert.alert("Error", "Event not found");
-        return;
-      }
-
-      const allEvents: EventData[] = JSON.parse(eventsData);
-      const updatedEvents = allEvents.map((e) =>
-        e.id === event.id
-          ? {
-              ...e,
-              resultsStatus: "published" as const,
-              publishedAt: new Date().toISOString(),
-              isCompleted: true,
-              completedAt: new Date().toISOString(),
-            }
-          : e
-      );
-
-      await AsyncStorage.setItem(EVENTS_KEY, JSON.stringify(updatedEvents));
+      await updateEventDoc(event.id, {
+        resultsStatus: "published",
+        publishedAt: new Date().toISOString(),
+        isCompleted: true,
+        completedAt: new Date().toISOString(),
+      });
       Alert.alert("Success", "Results published — Order of Merit updated");
       router.back();
     } catch (error) {
@@ -510,6 +456,8 @@ export default function EventResultsScreen() {
     }
     return scores.sort((a, b) => a.score - b.score).slice(0, 3);
   };
+
+  const loading = loadingEvent || loadingMembers || loadingCourses || loadingTeesets;
 
   if (loading) {
     return (

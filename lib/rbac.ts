@@ -6,16 +6,10 @@
  * Output: Permissions object with boolean flags
  */
 
-import { getSession } from "./session";
-import { getCurrentUserRoles } from "./roles";
-import { 
-  normalizeSessionRole, 
-  normalizeMemberRoles,
-  type SessionRole,
-  type MemberRole 
-} from "./permissions";
-import { STORAGE_KEYS } from "./storage";
-import AsyncStorage from "@react-native-async-storage/async-storage";
+import { ensureSignedIn } from "@/lib/firebase";
+import { getUserDoc } from "@/lib/db/userRepo";
+import { getMemberDoc } from "@/lib/db/memberRepo";
+import { normalizeMemberRoles, type MemberRole, type SessionRole } from "./permissions";
 
 export type Permissions = {
   canManageRoles: boolean;        // Captain only
@@ -32,20 +26,32 @@ export type Permissions = {
   isHandicapper: boolean;           // Is Handicapper
 };
 
+function sessionRoleFromRoles(roles: MemberRole[]): SessionRole {
+  if (roles.includes("Captain")) {
+    return "ADMIN";
+  }
+  return "MEMBER";
+}
+
 /**
  * Get current user's permissions
  * Returns all false if not loaded yet (safe default)
  */
 export async function getPermissions(): Promise<Permissions> {
   try {
-    const session = await getSession();
-    if (!session.currentUserId) {
+    const uid = await ensureSignedIn();
+    const user = await getUserDoc(uid);
+    if (!user?.activeMemberId) {
       return getDefaultPermissions();
     }
 
-    const sessionRole = normalizeSessionRole(session.role);
-    const rawRoles = await getCurrentUserRoles();
-    const roles = normalizeMemberRoles(rawRoles);
+    const member = await getMemberDoc(user.activeMemberId);
+    if (!member) {
+      return getDefaultPermissions();
+    }
+
+    const roles = normalizeMemberRoles(member.roles);
+    const sessionRole = sessionRoleFromRoles(roles);
 
     return {
       canManageRoles: sessionRole === "ADMIN" || roles.includes("Captain"),
@@ -72,26 +78,24 @@ export async function getPermissions(): Promise<Permissions> {
  */
 export async function getPermissionsForMember(memberId: string): Promise<Permissions> {
   try {
-    const session = await getSession();
-    if (!session.currentUserId) {
+    const uid = await ensureSignedIn();
+    const user = await getUserDoc(uid);
+    if (!user?.activeMemberId) {
       return getDefaultPermissions();
     }
 
-    // Load member data
-    const membersData = await AsyncStorage.getItem(STORAGE_KEYS.MEMBERS);
-    if (!membersData) {
+    const currentMember = await getMemberDoc(user.activeMemberId);
+    if (!currentMember) {
       return getDefaultPermissions();
     }
 
-    const members: Array<{ id: string; roles?: unknown }> = JSON.parse(membersData);
-    const member = members.find((m) => m.id === memberId);
-    
-    if (!member) {
+    const targetMember = await getMemberDoc(memberId);
+    if (!targetMember) {
       return getDefaultPermissions();
     }
 
-    const sessionRole = normalizeSessionRole(session.role);
-    const roles = normalizeMemberRoles(member.roles);
+    const sessionRole = sessionRoleFromRoles(normalizeMemberRoles(currentMember.roles));
+    const roles = normalizeMemberRoles(targetMember.roles);
 
     return {
       canManageRoles: sessionRole === "ADMIN" || roles.includes("Captain"),
@@ -117,11 +121,12 @@ export async function getPermissionsForMember(memberId: string): Promise<Permiss
  * Check if current user can edit a specific member
  */
 export async function canEditMember(targetMemberId: string): Promise<boolean> {
-  const session = await getSession();
-  if (!session.currentUserId) return false;
-  
+  const uid = await ensureSignedIn();
+  const user = await getUserDoc(uid);
+  if (!user?.activeMemberId) return false;
+
   // Can edit own profile
-  if (session.currentUserId === targetMemberId) return true;
+  if (user.activeMemberId === targetMemberId) return true;
   
   // Can edit others if has canManageMembers permission
   const permissions = await getPermissions();

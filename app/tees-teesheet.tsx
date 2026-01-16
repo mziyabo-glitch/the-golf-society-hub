@@ -4,17 +4,13 @@
  * - Members can view tee sheet
  */
 
-import { STORAGE_KEYS } from "@/lib/storage";
 import type { Course, TeeSet, EventData, MemberData } from "@/lib/models";
 import { getPlayingHandicap, getCourseHandicap } from "@/lib/handicap";
 import { formatDateDDMMYYYY } from "@/utils/date";
 import { getPermissions, type Permissions } from "@/lib/rbac";
 import { guard } from "@/lib/guards";
-import { getArray, ensureArray } from "@/lib/storage-helpers";
-import AsyncStorage from "@react-native-async-storage/async-storage";
-import { useFocusEffect } from "@react-navigation/native";
 import { router } from "expo-router";
-import { useCallback, useState, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Alert, Pressable, StyleSheet, TextInput, View, Modal, Platform, ActivityIndicator, Text } from "react-native";
 import { Screen } from "@/components/ui/Screen";
 import { SectionHeader } from "@/components/ui/SectionHeader";
@@ -26,22 +22,28 @@ import { SocietyHeader } from "@/components/ui/SocietyHeader";
 import { getColors, spacing } from "@/lib/ui/theme";
 import * as Print from "expo-print";
 import * as Sharing from "expo-sharing";
-
-const COURSES_KEY = STORAGE_KEYS.COURSES;
-const EVENTS_KEY = STORAGE_KEYS.EVENTS;
-const MEMBERS_KEY = STORAGE_KEYS.MEMBERS;
+import { useBootstrap } from "@/lib/useBootstrap";
+import { subscribeCoursesBySociety, type CourseDoc } from "@/lib/db/courseRepo";
+import { subscribeTeesetsBySociety, type TeeSetDoc } from "@/lib/db/teesetRepo";
+import { subscribeMembersBySociety, type MemberDoc } from "@/lib/db/memberRepo";
+import { subscribeEventsBySociety, updateEventDoc, type EventDoc } from "@/lib/db/eventRepo";
+import { subscribeSocietyDoc } from "@/lib/db/societyRepo";
 
 type TabType = "tees" | "teesheet";
 
+type CourseWithTees = CourseDoc & { teeSets: TeeSetDoc[] };
+
 export default function TeesTeeSheetScreen() {
+  const { user } = useBootstrap();
   const [permissions, setPermissions] = useState<Permissions | null>(null);
   const [permissionsLoading, setPermissionsLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<TabType>("tees");
-  const [courses, setCourses] = useState<Course[]>([]);
-  const [events, setEvents] = useState<EventData[]>([]);
-  const [members, setMembers] = useState<MemberData[]>([]);
-  const [selectedCourse, setSelectedCourse] = useState<Course | null>(null);
-  const [selectedEvent, setSelectedEvent] = useState<EventData | null>(null);
+  const [courses, setCourses] = useState<CourseDoc[]>([]);
+  const [teeSets, setTeeSets] = useState<TeeSetDoc[]>([]);
+  const [events, setEvents] = useState<EventDoc[]>([]);
+  const [members, setMembers] = useState<MemberDoc[]>([]);
+  const [selectedCourse, setSelectedCourse] = useState<CourseWithTees | null>(null);
+  const [selectedEvent, setSelectedEvent] = useState<EventDoc | null>(null);
   const [selectedMaleTeeSet, setSelectedMaleTeeSet] = useState<TeeSet | null>(null);
   const [selectedFemaleTeeSet, setSelectedFemaleTeeSet] = useState<TeeSet | null>(null);
   const [handicapAllowancePct, setHandicapAllowancePct] = useState<number>(100);
@@ -79,12 +81,18 @@ export default function TeesTeeSheetScreen() {
   // Derived permission flag
   const canManageTeeSheet = permissions?.canManageTeeSheet ?? false;
 
-  useFocusEffect(
-    useCallback(() => {
-      loadPermissions();
-      loadData();
-    }, [])
+  const coursesWithTees = useMemo<CourseWithTees[]>(
+    () =>
+      courses.map((course) => ({
+        ...course,
+        teeSets: teeSets.filter((tee) => tee.courseId === course.id),
+      })),
+    [courses, teeSets]
   );
+
+  useEffect(() => {
+    loadPermissions();
+  }, [user?.activeMemberId]);
 
   const loadPermissions = async () => {
     try {
@@ -99,36 +107,42 @@ export default function TeesTeeSheetScreen() {
     }
   };
 
-  const loadData = async () => {
-    try {
-      // Load society (for logo and name)
-      const societyData = await AsyncStorage.getItem(STORAGE_KEYS.SOCIETY_ACTIVE);
-      if (societyData) {
-        try {
-          const loaded = JSON.parse(societyData);
-          setSociety(loaded);
-        } catch (e) {
-          console.error("Error parsing society data:", e);
-        }
-      }
-
-      // Load courses
-      const loadedCourses = await getArray<Course>(COURSES_KEY, []);
-      setCourses(loadedCourses);
-
-      // Load events
-      const loadedEvents = await getArray<EventData>(EVENTS_KEY, []);
-      setEvents(loadedEvents);
-
-      // Load members
-      const loadedMembers = await getArray<MemberData>(MEMBERS_KEY, []);
-      setMembers(loadedMembers);
-    } catch (error) {
-      console.error("Error loading data:", error);
+  useEffect(() => {
+    if (!user?.activeSocietyId) {
+      setSociety(null);
+      setCourses([]);
+      setTeeSets([]);
+      setEvents([]);
+      setMembers([]);
+      return;
     }
-  };
 
-  const handleSelectCourse = (course: Course) => {
+    const unsubscribeSociety = subscribeSocietyDoc(user.activeSocietyId, (doc) => {
+      setSociety(doc ? { name: doc.name, logoUrl: doc.logoUrl ?? undefined } : null);
+    });
+    const unsubscribeCourses = subscribeCoursesBySociety(user.activeSocietyId, (items) => {
+      setCourses(items);
+    });
+    const unsubscribeTees = subscribeTeesetsBySociety(user.activeSocietyId, (items) => {
+      setTeeSets(items);
+    });
+    const unsubscribeEvents = subscribeEventsBySociety(user.activeSocietyId, (items) => {
+      setEvents(items);
+    });
+    const unsubscribeMembers = subscribeMembersBySociety(user.activeSocietyId, (items) => {
+      setMembers(items);
+    });
+
+    return () => {
+      unsubscribeSociety();
+      unsubscribeCourses();
+      unsubscribeTees();
+      unsubscribeEvents();
+      unsubscribeMembers();
+    };
+  }, [user?.activeSocietyId]);
+
+  const handleSelectCourse = (course: CourseWithTees) => {
     setSelectedCourse(course);
     // Find tee sets for this course
     const maleTee = course.teeSets.find((t) => t.appliesTo === "male");
@@ -150,7 +164,7 @@ export default function TeesTeeSheetScreen() {
 
     // Load course and tee sets for this event
     if (event.courseId) {
-      const course = courses.find((c) => c.id === event.courseId);
+      const course = coursesWithTees.find((c) => c.id === event.courseId);
       if (course) {
         setSelectedCourse(course);
         if (event.maleTeeSetId) {
@@ -212,22 +226,14 @@ export default function TeesTeeSheetScreen() {
     }
 
     try {
-      const updatedEvents = events.map((e) =>
-        e.id === selectedEvent.id
-          ? {
-              ...e,
-              courseId: selectedCourse.id,
-              maleTeeSetId: selectedMaleTeeSet.id,
-              femaleTeeSetId: selectedFemaleTeeSet.id,
-              handicapAllowancePct: handicapAllowancePct,
-              handicapAllowance: handicapAllowancePct === 100 ? 1.0 : 0.9,
-              courseName: selectedCourse.name, // Keep for backward compat
-            }
-          : e
-      );
-
-      await AsyncStorage.setItem(EVENTS_KEY, JSON.stringify(updatedEvents));
-      await loadData();
+      await updateEventDoc(selectedEvent.id, {
+        courseId: selectedCourse.id,
+        maleTeeSetId: selectedMaleTeeSet.id,
+        femaleTeeSetId: selectedFemaleTeeSet.id,
+        handicapAllowancePct: handicapAllowancePct,
+        handicapAllowance: handicapAllowancePct === 100 ? 1.0 : 0.9,
+        courseName: selectedCourse.name,
+      });
       Alert.alert("Success", "Tee sets saved for event");
     } catch (error) {
       console.error("Error saving tees:", error);
@@ -357,25 +363,17 @@ export default function TeesTeeSheetScreen() {
       const startDate = new Date();
       startDate.setHours(hours, minutes, 0, 0);
 
-      const updatedEvents = events.map((e) =>
-        e.id === selectedEvent.id
-          ? {
-              ...e,
-              teeSheet: {
-                startTimeISO: startDate.toISOString(),
-                intervalMins: intervalMins,
-                groups: teeGroups,
-              },
-              guests: guests, // Save guests with event
-              teeSheetNotes: teeSheetNotes.trim() || undefined,
-              nearestToPinHoles: nearestToPinHoles.length > 0 ? [...nearestToPinHoles].sort((a, b) => a - b) : undefined,
-              longestDriveHoles: longestDriveHoles.length > 0 ? [...longestDriveHoles].sort((a, b) => a - b) : undefined,
-            }
-          : e
-      );
-
-      await AsyncStorage.setItem(EVENTS_KEY, JSON.stringify(updatedEvents));
-      await loadData();
+      await updateEventDoc(selectedEvent.id, {
+        teeSheet: {
+          startTimeISO: startDate.toISOString(),
+          intervalMins: intervalMins,
+          groups: teeGroups,
+        },
+        guests: guests,
+        teeSheetNotes: teeSheetNotes.trim() || undefined,
+        nearestToPinHoles: nearestToPinHoles.length > 0 ? [...nearestToPinHoles].sort((a, b) => a - b) : undefined,
+        longestDriveHoles: longestDriveHoles.length > 0 ? [...longestDriveHoles].sort((a, b) => a - b) : undefined,
+      });
       Alert.alert("Success", "Tee sheet saved");
     } catch (error) {
       console.error("Error saving tee sheet:", error);
@@ -492,14 +490,10 @@ export default function TeesTeeSheetScreen() {
       const newRsvps: Record<string, string> = { ...selectedEvent.rsvps };
       members.forEach((member) => {
         if (selectedPlayerIds.has(member.id)) {
-          newRsvps[member.id] = "yes"; // Coming
+          newRsvps[member.id] = "going";
         }
       });
-      const updatedEvents = events.map((e) =>
-        e.id === selectedEvent.id ? { ...e, rsvps: newRsvps, guests } : e
-      );
-      await AsyncStorage.setItem(EVENTS_KEY, JSON.stringify(updatedEvents));
-      setEvents(updatedEvents);
+      await updateEventDoc(selectedEvent.id, { rsvps: newRsvps, guests });
     } catch (error) {
       console.error("Error saving RSVPs:", error);
     }
@@ -797,7 +791,7 @@ export default function TeesTeeSheetScreen() {
                   </View>
                 ) : (
                   <View style={styles.selectContainer}>
-                    {courses.map((course) => (
+                    {coursesWithTees.map((course) => (
                       <Pressable
                         key={course.id}
                         onPress={() => handleSelectCourse(course)}

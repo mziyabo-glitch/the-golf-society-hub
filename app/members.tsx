@@ -1,13 +1,12 @@
-import { useFocusEffect } from "@react-navigation/native";
 import { router } from "expo-router";
-import { useCallback, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Alert, ActivityIndicator, Pressable, StyleSheet, View } from "react-native";
-import { getSession, setCurrentUserId } from "@/lib/session";
 import { canManageMembers, normalizeMemberRoles, normalizeSessionRole } from "@/lib/permissions";
-import { ensureValidCurrentMember } from "@/lib/storage";
-import { STORAGE_KEYS } from "@/lib/storage";
 import { guard } from "@/lib/guards";
-import { setJson } from "@/lib/storage-helpers";
+import { useBootstrap } from "@/lib/useBootstrap";
+import { deleteMemberDoc, subscribeMembersBySociety, type MemberDoc } from "@/lib/db/memberRepo";
+import { subscribeEventsBySociety, type EventDoc } from "@/lib/db/eventRepo";
+import { setActiveMember } from "@/lib/db/userRepo";
 import { Screen } from "@/components/ui/Screen";
 import { SectionHeader } from "@/components/ui/SectionHeader";
 import { AppText } from "@/components/ui/AppText";
@@ -17,87 +16,81 @@ import { PrimaryButton, SecondaryButton, DestructiveButton } from "@/components/
 import { EmptyState } from "@/components/ui/EmptyState";
 import { Row } from "@/components/ui/Row";
 import { getColors, spacing } from "@/lib/ui/theme";
-import AsyncStorage from "@react-native-async-storage/async-storage";
-import type { EventData } from "@/lib/models";
 
-type MemberData = {
-  id: string;
-  name: string;
-  handicap?: number;
-  roles?: string[];
-  paid?: boolean;
-  amountPaid?: number;
-  paidDate?: string;
-};
-
-const EVENTS_KEY = STORAGE_KEYS.EVENTS;
+type MemberData = MemberDoc;
+type EventData = EventDoc;
 
 export default function MembersScreen() {
+  const { user } = useBootstrap();
   const [members, setMembers] = useState<MemberData[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [events, setEvents] = useState<EventData[]>([]);
+  const [loadingMembers, setLoadingMembers] = useState(true);
+  const [loadingEvents, setLoadingEvents] = useState(true);
   const [currentUserId, setCurrentUserIdState] = useState<string | null>(null);
   const [selectedMemberId, setSelectedMemberId] = useState<string | null>(null);
-  const [canManageMembersFlag, setCanManageMembersFlag] = useState(false);
-  const [nextUpcomingEvent, setNextUpcomingEvent] = useState<EventData | null>(null);
+  const canManageMembersFlag = useMemo(() => {
+    const current = members.find((m) => m.id === currentUserId) || null;
+    const sessionRole = normalizeSessionRole("member");
+    const memberRoles = normalizeMemberRoles(current?.roles);
+    return canManageMembers(sessionRole, memberRoles);
+  }, [members, currentUserId]);
 
-  useFocusEffect(
-    useCallback(() => {
-      loadMembers();
-    }, [])
-  );
+  useEffect(() => {
+    setCurrentUserIdState(user?.activeMemberId ?? null);
+  }, [user?.activeMemberId]);
 
-  const loadMembers = async () => {
-    try {
-      // Self-heal: ensure valid current member exists
-      const { members: healedMembers, currentUserId: healedUserId } = await ensureValidCurrentMember();
-      
-      setMembers(healedMembers);
-
-      // Load session (single source of truth)
-      const session = await getSession();
-      const effectiveUserId = healedUserId || session.currentUserId;
-      setCurrentUserIdState(effectiveUserId);
-
-      // Permissions should never block loading members; gate only editing UI/actions.
-      const current = healedMembers.find((m) => m.id === effectiveUserId) || null;
-      const sessionRole = normalizeSessionRole(session.role);
-      const memberRoles = normalizeMemberRoles(current?.roles);
-
-      // Dev-only unit-style check: ensure we didn't shadow the import again
-      if (__DEV__) {
-        // eslint-disable-next-line no-console
-        console.log("[Members] typeof canManageMembers:", typeof canManageMembers);
-      }
-
-      setCanManageMembersFlag(canManageMembers(sessionRole, memberRoles));
-
-      // Load events to find next upcoming event
-      const eventsData = await AsyncStorage.getItem(EVENTS_KEY);
-      if (eventsData) {
-        const allEvents: EventData[] = JSON.parse(eventsData);
-        const now = new Date();
-        const upcomingEvents = allEvents
-          .filter((e) => {
-            const eventDate = new Date(e.date);
-            return eventDate >= now && !e.isCompleted;
-          })
-          .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
-        
-        if (upcomingEvents.length > 0) {
-          setNextUpcomingEvent(upcomingEvents[0]);
-        }
-      }
-    } catch (error) {
-      console.error("Error loading members:", error);
-    } finally {
-      setLoading(false);
+  useEffect(() => {
+    if (!user?.activeSocietyId) {
+      setMembers([]);
+      setLoadingMembers(false);
+      return;
     }
-  };
+    setLoadingMembers(true);
+    const unsubscribe = subscribeMembersBySociety(user.activeSocietyId, (items) => {
+      setMembers(items);
+      setLoadingMembers(false);
+    });
+    return () => unsubscribe();
+  }, [user?.activeSocietyId]);
+
+  useEffect(() => {
+    if (!user?.activeSocietyId) {
+      setEvents([]);
+      setLoadingEvents(false);
+      return;
+    }
+    setLoadingEvents(true);
+    const unsubscribe = subscribeEventsBySociety(user.activeSocietyId, (items) => {
+      setEvents(items);
+      setLoadingEvents(false);
+    });
+    return () => unsubscribe();
+  }, [user?.activeSocietyId]);
+
+  useEffect(() => {
+    if (!user?.id) return;
+    if (!user.activeMemberId && members.length > 0) {
+      setActiveMember(user.id, members[0].id).catch((error) => {
+        console.error("Error setting default member:", error);
+      });
+    }
+  }, [members, user?.activeMemberId, user?.id]);
+
+  const nextUpcomingEvent = useMemo(() => {
+    const now = new Date();
+    const upcomingEvents = events
+      .filter((e) => {
+        const eventDate = new Date(e.date);
+        return eventDate >= now && !e.isCompleted;
+      })
+      .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+    return upcomingEvents.length > 0 ? upcomingEvents[0] : null;
+  }, [events]);
 
   const handleSetAsProfile = async (memberId: string) => {
     try {
-      await setCurrentUserId(memberId);
-      setCurrentUserIdState(memberId);
+      if (!user?.id) return;
+      await setActiveMember(user.id, memberId);
       setSelectedMemberId(null);
       Alert.alert("Success", "Profile set successfully");
     } catch (error) {
@@ -172,20 +165,11 @@ export default function MembersScreen() {
                 setSelectedMemberId(null);
               }
 
-              // Persist to storage
-              const success = await setJson(STORAGE_KEYS.MEMBERS, updatedMembers);
-              if (!success) {
-                // Rollback on failure
-                setMembers(members);
-                Alert.alert("Error", "Failed to save changes. Please try again.");
-                return;
-              }
+              await deleteMemberDoc(memberId);
 
-              // If removed member was current user, switch to first remaining member
-              if (memberId === currentUserId && updatedMembers.length > 0) {
-                const firstMember = updatedMembers[0];
-                await setCurrentUserId(firstMember.id);
-                setCurrentUserIdState(firstMember.id);
+              if (memberId === currentUserId && user?.id) {
+                const nextMember = updatedMembers[0] || null;
+                await setActiveMember(user.id, nextMember?.id ?? null);
               }
 
               Alert.alert("Success", `${targetMember.name} has been removed.`);
@@ -203,7 +187,7 @@ export default function MembersScreen() {
 
   const colors = getColors();
 
-  if (loading) {
+  if (loadingMembers || loadingEvents) {
     return (
       <Screen scrollable={false}>
         <View style={styles.centerContent}>

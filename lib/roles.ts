@@ -13,14 +13,12 @@
  * Manages member roles: captain, treasurer, secretary, handicapper, member, admin
  */
 
-import AsyncStorage from "@react-native-async-storage/async-storage";
-import { getSession } from "./session";
-import { STORAGE_KEYS } from "./storage";
+import { ensureSignedIn } from "@/lib/firebase";
+import { getUserDoc } from "@/lib/db/userRepo";
+import { getMemberDoc, listMembersBySociety } from "@/lib/db/memberRepo";
 
 export type MemberRole = "captain" | "treasurer" | "secretary" | "handicapper" | "member" | "admin";
 
-const MEMBERS_KEY = STORAGE_KEYS.MEMBERS;
-let migrationDone = false;
 
 export type MemberData = {
   id: string;
@@ -29,44 +27,6 @@ export type MemberData = {
   roles?: string[]; // Array of roles (member can have multiple) - using string[] for compatibility
 };
 
-/**
- * Migrate existing members to include roles field
- * Defaults to ["member"] if missing
- */
-async function migrateMemberRoles(): Promise<void> {
-  if (migrationDone) return;
-
-  try {
-    const membersData = await AsyncStorage.getItem(MEMBERS_KEY);
-    if (!membersData) {
-      migrationDone = true;
-      return;
-    }
-
-    const members: MemberData[] = JSON.parse(membersData);
-    let needsUpdate = false;
-
-    const migratedMembers = members.map((member) => {
-      if (!member.roles || member.roles.length === 0) {
-        needsUpdate = true;
-        return {
-          ...member,
-          roles: ["member"] as MemberRole[],
-        };
-      }
-      return member;
-    });
-
-    if (needsUpdate) {
-      await AsyncStorage.setItem(MEMBERS_KEY, JSON.stringify(migratedMembers));
-    }
-
-    migrationDone = true;
-  } catch (error) {
-    console.error("Error migrating member roles:", error);
-    migrationDone = true; // Prevent retry loops
-  }
-}
 
 /**
  * SYNC helper: Check if a member object has a specific role.
@@ -94,20 +54,12 @@ export function isAdminLike(member: MemberData | null): boolean {
  */
 export async function getMemberById(memberId: string): Promise<MemberData | null> {
   try {
-    await migrateMemberRoles(); // Ensure migration runs
-    
-    const membersData = await AsyncStorage.getItem(MEMBERS_KEY);
-    if (!membersData) return null;
-    
-    const members: MemberData[] = JSON.parse(membersData);
-    const member = members.find((m) => m.id === memberId) || null;
-    
-    // Ensure member has roles
-    if (member && (!member.roles || member.roles.length === 0)) {
-      return { ...member, roles: ["member"] };
-    }
-    
-    return member;
+    const member = await getMemberDoc(memberId);
+    if (!member) return null;
+    return {
+      ...member,
+      roles: member.roles && member.roles.length > 0 ? member.roles : ["member"],
+    };
   } catch (error) {
     console.error("Error loading member:", error);
     return null;
@@ -119,13 +71,10 @@ export async function getMemberById(memberId: string): Promise<MemberData | null
  */
 export async function getAllMembers(): Promise<MemberData[]> {
   try {
-    await migrateMemberRoles();
-    
-    const membersData = await AsyncStorage.getItem(MEMBERS_KEY);
-    if (!membersData) return [];
-    
-    const members: MemberData[] = JSON.parse(membersData);
-    // Ensure all members have roles
+    const uid = await ensureSignedIn();
+    const user = await getUserDoc(uid);
+    if (!user?.activeSocietyId) return [];
+    const members = await listMembersBySociety(user.activeSocietyId);
     return members.map((m) => ({
       ...m,
       roles: m.roles && m.roles.length > 0 ? m.roles : ["member"],
@@ -140,9 +89,10 @@ export async function getAllMembers(): Promise<MemberData[]> {
  * Get current user's member data
  */
 export async function getCurrentMember(): Promise<MemberData | null> {
-  const session = await getSession();
-  if (!session.currentUserId) return null;
-  return await getMemberById(session.currentUserId);
+  const uid = await ensureSignedIn();
+  const user = await getUserDoc(uid);
+  if (!user?.activeMemberId) return null;
+  return await getMemberById(user.activeMemberId);
 }
 
 /**

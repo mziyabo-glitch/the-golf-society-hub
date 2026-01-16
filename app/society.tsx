@@ -8,7 +8,6 @@
  * - Verify role badge shows on dashboard (e.g., "John Doe (Captain, Treasurer)")
  */
 
-import { InfoCard } from "@/components/ui/info-card";
 import { AppButton } from "@/components/ui/AppButton";
 import { PrimaryButton, SecondaryButton } from "@/components/ui/Button";
 import { SegmentedTabs } from "@/components/ui/SegmentedTabs";
@@ -22,161 +21,111 @@ import {
   normalizeMemberRoles,
   normalizeSessionRole,
 } from "@/lib/permissions";
-import { getCurrentUserRoles, hasManCoRole } from "@/lib/roles";
-import { getSession } from "@/lib/session";
-import { STORAGE_KEYS } from "@/lib/storage";
-import AsyncStorage from "@react-native-async-storage/async-storage";
-import { useFocusEffect } from "@react-navigation/native";
 import { router } from "expo-router";
-import { useCallback, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { ActivityIndicator, Pressable, StyleSheet, View } from "react-native";
 import { Screen } from "@/components/ui/Screen";
 import { AppText } from "@/components/ui/AppText";
 import { AppCard } from "@/components/ui/AppCard";
 import { SectionHeader } from "@/components/ui/SectionHeader";
 import { getColors, spacing } from "@/lib/ui/theme";
-
-const STORAGE_KEY = STORAGE_KEYS.SOCIETY_ACTIVE;
-const EVENTS_KEY = STORAGE_KEYS.EVENTS;
-const MEMBERS_KEY = STORAGE_KEYS.MEMBERS;
-const SCORES_KEY = STORAGE_KEYS.SCORES;
-const DRAFT_KEY = STORAGE_KEYS.SOCIETY_DRAFT;
-
-type SocietyData = {
-  name: string;
-  homeCourse: string;
-  country: string;
-  scoringMode: "Stableford" | "Strokeplay" | "Both";
-  handicapRule: "Allow WHS" | "Fixed HCP" | "No HCP";
-  logoUrl?: string | null;
-};
-
-type EventData = {
-  id: string;
-  name: string;
-  date: string;
-  courseName: string;
-  format: "Stableford" | "Strokeplay" | "Both";
-  playerIds?: string[];
-  isCompleted?: boolean;
-  completedAt?: string;
-  resultsStatus?: "draft" | "published";
-  publishedAt?: string;
-  resultsUpdatedAt?: string;
-  isOOM?: boolean;
-  winnerId?: string;
-  winnerName?: string;
-  handicapSnapshot?: { [memberId: string]: number };
-  rsvps?: {
-    [memberId: string]: "going" | "maybe" | "no";
-  };
-  results?: {
-    [memberId: string]: {
-      grossScore: number;
-      netScore?: number;
-      stableford?: number;
-      strokeplay?: number;
-    };
-  };
-};
-
-type MemberData = {
-  id: string;
-  name: string;
-  handicap?: number;
-};
-
-type ScoreData = {
-  stableford?: number;
-  strokeplay?: number;
-};
-
-type ScoresData = {
-  [eventId: string]: {
-    [memberId: string]: ScoreData;
-  };
-};
+import { useBootstrap } from "@/lib/useBootstrap";
+import { subscribeSocietyDoc, type SocietyDoc } from "@/lib/db/societyRepo";
+import { subscribeMembersBySociety, type MemberDoc } from "@/lib/db/memberRepo";
+import { subscribeEventsBySociety, type EventDoc } from "@/lib/db/eventRepo";
 
 export default function SocietyDashboardScreen() {
-  const [society, setSociety] = useState<SocietyData | null>(null);
-  const [events, setEvents] = useState<EventData[]>([]);
-  const [members, setMembers] = useState<MemberData[]>([]);
-  const [scores, setScores] = useState<ScoresData>({});
-  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
-  const [role, setRole] = useState<"admin" | "member">("member");
-  const [currentMember, setCurrentMember] = useState<MemberData | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [isManCo, setIsManCo] = useState(false);
-  const [canViewFinanceRole, setCanViewFinanceRole] = useState(false);
-  const [canEditVenueRole, setCanEditVenueRole] = useState(false);
-  const [canEditHandicapsRole, setCanEditHandicapsRole] = useState(false);
-  const [canCreateEventsRole, setCanCreateEventsRole] = useState(false);
-  const [canAssignRolesRole, setCanAssignRolesRole] = useState(false);
-  const [userRoles, setUserRoles] = useState<string[]>([]);
+  const { user } = useBootstrap();
+  const [society, setSociety] = useState<SocietyDoc | null>(null);
+  const [events, setEvents] = useState<EventDoc[]>([]);
+  const [members, setMembers] = useState<MemberDoc[]>([]);
+  const [currentMember, setCurrentMember] = useState<MemberDoc | null>(null);
+  const [loadingSociety, setLoadingSociety] = useState(true);
+  const [loadingMembers, setLoadingMembers] = useState(true);
+  const [loadingEvents, setLoadingEvents] = useState(true);
   const [activeTab, setActiveTab] = useState<string>("members");
 
-  useFocusEffect(
-    useCallback(() => {
-      loadData();
-    }, [])
+  useEffect(() => {
+    if (!user?.activeSocietyId) {
+      setSociety(null);
+      setLoadingSociety(false);
+      return;
+    }
+    setLoadingSociety(true);
+    const unsubscribe = subscribeSocietyDoc(user.activeSocietyId, (doc) => {
+      setSociety(doc);
+      setLoadingSociety(false);
+    });
+    return () => unsubscribe();
+  }, [user?.activeSocietyId]);
+
+  useEffect(() => {
+    if (!user?.activeSocietyId) {
+      setMembers([]);
+      setLoadingMembers(false);
+      return;
+    }
+    setLoadingMembers(true);
+    const unsubscribe = subscribeMembersBySociety(user.activeSocietyId, (items) => {
+      setMembers(items);
+      setLoadingMembers(false);
+    });
+    return () => unsubscribe();
+  }, [user?.activeSocietyId]);
+
+  useEffect(() => {
+    if (!user?.activeSocietyId) {
+      setEvents([]);
+      setLoadingEvents(false);
+      return;
+    }
+    setLoadingEvents(true);
+    const unsubscribe = subscribeEventsBySociety(user.activeSocietyId, (items) => {
+      setEvents(items);
+      setLoadingEvents(false);
+    });
+    return () => unsubscribe();
+  }, [user?.activeSocietyId]);
+
+  useEffect(() => {
+    if (!user?.activeMemberId) {
+      setCurrentMember(null);
+      return;
+    }
+    const member = members.find((m) => m.id === user.activeMemberId) || null;
+    setCurrentMember(member);
+  }, [members, user?.activeMemberId]);
+
+  const userRoles = useMemo(() => currentMember?.roles ?? ["member"], [currentMember?.roles]);
+  const normalizedSessionRole = useMemo(() => normalizeSessionRole("member"), []);
+  const normalizedRoles = useMemo(() => normalizeMemberRoles(userRoles), [userRoles]);
+
+  const isManCo = useMemo(
+    () => normalizedRoles.some((role) => role !== "Member"),
+    [normalizedRoles]
+  );
+  const canViewFinanceRole = useMemo(
+    () => canViewFinance(normalizedSessionRole, normalizedRoles),
+    [normalizedRoles, normalizedSessionRole]
+  );
+  const canEditVenueRole = useMemo(
+    () => canEditVenueInfo(normalizedSessionRole, normalizedRoles),
+    [normalizedRoles, normalizedSessionRole]
+  );
+  const canEditHandicapsRole = useMemo(
+    () => canEditHandicaps(normalizedSessionRole, normalizedRoles),
+    [normalizedRoles, normalizedSessionRole]
+  );
+  const canCreateEventsRole = useMemo(
+    () => canCreateEvents(normalizedSessionRole, normalizedRoles),
+    [normalizedRoles, normalizedSessionRole]
+  );
+  const canAssignRolesRole = useMemo(
+    () => canAssignRoles(normalizedSessionRole, normalizedRoles),
+    [normalizedRoles, normalizedSessionRole]
   );
 
-  const loadData = async () => {
-    try {
-      const societyData = await AsyncStorage.getItem(STORAGE_KEY);
-      if (societyData) {
-        setSociety(JSON.parse(societyData));
-      }
-
-      const eventsData = await AsyncStorage.getItem(EVENTS_KEY);
-      if (eventsData) {
-        setEvents(JSON.parse(eventsData));
-      }
-
-      const membersData = await AsyncStorage.getItem(MEMBERS_KEY);
-      const loadedMembers = membersData ? JSON.parse(membersData) : [];
-      setMembers(loadedMembers);
-
-      const scoresData = await AsyncStorage.getItem(SCORES_KEY);
-      if (scoresData) {
-        setScores(JSON.parse(scoresData));
-      }
-
-      // Load session (single source of truth)
-      const session = await getSession();
-      setCurrentUserId(session.currentUserId);
-      setRole(session.role);
-      
-      // Find member data from loaded members
-      if (session.currentUserId) {
-        const member = loadedMembers.find((m: MemberData) => m.id === session.currentUserId);
-        setCurrentMember(member || null);
-      } else {
-        setCurrentMember(null);
-      }
-
-      // Load current user roles for display
-      const roles = await getCurrentUserRoles();
-      setUserRoles(roles);
-      const normalizedSessionRole = normalizeSessionRole(session.role);
-      const normalizedRoles = normalizeMemberRoles(roles);
-
-      // Check role permissions
-      const manCo = await hasManCoRole();
-      setIsManCo(manCo);
-      setCanViewFinanceRole(canViewFinance(normalizedSessionRole, normalizedRoles));
-      setCanEditVenueRole(canEditVenueInfo(normalizedSessionRole, normalizedRoles));
-      setCanEditHandicapsRole(canEditHandicaps(normalizedSessionRole, normalizedRoles));
-      setCanCreateEventsRole(canCreateEvents(normalizedSessionRole, normalizedRoles));
-      setCanAssignRolesRole(canAssignRoles(normalizedSessionRole, normalizedRoles));
-    } catch (error) {
-      console.error("Error loading data:", error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const getNextEvent = (): EventData | null => {
+  const getNextEvent = (): EventDoc | null => {
     if (events.length === 0) return null;
     const now = new Date().getTime();
     const futureEvents = events
@@ -194,14 +143,14 @@ export default function SocietyDashboardScreen() {
     return futureEvents.length > 0 ? futureEvents[0] : null;
   };
 
-  const getLastEvent = (): EventData | null => {
+  const getLastEvent = (): EventDoc | null => {
     if (events.length === 0) return null;
     
     // Determine if event is completed:
     // - has isCompleted flag, OR
     // - has completedAt timestamp, OR
     // - has results (results exist means event was completed)
-    const isEventCompleted = (e: EventData): boolean => {
+    const isEventCompleted = (e: EventDoc): boolean => {
       if (e.isCompleted) return true;
       if (e.completedAt) return true;
       if (e.results && Object.keys(e.results).length > 0) return true;
@@ -242,56 +191,21 @@ export default function SocietyDashboardScreen() {
     return completedEvents[0];
   };
 
-  const getLastWinner = (event: EventData | null): { memberName: string } | null => {
-    if (!event || !scores[event.id]) return null;
-
-    const eventScores = scores[event.id];
-    const memberScores = members
-      .map((member) => {
-        const memberScore = eventScores[member.id];
-        if (!memberScore) return null;
-
-        let score: number | null = null;
-        let useStableford = false;
-
-        if (event.format === "Stableford" && memberScore.stableford !== undefined) {
-          score = memberScore.stableford;
-          useStableford = true;
-        } else if (event.format === "Strokeplay" && memberScore.strokeplay !== undefined) {
-          score = memberScore.strokeplay;
-          useStableford = false;
-        } else if (event.format === "Both") {
-          if (memberScore.stableford !== undefined) {
-            score = memberScore.stableford;
-            useStableford = true;
-          } else if (memberScore.strokeplay !== undefined) {
-            score = memberScore.strokeplay;
-            useStableford = false;
-          }
-        }
-
-        return score !== null ? { member, score, useStableford } : null;
-      })
-      .filter((item): item is { member: MemberData; score: number; useStableford: boolean } => item !== null);
-
-    if (memberScores.length === 0) return null;
-
-    const sorted = memberScores.sort((a, b) => {
-      if (a.useStableford) {
-        return b.score - a.score;
-      } else {
-        return a.score - b.score;
-      }
-    });
-
-    return {
-      memberName: sorted[0].member.name,
-    };
+  const getLastWinner = (event: EventDoc | null): { memberName: string } | null => {
+    if (!event) return null;
+    if (event.winnerName) {
+      return { memberName: event.winnerName };
+    }
+    if (event.winnerId) {
+      const member = members.find((m) => m.id === event.winnerId);
+      return member ? { memberName: member.name } : null;
+    }
+    return null;
   };
 
   const colors = getColors();
 
-  if (loading) {
+  if (loadingSociety || loadingMembers || loadingEvents) {
     return (
       <Screen scrollable={false}>
         <View style={styles.centerContent}>
@@ -322,7 +236,7 @@ export default function SocietyDashboardScreen() {
   const lastEvent = getLastEvent();
   const lastWinner = lastEvent ? getLastWinner(lastEvent) : null;
 
-  const isAdmin = role === "admin";
+  const isAdmin = normalizedRoles.includes("Captain");
 
   return (
     <Screen>
@@ -334,7 +248,7 @@ export default function SocietyDashboardScreen() {
                 <AppText variant="small" color="secondary" style={styles.userIndicator}>
                   {currentMember.name} {userRoles.length > 0 && userRoles.filter(r => r !== "member").length > 0 
                     ? `(${userRoles.filter(r => r !== "member").map(r => r.charAt(0).toUpperCase() + r.slice(1)).join(", ")})`
-                    : `(${role})`}
+                    : "(Member)"}
                 </AppText>
               ) : (
                 <Pressable

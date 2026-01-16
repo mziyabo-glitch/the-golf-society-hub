@@ -1,12 +1,11 @@
-import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useRouter } from "expo-router";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { Pressable, ScrollView, Text, TextInput, View } from "react-native";
 
-import { STORAGE_KEYS } from "@/lib/storage";
-
-const DRAFT_KEY = STORAGE_KEYS.SOCIETY_DRAFT;
-const ACTIVE_KEY = STORAGE_KEYS.SOCIETY_ACTIVE;
+import { ensureSignedIn } from "@/lib/firebase";
+import { createMember } from "@/lib/db/memberRepo";
+import { createSociety } from "@/lib/db/societyRepo";
+import { setActiveSocietyAndMember } from "@/lib/db/userRepo";
 
 type SocietyData = {
   name: string;
@@ -25,125 +24,32 @@ export default function CreateSocietyScreen() {
   const [scoringMode, setScoringMode] = useState<"Stableford" | "Strokeplay" | "Both">("Stableford");
   const [handicapRule, setHandicapRule] = useState<"Allow WHS" | "Fixed HCP" | "No HCP">("Allow WHS");
 
-  const hasLoadedDraft = useRef(false);
-
-  // Load draft on mount
-  useEffect(() => {
-    const loadDraft = async () => {
-      try {
-        const draftData = await AsyncStorage.getItem(DRAFT_KEY);
-        if (draftData) {
-          const draft: SocietyData = JSON.parse(draftData);
-          setSocietyName(draft.name || "");
-          setHomeCourse(draft.homeCourse || "");
-          setCountry(draft.country || "United Kingdom");
-          setScoringMode(draft.scoringMode || "Stableford");
-          setHandicapRule(draft.handicapRule || "Allow WHS");
-        }
-      } catch (error) {
-        console.error("Error loading draft:", error);
-      } finally {
-        hasLoadedDraft.current = true;
-      }
-    };
-    loadDraft();
-  }, []);
-
-  // Save draft whenever form values change (but not on initial load)
-  const saveDraft = useCallback(async () => {
-    if (!hasLoadedDraft.current) return;
-    
-    try {
-      const draftData: SocietyData = {
-        name: societyName,
-        homeCourse,
-        country,
-        scoringMode,
-        handicapRule,
-      };
-      await AsyncStorage.setItem(DRAFT_KEY, JSON.stringify(draftData));
-    } catch (error) {
-      console.error("Error saving draft:", error);
-    }
-  }, [societyName, homeCourse, country, scoringMode, handicapRule]);
-
-  useEffect(() => {
-    if (hasLoadedDraft.current) {
-      saveDraft();
-    }
-  }, [saveDraft]);
-
-  // Save draft on unmount to ensure data is persisted
-  useEffect(() => {
-    return () => {
-      if (hasLoadedDraft.current) {
-        saveDraft();
-      }
-    };
-  }, [saveDraft]);
-
   const clearDraft = async () => {
-    try {
-      await AsyncStorage.removeItem(DRAFT_KEY);
-      setSocietyName("");
-      setHomeCourse("");
-      setCountry("United Kingdom");
-      setScoringMode("Stableford");
-      setHandicapRule("Allow WHS");
-    } catch (error) {
-      console.error("Error clearing draft:", error);
-    }
+    setSocietyName("");
+    setHomeCourse("");
+    setCountry("United Kingdom");
+    setScoringMode("Stableford");
+    setHandicapRule("Allow WHS");
   };
 
   const handleNameChange = (text: string) => {
     setSocietyName(text);
-    if (hasLoadedDraft.current) {
-      saveDraftWithValues({ name: text });
-    }
   };
 
   const handleHomeCourseChange = (text: string) => {
     setHomeCourse(text);
-    if (hasLoadedDraft.current) {
-      saveDraftWithValues({ homeCourse: text });
-    }
   };
 
   const handleCountryChange = (text: string) => {
     setCountry(text);
-    if (hasLoadedDraft.current) {
-      saveDraftWithValues({ country: text });
-    }
   };
 
   const handleScoringModeChange = (mode: "Stableford" | "Strokeplay" | "Both") => {
     setScoringMode(mode);
-    if (hasLoadedDraft.current) {
-      saveDraftWithValues({ scoringMode: mode });
-    }
   };
 
   const handleHandicapRuleChange = (rule: "Allow WHS" | "Fixed HCP" | "No HCP") => {
     setHandicapRule(rule);
-    if (hasLoadedDraft.current) {
-      saveDraftWithValues({ handicapRule: rule });
-    }
-  };
-
-  // Helper function to save draft with updated values immediately
-  const saveDraftWithValues = async (updates: Partial<SocietyData>) => {
-    try {
-      const draftData: SocietyData = {
-        name: updates.name ?? societyName,
-        homeCourse: updates.homeCourse ?? homeCourse,
-        country: updates.country ?? country,
-        scoringMode: updates.scoringMode ?? scoringMode,
-        handicapRule: updates.handicapRule ?? handicapRule,
-      };
-      await AsyncStorage.setItem(DRAFT_KEY, JSON.stringify(draftData));
-    } catch (error) {
-      console.error("Error saving draft:", error);
-    }
   };
 
   const isFormValid = societyName.trim().length > 0;
@@ -160,24 +66,27 @@ export default function CreateSocietyScreen() {
     };
 
     try {
-      // Save active society
-      await AsyncStorage.setItem(ACTIVE_KEY, JSON.stringify(societyData));
-      // Clear draft after successful save
-      await AsyncStorage.removeItem(DRAFT_KEY);
-      
-      // Create first member (creator) automatically
-      const { ensureValidCurrentMember } = await import("@/lib/storage");
-      await ensureValidCurrentMember();
-      
-      // Set session role to admin for initial setup
-      const { setRole } = await import("@/lib/session");
-      await setRole("admin");
-      
-      // Navigate to dashboard
+      const uid = await ensureSignedIn();
+      const createdSociety = await createSociety({
+        name: societyData.name,
+        country: societyData.country,
+        createdBy: uid,
+        homeCourse: societyData.homeCourse,
+        scoringMode: societyData.scoringMode,
+        handicapRule: societyData.handicapRule,
+      });
+
+      const creator = await createMember({
+        societyId: createdSociety.id,
+        name: "Admin",
+        roles: ["captain", "admin"],
+        status: "active",
+      });
+
+      await setActiveSocietyAndMember(uid, createdSociety.id, creator.id);
       router.replace("/society");
     } catch (error) {
       console.error("Error saving society:", error);
-      // Show error to user (you can add an Alert here if needed)
     }
   };
 

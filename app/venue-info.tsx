@@ -5,28 +5,29 @@
  */
 
 import { canEditVenueInfo, canEditHandicaps, normalizeMemberRoles, normalizeSessionRole } from "@/lib/permissions";
-import { getCurrentUserRoles } from "@/lib/roles";
-import { getSession } from "@/lib/session";
-import { STORAGE_KEYS } from "@/lib/storage";
 import type { Course, TeeSet } from "@/lib/models";
-import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Linking } from "react-native";
-import { useFocusEffect } from "@react-navigation/native";
 import { router } from "expo-router";
-import { useCallback, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { useBootstrap } from "@/lib/useBootstrap";
+import { subscribeCoursesBySociety, createCourse, updateCourseDoc, deleteCourseDoc, type CourseDoc } from "@/lib/db/courseRepo";
+import { subscribeTeesetsBySociety, createTeeSet, updateTeeSetDoc, deleteTeeSetDoc, type TeeSetDoc } from "@/lib/db/teesetRepo";
+import { subscribeMemberDoc } from "@/lib/db/memberRepo";
 
-const COURSES_KEY = STORAGE_KEYS.COURSES;
+type CourseWithTees = CourseDoc & { teeSets: TeeSetDoc[] };
 
 export default function VenueInfoScreen() {
+  const { user } = useBootstrap();
   const [hasEditAccess, setHasEditAccess] = useState(false);
   const [canEditCourses, setCanEditCourses] = useState(false);
   const [canEditTeeSets, setCanEditTeeSets] = useState(false);
-  const [courses, setCourses] = useState<Course[]>([]);
-  const [selectedCourse, setSelectedCourse] = useState<Course | null>(null);
+  const [courses, setCourses] = useState<CourseDoc[]>([]);
+  const [teeSets, setTeeSets] = useState<TeeSetDoc[]>([]);
+  const [selectedCourseId, setSelectedCourseId] = useState<string | null>(null);
   const [isEditingCourse, setIsEditingCourse] = useState(false);
   const [isEditingTeeSet, setIsEditingTeeSet] = useState(false);
-  const [editingTeeSet, setEditingTeeSet] = useState<TeeSet | null>(null);
+  const [editingTeeSet, setEditingTeeSet] = useState<TeeSetDoc | null>(null);
   
   // Course form fields
   const [courseName, setCourseName] = useState("");
@@ -41,42 +42,57 @@ export default function VenueInfoScreen() {
   const [teeSlopeRating, setTeeSlopeRating] = useState("");
   const [teeAppliesTo, setTeeAppliesTo] = useState<"male" | "female">("male");
 
-  useFocusEffect(
-    useCallback(() => {
-      checkAccess();
-      loadCourses();
-    }, [])
+  const coursesWithTees = useMemo<CourseWithTees[]>(
+    () =>
+      courses.map((course) => ({
+        ...course,
+        teeSets: teeSets.filter((tee) => tee.courseId === course.id),
+      })),
+    [courses, teeSets]
   );
 
-  const checkAccess = async () => {
-    const session = await getSession();
-    const sessionRole = normalizeSessionRole(session.role);
-    const roles = normalizeMemberRoles(await getCurrentUserRoles());
-    const canEditCourse = canEditVenueInfo(sessionRole, roles); // Captain/Secretary
-    const canEditTees = canEditHandicaps(sessionRole, roles); // Captain/Handicapper
-    const hasAccess = canEditCourse || canEditTees; // Allow if can edit either
-    setHasEditAccess(hasAccess);
-    setCanEditCourses(canEditCourse);
-    setCanEditTeeSets(canEditTees);
-    
-    if (!hasAccess) {
-      Alert.alert("Access Denied", "Only Captain, Secretary, or Handicapper can access venue info", [
-        { text: "OK", onPress: () => router.back() },
-      ]);
-    }
-  };
+  const selectedCourse = useMemo(
+    () => coursesWithTees.find((course) => course.id === selectedCourseId) || null,
+    [coursesWithTees, selectedCourseId]
+  );
 
-  const loadCourses = async () => {
-    try {
-      const coursesData = await AsyncStorage.getItem(COURSES_KEY);
-      if (coursesData) {
-        const loaded: Course[] = JSON.parse(coursesData);
-        setCourses(loaded);
-      }
-    } catch (error) {
-      console.error("Error loading courses:", error);
+  useEffect(() => {
+    if (!user?.activeSocietyId) {
+      setCourses([]);
+      setTeeSets([]);
+      return;
     }
-  };
+    const unsubscribeCourses = subscribeCoursesBySociety(user.activeSocietyId, (items) => {
+      setCourses(items);
+    });
+    const unsubscribeTees = subscribeTeesetsBySociety(user.activeSocietyId, (items) => {
+      setTeeSets(items);
+    });
+    return () => {
+      unsubscribeCourses();
+      unsubscribeTees();
+    };
+  }, [user?.activeSocietyId]);
+
+  useEffect(() => {
+    if (!user?.activeMemberId) return;
+    const unsubscribe = subscribeMemberDoc(user.activeMemberId, (member) => {
+      const sessionRole = normalizeSessionRole("member");
+      const roles = normalizeMemberRoles(member?.roles);
+      const canEditCourse = canEditVenueInfo(sessionRole, roles);
+      const canEditTees = canEditHandicaps(sessionRole, roles);
+      const hasAccess = canEditCourse || canEditTees;
+      setHasEditAccess(hasAccess);
+      setCanEditCourses(canEditCourse);
+      setCanEditTeeSets(canEditTees);
+      if (!hasAccess) {
+        Alert.alert("Access Denied", "Only Captain, Secretary, or Handicapper can access venue info", [
+          { text: "OK", onPress: () => router.back() },
+        ]);
+      }
+    });
+    return () => unsubscribe();
+  }, [router, user?.activeMemberId]);
 
   const handleSaveCourse = async () => {
     if (!courseName.trim()) {
@@ -85,38 +101,31 @@ export default function VenueInfoScreen() {
     }
 
     try {
-      let updatedCourses: Course[];
+      if (!user?.activeSocietyId) {
+        Alert.alert("Error", "No active society found");
+        return;
+      }
+
       if (selectedCourse) {
-        // Update existing
-        updatedCourses = courses.map((c) =>
-          c.id === selectedCourse.id
-            ? {
-                ...c,
-                name: courseName.trim(),
-                address: courseAddress.trim() || undefined,
-                postcode: coursePostcode.trim() || undefined,
-                notes: courseNotes.trim() || undefined,
-                mapsUrl: c.mapsUrl, // Preserve existing
-              }
-            : c
-        );
-      } else {
-        // Create new
-        const newCourse: Course = {
-          id: Date.now().toString(),
+        await updateCourseDoc(selectedCourse.id, {
           name: courseName.trim(),
           address: courseAddress.trim() || undefined,
           postcode: coursePostcode.trim() || undefined,
           notes: courseNotes.trim() || undefined,
-          teeSets: [],
-        };
-        updatedCourses = [...courses, newCourse];
+        });
+      } else {
+        await createCourse({
+          societyId: user.activeSocietyId,
+          name: courseName.trim(),
+          address: courseAddress.trim() || undefined,
+          postcode: coursePostcode.trim() || undefined,
+          notes: courseNotes.trim() || undefined,
+          status: "active",
+        });
       }
 
-      await AsyncStorage.setItem(COURSES_KEY, JSON.stringify(updatedCourses));
-      await loadCourses();
       setIsEditingCourse(false);
-      setSelectedCourse(null);
+      setSelectedCourseId(null);
       resetCourseForm();
       Alert.alert("Success", selectedCourse ? "Course updated" : "Course created");
     } catch (error) {
@@ -138,10 +147,10 @@ export default function VenueInfoScreen() {
           style: "destructive",
           onPress: async () => {
             try {
-              const updatedCourses = courses.filter((c) => c.id !== selectedCourse.id);
-              await AsyncStorage.setItem(COURSES_KEY, JSON.stringify(updatedCourses));
-              await loadCourses();
-              setSelectedCourse(null);
+              const teesToDelete = teeSets.filter((t) => t.courseId === selectedCourse.id);
+              await Promise.all(teesToDelete.map((t) => deleteTeeSetDoc(t.id)));
+              await deleteCourseDoc(selectedCourse.id);
+              setSelectedCourseId(null);
               resetCourseForm();
             } catch (error) {
               console.error("Error deleting course:", error);
@@ -182,45 +191,33 @@ export default function VenueInfoScreen() {
     }
 
     try {
-      const updatedCourses = courses.map((c) => {
-        if (c.id !== selectedCourse.id) return c;
-        
-        let updatedTeeSets: TeeSet[];
-        if (editingTeeSet) {
-          // Update existing
-          updatedTeeSets = c.teeSets.map((t) =>
-            t.id === editingTeeSet.id
-              ? {
-                  ...t,
-                  teeColor: teeColor.trim(),
-                  par,
-                  courseRating,
-                  slopeRating,
-                  appliesTo: teeAppliesTo,
-                }
-              : t
-          );
-        } else {
-          // Create new
-          const newTeeSet: TeeSet = {
-            id: Date.now().toString(),
-            courseId: c.id,
-            teeColor: teeColor.trim(),
-            par,
-            courseRating,
-            slopeRating,
-            appliesTo: teeAppliesTo,
-          };
-          updatedTeeSets = [...c.teeSets, newTeeSet];
-        }
-        
-        return { ...c, teeSets: updatedTeeSets };
-      });
+      if (!user?.activeSocietyId) {
+        Alert.alert("Error", "No active society found");
+        return;
+      }
 
-      await AsyncStorage.setItem(COURSES_KEY, JSON.stringify(updatedCourses));
-      await loadCourses();
-      const updated = updatedCourses.find((c) => c.id === selectedCourse.id);
-      if (updated) setSelectedCourse(updated);
+      if (editingTeeSet) {
+        await updateTeeSetDoc(editingTeeSet.id, {
+          teeColor: teeColor.trim(),
+          name: teeColor.trim(),
+          par,
+          courseRating,
+          slopeRating,
+          appliesTo: teeAppliesTo,
+        });
+      } else {
+        await createTeeSet({
+          societyId: user.activeSocietyId,
+          courseId: selectedCourse.id,
+          name: teeColor.trim(),
+          teeColor: teeColor.trim(),
+          par,
+          courseRating,
+          slopeRating,
+          appliesTo: teeAppliesTo,
+        });
+      }
+
       setIsEditingTeeSet(false);
       setEditingTeeSet(null);
       resetTeeSetForm();
@@ -241,14 +238,7 @@ export default function VenueInfoScreen() {
         style: "destructive",
         onPress: async () => {
           try {
-            const updatedCourses = courses.map((c) => {
-              if (c.id !== selectedCourse.id) return c;
-              return { ...c, teeSets: c.teeSets.filter((t) => t.id !== teeSetId) };
-            });
-            await AsyncStorage.setItem(COURSES_KEY, JSON.stringify(updatedCourses));
-            await loadCourses();
-            const updated = updatedCourses.find((c) => c.id === selectedCourse.id);
-            if (updated) setSelectedCourse(updated);
+            await deleteTeeSetDoc(teeSetId);
           } catch (error) {
             console.error("Error deleting tee set:", error);
             Alert.alert("Error", "Failed to delete tee set");
@@ -273,8 +263,8 @@ export default function VenueInfoScreen() {
     setTeeAppliesTo("male");
   };
 
-  const startEditCourse = (course: Course) => {
-    setSelectedCourse(course);
+  const startEditCourse = (course: CourseWithTees) => {
+    setSelectedCourseId(course.id);
     setCourseName(course.name);
     setCourseAddress(course.address || "");
     setCoursePostcode(course.postcode || "");
@@ -282,7 +272,7 @@ export default function VenueInfoScreen() {
     setIsEditingCourse(true);
   };
 
-  const startEditTeeSet = (teeSet: TeeSet) => {
+  const startEditTeeSet = (teeSet: TeeSetDoc) => {
     setEditingTeeSet(teeSet);
     setTeeColor(teeSet.teeColor);
     setTeePar(teeSet.par.toString());
@@ -344,7 +334,7 @@ export default function VenueInfoScreen() {
               )}
             </View>
           ) : (
-            courses.map((course) => (
+            coursesWithTees.map((course) => (
               <View key={course.id} style={styles.courseCard}>
                 <View style={styles.courseHeader}>
                   <Text style={styles.courseName}>{course.name}</Text>
@@ -360,7 +350,7 @@ export default function VenueInfoScreen() {
                     {canEditTeeSets && (
                       <Pressable
                         onPress={() => {
-                          setSelectedCourse(course);
+                          setSelectedCourseId(course.id);
                           setIsEditingCourse(false);
                         }}
                         style={styles.editButton}
@@ -437,7 +427,7 @@ export default function VenueInfoScreen() {
                   <Pressable
                     onPress={() => {
                       setIsEditingCourse(false);
-                      setSelectedCourse(null);
+                      setSelectedCourseId(null);
                       resetCourseForm();
                     }}
                     style={styles.cancelButton}
@@ -460,7 +450,7 @@ export default function VenueInfoScreen() {
             ) : (
               <Pressable
                 onPress={() => {
-                  setSelectedCourse(null);
+                  setSelectedCourseId(null);
                   resetCourseForm();
                   setIsEditingCourse(true);
                 }}

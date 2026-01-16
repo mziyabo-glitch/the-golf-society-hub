@@ -234,18 +234,7 @@ export function getColor(key: keyof typeof colors.light): string {
  * Load theme from storage (use in screens with useFocusEffect)
  */
 export async function loadThemeFromStorage(): Promise<ThemeMode> {
-  try {
-    const { STORAGE_KEYS } = await import("@/lib/storage");
-    const AsyncStorage = (await import("@react-native-async-storage/async-storage")).default;
-    const stored = await AsyncStorage.getItem(STORAGE_KEYS.THEME_MODE);
-    if (stored === "light" || stored === "dark") {
-      setThemeMode(stored);
-      return stored;
-    }
-  } catch (error) {
-    console.error("[Theme] Error loading theme from storage:", error);
-  }
-  setThemeMode("light"); // Default to light
+  setThemeMode("light");
   return "light";
 }
 
@@ -253,13 +242,6 @@ export async function loadThemeFromStorage(): Promise<ThemeMode> {
  * Save theme to storage
  */
 export async function saveThemeToStorage(mode: ThemeMode): Promise<void> {
-  try {
-    const { STORAGE_KEYS } = await import("@/lib/storage");
-    const AsyncStorage = (await import("@react-native-async-storage/async-storage")).default;
-    await AsyncStorage.setItem(STORAGE_KEYS.THEME_MODE, mode);
-    setThemeMode(mode);
-  } catch (error) {
-    console.error("[Theme] Error saving theme to storage:", error);
-  }
+  setThemeMode(mode);
 }
 

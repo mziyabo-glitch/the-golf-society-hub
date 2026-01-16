@@ -8,10 +8,8 @@
  * - Close/reopen app, verify player selection persists
  */
 
-import AsyncStorage from "@react-native-async-storage/async-storage";
-import { useFocusEffect } from "@react-navigation/native";
 import { router, useLocalSearchParams } from "expo-router";
-import { useCallback, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 
 /**
@@ -23,121 +21,111 @@ import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from "react-nati
  */
 
 import { getCourseHandicap, getPlayingHandicap } from "@/lib/handicap";
-import type { Course, TeeSet } from "@/lib/models";
 import { canCreateEvents, normalizeMemberRoles, normalizeSessionRole } from "@/lib/permissions";
-import { getCurrentUserRoles } from "@/lib/roles";
-import { getSession } from "@/lib/session";
-import { STORAGE_KEYS } from "@/lib/storage";
+import { useBootstrap } from "@/lib/useBootstrap";
+import { subscribeEventDoc, updateEventDoc, type EventDoc } from "@/lib/db/eventRepo";
+import { subscribeMembersBySociety, type MemberDoc } from "@/lib/db/memberRepo";
+import { subscribeCoursesBySociety, type CourseDoc } from "@/lib/db/courseRepo";
+import { subscribeTeesetsBySociety, type TeeSetDoc } from "@/lib/db/teesetRepo";
 
-const EVENTS_KEY = STORAGE_KEYS.EVENTS;
-const MEMBERS_KEY = STORAGE_KEYS.MEMBERS;
-const COURSES_KEY = STORAGE_KEYS.COURSES;
-
-type EventData = {
-  id: string;
-  name: string;
-  date: string;
-  courseName: string;
-  courseId?: string;
-  maleTeeSetId?: string;
-  femaleTeeSetId?: string;
-  handicapAllowance?: 0.9 | 1.0;
-  handicapAllowancePct?: number;
-  format: "Stableford" | "Strokeplay" | "Both";
-  playerIds?: string[];
-};
-
-type MemberData = {
-  id: string;
-  name: string;
-  handicap?: number;
-  sex?: "male" | "female";
-};
+type EventData = EventDoc;
+type MemberData = MemberDoc;
+type CourseWithTees = CourseDoc & { teeSets: TeeSetDoc[] };
 
 export default function EventPlayersScreen() {
   const { id: eventId } = useLocalSearchParams<{ id: string }>();
+  const { user } = useBootstrap();
   const [event, setEvent] = useState<EventData | null>(null);
   const [members, setMembers] = useState<MemberData[]>([]);
   const [selectedPlayerIds, setSelectedPlayerIds] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
-  const [role, setRole] = useState<"admin" | "member">("member");
   const [canManagePlayers, setCanManagePlayers] = useState(false);
-  const [courses, setCourses] = useState<Course[]>([]);
-  const [selectedCourse, setSelectedCourse] = useState<Course | null>(null);
-  const [selectedMaleTeeSet, setSelectedMaleTeeSet] = useState<TeeSet | null>(null);
-  const [selectedFemaleTeeSet, setSelectedFemaleTeeSet] = useState<TeeSet | null>(null);
+  const [courses, setCourses] = useState<CourseDoc[]>([]);
+  const [teeSets, setTeeSets] = useState<TeeSetDoc[]>([]);
+  const [selectedCourse, setSelectedCourse] = useState<CourseWithTees | null>(null);
+  const [selectedMaleTeeSet, setSelectedMaleTeeSet] = useState<TeeSetDoc | null>(null);
+  const [selectedFemaleTeeSet, setSelectedFemaleTeeSet] = useState<TeeSetDoc | null>(null);
 
-  useFocusEffect(
-    useCallback(() => {
-      loadData();
-    }, [eventId])
+  const coursesWithTees = useMemo<CourseWithTees[]>(
+    () =>
+      courses.map((course) => ({
+        ...course,
+        teeSets: teeSets.filter((tee) => tee.courseId === course.id),
+      })),
+    [courses, teeSets]
   );
 
-  const loadData = async () => {
-    try {
-      // Load courses
-      const coursesData = await AsyncStorage.getItem(COURSES_KEY);
-      let loadedCourses: Course[] = [];
-      if (coursesData) {
-        loadedCourses = JSON.parse(coursesData);
-        setCourses(loadedCourses);
-      }
-
-      // Load event
-      const eventsData = await AsyncStorage.getItem(EVENTS_KEY);
-      if (eventsData) {
-        const allEvents: EventData[] = JSON.parse(eventsData);
-        const currentEvent = allEvents.find((e) => e.id === eventId);
-        if (currentEvent) {
-          setEvent(currentEvent);
-          setSelectedPlayerIds(new Set(currentEvent.playerIds || []));
-          
-          // Load course and tee sets for this event
-          if (currentEvent.courseId) {
-            const course = loadedCourses.find((c) => c.id === currentEvent.courseId);
-            if (course) {
-              setSelectedCourse(course);
-              if (currentEvent.maleTeeSetId) {
-                const maleTee = course.teeSets.find((t) => t.id === currentEvent.maleTeeSetId);
-                setSelectedMaleTeeSet(maleTee || null);
-              }
-              if (currentEvent.femaleTeeSetId) {
-                const femaleTee = course.teeSets.find((t) => t.id === currentEvent.femaleTeeSetId);
-                setSelectedFemaleTeeSet(femaleTee || null);
-              }
-            }
-          }
-        }
-      }
-
-      // Load members
-      const membersData = await AsyncStorage.getItem(MEMBERS_KEY);
-      if (membersData) {
-        setMembers(JSON.parse(membersData));
-      }
-
-      // Load session (single source of truth)
-      const session = await getSession();
-      setRole(session.role);
-      
-      // Check permissions using pure functions
-      const sessionRole = normalizeSessionRole(session.role);
-      const roles = normalizeMemberRoles(await getCurrentUserRoles());
-      const canManage = canCreateEvents(sessionRole, roles);
-      setCanManagePlayers(canManage);
-      
-      if (!canManage) {
-        Alert.alert("Access Denied", "Only Captain or Admin can manage players", [
-          { text: "OK", onPress: () => router.back() },
-        ]);
-      }
-    } catch (error) {
-      console.error("Error loading data:", error);
-      Alert.alert("Error", "Failed to load data");
-    } finally {
+  useEffect(() => {
+    if (!eventId) return;
+    setLoading(true);
+    const unsubscribe = subscribeEventDoc(eventId, (doc) => {
+      setEvent(doc);
+      setSelectedPlayerIds(new Set(doc?.playerIds || []));
       setLoading(false);
+    });
+    return () => unsubscribe();
+  }, [eventId]);
+
+  useEffect(() => {
+    if (!user?.activeSocietyId) {
+      setMembers([]);
+      return;
     }
-  };
+    const unsubscribe = subscribeMembersBySociety(user.activeSocietyId, (items) => {
+      setMembers(items);
+    });
+    return () => unsubscribe();
+  }, [user?.activeSocietyId]);
+
+  useEffect(() => {
+    if (!user?.activeSocietyId) {
+      setCourses([]);
+      setTeeSets([]);
+      return;
+    }
+    const unsubscribeCourses = subscribeCoursesBySociety(user.activeSocietyId, (items) => {
+      setCourses(items);
+    });
+    const unsubscribeTees = subscribeTeesetsBySociety(user.activeSocietyId, (items) => {
+      setTeeSets(items);
+    });
+    return () => {
+      unsubscribeCourses();
+      unsubscribeTees();
+    };
+  }, [user?.activeSocietyId]);
+
+  useEffect(() => {
+    if (!event) return;
+    if (event.courseId) {
+      const course = coursesWithTees.find((c) => c.id === event.courseId) || null;
+      setSelectedCourse(course);
+      if (course && event.maleTeeSetId) {
+        setSelectedMaleTeeSet(course.teeSets.find((t) => t.id === event.maleTeeSetId) || null);
+      } else {
+        setSelectedMaleTeeSet(null);
+      }
+      if (course && event.femaleTeeSetId) {
+        setSelectedFemaleTeeSet(course.teeSets.find((t) => t.id === event.femaleTeeSetId) || null);
+      } else {
+        setSelectedFemaleTeeSet(null);
+      }
+    }
+  }, [coursesWithTees, event]);
+
+  useEffect(() => {
+    const currentMember = members.find((m) => m.id === user?.activeMemberId) || null;
+    const sessionRole = normalizeSessionRole("member");
+    const roles = normalizeMemberRoles(currentMember?.roles);
+    const canManage = canCreateEvents(sessionRole, roles);
+    setCanManagePlayers(canManage);
+
+    if (!canManage) {
+      Alert.alert("Access Denied", "Only Captain or Admin can manage players", [
+        { text: "OK", onPress: () => router.back() },
+      ]);
+    }
+  }, [members, router, user?.activeMemberId]);
 
   if (!canManagePlayers && !loading) {
     return null; // Will redirect via Alert
@@ -159,20 +147,9 @@ export default function EventPlayersScreen() {
     if (!event) return;
 
     try {
-      const eventsData = await AsyncStorage.getItem(EVENTS_KEY);
-      if (!eventsData) {
-        Alert.alert("Error", "Event not found");
-        return;
-      }
-
-      const allEvents: EventData[] = JSON.parse(eventsData);
-      const updatedEvents = allEvents.map((e) =>
-        e.id === event.id
-          ? { ...e, playerIds: Array.from(selectedPlayerIds) }
-          : e
-      );
-
-      await AsyncStorage.setItem(EVENTS_KEY, JSON.stringify(updatedEvents));
+      await updateEventDoc(event.id, {
+        playerIds: Array.from(selectedPlayerIds),
+      });
       Alert.alert("Success", "Players saved successfully");
       router.back();
     } catch (error) {

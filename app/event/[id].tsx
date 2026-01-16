@@ -1,113 +1,46 @@
-import AsyncStorage from "@react-native-async-storage/async-storage";
-import { useFocusEffect } from "@react-navigation/native";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { useCallback, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 
 import { getCourseHandicap, getPlayingHandicap } from "@/lib/handicap";
 import type { Course, TeeSet, EventData as EventDataModel } from "@/lib/models";
 import { canCreateEvents, canEditVenueInfo, canEnterScores, canManageFinance, normalizeMemberRoles, normalizeSessionRole } from "@/lib/permissions";
-import { getCurrentUserRoles, hasManCoRole } from "@/lib/roles";
-import { getSession } from "@/lib/session";
-import { STORAGE_KEYS } from "@/lib/storage";
 import { formatDateDDMMYYYY } from "@/utils/date";
 import { DatePicker } from "@/components/DatePicker";
+import { useBootstrap } from "@/lib/useBootstrap";
+import { subscribeEventDoc, updateEventDoc, type EventDoc } from "@/lib/db/eventRepo";
+import { subscribeMembersBySociety, type MemberDoc } from "@/lib/db/memberRepo";
+import { subscribeCoursesBySociety, type CourseDoc } from "@/lib/db/courseRepo";
+import { subscribeTeesetsBySociety, type TeeSetDoc } from "@/lib/db/teesetRepo";
 
-const EVENTS_KEY = STORAGE_KEYS.EVENTS;
-const MEMBERS_KEY = STORAGE_KEYS.MEMBERS;
-const SCORES_KEY = STORAGE_KEYS.SCORES;
-const COURSES_KEY = STORAGE_KEYS.COURSES;
-
-type EventData = {
-  id: string;
-  name: string;
-  date: string;
-  courseName: string; // Legacy field, kept for backward compatibility
-  courseId?: string; // New: reference to Course
-  maleTeeSetId?: string; // New: tee set for male players
-  femaleTeeSetId?: string; // New: tee set for female players
-  handicapAllowance?: 0.9 | 1.0; // New: default 1.0
-  handicapAllowancePct?: number; // Alternative: percentage (100 = 1.0, 90 = 0.9)
-  format: "Stableford" | "Strokeplay" | "Both";
-  playerIds?: string[];
-  teeSheet?: {
-    startTimeISO: string;
-    intervalMins: number;
-    groups: Array<{
-      timeISO: string;
-      players: string[]; // memberIds, max 4
-    }>;
-  };
-  isCompleted?: boolean;
-  completedAt?: string;
-  resultsStatus?: "draft" | "published";
-  publishedAt?: string;
-  resultsUpdatedAt?: string;
-  isOOM?: boolean;
-  winnerId?: string;
-  winnerName?: string;
-  handicapSnapshot?: { [memberId: string]: number }; // Legacy: stores WHS index
-  playingHandicapSnapshot?: { [memberId: string]: number }; // New: stores playing handicap
-  rsvps?: {
-    [memberId: string]: "going" | "maybe" | "no";
-  };
-  guests?: Array<{
-    id: string;
-    name: string;
-    sex: "male" | "female";
-    handicapIndex?: number;
-    included: boolean;
-  }>;
-  results?: {
-    [memberId: string]: {
-      grossScore: number;
-      netScore?: number;
-      stableford?: number;
-      strokeplay?: number;
-    };
-  };
-  // Event fee and payment tracking (Treasurer-managed)
-  eventFee?: number; // Competition fee for this event
-  payments?: {
-    [memberId: string]: {
-      paid: boolean;
-      paidAtISO?: string; // ISO date string
-      method?: "cash" | "bank" | "other";
-    };
-  };
-};
-
-type MemberData = {
-  id: string;
-  name: string;
-  handicap?: number;
-};
+type EventData = EventDoc;
+type MemberData = MemberDoc;
 
 type ScoreData = {
   stableford?: number;
   strokeplay?: number;
 };
 
-type ScoresData = {
-  [eventId: string]: {
-    [memberId: string]: ScoreData;
-  };
-};
+type CourseWithTees = CourseDoc & { teeSets: TeeSetDoc[] };
 
 export default function EventDetailsScreen() {
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
+  const { user } = useBootstrap();
   const [event, setEvent] = useState<EventData | null>(null);
   const [members, setMembers] = useState<MemberData[]>([]);
+  const [courses, setCourses] = useState<CourseDoc[]>([]);
+  const [teeSets, setTeeSets] = useState<TeeSetDoc[]>([]);
   const [scores, setScores] = useState<{ [memberId: string]: ScoreData }>({});
   const [showLeaderboard, setShowLeaderboard] = useState(false);
-  const [loading, setLoading] = useState(true);
+  const [loadingEvent, setLoadingEvent] = useState(true);
+  const [loadingMembers, setLoadingMembers] = useState(true);
+  const [loadingCourses, setLoadingCourses] = useState(true);
+  const [loadingTeesets, setLoadingTeesets] = useState(true);
   const [isOOM, setIsOOM] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   const [editName, setEditName] = useState("");
   const [editDate, setEditDate] = useState("");
-  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
-  const [role, setRole] = useState<"admin" | "member">("member");
   const [isManCo, setIsManCo] = useState(false);
   const [rsvpSuccess, setRsvpSuccess] = useState(false);
   const [canEditEvent, setCanEditEvent] = useState(false);
@@ -117,103 +50,123 @@ export default function EventDetailsScreen() {
   const [editingEventFee, setEditingEventFee] = useState(false);
   const [eventFeeInput, setEventFeeInput] = useState<string>("");
   const [lockHandicaps, setLockHandicaps] = useState(false);
-  const [courses, setCourses] = useState<Course[]>([]);
   const [selectedCourseId, setSelectedCourseId] = useState<string>("");
   const [selectedMaleTeeSetId, setSelectedMaleTeeSetId] = useState<string>("");
   const [selectedFemaleTeeSetId, setSelectedFemaleTeeSetId] = useState<string>("");
   const [handicapAllowance, setHandicapAllowance] = useState<0.9 | 1.0>(1.0);
-  const [selectedCourse, setSelectedCourse] = useState<Course | null>(null);
-  const [selectedMaleTeeSet, setSelectedMaleTeeSet] = useState<TeeSet | null>(null);
-  const [selectedFemaleTeeSet, setSelectedFemaleTeeSet] = useState<TeeSet | null>(null);
+  const [selectedCourse, setSelectedCourse] = useState<CourseWithTees | null>(null);
+  const [selectedMaleTeeSet, setSelectedMaleTeeSet] = useState<TeeSetDoc | null>(null);
+  const [selectedFemaleTeeSet, setSelectedFemaleTeeSet] = useState<TeeSetDoc | null>(null);
 
-  useFocusEffect(
-    useCallback(() => {
-      loadData();
-    }, [id])
+  useEffect(() => {
+    if (!id) return;
+    setLoadingEvent(true);
+    const unsubscribe = subscribeEventDoc(id, (doc) => {
+      setEvent(doc);
+      setLoadingEvent(false);
+    });
+    return () => unsubscribe();
+  }, [id]);
+
+  useEffect(() => {
+    if (!user?.activeSocietyId) {
+      setMembers([]);
+      setLoadingMembers(false);
+      return;
+    }
+    setLoadingMembers(true);
+    const unsubscribe = subscribeMembersBySociety(user.activeSocietyId, (items) => {
+      setMembers(items);
+      setLoadingMembers(false);
+    });
+    return () => unsubscribe();
+  }, [user?.activeSocietyId]);
+
+  useEffect(() => {
+    if (!user?.activeSocietyId) {
+      setCourses([]);
+      setLoadingCourses(false);
+      return;
+    }
+    setLoadingCourses(true);
+    const unsubscribe = subscribeCoursesBySociety(user.activeSocietyId, (items) => {
+      setCourses(items);
+      setLoadingCourses(false);
+    });
+    return () => unsubscribe();
+  }, [user?.activeSocietyId]);
+
+  useEffect(() => {
+    if (!user?.activeSocietyId) {
+      setTeeSets([]);
+      setLoadingTeesets(false);
+      return;
+    }
+    setLoadingTeesets(true);
+    const unsubscribe = subscribeTeesetsBySociety(user.activeSocietyId, (items) => {
+      setTeeSets(items);
+      setLoadingTeesets(false);
+    });
+    return () => unsubscribe();
+  }, [user?.activeSocietyId]);
+
+  const coursesWithTees = useMemo<CourseWithTees[]>(
+    () =>
+      courses.map((course) => ({
+        ...course,
+        teeSets: teeSets.filter((tee) => tee.courseId === course.id),
+      })),
+    [courses, teeSets]
   );
 
-  const loadData = async () => {
-    try {
-      // Load courses
-      const coursesData = await AsyncStorage.getItem(COURSES_KEY);
-      let loadedCourses: Course[] = [];
-      if (coursesData) {
-        loadedCourses = JSON.parse(coursesData);
-        setCourses(loadedCourses);
-      }
+  useEffect(() => {
+    if (!event) return;
+    setIsOOM(event.isOOM || false);
+    setEditName(event.name);
+    setEditDate(event.date || "");
+    setSelectedCourseId(event.courseId || "");
+    setSelectedMaleTeeSetId(event.maleTeeSetId || "");
+    setSelectedFemaleTeeSetId(event.femaleTeeSetId || "");
+    setHandicapAllowance(event.handicapAllowance || 1.0);
+    setLockHandicaps(!!event.handicapSnapshot && Object.keys(event.handicapSnapshot).length > 0);
+    setEventFeeInput(event.eventFee?.toString() || "");
 
-      // Load event
-      const eventsData = await AsyncStorage.getItem(EVENTS_KEY);
-      if (eventsData) {
-        const events: EventData[] = JSON.parse(eventsData);
-        const foundEvent = events.find((e) => e.id === id);
-        if (foundEvent) {
-          setEvent(foundEvent);
-          setIsOOM(foundEvent.isOOM || false);
-          setEditName(foundEvent.name);
-          setEditDate(foundEvent.date || "");
-          setSelectedCourseId(foundEvent.courseId || "");
-          setSelectedMaleTeeSetId(foundEvent.maleTeeSetId || "");
-          setSelectedFemaleTeeSetId(foundEvent.femaleTeeSetId || "");
-          setHandicapAllowance(foundEvent.handicapAllowance || 1.0);
-          setLockHandicaps(foundEvent.handicapSnapshot !== undefined && Object.keys(foundEvent.handicapSnapshot).length > 0);
-          
-          // Initialize event fee input
-          setEventFeeInput(foundEvent.eventFee?.toString() || "");
-          
-          // Load course and tee sets
-          if (foundEvent.courseId) {
-            const course = loadedCourses.find((c) => c.id === foundEvent.courseId);
-            if (course) {
-              setSelectedCourse(course);
-              if (foundEvent.maleTeeSetId) {
-                const maleTee = course.teeSets.find((t) => t.id === foundEvent.maleTeeSetId);
-                setSelectedMaleTeeSet(maleTee || null);
-              }
-              if (foundEvent.femaleTeeSetId) {
-                const femaleTee = course.teeSets.find((t) => t.id === foundEvent.femaleTeeSetId);
-                setSelectedFemaleTeeSet(femaleTee || null);
-              }
-            }
-          }
-        }
-      }
-
-      // Load members
-      const membersData = await AsyncStorage.getItem(MEMBERS_KEY);
-      if (membersData) {
-        setMembers(JSON.parse(membersData));
-      }
-
-      // Load scores
-      const scoresData = await AsyncStorage.getItem(SCORES_KEY);
-      if (scoresData) {
-        const allScores: ScoresData = JSON.parse(scoresData);
-        if (allScores[id]) {
-          setScores(allScores[id]);
-        }
-      }
-
-      // Load session (single source of truth)
-      const session = await getSession();
-      setCurrentUserId(session.currentUserId);
-      setRole(session.role);
-      
-      // Check permissions using pure functions
-      const manCo = await hasManCoRole();
-      setIsManCo(manCo);
-      const sessionRole = normalizeSessionRole(session.role);
-      const roles = normalizeMemberRoles(await getCurrentUserRoles());
-      setCanEditEvent(canCreateEvents(sessionRole, roles)); // Captain/admin can edit event settings
-      setCanEditVenue(canEditVenueInfo(sessionRole, roles)); // Secretary/captain/admin can edit venue
-      setCanEnterResults(canEnterScores(sessionRole, roles)); // Captain/Secretary/Handicapper can enter results
-      setCanManageFinanceFlag(canManageFinance(sessionRole, roles)); // Captain/Treasurer can manage finance
-    } catch (error) {
-      console.error("Error loading data:", error);
-    } finally {
-      setLoading(false);
+    const resultScores: { [memberId: string]: ScoreData } = {};
+    if (event.results) {
+      Object.entries(event.results).forEach(([memberId, result]) => {
+        resultScores[memberId] = {
+          stableford: result.stableford ?? undefined,
+          strokeplay: result.strokeplay ?? undefined,
+        };
+      });
     }
-  };
+    setScores(resultScores);
+  }, [event?.id]);
+
+  useEffect(() => {
+    const course = coursesWithTees.find((c) => c.id === selectedCourseId) || null;
+    setSelectedCourse(course);
+    if (!course) {
+      setSelectedMaleTeeSet(null);
+      setSelectedFemaleTeeSet(null);
+      return;
+    }
+    const male = course.teeSets.find((t) => t.id === selectedMaleTeeSetId) || null;
+    const female = course.teeSets.find((t) => t.id === selectedFemaleTeeSetId) || null;
+    setSelectedMaleTeeSet(male);
+    setSelectedFemaleTeeSet(female);
+  }, [coursesWithTees, selectedCourseId, selectedFemaleTeeSetId, selectedMaleTeeSetId]);
+
+  useEffect(() => {
+    const currentMember = members.find((m) => m.id === user?.activeMemberId) || null;
+    const sessionRole = normalizeSessionRole("member");
+    const roles = normalizeMemberRoles(currentMember?.roles);
+    setIsManCo(roles.some((role) => role !== "Member"));
+    setCanEditEvent(canCreateEvents(sessionRole, roles));
+    setCanEditVenue(canEditVenueInfo(sessionRole, roles));
+    setCanEnterResults(canEnterScores(sessionRole, roles));
+    setCanManageFinanceFlag(canManageFinance(sessionRole, roles));
+  }, [members, user?.activeMemberId]);
 
   const handleScoreChange = (memberId: string, field: "stableford" | "strokeplay", value: string) => {
     setScores((prev) => ({
@@ -227,15 +180,23 @@ export default function EventDetailsScreen() {
 
   const handleSaveScores = async () => {
     try {
-      // Load all scores
-      const scoresData = await AsyncStorage.getItem(SCORES_KEY);
-      const allScores: ScoresData = scoresData ? JSON.parse(scoresData) : {};
+      if (!event) return;
+      const results: EventDoc["results"] = {};
+      Object.entries(scores).forEach(([memberId, score]) => {
+        if (score.stableford === undefined && score.strokeplay === undefined) return;
+        const grossScore = score.strokeplay ?? score.stableford ?? 0;
+        results[memberId] = {
+          grossScore,
+          stableford: score.stableford,
+          strokeplay: score.strokeplay,
+        };
+      });
 
-      // Update scores for this event
-      allScores[id] = scores;
-
-      // Save back
-      await AsyncStorage.setItem(SCORES_KEY, JSON.stringify(allScores));
+      await updateEventDoc(event.id, {
+        results,
+        resultsStatus: "draft",
+        resultsUpdatedAt: new Date().toISOString(),
+      });
 
       Alert.alert("Success", "Scores saved successfully!");
     } catch (error) {
@@ -261,59 +222,33 @@ export default function EventDetailsScreen() {
     }
 
     try {
-      const eventsData = await AsyncStorage.getItem(EVENTS_KEY);
-      if (!eventsData) {
-        Alert.alert("Error", "Event not found");
-        return;
-      }
-
-      const events: EventData[] = JSON.parse(eventsData);
-      
-      // If locking handicaps, create snapshot from current member handicaps
       let handicapSnapshot: { [memberId: string]: number } | undefined = undefined;
       if (lockHandicaps) {
-        const membersData = await AsyncStorage.getItem(MEMBERS_KEY);
-        if (membersData) {
-          const allMembers: MemberData[] = JSON.parse(membersData);
-          handicapSnapshot = {};
-          allMembers.forEach((member) => {
-            if (member.handicap !== undefined) {
-              handicapSnapshot![member.id] = member.handicap;
-            }
-          });
-        }
+        handicapSnapshot = {};
+        members.forEach((member) => {
+          if (member.handicap !== undefined) {
+            handicapSnapshot![member.id] = member.handicap;
+          }
+        });
       }
-      
-      const updatedEvents = events.map((e) =>
-        e.id === event.id
-          ? {
-              ...e,
-              name: editName.trim(),
-              date: editDate.trim(),
-              isOOM: isOOM,
-              courseId: selectedCourseId || undefined,
-              maleTeeSetId: selectedMaleTeeSetId || undefined,
-              femaleTeeSetId: selectedFemaleTeeSetId || undefined,
-              handicapAllowance: handicapAllowance,
-              handicapSnapshot: lockHandicaps ? handicapSnapshot : undefined,
-              // Keep courseName for backward compatibility
-              courseName: selectedCourseId ? courses.find(c => c.id === selectedCourseId)?.name || e.courseName : e.courseName,
-            }
-          : e
-      );
 
-      await AsyncStorage.setItem(EVENTS_KEY, JSON.stringify(updatedEvents));
-      
-      // Update local state
-      const updatedEvent = {
-        ...event,
+      const selectedCourseName = selectedCourseId
+        ? coursesWithTees.find((c) => c.id === selectedCourseId)?.name
+        : undefined;
+
+      await updateEventDoc(event.id, {
         name: editName.trim(),
         date: editDate.trim(),
         isOOM: isOOM,
-      };
-      setEvent(updatedEvent);
+        courseId: selectedCourseId || undefined,
+        maleTeeSetId: selectedMaleTeeSetId || undefined,
+        femaleTeeSetId: selectedFemaleTeeSetId || undefined,
+        handicapAllowance: handicapAllowance,
+        handicapSnapshot: lockHandicaps ? handicapSnapshot : undefined,
+        courseName: selectedCourseName || event.courseName,
+      });
+
       setIsEditing(false);
-      
       Alert.alert("Success", "Event updated successfully");
     } catch (error) {
       console.error("Error saving event:", error);
@@ -347,32 +282,10 @@ export default function EventDetailsScreen() {
     }
 
     try {
-      const eventsData = await AsyncStorage.getItem(EVENTS_KEY);
-      if (!eventsData) {
-        Alert.alert("Error", "Event not found");
-        return;
-      }
-
-      const events: EventData[] = JSON.parse(eventsData);
-      const updatedEvents = events.map((e) =>
-        e.id === event.id
-          ? {
-              ...e,
-              eventFee: feeValue > 0 ? feeValue : undefined, // Store undefined if 0
-            }
-          : e
-      );
-
-      await AsyncStorage.setItem(EVENTS_KEY, JSON.stringify(updatedEvents));
-
-      // Update local state
-      const updatedEvent = {
-        ...event,
+      await updateEventDoc(event.id, {
         eventFee: feeValue > 0 ? feeValue : undefined,
-      };
-      setEvent(updatedEvent);
+      });
       setEditingEventFee(false);
-      
       Alert.alert("Success", "Event fee updated successfully");
     } catch (error) {
       console.error("Error saving event fee:", error);
@@ -397,38 +310,11 @@ export default function EventDetailsScreen() {
     }
 
     try {
-      const eventsData = await AsyncStorage.getItem(EVENTS_KEY);
-      if (!eventsData) {
-        Alert.alert("Error", "Event not found");
-        return;
-      }
-
-      const events: EventData[] = JSON.parse(eventsData);
       const currentPayment = event.payments?.[memberId];
       const newPaidStatus = !(currentPayment?.paid ?? false);
       const nowISO = new Date().toISOString();
 
-      const updatedEvents = events.map((e) =>
-        e.id === event.id
-          ? {
-              ...e,
-              payments: {
-                ...(e.payments || {}),
-                [memberId]: {
-                  paid: newPaidStatus,
-                  paidAtISO: newPaidStatus ? nowISO : undefined,
-                  method: currentPayment?.method || "cash",
-                },
-              },
-            }
-          : e
-      );
-
-      await AsyncStorage.setItem(EVENTS_KEY, JSON.stringify(updatedEvents));
-
-      // Update local state
-      const updatedEvent = {
-        ...event,
+      await updateEventDoc(event.id, {
         payments: {
           ...(event.payments || {}),
           [memberId]: {
@@ -437,8 +323,7 @@ export default function EventDetailsScreen() {
             method: currentPayment?.method || "cash",
           },
         },
-      };
-      setEvent(updatedEvent);
+      });
     } catch (error) {
       console.error("Error toggling payment:", error);
       Alert.alert("Error", "Failed to update payment status");
@@ -446,38 +331,16 @@ export default function EventDetailsScreen() {
   };
 
   const handleRSVP = async (status: "going" | "maybe" | "no") => {
-    if (!event || !currentUserId) return;
+    if (!event || !user?.activeMemberId) return;
 
     try {
-      const eventsData = await AsyncStorage.getItem(EVENTS_KEY);
-      if (!eventsData) return;
-
-      const events: EventData[] = JSON.parse(eventsData);
-      const updatedEvents = events.map((e) =>
-        e.id === event.id
-          ? {
-              ...e,
-              rsvps: {
-                ...(e.rsvps || {}),
-                [currentUserId]: status,
-              },
-            }
-          : e
-      );
-
-      await AsyncStorage.setItem(EVENTS_KEY, JSON.stringify(updatedEvents));
-      
-      // Update local state
-      const updatedEvent = {
-        ...event,
+      await updateEventDoc(event.id, {
         rsvps: {
           ...(event.rsvps || {}),
-          [currentUserId]: status,
+          [user.activeMemberId]: status,
         },
-      };
-      setEvent(updatedEvent);
-      
-      // Show success message
+      });
+
       setRsvpSuccess(true);
       setTimeout(() => setRsvpSuccess(false), 2000);
     } catch (error) {
@@ -551,6 +414,9 @@ export default function EventDetailsScreen() {
       }
     });
   };
+
+  const currentUserId = user?.activeMemberId ?? null;
+  const loading = loadingEvent || loadingMembers || loadingCourses || loadingTeesets;
 
   if (loading) {
     return (
@@ -641,12 +507,12 @@ export default function EventDetailsScreen() {
                     >
                       <Text style={styles.selectButtonText}>
                         {selectedCourseId
-                          ? courses.find((c) => c.id === selectedCourseId)?.name || "Select course"
+                          ? coursesWithTees.find((c) => c.id === selectedCourseId)?.name || "Select course"
                           : event.courseName || "Select course"}
                       </Text>
                     </Pressable>
                     {selectedCourseId && (() => {
-                      const selectedCourse = courses.find((c) => c.id === selectedCourseId);
+                      const selectedCourse = coursesWithTees.find((c) => c.id === selectedCourseId);
                       const maleTees = selectedCourse?.teeSets.filter((t) => t.appliesTo === "male") || [];
                       const femaleTees = selectedCourse?.teeSets.filter((t) => t.appliesTo === "female") || [];
                       return (

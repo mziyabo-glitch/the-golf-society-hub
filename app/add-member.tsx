@@ -1,52 +1,39 @@
 import { canManageMembers, normalizeMemberRoles, normalizeSessionRole } from "@/lib/permissions";
-import { getCurrentUserRoles } from "@/lib/roles";
-import { getSession } from "@/lib/session";
-import { STORAGE_KEYS } from "@/lib/storage";
-import AsyncStorage from "@react-native-async-storage/async-storage";
-import { useFocusEffect } from "@react-navigation/native";
+import { useBootstrap } from "@/lib/useBootstrap";
+import { createMember, subscribeMemberDoc } from "@/lib/db/memberRepo";
+import { setActiveMember } from "@/lib/db/userRepo";
 import { useRouter } from "expo-router";
-import { useCallback, useState } from "react";
+import { useEffect, useState } from "react";
 import { Alert, Pressable, ScrollView, Text, TextInput, View } from "react-native";
-
-const MEMBERS_KEY = STORAGE_KEYS.MEMBERS;
-
-type MemberData = {
-  id: string;
-  name: string;
-  handicap?: number;
-  sex?: "male" | "female";
-  roles?: string[];
-};
 
 export default function AddMemberScreen() {
   const router = useRouter();
   const [memberName, setMemberName] = useState("");
   const [handicap, setHandicap] = useState("");
   const [sex, setSex] = useState<"male" | "female" | "">("");
-  const [role, setRole] = useState<"admin" | "member">("member");
   const [canCreate, setCanCreate] = useState(false);
+  const { user } = useBootstrap();
 
-  useFocusEffect(
-    useCallback(() => {
-      loadSession();
-    }, [])
-  );
-
-  const loadSession = async () => {
-    const session = await getSession();
-    setRole(session.role);
-    
-    const sessionRole = normalizeSessionRole(session.role);
-    const roles = normalizeMemberRoles(await getCurrentUserRoles());
-    const canManage = canManageMembers(sessionRole, roles);
-    setCanCreate(canManage);
-    
-    if (!canManage) {
-      Alert.alert("Access Denied", "Only Captain, Secretary, or Treasurer can add members", [
-        { text: "OK", onPress: () => router.back() },
-      ]);
+  useEffect(() => {
+    if (!user?.activeMemberId) {
+      setCanCreate(false);
+      return;
     }
-  };
+
+    const unsubscribe = subscribeMemberDoc(user.activeMemberId, (member) => {
+      const roles = normalizeMemberRoles(member?.roles);
+      const sessionRole = normalizeSessionRole("member");
+      const canManage = canManageMembers(sessionRole, roles);
+      setCanCreate(canManage);
+      if (!canManage) {
+        Alert.alert("Access Denied", "Only Captain, Secretary, or Treasurer can add members", [
+          { text: "OK", onPress: () => router.back() },
+        ]);
+      }
+    });
+
+    return () => unsubscribe();
+  }, [router, user?.activeMemberId]);
 
   const isFormValid = memberName.trim().length > 0 && (sex === "male" || sex === "female");
 
@@ -54,44 +41,24 @@ export default function AddMemberScreen() {
     if (!isFormValid) return;
 
     try {
-      // Load existing members
-      const existingMembersData = await AsyncStorage.getItem(MEMBERS_KEY);
-      const existingMembers: MemberData[] = existingMembersData
-        ? JSON.parse(existingMembersData)
-        : [];
+      if (!user?.activeSocietyId) {
+        Alert.alert("Error", "No active society found");
+        return;
+      }
 
-      // Determine roles: first member gets Captain/Handicapper, others get Member
-      const isFirstMember = existingMembers.length === 0;
-      const roles: string[] = isFirstMember 
-        ? ["Captain", "Handicapper", "Member"] 
-        : ["Member"];
-
-      // Create new member
-      const newMember: MemberData = {
-        id: Date.now().toString(),
+      const newMember = await createMember({
+        societyId: user.activeSocietyId,
         name: memberName.trim(),
         handicap: handicap.trim() ? parseFloat(handicap.trim()) : undefined,
         sex: sex as "male" | "female",
-        roles,
-      };
+        roles: ["member"],
+        status: "active",
+      });
 
-      // Append to array and save
-      const updatedMembers = [...existingMembers, newMember];
-      await AsyncStorage.setItem(MEMBERS_KEY, JSON.stringify(updatedMembers));
-      
-      // If first member OR no current user set, set as current user and admin session
-      const session = await getSession();
-      if (isFirstMember || !session.currentUserId) {
-        const { setCurrentUserId: setSessionUserId, setRole: setSessionRole } = await import("@/lib/session");
-        if (!session.currentUserId) {
-          await setSessionUserId(newMember.id);
-        }
-        if (isFirstMember) {
-          await setSessionRole("admin"); // Set session to admin for first user
-        }
+      if (!user.activeMemberId) {
+        await setActiveMember(user.id, newMember.id);
       }
 
-      // Navigate back
       router.back();
     } catch (error) {
       console.error("Error saving member:", error);
