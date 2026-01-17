@@ -8,9 +8,10 @@ import { StyleSheet, View, ViewStyle } from "react-native";
 import { AppText } from "./AppText";
 import { AppCard } from "./AppCard";
 import { PrimaryButton } from "./Button";
-import { spacing } from "@/lib/ui/theme";
+import { getColors, radius, spacing } from "@/lib/ui/theme";
 
 type EmptyStateProps = {
+  icon?: ReactNode;
   title: string;
   message?: string;
   action?: {
@@ -20,10 +21,13 @@ type EmptyStateProps = {
   style?: ViewStyle;
 };
 
-export function EmptyState({ title, message, action, style }: EmptyStateProps) {
+export function EmptyState({ icon, title, message, action, style }: EmptyStateProps) {
+  const colors = getColors();
+
   return (
     <AppCard style={style ? StyleSheet.flatten([styles.container, style]) : styles.container}>
       <View style={styles.content}>
+        {icon && <View style={[styles.iconContainer, { backgroundColor: colors.backgroundTertiary }]}>{icon}</View>}
         <AppText variant="h2" style={styles.title}>
           {title}
         </AppText>
@@ -49,6 +53,14 @@ const styles = StyleSheet.create({
   content: {
     alignItems: "center",
     paddingVertical: spacing.xl,
+  },
+  iconContainer: {
+    width: 56,
+    height: 56,
+    borderRadius: radius.full,
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: spacing.md,
   },
   title: {
     marginBottom: spacing.sm,
