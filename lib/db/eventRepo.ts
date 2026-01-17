@@ -12,6 +12,7 @@ import {
 } from "firebase/firestore";
 
 import { db } from "@/lib/firebase";
+import { stripUndefined } from "@/lib/db/sanitize";
 
 export type EventDoc = {
   id: string;
@@ -72,11 +73,11 @@ export type EventDoc = {
 type EventInput = Omit<EventDoc, "id" | "createdAt">;
 
 export async function createEvent(input: EventInput): Promise<EventDoc> {
-  const payload = {
+  const payload = stripUndefined({
     ...input,
     status: input.status ?? "scheduled",
     createdAt: serverTimestamp(),
-  };
+  });
 
   const ref = await addDoc(collection(db, "events"), payload);
   return { id: ref.id, ...payload };

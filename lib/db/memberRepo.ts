@@ -13,6 +13,7 @@ import {
 } from "firebase/firestore";
 
 import { db } from "@/lib/firebase";
+import { stripUndefined } from "@/lib/db/sanitize";
 
 export type MemberDoc = {
   id: string;
@@ -30,7 +31,7 @@ export type MemberDoc = {
 type MemberInput = Omit<MemberDoc, "id">;
 
 export async function createMember(input: MemberInput): Promise<MemberDoc> {
-  const payload = {
+  const payload = stripUndefined({
     societyId: input.societyId,
     name: input.name,
     handicap: input.handicap ?? null,
@@ -41,7 +42,7 @@ export async function createMember(input: MemberInput): Promise<MemberDoc> {
     amountPaid: input.amountPaid,
     paidDate: input.paidDate,
     updatedAt: serverTimestamp(),
-  };
+  });
 
   const ref = await addDoc(collection(db, "members"), payload);
   return { id: ref.id, ...payload };

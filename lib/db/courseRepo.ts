@@ -13,6 +13,7 @@ import {
 } from "firebase/firestore";
 
 import { db } from "@/lib/firebase";
+import { stripUndefined } from "@/lib/db/sanitize";
 
 export type CourseDoc = {
   id: string;
@@ -30,7 +31,7 @@ export type CourseDoc = {
 type CourseInput = Omit<CourseDoc, "id" | "updatedAt">;
 
 export async function createCourse(input: CourseInput): Promise<CourseDoc> {
-  const payload = {
+  const payload = stripUndefined({
     societyId: input.societyId,
     name: input.name,
     address: input.address,
@@ -40,7 +41,7 @@ export async function createCourse(input: CourseInput): Promise<CourseDoc> {
     mapsUrl: input.mapsUrl,
     googlePlaceId: input.googlePlaceId,
     updatedAt: serverTimestamp(),
-  };
+  });
 
   const ref = await addDoc(collection(db, "courses"), payload);
   return { id: ref.id, ...payload };

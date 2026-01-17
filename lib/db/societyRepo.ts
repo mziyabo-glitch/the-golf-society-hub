@@ -1,6 +1,7 @@
 import { addDoc, collection, doc, getDoc, onSnapshot, serverTimestamp, updateDoc } from "firebase/firestore";
 
 import { db } from "@/lib/firebase";
+import { stripUndefined } from "@/lib/db/sanitize";
 
 export type SocietyDoc = {
   id: string;
@@ -29,7 +30,7 @@ type SocietyInput = {
 };
 
 export async function createSociety(input: SocietyInput): Promise<SocietyDoc> {
-  const payload = {
+  const payload = stripUndefined({
     name: input.name,
     country: input.country,
     createdBy: input.createdBy,
@@ -40,7 +41,7 @@ export async function createSociety(input: SocietyInput): Promise<SocietyDoc> {
     scoringMode: input.scoringMode,
     handicapRule: input.handicapRule,
     logoUrl: input.logoUrl ?? null,
-  };
+  });
 
   const ref = await addDoc(collection(db, "societies"), payload);
   return { id: ref.id, ...payload };
