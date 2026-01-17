@@ -18,7 +18,7 @@ export type MemberDoc = {
   id: string;
   societyId: string;
   name: string;
-  handicap?: number;
+  handicap?: number | null;
   sex?: "male" | "female";
   roles?: string[];
   status?: string;
@@ -33,7 +33,7 @@ export async function createMember(input: MemberInput): Promise<MemberDoc> {
   const payload = {
     societyId: input.societyId,
     name: input.name,
-    handicap: input.handicap ?? undefined,
+    handicap: input.handicap ?? null,
     sex: input.sex,
     roles: input.roles ?? ["member"],
     status: input.status ?? "active",
@@ -81,6 +81,9 @@ export async function updateMemberDoc(id: string, updates: Partial<MemberDoc>): 
   const ref = doc(db, "members", id);
   const payload: Record<string, unknown> = { ...updates, updatedAt: serverTimestamp() };
   delete payload.id;
+  for (const k of Object.keys(payload)) {
+    if (payload[k] === undefined) delete payload[k];
+  }
   await updateDoc(ref, payload);
 }
 

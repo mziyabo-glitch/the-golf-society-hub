@@ -89,7 +89,11 @@ export function subscribeUserDoc(
 
 export async function updateUserDoc(uid: string, updates: Partial<UserDocFields>): Promise<void> {
   const ref = doc(db, "users", uid);
-  await updateDoc(ref, { ...updates, updatedAt: serverTimestamp() });
+  const payload: Record<string, unknown> = { ...updates, updatedAt: serverTimestamp() };
+  for (const k of Object.keys(payload)) {
+    if (payload[k] === undefined) delete payload[k];
+  }
+  await updateDoc(ref, payload);
 }
 
 export async function setActiveSocietyAndMember(

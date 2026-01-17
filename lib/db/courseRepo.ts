@@ -84,6 +84,9 @@ export async function updateCourseDoc(id: string, updates: Partial<CourseDoc>): 
   const ref = doc(db, "courses", id);
   const payload: Record<string, unknown> = { ...updates, updatedAt: serverTimestamp() };
   delete payload.id;
+  for (const k of Object.keys(payload)) {
+    if (payload[k] === undefined) delete payload[k];
+  }
   await updateDoc(ref, payload);
 }
 

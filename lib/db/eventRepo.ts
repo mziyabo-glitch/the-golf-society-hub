@@ -116,6 +116,9 @@ export async function updateEventDoc(id: string, updates: Partial<EventDoc>): Pr
   const ref = doc(db, "events", id);
   const payload: Record<string, unknown> = { ...updates };
   delete payload.id;
+  for (const k of Object.keys(payload)) {
+    if (payload[k] === undefined) delete payload[k];
+  }
   await updateDoc(ref, payload);
 }
 

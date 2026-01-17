@@ -80,10 +80,8 @@ export async function updateSocietyDoc(id: string, updates: Partial<SocietyDoc>)
   const ref = doc(db, "societies", id);
   const payload: Record<string, unknown> = { ...updates, updatedAt: serverTimestamp() };
   delete payload.id;
-  Object.keys(payload).forEach((key) => {
-    if (payload[key] === undefined) {
-      delete payload[key];
-    }
-  });
+  for (const k of Object.keys(payload)) {
+    if (payload[k] === undefined) delete payload[k];
+  }
   await updateDoc(ref, payload);
 }
