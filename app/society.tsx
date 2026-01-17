@@ -21,7 +21,7 @@ import {
   normalizeSessionRole,
 } from "@/lib/permissions";
 import { router } from "expo-router";
-import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
+import MaterialIcons from "@expo/vector-icons/MaterialIcons";
 import { useEffect, useMemo, useState } from "react";
 import { ActivityIndicator, Pressable, StyleSheet, View } from "react-native";
 import { Screen } from "@/components/ui/Screen";
@@ -229,7 +229,7 @@ export default function SocietyDashboardScreen() {
     return (
       <Screen contentStyle={styles.screenContent}>
         <EmptyState
-          icon={<MaterialCommunityIcons name="golf" size={28} color={colors.primary} />}
+          icon={<MaterialIcons name="sports-golf" size={28} color={colors.primary} />}
           title="No Society Found"
           message="Create a society to get started"
           action={{ label: "Create Society", onPress: () => router.push("/create-society") }}
@@ -251,10 +251,10 @@ export default function SocietyDashboardScreen() {
   const societyInitials = useMemo(() => getInitials(society?.name), [society?.name]);
   const navItems = useMemo(
     () => [
-      { id: "members", label: "Members", icon: "people-outline" as const },
-      { id: "history", label: "History", icon: "time-outline" as const },
-      { id: "profile", label: "Profile", icon: "person-circle-outline" as const },
-      ...(isAdmin ? [{ id: "settings", label: "Settings", icon: "settings-outline" as const }] : []),
+      { id: "members", label: "Members", icon: "people" as const },
+      { id: "history", label: "History", icon: "history" as const },
+      { id: "profile", label: "Profile", icon: "person" as const },
+      ...(isAdmin ? [{ id: "settings", label: "Settings", icon: "settings" as const }] : []),
     ],
     [isAdmin]
   );
@@ -263,7 +263,6 @@ export default function SocietyDashboardScreen() {
       id: string;
       title: string;
       subtitle: string;
-      iconFamily: "ion" | "mci";
       iconName: string;
       route: string;
     }> = [];
@@ -273,8 +272,7 @@ export default function SocietyDashboardScreen() {
         id: "finance",
         title: "Finance",
         subtitle: "Treasurer tools",
-        iconFamily: "mci",
-        iconName: "cash-multiple",
+        iconName: "attach-money",
         route: "/finance",
       });
     }
@@ -284,8 +282,7 @@ export default function SocietyDashboardScreen() {
         id: "venue",
         title: "Venue Info",
         subtitle: "Edit venues",
-        iconFamily: "mci",
-        iconName: "map-marker-outline",
+        iconName: "place",
         route: "/venue-info",
       });
     }
@@ -295,24 +292,21 @@ export default function SocietyDashboardScreen() {
         id: "handicaps",
         title: "Handicaps",
         subtitle: "Manage handicaps",
-        iconFamily: "mci",
-        iconName: "golf",
+        iconName: "sports-golf",
         route: "/handicaps",
       });
       actions.push({
         id: "leaderboard",
         title: "Order of Merit",
         subtitle: "View standings",
-        iconFamily: "ion",
-        iconName: "trophy-outline",
+        iconName: "leaderboard",
         route: "/leaderboard",
       });
       actions.push({
         id: "tees",
         title: "Tees & Tee Sheet",
         subtitle: "Manage tees & schedule",
-        iconFamily: "mci",
-        iconName: "calendar-clock",
+        iconName: "event-note",
         route: "/tees-teesheet",
       });
     }
@@ -378,7 +372,7 @@ export default function SocietyDashboardScreen() {
               ]}
             >
               <View style={styles.createEventContent}>
-                <Ionicons name="add" size={20} color={colors.textInverse} />
+                <MaterialIcons name="add" size={20} color={colors.textInverse} />
                 <AppText variant="button" color="inverse">
                   Create Event
                 </AppText>
@@ -414,7 +408,7 @@ export default function SocietyDashboardScreen() {
                   pressed && { opacity: 0.9 },
                 ]}
               >
-                <Ionicons
+                <MaterialIcons
                   name={item.icon}
                   size={18}
                   color={isSelected ? colors.primary : colors.textSecondary}
@@ -439,7 +433,7 @@ export default function SocietyDashboardScreen() {
             >
               <View style={styles.eventHeader}>
                 <View style={[styles.eventIconWrap, { backgroundColor: colors.backgroundTertiary }]}>
-                  <Ionicons name="calendar-outline" size={20} color={colors.primary} />
+                  <MaterialIcons name="event" size={20} color={colors.primary} />
                 </View>
                 <View style={styles.eventHeaderContent}>
                   <AppText variant="h2" style={styles.eventTitle}>
@@ -477,7 +471,7 @@ export default function SocietyDashboardScreen() {
           </AppCard>
         ) : (
           <EmptyState
-            icon={<Ionicons name="calendar-outline" size={28} color={colors.primary} />}
+            icon={<MaterialIcons name="event" size={28} color={colors.primary} />}
             title="No upcoming events"
             message={
               canCreateEventsRole
@@ -497,7 +491,7 @@ export default function SocietyDashboardScreen() {
             >
               <View style={styles.eventHeader}>
                 <View style={[styles.eventIconWrap, { backgroundColor: colors.backgroundTertiary }]}>
-                  <Ionicons name="trophy-outline" size={20} color={colors.primary} />
+                  <MaterialIcons name="emoji-events" size={20} color={colors.primary} />
                 </View>
                 <View style={styles.eventHeaderContent}>
                   <AppText variant="h2" style={styles.eventTitle}>
@@ -520,7 +514,7 @@ export default function SocietyDashboardScreen() {
           </AppCard>
         ) : (
           <EmptyState
-            icon={<Ionicons name="trophy-outline" size={28} color={colors.primary} />}
+            icon={<MaterialIcons name="emoji-events" size={28} color={colors.primary} />}
             title="No completed events yet"
             message="Your completed events will appear here"
             style={styles.inlineEmptyState}
@@ -537,7 +531,6 @@ export default function SocietyDashboardScreen() {
                   key={action.id}
                   title={action.title}
                   subtitle={action.subtitle}
-                  iconFamily={action.iconFamily}
                   iconName={action.iconName}
                   onPress={() => router.push(action.route as any)}
                 />
@@ -559,30 +552,22 @@ export default function SocietyDashboardScreen() {
 type ActionCardProps = {
   title: string;
   subtitle: string;
-  iconFamily: "ion" | "mci";
   iconName: string;
   onPress: () => void;
 };
 
-function ActionCard({ title, subtitle, iconFamily, iconName, onPress }: ActionCardProps) {
+function ActionCard({ title, subtitle, iconName, onPress }: ActionCardProps) {
   const colors = getColors();
-  const icon =
-    iconFamily === "ion" ? (
-      <Ionicons name={iconName as keyof typeof Ionicons.glyphMap} size={20} color={colors.primary} />
-    ) : (
-      <MaterialCommunityIcons
-        name={iconName as keyof typeof MaterialCommunityIcons.glyphMap}
-        size={20}
-        color={colors.primary}
-      />
-    );
+  const icon = (
+    <MaterialIcons name={iconName as keyof typeof MaterialIcons.glyphMap} size={20} color={colors.primary} />
+  );
 
   return (
     <Pressable onPress={onPress} style={({ pressed }) => [styles.actionCardWrapper, pressed && { opacity: 0.95 }]}>
       <AppCard style={styles.actionCard} elevated>
         <View style={styles.actionCardHeader}>
           <View style={[styles.actionIconWrap, { backgroundColor: colors.backgroundTertiary }]}>{icon}</View>
-          <Ionicons name="chevron-forward" size={18} color={colors.textTertiary} />
+          <MaterialIcons name="chevron-right" size={18} color={colors.textTertiary} />
         </View>
         <AppText variant="bodyBold" style={styles.actionTitle}>
           {title}
