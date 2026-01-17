@@ -9,7 +9,7 @@ export type SocietyDoc = {
   createdAt?: unknown;
   createdBy?: string;
   homeCourseId?: string | null;
-  homeCourse?: string;
+  homeCourse?: string | null;
   scoringMode?: "Stableford" | "Strokeplay" | "Both";
   handicapRule?: "Allow WHS" | "Fixed HCP" | "No HCP";
   logoUrl?: string | null;
@@ -36,7 +36,7 @@ export async function createSociety(input: SocietyInput): Promise<SocietyDoc> {
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
     homeCourseId: input.homeCourseId ?? null,
-    homeCourse: input.homeCourse?.trim() || undefined,
+    homeCourse: input.homeCourse?.trim() || null,
     scoringMode: input.scoringMode,
     handicapRule: input.handicapRule,
     logoUrl: input.logoUrl ?? null,
@@ -80,5 +80,10 @@ export async function updateSocietyDoc(id: string, updates: Partial<SocietyDoc>)
   const ref = doc(db, "societies", id);
   const payload: Record<string, unknown> = { ...updates, updatedAt: serverTimestamp() };
   delete payload.id;
+  Object.keys(payload).forEach((key) => {
+    if (payload[key] === undefined) {
+      delete payload[key];
+    }
+  });
   await updateDoc(ref, payload);
 }
