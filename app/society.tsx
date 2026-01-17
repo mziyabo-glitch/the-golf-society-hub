@@ -134,6 +134,76 @@ export default function SocietyDashboardScreen() {
     () => canAssignRoles(normalizedSessionRole, normalizedRoles),
     [normalizedRoles, normalizedSessionRole]
   );
+  const isAdmin = normalizedRoles.includes("Captain");
+  const roleChips = useMemo(() => {
+    const roles = userRoles.filter((role) => role !== "member").map(formatRoleLabel);
+    return roles.length > 0 ? roles : ["Member"];
+  }, [userRoles]);
+  const societyInitials = useMemo(() => getInitials(society?.name), [society?.name]);
+  const navItems = useMemo(
+    () => [
+      { id: "members", label: "Members", icon: "people" as const },
+      { id: "history", label: "History", icon: "history" as const },
+      { id: "profile", label: "Profile", icon: "person" as const },
+      ...(isAdmin ? [{ id: "settings", label: "Settings", icon: "settings" as const }] : []),
+    ],
+    [isAdmin]
+  );
+  const mancoActions = useMemo(() => {
+    const actions: {
+      id: string;
+      title: string;
+      subtitle: string;
+      iconName: string;
+      route: string;
+    }[] = [];
+
+    if (canViewFinanceRole) {
+      actions.push({
+        id: "finance",
+        title: "Finance",
+        subtitle: "Treasurer tools",
+        iconName: "attach-money",
+        route: "/finance",
+      });
+    }
+
+    if (canEditVenueRole) {
+      actions.push({
+        id: "venue",
+        title: "Venue Info",
+        subtitle: "Edit venues",
+        iconName: "place",
+        route: "/venue-info",
+      });
+    }
+
+    if (canEditHandicapsRole) {
+      actions.push({
+        id: "handicaps",
+        title: "Handicaps",
+        subtitle: "Manage handicaps",
+        iconName: "sports-golf",
+        route: "/handicaps",
+      });
+      actions.push({
+        id: "leaderboard",
+        title: "Order of Merit",
+        subtitle: "View standings",
+        iconName: "leaderboard",
+        route: "/leaderboard",
+      });
+      actions.push({
+        id: "tees",
+        title: "Tees & Tee Sheet",
+        subtitle: "Manage tees & schedule",
+        iconName: "event-note",
+        route: "/tees-teesheet",
+      });
+    }
+
+    return actions;
+  }, [canEditHandicapsRole, canEditVenueRole, canViewFinanceRole]);
 
   const getNextEvent = (): EventDoc | null => {
     if (events.length === 0) return null;
@@ -242,77 +312,6 @@ export default function SocietyDashboardScreen() {
   const nextEvent = getNextEvent();
   const lastEvent = getLastEvent();
   const lastWinner = lastEvent ? getLastWinner(lastEvent) : null;
-
-  const isAdmin = normalizedRoles.includes("Captain");
-  const roleChips = useMemo(() => {
-    const roles = userRoles.filter((role) => role !== "member").map(formatRoleLabel);
-    return roles.length > 0 ? roles : ["Member"];
-  }, [userRoles]);
-  const societyInitials = useMemo(() => getInitials(society?.name), [society?.name]);
-  const navItems = useMemo(
-    () => [
-      { id: "members", label: "Members", icon: "people" as const },
-      { id: "history", label: "History", icon: "history" as const },
-      { id: "profile", label: "Profile", icon: "person" as const },
-      ...(isAdmin ? [{ id: "settings", label: "Settings", icon: "settings" as const }] : []),
-    ],
-    [isAdmin]
-  );
-  const mancoActions = useMemo(() => {
-    const actions: Array<{
-      id: string;
-      title: string;
-      subtitle: string;
-      iconName: string;
-      route: string;
-    }> = [];
-
-    if (canViewFinanceRole) {
-      actions.push({
-        id: "finance",
-        title: "Finance",
-        subtitle: "Treasurer tools",
-        iconName: "attach-money",
-        route: "/finance",
-      });
-    }
-
-    if (canEditVenueRole) {
-      actions.push({
-        id: "venue",
-        title: "Venue Info",
-        subtitle: "Edit venues",
-        iconName: "place",
-        route: "/venue-info",
-      });
-    }
-
-    if (canEditHandicapsRole) {
-      actions.push({
-        id: "handicaps",
-        title: "Handicaps",
-        subtitle: "Manage handicaps",
-        iconName: "sports-golf",
-        route: "/handicaps",
-      });
-      actions.push({
-        id: "leaderboard",
-        title: "Order of Merit",
-        subtitle: "View standings",
-        iconName: "leaderboard",
-        route: "/leaderboard",
-      });
-      actions.push({
-        id: "tees",
-        title: "Tees & Tee Sheet",
-        subtitle: "Manage tees & schedule",
-        iconName: "event-note",
-        route: "/tees-teesheet",
-      });
-    }
-
-    return actions;
-  }, [canEditHandicapsRole, canEditVenueRole, canViewFinanceRole]);
 
   return (
     <Screen contentStyle={styles.screenContent}>
