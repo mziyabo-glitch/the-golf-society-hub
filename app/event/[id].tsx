@@ -117,7 +117,6 @@ export default function EventDetailsScreen() {
     [courses, teeSets]
   );
 
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (!event) return;
     setIsOOM(event.isOOM || false);
@@ -140,7 +139,7 @@ export default function EventDetailsScreen() {
       });
     }
     setScores(resultScores);
-  }, [event?.id]);
+  }, [event]);
 
   useEffect(() => {
     const course = coursesWithTees.find((c) => c.id === selectedCourseId) || null;
