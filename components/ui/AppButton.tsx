@@ -4,7 +4,7 @@
  */
 
 import { Pressable, StyleSheet, Text, TextStyle, ViewStyle } from "react-native";
-import { getColors, getThemeMode, spacing, radius, typography, buttonHeights } from "@/lib/ui/theme";
+import { getColors, spacing, radius, typography, buttonHeights } from "@/lib/ui/theme";
 
 export type ButtonVariant = "primary" | "secondary" | "ghost";
 export type ButtonSize = "sm" | "md" | "lg";
@@ -31,7 +31,6 @@ export function AppButton({
   fullWidth = false,
 }: AppButtonProps) {
   const colors = getColors();
-  const theme = getThemeMode();
   
   const height = buttonHeights[size];
   const paddingHorizontal = size === "sm" ? spacing.base : size === "md" ? spacing.base : spacing.lg;

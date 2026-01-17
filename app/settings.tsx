@@ -10,12 +10,11 @@
 
 import { router } from "expo-router";
 import { useEffect, useRef, useState } from "react";
-import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View, Image, ActivityIndicator, Platform } from "react-native";
+import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View, Image, ActivityIndicator } from "react-native";
 
 import { canAssignRoles, normalizeMemberRoles, normalizeSessionRole, canEditVenueInfo } from "@/lib/permissions";
 import { pickImage } from "@/utils/imagePicker";
 import { AppCard } from "@/components/ui/AppCard";
-import { AppText } from "@/components/ui/AppText";
 import { spacing } from "@/lib/ui/theme";
 import { useBootstrap } from "@/lib/useBootstrap";
 import { subscribeSocietyDoc, updateSocietyDoc, type SocietyDoc } from "@/lib/db/societyRepo";
@@ -72,7 +71,7 @@ export default function SettingsScreen() {
       }
     });
     return () => unsubscribe();
-  }, [router, user?.activeMemberId]);
+  }, [user?.activeMemberId]);
 
 
   // Allow access if admin session OR has captain role (checked in loadSociety)

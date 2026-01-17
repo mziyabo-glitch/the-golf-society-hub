@@ -3,7 +3,6 @@
  * Consistent section titles with optional right action
  */
 
-import { ReactNode } from "react";
 import { StyleSheet, View, Pressable, ViewStyle } from "react-native";
 import { AppText } from "./AppText";
 import { spacing } from "@/lib/ui/theme";

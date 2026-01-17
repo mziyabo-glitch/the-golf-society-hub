@@ -6,8 +6,7 @@
 import { Image, StyleSheet, View, ViewStyle } from "react-native";
 import { AppText } from "./AppText";
 import { AppCard } from "./AppCard";
-import { spacing } from "@/lib/ui/theme";
-import { getColors } from "@/lib/ui/theme";
+import { getColors, spacing } from "@/lib/ui/theme";
 
 type SocietyHeaderProps = {
   societyName: string;

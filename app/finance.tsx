@@ -8,7 +8,7 @@
 
 import { router } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
-import { Alert, Pressable, StyleSheet, TextInput, View, Platform, ActivityIndicator } from "react-native";
+import { Alert, StyleSheet, TextInput, View, Platform, ActivityIndicator } from "react-native";
 import { Screen } from "@/components/ui/Screen";
 import { SectionHeader } from "@/components/ui/SectionHeader";
 import { PrimaryButton, SecondaryButton } from "@/components/ui/Button";
@@ -57,7 +57,7 @@ export default function FinanceScreen() {
         { text: "OK", onPress: () => router.back() },
       ]);
     }
-  }, [currentMember?.roles, router]);
+  }, [currentMember?.roles]);
 
   useEffect(() => {
     if (!user?.activeSocietyId) {
@@ -170,7 +170,6 @@ export default function FinanceScreen() {
 
   const handleExport = async () => {
     try {
-      const colors = getColors();
       const html = `
         <!DOCTYPE html>
         <html>
@@ -276,6 +275,20 @@ export default function FinanceScreen() {
       <AppText variant="caption" color="secondary" style={styles.subtitle}>
         Treasurer tools and financial management
       </AppText>
+
+      <AppCard style={styles.eventManagerCard}>
+        <View style={styles.eventManagerRow}>
+          <View style={styles.eventManagerText}>
+            <AppText variant="h2">Event Manager</AppText>
+            <AppText variant="caption" color="secondary">
+              Track event P&amp;L and expenses
+            </AppText>
+          </View>
+          <PrimaryButton onPress={() => router.push("/finance-events" as any)} size="sm">
+            Open
+          </PrimaryButton>
+        </View>
+      </AppCard>
 
         {/* Annual Fee */}
         <AppCard style={styles.section}>
@@ -541,6 +554,18 @@ const styles = StyleSheet.create({
   },
   subtitle: {
     marginBottom: spacing.xl,
+  },
+  eventManagerCard: {
+    marginBottom: spacing.base,
+  },
+  eventManagerRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: spacing.md,
+  },
+  eventManagerText: {
+    flex: 1,
   },
   section: {
     marginBottom: spacing.base,

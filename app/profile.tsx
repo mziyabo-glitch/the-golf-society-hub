@@ -10,7 +10,7 @@
  */
 
 import { useBootstrap } from "@/lib/useBootstrap";
-import { subscribeMembersBySociety, updateMemberDoc, type MemberDoc } from "@/lib/db/memberRepo";
+import { subscribeMembersBySociety, updateMemberDoc } from "@/lib/db/memberRepo";
 import { subscribeEventsBySociety, type EventDoc } from "@/lib/db/eventRepo";
 import { router } from "expo-router";
 import { useEffect, useMemo, useState } from "react";

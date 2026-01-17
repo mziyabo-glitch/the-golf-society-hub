@@ -12,7 +12,6 @@ import { PrimaryButton, SecondaryButton } from "@/components/ui/Button";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { formatDateDDMMYYYY } from "@/utils/date";
 import {
-  canAssignRoles,
   canCreateEvents,
   canEditHandicaps,
   canEditVenueInfo,
@@ -128,10 +127,6 @@ export default function SocietyDashboardScreen() {
   );
   const canCreateEventsRole = useMemo(
     () => canCreateEvents(normalizedSessionRole, normalizedRoles),
-    [normalizedRoles, normalizedSessionRole]
-  );
-  const canAssignRolesRole = useMemo(
-    () => canAssignRoles(normalizedSessionRole, normalizedRoles),
     [normalizedRoles, normalizedSessionRole]
   );
   const isAdmin = normalizedRoles.includes("Captain");

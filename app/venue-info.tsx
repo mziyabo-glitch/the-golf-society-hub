@@ -5,11 +5,9 @@
  */
 
 import { canEditVenueInfo, canEditHandicaps, normalizeMemberRoles, normalizeSessionRole } from "@/lib/permissions";
-import type { Course, TeeSet } from "@/lib/models";
-import { Linking } from "react-native";
 import { router } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
-import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { Alert, Linking, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { useBootstrap } from "@/lib/useBootstrap";
 import { subscribeCoursesBySociety, createCourse, updateCourseDoc, deleteCourseDoc, type CourseDoc } from "@/lib/db/courseRepo";
 import { subscribeTeesetsBySociety, createTeeSet, updateTeeSetDoc, deleteTeeSetDoc, type TeeSetDoc } from "@/lib/db/teesetRepo";
@@ -19,7 +17,6 @@ type CourseWithTees = CourseDoc & { teeSets: TeeSetDoc[] };
 
 export default function VenueInfoScreen() {
   const { user } = useBootstrap();
-  const [hasEditAccess, setHasEditAccess] = useState(false);
   const [canEditCourses, setCanEditCourses] = useState(false);
   const [canEditTeeSets, setCanEditTeeSets] = useState(false);
   const [courses, setCourses] = useState<CourseDoc[]>([]);
@@ -82,7 +79,6 @@ export default function VenueInfoScreen() {
       const canEditCourse = canEditVenueInfo(sessionRole, roles);
       const canEditTees = canEditHandicaps(sessionRole, roles);
       const hasAccess = canEditCourse || canEditTees;
-      setHasEditAccess(hasAccess);
       setCanEditCourses(canEditCourse);
       setCanEditTeeSets(canEditTees);
       if (!hasAccess) {
@@ -92,7 +88,7 @@ export default function VenueInfoScreen() {
       }
     });
     return () => unsubscribe();
-  }, [router, user?.activeMemberId]);
+  }, [user?.activeMemberId]);
 
   const handleSaveCourse = async () => {
     if (!courseName.trim()) {

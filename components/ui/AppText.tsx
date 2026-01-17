@@ -3,7 +3,7 @@
  * Uses typography tokens from theme for consistent text styling
  */
 
-import { StyleSheet, Text, TextProps, TextStyle } from "react-native";
+import { Text, TextProps, TextStyle } from "react-native";
 import { getColors, typography } from "@/lib/ui/theme";
 
 export type TextVariant = 

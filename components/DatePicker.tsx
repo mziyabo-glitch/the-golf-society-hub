@@ -4,8 +4,7 @@
  */
 
 import { useState } from "react";
-import { Modal, Platform, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
-import { parseDateToISO } from "@/utils/date";
+import { Modal, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 
 type DatePickerProps = {
   value: string; // ISO format (YYYY-MM-DD)
@@ -41,7 +40,7 @@ export function DatePicker({ value, onChange, placeholder = "YYYY-MM-DD", style 
           year: parts[0],
         };
       }
-    } catch (e) {
+    } catch {
       // Ignore
     }
     return { day: "", month: "", year: "" };

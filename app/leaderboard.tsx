@@ -18,7 +18,7 @@ import { Screen } from "@/components/ui/Screen";
 import { SectionHeader } from "@/components/ui/SectionHeader";
 import { AppText } from "@/components/ui/AppText";
 import { AppCard } from "@/components/ui/AppCard";
-import { PrimaryButton, SecondaryButton } from "@/components/ui/Button";
+import { SecondaryButton } from "@/components/ui/Button";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { Row } from "@/components/ui/Row";
 import { SocietyHeader } from "@/components/ui/SocietyHeader";
@@ -135,7 +135,7 @@ export default function LeaderboardScreen() {
 
   // Calculate event leaderboard using same logic as event page
   // Uses event.results with grossScore (lowest wins)
-  const getEventLeaderboard = (event: EventData): Array<{ memberId: string; grossScore: number }> => {
+  const getEventLeaderboard = (event: EventData): { memberId: string; grossScore: number }[] => {
     if (!event.results || Object.keys(event.results).length === 0) {
       return [];
     }
@@ -247,6 +247,7 @@ export default function LeaderboardScreen() {
 
   const loading = loadingMembers || loadingEvents || loadingSociety;
 
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (!loading && members.length > 0) {
       const calculated = calculateLeaderboard();

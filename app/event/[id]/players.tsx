@@ -125,7 +125,7 @@ export default function EventPlayersScreen() {
         { text: "OK", onPress: () => router.back() },
       ]);
     }
-  }, [members, router, user?.activeMemberId]);
+  }, [members, user?.activeMemberId]);
 
   if (!canManagePlayers && !loading) {
     return null; // Will redirect via Alert

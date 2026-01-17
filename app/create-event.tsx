@@ -15,32 +15,6 @@ import { useBootstrap } from "@/lib/useBootstrap";
 import { createEvent } from "@/lib/db/eventRepo";
 import { subscribeMemberDoc } from "@/lib/db/memberRepo";
 
-type EventData = {
-  id: string;
-  name: string;
-  date: string;
-  courseName: string; // Legacy field
-  courseId?: string;
-  maleTeeSetId?: string;
-  femaleTeeSetId?: string;
-  handicapAllowance?: 0.9 | 1.0;
-  format: "Stableford" | "Strokeplay" | "Both";
-  playerIds?: string[];
-  isCompleted?: boolean;
-  isOOM?: boolean;
-  winnerId?: string;
-  winnerName?: string;
-  rsvps?: {
-    [memberId: string]: "going" | "maybe" | "no";
-  };
-  results?: {
-    [memberId: string]: {
-      grossScore: number;
-      netScore?: number;
-    };
-  };
-};
-
 export default function CreateEventScreen() {
   const router = useRouter();
   const [eventName, setEventName] = useState("");
