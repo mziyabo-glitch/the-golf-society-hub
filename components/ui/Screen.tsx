@@ -26,7 +26,10 @@ export function Screen({ children, scrollable = true, style, contentStyle }: Scr
 
   if (scrollable) {
     return (
-      <SafeAreaView style={[styles.container, { backgroundColor: colors.background }, style]} edges={["top"]}>
+      <SafeAreaView
+        style={[styles.container, { backgroundColor: colors.background }, style]}
+        edges={["top", "bottom"]}
+      >
         <ScrollView
           style={styles.scroll}
           contentContainerStyle={styles.scrollContent}
@@ -39,7 +42,10 @@ export function Screen({ children, scrollable = true, style, contentStyle }: Scr
   }
 
   return (
-    <SafeAreaView style={[styles.container, { backgroundColor: colors.background }, style]} edges={["top"]}>
+    <SafeAreaView
+      style={[styles.container, { backgroundColor: colors.background }, style]}
+      edges={["top", "bottom"]}
+    >
       {content}
     </SafeAreaView>
   );
