@@ -61,7 +61,7 @@ export default function RolesScreen() {
       }
     });
     return () => unsubscribe();
-  }, [router, user?.activeMemberId]);
+  }, [user?.activeMemberId]);
   
   const handleCreateAdminMember = async () => {
     try {

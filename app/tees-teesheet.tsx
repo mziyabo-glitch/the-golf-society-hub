@@ -4,8 +4,8 @@
  * - Members can view tee sheet
  */
 
-import type { Course, TeeSet, EventData, MemberData } from "@/lib/models";
-import { getPlayingHandicap, getCourseHandicap } from "@/lib/handicap";
+import type { TeeSet, EventData, MemberData } from "@/lib/models";
+import { getPlayingHandicap } from "@/lib/handicap";
 import { formatDateDDMMYYYY } from "@/utils/date";
 import { getPermissions, type Permissions } from "@/lib/rbac";
 import { guard } from "@/lib/guards";
@@ -51,7 +51,7 @@ export default function TeesTeeSheetScreen() {
   // Tee Sheet fields
   const [startTime, setStartTime] = useState("08:00");
   const [intervalMins, setIntervalMins] = useState<number>(8);
-  const [teeGroups, setTeeGroups] = useState<Array<{ timeISO: string; players: string[] }>>([]);
+  const [teeGroups, setTeeGroups] = useState<{ timeISO: string; players: string[] }[]>([]);
   const [teeSheetNotes, setTeeSheetNotes] = useState<string>("");
   const [nearestToPinHoles, setNearestToPinHoles] = useState<number[]>([]);
   const [longestDriveHoles, setLongestDriveHoles] = useState<number[]>([]);
@@ -60,7 +60,7 @@ export default function TeesTeeSheetScreen() {
   
   // Player selection (assume all coming by default)
   const [selectedPlayerIds, setSelectedPlayerIds] = useState<Set<string>>(new Set());
-  const [guests, setGuests] = useState<Array<{ id: string; name: string; sex: "male" | "female"; handicapIndex?: number; included: boolean }>>([]);
+  const [guests, setGuests] = useState<{ id: string; name: string; sex: "male" | "female"; handicapIndex?: number; included: boolean }[]>([]);
 
   // Add Guest Modal state
   const [showAddGuestModal, setShowAddGuestModal] = useState(false);
@@ -296,7 +296,7 @@ export default function TeesTeeSheetScreen() {
     startDate.setHours(hours || 8, minutes || 0, 0, 0);
 
     // Generate groups using snake draft
-    const groups: Array<{ timeISO: string; players: string[] }> = [];
+    const groups: { timeISO: string; players: string[] }[] = [];
     for (let groupIdx = 0; groupIdx < groupCount; groupIdx++) {
       groups.push({
         timeISO: new Date(startDate.getTime() + groupIdx * intervalMins * 60000).toISOString(),
@@ -726,7 +726,7 @@ export default function TeesTeeSheetScreen() {
         <AppCard style={styles.readOnlyCard}>
           <Badge label="View Only" variant="status" />
           <AppText variant="small" color="secondary" style={styles.readOnlyText}>
-            You don't have permission to edit tee sheets
+            You do not have permission to edit tee sheets
           </AppText>
         </AppCard>
       )}

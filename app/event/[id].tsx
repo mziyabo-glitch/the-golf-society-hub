@@ -3,8 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 
 import { getCourseHandicap, getPlayingHandicap } from "@/lib/handicap";
-import type { Course, TeeSet, EventData as EventDataModel } from "@/lib/models";
-import { canCreateEvents, canEditVenueInfo, canEnterScores, canManageFinance, normalizeMemberRoles, normalizeSessionRole } from "@/lib/permissions";
+import { canCreateEvents, canEnterScores, canManageFinance, normalizeMemberRoles, normalizeSessionRole } from "@/lib/permissions";
 import { formatDateDDMMYYYY } from "@/utils/date";
 import { DatePicker } from "@/components/DatePicker";
 import { useBootstrap } from "@/lib/useBootstrap";
@@ -44,7 +43,6 @@ export default function EventDetailsScreen() {
   const [isManCo, setIsManCo] = useState(false);
   const [rsvpSuccess, setRsvpSuccess] = useState(false);
   const [canEditEvent, setCanEditEvent] = useState(false);
-  const [canEditVenue, setCanEditVenue] = useState(false);
   const [canEnterResults, setCanEnterResults] = useState(false);
   const [canManageFinanceFlag, setCanManageFinanceFlag] = useState(false);
   const [editingEventFee, setEditingEventFee] = useState(false);
@@ -141,7 +139,7 @@ export default function EventDetailsScreen() {
       });
     }
     setScores(resultScores);
-  }, [event?.id]);
+  }, [event]);
 
   useEffect(() => {
     const course = coursesWithTees.find((c) => c.id === selectedCourseId) || null;
@@ -163,7 +161,6 @@ export default function EventDetailsScreen() {
     const roles = normalizeMemberRoles(currentMember?.roles);
     setIsManCo(roles.some((role) => role !== "Member"));
     setCanEditEvent(canCreateEvents(sessionRole, roles));
-    setCanEditVenue(canEditVenueInfo(sessionRole, roles));
     setCanEnterResults(canEnterScores(sessionRole, roles));
     setCanManageFinanceFlag(canManageFinance(sessionRole, roles));
   }, [members, user?.activeMemberId]);

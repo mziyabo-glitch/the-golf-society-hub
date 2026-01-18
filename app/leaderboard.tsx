@@ -10,7 +10,7 @@
  */
 
 import { router } from "expo-router";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { ActivityIndicator, Pressable, StyleSheet, TextInput, View, Platform, Alert } from "react-native";
 import * as Print from "expo-print";
 import * as Sharing from "expo-sharing";
@@ -18,7 +18,7 @@ import { Screen } from "@/components/ui/Screen";
 import { SectionHeader } from "@/components/ui/SectionHeader";
 import { AppText } from "@/components/ui/AppText";
 import { AppCard } from "@/components/ui/AppCard";
-import { PrimaryButton, SecondaryButton } from "@/components/ui/Button";
+import { SecondaryButton } from "@/components/ui/Button";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { Row } from "@/components/ui/Row";
 import { SocietyHeader } from "@/components/ui/SocietyHeader";
@@ -135,7 +135,7 @@ export default function LeaderboardScreen() {
 
   // Calculate event leaderboard using same logic as event page
   // Uses event.results with grossScore (lowest wins)
-  const getEventLeaderboard = (event: EventData): Array<{ memberId: string; grossScore: number }> => {
+  const getEventLeaderboard = useCallback((event: EventData): { memberId: string; grossScore: number }[] => {
     if (!event.results || Object.keys(event.results).length === 0) {
       return [];
     }
@@ -149,9 +149,9 @@ export default function LeaderboardScreen() {
       .sort((a, b) => a.grossScore - b.grossScore);
 
     return leaderboard;
-  };
+  }, []);
 
-  const calculateLeaderboard = (): LeaderboardEntry[] => {
+  const calculateLeaderboard = useCallback((): LeaderboardEntry[] => {
     // Filter published events only (OOM only counts published results)
     let publishedEvents = events.filter((e) => {
       // Event must be published to count in OOM
@@ -243,7 +243,7 @@ export default function LeaderboardScreen() {
       }
       return b.eventsPlayed - a.eventsPlayed;
     });
-  };
+  }, [events, getEventLeaderboard, members, seasonYear, showOOMOnly]);
 
   const loading = loadingMembers || loadingEvents || loadingSociety;
 
@@ -252,7 +252,7 @@ export default function LeaderboardScreen() {
       const calculated = calculateLeaderboard();
       setLeaderboard(calculated);
     }
-  }, [members, events, loading, seasonYear, showOOMOnly]);
+  }, [calculateLeaderboard, loading, members.length]);
 
   const handleShareOrderOfMerit = async () => {
     try {

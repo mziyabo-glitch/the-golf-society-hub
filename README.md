@@ -35,6 +35,14 @@ In the output, you'll find options to open the app in a
 
 You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
 
+## Branching & Deployment Strategy
+
+- `main` → Production (Vercel Production Deployment)
+- `dev` → Staging/Test (Vercel Preview Deployments)
+- All testing happens on `dev`
+- Only merge into `main` when stable
+- Feature work branches from `dev`
+
 ## Deploy to Vercel (web)
 
 This app uses Expo web static export. Vercel should run the build and publish the `dist` folder.

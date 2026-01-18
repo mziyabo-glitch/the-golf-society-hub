@@ -13,11 +13,10 @@
 
 import { router, useLocalSearchParams } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
-import { Alert, Pressable, StyleSheet, TextInput, View, ActivityIndicator } from "react-native";
+import { Alert, StyleSheet, TextInput, View, ActivityIndicator } from "react-native";
 
 import { getCourseHandicap, getPlayingHandicap } from "@/lib/handicap";
 import { canEnterScores, normalizeMemberRoles, normalizeSessionRole } from "@/lib/permissions";
-import { formatDateDDMMYYYY } from "@/utils/date";
 import { Screen } from "@/components/ui/Screen";
 import { SectionHeader } from "@/components/ui/SectionHeader";
 import { AppText } from "@/components/ui/AppText";
@@ -157,7 +156,7 @@ export default function EventResultsScreen() {
         { text: "OK", onPress: () => router.back() },
       ]);
     }
-  }, [members, router, user?.activeMemberId]);
+  }, [members, user?.activeMemberId]);
 
   // Constants for validation
   const STABLEFORD_MIN = 0;

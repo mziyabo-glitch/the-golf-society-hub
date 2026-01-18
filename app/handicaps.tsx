@@ -51,7 +51,7 @@ export default function HandicapsScreen() {
         { text: "OK", onPress: () => router.back() },
       ]);
     }
-  }, [currentMember?.roles, router]);
+  }, [currentMember?.roles]);
 
   const handleHandicapChange = (memberId: string, value: string) => {
     setEditedHandicaps((prev) => ({
