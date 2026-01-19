@@ -14,6 +14,7 @@ export type SocietyDoc = {
   scoringMode?: "Stableford" | "Strokeplay" | "Both";
   handicapRule?: "Allow WHS" | "Fixed HCP" | "No HCP";
   logoUrl?: string | null;
+  adminPin?: string;
   annualFee?: number;
   updatedAt?: unknown;
 };

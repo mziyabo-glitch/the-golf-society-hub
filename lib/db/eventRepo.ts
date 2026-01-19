@@ -25,6 +25,7 @@ export type EventDoc = {
   maleTeeSetId?: string;
   femaleTeeSetId?: string;
   handicapAllowancePct?: number;
+  handicapAllowance?: 0.9 | 1.0;
   createdAt?: unknown;
   format?: "Stableford" | "Strokeplay" | "Both";
   playerIds?: string[];
@@ -51,6 +52,9 @@ export type EventDoc = {
     handicapIndex?: number;
     included: boolean;
   }>;
+  teeSheetNotes?: string;
+  nearestToPinHoles?: number[];
+  longestDriveHoles?: number[];
   results?: {
     [memberId: string]: {
       grossScore: number;

@@ -4,7 +4,7 @@
  * - Members can view tee sheet
  */
 
-import type { TeeSet, EventData, MemberData } from "@/lib/models";
+import type { TeeSet, MemberData } from "@/lib/models";
 import { getPlayingHandicap, isValidHandicap } from "@/lib/handicap";
 import { formatDateDDMMYYYY } from "@/utils/date";
 import { getPermissions, type Permissions } from "@/lib/rbac";
@@ -151,7 +151,7 @@ export default function TeesTeeSheetScreen() {
     setSelectedFemaleTeeSet(femaleTee || null);
   };
 
-  const handleSelectEvent = (event: EventData) => {
+  const handleSelectEvent = (event: EventDoc) => {
     setSelectedEvent(event);
     // Load event's tee sheet if exists
     if (event.teeSheet) {
@@ -487,7 +487,7 @@ export default function TeesTeeSheetScreen() {
     if (!selectedEvent) return;
     try {
       // Update RSVPs for selected members
-      const newRsvps: Record<string, string> = { ...selectedEvent.rsvps };
+      const newRsvps: Record<string, "going" | "maybe" | "no" | "yes"> = { ...selectedEvent.rsvps };
       members.forEach((member) => {
         if (selectedPlayerIds.has(member.id)) {
           newRsvps[member.id] = "going";

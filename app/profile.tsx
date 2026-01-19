@@ -10,23 +10,14 @@
  */
 
 import { useBootstrap } from "@/lib/useBootstrap";
-import { subscribeMembersBySociety, updateMemberDoc } from "@/lib/db/memberRepo";
+import { subscribeMembersBySociety, updateMemberDoc, type MemberDoc } from "@/lib/db/memberRepo";
 import { subscribeEventsBySociety, type EventDoc } from "@/lib/db/eventRepo";
 import { isValidHandicap } from "@/lib/handicap";
 import { router } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
 import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 
-type MemberData = {
-  id: string;
-  name: string;
-  handicap?: number;
-  sex?: "male" | "female";
-  roles?: string[];
-  paid?: boolean;
-  amountPaid?: number;
-  paidDate?: string;
-};
+type MemberData = MemberDoc;
 
 export default function ProfileScreen() {
   const { user } = useBootstrap();
