@@ -8,8 +8,11 @@
     "android": "expo start --android",
     "ios": "expo start --ios",
     "web": "expo start --web",
-    "build": "npx expo export -p web",
+    "build": "node ./node_modules/expo/bin/cli export -p web",
     "lint": "expo lint"
+  },
+  "engines": {
+    "node": "20.x"
   },
   "dependencies": {
     "@expo/vector-icons": "^15.0.3",
