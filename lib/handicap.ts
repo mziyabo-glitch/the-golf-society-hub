@@ -5,6 +5,10 @@
 import type { MemberData, Course, TeeSet, EventData } from "./models";
 import { calculatePlayingHandicapFromIndex } from "./whs";
 
+export function isValidHandicap(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
 /**
  * Get playing handicap for a member in an event
  * Returns null if tee sets are not configured
@@ -17,7 +21,7 @@ export function getPlayingHandicap(
   femaleTeeSet: TeeSet | null
 ): number | null {
   // Member must have handicap index
-  if (member.handicap === undefined) {
+  if (!isValidHandicap(member.handicap)) {
     return null;
   }
 
@@ -38,11 +42,12 @@ export function getPlayingHandicap(
     : event.handicapAllowance ?? 1.0;
 
   // Calculate playing handicap
-  return calculatePlayingHandicapFromIndex(
+  const playingHandicap = calculatePlayingHandicapFromIndex(
     member.handicap,
     teeSet,
     allowance as 0.9 | 1.0
   );
+  return Number.isFinite(playingHandicap) ? Math.round(playingHandicap) : null;
 }
 
 /**
@@ -53,7 +58,7 @@ export function getCourseHandicap(
   maleTeeSet: TeeSet | null,
   femaleTeeSet: TeeSet | null
 ): number | null {
-  if (member.handicap === undefined || !member.sex) {
+  if (!isValidHandicap(member.handicap) || !member.sex) {
     return null;
   }
 

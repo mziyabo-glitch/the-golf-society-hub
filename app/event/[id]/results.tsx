@@ -15,7 +15,7 @@ import { router, useLocalSearchParams } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
 import { Alert, StyleSheet, TextInput, View, ActivityIndicator } from "react-native";
 
-import { getCourseHandicap, getPlayingHandicap } from "@/lib/handicap";
+import { getCourseHandicap, getPlayingHandicap, isValidHandicap } from "@/lib/handicap";
 import { canEnterScores, normalizeMemberRoles, normalizeSessionRole } from "@/lib/permissions";
 import { Screen } from "@/components/ui/Screen";
 import { SectionHeader } from "@/components/ui/SectionHeader";
@@ -144,6 +144,22 @@ export default function EventResultsScreen() {
       setSelectedPlayers(members);
     }
   }, [event, members]);
+
+  const getPlayingHandicapForPlayer = (player: MemberData): number | null => {
+    if (!event) return null;
+    const snapshot = event.playingHandicapSnapshot?.[player.id];
+    if (isValidHandicap(snapshot)) return Math.round(snapshot);
+    const ph = getPlayingHandicap(
+      player,
+      event,
+      selectedCourse,
+      selectedMaleTeeSet,
+      selectedFemaleTeeSet
+    );
+    if (ph !== null) return Math.round(ph);
+    const legacy = event.handicapSnapshot?.[player.id];
+    return isValidHandicap(legacy) ? Math.round(legacy) : null;
+  };
 
   useEffect(() => {
     const currentMember = members.find((m) => m.id === user?.activeMemberId) || null;
@@ -347,10 +363,10 @@ export default function EventResultsScreen() {
           }
         }
         
-        // Calculate net score using handicap snapshot if available, otherwise current handicap
-        const handicap = event.handicapSnapshot?.[player.id] ?? player.handicap;
-        if (handicap !== undefined && result.strokeplay) {
-          result.netScore = result.strokeplay - handicap;
+        // Calculate net score using playing handicap (integer)
+        const playingHandicap = getPlayingHandicapForPlayer(player);
+        if (playingHandicap !== null && result.strokeplay) {
+          result.netScore = result.strokeplay - playingHandicap;
         }
         
         if (result.grossScore > 0 || result.stableford !== undefined) {
@@ -617,13 +633,13 @@ export default function EventResultsScreen() {
         <>
           {selectedPlayers.map((player) => {
             const ch = getCourseHandicap(player, selectedMaleTeeSet, selectedFemaleTeeSet);
-            const ph = getPlayingHandicap(player, event, selectedCourse, selectedMaleTeeSet, selectedFemaleTeeSet);
+            const ph = getPlayingHandicapForPlayer(player);
 
             return (
               <AppCard key={player.id} style={styles.resultCard}>
                 <AppText variant="bodyBold">{player.name}</AppText>
                 <View style={styles.handicapInfo}>
-                  {player.handicap !== undefined && (
+                  {isValidHandicap(player.handicap) && (
                     <AppText variant="small" color="secondary">
                       HI: {player.handicap}
                     </AppText>
@@ -668,12 +684,13 @@ export default function EventResultsScreen() {
                       style={[styles.input, { borderColor: colors.border, color: colors.text }]}
                     />
                     {(() => {
-                      const handicap = event.handicapSnapshot?.[player.id] ?? player.handicap;
+                      const playingHandicap = getPlayingHandicapForPlayer(player);
                       const strokeplay = results[player.id]?.strokeplay;
-                      if (handicap !== undefined && strokeplay) {
+                      if (playingHandicap !== null && strokeplay) {
+                        const netScore = parseInt(strokeplay || "0", 10) - playingHandicap;
                         return (
                           <AppText variant="small" color="secondary" style={styles.netScoreLabel}>
-                            Net: {parseInt(strokeplay || "0", 10) - handicap}
+                            Net: {netScore}
                           </AppText>
                         );
                       }

@@ -12,6 +12,7 @@
 import { useBootstrap } from "@/lib/useBootstrap";
 import { subscribeMembersBySociety, updateMemberDoc } from "@/lib/db/memberRepo";
 import { subscribeEventsBySociety, type EventDoc } from "@/lib/db/eventRepo";
+import { isValidHandicap } from "@/lib/handicap";
 import { router } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
 import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
@@ -21,6 +22,7 @@ type MemberData = {
   name: string;
   handicap?: number;
   sex?: "male" | "female";
+  roles?: string[];
   paid?: boolean;
   amountPaid?: number;
   paidDate?: string;
@@ -39,7 +41,7 @@ export default function ProfileScreen() {
   const [loadingMembers, setLoadingMembers] = useState(true);
   const [loadingEvents, setLoadingEvents] = useState(true);
 
-  const userRoles = useMemo(() => currentMember?.roles ?? ["member"], [currentMember?.roles]);
+  const userRoles = useMemo(() => currentMember?.roles ?? [], [currentMember?.roles]);
   const upcomingEventsWithFees = useMemo(() => {
     const now = new Date();
     return events
@@ -229,7 +231,7 @@ export default function ProfileScreen() {
               <View style={styles.profileSection}>
                 <View style={styles.profileCard}>
                   <Text style={styles.profileName}>{currentMember.name}</Text>
-                  {currentMember.handicap !== undefined && (
+                  {isValidHandicap(currentMember.handicap) && (
                     <Text style={styles.profileHandicap}>HCP: {currentMember.handicap}</Text>
                   )}
                 </View>

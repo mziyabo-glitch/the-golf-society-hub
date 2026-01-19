@@ -5,7 +5,7 @@
  */
 
 import type { TeeSet, EventData, MemberData } from "@/lib/models";
-import { getPlayingHandicap } from "@/lib/handicap";
+import { getPlayingHandicap, isValidHandicap } from "@/lib/handicap";
 import { formatDateDDMMYYYY } from "@/utils/date";
 import { getPermissions, type Permissions } from "@/lib/rbac";
 import { guard } from "@/lib/guards";
@@ -993,7 +993,7 @@ export default function TeesTeeSheetScreen() {
                           {isIncluded && <View style={styles.checkmark} />}
                         </View>
                         <Text style={styles.playerSelectName}>{member.name}</Text>
-                        {member.handicap !== undefined && (
+                        {isValidHandicap(member.handicap) && (
                           <Text style={styles.playerSelectHandicap}>HI: {member.handicap}</Text>
                         )}
                       </Pressable>

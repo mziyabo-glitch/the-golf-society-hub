@@ -65,7 +65,7 @@ export default function SettingsScreen() {
 
       if (!canAssign && !hasAlertedRef.current) {
         hasAlertedRef.current = true;
-        Alert.alert("Access Denied", "Only admins can access settings", [
+        Alert.alert("Access Denied", "Only captains or admins can access settings", [
           { text: "OK", onPress: () => router.back() },
         ]);
       }

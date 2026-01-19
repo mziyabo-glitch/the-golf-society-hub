@@ -2,7 +2,7 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
 import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 
-import { getCourseHandicap, getPlayingHandicap } from "@/lib/handicap";
+import { getCourseHandicap, getPlayingHandicap, isValidHandicap } from "@/lib/handicap";
 import { canCreateEvents, canEnterScores, canManageFinance, normalizeMemberRoles, normalizeSessionRole } from "@/lib/permissions";
 import { formatDateDDMMYYYY } from "@/utils/date";
 import { DatePicker } from "@/components/DatePicker";
@@ -166,11 +166,13 @@ export default function EventDetailsScreen() {
   }, [members, user?.activeMemberId]);
 
   const handleScoreChange = (memberId: string, field: "stableford" | "strokeplay", value: string) => {
+    const trimmed = value.trim();
+    const parsed = trimmed ? Number.parseInt(trimmed, 10) : NaN;
     setScores((prev) => ({
       ...prev,
       [memberId]: {
         ...prev[memberId],
-        [field]: value.trim() ? parseFloat(value.trim()) : undefined,
+        [field]: Number.isNaN(parsed) ? undefined : parsed,
       },
     }));
   };
@@ -220,11 +222,24 @@ export default function EventDetailsScreen() {
 
     try {
       let handicapSnapshot: { [memberId: string]: number } | undefined = undefined;
+      let playingHandicapSnapshot: { [memberId: string]: number } | undefined = undefined;
       if (lockHandicaps) {
         handicapSnapshot = {};
+        playingHandicapSnapshot = {};
+        const eventForHandicap = { ...event, handicapAllowance };
         members.forEach((member) => {
-          if (member.handicap !== undefined) {
+          if (isValidHandicap(member.handicap)) {
             handicapSnapshot![member.id] = member.handicap;
+          }
+          const ph = getPlayingHandicap(
+            member,
+            eventForHandicap,
+            selectedCourse,
+            selectedMaleTeeSet,
+            selectedFemaleTeeSet
+          );
+          if (ph !== null) {
+            playingHandicapSnapshot![member.id] = Math.round(ph);
           }
         });
       }
@@ -242,6 +257,7 @@ export default function EventDetailsScreen() {
         femaleTeeSetId: selectedFemaleTeeSetId || undefined,
         handicapAllowance: handicapAllowance,
         handicapSnapshot: lockHandicaps ? handicapSnapshot : undefined,
+        playingHandicapSnapshot: lockHandicaps ? playingHandicapSnapshot : undefined,
         courseName: selectedCourseName || event.courseName,
       });
 
@@ -946,7 +962,7 @@ export default function EventDetailsScreen() {
                                 return (
                                   <View key={member.id} style={styles.rsvpMemberRow}>
                                     <Text style={styles.rsvpMemberName}>{member.name}</Text>
-                                    {member.handicap !== undefined && (
+                                    {isValidHandicap(member.handicap) && (
                                       <Text style={styles.rsvpHandicapInfo}>
                                         HI: {member.handicap}
                                         {ch !== null && ` | CH: ${ch}`}
@@ -1061,7 +1077,7 @@ export default function EventDetailsScreen() {
                               {member.name}
                               {isCurrentUser && " (You)"}
                             </Text>
-                            {member.handicap !== undefined && (
+                            {isValidHandicap(member.handicap) && (
                               <Text style={styles.playerHandicapInfo}>
                                 HI: {member.handicap} | PH: {ph ?? "-"}
                               </Text>
@@ -1097,9 +1113,22 @@ export default function EventDetailsScreen() {
               <View style={styles.section}>
                 <Text style={styles.sectionTitle}>Results</Text>
                 {(() => {
-                  // Helper to get handicap (from snapshot or current)
-                  const getHandicap = (memberId: string) => {
-                    return event.handicapSnapshot?.[memberId] ?? members.find(m => m.id === memberId)?.handicap;
+                  // Helper to get playing handicap (snapshot preferred)
+                  const getPlayingHandicapForMember = (memberId: string) => {
+                    const snapshot = event.playingHandicapSnapshot?.[memberId];
+                    if (isValidHandicap(snapshot)) return Math.round(snapshot);
+                    const member = members.find((m) => m.id === memberId);
+                    if (!member) return undefined;
+                    const ph = getPlayingHandicap(
+                      member,
+                      event,
+                      selectedCourse,
+                      selectedMaleTeeSet,
+                      selectedFemaleTeeSet
+                    );
+                    if (ph !== null) return Math.round(ph);
+                    const legacy = event.handicapSnapshot?.[memberId];
+                    return isValidHandicap(legacy) ? Math.round(legacy) : undefined;
                   };
 
                   // Build Stableford table if format includes Stableford
@@ -1113,7 +1142,7 @@ export default function EventDetailsScreen() {
                           member,
                           score: result.stableford,
                           scoreLabel: `${result.stableford} pts`,
-                          handicap: getHandicap(member.id),
+                          handicap: getPlayingHandicapForMember(member.id),
                         };
                       })
                       .filter((item): item is NonNullable<typeof item> => item !== null)
@@ -1140,8 +1169,9 @@ export default function EventDetailsScreen() {
                         const result = event.results?.[member.id];
                         if (!result || result.strokeplay === undefined) return null;
                         
-                        const handicap = getHandicap(member.id);
-                        const netScore = result.netScore ?? (handicap !== undefined ? result.strokeplay - handicap : undefined);
+                        const playingHandicap = getPlayingHandicapForMember(member.id);
+                        const netScore =
+                          playingHandicap !== undefined ? result.strokeplay - playingHandicap : result.netScore;
                         const scoreLabel = netScore !== undefined ? `${result.strokeplay} (${netScore} net)` : `${result.strokeplay}`;
                         
                         return {
@@ -1149,7 +1179,7 @@ export default function EventDetailsScreen() {
                           score: result.strokeplay,
                           netScore,
                           scoreLabel,
-                          handicap,
+                          handicap: playingHandicap,
                         };
                       })
                       .filter((item): item is NonNullable<typeof item> => item !== null)
@@ -1202,7 +1232,7 @@ export default function EventDetailsScreen() {
                                 <Text style={styles.tableCell}>{position}</Text>
                                 <View style={{ flex: 1 }}>
                                   <Text style={styles.tableCell}>{row.member.name}</Text>
-                                  {row.handicap !== undefined && (
+                                  {isValidHandicap(row.handicap) && (
                                     <Text style={styles.tableCellSmall}>HCP: {row.handicap}</Text>
                                   )}
                                 </View>
@@ -1247,7 +1277,7 @@ export default function EventDetailsScreen() {
                 members.map((member) => (
                   <View key={member.id} style={styles.scoreCard}>
                     <Text style={styles.memberName}>{member.name}</Text>
-                    {member.handicap !== undefined && (
+                    {isValidHandicap(member.handicap) && (
                       <Text style={styles.memberHandicap}>HCP: {member.handicap}</Text>
                     )}
 

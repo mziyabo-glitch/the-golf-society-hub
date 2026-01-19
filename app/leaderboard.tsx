@@ -27,6 +27,7 @@ import { useBootstrap } from "@/lib/useBootstrap";
 import { subscribeMembersBySociety, type MemberDoc } from "@/lib/db/memberRepo";
 import { subscribeEventsBySociety, type EventDoc } from "@/lib/db/eventRepo";
 import { subscribeSocietyDoc, type SocietyDoc } from "@/lib/db/societyRepo";
+import { isValidHandicap } from "@/lib/handicap";
 
 type EventData = EventDoc;
 type MemberData = MemberDoc;
@@ -309,7 +310,7 @@ export default function LeaderboardScreen() {
                   (entry, index) => `
                 <tr>
                   <td class="position">${index + 1}</td>
-                  <td>${entry.member.name || "Unknown"}${entry.member.handicap !== undefined ? ` (HCP: ${entry.member.handicap})` : ""}</td>
+                  <td>${entry.member.name || "Unknown"}${isValidHandicap(entry.member.handicap) ? ` (HCP: ${entry.member.handicap})` : ""}</td>
                   <td class="points">${entry.totalPoints}</td>
                   <td class="wins">${entry.totalWins}</td>
                   <td class="played">${entry.eventsPlayed}</td>
@@ -510,7 +511,7 @@ export default function LeaderboardScreen() {
                   <AppText variant="bodyBold" numberOfLines={1} ellipsizeMode="tail" style={styles.memberName}>
                     {entry.member.name}
                   </AppText>
-                  {entry.member.handicap !== undefined && (
+                  {isValidHandicap(entry.member.handicap) && (
                     <AppText variant="small" color="secondary" numberOfLines={1}>
                       HCP: {entry.member.handicap}
                     </AppText>

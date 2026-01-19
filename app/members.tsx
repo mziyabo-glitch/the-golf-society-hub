@@ -16,6 +16,7 @@ import { PrimaryButton, SecondaryButton, DestructiveButton } from "@/components/
 import { EmptyState } from "@/components/ui/EmptyState";
 import { Row } from "@/components/ui/Row";
 import { getColors, spacing } from "@/lib/ui/theme";
+import { isValidHandicap } from "@/lib/handicap";
 
 type MemberData = MemberDoc;
 type EventData = EventDoc;
@@ -289,7 +290,7 @@ export default function MembersScreen() {
                       {currentUserId === member.id && <Badge label="My Profile" variant="status" />}
                     </Row>
                     <Row gap="sm" alignItems="center" style={styles.memberMeta}>
-                      {member.handicap !== undefined && (
+                      {isValidHandicap(member.handicap) && (
                         <AppText variant="small" color="secondary">
                           HCP: {member.handicap}
                         </AppText>

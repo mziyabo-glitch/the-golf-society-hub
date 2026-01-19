@@ -20,7 +20,7 @@ import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from "react-nati
  * - Verify player count updates on event card
  */
 
-import { getCourseHandicap, getPlayingHandicap } from "@/lib/handicap";
+import { getCourseHandicap, getPlayingHandicap, isValidHandicap } from "@/lib/handicap";
 import { canCreateEvents, normalizeMemberRoles, normalizeSessionRole } from "@/lib/permissions";
 import { useBootstrap } from "@/lib/useBootstrap";
 import { subscribeEventDoc, updateEventDoc, type EventDoc } from "@/lib/db/eventRepo";
@@ -206,7 +206,7 @@ export default function EventPlayersScreen() {
                         const ph = event ? getPlayingHandicap(member, event, selectedCourse, selectedMaleTeeSet, selectedFemaleTeeSet) : null;
                         return (
                           <View style={styles.handicapInfo}>
-                            {member.handicap !== undefined && (
+                            {isValidHandicap(member.handicap) && (
                               <Text style={styles.memberHandicap}>HI: {member.handicap}</Text>
                             )}
                             {ch !== null && (
