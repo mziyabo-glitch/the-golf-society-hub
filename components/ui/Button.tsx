@@ -5,7 +5,7 @@
  */
 
 import { ReactNode } from "react";
-import { Pressable, StyleSheet, ViewStyle, ActivityIndicator } from "react-native";
+import { Pressable, StyleSheet, View, ViewStyle, ActivityIndicator } from "react-native";
 import { AppText } from "./AppText";
 import { getColors, radius, spacing, buttonHeights, typography } from "@/lib/ui/theme";
 
@@ -17,9 +17,20 @@ type ButtonProps = {
   style?: ViewStyle;
   variant?: "primary" | "secondary" | "destructive";
   size?: "sm" | "md" | "lg";
+  icon?: ReactNode;
+  iconPosition?: "left" | "right";
 };
 
-export function PrimaryButton({ children, onPress, disabled, loading, style, size = "md" }: ButtonProps) {
+export function PrimaryButton({
+  children,
+  onPress,
+  disabled,
+  loading,
+  style,
+  size = "md",
+  icon,
+  iconPosition = "left",
+}: ButtonProps) {
   const colors = getColors();
   const height = buttonHeights[size];
 
@@ -43,15 +54,28 @@ export function PrimaryButton({ children, onPress, disabled, loading, style, siz
       {loading ? (
         <ActivityIndicator size="small" color={colors.textInverse} />
       ) : (
-        <AppText variant="button" color="inverse" style={styles.buttonText}>
-          {children}
-        </AppText>
+        <View style={styles.content}>
+          {icon && iconPosition === "left" ? <View style={styles.icon}>{icon}</View> : null}
+          <AppText variant="button" color="inverse" style={styles.buttonText}>
+            {children}
+          </AppText>
+          {icon && iconPosition === "right" ? <View style={styles.icon}>{icon}</View> : null}
+        </View>
       )}
     </Pressable>
   );
 }
 
-export function SecondaryButton({ children, onPress, disabled, loading, style, size = "md" }: ButtonProps) {
+export function SecondaryButton({
+  children,
+  onPress,
+  disabled,
+  loading,
+  style,
+  size = "md",
+  icon,
+  iconPosition = "left",
+}: ButtonProps) {
   const colors = getColors();
   const height = buttonHeights[size];
 
@@ -77,15 +101,28 @@ export function SecondaryButton({ children, onPress, disabled, loading, style, s
       {loading ? (
         <ActivityIndicator size="small" color={colors.primary} />
       ) : (
-        <AppText variant="button" color="primary" style={styles.buttonText}>
-          {children}
-        </AppText>
+        <View style={styles.content}>
+          {icon && iconPosition === "left" ? <View style={styles.icon}>{icon}</View> : null}
+          <AppText variant="button" color="primary" style={styles.buttonText}>
+            {children}
+          </AppText>
+          {icon && iconPosition === "right" ? <View style={styles.icon}>{icon}</View> : null}
+        </View>
       )}
     </Pressable>
   );
 }
 
-export function DestructiveButton({ children, onPress, disabled, loading, style, size = "md" }: ButtonProps) {
+export function DestructiveButton({
+  children,
+  onPress,
+  disabled,
+  loading,
+  style,
+  size = "md",
+  icon,
+  iconPosition = "left",
+}: ButtonProps) {
   const colors = getColors();
   const height = buttonHeights[size];
 
@@ -109,9 +146,13 @@ export function DestructiveButton({ children, onPress, disabled, loading, style,
       {loading ? (
         <ActivityIndicator size="small" color={colors.textInverse} />
       ) : (
-        <AppText variant="button" color="inverse" style={styles.buttonText}>
-          {children}
-        </AppText>
+        <View style={styles.content}>
+          {icon && iconPosition === "left" ? <View style={styles.icon}>{icon}</View> : null}
+          <AppText variant="button" color="inverse" style={styles.buttonText}>
+            {children}
+          </AppText>
+          {icon && iconPosition === "right" ? <View style={styles.icon}>{icon}</View> : null}
+        </View>
       )}
     </Pressable>
   );
@@ -119,6 +160,15 @@ export function DestructiveButton({ children, onPress, disabled, loading, style,
 
 const styles = StyleSheet.create({
   button: {
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  content: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.xs,
+  },
+  icon: {
     alignItems: "center",
     justifyContent: "center",
   },

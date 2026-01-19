@@ -8,14 +8,17 @@
 
 import { router } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
-import { Alert, StyleSheet, TextInput, View, Platform, ActivityIndicator } from "react-native";
+import { Alert, StyleSheet, View, Platform } from "react-native";
+import { Feather } from "@expo/vector-icons";
 import { Screen } from "@/components/ui/Screen";
 import { SectionHeader } from "@/components/ui/SectionHeader";
 import { PrimaryButton, SecondaryButton } from "@/components/ui/Button";
 import { canViewFinance, normalizeMemberRoles, normalizeSessionRole } from "@/lib/permissions";
 import { AppText } from "@/components/ui/AppText";
 import { AppCard } from "@/components/ui/AppCard";
+import { AppInput } from "@/components/ui/AppInput";
 import { Badge } from "@/components/ui/Badge";
+import { LoadingState } from "@/components/ui/LoadingState";
 import { getColors, spacing, typography } from "@/lib/ui/theme";
 import * as Print from "expo-print";
 import * as Sharing from "expo-sharing";
@@ -258,9 +261,7 @@ export default function FinanceScreen() {
   if (loading) {
     return (
       <Screen scrollable={false}>
-        <View style={styles.centerContent}>
-          <ActivityIndicator size="large" color={colors.primary} />
-        </View>
+        <LoadingState message="Loading finance data..." />
       </Screen>
     );
   }
@@ -284,7 +285,11 @@ export default function FinanceScreen() {
               Track event P&amp;L and expenses
             </AppText>
           </View>
-          <PrimaryButton onPress={() => router.push("/finance-events" as any)} size="sm">
+          <PrimaryButton
+            onPress={() => router.push("/finance-events" as any)}
+            size="sm"
+            icon={<Feather name="arrow-right" size={16} color={colors.textInverse} />}
+          >
             Open
           </PrimaryButton>
         </View>
@@ -297,14 +302,19 @@ export default function FinanceScreen() {
           </AppText>
           {editingFee ? (
             <View style={styles.editRow}>
-              <TextInput
+              <AppInput
                 value={annualFee}
                 onChangeText={setAnnualFee}
                 keyboardType="numeric"
                 placeholder="0.00"
-                style={[styles.input, { borderColor: colors.border, color: colors.text }]}
+                style={styles.input}
               />
-              <PrimaryButton onPress={saveAnnualFee} size="sm" style={styles.saveButton}>
+              <PrimaryButton
+                onPress={saveAnnualFee}
+                size="sm"
+                style={styles.saveButton}
+                icon={<Feather name="save" size={16} color={colors.textInverse} />}
+              >
                 Save
               </PrimaryButton>
               <SecondaryButton
@@ -326,6 +336,7 @@ export default function FinanceScreen() {
               <SecondaryButton
                 onPress={() => setEditingFee(true)}
                 size="sm"
+                icon={<Feather name="edit-2" size={16} color={colors.primary} />}
               >
                 Edit
               </SecondaryButton>
@@ -453,7 +464,11 @@ export default function FinanceScreen() {
             <AppText variant="h2" style={styles.sectionTitle}>
               Member Payments
             </AppText>
-            <PrimaryButton onPress={handleExport} size="sm">
+            <PrimaryButton
+              onPress={handleExport}
+              size="sm"
+              icon={<Feather name="download" size={16} color={colors.textInverse} />}
+            >
               Export
             </PrimaryButton>
           </View>
@@ -468,24 +483,27 @@ export default function FinanceScreen() {
                   {editingMemberId === member.id ? (
                     <View style={styles.editPaymentRow}>
                       <View style={styles.editInputs}>
-                        <TextInput
+                        <AppInput
                           value={editAmount}
                           onChangeText={setEditAmount}
                           keyboardType="numeric"
                           placeholder="Amount"
-                          style={[styles.smallInput, { borderColor: colors.border, color: colors.text }]}
+                          style={styles.smallInput}
+                          size="sm"
                         />
-                        <TextInput
+                        <AppInput
                           value={editPaidDate}
                           onChangeText={setEditPaidDate}
                           placeholder="YYYY-MM-DD"
-                          style={[styles.smallInput, { borderColor: colors.border, color: colors.text }]}
+                          style={styles.smallInput}
+                          size="sm"
                         />
                       </View>
                       <View style={styles.editActions}>
                         <PrimaryButton
                           onPress={() => saveMemberPayment(member.id)}
                           size="sm"
+                          icon={<Feather name="save" size={16} color={colors.textInverse} />}
                         >
                           Save
                         </PrimaryButton>
@@ -518,6 +536,7 @@ export default function FinanceScreen() {
                             setEditPaidDate(member.paidDate || "");
                           }}
                           size="sm"
+                          icon={<Feather name="edit-2" size={16} color={colors.primary} />}
                         >
                           Edit
                         </SecondaryButton>
@@ -595,17 +614,9 @@ const styles = StyleSheet.create({
   },
   input: {
     flex: 1,
-    borderWidth: 1,
-    borderRadius: 8,
-    padding: spacing.sm,
-    fontSize: 16,
   },
   smallInput: {
     flex: 1,
-    borderWidth: 1,
-    borderRadius: 6,
-    padding: spacing.xs,
-    fontSize: 14,
     marginRight: spacing.xs,
   },
   saveButton: {

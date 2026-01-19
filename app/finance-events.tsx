@@ -1,11 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
-import { Alert, Modal, Pressable, StyleSheet, TextInput, View } from "react-native";
+import { Alert, Modal, Pressable, StyleSheet, View } from "react-native";
+import { Feather } from "@expo/vector-icons";
 
 import { AppCard } from "@/components/ui/AppCard";
+import { AppInput } from "@/components/ui/AppInput";
 import { AppText } from "@/components/ui/AppText";
 import { Badge } from "@/components/ui/Badge";
-import { PrimaryButton, SecondaryButton } from "@/components/ui/Button";
+import { DestructiveButton, PrimaryButton, SecondaryButton } from "@/components/ui/Button";
 import { EmptyState } from "@/components/ui/EmptyState";
+import { LoadingState } from "@/components/ui/LoadingState";
 import { Screen } from "@/components/ui/Screen";
 import { SegmentedTabs } from "@/components/ui/SegmentedTabs";
 import { subscribeEventsBySociety, type EventDoc } from "@/lib/db/eventRepo";
@@ -13,6 +16,7 @@ import {
   createEventExpense,
   deleteEventExpenseDoc,
   subscribeExpensesByEvent,
+  updateEventExpenseDoc,
   type EventExpenseCategory,
   type EventExpenseDoc,
 } from "@/lib/db/eventExpenseRepo";
@@ -45,11 +49,14 @@ export default function FinanceEventsScreen() {
   const colors = getColors();
   const [events, setEvents] = useState<EventDoc[]>([]);
   const [members, setMembers] = useState<MemberDoc[]>([]);
+  const [loadingEvents, setLoadingEvents] = useState(true);
+  const [loadingMembers, setLoadingMembers] = useState(true);
   const [filter, setFilter] = useState<FilterMode>("upcoming");
   const [expandedEventId, setExpandedEventId] = useState<string | null>(null);
   const [expensesByEvent, setExpensesByEvent] = useState<Record<string, EventExpenseDoc[]>>({});
   const [isExpenseModalVisible, setIsExpenseModalVisible] = useState(false);
   const [activeEvent, setActiveEvent] = useState<EventDoc | null>(null);
+  const [activeExpense, setActiveExpense] = useState<EventExpenseDoc | null>(null);
   const [description, setDescription] = useState("");
   const [amount, setAmount] = useState("");
   const [category, setCategory] = useState<EventExpenseCategory>("other");
@@ -58,10 +65,13 @@ export default function FinanceEventsScreen() {
   useEffect(() => {
     if (!user?.activeSocietyId) {
       setEvents([]);
+      setLoadingEvents(false);
       return;
     }
+    setLoadingEvents(true);
     const unsubscribe = subscribeEventsBySociety(user.activeSocietyId, (items) => {
       setEvents(items);
+      setLoadingEvents(false);
     });
     return () => unsubscribe();
   }, [user?.activeSocietyId]);
@@ -69,10 +79,13 @@ export default function FinanceEventsScreen() {
   useEffect(() => {
     if (!user?.activeSocietyId) {
       setMembers([]);
+      setLoadingMembers(false);
       return;
     }
+    setLoadingMembers(true);
     const unsubscribe = subscribeMembersBySociety(user.activeSocietyId, (items) => {
       setMembers(items);
+      setLoadingMembers(false);
     });
     return () => unsubscribe();
   }, [user?.activeSocietyId]);
@@ -119,18 +132,27 @@ export default function FinanceEventsScreen() {
     setExpandedEventId((prev) => (prev === eventId ? null : eventId));
   };
 
-  const openExpenseModal = (event: EventDoc) => {
+  const openExpenseModal = (event: EventDoc, expense?: EventExpenseDoc) => {
     setActiveEvent(event);
-    setDescription("");
-    setAmount("");
-    setCategory("other");
-    setIncurredDateISO(getTodayISO());
+    setActiveExpense(expense ?? null);
+    if (expense) {
+      setDescription(expense.description);
+      setAmount(expense.amount.toString());
+      setCategory(expense.category);
+      setIncurredDateISO(expense.incurredDateISO);
+    } else {
+      setDescription("");
+      setAmount("");
+      setCategory("other");
+      setIncurredDateISO(getTodayISO());
+    }
     setIsExpenseModalVisible(true);
   };
 
   const closeExpenseModal = () => {
     setIsExpenseModalVisible(false);
     setActiveEvent(null);
+    setActiveExpense(null);
   };
 
   const handleSaveExpense = async () => {
@@ -149,15 +171,24 @@ export default function FinanceEventsScreen() {
     }
 
     try {
-      await createEventExpense({
-        eventId: activeEvent.id,
-        societyId: user.activeSocietyId,
-        description: description.trim(),
-        amount: amountValue,
-        category,
-        incurredDateISO: incurredDateISO.trim() || getTodayISO(),
-        createdBy: user.id,
-      });
+      if (activeExpense) {
+        await updateEventExpenseDoc(activeEvent.id, activeExpense.id, {
+          description: description.trim(),
+          amount: amountValue,
+          category,
+          incurredDateISO: incurredDateISO.trim() || getTodayISO(),
+        });
+      } else {
+        await createEventExpense({
+          eventId: activeEvent.id,
+          societyId: user.activeSocietyId,
+          description: description.trim(),
+          amount: amountValue,
+          category,
+          incurredDateISO: incurredDateISO.trim() || getTodayISO(),
+          createdBy: user.id,
+        });
+      }
       closeExpenseModal();
     } catch (error) {
       console.error("Error saving expense:", error);
@@ -183,6 +214,15 @@ export default function FinanceEventsScreen() {
     ]);
   };
 
+  const loading = loadingEvents || loadingMembers;
+  if (loading) {
+    return (
+      <Screen scrollable={false}>
+        <LoadingState message="Loading finance events..." />
+      </Screen>
+    );
+  }
+
   return (
     <Screen>
       <AppText variant="h1" style={styles.title}>
@@ -205,6 +245,7 @@ export default function FinanceEventsScreen() {
         <EmptyState
           title="No events to display"
           message="Create events with fees to see event P&amp;L."
+          icon={<Feather name="calendar" size={24} color={colors.primary} />}
           style={styles.emptyState}
         />
       ) : (
@@ -282,10 +323,24 @@ export default function FinanceEventsScreen() {
               </View>
 
               <View style={styles.eventActions}>
-                <SecondaryButton onPress={() => handleToggleEvent(event.id)} size="sm">
+                <SecondaryButton
+                  onPress={() => handleToggleEvent(event.id)}
+                  size="sm"
+                  icon={
+                    <Feather
+                      name={expanded ? "chevron-up" : "chevron-down"}
+                      size={16}
+                      color={colors.primary}
+                    />
+                  }
+                >
                   {expanded ? "Hide expenses" : "View expenses"}
                 </SecondaryButton>
-                <PrimaryButton onPress={() => openExpenseModal(event)} size="sm">
+                <PrimaryButton
+                  onPress={() => openExpenseModal(event)}
+                  size="sm"
+                  icon={<Feather name="plus" size={16} color={colors.textInverse} />}
+                >
                   Add Expense
                 </PrimaryButton>
               </View>
@@ -315,13 +370,22 @@ export default function FinanceEventsScreen() {
                         </View>
                         <View style={styles.expenseActions}>
                           <AppText variant="bodyBold">£{expense.amount.toFixed(2)}</AppText>
-                          <SecondaryButton
-                            onPress={() => handleDeleteExpense(event.id, expense.id)}
-                            size="sm"
-                            style={styles.deleteButton}
-                          >
-                            Delete
-                          </SecondaryButton>
+                          <View style={styles.expenseButtons}>
+                            <SecondaryButton
+                              onPress={() => openExpenseModal(event, expense)}
+                              size="sm"
+                              icon={<Feather name="edit-2" size={14} color={colors.primary} />}
+                            >
+                              Edit
+                            </SecondaryButton>
+                            <DestructiveButton
+                              onPress={() => handleDeleteExpense(event.id, expense.id)}
+                              size="sm"
+                              icon={<Feather name="trash-2" size={14} color={colors.textInverse} />}
+                            >
+                              Delete
+                            </DestructiveButton>
+                          </View>
                         </View>
                       </View>
                     ))
@@ -337,28 +401,26 @@ export default function FinanceEventsScreen() {
         <View style={styles.modalBackdrop}>
           <View style={[styles.modalCard, { backgroundColor: colors.surface }]}>
             <AppText variant="h2" style={styles.modalTitle}>
-              Add Expense
+              {activeExpense ? "Edit Expense" : "Add Expense"}
             </AppText>
 
             <AppText variant="caption" color="secondary" style={styles.modalLabel}>
               Description
             </AppText>
-            <TextInput
+            <AppInput
               value={description}
               onChangeText={setDescription}
               placeholder="e.g. Trophy engraving"
-              style={[styles.input, { borderColor: colors.border, color: colors.text }]}
             />
 
             <AppText variant="caption" color="secondary" style={styles.modalLabel}>
               Amount
             </AppText>
-            <TextInput
+            <AppInput
               value={amount}
               onChangeText={setAmount}
               placeholder="0.00"
               keyboardType="decimal-pad"
-              style={[styles.input, { borderColor: colors.border, color: colors.text }]}
             />
 
             <AppText variant="caption" color="secondary" style={styles.modalLabel}>
@@ -390,19 +452,27 @@ export default function FinanceEventsScreen() {
             <AppText variant="caption" color="secondary" style={styles.modalLabel}>
               Date
             </AppText>
-            <TextInput
+            <AppInput
               value={incurredDateISO}
               onChangeText={setIncurredDateISO}
               placeholder="YYYY-MM-DD"
-              style={[styles.input, { borderColor: colors.border, color: colors.text }]}
             />
 
             <View style={styles.modalActions}>
-              <SecondaryButton onPress={closeExpenseModal} size="sm" style={styles.modalButton}>
+              <SecondaryButton
+                onPress={closeExpenseModal}
+                size="sm"
+                style={styles.modalButton}
+              >
                 Cancel
               </SecondaryButton>
-              <PrimaryButton onPress={handleSaveExpense} size="sm" style={styles.modalButton}>
-                Save
+              <PrimaryButton
+                onPress={handleSaveExpense}
+                size="sm"
+                style={styles.modalButton}
+                icon={<Feather name="save" size={16} color={colors.textInverse} />}
+              >
+                {activeExpense ? "Update" : "Save"}
               </PrimaryButton>
             </View>
           </View>
@@ -475,8 +545,9 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     gap: spacing.sm,
   },
-  deleteButton: {
-    paddingHorizontal: spacing.sm,
+  expenseButtons: {
+    flexDirection: "row",
+    gap: spacing.sm,
   },
   modalBackdrop: {
     flex: 1,
@@ -494,12 +565,6 @@ const styles = StyleSheet.create({
   modalLabel: {
     marginTop: spacing.sm,
     marginBottom: spacing.xs,
-  },
-  input: {
-    borderWidth: 1,
-    borderRadius: radius.md,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: spacing.sm,
   },
   categoryGrid: {
     flexDirection: "row",
