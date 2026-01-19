@@ -35,6 +35,13 @@ export async function createEventExpense(input: EventExpenseInput): Promise<Even
     updatedAt: serverTimestamp(),
   });
 
+  if (__DEV__) {
+    console.log("[Firestore] createEventExpense", {
+      path: `events/${input.eventId}/expenses`,
+      payload,
+    });
+  }
+
   const ref = await addDoc(collection(db, "events", input.eventId, "expenses"), payload);
   return { id: ref.id, ...payload };
 }
