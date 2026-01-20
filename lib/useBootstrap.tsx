@@ -1,71 +1,82 @@
 import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
-
 import { ensureSignedIn } from "@/lib/firebase";
-import { ensureUserDoc, subscribeUserDoc, type UserDoc } from "@/lib/db/userRepo";
+import { subscribeUserDoc } from "@/lib/firebase/firestore";
 import { runAsyncStorageMigration } from "@/lib/migrations/asyncToFirestore";
-import { repairActiveProfile } from "@/lib/migrations/repairActiveProfile";
 
-type BootstrapState = {
-  user: UserDoc | null;
+type BootstrapCtx = {
   loading: boolean;
-  error: Error | null;
+  uid: string | null;
+  user: any | null;
+  societyId: string | null;
 };
 
-const BootstrapContext = createContext<BootstrapState | undefined>(undefined);
+const Ctx = createContext<BootstrapCtx>({
+  loading: true,
+  uid: null,
+  user: null,
+  societyId: null,
+});
 
-let migrationPromise: Promise<void> | null = null;
+export function useBootstrap() {
+  return useContext(Ctx);
+}
 
 export function BootstrapProvider({ children }: { children: React.ReactNode }) {
-  const [state, setState] = useState<BootstrapState>({
-    user: null,
-    loading: true,
-    error: null,
-  });
+  const [loading, setLoading] = useState(true);
+  const [uid, setUid] = useState<string | null>(null);
+  const [user, setUser] = useState<any | null>(null);
+  const [societyId, setSocietyId] = useState<string | null>(null);
 
   useEffect(() => {
-    let mounted = true;
-    let unsubscribe: (() => void) | null = null;
+    let unsub: null | (() => void) = null;
+    let cancelled = false;
 
-    const bootstrap = async () => {
+    (async () => {
       try {
-        const uid = await ensureSignedIn();
-        if (!migrationPromise) {
-          migrationPromise = runAsyncStorageMigration();
-        }
-        await migrationPromise;
-        await ensureUserDoc(uid);
+        const myUid = await ensureSignedIn();
+        if (cancelled) return;
 
-        // Defensive repair: older AsyncStorage migration sometimes wrote an auth uid into
-        // users/{uid}.activeMemberId (instead of a member document id). That breaks RBAC.
-        await repairActiveProfile(uid);
+        setUid(myUid);
 
-        unsubscribe = subscribeUserDoc(uid, (user) => {
-          if (!mounted) return;
-          setState({ user, loading: false, error: null });
+        // Run migration (native-only inside the function).
+        await runAsyncStorageMigration();
+        if (cancelled) return;
+
+        // Wait for FIRST user snapshot before dropping loading.
+        const firstSnapshot = await new Promise<void>((resolve) => {
+          let resolved = false;
+
+          unsub = subscribeUserDoc(myUid, (u) => {
+            if (cancelled) return;
+
+            setUser(u);
+            setSocietyId(u?.activeSocietyId ?? null);
+
+            if (!resolved) {
+              resolved = true;
+              resolve();
+            }
+          });
         });
-      } catch (error) {
-        if (!mounted) return;
-        setState({ user: null, loading: false, error: error as Error });
-      }
-    };
 
-    bootstrap();
+        void firstSnapshot;
+        if (!cancelled) setLoading(false);
+      } catch (e) {
+        console.error("bootstrap error", e);
+        if (!cancelled) setLoading(false);
+      }
+    })();
 
     return () => {
-      mounted = false;
-      if (unsubscribe) unsubscribe();
+      cancelled = true;
+      if (unsub) unsub();
     };
   }, []);
 
-  const value = useMemo(() => state, [state]);
+  const value = useMemo(
+    () => ({ loading, uid, user, societyId }),
+    [loading, uid, user, societyId]
+  );
 
-  return <BootstrapContext.Provider value={value}>{children}</BootstrapContext.Provider>;
-}
-
-export function useBootstrap(): BootstrapState {
-  const context = useContext(BootstrapContext);
-  if (!context) {
-    throw new Error("useBootstrap must be used within BootstrapProvider");
-  }
-  return context;
+  return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
