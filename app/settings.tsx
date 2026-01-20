@@ -2,20 +2,34 @@
  * HOW TO TEST:
  * - As member: try to access settings (should show alert and redirect)
  * - As captain: verify can access settings
+ * - As secretary: verify can access settings (logo + venue/info related settings)
  * - Set/change Admin PIN
- * - Access Roles & Permissions section (PIN-gated)
- * - Assign roles to members
- * - Verify roles persist and are enforced
+ * - Access Roles & Permissions section (Captain only)
+ * - Reset Society visible only to Captain
  */
 
 import { router } from "expo-router";
 import { useEffect, useRef, useState } from "react";
-import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View, Image, ActivityIndicator } from "react-native";
+import {
+  ActivityIndicator,
+  Alert,
+  Image,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from "react-native";
 
-import { canAssignRoles, normalizeMemberRoles, normalizeSessionRole, canEditVenueInfo } from "@/lib/permissions";
+import {
+  canAssignRoles,
+  canEditVenueInfo,
+  normalizeMemberRoles,
+  normalizeSessionRole,
+} from "@/lib/permissions";
 import { pickImage } from "@/utils/imagePicker";
 import { AppCard } from "@/components/ui/AppCard";
-import { spacing } from "@/lib/ui/theme";
 import { useBootstrap } from "@/lib/useBootstrap";
 import { subscribeSocietyDoc, updateSocietyDoc, type SocietyDoc } from "@/lib/db/societyRepo";
 import { subscribeMemberDoc } from "@/lib/db/memberRepo";
@@ -26,13 +40,16 @@ export default function SettingsScreen() {
   const [society, setSociety] = useState<SocietyDoc | null>(null);
   const [societyName, setSocietyName] = useState("");
   const [isEditingName, setIsEditingName] = useState(false);
+
   const [adminPin, setAdminPin] = useState("");
   const [isEditingPin, setIsEditingPin] = useState(false);
   const [newPin, setNewPin] = useState("");
   const [confirmPin, setConfirmPin] = useState("");
-  const [canAssignRolesRole, setCanAssignRolesRole] = useState(false);
-  const [canEditLogo, setCanEditLogo] = useState(false);
+
+  const [canAssignRolesRole, setCanAssignRolesRole] = useState(false); // Captain/Admin
+  const [canEditLogo, setCanEditLogo] = useState(false); // Captain or Secretary
   const [uploadingLogo, setUploadingLogo] = useState(false);
+
   const hasAlertedRef = useRef(false);
 
   useEffect(() => {
@@ -41,6 +58,7 @@ export default function SettingsScreen() {
       setSocietyName("");
       return;
     }
+
     const unsubscribe = subscribeSocietyDoc(user.activeSocietyId, (doc) => {
       setSociety(doc);
       setSocietyName(doc?.name ?? "");
@@ -50,34 +68,36 @@ export default function SettingsScreen() {
         setAdminPin("");
       }
     });
+
     return () => unsubscribe();
   }, [user?.activeSocietyId]);
 
   useEffect(() => {
     if (!user?.activeMemberId) return;
+
     const unsubscribe = subscribeMemberDoc(user.activeMemberId, (member) => {
+      // NOTE: Session role is currently not persisted; treat as MEMBER and rely on member roles
       const sessionRole = normalizeSessionRole("member");
       const roles = normalizeMemberRoles(member?.roles);
-      const canAssign = canAssignRoles(sessionRole, roles);
-      const canEdit = canEditVenueInfo(sessionRole, roles);
+
+      const canAssign = canAssignRoles(sessionRole, roles); // Captain
+      const canEdit = canEditVenueInfo(sessionRole, roles); // Captain or Secretary
+
       setCanAssignRolesRole(canAssign);
       setCanEditLogo(canEdit);
 
-      if (!canAssign && !hasAlertedRef.current) {
+      // Allow access for Captain OR Secretary.
+      // Block only if user has neither capability.
+      if (!canAssign && !canEdit && !hasAlertedRef.current) {
         hasAlertedRef.current = true;
-        Alert.alert("Access Denied", "Only captains or admins can access settings", [
+        Alert.alert("Access Denied", "Only Captain or Secretary can access settings", [
           { text: "OK", onPress: () => router.back() },
         ]);
       }
     });
+
     return () => unsubscribe();
   }, [user?.activeMemberId]);
-
-
-  // Allow access if admin session OR has captain role (checked in loadSociety)
-  // if (role !== "admin" && !canAssignRolesRole && society) {
-  //   return null; // Will redirect via Alert
-  // }
 
   const handleSaveName = async () => {
     if (!society || !societyName.trim()) return;
@@ -133,46 +153,36 @@ export default function SettingsScreen() {
 
     try {
       setUploadingLogo(true);
-      
-      // Pick image using expo-image-picker
+
       const result = await pickImage();
       if (!result || !result.uri) {
         setUploadingLogo(false);
         return;
       }
 
-      // Convert image to base64 data URL for Firestore storage
-      // Note: For production with Firebase Storage, upload to /societies/{societyId}/logo and store download URL
       let logoUrl: string;
-      
+
       try {
-        // Fetch image and convert to base64 data URL for cross-platform compatibility
         const response = await fetch(result.uri);
         if (!response.ok) {
           throw new Error("Failed to fetch image");
         }
-        
+
         const blob = await response.blob();
-        
-        // Convert blob to base64 data URL
+
         const reader = new FileReader();
         logoUrl = await new Promise<string>((resolve, reject) => {
           reader.onloadend = () => {
-            if (typeof reader.result === "string") {
-              resolve(reader.result);
-            } else {
-              reject(new Error("Failed to convert image to base64"));
-            }
+            if (typeof reader.result === "string") resolve(reader.result);
+            else reject(new Error("Failed to convert image to base64"));
           };
           reader.onerror = () => reject(new Error("FileReader error"));
           reader.readAsDataURL(blob);
         });
       } catch (error) {
         console.error("Error processing image:", error);
-        // Fallback: use local URI (works but may not persist across app restarts/updates)
-        // TODO: Implement Firebase Storage upload for production use
+        // Fallback to local URI (may not persist long-term)
         logoUrl = result.uri;
-        console.warn("Using local URI - consider implementing Firebase Storage for production");
       }
 
       await updateSocietyDoc(society.id, { logoUrl });
@@ -191,30 +201,24 @@ export default function SettingsScreen() {
       return;
     }
 
-    if (!society) {
-      return;
-    }
+    if (!society) return;
 
-    Alert.alert(
-      "Remove Logo",
-      "Are you sure you want to remove the society logo?",
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Remove",
-          style: "destructive",
-          onPress: async () => {
-            try {
-              await updateSocietyDoc(society.id, { logoUrl: null });
-              Alert.alert("Success", "Logo removed");
-            } catch (error) {
-              console.error("Error removing logo:", error);
-              Alert.alert("Error", "Failed to remove logo");
-            }
-          },
+    Alert.alert("Remove Logo", "Are you sure you want to remove the society logo?", [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Remove",
+        style: "destructive",
+        onPress: async () => {
+          try {
+            await updateSocietyDoc(society.id, { logoUrl: null });
+            Alert.alert("Success", "Logo removed");
+          } catch (error) {
+            console.error("Error removing logo:", error);
+            Alert.alert("Error", "Failed to remove logo");
+          }
         },
-      ]
-    );
+      },
+    ]);
   };
 
   const handleResetSociety = () => {
@@ -222,10 +226,7 @@ export default function SettingsScreen() {
       "Reset Society",
       "This will delete all your data (society, events, members, scores, and session). This cannot be undone.",
       [
-        {
-          text: "Cancel",
-          style: "cancel",
-        },
+        { text: "Cancel", style: "cancel" },
         {
           text: "Reset",
           style: "destructive",
@@ -236,7 +237,6 @@ export default function SettingsScreen() {
                 activeSocietyId: null,
                 activeMemberId: null,
               });
-              // Redirect to create-society screen
               router.replace("/create-society");
             } catch (error) {
               console.error("Error resetting society:", error);
@@ -275,6 +275,7 @@ export default function SettingsScreen() {
                 <Text style={styles.logoPlaceholderText}>Logo</Text>
               </View>
             )}
+
             {canEditLogo && (
               <View style={styles.logoActions}>
                 <Pressable
@@ -290,21 +291,18 @@ export default function SettingsScreen() {
                     </Text>
                   )}
                 </Pressable>
+
                 {society.logoUrl && (
-                  <Pressable
-                    onPress={handleRemoveLogo}
-                    style={[styles.logoButton, styles.logoButtonRemove]}
-                  >
+                  <Pressable onPress={handleRemoveLogo} style={[styles.logoButton, styles.logoButtonRemove]}>
                     <Text style={styles.logoButtonTextRemove}>Remove</Text>
                   </Pressable>
                 )}
               </View>
             )}
           </View>
+
           {!canEditLogo && (
-            <Text style={styles.permissionText}>
-              Only Captain or Secretary can upload logo
-            </Text>
+            <Text style={styles.permissionText}>Only Captain or Secretary can upload logo</Text>
           )}
         </AppCard>
 
@@ -338,10 +336,7 @@ export default function SettingsScreen() {
           ) : (
             <View style={styles.nameRow}>
               <Text style={styles.nameValue}>{society.name}</Text>
-              <Pressable
-                onPress={() => setIsEditingName(true)}
-                style={styles.editButton}
-              >
+              <Pressable onPress={() => setIsEditingName(true)} style={styles.editButton}>
                 <Text style={styles.editButtonText}>Edit</Text>
               </Pressable>
             </View>
@@ -392,26 +387,18 @@ export default function SettingsScreen() {
           ) : (
             <View style={styles.nameRow}>
               <Text style={styles.nameValue}>{adminPin || "Not set"}</Text>
-              <Pressable
-                onPress={() => setIsEditingPin(true)}
-                style={styles.editButton}
-              >
-                <Text style={styles.editButtonText}>
-                  {adminPin ? "Change" : "Set"}
-                </Text>
+              <Pressable onPress={() => setIsEditingPin(true)} style={styles.editButton}>
+                <Text style={styles.editButtonText}>{adminPin ? "Change" : "Set"}</Text>
               </Pressable>
             </View>
           )}
         </View>
 
-        {/* Roles & Permissions - PIN Gated */}
+        {/* Roles & Permissions (Captain only) */}
         {canAssignRolesRole && (
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Roles & Permissions</Text>
-            <Pressable
-              onPress={() => router.push("/roles" as any)}
-              style={styles.rolesButton}
-            >
+            <Pressable onPress={() => router.push("/roles" as any)} style={styles.rolesButton}>
               <Text style={styles.rolesButtonText}>Manage Roles</Text>
             </Pressable>
             <Text style={styles.rolesDescription}>
@@ -420,16 +407,16 @@ export default function SettingsScreen() {
           </View>
         )}
 
-        {/* Reset Society */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Danger Zone</Text>
-          <Pressable onPress={handleResetSociety} style={styles.resetButton}>
-            <Text style={styles.resetButtonText}>Reset Society</Text>
-          </Pressable>
-          <Text style={styles.warningText}>
-            This will permanently delete all your data
-          </Text>
-        </View>
+        {/* Reset Society (Captain only) */}
+        {canAssignRolesRole && (
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Danger Zone</Text>
+            <Pressable onPress={handleResetSociety} style={styles.resetButton}>
+              <Text style={styles.resetButtonText}>Reset Society</Text>
+            </Pressable>
+            <Text style={styles.warningText}>This will permanently delete all your data</Text>
+          </View>
+        )}
 
         {/* Back Button */}
         <Pressable onPress={() => router.back()} style={styles.backButton}>
@@ -521,7 +508,7 @@ const styles = StyleSheet.create({
   cancelButtonText: {
     fontSize: 16,
     fontWeight: "600",
-    color: "#111827",
+    color: "#6b7280",
   },
   saveButton: {
     flex: 1,
@@ -532,129 +519,120 @@ const styles = StyleSheet.create({
   },
   saveButtonText: {
     fontSize: 16,
-    fontWeight: "600",
-    color: "white",
-  },
-  resetButton: {
-    backgroundColor: "#ef4444",
-    paddingVertical: 16,
-    borderRadius: 12,
-    alignItems: "center",
-    marginBottom: 8,
-  },
-  resetButtonText: {
-    color: "white",
-    fontSize: 16,
     fontWeight: "700",
-  },
-  warningText: {
-    fontSize: 12,
-    opacity: 0.6,
-    color: "#111827",
-    textAlign: "center",
+    color: "#fff",
   },
   rolesButton: {
     backgroundColor: "#0B6E4F",
-    paddingVertical: 16,
+    paddingVertical: 14,
     borderRadius: 12,
     alignItems: "center",
-    marginBottom: 8,
   },
   rolesButtonText: {
-    color: "white",
     fontSize: 16,
     fontWeight: "700",
+    color: "#fff",
   },
   rolesDescription: {
-    fontSize: 12,
-    opacity: 0.7,
-    color: "#111827",
-    textAlign: "center",
+    marginTop: 10,
+    fontSize: 13,
+    color: "#6b7280",
+    lineHeight: 18,
   },
-  errorText: {
+  resetButton: {
+    backgroundColor: "#dc2626",
+    paddingVertical: 14,
+    borderRadius: 12,
+    alignItems: "center",
+  },
+  resetButtonText: {
     fontSize: 16,
-    color: "#ef4444",
-    marginBottom: 16,
+    fontWeight: "700",
+    color: "#fff",
+  },
+  warningText: {
+    marginTop: 10,
+    fontSize: 13,
+    color: "#6b7280",
+    lineHeight: 18,
   },
   backButton: {
+    marginTop: 16,
     paddingVertical: 14,
+    borderRadius: 12,
+    backgroundColor: "#f3f4f6",
     alignItems: "center",
-    marginTop: 8,
   },
   backButtonText: {
     fontSize: 16,
-    fontWeight: "600",
-    color: "#6b7280",
+    fontWeight: "700",
+    color: "#111827",
   },
   buttonText: {
-    color: "white",
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: "700",
+    color: "#111827",
   },
+  errorText: {
+    fontSize: 16,
+    color: "#111827",
+    marginBottom: 16,
+  },
+
+  // Logo styles
   logoContainer: {
+    flexDirection: "row",
     alignItems: "center",
-    marginTop: spacing.base,
+    gap: 16,
   },
   logo: {
-    width: 120,
-    height: 120,
-    borderRadius: spacing.sm,
-    marginBottom: spacing.base,
+    width: 72,
+    height: 72,
+    borderRadius: 12,
     backgroundColor: "#f3f4f6",
   },
   logoPlaceholder: {
-    width: 120,
-    height: 120,
-    borderRadius: spacing.sm,
+    width: 72,
+    height: 72,
+    borderRadius: 12,
     backgroundColor: "#f3f4f6",
-    justifyContent: "center",
     alignItems: "center",
-    marginBottom: spacing.base,
-    borderWidth: 2,
-    borderStyle: "dashed",
-    borderColor: "#d1d5db",
+    justifyContent: "center",
   },
   logoPlaceholderText: {
     fontSize: 16,
-    fontWeight: "600",
-    color: "#9ca3af",
+    fontWeight: "700",
+    color: "#6b7280",
   },
   logoActions: {
-    flexDirection: "row",
-    gap: spacing.sm,
-    width: "100%",
+    flex: 1,
+    gap: 10,
   },
   logoButton: {
-    flex: 1,
-    paddingVertical: spacing.sm,
-    paddingHorizontal: spacing.base,
-    borderRadius: spacing.sm,
-    backgroundColor: "#0B6E4F",
+    backgroundColor: "#f3f4f6",
+    paddingVertical: 12,
+    borderRadius: 12,
     alignItems: "center",
-    justifyContent: "center",
-    minHeight: 44,
   },
   logoButtonDisabled: {
     opacity: 0.6,
   },
-  logoButtonRemove: {
-    backgroundColor: "#ef4444",
-  },
   logoButtonText: {
-    color: "white",
-    fontSize: 16,
-    fontWeight: "600",
+    fontSize: 14,
+    fontWeight: "700",
+    color: "#0B6E4F",
+  },
+  logoButtonRemove: {
+    backgroundColor: "#fee2e2",
   },
   logoButtonTextRemove: {
-    color: "white",
-    fontSize: 16,
-    fontWeight: "600",
+    fontSize: 14,
+    fontWeight: "700",
+    color: "#dc2626",
   },
   permissionText: {
-    fontSize: 12,
+    marginTop: 10,
+    fontSize: 13,
     color: "#6b7280",
-    marginTop: spacing.xs,
-    textAlign: "center",
   },
 });
-
