@@ -61,3 +61,4 @@ export async function ensureSignedIn(): Promise<string> {
   const result = await signInAnonymously(auth);
   return result.user.uid;
 }
+
