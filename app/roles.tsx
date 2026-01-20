@@ -1,24 +1,30 @@
 /**
- * HOW TO TEST:
- * - Navigate to Roles screen from Settings (Captain/Admin only)
- * - Verify PIN prompt appears
- * - Select a member and toggle roles
- * - Save and verify roles persist
- * - Check that member's roles appear correctly in other screens
+ * Roles screen (Captain only) + PIN gate
+ *
+ * FIX:
+ * - Normalize loaded roles to lowercase so checkboxes reflect reality
+ * - Save ONLY lowercase roles to Firestore so RBAC is stable everywhere
  */
 
 import { router } from "expo-router";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
-import { MemberRole } from "@/lib/roles";
-import { canAssignRoles, normalizeMemberRoles, normalizeSessionRole } from "@/lib/permissions";
+
+import { canAssignRoles as canAssignRolesPure, normalizeMemberRoles, normalizeSessionRole } from "@/lib/permissions";
+import { normalizeRolesArray, type MemberRole } from "@/lib/roles";
 import { useBootstrap } from "@/lib/useBootstrap";
-import { subscribeMembersBySociety, updateMemberDoc, type MemberDoc } from "@/lib/db/memberRepo";
+import { subscribeMembersBySociety, updateMemberDoc, type MemberDoc, subscribeMemberDoc } from "@/lib/db/memberRepo";
 import { subscribeSocietyDoc } from "@/lib/db/societyRepo";
-import { subscribeMemberDoc } from "@/lib/db/memberRepo";
+
+const ROLE_OPTIONS: MemberRole[] = ["captain", "treasurer", "secretary", "handicapper"];
+
+function labelize(role: MemberRole): string {
+  return role.charAt(0).toUpperCase() + role.slice(1);
+}
 
 export default function RolesScreen() {
   const { user } = useBootstrap();
+
   const [members, setMembers] = useState<MemberDoc[]>([]);
   const [pinVerified, setPinVerified] = useState(false);
   const [pinInput, setPinInput] = useState("");
@@ -34,7 +40,12 @@ export default function RolesScreen() {
     }
     setLoading(true);
     const unsubscribe = subscribeMembersBySociety(user.activeSocietyId, (items) => {
-      setMembers(items);
+      // ✅ normalize roles immediately for UI correctness
+      const normalized = items.map((m) => ({
+        ...m,
+        roles: normalizeRolesArray(m.roles),
+      }));
+      setMembers(normalized);
       setLoading(false);
     });
     return () => unsubscribe();
@@ -51,10 +62,11 @@ export default function RolesScreen() {
   useEffect(() => {
     if (!user?.activeMemberId) return;
     const unsubscribe = subscribeMemberDoc(user.activeMemberId, (member) => {
+      // NOTE: sessionRole is not stored; treat as MEMBER and rely on roles
       const sessionRole = normalizeSessionRole("member");
-      const roles = normalizeMemberRoles(member?.roles);
-      const canAssignRolesFlag = canAssignRoles(sessionRole, roles);
-      if (!canAssignRolesFlag) {
+      const rolesForPermissions = normalizeMemberRoles(member?.roles); // TitleCase-compatible
+      const ok = canAssignRolesPure(sessionRole, rolesForPermissions);
+      if (!ok) {
         Alert.alert("Access Denied", "Only Captain can assign roles", [
           { text: "OK", onPress: () => router.back() },
         ]);
@@ -62,125 +74,82 @@ export default function RolesScreen() {
     });
     return () => unsubscribe();
   }, [user?.activeMemberId]);
-  
-  const handleCreateAdminMember = async () => {
-    try {
-      Alert.alert("Info", "Create a member from the Members screen, then assign roles here.");
-    } catch (error) {
-      console.error("Error creating admin member:", error);
-      Alert.alert("Error", "Failed to create admin member");
-    }
-  };
 
   const verifyPin = async () => {
-    try {
-      if (!adminPin) {
-        Alert.alert("Error", "Admin PIN not set. Please set it in Settings first.");
-        return;
-      }
-
-      if (pinInput !== adminPin) {
-        Alert.alert("Error", "Incorrect PIN");
-        setPinInput("");
-        return;
-      }
-
-      setPinVerified(true);
-      setPinInput("");
-    } catch (error) {
-      console.error("Error verifying PIN:", error);
-      Alert.alert("Error", "Failed to verify PIN");
-    }
-  };
-
-  const toggleRole = (memberId: string, role: MemberRole) => {
-    console.log(`toggleRole called: memberId=${memberId}, role=${role}`);
-    
-    // Don't allow toggling member role - it's always included
-    if (role === "member") {
+    if (!adminPin) {
+      Alert.alert("Error", "Admin PIN not set. Please set it in Settings first.");
       return;
     }
+    if (pinInput !== adminPin) {
+      Alert.alert("Error", "Incorrect PIN");
+      setPinInput("");
+      return;
+    }
+    setPinVerified(true);
+    setPinInput("");
+  };
 
-    const updatedMembers = members.map((member) => {
-      if (member.id !== memberId) return member;
+  const captainLikeCount = useMemo(() => {
+    return members.filter((m) => {
+      const roles = normalizeRolesArray(m.roles);
+      return roles.includes("captain") || roles.includes("admin");
+    }).length;
+  }, [members]);
 
-      const currentRoles = member.roles && member.roles.length > 0 ? member.roles : ["member"];
-      const rolesSet = new Set(currentRoles);
+  const toggleRole = (memberId: string, role: MemberRole) => {
+    if (role === "member") return;
 
-      console.log(`Current roles for ${member.name}:`, Array.from(rolesSet));
+    setMembers((prev) => {
+      const next = prev.map((m) => {
+        if (m.id !== memberId) return m;
 
-      // Prevent removing captain if it's the last one
-      if (role === "captain" && rolesSet.has("captain")) {
-        const captainCount = members.filter((m) => 
-          m.id !== memberId && m.roles && (m.roles.includes("captain") || m.roles.includes("admin"))
-        ).length;
-        
-        if (captainCount === 0) {
-          Alert.alert("Cannot Remove", "There must be at least one Captain or Admin");
-          return member;
+        const roles = new Set<MemberRole>(normalizeRolesArray(m.roles));
+
+        // prevent removing last captain/admin
+        if (role === "captain" && roles.has("captain")) {
+          const otherCaptainCount = prev.filter((x) => x.id !== memberId).filter((x) => {
+            const r = normalizeRolesArray(x.roles);
+            return r.includes("captain") || r.includes("admin");
+          }).length;
+
+          if (otherCaptainCount === 0) {
+            Alert.alert("Cannot Remove", "There must be at least one Captain (or Admin) in the society.");
+            return m;
+          }
         }
-      }
 
-      // Toggle role
-      if (rolesSet.has(role)) {
-        rolesSet.delete(role);
-        console.log(`Removed role ${role}`);
-      } else {
-        rolesSet.add(role);
-        console.log(`Added role ${role}`);
-      }
+        if (roles.has(role)) roles.delete(role);
+        else roles.add(role);
 
-      // Ensure member role is always included
-      if (!rolesSet.has("member")) {
-        rolesSet.add("member");
-      }
+        roles.add("member"); // always keep member
+        return { ...m, roles: Array.from(roles) };
+      });
 
-      const newRoles = Array.from(rolesSet);
-      console.log(`New roles for ${member.name}:`, newRoles);
-
-      return {
-        ...member,
-        roles: newRoles,
-      };
+      return next;
     });
 
-    setMembers(updatedMembers);
     setHasChanges(true);
-    console.log("Members updated, hasChanges set to true");
   };
 
   const handleSaveAll = async () => {
+    // must keep at least one captain/admin
+    if (captainLikeCount === 0) {
+      Alert.alert("Cannot Save", "There must be at least one Captain (or Admin) in the society.");
+      return;
+    }
+
     try {
-      console.log("Saving roles for members:", members.map(m => ({ name: m.name, roles: m.roles })));
-      
-      // Check if there's at least one captain/admin
-      const captainCount = members.filter((m) => 
-        m.roles && (m.roles.includes("captain") || m.roles.includes("admin"))
-      ).length;
-      
-      if (captainCount === 0) {
-        Alert.alert("Cannot Save", "There must be at least one Captain or Admin in the society");
-        return;
-      }
+      const updates = members.map((m) => {
+        const roles = normalizeRolesArray(m.roles); // ✅ force lowercase canonical
+        return updateMemberDoc(m.id, { roles });
+      });
 
-      // Ensure all members have roles array
-      const membersToSave = members.map(m => ({
-        ...m,
-        roles: m.roles && m.roles.length > 0 ? m.roles : ["member"]
-      }));
-
-      const updates = membersToSave.map((member) =>
-        updateMemberDoc(member.id, {
-          roles: member.roles && member.roles.length > 0 ? member.roles : ["member"],
-        })
-      );
       await Promise.all(updates);
       setHasChanges(false);
-      
       Alert.alert("Success", "Roles updated successfully");
     } catch (error) {
       console.error("Error saving roles:", error);
-      Alert.alert("Error", "Failed to save roles");
+      Alert.alert("Error", "Failed to save roles. Check Firestore rules / auth.");
     }
   };
 
@@ -232,82 +201,56 @@ export default function RolesScreen() {
         {members.length === 0 ? (
           <View style={styles.emptyState}>
             <Text style={styles.emptyText}>No members found</Text>
-            <Text style={styles.emptySubtext}>
-              Go to Members and add first member, or create admin member below
-            </Text>
-            <Pressable
-              onPress={handleCreateAdminMember}
-              style={styles.createAdminButton}
-            >
-              <Text style={styles.createAdminButtonText}>Create Admin Member</Text>
-            </Pressable>
-            <Pressable
-              onPress={() => router.push("/members" as any)}
-              style={styles.goToMembersButton}
-            >
-              <Text style={styles.goToMembersButtonText}>Go to Members</Text>
-            </Pressable>
           </View>
         ) : (
           <>
             <Text style={styles.instructionText}>
-              Tap checkboxes to assign roles. Member role is always included and cannot be removed.
+              Tap roles to assign them. Member is always included.
             </Text>
+
             <View style={styles.membersList}>
               {members.map((member) => {
-                const memberRoles = member.roles && member.roles.length > 0 ? member.roles : ["member"];
+                const roles = normalizeRolesArray(member.roles);
+                const readable = roles.filter((r) => r !== "member").join(", ") || "None (Member only)";
                 return (
                   <View key={member.id} style={styles.memberCard}>
                     <Text style={styles.memberName}>{member.name}</Text>
-                    <Text style={styles.currentRolesText}>
-                      Current roles: {memberRoles.filter(r => r !== "member").join(", ") || "None (Member only)"}
-                    </Text>
+                    <Text style={styles.currentRolesText}>Current roles: {readable}</Text>
+
                     <View style={styles.rolesRow}>
-                      {(["captain", "treasurer", "secretary", "handicapper"] as MemberRole[]).map(
-                        (role, index) => {
-                          const isChecked = memberRoles.includes(role);
-                          return (
-                            <Pressable
-                              key={role}
-                              onPress={() => {
-                                console.log(`Toggling role ${role} for member ${member.id} (${member.name})`);
-                                toggleRole(member.id, role);
-                              }}
+                      {ROLE_OPTIONS.map((role, index) => {
+                        const isChecked = roles.includes(role);
+                        return (
+                          <Pressable
+                            key={role}
+                            onPress={() => toggleRole(member.id, role)}
+                            style={[
+                              styles.roleCheckbox,
+                              isChecked && styles.roleCheckboxChecked,
+                              index > 0 && { marginLeft: 8 },
+                            ]}
+                          >
+                            <Text
                               style={[
-                                styles.roleCheckbox,
-                                isChecked && styles.roleCheckboxChecked,
-                                index > 0 && { marginLeft: 8 },
+                                styles.roleCheckboxText,
+                                isChecked && styles.roleCheckboxTextChecked,
                               ]}
                             >
-                              <Text
-                                style={[
-                                  styles.roleCheckboxText,
-                                  isChecked && styles.roleCheckboxTextChecked,
-                                ]}
-                              >
-                                {role.charAt(0).toUpperCase() + role.slice(1)} {isChecked ? "✓" : ""}
-                              </Text>
-                            </Pressable>
-                          );
-                        }
-                      )}
-                      {/* Member role is always included, show as read-only */}
-                      <View
-                        style={[
-                          styles.roleCheckbox,
-                          styles.roleCheckboxDisabled,
-                          { marginLeft: 8 },
-                        ]}
-                      >
-                        <Text style={[styles.roleCheckboxText, styles.roleCheckboxTextDisabled]}>
-                          Member ✓
-                        </Text>
+                              {labelize(role)} {isChecked ? "✓" : ""}
+                            </Text>
+                          </Pressable>
+                        );
+                      })}
+
+                      <View style={[styles.roleCheckbox, styles.roleCheckboxDisabled, { marginLeft: 8 }]}>
+                        <Text style={[styles.roleCheckboxText, styles.roleCheckboxTextDisabled]}>Member ✓</Text>
                       </View>
                     </View>
                   </View>
                 );
               })}
             </View>
+
             {hasChanges && (
               <Pressable onPress={handleSaveAll} style={styles.saveButton}>
                 <Text style={styles.saveButtonText}>Save All Changes</Text>
@@ -325,33 +268,16 @@ export default function RolesScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: "#fff",
-  },
-  content: {
-    flex: 1,
-    padding: 24,
-  },
-  title: {
-    fontSize: 34,
-    fontWeight: "800",
-    marginBottom: 6,
-  },
-  subtitle: {
-    fontSize: 16,
-    opacity: 0.75,
-    marginBottom: 24,
-  },
-  pinSection: {
-    marginBottom: 24,
-  },
-  pinLabel: {
-    fontSize: 14,
-    fontWeight: "600",
-    color: "#111827",
-    marginBottom: 8,
-  },
+  container: { flex: 1, backgroundColor: "#fff" },
+  content: { flex: 1, padding: 24 },
+  centerContent: { justifyContent: "center", alignItems: "center" },
+
+  title: { fontSize: 34, fontWeight: "800", marginBottom: 6 },
+  subtitle: { fontSize: 16, opacity: 0.75, marginBottom: 24 },
+  loadingText: { fontSize: 16, color: "#111827" },
+
+  pinSection: { marginBottom: 24 },
+  pinLabel: { fontSize: 14, fontWeight: "600", color: "#111827", marginBottom: 8 },
   pinInput: {
     backgroundColor: "#f9fafb",
     paddingVertical: 12,
@@ -362,93 +288,20 @@ const styles = StyleSheet.create({
     borderColor: "#e5e7eb",
     marginBottom: 12,
   },
-  verifyButton: {
-    backgroundColor: "#0B6E4F",
-    paddingVertical: 14,
-    borderRadius: 10,
-    alignItems: "center",
-  },
-  verifyButtonText: {
-    color: "white",
-    fontSize: 16,
-    fontWeight: "600",
-  },
-  emptyState: {
-    alignItems: "center",
-    paddingVertical: 40,
-  },
-  emptyText: {
-    fontSize: 16,
-    color: "#6b7280",
-    marginBottom: 8,
-  },
-  emptySubtext: {
-    fontSize: 14,
-    color: "#9ca3af",
-    textAlign: "center",
-    marginBottom: 16,
-  },
-  createAdminButton: {
-    backgroundColor: "#0B6E4F",
-    paddingVertical: 14,
-    paddingHorizontal: 24,
-    borderRadius: 10,
-    alignItems: "center",
-    marginBottom: 12,
-  },
-  createAdminButtonText: {
-    color: "white",
-    fontSize: 16,
-    fontWeight: "600",
-  },
-  goToMembersButton: {
-    backgroundColor: "#f3f4f6",
-    paddingVertical: 14,
-    paddingHorizontal: 24,
-    borderRadius: 10,
-    alignItems: "center",
-  },
-  goToMembersButtonText: {
-    color: "#111827",
-    fontSize: 16,
-    fontWeight: "600",
-  },
-  membersList: {
-    marginBottom: 24,
-  },
-  memberCard: {
-    backgroundColor: "#f3f4f6",
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 12,
-  },
-  memberName: {
-    fontSize: 18,
-    fontWeight: "600",
-    color: "#111827",
-    marginBottom: 4,
-  },
-  currentRolesText: {
-    fontSize: 12,
-    color: "#6b7280",
-    fontStyle: "italic",
-    marginBottom: 8,
-  },
-  memberRoles: {
-    fontSize: 14,
-    color: "#6b7280",
-  },
-  instructionText: {
-    fontSize: 14,
-    color: "#6b7280",
-    marginBottom: 16,
-    fontStyle: "italic",
-  },
-  rolesRow: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    marginTop: 12,
-  },
+  verifyButton: { backgroundColor: "#0B6E4F", paddingVertical: 14, borderRadius: 10, alignItems: "center" },
+  verifyButtonText: { color: "white", fontSize: 16, fontWeight: "600" },
+
+  emptyState: { alignItems: "center", paddingVertical: 40 },
+  emptyText: { fontSize: 16, color: "#6b7280", marginBottom: 8 },
+
+  instructionText: { fontSize: 14, color: "#6b7280", marginBottom: 16, fontStyle: "italic" },
+  membersList: { marginBottom: 24 },
+
+  memberCard: { backgroundColor: "#f3f4f6", borderRadius: 12, padding: 16, marginBottom: 12 },
+  memberName: { fontSize: 18, fontWeight: "600", color: "#111827", marginBottom: 4 },
+  currentRolesText: { fontSize: 12, color: "#6b7280", fontStyle: "italic", marginBottom: 8 },
+
+  rolesRow: { flexDirection: "row", flexWrap: "wrap", marginTop: 12 },
   roleCheckbox: {
     paddingVertical: 6,
     paddingHorizontal: 12,
@@ -457,87 +310,15 @@ const styles = StyleSheet.create({
     borderColor: "#e5e7eb",
     backgroundColor: "#fff",
   },
-  roleCheckboxChecked: {
-    borderColor: "#0B6E4F",
-    backgroundColor: "#f0fdf4",
-  },
-  roleCheckboxText: {
-    fontSize: 12,
-    fontWeight: "600",
-    color: "#6b7280",
-  },
-  roleCheckboxTextChecked: {
-    color: "#0B6E4F",
-  },
-  roleCheckboxDisabled: {
-    opacity: 0.6,
-    backgroundColor: "#f3f4f6",
-  },
-  roleCheckboxTextDisabled: {
-    color: "#9ca3af",
-  },
-  rolesSection: {
-    backgroundColor: "#f9fafb",
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 24,
-  },
-  rolesTitle: {
-    fontSize: 18,
-    fontWeight: "700",
-    color: "#111827",
-    marginBottom: 16,
-  },
-  roleOption: {
-    backgroundColor: "#fff",
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    borderRadius: 8,
-    marginBottom: 8,
-    borderWidth: 2,
-    borderColor: "transparent",
-  },
-  roleOptionSelected: {
-    borderColor: "#0B6E4F",
-    backgroundColor: "#f0fdf4",
-  },
-  roleOptionText: {
-    fontSize: 16,
-    fontWeight: "600",
-    color: "#111827",
-  },
-  roleOptionTextSelected: {
-    color: "#0B6E4F",
-  },
-  saveButton: {
-    backgroundColor: "#0B6E4F",
-    paddingVertical: 14,
-    borderRadius: 10,
-    alignItems: "center",
-    marginTop: 16,
-  },
-  saveButtonText: {
-    color: "white",
-    fontSize: 16,
-    fontWeight: "600",
-  },
-  backButton: {
-    paddingVertical: 14,
-    alignItems: "center",
-  },
-  backButtonText: {
-    fontSize: 16,
-    fontWeight: "600",
-    color: "#6b7280",
-  },
-  centerContent: {
-    justifyContent: "center",
-    alignItems: "center",
-    flex: 1,
-  },
-  loadingText: {
-    fontSize: 16,
-    color: "#6b7280",
-  },
-});
+  roleCheckboxChecked: { borderColor: "#0B6E4F", backgroundColor: "#f0fdf4" },
+  roleCheckboxText: { fontSize: 12, fontWeight: "600", color: "#6b7280" },
+  roleCheckboxTextChecked: { color: "#0B6E4F" },
+  roleCheckboxDisabled: { opacity: 0.6, backgroundColor: "#f3f4f6" },
+  roleCheckboxTextDisabled: { color: "#9ca3af" },
 
+  saveButton: { backgroundColor: "#0B6E4F", paddingVertical: 14, borderRadius: 10, alignItems: "center", marginTop: 16 },
+  saveButtonText: { color: "white", fontSize: 16, fontWeight: "700" },
+
+  backButton: { marginTop: 16, paddingVertical: 14, borderRadius: 10, backgroundColor: "#f3f4f6", alignItems: "center" },
+  backButtonText: { color: "#111827", fontSize: 16, fontWeight: "700" },
+});
