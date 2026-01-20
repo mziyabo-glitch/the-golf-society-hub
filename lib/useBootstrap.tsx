@@ -3,6 +3,7 @@ import React, { createContext, useContext, useEffect, useMemo, useState } from "
 import { ensureSignedIn } from "@/lib/firebase";
 import { ensureUserDoc, subscribeUserDoc, type UserDoc } from "@/lib/db/userRepo";
 import { runAsyncStorageMigration } from "@/lib/migrations/asyncToFirestore";
+import { repairActiveProfile } from "@/lib/migrations/repairActiveProfile";
 
 type BootstrapState = {
   user: UserDoc | null;
@@ -33,6 +34,11 @@ export function BootstrapProvider({ children }: { children: React.ReactNode }) {
         }
         await migrationPromise;
         await ensureUserDoc(uid);
+
+        // Defensive repair: older AsyncStorage migration sometimes wrote an auth uid into
+        // users/{uid}.activeMemberId (instead of a member document id). That breaks RBAC.
+        await repairActiveProfile(uid);
+
         unsubscribe = subscribeUserDoc(uid, (user) => {
           if (!mounted) return;
           setState({ user, loading: false, error: null });
