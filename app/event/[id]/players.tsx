@@ -20,7 +20,7 @@ import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from "react-nati
  * - Verify player count updates on event card
  */
 
-import { getCourseHandicap, getPlayingHandicap, isValidHandicap } from "@/lib/handicap";
+import { getCourseHandicap, getPlayingHandicap } from "@/lib/handicap";
 import { canCreateEvents, normalizeMemberRoles, normalizeSessionRole } from "@/lib/permissions";
 import { useBootstrap } from "@/lib/useBootstrap";
 import { subscribeEventDoc, updateEventDoc, type EventDoc } from "@/lib/db/eventRepo";
@@ -38,7 +38,8 @@ export default function EventPlayersScreen() {
   const [event, setEvent] = useState<EventData | null>(null);
   const [members, setMembers] = useState<MemberData[]>([]);
   const [selectedPlayerIds, setSelectedPlayerIds] = useState<Set<string>>(new Set());
-  const [loading, setLoading] = useState(true);
+  const [loadingEvent, setLoadingEvent] = useState(true);
+  const [loadingMembers, setLoadingMembers] = useState(true);
   const [canManagePlayers, setCanManagePlayers] = useState(false);
   const [courses, setCourses] = useState<CourseDoc[]>([]);
   const [teeSets, setTeeSets] = useState<TeeSetDoc[]>([]);
@@ -57,11 +58,11 @@ export default function EventPlayersScreen() {
 
   useEffect(() => {
     if (!eventId) return;
-    setLoading(true);
+    setLoadingEvent(true);
     const unsubscribe = subscribeEventDoc(eventId, (doc) => {
       setEvent(doc);
       setSelectedPlayerIds(new Set(doc?.playerIds || []));
-      setLoading(false);
+      setLoadingEvent(false);
     });
     return () => unsubscribe();
   }, [eventId]);
@@ -69,10 +70,13 @@ export default function EventPlayersScreen() {
   useEffect(() => {
     if (!user?.activeSocietyId) {
       setMembers([]);
+      setLoadingMembers(false);
       return;
     }
+    setLoadingMembers(true);
     const unsubscribe = subscribeMembersBySociety(user.activeSocietyId, (items) => {
       setMembers(items);
+      setLoadingMembers(false);
     });
     return () => unsubscribe();
   }, [user?.activeSocietyId]);
@@ -114,7 +118,12 @@ export default function EventPlayersScreen() {
   }, [coursesWithTees, event]);
 
   useEffect(() => {
-    const currentMember = members.find((m) => m.id === user?.activeMemberId) || null;
+    if (loadingMembers) return;
+    if (!user?.activeMemberId) {
+      setCanManagePlayers(false);
+      return;
+    }
+    const currentMember = members.find((m) => m.id === user.activeMemberId) || null;
     const sessionRole = normalizeSessionRole("member");
     const roles = normalizeMemberRoles(currentMember?.roles);
     const canManage = canCreateEvents(sessionRole, roles);
@@ -125,7 +134,9 @@ export default function EventPlayersScreen() {
         { text: "OK", onPress: () => router.back() },
       ]);
     }
-  }, [members, user?.activeMemberId]);
+  }, [loadingMembers, members, router, user?.activeMemberId]);
+
+  const loading = loadingEvent || loadingMembers;
 
   if (!canManagePlayers && !loading) {
     return null; // Will redirect via Alert
@@ -206,7 +217,7 @@ export default function EventPlayersScreen() {
                         const ph = event ? getPlayingHandicap(member, event, selectedCourse, selectedMaleTeeSet, selectedFemaleTeeSet) : null;
                         return (
                           <View style={styles.handicapInfo}>
-                            {isValidHandicap(member.handicap) && (
+                            {member.handicap !== undefined && (
                               <Text style={styles.memberHandicap}>HI: {member.handicap}</Text>
                             )}
                             {ch !== null && (
@@ -378,4 +389,3 @@ const styles = StyleSheet.create({
     fontWeight: "700",
   },
 });
-
