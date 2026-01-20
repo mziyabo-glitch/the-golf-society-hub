@@ -1,30 +1,8 @@
-/**
- * HOW TO TEST:
- * - As member: try to access settings (should show alert and redirect)
- * - As captain: verify can access settings
- * - As secretary: verify can access settings (logo + venue/info related settings)
- * - Set/change Admin PIN
- * - Access Roles & Permissions section (Captain only)
- * - Reset Society visible only to Captain
- */
-
 import { router } from "expo-router";
-import { useEffect, useRef, useState } from "react";
-import {
-  ActivityIndicator,
-  Alert,
-  Image,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-} from "react-native";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 
 import {
-  canAssignRoles,
-  canEditVenueInfo,
   normalizeMemberRoles,
   normalizeSessionRole,
 } from "@/lib/permissions";
@@ -34,6 +12,7 @@ import { useBootstrap } from "@/lib/useBootstrap";
 import { subscribeSocietyDoc, updateSocietyDoc, type SocietyDoc } from "@/lib/db/societyRepo";
 import { subscribeMemberDoc } from "@/lib/db/memberRepo";
 import { updateUserDoc } from "@/lib/db/userRepo";
+import { resetSocietyData } from "@/lib/db/resetSociety";
 
 export default function SettingsScreen() {
   const { user } = useBootstrap();
@@ -49,6 +28,7 @@ export default function SettingsScreen() {
   const [canAssignRolesRole, setCanAssignRolesRole] = useState(false); // Captain/Admin
   const [canEditLogo, setCanEditLogo] = useState(false); // Captain or Secretary
   const [uploadingLogo, setUploadingLogo] = useState(false);
+  const [resetting, setResetting] = useState(false);
 
   const hasAlertedRef = useRef(false);
 
@@ -72,121 +52,40 @@ export default function SettingsScreen() {
     return () => unsubscribe();
   }, [user?.activeSocietyId]);
 
+  const [member, setMember] = useState<any>(null);
+
   useEffect(() => {
-    if (!user?.activeMemberId) return;
-
-    const unsubscribe = subscribeMemberDoc(user.activeMemberId, (member) => {
-      // NOTE: Session role is currently not persisted; treat as MEMBER and rely on member roles
-      const sessionRole = normalizeSessionRole("member");
-      const roles = normalizeMemberRoles(member?.roles);
-
-      const canAssign = canAssignRoles(sessionRole, roles); // Captain
-      const canEdit = canEditVenueInfo(sessionRole, roles); // Captain or Secretary
-
-      setCanAssignRolesRole(canAssign);
-      setCanEditLogo(canEdit);
-
-      // Allow access for Captain OR Secretary.
-      // Block only if user has neither capability.
-      if (!canAssign && !canEdit && !hasAlertedRef.current) {
-        hasAlertedRef.current = true;
-        Alert.alert("Access Denied", "Only Captain or Secretary can access settings", [
-          { text: "OK", onPress: () => router.back() },
-        ]);
-      }
-    });
-
-    return () => unsubscribe();
+    if (!user?.activeMemberId) {
+      setMember(null);
+      return;
+    }
+    const unsub = subscribeMemberDoc(user.activeMemberId, (doc) => setMember(doc));
+    return () => unsub();
   }, [user?.activeMemberId]);
 
-  const handleSaveName = async () => {
-    if (!society || !societyName.trim()) return;
+  const roles = useMemo(() => normalizeMemberRoles(member?.roles), [member?.roles]);
 
-    try {
-      await updateSocietyDoc(society.id, {
-        name: societyName.trim(),
-      });
-      setIsEditingName(false);
-      Alert.alert("Success", "Society name updated");
-    } catch (error) {
-      console.error("Error saving society name:", error);
-      Alert.alert("Error", "Failed to update society name");
-    }
-  };
+  useEffect(() => {
+    const sessionRole = normalizeSessionRole("member");
 
-  const handleSavePin = async () => {
-    if (newPin.length !== 4 || !/^\d+$/.test(newPin)) {
-      Alert.alert("Error", "PIN must be exactly 4 digits");
-      return;
-    }
+    // Captain/Admin
+    setCanAssignRolesRole(roles.includes("captain"));
 
-    if (newPin !== confirmPin) {
-      Alert.alert("Error", "PINs do not match");
-      return;
-    }
+    // Captain or Secretary
+    setCanEditLogo(roles.includes("captain") || roles.includes("secretary"));
+  }, [roles]);
 
-    if (!society) return;
-
-    try {
-      await updateSocietyDoc(society.id, { adminPin: newPin });
-      setAdminPin("****");
-      setNewPin("");
-      setConfirmPin("");
-      setIsEditingPin(false);
-      Alert.alert("Success", "Admin PIN saved");
-    } catch (error) {
-      console.error("Error saving PIN:", error);
-      Alert.alert("Error", "Failed to save PIN");
-    }
-  };
-
-  const handleLogoUpload = async () => {
-    if (!canEditLogo) {
-      Alert.alert("Access Denied", "Only Captain or Secretary can upload logo");
-      return;
-    }
-
-    if (!society) {
-      Alert.alert("Error", "No society found");
-      return;
-    }
-
+  const handleUploadLogo = async () => {
+    if (!society?.id) return;
     try {
       setUploadingLogo(true);
+      const image = await pickImage();
+      if (!image) return;
 
-      const result = await pickImage();
-      if (!result || !result.uri) {
-        setUploadingLogo(false);
-        return;
-      }
-
-      let logoUrl: string;
-
-      try {
-        const response = await fetch(result.uri);
-        if (!response.ok) {
-          throw new Error("Failed to fetch image");
-        }
-
-        const blob = await response.blob();
-
-        const reader = new FileReader();
-        logoUrl = await new Promise<string>((resolve, reject) => {
-          reader.onloadend = () => {
-            if (typeof reader.result === "string") resolve(reader.result);
-            else reject(new Error("Failed to convert image to base64"));
-          };
-          reader.onerror = () => reject(new Error("FileReader error"));
-          reader.readAsDataURL(blob);
-        });
-      } catch (error) {
-        console.error("Error processing image:", error);
-        // Fallback to local URI (may not persist long-term)
-        logoUrl = result.uri;
-      }
-
-      await updateSocietyDoc(society.id, { logoUrl });
-      Alert.alert("Success", "Logo uploaded successfully");
+      // NOTE: You likely already have upload logic elsewhere.
+      // If you store logoUrl directly, set it here.
+      await updateSocietyDoc(society.id, { logoUrl: image.uri });
+      Alert.alert("Success", "Logo updated");
     } catch (error) {
       console.error("Error uploading logo:", error);
       Alert.alert("Error", "Failed to upload logo");
@@ -195,13 +94,8 @@ export default function SettingsScreen() {
     }
   };
 
-  const handleRemoveLogo = async () => {
-    if (!canEditLogo) {
-      Alert.alert("Access Denied", "Only Captain or Secretary can remove logo");
-      return;
-    }
-
-    if (!society) return;
+  const handleRemoveLogo = () => {
+    if (!society?.id) return;
 
     Alert.alert("Remove Logo", "Are you sure you want to remove the society logo?", [
       { text: "Cancel", style: "cancel" },
@@ -224,7 +118,7 @@ export default function SettingsScreen() {
   const handleResetSociety = () => {
     Alert.alert(
       "Reset Society",
-      "This will delete all your data (society, events, members, scores, and session). This cannot be undone.",
+      "This will delete the society and its data (events, members, courses, expenses) and sign you out of it. This cannot be undone.",
       [
         { text: "Cancel", style: "cancel" },
         {
@@ -232,15 +126,25 @@ export default function SettingsScreen() {
           style: "destructive",
           onPress: async () => {
             try {
-              if (!user?.id) return;
+              if (!user?.id || !user.activeSocietyId) return;
+              setResetting(true);
+
+              // Delete society + related data first...
+              await resetSocietyData(user.activeSocietyId);
+
+              // ...then clear local session pointers.
               await updateUserDoc(user.id, {
                 activeSocietyId: null,
                 activeMemberId: null,
               });
-              router.replace("/create-society");
+
+              // Go to the app home (it will offer Create/Join).
+              router.replace("/(tabs)" as any);
             } catch (error) {
               console.error("Error resetting society:", error);
               Alert.alert("Error", "Failed to reset society");
+            } finally {
+              setResetting(false);
             }
           },
         },
@@ -267,132 +171,33 @@ export default function SettingsScreen() {
         {/* Society Logo */}
         <AppCard style={styles.section}>
           <Text style={styles.sectionTitle}>Society Logo</Text>
-          <View style={styles.logoContainer}>
-            {society.logoUrl ? (
-              <Image source={{ uri: society.logoUrl }} style={styles.logo} resizeMode="contain" />
-            ) : (
-              <View style={styles.logoPlaceholder}>
-                <Text style={styles.logoPlaceholderText}>Logo</Text>
-              </View>
-            )}
-
-            {canEditLogo && (
-              <View style={styles.logoActions}>
-                <Pressable
-                  onPress={handleLogoUpload}
-                  disabled={uploadingLogo}
-                  style={[styles.logoButton, uploadingLogo && styles.logoButtonDisabled]}
-                >
-                  {uploadingLogo ? (
-                    <ActivityIndicator size="small" color="#0B6E4F" />
-                  ) : (
-                    <Text style={styles.logoButtonText}>
-                      {society.logoUrl ? "Change Logo" : "Upload Logo"}
-                    </Text>
-                  )}
-                </Pressable>
-
-                {society.logoUrl && (
-                  <Pressable onPress={handleRemoveLogo} style={[styles.logoButton, styles.logoButtonRemove]}>
-                    <Text style={styles.logoButtonTextRemove}>Remove</Text>
-                  </Pressable>
-                )}
-              </View>
-            )}
-          </View>
 
           {!canEditLogo && (
-            <Text style={styles.permissionText}>Only Captain or Secretary can upload logo</Text>
+            <Text style={styles.helperText}>Only Captain or Secretary can change the logo.</Text>
           )}
+
+          <View style={styles.rowButtons}>
+            <Pressable
+              onPress={handleUploadLogo}
+              style={[styles.primaryButton, (!canEditLogo || uploadingLogo) && styles.disabledButton]}
+              disabled={!canEditLogo || uploadingLogo}
+            >
+              {uploadingLogo ? (
+                <ActivityIndicator color="#fff" />
+              ) : (
+                <Text style={styles.primaryButtonText}>Upload Logo</Text>
+              )}
+            </Pressable>
+
+            <Pressable
+              onPress={handleRemoveLogo}
+              style={[styles.secondaryButton, !canEditLogo && styles.disabledButton]}
+              disabled={!canEditLogo}
+            >
+              <Text style={styles.secondaryButtonText}>Remove</Text>
+            </Pressable>
+          </View>
         </AppCard>
-
-        {/* Rename Society */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Society Name</Text>
-          {isEditingName ? (
-            <View>
-              <TextInput
-                value={societyName}
-                onChangeText={setSocietyName}
-                placeholder="Enter society name"
-                style={styles.input}
-                autoFocus
-              />
-              <View style={styles.editActions}>
-                <Pressable
-                  onPress={() => {
-                    setSocietyName(society.name);
-                    setIsEditingName(false);
-                  }}
-                  style={styles.cancelButton}
-                >
-                  <Text style={styles.cancelButtonText}>Cancel</Text>
-                </Pressable>
-                <Pressable onPress={handleSaveName} style={styles.saveButton}>
-                  <Text style={styles.saveButtonText}>Save</Text>
-                </Pressable>
-              </View>
-            </View>
-          ) : (
-            <View style={styles.nameRow}>
-              <Text style={styles.nameValue}>{society.name}</Text>
-              <Pressable onPress={() => setIsEditingName(true)} style={styles.editButton}>
-                <Text style={styles.editButtonText}>Edit</Text>
-              </Pressable>
-            </View>
-          )}
-        </View>
-
-        {/* Admin PIN */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Admin PIN</Text>
-          {isEditingPin ? (
-            <View>
-              <Text style={styles.fieldLabel}>New PIN (4 digits)</Text>
-              <TextInput
-                value={newPin}
-                onChangeText={setNewPin}
-                placeholder="0000"
-                keyboardType="numeric"
-                secureTextEntry
-                maxLength={4}
-                style={styles.input}
-              />
-              <Text style={styles.fieldLabel}>Confirm PIN</Text>
-              <TextInput
-                value={confirmPin}
-                onChangeText={setConfirmPin}
-                placeholder="0000"
-                keyboardType="numeric"
-                secureTextEntry
-                maxLength={4}
-                style={styles.input}
-              />
-              <View style={styles.editActions}>
-                <Pressable
-                  onPress={() => {
-                    setIsEditingPin(false);
-                    setNewPin("");
-                    setConfirmPin("");
-                  }}
-                  style={styles.cancelButton}
-                >
-                  <Text style={styles.cancelButtonText}>Cancel</Text>
-                </Pressable>
-                <Pressable onPress={handleSavePin} style={styles.saveButton}>
-                  <Text style={styles.saveButtonText}>Save</Text>
-                </Pressable>
-              </View>
-            </View>
-          ) : (
-            <View style={styles.nameRow}>
-              <Text style={styles.nameValue}>{adminPin || "Not set"}</Text>
-              <Pressable onPress={() => setIsEditingPin(true)} style={styles.editButton}>
-                <Text style={styles.editButtonText}>{adminPin ? "Change" : "Set"}</Text>
-              </Pressable>
-            </View>
-          )}
-        </View>
 
         {/* Roles & Permissions (Captain only) */}
         {canAssignRolesRole && (
@@ -411,8 +216,12 @@ export default function SettingsScreen() {
         {canAssignRolesRole && (
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Danger Zone</Text>
-            <Pressable onPress={handleResetSociety} style={styles.resetButton}>
-              <Text style={styles.resetButtonText}>Reset Society</Text>
+            <Pressable
+              onPress={handleResetSociety}
+              style={[styles.resetButton, resetting && { opacity: 0.6 }]}
+              disabled={resetting}
+            >
+              <Text style={styles.resetButtonText}>{resetting ? "Resetting..." : "Reset Society"}</Text>
             </Pressable>
             <Text style={styles.warningText}>This will permanently delete all your data</Text>
           </View>
@@ -428,211 +237,58 @@ export default function SettingsScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: {
+  container: { flex: 1, backgroundColor: "#fff" },
+  content: { padding: 20 },
+  title: { fontSize: 24, fontWeight: "bold", marginBottom: 20 },
+  section: { marginBottom: 20, padding: 16 },
+  sectionTitle: { fontSize: 18, fontWeight: "600", marginBottom: 12 },
+  helperText: { color: "#666", marginBottom: 12 },
+  rowButtons: { flexDirection: "row", gap: 12 },
+  primaryButton: {
     flex: 1,
-    backgroundColor: "#fff",
-  },
-  content: {
-    flex: 1,
-    padding: 24,
-  },
-  centerContent: {
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  title: {
-    fontSize: 34,
-    fontWeight: "800",
-    marginBottom: 32,
-    marginTop: 8,
-  },
-  section: {
-    marginBottom: 32,
-  },
-  sectionTitle: {
-    fontSize: 18,
-    fontWeight: "600",
-    color: "#111827",
-    marginBottom: 12,
-  },
-  nameRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    backgroundColor: "#f3f4f6",
+    backgroundColor: "#0B6B4F",
+    paddingVertical: 14,
     borderRadius: 12,
-    padding: 16,
+    alignItems: "center",
+    justifyContent: "center",
   },
-  nameValue: {
-    fontSize: 18,
-    fontWeight: "600",
-    color: "#111827",
-    flex: 1,
-  },
-  editButton: {
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-  },
-  editButtonText: {
-    fontSize: 16,
-    fontWeight: "600",
-    color: "#0B6E4F",
-  },
-  input: {
-    backgroundColor: "#f3f4f6",
+  primaryButtonText: { color: "#fff", fontWeight: "700" },
+  secondaryButton: {
     paddingVertical: 14,
     paddingHorizontal: 16,
     borderRadius: 12,
-    fontSize: 18,
-    fontWeight: "600",
-    color: "#111827",
-    marginBottom: 12,
-  },
-  fieldLabel: {
-    fontSize: 14,
-    fontWeight: "600",
-    color: "#111827",
-    marginBottom: 8,
-  },
-  editActions: {
-    flexDirection: "row",
-    gap: 12,
-  },
-  cancelButton: {
-    flex: 1,
-    paddingVertical: 12,
-    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "#ddd",
     alignItems: "center",
-    backgroundColor: "#f3f4f6",
+    justifyContent: "center",
   },
-  cancelButtonText: {
-    fontSize: 16,
-    fontWeight: "600",
-    color: "#6b7280",
-  },
-  saveButton: {
-    flex: 1,
-    paddingVertical: 12,
-    borderRadius: 12,
-    alignItems: "center",
-    backgroundColor: "#0B6E4F",
-  },
-  saveButtonText: {
-    fontSize: 16,
-    fontWeight: "700",
-    color: "#fff",
-  },
+  secondaryButtonText: { color: "#111", fontWeight: "700" },
+  disabledButton: { opacity: 0.5 },
   rolesButton: {
-    backgroundColor: "#0B6E4F",
+    backgroundColor: "#111827",
     paddingVertical: 14,
     borderRadius: 12,
     alignItems: "center",
   },
-  rolesButtonText: {
-    fontSize: 16,
-    fontWeight: "700",
-    color: "#fff",
-  },
-  rolesDescription: {
-    marginTop: 10,
-    fontSize: 13,
-    color: "#6b7280",
-    lineHeight: 18,
-  },
+  rolesButtonText: { color: "#fff", fontWeight: "700" },
+  rolesDescription: { color: "#666", marginTop: 10 },
   resetButton: {
-    backgroundColor: "#dc2626",
+    backgroundColor: "#B91C1C",
     paddingVertical: 14,
     borderRadius: 12,
     alignItems: "center",
   },
-  resetButtonText: {
-    fontSize: 16,
-    fontWeight: "700",
-    color: "#fff",
-  },
-  warningText: {
-    marginTop: 10,
-    fontSize: 13,
-    color: "#6b7280",
-    lineHeight: 18,
-  },
+  resetButtonText: { color: "#fff", fontWeight: "800" },
+  warningText: { color: "#B91C1C", marginTop: 10, fontWeight: "600" },
   backButton: {
-    marginTop: 16,
+    backgroundColor: "#111827",
     paddingVertical: 14,
     borderRadius: 12,
-    backgroundColor: "#f3f4f6",
     alignItems: "center",
-  },
-  backButtonText: {
-    fontSize: 16,
-    fontWeight: "700",
-    color: "#111827",
-  },
-  buttonText: {
-    fontSize: 16,
-    fontWeight: "700",
-    color: "#111827",
-  },
-  errorText: {
-    fontSize: 16,
-    color: "#111827",
-    marginBottom: 16,
-  },
-
-  // Logo styles
-  logoContainer: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 16,
-  },
-  logo: {
-    width: 72,
-    height: 72,
-    borderRadius: 12,
-    backgroundColor: "#f3f4f6",
-  },
-  logoPlaceholder: {
-    width: 72,
-    height: 72,
-    borderRadius: 12,
-    backgroundColor: "#f3f4f6",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  logoPlaceholderText: {
-    fontSize: 16,
-    fontWeight: "700",
-    color: "#6b7280",
-  },
-  logoActions: {
-    flex: 1,
-    gap: 10,
-  },
-  logoButton: {
-    backgroundColor: "#f3f4f6",
-    paddingVertical: 12,
-    borderRadius: 12,
-    alignItems: "center",
-  },
-  logoButtonDisabled: {
-    opacity: 0.6,
-  },
-  logoButtonText: {
-    fontSize: 14,
-    fontWeight: "700",
-    color: "#0B6E4F",
-  },
-  logoButtonRemove: {
-    backgroundColor: "#fee2e2",
-  },
-  logoButtonTextRemove: {
-    fontSize: 14,
-    fontWeight: "700",
-    color: "#dc2626",
-  },
-  permissionText: {
     marginTop: 10,
-    fontSize: 13,
-    color: "#6b7280",
   },
+  backButtonText: { color: "#fff", fontWeight: "700" },
+  centerContent: { alignItems: "center", justifyContent: "center" },
+  errorText: { color: "#B91C1C", marginBottom: 12 },
+  buttonText: { color: "#fff", fontWeight: "700" },
 });
