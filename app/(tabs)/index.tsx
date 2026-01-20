@@ -50,7 +50,7 @@ export default function HomeScreen() {
       </Pressable>
 
       <Pressable
-        onPress={() => {}}
+        onPress={() => router.push("/join-society")}
         style={{
           backgroundColor: "#111827",
           paddingVertical: 14,
@@ -64,7 +64,10 @@ export default function HomeScreen() {
         </Text>
       </Pressable>
 
-      <Pressable onPress={() => {}} style={{ paddingVertical: 12, alignItems: "center" }}>
+      <Pressable
+        onPress={() => router.push("/create-society")}
+        style={{ paddingVertical: 12, alignItems: "center" }}
+      >
         <Text style={{ fontSize: 16, fontWeight: "600", opacity: 0.8 }}>
           I already have an account
         </Text>
