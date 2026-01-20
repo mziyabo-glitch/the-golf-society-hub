@@ -1,16 +1,9 @@
 /**
- * HOW TO TEST:
- * - Set member roles via Settings → Roles & Permissions
- * - Confirm member can't create event (should show alert and redirect)
- * - Confirm captain can create/edit events
- * - Confirm secretary can edit venue notes only
- * - Confirm handicapper can access results/handicaps
- * - Verify role badge shows on dashboard
- */
-
-/**
  * Role management utilities
- * Manages member roles: captain, treasurer, secretary, handicapper, member, admin
+ *
+ * FIX:
+ * - Normalize roles to lowercase internally so RBAC works even if Firestore contains:
+ *   ["Captain","Member"] or ["captain","member"] or mixed.
  */
 
 import { ensureSignedIn } from "@/lib/firebase";
@@ -19,34 +12,70 @@ import { getMemberDoc, listMembersBySociety } from "@/lib/db/memberRepo";
 
 export type MemberRole = "captain" | "treasurer" | "secretary" | "handicapper" | "member" | "admin";
 
-
 export type MemberData = {
   id: string;
   name: string;
   handicap?: number;
-  roles?: string[]; // Array of roles (member can have multiple) - using string[] for compatibility
+  roles?: string[];
 };
 
+const ROLE_CANONICAL: Record<string, MemberRole> = {
+  // lowercase
+  captain: "captain",
+  treasurer: "treasurer",
+  secretary: "secretary",
+  handicapper: "handicapper",
+  member: "member",
+  admin: "admin",
 
-/**
- * SYNC helper: Check if a member object has a specific role.
- * Use this when you already have a MemberData object.
- * 
- * Example: hasRole(member, "captain")
- */
-export function hasRole(member: MemberData | null, role: MemberRole): boolean {
-  if (!member) return false;
-  if (!member.roles || member.roles.length === 0) return role === "member";
-  return member.roles.includes(role);
+  // Title Case (legacy)
+  Captain: "captain",
+  Treasurer: "treasurer",
+  Secretary: "secretary",
+  Handicapper: "handicapper",
+  Member: "member",
+  Admin: "admin",
+};
+
+export function normalizeRoleString(raw: unknown): MemberRole | null {
+  if (typeof raw !== "string") return null;
+  const direct = ROLE_CANONICAL[raw];
+  if (direct) return direct;
+
+  const lower = raw.toLowerCase();
+  return (ROLE_CANONICAL[lower] ?? null) as MemberRole | null;
+}
+
+export function normalizeRolesArray(raw: unknown): MemberRole[] {
+  const set = new Set<MemberRole>();
+  set.add("member");
+
+  if (!Array.isArray(raw)) return Array.from(set);
+
+  for (const r of raw) {
+    const normalized = normalizeRoleString(r);
+    if (normalized) set.add(normalized);
+  }
+
+  return Array.from(set);
 }
 
 /**
- * Check if member is admin-like (captain OR legacy admin flag)
+ * SYNC helper: Check if a member object has a specific role.
+ */
+export function hasRole(member: MemberData | null, role: MemberRole): boolean {
+  if (!member) return false;
+  const roles = normalizeRolesArray(member.roles);
+  return roles.includes(role);
+}
+
+/**
+ * Check if member is admin-like (captain OR admin)
  */
 export function isAdminLike(member: MemberData | null): boolean {
   if (!member) return false;
-  if (!member.roles || member.roles.length === 0) return false;
-  return member.roles.includes("captain") || member.roles.includes("admin");
+  const roles = normalizeRolesArray(member.roles);
+  return roles.includes("captain") || roles.includes("admin");
 }
 
 /**
@@ -58,7 +87,7 @@ export async function getMemberById(memberId: string): Promise<MemberData | null
     if (!member) return null;
     return {
       ...member,
-      roles: member.roles && member.roles.length > 0 ? member.roles : ["member"],
+      roles: normalizeRolesArray(member.roles),
     };
   } catch (error) {
     console.error("Error loading member:", error);
@@ -67,7 +96,7 @@ export async function getMemberById(memberId: string): Promise<MemberData | null
 }
 
 /**
- * Get all members with migration
+ * Get all members
  */
 export async function getAllMembers(): Promise<MemberData[]> {
   try {
@@ -77,7 +106,7 @@ export async function getAllMembers(): Promise<MemberData[]> {
     const members = await listMembersBySociety(user.activeSocietyId);
     return members.map((m) => ({
       ...m,
-      roles: m.roles && m.roles.length > 0 ? m.roles : ["member"],
+      roles: normalizeRolesArray(m.roles),
     }));
   } catch (error) {
     console.error("Error loading members:", error);
@@ -98,20 +127,14 @@ export async function getCurrentMember(): Promise<MemberData | null> {
 /**
  * Get current user's roles
  */
-export async function getCurrentUserRoles(): Promise<string[]> {
+export async function getCurrentUserRoles(): Promise<MemberRole[]> {
   const member = await getCurrentMember();
   if (!member) return ["member"];
-  return member.roles && member.roles.length > 0 ? member.roles : ["member"];
+  return normalizeRolesArray(member.roles);
 }
 
 /**
  * ASYNC helper: Check if the current logged-in user has a specific role.
- * This loads the current user from session and checks their roles.
- * 
- * Use this for permission checks in screens/components.
- * Example: if (await currentUserHasRole("captain")) { ... }
- * 
- * For checking a specific member object, use the sync hasRole(member, role) instead.
  */
 export async function currentUserHasRole(role: MemberRole): Promise<boolean> {
   const roles = await getCurrentUserRoles();
@@ -127,7 +150,7 @@ export async function hasAnyRole(rolesToCheck: MemberRole[]): Promise<boolean> {
 }
 
 /**
- * Check if user has ManCo role (captain, treasurer, secretary, handicapper, admin)
+ * Check if user has ManCo role
  */
 export async function hasManCoRole(): Promise<boolean> {
   return hasAnyRole(["captain", "treasurer", "secretary", "handicapper", "admin"]);
@@ -167,4 +190,3 @@ export async function canEditVenueInfo(): Promise<boolean> {
 export async function canEditHandicaps(): Promise<boolean> {
   return hasAnyRole(["handicapper", "captain", "admin"]);
 }
-
