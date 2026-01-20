@@ -1,84 +1,62 @@
 /**
- * TEST PLAN:
- * - Navigate to event details, tap "Enter Results" button
- * - Verify only selected players (from Players screen) are shown
- * - Enter gross scores for each player
- * - Verify validation: scores must be numbers > 0
- * - Save results and verify winner is auto-calculated (lowest gross)
- * - Mark event as completed
- * - Verify event moves from Next Event to Last Event on dashboard
- * - Verify winner name appears on Last Event card
- * - Close/reopen app, verify results persist
+ * Event Results (Position-based)
+ *
+ * Per your spec: you don't want to enter raw scores.
+ * You only want to enter finishing results and publish them.
+ *
+ * Implementation detail:
+ * - We store the finishing position into `event.results[memberId].grossScore`.
+ *   (The rest of the app already sorts "winner" by lowest grossScore.)
  */
 
 import { router, useLocalSearchParams } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
-import { Alert, StyleSheet, TextInput, View, ActivityIndicator } from "react-native";
+import { ActivityIndicator, Alert, StyleSheet, TextInput, View } from "react-native";
 
-import { getCourseHandicap, getPlayingHandicap, isValidHandicap } from "@/lib/handicap";
-import { canEnterScores, normalizeMemberRoles, normalizeSessionRole } from "@/lib/permissions";
+import { AppCard } from "@/components/ui/AppCard";
+import { AppText } from "@/components/ui/AppText";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { PrimaryButton, SecondaryButton } from "@/components/ui/Button";
 import { Screen } from "@/components/ui/Screen";
 import { SectionHeader } from "@/components/ui/SectionHeader";
-import { AppText } from "@/components/ui/AppText";
-import { AppCard } from "@/components/ui/AppCard";
-import { PrimaryButton, SecondaryButton } from "@/components/ui/Button";
-import { EmptyState } from "@/components/ui/EmptyState";
-import { getColors, spacing } from "@/lib/ui/theme";
-import { useBootstrap } from "@/lib/useBootstrap";
 import { subscribeEventDoc, updateEventDoc, type EventDoc } from "@/lib/db/eventRepo";
 import { subscribeMembersBySociety, type MemberDoc } from "@/lib/db/memberRepo";
-import { subscribeCoursesBySociety, type CourseDoc } from "@/lib/db/courseRepo";
-import { subscribeTeesetsBySociety, type TeeSetDoc } from "@/lib/db/teesetRepo";
+import { canEnterScores, normalizeMemberRoles, normalizeSessionRole } from "@/lib/permissions";
+import { getColors, spacing } from "@/lib/ui/theme";
+import { useBootstrap } from "@/lib/useBootstrap";
 
 type EventData = EventDoc;
 type MemberData = MemberDoc;
-type CourseWithTees = CourseDoc & { teeSets: TeeSetDoc[] };
 
 export default function EventResultsScreen() {
   const { id: eventId } = useLocalSearchParams<{ id: string }>();
   const { user } = useBootstrap();
+
   const [event, setEvent] = useState<EventData | null>(null);
   const [members, setMembers] = useState<MemberData[]>([]);
-  const [selectedPlayers, setSelectedPlayers] = useState<MemberData[]>([]);
-  const [results, setResults] = useState<{ [memberId: string]: { stableford?: string; strokeplay?: string } }>({});
+  const [positions, setPositions] = useState<Record<string, string>>({});
   const [loadingEvent, setLoadingEvent] = useState(true);
   const [loadingMembers, setLoadingMembers] = useState(true);
-  const [loadingCourses, setLoadingCourses] = useState(true);
-  const [loadingTeesets, setLoadingTeesets] = useState(true);
-  const [canEdit, setCanEdit] = useState(false);
-  const [courses, setCourses] = useState<CourseDoc[]>([]);
-  const [teeSets, setTeeSets] = useState<TeeSetDoc[]>([]);
-  const [selectedCourse, setSelectedCourse] = useState<CourseWithTees | null>(null);
-  const [selectedMaleTeeSet, setSelectedMaleTeeSet] = useState<TeeSetDoc | null>(null);
-  const [selectedFemaleTeeSet, setSelectedFemaleTeeSet] = useState<TeeSetDoc | null>(null);
+  const [saving, setSaving] = useState(false);
 
-  const coursesWithTees = useMemo<CourseWithTees[]>(
-    () =>
-      courses.map((course) => ({
-        ...course,
-        teeSets: teeSets.filter((tee) => tee.courseId === course.id),
-      })),
-    [courses, teeSets]
-  );
+  const colors = getColors();
 
   useEffect(() => {
     if (!eventId) return;
     setLoadingEvent(true);
-    const unsubscribe = subscribeEventDoc(eventId, (doc) => {
+    const unsub = subscribeEventDoc(eventId, (doc) => {
       setEvent(doc);
+      // Hydrate existing saved results into the form.
       if (doc?.results) {
-        const resultsMap: { [memberId: string]: { stableford?: string; strokeplay?: string } } = {};
-        Object.entries(doc.results).forEach(([memberId, result]) => {
-          resultsMap[memberId] = {
-            stableford: result.stableford?.toString() || result.grossScore?.toString(),
-            strokeplay: result.strokeplay?.toString() || result.grossScore?.toString(),
-          };
-        });
-        setResults(resultsMap);
+        const next: Record<string, string> = {};
+        for (const [memberId, r] of Object.entries(doc.results)) {
+          if (typeof r.grossScore === "number") next[memberId] = String(r.grossScore);
+        }
+        setPositions(next);
       }
       setLoadingEvent(false);
     });
-    return () => unsubscribe();
+    return () => unsub();
   }, [eventId]);
 
   useEffect(() => {
@@ -88,397 +66,165 @@ export default function EventResultsScreen() {
       return;
     }
     setLoadingMembers(true);
-    const unsubscribe = subscribeMembersBySociety(user.activeSocietyId, (items) => {
+    const unsub = subscribeMembersBySociety(user.activeSocietyId, (items) => {
       setMembers(items);
       setLoadingMembers(false);
     });
-    return () => unsubscribe();
+    return () => unsub();
   }, [user?.activeSocietyId]);
 
-  useEffect(() => {
-    if (!user?.activeSocietyId) {
-      setCourses([]);
-      setTeeSets([]);
-      setLoadingCourses(false);
-      setLoadingTeesets(false);
-      return;
-    }
-    setLoadingCourses(true);
-    setLoadingTeesets(true);
-    const unsubscribeCourses = subscribeCoursesBySociety(user.activeSocietyId, (items) => {
-      setCourses(items);
-      setLoadingCourses(false);
-    });
-    const unsubscribeTees = subscribeTeesetsBySociety(user.activeSocietyId, (items) => {
-      setTeeSets(items);
-      setLoadingTeesets(false);
-    });
-    return () => {
-      unsubscribeCourses();
-      unsubscribeTees();
-    };
-  }, [user?.activeSocietyId]);
+  const currentMember = useMemo(
+    () => members.find((m) => m.id === user?.activeMemberId) || null,
+    [members, user?.activeMemberId]
+  );
 
-  useEffect(() => {
-    if (!event) return;
-    const course = coursesWithTees.find((c) => c.id === event.courseId) || null;
-    setSelectedCourse(course);
-    if (course && event.maleTeeSetId) {
-      setSelectedMaleTeeSet(course.teeSets.find((t) => t.id === event.maleTeeSetId) || null);
-    } else {
-      setSelectedMaleTeeSet(null);
-    }
-    if (course && event.femaleTeeSetId) {
-      setSelectedFemaleTeeSet(course.teeSets.find((t) => t.id === event.femaleTeeSetId) || null);
-    } else {
-      setSelectedFemaleTeeSet(null);
-    }
-  }, [coursesWithTees, event]);
-
-  useEffect(() => {
-    if (!event) return;
-    if (event.playerIds && event.playerIds.length > 0) {
-      const players = members.filter((m) => event.playerIds!.includes(m.id));
-      setSelectedPlayers(players);
-    } else {
-      setSelectedPlayers(members);
-    }
+  const selectedPlayers = useMemo(() => {
+    if (!event) return [] as MemberData[];
+    const ids = event.playerIds?.length ? event.playerIds : members.map((m) => m.id);
+    return members.filter((m) => ids.includes(m.id));
   }, [event, members]);
 
-  const getPlayingHandicapForPlayer = (player: MemberData): number | null => {
-    if (!event) return null;
-    const snapshot = event.playingHandicapSnapshot?.[player.id];
-    if (isValidHandicap(snapshot)) return Math.round(snapshot);
-    const ph = getPlayingHandicap(
-      player,
-      event,
-      selectedCourse,
-      selectedMaleTeeSet,
-      selectedFemaleTeeSet
-    );
-    if (ph !== null) return Math.round(ph);
-    const legacy = event.handicapSnapshot?.[player.id];
-    return isValidHandicap(legacy) ? Math.round(legacy) : null;
-  };
-
   useEffect(() => {
-    const currentMember = members.find((m) => m.id === user?.activeMemberId) || null;
+    // Permission gate: Captain / Secretary / Handicapper (existing app rule).
     const sessionRole = normalizeSessionRole("member");
     const roles = normalizeMemberRoles(currentMember?.roles);
     const canEnter = canEnterScores(sessionRole, roles);
-    setCanEdit(canEnter);
-    if (!canEnter) {
+    if (!canEnter && !loadingMembers && members.length > 0) {
       Alert.alert("Access Denied", "Only Captain, Secretary, or Handicapper can enter results", [
         { text: "OK", onPress: () => router.back() },
       ]);
     }
-  }, [members, user?.activeMemberId]);
+  }, [currentMember?.roles, loadingMembers, members.length]);
 
-  // Constants for validation
-  const STABLEFORD_MIN = 0;
-  const STABLEFORD_MAX = 60;
-  const STROKEPLAY_MIN = 50;
-  const STROKEPLAY_MAX = 200;
-
-  const handleScoreChange = (memberId: string, field: "stableford" | "strokeplay", value: string) => {
-    setResults((prev) => ({
-      ...prev,
-      [memberId]: {
-        ...prev[memberId],
-        [field]: value,
-      },
-    }));
+  const handleChange = (memberId: string, value: string) => {
+    // Allow only digits in the input.
+    const cleaned = value.replace(/[^0-9]/g, "");
+    setPositions((prev) => ({ ...prev, [memberId]: cleaned }));
   };
 
-  const calculateWinner = (): { memberId: string; memberName: string } | null => {
-    if (!event) return null;
-    
-    const validResults = selectedPlayers
-      .map((player) => {
-        const playerResults = results[player.id];
-        if (!playerResults) return null;
-        
-        let score: number | null = null;
-        let useStableford = false;
-        
-        if (event.format === "Stableford" && playerResults.stableford) {
-          const s = parseInt(playerResults.stableford, 10);
-          if (!isNaN(s) && s >= STABLEFORD_MIN && s <= STABLEFORD_MAX) {
-            score = s;
-            useStableford = true;
-          }
-        } else if (event.format === "Strokeplay" && playerResults.strokeplay) {
-          const s = parseInt(playerResults.strokeplay, 10);
-          if (!isNaN(s) && s >= STROKEPLAY_MIN && s <= STROKEPLAY_MAX) {
-            score = s;
-            useStableford = false;
-          }
-        } else if (event.format === "Both") {
-          // Prefer Stableford if available, otherwise Strokeplay
-          if (playerResults.stableford) {
-            const s = parseInt(playerResults.stableford, 10);
-            if (!isNaN(s) && s >= STABLEFORD_MIN && s <= STABLEFORD_MAX) {
-              score = s;
-              useStableford = true;
-            }
-          } else if (playerResults.strokeplay) {
-            const s = parseInt(playerResults.strokeplay, 10);
-            if (!isNaN(s) && s >= STROKEPLAY_MIN && s <= STROKEPLAY_MAX) {
-              score = s;
-              useStableford = false;
-            }
-          }
-        }
-        
-        if (score === null) return null;
-        return { memberId: player.id, memberName: player.name, score, useStableford };
-      })
-      .filter((item): item is { memberId: string; memberName: string; score: number; useStableford: boolean } => item !== null);
-
-    if (validResults.length === 0) return null;
-
-    // Winner: highest Stableford, lowest Strokeplay
-    const sorted = validResults.sort((a, b) => {
-      if (a.useStableford) {
-        return b.score - a.score; // Higher is better for Stableford
-      } else {
-        return a.score - b.score; // Lower is better for Strokeplay
-      }
-    });
-    return {
-      memberId: sorted[0].memberId,
-      memberName: sorted[0].memberName,
-    };
+  const parsePosition = (value: string): number | null => {
+    if (!value) return null;
+    const n = parseInt(value, 10);
+    if (Number.isNaN(n) || n <= 0) return null;
+    return n;
   };
 
-  const handleSaveResults = async () => {
-    if (!event) {
-      Alert.alert("Error", "Event not found");
-      return;
+  const buildResultsPayload = (): EventData["results"] => {
+    const payload: NonNullable<EventData["results"]> = {};
+    for (const player of selectedPlayers) {
+      const p = parsePosition(positions[player.id] ?? "");
+      if (p !== null) {
+        payload[player.id] = { grossScore: p };
+      }
     }
-    
-    const currentMember = members.find((m) => m.id === user?.activeMemberId) || null;
-    const sessionRole = normalizeSessionRole("member");
-    const roles = normalizeMemberRoles(currentMember?.roles);
-    const canEnter = canEnterScores(sessionRole, roles);
-    
-    if (!canEnter) {
-      Alert.alert("Access Denied", "Only Captain, Secretary, or Handicapper can enter results");
+    return payload;
+  };
+
+  const computeWinner = (payload: EventData["results"]): { id: string; name: string } | null => {
+    if (!payload) return null;
+    let best: { id: string; score: number } | null = null;
+    for (const [memberId, r] of Object.entries(payload)) {
+      const score = r?.grossScore;
+      if (typeof score !== "number") continue;
+      if (!best || score < best.score) best = { id: memberId, score };
+    }
+    if (!best) return null;
+    const member = members.find((m) => m.id === best!.id);
+    return { id: best.id, name: member?.name || "Winner" };
+  };
+
+  const validateBeforeSave = (): { ok: true } | { ok: false; message: string } => {
+    if (!event) return { ok: false, message: "Event not found" };
+    if (selectedPlayers.length === 0) return { ok: false, message: "No players selected" };
+
+    const filled = selectedPlayers
+      .map((p) => ({ id: p.id, pos: parsePosition(positions[p.id] ?? "") }))
+      .filter((x) => x.pos !== null) as Array<{ id: string; pos: number }>;
+
+    if (filled.length === 0) return { ok: false, message: "Enter at least one finishing position" };
+
+    // Detect duplicates (not a hard error, but usually a mistake).
+    const seen = new Map<number, number>();
+    for (const f of filled) {
+      seen.set(f.pos, (seen.get(f.pos) ?? 0) + 1);
+    }
+    const dupes = Array.from(seen.entries()).filter(([, c]) => c > 1).map(([p]) => p);
+    if (dupes.length) {
+      return {
+        ok: false,
+        message: `Duplicate positions found: ${dupes.join(", ")}. Each player should have a unique finishing position.`,
+      };
+    }
+
+    return { ok: true };
+  };
+
+  const saveDraft = async () => {
+    if (!event) return;
+    const v = validateBeforeSave();
+    if (!v.ok) {
+      Alert.alert("Check results", v.message);
       return;
     }
 
-    // Validate all scores based on event format
-    const invalidScores: string[] = [];
-    selectedPlayers.forEach((player) => {
-      const playerResults = results[player.id];
-      if (!playerResults) {
-        invalidScores.push(player.name);
-        return;
-      }
-      
-      if (event.format === "Stableford") {
-        const scoreStr = playerResults.stableford;
-        if (!scoreStr || scoreStr.trim() === "") {
-          invalidScores.push(player.name);
-        } else {
-          const score = parseInt(scoreStr, 10);
-          if (isNaN(score) || score < STABLEFORD_MIN || score > STABLEFORD_MAX) {
-            invalidScores.push(`${player.name} (Stableford: ${scoreStr})`);
-          }
-        }
-      } else if (event.format === "Strokeplay") {
-        const scoreStr = playerResults.strokeplay;
-        if (!scoreStr || scoreStr.trim() === "") {
-          invalidScores.push(player.name);
-        } else {
-          const score = parseInt(scoreStr, 10);
-          if (isNaN(score) || score < STROKEPLAY_MIN || score > STROKEPLAY_MAX) {
-            invalidScores.push(`${player.name} (Strokeplay: ${scoreStr})`);
-          }
-        }
-      } else if (event.format === "Both") {
-        // Both formats require at least one score
-        const stableford = playerResults.stableford;
-        const strokeplay = playerResults.strokeplay;
-        if ((!stableford || stableford.trim() === "") && (!strokeplay || strokeplay.trim() === "")) {
-          invalidScores.push(player.name);
-        } else {
-          if (stableford && stableford.trim() !== "") {
-            const score = parseInt(stableford, 10);
-            if (isNaN(score) || score < STABLEFORD_MIN || score > STABLEFORD_MAX) {
-              invalidScores.push(`${player.name} (Stableford: ${stableford})`);
-            }
-          }
-          if (strokeplay && strokeplay.trim() !== "") {
-            const score = parseInt(strokeplay, 10);
-            if (isNaN(score) || score < STROKEPLAY_MIN || score > STROKEPLAY_MAX) {
-              invalidScores.push(`${player.name} (Strokeplay: ${strokeplay})`);
-            }
-          }
-        }
-      }
-    });
-
-    if (invalidScores.length > 0) {
-      Alert.alert(
-        "Invalid Scores",
-        `Please enter valid scores for: ${invalidScores.join(", ")}\n\nStableford: ${STABLEFORD_MIN}-${STABLEFORD_MAX}\nStrokeplay: ${STROKEPLAY_MIN}-${STROKEPLAY_MAX}`
-      );
-      return;
-    }
+    const resultsPayload = buildResultsPayload();
+    const winner = computeWinner(resultsPayload);
 
     try {
-      const winner = calculateWinner();
-
-      // Build results object with format-specific scores
-      const resultsObj: { [memberId: string]: { grossScore: number; stableford?: number; strokeplay?: number; netScore?: number } } = {};
-      selectedPlayers.forEach((player) => {
-        const playerResults = results[player.id];
-        if (!playerResults) return;
-        
-        const result: { grossScore: number; stableford?: number; strokeplay?: number; netScore?: number } = {
-          grossScore: 0, // Will be set from strokeplay or calculated
-        };
-        
-        if (playerResults.stableford && playerResults.stableford.trim() !== "") {
-          const stablefordScore = parseInt(playerResults.stableford, 10);
-          if (!isNaN(stablefordScore)) {
-            result.stableford = stablefordScore;
-            // For "Both" format, use strokeplay as grossScore if available
-            if (event.format === "Both" && playerResults.strokeplay) {
-              const strokeplayScore = parseInt(playerResults.strokeplay, 10);
-              if (!isNaN(strokeplayScore)) {
-                result.grossScore = strokeplayScore;
-                result.strokeplay = strokeplayScore;
-              }
-            }
-          }
-        }
-        
-        if (playerResults.strokeplay && playerResults.strokeplay.trim() !== "") {
-          const strokeplayScore = parseInt(playerResults.strokeplay, 10);
-          if (!isNaN(strokeplayScore)) {
-            result.strokeplay = strokeplayScore;
-            result.grossScore = strokeplayScore; // Gross score is strokeplay
-          }
-        }
-        
-        // Calculate net score using playing handicap (integer)
-        const playingHandicap = getPlayingHandicapForPlayer(player);
-        if (playingHandicap !== null && result.strokeplay) {
-          result.netScore = result.strokeplay - playingHandicap;
-        }
-        
-        if (result.grossScore > 0 || result.stableford !== undefined) {
-          resultsObj[player.id] = result;
-        }
-      });
-
-      // Save as DRAFT only (not published)
+      setSaving(true);
       await updateEventDoc(event.id, {
-        results: resultsObj,
-        winnerId: winner?.memberId,
-        winnerName: winner?.memberName,
+        results: resultsPayload,
+        winnerId: winner?.id,
+        winnerName: winner?.name,
         resultsStatus: "draft",
         resultsUpdatedAt: new Date().toISOString(),
       });
-      Alert.alert("Success", "Draft saved — not counted in Order of Merit until published");
-      router.back();
-    } catch (error) {
-      console.error("Error saving results:", error);
+      Alert.alert("Saved", "Draft results saved.");
+    } catch (e) {
+      console.error("Error saving results draft", e);
       Alert.alert("Error", "Failed to save results");
+    } finally {
+      setSaving(false);
     }
   };
 
-  const handlePublishResults = async () => {
-    if (!event) {
-      Alert.alert("Error", "Event not found");
-      return;
-    }
-    
-    const currentMember = members.find((m) => m.id === user?.activeMemberId) || null;
-    const sessionRole = normalizeSessionRole("member");
-    const roles = normalizeMemberRoles(currentMember?.roles);
-    const canEnter = canEnterScores(sessionRole, roles);
-    
-    if (!canEnter) {
-      Alert.alert("Access Denied", "Only Captain, Secretary, or Handicapper can publish results");
+  const publish = async () => {
+    if (!event) return;
+    const v = validateBeforeSave();
+    if (!v.ok) {
+      Alert.alert("Check results", v.message);
       return;
     }
 
-    // Validate that results exist
-    if (!event.results || Object.keys(event.results).length === 0) {
-      Alert.alert("Cannot Publish", "Please enter scores before publishing");
-      return;
-    }
-
-    // Validate required players have scores
-    const missingScores: string[] = [];
-    selectedPlayers.forEach((player) => {
-      if (!event.results?.[player.id]) {
-        missingScores.push(player.name);
-      }
-    });
-
-    if (missingScores.length > 0) {
-      Alert.alert(
-        "Cannot Publish",
-        `Please enter scores for all players: ${missingScores.join(", ")}`
-      );
-      return;
-    }
+    const resultsPayload = buildResultsPayload();
+    const winner = computeWinner(resultsPayload);
 
     try {
+      setSaving(true);
       await updateEventDoc(event.id, {
+        results: resultsPayload,
+        winnerId: winner?.id,
+        winnerName: winner?.name,
         resultsStatus: "published",
         publishedAt: new Date().toISOString(),
         isCompleted: true,
+        status: "completed",
         completedAt: new Date().toISOString(),
       });
-      Alert.alert("Success", "Results published — Order of Merit updated");
-      router.back();
-    } catch (error) {
-      console.error("Error publishing results:", error);
+      Alert.alert("Published", "Results published.", [{ text: "OK", onPress: () => router.back() }]);
+    } catch (e) {
+      console.error("Error publishing results", e);
       Alert.alert("Error", "Failed to publish results");
+    } finally {
+      setSaving(false);
     }
   };
 
-  const colors = getColors();
-  const winner = calculateWinner();
-  const hasResults = event?.results && Object.keys(event.results).length > 0;
-  const isPublished = event?.resultsStatus === "published";
-  const isDraft = event?.resultsStatus === "draft" || (!event?.resultsStatus && hasResults);
-
-  // Get top scores for summary
-  const getTopScores = () => {
-    if (!event || !hasResults) return null;
-    const scores = selectedPlayers
-      .map((player) => {
-        const result = event.results?.[player.id];
-        if (!result) return null;
-        if (event.format === "Stableford" || event.format === "Both") {
-          return { name: player.name, score: result.stableford ?? result.grossScore, type: "Stableford" };
-        }
-        if (event.format === "Strokeplay" || event.format === "Both") {
-          return { name: player.name, score: result.strokeplay ?? result.grossScore, type: "Strokeplay" };
-        }
-        return null;
-      })
-      .filter((s): s is { name: string; score: number; type: string } => s !== null && s.score !== undefined);
-    
-    if (event.format === "Stableford" || (event.format === "Both" && scores.some(s => s.type === "Stableford"))) {
-      return scores.sort((a, b) => b.score - a.score).slice(0, 3);
-    }
-    return scores.sort((a, b) => a.score - b.score).slice(0, 3);
-  };
-
-  const loading = loadingEvent || loadingMembers || loadingCourses || loadingTeesets;
-
-  if (loading) {
+  if (loadingEvent || loadingMembers) {
     return (
-      <Screen scrollable={false}>
-        <View style={styles.centerContent}>
-          <ActivityIndicator size="large" color={colors.primary} />
+      <Screen>
+        <View style={styles.center}>
+          <ActivityIndicator />
         </View>
       </Screen>
     );
@@ -487,292 +233,80 @@ export default function EventResultsScreen() {
   if (!event) {
     return (
       <Screen>
-        <EmptyState title="Event not found" message="The event you're looking for doesn't exist." />
-        <SecondaryButton onPress={() => router.back()}>Back</SecondaryButton>
+        <EmptyState title="Event not found" description="This event may have been deleted." />
       </Screen>
     );
   }
-
-  // Read-only view for users without permission
-  if (!canEdit) {
-    const topScores = getTopScores();
-    return (
-      <Screen>
-        <SectionHeader title={isPublished ? "View Results" : "Results Pending"} />
-        <AppText variant="caption" color="secondary" style={styles.subtitle}>
-          {event.name}
-        </AppText>
-
-        {/* Summary Card */}
-        {hasResults && winner && (
-          <AppCard style={styles.summaryCard}>
-            <AppText variant="h2" style={styles.summaryTitle}>
-              Winner
-            </AppText>
-            <AppText variant="h1" style={{ color: colors.primary, marginVertical: spacing.sm }}>
-              {winner.memberName}
-            </AppText>
-            {topScores && topScores.length > 0 && (
-              <View style={styles.topScores}>
-                <AppText variant="bodyBold" style={styles.topScoresTitle}>
-                  Top {Math.min(3, topScores.length)}:
-                </AppText>
-                {topScores.map((s, idx) => (
-                  <AppText key={idx} variant="body" color="secondary">
-                    {idx + 1}. {s.name} — {s.score}
-                  </AppText>
-                ))}
-              </View>
-            )}
-          </AppCard>
-        )}
-
-        {!hasResults ? (
-          <EmptyState
-            title="Results Pending"
-            message="Results will be entered by the Handicapper/ManCo after the round."
-          />
-        ) : (
-          <>
-            {selectedPlayers.map((player) => {
-              const playerResult = event.results?.[player.id];
-              if (!playerResult) return null;
-
-              const ch = getCourseHandicap(player, selectedMaleTeeSet, selectedFemaleTeeSet);
-              const ph = getPlayingHandicap(player, event, selectedCourse, selectedMaleTeeSet, selectedFemaleTeeSet);
-
-              return (
-                <AppCard key={player.id} style={styles.resultCard}>
-                  <AppText variant="bodyBold">{player.name}</AppText>
-                  <View style={styles.handicapInfo}>
-                    {player.handicap !== undefined && (
-                      <AppText variant="small" color="secondary">
-                        HI: {player.handicap}
-                      </AppText>
-                    )}
-                    {ch !== null && (
-                      <AppText variant="small" color="secondary">
-                        {" | "}CH: {ch}
-                      </AppText>
-                    )}
-                    {ph !== null && (
-                      <AppText variant="small" color="secondary">
-                        {" | "}PH: {ph}
-                      </AppText>
-                    )}
-                  </View>
-                  <View style={styles.scoreDisplay}>
-                    {event.format === "Stableford" || event.format === "Both" ? (
-                      <AppText variant="body">
-                        Stableford: {playerResult.stableford ?? playerResult.grossScore ?? "N/A"}
-                      </AppText>
-                    ) : null}
-                    {event.format === "Strokeplay" || event.format === "Both" ? (
-                      <AppText variant="body">
-                        Strokeplay: {playerResult.strokeplay ?? playerResult.grossScore ?? "N/A"}
-                      </AppText>
-                    ) : null}
-                  </View>
-                </AppCard>
-              );
-            })}
-          </>
-        )}
-
-        <SecondaryButton onPress={() => router.back()}>Back</SecondaryButton>
-      </Screen>
-    );
-  }
-
-  const topScores = getTopScores();
 
   return (
     <Screen>
-      <SectionHeader title="Enter Results" />
-      <AppText variant="caption" color="secondary" style={styles.subtitle}>
-        {event.name}
-      </AppText>
-      {isDraft && (
-        <AppCard style={styles.draftHelper}>
-          <AppText variant="small" color="secondary">
-            Draft — not counted in Order of Merit until published.
-          </AppText>
-        </AppCard>
-      )}
-
-      {/* Summary Card */}
-      {hasResults && winner && (
-        <AppCard style={styles.summaryCard}>
-          <AppText variant="h2" style={styles.summaryTitle}>
-            Current Winner
-          </AppText>
-          <AppText variant="h1" style={{ color: colors.primary, marginVertical: spacing.sm }}>
-            {winner.memberName}
-          </AppText>
-          {topScores && topScores.length > 0 && (
-            <View style={styles.topScores}>
-              <AppText variant="bodyBold" style={styles.topScoresTitle}>
-                Top {Math.min(3, topScores.length)}:
-              </AppText>
-              {topScores.map((s, idx) => (
-                <AppText key={idx} variant="body" color="secondary">
-                  {idx + 1}. {s.name} — {s.score}
-                </AppText>
-              ))}
-            </View>
-          )}
-        </AppCard>
-      )}
+      <SectionHeader title="Enter Results" subtitle={event.name} />
 
       {selectedPlayers.length === 0 ? (
-        <EmptyState
-          title="No players selected"
-          message="Go to Players screen to select players first"
-        />
+        <EmptyState title="No players" description="Add players to the event first." />
       ) : (
-        <>
-          {selectedPlayers.map((player) => {
-            const ch = getCourseHandicap(player, selectedMaleTeeSet, selectedFemaleTeeSet);
-            const ph = getPlayingHandicapForPlayer(player);
+        <AppCard style={styles.card}>
+          <AppText style={styles.helperText}>
+            Enter finishing position for each player (1 = winner). No raw scores required.
+          </AppText>
 
-            return (
-              <AppCard key={player.id} style={styles.resultCard}>
-                <AppText variant="bodyBold">{player.name}</AppText>
-                <View style={styles.handicapInfo}>
-                  {isValidHandicap(player.handicap) && (
-                    <AppText variant="small" color="secondary">
-                      HI: {player.handicap}
-                    </AppText>
-                  )}
-                  {ch !== null && (
-                    <AppText variant="small" color="secondary">
-                      {" | "}CH: {ch}
-                    </AppText>
-                  )}
-                  {ph !== null && (
-                    <AppText variant="small" color="secondary">
-                      {" | "}PH: {ph}
-                    </AppText>
-                  )}
-                </View>
-                {(event.format === "Stableford" || event.format === "Both") && (
-                  <View style={styles.scoreInput}>
-                    <AppText variant="caption" style={styles.scoreLabel}>
-                      Stableford Points (0-60)
-                    </AppText>
-                    <TextInput
-                      value={results[player.id]?.stableford || ""}
-                      onChangeText={(value) => handleScoreChange(player.id, "stableford", value)}
-                      placeholder="Enter points"
-                      keyboardType="numeric"
-                      editable={canEdit}
-                      style={[styles.input, { borderColor: colors.border, color: colors.text }]}
-                    />
-                  </View>
-                )}
-                {(event.format === "Strokeplay" || event.format === "Both") && (
-                  <View style={styles.scoreInput}>
-                    <AppText variant="caption" style={styles.scoreLabel}>
-                      Strokeplay Gross (50-200)
-                    </AppText>
-                    <TextInput
-                      value={results[player.id]?.strokeplay || ""}
-                      onChangeText={(value) => handleScoreChange(player.id, "strokeplay", value)}
-                      placeholder="Enter score"
-                      keyboardType="numeric"
-                      editable={canEdit}
-                      style={[styles.input, { borderColor: colors.border, color: colors.text }]}
-                    />
-                    {(() => {
-                      const playingHandicap = getPlayingHandicapForPlayer(player);
-                      const strokeplay = results[player.id]?.strokeplay;
-                      if (playingHandicap !== null && strokeplay) {
-                        const netScore = parseInt(strokeplay || "0", 10) - playingHandicap;
-                        return (
-                          <AppText variant="small" color="secondary" style={styles.netScoreLabel}>
-                            Net: {netScore}
-                          </AppText>
-                        );
-                      }
-                      return null;
-                    })()}
-                  </View>
-                )}
-              </AppCard>
-            );
-          })}
-
-          <PrimaryButton onPress={handleSaveResults} disabled={!canEdit} style={styles.actionButton}>
-            Save Draft
-          </PrimaryButton>
-
-          {isDraft && canEdit && (
-            <PrimaryButton onPress={handlePublishResults} style={styles.actionButton}>
-              Publish Results
-            </PrimaryButton>
-          )}
-        </>
+          {selectedPlayers.map((p) => (
+            <View key={p.id} style={styles.row}>
+              <AppText style={styles.name}>{p.name}</AppText>
+              <TextInput
+                value={positions[p.id] ?? ""}
+                onChangeText={(v) => handleChange(p.id, v)}
+                placeholder="#"
+                keyboardType="number-pad"
+                style={[styles.input, { borderColor: colors.border }]}
+              />
+            </View>
+          ))}
+        </AppCard>
       )}
 
-      <SecondaryButton onPress={() => router.back()}>Cancel</SecondaryButton>
+      <View style={{ height: spacing.lg }} />
+
+      <PrimaryButton title={saving ? "Saving..." : "Save Draft"} onPress={saveDraft} disabled={saving} />
+      <View style={{ height: spacing.sm }} />
+      <PrimaryButton title={saving ? "Publishing..." : "Publish Results"} onPress={publish} disabled={saving} />
+      <View style={{ height: spacing.sm }} />
+      <SecondaryButton title="Back" onPress={() => router.back()} />
     </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  centerContent: {
+  center: {
     flex: 1,
-    justifyContent: "center",
     alignItems: "center",
+    justifyContent: "center",
   },
-  subtitle: {
-    marginBottom: spacing.lg,
+  card: {
+    marginTop: spacing.md,
+    padding: spacing.md,
   },
-  summaryCard: {
-    marginBottom: spacing.base,
+  helperText: {
+    opacity: 0.8,
+    marginBottom: spacing.md,
   },
-  summaryTitle: {
-    marginBottom: spacing.xs,
-  },
-  topScores: {
-    marginTop: spacing.sm,
-  },
-  topScoresTitle: {
-    marginBottom: spacing.xs,
-  },
-  draftHelper: {
-    marginBottom: spacing.base,
-  },
-  resultCard: {
-    marginBottom: spacing.base,
-  },
-  handicapInfo: {
+  row: {
     flexDirection: "row",
-    flexWrap: "wrap",
-    marginTop: spacing.xs,
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingVertical: spacing.sm,
   },
-  scoreInput: {
-    marginTop: spacing.base,
-  },
-  scoreLabel: {
-    marginBottom: spacing.xs,
+  name: {
+    flex: 1,
+    marginRight: spacing.md,
   },
   input: {
+    width: 80,
     borderWidth: 1,
-    borderRadius: 8,
-    paddingVertical: spacing.sm,
-    paddingHorizontal: spacing.base,
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    textAlign: "center",
     fontSize: 16,
-    minHeight: 44,
-  },
-  scoreDisplay: {
-    marginTop: spacing.sm,
-  },
-  netScoreLabel: {
-    marginTop: spacing.xs,
-  },
-  actionButton: {
-    marginBottom: spacing.base,
   },
 });
-
