@@ -61,7 +61,9 @@ export function normalizeMemberRoles(rawRoles: unknown): MemberRole[] {
 
 export function canManageMembers(sessionRole: SessionRole, roles: MemberRole[]): boolean {
   if (sessionRole === "ADMIN") return true;
-  return roles.includes("Captain") || roles.includes("Secretary") || roles.includes("Treasurer");
+  // Society rule: Captain (Admin) or Treasurer can add/remove members.
+  // Secretary should NOT be able to manage membership.
+  return roles.includes("Captain") || roles.includes("Treasurer");
 }
 
 export function canCreateEvents(sessionRole: SessionRole, roles: MemberRole[]): boolean {
