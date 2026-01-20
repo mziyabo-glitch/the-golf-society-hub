@@ -7,49 +7,15 @@ import { createMember } from "@/lib/db/memberRepo";
 import { createSociety } from "@/lib/db/societyRepo";
 import { setActiveSocietyAndMember } from "@/lib/db/userRepo";
 
-type SocietyData = {
-  name: string;
-  homeCourse: string;
-  country: string;
-  scoringMode: "Stableford" | "Strokeplay" | "Both";
-  handicapRule: "Allow WHS" | "Fixed HCP" | "No HCP";
-  logoUrl?: string | null;
-};
-
 export default function CreateSocietyScreen() {
   const router = useRouter();
+
   const [societyName, setSocietyName] = useState("");
-  const [homeCourse, setHomeCourse] = useState("");
   const [country, setCountry] = useState("United Kingdom");
-  const [scoringMode, setScoringMode] = useState<"Stableford" | "Strokeplay" | "Both">("Stableford");
-  const [handicapRule, setHandicapRule] = useState<"Allow WHS" | "Fixed HCP" | "No HCP">("Allow WHS");
 
   const clearDraft = async () => {
     setSocietyName("");
-    setHomeCourse("");
     setCountry("United Kingdom");
-    setScoringMode("Stableford");
-    setHandicapRule("Allow WHS");
-  };
-
-  const handleNameChange = (text: string) => {
-    setSocietyName(text);
-  };
-
-  const handleHomeCourseChange = (text: string) => {
-    setHomeCourse(text);
-  };
-
-  const handleCountryChange = (text: string) => {
-    setCountry(text);
-  };
-
-  const handleScoringModeChange = (mode: "Stableford" | "Strokeplay" | "Both") => {
-    setScoringMode(mode);
-  };
-
-  const handleHandicapRuleChange = (rule: "Allow WHS" | "Fixed HCP" | "No HCP") => {
-    setHandicapRule(rule);
   };
 
   const isFormValid = societyName.trim().length > 0;
@@ -57,23 +23,18 @@ export default function CreateSocietyScreen() {
   const handleSubmit = async () => {
     if (!isFormValid) return;
 
-    const societyData: SocietyData = {
-      name: societyName.trim(),
-      homeCourse: homeCourse.trim(),
-      country: country.trim(),
-      scoringMode,
-      handicapRule,
-    };
-
     try {
       const uid = await ensureSignedIn();
+
       const createdSociety = await createSociety({
-        name: societyData.name,
-        country: societyData.country,
+        name: societyName.trim(),
+        country: country.trim() || "United Kingdom",
         createdBy: uid,
-        homeCourse: societyData.homeCourse,
-        scoringMode: societyData.scoringMode,
-        handicapRule: societyData.handicapRule,
+
+        // ✅ enforced defaults per your spec
+        homeCourse: "",
+        scoringMode: "Both",
+        handicapRule: "Allow WHS",
       });
 
       const creator = await createMember({
@@ -100,7 +61,7 @@ export default function CreateSocietyScreen() {
           Set up your society in under a minute.
         </Text>
 
-        {/* Clear Draft Button */}
+        {/* Clear Draft */}
         <Pressable
           onPress={clearDraft}
           style={{
@@ -121,26 +82,8 @@ export default function CreateSocietyScreen() {
         </Text>
         <TextInput
           value={societyName}
-          onChangeText={handleNameChange}
+          onChangeText={setSocietyName}
           placeholder="Enter society name"
-          style={{
-            backgroundColor: "#f3f4f6",
-            paddingVertical: 14,
-            paddingHorizontal: 16,
-            borderRadius: 14,
-            fontSize: 16,
-            marginBottom: 20,
-          }}
-        />
-
-        {/* Home Course */}
-        <Text style={{ fontSize: 16, fontWeight: "600", marginBottom: 8 }}>
-          Home Course
-        </Text>
-        <TextInput
-          value={homeCourse}
-          onChangeText={handleHomeCourseChange}
-          placeholder="Enter home course (optional)"
           style={{
             backgroundColor: "#f3f4f6",
             paddingVertical: 14,
@@ -157,7 +100,7 @@ export default function CreateSocietyScreen() {
         </Text>
         <TextInput
           value={country}
-          onChangeText={handleCountryChange}
+          onChangeText={setCountry}
           placeholder="Enter country"
           style={{
             backgroundColor: "#f3f4f6",
@@ -169,68 +112,27 @@ export default function CreateSocietyScreen() {
           }}
         />
 
-        {/* Scoring Mode */}
-        <Text style={{ fontSize: 16, fontWeight: "600", marginBottom: 8 }}>
-          Scoring Mode
-        </Text>
-        <View style={{ flexDirection: "row", gap: 8, marginBottom: 20 }}>
-          {(["Stableford", "Strokeplay", "Both"] as const).map((mode) => (
-            <Pressable
-              key={mode}
-              onPress={() => handleScoringModeChange(mode)}
-              style={{
-                flex: 1,
-                backgroundColor: scoringMode === mode ? "#0B6E4F" : "#f3f4f6",
-                paddingVertical: 12,
-                borderRadius: 14,
-                alignItems: "center",
-              }}
-            >
-              <Text
-                style={{
-                  color: scoringMode === mode ? "white" : "#111827",
-                  fontSize: 14,
-                  fontWeight: "600",
-                }}
-              >
-                {mode}
-              </Text>
-            </Pressable>
-          ))}
+        {/* Info (fixed rules) */}
+        <View
+          style={{
+            backgroundColor: "#f9fafb",
+            borderRadius: 14,
+            padding: 14,
+            marginBottom: 20,
+            borderWidth: 1,
+            borderColor: "#e5e7eb",
+          }}
+        >
+          <Text style={{ fontSize: 14, fontWeight: "700", marginBottom: 6, color: "#111827" }}>
+            Defaults for this society
+          </Text>
+          <Text style={{ fontSize: 13, color: "#6b7280", lineHeight: 18 }}>
+            • Scoring: Both (Stableford + Strokeplay){"\n"}
+            • Handicaps: WHS only
+          </Text>
         </View>
 
-        {/* Handicap Rule */}
-        <Text style={{ fontSize: 16, fontWeight: "600", marginBottom: 8 }}>
-          Handicap Rule
-        </Text>
-        <View style={{ flexDirection: "row", gap: 8, marginBottom: 20, flexWrap: "wrap" }}>
-          {(["Allow WHS", "Fixed HCP", "No HCP"] as const).map((rule) => (
-            <Pressable
-              key={rule}
-              onPress={() => handleHandicapRuleChange(rule)}
-              style={{
-                flex: 1,
-                minWidth: "30%",
-                backgroundColor: handicapRule === rule ? "#0B6E4F" : "#f3f4f6",
-                paddingVertical: 12,
-                borderRadius: 14,
-                alignItems: "center",
-              }}
-            >
-              <Text
-                style={{
-                  color: handicapRule === rule ? "white" : "#111827",
-                  fontSize: 14,
-                  fontWeight: "600",
-                }}
-              >
-                {rule}
-              </Text>
-            </Pressable>
-          ))}
-        </View>
-
-        {/* Create Society Button */}
+        {/* Create Society */}
         <Pressable
           onPress={handleSubmit}
           disabled={!isFormValid}
@@ -248,7 +150,7 @@ export default function CreateSocietyScreen() {
           </Text>
         </Pressable>
 
-        {/* Back Button */}
+        {/* Back */}
         <Pressable
           onPress={() => router.back()}
           style={{
