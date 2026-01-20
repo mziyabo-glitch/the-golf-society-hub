@@ -1,5 +1,5 @@
 import { getAuth, onAuthStateChanged, signInAnonymously } from "firebase/auth";
-import { app } from "./index";
+import { app } from "./app";
 
 export const auth = getAuth(app);
 
