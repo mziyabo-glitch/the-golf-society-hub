@@ -1,27 +1,35 @@
+// app/_layout.tsx
 import { Stack } from "expo-router";
 import { BootstrapProvider, useBootstrap } from "@/lib/useBootstrap";
 import { View, ActivityIndicator } from "react-native";
 
-function Gate({ children }: { children: React.ReactNode }) {
-  const { loading } = useBootstrap();
+function RootNavigator() {
+  const { user, loading } = useBootstrap();
 
+  // ⛔ DO NOT ROUTE WHILE LOADING
   if (loading) {
     return (
-      <View style={{ flex: 1, justifyContent: "center" }}>
+      <View style={{ flex: 1, alignItems: "center", justifyContent: "center" }}>
         <ActivityIndicator size="large" />
       </View>
     );
   }
 
-  return <>{children}</>;
+  return (
+    <Stack screenOptions={{ headerShown: false }}>
+      {!user?.activeSocietyId ? (
+        <Stack.Screen name="join" />
+      ) : (
+        <Stack.Screen name="(tabs)" />
+      )}
+    </Stack>
+  );
 }
 
-export default function RootLayout() {
+export default function Layout() {
   return (
     <BootstrapProvider>
-      <Gate>
-        <Stack screenOptions={{ headerShown: false }} />
-      </Gate>
+      <RootNavigator />
     </BootstrapProvider>
   );
 }
