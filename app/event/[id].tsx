@@ -307,13 +307,36 @@ export default function EventDetailsScreen() {
   };
 
   const handleToggleEventPayment = async (memberId: string) => {
-    if (!event) return;
+  if (!event) return;
 
-    // Guard: must have permission
-    if (!canManageFinanceFlag) {
-      Alert.alert("Access Denied", "Only Captain or Treasurer can manage payments.");
-      return;
+  try {
+    const current = event.payments?.[memberId];
+    const newPaidStatus = !(current?.paid ?? false);
+
+    const nextPayments = {
+      ...(event.payments || {}),
+      [memberId]: {
+        paid: newPaidStatus,
+        paidAtISO: newPaidStatus ? new Date().toISOString() : undefined,
+        method: current?.method ?? "other",
+      },
+    };
+
+    // Auto-RSVP: if treasurer/capt marks payment as paid, set RSVP = going
+    const nextRsvps = { ...(event.rsvps || {}) };
+    if (newPaidStatus) {
+      nextRsvps[memberId] = "going";
     }
+
+    await updateEventDoc(event.id, {
+      payments: nextPayments,
+      rsvps: nextRsvps,
+    });
+  } catch (error) {
+    console.error("Error toggling payment status:", error);
+    Alert.alert("Error", "Failed to update payment status");
+  }
+};
 
     // Guard: must have event fee set
     const eventFee = event.eventFee ?? 0;
