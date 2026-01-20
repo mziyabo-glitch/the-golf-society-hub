@@ -1,7 +1,13 @@
 /**
  * Button Components
  * Primary, Secondary, and Destructive button variants
- * All buttons have minHeight 44px for accessibility
+ *
+ * FIX:
+ * - Support BOTH usages:
+ *    <PrimaryButton>Save</PrimaryButton>
+ *    <PrimaryButton label="Save" />
+ *
+ * This prevents "blank green pill" buttons on web.
  */
 
 import { ReactNode } from "react";
@@ -10,7 +16,12 @@ import { AppText } from "./AppText";
 import { getColors, radius, spacing, buttonHeights, typography } from "@/lib/ui/theme";
 
 type ButtonProps = {
-  children: ReactNode;
+  // ✅ Back-compat support:
+  label?: string;
+
+  // ✅ Preferred usage:
+  children?: ReactNode;
+
   onPress: () => void;
   disabled?: boolean;
   loading?: boolean;
@@ -21,7 +32,13 @@ type ButtonProps = {
   iconPosition?: "left" | "right";
 };
 
+function resolveContent(label?: string, children?: ReactNode): ReactNode {
+  if (typeof label === "string" && label.length > 0) return label;
+  return children ?? null;
+}
+
 export function PrimaryButton({
+  label,
   children,
   onPress,
   disabled,
@@ -33,6 +50,7 @@ export function PrimaryButton({
 }: ButtonProps) {
   const colors = getColors();
   const height = buttonHeights[size];
+  const content = resolveContent(label, children);
 
   return (
     <Pressable
@@ -57,7 +75,7 @@ export function PrimaryButton({
         <View style={styles.content}>
           {icon && iconPosition === "left" ? <View style={styles.icon}>{icon}</View> : null}
           <AppText variant="button" color="inverse" style={styles.buttonText}>
-            {children}
+            {content}
           </AppText>
           {icon && iconPosition === "right" ? <View style={styles.icon}>{icon}</View> : null}
         </View>
@@ -67,6 +85,7 @@ export function PrimaryButton({
 }
 
 export function SecondaryButton({
+  label,
   children,
   onPress,
   disabled,
@@ -78,6 +97,7 @@ export function SecondaryButton({
 }: ButtonProps) {
   const colors = getColors();
   const height = buttonHeights[size];
+  const content = resolveContent(label, children);
 
   return (
     <Pressable
@@ -104,7 +124,7 @@ export function SecondaryButton({
         <View style={styles.content}>
           {icon && iconPosition === "left" ? <View style={styles.icon}>{icon}</View> : null}
           <AppText variant="button" color="primary" style={styles.buttonText}>
-            {children}
+            {content}
           </AppText>
           {icon && iconPosition === "right" ? <View style={styles.icon}>{icon}</View> : null}
         </View>
@@ -114,6 +134,7 @@ export function SecondaryButton({
 }
 
 export function DestructiveButton({
+  label,
   children,
   onPress,
   disabled,
@@ -125,6 +146,7 @@ export function DestructiveButton({
 }: ButtonProps) {
   const colors = getColors();
   const height = buttonHeights[size];
+  const content = resolveContent(label, children);
 
   return (
     <Pressable
@@ -149,7 +171,7 @@ export function DestructiveButton({
         <View style={styles.content}>
           {icon && iconPosition === "left" ? <View style={styles.icon}>{icon}</View> : null}
           <AppText variant="button" color="inverse" style={styles.buttonText}>
-            {children}
+            {content}
           </AppText>
           {icon && iconPosition === "right" ? <View style={styles.icon}>{icon}</View> : null}
         </View>
