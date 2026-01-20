@@ -1,82 +1,59 @@
-import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
-import { ensureSignedIn } from "@/lib/firebase";
-import { subscribeUserDoc } from "@/lib/firebase/firestore";
-import { runAsyncStorageMigration } from "@/lib/migrations/asyncToFirestore";
+import React, {
+  createContext,
+  useContext,
+  useEffect,
+  useState,
+} from "react";
+import { ensureSignedIn, db } from "@/lib/firebase";
+import { doc, onSnapshot } from "firebase/firestore";
 
 type BootstrapCtx = {
+  userId: string | null;
+  activeSocietyId: string | null;
   loading: boolean;
-  uid: string | null;
-  user: any | null;
-  societyId: string | null;
 };
 
-const Ctx = createContext<BootstrapCtx>({
+const BootstrapContext = createContext<BootstrapCtx>({
+  userId: null,
+  activeSocietyId: null,
   loading: true,
-  uid: null,
-  user: null,
-  societyId: null,
 });
 
-export function useBootstrap() {
-  return useContext(Ctx);
-}
-
-export function BootstrapProvider({ children }: { children: React.ReactNode }) {
+export const BootstrapProvider = ({
+  children,
+}: {
+  children: React.ReactNode;
+}) => {
+  const [userId, setUserId] = useState<string | null>(null);
+  const [activeSocietyId, setActiveSocietyId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  const [uid, setUid] = useState<string | null>(null);
-  const [user, setUser] = useState<any | null>(null);
-  const [societyId, setSocietyId] = useState<string | null>(null);
 
   useEffect(() => {
-    let unsub: null | (() => void) = null;
-    let cancelled = false;
+    let unsubscribeUserDoc: (() => void) | undefined;
 
-    (async () => {
-      try {
-        const myUid = await ensureSignedIn();
-        if (cancelled) return;
+    ensureSignedIn()
+      .then((user) => {
+        setUserId(user.uid);
 
-        setUid(myUid);
-
-        // Run migration (native-only inside the function).
-        await runAsyncStorageMigration();
-        if (cancelled) return;
-
-        // Wait for FIRST user snapshot before dropping loading.
-        const firstSnapshot = await new Promise<void>((resolve) => {
-          let resolved = false;
-
-          unsub = subscribeUserDoc(myUid, (u) => {
-            if (cancelled) return;
-
-            setUser(u);
-            setSocietyId(u?.activeSocietyId ?? null);
-
-            if (!resolved) {
-              resolved = true;
-              resolve();
-            }
-          });
+        const userRef = doc(db, "users", user.uid);
+        unsubscribeUserDoc = onSnapshot(userRef, (snap) => {
+          const data = snap.data();
+          setActiveSocietyId(data?.activeSocietyId ?? null);
+          setLoading(false);
         });
+      })
+      .catch(() => setLoading(false));
 
-        void firstSnapshot;
-        if (!cancelled) setLoading(false);
-      } catch (e) {
-        console.error("bootstrap error", e);
-        if (!cancelled) setLoading(false);
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-      if (unsub) unsub();
-    };
+    return () => unsubscribeUserDoc?.();
   }, []);
 
-  const value = useMemo(
-    () => ({ loading, uid, user, societyId }),
-    [loading, uid, user, societyId]
+  return (
+    <BootstrapContext.Provider
+      value={{ userId, activeSocietyId, loading }}
+    >
+      {children}
+    </BootstrapContext.Provider>
   );
+};
 
-  return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
-}
+export const useBootstrap = () => useContext(BootstrapContext);
