@@ -104,14 +104,10 @@ export default function FinanceEventsScreen() {
     return () => unsubscribe();
   }, [expandedEventId]);
 
-  const eventsWithFees = useMemo(
-    () => events.filter((event) => (event.eventFee ?? 0) > 0),
-    [events]
-  );
-
+  // ✅ CHANGED: list ALL events, not only events with fees
   const filteredEvents = useMemo(() => {
     const now = Date.now();
-    const filtered = eventsWithFees.filter((event) => {
+    const filtered = events.filter((event) => {
       if (filter === "completed") {
         return isEventCompleted(event);
       }
@@ -126,7 +122,7 @@ export default function FinanceEventsScreen() {
       const bTime = bDate ? new Date(bDate).getTime() : 0;
       return filter === "completed" ? bTime - aTime : aTime - bTime;
     });
-  }, [eventsWithFees, filter]);
+  }, [events, filter]);
 
   const handleToggleEvent = (eventId: string) => {
     setExpandedEventId((prev) => (prev === eventId ? null : eventId));
@@ -244,7 +240,7 @@ export default function FinanceEventsScreen() {
       {filteredEvents.length === 0 ? (
         <EmptyState
           title="No events to display"
-          message="Create events with fees to see event P&amp;L."
+          message="Create events to see event P&amp;L."
           icon={<Feather name="calendar" size={24} color={colors.primary} />}
           style={styles.emptyState}
         />
@@ -253,138 +249,107 @@ export default function FinanceEventsScreen() {
           const fee = event.eventFee || 0;
           const participants = event.playerIds?.length ?? members.length;
           const expected = fee * participants;
+
           const received = event.payments
             ? Object.values(event.payments).reduce((sum, payment) => sum + (payment.paid ? fee : 0), 0)
             : 0;
+
           const outstanding = expected - received;
           const expenses = expensesByEvent[event.id] || [];
-          const expensesTotal = expenses.reduce((sum, expense) => sum + (expense.amount || 0), 0);
-          const net = received - expensesTotal;
-          const expanded = expandedEventId === event.id;
+          const totalExpenses = expenses.reduce((sum, expense) => sum + (expense.amount || 0), 0);
+          const profitLoss = received - totalExpenses;
+
+          const isExpanded = expandedEventId === event.id;
 
           return (
-            <AppCard key={event.id} style={styles.eventCard}>
-              <View style={styles.eventHeader}>
-                <View style={styles.eventHeaderText}>
-                  <AppText variant="h2">{event.name}</AppText>
-                  <AppText variant="small" color="secondary">
-                    {formatDateDDMMYYYY(event.date)}
+            <AppCard key={event.id} style={styles.card}>
+              <Pressable onPress={() => handleToggleEvent(event.id)} style={styles.cardHeader}>
+                <View style={styles.cardHeaderText}>
+                  <AppText variant="h3">{event.name}</AppText>
+                  <AppText variant="body" color="secondary">
+                    {event.date ? formatDateDDMMYYYY(event.date) : "No date"}
                   </AppText>
                 </View>
-                <Badge label={`£${fee.toFixed(2)}`} variant="status" />
-              </View>
+                <Feather name={isExpanded ? "chevron-up" : "chevron-down"} size={20} color={colors.textSecondary} />
+              </Pressable>
 
               <View style={styles.metricsRow}>
-                <View style={styles.metricItem}>
+                <View style={styles.metric}>
                   <AppText variant="caption" color="secondary">
-                    Participants
+                    Fee
                   </AppText>
-                  <AppText variant="bodyBold">{participants}</AppText>
+                  <AppText variant="bodyStrong">£{fee.toFixed(2)}</AppText>
                 </View>
-                <View style={styles.metricItem}>
+
+                <View style={styles.metric}>
                   <AppText variant="caption" color="secondary">
                     Expected
                   </AppText>
-                  <AppText variant="bodyBold">£{expected.toFixed(2)}</AppText>
+                  <AppText variant="bodyStrong">£{expected.toFixed(2)}</AppText>
                 </View>
-                <View style={styles.metricItem}>
+
+                <View style={styles.metric}>
                   <AppText variant="caption" color="secondary">
                     Received
                   </AppText>
-                  <AppText variant="bodyBold" style={{ color: colors.success }}>
-                    £{received.toFixed(2)}
-                  </AppText>
+                  <AppText variant="bodyStrong">£{received.toFixed(2)}</AppText>
                 </View>
-              </View>
 
-              <View style={styles.metricsRow}>
-                <View style={styles.metricItem}>
+                <View style={styles.metric}>
                   <AppText variant="caption" color="secondary">
                     Outstanding
                   </AppText>
-                  <AppText variant="bodyBold" style={{ color: outstanding > 0 ? colors.error : colors.success }}>
-                    £{outstanding.toFixed(2)}
-                  </AppText>
-                </View>
-                <View style={styles.metricItem}>
-                  <AppText variant="caption" color="secondary">
-                    Expenses
-                  </AppText>
-                  <AppText variant="bodyBold">£{expensesTotal.toFixed(2)}</AppText>
-                </View>
-                <View style={styles.metricItem}>
-                  <AppText variant="caption" color="secondary">
-                    Net
-                  </AppText>
-                  <AppText variant="bodyBold" style={{ color: net >= 0 ? colors.success : colors.error }}>
-                    £{net.toFixed(2)}
-                  </AppText>
+                  <AppText variant="bodyStrong">£{outstanding.toFixed(2)}</AppText>
                 </View>
               </View>
 
-              <View style={styles.eventActions}>
-                <SecondaryButton
-                  onPress={() => handleToggleEvent(event.id)}
-                  size="sm"
-                  icon={
-                    <Feather
-                      name={expanded ? "chevron-up" : "chevron-down"}
-                      size={16}
-                      color={colors.primary}
-                    />
-                  }
-                >
-                  {expanded ? "Hide expenses" : "View expenses"}
-                </SecondaryButton>
-                <PrimaryButton
-                  onPress={() => openExpenseModal(event)}
-                  size="sm"
-                  icon={<Feather name="plus" size={16} color={colors.textInverse} />}
-                >
-                  Add Expense
-                </PrimaryButton>
+              <View style={styles.summaryRow}>
+                <Badge
+                  label={`Expenses: £${totalExpenses.toFixed(2)}`}
+                  variant="neutral"
+                  style={styles.badge}
+                />
+                <Badge
+                  label={`P&L: £${profitLoss.toFixed(2)}`}
+                  variant={profitLoss >= 0 ? "success" : "danger"}
+                  style={styles.badge}
+                />
               </View>
 
-              {expanded && (
-                <View style={styles.expensesSection}>
+              {isExpanded && (
+                <View style={styles.expanded}>
+                  <View style={styles.expensesHeader}>
+                    <AppText variant="h4">Expenses</AppText>
+                    <PrimaryButton label="Add expense" onPress={() => openExpenseModal(event)} />
+                  </View>
+
                   {expenses.length === 0 ? (
-                    <AppText variant="small" color="secondary">
-                      No expenses yet.
-                    </AppText>
+                    <EmptyState
+                      title="No expenses yet"
+                      message="Add expenses to track P&L for this event."
+                      icon={<Feather name="dollar-sign" size={24} color={colors.primary} />}
+                      style={styles.emptyStateInline}
+                    />
                   ) : (
                     expenses.map((expense) => (
-                      <View key={expense.id} style={[styles.expenseRow, { borderColor: colors.border }]}>
+                      <View key={expense.id} style={styles.expenseRow}>
                         <View style={styles.expenseInfo}>
-                          <AppText variant="bodyBold">{expense.description}</AppText>
-                          <View style={styles.expenseMeta}>
-                            <Badge
-                              label={
-                                CATEGORY_OPTIONS.find((option) => option.value === expense.category)?.label ||
-                                expense.category
-                              }
-                            />
-                            <AppText variant="small" color="secondary">
-                              {formatDateDDMMYYYY(expense.incurredDateISO)}
-                            </AppText>
-                          </View>
+                          <AppText variant="bodyStrong">{expense.description}</AppText>
+                          <AppText variant="caption" color="secondary">
+                            {CATEGORY_OPTIONS.find((c) => c.value === expense.category)?.label ?? "Other"} •{" "}
+                            {expense.incurredDateISO}
+                          </AppText>
                         </View>
+
                         <View style={styles.expenseActions}>
-                          <AppText variant="bodyBold">£{expense.amount.toFixed(2)}</AppText>
-                          <View style={styles.expenseButtons}>
-                            <SecondaryButton
-                              onPress={() => openExpenseModal(event, expense)}
-                              size="sm"
-                              icon={<Feather name="edit-2" size={14} color={colors.primary} />}
-                            >
-                              Edit
-                            </SecondaryButton>
-                            <DestructiveButton
-                              onPress={() => handleDeleteExpense(event.id, expense.id)}
-                              size="sm"
-                              icon={<Feather name="trash-2" size={14} color={colors.textInverse} />}
-                            >
-                              Delete
-                            </DestructiveButton>
+                          <AppText variant="bodyStrong">£{expense.amount.toFixed(2)}</AppText>
+                          <View style={styles.iconActions}>
+                            <Pressable onPress={() => openExpenseModal(event, expense)} style={styles.iconButton}>
+                              <Feather name="edit-2" size={16} color={colors.textSecondary} />
+                            </Pressable>
+                            <Pressable onPress={() => handleDeleteExpense(event.id, expense.id)} style={styles.iconButton}>
+                              <Feather name="trash-2" size={16} color={colors.danger} />
+                            </Pressable>
                           </View>
                         </View>
                       </View>
@@ -397,84 +362,59 @@ export default function FinanceEventsScreen() {
         })
       )}
 
-      <Modal visible={isExpenseModalVisible} transparent animationType="fade">
-        <View style={styles.modalBackdrop}>
-          <View style={[styles.modalCard, { backgroundColor: colors.surface }]}>
-            <AppText variant="h2" style={styles.modalTitle}>
-              {activeExpense ? "Edit Expense" : "Add Expense"}
+      <Modal visible={isExpenseModalVisible} transparent animationType="fade" onRequestClose={closeExpenseModal}>
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modal, { backgroundColor: colors.card }]}>
+            <AppText variant="h3" style={styles.modalTitle}>
+              {activeExpense ? "Edit expense" : "Add expense"}
             </AppText>
 
-            <AppText variant="caption" color="secondary" style={styles.modalLabel}>
-              Description
-            </AppText>
-            <AppInput
-              value={description}
-              onChangeText={setDescription}
-              placeholder="e.g. Trophy engraving"
-            />
+            <AppInput label="Description" value={description} onChangeText={setDescription} placeholder="e.g. Prizes" />
 
-            <AppText variant="caption" color="secondary" style={styles.modalLabel}>
-              Amount
-            </AppText>
             <AppInput
+              label="Amount"
               value={amount}
               onChangeText={setAmount}
               placeholder="0.00"
               keyboardType="decimal-pad"
             />
 
-            <AppText variant="caption" color="secondary" style={styles.modalLabel}>
-              Category
-            </AppText>
-            <View style={styles.categoryGrid}>
-              {CATEGORY_OPTIONS.map((option) => {
-                const selected = option.value === category;
-                return (
-                  <Pressable
-                    key={option.value}
-                    onPress={() => setCategory(option.value)}
-                    style={[
-                      styles.categoryOption,
-                      {
-                        borderColor: selected ? colors.primary : colors.border,
-                        backgroundColor: selected ? colors.primary + "15" : colors.surface,
-                      },
-                    ]}
-                  >
-                    <AppText variant="small" style={{ color: selected ? colors.primary : colors.textSecondary }}>
-                      {option.label}
-                    </AppText>
-                  </Pressable>
-                );
-              })}
-            </View>
-
-            <AppText variant="caption" color="secondary" style={styles.modalLabel}>
-              Date
-            </AppText>
             <AppInput
+              label="Category (type one)"
+              value={category}
+              onChangeText={(v) => setCategory(v as any)}
+              placeholder="other"
+              helperText="prizes | trophies | admin | food | other"
+            />
+
+            <AppInput
+              label="Incurred date (YYYY-MM-DD)"
               value={incurredDateISO}
               onChangeText={setIncurredDateISO}
-              placeholder="YYYY-MM-DD"
+              placeholder={getTodayISO()}
             />
 
             <View style={styles.modalActions}>
-              <SecondaryButton
-                onPress={closeExpenseModal}
-                size="sm"
-                style={styles.modalButton}
-              >
-                Cancel
-              </SecondaryButton>
-              <PrimaryButton
-                onPress={handleSaveExpense}
-                size="sm"
-                style={styles.modalButton}
-                icon={<Feather name="save" size={16} color={colors.textInverse} />}
-              >
-                {activeExpense ? "Update" : "Save"}
-              </PrimaryButton>
+              <SecondaryButton label="Cancel" onPress={closeExpenseModal} />
+              {activeExpense ? (
+                <PrimaryButton label="Save" onPress={handleSaveExpense} />
+              ) : (
+                <PrimaryButton label="Add" onPress={handleSaveExpense} />
+              )}
             </View>
+
+            {activeExpense && (
+              <View style={styles.modalDanger}>
+                <DestructiveButton
+                  label="Delete expense"
+                  onPress={() => {
+                    if (!activeEvent || !activeExpense) return;
+                    closeExpenseModal();
+                    handleDeleteExpense(activeEvent.id, activeExpense.id);
+                  }}
+                />
+              </View>
+            )}
           </View>
         </View>
       </Modal>
@@ -484,106 +424,107 @@ export default function FinanceEventsScreen() {
 
 const styles = StyleSheet.create({
   title: {
-    marginBottom: spacing.xs,
+    marginBottom: spacing.sm,
   },
   subtitle: {
     marginBottom: spacing.lg,
   },
   emptyState: {
-    marginTop: spacing.lg,
+    marginTop: spacing.xl,
   },
-  eventCard: {
-    marginBottom: spacing.base,
+  emptyStateInline: {
+    marginTop: spacing.md,
   },
-  eventHeader: {
+  card: {
+    marginTop: spacing.md,
+  },
+  cardHeader: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    marginBottom: spacing.sm,
+    gap: spacing.md,
   },
-  eventHeaderText: {
+  cardHeaderText: {
     flex: 1,
-    marginRight: spacing.sm,
+    gap: 2,
   },
   metricsRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    marginBottom: spacing.sm,
-  },
-  metricItem: {
-    flex: 1,
-    alignItems: "flex-start",
-  },
-  eventActions: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    gap: spacing.sm,
-    marginTop: spacing.sm,
-  },
-  expensesSection: {
     marginTop: spacing.md,
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: spacing.md,
+  },
+  metric: {
+    minWidth: 130,
+    flexGrow: 1,
+    padding: spacing.md,
+    borderRadius: radius.lg,
+    backgroundColor: "#F3F4F6",
+  },
+  summaryRow: {
+    marginTop: spacing.md,
+    flexDirection: "row",
+    flexWrap: "wrap",
     gap: spacing.sm,
+  },
+  badge: {
+    alignSelf: "flex-start",
+  },
+  expanded: {
+    marginTop: spacing.lg,
+    gap: spacing.md,
+  },
+  expensesHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: spacing.md,
   },
   expenseRow: {
-    borderWidth: 1,
-    borderRadius: radius.md,
-    padding: spacing.sm,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    gap: spacing.md,
+    padding: spacing.md,
+    borderRadius: radius.lg,
+    backgroundColor: "#F9FAFB",
   },
   expenseInfo: {
-    gap: spacing.xs,
-  },
-  expenseMeta: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    alignItems: "center",
-    gap: spacing.xs,
+    flex: 1,
+    gap: 2,
   },
   expenseActions: {
-    marginTop: spacing.sm,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: spacing.sm,
+    alignItems: "flex-end",
+    gap: 6,
   },
-  expenseButtons: {
+  iconActions: {
     flexDirection: "row",
     gap: spacing.sm,
   },
-  modalBackdrop: {
+  iconButton: {
+    padding: 6,
+  },
+  modalOverlay: {
     flex: 1,
-    backgroundColor: "rgba(0,0,0,0.4)",
     justifyContent: "center",
     padding: spacing.lg,
+    backgroundColor: "rgba(0,0,0,0.5)",
   },
-  modalCard: {
-    borderRadius: radius.lg,
+  modal: {
+    borderRadius: radius.xl,
     padding: spacing.lg,
+    gap: spacing.md,
   },
   modalTitle: {
-    marginBottom: spacing.md,
-  },
-  modalLabel: {
-    marginTop: spacing.sm,
-    marginBottom: spacing.xs,
-  },
-  categoryGrid: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: spacing.xs,
-  },
-  categoryOption: {
-    borderWidth: 1,
-    borderRadius: radius.full,
-    paddingVertical: spacing.xs,
-    paddingHorizontal: spacing.sm,
+    marginBottom: spacing.sm,
   },
   modalActions: {
     flexDirection: "row",
-    justifyContent: "flex-end",
-    gap: spacing.sm,
-    marginTop: spacing.lg,
+    justifyContent: "space-between",
+    gap: spacing.md,
+    marginTop: spacing.md,
   },
-  modalButton: {
-    minWidth: 96,
+  modalDanger: {
+    marginTop: spacing.md,
   },
 });
