@@ -1,7 +1,7 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { initializeAuth, getReactNativePersistence } from "firebase/auth/react-native";
 import { getAuth, onAuthStateChanged, signInAnonymously } from "firebase/auth";
-import { app } from "./index";
+import { app } from "./app";
 
 export const auth = (() => {
   try {
@@ -9,7 +9,7 @@ export const auth = (() => {
       persistence: getReactNativePersistence(AsyncStorage),
     });
   } catch {
-    // Hot reload / already initialised
+    // hot reload / already initialised
     return getAuth(app);
   }
 })();
