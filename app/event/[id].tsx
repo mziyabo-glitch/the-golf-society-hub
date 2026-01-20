@@ -350,16 +350,38 @@ export default function EventDetailsScreen() {
       const newPaidStatus = !(currentPayment?.paid ?? false);
       const nowISO = new Date().toISOString();
 
-      await updateEventDoc(event.id, {
-        payments: {
-          ...(event.payments || {}),
-          [memberId]: {
-            paid: newPaidStatus,
-            paidAtISO: newPaidStatus ? nowISO : undefined,
-            method: currentPayment?.method || "cash",
-          },
-        },
-      });
+      const handleToggleEventPayment = async (memberId: string) => {
+  if (!event) return;
+
+  try {
+    const current = event.payments?.[memberId];
+    const newPaidStatus = !(current?.paid ?? false);
+    const nowISO = new Date().toISOString();
+
+    const nextPayments = {
+      ...(event.payments || {}),
+      [memberId]: {
+        paid: newPaidStatus,
+        paidAtISO: newPaidStatus ? nowISO : undefined,
+        method: current?.method ?? "other",
+      },
+    };
+
+    // Auto-RSVP: if paid, set RSVP going
+    const nextRsvps = { ...(event.rsvps || {}) };
+    if (newPaidStatus) {
+      nextRsvps[memberId] = "going";
+    }
+
+    await updateEventDoc(event.id, {
+      payments: nextPayments,
+      rsvps: nextRsvps,
+    });
+  } catch (error) {
+    console.error("Error toggling payment status:", error);
+    Alert.alert("Error", "Failed to update payment status");
+  }
+};
     } catch (error) {
       console.error("Error toggling payment:", error);
       Alert.alert("Error", "Failed to update payment status");
