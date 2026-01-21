@@ -21,6 +21,7 @@ import {
   type EventExpenseDoc,
 } from "@/lib/db/eventExpenseRepo";
 import { subscribeMembersBySociety, type MemberDoc } from "@/lib/db/memberRepo";
+import { subscribeSocietyDoc, type SocietyDoc } from "@/lib/db/societyRepo";
 import { getColors, radius, spacing } from "@/lib/ui/theme";
 import { useBootstrap } from "@/lib/useBootstrap";
 import { formatDateDDMMYYYY } from "@/utils/date";
@@ -38,58 +39,119 @@ const CATEGORY_OPTIONS: { value: EventExpenseCategory; label: string }[] = [
 const getTodayISO = () => new Date().toISOString().split("T")[0];
 
 const isEventCompleted = (event: EventDoc): boolean => {
-  if (event.isCompleted) return true;
-  if (event.completedAt) return true;
-  if (event.results && Object.keys(event.results).length > 0) return true;
-  return false;
+  const iso = event.date || "";
+  return !!iso && iso < getTodayISO();
 };
 
 export default function FinanceEventsScreen() {
   const { user } = useBootstrap();
   const colors = getColors();
-  const [events, setEvents] = useState<EventDoc[]>([]);
-  const [members, setMembers] = useState<MemberDoc[]>([]);
-  const [loadingEvents, setLoadingEvents] = useState(true);
-  const [loadingMembers, setLoadingMembers] = useState(true);
+
   const [filter, setFilter] = useState<FilterMode>("upcoming");
+
+  const [society, setSociety] = useState<SocietyDoc | null>(null);
+
+  const [members, setMembers] = useState<MemberDoc[]>([]);
+  const [events, setEvents] = useState<EventDoc[]>([]);
+  const [loading, setLoading] = useState(true);
+
   const [expandedEventId, setExpandedEventId] = useState<string | null>(null);
   const [expensesByEvent, setExpensesByEvent] = useState<Record<string, EventExpenseDoc[]>>({});
-  const [isExpenseModalVisible, setIsExpenseModalVisible] = useState(false);
-  const [activeEvent, setActiveEvent] = useState<EventDoc | null>(null);
-  const [activeExpense, setActiveExpense] = useState<EventExpenseDoc | null>(null);
-  const [description, setDescription] = useState("");
-  const [amount, setAmount] = useState("");
-  const [category, setCategory] = useState<EventExpenseCategory>("other");
-  const [incurredDateISO, setIncurredDateISO] = useState(getTodayISO());
+  const [expenseTotalsByEvent, setExpenseTotalsByEvent] = useState<Record<string, number>>({});
 
-  useEffect(() => {
-    if (!user?.activeSocietyId) {
-      setEvents([]);
-      setLoadingEvents(false);
-      return;
-    }
-    setLoadingEvents(true);
-    const unsubscribe = subscribeEventsBySociety(user.activeSocietyId, (items) => {
-      setEvents(items);
-      setLoadingEvents(false);
-    });
-    return () => unsubscribe();
-  }, [user?.activeSocietyId]);
+  // Expense modal state
+  const [expenseModalOpen, setExpenseModalOpen] = useState(false);
+  const [expenseDraft, setExpenseDraft] = useState<Partial<EventExpenseDoc>>({
+    category: "other",
+    description: "",
+    amount: 0,
+    incurredDateISO: getTodayISO(),
+  });
+
+  const filteredEvents = useMemo(() => {
+    const items = [...events];
+
+    const upcoming = items.filter((e) => !isEventCompleted(e));
+    const completed = items.filter((e) => isEventCompleted(e));
+
+    const chosen = filter === "upcoming" ? upcoming : completed;
+
+    return chosen.sort((a, b) => (a.date || "").localeCompare(b.date || ""));
+  }, [events, filter]);
 
   useEffect(() => {
     if (!user?.activeSocietyId) {
       setMembers([]);
-      setLoadingMembers(false);
+      setEvents([]);
+      setLoading(false);
       return;
     }
-    setLoadingMembers(true);
-    const unsubscribe = subscribeMembersBySociety(user.activeSocietyId, (items) => {
+
+    setLoading(true);
+
+    const unsubMembers = subscribeMembersBySociety(user.activeSocietyId, (items) => {
       setMembers(items);
-      setLoadingMembers(false);
+    });
+
+    const unsubEvents = subscribeEventsBySociety(
+      user.activeSocietyId,
+      (items) => {
+        setEvents(items);
+        setLoading(false);
+      },
+      (error) => {
+        console.error("Error loading events:", error);
+        setLoading(false);
+      }
+    );
+
+    return () => {
+      unsubMembers();
+      unsubEvents();
+    };
+  }, [user?.activeSocietyId]);
+
+  useEffect(() => {
+    if (!user?.activeSocietyId) {
+      setSociety(null);
+      return;
+    }
+    const unsubscribe = subscribeSocietyDoc(user.activeSocietyId, (doc) => {
+      setSociety(doc);
     });
     return () => unsubscribe();
   }, [user?.activeSocietyId]);
 
+  // Season-level expense totals (so Season P&L can be computed)
+  useEffect(() => {
+    const ids = events.map((e) => e.id);
+    if (ids.length === 0) {
+      setExpenseTotalsByEvent({});
+      return;
+    }
+
+    const unsubs: (() => void)[] = [];
+
+    ids.forEach((eventId) => {
+      const unsub = subscribeExpensesByEvent(
+        eventId,
+        (items) => {
+          const total = items.reduce((sum, x) => sum + (x.amount || 0), 0);
+          setExpenseTotalsByEvent((prev) => ({ ...prev, [eventId]: total }));
+        },
+        (error) => {
+          console.error("Error loading expenses for season totals:", error);
+        }
+      );
+      unsubs.push(unsub);
+    });
+
+    return () => {
+      unsubs.forEach((u) => u());
+    };
+  }, [events]);
+
+  // Expanded event expense list
   useEffect(() => {
     if (!expandedEventId) return;
     const unsubscribe = subscribeExpensesByEvent(
@@ -104,143 +166,124 @@ export default function FinanceEventsScreen() {
     return () => unsubscribe();
   }, [expandedEventId]);
 
-  // ✅ CHANGED: list ALL events, not only events with fees
-  const filteredEvents = useMemo(() => {
-    const now = Date.now();
-    const filtered = events.filter((event) => {
-      if (filter === "completed") {
-        return isEventCompleted(event);
-      }
-      const eventDate = event.date ? new Date(event.date).getTime() : now;
-      return !isEventCompleted(event) && eventDate >= now;
-    });
-
-    return filtered.sort((a, b) => {
-      const aDate = a.completedAt || a.date || "";
-      const bDate = b.completedAt || b.date || "";
-      const aTime = aDate ? new Date(aDate).getTime() : 0;
-      const bTime = bDate ? new Date(bDate).getTime() : 0;
-      return filter === "completed" ? bTime - aTime : aTime - bTime;
-    });
-  }, [events, filter]);
-
   const handleToggleEvent = (eventId: string) => {
     setExpandedEventId((prev) => (prev === eventId ? null : eventId));
   };
 
-  const openExpenseModal = (event: EventDoc, expense?: EventExpenseDoc) => {
-    setActiveEvent(event);
-    setActiveExpense(expense ?? null);
-    if (expense) {
-      setDescription(expense.description);
-      setAmount(expense.amount.toString());
-      setCategory(expense.category);
-      setIncurredDateISO(expense.incurredDateISO);
-    } else {
-      setDescription("");
-      setAmount("");
-      setCategory("other");
-      setIncurredDateISO(getTodayISO());
-    }
-    setIsExpenseModalVisible(true);
+  const openAddExpense = (eventId: string) => {
+    setExpandedEventId(eventId);
+    setExpenseDraft({
+      category: "other",
+      description: "",
+      amount: 0,
+      incurredDateISO: getTodayISO(),
+    });
+    setExpenseModalOpen(true);
   };
 
-  const closeExpenseModal = () => {
-    setIsExpenseModalVisible(false);
-    setActiveEvent(null);
-    setActiveExpense(null);
-  };
+  const saveExpense = async () => {
+    if (!expandedEventId) return;
 
-  const handleSaveExpense = async () => {
-    if (!activeEvent || !user?.activeSocietyId || !user?.id) {
-      Alert.alert("Error", "Missing event or user context.");
-      return;
-    }
-    if (!description.trim()) {
-      Alert.alert("Missing description", "Please add a description.");
-      return;
-    }
-    const amountValue = parseFloat(amount);
-    if (isNaN(amountValue) || amountValue <= 0) {
-      Alert.alert("Invalid amount", "Please enter a valid amount greater than 0.");
+    const amount = Number(expenseDraft.amount || 0);
+    if (!Number.isFinite(amount) || amount < 0) {
+      Alert.alert("Invalid amount", "Please enter a valid amount.");
       return;
     }
 
     try {
-      if (activeExpense) {
-        await updateEventExpenseDoc(activeEvent.id, activeExpense.id, {
-          description: description.trim(),
-          amount: amountValue,
-          category,
-          incurredDateISO: incurredDateISO.trim() || getTodayISO(),
-        });
-      } else {
-        await createEventExpense({
-          eventId: activeEvent.id,
-          societyId: user.activeSocietyId,
-          description: description.trim(),
-          amount: amountValue,
-          category,
-          incurredDateISO: incurredDateISO.trim() || getTodayISO(),
-          createdBy: user.id,
-        });
-      }
-      closeExpenseModal();
-    } catch (error) {
-      console.error("Error saving expense:", error);
-      Alert.alert("Error", "Failed to save expense.");
+      await createEventExpense(expandedEventId, {
+        category: expenseDraft.category as EventExpenseCategory,
+        description: String(expenseDraft.description || "").trim(),
+        amount,
+        incurredDateISO: String(expenseDraft.incurredDateISO || getTodayISO()),
+      });
+
+      setExpenseModalOpen(false);
+    } catch (e: any) {
+      console.error("createEventExpense failed:", e);
+      Alert.alert("Error", e?.message ?? "Could not add expense");
     }
   };
 
-  const handleDeleteExpense = (eventId: string, expenseId: string) => {
-    Alert.alert("Delete expense", "Are you sure you want to delete this expense?", [
-      { text: "Cancel", style: "cancel" },
-      {
-        text: "Delete",
-        style: "destructive",
-        onPress: async () => {
-          try {
-            await deleteEventExpenseDoc(eventId, expenseId);
-          } catch (error) {
-            console.error("Error deleting expense:", error);
-            Alert.alert("Error", "Failed to delete expense.");
-          }
-        },
-      },
-    ]);
-  };
+  const seasonFee = society?.annualFee ?? 0;
 
-  const loading = loadingEvents || loadingMembers;
+  const membershipExpected = seasonFee * members.length;
+  const membershipReceived = members.reduce((sum, m) => {
+    if (!m.paid) return sum;
+    const amt = typeof m.amountPaid === "number" ? m.amountPaid : seasonFee;
+    return sum + (amt || 0);
+  }, 0);
+  const membershipOutstanding = membershipExpected - membershipReceived;
+
+  const eventsNet = events.reduce((sum, event) => {
+    const fee = event.eventFee || 0;
+    const received = event.payments
+      ? Object.values(event.payments).reduce((s: number, p: any) => s + (p.paid ? fee : 0), 0)
+      : 0;
+    const expensesTotal = expenseTotalsByEvent[event.id] || 0;
+    return sum + (received - expensesTotal);
+  }, 0);
+
+  const seasonNet = membershipReceived + eventsNet;
+
   if (loading) {
-    return (
-      <Screen scrollable={false}>
-        <LoadingState message="Loading finance events..." />
-      </Screen>
-    );
+    return <LoadingState title="Loading finance…" />;
   }
 
   return (
-    <Screen>
-      <AppText variant="h1" style={styles.title}>
-        Event Manager
-      </AppText>
-      <AppText variant="body" color="secondary" style={styles.subtitle}>
-        Track event P&amp;L and manage expenses
-      </AppText>
+    <Screen title="Event Finance" subtitle="Event P&L and season roll-up">
+      <AppCard style={styles.summaryCard}>
+        <AppText variant="h3" style={{ marginBottom: spacing.sm }}>
+          Season P&amp;L
+        </AppText>
+
+        <View style={styles.summaryRow}>
+          <AppText variant="body" color="secondary">
+            Season Fee
+          </AppText>
+          <AppText variant="body">£{seasonFee.toFixed(2)}</AppText>
+        </View>
+
+        <View style={styles.summaryRow}>
+          <AppText variant="body" color="secondary">
+            Membership (received)
+          </AppText>
+          <AppText variant="body">£{membershipReceived.toFixed(2)}</AppText>
+        </View>
+
+        <View style={styles.summaryRow}>
+          <AppText variant="body" color="secondary">
+            Membership (outstanding)
+          </AppText>
+          <AppText variant="body">£{membershipOutstanding.toFixed(2)}</AppText>
+        </View>
+
+        <View style={styles.summaryRow}>
+          <AppText variant="body" color="secondary">
+            Events net (fees - expenses)
+          </AppText>
+          <AppText variant="body">£{eventsNet.toFixed(2)}</AppText>
+        </View>
+
+        <View style={[styles.summaryRow, { marginTop: spacing.sm }]}>
+          <AppText variant="h3">Season Net</AppText>
+          <AppText variant="h3">£{seasonNet.toFixed(2)}</AppText>
+        </View>
+      </AppCard>
 
       <SegmentedTabs
-        items={[
-          { id: "upcoming", label: "Upcoming" },
-          { id: "completed", label: "Completed" },
+        options={[
+          { value: "upcoming", label: "Upcoming" },
+          { value: "completed", label: "Completed" },
         ]}
-        selectedId={filter}
+        value={filter}
         onSelect={setFilter}
       />
 
       {filteredEvents.length === 0 ? (
         <EmptyState
           title="No events to display"
-          message="Create events to see event P&amp;L."
+          message="Create events to see event P&L."
           icon={<Feather name="calendar" size={24} color={colors.primary} />}
           style={styles.emptyState}
         />
@@ -251,10 +294,11 @@ export default function FinanceEventsScreen() {
           const expected = fee * participants;
 
           const received = event.payments
-            ? Object.values(event.payments).reduce((sum, payment) => sum + (payment.paid ? fee : 0), 0)
+            ? Object.values(event.payments).reduce((sum, payment: any) => sum + (payment.paid ? fee : 0), 0)
             : 0;
 
           const outstanding = expected - received;
+
           const expenses = expensesByEvent[event.id] || [];
           const totalExpenses = expenses.reduce((sum, expense) => sum + (expense.amount || 0), 0);
           const profitLoss = received - totalExpenses;
@@ -264,94 +308,82 @@ export default function FinanceEventsScreen() {
           return (
             <AppCard key={event.id} style={styles.card}>
               <Pressable onPress={() => handleToggleEvent(event.id)} style={styles.cardHeader}>
-                <View style={styles.cardHeaderText}>
+                <View style={{ flex: 1 }}>
                   <AppText variant="h3">{event.name}</AppText>
-                  <AppText variant="body" color="secondary">
-                    {event.date ? formatDateDDMMYYYY(event.date) : "No date"}
+                  <AppText variant="caption" color="secondary">
+                    {formatDateDDMMYYYY(event.date)} • £{(event.eventFee || 0).toFixed(2)} fee
                   </AppText>
                 </View>
+
                 <Feather name={isExpanded ? "chevron-up" : "chevron-down"} size={20} color={colors.textSecondary} />
               </Pressable>
 
               <View style={styles.metricsRow}>
                 <View style={styles.metric}>
-                  <AppText variant="caption" color="secondary">
-                    Fee
-                  </AppText>
-                  <AppText variant="bodyStrong">£{fee.toFixed(2)}</AppText>
+                  <AppText variant="caption" color="secondary">Expected</AppText>
+                  <AppText variant="body">£{expected.toFixed(2)}</AppText>
                 </View>
-
                 <View style={styles.metric}>
-                  <AppText variant="caption" color="secondary">
-                    Expected
-                  </AppText>
-                  <AppText variant="bodyStrong">£{expected.toFixed(2)}</AppText>
+                  <AppText variant="caption" color="secondary">Received</AppText>
+                  <AppText variant="body">£{received.toFixed(2)}</AppText>
                 </View>
-
                 <View style={styles.metric}>
-                  <AppText variant="caption" color="secondary">
-                    Received
-                  </AppText>
-                  <AppText variant="bodyStrong">£{received.toFixed(2)}</AppText>
-                </View>
-
-                <View style={styles.metric}>
-                  <AppText variant="caption" color="secondary">
-                    Outstanding
-                  </AppText>
-                  <AppText variant="bodyStrong">£{outstanding.toFixed(2)}</AppText>
+                  <AppText variant="caption" color="secondary">Outstanding</AppText>
+                  <AppText variant="body">£{outstanding.toFixed(2)}</AppText>
                 </View>
               </View>
 
-              <View style={styles.summaryRow}>
-                <Badge
-                  label={`Expenses: £${totalExpenses.toFixed(2)}`}
-                  variant="neutral"
-                  style={styles.badge}
-                />
-                <Badge
-                  label={`P&L: £${profitLoss.toFixed(2)}`}
-                  variant={profitLoss >= 0 ? "success" : "danger"}
-                  style={styles.badge}
-                />
+              <View style={styles.metricsRow}>
+                <View style={styles.metric}>
+                  <AppText variant="caption" color="secondary">Expenses</AppText>
+                  <AppText variant="body">£{totalExpenses.toFixed(2)}</AppText>
+                </View>
+                <View style={styles.metric}>
+                  <AppText variant="caption" color="secondary">P&amp;L</AppText>
+                  <Badge
+                    label={`£${profitLoss.toFixed(2)}`}
+                    tone={profitLoss >= 0 ? "success" : "danger"}
+                  />
+                </View>
               </View>
 
               {isExpanded && (
-                <View style={styles.expanded}>
-                  <View style={styles.expensesHeader}>
-                    <AppText variant="h4">Expenses</AppText>
-                    <PrimaryButton label="Add expense" onPress={() => openExpenseModal(event)} />
-                  </View>
+                <View style={{ marginTop: spacing.md }}>
+                  <PrimaryButton
+                    onPress={() => openAddExpense(event.id)}
+                    iconLeft={<Feather name="plus" size={16} color="#fff" />}
+                  >
+                    Add Expense
+                  </PrimaryButton>
+
+                  <View style={{ height: spacing.sm }} />
 
                   {expenses.length === 0 ? (
-                    <EmptyState
-                      title="No expenses yet"
-                      message="Add expenses to track P&L for this event."
-                      icon={<Feather name="dollar-sign" size={24} color={colors.primary} />}
-                      style={styles.emptyStateInline}
-                    />
+                    <AppText variant="body" color="secondary">
+                      No expenses yet.
+                    </AppText>
                   ) : (
-                    expenses.map((expense) => (
-                      <View key={expense.id} style={styles.expenseRow}>
-                        <View style={styles.expenseInfo}>
-                          <AppText variant="bodyStrong">{expense.description}</AppText>
+                    expenses.map((ex) => (
+                      <View key={ex.id} style={styles.expenseRow}>
+                        <View style={{ flex: 1 }}>
+                          <AppText variant="body">{ex.description || "Expense"}</AppText>
                           <AppText variant="caption" color="secondary">
-                            {CATEGORY_OPTIONS.find((c) => c.value === expense.category)?.label ?? "Other"} •{" "}
-                            {expense.incurredDateISO}
+                            {ex.category} • {ex.incurredDateISO}
                           </AppText>
                         </View>
-
-                        <View style={styles.expenseActions}>
-                          <AppText variant="bodyStrong">£{expense.amount.toFixed(2)}</AppText>
-                          <View style={styles.iconActions}>
-                            <Pressable onPress={() => openExpenseModal(event, expense)} style={styles.iconButton}>
-                              <Feather name="edit-2" size={16} color={colors.textSecondary} />
-                            </Pressable>
-                            <Pressable onPress={() => handleDeleteExpense(event.id, expense.id)} style={styles.iconButton}>
-                              <Feather name="trash-2" size={16} color={colors.danger} />
-                            </Pressable>
-                          </View>
-                        </View>
+                        <AppText variant="body">£{(ex.amount || 0).toFixed(2)}</AppText>
+                        <Pressable
+                          onPress={async () => {
+                            try {
+                              await deleteEventExpenseDoc(event.id, ex.id);
+                            } catch (e: any) {
+                              Alert.alert("Error", e?.message ?? "Could not delete expense");
+                            }
+                          }}
+                          style={{ marginLeft: spacing.sm }}
+                        >
+                          <Feather name="trash-2" size={18} color={colors.danger} />
+                        </Pressable>
                       </View>
                     ))
                   )}
@@ -362,59 +394,46 @@ export default function FinanceEventsScreen() {
         })
       )}
 
-      <Modal visible={isExpenseModalVisible} transparent animationType="fade" onRequestClose={closeExpenseModal}>
-        <View style={styles.modalOverlay}>
-          <View style={[styles.modal, { backgroundColor: colors.card }]}>
-            <AppText variant="h3" style={styles.modalTitle}>
-              {activeExpense ? "Edit expense" : "Add expense"}
+      <Modal visible={expenseModalOpen} transparent animationType="fade">
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCard}>
+            <AppText variant="h3" style={{ marginBottom: spacing.md }}>
+              Add Expense
             </AppText>
 
-            <AppInput label="Description" value={description} onChangeText={setDescription} placeholder="e.g. Prizes" />
-
             <AppInput
-              label="Amount"
-              value={amount}
-              onChangeText={setAmount}
-              placeholder="0.00"
-              keyboardType="decimal-pad"
+              label="Description"
+              value={String(expenseDraft.description || "")}
+              onChangeText={(v) => setExpenseDraft((p) => ({ ...p, description: v }))}
+              placeholder="e.g. Prizes"
             />
 
             <AppInput
-              label="Category (type one)"
-              value={category}
-              onChangeText={(v) => setCategory(v as any)}
-              placeholder="other"
-              helperText="prizes | trophies | admin | food | other"
+              label="Amount (£)"
+              value={String(expenseDraft.amount ?? "")}
+              onChangeText={(v) => setExpenseDraft((p) => ({ ...p, amount: Number(v) }))}
+              keyboardType="numeric"
+              placeholder="0"
             />
 
             <AppInput
-              label="Incurred date (YYYY-MM-DD)"
-              value={incurredDateISO}
-              onChangeText={setIncurredDateISO}
+              label="Date (YYYY-MM-DD)"
+              value={String(expenseDraft.incurredDateISO || getTodayISO())}
+              onChangeText={(v) => setExpenseDraft((p) => ({ ...p, incurredDateISO: v }))}
               placeholder={getTodayISO()}
             />
 
-            <View style={styles.modalActions}>
-              <SecondaryButton label="Cancel" onPress={closeExpenseModal} />
-              {activeExpense ? (
-                <PrimaryButton label="Save" onPress={handleSaveExpense} />
-              ) : (
-                <PrimaryButton label="Add" onPress={handleSaveExpense} />
-              )}
-            </View>
+            <View style={{ height: spacing.md }} />
 
-            {activeExpense && (
-              <View style={styles.modalDanger}>
-                <DestructiveButton
-                  label="Delete expense"
-                  onPress={() => {
-                    if (!activeEvent || !activeExpense) return;
-                    closeExpenseModal();
-                    handleDeleteExpense(activeEvent.id, activeExpense.id);
-                  }}
-                />
-              </View>
-            )}
+            <PrimaryButton onPress={saveExpense}>Save</PrimaryButton>
+            <View style={{ height: spacing.sm }} />
+            <SecondaryButton
+              onPress={() => {
+                setExpenseModalOpen(false);
+              }}
+            >
+              Cancel
+            </SecondaryButton>
           </View>
         </View>
       </Modal>
@@ -423,108 +442,55 @@ export default function FinanceEventsScreen() {
 }
 
 const styles = StyleSheet.create({
-  title: {
-    marginBottom: spacing.sm,
-  },
-  subtitle: {
+  summaryCard: {
     marginBottom: spacing.lg,
+  },
+  summaryRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingVertical: spacing.xs,
   },
   emptyState: {
     marginTop: spacing.xl,
-  },
-  emptyStateInline: {
-    marginTop: spacing.md,
   },
   card: {
     marginTop: spacing.md,
   },
   cardHeader: {
     flexDirection: "row",
-    justifyContent: "space-between",
     alignItems: "center",
-    gap: spacing.md,
-  },
-  cardHeaderText: {
-    flex: 1,
-    gap: 2,
-  },
-  metricsRow: {
-    marginTop: spacing.md,
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: spacing.md,
-  },
-  metric: {
-    minWidth: 130,
-    flexGrow: 1,
-    padding: spacing.md,
-    borderRadius: radius.lg,
-    backgroundColor: "#F3F4F6",
-  },
-  summaryRow: {
-    marginTop: spacing.md,
-    flexDirection: "row",
-    flexWrap: "wrap",
     gap: spacing.sm,
   },
-  badge: {
-    alignSelf: "flex-start",
-  },
-  expanded: {
-    marginTop: spacing.lg,
-    gap: spacing.md,
-  },
-  expensesHeader: {
+  metricsRow: {
     flexDirection: "row",
     justifyContent: "space-between",
-    alignItems: "center",
-    gap: spacing.md,
+    marginTop: spacing.md,
+    gap: spacing.sm,
+  },
+  metric: {
+    flex: 1,
+    padding: spacing.sm,
+    borderRadius: radius.md,
+    borderWidth: 1,
   },
   expenseRow: {
     flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "flex-start",
-    gap: spacing.md,
-    padding: spacing.md,
-    borderRadius: radius.lg,
-    backgroundColor: "#F9FAFB",
+    alignItems: "center",
+    paddingVertical: spacing.sm,
+    borderBottomWidth: 1,
   },
-  expenseInfo: {
+  modalBackdrop: {
     flex: 1,
-    gap: 2,
-  },
-  expenseActions: {
-    alignItems: "flex-end",
-    gap: 6,
-  },
-  iconActions: {
-    flexDirection: "row",
-    gap: spacing.sm,
-  },
-  iconButton: {
-    padding: 6,
-  },
-  modalOverlay: {
-    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.45)",
+    alignItems: "center",
     justifyContent: "center",
     padding: spacing.lg,
-    backgroundColor: "rgba(0,0,0,0.5)",
   },
-  modal: {
-    borderRadius: radius.xl,
+  modalCard: {
+    width: "100%",
+    backgroundColor: "white",
+    borderRadius: radius.lg,
     padding: spacing.lg,
-    gap: spacing.md,
-  },
-  modalTitle: {
-    marginBottom: spacing.sm,
-  },
-  modalActions: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    gap: spacing.md,
-    marginTop: spacing.md,
-  },
-  modalDanger: {
-    marginTop: spacing.md,
   },
 });
