@@ -1,74 +1,27 @@
-import { useBootstrap } from "@/lib/useBootstrap";
+import { useEffect } from "react";
 import { useRouter } from "expo-router";
-import { useEffect, useState } from "react";
-import { ActivityIndicator, Pressable, Text, View } from "react-native";
+import { View, ActivityIndicator } from "react-native";
+import { useBootstrap } from "@/lib/useBootstrap";
 
-export default function HomeScreen() {
+export default function Index() {
   const router = useRouter();
-  const [checking, setChecking] = useState(true);
-  const { user, loading } = useBootstrap();
+  const { isLoading, hasSociety, needsSociety } = useBootstrap();
 
   useEffect(() => {
-    if (loading) return;
-    if (user?.activeSocietyId) {
-      router.replace("/society");
-      return;
-    }
-    setChecking(false);
-  }, [loading, user?.activeSocietyId, router]);
+    if (isLoading) return;
 
-  if (checking || loading) {
-    return (
-      <View style={{ flex: 1, justifyContent: "center", alignItems: "center" }}>
-        <ActivityIndicator size="large" color="#0B6E4F" />
-      </View>
-    );
-  }
+    if (needsSociety) {
+      router.replace("/society");
+    }
+
+    if (hasSociety) {
+      router.replace("/home");
+    }
+  }, [isLoading, hasSociety, needsSociety]);
 
   return (
-    <View style={{ flex: 1, padding: 24, justifyContent: "center" }}>
-      <Text style={{ fontSize: 34, fontWeight: "800", marginBottom: 6 }}>
-        The Golf Society Hub
-      </Text>
-      <Text style={{ fontSize: 16, opacity: 0.75, marginBottom: 28 }}>
-        Everything Golf Society
-      </Text>
-
-      <Pressable
-        onPress={() => router.push("/create-society")}
-        style={{
-          backgroundColor: "#0B6E4F",
-          paddingVertical: 14,
-          borderRadius: 14,
-          alignItems: "center",
-          marginBottom: 12,
-        }}
-      >
-        <Text style={{ color: "white", fontSize: 18, fontWeight: "700" }}>
-          Create a Society
-        </Text>
-      </Pressable>
-
-      <Pressable
-        onPress={() => router.push("/join")}
-        style={{
-          backgroundColor: "#111827",
-          paddingVertical: 14,
-          borderRadius: 14,
-          alignItems: "center",
-          marginBottom: 12,
-        }}
-      >
-        <Text style={{ color: "white", fontSize: 18, fontWeight: "700" }}>
-          Join a Society
-        </Text>
-      </Pressable>
-
-      <Pressable onPress={() => {}} style={{ paddingVertical: 12, alignItems: "center" }}>
-        <Text style={{ fontSize: 16, fontWeight: "600", opacity: 0.8 }}>
-          I already have an account
-        </Text>
-      </Pressable>
+    <View style={{ flex: 1, justifyContent: "center", alignItems: "center" }}>
+      <ActivityIndicator size="large" />
     </View>
   );
 }
