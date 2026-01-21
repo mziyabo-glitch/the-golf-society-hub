@@ -1,70 +1,65 @@
 import React, { createContext, useContext, useEffect, useState } from "react";
-import { doc, onSnapshot } from "firebase/firestore";
-import { db, ensureSignedIn } from "@/lib/firebase";
-
-type BootUser = {
-  uid: string;
-  activeSocietyId: string | null;
-};
+import { ensureSignedIn } from "@/lib/firebase";
+import { ensureUserDoc, subscribeUserDoc, type UserDoc } from "@/lib/db/userRepo";
 
 type BootstrapCtx = {
-  user: BootUser | null;
-  activeSocietyId: string | null; // convenience
+  user: UserDoc | null;
   loading: boolean;
 };
 
 const BootstrapContext = createContext<BootstrapCtx>({
   user: null,
-  activeSocietyId: null,
   loading: true,
 });
 
 export const BootstrapProvider = ({ children }: { children: React.ReactNode }) => {
-  const [user, setUser] = useState<BootUser | null>(null);
-  const [activeSocietyId, setActiveSocietyId] = useState<string | null>(null);
+  const [user, setUser] = useState<UserDoc | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     let unsub: (() => void) | null = null;
+    let cancelled = false;
 
-    ensureSignedIn()
-      .then((uid) => {
-        // Start in loading until first snapshot arrives
-        setLoading(true);
+    (async () => {
+      try {
+        // ✅ ensureSignedIn returns a UID string in YOUR repo
+        const uid = await ensureSignedIn();
+        if (cancelled) return;
 
-        const userRef = doc(db, "users", uid);
+        // ✅ Make sure users/{uid} exists so bootstrap can resolve deterministically
+        await ensureUserDoc(uid);
+        if (cancelled) return;
 
-        unsub = onSnapshot(
-          userRef,
-          (snap) => {
-            const data = snap.exists() ? (snap.data() as any) : null;
-            const socId = data?.activeSocietyId ?? null;
-
-            setActiveSocietyId(socId);
-            setUser({ uid, activeSocietyId: socId });
+        unsub = subscribeUserDoc(
+          uid,
+          (doc) => {
+            if (cancelled) return;
+            setUser(doc);
             setLoading(false);
           },
-          () => {
-            // snapshot error
-            setUser({ uid, activeSocietyId: null });
-            setActiveSocietyId(null);
+          (err) => {
+            console.error("bootstrap: subscribeUserDoc error", err);
+            if (cancelled) return;
+            setUser(null);
             setLoading(false);
           }
         );
-      })
-      .catch(() => {
+      } catch (e) {
+        console.error("bootstrap: failed", e);
+        if (cancelled) return;
         setUser(null);
-        setActiveSocietyId(null);
         setLoading(false);
-      });
+      }
+    })();
 
     return () => {
+      cancelled = true;
       if (unsub) unsub();
     };
   }, []);
 
   return (
-    <BootstrapContext.Provider value={{ user, activeSocietyId, loading }}>
+    <BootstrapContext.Provider value={{ user, loading }}>
       {children}
     </BootstrapContext.Provider>
   );
