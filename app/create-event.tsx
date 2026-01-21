@@ -2,8 +2,9 @@
  * HOW TO TEST:
  * - As member: try to create event (should show alert "Access denied: Captain only" and redirect)
  * - As captain: verify can create events
- * - Create event with all fields
+ * - Create event with all fields (including Event Fee)
  * - Verify event appears on dashboard
+ * - Open Finance -> Events and confirm P&L uses the fee
  */
 
 import { useRouter } from "expo-router";
@@ -20,6 +21,7 @@ export default function CreateEventScreen() {
   const [eventName, setEventName] = useState("");
   const [eventDate, setEventDate] = useState("");
   const [courseName, setCourseName] = useState("");
+  const [eventFee, setEventFee] = useState(""); // ✅ restored
   const [format, setFormat] = useState<"Stableford" | "Strokeplay" | "Both">("Stableford");
   const [isOOM, setIsOOM] = useState(false);
   const [canCreate, setCanCreate] = useState(false);
@@ -45,13 +47,11 @@ export default function CreateEventScreen() {
     });
 
     return () => unsubscribe();
-  }, [router, user?.activeMemberId]);
+  }, [user?.activeMemberId, router]);
 
-  if (!canCreate) {
-    return null; // Will redirect via Alert
-  }
-
-  const isFormValid = eventName.trim().length > 0;
+  const isFormValid =
+    eventName.trim().length > 0 &&
+    (eventFee.trim() === "" || (!Number.isNaN(Number(eventFee)) && Number(eventFee) >= 0));
 
   const handleSubmit = async () => {
     if (!isFormValid) return;
@@ -67,6 +67,7 @@ export default function CreateEventScreen() {
         name: eventName.trim(),
         date: eventDate.trim(),
         courseName: courseName.trim(),
+        eventFee: eventFee.trim() === "" ? 0 : Number(eventFee), // ✅ persisted
         format,
         isOOM,
         status: "scheduled",
@@ -75,15 +76,14 @@ export default function CreateEventScreen() {
       router.back();
     } catch (error) {
       console.error("Error saving event:", error);
+      Alert.alert("Error", "Failed to create event. Check console for details.");
     }
   };
 
   return (
     <ScrollView style={{ flex: 1, backgroundColor: "#fff" }}>
       <View style={{ flex: 1, padding: 24 }}>
-        <Text style={{ fontSize: 34, fontWeight: "800", marginBottom: 6 }}>
-          Create Event
-        </Text>
+        <Text style={{ fontSize: 34, fontWeight: "800", marginBottom: 6 }}>Create Event</Text>
         <Text style={{ fontSize: 16, opacity: 0.75, marginBottom: 28 }}>
           Add a new golf event to your society.
         </Text>
@@ -102,14 +102,31 @@ export default function CreateEventScreen() {
             paddingHorizontal: 16,
             borderRadius: 14,
             fontSize: 16,
+            marginBottom: 0,
+          }}
+        />
+
+        {/* Event Fee */}
+        <Text style={{ fontSize: 16, fontWeight: "600", marginBottom: 8, marginTop: 16 }}>
+          Event Fee (£)
+        </Text>
+        <TextInput
+          value={eventFee}
+          onChangeText={setEventFee}
+          placeholder="0"
+          keyboardType="numeric"
+          style={{
+            backgroundColor: "#f3f4f6",
+            paddingVertical: 14,
+            paddingHorizontal: 16,
+            borderRadius: 14,
+            fontSize: 16,
             marginBottom: 20,
           }}
         />
 
-        {/* Event Date */}
-        <Text style={{ fontSize: 16, fontWeight: "600", marginBottom: 8 }}>
-          Event Date
-        </Text>
+        {/* Date */}
+        <Text style={{ fontSize: 16, fontWeight: "600", marginBottom: 8 }}>Event Date</Text>
         <DatePicker
           value={eventDate}
           onChange={setEventDate}
@@ -120,9 +137,7 @@ export default function CreateEventScreen() {
         />
 
         {/* Course Name */}
-        <Text style={{ fontSize: 16, fontWeight: "600", marginBottom: 8 }}>
-          Course Name
-        </Text>
+        <Text style={{ fontSize: 16, fontWeight: "600", marginBottom: 8 }}>Course Name</Text>
         <TextInput
           value={courseName}
           onChangeText={setCourseName}
@@ -138,114 +153,72 @@ export default function CreateEventScreen() {
         />
 
         {/* Format */}
-        <Text style={{ fontSize: 16, fontWeight: "600", marginBottom: 8 }}>
-          Format
-        </Text>
-        <View style={{ flexDirection: "row", gap: 8, marginBottom: 20 }}>
-          {(["Stableford", "Strokeplay", "Both"] as const).map((mode) => (
+        <Text style={{ fontSize: 16, fontWeight: "600", marginBottom: 8 }}>Format</Text>
+        <View style={{ flexDirection: "row", gap: 10, marginBottom: 20 }}>
+          {(["Stableford", "Strokeplay", "Both"] as const).map((f) => (
             <Pressable
-              key={mode}
-              onPress={() => setFormat(mode)}
+              key={f}
+              onPress={() => setFormat(f)}
               style={{
                 flex: 1,
-                backgroundColor: format === mode ? "#0B6E4F" : "#f3f4f6",
                 paddingVertical: 12,
                 borderRadius: 14,
+                backgroundColor: format === f ? "#0f172a" : "#f3f4f6",
                 alignItems: "center",
               }}
             >
-              <Text
-                style={{
-                  color: format === mode ? "white" : "#111827",
-                  fontSize: 14,
-                  fontWeight: "600",
-                }}
-              >
-                {mode}
+              <Text style={{ color: format === f ? "#fff" : "#111827", fontWeight: "700" }}>
+                {f}
               </Text>
             </Pressable>
           ))}
         </View>
 
-        {/* OOM Event Toggle */}
-        <View style={{ marginBottom: 20 }}>
-          <Text style={{ fontSize: 16, fontWeight: "600", marginBottom: 12 }}>
-            Order of Merit Event?
-          </Text>
-          <Pressable
-            onPress={() => setIsOOM(!isOOM)}
-            style={{
-              flexDirection: "row",
-              alignItems: "center",
-              backgroundColor: "#f3f4f6",
-              paddingVertical: 14,
-              paddingHorizontal: 16,
-              borderRadius: 14,
-            }}
-          >
-            <View
-              style={{
-                width: 24,
-                height: 24,
-                borderRadius: 12,
-                backgroundColor: isOOM ? "#0B6E4F" : "#d1d5db",
-                marginRight: 12,
-                justifyContent: "center",
-                alignItems: "center",
-              }}
-            >
-              {isOOM && (
-                <View
-                  style={{
-                    width: 8,
-                    height: 8,
-                    borderRadius: 4,
-                    backgroundColor: "#fff",
-                  }}
-                />
-              )}
-            </View>
-            <Text style={{ fontSize: 16, color: "#111827" }}>
-              {isOOM ? "Yes, this is an Order of Merit event" : "No, this is not an Order of Merit event"}
-            </Text>
-          </Pressable>
-        </View>
-
-        {/* Create Event Button */}
+        {/* OOM toggle */}
         <Pressable
-          onPress={handleSubmit}
-          disabled={!isFormValid}
+          onPress={() => setIsOOM((v) => !v)}
           style={{
-            backgroundColor: isFormValid ? "#0B6E4F" : "#9ca3af",
-            paddingVertical: 14,
-            borderRadius: 14,
+            flexDirection: "row",
             alignItems: "center",
-            marginBottom: 12,
-            marginTop: 8,
+            padding: 14,
+            borderRadius: 14,
+            backgroundColor: "#f3f4f6",
+            marginBottom: 24,
           }}
         >
-          <Text style={{ color: "white", fontSize: 18, fontWeight: "700" }}>
-            Create Event
-          </Text>
+          <View
+            style={{
+              width: 22,
+              height: 22,
+              borderRadius: 6,
+              marginRight: 12,
+              backgroundColor: isOOM ? "#16a34a" : "#d1d5db",
+            }}
+          />
+          <Text style={{ fontSize: 16, fontWeight: "700" }}>Counts toward Order of Merit</Text>
         </Pressable>
 
-        {/* Back Button */}
+        {/* Save */}
         <Pressable
-          onPress={() => router.back()}
+          onPress={handleSubmit}
+          disabled={!canCreate || !isFormValid}
           style={{
-            backgroundColor: "#111827",
-            paddingVertical: 14,
-            borderRadius: 14,
+            backgroundColor: canCreate && isFormValid ? "#2F6F62" : "#9ca3af",
+            paddingVertical: 16,
+            borderRadius: 16,
             alignItems: "center",
-            marginBottom: 12,
           }}
         >
-          <Text style={{ color: "white", fontSize: 18, fontWeight: "700" }}>
-            Back
-          </Text>
+          <Text style={{ color: "#fff", fontSize: 18, fontWeight: "800" }}>Create Event</Text>
+        </Pressable>
+
+        <Pressable
+          onPress={() => router.back()}
+          style={{ paddingVertical: 16, alignItems: "center", marginTop: 14 }}
+        >
+          <Text style={{ fontSize: 16, fontWeight: "700", color: "#0f172a" }}>Back</Text>
         </Pressable>
       </View>
     </ScrollView>
   );
 }
-
