@@ -1,58 +1,73 @@
-import { useEffect, useState } from "react";
-import { onAuthStateChanged } from "firebase/auth";
-import { auth } from "@/lib/firebase";
-import { subscribeToUser, UserDocFields } from "@/lib/db/userRepo";
+import React, { createContext, useContext, useEffect, useState } from "react";
+import { doc, onSnapshot } from "firebase/firestore";
+import { db, ensureSignedIn } from "@/lib/firebase";
 
-type BootstrapState =
-  | "loading"
-  | "noAuth"
-  | "noSociety"
-  | "ready";
+type BootUser = {
+  uid: string;
+  activeSocietyId: string | null;
+};
 
-export function useBootstrap() {
-  const [state, setState] = useState<BootstrapState>("loading");
-  const [user, setUser] = useState<UserDocFields | null>(null);
-  const [uid, setUid] = useState<string | null>(null);
+type BootstrapCtx = {
+  user: BootUser | null;
+  activeSocietyId: string | null; // convenience
+  loading: boolean;
+};
+
+const BootstrapContext = createContext<BootstrapCtx>({
+  user: null,
+  activeSocietyId: null,
+  loading: true,
+});
+
+export const BootstrapProvider = ({ children }: { children: React.ReactNode }) => {
+  const [user, setUser] = useState<BootUser | null>(null);
+  const [activeSocietyId, setActiveSocietyId] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const unsubAuth = onAuthStateChanged(auth, (firebaseUser) => {
-      if (!firebaseUser) {
-        setUid(null);
+    let unsub: (() => void) | null = null;
+
+    ensureSignedIn()
+      .then((uid) => {
+        // Start in loading until first snapshot arrives
+        setLoading(true);
+
+        const userRef = doc(db, "users", uid);
+
+        unsub = onSnapshot(
+          userRef,
+          (snap) => {
+            const data = snap.exists() ? (snap.data() as any) : null;
+            const socId = data?.activeSocietyId ?? null;
+
+            setActiveSocietyId(socId);
+            setUser({ uid, activeSocietyId: socId });
+            setLoading(false);
+          },
+          () => {
+            // snapshot error
+            setUser({ uid, activeSocietyId: null });
+            setActiveSocietyId(null);
+            setLoading(false);
+          }
+        );
+      })
+      .catch(() => {
         setUser(null);
-        setState("noAuth");
-        return;
-      }
-
-      setUid(firebaseUser.uid);
-
-      const unsubUser = subscribeToUser(firebaseUser.uid, (doc) => {
-        if (!doc) {
-          // Firestore not resolved yet
-          setState("loading");
-          return;
-        }
-
-        setUser(doc);
-
-        if (!doc.activeSocietyId) {
-          setState("noSociety");
-        } else {
-          setState("ready");
-        }
+        setActiveSocietyId(null);
+        setLoading(false);
       });
 
-      return () => unsubUser();
-    });
-
-    return () => unsubAuth();
+    return () => {
+      if (unsub) unsub();
+    };
   }, []);
 
-  return {
-    state,
-    user,
-    uid,
-    isLoading: state === "loading",
-    hasSociety: state === "ready",
-    needsSociety: state === "noSociety",
-  };
-}
+  return (
+    <BootstrapContext.Provider value={{ user, activeSocietyId, loading }}>
+      {children}
+    </BootstrapContext.Provider>
+  );
+};
+
+export const useBootstrap = () => useContext(BootstrapContext);
