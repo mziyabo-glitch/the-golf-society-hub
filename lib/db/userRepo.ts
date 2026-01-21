@@ -9,56 +9,69 @@ import {
 import { db } from "@/lib/firebase";
 
 /**
- * Shape of the user document
+ * User document shape
  */
-export type UserDocFields = {
+export type UserDoc = {
   uid: string;
-  activeSocietyId?: string | null;
-  activeMemberId?: string | null;
+  activeSocietyId: string | null;
+  activeMemberId: string | null;
   createdAt?: unknown;
   updatedAt?: unknown;
 };
 
 /**
- * Get user document once
+ * Ensure users/{uid} exists
+ * Called during bootstrap
  */
-export async function getUserDoc(uid: string): Promise<UserDocFields | null> {
+export async function ensureUserDoc(uid: string): Promise<void> {
   const ref = doc(db, "users", uid);
   const snap = await getDoc(ref);
-  if (!snap.exists()) return null;
-  return snap.data() as UserDocFields;
+
+  if (!snap.exists()) {
+    await setDoc(ref, {
+      uid,
+      activeSocietyId: null,
+      activeMemberId: null,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
+  }
 }
 
 /**
- * Subscribe to user document
+ * Subscribe to users/{uid}
  */
-export function subscribeToUser(
+export function subscribeUserDoc(
   uid: string,
-  cb: (user: UserDocFields | null) => void
+  onNext: (user: UserDoc | null) => void,
+  onError?: (err: unknown) => void
 ) {
   const ref = doc(db, "users", uid);
-  return onSnapshot(ref, (snap) => {
-    if (!snap.exists()) {
-      cb(null);
-      return;
+
+  return onSnapshot(
+    ref,
+    (snap) => {
+      if (!snap.exists()) {
+        onNext(null);
+        return;
+      }
+      onNext(snap.data() as UserDoc);
+    },
+    (err) => {
+      if (onError) onError(err);
     }
-    cb(snap.data() as UserDocFields);
-  });
+  );
 }
 
 /**
- * SAFE UPSERT for user document
- * ----------------------------------------------------
- * updateDoc() FAILS if the document does not exist.
- * This happens for brand-new anonymous users when
- * creating their first society.
- *
- * We attempt updateDoc first, then fall back to
- * setDoc(..., { merge: true }) if needed.
+ * Safe upsert for user updates
+ * --------------------------------
+ * updateDoc FAILS if the doc does not exist.
+ * This guarantees writes always succeed.
  */
-async function updateUserDoc(
+export async function updateUserDoc(
   uid: string,
-  updates: Partial<UserDocFields>
+  updates: Partial<UserDoc>
 ): Promise<void> {
   const ref = doc(db, "users", uid);
 
@@ -67,22 +80,20 @@ async function updateUserDoc(
     updatedAt: serverTimestamp(),
   };
 
-  // Remove undefined values (Firestore rejects them)
-  Object.keys(payload).forEach((key) => {
-    if (payload[key] === undefined) delete payload[key];
+  // Firestore rejects undefined
+  Object.keys(payload).forEach((k) => {
+    if (payload[k] === undefined) delete payload[k];
   });
 
   try {
-    // Works if doc already exists
     await updateDoc(ref, payload);
   } catch {
-    // First-time user → doc does not exist yet
     await setDoc(
       ref,
       {
         uid,
-        createdAt: serverTimestamp(),
         ...payload,
+        createdAt: serverTimestamp(),
       },
       { merge: true }
     );
@@ -90,7 +101,7 @@ async function updateUserDoc(
 }
 
 /**
- * Set active society + member for user
+ * Set active society + member
  * Called after Create Society or Join Society
  */
 export async function setActiveSocietyAndMember(
@@ -105,7 +116,7 @@ export async function setActiveSocietyAndMember(
 }
 
 /**
- * Clear active society (Reset Society flow)
+ * Reset society (leave / reset flow)
  */
 export async function clearActiveSociety(uid: string): Promise<void> {
   await updateUserDoc(uid, {
