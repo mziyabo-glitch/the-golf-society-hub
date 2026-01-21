@@ -1,93 +1,74 @@
-import React from "react";
-import { View, Text, Pressable, Alert, StyleSheet } from "react-native";
-import { useRouter } from "expo-router";
-import { doc, updateDoc, serverTimestamp } from "firebase/firestore";
-
-import { db } from "@/lib/firebase";
 import { useBootstrap } from "@/lib/useBootstrap";
+import { useRouter } from "expo-router";
+import { useEffect, useState } from "react";
+import { ActivityIndicator, Pressable, Text, View } from "react-native";
 
-export default function HomeTab() {
+export default function HomeScreen() {
   const router = useRouter();
-  const { userId, activeSocietyId } = useBootstrap();
+  const [checking, setChecking] = useState(true);
+  const { user, loading } = useBootstrap();
 
-  const handleResetSociety = () => {
-    if (!userId) return;
+  useEffect(() => {
+    if (loading) return;
+    if (user?.activeSocietyId) {
+      router.replace("/society");
+      return;
+    }
+    setChecking(false);
+  }, [loading, user?.activeSocietyId, router]);
 
-    Alert.alert(
-      "Reset Society",
-      "This will remove your active society and return you to the join screen.",
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Reset",
-          style: "destructive",
-          onPress: async () => {
-            await updateDoc(doc(db, "users", userId), {
-              activeSocietyId: null,
-              updatedAt: serverTimestamp(),
-            });
-
-            router.replace("/join");
-          },
-        },
-      ]
+  if (checking || loading) {
+    return (
+      <View style={{ flex: 1, justifyContent: "center", alignItems: "center" }}>
+        <ActivityIndicator size="large" color="#0B6E4F" />
+      </View>
     );
-  };
+  }
 
   return (
-    <View style={styles.container}>
-      <Text style={styles.title}>Golf Society Hub</Text>
+    <View style={{ flex: 1, padding: 24, justifyContent: "center" }}>
+      <Text style={{ fontSize: 34, fontWeight: "800", marginBottom: 6 }}>
+        The Golf Society Hub
+      </Text>
+      <Text style={{ fontSize: 16, opacity: 0.75, marginBottom: 28 }}>
+        Everything Golf Society
+      </Text>
 
-      <View style={styles.card}>
-        <Text style={styles.label}>Active Society</Text>
-        <Text style={styles.value}>
-          {activeSocietyId ?? "None"}
+      <Pressable
+        onPress={() => router.push("/create-society")}
+        style={{
+          backgroundColor: "#0B6E4F",
+          paddingVertical: 14,
+          borderRadius: 14,
+          alignItems: "center",
+          marginBottom: 12,
+        }}
+      >
+        <Text style={{ color: "white", fontSize: 18, fontWeight: "700" }}>
+          Create a Society
         </Text>
-      </View>
+      </Pressable>
 
-      <Pressable style={styles.resetButton} onPress={handleResetSociety}>
-        <Text style={styles.resetText}>Reset Society</Text>
+      <Pressable
+        onPress={() => router.push("/join")}
+        style={{
+          backgroundColor: "#111827",
+          paddingVertical: 14,
+          borderRadius: 14,
+          alignItems: "center",
+          marginBottom: 12,
+        }}
+      >
+        <Text style={{ color: "white", fontSize: 18, fontWeight: "700" }}>
+          Join a Society
+        </Text>
+      </Pressable>
+
+      <Pressable onPress={() => {}} style={{ paddingVertical: 12, alignItems: "center" }}>
+        <Text style={{ fontSize: 16, fontWeight: "600", opacity: 0.8 }}>
+          I already have an account
+        </Text>
       </Pressable>
     </View>
   );
 }
-
-/* ---------------- Styles ---------------- */
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    padding: 24,
-  },
-  title: {
-    fontSize: 22,
-    fontWeight: "600",
-    marginBottom: 24,
-  },
-  card: {
-    backgroundColor: "#f4f4f4",
-    padding: 16,
-    borderRadius: 10,
-    marginBottom: 32,
-  },
-  label: {
-    fontSize: 14,
-    color: "#666",
-    marginBottom: 6,
-  },
-  value: {
-    fontSize: 16,
-    fontWeight: "500",
-  },
-  resetButton: {
-    backgroundColor: "#d32f2f",
-    paddingVertical: 14,
-    borderRadius: 8,
-    alignItems: "center",
-  },
-  resetText: {
-    color: "#fff",
-    fontSize: 16,
-    fontWeight: "600",
-  },
-});
