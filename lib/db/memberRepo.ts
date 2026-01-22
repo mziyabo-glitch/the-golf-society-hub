@@ -1,6 +1,7 @@
 // lib/db/memberRepo.ts
 import { db } from "@/lib/firebase";
 import {
+  addDoc,
   collection,
   deleteDoc,
   doc,
@@ -12,6 +13,7 @@ import {
   serverTimestamp,
   setDoc,
   updateDoc,
+  where,
   type Unsubscribe,
 } from "firebase/firestore";
 
@@ -23,8 +25,9 @@ export type MemberDoc = {
   name?: string;
   email?: string;
 
-  roles?: string[]; // ["captain","treasurer",...]
+  roles?: string[]; // e.g. ["captain","treasurer"]
   createdAt?: any;
+  updatedAt?: any;
 
   // Treasurer MVP
   paid?: boolean;
@@ -44,9 +47,35 @@ export function memberRef(memberId: string) {
   return doc(db, "members", memberId);
 }
 
-export function societyMembersCol(societyId: string) {
-  // members are stored in top-level collection with societyId field
-  return collection(db, "members");
+/**
+ * ✅ Used by create-society / add-member flows
+ * Creates a new member in the top-level "members" collection and returns the new memberId.
+ */
+export async function createMember(
+  societyId: string,
+  data: Partial<Omit<MemberDoc, "id" | "societyId">> & {
+    displayName?: string;
+    name?: string;
+    roles?: string[];
+  }
+): Promise<string> {
+  if (!societyId) throw new Error("createMember: missing societyId");
+
+  const payload = stripUndefined({
+    societyId,
+    displayName: data.displayName ?? data.name ?? "Member",
+    name: data.name,
+    email: data.email,
+    roles: Array.isArray(data.roles) ? data.roles : ["member"],
+    paid: data.paid ?? false,
+    amountPaid: data.amountPaid ?? 0,
+    paidDate: data.paidDate ?? null,
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  });
+
+  const ref = await addDoc(collection(db, "members"), payload);
+  return ref.id;
 }
 
 /**
@@ -78,28 +107,26 @@ export function subscribeMemberDoc(
 
 /**
  * Subscribe members for a society (used by Members screen, Finance screens).
+ * Uses where() so you don't fetch all members across all societies.
  */
 export function subscribeMembersBySociety(
   societyId: string,
   onNext: (docs: MemberDoc[]) => void,
   onError?: (err: any) => void
 ): Unsubscribe {
-  // NOTE: members are in top-level collection with societyId field
   const q = query(
     collection(db, "members"),
-    // orderBy needs an indexed field; displayName may be missing, so we order by createdAt
+    where("societyId", "==", societyId),
     orderBy("createdAt", "desc")
   );
 
   return onSnapshot(
     q,
     (snap) => {
-      const rows: MemberDoc[] = [];
-      snap.forEach((d) => {
-        const data = d.data() as any;
-        if (data?.societyId !== societyId) return;
-        rows.push({ id: d.id, ...(data as Omit<MemberDoc, "id">) });
-      });
+      const rows: MemberDoc[] = snap.docs.map((d) => ({
+        id: d.id,
+        ...(d.data() as any),
+      }));
       onNext(rows);
     },
     (err) => {
@@ -110,18 +137,17 @@ export function subscribeMembersBySociety(
 }
 
 /**
- * One-shot fetch (used by some screens)
+ * One-shot fetch.
  */
 export async function getMembersBySocietyId(societyId: string): Promise<MemberDoc[]> {
-  const q = query(collection(db, "members"), orderBy("createdAt", "desc"));
+  const q = query(
+    collection(db, "members"),
+    where("societyId", "==", societyId),
+    orderBy("createdAt", "desc")
+  );
+
   const snap = await getDocs(q);
-  const rows: MemberDoc[] = [];
-  snap.forEach((d) => {
-    const data = d.data() as any;
-    if (data?.societyId !== societyId) return;
-    rows.push({ id: d.id, ...(data as Omit<MemberDoc, "id">) });
-  });
-  return rows;
+  return snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }));
 }
 
 /**
@@ -134,7 +160,7 @@ export async function updateMemberDoc(
 ) {
   const ref = memberRef(memberId);
 
-  // safety: prevent moving member to another society accidentally
+  // prevent accidental move between societies
   const payload = stripUndefined({
     ...updates,
     societyId,
@@ -151,23 +177,17 @@ export async function updateMemberDoc(
 /**
  * ✅ REQUIRED FEATURE:
  * Captain/Treasurer can remove a member.
- *
- * IMPORTANT:
- * - We do NOT attempt to also delete users/{uid} here because you don't have a guaranteed mapping.
- * - It only deletes the members/{memberId} record.
- * - If the deleted member is someone's activeMemberId, their bootstrap will show "Profile not linked" and you can ask them to re-join.
  */
 export async function deleteMember(memberId: string) {
-  if (!memberId) throw new Error("Missing memberId");
+  if (!memberId) throw new Error("deleteMember: missing memberId");
   await deleteDoc(memberRef(memberId));
 }
 
 /**
- * Optional: helper to prevent deleting yourself by mistake in UI.
+ * Helper: read a member.
  */
 export async function getMember(memberId: string): Promise<MemberDoc | null> {
   const snap = await getDoc(memberRef(memberId));
   if (!snap.exists()) return null;
-  const data = snap.data() as any;
-  return { id: snap.id, ...(data as Omit<MemberDoc, "id">) };
+  return { id: snap.id, ...(snap.data() as any) };
 }
