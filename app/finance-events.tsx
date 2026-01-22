@@ -45,7 +45,7 @@ import {
   updateSocietyDoc,
   type SocietyDoc,
 } from "@/lib/db/societyRepo";
-import { subscribeExpensesByEvent } from "@/lib/db/eventExpenseRepo";
+import { subscribeEventExpenses } from "@/lib/db/expenseRepo";
 
 import * as Print from "expo-print";
 import * as Sharing from "expo-sharing";
@@ -160,7 +160,7 @@ export default function FinanceScreen() {
     }
 
     const unsubs = events.map((evt) => {
-      return subscribeExpensesByEvent(societyId, evt.id, (expenses) => {
+      return subscribeEventExpenses(societyId, evt.id, (expenses) => {
         const total = expenses.reduce(
           (sum, x) => sum + Number(x.amount || 0),
           0
