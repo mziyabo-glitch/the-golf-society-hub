@@ -1,2 +1,2 @@
 // app/(tabs)/event.tsx
-export { default } from "../event";
+export { default } from "../event/index";
