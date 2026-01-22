@@ -3,6 +3,15 @@ import { Stack, Redirect } from "expo-router";
 import { View, ActivityIndicator } from "react-native";
 import { BootstrapProvider, useBootstrap } from "@/lib/useBootstrap";
 
+if (typeof window !== "undefined") {
+  const originalWarn = console.warn;
+  console.warn = (...args: any[]) => {
+    const msg = String(args?.[0] ?? "");
+    // Filter noisy RN Web aria-hidden warning
+    if (msg.includes("Blocked aria-hidden on an element")) return;
+    originalWarn(...args);
+  };
+}
 function Root() {
   const { user, loading, error } = useBootstrap();
 
@@ -76,3 +85,4 @@ export default function Layout() {
     </BootstrapProvider>
   );
 }
+
