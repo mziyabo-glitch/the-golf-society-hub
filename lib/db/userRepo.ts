@@ -3,9 +3,11 @@ import { db } from "@/lib/firebase";
 import {
   doc,
   getDoc,
+  onSnapshot,
   serverTimestamp,
   setDoc,
   updateDoc,
+  type Unsubscribe,
 } from "firebase/firestore";
 
 export type UserDoc = {
@@ -42,6 +44,33 @@ export async function ensureUserDoc(uid: string): Promise<void> {
 }
 
 /**
+ * ✅ REQUIRED by bootstrap: subscribe to user doc changes
+ * Returns Firestore unsubscribe function.
+ */
+export function subscribeUserDoc(
+  uid: string,
+  onData: (doc: UserDoc | null) => void,
+  onError?: (err: any) => void
+): Unsubscribe {
+  const ref = getUserDocRef(uid);
+
+  return onSnapshot(
+    ref,
+    (snap) => {
+      if (!snap.exists()) {
+        onData(null);
+        return;
+      }
+      onData(snap.data() as UserDoc);
+    },
+    (err) => {
+      if (onError) onError(err);
+      else console.error("subscribeUserDoc error", err);
+    }
+  );
+}
+
+/**
  * Set active society for current user.
  */
 export async function setActiveSociety(uid: string, societyId: string | null) {
@@ -54,8 +83,7 @@ export async function setActiveSociety(uid: string, societyId: string | null) {
 }
 
 /**
- * ✅ FIX: This function was imported by the UI but missing in the repo.
- * Set active member ID for current user (used after joining/creating a society).
+ * Set active member ID for current user.
  */
 export async function setActiveMember(uid: string, memberId: string | null) {
   const ref = getUserDocRef(uid);
