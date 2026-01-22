@@ -49,11 +49,13 @@ export function memberRef(memberId: string) {
 
 /**
  * ✅ Used by create-society / add-member flows
- * Creates a new member in the top-level "members" collection and returns the new memberId.
+ * Creates a new member in top-level "members" collection and returns the new memberId.
+ *
+ * IMPORTANT: data is optional because some callers pass nothing.
  */
 export async function createMember(
   societyId: string,
-  data: Partial<Omit<MemberDoc, "id" | "societyId">> & {
+  data?: Partial<Omit<MemberDoc, "id" | "societyId">> & {
     displayName?: string;
     name?: string;
     roles?: string[];
@@ -61,15 +63,20 @@ export async function createMember(
 ): Promise<string> {
   if (!societyId) throw new Error("createMember: missing societyId");
 
+  const safe = data ?? {};
+
+  const roles =
+    Array.isArray(safe.roles) && safe.roles.length > 0 ? safe.roles : ["member"];
+
   const payload = stripUndefined({
     societyId,
-    displayName: data.displayName ?? data.name ?? "Member",
-    name: data.name,
-    email: data.email,
-    roles: Array.isArray(data.roles) ? data.roles : ["member"],
-    paid: data.paid ?? false,
-    amountPaid: data.amountPaid ?? 0,
-    paidDate: data.paidDate ?? null,
+    displayName: safe.displayName ?? safe.name ?? "Member",
+    name: safe.name,
+    email: safe.email,
+    roles,
+    paid: safe.paid ?? false,
+    amountPaid: safe.amountPaid ?? 0,
+    paidDate: safe.paidDate ?? null,
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
   });
@@ -95,8 +102,7 @@ export function subscribeMemberDoc(
         onNext(null);
         return;
       }
-      const data = snap.data() as any;
-      onNext({ id: snap.id, ...(data as Omit<MemberDoc, "id">) });
+      onNext({ id: snap.id, ...(snap.data() as any) });
     },
     (err) => {
       if (onError) onError(err);
@@ -106,8 +112,7 @@ export function subscribeMemberDoc(
 }
 
 /**
- * Subscribe members for a society (used by Members screen, Finance screens).
- * Uses where() so you don't fetch all members across all societies.
+ * Subscribe members for a society (efficient with where()).
  */
 export function subscribeMembersBySociety(
   societyId: string,
@@ -160,7 +165,6 @@ export async function updateMemberDoc(
 ) {
   const ref = memberRef(memberId);
 
-  // prevent accidental move between societies
   const payload = stripUndefined({
     ...updates,
     societyId,
@@ -175,8 +179,7 @@ export async function updateMemberDoc(
 }
 
 /**
- * ✅ REQUIRED FEATURE:
- * Captain/Treasurer can remove a member.
+ * ✅ Captain/Treasurer can remove a member.
  */
 export async function deleteMember(memberId: string) {
   if (!memberId) throw new Error("deleteMember: missing memberId");
