@@ -1,44 +1,26 @@
 // app/_layout.tsx
 import { Stack } from "expo-router";
-import { useEffect, useState } from "react";
+import { useMemo } from "react";
 import { StyleSheet, View } from "react-native";
 
 import { AppText } from "@/components/ui/AppText";
 import { Screen } from "@/components/ui/Screen";
+import { firebaseEnvMissingKeys, firebaseEnvReady } from "@/lib/firebase";
 
 /**
- * We intentionally hard-fail if EXPO_PUBLIC_FIREBASE_* env vars are missing
- * (otherwise Firestore fails with 400 / Listen transport errors).
- *
- * This layout catches that error and shows a friendly setup screen instead of a blank crash.
+ * If EXPO_PUBLIC_FIREBASE_* env vars are missing, show a friendly setup screen
+ * instead of a blank crash during static rendering.
  */
 
 export default function RootLayout() {
-  const [bootError, setBootError] = useState<string | null>(null);
-
-  useEffect(() => {
-    // Catch errors thrown during module init (firebase.ts)
-    const handler = (event: any) => {
-      const msg = String(event?.error?.message ?? event?.message ?? "");
-      if (msg.includes("Missing environment variable: EXPO_PUBLIC_FIREBASE_")) {
-        setBootError(msg);
-        event?.preventDefault?.();
-        return;
-      }
-    };
-
-    // web
-    if (typeof window !== "undefined") {
-      window.addEventListener("error", handler);
-      window.addEventListener("unhandledrejection", handler as any);
-      return () => {
-        window.removeEventListener("error", handler);
-        window.removeEventListener("unhandledrejection", handler as any);
-      };
-    }
+  const bootError = useMemo(() => {
+    if (firebaseEnvReady) return null;
+    return (
+      "Missing environment variables:\n" + firebaseEnvMissingKeys.join("\n")
+    );
   }, []);
 
-  if (bootError) {
+  if (!firebaseEnvReady) {
     return (
       <Screen>
         <View style={styles.card}>
