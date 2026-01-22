@@ -8,8 +8,7 @@ import {
   TextInput,
   View,
 } from "react-native";
-import { useLocalSearchParams } from "expo-router";
-import { router } from "expo-router";
+import { useLocalSearchParams, router } from "expo-router";
 import { Feather } from "@expo/vector-icons";
 
 import { Screen } from "@/components/ui/Screen";
@@ -41,13 +40,16 @@ type Expense = {
 };
 
 export default function EventPnlManager() {
-  const { id } = useLocalSearchParams<{ id: string }>();
-  const eventId = String(id ?? "");
+  const params = useLocalSearchParams<{ id?: string }>();
+  const eventId = typeof params?.id === "string" ? params.id : "";
 
   const { societyId, member } = useBootstrap();
   const perms = useMemo(() => getPermissionsForMember(member), [member]);
 
+  const canManage = perms.canManageEventPayments || perms.canManageEventExpenses;
+
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   const [eventTitle, setEventTitle] = useState<string>("Event");
   const [eventFee, setEventFeeLocal] = useState<string>("0");
@@ -59,10 +61,20 @@ export default function EventPnlManager() {
   const [newExpenseDesc, setNewExpenseDesc] = useState("");
   const [newExpenseAmount, setNewExpenseAmount] = useState<string>("");
 
-  const canManage = perms.canManageEventPayments || perms.canManageEventExpenses;
-
   const load = async () => {
-    if (!societyId || !eventId) return;
+    setError(null);
+
+    // Hard guards to prevent invalid Firestore paths (common blank-screen cause)
+    if (!societyId) {
+      setError("Missing societyId (not joined to a society yet).");
+      setLoading(false);
+      return;
+    }
+    if (!eventId) {
+      setError("Missing event id in route.");
+      setLoading(false);
+      return;
+    }
 
     setLoading(true);
     try {
@@ -85,38 +97,16 @@ export default function EventPnlManager() {
         createdAt: x.createdAt,
       }));
 
-      // newest first
-      list.sort((a, b) => {
-        const ad =
-          typeof a.createdAt?.toDate === "function"
-            ? a.createdAt.toDate().getTime()
-            : a.createdAt?.seconds
-            ? a.createdAt.seconds * 1000
-            : a.createdAt
-            ? new Date(a.createdAt).getTime()
-            : 0;
-        const bd =
-          typeof b.createdAt?.toDate === "function"
-            ? b.createdAt.toDate().getTime()
-            : b.createdAt?.seconds
-            ? b.createdAt.seconds * 1000
-            : b.createdAt
-            ? new Date(b.createdAt).getTime()
-            : 0;
-        return bd - ad;
-      });
-
       setExpenses(list);
     } catch (e: any) {
       console.error(e);
-      Alert.alert("Event P&L", e?.message ?? "Failed to load event.");
+      setError(e?.message ?? "Failed to load event P&L data.");
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
-    if (!societyId || !eventId) return;
     if (!perms.canAccessFinance) return;
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -143,6 +133,7 @@ export default function EventPnlManager() {
 
   const handleSaveEventFee = async () => {
     if (!societyId || !eventId) return;
+
     const fee = Number(eventFee);
     if (isNaN(fee) || fee < 0) {
       Alert.alert("Event Fee", "Please enter a valid fee.");
@@ -151,8 +142,8 @@ export default function EventPnlManager() {
 
     try {
       await setEventFee(societyId, eventId, fee);
-      Alert.alert("Saved", "Event fee updated.");
       await load();
+      Alert.alert("Saved", "Event fee updated.");
     } catch (e: any) {
       console.error(e);
       Alert.alert("Event Fee", e?.message ?? "Failed to save event fee.");
@@ -161,6 +152,7 @@ export default function EventPnlManager() {
 
   const togglePaid = async (memberId: string, nextPaid: boolean) => {
     if (!societyId || !eventId) return;
+
     try {
       await setEventPaymentStatus(societyId, eventId, memberId, nextPaid);
       setPayments((prev) => ({
@@ -169,10 +161,7 @@ export default function EventPnlManager() {
       }));
     } catch (e: any) {
       console.error(e);
-      Alert.alert(
-        "Payment",
-        e?.message ?? "Failed to update payment status."
-      );
+      Alert.alert("Payment", e?.message ?? "Failed to update payment status.");
     }
   };
 
@@ -217,10 +206,7 @@ export default function EventPnlManager() {
             await load();
           } catch (e: any) {
             console.error(e);
-            Alert.alert(
-              "Expense",
-              e?.message ?? "Failed to delete expense."
-            );
+            Alert.alert("Expense", e?.message ?? "Failed to delete expense.");
           }
         },
       },
@@ -245,32 +231,23 @@ export default function EventPnlManager() {
     <Screen>
       <SectionHeader title={eventTitle} subtitle="Event P&L Manager" />
 
+      {error ? (
+        <AppCard style={{ marginBottom: 12 }}>
+          <AppText style={styles.errTitle}>Something went wrong</AppText>
+          <AppText style={styles.errMsg}>{error}</AppText>
+          <SecondaryButton label="Try again" onPress={load} />
+        </AppCard>
+      ) : null}
+
       <AppCard style={{ marginBottom: 12 }}>
-        <View style={styles.kpiRow}>
-          <View style={styles.kpiItem}>
-            <AppText style={styles.kpiLabel}>Event Fee</AppText>
-            <AppText style={styles.kpiValue}>£{Number(eventFee || 0)}</AppText>
-          </View>
-
-          <View style={styles.kpiItem}>
-            <AppText style={styles.kpiLabel}>Paid</AppText>
-            <AppText style={styles.kpiValue}>
-              {paidCount}/{members.length}
-            </AppText>
-          </View>
-        </View>
-
         <View style={styles.kpiRow}>
           <View style={styles.kpiItem}>
             <AppText style={styles.kpiLabel}>Fees Received</AppText>
             <AppText style={styles.kpiValue}>£{feesReceived.toFixed(0)}</AppText>
           </View>
-
           <View style={styles.kpiItem}>
             <AppText style={styles.kpiLabel}>Expenses</AppText>
-            <AppText style={styles.kpiValue}>
-              £{expensesTotal.toFixed(0)}
-            </AppText>
+            <AppText style={styles.kpiValue}>£{expensesTotal.toFixed(0)}</AppText>
           </View>
         </View>
 
@@ -279,15 +256,19 @@ export default function EventPnlManager() {
             <AppText style={styles.kpiLabel}>Net</AppText>
             <AppText style={styles.kpiValue}>£{net.toFixed(0)}</AppText>
           </View>
+          <View style={styles.kpiItem}>
+            <AppText style={styles.kpiLabel}>Paid</AppText>
+            <AppText style={styles.kpiValue}>
+              {paidCount}/{members.length}
+            </AppText>
+          </View>
         </View>
+
+        {loading ? <AppText style={styles.muted}>Loading…</AppText> : null}
       </AppCard>
 
       <AppCard style={{ marginBottom: 12 }}>
         <AppText style={styles.h2}>Event Fee</AppText>
-        <AppText style={styles.muted}>
-          Set the fee players pay for this event.
-        </AppText>
-
         <View style={styles.formRow}>
           <TextInput
             value={eventFee}
@@ -302,10 +283,8 @@ export default function EventPnlManager() {
             label="Save"
             onPress={handleSaveEventFee}
             disabled={!canManage}
-            icon={<Feather name="save" size={16} />}
           />
         </View>
-
         {!canManage ? (
           <AppText style={styles.warn}>
             Only Captain/Treasurer can manage Event P&L.
@@ -315,24 +294,19 @@ export default function EventPnlManager() {
 
       <AppCard style={{ marginBottom: 12 }}>
         <AppText style={styles.h2}>Payments</AppText>
-        <AppText style={styles.muted}>
-          Tick who has paid for this event.
-        </AppText>
-
         <ScrollView style={{ maxHeight: 320 }}>
           {members.map((m) => {
             const paid = Boolean(payments?.[m.id]?.paid);
             return (
-              <View key={m.id} style={styles.memberRow}>
+              <View key={m.id} style={styles.row}>
                 <View style={{ flex: 1 }}>
-                  <AppText style={styles.memberName}>
+                  <AppText style={styles.name}>
                     {m.displayName ?? m.name ?? "Member"}
                   </AppText>
                   <AppText style={styles.mutedSmall}>
                     {paid ? "Paid" : "Unpaid"}
                   </AppText>
                 </View>
-
                 <SecondaryButton
                   label={paid ? "Mark Unpaid" : "Mark Paid"}
                   onPress={() => togglePaid(m.id, !paid)}
@@ -341,8 +315,7 @@ export default function EventPnlManager() {
               </View>
             );
           })}
-
-          {members.length === 0 ? (
+          {members.length === 0 && !loading ? (
             <AppText style={styles.muted}>No members found.</AppText>
           ) : null}
         </ScrollView>
@@ -350,11 +323,8 @@ export default function EventPnlManager() {
 
       <AppCard style={{ marginBottom: 12 }}>
         <AppText style={styles.h2}>Expenses</AppText>
-        <AppText style={styles.muted}>
-          Add prizes, trophies, food, etc.
-        </AppText>
 
-        <View style={styles.formRowCol}>
+        <View style={{ gap: 10 }}>
           <TextInput
             value={newExpenseDesc}
             onChangeText={setNewExpenseDesc}
@@ -372,7 +342,6 @@ export default function EventPnlManager() {
             keyboardType={Platform.select({ ios: "decimal-pad", android: "numeric" })}
             editable={canManage}
           />
-
           <PrimaryButton
             label="Add Expense"
             onPress={handleAddExpense}
@@ -383,16 +352,13 @@ export default function EventPnlManager() {
 
         <View style={{ marginTop: 10 }}>
           {expenses.map((e) => (
-            <View key={e.id} style={styles.expenseRow}>
+            <View key={e.id} style={styles.row}>
               <View style={{ flex: 1 }}>
-                <AppText style={styles.memberName}>
-                  {e.description || "Expense"}
-                </AppText>
+                <AppText style={styles.name}>{e.description || "Expense"}</AppText>
                 <AppText style={styles.mutedSmall}>
                   £{Number(e.amount || 0).toFixed(0)}
                 </AppText>
               </View>
-
               <SecondaryButton
                 label="Delete"
                 onPress={() => handleDeleteExpense(e.id)}
@@ -400,8 +366,7 @@ export default function EventPnlManager() {
               />
             </View>
           ))}
-
-          {expenses.length === 0 ? (
+          {expenses.length === 0 && !loading ? (
             <AppText style={styles.muted}>No expenses yet.</AppText>
           ) : null}
         </View>
@@ -413,47 +378,16 @@ export default function EventPnlManager() {
 }
 
 const styles = StyleSheet.create({
-  kpiRow: {
-    flexDirection: "row",
-    gap: 12,
-    marginBottom: 10,
-  },
-  kpiItem: {
-    flex: 1,
-  },
-  kpiLabel: {
-    opacity: 0.7,
-    marginBottom: 2,
-  },
-  kpiValue: {
-    fontSize: 20,
-    fontWeight: "700",
-  },
-  h2: {
-    fontSize: 18,
-    fontWeight: "700",
-    marginBottom: 6,
-  },
-  muted: {
-    opacity: 0.7,
-    marginBottom: 10,
-  },
-  mutedSmall: {
-    opacity: 0.7,
-    fontSize: 12,
-  },
-  warn: {
-    marginTop: 8,
-    opacity: 0.75,
-  },
-  formRow: {
-    flexDirection: "row",
-    gap: 10,
-    alignItems: "center",
-  },
-  formRowCol: {
-    gap: 10,
-  },
+  kpiRow: { flexDirection: "row", gap: 12, marginBottom: 10 },
+  kpiItem: { flex: 1 },
+  kpiLabel: { opacity: 0.7, marginBottom: 2 },
+  kpiValue: { fontSize: 20, fontWeight: "700" },
+
+  h2: { fontSize: 18, fontWeight: "700", marginBottom: 10 },
+  muted: { opacity: 0.7 },
+  mutedSmall: { opacity: 0.7, fontSize: 12 },
+  warn: { marginTop: 8, opacity: 0.75 },
+
   input: {
     borderWidth: 1,
     borderColor: "rgba(255,255,255,0.18)",
@@ -463,7 +397,10 @@ const styles = StyleSheet.create({
     color: "white",
     backgroundColor: "rgba(255,255,255,0.06)",
   },
-  memberRow: {
+
+  formRow: { flexDirection: "row", gap: 10, alignItems: "center" },
+
+  row: {
     flexDirection: "row",
     gap: 10,
     alignItems: "center",
@@ -471,17 +408,9 @@ const styles = StyleSheet.create({
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: "rgba(255,255,255,0.12)",
   },
-  memberName: {
-    fontSize: 15,
-    fontWeight: "700",
-    marginBottom: 2,
-  },
-  expenseRow: {
-    flexDirection: "row",
-    gap: 10,
-    alignItems: "center",
-    paddingVertical: 10,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: "rgba(255,255,255,0.12)",
-  },
+
+  name: { fontSize: 15, fontWeight: "700", marginBottom: 2 },
+
+  errTitle: { fontSize: 16, fontWeight: "800", marginBottom: 6 },
+  errMsg: { opacity: 0.85, marginBottom: 12 },
 });
