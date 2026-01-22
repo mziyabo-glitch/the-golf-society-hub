@@ -1,126 +1,67 @@
+// lib/db/userRepo.ts
+import { db } from "@/lib/firebase";
 import {
   doc,
   getDoc,
+  serverTimestamp,
   setDoc,
   updateDoc,
-  onSnapshot,
-  serverTimestamp,
 } from "firebase/firestore";
-import { db } from "@/lib/firebase";
 
-/**
- * User document shape
- */
 export type UserDoc = {
   uid: string;
-  activeSocietyId: string | null;
-  activeMemberId: string | null;
-  createdAt?: unknown;
-  updatedAt?: unknown;
+  activeSocietyId?: string | null;
+  activeMemberId?: string | null;
+  createdAt?: any;
+  updatedAt?: any;
 };
 
+export const getUserDocRef = (uid: string) => doc(db, "users", uid);
+
+export async function getUserDoc(uid: string): Promise<UserDoc | null> {
+  const snap = await getDoc(getUserDocRef(uid));
+  if (!snap.exists()) return null;
+  return snap.data() as UserDoc;
+}
+
 /**
- * Ensure users/{uid} exists
- * Called during bootstrap
+ * Ensure a user doc exists.
  */
 export async function ensureUserDoc(uid: string): Promise<void> {
-  const ref = doc(db, "users", uid);
+  const ref = getUserDocRef(uid);
   const snap = await getDoc(ref);
+  if (snap.exists()) return;
 
-  if (!snap.exists()) {
-    await setDoc(ref, {
-      uid,
-      activeSocietyId: null,
-      activeMemberId: null,
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp(),
-    });
-  }
-}
-
-/**
- * Subscribe to users/{uid}
- */
-export function subscribeUserDoc(
-  uid: string,
-  onNext: (user: UserDoc | null) => void,
-  onError?: (err: unknown) => void
-) {
-  const ref = doc(db, "users", uid);
-
-  return onSnapshot(
-    ref,
-    (snap) => {
-      if (!snap.exists()) {
-        onNext(null);
-        return;
-      }
-      onNext(snap.data() as UserDoc);
-    },
-    (err) => {
-      if (onError) onError(err);
-    }
-  );
-}
-
-/**
- * Safe upsert for user updates
- * --------------------------------
- * updateDoc FAILS if the doc does not exist.
- * This guarantees writes always succeed.
- */
-export async function updateUserDoc(
-  uid: string,
-  updates: Partial<UserDoc>
-): Promise<void> {
-  const ref = doc(db, "users", uid);
-
-  const payload: Record<string, unknown> = {
-    ...updates,
-    updatedAt: serverTimestamp(),
-  };
-
-  // Firestore rejects undefined
-  Object.keys(payload).forEach((k) => {
-    if (payload[k] === undefined) delete payload[k];
-  });
-
-  try {
-    await updateDoc(ref, payload);
-  } catch {
-    await setDoc(
-      ref,
-      {
-        uid,
-        ...payload,
-        createdAt: serverTimestamp(),
-      },
-      { merge: true }
-    );
-  }
-}
-
-/**
- * Set active society + member
- * Called after Create Society or Join Society
- */
-export async function setActiveSocietyAndMember(
-  uid: string,
-  societyId: string,
-  memberId: string
-): Promise<void> {
-  await updateUserDoc(uid, {
-    activeSocietyId: societyId,
-    activeMemberId: memberId,
-  });
-}
-
-/**
- * Reset society (leave / reset flow)
- */
-export async function clearActiveSociety(uid: string): Promise<void> {
-  await updateUserDoc(uid, {
+  await setDoc(ref, {
+    uid,
     activeSocietyId: null,
     activeMemberId: null,
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  } satisfies UserDoc);
+}
+
+/**
+ * Set active society for current user.
+ */
+export async function setActiveSociety(uid: string, societyId: string | null) {
+  const ref = getUserDocRef(uid);
+  await ensureUserDoc(uid);
+  await updateDoc(ref, {
+    activeSocietyId: societyId ?? null,
+    updatedAt: serverTimestamp(),
+  });
+}
+
+/**
+ * ✅ FIX: This function was imported by the UI but missing in the repo.
+ * Set active member ID for current user (used after joining/creating a society).
+ */
+export async function setActiveMember(uid: string, memberId: string | null) {
+  const ref = getUserDocRef(uid);
+  await ensureUserDoc(uid);
+  await updateDoc(ref, {
+    activeMemberId: memberId ?? null,
+    updatedAt: serverTimestamp(),
   });
 }
