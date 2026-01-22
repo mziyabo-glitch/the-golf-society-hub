@@ -15,6 +15,42 @@
 
 export type SessionRole = "admin" | "member";
 
+export type Permissions = {
+  // Society-level
+  canResetSociety: boolean;
+
+  // Members
+  canCreateMembers: boolean;
+  canEditMembers: boolean;
+  canDeleteMembers: boolean;
+  canEditOwnProfile: boolean;
+
+  // Roles
+  canManageRoles: boolean;
+
+  // Events / tee sheets
+  canCreateEvents: boolean;
+  canEditEvents: boolean;
+  canDeleteEvents: boolean;
+  canUploadTeeSheet: boolean;
+  canManageTeeSheet: boolean;
+
+  // Finance / P&L
+  canAccessFinance: boolean;
+  canManageMembershipFees: boolean;
+  canManageEventPayments: boolean;
+  canManageEventExpenses: boolean;
+
+  // Handicaps
+  canManageHandicaps: boolean;
+};
+
+export type MemberLike = {
+  id?: string;
+  uid?: string;
+  roles?: string[];
+};
+
 /**
  * Normalize roles from Firestore:
  * - accepts ["Captain","member"] etc
@@ -61,6 +97,15 @@ function isAdmin(sessionRole: SessionRole, roles: string[]) {
 
 function hasAnyRole(roles: string[], wanted: string[]) {
   return wanted.some((r) => roles.includes(r));
+}
+
+function getRoleFlags(roles: string[]) {
+  return {
+    captain: roles.includes("captain") || roles.includes("admin"),
+    treasurer: roles.includes("treasurer"),
+    secretary: roles.includes("secretary"),
+    handicapper: roles.includes("handicapper"),
+  };
 }
 
 /**
@@ -110,6 +155,47 @@ export function canEditVenueInfo(sessionRole: SessionRole, roles: string[]) {
   const r = normalizeMemberRoles(roles);
   // Secretary or Captain
   return isAdmin(sessionRole, r) || hasAnyRole(r, ["secretary"]);
+}
+
+/**
+ * ---- Canonical permissions for current member ----
+ * Signature: (currentMember)
+ */
+export function getPermissionsForMember(
+  currentMember: MemberLike | null | undefined
+): Permissions {
+  const roles = normalizeMemberRoles(currentMember?.roles);
+  const { captain, treasurer, secretary, handicapper } = getRoleFlags(roles);
+
+  return {
+    // Society-level
+    canResetSociety: captain || treasurer,
+
+    // Members
+    canCreateMembers: captain || treasurer,
+    canEditMembers: captain || treasurer,
+    canDeleteMembers: captain || treasurer,
+    canEditOwnProfile: true,
+
+    // Roles
+    canManageRoles: captain,
+
+    // Events / tee sheets
+    canCreateEvents: captain || secretary || handicapper,
+    canEditEvents: captain || secretary || handicapper,
+    canDeleteEvents: captain,
+    canUploadTeeSheet: captain || handicapper || secretary,
+    canManageTeeSheet: captain || handicapper || secretary,
+
+    // Finance / P&L
+    canAccessFinance: captain || treasurer,
+    canManageMembershipFees: captain || treasurer,
+    canManageEventPayments: captain || treasurer,
+    canManageEventExpenses: captain || treasurer,
+
+    // Handicaps
+    canManageHandicaps: captain || handicapper,
+  };
 }
 
 /**
