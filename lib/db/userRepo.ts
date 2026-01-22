@@ -3,65 +3,62 @@ import { db } from "@/lib/firebase";
 import {
   doc,
   getDoc,
-  onSnapshot,
-  serverTimestamp,
   setDoc,
   updateDoc,
+  onSnapshot,
+  serverTimestamp,
   type Unsubscribe,
 } from "firebase/firestore";
 
+/**
+ * User document shape
+ */
 export type UserDoc = {
   uid: string;
-  activeSocietyId?: string | null;
-  activeMemberId?: string | null;
-  createdAt?: any;
-  updatedAt?: any;
+  activeSocietyId: string | null;
+  activeMemberId: string | null;
+  createdAt?: unknown;
+  updatedAt?: unknown;
 };
 
-export const getUserDocRef = (uid: string) => doc(db, "users", uid);
-
-export async function getUserDoc(uid: string): Promise<UserDoc | null> {
-  const snap = await getDoc(getUserDocRef(uid));
-  if (!snap.exists()) return null;
-  return snap.data() as UserDoc;
-}
-
 /**
- * Ensure a user doc exists.
+ * Ensure users/{uid} exists
+ * Called during bootstrap
  */
 export async function ensureUserDoc(uid: string): Promise<void> {
-  const ref = getUserDocRef(uid);
+  const ref = doc(db, "users", uid);
   const snap = await getDoc(ref);
-  if (snap.exists()) return;
 
-  await setDoc(ref, {
-    uid,
-    activeSocietyId: null,
-    activeMemberId: null,
-    createdAt: serverTimestamp(),
-    updatedAt: serverTimestamp(),
-  } satisfies UserDoc);
+  if (!snap.exists()) {
+    await setDoc(ref, {
+      uid,
+      activeSocietyId: null,
+      activeMemberId: null,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
+  }
 }
 
 /**
- * ✅ REQUIRED by bootstrap: subscribe to user doc changes
- * Returns Firestore unsubscribe function.
+ * ✅ REQUIRED for app load:
+ * Subscribe to users/{uid}
  */
 export function subscribeUserDoc(
   uid: string,
-  onData: (doc: UserDoc | null) => void,
-  onError?: (err: any) => void
+  onNext: (user: UserDoc | null) => void,
+  onError?: (err: unknown) => void
 ): Unsubscribe {
-  const ref = getUserDocRef(uid);
+  const ref = doc(db, "users", uid);
 
   return onSnapshot(
     ref,
     (snap) => {
       if (!snap.exists()) {
-        onData(null);
+        onNext(null);
         return;
       }
-      onData(snap.data() as UserDoc);
+      onNext(snap.data() as UserDoc);
     },
     (err) => {
       if (onError) onError(err);
@@ -71,25 +68,74 @@ export function subscribeUserDoc(
 }
 
 /**
- * Set active society for current user.
+ * Safe upsert for user updates
+ * --------------------------------
+ * updateDoc FAILS if the doc does not exist.
+ * This guarantees writes always succeed.
  */
-export async function setActiveSociety(uid: string, societyId: string | null) {
-  const ref = getUserDocRef(uid);
-  await ensureUserDoc(uid);
-  await updateDoc(ref, {
-    activeSocietyId: societyId ?? null,
+export async function updateUserDoc(
+  uid: string,
+  updates: Partial<UserDoc>
+): Promise<void> {
+  const ref = doc(db, "users", uid);
+
+  const payload: Record<string, unknown> = {
+    ...updates,
     updatedAt: serverTimestamp(),
+  };
+
+  // Firestore rejects undefined
+  Object.keys(payload).forEach((k) => {
+    if (payload[k] === undefined) delete payload[k];
+  });
+
+  try {
+    await updateDoc(ref, payload);
+  } catch {
+    await setDoc(
+      ref,
+      {
+        uid,
+        ...payload,
+        createdAt: serverTimestamp(),
+      },
+      { merge: true }
+    );
+  }
+}
+
+/**
+ * Set active society + member
+ * Called after Create Society or Join Society
+ */
+export async function setActiveSocietyAndMember(
+  uid: string,
+  societyId: string,
+  memberId: string
+): Promise<void> {
+  await updateUserDoc(uid, {
+    activeSocietyId: societyId,
+    activeMemberId: memberId,
   });
 }
 
 /**
- * Set active member ID for current user.
+ * Reset society (leave / reset flow)
  */
-export async function setActiveMember(uid: string, memberId: string | null) {
-  const ref = getUserDocRef(uid);
-  await ensureUserDoc(uid);
-  await updateDoc(ref, {
-    activeMemberId: memberId ?? null,
-    updatedAt: serverTimestamp(),
+export async function clearActiveSociety(uid: string): Promise<void> {
+  await updateUserDoc(uid, {
+    activeSocietyId: null,
+    activeMemberId: null,
   });
+}
+
+/**
+ * ✅ Convenience wrappers used by Settings reset flow
+ */
+export async function setActiveSociety(uid: string, societyId: string | null) {
+  await updateUserDoc(uid, { activeSocietyId: societyId ?? null });
+}
+
+export async function setActiveMember(uid: string, memberId: string | null) {
+  await updateUserDoc(uid, { activeMemberId: memberId ?? null });
 }
