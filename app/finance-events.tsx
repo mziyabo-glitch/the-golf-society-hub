@@ -28,33 +28,41 @@ import { LoadingState } from "@/components/ui/LoadingState";
 
 import { useBootstrap } from "@/lib/useBootstrap";
 import { getColors, spacing, typography } from "@/lib/ui/theme";
-import { canViewFinance, normalizeMemberRoles, normalizeSessionRole } from "@/lib/permissions";
+import {
+  canViewFinance,
+  normalizeMemberRoles,
+  normalizeSessionRole,
+} from "@/lib/permissions";
 
-import { subscribeMembersBySociety, updateMemberDoc, type MemberDoc } from "@/lib/db/memberRepo";
+import {
+  subscribeMembersBySociety,
+  updateMemberDoc,
+  type MemberDoc,
+} from "@/lib/db/memberRepo";
 import { subscribeEventsBySociety, type EventDoc } from "@/lib/db/eventRepo";
-import { subscribeSocietyDoc, updateSocietyDoc, type SocietyDoc } from "@/lib/db/societyRepo";
+import {
+  subscribeSocietyDoc,
+  updateSocietyDoc,
+  type SocietyDoc,
+} from "@/lib/db/societyRepo";
 import { subscribeExpensesByEvent } from "@/lib/db/eventExpenseRepo";
 
 import * as Print from "expo-print";
 import * as Sharing from "expo-sharing";
 
-const n = (v: any, fallback = 0) => {
-  const num = typeof v === "number" ? v : Number(v);
-  return Number.isFinite(num) ? num : fallback;
-};
+type ExpenseTotalsByEvent = Record<string, number>;
 
 export default function FinanceScreen() {
-  const { user } = useBootstrap();
   const colors = getColors();
+  const { user, societyId } = useBootstrap();
 
-  const [hasAccess, setHasAccess] = useState(false);
+  const [hasAccess, setHasAccess] = useState<boolean>(false);
 
-  const [members, setMembers] = useState<MemberDoc[]>([]);
   const [society, setSociety] = useState<SocietyDoc | null>(null);
+  const [members, setMembers] = useState<MemberDoc[]>([]);
   const [events, setEvents] = useState<EventDoc[]>([]);
 
-  const [annualFee, setAnnualFee] = useState<string>("");
-  const [editingFee, setEditingFee] = useState(false);
+  const [annualFeeInput, setAnnualFeeInput] = useState<string>("");
 
   const [editingMemberId, setEditingMemberId] = useState<string | null>(null);
   const [editAmount, setEditAmount] = useState<string>("");
@@ -64,511 +72,474 @@ export default function FinanceScreen() {
   const [loadingEvents, setLoadingEvents] = useState(true);
   const [loadingSociety, setLoadingSociety] = useState(true);
 
-  // For Season P&L: total expenses per event
-  const [expenseTotalsByEvent, setExpenseTotalsByEvent] = useState<Record<string, number>>({});
+  // For Season P&L
+  const [expenseTotalsByEvent, setExpenseTotalsByEvent] =
+    useState<ExpenseTotalsByEvent>({});
 
   const currentMember = useMemo(() => {
     return members.find((m) => m.id === user?.activeMemberId) || null;
   }, [members, user?.activeMemberId]);
 
-  // ACCESS CONTROL
+  // ACCESS CONTROL (✅ FIXED)
   useEffect(() => {
+    // ✅ Wait until members are loaded, otherwise currentMember is null initially
+    if (loadingMembers) return;
+
+    // ✅ If still no currentMember after members loaded, activeMemberId is missing/mismatched
+    if (!currentMember) {
+      setHasAccess(false);
+      Alert.alert(
+        "Profile not linked",
+        "Your user record is missing an active member. Please re-join the society or use Settings → Reset Society and join again.",
+        [{ text: "OK", onPress: () => router.push("/settings") }]
+      );
+      return;
+    }
+
     const sessionRole = normalizeSessionRole("member");
-    const roles = normalizeMemberRoles(currentMember?.roles);
+    const roles = normalizeMemberRoles(currentMember.roles);
     const access = canViewFinance(sessionRole, roles);
 
     setHasAccess(access);
 
     if (!access) {
-      Alert.alert("Access Denied", "Only Treasurer, Captain, or Admin can access Finance", [
-        { text: "OK", onPress: () => router.back() },
-      ]);
+      Alert.alert(
+        "Access Denied",
+        "Only Treasurer, Captain, or Admin can access Finance",
+        [{ text: "OK", onPress: () => router.back() }]
+      );
     }
-  }, [currentMember?.roles]);
+  }, [loadingMembers, currentMember?.id, currentMember?.roles]);
 
   // SUBSCRIBE SOCIETY
   useEffect(() => {
-    if (!user?.activeSocietyId) {
-      setSociety(null);
-      setAnnualFee("");
-      setLoadingSociety(false);
-      return;
-    }
-
+    if (!societyId) return;
     setLoadingSociety(true);
-    const unsubscribe = subscribeSocietyDoc(user.activeSocietyId, (doc) => {
+
+    const unsub = subscribeSocietyDoc(societyId, (doc) => {
       setSociety(doc);
-      setAnnualFee(doc?.annualFee?.toString() || "");
+      setAnnualFeeInput(doc?.annualFee ? String(doc.annualFee) : "");
       setLoadingSociety(false);
     });
 
-    return () => unsubscribe();
-  }, [user?.activeSocietyId]);
+    return () => unsub?.();
+  }, [societyId]);
 
   // SUBSCRIBE MEMBERS
   useEffect(() => {
-    if (!user?.activeSocietyId) {
-      setMembers([]);
-      setLoadingMembers(false);
-      return;
-    }
-
+    if (!societyId) return;
     setLoadingMembers(true);
-    const unsubscribe = subscribeMembersBySociety(user.activeSocietyId, (items) => {
-      setMembers(items);
+
+    const unsub = subscribeMembersBySociety(societyId, (docs) => {
+      setMembers(docs);
       setLoadingMembers(false);
     });
 
-    return () => unsubscribe();
-  }, [user?.activeSocietyId]);
+    return () => unsub?.();
+  }, [societyId]);
 
   // SUBSCRIBE EVENTS
   useEffect(() => {
-    if (!user?.activeSocietyId) {
-      setEvents([]);
-      setLoadingEvents(false);
-      return;
-    }
-
+    if (!societyId) return;
     setLoadingEvents(true);
-    const unsubscribe = subscribeEventsBySociety(user.activeSocietyId, (items) => {
-      setEvents(items);
+
+    const unsub = subscribeEventsBySociety(societyId, (docs) => {
+      setEvents(docs);
       setLoadingEvents(false);
     });
 
-    return () => unsubscribe();
-  }, [user?.activeSocietyId]);
+    return () => unsub?.();
+  }, [societyId]);
 
-  // SUBSCRIBE EXPENSE TOTALS PER EVENT (for Season P&L)
+  // SUBSCRIBE EXPENSE TOTALS PER EVENT
   useEffect(() => {
-    const ids = events.map((e) => e.id);
-    if (ids.length === 0) {
+    if (!societyId) return;
+    if (!events.length) {
       setExpenseTotalsByEvent({});
       return;
     }
 
-    const unsubs: (() => void)[] = [];
-
-    ids.forEach((eventId) => {
-      const unsub = subscribeExpensesByEvent(
-        eventId,
-        (items) => {
-          const total = items.reduce((sum, x) => sum + n(x.amount, 0), 0);
-          setExpenseTotalsByEvent((prev) => ({ ...prev, [eventId]: total }));
-        },
-        (err) => {
-          console.error("subscribeExpensesByEvent error:", err);
-        }
-      );
-      unsubs.push(unsub);
+    const unsubs = events.map((evt) => {
+      return subscribeExpensesByEvent(societyId, evt.id, (expenses) => {
+        const total = expenses.reduce(
+          (sum, x) => sum + Number(x.amount || 0),
+          0
+        );
+        setExpenseTotalsByEvent((prev) => ({ ...prev, [evt.id]: total }));
+      });
     });
 
-    return () => unsubs.forEach((u) => u());
-  }, [events]);
+    return () => {
+      unsubs.forEach((u) => u?.());
+    };
+  }, [societyId, events]);
 
-  const saveAnnualFee = async () => {
-    if (!society) return;
+  const annualFee = useMemo(() => {
+    const n = Number(annualFeeInput);
+    return isNaN(n) ? 0 : n;
+  }, [annualFeeInput]);
 
+  const membershipReceived = useMemo(() => {
+    return members.reduce((sum, m) => sum + Number(m.amountPaid || 0), 0);
+  }, [members]);
+
+  const eventSummaries = useMemo(() => {
+    return events.map((evt) => {
+      const fee = Number(evt.eventFee || 0);
+      const payments = evt.payments || {};
+      const paidCount = Object.values(payments).filter(
+        (p: any) => p?.paid
+      ).length;
+
+      const feesReceived = paidCount * fee;
+      const expenses = Number(expenseTotalsByEvent[evt.id] || 0);
+      const net = feesReceived - expenses;
+
+      return {
+        id: evt.id,
+        title: evt.title || "Event",
+        date: evt.date || "",
+        eventFee: fee,
+        paidCount,
+        memberCount: members.length,
+        feesReceived,
+        expenses,
+        net,
+      };
+    });
+  }, [events, members.length, expenseTotalsByEvent]);
+
+  const seasonNet = useMemo(() => {
+    const eventsNet = eventSummaries.reduce((sum, e) => sum + e.net, 0);
+    return membershipReceived + eventsNet;
+  }, [membershipReceived, eventSummaries]);
+
+  const handleSaveAnnualFee = async () => {
+    if (!societyId) return;
     try {
-      const fee = n(annualFee, NaN);
-      if (!Number.isFinite(fee) || fee < 0) {
-        Alert.alert("Invalid fee", "Please enter a valid number (0 or greater).");
-        return;
-      }
-      await updateSocietyDoc(society.id, { annualFee: fee });
-      setEditingFee(false);
-      Alert.alert("Success", "Season fee updated");
-    } catch (error) {
-      console.error("saveAnnualFee error:", error);
-      Alert.alert("Error", "Failed to update season fee");
+      await updateSocietyDoc(societyId, { annualFee });
+      Alert.alert("Saved", "Annual fee updated.");
+    } catch (e: any) {
+      console.error(e);
+      Alert.alert("Error", e?.message ?? "Failed to update annual fee.");
     }
   };
 
   const startEditMember = (m: MemberDoc) => {
     setEditingMemberId(m.id);
-    setEditAmount(String(n(m.amountPaid, 0)));
-    setEditPaidDate(m.paidDate || "");
+    setEditAmount(m.amountPaid ? String(m.amountPaid) : "");
+    setEditPaidDate(m.paidDate ? String(m.paidDate) : "");
   };
 
-  const cancelEditMember = () => {
+  const cancelEdit = () => {
     setEditingMemberId(null);
     setEditAmount("");
     setEditPaidDate("");
   };
 
-  const saveMemberPayment = async (memberId: string) => {
+  const saveEditMember = async () => {
+    if (!societyId || !editingMemberId) return;
+
+    const amount = Number(editAmount);
+    if (isNaN(amount) || amount < 0) {
+      Alert.alert("Invalid", "Amount paid must be a valid number.");
+      return;
+    }
+
     try {
-      const amt = n(editAmount, NaN);
-      if (!Number.isFinite(amt) || amt < 0) {
-        Alert.alert("Invalid amount", "Please enter a valid amount (0 or greater).");
-        return;
-      }
-
-      await updateMemberDoc(memberId, {
-        paid: amt > 0,
-        amountPaid: amt,
-        paidDate: editPaidDate.trim(),
+      await updateMemberDoc(societyId, editingMemberId, {
+        paid: amount > 0,
+        amountPaid: amount,
+        paidDate: editPaidDate ? editPaidDate : null,
       });
-
-      cancelEditMember();
-      Alert.alert("Success", "Payment updated");
-    } catch (error) {
-      console.error("saveMemberPayment error:", error);
-      Alert.alert("Error", "Failed to save payment");
+      cancelEdit();
+    } catch (e: any) {
+      console.error(e);
+      Alert.alert("Error", e?.message ?? "Failed to update member payment.");
     }
   };
 
-  const activeMembers = members.filter((m) => m.id);
+  const openEventPnL = (eventId: string) => {
+    router.push(`/finance-events/${eventId}`);
+  };
 
-  // Membership totals
-  const seasonFee = n(society?.annualFee, 0);
-  const membershipExpected = seasonFee * activeMembers.length;
-
-  const membershipReceived = members.reduce((sum, m) => {
-    if (!m.paid) return sum;
-    // If amountPaid missing, assume full season fee.
-    const amt = typeof m.amountPaid === "number" ? m.amountPaid : seasonFee;
-    return sum + n(amt, 0);
-  }, 0);
-
-  const membershipOutstanding = membershipExpected - membershipReceived;
-
-  // Event fee totals (Expected/Received/Outstanding) + Event Net (after expenses)
-  const eventFeesExpected = events.reduce((sum, e) => {
-    const fee = n((e as any).eventFee, 0);
-    const participants = (e.playerIds?.length ?? activeMembers.length);
-    return sum + fee * participants;
-  }, 0);
-
-  const eventFeesReceived = events.reduce((sum, e) => {
-    const fee = n((e as any).eventFee, 0);
-    const paymentsObj = (e as any).payments;
-    const paymentValues = paymentsObj ? Object.values(paymentsObj) : [];
-    const received = paymentValues.reduce((s: number, p: any) => s + (p?.paid ? fee : 0), 0);
-    return sum + received;
-  }, 0);
-
-  const eventFeesOutstanding = eventFeesExpected - eventFeesReceived;
-
-  const eventsExpensesTotal = events.reduce((sum, e) => sum + n(expenseTotalsByEvent[e.id], 0), 0);
-  const eventsNet = eventFeesReceived - eventsExpensesTotal;
-
-  // ✅ Season P&L Net (persistent derived values)
-  const seasonNet = membershipReceived + eventsNet;
-
-  const loading = loadingSociety || loadingMembers || loadingEvents;
-
-  const handleExport = async () => {
+  const exportSeasonReport = async () => {
     try {
       const html = `
-        <!DOCTYPE html>
         <html>
-        <head>
-          <meta charset="utf-8" />
-          <style>
-            body { font-family: Arial, sans-serif; font-size: 12px; padding: 20px; }
-            h1 { margin: 0 0 10px 0; font-size: 20px; }
-            h2 { margin: 20px 0 10px 0; font-size: 16px; }
-            table { width: 100%; border-collapse: collapse; margin-top: 10px; }
-            th, td { border: 1px solid #ddd; padding: 8px; }
-            th { background: #f5f5f5; text-align: left; }
-            .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-            .card { border: 1px solid #ddd; padding: 10px; border-radius: 8px; }
-            .row { display:flex; justify-content: space-between; margin: 4px 0; }
-          </style>
-        </head>
-        <body>
-          <h1>${society?.name || "Society"} — Finance Summary</h1>
+          <head>
+            <meta charset="utf-8" />
+            <style>
+              body { font-family: Arial, sans-serif; padding: 16px; }
+              h1 { margin-bottom: 8px; }
+              table { width: 100%; border-collapse: collapse; margin-top: 12px; }
+              th, td { border: 1px solid #ddd; padding: 8px; font-size: 12px; }
+              th { background: #f5f5f5; text-align: left; }
+              .kpi { margin-top: 8px; }
+            </style>
+          </head>
+          <body>
+            <h1>Season Finance Report</h1>
+            <div class="kpi"><b>Society:</b> ${society?.name ?? ""}</div>
+            <div class="kpi"><b>Membership Received:</b> £${membershipReceived.toFixed(
+              0
+            )}</div>
+            <div class="kpi"><b>Season Net:</b> £${seasonNet.toFixed(0)}</div>
 
-          <div class="grid">
-            <div class="card">
-              <h2>Season P&L</h2>
-              <div class="row"><div>Membership received</div><div>£${membershipReceived.toFixed(2)}</div></div>
-              <div class="row"><div>Events net (fees - expenses)</div><div>£${eventsNet.toFixed(2)}</div></div>
-              <div class="row"><strong>Season Net</strong><strong>£${seasonNet.toFixed(2)}</strong></div>
-            </div>
-            <div class="card">
-              <h2>Membership</h2>
-              <div class="row"><div>Season fee</div><div>£${seasonFee.toFixed(2)}</div></div>
-              <div class="row"><div>Expected</div><div>£${membershipExpected.toFixed(2)}</div></div>
-              <div class="row"><div>Received</div><div>£${membershipReceived.toFixed(2)}</div></div>
-              <div class="row"><div>Outstanding</div><div>£${membershipOutstanding.toFixed(2)}</div></div>
-            </div>
-          </div>
-
-          <div class="card" style="margin-top: 12px;">
-            <h2>Events (Fees)</h2>
-            <div class="row"><div>Expected</div><div>£${eventFeesExpected.toFixed(2)}</div></div>
-            <div class="row"><div>Received</div><div>£${eventFeesReceived.toFixed(2)}</div></div>
-            <div class="row"><div>Expenses total</div><div>£${eventsExpensesTotal.toFixed(2)}</div></div>
-            <div class="row"><strong>Events net</strong><strong>£${eventsNet.toFixed(2)}</strong></div>
-          </div>
-
-          <h2>Member Payments</h2>
-          <table>
-            <thead>
-              <tr>
-                <th>Member</th>
-                <th>Paid</th>
-                <th>Amount</th>
-                <th>Paid Date</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${members
-                .map(
-                  (m) => `
+            <h2>Events</h2>
+            <table>
+              <thead>
+                <tr>
+                  <th>Event</th>
+                  <th>Date</th>
+                  <th>Fee</th>
+                  <th>Paid</th>
+                  <th>Fees Received</th>
+                  <th>Expenses</th>
+                  <th>Net</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${eventSummaries
+                  .map(
+                    (e) => `
                   <tr>
-                    <td>${m.name || ""}</td>
-                    <td>${m.paid ? "Yes" : "No"}</td>
-                    <td>£${n(m.amountPaid, 0).toFixed(2)}</td>
-                    <td>${m.paidDate || ""}</td>
+                    <td>${e.title}</td>
+                    <td>${e.date}</td>
+                    <td>£${e.eventFee.toFixed(0)}</td>
+                    <td>${e.paidCount}/${e.memberCount}</td>
+                    <td>£${e.feesReceived.toFixed(0)}</td>
+                    <td>£${e.expenses.toFixed(0)}</td>
+                    <td>£${e.net.toFixed(0)}</td>
                   </tr>
                 `
-                )
-                .join("")}
-            </tbody>
-          </table>
-        </body>
+                  )
+                  .join("")}
+              </tbody>
+            </table>
+          </body>
         </html>
       `;
 
       const { uri } = await Print.printToFileAsync({ html });
-
-      if (Platform.OS === "web") {
-        Alert.alert("Export created", "Export is available in the browser download.");
-        return;
-      }
-
-      if (await Sharing.isAvailableAsync()) {
-        await Sharing.shareAsync(uri);
-      } else {
-        Alert.alert("Sharing not available", uri);
-      }
+      await Sharing.shareAsync(uri);
     } catch (e: any) {
-      console.error("Export error:", e);
-      Alert.alert("Error", e?.message ?? "Export failed");
+      console.error(e);
+      Alert.alert("Export Failed", e?.message ?? "Could not export report.");
     }
   };
 
-  if (!hasAccess) {
+  if (!societyId) {
     return (
       <Screen>
-        <EmptyBlocked />
+        <SectionHeader title="Finance" />
+        <AppCard>
+          <AppText>No active society selected.</AppText>
+        </AppCard>
       </Screen>
     );
   }
 
-  if (loading) {
-    return <LoadingState title="Loading finance…" />;
+  if (!hasAccess) {
+    return (
+      <Screen>
+        <SectionHeader title="Finance" subtitle="Captain/Treasurer only" />
+        <AppCard>
+          <AppText style={{ marginBottom: 12 }}>
+            Checking your access…
+          </AppText>
+          <LoadingState />
+        </AppCard>
+      </Screen>
+    );
   }
 
+  const isLoading = loadingSociety || loadingMembers || loadingEvents;
+
   return (
-    <Screen title="Finance" subtitle="Season fees, member payments, and season P&L">
-      {/* ✅ Season P&L Rollup */}
-      <AppCard style={styles.card}>
-        <SectionHeader title="Season P&L" icon={<Feather name="trending-up" size={18} color={colors.primary} />} />
+    <Screen>
+      <SectionHeader title="Finance" subtitle="Treasurer MVP + Season P&L" />
 
-        <View style={styles.totalsGrid}>
-          <View style={styles.totalItem}>
-            <AppText variant="caption" color="secondary">Membership received</AppText>
-            <AppText variant="h3" style={styles.totalValue}>£{membershipReceived.toFixed(2)}</AppText>
-          </View>
+      {isLoading ? (
+        <LoadingState />
+      ) : (
+        <>
+          <AppCard style={{ marginBottom: spacing.md }}>
+            <AppText style={styles.h2}>Season Summary</AppText>
 
-          <View style={styles.totalItem}>
-            <AppText variant="caption" color="secondary">Events net</AppText>
-            <AppText variant="h3" style={styles.totalValue}>£{eventsNet.toFixed(2)}</AppText>
-          </View>
-
-          <View style={styles.totalItem}>
-            <AppText variant="caption" color="secondary">Season Net</AppText>
-            <Badge
-              label={`£${seasonNet.toFixed(2)}`}
-              variant={seasonNet >= 0 ? "paid" : "unpaid"}
-            />
-          </View>
-        </View>
-
-        <View style={{ height: spacing.md }} />
-
-        <PrimaryButton
-          label="Open Event P&L Manager"
-          onPress={() => router.push("/finance-events")}
-          iconLeft={<Feather name="calendar" size={16} color="#fff" />}
-        />
-      </AppCard>
-
-      {/* Membership Fee */}
-      <AppCard style={styles.card}>
-        <SectionHeader title="Season Fee" icon={<Feather name="credit-card" size={18} color={colors.primary} />} />
-
-        {!editingFee ? (
-          <View style={styles.rowBetween}>
-            <AppText variant="bodyStrong">£{seasonFee.toFixed(2)}</AppText>
-            <SecondaryButton label="Edit" onPress={() => setEditingFee(true)} />
-          </View>
-        ) : (
-          <View style={{ gap: spacing.sm }}>
-            <AppInput label="Season fee (£)" value={annualFee} onChangeText={setAnnualFee} keyboardType="numeric" />
-            <View style={styles.rowBetween}>
-              <SecondaryButton label="Cancel" onPress={() => setEditingFee(false)} />
-              <PrimaryButton label="Save" onPress={saveAnnualFee} />
+            <View style={styles.kpiRow}>
+              <View style={styles.kpiItem}>
+                <AppText style={styles.kpiLabel}>Membership Received</AppText>
+                <AppText style={styles.kpiValue}>
+                  £{membershipReceived.toFixed(0)}
+                </AppText>
+              </View>
+              <View style={styles.kpiItem}>
+                <AppText style={styles.kpiLabel}>Season Net</AppText>
+                <AppText style={styles.kpiValue}>£{seasonNet.toFixed(0)}</AppText>
+              </View>
             </View>
-          </View>
-        )}
 
-        <View style={styles.totalsGrid}>
-          <View style={styles.totalItem}>
-            <AppText variant="caption" color="secondary">Expected</AppText>
-            <AppText variant="bodyStrong" style={styles.totalValue}>£{membershipExpected.toFixed(2)}</AppText>
-          </View>
-          <View style={styles.totalItem}>
-            <AppText variant="caption" color="secondary">Received</AppText>
-            <AppText variant="bodyStrong" style={styles.totalValue}>£{membershipReceived.toFixed(2)}</AppText>
-          </View>
-          <View style={styles.totalItem}>
-            <AppText variant="caption" color="secondary">Outstanding</AppText>
-            <AppText variant="bodyStrong" style={styles.totalValue}>£{membershipOutstanding.toFixed(2)}</AppText>
-          </View>
-        </View>
-      </AppCard>
+            <View style={{ marginTop: spacing.sm }}>
+              <PrimaryButton
+                label="Export Season Report"
+                onPress={exportSeasonReport}
+                icon={<Feather name="share-2" size={16} />}
+              />
+            </View>
+          </AppCard>
 
-      {/* Event Fees Summary */}
-      <AppCard style={styles.card}>
-        <SectionHeader title="Event Fees (Summary)" icon={<Feather name="flag" size={18} color={colors.primary} />} />
+          <AppCard style={{ marginBottom: spacing.md }}>
+            <AppText style={styles.h2}>Annual Membership Fee</AppText>
+            <View style={styles.row}>
+              <AppInput
+                value={annualFeeInput}
+                onChangeText={setAnnualFeeInput}
+                placeholder="0"
+                keyboardType={Platform.OS === "ios" ? "number-pad" : "numeric"}
+                style={{ flex: 1 }}
+              />
+              <PrimaryButton label="Save" onPress={handleSaveAnnualFee} />
+            </View>
+          </AppCard>
 
-        <View style={styles.totalsGrid}>
-          <View style={styles.totalItem}>
-            <AppText variant="caption" color="secondary">Expected</AppText>
-            <AppText variant="bodyStrong" style={styles.totalValue}>£{eventFeesExpected.toFixed(2)}</AppText>
-          </View>
-          <View style={styles.totalItem}>
-            <AppText variant="caption" color="secondary">Received</AppText>
-            <AppText variant="bodyStrong" style={styles.totalValue}>£{eventFeesReceived.toFixed(2)}</AppText>
-          </View>
-          <View style={styles.totalItem}>
-            <AppText variant="caption" color="secondary">Outstanding</AppText>
-            <AppText variant="bodyStrong" style={styles.totalValue}>£{eventFeesOutstanding.toFixed(2)}</AppText>
-          </View>
-        </View>
+          <AppCard style={{ marginBottom: spacing.md }}>
+            <AppText style={styles.h2}>Member Payments</AppText>
 
-        <View style={{ height: spacing.sm }} />
+            {members.map((m) => {
+              const paid = Boolean(m.paid);
+              const isEditing = editingMemberId === m.id;
 
-        <View style={styles.totalsGrid}>
-          <View style={styles.totalItem}>
-            <AppText variant="caption" color="secondary">Expenses total</AppText>
-            <AppText variant="bodyStrong" style={styles.totalValue}>£{eventsExpensesTotal.toFixed(2)}</AppText>
-          </View>
-          <View style={styles.totalItem}>
-            <AppText variant="caption" color="secondary">Events net</AppText>
-            <Badge
-              label={`£${eventsNet.toFixed(2)}`}
-              variant={eventsNet >= 0 ? "paid" : "unpaid"}
-            />
-          </View>
-        </View>
-      </AppCard>
+              return (
+                <View key={m.id} style={styles.memberRow}>
+                  <View style={{ flex: 1 }}>
+                    <AppText style={styles.memberName}>
+                      {m.displayName || m.name || "Member"}
+                    </AppText>
 
-      {/* Member list */}
-      <AppCard style={styles.card}>
-        <SectionHeader title="Member Payments" icon={<Feather name="users" size={18} color={colors.primary} />} />
-
-        {members.length === 0 ? (
-          <AppText variant="body" color="secondary">No members found.</AppText>
-        ) : (
-          members.map((m) => {
-            const isEditing = editingMemberId === m.id;
-            const paid = !!m.paid;
-            const amt = n(m.amountPaid, 0);
-
-            return (
-              <View key={m.id} style={styles.memberRow}>
-                <View style={{ flex: 1 }}>
-                  <AppText variant="bodyStrong">{m.name}</AppText>
-                  <AppText variant="caption" color="secondary">
-                    {paid ? "Paid" : "Unpaid"} • £{amt.toFixed(2)} {m.paidDate ? `• ${m.paidDate}` : ""}
-                  </AppText>
-                </View>
-
-                {!isEditing ? (
-                  <View style={{ alignItems: "flex-end", gap: 8 }}>
-                    <Badge label={paid ? "Paid" : "Unpaid"} variant={paid ? "paid" : "unpaid"} />
-                    <SecondaryButton label="Edit" onPress={() => startEditMember(m)} />
-                  </View>
-                ) : (
-                  <View style={{ width: 220, gap: spacing.sm }}>
-                    <AppInput label="Amount paid (£)" value={editAmount} onChangeText={setEditAmount} keyboardType="numeric" />
-                    <AppInput label="Paid date" value={editPaidDate} onChangeText={setEditPaidDate} placeholder="YYYY-MM-DD" />
-                    <View style={styles.rowBetween}>
-                      <SecondaryButton label="Cancel" onPress={cancelEditMember} />
-                      <PrimaryButton label="Save" onPress={() => saveMemberPayment(m.id)} />
+                    <View style={styles.badgeRow}>
+                      <Badge label={paid ? "Paid" : "Unpaid"} />
+                      <AppText style={styles.muted}>
+                        £{Number(m.amountPaid || 0).toFixed(0)}
+                      </AppText>
                     </View>
                   </View>
-                )}
+
+                  <SecondaryButton
+                    label={isEditing ? "Cancel" : "Edit"}
+                    onPress={() => (isEditing ? cancelEdit() : startEditMember(m))}
+                  />
+                </View>
+              );
+            })}
+
+            {editingMemberId ? (
+              <View style={{ marginTop: spacing.md, gap: spacing.sm }}>
+                <AppInput
+                  label="Amount Paid"
+                  value={editAmount}
+                  onChangeText={setEditAmount}
+                  placeholder="0"
+                  keyboardType={
+                    Platform.OS === "ios" ? "decimal-pad" : "numeric"
+                  }
+                />
+                <AppInput
+                  label="Paid Date (optional)"
+                  value={editPaidDate}
+                  onChangeText={setEditPaidDate}
+                  placeholder="YYYY-MM-DD"
+                />
+                <PrimaryButton label="Save Payment" onPress={saveEditMember} />
               </View>
-            );
-          })
-        )}
-      </AppCard>
+            ) : null}
+          </AppCard>
 
-      {/* Export */}
-      <View style={styles.exportRow}>
-        <PrimaryButton
-          label="Export Finance Summary"
-          onPress={handleExport}
-          iconLeft={<Feather name="share-2" size={16} color="#fff" />}
-        />
-      </View>
+          <AppCard style={{ marginBottom: spacing.md }}>
+            <AppText style={styles.h2}>Event P&L</AppText>
 
-      <SecondaryButton label="Back" onPress={() => router.back()} />
+            {eventSummaries.map((e) => (
+              <View key={e.id} style={styles.eventRow}>
+                <View style={{ flex: 1 }}>
+                  <AppText style={styles.eventTitle}>{e.title}</AppText>
+                  <AppText style={styles.muted}>
+                    {e.date ? `${e.date} · ` : ""}
+                    Paid {e.paidCount}/{e.memberCount} · Net £{e.net.toFixed(0)}
+                  </AppText>
+                </View>
+                <SecondaryButton
+                  label="Open"
+                  onPress={() => openEventPnL(e.id)}
+                />
+              </View>
+            ))}
+          </AppCard>
+
+          <SecondaryButton label="Back" onPress={() => router.back()} />
+        </>
+      )}
     </Screen>
   );
 }
 
-function EmptyBlocked() {
-  return (
-    <View style={{ padding: spacing.lg }}>
-      <AppText variant="h2">Finance</AppText>
-      <AppText variant="body" color="secondary" style={{ marginTop: spacing.sm }}>
-        You don’t have permission to access this area.
-      </AppText>
-    </View>
-  );
-}
-
 const styles = StyleSheet.create({
-  card: {
-    marginBottom: spacing.lg,
+  h2: {
+    fontSize: typography.lg,
+    fontWeight: "800",
+    marginBottom: spacing.sm,
   },
-  rowBetween: {
+  kpiRow: {
     flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
+    gap: spacing.md,
   },
-  totalsGrid: {
+  kpiItem: {
+    flex: 1,
+  },
+  kpiLabel: {
+    opacity: 0.7,
+    marginBottom: 4,
+  },
+  kpiValue: {
+    fontSize: 20,
+    fontWeight: "800",
+  },
+  row: {
     flexDirection: "row",
-    justifyContent: "space-around",
-    marginTop: spacing.base,
-    gap: spacing.base,
-    flexWrap: "wrap",
-  },
-  totalItem: {
+    gap: spacing.sm,
     alignItems: "center",
-    minWidth: 140,
-  },
-  totalValue: {
-    marginTop: spacing.xs,
   },
   memberRow: {
     flexDirection: "row",
-    alignItems: "flex-start",
-    paddingVertical: spacing.base,
-    borderTopWidth: 1,
-    borderColor: "rgba(0,0,0,0.08)",
-    gap: spacing.base,
+    gap: spacing.sm,
+    alignItems: "center",
+    paddingVertical: spacing.sm,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: "rgba(255,255,255,0.12)",
   },
-  exportRow: {
-    marginTop: spacing.base,
-    marginBottom: spacing.lg,
+  memberName: {
+    fontSize: 15,
+    fontWeight: "800",
+    marginBottom: 2,
+  },
+  badgeRow: {
+    flexDirection: "row",
+    gap: spacing.sm,
+    alignItems: "center",
+  },
+  muted: {
+    opacity: 0.7,
+  },
+  eventRow: {
+    flexDirection: "row",
+    gap: spacing.sm,
+    alignItems: "center",
+    paddingVertical: spacing.sm,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: "rgba(255,255,255,0.12)",
+  },
+  eventTitle: {
+    fontSize: 15,
+    fontWeight: "800",
+    marginBottom: 2,
   },
 });
