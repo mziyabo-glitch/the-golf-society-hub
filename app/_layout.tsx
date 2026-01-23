@@ -11,13 +11,10 @@ import { firebaseEnvMissingKeys, firebaseEnvReady } from "@/lib/firebase";
  * If EXPO_PUBLIC_FIREBASE_* env vars are missing, show a friendly setup screen
  * instead of a blank crash during static rendering.
  */
-
 export default function RootLayout() {
   const bootError = useMemo(() => {
     if (firebaseEnvReady) return null;
-    return (
-      "Missing environment variables:\n" + firebaseEnvMissingKeys.join("\n")
-    );
+    return "Missing environment variables:\n" + firebaseEnvMissingKeys.join("\n");
   }, []);
 
   if (!firebaseEnvReady) {
@@ -37,8 +34,8 @@ export default function RootLayout() {
 
           <AppText style={styles.body}>
             Fix this in Vercel → Project → Settings → Environment Variables.
-            Ensure the variables exist for the environment you’re deploying
-            (Preview AND Production if you use both).
+            Ensure the variables exist for the environment you’re deploying (Preview AND
+            Production if you use both).
           </AppText>
 
           <View style={{ height: 12 }} />
@@ -59,7 +56,10 @@ export default function RootLayout() {
 
   return (
     <Stack screenOptions={{ headerShown: false }}>
-      <Stack.Screen name="(tabs)" />
+      {/* ✅ Main app group (contains (tabs), society, profile, etc.) */}
+      <Stack.Screen name="(app)" />
+
+      {/* ✅ Other top-level routes (outside the (app) group) */}
       <Stack.Screen name="join" />
       <Stack.Screen name="join-society" />
       <Stack.Screen name="create-society" />
@@ -67,7 +67,8 @@ export default function RootLayout() {
       <Stack.Screen name="add-member" />
       <Stack.Screen name="finance" />
       <Stack.Screen name="finance-events" />
-      <Stack.Screen name="event" />
+
+      {/* Modal */}
       <Stack.Screen name="modal" options={{ presentation: "modal" }} />
     </Stack>
   );
