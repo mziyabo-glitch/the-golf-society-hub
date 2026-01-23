@@ -1,11 +1,12 @@
-diff --git a/app/(app)/(tabs)/leaderboard.tsx b/app/(app)/(tabs)/leaderboard.tsx
+diff --git a/app/(app)/(tabs)/members.tsx b/app/(app)/(tabs)/members.tsx
 index 0000000..1111111 100644
---- a/app/(app)/(tabs)/leaderboard.tsx
-+++ b/app/(app)/(tabs)/leaderboard.tsx
+--- a/app/(app)/(tabs)/members.tsx
++++ b/app/(app)/(tabs)/members.tsx
 @@ -1,2 +1 @@
--// app/(tabs)/leaderboard.tsx
--export { default } from "./leaderboard";
-+export { default } from "../leaderboard";
+-// app/(tabs)/members.tsx
+-export { default } from "./members";
++export { default } from "../members";
+
 
 
 
