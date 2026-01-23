@@ -846,3 +846,360 @@ index 1d90b613..5db775ed 100644
 +            roles.delete("secretary");
 +            roles.delete("handicapper");
 +          }
+diff --git a/app/join.tsx b/app/join.tsx
+deleted file mode 100644
+index 09b22dd1..00000000
+--- a/app/join.tsx
++++ /dev/null
+@@ -1,46 +0,0 @@
+-import { useRouter } from "expo-router";
+-import { Pressable, ScrollView, Text, View } from "react-native";
+-
+-export default function JoinScreen() {
+-  const router = useRouter();
+-
+-  return (
+-    <ScrollView contentContainerStyle={{ padding: 20, paddingTop: 40 }}>
+-      <View style={{ alignItems: "center", marginBottom: 24 }}>
+-        <Text style={{ fontSize: 28, fontWeight: "800", marginBottom: 6 }}>
+-          No Society Found
+-        </Text>
+-        <Text style={{ opacity: 0.7 }}>Create a society to get started</Text>
+-      </View>
+-
+-      <Pressable
+-        onPress={() => router.push("/create-society")}
+-        style={{
+-          backgroundColor: "#2F6F62",
+-          paddingVertical: 14,
+-          borderRadius: 14,
+-          alignItems: "center",
+-          marginBottom: 12,
+-        }}
+-      >
+-        <Text style={{ color: "white", fontSize: 18, fontWeight: "700" }}>
+-          Create Society
+-        </Text>
+-      </Pressable>
+-
+-      <Pressable
+-        onPress={() => router.push("/join-society")}
+-        style={{
+-          backgroundColor: "#0F172A",
+-          paddingVertical: 14,
+-          borderRadius: 14,
+-          alignItems: "center",
+-        }}
+-      >
+-        <Text style={{ color: "white", fontSize: 18, fontWeight: "700" }}>
+-          Join Existing Society
+-        </Text>
+-      </Pressable>
+-    </ScrollView>
+-  );
+-}
+diff --git a/components/guards/RouteGuards.tsx b/components/guards/RouteGuards.tsx
+new file mode 100644
+index 00000000..9c6adf5d
+--- /dev/null
++++ b/components/guards/RouteGuards.tsx
+@@ -0,0 +1,118 @@
++import React, { useCallback, useEffect, useRef } from "react";
++import { usePathname, useRouter } from "expo-router";
++
++import { useBootstrap } from "@/lib/useBootstrap";
++
++type GuardProps = {
++  children: React.ReactNode;
++};
++
++function useRedirectOnce(resetKey?: string) {
++  const redirectedRef = useRef(false);
++
++  useEffect(() => {
++    redirectedRef.current = false;
++  }, [resetKey]);
++
++  const markRedirected = useCallback(() => {
++    redirectedRef.current = true;
++  }, []);
++
++  const canRedirect = useCallback(() => !redirectedRef.current, []);
++
++  return { markRedirected, canRedirect };
++}
++
++export function RequireAuth({ children }: GuardProps) {
++  const router = useRouter();
++  const pathname = usePathname();
++  const { bootstrapped, isSignedIn } = useBootstrap();
++  const { markRedirected, canRedirect } = useRedirectOnce(pathname);
++
++  useEffect(() => {
++    if (!bootstrapped) return;
++    if (!isSignedIn && canRedirect()) {
++      markRedirected();
++      if (pathname !== "/(auth)/sign-in") {
++        router.replace("/(auth)/sign-in");
++      }
++    }
++  }, [bootstrapped, isSignedIn, pathname, router, canRedirect, markRedirected]);
++
++  if (!bootstrapped) return null;
++  if (!isSignedIn) return null;
++
++  return <>{children}</>;
++}
++
++export function RequireSociety({ children }: GuardProps) {
++  const router = useRouter();
++  const pathname = usePathname();
++  const { bootstrapped, activeSocietyId, isSignedIn } = useBootstrap();
++  const { markRedirected, canRedirect } = useRedirectOnce(pathname);
++
++  useEffect(() => {
++    if (!bootstrapped) return;
++    if (!isSignedIn && canRedirect()) {
++      markRedirected();
++      router.replace("/(auth)/sign-in");
++      return;
++    }
++    if (isSignedIn && !activeSocietyId && canRedirect()) {
++      markRedirected();
++      if (pathname !== "/(auth)/join") {
++        router.replace("/(auth)/join");
++      }
++    }
++  }, [
++    activeSocietyId,
++    bootstrapped,
++    isSignedIn,
++    pathname,
++    router,
++    canRedirect,
++    markRedirected,
++  ]);
++
++  if (!bootstrapped) return null;
++  if (!isSignedIn) return null;
++  if (!activeSocietyId) return null;
++
++  return <>{children}</>;
++}
++
++export function RequireNoSociety({ children }: GuardProps) {
++  const router = useRouter();
++  const pathname = usePathname();
++  const { bootstrapped, activeSocietyId, isSignedIn } = useBootstrap();
++  const { markRedirected, canRedirect } = useRedirectOnce(pathname);
++
++  useEffect(() => {
++    if (!bootstrapped) return;
++    if (!isSignedIn && canRedirect()) {
++      markRedirected();
++      if (pathname !== "/(auth)/sign-in") {
++        router.replace("/(auth)/sign-in");
++      }
++      return;
++    }
++    if (activeSocietyId && canRedirect()) {
++      markRedirected();
++      router.replace("/(app)/society");
++    }
++  }, [
++    activeSocietyId,
++    bootstrapped,
++    isSignedIn,
++    pathname,
++    router,
++    canRedirect,
++    markRedirected,
++  ]);
++
++  if (!bootstrapped) return null;
++  if (!isSignedIn) return null;
++  if (activeSocietyId) return null;
++
++  return <>{children}</>;
++}
+diff --git a/components/ui/collapsible.tsx b/components/ui/collapsible.tsx
+index 6345fdeb..4f4cbf66 100644
+--- a/components/ui/collapsible.tsx
++++ b/components/ui/collapsible.tsx
+@@ -4,7 +4,7 @@ import { StyleSheet, TouchableOpacity } from 'react-native';
+ import { ThemedText } from '@/components/themed-text';
+ import { ThemedView } from '@/components/themed-view';
+ import { IconSymbol } from '@/components/ui/icon-symbol';
+-import { Colors } from '@/constants/theme';
++import { Colors } from "@/lib/constants/theme";
+ import { useColorScheme } from '@/hooks/use-color-scheme';
+ 
+ export function Collapsible({ children, title }: PropsWithChildren & { title: string }) {
+diff --git a/hooks/use-theme-color.ts b/hooks/use-theme-color.ts
+index 0cbc3a6e..689c512c 100644
+--- a/hooks/use-theme-color.ts
++++ b/hooks/use-theme-color.ts
+@@ -3,7 +3,7 @@
+  * https://docs.expo.dev/guides/color-schemes/
+  */
+ 
+-import { Colors } from '@/constants/theme';
++import { Colors } from "@/lib/constants/theme";
+ import { useColorScheme } from '@/hooks/use-color-scheme';
+ 
+ export function useThemeColor(
+diff --git a/lib/constants/theme.ts b/lib/constants/theme.ts
+new file mode 100644
+index 00000000..0a6f399f
+--- /dev/null
++++ b/lib/constants/theme.ts
+@@ -0,0 +1 @@
++export { Colors, Fonts } from "../../constants/theme";
+diff --git a/lib/db/eventExpenseRepo.ts b/lib/db/eventExpenseRepo.ts
+deleted file mode 100644
+index 587688ca..00000000
+--- a/lib/db/eventExpenseRepo.ts
++++ /dev/null
+@@ -1,87 +0,0 @@
+... (deleted file contents)
+diff --git a/lib/db/eventRepo.ts b/lib/db/eventRepo.ts
+index d6cb14fe..8dd0cb81 100644
+--- a/lib/db/eventRepo.ts
++++ b/lib/db/eventRepo.ts
+@@ -87,14 +87,27 @@ export async function createEvent(input: EventInput): Promise<EventDoc> {
+   return { id: ref.id, ...payload };
+ }
+ 
+-export async function getEventDoc(id: string): Promise<EventDoc | null> {
+-  const ref = doc(db, "events", id);
+-  const snap = await getDoc(ref);
+-  if (!snap.exists()) {
+-    return null;
+-  }
+-  return { id: snap.id, ...(snap.data() as Omit<EventDoc, "id">) };
+-}
++export async function getEventDoc(id: string): Promise<EventDoc | null> {
++  const ref = doc(db, "events", id);
++  const snap = await getDoc(ref);
++  if (!snap.exists()) {
++    return null;
++  }
++  return { id: snap.id, ...(snap.data() as Omit<EventDoc, "id">) };
++}
++
++/**
++ * Legacy helper: fetch event by id and optionally validate societyId.
++ */
++export async function getEvent(
++  societyId: string,
++  eventId: string
++): Promise<EventDoc | null> {
++  const event = await getEventDoc(eventId);
++  if (!event) return null;
++  if (event.societyId !== societyId) return null;
++  return event;
++}
+ 
+ export function subscribeEventDoc(
+   id: string,
+@@ -117,15 +130,40 @@ export function subscribeEventDoc(
+   );
+ }
+ 
+-export async function updateEventDoc(id: string, updates: Partial<EventDoc>): Promise<void> {
+-  const ref = doc(db, "events", id);
+-  const payload: Record<string, unknown> = { ...updates };
+-  delete payload.id;
+-  for (const k of Object.keys(payload)) {
++export async function updateEventDoc(id: string, updates: Partial<EventDoc>): Promise<void> {
++  const ref = doc(db, "events", id);
++  const payload: Record<string, unknown> = { ...updates };
++  delete payload.id;
++  for (const k of Object.keys(payload)) {
+     if (payload[k] === undefined) delete payload[k];
+-  }
+-  await updateDoc(ref, payload);
+-}
++  }
++  await updateDoc(ref, payload);
++}
++
++export async function setEventFee(
++  societyId: string,
++  eventId: string,
++  eventFee: number
++): Promise<void> {
++  const event = await getEvent(societyId, eventId);
++  if (!event) throw new Error("Event not found");
++  await updateEventDoc(eventId, { eventFee });
++}
++
++export async function setEventPaymentStatus(
++  societyId: string,
++  eventId: string,
++  memberId: string,
++  paid: boolean
++): Promise<void> {
++  const event = await getEvent(societyId, eventId);
++  if (!event) throw new Error("Event not found");
++  const ref = doc(db, "events", eventId);
++  await updateDoc(ref, {
++    [`payments.${memberId}.paid`]: paid,
++    [`payments.${memberId}.paidAtISO`]: paid ? new Date().toISOString() : null,
++  });
++}
+ 
+ export async function listEventsBySociety(societyId: string): Promise<EventDoc[]> {
+   const q = query(collection(db, "events"), where("societyId", "==", societyId));
+diff --git a/lib/db/expenseRepo.ts b/lib/db/expenseRepo.ts
+index fec509da..0c45d783 100644
+--- a/lib/db/expenseRepo.ts
++++ b/lib/db/expenseRepo.ts
+@@ -6,9 +6,11 @@ import {
+   deleteDoc,
+   doc,
+   getDocs,
++  onSnapshot,
+   orderBy,
+   query,
+   serverTimestamp,
++  type Unsubscribe,
+ } from "firebase/firestore";
+ 
+ export type EventExpense = {
+@@ -36,6 +38,33 @@ export async function listEventExpenses(societyId: string, eventId: string) {
+   })) as EventExpense[];
+ }
+ 
++/**
++ * Subscribe to event expenses for live totals.
++ */
++export function subscribeEventExpenses(
++  societyId: string,
++  eventId: string,
++  onNext: (expenses: EventExpense[]) => void,
++  onError?: (err: any) => void
++): Unsubscribe {
++  const q = query(expensesCol(societyId, eventId), orderBy("createdAt", "desc"));
++
++  return onSnapshot(
++    q,
++    (snap) => {
++      const items = snap.docs.map((d) => ({
++        id: d.id,
++        ...(d.data() as Omit<EventExpense, "id">),
++      })) as EventExpense[];
++      onNext(items);
++    },
++    (err) => {
++      if (onError) onError(err);
++      else console.error("subscribeEventExpenses error", err);
++    }
++  );
++}
++
+ /**
+  * Create an expense entry under:
+  * societies/{societyId}/events/{eventId}/expenses/{expenseId}
+
+
