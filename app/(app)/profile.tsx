@@ -1,1 +1,1 @@
-/** ... full file content omitted in this summary for brevity ... */
+export { default } from "./(tabs)/profile";
