@@ -514,24 +514,29 @@ export default function SocietyDashboardScreen() {
             style={styles.inlineEmptyState}
           />
         )}
+  return (
+  <View style={styles.container}>
+    {/* ManCo Tools Section */}
+    {isManCo && (
+      <>
+        <SectionHeader title="ManCo Tools" />
+        <View style={styles.actionGrid}>
+          {mancoActions.map((action) => (
+            <ActionCard
+              key={action.id}
+              title={action.title}
+              subtitle={action.subtitle}
+              iconName={action.iconName}
+              onPress={() => router.push(action.route)}
+            />
+          ))}
+        </View>
+      </>
+    )}
 
-        {/* ManCo Tools Section */}
-        {isManCo && (
-          <>
-            <SectionHeader title="ManCo Tools" style={styles.sectionHeader} />
-            <View style={styles.actionGrid}>
-              {mancoActions.map((action) => (
-                <ActionCard
-                  key={action.id}
-                  title={action.title}
-                  subtitle={action.subtitle}
-                  iconName={action.iconName}
-                  onPress={() => router.push(action.route as any)}
-                />
-              ))}
-            </View>
-          </>
-        )}
-
-        <SecondaryButton
-          onPress={() => router.pu
+    <SecondaryButton onPress={() => router.push("/(app)/settings")}>
+      Settings
+    </SecondaryButton>
+  </View>
+);
+  
