@@ -7,16 +7,18 @@ import { AppText } from "@/components/ui/AppText";
 import { Screen } from "@/components/ui/Screen";
 import { firebaseEnvMissingKeys, firebaseEnvReady } from "@/lib/firebase";
 
-/**
- * If EXPO_PUBLIC_FIREBASE_* env vars are missing, show a friendly setup screen
- * instead of a blank crash during static rendering.
- */
+// Helpful default for web boot
+export const unstable_settings = {
+  initialRouteName: "(app)",
+};
+
 export default function RootLayout() {
   const bootError = useMemo(() => {
     if (firebaseEnvReady) return null;
     return "Missing environment variables:\n" + firebaseEnvMissingKeys.join("\n");
   }, []);
 
+  // If env vars missing, show friendly screen (prevents blank deploy)
   if (!firebaseEnvReady) {
     return (
       <Screen>
@@ -34,8 +36,8 @@ export default function RootLayout() {
 
           <AppText style={styles.body}>
             Fix this in Vercel → Project → Settings → Environment Variables.
-            Ensure the variables exist for the environment you’re deploying (Preview AND
-            Production if you use both).
+            Ensure the variables exist for the environment you’re deploying
+            (Preview AND Production if you use both).
           </AppText>
 
           <View style={{ height: 12 }} />
@@ -56,19 +58,23 @@ export default function RootLayout() {
 
   return (
     <Stack screenOptions={{ headerShown: false }}>
-      {/* ✅ Main app group (contains (tabs), society, profile, etc.) */}
+      {/* App area */}
       <Stack.Screen name="(app)" />
 
-      {/* ✅ Other top-level routes (outside the (app) group) */}
+      {/* Auth / joins */}
       <Stack.Screen name="join" />
       <Stack.Screen name="join-society" />
       <Stack.Screen name="create-society" />
+
+      {/* Flows */}
       <Stack.Screen name="create-event" />
       <Stack.Screen name="add-member" />
       <Stack.Screen name="finance" />
       <Stack.Screen name="finance-events" />
 
-      {/* Modal */}
+      {/* This should exist as a folder route like: app/event/[id]/index.tsx */}
+      <Stack.Screen name="event" />
+
       <Stack.Screen name="modal" options={{ presentation: "modal" }} />
     </Stack>
   );
