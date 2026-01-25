@@ -1,4 +1,15 @@
-import { addDoc, collection, doc, getDoc, onSnapshot, serverTimestamp, updateDoc } from "firebase/firestore";
+import {
+  addDoc,
+  collection,
+  doc,
+  getDoc,
+  getDocs,
+  onSnapshot,
+  query,
+  serverTimestamp,
+  updateDoc,
+  where,
+} from "firebase/firestore";
 
 import { db } from "@/lib/firebase";
 import { stripUndefined } from "@/lib/db/sanitize";
@@ -7,6 +18,7 @@ export type SocietyDoc = {
   id: string;
   name: string;
   country: string;
+  joinCode?: string;
   createdAt?: unknown;
   createdBy?: string;
   homeCourseId?: string | null;
@@ -14,6 +26,7 @@ export type SocietyDoc = {
   scoringMode?: "Stableford" | "Strokeplay" | "Both";
   handicapRule?: "Allow WHS" | "Fixed HCP" | "No HCP";
   logoUrl?: string | null;
+  adminPin?: string;
   annualFee?: number;
   updatedAt?: unknown;
 };
@@ -29,11 +42,27 @@ type SocietyInput = {
   logoUrl?: string | null;
 };
 
+/**
+ * Generate a unique, human-friendly join code
+ * Format: 6 uppercase alphanumeric characters (no confusing chars like 0/O, 1/I/L)
+ */
+function generateJoinCode(): string {
+  const chars = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
+  let code = "";
+  for (let i = 0; i < 6; i++) {
+    code += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return code;
+}
+
 export async function createSociety(input: SocietyInput): Promise<SocietyDoc> {
+  const joinCode = generateJoinCode();
+
   const payload = stripUndefined({
     name: input.name,
     country: input.country,
     createdBy: input.createdBy,
+    joinCode,
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
     homeCourseId: input.homeCourseId ?? null,
@@ -44,7 +73,7 @@ export async function createSociety(input: SocietyInput): Promise<SocietyDoc> {
   });
 
   const ref = await addDoc(collection(db, "societies"), payload);
-  return { id: ref.id, ...payload };
+  return { id: ref.id, ...payload, joinCode };
 }
 
 export async function getSocietyDoc(id: string): Promise<SocietyDoc | null> {
@@ -85,4 +114,37 @@ export async function updateSocietyDoc(id: string, updates: Partial<SocietyDoc>)
     if (payload[k] === undefined) delete payload[k];
   }
   await updateDoc(ref, payload);
+}
+
+/**
+ * Find a society by its join code.
+ * Returns the society doc if found, null if not found.
+ */
+export async function findSocietyByJoinCode(joinCode: string): Promise<SocietyDoc | null> {
+  const normalizedCode = joinCode.trim().toUpperCase();
+  if (!normalizedCode || normalizedCode.length < 4) {
+    return null;
+  }
+
+  const q = query(
+    collection(db, "societies"),
+    where("joinCode", "==", normalizedCode)
+  );
+
+  const snap = await getDocs(q);
+  if (snap.empty) {
+    return null;
+  }
+
+  const docSnap = snap.docs[0];
+  return { id: docSnap.id, ...(docSnap.data() as Omit<SocietyDoc, "id">) };
+}
+
+/**
+ * Regenerate join code for a society (Captain only)
+ */
+export async function regenerateJoinCode(societyId: string): Promise<string> {
+  const newCode = generateJoinCode();
+  await updateSocietyDoc(societyId, { joinCode: newCode });
+  return newCode;
 }

@@ -8,6 +8,7 @@
 import { canManageCompetition, normalizeMemberRoles, normalizeSessionRole } from "@/lib/permissions";
 import { useBootstrap } from "@/lib/useBootstrap";
 import { subscribeMembersBySociety, updateMemberDoc, type MemberDoc } from "@/lib/db/memberRepo";
+import { isValidHandicap } from "@/lib/handicap";
 import { router } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
 import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
@@ -148,7 +149,7 @@ export default function HandicapsScreen() {
                   <Text style={styles.memberName}>{member.name}</Text>
                   {!isBulkEdit && (
                     <Text style={styles.memberHandicap}>
-                      HCP: {member.handicap !== undefined ? member.handicap : "Not set"}
+                      HCP: {isValidHandicap(member.handicap) ? member.handicap : "Not set"}
                     </Text>
                   )}
                 </View>

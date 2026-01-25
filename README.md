@@ -57,6 +57,12 @@ This app uses Expo web static export. Vercel should run the build and publish th
 2. Build command: `npm run build`
 3. Output directory: `dist`
 
+## Firestore rules
+
+The app writes event expenses to `events/{eventId}/expenses/{expenseId}`.
+See `firestore.rules` for the current signed-in access rules (tighten these
+for production as needed).
+
 ## Project Structure
 
 - `app/` - Main application screens and routing

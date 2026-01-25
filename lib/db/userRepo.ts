@@ -1,112 +1,141 @@
-import { doc, getDoc, onSnapshot, serverTimestamp, setDoc, updateDoc } from "firebase/firestore";
-
+// lib/db/userRepo.ts
 import { db } from "@/lib/firebase";
+import {
+  doc,
+  getDoc,
+  setDoc,
+  updateDoc,
+  onSnapshot,
+  serverTimestamp,
+  type Unsubscribe,
+} from "firebase/firestore";
 
+/**
+ * User document shape
+ */
 export type UserDoc = {
-  id: string;
+  uid: string;
   activeSocietyId: string | null;
   activeMemberId: string | null;
-  migratedFromAsyncStorageV1: boolean;
-  themeMode?: "light" | "dark";
+  createdAt?: unknown;
   updatedAt?: unknown;
 };
 
-type UserDocFields = Omit<UserDoc, "id">;
-
-const DEFAULT_USER: UserDocFields = {
-  activeSocietyId: null,
-  activeMemberId: null,
-  migratedFromAsyncStorageV1: false,
-};
-
-function normalizeUser(id: string, data?: Partial<UserDocFields>): UserDoc {
-  return {
-    id,
-    ...DEFAULT_USER,
-    ...data,
-    activeSocietyId: data?.activeSocietyId ?? null,
-    activeMemberId: data?.activeMemberId ?? null,
-    migratedFromAsyncStorageV1: data?.migratedFromAsyncStorageV1 ?? false,
-  };
-}
-
-export async function ensureUserDoc(uid: string): Promise<UserDoc> {
+/**
+ * Ensure users/{uid} exists
+ * Called during bootstrap
+ */
+export async function ensureUserDoc(uid: string): Promise<void> {
   const ref = doc(db, "users", uid);
   const snap = await getDoc(ref);
 
   if (!snap.exists()) {
-    await setDoc(ref, { ...DEFAULT_USER, updatedAt: serverTimestamp() });
-    return normalizeUser(uid);
-  }
-
-  const data = snap.data() as Partial<UserDocFields> | undefined;
-  const needsPatch =
-    data?.activeSocietyId === undefined ||
-    data?.activeMemberId === undefined ||
-    data?.migratedFromAsyncStorageV1 === undefined;
-
-  if (needsPatch) {
-    await updateDoc(ref, {
-      activeSocietyId: data?.activeSocietyId ?? null,
-      activeMemberId: data?.activeMemberId ?? null,
-      migratedFromAsyncStorageV1: data?.migratedFromAsyncStorageV1 ?? false,
+    await setDoc(ref, {
+      uid,
+      activeSocietyId: null,
+      activeMemberId: null,
+      createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
     });
   }
-
-  return normalizeUser(uid, data);
 }
 
-export async function getUserDoc(uid: string): Promise<UserDoc | null> {
-  const ref = doc(db, "users", uid);
-  const snap = await getDoc(ref);
-  if (!snap.exists()) {
-    return null;
-  }
-  return normalizeUser(uid, snap.data() as Partial<UserDocFields>);
-}
-
+/**
+ * ✅ REQUIRED for app load:
+ * Subscribe to users/{uid}
+ */
 export function subscribeUserDoc(
   uid: string,
-  onChange: (user: UserDoc | null) => void,
-  onError?: (error: Error) => void
-): () => void {
+  onNext: (user: UserDoc | null) => void,
+  onError?: (err: unknown) => void
+): Unsubscribe {
   const ref = doc(db, "users", uid);
+
   return onSnapshot(
     ref,
     (snap) => {
       if (!snap.exists()) {
-        onChange(null);
+        onNext(null);
         return;
       }
-      onChange(normalizeUser(uid, snap.data() as Partial<UserDocFields>));
+      onNext(snap.data() as UserDoc);
     },
-    (error) => {
-      if (onError) onError(error);
+    (err) => {
+      if (onError) onError(err);
+      else console.error("subscribeUserDoc error", err);
     }
   );
 }
 
-export async function updateUserDoc(uid: string, updates: Partial<UserDocFields>): Promise<void> {
+/**
+ * Safe upsert for user updates
+ * --------------------------------
+ * updateDoc FAILS if the doc does not exist.
+ * This guarantees writes always succeed.
+ */
+export async function updateUserDoc(
+  uid: string,
+  updates: Partial<UserDoc>
+): Promise<void> {
   const ref = doc(db, "users", uid);
-  const payload: Record<string, unknown> = { ...updates, updatedAt: serverTimestamp() };
-  for (const k of Object.keys(payload)) {
+
+  const payload: Record<string, unknown> = {
+    ...updates,
+    updatedAt: serverTimestamp(),
+  };
+
+  // Firestore rejects undefined
+  Object.keys(payload).forEach((k) => {
     if (payload[k] === undefined) delete payload[k];
+  });
+
+  try {
+    await updateDoc(ref, payload);
+  } catch {
+    await setDoc(
+      ref,
+      {
+        uid,
+        ...payload,
+        createdAt: serverTimestamp(),
+      },
+      { merge: true }
+    );
   }
-  await updateDoc(ref, payload);
 }
 
+/**
+ * Set active society + member
+ * Called after Create Society or Join Society
+ */
 export async function setActiveSocietyAndMember(
   uid: string,
-  activeSocietyId: string | null,
-  activeMemberId: string | null
+  societyId: string,
+  memberId: string
 ): Promise<void> {
   await updateUserDoc(uid, {
-    activeSocietyId,
-    activeMemberId,
+    activeSocietyId: societyId,
+    activeMemberId: memberId,
   });
 }
 
-export async function setActiveMember(uid: string, activeMemberId: string | null): Promise<void> {
-  await updateUserDoc(uid, { activeMemberId });
+/**
+ * Reset society (leave / reset flow)
+ */
+export async function clearActiveSociety(uid: string): Promise<void> {
+  await updateUserDoc(uid, {
+    activeSocietyId: null,
+    activeMemberId: null,
+  });
+}
+
+/**
+ * ✅ Convenience wrappers used by Settings reset flow
+ */
+export async function setActiveSociety(uid: string, societyId: string | null) {
+  await updateUserDoc(uid, { activeSocietyId: societyId ?? null });
+}
+
+export async function setActiveMember(uid: string, memberId: string | null) {
+  await updateUserDoc(uid, { activeMemberId: memberId ?? null });
 }

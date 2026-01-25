@@ -1,165 +1,150 @@
+// lib/rbac.ts
 /**
- * Centralized RBAC (Role-Based Access Control)
- * Single source of truth for all permissions
- * 
- * Inputs: session (current user), members list, optional society config
- * Output: Permissions object with boolean flags
+ * RBAC helpers for the Golf Society Hub
+ *
+ * This file centralizes what each role can do.
+ * IMPORTANT: Permissions are determined from the CURRENT logged-in member,
+ * not the "target" member being viewed/edited.
  */
 
-import { ensureSignedIn } from "@/lib/firebase";
-import { getUserDoc } from "@/lib/db/userRepo";
-import { getMemberDoc } from "@/lib/db/memberRepo";
-import { normalizeMemberRoles, type MemberRole, type SessionRole } from "./permissions";
+export type Role =
+  | "CAPTAIN"
+  | "TREASURER"
+  | "SECRETARY"
+  | "HANDICAPPER"
+  | "MEMBER";
 
 export type Permissions = {
-  canManageRoles: boolean;        // Captain only
-  canManageMembers: boolean;       // Captain or Treasurer
-  canManageEvents: boolean;        // Captain or Secretary
-  canManageTeeSheet: boolean;      // Captain or Handicapper
-  canManageHandicaps: boolean;     // Captain or Handicapper
-  canManageFinance: boolean;       // Captain or Treasurer
-  canEnterResults: boolean;         // Captain, Secretary, or Handicapper
-  canEditOwnProfile: boolean;       // All signed-in members
-  isCaptain: boolean;               // Is Captain
-  isTreasurer: boolean;             // Is Treasurer
-  isSecretary: boolean;             // Is Secretary
-  isHandicapper: boolean;           // Is Handicapper
+  // Society-level
+  canResetSociety: boolean;
+
+  // Members
+  canCreateMembers: boolean;
+  canEditMembers: boolean;
+  canDeleteMembers: boolean;
+  canEditOwnProfile: boolean;
+
+  // Roles
+  canManageRoles: boolean;
+
+  // Events / tee sheets
+  canCreateEvents: boolean;
+  canEditEvents: boolean;
+  canDeleteEvents: boolean;
+  canUploadTeeSheet: boolean;
+
+  // Finance / P&L
+  canAccessFinance: boolean;
+  canManageMembershipFees: boolean;
+  canManageEventPayments: boolean;
+  canManageEventExpenses: boolean;
+
+  // Handicaps
+  canManageHandicaps: boolean;
 };
 
-function sessionRoleFromRoles(roles: MemberRole[]): SessionRole {
-  if (roles.includes("Captain")) {
-    return "ADMIN";
-  }
-  return "MEMBER";
-}
+export type MemberLike = {
+  id: string;
+  uid?: string;
+  roles?: Role[];
+};
+
+const normalizeRoles = (roles?: Role[]) => {
+  const r = Array.isArray(roles) ? roles : [];
+  return r.length ? r : (["MEMBER"] as Role[]);
+};
+
+export const hasRole = (member: MemberLike | null | undefined, role: Role) => {
+  const roles = normalizeRoles(member?.roles);
+  return roles.includes(role);
+};
+
+export const isCaptain = (member: MemberLike | null | undefined) =>
+  hasRole(member, "CAPTAIN");
+
+export const isTreasurer = (member: MemberLike | null | undefined) =>
+  hasRole(member, "TREASURER");
+
+export const isSecretary = (member: MemberLike | null | undefined) =>
+  hasRole(member, "SECRETARY");
+
+export const isHandicapper = (member: MemberLike | null | undefined) =>
+  hasRole(member, "HANDICAPPER");
+
+export const isManCo = (member: MemberLike | null | undefined) => {
+  const roles = normalizeRoles(member?.roles);
+  return roles.some((r) =>
+    ["CAPTAIN", "TREASURER", "SECRETARY", "HANDICAPPER"].includes(r)
+  );
+};
 
 /**
- * Get current user's permissions
- * Returns all false if not loaded yet (safe default)
+ * Compute permissions for the CURRENT logged-in member.
+ * (Previously this was accidentally derived from the "target member" and also
+ * referenced a non-existent `session` object.)
  */
-export async function getPermissions(): Promise<Permissions> {
-  try {
-    const uid = await ensureSignedIn();
-    const user = await getUserDoc(uid);
-    if (!user?.activeMemberId) {
-      return getDefaultPermissions();
-    }
+export const getPermissionsForMember = (
+  currentMember: MemberLike | null | undefined
+): Permissions => {
+  const captain = isCaptain(currentMember);
+  const treasurer = isTreasurer(currentMember);
+  const secretary = isSecretary(currentMember);
+  const handicapper = isHandicapper(currentMember);
+  const manco = isManCo(currentMember);
 
-    const member = await getMemberDoc(user.activeMemberId);
-    if (!member) {
-      return getDefaultPermissions();
-    }
-
-    const roles = normalizeMemberRoles(member.roles);
-    const sessionRole = sessionRoleFromRoles(roles);
-
-    return {
-      canManageRoles: sessionRole === "ADMIN" || roles.includes("Captain"),
-      canManageMembers: sessionRole === "ADMIN" || roles.includes("Captain") || roles.includes("Treasurer"),
-      canManageEvents: sessionRole === "ADMIN" || roles.includes("Captain") || roles.includes("Secretary"),
-      canManageTeeSheet: sessionRole === "ADMIN" || roles.includes("Captain") || roles.includes("Handicapper"),
-      canManageHandicaps: sessionRole === "ADMIN" || roles.includes("Captain") || roles.includes("Handicapper"),
-      canManageFinance: sessionRole === "ADMIN" || roles.includes("Captain") || roles.includes("Treasurer"),
-      canEnterResults: sessionRole === "ADMIN" || roles.includes("Captain") || roles.includes("Secretary") || roles.includes("Handicapper"),
-      canEditOwnProfile: true, // All signed-in members can edit their own profile
-      isCaptain: sessionRole === "ADMIN" || roles.includes("Captain"),
-      isTreasurer: roles.includes("Treasurer"),
-      isSecretary: roles.includes("Secretary"),
-      isHandicapper: roles.includes("Handicapper"),
-    };
-  } catch (error) {
-    console.error("[RBAC] Error getting permissions:", error);
-    return getDefaultPermissions();
-  }
-}
-
-/**
- * Get permissions for a specific member (for checking if user can edit another member)
- */
-export async function getPermissionsForMember(memberId: string): Promise<Permissions> {
-  try {
-    const uid = await ensureSignedIn();
-    const user = await getUserDoc(uid);
-    if (!user?.activeMemberId) {
-      return getDefaultPermissions();
-    }
-
-    const currentMember = await getMemberDoc(user.activeMemberId);
-    if (!currentMember) {
-      return getDefaultPermissions();
-    }
-
-    const targetMember = await getMemberDoc(memberId);
-    if (!targetMember) {
-      return getDefaultPermissions();
-    }
-
-    const sessionRole = sessionRoleFromRoles(normalizeMemberRoles(currentMember.roles));
-    const roles = normalizeMemberRoles(targetMember.roles);
-
-    return {
-      canManageRoles: sessionRole === "ADMIN" || roles.includes("Captain"),
-      canManageMembers: sessionRole === "ADMIN" || roles.includes("Captain") || roles.includes("Treasurer"),
-      canManageEvents: sessionRole === "ADMIN" || roles.includes("Captain") || roles.includes("Secretary"),
-      canManageTeeSheet: sessionRole === "ADMIN" || roles.includes("Captain") || roles.includes("Handicapper"),
-      canManageHandicaps: sessionRole === "ADMIN" || roles.includes("Captain") || roles.includes("Handicapper"),
-      canManageFinance: sessionRole === "ADMIN" || roles.includes("Captain") || roles.includes("Treasurer"),
-      canEnterResults: sessionRole === "ADMIN" || roles.includes("Captain") || roles.includes("Secretary") || roles.includes("Handicapper"),
-      canEditOwnProfile: session.currentUserId === memberId, // Can only edit own profile
-      isCaptain: sessionRole === "ADMIN" || roles.includes("Captain"),
-      isTreasurer: roles.includes("Treasurer"),
-      isSecretary: roles.includes("Secretary"),
-      isHandicapper: roles.includes("Handicapper"),
-    };
-  } catch (error) {
-    console.error("[RBAC] Error getting permissions for member:", error);
-    return getDefaultPermissions();
-  }
-}
-
-/**
- * Check if current user can edit a specific member
- */
-export async function canEditMember(targetMemberId: string): Promise<boolean> {
-  const uid = await ensureSignedIn();
-  const user = await getUserDoc(uid);
-  if (!user?.activeMemberId) return false;
-
-  // Can edit own profile
-  if (user.activeMemberId === targetMemberId) return true;
-  
-  // Can edit others if has canManageMembers permission
-  const permissions = await getPermissions();
-  return permissions.canManageMembers;
-}
-
-function getDefaultPermissions(): Permissions {
   return {
-    canManageRoles: false,
-    canManageMembers: false,
-    canManageEvents: false,
-    canManageTeeSheet: false,
-    canManageHandicaps: false,
-    canManageFinance: false,
-    canEnterResults: false,
-    canEditOwnProfile: false,
-    isCaptain: false,
-    isTreasurer: false,
-    isSecretary: false,
-    isHandicapper: false,
+    // Society-level
+    canResetSociety: captain || treasurer,
+
+    // Members
+    canCreateMembers: captain || treasurer,
+    canEditMembers: captain || treasurer,
+    canDeleteMembers: captain || treasurer,
+    canEditOwnProfile: true,
+
+    // Roles
+    canManageRoles: captain,
+
+    // Events / tee sheets
+    canCreateEvents: captain || secretary || handicapper,
+    canEditEvents: captain || secretary || handicapper,
+    canDeleteEvents: captain,
+    canUploadTeeSheet: captain || handicapper,
+
+    // Finance / P&L
+    canAccessFinance: captain || treasurer,
+    canManageMembershipFees: captain || treasurer,
+    canManageEventPayments: captain || treasurer,
+    canManageEventExpenses: captain || treasurer,
+
+    // Handicaps
+    canManageHandicaps: captain || handicapper,
   };
-}
+};
 
+/**
+ * Convenience helpers (keep call-sites readable)
+ */
+export const can = {
+  resetSociety: (currentMember: MemberLike | null | undefined) =>
+    getPermissionsForMember(currentMember).canResetSociety,
 
+  manageRoles: (currentMember: MemberLike | null | undefined) =>
+    getPermissionsForMember(currentMember).canManageRoles,
 
+  manageMembers: (currentMember: MemberLike | null | undefined) => {
+    const p = getPermissionsForMember(currentMember);
+    return p.canCreateMembers || p.canEditMembers || p.canDeleteMembers;
+  },
 
+  accessFinance: (currentMember: MemberLike | null | undefined) =>
+    getPermissionsForMember(currentMember).canAccessFinance,
 
+  manageEventPnl: (currentMember: MemberLike | null | undefined) => {
+    const p = getPermissionsForMember(currentMember);
+    return p.canManageEventPayments || p.canManageEventExpenses;
+  },
 
-
-
-
-
-
-
-
-
+  manageHandicaps: (currentMember: MemberLike | null | undefined) =>
+    getPermissionsForMember(currentMember).canManageHandicaps,
+};

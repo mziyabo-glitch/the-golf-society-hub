@@ -1,30 +1,59 @@
-import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
-import { Stack } from 'expo-router';
-import { StatusBar } from 'expo-status-bar';
-import 'react-native-reanimated';
-import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { useEffect } from "react";
+import { Stack, useRouter, useSegments } from "expo-router";
+import { View } from "react-native";
+import { BootstrapProvider, useBootstrap } from "@/lib/useBootstrap";
+import { LoadingState } from "@/components/ui/LoadingState";
+import { AppCard } from "@/components/ui/AppCard";
+import { AppText } from "@/components/ui/AppText";
+import { PrimaryButton } from "@/components/ui/Button";
+import { getColors, spacing } from "@/lib/ui/theme";
 
-import { useColorScheme } from '@/hooks/use-color-scheme';
-import { BootstrapProvider } from '@/lib/useBootstrap';
+function RootNavigator() {
+  const { loading, error, societyId, refresh } = useBootstrap();
+  const segments = useSegments();
+  const router = useRouter();
+  const colors = getColors();
 
-export const unstable_settings = {
-  anchor: '(tabs)',
-};
+  useEffect(() => {
+    if (loading) return;
+
+    const inOnboarding = segments[0] === "onboarding";
+    const hasSociety = !!societyId;
+
+    if (!hasSociety && !inOnboarding) {
+      router.replace("/onboarding");
+    } else if (hasSociety && inOnboarding) {
+      router.replace("/(app)/(tabs)");
+    }
+  }, [loading, societyId, segments, router]);
+
+  if (loading) {
+    return (
+      <View style={{ flex: 1, justifyContent: "center", alignItems: "center", backgroundColor: colors.background }}>
+        <LoadingState message="Loading your golf society..." />
+      </View>
+    );
+  }
+
+  if (error) {
+    return (
+      <View style={{ flex: 1, justifyContent: "center", alignItems: "center", backgroundColor: colors.background, padding: spacing.lg }}>
+        <AppCard>
+          <AppText variant="h2" style={{ marginBottom: spacing.sm }}>Something went wrong</AppText>
+          <AppText variant="body" color="secondary" style={{ marginBottom: spacing.lg }}>{error}</AppText>
+          <PrimaryButton onPress={refresh}>Try Again</PrimaryButton>
+        </AppCard>
+      </View>
+    );
+  }
+
+  return <Stack screenOptions={{ headerShown: false }} />;
+}
 
 export default function RootLayout() {
-  const colorScheme = useColorScheme();
-
   return (
-    <SafeAreaProvider>
-      <BootstrapProvider>
-        <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
-          <Stack>
-            <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-            <Stack.Screen name="modal" options={{ presentation: 'modal', title: 'Modal' }} />
-          </Stack>
-          <StatusBar style="auto" />
-        </ThemeProvider>
-      </BootstrapProvider>
-    </SafeAreaProvider>
+    <BootstrapProvider>
+      <RootNavigator />
+    </BootstrapProvider>
   );
 }

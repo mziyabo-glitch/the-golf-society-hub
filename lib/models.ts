@@ -30,7 +30,7 @@ export type MemberData = {
   id: string;
   societyId?: string;
   name: string;
-  handicap?: number;
+  handicap?: number | null;
   sex?: "male" | "female";
   roles?: string[];
   status?: string;
@@ -54,13 +54,13 @@ export type EventData = {
   name: string;
   status?: string;
   date: string;
-  courseName: string; // Legacy field, kept for backward compatibility
+  courseName?: string; // Legacy field, kept for backward compatibility
   courseId?: string;
   maleTeeSetId?: string;
   femaleTeeSetId?: string;
   handicapAllowance?: 0.9 | 1.0;
   handicapAllowancePct?: number;
-  format: "Stableford" | "Strokeplay" | "Both";
+  format?: "Stableford" | "Strokeplay" | "Both";
   playerIds?: string[];
   teeSheet?: {
     startTimeISO: string;

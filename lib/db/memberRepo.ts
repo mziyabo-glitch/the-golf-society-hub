@@ -1,3 +1,5 @@
+// lib/db/memberRepo.ts
+import { db } from "@/lib/firebase";
 import {
   addDoc,
   collection,
@@ -6,116 +8,189 @@ import {
   getDoc,
   getDocs,
   onSnapshot,
+  orderBy,
   query,
   serverTimestamp,
+  setDoc,
   updateDoc,
   where,
+  type Unsubscribe,
 } from "firebase/firestore";
-
-import { db } from "@/lib/firebase";
-import { stripUndefined } from "@/lib/db/sanitize";
 
 export type MemberDoc = {
   id: string;
   societyId: string;
-  name: string;
-  handicap?: number | null;
-  sex?: "male" | "female";
-  roles?: string[];
-  status?: string;
+
+  displayName?: string;
+  name?: string;
+  email?: string;
+
+  roles?: string[]; // e.g. ["captain","treasurer"]
+  createdAt?: any;
+  updatedAt?: any;
+
+  // Treasurer MVP
   paid?: boolean;
   amountPaid?: number;
-  paidDate?: string;
+  paidDate?: string | null;
 };
 
-type MemberInput = Omit<MemberDoc, "id">;
+function stripUndefined<T extends Record<string, any>>(obj: T) {
+  const out: Record<string, any> = { ...obj };
+  for (const k of Object.keys(out)) {
+    if (out[k] === undefined) delete out[k];
+  }
+  return out as T;
+}
 
-export async function createMember(input: MemberInput): Promise<MemberDoc> {
+export function memberRef(memberId: string) {
+  return doc(db, "members", memberId);
+}
+
+/**
+ * ✅ Used by create-society / add-member flows
+ * Creates a new member in top-level "members" collection and returns the new memberId.
+ *
+ * IMPORTANT: data is optional because some callers pass nothing.
+ */
+export async function createMember(
+  societyId: string,
+  data?: Partial<Omit<MemberDoc, "id" | "societyId">> & {
+    displayName?: string;
+    name?: string;
+    roles?: string[];
+  }
+): Promise<string> {
+  if (!societyId) throw new Error("createMember: missing societyId");
+
+  const safe = data ?? {};
+
+  const roles =
+    Array.isArray(safe.roles) && safe.roles.length > 0 ? safe.roles : ["member"];
+
   const payload = stripUndefined({
-    societyId: input.societyId,
-    name: input.name,
-    handicap: input.handicap ?? null,
-    sex: input.sex,
-    roles: input.roles ?? ["member"],
-    status: input.status ?? "active",
-    paid: input.paid,
-    amountPaid: input.amountPaid,
-    paidDate: input.paidDate,
+    societyId,
+    displayName: safe.displayName ?? safe.name ?? "Member",
+    name: safe.name,
+    email: safe.email,
+    roles,
+    paid: safe.paid ?? false,
+    amountPaid: safe.amountPaid ?? 0,
+    paidDate: safe.paidDate ?? null,
+    createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
   });
 
   const ref = await addDoc(collection(db, "members"), payload);
-  return { id: ref.id, ...payload };
+  return ref.id;
 }
 
-export async function getMemberDoc(id: string): Promise<MemberDoc | null> {
-  const ref = doc(db, "members", id);
-  const snap = await getDoc(ref);
-  if (!snap.exists()) {
-    return null;
-  }
-  return { id: snap.id, ...(snap.data() as Omit<MemberDoc, "id">) };
-}
-
+/**
+ * Subscribe a single member doc by ID (used by bootstrap).
+ */
 export function subscribeMemberDoc(
-  id: string,
-  onChange: (member: MemberDoc | null) => void,
-  onError?: (error: Error) => void
-): () => void {
-  const ref = doc(db, "members", id);
+  memberId: string,
+  onNext: (doc: MemberDoc | null) => void,
+  onError?: (err: any) => void
+): Unsubscribe {
+  const ref = memberRef(memberId);
+
   return onSnapshot(
     ref,
     (snap) => {
       if (!snap.exists()) {
-        onChange(null);
+        onNext(null);
         return;
       }
-      onChange({ id: snap.id, ...(snap.data() as Omit<MemberDoc, "id">) });
+      onNext({ id: snap.id, ...(snap.data() as any) });
     },
-    (error) => {
-      if (onError) onError(error);
+    (err) => {
+      if (onError) onError(err);
+      else console.error("subscribeMemberDoc error", err);
     }
   );
 }
 
-export async function updateMemberDoc(id: string, updates: Partial<MemberDoc>): Promise<void> {
-  const ref = doc(db, "members", id);
-  const payload: Record<string, unknown> = { ...updates, updatedAt: serverTimestamp() };
-  delete payload.id;
-  for (const k of Object.keys(payload)) {
-    if (payload[k] === undefined) delete payload[k];
-  }
-  await updateDoc(ref, payload);
-}
-
-export async function deleteMemberDoc(id: string): Promise<void> {
-  await deleteDoc(doc(db, "members", id));
-}
-
-export async function listMembersBySociety(societyId: string): Promise<MemberDoc[]> {
-  const q = query(collection(db, "members"), where("societyId", "==", societyId));
-  const snap = await getDocs(q);
-  const items = snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<MemberDoc, "id">) }));
-  return items.sort((a, b) => a.name.localeCompare(b.name));
-}
-
+/**
+ * Subscribe members for a society (efficient with where()).
+ */
 export function subscribeMembersBySociety(
   societyId: string,
-  onChange: (members: MemberDoc[]) => void,
-  onError?: (error: Error) => void
-): () => void {
-  const q = query(collection(db, "members"), where("societyId", "==", societyId));
+  onNext: (docs: MemberDoc[]) => void,
+  onError?: (err: any) => void
+): Unsubscribe {
+  const q = query(
+    collection(db, "members"),
+    where("societyId", "==", societyId),
+    orderBy("createdAt", "desc")
+  );
+
   return onSnapshot(
     q,
     (snap) => {
-      const items = snap.docs.map((d) => ({
+      const rows: MemberDoc[] = snap.docs.map((d) => ({
         id: d.id,
-        ...(d.data() as Omit<MemberDoc, "id">),
+        ...(d.data() as any),
       }));
-      onChange(items.sort((a, b) => a.name.localeCompare(b.name)));
+      onNext(rows);
     },
-    (error) => {
-      if (onError) onError(error);
+    (err) => {
+      if (onError) onError(err);
+      else console.error("subscribeMembersBySociety error", err);
     }
   );
+}
+
+/**
+ * One-shot fetch.
+ */
+export async function getMembersBySocietyId(societyId: string): Promise<MemberDoc[]> {
+  const q = query(
+    collection(db, "members"),
+    where("societyId", "==", societyId),
+    orderBy("createdAt", "desc")
+  );
+
+  const snap = await getDocs(q);
+  return snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }));
+}
+
+/**
+ * Update member document safely.
+ */
+export async function updateMemberDoc(
+  societyId: string,
+  memberId: string,
+  updates: Partial<Omit<MemberDoc, "id">>
+) {
+  const ref = memberRef(memberId);
+
+  const payload = stripUndefined({
+    ...updates,
+    societyId,
+    updatedAt: serverTimestamp(),
+  } as any);
+
+  try {
+    await updateDoc(ref, payload);
+  } catch {
+    await setDoc(ref, payload, { merge: true });
+  }
+}
+
+/**
+ * ✅ Captain/Treasurer can remove a member.
+ */
+export async function deleteMember(memberId: string) {
+  if (!memberId) throw new Error("deleteMember: missing memberId");
+  await deleteDoc(memberRef(memberId));
+}
+
+/**
+ * Helper: read a member.
+ */
+export async function getMember(memberId: string): Promise<MemberDoc | null> {
+  const snap = await getDoc(memberRef(memberId));
+  if (!snap.exists()) return null;
+  return { id: snap.id, ...(snap.data() as any) };
 }
