@@ -1,15 +1,16 @@
-// app/(app)/(tabs)/_layout.tsx
-import { Tabs } from "expo-router";
+﻿import { Tabs } from "expo-router";
 
 export default function TabsLayout() {
   return (
     <Tabs screenOptions={{ headerShown: false }}>
-      <Tabs.Screen name="index" />
-      <Tabs.Screen name="event" />
-      <Tabs.Screen name="members" />
-      <Tabs.Screen name="leaderboard" />
-      <Tabs.Screen name="profile" />
-      <Tabs.Screen name="settings" />
+      <Tabs.Screen name="index" options={{ title: "Home" }} />
+      <Tabs.Screen name="event" options={{ title: "Event" }} />
+      <Tabs.Screen name="members" options={{ title: "Members" }} />
+      <Tabs.Screen name="leaderboard" options={{ title: "Leaderboard" }} />
+      <Tabs.Screen name="history" options={{ title: "History" }} />
+      <Tabs.Screen name="explore" options={{ title: "Explore" }} />
+      <Tabs.Screen name="settings" options={{ title: "Settings" }} />
+      <Tabs.Screen name="profile" options={{ title: "Profile" }} />
     </Tabs>
   );
 }

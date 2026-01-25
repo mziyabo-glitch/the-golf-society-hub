@@ -1,4 +1,4 @@
-import { View, StyleSheet } from "react-native";
+﻿import { View, StyleSheet } from "react-native";
 import { Screen } from "@/components/ui/Screen";
 import { AppText } from "@/components/ui/AppText";
 import { SecondaryButton } from "@/components/ui/Button";
@@ -10,8 +10,8 @@ export default function EventTabScreen() {
   return (
     <Screen>
       <View style={styles.container}>
-        <AppText variant="title">Event</AppText>
-        <AppText>This is the Event tab. Pick an event.</AppText>
+        <AppText variant="title">Events</AppText>
+        <AppText>Select or create an event</AppText>
 
         <SecondaryButton onPress={() => router.push("/(app)/create-event")}>
           Create Event
@@ -22,5 +22,8 @@ export default function EventTabScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { padding: 16, gap: 12 },
+  container: {
+    padding: 16,
+    gap: 12,
+  },
 });

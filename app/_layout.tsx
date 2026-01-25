@@ -1,4 +1,4 @@
-// app/_layout.tsx
+﻿// app/_layout.tsx
 import { Stack } from "expo-router";
 import { useMemo } from "react";
 import { StyleSheet, View } from "react-native";
@@ -7,18 +7,13 @@ import { AppText } from "@/components/ui/AppText";
 import { Screen } from "@/components/ui/Screen";
 import { firebaseEnvMissingKeys, firebaseEnvReady } from "@/lib/firebase";
 
-// Helpful default for web boot
-export const unstable_settings = {
-  initialRouteName: "(app)",
-};
-
 export default function RootLayout() {
   const bootError = useMemo(() => {
     if (firebaseEnvReady) return null;
     return "Missing environment variables:\n" + firebaseEnvMissingKeys.join("\n");
   }, []);
 
-  // If env vars missing, show friendly screen (prevents blank deploy)
+  // If env missing, show a friendly screen instead of a silent blank deploy.
   if (!firebaseEnvReady) {
     return (
       <Screen>
@@ -35,9 +30,8 @@ export default function RootLayout() {
           <View style={{ height: 12 }} />
 
           <AppText style={styles.body}>
-            Fix this in Vercel → Project → Settings → Environment Variables.
-            Ensure the variables exist for the environment you’re deploying
-            (Preview AND Production if you use both).
+            Fix this in Vercel → Project → Settings → Environment Variables. Ensure the
+            variables exist for the environment you’re deploying (Preview AND Production).
           </AppText>
 
           <View style={{ height: 12 }} />
@@ -56,23 +50,21 @@ export default function RootLayout() {
     );
   }
 
+  // IMPORTANT:
+  // Your actual app lives under the route group: app/(app)/...
+  // We mount that group as the main stack entry.
   return (
     <Stack screenOptions={{ headerShown: false }}>
-      {/* App area */}
       <Stack.Screen name="(app)" />
 
-      {/* Auth / joins */}
+      {/* Standalone screens outside (app) */}
       <Stack.Screen name="join" />
       <Stack.Screen name="join-society" />
       <Stack.Screen name="create-society" />
-
-      {/* Flows */}
       <Stack.Screen name="create-event" />
       <Stack.Screen name="add-member" />
       <Stack.Screen name="finance" />
       <Stack.Screen name="finance-events" />
-
-      {/* This should exist as a folder route like: app/event/[id]/index.tsx */}
       <Stack.Screen name="event" />
 
       <Stack.Screen name="modal" options={{ presentation: "modal" }} />
