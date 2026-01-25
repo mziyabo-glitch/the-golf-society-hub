@@ -1,26 +1,31 @@
 import { useEffect, useState } from "react";
-import { StyleSheet, View, Pressable } from "react-native";
+import { StyleSheet, View, Pressable, Alert } from "react-native";
 import { useRouter } from "expo-router";
 import { Feather } from "@expo/vector-icons";
 
 import { Screen } from "@/components/ui/Screen";
 import { AppText } from "@/components/ui/AppText";
 import { AppCard } from "@/components/ui/AppCard";
-import { PrimaryButton } from "@/components/ui/Button";
+import { AppInput } from "@/components/ui/AppInput";
+import { PrimaryButton, SecondaryButton } from "@/components/ui/Button";
 import { LoadingState } from "@/components/ui/LoadingState";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { useBootstrap } from "@/lib/useBootstrap";
-import { subscribeEventsBySociety, type EventDoc } from "@/lib/db/eventRepo";
+import { subscribeEventsBySociety, createEvent, type EventDoc } from "@/lib/db/eventRepo";
 import { getPermissionsForMember } from "@/lib/rbac";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
 
 export default function EventsScreen() {
   const router = useRouter();
-  const { societyId, member, loading: bootstrapLoading } = useBootstrap();
+  const { societyId, member, user, loading: bootstrapLoading } = useBootstrap();
   const colors = getColors();
 
   const [events, setEvents] = useState<EventDoc[]>([]);
   const [loading, setLoading] = useState(true);
+  const [showCreateForm, setShowCreateForm] = useState(false);
+  const [formName, setFormName] = useState("");
+  const [formDate, setFormDate] = useState("");
+  const [submitting, setSubmitting] = useState(false);
 
   const permissions = getPermissionsForMember(member as any);
 
@@ -45,12 +50,97 @@ export default function EventsScreen() {
     return unsub;
   }, [societyId]);
 
+  const handleCreateEvent = async () => {
+    if (!formName.trim()) {
+      Alert.alert("Missing Name", "Please enter an event name.");
+      return;
+    }
+    if (!formDate.trim()) {
+      Alert.alert("Missing Date", "Please enter a date (YYYY-MM-DD).");
+      return;
+    }
+    if (!societyId || !user?.uid) {
+      Alert.alert("Error", "Not signed in or no society selected.");
+      return;
+    }
+
+    // Validate date format
+    const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+    if (!dateRegex.test(formDate.trim())) {
+      Alert.alert("Invalid Date", "Please enter date in YYYY-MM-DD format.");
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      await createEvent(societyId, {
+        name: formName.trim(),
+        date: formDate.trim(),
+        createdBy: user.uid,
+      });
+      setFormName("");
+      setFormDate("");
+      setShowCreateForm(false);
+    } catch (e: any) {
+      console.error("Create event error:", e);
+      Alert.alert("Error", e?.message || "Failed to create event.");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   if (bootstrapLoading || loading) {
     return (
       <Screen scrollable={false}>
         <View style={styles.centered}>
           <LoadingState message="Loading events..." />
         </View>
+      </Screen>
+    );
+  }
+
+  // Create form view
+  if (showCreateForm) {
+    return (
+      <Screen>
+        <View style={styles.formHeader}>
+          <SecondaryButton onPress={() => setShowCreateForm(false)} size="sm">
+            Cancel
+          </SecondaryButton>
+          <AppText variant="h2">Create Event</AppText>
+          <View style={{ width: 60 }} />
+        </View>
+
+        <AppCard>
+          <View style={styles.formField}>
+            <AppText variant="captionBold" style={styles.label}>Event Name</AppText>
+            <AppInput
+              placeholder="e.g. Monthly Medal"
+              value={formName}
+              onChangeText={setFormName}
+              autoCapitalize="words"
+            />
+          </View>
+
+          <View style={styles.formField}>
+            <AppText variant="captionBold" style={styles.label}>Date (YYYY-MM-DD)</AppText>
+            <AppInput
+              placeholder="e.g. 2025-02-15"
+              value={formDate}
+              onChangeText={setFormDate}
+              keyboardType="numbers-and-punctuation"
+              autoCapitalize="none"
+            />
+          </View>
+
+          <PrimaryButton
+            onPress={handleCreateEvent}
+            loading={submitting}
+            style={{ marginTop: spacing.sm }}
+          >
+            Create Event
+          </PrimaryButton>
+        </AppCard>
       </Screen>
     );
   }
@@ -78,7 +168,6 @@ export default function EventsScreen() {
     >
       <AppCard style={styles.eventCard}>
         <View style={styles.eventRow}>
-          {/* Date badge */}
           <View style={[styles.dateBadge, { backgroundColor: colors.backgroundTertiary }]}>
             {event.date ? (
               <>
@@ -94,7 +183,6 @@ export default function EventsScreen() {
             )}
           </View>
 
-          {/* Event info */}
           <View style={styles.eventInfo}>
             <AppText variant="bodyBold" numberOfLines={1}>{event.name}</AppText>
             {event.courseName && (
@@ -128,7 +216,6 @@ export default function EventsScreen() {
 
   return (
     <Screen>
-      {/* Header */}
       <View style={styles.header}>
         <View>
           <AppText variant="title">Events</AppText>
@@ -137,11 +224,8 @@ export default function EventsScreen() {
           </AppText>
         </View>
         {permissions.canCreateEvents && (
-          <PrimaryButton
-            onPress={() => router.push("/(app)/event/")}
-            size="sm"
-          >
-            New Event
+          <PrimaryButton onPress={() => setShowCreateForm(true)} size="sm">
+            Create Event
           </PrimaryButton>
         )}
       </View>
@@ -153,12 +237,11 @@ export default function EventsScreen() {
           message="Create your first event to start tracking results and scores."
           action={permissions.canCreateEvents ? {
             label: "Create Event",
-            onPress: () => router.push("/(app)/event/"),
+            onPress: () => setShowCreateForm(true),
           } : undefined}
         />
       ) : (
         <>
-          {/* Upcoming Events */}
           {upcomingEvents.length > 0 && (
             <View style={styles.section}>
               <AppText variant="h2" style={styles.sectionTitle}>
@@ -168,7 +251,6 @@ export default function EventsScreen() {
             </View>
           )}
 
-          {/* Completed Events */}
           {completedEvents.length > 0 && (
             <View style={styles.section}>
               <AppText variant="h2" style={styles.sectionTitle}>
@@ -237,5 +319,17 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.xs,
     paddingVertical: 2,
     borderRadius: radius.sm,
+  },
+  formHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: spacing.lg,
+  },
+  formField: {
+    marginBottom: spacing.base,
+  },
+  label: {
+    marginBottom: spacing.xs,
   },
 });
