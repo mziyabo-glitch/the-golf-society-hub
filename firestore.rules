@@ -2,38 +2,174 @@ rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // HELPER FUNCTIONS
+    // ══════════════════════════════════════════════════════════════════════════
+
     function isSignedIn() {
       return request.auth != null;
     }
 
-    // Core collections used by the app
+    // Get the current user's document
+    function getUserDoc() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    // Get a member document by ID
+    function getMemberDoc(memberId) {
+      return get(/databases/$(database)/documents/members/$(memberId)).data;
+    }
+
+    // Check if user is a member of the given society
+    function isMemberOfSociety(societyId) {
+      return isSignedIn() && getUserDoc().activeSocietyId == societyId;
+    }
+
+    // Get the current user's roles for their active society
+    function getCurrentMemberRoles() {
+      let userDoc = getUserDoc();
+      let memberDoc = getMemberDoc(userDoc.activeMemberId);
+      return memberDoc.roles;
+    }
+
+    // Check if current user has a specific role (case-insensitive via lowercase check)
+    function hasRole(role) {
+      let roles = getCurrentMemberRoles();
+      return role in roles || role.lower() in roles;
+    }
+
+    // Role checks
+    function isCaptain() {
+      let roles = getCurrentMemberRoles();
+      return 'captain' in roles || 'CAPTAIN' in roles || 'Captain' in roles;
+    }
+
+    function isSecretary() {
+      let roles = getCurrentMemberRoles();
+      return 'secretary' in roles || 'SECRETARY' in roles || 'Secretary' in roles;
+    }
+
+    function isTreasurer() {
+      let roles = getCurrentMemberRoles();
+      return 'treasurer' in roles || 'TREASURER' in roles || 'Treasurer' in roles;
+    }
+
+    function isHandicapper() {
+      let roles = getCurrentMemberRoles();
+      return 'handicapper' in roles || 'HANDICAPPER' in roles || 'Handicapper' in roles;
+    }
+
+    // Management Committee (ManCo) - can manage events
+    function canManageEvents() {
+      return isCaptain() || isSecretary() || isHandicapper();
+    }
+
+    // Can manage event finances
+    function canManageEventFinances() {
+      return isCaptain() || isTreasurer();
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // USERS COLLECTION
+    // ══════════════════════════════════════════════════════════════════════════
+    match /users/{userId} {
+      // Users can only read/write their own document
+      allow read, write: if isSignedIn() && request.auth.uid == userId;
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // SOCIETIES COLLECTION
+    // ══════════════════════════════════════════════════════════════════════════
     match /societies/{societyId} {
-      allow read, write: if isSignedIn();
+      // Any signed-in user can read societies (needed for join code lookup)
+      allow read: if isSignedIn();
+
+      // Only members of the society can update it
+      allow update: if isMemberOfSociety(societyId) && isCaptain();
+
+      // Any signed-in user can create a society (they become captain)
+      allow create: if isSignedIn();
+
+      // Only captain can delete society
+      allow delete: if isMemberOfSociety(societyId) && isCaptain();
     }
 
+    // ══════════════════════════════════════════════════════════════════════════
+    // MEMBERS COLLECTION
+    // ══════════════════════════════════════════════════════════════════════════
     match /members/{memberId} {
-      allow read, write: if isSignedIn();
+      // Members of the same society can read member docs
+      allow read: if isSignedIn() && isMemberOfSociety(resource.data.societyId);
+
+      // Anyone signed in can create a member (for joining a society)
+      allow create: if isSignedIn();
+
+      // Update rules - protect the roles field
+      allow update: if isSignedIn() && isMemberOfSociety(resource.data.societyId) && (
+        // Captain can update anything including roles
+        isCaptain() ||
+        // Non-captains can update, but NOT the roles field
+        (
+          (isTreasurer() || isSecretary()) &&
+          (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['roles']))
+        )
+      );
+
+      // Only captain can delete members
+      allow delete: if isSignedIn() && isMemberOfSociety(resource.data.societyId) && isCaptain();
     }
 
+    // ══════════════════════════════════════════════════════════════════════════
+    // EVENTS COLLECTION
+    // ══════════════════════════════════════════════════════════════════════════
     match /events/{eventId} {
-      allow read, write: if isSignedIn();
+      // Members of the society can read events
+      allow read: if isSignedIn() && isMemberOfSociety(resource.data.societyId);
 
-      // Treasurer Event Manager expenses
+      // Captain, Secretary, or Handicapper can create events
+      allow create: if isSignedIn() && isMemberOfSociety(request.resource.data.societyId) && canManageEvents();
+
+      // Captain, Secretary, Handicapper can update events
+      // Treasurer can update payment-related fields
+      allow update: if isSignedIn() && isMemberOfSociety(resource.data.societyId) && (
+        canManageEvents() || canManageEventFinances()
+      );
+
+      // Only Captain or Secretary can delete events
+      allow delete: if isSignedIn() && isMemberOfSociety(resource.data.societyId) && (isCaptain() || isSecretary());
+
+      // Event expenses subcollection
       match /expenses/{expenseId} {
-        allow read, write: if isSignedIn();
+        allow read: if isSignedIn() && isMemberOfSociety(get(/databases/$(database)/documents/events/$(eventId)).data.societyId);
+        allow create, update, delete: if isSignedIn() &&
+          isMemberOfSociety(get(/databases/$(database)/documents/events/$(eventId)).data.societyId) &&
+          canManageEventFinances();
       }
     }
 
+    // ══════════════════════════════════════════════════════════════════════════
+    // COURSES COLLECTION
+    // ══════════════════════════════════════════════════════════════════════════
     match /courses/{courseId} {
-      allow read, write: if isSignedIn();
+      // Members of the society can read courses
+      allow read: if isSignedIn() && isMemberOfSociety(resource.data.societyId);
+
+      // Captain, Secretary can manage courses
+      allow create: if isSignedIn() && isMemberOfSociety(request.resource.data.societyId) && (isCaptain() || isSecretary());
+      allow update, delete: if isSignedIn() && isMemberOfSociety(resource.data.societyId) && (isCaptain() || isSecretary());
     }
 
+    // ══════════════════════════════════════════════════════════════════════════
+    // TEESETS COLLECTION
+    // ══════════════════════════════════════════════════════════════════════════
     match /teesets/{teeSetId} {
-      allow read, write: if isSignedIn();
-    }
+      // Members of the society can read tee sets
+      allow read: if isSignedIn() && isMemberOfSociety(resource.data.societyId);
 
-    match /users/{userId} {
-      allow read, write: if isSignedIn();
+      // Captain, Secretary, Handicapper can manage tee sets
+      allow create: if isSignedIn() && isMemberOfSociety(request.resource.data.societyId) && (isCaptain() || isSecretary() || isHandicapper());
+      allow update, delete: if isSignedIn() && isMemberOfSociety(resource.data.societyId) && (isCaptain() || isSecretary() || isHandicapper());
     }
   }
 }
