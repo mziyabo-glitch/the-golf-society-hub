@@ -1,18 +1,19 @@
-import { View, StyleSheet } from "react-native";
+﻿import { StyleSheet, View } from "react-native";
 import { Screen } from "@/components/ui/Screen";
 import { AppText } from "@/components/ui/AppText";
 
-export default function MembersScreen() {
+export default function ScreenComponent() {
   return (
     <Screen>
       <View style={styles.container}>
         <AppText variant="title">Members</AppText>
-        <AppText>Members screen placeholder. Content to be implemented.</AppText>
+        <AppText style={styles.sub}>Manage members here.</AppText>
       </View>
     </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { padding: 16 },
+  container: { padding: 16, gap: 10 },
+  sub: { opacity: 0.8, lineHeight: 20 },
 });

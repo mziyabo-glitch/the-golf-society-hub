@@ -1,28 +1,10 @@
-﻿// app/(app)/(tabs)/profile.tsx
-import { StyleSheet, View } from "react-native";
-import { router } from "expo-router";
-
-import { Screen } from "@/components/ui/Screen";
-import { AppText } from "@/components/ui/AppText";
-import { SecondaryButton } from "@/components/ui/Button";
+﻿import { View, Text } from "react-native";
 
 export default function ProfileTab() {
   return (
-    <Screen>
-      <View style={styles.container}>
-        <AppText variant="title">Profile</AppText>
-        <AppText>
-          This is your profile tab. If you want, we can show user details + active society here.
-        </AppText>
-
-        <SecondaryButton onPress={() => router.push("/settings")}>
-          Open Settings
-        </SecondaryButton>
-      </View>
-    </Screen>
+    <View style={{ padding: 16 }}>
+      <Text style={{ fontSize: 22, fontWeight: "700" }}>Profile</Text>
+      <Text style={{ marginTop: 8 }}>Coming soon.</Text>
+    </View>
   );
 }
-
-const styles = StyleSheet.create({
-  container: { padding: 16, gap: 12 },
-});

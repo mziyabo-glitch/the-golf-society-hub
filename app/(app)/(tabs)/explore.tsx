@@ -1,18 +1,10 @@
-import { View, StyleSheet } from "react-native";
-import { Screen } from "@/components/ui/Screen";
-import { AppText } from "@/components/ui/AppText";
+﻿import { View, Text } from "react-native";
 
-export default function ExploreScreen() {
+export default function ExploreTab() {
   return (
-    <Screen>
-      <View style={styles.container}>
-        <AppText variant="title">Explore</AppText>
-        <AppText>Explore screen placeholder. Content to be implemented.</AppText>
-      </View>
-    </Screen>
+    <View style={{ padding: 16 }}>
+      <Text style={{ fontSize: 22, fontWeight: "700" }}>Explore</Text>
+      <Text style={{ marginTop: 8 }}>Coming soon.</Text>
+    </View>
   );
 }
-
-const styles = StyleSheet.create({
-  container: { padding: 16 },
-});
