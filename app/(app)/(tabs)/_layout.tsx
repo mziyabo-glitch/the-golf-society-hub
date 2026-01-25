@@ -21,20 +21,8 @@ export default function TabsLayout() {
         options={{ title: "Members", tabBarIcon: ({ color, size }) => <Feather name="users" color={color} size={size} /> }}
       />
       <Tabs.Screen
-        name="history"
-        options={{ title: "History", tabBarIcon: ({ color, size }) => <Feather name="clock" color={color} size={size} /> }}
-      />
-      <Tabs.Screen
         name="settings"
         options={{ title: "Settings", tabBarIcon: ({ color, size }) => <Feather name="settings" color={color} size={size} /> }}
-      />
-      <Tabs.Screen
-        name="explore"
-        options={{ href: null }}
-      />
-      <Tabs.Screen
-        name="profile"
-        options={{ href: null }}
       />
     </Tabs>
   );
