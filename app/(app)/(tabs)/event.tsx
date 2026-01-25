@@ -1,4 +1,4 @@
-﻿import { View, StyleSheet } from "react-native";
+import { View, StyleSheet } from "react-native";
 import { useRouter } from "expo-router";
 import { Screen } from "@/components/ui/Screen";
 import { AppText } from "@/components/ui/AppText";

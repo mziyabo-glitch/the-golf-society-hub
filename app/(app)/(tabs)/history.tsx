@@ -1,4 +1,4 @@
-﻿import { StyleSheet, View } from "react-native";
+import { StyleSheet, View } from "react-native";
 import { Screen } from "@/components/ui/Screen";
 import { AppText } from "@/components/ui/AppText";
 
