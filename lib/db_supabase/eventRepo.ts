@@ -8,13 +8,30 @@ export type EventDoc = {
   date?: string;
   course_id?: string;
   courseName?: string;
+  format?: string;
+  status?: string;
   isCompleted?: boolean;
   isOOM?: boolean;
   winnerName?: string;
+  playerIds?: string[];
+  results?: Record<string, { stableford?: number; netScore?: number; grossScore?: number }>;
+  created_by?: string;
   created_at?: string;
   updated_at?: string;
   [key: string]: unknown;
 };
+
+function mapEvent(row: any): EventDoc {
+  return {
+    ...row,
+    courseName: row.course_name,
+    isCompleted: row.is_completed ?? false,
+    isOOM: row.is_oom ?? false,
+    winnerName: row.winner_name,
+    playerIds: row.player_ids ?? [],
+    results: row.results ?? {},
+  };
+}
 
 /**
  * Get events for a society (one-time fetch)
@@ -33,17 +50,10 @@ export async function getEventsBySocietyId(societyId: string): Promise<EventDoc[
       hint: error.hint,
       code: error.code,
     });
-    // Return empty array instead of throwing - table might not exist yet
     return [];
   }
 
-  return (data ?? []).map((e) => ({
-    ...e,
-    courseName: e.course_name,
-    isCompleted: e.is_completed,
-    isOOM: e.is_oom,
-    winnerName: e.winner_name,
-  }));
+  return (data ?? []).map(mapEvent);
 }
 
 /**
@@ -66,15 +76,7 @@ export async function getEvent(eventId: string): Promise<EventDoc | null> {
     return null;
   }
 
-  if (!data) return null;
-
-  return {
-    ...data,
-    courseName: data.course_name,
-    isCompleted: data.is_completed,
-    isOOM: data.is_oom,
-    winnerName: data.winner_name,
-  };
+  return data ? mapEvent(data) : null;
 }
 
 /**
@@ -87,18 +89,26 @@ export async function createEvent(
     date?: string;
     courseId?: string;
     courseName?: string;
+    format?: string;
     isOOM?: boolean;
+    createdBy?: string;
   }
 ): Promise<EventDoc> {
-  const payload = {
+  const payload: Record<string, unknown> = {
     society_id: societyId,
     name: data.name,
     date: data.date ?? null,
     course_id: data.courseId ?? null,
     course_name: data.courseName ?? null,
+    format: data.format ?? null,
     is_oom: data.isOOM ?? false,
     is_completed: false,
   };
+
+  // Only add created_by if provided
+  if (data.createdBy) {
+    payload.created_by = data.createdBy;
+  }
 
   console.log("[eventRepo] createEvent payload:", JSON.stringify(payload, null, 2));
 
@@ -118,13 +128,7 @@ export async function createEvent(
     throw new Error(error.message || "Failed to create event");
   }
 
-  return {
-    ...row,
-    courseName: row.course_name,
-    isCompleted: row.is_completed,
-    isOOM: row.is_oom,
-    winnerName: row.winner_name,
-  };
+  return mapEvent(row);
 }
 
 /**
@@ -137,6 +141,8 @@ export async function updateEvent(
     date: string;
     courseId: string;
     courseName: string;
+    format: string;
+    status: string;
     isCompleted: boolean;
     isOOM: boolean;
     winnerName: string;
@@ -150,6 +156,8 @@ export async function updateEvent(
   if (updates.date !== undefined) payload.date = updates.date;
   if (updates.courseId !== undefined) payload.course_id = updates.courseId;
   if (updates.courseName !== undefined) payload.course_name = updates.courseName;
+  if (updates.format !== undefined) payload.format = updates.format;
+  if (updates.status !== undefined) payload.status = updates.status;
   if (updates.isCompleted !== undefined) payload.is_completed = updates.isCompleted;
   if (updates.isOOM !== undefined) payload.is_oom = updates.isOOM;
   if (updates.winnerName !== undefined) payload.winner_name = updates.winnerName;

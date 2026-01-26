@@ -6,12 +6,24 @@ export type MemberDoc = {
   society_id: string;
   user_id?: string | null;
   name?: string;
+  displayName?: string; // alias for name
   email?: string;
   handicap?: number | null;
   role?: string;
+  roles?: string[]; // computed from role for compatibility
+  paid?: boolean;
+  paid_date?: string | null;
   created_at?: string;
   updated_at?: string;
 };
+
+function mapMember(row: any): MemberDoc {
+  return {
+    ...row,
+    displayName: row.name,
+    roles: row.role ? [row.role] : ["member"],
+  };
+}
 
 /**
  * Creates a new member in "members" table and returns the new memberId.
@@ -23,6 +35,7 @@ export async function createMember(
     name?: string;
     roles?: string[];
     userId?: string;
+    email?: string;
   }
 ): Promise<string> {
   if (!societyId) throw new Error("createMember: missing societyId");
@@ -30,12 +43,10 @@ export async function createMember(
   const safe = data ?? {};
 
   // Use first role or default to "member"
-  // Schema uses `role` (text), not `roles` (array)
   const role = Array.isArray(safe.roles) && safe.roles.length > 0
     ? safe.roles[0]
     : "member";
 
-  // Use `name` column (not display_name which doesn't exist)
   const name = safe.displayName ?? safe.name ?? "Member";
 
   const payload: Record<string, unknown> = {
@@ -43,6 +54,7 @@ export async function createMember(
     user_id: safe.userId ?? null,
     name: name,
     role: role,
+    email: safe.email ?? null,
   };
 
   console.log("[memberRepo] createMember payload:", JSON.stringify(payload, null, 2));
@@ -86,7 +98,7 @@ export async function getMember(memberId: string): Promise<MemberDoc | null> {
     });
     throw new Error(error.message || "Failed to get member");
   }
-  return data;
+  return data ? mapMember(data) : null;
 }
 
 /**
@@ -108,21 +120,43 @@ export async function getMembersBySocietyId(
       hint: error.hint,
       code: error.code,
     });
-    throw new Error(error.message || "Failed to get members");
+    return [];
   }
-  return data ?? [];
+  return (data ?? []).map(mapMember);
 }
 
 /**
  * Update member document
+ * Note: societyId param is for API compatibility but not used
  */
 export async function updateMemberDoc(
+  _societyId: string,
   memberId: string,
-  updates: Partial<Omit<MemberDoc, "id">>
+  updates: Partial<{
+    displayName: string;
+    name: string;
+    email: string;
+    handicap: number | null;
+    role: string;
+    paid: boolean;
+    paidDate: string | null;
+  }>
 ): Promise<void> {
+  const payload: Record<string, unknown> = {
+    updated_at: new Date().toISOString(),
+  };
+
+  if (updates.displayName !== undefined) payload.name = updates.displayName;
+  if (updates.name !== undefined) payload.name = updates.name;
+  if (updates.email !== undefined) payload.email = updates.email;
+  if (updates.handicap !== undefined) payload.handicap = updates.handicap;
+  if (updates.role !== undefined) payload.role = updates.role;
+  if (updates.paid !== undefined) payload.paid = updates.paid;
+  if (updates.paidDate !== undefined) payload.paid_date = updates.paidDate;
+
   const { error } = await supabase
     .from("members")
-    .update({ ...updates, updated_at: new Date().toISOString() })
+    .update(payload)
     .eq("id", memberId);
 
   if (error) {

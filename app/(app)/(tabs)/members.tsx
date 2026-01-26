@@ -11,19 +11,19 @@ import { LoadingState } from "@/components/ui/LoadingState";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { useBootstrap } from "@/lib/useBootstrap";
 import {
-  subscribeMembersBySociety,
+  getMembersBySocietyId,
   createMember,
   updateMemberDoc,
   deleteMember,
   type MemberDoc,
-} from "@/lib/db/memberRepo";
+} from "@/lib/db_supabase/memberRepo";
 import { getPermissionsForMember } from "@/lib/rbac";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
 
 type ModalMode = "none" | "add" | "edit";
 
 export default function MembersScreen() {
-  const { societyId, member: currentMember, loading: bootstrapLoading } = useBootstrap();
+  const { societyId, member: currentMember, loading: bootstrapLoading, refresh } = useBootstrap();
   const colors = getColors();
 
   const [members, setMembers] = useState<MemberDoc[]>([]);
@@ -39,25 +39,24 @@ export default function MembersScreen() {
   // Get permissions for current member
   const permissions = getPermissionsForMember(currentMember as any);
 
-  useEffect(() => {
+  const loadMembers = async () => {
     if (!societyId) {
       setLoading(false);
       return;
     }
+    setLoading(true);
+    try {
+      const data = await getMembersBySocietyId(societyId);
+      setMembers(data);
+    } catch (err) {
+      console.error("Failed to load members:", err);
+    } finally {
+      setLoading(false);
+    }
+  };
 
-    const unsub = subscribeMembersBySociety(
-      societyId,
-      (docs) => {
-        setMembers(docs);
-        setLoading(false);
-      },
-      (err) => {
-        console.error("Members subscription error:", err);
-        setLoading(false);
-      }
-    );
-
-    return unsub;
+  useEffect(() => {
+    loadMembers();
   }, [societyId]);
 
   const openAddModal = () => {
@@ -97,6 +96,7 @@ export default function MembersScreen() {
         roles: ["member"],
       });
       closeModal();
+      loadMembers();
     } catch (e: any) {
       Alert.alert("Error", e?.message || "Failed to add member.");
     } finally {
@@ -119,6 +119,7 @@ export default function MembersScreen() {
         email: formEmail.trim() || undefined,
       });
       closeModal();
+      loadMembers();
     } catch (e: any) {
       Alert.alert("Error", e?.message || "Failed to update member.");
     } finally {
@@ -143,6 +144,7 @@ export default function MembersScreen() {
           onPress: async () => {
             try {
               await deleteMember(member.id);
+              loadMembers();
             } catch (e: any) {
               Alert.alert("Error", e?.message || "Failed to delete member.");
             }
@@ -159,6 +161,7 @@ export default function MembersScreen() {
         paid: !member.paid,
         paidDate: !member.paid ? new Date().toISOString() : null,
       });
+      loadMembers();
     } catch (e: any) {
       Alert.alert("Error", e?.message || "Failed to update payment status.");
     }

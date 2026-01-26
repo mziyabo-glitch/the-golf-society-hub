@@ -11,7 +11,7 @@ import { PrimaryButton, SecondaryButton } from "@/components/ui/Button";
 import { LoadingState } from "@/components/ui/LoadingState";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { useBootstrap } from "@/lib/useBootstrap";
-import { subscribeEventsBySociety, createEvent, type EventDoc } from "@/lib/db/eventRepo";
+import { getEventsBySocietyId, createEvent, type EventDoc } from "@/lib/db_supabase/eventRepo";
 import { getPermissionsForMember } from "@/lib/rbac";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
 
@@ -29,25 +29,24 @@ export default function EventsScreen() {
 
   const permissions = getPermissionsForMember(member as any);
 
-  useEffect(() => {
+  const loadEvents = async () => {
     if (!societyId) {
       setLoading(false);
       return;
     }
+    setLoading(true);
+    try {
+      const data = await getEventsBySocietyId(societyId);
+      setEvents(data);
+    } catch (err) {
+      console.error("Failed to load events:", err);
+    } finally {
+      setLoading(false);
+    }
+  };
 
-    const unsub = subscribeEventsBySociety(
-      societyId,
-      (docs) => {
-        setEvents(docs);
-        setLoading(false);
-      },
-      (err) => {
-        console.error("Events subscription error:", err);
-        setLoading(false);
-      }
-    );
-
-    return unsub;
+  useEffect(() => {
+    loadEvents();
   }, [societyId]);
 
   const handleCreateEvent = async () => {
@@ -81,6 +80,7 @@ export default function EventsScreen() {
       setFormName("");
       setFormDate("");
       setShowCreateForm(false);
+      loadEvents();
     } catch (e: any) {
       console.error("Create event error:", e);
       Alert.alert("Error", e?.message || "Failed to create event.");

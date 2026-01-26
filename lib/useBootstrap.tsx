@@ -15,6 +15,7 @@ type MemberData = {
   name?: string;
   displayName?: string;
   role?: string;
+  roles?: string[];
   [key: string]: unknown;
 };
 
@@ -31,7 +32,9 @@ type BootstrapState = {
   setActiveSociety: (societyId: string | null, memberId: string | null) => Promise<void>;
   refresh: () => void;
   ready: boolean;
-  user: { uid: string } | null;
+  bootstrapped: boolean;
+  isSignedIn: boolean;
+  user: { uid: string; activeSocietyId: string | null; activeMemberId: string | null } | null;
 };
 
 const BootstrapContext = createContext<BootstrapState | null>(null);
@@ -112,6 +115,7 @@ function useBootstrapInternal(): BootstrapState {
             setMember({
               ...memberData,
               displayName: memberData.name,
+              roles: memberData.role ? [memberData.role] : ["member"],
             });
           }
         }
@@ -186,6 +190,8 @@ function useBootstrapInternal(): BootstrapState {
     setActiveSociety,
     refresh,
     ready: !loading,
-    user: userId ? { uid: userId } : null,
+    bootstrapped: !loading,
+    isSignedIn: !!userId,
+    user: userId ? { uid: userId, activeSocietyId, activeMemberId } : null,
   };
 }
