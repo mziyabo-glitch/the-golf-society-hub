@@ -29,13 +29,6 @@ export async function createMember(
     name?: string;
     roles?: string[];
     userId?: string;
-    handicap?: number | null;
-    sex?: "male" | "female";
-    status?: string;
-    email?: string;
-    paid?: boolean;
-    amountPaid?: number;
-    paidDate?: string | null;
   }
 ): Promise<string> {
   if (!societyId) throw new Error("createMember: missing societyId");
@@ -44,20 +37,15 @@ export async function createMember(
   const roles =
     Array.isArray(safe.roles) && safe.roles.length > 0 ? safe.roles : ["member"];
 
-  const payload = {
+  // Minimal payload - only essential columns
+  const payload: Record<string, unknown> = {
     society_id: societyId,
     user_id: safe.userId ?? null,
     display_name: safe.displayName ?? safe.name ?? "Member",
-    name: safe.name ?? null,
-    email: safe.email ?? null,
-    handicap: safe.handicap ?? null,
-    sex: safe.sex ?? null,
-    status: safe.status ?? "active",
     roles,
-    paid: safe.paid ?? false,
-    amount_paid: safe.amountPaid ?? 0,
-    paid_date: safe.paidDate ?? null,
   };
+
+  console.log("[memberRepo] createMember payload:", JSON.stringify(payload, null, 2));
 
   const { data: row, error } = await supabase
     .from("members")
@@ -65,7 +53,17 @@ export async function createMember(
     .select("id")
     .single();
 
-  if (error) throw error;
+  if (error) {
+    console.error("[memberRepo] createMember failed:", {
+      message: error.message,
+      details: error.details,
+      hint: error.hint,
+      code: error.code,
+    });
+    throw new Error(error.message || "Failed to create member");
+  }
+
+  console.log("[memberRepo] createMember success:", row?.id);
   return row.id;
 }
 
@@ -79,7 +77,15 @@ export async function getMember(memberId: string): Promise<MemberDoc | null> {
     .eq("id", memberId)
     .maybeSingle();
 
-  if (error) throw error;
+  if (error) {
+    console.error("[memberRepo] getMember failed:", {
+      message: error.message,
+      details: error.details,
+      hint: error.hint,
+      code: error.code,
+    });
+    throw new Error(error.message || "Failed to get member");
+  }
   return data;
 }
 
@@ -95,7 +101,15 @@ export async function getMembersBySocietyId(
     .eq("society_id", societyId)
     .order("created_at", { ascending: false });
 
-  if (error) throw error;
+  if (error) {
+    console.error("[memberRepo] getMembersBySocietyId failed:", {
+      message: error.message,
+      details: error.details,
+      hint: error.hint,
+      code: error.code,
+    });
+    throw new Error(error.message || "Failed to get members");
+  }
   return data ?? [];
 }
 
@@ -111,7 +125,15 @@ export async function updateMemberDoc(
     .update({ ...updates, updated_at: new Date().toISOString() })
     .eq("id", memberId);
 
-  if (error) throw error;
+  if (error) {
+    console.error("[memberRepo] updateMemberDoc failed:", {
+      message: error.message,
+      details: error.details,
+      hint: error.hint,
+      code: error.code,
+    });
+    throw new Error(error.message || "Failed to update member");
+  }
 }
 
 /**
@@ -122,5 +144,13 @@ export async function deleteMember(memberId: string): Promise<void> {
 
   const { error } = await supabase.from("members").delete().eq("id", memberId);
 
-  if (error) throw error;
+  if (error) {
+    console.error("[memberRepo] deleteMember failed:", {
+      message: error.message,
+      details: error.details,
+      hint: error.hint,
+      code: error.code,
+    });
+    throw new Error(error.message || "Failed to delete member");
+  }
 }

@@ -77,7 +77,8 @@ export default function OnboardingScreen() {
       router.replace("/(app)/(tabs)");
     } catch (e: any) {
       console.error("Join society error:", e);
-      Alert.alert("Error", e?.message || "Failed to join society. Please try again.");
+      const msg = e?.message || (typeof e === "string" ? e : JSON.stringify(e));
+      Alert.alert("Error", msg || "Failed to join society. Please try again.");
     } finally {
       setLoading(false);
     }
@@ -125,7 +126,8 @@ export default function OnboardingScreen() {
       router.replace("/(app)/(tabs)");
     } catch (e: any) {
       console.error("Create society error:", e);
-      Alert.alert("Error", e?.message || "Failed to create society. Please try again.");
+      const msg = e?.message || (typeof e === "string" ? e : JSON.stringify(e));
+      Alert.alert("Error", msg || "Failed to create society. Please try again.");
     } finally {
       setLoading(false);
     }

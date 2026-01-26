@@ -19,16 +19,36 @@ export async function ensureProfile(userId: string): Promise<ProfileDoc> {
     .eq("id", userId)
     .maybeSingle();
 
-  if (selErr) throw selErr;
+  if (selErr) {
+    console.error("[profileRepo] ensureProfile select failed:", {
+      message: selErr.message,
+      details: selErr.details,
+      hint: selErr.hint,
+      code: selErr.code,
+    });
+    throw new Error(selErr.message || "Failed to check profile");
+  }
+
   if (existing) return existing;
+
+  console.log("[profileRepo] Creating new profile for:", userId);
 
   const { data, error } = await supabase
     .from("profiles")
     .insert({ id: userId })
-    .select("*")
+    .select()
     .single();
 
-  if (error) throw error;
+  if (error) {
+    console.error("[profileRepo] ensureProfile insert failed:", {
+      message: error.message,
+      details: error.details,
+      hint: error.hint,
+      code: error.code,
+    });
+    throw new Error(error.message || "Failed to create profile");
+  }
+
   return data;
 }
 
@@ -42,7 +62,15 @@ export async function getProfile(userId: string): Promise<ProfileDoc | null> {
     .eq("id", userId)
     .maybeSingle();
 
-  if (error) throw error;
+  if (error) {
+    console.error("[profileRepo] getProfile failed:", {
+      message: error.message,
+      details: error.details,
+      hint: error.hint,
+      code: error.code,
+    });
+    throw new Error(error.message || "Failed to get profile");
+  }
   return data;
 }
 
@@ -53,12 +81,22 @@ export async function updateProfile(
   userId: string,
   updates: Partial<Omit<ProfileDoc, "id">>
 ): Promise<void> {
+  console.log("[profileRepo] updateProfile:", userId, JSON.stringify(updates, null, 2));
+
   const { error } = await supabase
     .from("profiles")
     .update({ ...updates, updated_at: new Date().toISOString() })
     .eq("id", userId);
 
-  if (error) throw error;
+  if (error) {
+    console.error("[profileRepo] updateProfile failed:", {
+      message: error.message,
+      details: error.details,
+      hint: error.hint,
+      code: error.code,
+    });
+    throw new Error(error.message || "Failed to update profile");
+  }
 }
 
 /**
@@ -70,6 +108,7 @@ export async function setActiveSocietyAndMember(
   societyId: string,
   memberId: string
 ): Promise<void> {
+  console.log("[profileRepo] setActiveSocietyAndMember:", { userId, societyId, memberId });
   await updateProfile(userId, {
     active_society_id: societyId,
     active_member_id: memberId,

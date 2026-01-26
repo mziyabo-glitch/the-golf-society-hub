@@ -4,14 +4,14 @@ import { supabase } from "@/lib/supabase";
 export type SocietyDoc = {
   id: string;
   name: string;
-  country: string;
+  country?: string;
   join_code?: string;
   created_at?: string;
   created_by?: string;
   home_course_id?: string | null;
   home_course?: string | null;
-  scoring_mode?: "Stableford" | "Strokeplay" | "Both";
-  handicap_rule?: "Allow WHS" | "Fixed HCP" | "No HCP";
+  scoring_mode?: string | null;
+  handicap_rule?: string | null;
   logo_url?: string | null;
   admin_pin?: string;
   annual_fee?: number;
@@ -20,13 +20,8 @@ export type SocietyDoc = {
 
 type SocietyInput = {
   name: string;
-  country: string;
+  country?: string;
   createdBy: string;
-  homeCourseId?: string | null;
-  homeCourse?: string;
-  scoringMode?: "Stableford" | "Strokeplay" | "Both";
-  handicapRule?: "Allow WHS" | "Fixed HCP" | "No HCP";
-  logoUrl?: string | null;
 };
 
 /**
@@ -45,25 +40,38 @@ function generateJoinCode(): string {
 export async function createSociety(input: SocietyInput): Promise<SocietyDoc> {
   const joinCode = generateJoinCode();
 
-  const payload = {
+  // Minimal payload - only essential columns
+  // Add country only if provided (column may or may not exist in schema)
+  const payload: Record<string, unknown> = {
     name: input.name,
-    country: input.country,
     created_by: input.createdBy,
     join_code: joinCode,
-    home_course_id: input.homeCourseId ?? null,
-    home_course: input.homeCourse?.trim() || null,
-    scoring_mode: input.scoringMode ?? null,
-    handicap_rule: input.handicapRule ?? null,
-    logo_url: input.logoUrl ?? null,
   };
+
+  // Only add country if provided and not empty
+  if (input.country?.trim()) {
+    payload.country = input.country.trim();
+  }
+
+  console.log("[societyRepo] createSociety payload:", JSON.stringify(payload, null, 2));
 
   const { data, error } = await supabase
     .from("societies")
     .insert(payload)
-    .select("*")
+    .select()
     .single();
 
-  if (error) throw error;
+  if (error) {
+    console.error("[societyRepo] createSociety failed:", {
+      message: error.message,
+      details: error.details,
+      hint: error.hint,
+      code: error.code,
+    });
+    throw new Error(error.message || "Failed to create society");
+  }
+
+  console.log("[societyRepo] createSociety success:", data?.id);
   return data;
 }
 
@@ -74,7 +82,15 @@ export async function getSocietyDoc(id: string): Promise<SocietyDoc | null> {
     .eq("id", id)
     .maybeSingle();
 
-  if (error) throw error;
+  if (error) {
+    console.error("[societyRepo] getSocietyDoc failed:", {
+      message: error.message,
+      details: error.details,
+      hint: error.hint,
+      code: error.code,
+    });
+    throw new Error(error.message || "Failed to get society");
+  }
   return data;
 }
 
@@ -87,7 +103,15 @@ export async function updateSocietyDoc(
     .update({ ...updates, updated_at: new Date().toISOString() })
     .eq("id", id);
 
-  if (error) throw error;
+  if (error) {
+    console.error("[societyRepo] updateSocietyDoc failed:", {
+      message: error.message,
+      details: error.details,
+      hint: error.hint,
+      code: error.code,
+    });
+    throw new Error(error.message || "Failed to update society");
+  }
 }
 
 /**
@@ -108,7 +132,15 @@ export async function findSocietyByJoinCode(
     .eq("join_code", normalizedCode)
     .maybeSingle();
 
-  if (error) throw error;
+  if (error) {
+    console.error("[societyRepo] findSocietyByJoinCode failed:", {
+      message: error.message,
+      details: error.details,
+      hint: error.hint,
+      code: error.code,
+    });
+    throw new Error(error.message || "Failed to find society");
+  }
   return data;
 }
 
