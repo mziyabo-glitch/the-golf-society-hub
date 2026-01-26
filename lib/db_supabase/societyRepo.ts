@@ -38,10 +38,34 @@ function generateJoinCode(): string {
 }
 
 export async function createSociety(input: SocietyInput): Promise<SocietyDoc> {
+  // CRITICAL: Verify auth state before insert
+  // RLS policy requires: created_by = auth.uid()
+  const { data: { user }, error: authError } = await supabase.auth.getUser();
+
+  if (authError) {
+    console.error("[societyRepo] Auth error before createSociety:", authError.message);
+    throw new Error("Authentication error: " + authError.message);
+  }
+
+  if (!user) {
+    console.error("[societyRepo] No authenticated user found");
+    throw new Error("You must be signed in to create a society.");
+  }
+
+  // Verify the createdBy matches the authenticated user
+  if (user.id !== input.createdBy) {
+    console.error("[societyRepo] User ID mismatch:", {
+      authUid: user.id,
+      createdBy: input.createdBy,
+    });
+    throw new Error("Authentication mismatch. Please refresh and try again.");
+  }
+
+  console.log("[societyRepo] Auth verified. User ID:", user.id);
+
   const joinCode = generateJoinCode();
 
   // Minimal payload - only essential columns
-  // Add country only if provided (column may or may not exist in schema)
   const payload: Record<string, unknown> = {
     name: input.name,
     created_by: input.createdBy,
@@ -68,6 +92,15 @@ export async function createSociety(input: SocietyInput): Promise<SocietyDoc> {
       hint: error.hint,
       code: error.code,
     });
+
+    // Provide more helpful error message for RLS failures
+    if (error.code === "42501" || error.message?.includes("row-level security")) {
+      throw new Error(
+        "Permission denied. Please ensure anonymous sign-ins are enabled in Supabase Auth settings, " +
+        "and the RLS policy allows inserts where created_by = auth.uid()."
+      );
+    }
+
     throw new Error(error.message || "Failed to create society");
   }
 

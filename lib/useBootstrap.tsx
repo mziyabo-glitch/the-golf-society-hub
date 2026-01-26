@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState, ReactNode } from "react";
-import { ensureProfile, ensureSignedIn, updateActiveSociety } from "@/lib/auth_supabase";
+import { ensureSignedIn, ensureProfile, updateActiveSociety } from "@/lib/auth_supabase";
 import { supabase } from "@/lib/supabase";
 
 type SocietyData = {
@@ -69,17 +69,29 @@ function useBootstrapInternal(): BootstrapState {
   }, []);
 
   useEffect(() => {
-    let timer: any;
+    let timer: ReturnType<typeof setInterval> | null = null;
 
     const run = async () => {
       try {
         setLoading(true);
         setError(null);
 
+        // CRITICAL: ensureSignedIn must complete before any DB operations
+        // This establishes the auth session that RLS policies depend on
+        console.log("[useBootstrap] Starting auth...");
         const user = await ensureSignedIn();
         if (!mounted.current) return;
 
+        console.log("[useBootstrap] Auth complete. User ID:", user.id);
         setUserId(user.id);
+
+        // Verify the session is actually set
+        const { data: { session } } = await supabase.auth.getSession();
+        if (!session) {
+          console.error("[useBootstrap] No session after ensureSignedIn!");
+          throw new Error("Failed to establish session");
+        }
+        console.log("[useBootstrap] Session verified for user:", session.user.id);
 
         const p = await ensureProfile(user.id);
         if (!mounted.current) return;
@@ -120,7 +132,7 @@ function useBootstrapInternal(): BootstrapState {
           }
         }
 
-        // Poll profile every 3s
+        // Poll profile every 3s for updates
         timer = setInterval(async () => {
           const { data, error: pollErr } = await supabase
             .from("profiles")
@@ -132,7 +144,7 @@ function useBootstrapInternal(): BootstrapState {
           if (!pollErr && data) setProfile(data);
         }, 3000);
       } catch (e: any) {
-        console.error("Bootstrap error:", e);
+        console.error("[useBootstrap] Error:", e);
         if (mounted.current) setError(e?.message || "Bootstrap failed");
       } finally {
         if (mounted.current) setLoading(false);
