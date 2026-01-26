@@ -5,18 +5,12 @@ export type MemberDoc = {
   id: string;
   society_id: string;
   user_id?: string | null;
-  display_name?: string;
   name?: string;
   email?: string;
   handicap?: number | null;
-  sex?: "male" | "female";
-  status?: string;
-  roles?: string[];
+  role?: string;
   created_at?: string;
   updated_at?: string;
-  paid?: boolean;
-  amount_paid?: number;
-  paid_date?: string | null;
 };
 
 /**
@@ -34,15 +28,21 @@ export async function createMember(
   if (!societyId) throw new Error("createMember: missing societyId");
 
   const safe = data ?? {};
-  const roles =
-    Array.isArray(safe.roles) && safe.roles.length > 0 ? safe.roles : ["member"];
 
-  // Minimal payload - only essential columns
+  // Use first role or default to "member"
+  // Schema uses `role` (text), not `roles` (array)
+  const role = Array.isArray(safe.roles) && safe.roles.length > 0
+    ? safe.roles[0]
+    : "member";
+
+  // Use `name` column (not display_name which doesn't exist)
+  const name = safe.displayName ?? safe.name ?? "Member";
+
   const payload: Record<string, unknown> = {
     society_id: societyId,
     user_id: safe.userId ?? null,
-    display_name: safe.displayName ?? safe.name ?? "Member",
-    roles,
+    name: name,
+    role: role,
   };
 
   console.log("[memberRepo] createMember payload:", JSON.stringify(payload, null, 2));
