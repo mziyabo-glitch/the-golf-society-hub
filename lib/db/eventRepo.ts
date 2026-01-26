@@ -18,15 +18,16 @@ export type EventDoc = {
   id: string;
   societyId: string;
   name: string;
-  status?: string;
   date: string;
+  createdAt?: unknown;
+  createdBy?: string;
+  status?: string;
   courseId?: string;
   courseName?: string;
   maleTeeSetId?: string;
   femaleTeeSetId?: string;
   handicapAllowancePct?: number;
   handicapAllowance?: 0.9 | 1.0;
-  createdAt?: unknown;
   format?: "Stableford" | "Strokeplay" | "Both";
   playerIds?: string[];
   teeSheet?: {
@@ -74,17 +75,36 @@ export type EventDoc = {
   >;
 };
 
-type EventInput = Omit<EventDoc, "id" | "createdAt">;
+type CreateEventPayload = {
+  name: string;
+  date: string;
+  createdBy: string;
+  courseId?: string;
+  courseName?: string;
+  format?: "Stableford" | "Strokeplay" | "Both";
+  isOOM?: boolean;
+};
 
-export async function createEvent(input: EventInput): Promise<EventDoc> {
-  const payload = stripUndefined({
-    ...input,
-    status: input.status ?? "scheduled",
+export async function createEvent(
+  societyId: string,
+  payload: CreateEventPayload
+): Promise<EventDoc> {
+  const data = stripUndefined({
+    societyId,
+    name: payload.name,
+    date: payload.date,
+    createdBy: payload.createdBy,
     createdAt: serverTimestamp(),
+    status: "scheduled",
+    courseId: payload.courseId,
+    courseName: payload.courseName,
+    format: payload.format,
+    isOOM: payload.isOOM,
+    isCompleted: false,
   });
 
-  const ref = await addDoc(collection(db, "events"), payload);
-  return { id: ref.id, ...payload };
+  const ref = await addDoc(collection(db, "events"), data);
+  return { id: ref.id, ...data } as EventDoc;
 }
 
 export async function getEventDoc(id: string): Promise<EventDoc | null> {

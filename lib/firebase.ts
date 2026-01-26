@@ -6,7 +6,10 @@ import {
   initializeAuth,
   onAuthStateChanged,
   signInAnonymously,
+  browserLocalPersistence,
+  setPersistence,
   type Auth,
+  type User,
 } from "firebase/auth";
 import { getFirestore, type Firestore } from "firebase/firestore";
 
@@ -76,10 +79,13 @@ let dbInstance: Firestore | null = null;
 if (app) {
   if (Platform.OS === "web") {
     authInstance = getAuth(app);
+    // Set persistence for web to ensure auth state persists across page reloads
+    setPersistence(authInstance, browserLocalPersistence).catch((err) => {
+      console.error("[firebase] setPersistence error:", err?.code, err?.message);
+    });
   } else {
     // Native: attempt persistence if available, fallback to standard auth
     try {
-      // NOTE: if you later decide to enforce "no AsyncStorage", remove this block.
       const { getReactNativePersistence } = require("firebase/auth/react-native");
       const AsyncStorage =
         require("@react-native-async-storage/async-storage").default;
@@ -92,12 +98,19 @@ if (app) {
   }
 
   dbInstance = getFirestore(app);
+
+  // Debug log once
+  console.log(`[firebase] initialized projectId=${app.options.projectId}`);
 }
 
 export const auth = authInstance ?? (null as unknown as Auth);
 export const db = dbInstance ?? (null as unknown as Firestore);
 export const firebaseApp = app;
 
+/**
+ * Wait for auth state to resolve, then sign in anonymously if needed.
+ * Returns the user's uid.
+ */
 export async function ensureSignedIn(): Promise<string> {
   if (!firebaseEnvReady) {
     throw new Error(
@@ -107,17 +120,38 @@ export async function ensureSignedIn(): Promise<string> {
   if (!authInstance) {
     throw new Error("Firebase auth is not initialized.");
   }
-  if (authInstance.currentUser?.uid) return authInstance.currentUser.uid;
 
-  const existing = await new Promise<string | null>((resolve) => {
-    const unsubscribe = onAuthStateChanged(authInstance, (user) => {
+  // Wait for auth state to be determined
+  const user = await new Promise<User | null>((resolve) => {
+    const unsubscribe = onAuthStateChanged(authInstance, (u) => {
       unsubscribe();
-      resolve(user?.uid ?? null);
+      resolve(u);
     });
   });
 
-  if (existing) return existing;
+  if (user?.uid) {
+    console.log(`[firebase] AUTH uid=${user.uid}, projectId=${app?.options.projectId}`);
+    return user.uid;
+  }
 
-  const result = await signInAnonymously(authInstance);
-  return result.user.uid;
+  // No user, sign in anonymously
+  try {
+    const result = await signInAnonymously(authInstance);
+    console.log(`[firebase] AUTH uid=${result.user.uid}, projectId=${app?.options.projectId}`);
+    return result.user.uid;
+  } catch (err: any) {
+    console.error("[firebase] signInAnonymously failed:", err?.code, err?.message, err);
+    throw err;
+  }
+}
+
+/**
+ * Listen for auth state changes. Returns unsubscribe function.
+ */
+export function onAuthChange(callback: (user: User | null) => void): () => void {
+  if (!authInstance) {
+    console.error("[firebase] onAuthChange called but auth not initialized");
+    return () => {};
+  }
+  return onAuthStateChanged(authInstance, callback);
 }

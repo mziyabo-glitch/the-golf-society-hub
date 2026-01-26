@@ -77,9 +77,20 @@ export default function LeaderboardScreen() {
     };
   }, [societyId]);
 
+  // Get relevant events for OOM: prefer isOOM events, fallback to all completed events
+  const getOOMEvents = (): EventDoc[] => {
+    const completedWithResults = events.filter((e) => e.isCompleted && e.results);
+
+    // Check if any events have isOOM explicitly set to true
+    const oomEvents = completedWithResults.filter((e) => e.isOOM === true);
+
+    // If we have OOM-flagged events, use only those; otherwise use all completed events
+    return oomEvents.length > 0 ? oomEvents : completedWithResults;
+  };
+
   // Calculate OOM standings from completed OOM events
   const calculateOOMStandings = (): OOMEntry[] => {
-    const oomEvents = events.filter((e) => e.isOOM && e.isCompleted && e.results);
+    const relevantEvents = getOOMEvents();
     const standings: Record<string, OOMEntry> = {};
 
     // Initialize standings for all members
@@ -93,8 +104,8 @@ export default function LeaderboardScreen() {
       };
     });
 
-    // Calculate points from each OOM event
-    oomEvents.forEach((event) => {
+    // Calculate points from each event
+    relevantEvents.forEach((event) => {
       if (!event.results) return;
 
       // Get sorted results for this event (by stableford or grossScore)
@@ -118,11 +129,6 @@ export default function LeaderboardScreen() {
           }
         }
       });
-
-      // Also track winner
-      if (event.winnerId && standings[event.winnerId]) {
-        // Winner already tracked via results
-      }
     });
 
     // Sort by points, then wins
@@ -144,7 +150,8 @@ export default function LeaderboardScreen() {
     );
   }
 
-  const oomEvents = events.filter((e) => e.isOOM && e.isCompleted);
+  const relevantEvents = getOOMEvents();
+  const hasOOMFlaggedEvents = events.some((e) => e.isOOM === true);
   const standings = calculateOOMStandings();
 
   return (
@@ -153,15 +160,16 @@ export default function LeaderboardScreen() {
       <View style={styles.header}>
         <AppText variant="title">Order of Merit</AppText>
         <AppText variant="caption" color="secondary">
-          {oomEvents.length} OOM event{oomEvents.length !== 1 ? "s" : ""} completed
+          {relevantEvents.length} event{relevantEvents.length !== 1 ? "s" : ""} completed
+          {!hasOOMFlaggedEvents && relevantEvents.length > 0 ? " (all events)" : ""}
         </AppText>
       </View>
 
       {standings.length === 0 ? (
         <EmptyState
           icon={<Feather name="award" size={24} color={colors.textTertiary} />}
-          title="No Standings Yet"
-          message="Complete OOM events to see the leaderboard. Create events and mark them as 'Order of Merit' to track season standings."
+          title="No Order of Merit Points Yet"
+          message="Complete events with results to see the leaderboard. Mark events as 'Order of Merit' to track season standings separately."
         />
       ) : (
         <View style={styles.list}>
@@ -230,7 +238,7 @@ export default function LeaderboardScreen() {
         <View style={styles.infoContent}>
           <Feather name="info" size={16} color={colors.textTertiary} />
           <AppText variant="caption" color="secondary" style={{ flex: 1 }}>
-            Points are awarded based on finishing position in OOM events: 1st = 10pts, 2nd = 8pts, 3rd = 6pts, etc.
+            Points are awarded based on finishing position: 1st = 10pts, 2nd = 8pts, 3rd = 6pts, etc.
           </AppText>
         </View>
       </AppCard>
