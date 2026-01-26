@@ -10,9 +10,11 @@ type BootstrapCtx = {
   // Auth/user doc
   user: userRepo.UserDoc | null;
 
-  // Derived active links
+  // Derived active links (aliased for convenience)
   societyId: string | null;
   memberId: string | null;
+  activeSocietyId: string | null;
+  activeMemberId: string | null;
 
   // Hydrated docs
   society: SocietyDoc | null;
@@ -30,6 +32,8 @@ const BootstrapContext = createContext<BootstrapCtx>({
   user: null,
   societyId: null,
   memberId: null,
+  activeSocietyId: null,
+  activeMemberId: null,
   society: null,
   member: null,
   loading: true,
@@ -155,6 +159,8 @@ export const BootstrapProvider = ({ children }: { children: React.ReactNode }) =
         user,
         societyId,
         memberId,
+        activeSocietyId: societyId,
+        activeMemberId: memberId,
         society,
         member,
         loading,

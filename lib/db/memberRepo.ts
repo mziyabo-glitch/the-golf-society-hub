@@ -1,5 +1,5 @@
 // lib/db/memberRepo.ts
-import { auth, db } from "@/lib/firebase";
+import { db } from "@/lib/firebase";
 import {
   addDoc,
   collection,
@@ -25,6 +25,9 @@ export type MemberDoc = {
   displayName?: string;
   name?: string;
   email?: string;
+  handicap?: number | null;
+  sex?: "male" | "female";
+  status?: string;
 
   roles?: string[]; // e.g. ["captain","treasurer"]
   createdAt?: any;
@@ -49,10 +52,11 @@ export function memberRef(memberId: string) {
 }
 
 /**
- * ✅ Used by create-society / add-member flows
+ * Used by create-society / add-member flows
  * Creates a new member in top-level "members" collection and returns the new memberId.
  *
- * IMPORTANT: data is optional because some callers pass nothing.
+ * IMPORTANT: userId is optional - only pass it for the signed-in user's own member doc,
+ * NOT for newly added members (they may not have joined yet).
  */
 export async function createMember(
   societyId: string,
@@ -60,6 +64,10 @@ export async function createMember(
     displayName?: string;
     name?: string;
     roles?: string[];
+    userId?: string;
+    handicap?: number | null;
+    sex?: "male" | "female";
+    status?: string;
   }
 ): Promise<string> {
   if (!societyId) throw new Error("createMember: missing societyId");
@@ -71,10 +79,13 @@ export async function createMember(
 
   const payload = stripUndefined({
     societyId,
-    userId: auth.currentUser?.uid,
+    userId: safe.userId, // Only set if explicitly passed
     displayName: safe.displayName ?? safe.name ?? "Member",
     name: safe.name,
     email: safe.email,
+    handicap: safe.handicap,
+    sex: safe.sex,
+    status: safe.status ?? "active",
     roles,
     paid: safe.paid ?? false,
     amountPaid: safe.amountPaid ?? 0,
@@ -181,7 +192,7 @@ export async function updateMemberDoc(
 }
 
 /**
- * ✅ Captain/Treasurer can remove a member.
+ * Captain/Treasurer can remove a member.
  */
 export async function deleteMember(memberId: string) {
   if (!memberId) throw new Error("deleteMember: missing memberId");
