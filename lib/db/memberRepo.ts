@@ -1,5 +1,5 @@
 // lib/db/memberRepo.ts
-import { db } from "@/lib/firebase";
+import { auth, db } from "@/lib/firebase";
 import {
   addDoc,
   collection,
@@ -20,6 +20,7 @@ import {
 export type MemberDoc = {
   id: string;
   societyId: string;
+  userId?: string;
 
   displayName?: string;
   name?: string;
@@ -70,6 +71,7 @@ export async function createMember(
 
   const payload = stripUndefined({
     societyId,
+    userId: auth.currentUser?.uid,
     displayName: safe.displayName ?? safe.name ?? "Member",
     name: safe.name,
     email: safe.email,
