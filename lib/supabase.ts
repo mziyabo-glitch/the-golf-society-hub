@@ -1,21 +1,26 @@
 ﻿import { createClient } from "@supabase/supabase-js";
-import { secureStorage } from "@/lib/supabaseStorage";
 
-const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL!;
-const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY!;
+const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
+const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
 
-if (!supabaseUrl || !supabaseAnonKey) {
-  throw new Error(
-    "Missing Supabase env vars. Set EXPO_PUBLIC_SUPABASE_URL and EXPO_PUBLIC_SUPABASE_ANON_KEY."
-  );
+// 🔎 TEMP DEBUG LOGS — REMOVE AFTER FIXING
+console.log("SUPABASE DEBUG");
+console.log("URL:", supabaseUrl);
+console.log("ANON KEY LENGTH:", supabaseAnonKey?.length);
+
+// HARD FAIL if env is missing (makes errors obvious)
+if (!supabaseUrl) {
+  throw new Error("EXPO_PUBLIC_SUPABASE_URL is missing");
+}
+if (!supabaseAnonKey) {
+  throw new Error("EXPO_PUBLIC_SUPABASE_ANON_KEY is missing");
 }
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   auth: {
-    // ✅ OPTION B: secure persistence (NO AsyncStorage / localStorage)
-    storage: secureStorage,
-    persistSession: true,
-    autoRefreshToken: true,
+    // as agreed: no local storage
+    persistSession: false,
+    autoRefreshToken: false,
     detectSessionInUrl: false,
   },
 });
