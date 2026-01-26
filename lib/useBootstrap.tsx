@@ -1,31 +1,29 @@
 // lib/useBootstrap.tsx
 import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
-import { auth, ensureSignedIn, onAuthChange } from "@/lib/firebase";
+import { doc, setDoc, getDoc, onSnapshot, serverTimestamp } from "firebase/firestore";
+import { auth, db, onAuthChange } from "@/lib/firebase";
+import { signInAnonymously } from "firebase/auth";
 
-import * as userRepo from "@/lib/db/userRepo";
 import { subscribeMemberDoc, type MemberDoc } from "@/lib/db/memberRepo";
 import { subscribeSocietyDoc, type SocietyDoc } from "@/lib/db/societyRepo";
 
-type BootstrapCtx = {
-  // Auth/user doc
-  user: (userRepo.UserDoc & { uid: string }) | null;
+type UserDoc = {
+  uid: string;
+  activeSocietyId?: string | null;
+  activeMemberId?: string | null;
+};
 
-  // Derived active links (aliased for convenience)
+type BootstrapCtx = {
+  user: UserDoc | null;
   societyId: string | null;
   memberId: string | null;
   activeSocietyId: string | null;
   activeMemberId: string | null;
-
-  // Hydrated docs
   society: SocietyDoc | null;
   member: MemberDoc | null;
-
-  // State
   loading: boolean;
   ready: boolean;
   error: string | null;
-
-  // Actions
   refresh: () => Promise<void>;
 };
 
@@ -44,7 +42,7 @@ const BootstrapContext = createContext<BootstrapCtx>({
 });
 
 export const BootstrapProvider = ({ children }: { children: React.ReactNode }) => {
-  const [user, setUser] = useState<(userRepo.UserDoc & { uid: string }) | null>(null);
+  const [user, setUser] = useState<UserDoc | null>(null);
   const [society, setSociety] = useState<SocietyDoc | null>(null);
   const [member, setMember] = useState<MemberDoc | null>(null);
 
@@ -55,7 +53,7 @@ export const BootstrapProvider = ({ children }: { children: React.ReactNode }) =
   const societyId = useMemo(() => user?.activeSocietyId ?? null, [user?.activeSocietyId]);
   const memberId = useMemo(() => user?.activeMemberId ?? null, [user?.activeMemberId]);
 
-  // Step 1: Wait for Firebase Auth state, then ensure signed in
+  // Main init: wait for auth, ensure user doc, then read it
   useEffect(() => {
     let cancelled = false;
     let unsubUserDoc: (() => void) | null = null;
@@ -65,37 +63,80 @@ export const BootstrapProvider = ({ children }: { children: React.ReactNode }) =
       setError(null);
 
       try {
-        // ensureSignedIn waits for onAuthStateChanged then signs in anonymously if needed
-        const uid = await ensureSignedIn();
+        // 1) Wait for auth state - only sign in if no currentUser
+        let uid = auth.currentUser?.uid;
+
+        if (!uid) {
+          // Sign in anonymously only if needed
+          try {
+            const result = await signInAnonymously(auth);
+            uid = result.user.uid;
+          } catch (e: any) {
+            console.error("[bootstrap] signInAnonymously failed:", e?.code, e?.message);
+            throw e;
+          }
+        }
 
         if (cancelled) return;
 
-        console.log(`[useBootstrap] Auth ready, uid=${uid}`);
-
-        // Ensure user doc exists
-        await userRepo.ensureUserDoc(uid);
+        // 2) Ensure user doc exists BEFORE any reads
+        const userDocRef = doc(db, "users", uid);
+        try {
+          await setDoc(userDocRef, { updatedAt: serverTimestamp() }, { merge: true });
+          console.log(`[bootstrap] uid=${uid}, ensured user doc`);
+        } catch (e: any) {
+          console.error(`[bootstrap] setDoc users/${uid} denied:`, e?.code, e?.message);
+          throw e;
+        }
 
         if (cancelled) return;
 
-        // Subscribe to user doc
-        unsubUserDoc = userRepo.subscribeUserDoc(
+        // 3) Read user doc once to get activeSocietyId/activeMemberId
+        let userDocData: any = null;
+        try {
+          const snap = await getDoc(userDocRef);
+          userDocData = snap.exists() ? snap.data() : {};
+        } catch (e: any) {
+          console.error(`[bootstrap] getDoc users/${uid} denied:`, e?.code, e?.message);
+          throw e;
+        }
+
+        if (cancelled) return;
+
+        const activeSocietyId = userDocData?.activeSocietyId ?? null;
+        const activeMemberId = userDocData?.activeMemberId ?? null;
+
+        console.log(`[bootstrap] activeSocietyId=${activeSocietyId}, activeMemberId=${activeMemberId}`);
+
+        // Set user state
+        setUser({
           uid,
-          (doc) => {
+          activeSocietyId,
+          activeMemberId,
+        });
+
+        // 4) Subscribe to user doc for live updates
+        unsubUserDoc = onSnapshot(
+          userDocRef,
+          (snap) => {
             if (cancelled) return;
-            setUser(doc ? { ...doc, uid } : null);
-            setLoading(false);
-            setReady(true);
+            const data = snap.exists() ? snap.data() : {};
+            setUser({
+              uid,
+              activeSocietyId: data?.activeSocietyId ?? null,
+              activeMemberId: data?.activeMemberId ?? null,
+            });
           },
           (err: any) => {
-            if (cancelled) return;
-            console.error("[useBootstrap] subscribeUserDoc error:", err);
-            setError(err?.message ?? String(err));
-            setLoading(false);
+            console.error(`[bootstrap] onSnapshot users/${uid} error:`, err?.code, err?.message);
           }
         );
+
+        setLoading(false);
+        setReady(true);
       } catch (e: any) {
         if (cancelled) return;
-        console.error("[useBootstrap] initAuth failed:", e);
+        console.error("[bootstrap] initAuth failed:", e?.message);
         setError(e?.message ?? String(e));
         setLoading(false);
       }
@@ -109,24 +150,7 @@ export const BootstrapProvider = ({ children }: { children: React.ReactNode }) =
     };
   }, []);
 
-  // Also listen for auth state changes (e.g., sign out, token refresh)
-  useEffect(() => {
-    const unsub = onAuthChange((firebaseUser) => {
-      if (!firebaseUser) {
-        // User signed out, clear state
-        setUser(null);
-        setReady(false);
-        // Re-trigger sign in
-        ensureSignedIn().catch((e) => {
-          console.error("[useBootstrap] re-auth failed:", e);
-          setError(e?.message ?? String(e));
-        });
-      }
-    });
-    return unsub;
-  }, []);
-
-  // Subscribe society doc whenever societyId changes
+  // Subscribe society doc only if societyId is non-null
   useEffect(() => {
     let unsub: (() => void) | null = null;
     setSociety(null);
@@ -136,9 +160,8 @@ export const BootstrapProvider = ({ children }: { children: React.ReactNode }) =
     unsub = subscribeSocietyDoc(
       societyId,
       (doc) => setSociety(doc),
-      (err) => {
-        console.error("[useBootstrap] subscribeSocietyDoc error:", err);
-        setError(err?.message ?? String(err));
+      (err: any) => {
+        console.error(`[bootstrap] subscribeSocietyDoc societies/${societyId} error:`, err?.code, err?.message);
       }
     );
 
@@ -147,7 +170,7 @@ export const BootstrapProvider = ({ children }: { children: React.ReactNode }) =
     };
   }, [societyId]);
 
-  // Subscribe member doc whenever memberId changes
+  // Subscribe member doc only if memberId is non-null
   useEffect(() => {
     let unsub: (() => void) | null = null;
     setMember(null);
@@ -157,9 +180,8 @@ export const BootstrapProvider = ({ children }: { children: React.ReactNode }) =
     unsub = subscribeMemberDoc(
       memberId,
       (doc) => setMember(doc),
-      (err) => {
-        console.error("[useBootstrap] subscribeMemberDoc error:", err);
-        setError(err?.message ?? String(err));
+      (err: any) => {
+        console.error(`[bootstrap] subscribeMemberDoc members/${memberId} error:`, err?.code, err?.message);
       }
     );
 
@@ -169,13 +191,21 @@ export const BootstrapProvider = ({ children }: { children: React.ReactNode }) =
   }, [memberId]);
 
   const refresh = async () => {
+    if (!user?.uid) return;
+
     setLoading(true);
     try {
-      const uid = await ensureSignedIn();
-      await userRepo.ensureUserDoc(uid);
-      // User doc subscription will update state
+      const userDocRef = doc(db, "users", user.uid);
+      await setDoc(userDocRef, { updatedAt: serverTimestamp() }, { merge: true });
+      const snap = await getDoc(userDocRef);
+      const data = snap.exists() ? snap.data() : {};
+      setUser({
+        uid: user.uid,
+        activeSocietyId: data?.activeSocietyId ?? null,
+        activeMemberId: data?.activeMemberId ?? null,
+      });
     } catch (e: any) {
-      console.error("[useBootstrap] refresh failed:", e);
+      console.error("[bootstrap] refresh failed:", e?.message);
       setError(e?.message ?? String(e));
     } finally {
       setLoading(false);
