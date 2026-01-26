@@ -8,8 +8,8 @@ import { AppText } from "@/components/ui/AppText";
 import { AppCard } from "@/components/ui/AppCard";
 import { LoadingState } from "@/components/ui/LoadingState";
 import { useBootstrap } from "@/lib/useBootstrap";
-import { subscribeMembersBySociety, type MemberDoc } from "@/lib/db/memberRepo";
-import { subscribeEventsBySociety, type EventDoc } from "@/lib/db/eventRepo";
+import { getMembersBySocietyId, type MemberDoc } from "@/lib/db_supabase/memberRepo";
+import { getEventsBySocietyId, type EventDoc } from "@/lib/db_supabase/eventRepo";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
 
 export default function HomeScreen() {
@@ -27,48 +27,23 @@ export default function HomeScreen() {
       return;
     }
 
-    setDataLoading(true);
-    let membersLoaded = false;
-    let eventsLoaded = false;
-
-    const checkLoaded = () => {
-      if (membersLoaded && eventsLoaded) {
+    const loadData = async () => {
+      setDataLoading(true);
+      try {
+        const [membersData, eventsData] = await Promise.all([
+          getMembersBySocietyId(societyId),
+          getEventsBySocietyId(societyId),
+        ]);
+        setMembers(membersData);
+        setEvents(eventsData);
+      } catch (err) {
+        console.error("Failed to load home data:", err);
+      } finally {
         setDataLoading(false);
       }
     };
 
-    const unsubMembers = subscribeMembersBySociety(
-      societyId,
-      (docs) => {
-        setMembers(docs);
-        membersLoaded = true;
-        checkLoaded();
-      },
-      (err) => {
-        console.error("Members subscription error:", err);
-        membersLoaded = true;
-        checkLoaded();
-      }
-    );
-
-    const unsubEvents = subscribeEventsBySociety(
-      societyId,
-      (docs) => {
-        setEvents(docs);
-        eventsLoaded = true;
-        checkLoaded();
-      },
-      (err) => {
-        console.error("Events subscription error:", err);
-        eventsLoaded = true;
-        checkLoaded();
-      }
-    );
-
-    return () => {
-      unsubMembers();
-      unsubEvents();
-    };
+    loadData();
   }, [societyId]);
 
   if (bootstrapLoading || dataLoading) {

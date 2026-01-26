@@ -2,6 +2,22 @@ import { createContext, useContext, useEffect, useMemo, useRef, useState, ReactN
 import { ensureProfile, ensureSignedIn, updateActiveSociety } from "@/lib/auth_supabase";
 import { supabase } from "@/lib/supabase";
 
+type SocietyData = {
+  id: string;
+  name: string;
+  joinCode?: string;
+  country?: string;
+  [key: string]: unknown;
+};
+
+type MemberData = {
+  id: string;
+  name?: string;
+  displayName?: string;
+  role?: string;
+  [key: string]: unknown;
+};
+
 type BootstrapState = {
   loading: boolean;
   error: string | null;
@@ -9,10 +25,11 @@ type BootstrapState = {
   profile: any | null;
   activeSocietyId: string | null;
   activeMemberId: string | null;
-  societyId: string | null; // alias for activeSocietyId for layout compatibility
+  societyId: string | null;
+  society: SocietyData | null;
+  member: MemberData | null;
   setActiveSociety: (societyId: string | null, memberId: string | null) => Promise<void>;
   refresh: () => void;
-  // Backward-compatible aliases for onboarding.tsx
   ready: boolean;
   user: { uid: string } | null;
 };
@@ -27,7 +44,6 @@ export function BootstrapProvider({ children }: { children: ReactNode }) {
 export function useBootstrap(): BootstrapState {
   const ctx = useContext(BootstrapContext);
   if (ctx) return ctx;
-  // Fallback for direct usage (without provider) - shouldn't happen in normal use
   return useBootstrapInternal();
 }
 
@@ -36,6 +52,8 @@ function useBootstrapInternal(): BootstrapState {
   const [error, setError] = useState<string | null>(null);
   const [userId, setUserId] = useState<string | null>(null);
   const [profile, setProfile] = useState<any | null>(null);
+  const [society, setSociety] = useState<SocietyData | null>(null);
+  const [member, setMember] = useState<MemberData | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
 
   const mounted = useRef(true);
@@ -64,7 +82,41 @@ function useBootstrapInternal(): BootstrapState {
         if (!mounted.current) return;
         setProfile(p);
 
-        // Poll profile every 3s (simple + reliable)
+        // Load society if active_society_id exists
+        if (p?.active_society_id) {
+          const { data: societyData } = await supabase
+            .from("societies")
+            .select("*")
+            .eq("id", p.active_society_id)
+            .maybeSingle();
+
+          if (!mounted.current) return;
+          if (societyData) {
+            setSociety({
+              ...societyData,
+              joinCode: societyData.join_code,
+            });
+          }
+        }
+
+        // Load member if active_member_id exists
+        if (p?.active_member_id) {
+          const { data: memberData } = await supabase
+            .from("members")
+            .select("*")
+            .eq("id", p.active_member_id)
+            .maybeSingle();
+
+          if (!mounted.current) return;
+          if (memberData) {
+            setMember({
+              ...memberData,
+              displayName: memberData.name,
+            });
+          }
+        }
+
+        // Poll profile every 3s
         timer = setInterval(async () => {
           const { data, error: pollErr } = await supabase
             .from("profiles")
@@ -109,7 +161,6 @@ function useBootstrapInternal(): BootstrapState {
       activeMemberId: memberId,
     });
 
-    // optimistic update
     setProfile((prev: any) => ({
       ...(prev ?? {}),
       id: userId,
@@ -129,10 +180,11 @@ function useBootstrapInternal(): BootstrapState {
     profile,
     activeSocietyId,
     activeMemberId,
-    societyId: activeSocietyId, // alias for layout compatibility
+    societyId: activeSocietyId,
+    society,
+    member,
     setActiveSociety,
     refresh,
-    // Backward-compatible aliases for onboarding.tsx
     ready: !loading,
     user: userId ? { uid: userId } : null,
   };
