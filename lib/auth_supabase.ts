@@ -2,7 +2,7 @@
 
 /**
  * Ensure we have a signed-in user (anonymous).
- * With Option B, the session is persisted securely via SecureStore.
+ * Session is persisted via browser localStorage on web.
  */
 export async function ensureSignedIn() {
   const existing = await supabase.auth.getSession();
