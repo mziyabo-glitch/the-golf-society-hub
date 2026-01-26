@@ -11,7 +11,12 @@ service cloud.firestore {
       return request.auth != null;
     }
 
-    // Get the current user's document
+    // Check if user document exists
+    function userDocExists() {
+      return exists(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+
+    // Get the current user's document (only call after confirming userDocExists)
     function getUserDoc() {
       return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
     }
@@ -21,43 +26,59 @@ service cloud.firestore {
       return get(/databases/$(database)/documents/members/$(memberId)).data;
     }
 
-    // Check if user is a member of the given society
-    function isMemberOfSociety(societyId) {
-      return isSignedIn() && getUserDoc().activeSocietyId == societyId;
+    // Check if user has an active society set
+    function hasActiveSociety() {
+      return userDocExists() && getUserDoc().activeSocietyId != null;
     }
 
-    // Get the current user's roles for their active society
+    // Check if user is a member of the given society (safe for new users)
+    function isMemberOfSociety(societyId) {
+      return isSignedIn() && userDocExists() && getUserDoc().activeSocietyId == societyId;
+    }
+
+    // Get the current user's roles for their active society (only call when userDocExists)
     function getCurrentMemberRoles() {
       let userDoc = getUserDoc();
       let memberDoc = getMemberDoc(userDoc.activeMemberId);
       return memberDoc.roles;
     }
 
-    // Check if current user has a specific role (case-insensitive via lowercase check)
-    function hasRole(role) {
-      let roles = getCurrentMemberRoles();
-      return role in roles || role.lower() in roles;
+    // Safe role check - returns false if user doc doesn't exist
+    function hasRoleSafe(role) {
+      return userDocExists() && hasActiveSociety() && (role in getCurrentMemberRoles() || role.lower() in getCurrentMemberRoles());
     }
 
-    // Role checks
+    // Role checks (safe for new users - return false if no user doc)
     function isCaptain() {
-      let roles = getCurrentMemberRoles();
-      return 'captain' in roles || 'CAPTAIN' in roles || 'Captain' in roles;
+      return userDocExists() && hasActiveSociety() && (
+        'captain' in getCurrentMemberRoles() ||
+        'CAPTAIN' in getCurrentMemberRoles() ||
+        'Captain' in getCurrentMemberRoles()
+      );
     }
 
     function isSecretary() {
-      let roles = getCurrentMemberRoles();
-      return 'secretary' in roles || 'SECRETARY' in roles || 'Secretary' in roles;
+      return userDocExists() && hasActiveSociety() && (
+        'secretary' in getCurrentMemberRoles() ||
+        'SECRETARY' in getCurrentMemberRoles() ||
+        'Secretary' in getCurrentMemberRoles()
+      );
     }
 
     function isTreasurer() {
-      let roles = getCurrentMemberRoles();
-      return 'treasurer' in roles || 'TREASURER' in roles || 'Treasurer' in roles;
+      return userDocExists() && hasActiveSociety() && (
+        'treasurer' in getCurrentMemberRoles() ||
+        'TREASURER' in getCurrentMemberRoles() ||
+        'Treasurer' in getCurrentMemberRoles()
+      );
     }
 
     function isHandicapper() {
-      let roles = getCurrentMemberRoles();
-      return 'handicapper' in roles || 'HANDICAPPER' in roles || 'Handicapper' in roles;
+      return userDocExists() && hasActiveSociety() && (
+        'handicapper' in getCurrentMemberRoles() ||
+        'HANDICAPPER' in getCurrentMemberRoles() ||
+        'Handicapper' in getCurrentMemberRoles()
+      );
     }
 
     // Management Committee (ManCo) - can manage events
@@ -85,11 +106,11 @@ service cloud.firestore {
       // Any signed-in user can read societies (needed for join code lookup)
       allow read: if isSignedIn();
 
-      // Only members of the society can update it
-      allow update: if isMemberOfSociety(societyId) && isCaptain();
-
-      // Any signed-in user can create a society (they become captain)
+      // Any signed-in user can create a society (for onboarding - no role check)
       allow create: if isSignedIn();
+
+      // Only captain of the society can update it
+      allow update: if isMemberOfSociety(societyId) && isCaptain();
 
       // Only captain can delete society
       allow delete: if isMemberOfSociety(societyId) && isCaptain();
@@ -100,9 +121,14 @@ service cloud.firestore {
     // ══════════════════════════════════════════════════════════════════════════
     match /members/{memberId} {
       // Members of the same society can read member docs
-      allow read: if isSignedIn() && isMemberOfSociety(resource.data.societyId);
+      // Also allow read if user doesn't have active society yet (for bootstrap)
+      allow read: if isSignedIn() && (
+        !userDocExists() ||
+        !hasActiveSociety() ||
+        isMemberOfSociety(resource.data.societyId)
+      );
 
-      // Anyone signed in can create a member (for joining a society)
+      // Anyone signed in can create a member (for joining/creating a society)
       allow create: if isSignedIn();
 
       // Update rules - protect the roles field
