@@ -10,6 +10,7 @@ import { AppInput } from "@/components/ui/AppInput";
 import { PrimaryButton, SecondaryButton } from "@/components/ui/Button";
 import { LoadingState } from "@/components/ui/LoadingState";
 import { useBootstrap } from "@/lib/useBootstrap";
+import { ensureSignedIn } from "@/lib/firebase";
 import { createSociety, findSocietyByJoinCode } from "@/lib/db/societyRepo";
 import { createMember } from "@/lib/db/memberRepo";
 import { setActiveSocietyAndMember } from "@/lib/db/userRepo";
@@ -19,7 +20,7 @@ type Mode = "choose" | "join" | "create";
 
 export default function OnboardingScreen() {
   const router = useRouter();
-  const { user } = useBootstrap();
+  const { user, ready } = useBootstrap();
   const colors = getColors();
 
   const [mode, setMode] = useState<Mode>("choose");
@@ -34,6 +35,9 @@ export default function OnboardingScreen() {
   const [country, setCountry] = useState("");
   const [captainName, setCaptainName] = useState("");
 
+  // Buttons are disabled until auth is ready
+  const isAuthReady = ready && !!user?.uid;
+
   const handleJoinSociety = async () => {
     if (!joinCode.trim()) {
       Alert.alert("Missing Code", "Please enter the society join code.");
@@ -43,13 +47,17 @@ export default function OnboardingScreen() {
       Alert.alert("Missing Name", "Please enter your name.");
       return;
     }
-    if (!user?.uid) {
-      Alert.alert("Error", "Not signed in. Please restart the app.");
-      return;
-    }
 
     setLoading(true);
     try {
+      // Re-ensure signed in before Firestore writes
+      const uid = await ensureSignedIn();
+      if (!uid) {
+        Alert.alert("Error", "Authentication failed. Please try again.");
+        setLoading(false);
+        return;
+      }
+
       const society = await findSocietyByJoinCode(joinCode);
       if (!society) {
         Alert.alert("Not Found", "No society found with that code. Please check and try again.");
@@ -61,9 +69,10 @@ export default function OnboardingScreen() {
         displayName: displayName.trim(),
         name: displayName.trim(),
         roles: ["member"],
+        userId: uid,
       });
 
-      await setActiveSocietyAndMember(user.uid, society.id, memberId);
+      await setActiveSocietyAndMember(uid, society.id, memberId);
       router.replace("/(app)/(tabs)");
     } catch (e: any) {
       console.error("Join society error:", e);
@@ -86,26 +95,31 @@ export default function OnboardingScreen() {
       Alert.alert("Missing Name", "Please enter your name (you will be the Captain).");
       return;
     }
-    if (!user?.uid) {
-      Alert.alert("Error", "Not signed in. Please restart the app.");
-      return;
-    }
 
     setLoading(true);
     try {
+      // Re-ensure signed in before Firestore writes
+      const uid = await ensureSignedIn();
+      if (!uid) {
+        Alert.alert("Error", "Authentication failed. Please try again.");
+        setLoading(false);
+        return;
+      }
+
       const society = await createSociety({
         name: societyName.trim(),
         country: country.trim(),
-        createdBy: user.uid,
+        createdBy: uid,
       });
 
       const memberId = await createMember(society.id, {
         displayName: captainName.trim(),
         name: captainName.trim(),
         roles: ["captain", "member"],
+        userId: uid,
       });
 
-      await setActiveSocietyAndMember(user.uid, society.id, memberId);
+      await setActiveSocietyAndMember(uid, society.id, memberId);
       router.replace("/(app)/(tabs)");
     } catch (e: any) {
       console.error("Create society error:", e);
@@ -120,6 +134,17 @@ export default function OnboardingScreen() {
       <Screen scrollable={false}>
         <View style={styles.centered}>
           <LoadingState message={mode === "join" ? "Joining society..." : "Creating society..."} />
+        </View>
+      </Screen>
+    );
+  }
+
+  // Show loading while waiting for auth
+  if (!ready) {
+    return (
+      <Screen scrollable={false}>
+        <View style={styles.centered}>
+          <LoadingState message="Signing in..." />
         </View>
       </Screen>
     );
@@ -167,8 +192,12 @@ export default function OnboardingScreen() {
                 />
               </View>
 
-              <PrimaryButton onPress={handleJoinSociety} style={styles.submitButton}>
-                Join Society
+              <PrimaryButton
+                onPress={handleJoinSociety}
+                style={styles.submitButton}
+                disabled={!isAuthReady}
+              >
+                {isAuthReady ? "Join Society" : "Signing in..."}
               </PrimaryButton>
             </AppCard>
           </View>
@@ -227,8 +256,12 @@ export default function OnboardingScreen() {
                 />
               </View>
 
-              <PrimaryButton onPress={handleCreateSociety} style={styles.submitButton}>
-                Create Society
+              <PrimaryButton
+                onPress={handleCreateSociety}
+                style={styles.submitButton}
+                disabled={!isAuthReady}
+              >
+                {isAuthReady ? "Create Society" : "Signing in..."}
               </PrimaryButton>
             </AppCard>
           </View>
@@ -258,8 +291,12 @@ export default function OnboardingScreen() {
             <AppText variant="caption" color="secondary" style={styles.optionDescription}>
               Have a join code? Enter it to join your society.
             </AppText>
-            <PrimaryButton onPress={() => setMode("join")} style={styles.optionButton}>
-              Join with Code
+            <PrimaryButton
+              onPress={() => setMode("join")}
+              style={styles.optionButton}
+              disabled={!isAuthReady}
+            >
+              {isAuthReady ? "Join with Code" : "Signing in..."}
             </PrimaryButton>
           </AppCard>
 
@@ -271,8 +308,12 @@ export default function OnboardingScreen() {
             <AppText variant="caption" color="secondary" style={styles.optionDescription}>
               Start a new golf society and invite your friends.
             </AppText>
-            <SecondaryButton onPress={() => setMode("create")} style={styles.optionButton}>
-              Create New
+            <SecondaryButton
+              onPress={() => setMode("create")}
+              style={styles.optionButton}
+              disabled={!isAuthReady}
+            >
+              {isAuthReady ? "Create New" : "Signing in..."}
             </SecondaryButton>
           </AppCard>
         </View>
