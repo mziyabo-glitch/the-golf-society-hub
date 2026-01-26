@@ -10,7 +10,7 @@ import { AppInput } from "@/components/ui/AppInput";
 import { PrimaryButton, SecondaryButton } from "@/components/ui/Button";
 import { LoadingState } from "@/components/ui/LoadingState";
 import { useBootstrap } from "@/lib/useBootstrap";
-import { ensureSignedIn } from "@/lib/firebase";
+import { ensureSignedIn } from "@/lib/auth_supabase";
 import { createSociety, findSocietyByJoinCode } from "@/lib/db/societyRepo";
 import { createMember } from "@/lib/db/memberRepo";
 import { setActiveSocietyAndMember } from "@/lib/db/userRepo";
@@ -50,8 +50,9 @@ export default function OnboardingScreen() {
 
     setLoading(true);
     try {
-      // Re-ensure signed in before Firestore writes
-      const uid = await ensureSignedIn();
+      // Re-ensure signed in before writes
+      const authUser = await ensureSignedIn();
+      const uid = authUser?.id;
       if (!uid) {
         Alert.alert("Error", "Authentication failed. Please try again.");
         setLoading(false);
@@ -98,8 +99,9 @@ export default function OnboardingScreen() {
 
     setLoading(true);
     try {
-      // Re-ensure signed in before Firestore writes
-      const uid = await ensureSignedIn();
+      // Re-ensure signed in before writes
+      const authUser = await ensureSignedIn();
+      const uid = authUser?.id;
       if (!uid) {
         Alert.alert("Error", "Authentication failed. Please try again.");
         setLoading(false);

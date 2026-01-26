@@ -12,6 +12,9 @@ type BootstrapState = {
   societyId: string | null; // alias for activeSocietyId for layout compatibility
   setActiveSociety: (societyId: string | null, memberId: string | null) => Promise<void>;
   refresh: () => void;
+  // Backward-compatible aliases for onboarding.tsx
+  ready: boolean;
+  user: { uid: string } | null;
 };
 
 const BootstrapContext = createContext<BootstrapState | null>(null);
@@ -129,5 +132,8 @@ function useBootstrapInternal(): BootstrapState {
     societyId: activeSocietyId, // alias for layout compatibility
     setActiveSociety,
     refresh,
+    // Backward-compatible aliases for onboarding.tsx
+    ready: !loading,
+    user: userId ? { uid: userId } : null,
   };
 }
