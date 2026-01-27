@@ -39,7 +39,9 @@ function mapEvent(row: any): EventDoc {
 export async function getEventsBySocietyId(societyId: string): Promise<EventDoc[]> {
   const { data, error } = await supabase
     .from("events")
-    .select("*")
+    .select(
+      "id, society_id, name, date, created_by, created_at, updated_at, status, course_id, course_name, male_tee_set_id, female_tee_set_id, handicap_allowance_pct, handicap_allowance, format, player_ids, tee_sheet, is_completed, is_oom, winner_id, winner_name, tee_sheet_notes, results, event_fee"
+    )
     .eq("society_id", societyId)
     .order("date", { ascending: false });
 
@@ -62,7 +64,9 @@ export async function getEventsBySocietyId(societyId: string): Promise<EventDoc[
 export async function getEvent(eventId: string): Promise<EventDoc | null> {
   const { data, error } = await supabase
     .from("events")
-    .select("*")
+    .select(
+      "id, society_id, name, date, created_by, created_at, updated_at, status, course_id, course_name, male_tee_set_id, female_tee_set_id, handicap_allowance_pct, handicap_allowance, format, player_ids, tee_sheet, is_completed, is_oom, winner_id, winner_name, tee_sheet_notes, results, event_fee"
+    )
     .eq("id", eventId)
     .maybeSingle();
 

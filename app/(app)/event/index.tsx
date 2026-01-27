@@ -15,7 +15,7 @@ import {
   getEventsBySocietyId,
   createEvent,
   type EventDoc,
-} from "@/lib/db_supabase/eventRepo";
+} from "@/lib/db/eventRepo";
 import { getPermissionsForMember } from "@/lib/rbac";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
 

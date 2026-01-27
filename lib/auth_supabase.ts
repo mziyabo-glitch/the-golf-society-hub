@@ -119,7 +119,7 @@ export async function ensureProfile(userId: string): Promise<any> {
   // Step 2: Fetch profile with .maybeSingle()
   const { data, error: selectError } = await supabase
     .from("profiles")
-    .select("*")
+    .select("id, active_society_id, active_member_id, created_at, updated_at")
     .eq("id", userId)
     .maybeSingle();
 

@@ -9,8 +9,8 @@ import { AppCard } from "@/components/ui/AppCard";
 import { DestructiveButton, SecondaryButton } from "@/components/ui/Button";
 import { LoadingState } from "@/components/ui/LoadingState";
 import { useBootstrap } from "@/lib/useBootstrap";
-import { clearActiveSociety } from "@/lib/db_supabase/profileRepo";
-import { regenerateJoinCode } from "@/lib/db_supabase/societyRepo";
+import { clearActiveSociety } from "@/lib/db/profileRepo";
+import { regenerateJoinCode } from "@/lib/db/societyRepo";
 import { isCaptain } from "@/lib/rbac";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
 

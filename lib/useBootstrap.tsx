@@ -4,7 +4,8 @@
 // NO .select().single() after upsert to avoid 406 errors
 
 import { createContext, useContext, useEffect, useMemo, useRef, useState, ReactNode } from "react";
-import { supabase } from "@/lib/supabase";
+import { supabase, setSupabaseBootstrapComplete } from "@/lib/supabase";
+import { debugSupabaseSession } from "@/lib/debugSupabase";
 import type { User, Session } from "@supabase/supabase-js";
 
 // ============================================================================
@@ -106,6 +107,7 @@ function useBootstrapInternal(): BootstrapState {
 
     const bootstrap = async () => {
       try {
+        setSupabaseBootstrapComplete(false);
         setLoading(true);
         setError(null);
 
@@ -183,7 +185,7 @@ function useBootstrapInternal(): BootstrapState {
         // Step 2b: Fetch profile with .maybeSingle()
         const { data: profileData, error: profileSelectError } = await supabase
           .from("profiles")
-          .select("*")
+          .select("id, active_society_id, active_member_id, created_at, updated_at")
           .eq("id", currentUser.id)
           .maybeSingle();
 
@@ -206,7 +208,9 @@ function useBootstrapInternal(): BootstrapState {
 
           const { data: societyData, error: societyError } = await supabase
             .from("societies")
-            .select("*")
+            .select(
+              "id, name, country, join_code, created_by, created_at, updated_at, home_course_id, home_course, scoring_mode, handicap_rule, logo_url, admin_pin, annual_fee"
+            )
             .eq("id", finalProfile.active_society_id)
             .maybeSingle();
 
@@ -231,7 +235,9 @@ function useBootstrapInternal(): BootstrapState {
 
           const { data: memberData, error: memberError } = await supabase
             .from("members")
-            .select("*")
+            .select(
+              "id, society_id, user_id, name, display_name, email, handicap, sex, status, role, created_at, updated_at, paid, amount_paid_pence, paid_at"
+            )
             .eq("id", finalProfile.active_member_id)
             .maybeSingle();
 
@@ -257,7 +263,7 @@ function useBootstrapInternal(): BootstrapState {
 
           const { data, error: pollError } = await supabase
             .from("profiles")
-            .select("*")
+            .select("id, active_society_id, active_member_id, created_at, updated_at")
             .eq("id", currentUser.id)
             .maybeSingle();
 
@@ -272,11 +278,15 @@ function useBootstrapInternal(): BootstrapState {
         console.log("[useBootstrap] Final session user ID:", currentUser?.id);
         console.log("[useBootstrap] Session will persist across reloads");
 
+        setSupabaseBootstrapComplete(true);
+        await debugSupabaseSession("boot");
+
       } catch (e: any) {
         console.error("[useBootstrap] Bootstrap error:", e);
         if (mounted.current) {
           setError(e?.message || "Bootstrap failed");
         }
+        setSupabaseBootstrapComplete(false);
       } finally {
         if (mounted.current) {
           setLoading(false);
@@ -297,6 +307,9 @@ function useBootstrapInternal(): BootstrapState {
           // Refresh bootstrap on sign in/out
           if (event === "SIGNED_IN" || event === "SIGNED_OUT") {
             setRefreshKey((k) => k + 1);
+          }
+          if (event === "SIGNED_OUT") {
+            setSupabaseBootstrapComplete(false);
           }
         }
       }
@@ -370,6 +383,7 @@ function useBootstrapInternal(): BootstrapState {
     setProfile(null);
     setSociety(null);
     setMember(null);
+    setSupabaseBootstrapComplete(false);
   };
 
   // ============================================================================

@@ -96,7 +96,7 @@ export async function getMemberById(memberId: string): Promise<MemberData | null
   try {
     const { data, error } = await supabase
       .from("members")
-      .select("*")
+      .select("id, name, handicap, role")
       .eq("id", memberId)
       .maybeSingle();
 
@@ -126,7 +126,7 @@ export async function getMembersBySociety(societyId: string): Promise<MemberData
   try {
     const { data, error } = await supabase
       .from("members")
-      .select("*")
+      .select("id, name, handicap, role")
       .eq("society_id", societyId);
 
     if (error) {

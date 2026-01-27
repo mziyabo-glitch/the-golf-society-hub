@@ -1,49 +1,44 @@
-// lib/supabase.ts
-// SINGLETON Supabase client - use this everywhere
-// DO NOT create additional clients elsewhere
+import { createClient } from "@supabase/supabase-js";
 
-import "react-native-url-polyfill/auto";
-import { createClient, SupabaseClient } from "@supabase/supabase-js";
-import { supabaseStorage } from "@/lib/supabaseStorage";
-
-const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
-const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 
 if (!supabaseUrl || !supabaseAnonKey) {
-  throw new Error(
-    "Missing Supabase environment variables. " +
-    "Set EXPO_PUBLIC_SUPABASE_URL and EXPO_PUBLIC_SUPABASE_ANON_KEY in your .env file."
+  console.error(
+    "[supabase] Missing env vars. Check NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY"
   );
 }
 
-// Singleton instance
-let supabaseInstance: SupabaseClient | null = null;
+export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+  auth: {
+    persistSession: true,
+    autoRefreshToken: true,
+    detectSessionInUrl: true,
+  },
+});
 
-function getSupabaseClient(): SupabaseClient {
-  if (supabaseInstance) {
-    return supabaseInstance;
-  }
+let bootstrapComplete = false;
 
-  supabaseInstance = createClient(supabaseUrl, supabaseAnonKey, {
-    auth: {
-      // Use cross-platform storage adapter (localStorage on web, SecureStore on native)
-      storage: supabaseStorage,
-      // Persist session across app restarts
-      persistSession: true,
-      // Automatically refresh token before expiry
-      autoRefreshToken: true,
-      // Detect OAuth callback in URL (for social logins)
-      detectSessionInUrl: true,
-      // Storage key for session (will be prefixed by supabaseStorage with "gsh:")
-      storageKey: "supabase-auth",
-    },
-  });
-
-  return supabaseInstance;
+export function setSupabaseBootstrapComplete(value: boolean) {
+  bootstrapComplete = value;
 }
 
-// Export the singleton client
-export const supabase = getSupabaseClient();
+export function getSupabaseBootstrapComplete() {
+  return bootstrapComplete;
+}
 
-// Type export for consumers that need it
-export type { SupabaseClient };
+export async function requireSupabaseSession(tag?: string) {
+  if (!bootstrapComplete) {
+    throw new Error(`[supabase] Bootstrap not complete${tag ? ` (${tag})` : ""}`);
+  }
+
+  const { data, error } = await supabase.auth.getSession();
+  if (error) {
+    throw new Error(error.message || "Failed to load Supabase session");
+  }
+  if (!data.session || !data.session.user) {
+    throw new Error(`[supabase] No active session${tag ? ` (${tag})` : ""}`);
+  }
+
+  return data.session;
+}

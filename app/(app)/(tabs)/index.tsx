@@ -8,8 +8,8 @@ import { AppText } from "@/components/ui/AppText";
 import { AppCard } from "@/components/ui/AppCard";
 import { LoadingState } from "@/components/ui/LoadingState";
 import { useBootstrap } from "@/lib/useBootstrap";
-import { getMembersBySocietyId, type MemberDoc } from "@/lib/db_supabase/memberRepo";
-import { getEventsBySocietyId, type EventDoc } from "@/lib/db_supabase/eventRepo";
+import { getMembersBySocietyId, type MemberDoc } from "@/lib/db/memberRepo";
+import { getEventsBySocietyId, type EventDoc } from "@/lib/db/eventRepo";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
 
 export default function HomeScreen() {
