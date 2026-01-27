@@ -1,6 +1,7 @@
 // lib/useBootstrap.tsx
 // Bootstrap hook for auth and app state
 // Uses singleton supabase client for consistent auth
+// NO .select().single() after upsert to avoid 406 errors
 
 import { createContext, useContext, useEffect, useMemo, useRef, useState, ReactNode } from "react";
 import { supabase } from "@/lib/supabase";
@@ -149,39 +150,40 @@ function useBootstrapInternal(): BootstrapState {
         setSession(currentSession);
 
         // ----------------------------------------------------------------
-        // Step 2: Ensure profile exists (upsert)
+        // Step 2: Ensure profile exists
+        // IMPORTANT: upsert WITHOUT .select().single() to avoid 406 errors
+        // Then fetch separately with .maybeSingle()
         // ----------------------------------------------------------------
         console.log("[useBootstrap] Ensuring profile for user:", currentUser.id);
 
-        const { data: profileData, error: profileError } = await supabase
+        // Step 2a: Upsert without .select().single()
+        const { error: upsertError } = await supabase
           .from("profiles")
           .upsert(
             { id: currentUser.id },
-            { onConflict: "id", ignoreDuplicates: true }
-          )
+            { onConflict: "id" }
+          );
+
+        if (upsertError) {
+          console.warn("[useBootstrap] Profile upsert warning:", upsertError.message);
+          // Don't throw - profile might already exist
+        }
+
+        // Step 2b: Fetch profile with .maybeSingle()
+        const { data: profileData, error: profileSelectError } = await supabase
+          .from("profiles")
           .select("*")
-          .single();
+          .eq("id", currentUser.id)
+          .maybeSingle();
 
-        // If upsert fails, try select (profile may already exist)
-        let finalProfile = profileData;
-        if (profileError) {
-          console.log("[useBootstrap] Upsert returned error, trying select:", profileError.message);
-
-          const { data: selectProfile, error: selectError } = await supabase
-            .from("profiles")
-            .select("*")
-            .eq("id", currentUser.id)
-            .maybeSingle();
-
-          if (selectError) {
-            console.error("[useBootstrap] Profile select failed:", selectError.message);
-            throw new Error("Failed to load profile");
-          }
-
-          finalProfile = selectProfile;
+        if (profileSelectError) {
+          console.error("[useBootstrap] Profile select error:", profileSelectError.message);
+          throw new Error("Failed to load profile");
         }
 
         if (!mounted.current) return;
+
+        const finalProfile = profileData;
         setProfile(finalProfile);
         console.log("[useBootstrap] Profile loaded:", finalProfile?.id);
 

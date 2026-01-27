@@ -1,6 +1,7 @@
 // lib/auth_supabase.ts
 // Auth helper functions using singleton supabase client
 // All auth uses supabase-js, no manual fetch calls
+// NO .select().single() after upsert to avoid 406 errors
 
 import { supabase } from "@/lib/supabase";
 import type { User, Session } from "@supabase/supabase-js";
@@ -96,30 +97,27 @@ export async function signOut(): Promise<void> {
 
 /**
  * Ensure a profile row exists for the user.
- * Uses upsert to create if not exists.
+ * Uses upsert WITHOUT .select().single() to avoid 406 errors,
+ * then fetches separately with .maybeSingle()
  */
 export async function ensureProfile(userId: string): Promise<any> {
   console.log("[auth] Ensuring profile for:", userId);
 
-  // Try upsert first
-  const { data: upsertData, error: upsertError } = await supabase
+  // Step 1: Upsert WITHOUT .select().single()
+  const { error: upsertError } = await supabase
     .from("profiles")
     .upsert(
       { id: userId },
-      { onConflict: "id", ignoreDuplicates: true }
-    )
-    .select("*")
-    .single();
+      { onConflict: "id" }
+    );
 
-  if (!upsertError && upsertData) {
-    console.log("[auth] Profile upsert successful");
-    return upsertData;
+  if (upsertError) {
+    console.warn("[auth] Profile upsert warning:", upsertError.message);
+    // Don't throw - profile might already exist
   }
 
-  // Upsert may fail due to RLS, try select
-  console.log("[auth] Upsert returned error, trying select:", upsertError?.message);
-
-  const { data: selectData, error: selectError } = await supabase
+  // Step 2: Fetch profile with .maybeSingle()
+  const { data, error: selectError } = await supabase
     .from("profiles")
     .select("*")
     .eq("id", userId)
@@ -130,25 +128,13 @@ export async function ensureProfile(userId: string): Promise<any> {
     throw new Error(`Failed to load profile: ${selectError.message}`);
   }
 
-  if (selectData) {
-    return selectData;
+  if (!data) {
+    console.error("[auth] No profile found after upsert");
+    throw new Error("Profile not found");
   }
 
-  // Profile doesn't exist, try insert
-  console.log("[auth] Profile not found, creating...");
-
-  const { data: insertData, error: insertError } = await supabase
-    .from("profiles")
-    .insert({ id: userId })
-    .select("*")
-    .single();
-
-  if (insertError) {
-    console.error("[auth] Profile insert error:", insertError.message);
-    throw new Error(`Failed to create profile: ${insertError.message}`);
-  }
-
-  return insertData;
+  console.log("[auth] Profile loaded:", data.id);
+  return data;
 }
 
 /**

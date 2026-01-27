@@ -1,4 +1,7 @@
 // lib/db_supabase/profileRepo.ts
+// Profile management - uses singleton supabase client
+// NO .select().single() after upsert to avoid 406 errors
+
 import { supabase } from "@/lib/supabase";
 
 export type ProfileDoc = {
@@ -10,45 +13,55 @@ export type ProfileDoc = {
 };
 
 /**
- * Ensure profile exists for user
+ * Ensure profile exists for user.
+ * Uses upsert WITHOUT .select().single() to avoid 406 errors,
+ * then fetches with .maybeSingle().
  */
 export async function ensureProfile(userId: string): Promise<ProfileDoc> {
-  const { data: existing, error: selErr } = await supabase
+  console.log("[profileRepo] ensureProfile for:", userId);
+
+  // Step 1: Upsert WITHOUT .select().single()
+  const { error: upsertError } = await supabase
+    .from("profiles")
+    .upsert(
+      { id: userId },
+      { onConflict: "id" }
+    );
+
+  if (upsertError) {
+    console.error("[profileRepo] upsert failed:", {
+      message: upsertError.message,
+      details: upsertError.details,
+      hint: upsertError.hint,
+      code: upsertError.code,
+    });
+    // Don't throw - profile might already exist, continue to fetch
+  }
+
+  // Step 2: Fetch profile with .maybeSingle()
+  const { data, error: selectError } = await supabase
     .from("profiles")
     .select("*")
     .eq("id", userId)
     .maybeSingle();
 
-  if (selErr) {
-    console.error("[profileRepo] ensureProfile select failed:", {
-      message: selErr.message,
-      details: selErr.details,
-      hint: selErr.hint,
-      code: selErr.code,
+  if (selectError) {
+    console.error("[profileRepo] select failed:", {
+      message: selectError.message,
+      details: selectError.details,
+      hint: selectError.hint,
+      code: selectError.code,
     });
-    throw new Error(selErr.message || "Failed to check profile");
+    throw new Error(selectError.message || "Failed to load profile");
   }
 
-  if (existing) return existing;
-
-  console.log("[profileRepo] Creating new profile for:", userId);
-
-  const { data, error } = await supabase
-    .from("profiles")
-    .insert({ id: userId })
-    .select()
-    .single();
-
-  if (error) {
-    console.error("[profileRepo] ensureProfile insert failed:", {
-      message: error.message,
-      details: error.details,
-      hint: error.hint,
-      code: error.code,
-    });
-    throw new Error(error.message || "Failed to create profile");
+  if (!data) {
+    // This shouldn't happen after upsert, but handle gracefully
+    console.error("[profileRepo] No profile found after upsert");
+    throw new Error("Profile not found");
   }
 
+  console.log("[profileRepo] ensureProfile success:", data.id);
   return data;
 }
 
