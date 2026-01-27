@@ -51,6 +51,26 @@ function RootNavigator() {
 }
 
 export default function RootLayout() {
+  useEffect(() => {
+    if (!__DEV__) return;
+    if (typeof window === "undefined") return;
+
+    let active = true;
+    import("@/lib/dev/supabaseDevTest").then(({ runSupabaseDevTest }) => {
+      if (!active) return;
+      const win = window as any;
+      win.runSupabaseDevTest = runSupabaseDevTest;
+    });
+
+    return () => {
+      active = false;
+      if (typeof window !== "undefined") {
+        const win = window as any;
+        delete win.runSupabaseDevTest;
+      }
+    };
+  }, []);
+
   return (
     <BootstrapProvider>
       <RootNavigator />

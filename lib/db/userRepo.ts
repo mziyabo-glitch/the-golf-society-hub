@@ -1,112 +1,105 @@
 // lib/db/userRepo.ts
-import { db } from "@/lib/firebase";
-import {
-  doc,
-  getDoc,
-  setDoc,
-  updateDoc,
-  onSnapshot,
-  serverTimestamp,
-  type Unsubscribe,
-} from "firebase/firestore";
+import { supabase } from "@/lib/supabase";
 
 /**
- * User document shape
+ * User document shape (profile-backed)
  */
 export type UserDoc = {
   uid: string;
   activeSocietyId: string | null;
   activeMemberId: string | null;
-  createdAt?: unknown;
-  updatedAt?: unknown;
+  createdAt?: string | null;
+  updatedAt?: string | null;
 };
 
+function mapUser(row: any): UserDoc {
+  return {
+    uid: row.id,
+    activeSocietyId: row.active_society_id ?? null,
+    activeMemberId: row.active_member_id ?? null,
+    createdAt: row.created_at ?? null,
+    updatedAt: row.updated_at ?? null,
+  };
+}
+
 /**
- * Ensure users/{uid} exists
- * Called during bootstrap
+ * Ensure profiles/{uid} exists
  */
 export async function ensureUserDoc(uid: string): Promise<void> {
-  const ref = doc(db, "users", uid);
-  const snap = await getDoc(ref);
+  const { error } = await supabase
+    .from("profiles")
+    .upsert({ id: uid }, { onConflict: "id" });
 
-  if (!snap.exists()) {
-    await setDoc(ref, {
-      uid,
-      activeSocietyId: null,
-      activeMemberId: null,
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp(),
-    });
+  if (error) {
+    throw new Error(error.message || "Failed to ensure profile");
   }
 }
 
 /**
- * ✅ REQUIRED for app load:
- * Subscribe to users/{uid}
+ * Read profiles/{uid}
+ */
+export async function getUserDoc(uid: string): Promise<UserDoc | null> {
+  const { data, error } = await supabase
+    .from("profiles")
+    .select("*")
+    .eq("id", uid)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(error.message || "Failed to load profile");
+  }
+  return data ? mapUser(data) : null;
+}
+
+/**
+ * Subscribe to profiles/{uid} (polling).
  */
 export function subscribeUserDoc(
   uid: string,
   onNext: (user: UserDoc | null) => void,
   onError?: (err: unknown) => void
-): Unsubscribe {
-  const ref = doc(db, "users", uid);
+): () => void {
+  let active = true;
 
-  return onSnapshot(
-    ref,
-    (snap) => {
-      if (!snap.exists()) {
-        onNext(null);
-        return;
+  const fetchOnce = async () => {
+    try {
+      const doc = await getUserDoc(uid);
+      if (active) onNext(doc);
+    } catch (err) {
+      if (active) {
+        if (onError) onError(err);
+        else console.error("subscribeUserDoc error", err);
       }
-      onNext(snap.data() as UserDoc);
-    },
-    (err) => {
-      if (onError) onError(err);
-      else console.error("subscribeUserDoc error", err);
     }
-  );
+  };
+
+  fetchOnce();
+  const timer = setInterval(fetchOnce, 5000);
+
+  return () => {
+    active = false;
+    clearInterval(timer);
+  };
 }
 
 /**
- * Safe upsert for user updates
- * --------------------------------
- * updateDoc FAILS if the doc does not exist.
- * This guarantees writes always succeed.
+ * Update profile row
  */
-export async function updateUserDoc(
-  uid: string,
-  updates: Partial<UserDoc>
-): Promise<void> {
-  const ref = doc(db, "users", uid);
+export async function updateUserDoc(uid: string, updates: Partial<UserDoc>): Promise<void> {
+  const payload: Record<string, unknown> = {};
+  if (updates.activeSocietyId !== undefined) payload.active_society_id = updates.activeSocietyId;
+  if (updates.activeMemberId !== undefined) payload.active_member_id = updates.activeMemberId;
 
-  const payload: Record<string, unknown> = {
-    ...updates,
-    updatedAt: serverTimestamp(),
-  };
+  if (Object.keys(payload).length === 0) return;
 
-  // Firestore rejects undefined
-  Object.keys(payload).forEach((k) => {
-    if (payload[k] === undefined) delete payload[k];
-  });
-
-  try {
-    await updateDoc(ref, payload);
-  } catch {
-    await setDoc(
-      ref,
-      {
-        uid,
-        ...payload,
-        createdAt: serverTimestamp(),
-      },
-      { merge: true }
-    );
+  const { error } = await supabase.from("profiles").update(payload).eq("id", uid);
+  if (error) {
+    throw new Error(error.message || "Failed to update profile");
   }
 }
 
 /**
  * Set active society + member
- * Called after Create Society or Join Society
  */
 export async function setActiveSocietyAndMember(
   uid: string,
@@ -130,7 +123,7 @@ export async function clearActiveSociety(uid: string): Promise<void> {
 }
 
 /**
- * ✅ Convenience wrappers used by Settings reset flow
+ * Convenience wrappers
  */
 export async function setActiveSociety(uid: string, societyId: string | null) {
   await updateUserDoc(uid, { activeSocietyId: societyId ?? null });

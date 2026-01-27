@@ -11,7 +11,7 @@ import { PrimaryButton, SecondaryButton } from "@/components/ui/Button";
 import { LoadingState } from "@/components/ui/LoadingState";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { useBootstrap } from "@/lib/useBootstrap";
-import { getEventsBySocietyId, createEvent, type EventDoc } from "@/lib/db_supabase/eventRepo";
+import { getEventsBySocietyId, createEvent, type EventDoc } from "@/lib/db/eventRepo";
 import { getPermissionsForMember } from "@/lib/rbac";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
 

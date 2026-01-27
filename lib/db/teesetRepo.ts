@@ -1,17 +1,4 @@
-import {
-  addDoc,
-  collection,
-  deleteDoc,
-  doc,
-  getDocs,
-  onSnapshot,
-  query,
-  serverTimestamp,
-  updateDoc,
-  where,
-} from "firebase/firestore";
-
-import { db } from "@/lib/firebase";
+import { supabase } from "@/lib/supabase";
 
 export type TeeSetDoc = {
   id: string;
@@ -23,26 +10,48 @@ export type TeeSetDoc = {
   par: number;
   courseRating: number;
   slopeRating: number;
-  updatedAt?: unknown;
+  updatedAt?: string | null;
 };
 
 type TeeSetInput = Omit<TeeSetDoc, "id" | "updatedAt">;
 
+function mapTeeSet(row: any): TeeSetDoc {
+  return {
+    id: row.id,
+    societyId: row.society_id,
+    courseId: row.course_id,
+    name: row.name,
+    teeColor: row.tee_color ?? row.name,
+    appliesTo: row.applies_to,
+    par: row.par,
+    courseRating: row.course_rating,
+    slopeRating: row.slope_rating,
+    updatedAt: row.updated_at ?? null,
+  };
+}
+
 export async function createTeeSet(input: TeeSetInput): Promise<TeeSetDoc> {
   const payload = {
-    societyId: input.societyId,
-    courseId: input.courseId,
+    society_id: input.societyId,
+    course_id: input.courseId,
     name: input.name,
-    teeColor: input.teeColor,
-    appliesTo: input.appliesTo,
+    tee_color: input.teeColor,
+    applies_to: input.appliesTo,
     par: input.par,
-    courseRating: input.courseRating,
-    slopeRating: input.slopeRating,
-    updatedAt: serverTimestamp(),
+    course_rating: input.courseRating,
+    slope_rating: input.slopeRating,
   };
 
-  const ref = await addDoc(collection(db, "teesets"), payload);
-  return { id: ref.id, ...payload };
+  const { data, error } = await supabase
+    .from("teesets")
+    .insert(payload)
+    .select("*")
+    .single();
+
+  if (error) {
+    throw new Error(error.message || "Failed to create tee set");
+  }
+  return mapTeeSet(data);
 }
 
 export function subscribeTeesetsBySociety(
@@ -50,41 +59,74 @@ export function subscribeTeesetsBySociety(
   onChange: (teesets: TeeSetDoc[]) => void,
   onError?: (error: Error) => void
 ): () => void {
-  const q = query(collection(db, "teesets"), where("societyId", "==", societyId));
-  return onSnapshot(
-    q,
-    (snap) => {
-      const items = snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<TeeSetDoc, "id">) }));
-      onChange(items);
-    },
-    (error) => {
-      if (onError) onError(error);
+  let active = true;
+
+  const fetchOnce = async () => {
+    try {
+      const items = await listTeesetsBySociety(societyId);
+      if (active) onChange(items);
+    } catch (error: any) {
+      if (active && onError) onError(error);
     }
-  );
+  };
+
+  fetchOnce();
+  const timer = setInterval(fetchOnce, 5000);
+
+  return () => {
+    active = false;
+    clearInterval(timer);
+  };
 }
 
 export async function listTeesetsBySociety(societyId: string): Promise<TeeSetDoc[]> {
-  const q = query(collection(db, "teesets"), where("societyId", "==", societyId));
-  const snap = await getDocs(q);
-  return snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<TeeSetDoc, "id">) }));
+  const { data, error } = await supabase
+    .from("teesets")
+    .select("*")
+    .eq("society_id", societyId);
+
+  if (error) {
+    throw new Error(error.message || "Failed to load tee sets");
+  }
+  return (data ?? []).map(mapTeeSet);
 }
 
 export async function listTeesetsByCourse(courseId: string): Promise<TeeSetDoc[]> {
-  const q = query(collection(db, "teesets"), where("courseId", "==", courseId));
-  const snap = await getDocs(q);
-  return snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<TeeSetDoc, "id">) }));
+  const { data, error } = await supabase
+    .from("teesets")
+    .select("*")
+    .eq("course_id", courseId);
+
+  if (error) {
+    throw new Error(error.message || "Failed to load tee sets");
+  }
+  return (data ?? []).map(mapTeeSet);
 }
 
 export async function updateTeeSetDoc(id: string, updates: Partial<TeeSetDoc>): Promise<void> {
-  const ref = doc(db, "teesets", id);
-  const payload: Record<string, unknown> = { ...updates, updatedAt: serverTimestamp() };
-  delete payload.id;
-  for (const k of Object.keys(payload)) {
-    if (payload[k] === undefined) delete payload[k];
+  const payload: Record<string, unknown> = {};
+  if (updates.name !== undefined) payload.name = updates.name;
+  if (updates.teeColor !== undefined) payload.tee_color = updates.teeColor;
+  if (updates.appliesTo !== undefined) payload.applies_to = updates.appliesTo;
+  if (updates.par !== undefined) payload.par = updates.par;
+  if (updates.courseRating !== undefined) payload.course_rating = updates.courseRating;
+  if (updates.slopeRating !== undefined) payload.slope_rating = updates.slopeRating;
+
+  if (Object.keys(payload).length === 0) return;
+
+  const { error } = await supabase
+    .from("teesets")
+    .update({ ...payload, updated_at: new Date().toISOString() })
+    .eq("id", id);
+
+  if (error) {
+    throw new Error(error.message || "Failed to update tee set");
   }
-  await updateDoc(ref, payload);
 }
 
 export async function deleteTeeSetDoc(id: string): Promise<void> {
-  await deleteDoc(doc(db, "teesets", id));
+  const { error } = await supabase.from("teesets").delete().eq("id", id);
+  if (error) {
+    throw new Error(error.message || "Failed to delete tee set");
+  }
 }

@@ -1,34 +1,21 @@
-import {
-  addDoc,
-  collection,
-  doc,
-  getDoc,
-  getDocs,
-  onSnapshot,
-  query,
-  serverTimestamp,
-  updateDoc,
-  where,
-} from "firebase/firestore";
-
-import { db } from "@/lib/firebase";
-import { stripUndefined } from "@/lib/db/sanitize";
+import { supabase } from "@/lib/supabase";
 
 export type EventDoc = {
   id: string;
   societyId: string;
   name: string;
-  date: string;
-  createdAt?: unknown;
-  createdBy?: string;
-  status?: string;
-  courseId?: string;
-  courseName?: string;
-  maleTeeSetId?: string;
-  femaleTeeSetId?: string;
-  handicapAllowancePct?: number;
-  handicapAllowance?: 0.9 | 1.0;
-  format?: "Stableford" | "Strokeplay" | "Both";
+  date?: string | null;
+  createdBy?: string | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+  status?: string | null;
+  courseId?: string | null;
+  courseName?: string | null;
+  maleTeeSetId?: string | null;
+  femaleTeeSetId?: string | null;
+  handicapAllowancePct?: number | null;
+  handicapAllowance?: number | null;
+  format?: string | null;
   playerIds?: string[];
   teeSheet?: {
     startTimeISO: string;
@@ -36,26 +23,10 @@ export type EventDoc = {
     groups: Array<{ timeISO: string; players: string[] }>;
   };
   isCompleted?: boolean;
-  completedAt?: string;
-  resultsStatus?: "draft" | "published";
-  publishedAt?: string;
-  resultsUpdatedAt?: string;
   isOOM?: boolean;
-  winnerId?: string;
-  winnerName?: string;
-  handicapSnapshot?: Record<string, number>;
-  playingHandicapSnapshot?: Record<string, number>;
-  rsvps?: Record<string, "going" | "maybe" | "no" | "yes">;
-  guests?: Array<{
-    id: string;
-    name: string;
-    sex: "male" | "female";
-    handicapIndex?: number;
-    included: boolean;
-  }>;
-  teeSheetNotes?: string;
-  nearestToPinHoles?: number[];
-  longestDriveHoles?: number[];
+  winnerId?: string | null;
+  winnerName?: string | null;
+  teeSheetNotes?: string | null;
   results?: {
     [memberId: string]: {
       grossScore: number;
@@ -64,7 +35,7 @@ export type EventDoc = {
       strokeplay?: number;
     };
   };
-  eventFee?: number;
+  eventFee?: number | null;
   payments?: Record<
     string,
     {
@@ -77,43 +48,126 @@ export type EventDoc = {
 
 type CreateEventPayload = {
   name: string;
-  date: string;
-  createdBy: string;
+  date?: string;
+  createdBy?: string;
   courseId?: string;
   courseName?: string;
-  format?: "Stableford" | "Strokeplay" | "Both";
+  format?: string;
   isOOM?: boolean;
 };
+
+function mapEvent(row: any): EventDoc {
+  return {
+    id: row.id,
+    societyId: row.society_id,
+    name: row.name,
+    date: row.date ?? null,
+    createdBy: row.created_by ?? null,
+    createdAt: row.created_at ?? null,
+    updatedAt: row.updated_at ?? null,
+    status: row.status ?? null,
+    courseId: row.course_id ?? null,
+    courseName: row.course_name ?? null,
+    maleTeeSetId: row.male_tee_set_id ?? null,
+    femaleTeeSetId: row.female_tee_set_id ?? null,
+    handicapAllowancePct: row.handicap_allowance_pct ?? null,
+    handicapAllowance: row.handicap_allowance ?? null,
+    format: row.format ?? null,
+    playerIds: Array.isArray(row.player_ids) ? row.player_ids : [],
+    teeSheet: row.tee_sheet ?? undefined,
+    isCompleted: row.is_completed ?? false,
+    isOOM: row.is_oom ?? false,
+    winnerId: row.winner_id ?? null,
+    winnerName: row.winner_name ?? null,
+    teeSheetNotes: row.tee_sheet_notes ?? null,
+    results: row.results ?? undefined,
+    eventFee: row.event_fee ?? null,
+  };
+}
+
+async function getEventPaymentsMap(eventId: string) {
+  const { data, error } = await supabase
+    .from("event_payments")
+    .select("member_id, paid, paid_at")
+    .eq("event_id", eventId);
+
+  if (error) {
+    return {};
+  }
+
+  const map: Record<string, any> = {};
+  (data ?? []).forEach((row) => {
+    map[row.member_id] = {
+      paid: row.paid ?? false,
+      paidAtISO: row.paid_at ?? undefined,
+    };
+  });
+  return map;
+}
 
 export async function createEvent(
   societyId: string,
   payload: CreateEventPayload
 ): Promise<EventDoc> {
-  const data = stripUndefined({
-    societyId,
+  const data: Record<string, unknown> = {
+    society_id: societyId,
     name: payload.name,
-    date: payload.date,
-    createdBy: payload.createdBy,
-    createdAt: serverTimestamp(),
-    status: "scheduled",
-    courseId: payload.courseId,
-    courseName: payload.courseName,
-    format: payload.format,
-    isOOM: payload.isOOM,
-    isCompleted: false,
-  });
+    date: payload.date ?? null,
+    course_id: payload.courseId ?? null,
+    course_name: payload.courseName ?? null,
+    format: payload.format ?? null,
+    is_oom: payload.isOOM ?? false,
+  };
 
-  const ref = await addDoc(collection(db, "events"), data);
-  return { id: ref.id, ...data } as EventDoc;
+  if (payload.createdBy) {
+    data.created_by = payload.createdBy;
+  }
+
+  const { data: row, error } = await supabase
+    .from("events")
+    .insert(data)
+    .select("*")
+    .single();
+
+  if (error) {
+    throw new Error(error.message || "Failed to create event");
+  }
+
+  return mapEvent(row);
 }
 
 export async function getEventDoc(id: string): Promise<EventDoc | null> {
-  const ref = doc(db, "events", id);
-  const snap = await getDoc(ref);
-  if (!snap.exists()) {
-    return null;
+  const { data, error } = await supabase
+    .from("events")
+    .select("*")
+    .eq("id", id)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(error.message || "Failed to get event");
   }
-  return { id: snap.id, ...(snap.data() as Omit<EventDoc, "id">) };
+  return data ? mapEvent(data) : null;
+}
+
+export async function getEvent(
+  societyId: string,
+  eventId: string
+): Promise<EventDoc | null> {
+  const { data, error } = await supabase
+    .from("events")
+    .select("*")
+    .eq("id", eventId)
+    .eq("society_id", societyId)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(error.message || "Failed to get event");
+  }
+  if (!data) return null;
+
+  const event = mapEvent(data);
+  const payments = await getEventPaymentsMap(eventId);
+  return { ...event, payments };
 }
 
 export function subscribeEventDoc(
@@ -121,41 +175,81 @@ export function subscribeEventDoc(
   onChange: (event: EventDoc | null) => void,
   onError?: (error: Error) => void
 ): () => void {
-  const ref = doc(db, "events", id);
-  return onSnapshot(
-    ref,
-    (snap) => {
-      if (!snap.exists()) {
-        onChange(null);
-        return;
-      }
-      onChange({ id: snap.id, ...(snap.data() as Omit<EventDoc, "id">) });
-    },
-    (error) => {
-      if (onError) onError(error);
+  let active = true;
+
+  const fetchOnce = async () => {
+    try {
+      const doc = await getEventDoc(id);
+      if (active) onChange(doc);
+    } catch (error: any) {
+      if (active && onError) onError(error);
     }
-  );
+  };
+
+  fetchOnce();
+  const timer = setInterval(fetchOnce, 5000);
+
+  return () => {
+    active = false;
+    clearInterval(timer);
+  };
 }
 
 export async function updateEventDoc(id: string, updates: Partial<EventDoc>): Promise<void> {
-  const ref = doc(db, "events", id);
-  const payload: Record<string, unknown> = { ...updates };
-  delete payload.id;
-  for (const k of Object.keys(payload)) {
-    if (payload[k] === undefined) delete payload[k];
+  const payload: Record<string, unknown> = {};
+
+  if (updates.name !== undefined) payload.name = updates.name;
+  if (updates.date !== undefined) payload.date = updates.date;
+  if (updates.status !== undefined) payload.status = updates.status;
+  if (updates.courseId !== undefined) payload.course_id = updates.courseId;
+  if (updates.courseName !== undefined) payload.course_name = updates.courseName;
+  if (updates.format !== undefined) payload.format = updates.format;
+  if (updates.isCompleted !== undefined) payload.is_completed = updates.isCompleted;
+  if (updates.isOOM !== undefined) payload.is_oom = updates.isOOM;
+  if (updates.winnerId !== undefined) payload.winner_id = updates.winnerId;
+  if (updates.winnerName !== undefined) payload.winner_name = updates.winnerName;
+  if (updates.playerIds !== undefined) payload.player_ids = updates.playerIds;
+  if (updates.teeSheet !== undefined) payload.tee_sheet = updates.teeSheet;
+  if (updates.teeSheetNotes !== undefined) payload.tee_sheet_notes = updates.teeSheetNotes;
+  if (updates.maleTeeSetId !== undefined) payload.male_tee_set_id = updates.maleTeeSetId;
+  if (updates.femaleTeeSetId !== undefined) payload.female_tee_set_id = updates.femaleTeeSetId;
+  if (updates.handicapAllowancePct !== undefined) {
+    payload.handicap_allowance_pct = updates.handicapAllowancePct;
   }
-  await updateDoc(ref, payload);
+  if (updates.handicapAllowance !== undefined) {
+    payload.handicap_allowance = updates.handicapAllowance;
+  }
+  if (updates.results !== undefined) payload.results = updates.results;
+  if (updates.eventFee !== undefined) payload.event_fee = updates.eventFee;
+
+  if (Object.keys(payload).length === 0) return;
+
+  const { error } = await supabase
+    .from("events")
+    .update({ ...payload, updated_at: new Date().toISOString() })
+    .eq("id", id);
+
+  if (error) {
+    throw new Error(error.message || "Failed to update event");
+  }
 }
 
 export async function listEventsBySociety(societyId: string): Promise<EventDoc[]> {
-  const q = query(collection(db, "events"), where("societyId", "==", societyId));
-  const snap = await getDocs(q);
-  const items = snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<EventDoc, "id">) }));
-  return items.sort((a, b) => {
-    const aTime = a.date ? new Date(a.date).getTime() : 0;
-    const bTime = b.date ? new Date(b.date).getTime() : 0;
-    return bTime - aTime;
-  });
+  const { data, error } = await supabase
+    .from("events")
+    .select("*")
+    .eq("society_id", societyId)
+    .order("date", { ascending: false });
+
+  if (error) {
+    throw new Error(error.message || "Failed to load events");
+  }
+
+  return (data ?? []).map(mapEvent);
+}
+
+export async function getEventsBySocietyId(societyId: string): Promise<EventDoc[]> {
+  return listEventsBySociety(societyId);
 }
 
 export function subscribeEventsBySociety(
@@ -163,21 +257,91 @@ export function subscribeEventsBySociety(
   onChange: (events: EventDoc[]) => void,
   onError?: (error: Error) => void
 ): () => void {
-  const q = query(collection(db, "events"), where("societyId", "==", societyId));
-  return onSnapshot(
-    q,
-    (snap) => {
-      const items = snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<EventDoc, "id">) }));
-      onChange(
-        items.sort((a, b) => {
-          const aTime = a.date ? new Date(a.date).getTime() : 0;
-          const bTime = b.date ? new Date(b.date).getTime() : 0;
-          return bTime - aTime;
-        })
-      );
-    },
-    (error) => {
-      if (onError) onError(error);
+  let active = true;
+
+  const fetchOnce = async () => {
+    try {
+      const items = await listEventsBySociety(societyId);
+      if (active) onChange(items);
+    } catch (error: any) {
+      if (active && onError) onError(error);
     }
-  );
+  };
+
+  fetchOnce();
+  const timer = setInterval(fetchOnce, 5000);
+
+  return () => {
+    active = false;
+    clearInterval(timer);
+  };
+}
+
+export async function setEventFee(
+  societyId: string,
+  eventId: string,
+  fee: number
+): Promise<void> {
+  const { error } = await supabase
+    .from("events")
+    .update({ event_fee: fee, updated_at: new Date().toISOString() })
+    .eq("id", eventId)
+    .eq("society_id", societyId);
+
+  if (error) {
+    throw new Error(error.message || "Failed to update event fee");
+  }
+}
+
+export async function setEventPaymentStatus(
+  societyId: string,
+  eventId: string,
+  memberId: string,
+  paid: boolean
+): Promise<void> {
+  const payloadWithSociety: Record<string, unknown> = {
+    society_id: societyId,
+    event_id: eventId,
+    member_id: memberId,
+    paid,
+    paid_at: paid ? new Date().toISOString() : null,
+  };
+
+  let payloadForWrite: Record<string, unknown> = payloadWithSociety;
+  let { error } = await supabase
+    .from("event_payments")
+    .upsert(payloadForWrite, { onConflict: "event_id,member_id" });
+
+  if (error) {
+    if (error.code === "42703") {
+      const fallback = {
+        event_id: eventId,
+        member_id: memberId,
+        paid,
+        paid_at: paid ? new Date().toISOString() : null,
+      };
+      payloadForWrite = fallback;
+      const { error: fallbackError } = await supabase
+        .from("event_payments")
+        .upsert(fallback, { onConflict: "event_id,member_id" });
+      if (!fallbackError) return;
+      error = fallbackError;
+    }
+    if (error.code === "42P10") {
+      const { data: updated, error: updateError } = await supabase
+        .from("event_payments")
+        .update(payloadForWrite)
+        .eq("event_id", eventId)
+        .eq("member_id", memberId)
+        .select("member_id");
+      if (!updateError && updated && updated.length > 0) return;
+
+      const { error: insertError } = await supabase
+        .from("event_payments")
+        .insert(payloadForWrite);
+      if (!insertError) return;
+      throw new Error(insertError.message || "Failed to update payment status");
+    }
+    throw new Error(error.message || "Failed to update payment status");
+  }
 }

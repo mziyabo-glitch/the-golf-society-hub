@@ -11,9 +11,9 @@ import { PrimaryButton, SecondaryButton } from "@/components/ui/Button";
 import { LoadingState } from "@/components/ui/LoadingState";
 import { useBootstrap } from "@/lib/useBootstrap";
 import { ensureSignedIn } from "@/lib/auth_supabase";
-import { createSociety, findSocietyByJoinCode } from "@/lib/db_supabase/societyRepo";
-import { createMember } from "@/lib/db_supabase/memberRepo";
-import { setActiveSocietyAndMember } from "@/lib/db_supabase/profileRepo";
+import { createSociety, findSocietyByJoinCode } from "@/lib/db/societyRepo";
+import { createMember } from "@/lib/db/memberRepo";
+import { setActiveSocietyAndMember } from "@/lib/db/profileRepo";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
 
 type Mode = "choose" | "join" | "create";

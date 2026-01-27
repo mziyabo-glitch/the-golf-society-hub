@@ -16,7 +16,7 @@ import {
   updateMemberDoc,
   deleteMember,
   type MemberDoc,
-} from "@/lib/db_supabase/memberRepo";
+} from "@/lib/db/memberRepo";
 import { getPermissionsForMember } from "@/lib/rbac";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
 

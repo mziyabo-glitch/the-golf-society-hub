@@ -1,19 +1,4 @@
-import {
-  addDoc,
-  collection,
-  deleteDoc,
-  doc,
-  getDoc,
-  getDocs,
-  onSnapshot,
-  query,
-  serverTimestamp,
-  updateDoc,
-  where,
-} from "firebase/firestore";
-
-import { db } from "@/lib/firebase";
-import { stripUndefined } from "@/lib/db/sanitize";
+import { supabase } from "@/lib/supabase";
 
 export type CourseDoc = {
   id: string;
@@ -25,35 +10,61 @@ export type CourseDoc = {
   notes?: string;
   mapsUrl?: string;
   googlePlaceId?: string;
-  updatedAt?: unknown;
+  updatedAt?: string | null;
 };
 
 type CourseInput = Omit<CourseDoc, "id" | "updatedAt">;
 
-export async function createCourse(input: CourseInput): Promise<CourseDoc> {
-  const payload = stripUndefined({
-    societyId: input.societyId,
-    name: input.name,
-    address: input.address,
-    postcode: input.postcode,
-    status: input.status ?? "active",
-    notes: input.notes,
-    mapsUrl: input.mapsUrl,
-    googlePlaceId: input.googlePlaceId,
-    updatedAt: serverTimestamp(),
-  });
+function mapCourse(row: any): CourseDoc {
+  return {
+    id: row.id,
+    societyId: row.society_id,
+    name: row.name,
+    address: row.address ?? undefined,
+    postcode: row.postcode ?? undefined,
+    status: row.status ?? undefined,
+    notes: row.notes ?? undefined,
+    mapsUrl: row.maps_url ?? undefined,
+    googlePlaceId: row.google_place_id ?? undefined,
+    updatedAt: row.updated_at ?? null,
+  };
+}
 
-  const ref = await addDoc(collection(db, "courses"), payload);
-  return { id: ref.id, ...payload };
+export async function createCourse(input: CourseInput): Promise<CourseDoc> {
+  const payload: Record<string, unknown> = {
+    society_id: input.societyId,
+    name: input.name,
+    address: input.address ?? null,
+    postcode: input.postcode ?? null,
+    status: input.status ?? "active",
+    notes: input.notes ?? null,
+    maps_url: input.mapsUrl ?? null,
+    google_place_id: input.googlePlaceId ?? null,
+  };
+
+  const { data, error } = await supabase
+    .from("courses")
+    .insert(payload)
+    .select("*")
+    .single();
+
+  if (error) {
+    throw new Error(error.message || "Failed to create course");
+  }
+  return mapCourse(data);
 }
 
 export async function getCourseDoc(id: string): Promise<CourseDoc | null> {
-  const ref = doc(db, "courses", id);
-  const snap = await getDoc(ref);
-  if (!snap.exists()) {
-    return null;
+  const { data, error } = await supabase
+    .from("courses")
+    .select("*")
+    .eq("id", id)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(error.message || "Failed to load course");
   }
-  return { id: snap.id, ...(snap.data() as Omit<CourseDoc, "id">) };
+  return data ? mapCourse(data) : null;
 }
 
 export function subscribeCoursesBySociety(
@@ -61,36 +72,64 @@ export function subscribeCoursesBySociety(
   onChange: (courses: CourseDoc[]) => void,
   onError?: (error: Error) => void
 ): () => void {
-  const q = query(collection(db, "courses"), where("societyId", "==", societyId));
-  return onSnapshot(
-    q,
-    (snap) => {
-      const items = snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<CourseDoc, "id">) }));
-      onChange(items.sort((a, b) => a.name.localeCompare(b.name)));
-    },
-    (error) => {
-      if (onError) onError(error);
+  let active = true;
+
+  const fetchOnce = async () => {
+    try {
+      const items = await listCoursesBySociety(societyId);
+      if (active) onChange(items);
+    } catch (error: any) {
+      if (active && onError) onError(error);
     }
-  );
+  };
+
+  fetchOnce();
+  const timer = setInterval(fetchOnce, 5000);
+
+  return () => {
+    active = false;
+    clearInterval(timer);
+  };
 }
 
 export async function listCoursesBySociety(societyId: string): Promise<CourseDoc[]> {
-  const q = query(collection(db, "courses"), where("societyId", "==", societyId));
-  const snap = await getDocs(q);
-  const items = snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<CourseDoc, "id">) }));
-  return items.sort((a, b) => a.name.localeCompare(b.name));
+  const { data, error } = await supabase
+    .from("courses")
+    .select("*")
+    .eq("society_id", societyId)
+    .order("name", { ascending: true });
+
+  if (error) {
+    throw new Error(error.message || "Failed to load courses");
+  }
+  return (data ?? []).map(mapCourse);
 }
 
 export async function updateCourseDoc(id: string, updates: Partial<CourseDoc>): Promise<void> {
-  const ref = doc(db, "courses", id);
-  const payload: Record<string, unknown> = { ...updates, updatedAt: serverTimestamp() };
-  delete payload.id;
-  for (const k of Object.keys(payload)) {
-    if (payload[k] === undefined) delete payload[k];
+  const payload: Record<string, unknown> = {};
+  if (updates.name !== undefined) payload.name = updates.name;
+  if (updates.address !== undefined) payload.address = updates.address;
+  if (updates.postcode !== undefined) payload.postcode = updates.postcode;
+  if (updates.status !== undefined) payload.status = updates.status;
+  if (updates.notes !== undefined) payload.notes = updates.notes;
+  if (updates.mapsUrl !== undefined) payload.maps_url = updates.mapsUrl;
+  if (updates.googlePlaceId !== undefined) payload.google_place_id = updates.googlePlaceId;
+
+  if (Object.keys(payload).length === 0) return;
+
+  const { error } = await supabase
+    .from("courses")
+    .update({ ...payload, updated_at: new Date().toISOString() })
+    .eq("id", id);
+
+  if (error) {
+    throw new Error(error.message || "Failed to update course");
   }
-  await updateDoc(ref, payload);
 }
 
 export async function deleteCourseDoc(id: string): Promise<void> {
-  await deleteDoc(doc(db, "courses", id));
+  const { error } = await supabase.from("courses").delete().eq("id", id);
+  if (error) {
+    throw new Error(error.message || "Failed to delete course");
+  }
 }
