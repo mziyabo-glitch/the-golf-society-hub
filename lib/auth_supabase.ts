@@ -1,123 +1,165 @@
+// lib/auth_supabase.ts
+// Auth helper functions using singleton supabase client
+// All auth uses supabase-js, no manual fetch calls
+
 import { supabase } from "@/lib/supabase";
+import type { User, Session } from "@supabase/supabase-js";
+
+// ============================================================================
+// Session Management
+// ============================================================================
 
 /**
- * Get the currently authenticated user.
- * Returns null if not signed in.
+ * Get the current session (from memory/localStorage)
  */
-export async function getCurrentUser() {
-  const { data: { user }, error } = await supabase.auth.getUser();
+export async function getSession(): Promise<Session | null> {
+  const { data: { session }, error } = await supabase.auth.getSession();
+
   if (error) {
-    console.error("[auth_supabase] getCurrentUser error:", error.message);
+    console.error("[auth] getSession error:", error.message);
     return null;
   }
-  return user;
+
+  return session;
 }
 
 /**
- * Ensure we have a signed-in user (anonymous if needed).
- * Session is persisted via browser localStorage on web.
- *
- * IMPORTANT: This function ensures the Supabase client has a valid session
- * that will be sent with subsequent requests for RLS policies.
+ * Get the current user from the session
  */
-export async function ensureSignedIn() {
-  // First check if we have an existing session
+export async function getCurrentUser(): Promise<User | null> {
+  const { data: { user }, error } = await supabase.auth.getUser();
+
+  if (error) {
+    console.error("[auth] getCurrentUser error:", error.message);
+    return null;
+  }
+
+  return user;
+}
+
+// ============================================================================
+// Sign In / Sign Out
+// ============================================================================
+
+/**
+ * Ensure user is signed in. If no session exists, sign in anonymously.
+ * Returns the user object.
+ */
+export async function ensureSignedIn(): Promise<User> {
+  // Check for existing session
   const { data: { session }, error: sessionError } = await supabase.auth.getSession();
 
   if (sessionError) {
-    console.error("[auth_supabase] getSession error:", sessionError.message);
+    console.error("[auth] getSession error:", sessionError.message);
   }
 
   if (session?.user) {
-    console.log("[auth_supabase] Existing session found for user:", session.user.id);
+    console.log("[auth] Existing session for user:", session.user.id);
     return session.user;
   }
 
   // No session, sign in anonymously
-  console.log("[auth_supabase] No session found, signing in anonymously...");
+  console.log("[auth] No session, signing in anonymously...");
+
   const { data, error } = await supabase.auth.signInAnonymously();
 
   if (error) {
-    console.error("[auth_supabase] signInAnonymously error:", error.message);
-    throw error;
+    console.error("[auth] signInAnonymously error:", error.message);
+    throw new Error(`Sign in failed: ${error.message}`);
   }
 
   if (!data.user) {
-    throw new Error("Supabase: no user returned from signInAnonymously()");
+    throw new Error("Sign in returned no user");
   }
 
-  console.log("[auth_supabase] Signed in anonymously as:", data.user.id);
+  console.log("[auth] Signed in anonymously as:", data.user.id);
   return data.user;
 }
 
 /**
- * Verify the current auth state matches the expected user ID.
- * Throws if there's a mismatch or no auth.
+ * Sign out the current user
  */
-export async function verifyAuthState(expectedUserId: string): Promise<void> {
-  const { data: { user }, error } = await supabase.auth.getUser();
+export async function signOut(): Promise<void> {
+  const { error } = await supabase.auth.signOut();
 
   if (error) {
-    console.error("[auth_supabase] verifyAuthState error:", error.message);
-    throw new Error("Failed to verify auth state: " + error.message);
+    console.error("[auth] signOut error:", error.message);
+    throw new Error(`Sign out failed: ${error.message}`);
   }
 
-  if (!user) {
-    throw new Error("No authenticated user found. Please sign in again.");
-  }
-
-  if (user.id !== expectedUserId) {
-    console.error("[auth_supabase] User ID mismatch:", { expected: expectedUserId, actual: user.id });
-    throw new Error("Auth state mismatch. Please refresh and try again.");
-  }
-
-  console.log("[auth_supabase] Auth state verified for user:", user.id);
+  console.log("[auth] Signed out successfully");
 }
 
+// ============================================================================
+// Profile Management
+// ============================================================================
+
 /**
- * Ensure a profile row exists for this user.
+ * Ensure a profile row exists for the user.
+ * Uses upsert to create if not exists.
  */
-export async function ensureProfile(userId: string) {
-  const { data: existing, error: selErr } = await supabase
+export async function ensureProfile(userId: string): Promise<any> {
+  console.log("[auth] Ensuring profile for:", userId);
+
+  // Try upsert first
+  const { data: upsertData, error: upsertError } = await supabase
+    .from("profiles")
+    .upsert(
+      { id: userId },
+      { onConflict: "id", ignoreDuplicates: true }
+    )
+    .select("*")
+    .single();
+
+  if (!upsertError && upsertData) {
+    console.log("[auth] Profile upsert successful");
+    return upsertData;
+  }
+
+  // Upsert may fail due to RLS, try select
+  console.log("[auth] Upsert returned error, trying select:", upsertError?.message);
+
+  const { data: selectData, error: selectError } = await supabase
     .from("profiles")
     .select("*")
     .eq("id", userId)
     .maybeSingle();
 
-  if (selErr) {
-    console.error("[auth_supabase] ensureProfile select error:", selErr.message);
-    throw selErr;
+  if (selectError) {
+    console.error("[auth] Profile select error:", selectError.message);
+    throw new Error(`Failed to load profile: ${selectError.message}`);
   }
 
-  if (existing) {
-    console.log("[auth_supabase] Profile exists for user:", userId);
-    return existing;
+  if (selectData) {
+    return selectData;
   }
 
-  console.log("[auth_supabase] Creating profile for user:", userId);
-  const { data, error } = await supabase
+  // Profile doesn't exist, try insert
+  console.log("[auth] Profile not found, creating...");
+
+  const { data: insertData, error: insertError } = await supabase
     .from("profiles")
     .insert({ id: userId })
     .select("*")
     .single();
 
-  if (error) {
-    console.error("[auth_supabase] ensureProfile insert error:", error.message);
-    throw error;
+  if (insertError) {
+    console.error("[auth] Profile insert error:", insertError.message);
+    throw new Error(`Failed to create profile: ${insertError.message}`);
   }
 
-  return data;
+  return insertData;
 }
 
 /**
- * Update active society / member pointers on the profile.
+ * Update active society and member on the profile
  */
 export async function updateActiveSociety(params: {
   userId: string;
   activeSocietyId: string | null;
   activeMemberId: string | null;
-}) {
-  console.log("[auth_supabase] updateActiveSociety:", params);
+}): Promise<void> {
+  console.log("[auth] updateActiveSociety:", params);
 
   const { error } = await supabase
     .from("profiles")
@@ -128,7 +170,48 @@ export async function updateActiveSociety(params: {
     .eq("id", params.userId);
 
   if (error) {
-    console.error("[auth_supabase] updateActiveSociety error:", error.message);
-    throw error;
+    console.error("[auth] updateActiveSociety error:", error.message);
+    throw new Error(`Failed to update profile: ${error.message}`);
   }
+
+  console.log("[auth] updateActiveSociety success");
+}
+
+/**
+ * Clear active society (for "leave society" flow)
+ */
+export async function clearActiveSociety(userId: string): Promise<void> {
+  await updateActiveSociety({
+    userId,
+    activeSocietyId: null,
+    activeMemberId: null,
+  });
+}
+
+// ============================================================================
+// Auth State Verification
+// ============================================================================
+
+/**
+ * Verify that the current auth state matches expected user ID.
+ * Useful before operations that require auth.uid() to match a specific user.
+ */
+export async function verifyAuthState(expectedUserId: string): Promise<void> {
+  const { data: { user }, error } = await supabase.auth.getUser();
+
+  if (error) {
+    console.error("[auth] verifyAuthState error:", error.message);
+    throw new Error(`Auth verification failed: ${error.message}`);
+  }
+
+  if (!user) {
+    throw new Error("No authenticated user");
+  }
+
+  if (user.id !== expectedUserId) {
+    console.error("[auth] User ID mismatch:", { expected: expectedUserId, actual: user.id });
+    throw new Error("Auth state mismatch");
+  }
+
+  console.log("[auth] Auth state verified for:", user.id);
 }

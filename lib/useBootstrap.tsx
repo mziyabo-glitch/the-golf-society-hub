@@ -1,6 +1,14 @@
+// lib/useBootstrap.tsx
+// Bootstrap hook for auth and app state
+// Uses singleton supabase client for consistent auth
+
 import { createContext, useContext, useEffect, useMemo, useRef, useState, ReactNode } from "react";
-import { ensureSignedIn, ensureProfile, updateActiveSociety } from "@/lib/auth_supabase";
 import { supabase } from "@/lib/supabase";
+import type { User, Session } from "@supabase/supabase-js";
+
+// ============================================================================
+// Types
+// ============================================================================
 
 type SocietyData = {
   id: string;
@@ -20,22 +28,39 @@ type MemberData = {
 };
 
 type BootstrapState = {
+  // Loading & error
   loading: boolean;
   error: string | null;
+
+  // Auth state
   userId: string | null;
+  session: Session | null;
+
+  // Profile & active pointers
   profile: any | null;
   activeSocietyId: string | null;
   activeMemberId: string | null;
+
+  // Loaded data
   societyId: string | null;
   society: SocietyData | null;
   member: MemberData | null;
+
+  // Actions
   setActiveSociety: (societyId: string | null, memberId: string | null) => Promise<void>;
   refresh: () => void;
+  signOut: () => Promise<void>;
+
+  // Aliases for backwards compatibility
   ready: boolean;
   bootstrapped: boolean;
   isSignedIn: boolean;
   user: { uid: string; activeSocietyId: string | null; activeMemberId: string | null } | null;
 };
+
+// ============================================================================
+// Context
+// ============================================================================
 
 const BootstrapContext = createContext<BootstrapState | null>(null);
 
@@ -47,13 +72,18 @@ export function BootstrapProvider({ children }: { children: ReactNode }) {
 export function useBootstrap(): BootstrapState {
   const ctx = useContext(BootstrapContext);
   if (ctx) return ctx;
+  // Fallback for components outside provider (shouldn't happen in prod)
   return useBootstrapInternal();
 }
+
+// ============================================================================
+// Internal Hook
+// ============================================================================
 
 function useBootstrapInternal(): BootstrapState {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [userId, setUserId] = useState<string | null>(null);
+  const [session, setSession] = useState<Session | null>(null);
   const [profile, setProfile] = useState<any | null>(null);
   const [society, setSociety] = useState<SocietyData | null>(null);
   const [member, setMember] = useState<MemberData | null>(null);
@@ -61,6 +91,7 @@ function useBootstrapInternal(): BootstrapState {
 
   const mounted = useRef(true);
 
+  // Cleanup on unmount
   useEffect(() => {
     mounted.current = true;
     return () => {
@@ -68,42 +99,107 @@ function useBootstrapInternal(): BootstrapState {
     };
   }, []);
 
+  // Main bootstrap effect
   useEffect(() => {
-    let timer: ReturnType<typeof setInterval> | null = null;
+    let profilePollTimer: ReturnType<typeof setInterval> | null = null;
 
-    const run = async () => {
+    const bootstrap = async () => {
       try {
         setLoading(true);
         setError(null);
 
-        // CRITICAL: ensureSignedIn must complete before any DB operations
-        // This establishes the auth session that RLS policies depend on
-        console.log("[useBootstrap] Starting auth...");
-        const user = await ensureSignedIn();
-        if (!mounted.current) return;
+        // ----------------------------------------------------------------
+        // Step 1: Get existing session or sign in anonymously
+        // ----------------------------------------------------------------
+        console.log("[useBootstrap] Checking for existing session...");
 
-        console.log("[useBootstrap] Auth complete. User ID:", user.id);
-        setUserId(user.id);
+        const { data: { session: existingSession }, error: sessionError } =
+          await supabase.auth.getSession();
 
-        // Verify the session is actually set
-        const { data: { session } } = await supabase.auth.getSession();
-        if (!session) {
-          console.error("[useBootstrap] No session after ensureSignedIn!");
-          throw new Error("Failed to establish session");
+        if (sessionError) {
+          console.error("[useBootstrap] getSession error:", sessionError.message);
         }
-        console.log("[useBootstrap] Session verified for user:", session.user.id);
 
-        const p = await ensureProfile(user.id);
+        let currentSession = existingSession;
+        let currentUser: User | null = existingSession?.user ?? null;
+
+        if (!currentSession) {
+          console.log("[useBootstrap] No session found, signing in anonymously...");
+
+          const { data: signInData, error: signInError } =
+            await supabase.auth.signInAnonymously();
+
+          if (signInError) {
+            throw new Error(`Anonymous sign-in failed: ${signInError.message}`);
+          }
+
+          currentSession = signInData.session;
+          currentUser = signInData.user;
+
+          console.log("[useBootstrap] Signed in anonymously:", currentUser?.id);
+        } else {
+          console.log("[useBootstrap] Existing session found:", currentUser?.id);
+        }
+
+        if (!currentSession || !currentUser) {
+          throw new Error("Failed to establish auth session");
+        }
+
         if (!mounted.current) return;
-        setProfile(p);
+        setSession(currentSession);
 
-        // Load society if active_society_id exists
-        if (p?.active_society_id) {
-          const { data: societyData } = await supabase
+        // ----------------------------------------------------------------
+        // Step 2: Ensure profile exists (upsert)
+        // ----------------------------------------------------------------
+        console.log("[useBootstrap] Ensuring profile for user:", currentUser.id);
+
+        const { data: profileData, error: profileError } = await supabase
+          .from("profiles")
+          .upsert(
+            { id: currentUser.id },
+            { onConflict: "id", ignoreDuplicates: true }
+          )
+          .select("*")
+          .single();
+
+        // If upsert fails, try select (profile may already exist)
+        let finalProfile = profileData;
+        if (profileError) {
+          console.log("[useBootstrap] Upsert returned error, trying select:", profileError.message);
+
+          const { data: selectProfile, error: selectError } = await supabase
+            .from("profiles")
+            .select("*")
+            .eq("id", currentUser.id)
+            .maybeSingle();
+
+          if (selectError) {
+            console.error("[useBootstrap] Profile select failed:", selectError.message);
+            throw new Error("Failed to load profile");
+          }
+
+          finalProfile = selectProfile;
+        }
+
+        if (!mounted.current) return;
+        setProfile(finalProfile);
+        console.log("[useBootstrap] Profile loaded:", finalProfile?.id);
+
+        // ----------------------------------------------------------------
+        // Step 3: Load society if active_society_id exists
+        // ----------------------------------------------------------------
+        if (finalProfile?.active_society_id) {
+          console.log("[useBootstrap] Loading society:", finalProfile.active_society_id);
+
+          const { data: societyData, error: societyError } = await supabase
             .from("societies")
             .select("*")
-            .eq("id", p.active_society_id)
+            .eq("id", finalProfile.active_society_id)
             .maybeSingle();
+
+          if (societyError) {
+            console.warn("[useBootstrap] Society load error:", societyError.message);
+          }
 
           if (!mounted.current) return;
           if (societyData) {
@@ -114,13 +210,21 @@ function useBootstrapInternal(): BootstrapState {
           }
         }
 
-        // Load member if active_member_id exists
-        if (p?.active_member_id) {
-          const { data: memberData } = await supabase
+        // ----------------------------------------------------------------
+        // Step 4: Load member if active_member_id exists
+        // ----------------------------------------------------------------
+        if (finalProfile?.active_member_id) {
+          console.log("[useBootstrap] Loading member:", finalProfile.active_member_id);
+
+          const { data: memberData, error: memberError } = await supabase
             .from("members")
             .select("*")
-            .eq("id", p.active_member_id)
+            .eq("id", finalProfile.active_member_id)
             .maybeSingle();
+
+          if (memberError) {
+            console.warn("[useBootstrap] Member load error:", memberError.message);
+          }
 
           if (!mounted.current) return;
           if (memberData) {
@@ -132,31 +236,67 @@ function useBootstrapInternal(): BootstrapState {
           }
         }
 
-        // Poll profile every 3s for updates
-        timer = setInterval(async () => {
-          const { data, error: pollErr } = await supabase
+        // ----------------------------------------------------------------
+        // Step 5: Poll profile for updates (handles external changes)
+        // ----------------------------------------------------------------
+        profilePollTimer = setInterval(async () => {
+          if (!currentUser) return;
+
+          const { data, error: pollError } = await supabase
             .from("profiles")
             .select("*")
-            .eq("id", user.id)
+            .eq("id", currentUser.id)
             .maybeSingle();
 
           if (!mounted.current) return;
-          if (!pollErr && data) setProfile(data);
-        }, 3000);
+          if (!pollError && data) {
+            setProfile(data);
+          }
+        }, 5000);
+
+        console.log("[useBootstrap] Bootstrap complete");
+
       } catch (e: any) {
-        console.error("[useBootstrap] Error:", e);
-        if (mounted.current) setError(e?.message || "Bootstrap failed");
+        console.error("[useBootstrap] Bootstrap error:", e);
+        if (mounted.current) {
+          setError(e?.message || "Bootstrap failed");
+        }
       } finally {
-        if (mounted.current) setLoading(false);
+        if (mounted.current) {
+          setLoading(false);
+        }
       }
     };
 
-    run();
+    bootstrap();
+
+    // Listen for auth state changes
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(
+      async (event, newSession) => {
+        console.log("[useBootstrap] Auth state changed:", event);
+
+        if (mounted.current) {
+          setSession(newSession);
+
+          // Refresh bootstrap on sign in/out
+          if (event === "SIGNED_IN" || event === "SIGNED_OUT") {
+            setRefreshKey((k) => k + 1);
+          }
+        }
+      }
+    );
 
     return () => {
-      if (timer) clearInterval(timer);
+      if (profilePollTimer) clearInterval(profilePollTimer);
+      subscription.unsubscribe();
     };
   }, [refreshKey]);
+
+  // ============================================================================
+  // Derived state
+  // ============================================================================
+
+  const userId = session?.user?.id ?? null;
 
   const activeSocietyId = useMemo(
     () => (profile?.active_society_id ?? null) as string | null,
@@ -168,15 +308,32 @@ function useBootstrapInternal(): BootstrapState {
     [profile]
   );
 
+  // ============================================================================
+  // Actions
+  // ============================================================================
+
   const setActiveSociety = async (societyId: string | null, memberId: string | null) => {
-    if (!userId) return;
+    if (!userId) {
+      console.error("[useBootstrap] setActiveSociety: No user ID");
+      return;
+    }
 
-    await updateActiveSociety({
-      userId,
-      activeSocietyId: societyId,
-      activeMemberId: memberId,
-    });
+    console.log("[useBootstrap] setActiveSociety:", { societyId, memberId });
 
+    const { error } = await supabase
+      .from("profiles")
+      .update({
+        active_society_id: societyId,
+        active_member_id: memberId,
+      })
+      .eq("id", userId);
+
+    if (error) {
+      console.error("[useBootstrap] setActiveSociety error:", error.message);
+      throw new Error(error.message);
+    }
+
+    // Update local state
     setProfile((prev: any) => ({
       ...(prev ?? {}),
       id: userId,
@@ -186,21 +343,42 @@ function useBootstrapInternal(): BootstrapState {
   };
 
   const refresh = () => {
+    console.log("[useBootstrap] Manual refresh triggered");
     setRefreshKey((k) => k + 1);
   };
 
+  const signOut = async () => {
+    console.log("[useBootstrap] Signing out...");
+    await supabase.auth.signOut();
+    setSession(null);
+    setProfile(null);
+    setSociety(null);
+    setMember(null);
+  };
+
+  // ============================================================================
+  // Return state
+  // ============================================================================
+
   return {
+    // Core state
     loading,
     error,
     userId,
+    session,
     profile,
     activeSocietyId,
     activeMemberId,
     societyId: activeSocietyId,
     society,
     member,
+
+    // Actions
     setActiveSociety,
     refresh,
+    signOut,
+
+    // Backwards compatibility aliases
     ready: !loading,
     bootstrapped: !loading,
     isSignedIn: !!userId,
