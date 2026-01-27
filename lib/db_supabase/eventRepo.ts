@@ -1,6 +1,27 @@
 // lib/db_supabase/eventRepo.ts
 import { supabase } from "@/lib/supabase";
 
+// Event format types
+export type EventFormat = 'medal' | 'stableford' | 'matchplay' | 'scramble' | 'texas_scramble' | 'fourball' | 'foursomes';
+export type EventClassification = 'general' | 'oom' | 'major' | 'friendly';
+
+export const EVENT_FORMATS: { value: EventFormat; label: string }[] = [
+  { value: 'stableford', label: 'Stableford' },
+  { value: 'medal', label: 'Medal (Stroke Play)' },
+  { value: 'matchplay', label: 'Match Play' },
+  { value: 'scramble', label: 'Scramble' },
+  { value: 'texas_scramble', label: 'Texas Scramble' },
+  { value: 'fourball', label: 'Four-Ball' },
+  { value: 'foursomes', label: 'Foursomes' },
+];
+
+export const EVENT_CLASSIFICATIONS: { value: EventClassification; label: string }[] = [
+  { value: 'general', label: 'General' },
+  { value: 'oom', label: 'Order of Merit (OOM)' },
+  { value: 'major', label: 'Major' },
+  { value: 'friendly', label: 'Friendly' },
+];
+
 export type EventDoc = {
   id: string;
   society_id: string;
@@ -8,7 +29,8 @@ export type EventDoc = {
   date?: string;
   course_id?: string;
   courseName?: string;
-  format?: string;
+  format: EventFormat;
+  classification: EventClassification;
   status?: string;
   isCompleted?: boolean;
   isOOM?: boolean;
@@ -25,8 +47,10 @@ function mapEvent(row: any): EventDoc {
   return {
     ...row,
     courseName: row.course_name,
+    format: row.format ?? 'stableford',
+    classification: row.classification ?? 'general',
     isCompleted: row.is_completed ?? false,
-    isOOM: row.is_oom ?? false,
+    isOOM: row.is_oom ?? (row.classification === 'oom'),
     winnerName: row.winner_name,
     playerIds: row.player_ids ?? [],
     results: row.results ?? {},
@@ -89,19 +113,22 @@ export async function createEvent(
     date?: string;
     courseId?: string;
     courseName?: string;
-    format?: string;
-    isOOM?: boolean;
+    format: EventFormat;
+    classification?: EventClassification;
     createdBy?: string;
   }
 ): Promise<EventDoc> {
+  const classification = data.classification ?? 'general';
+
   const payload: Record<string, unknown> = {
     society_id: societyId,
     name: data.name,
     date: data.date ?? null,
     course_id: data.courseId ?? null,
     course_name: data.courseName ?? null,
-    format: data.format ?? null,
-    is_oom: data.isOOM ?? false,
+    format: data.format,
+    classification: classification,
+    is_oom: classification === 'oom',
     is_completed: false,
   };
 
@@ -141,10 +168,10 @@ export async function updateEvent(
     date: string;
     courseId: string;
     courseName: string;
-    format: string;
+    format: EventFormat;
+    classification: EventClassification;
     status: string;
     isCompleted: boolean;
-    isOOM: boolean;
     winnerName: string;
   }>
 ): Promise<void> {
@@ -157,9 +184,12 @@ export async function updateEvent(
   if (updates.courseId !== undefined) payload.course_id = updates.courseId;
   if (updates.courseName !== undefined) payload.course_name = updates.courseName;
   if (updates.format !== undefined) payload.format = updates.format;
+  if (updates.classification !== undefined) {
+    payload.classification = updates.classification;
+    payload.is_oom = updates.classification === 'oom';
+  }
   if (updates.status !== undefined) payload.status = updates.status;
   if (updates.isCompleted !== undefined) payload.is_completed = updates.isCompleted;
-  if (updates.isOOM !== undefined) payload.is_oom = updates.isOOM;
   if (updates.winnerName !== undefined) payload.winner_name = updates.winnerName;
 
   const { error } = await supabase

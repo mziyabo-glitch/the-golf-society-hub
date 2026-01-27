@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { StyleSheet, View, Pressable, Alert } from "react-native";
+import { useRouter } from "expo-router";
 import { Feather } from "@expo/vector-icons";
 
 import { Screen } from "@/components/ui/Screen";
@@ -12,8 +13,9 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { useBootstrap } from "@/lib/useBootstrap";
 import {
   getMembersBySocietyId,
-  createMember,
+  addMemberAsCaptain,
   updateMemberDoc,
+  updateMemberHandicap,
   deleteMember,
   type MemberDoc,
 } from "@/lib/db_supabase/memberRepo";
@@ -22,38 +24,136 @@ import { getColors, spacing, radius } from "@/lib/ui/theme";
 
 type ModalMode = "none" | "add" | "edit";
 
+// Role priority for sorting (lower number = higher priority)
+const ROLE_PRIORITY: Record<string, number> = {
+  captain: 1,
+  treasurer: 2,
+  secretary: 3,
+  handicapper: 4,
+  member: 5,
+};
+
+/**
+ * Get the priority number for a member's role
+ */
+function getRolePriority(member: MemberDoc): number {
+  const role = member.role?.toLowerCase() || "member";
+  return ROLE_PRIORITY[role] ?? 99;
+}
+
+/**
+ * Sort members by role priority, then by name alphabetically
+ */
+function sortMembersByRoleThenName(members: MemberDoc[]): MemberDoc[] {
+  return [...members].sort((a, b) => {
+    const priorityA = getRolePriority(a);
+    const priorityB = getRolePriority(b);
+
+    if (priorityA !== priorityB) {
+      return priorityA - priorityB;
+    }
+
+    // Same priority - sort by name ASC
+    const nameA = (a.displayName || a.name || "").toLowerCase();
+    const nameB = (b.displayName || b.name || "").toLowerCase();
+    return nameA.localeCompare(nameB);
+  });
+}
+
+/**
+ * Format role string to human-friendly display
+ */
+function formatRole(role: string | undefined): string {
+  if (!role) return "Member";
+  const lower = role.toLowerCase();
+  const roleNames: Record<string, string> = {
+    captain: "Captain",
+    treasurer: "Treasurer",
+    secretary: "Secretary",
+    handicapper: "Handicapper",
+    member: "Member",
+  };
+  return roleNames[lower] || role.charAt(0).toUpperCase() + role.slice(1);
+}
+
 export default function MembersScreen() {
-  const { societyId, member: currentMember, loading: bootstrapLoading, refresh } = useBootstrap();
+  const { societyId, activeSocietyId, member: currentMember, loading: bootstrapLoading, refresh } = useBootstrap();
+  const router = useRouter();
   const colors = getColors();
 
   const [members, setMembers] = useState<MemberDoc[]>([]);
   const [loading, setLoading] = useState(true);
+  const [permissionError, setPermissionError] = useState<string | null>(null);
   const [modalMode, setModalMode] = useState<ModalMode>("none");
   const [editingMember, setEditingMember] = useState<MemberDoc | null>(null);
 
   // Form state
   const [formName, setFormName] = useState("");
   const [formEmail, setFormEmail] = useState("");
+  const [formWhsNumber, setFormWhsNumber] = useState("");
+  const [formHandicapIndex, setFormHandicapIndex] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
   // Get permissions for current member
   const permissions = getPermissionsForMember(currentMember as any);
 
+  // Debug: log activeSocietyId and permissions
+  console.log("[members] activeSocietyId:", activeSocietyId || societyId);
+  console.log("[members] currentMember:", currentMember?.id, "roles:", currentMember?.roles);
+  console.log("[members] permissions.canCreateMembers:", permissions.canCreateMembers);
+
   const loadMembers = async () => {
     if (!societyId) {
+      console.log("[members] No societyId, skipping load");
       setLoading(false);
       return;
     }
+
     setLoading(true);
+    setPermissionError(null);
+
     try {
+      console.log("[members] Fetching members for society:", societyId);
       const data = await getMembersBySocietyId(societyId);
-      setMembers(data);
-    } catch (err) {
-      console.error("Failed to load members:", err);
+
+      // Sort by role priority, then name
+      const sorted = sortMembersByRoleThenName(data);
+      setMembers(sorted);
+
+      console.log("[members] Query success, count:", sorted.length);
+    } catch (err: any) {
+      console.error("[members] select error:", err);
+
+      // Handle 403 / permission errors
+      const errorCode = err?.code || err?.statusCode;
+      const errorMessage = err?.message || "";
+      const is403 =
+        errorCode === "403" ||
+        errorCode === 403 ||
+        errorCode === "42501" ||
+        errorMessage.includes("permission") ||
+        errorMessage.includes("row-level security");
+
+      if (is403) {
+        setPermissionError(
+          "You don't have permission to view members for this society. Please contact the Captain."
+        );
+      } else {
+        // Generic error - show alert
+        Alert.alert("Error", "Failed to load members. Please try again.");
+      }
     } finally {
       setLoading(false);
     }
   };
+
+  // Redirect to onboarding if no active society
+  useEffect(() => {
+    if (!bootstrapLoading && !activeSocietyId && !societyId) {
+      console.log("[members] No active society, redirecting to onboarding");
+      router.replace("/onboarding");
+    }
+  }, [bootstrapLoading, activeSocietyId, societyId, router]);
 
   useEffect(() => {
     loadMembers();
@@ -62,6 +162,8 @@ export default function MembersScreen() {
   const openAddModal = () => {
     setFormName("");
     setFormEmail("");
+    setFormWhsNumber("");
+    setFormHandicapIndex("");
     setEditingMember(null);
     setModalMode("add");
   };
@@ -69,6 +171,14 @@ export default function MembersScreen() {
   const openEditModal = (member: MemberDoc) => {
     setFormName(member.displayName || member.name || "");
     setFormEmail(member.email || "");
+    setFormWhsNumber(member.whsNumber || member.whs_number || "");
+    setFormHandicapIndex(
+      member.handicapIndex != null
+        ? String(member.handicapIndex)
+        : member.handicap_index != null
+        ? String(member.handicap_index)
+        : ""
+    );
     setEditingMember(member);
     setModalMode("edit");
   };
@@ -78,6 +188,8 @@ export default function MembersScreen() {
     setEditingMember(null);
     setFormName("");
     setFormEmail("");
+    setFormWhsNumber("");
+    setFormHandicapIndex("");
   };
 
   const handleAddMember = async () => {
@@ -88,17 +200,28 @@ export default function MembersScreen() {
     if (!societyId) return;
 
     setSubmitting(true);
+    console.log("[members] Adding member via RPC...");
+
     try {
-      await createMember(societyId, {
-        displayName: formName.trim(),
-        name: formName.trim(),
-        email: formEmail.trim() || undefined,
-        roles: ["member"],
-      });
+      const newMember = await addMemberAsCaptain(
+        societyId,
+        formName.trim(),
+        formEmail.trim() || null,
+        "member"
+      );
+      console.log("[members] Member added successfully, id:", newMember.id);
       closeModal();
       loadMembers();
     } catch (e: any) {
-      Alert.alert("Error", e?.message || "Failed to add member.");
+      console.error("[members] Add member RPC error:", e?.message);
+
+      // Show user-friendly error
+      const errorMsg = e?.message || "Failed to add member.";
+      if (errorMsg.includes("Only Captains")) {
+        Alert.alert("Permission Denied", "Only Captains can add members to the society.");
+      } else {
+        Alert.alert("Error", errorMsg);
+      }
     } finally {
       setSubmitting(false);
     }
@@ -111,13 +234,40 @@ export default function MembersScreen() {
     }
     if (!societyId || !editingMember) return;
 
+    // Validate handicap index if provided
+    if (formHandicapIndex.trim()) {
+      const hcap = parseFloat(formHandicapIndex.trim());
+      if (isNaN(hcap) || hcap < -10 || hcap > 54) {
+        Alert.alert("Invalid Handicap", "Handicap index must be between -10 and 54.");
+        return;
+      }
+    }
+
     setSubmitting(true);
     try {
+      // Update basic member info
       await updateMemberDoc(societyId, editingMember.id, {
         displayName: formName.trim(),
         name: formName.trim(),
         email: formEmail.trim() || undefined,
       });
+
+      // Update handicap if Captain/Handicapper and values changed
+      if (permissions.canManageHandicaps) {
+        const oldWhs = editingMember.whsNumber || editingMember.whs_number || "";
+        const oldHcap = editingMember.handicapIndex ?? editingMember.handicap_index ?? null;
+        const newWhs = formWhsNumber.trim() || null;
+        const newHcap = formHandicapIndex.trim() ? parseFloat(formHandicapIndex.trim()) : null;
+
+        const whsChanged = (newWhs || "") !== oldWhs;
+        const hcapChanged = newHcap !== oldHcap;
+
+        if (whsChanged || hcapChanged) {
+          console.log("[members] Updating handicap info:", { newWhs, newHcap });
+          await updateMemberHandicap(editingMember.id, newWhs, newHcap);
+        }
+      }
+
       closeModal();
       loadMembers();
     } catch (e: any) {
@@ -189,6 +339,22 @@ export default function MembersScreen() {
     );
   }
 
+  // Show permission error (403)
+  if (permissionError) {
+    return (
+      <Screen>
+        <View style={styles.header}>
+          <AppText variant="title">Members</AppText>
+        </View>
+        <EmptyState
+          icon={<Feather name="lock" size={24} color={colors.textTertiary} />}
+          title="Access Denied"
+          message={permissionError}
+        />
+      </Screen>
+    );
+  }
+
   // Modal for add/edit
   if (modalMode !== "none") {
     return (
@@ -222,6 +388,34 @@ export default function MembersScreen() {
               autoCapitalize="none"
             />
           </View>
+
+          {/* Handicap fields - only shown in edit mode for Captain/Handicapper */}
+          {modalMode === "edit" && permissions.canManageHandicaps && (
+            <>
+              <View style={[styles.formField, { marginTop: spacing.sm }]}>
+                <AppText variant="captionBold" style={styles.label}>WHS Number (optional)</AppText>
+                <AppInput
+                  placeholder="e.g. 1234567"
+                  value={formWhsNumber}
+                  onChangeText={setFormWhsNumber}
+                  autoCapitalize="none"
+                />
+              </View>
+
+              <View style={styles.formField}>
+                <AppText variant="captionBold" style={styles.label}>Handicap Index (optional)</AppText>
+                <AppInput
+                  placeholder="e.g. 12.4"
+                  value={formHandicapIndex}
+                  onChangeText={setFormHandicapIndex}
+                  keyboardType="decimal-pad"
+                />
+                <AppText variant="small" color="tertiary" style={{ marginTop: 4 }}>
+                  Valid range: -10 to 54
+                </AppText>
+              </View>
+            </>
+          )}
 
           <PrimaryButton
             onPress={modalMode === "add" ? handleAddMember : handleUpdateMember}
@@ -312,6 +506,15 @@ export default function MembersScreen() {
 
                       {member.email && (
                         <AppText variant="caption" color="tertiary">{member.email}</AppText>
+                      )}
+
+                      {/* Show handicap if available */}
+                      {(member.handicapIndex != null || member.handicap_index != null) && (
+                        <View style={[styles.badge, { backgroundColor: colors.info + "20", marginTop: 2 }]}>
+                          <AppText variant="small" style={{ color: colors.info }}>
+                            HI: {member.handicapIndex ?? member.handicap_index}
+                          </AppText>
+                        </View>
                       )}
                     </View>
 

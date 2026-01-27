@@ -1,7 +1,7 @@
 // lib/db_supabase/memberRepo.ts
 // Member management - uses singleton supabase client
 // IMPORTANT: Only send columns that exist in the members table:
-// id, society_id, user_id, name, email, role, paid, amount_paid_pence, paid_at, created_at, display_name
+// id, society_id, user_id, name, email, role, paid, amount_paid_pence, paid_at, created_at, display_name, whs_number, handicap_index
 
 import { supabase } from "@/lib/supabase";
 
@@ -19,6 +19,11 @@ export type MemberDoc = {
   amount_paid_pence?: number;
   paid_at?: string | null;
   created_at?: string;
+  // WHS / Handicap fields
+  whs_number?: string | null;
+  handicap_index?: number | null;
+  whsNumber?: string | null; // camelCase alias
+  handicapIndex?: number | null; // camelCase alias
 };
 
 function mapMember(row: any): MemberDoc {
@@ -26,12 +31,17 @@ function mapMember(row: any): MemberDoc {
     ...row,
     displayName: row.name || row.display_name,
     roles: row.role ? [row.role] : ["member"],
+    whsNumber: row.whs_number ?? null,
+    handicapIndex: row.handicap_index ?? null,
   };
 }
 
 /**
  * Creates a new member in "members" table and returns the new memberId.
  * Only sends valid columns: society_id, user_id, name, email, role, paid, amount_paid_pence
+ *
+ * IMPORTANT: RLS policy only allows inserting where user_id = auth.uid() or user_id IS NULL.
+ * This function validates that constraint before sending to prevent RLS errors.
  */
 export async function createMember(
   societyId: string,
@@ -43,11 +53,33 @@ export async function createMember(
     email?: string;
   }
 ): Promise<string> {
-  console.log("[onboarding] createMember start");
+  console.log("[memberRepo] createMember start");
 
   if (!societyId) throw new Error("createMember: missing societyId");
 
+  // Verify auth state and validate user_id matches
+  const { data: authData, error: authError } = await supabase.auth.getUser();
+  if (authError) {
+    console.error("[memberRepo] Auth error:", authError.message);
+    throw new Error("Authentication error: " + authError.message);
+  }
+
+  const authUid = authData?.user?.id;
+  if (!authUid) {
+    console.error("[memberRepo] No authenticated user found");
+    throw new Error("You must be signed in to create a member record.");
+  }
+
   const safe = data ?? {};
+
+  // App-level safety: Ensure user_id matches auth.uid() (RLS enforces this too)
+  if (safe.userId && safe.userId !== authUid) {
+    console.error("[memberRepo] user_id mismatch - cannot create member for another user:", {
+      providedUserId: safe.userId,
+      authUid: authUid,
+    });
+    throw new Error("Permission denied. You can only add yourself as a member.");
+  }
 
   // Use first role or default to "member"
   const role = Array.isArray(safe.roles) && safe.roles.length > 0
@@ -57,9 +89,10 @@ export async function createMember(
   const name = safe.displayName ?? safe.name ?? "Member";
 
   // ONLY send columns that exist in the members table
+  // Always use auth.uid() as user_id for safety
   const payload: Record<string, unknown> = {
     society_id: societyId,
-    user_id: safe.userId ?? null,
+    user_id: authUid,
     name: name,
     role: role,
     paid: false,
@@ -95,7 +128,7 @@ export async function createMember(
     throw new Error(error.message || "Failed to create member");
   }
 
-  console.log("[onboarding] createMember success:", row?.id);
+  console.log("[memberRepo] createMember success:", row?.id);
   return row.id;
 }
 
@@ -252,4 +285,146 @@ export async function deleteMember(memberId: string): Promise<void> {
     });
     throw new Error(error.message || "Failed to delete member");
   }
+}
+
+/**
+ * Add a member as Captain (uses RPC to bypass RLS)
+ *
+ * This function calls the `add_member_as_captain` Supabase RPC which:
+ * - Validates the caller is a captain of the society
+ * - Inserts a new member with user_id = NULL
+ * - Returns the inserted member
+ *
+ * @param societyId - The society to add the member to
+ * @param name - The member's display name
+ * @param email - Optional email address
+ * @param role - The member's role (defaults to 'member')
+ * @returns The new member's data
+ */
+export async function addMemberAsCaptain(
+  societyId: string,
+  name: string,
+  email?: string | null,
+  role: string = "member"
+): Promise<MemberDoc> {
+  console.log("[memberRepo] addMemberAsCaptain RPC starting:", {
+    societyId,
+    name,
+    email: email || "(none)",
+    role,
+  });
+
+  if (!societyId) throw new Error("addMemberAsCaptain: missing societyId");
+  if (!name || !name.trim()) throw new Error("addMemberAsCaptain: missing name");
+
+  const { data, error } = await supabase.rpc("add_member_as_captain", {
+    p_society_id: societyId,
+    p_name: name.trim(),
+    p_email: email?.trim() || null,
+    p_role: role.toLowerCase(),
+  });
+
+  if (error) {
+    console.error("[memberRepo] addMemberAsCaptain RPC error:", {
+      message: error.message,
+      details: error.details,
+      hint: error.hint,
+      code: error.code,
+    });
+
+    // Provide user-friendly error messages
+    if (error.message?.includes("Only Captains")) {
+      throw new Error("Only Captains can add members to the society.");
+    }
+    if (error.message?.includes("Not authenticated")) {
+      throw new Error("Please sign in to add members.");
+    }
+    if (error.message?.includes("name is required")) {
+      throw new Error("Member name is required.");
+    }
+
+    throw new Error(error.message || "Failed to add member");
+  }
+
+  // RPC returns an array with the inserted row
+  const row = Array.isArray(data) ? data[0] : data;
+
+  if (!row || !row.id) {
+    console.error("[memberRepo] addMemberAsCaptain: no data returned");
+    throw new Error("Failed to add member - no data returned");
+  }
+
+  console.log("[memberRepo] addMemberAsCaptain RPC success, member id:", row.id);
+
+  return mapMember(row);
+}
+
+/**
+ * Update a member's WHS number and handicap index (Captain/Handicapper only)
+ *
+ * This function calls the `update_member_handicap` Supabase RPC which:
+ * - Validates the caller is a Captain or Handicapper of the society
+ * - Updates the member's WHS number and handicap index
+ * - Returns the updated member data
+ *
+ * @param memberId - The member to update
+ * @param whsNumber - Optional WHS number (pass null to clear)
+ * @param handicapIndex - Optional handicap index (pass null to clear)
+ * @returns The updated member data
+ */
+export async function updateMemberHandicap(
+  memberId: string,
+  whsNumber?: string | null,
+  handicapIndex?: number | null
+): Promise<MemberDoc> {
+  console.log("[memberRepo] updateMemberHandicap RPC starting:", {
+    memberId,
+    whsNumber: whsNumber ?? "(unchanged)",
+    handicapIndex: handicapIndex ?? "(unchanged)",
+  });
+
+  if (!memberId) throw new Error("updateMemberHandicap: missing memberId");
+
+  const { data, error } = await supabase.rpc("update_member_handicap", {
+    p_member_id: memberId,
+    p_whs_number: whsNumber,
+    p_handicap_index: handicapIndex,
+  });
+
+  if (error) {
+    console.error("[memberRepo] updateMemberHandicap RPC error:", {
+      message: error.message,
+      details: error.details,
+      hint: error.hint,
+      code: error.code,
+    });
+
+    // Provide user-friendly error messages
+    if (error.message?.includes("Permission denied")) {
+      throw new Error("Only Captain or Handicapper can update handicaps.");
+    }
+    if (error.message?.includes("Not authenticated")) {
+      throw new Error("Please sign in to update handicaps.");
+    }
+    if (error.message?.includes("Member not found")) {
+      throw new Error("Member not found.");
+    }
+    if (error.message?.includes("Handicap index must be")) {
+      throw new Error("Handicap index must be between -10 and 54.");
+    }
+
+    throw new Error(error.message || "Failed to update handicap");
+  }
+
+  // RPC returns an array with the updated row
+  const row = Array.isArray(data) ? data[0] : data;
+
+  if (!row || !row.id) {
+    console.error("[memberRepo] updateMemberHandicap: no data returned");
+    throw new Error("Failed to update handicap - no data returned");
+  }
+
+  console.log("[memberRepo] updateMemberHandicap RPC success, member id:", row.id);
+
+  return mapMember(row);
 }
