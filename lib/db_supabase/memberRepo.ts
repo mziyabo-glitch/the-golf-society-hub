@@ -279,3 +279,75 @@ export async function deleteMember(memberId: string): Promise<void> {
     throw new Error(error.message || "Failed to delete member");
   }
 }
+
+/**
+ * Add a member as Captain (uses RPC to bypass RLS)
+ *
+ * This function calls the `add_member_as_captain` Supabase RPC which:
+ * - Validates the caller is a captain of the society
+ * - Inserts a new member with user_id = NULL
+ * - Returns the inserted member
+ *
+ * @param societyId - The society to add the member to
+ * @param name - The member's display name
+ * @param email - Optional email address
+ * @param role - The member's role (defaults to 'member')
+ * @returns The new member's data
+ */
+export async function addMemberAsCaptain(
+  societyId: string,
+  name: string,
+  email?: string | null,
+  role: string = "member"
+): Promise<MemberDoc> {
+  console.log("[memberRepo] addMemberAsCaptain RPC starting:", {
+    societyId,
+    name,
+    email: email || "(none)",
+    role,
+  });
+
+  if (!societyId) throw new Error("addMemberAsCaptain: missing societyId");
+  if (!name || !name.trim()) throw new Error("addMemberAsCaptain: missing name");
+
+  const { data, error } = await supabase.rpc("add_member_as_captain", {
+    p_society_id: societyId,
+    p_name: name.trim(),
+    p_email: email?.trim() || null,
+    p_role: role.toLowerCase(),
+  });
+
+  if (error) {
+    console.error("[memberRepo] addMemberAsCaptain RPC error:", {
+      message: error.message,
+      details: error.details,
+      hint: error.hint,
+      code: error.code,
+    });
+
+    // Provide user-friendly error messages
+    if (error.message?.includes("Only Captains")) {
+      throw new Error("Only Captains can add members to the society.");
+    }
+    if (error.message?.includes("Not authenticated")) {
+      throw new Error("Please sign in to add members.");
+    }
+    if (error.message?.includes("name is required")) {
+      throw new Error("Member name is required.");
+    }
+
+    throw new Error(error.message || "Failed to add member");
+  }
+
+  // RPC returns an array with the inserted row
+  const row = Array.isArray(data) ? data[0] : data;
+
+  if (!row || !row.id) {
+    console.error("[memberRepo] addMemberAsCaptain: no data returned");
+    throw new Error("Failed to add member - no data returned");
+  }
+
+  console.log("[memberRepo] addMemberAsCaptain RPC success, member id:", row.id);
+
+  return mapMember(row);
+}

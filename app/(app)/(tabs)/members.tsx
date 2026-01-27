@@ -13,7 +13,7 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { useBootstrap } from "@/lib/useBootstrap";
 import {
   getMembersBySocietyId,
-  createMember,
+  addMemberAsCaptain,
   updateMemberDoc,
   deleteMember,
   type MemberDoc,
@@ -185,17 +185,28 @@ export default function MembersScreen() {
     if (!societyId) return;
 
     setSubmitting(true);
+    console.log("[members] Adding member via RPC...");
+
     try {
-      await createMember(societyId, {
-        displayName: formName.trim(),
-        name: formName.trim(),
-        email: formEmail.trim() || undefined,
-        roles: ["member"],
-      });
+      const newMember = await addMemberAsCaptain(
+        societyId,
+        formName.trim(),
+        formEmail.trim() || null,
+        "member"
+      );
+      console.log("[members] Member added successfully, id:", newMember.id);
       closeModal();
       loadMembers();
     } catch (e: any) {
-      Alert.alert("Error", e?.message || "Failed to add member.");
+      console.error("[members] Add member RPC error:", e?.message);
+
+      // Show user-friendly error
+      const errorMsg = e?.message || "Failed to add member.";
+      if (errorMsg.includes("Only Captains")) {
+        Alert.alert("Permission Denied", "Only Captains can add members to the society.");
+      } else {
+        Alert.alert("Error", errorMsg);
+      }
     } finally {
       setSubmitting(false);
     }
