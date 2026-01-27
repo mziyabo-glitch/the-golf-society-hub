@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { StyleSheet, View, Pressable, Alert } from "react-native";
+import { useRouter } from "expo-router";
 import { Feather } from "@expo/vector-icons";
 
 import { Screen } from "@/components/ui/Screen";
@@ -22,12 +23,66 @@ import { getColors, spacing, radius } from "@/lib/ui/theme";
 
 type ModalMode = "none" | "add" | "edit";
 
+// Role priority for sorting (lower number = higher priority)
+const ROLE_PRIORITY: Record<string, number> = {
+  captain: 1,
+  treasurer: 2,
+  secretary: 3,
+  handicapper: 4,
+  member: 5,
+};
+
+/**
+ * Get the priority number for a member's role
+ */
+function getRolePriority(member: MemberDoc): number {
+  const role = member.role?.toLowerCase() || "member";
+  return ROLE_PRIORITY[role] ?? 99;
+}
+
+/**
+ * Sort members by role priority, then by name alphabetically
+ */
+function sortMembersByRoleThenName(members: MemberDoc[]): MemberDoc[] {
+  return [...members].sort((a, b) => {
+    const priorityA = getRolePriority(a);
+    const priorityB = getRolePriority(b);
+
+    if (priorityA !== priorityB) {
+      return priorityA - priorityB;
+    }
+
+    // Same priority - sort by name ASC
+    const nameA = (a.displayName || a.name || "").toLowerCase();
+    const nameB = (b.displayName || b.name || "").toLowerCase();
+    return nameA.localeCompare(nameB);
+  });
+}
+
+/**
+ * Format role string to human-friendly display
+ */
+function formatRole(role: string | undefined): string {
+  if (!role) return "Member";
+  const lower = role.toLowerCase();
+  const roleNames: Record<string, string> = {
+    captain: "Captain",
+    treasurer: "Treasurer",
+    secretary: "Secretary",
+    handicapper: "Handicapper",
+    member: "Member",
+  };
+  return roleNames[lower] || role.charAt(0).toUpperCase() + role.slice(1);
+}
+
 export default function MembersScreen() {
-  const { societyId, member: currentMember, loading: bootstrapLoading, refresh } = useBootstrap();
+  const { societyId, activeSocietyId, member: currentMember, loading: bootstrapLoading, refresh } = useBootstrap();
+  const router = useRouter();
   const colors = getColors();
 
   const [members, setMembers] = useState<MemberDoc[]>([]);
   const [loading, setLoading] = useState(true);
+  const [permissionError, setPermissionError] = useState<string | null>(null);
   const [modalMode, setModalMode] = useState<ModalMode>("none");
   const [editingMember, setEditingMember] = useState<MemberDoc | null>(null);
 
@@ -39,21 +94,61 @@ export default function MembersScreen() {
   // Get permissions for current member
   const permissions = getPermissionsForMember(currentMember as any);
 
+  // Debug: log activeSocietyId
+  console.log("[members] activeSocietyId:", activeSocietyId || societyId);
+
   const loadMembers = async () => {
     if (!societyId) {
+      console.log("[members] No societyId, skipping load");
       setLoading(false);
       return;
     }
+
     setLoading(true);
+    setPermissionError(null);
+
     try {
+      console.log("[members] Fetching members for society:", societyId);
       const data = await getMembersBySocietyId(societyId);
-      setMembers(data);
-    } catch (err) {
-      console.error("Failed to load members:", err);
+
+      // Sort by role priority, then name
+      const sorted = sortMembersByRoleThenName(data);
+      setMembers(sorted);
+
+      console.log("[members] Query success, count:", sorted.length);
+    } catch (err: any) {
+      console.error("[members] select error:", err);
+
+      // Handle 403 / permission errors
+      const errorCode = err?.code || err?.statusCode;
+      const errorMessage = err?.message || "";
+      const is403 =
+        errorCode === "403" ||
+        errorCode === 403 ||
+        errorCode === "42501" ||
+        errorMessage.includes("permission") ||
+        errorMessage.includes("row-level security");
+
+      if (is403) {
+        setPermissionError(
+          "You don't have permission to view members for this society. Please contact the Captain."
+        );
+      } else {
+        // Generic error - show alert
+        Alert.alert("Error", "Failed to load members. Please try again.");
+      }
     } finally {
       setLoading(false);
     }
   };
+
+  // Redirect to onboarding if no active society
+  useEffect(() => {
+    if (!bootstrapLoading && !activeSocietyId && !societyId) {
+      console.log("[members] No active society, redirecting to onboarding");
+      router.replace("/onboarding");
+    }
+  }, [bootstrapLoading, activeSocietyId, societyId, router]);
 
   useEffect(() => {
     loadMembers();
@@ -185,6 +280,22 @@ export default function MembersScreen() {
         <View style={styles.centered}>
           <LoadingState message="Loading members..." />
         </View>
+      </Screen>
+    );
+  }
+
+  // Show permission error (403)
+  if (permissionError) {
+    return (
+      <Screen>
+        <View style={styles.header}>
+          <AppText variant="title">Members</AppText>
+        </View>
+        <EmptyState
+          icon={<Feather name="lock" size={24} color={colors.textTertiary} />}
+          title="Access Denied"
+          message={permissionError}
+        />
       </Screen>
     );
   }
