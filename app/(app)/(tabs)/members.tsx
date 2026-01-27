@@ -94,8 +94,10 @@ export default function MembersScreen() {
   // Get permissions for current member
   const permissions = getPermissionsForMember(currentMember as any);
 
-  // Debug: log activeSocietyId
+  // Debug: log activeSocietyId and permissions
   console.log("[members] activeSocietyId:", activeSocietyId || societyId);
+  console.log("[members] currentMember:", currentMember?.id, "roles:", currentMember?.roles);
+  console.log("[members] permissions.canCreateMembers:", permissions.canCreateMembers);
 
   const loadMembers = async () => {
     if (!societyId) {

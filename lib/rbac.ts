@@ -46,12 +46,14 @@ export type Permissions = {
 export type MemberLike = {
   id: string;
   uid?: string;
-  roles?: Role[];
+  roles?: Role[] | string[];
 };
 
-const normalizeRoles = (roles?: Role[]) => {
+const normalizeRoles = (roles?: Role[] | string[]) => {
   const r = Array.isArray(roles) ? roles : [];
-  return r.length ? r : (["MEMBER"] as Role[]);
+  // Convert to uppercase to handle lowercase roles from database
+  const normalized = r.map((role) => role.toUpperCase() as Role);
+  return normalized.length ? normalized : (["MEMBER"] as Role[]);
 };
 
 export const hasRole = (member: MemberLike | null | undefined, role: Role) => {
