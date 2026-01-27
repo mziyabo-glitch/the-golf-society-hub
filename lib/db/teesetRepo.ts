@@ -1,4 +1,4 @@
-import { supabase } from "@/lib/supabase";
+import { supabase, requireSupabaseSession } from "@/lib/supabase";
 
 export type TeeSetDoc = {
   id: string;
@@ -31,6 +31,7 @@ function mapTeeSet(row: any): TeeSetDoc {
 }
 
 export async function createTeeSet(input: TeeSetInput): Promise<TeeSetDoc> {
+  await requireSupabaseSession("teesetRepo.createTeeSet");
   const payload = {
     society_id: input.societyId,
     course_id: input.courseId,
@@ -45,7 +46,7 @@ export async function createTeeSet(input: TeeSetInput): Promise<TeeSetDoc> {
   const { data, error } = await supabase
     .from("teesets")
     .insert(payload)
-    .select("*")
+    .select("id, society_id, course_id, name, tee_color, applies_to, par, course_rating, slope_rating, updated_at")
     .single();
 
   if (error) {
@@ -80,9 +81,10 @@ export function subscribeTeesetsBySociety(
 }
 
 export async function listTeesetsBySociety(societyId: string): Promise<TeeSetDoc[]> {
+  await requireSupabaseSession("teesetRepo.listTeesetsBySociety");
   const { data, error } = await supabase
     .from("teesets")
-    .select("*")
+    .select("id, society_id, course_id, name, tee_color, applies_to, par, course_rating, slope_rating, updated_at")
     .eq("society_id", societyId);
 
   if (error) {
@@ -92,9 +94,10 @@ export async function listTeesetsBySociety(societyId: string): Promise<TeeSetDoc
 }
 
 export async function listTeesetsByCourse(courseId: string): Promise<TeeSetDoc[]> {
+  await requireSupabaseSession("teesetRepo.listTeesetsByCourse");
   const { data, error } = await supabase
     .from("teesets")
-    .select("*")
+    .select("id, society_id, course_id, name, tee_color, applies_to, par, course_rating, slope_rating, updated_at")
     .eq("course_id", courseId);
 
   if (error) {
@@ -104,6 +107,7 @@ export async function listTeesetsByCourse(courseId: string): Promise<TeeSetDoc[]
 }
 
 export async function updateTeeSetDoc(id: string, updates: Partial<TeeSetDoc>): Promise<void> {
+  await requireSupabaseSession("teesetRepo.updateTeeSetDoc");
   const payload: Record<string, unknown> = {};
   if (updates.name !== undefined) payload.name = updates.name;
   if (updates.teeColor !== undefined) payload.tee_color = updates.teeColor;
@@ -125,6 +129,7 @@ export async function updateTeeSetDoc(id: string, updates: Partial<TeeSetDoc>): 
 }
 
 export async function deleteTeeSetDoc(id: string): Promise<void> {
+  await requireSupabaseSession("teesetRepo.deleteTeeSetDoc");
   const { error } = await supabase.from("teesets").delete().eq("id", id);
   if (error) {
     throw new Error(error.message || "Failed to delete tee set");

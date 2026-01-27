@@ -1,4 +1,4 @@
-import { supabase } from "@/lib/supabase";
+import { supabase, requireSupabaseSession } from "@/lib/supabase";
 
 export type SocietyDoc = {
   id: string;
@@ -57,6 +57,7 @@ function generateJoinCode(): string {
 }
 
 export async function createSociety(input: SocietyInput): Promise<SocietyDoc> {
+  await requireSupabaseSession("societyRepo.createSociety");
   const createdBy = input.created_by ?? input.createdBy;
   if (!createdBy) {
     throw new Error("createSociety: missing created_by");
@@ -87,7 +88,9 @@ export async function createSociety(input: SocietyInput): Promise<SocietyDoc> {
   const { data, error } = await supabase
     .from("societies")
     .insert(payload)
-    .select("*")
+    .select(
+      "id, name, country, join_code, created_by, created_at, updated_at, home_course_id, home_course, scoring_mode, handicap_rule, logo_url, admin_pin, annual_fee"
+    )
     .single();
 
   if (error) {
@@ -98,9 +101,12 @@ export async function createSociety(input: SocietyInput): Promise<SocietyDoc> {
 }
 
 export async function getSocietyDoc(id: string): Promise<SocietyDoc | null> {
+  await requireSupabaseSession("societyRepo.getSocietyDoc");
   const { data, error } = await supabase
     .from("societies")
-    .select("*")
+    .select(
+      "id, name, country, join_code, created_by, created_at, updated_at, home_course_id, home_course, scoring_mode, handicap_rule, logo_url, admin_pin, annual_fee"
+    )
     .eq("id", id)
     .maybeSingle();
 
@@ -111,6 +117,7 @@ export async function getSocietyDoc(id: string): Promise<SocietyDoc | null> {
 }
 
 export async function getSocietyByCode(joinCode: string): Promise<SocietyDoc | null> {
+  await requireSupabaseSession("societyRepo.getSocietyByCode");
   const normalizedCode = joinCode.trim().toUpperCase();
   if (!normalizedCode || normalizedCode.length < 4) {
     return null;
@@ -159,6 +166,7 @@ export function subscribeSocietyDoc(
 }
 
 export async function updateSocietyDoc(id: string, updates: Partial<SocietyDoc>): Promise<void> {
+  await requireSupabaseSession("societyRepo.updateSocietyDoc");
   const payload: Record<string, unknown> = {};
 
   if (updates.name !== undefined) payload.name = updates.name;

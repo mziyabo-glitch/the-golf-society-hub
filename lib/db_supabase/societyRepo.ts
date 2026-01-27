@@ -111,7 +111,9 @@ export async function createSociety(input: SocietyInput): Promise<SocietyDoc> {
 export async function getSocietyDoc(id: string): Promise<SocietyDoc | null> {
   const { data, error } = await supabase
     .from("societies")
-    .select("*")
+    .select(
+      "id, name, country, join_code, created_by, created_at, updated_at, home_course_id, home_course, scoring_mode, handicap_rule, logo_url, admin_pin, annual_fee"
+    )
     .eq("id", id)
     .maybeSingle();
 
@@ -161,7 +163,9 @@ export async function findSocietyByJoinCode(
 
   const { data, error } = await supabase
     .from("societies")
-    .select("*")
+    .select(
+      "id, name, country, join_code, created_by, created_at, updated_at, home_course_id, home_course, scoring_mode, handicap_rule, logo_url, admin_pin, annual_fee"
+    )
     .eq("join_code", normalizedCode)
     .maybeSingle();
 

@@ -85,7 +85,9 @@ export async function createMember(
 export async function getMember(memberId: string): Promise<MemberDoc | null> {
   const { data, error } = await supabase
     .from("members")
-    .select("*")
+    .select(
+      "id, society_id, user_id, name, display_name, email, handicap, sex, status, role, created_at, updated_at, paid, amount_paid_pence, paid_at"
+    )
     .eq("id", memberId)
     .maybeSingle();
 
@@ -109,7 +111,9 @@ export async function getMembersBySocietyId(
 ): Promise<MemberDoc[]> {
   const { data, error } = await supabase
     .from("members")
-    .select("*")
+    .select(
+      "id, society_id, user_id, name, display_name, email, handicap, sex, status, role, created_at, updated_at, paid, amount_paid_pence, paid_at"
+    )
     .eq("society_id", societyId)
     .order("created_at", { ascending: false });
 

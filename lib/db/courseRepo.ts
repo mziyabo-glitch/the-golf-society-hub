@@ -1,4 +1,4 @@
-import { supabase } from "@/lib/supabase";
+import { supabase, requireSupabaseSession } from "@/lib/supabase";
 
 export type CourseDoc = {
   id: string;
@@ -31,6 +31,7 @@ function mapCourse(row: any): CourseDoc {
 }
 
 export async function createCourse(input: CourseInput): Promise<CourseDoc> {
+  await requireSupabaseSession("courseRepo.createCourse");
   const payload: Record<string, unknown> = {
     society_id: input.societyId,
     name: input.name,
@@ -45,7 +46,7 @@ export async function createCourse(input: CourseInput): Promise<CourseDoc> {
   const { data, error } = await supabase
     .from("courses")
     .insert(payload)
-    .select("*")
+    .select("id, society_id, name, address, postcode, status, notes, maps_url, google_place_id, updated_at")
     .single();
 
   if (error) {
@@ -55,9 +56,10 @@ export async function createCourse(input: CourseInput): Promise<CourseDoc> {
 }
 
 export async function getCourseDoc(id: string): Promise<CourseDoc | null> {
+  await requireSupabaseSession("courseRepo.getCourseDoc");
   const { data, error } = await supabase
     .from("courses")
-    .select("*")
+    .select("id, society_id, name, address, postcode, status, notes, maps_url, google_place_id, updated_at")
     .eq("id", id)
     .maybeSingle();
 
@@ -93,9 +95,10 @@ export function subscribeCoursesBySociety(
 }
 
 export async function listCoursesBySociety(societyId: string): Promise<CourseDoc[]> {
+  await requireSupabaseSession("courseRepo.listCoursesBySociety");
   const { data, error } = await supabase
     .from("courses")
-    .select("*")
+    .select("id, society_id, name, address, postcode, status, notes, maps_url, google_place_id, updated_at")
     .eq("society_id", societyId)
     .order("name", { ascending: true });
 
@@ -106,6 +109,7 @@ export async function listCoursesBySociety(societyId: string): Promise<CourseDoc
 }
 
 export async function updateCourseDoc(id: string, updates: Partial<CourseDoc>): Promise<void> {
+  await requireSupabaseSession("courseRepo.updateCourseDoc");
   const payload: Record<string, unknown> = {};
   if (updates.name !== undefined) payload.name = updates.name;
   if (updates.address !== undefined) payload.address = updates.address;
@@ -128,6 +132,7 @@ export async function updateCourseDoc(id: string, updates: Partial<CourseDoc>): 
 }
 
 export async function deleteCourseDoc(id: string): Promise<void> {
+  await requireSupabaseSession("courseRepo.deleteCourseDoc");
   const { error } = await supabase.from("courses").delete().eq("id", id);
   if (error) {
     throw new Error(error.message || "Failed to delete course");

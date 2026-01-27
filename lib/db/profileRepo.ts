@@ -1,5 +1,5 @@
 // lib/db/profileRepo.ts
-import { supabase } from "@/lib/supabase";
+import { supabase, requireSupabaseSession } from "@/lib/supabase";
 
 export type ProfileDoc = {
   id: string;
@@ -14,10 +14,11 @@ export type ProfileDoc = {
  * Uses upsert with .select().single() (id is PK).
  */
 export async function ensureProfile(userId: string): Promise<ProfileDoc> {
+  await requireSupabaseSession("profileRepo.ensureProfile");
   const { data, error } = await supabase
     .from("profiles")
     .upsert({ id: userId }, { onConflict: "id" })
-    .select("*")
+    .select("id, active_society_id, active_member_id, created_at, updated_at")
     .single();
 
   if (error) {
@@ -31,9 +32,10 @@ export async function ensureProfile(userId: string): Promise<ProfileDoc> {
  * Get profile by user ID
  */
 export async function getProfile(userId: string): Promise<ProfileDoc | null> {
+  await requireSupabaseSession("profileRepo.getProfile");
   const { data, error } = await supabase
     .from("profiles")
-    .select("*")
+    .select("id, active_society_id, active_member_id, created_at, updated_at")
     .eq("id", userId)
     .maybeSingle();
 
@@ -55,6 +57,7 @@ export async function updateProfile(
     activeMemberId: string | null;
   }>
 ): Promise<void> {
+  await requireSupabaseSession("profileRepo.updateProfile");
   const payload: Record<string, unknown> = {};
   if (updates.active_society_id !== undefined) payload.active_society_id = updates.active_society_id;
   if (updates.active_member_id !== undefined) payload.active_member_id = updates.active_member_id;

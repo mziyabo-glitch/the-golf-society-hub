@@ -1,5 +1,5 @@
 // lib/db/expenseRepo.ts
-import { supabase } from "@/lib/supabase";
+import { supabase, requireSupabaseSession } from "@/lib/supabase";
 
 export type EventExpense = {
   id: string;
@@ -13,9 +13,10 @@ export type EventExpense = {
  * List all expenses for an event.
  */
 export async function listEventExpenses(_societyId: string, eventId: string) {
+  await requireSupabaseSession("expenseRepo.listEventExpenses");
   const { data, error } = await supabase
     .from("event_expenses")
-    .select("*")
+    .select("id, event_id, description, name, amount, created_at, created_by")
     .eq("event_id", eventId)
     .order("created_at", { ascending: false });
 
@@ -40,6 +41,7 @@ export async function createEventExpense(
   eventId: string,
   input: { description: string; amount: number; createdBy?: string }
 ) {
+  await requireSupabaseSession("expenseRepo.createEventExpense");
   const { description, amount, createdBy } = input;
 
   if (!eventId) throw new Error("Missing eventId");
@@ -82,6 +84,7 @@ export async function deleteEventExpense(
   _eventId: string,
   expenseId: string
 ) {
+  await requireSupabaseSession("expenseRepo.deleteEventExpense");
   if (!expenseId) throw new Error("Missing expenseId");
 
   const { error } = await supabase.from("event_expenses").delete().eq("id", expenseId);

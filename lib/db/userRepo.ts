@@ -1,5 +1,5 @@
 // lib/db/userRepo.ts
-import { supabase } from "@/lib/supabase";
+import { supabase, requireSupabaseSession } from "@/lib/supabase";
 
 /**
  * User document shape (profile-backed)
@@ -26,6 +26,7 @@ function mapUser(row: any): UserDoc {
  * Ensure profiles/{uid} exists
  */
 export async function ensureUserDoc(uid: string): Promise<void> {
+  await requireSupabaseSession("userRepo.ensureUserDoc");
   const { error } = await supabase
     .from("profiles")
     .upsert({ id: uid }, { onConflict: "id" });
@@ -39,9 +40,10 @@ export async function ensureUserDoc(uid: string): Promise<void> {
  * Read profiles/{uid}
  */
 export async function getUserDoc(uid: string): Promise<UserDoc | null> {
+  await requireSupabaseSession("userRepo.getUserDoc");
   const { data, error } = await supabase
     .from("profiles")
-    .select("*")
+    .select("id, active_society_id, active_member_id, created_at, updated_at")
     .eq("id", uid)
     .maybeSingle();
 
@@ -86,6 +88,7 @@ export function subscribeUserDoc(
  * Update profile row
  */
 export async function updateUserDoc(uid: string, updates: Partial<UserDoc>): Promise<void> {
+  await requireSupabaseSession("userRepo.updateUserDoc");
   const payload: Record<string, unknown> = {};
   if (updates.activeSocietyId !== undefined) payload.active_society_id = updates.activeSocietyId;
   if (updates.activeMemberId !== undefined) payload.active_member_id = updates.activeMemberId;

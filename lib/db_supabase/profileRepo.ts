@@ -41,7 +41,7 @@ export async function ensureProfile(userId: string): Promise<ProfileDoc> {
   // Step 2: Fetch profile with .maybeSingle()
   const { data, error: selectError } = await supabase
     .from("profiles")
-    .select("*")
+    .select("id, active_society_id, active_member_id, created_at, updated_at")
     .eq("id", userId)
     .maybeSingle();
 
@@ -71,7 +71,7 @@ export async function ensureProfile(userId: string): Promise<ProfileDoc> {
 export async function getProfile(userId: string): Promise<ProfileDoc | null> {
   const { data, error } = await supabase
     .from("profiles")
-    .select("*")
+    .select("id, active_society_id, active_member_id, created_at, updated_at")
     .eq("id", userId)
     .maybeSingle();
 

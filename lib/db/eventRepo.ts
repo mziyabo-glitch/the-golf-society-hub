@@ -1,4 +1,4 @@
-import { supabase } from "@/lib/supabase";
+import { supabase, requireSupabaseSession } from "@/lib/supabase";
 
 export type EventDoc = {
   id: string;
@@ -109,6 +109,7 @@ export async function createEvent(
   societyId: string,
   payload: CreateEventPayload
 ): Promise<EventDoc> {
+  await requireSupabaseSession("eventRepo.createEvent");
   const data: Record<string, unknown> = {
     society_id: societyId,
     name: payload.name,
@@ -126,7 +127,9 @@ export async function createEvent(
   const { data: row, error } = await supabase
     .from("events")
     .insert(data)
-    .select("*")
+    .select(
+      "id, society_id, name, date, created_by, created_at, updated_at, status, course_id, course_name, male_tee_set_id, female_tee_set_id, handicap_allowance_pct, handicap_allowance, format, player_ids, tee_sheet, is_completed, is_oom, winner_id, winner_name, tee_sheet_notes, results, event_fee"
+    )
     .single();
 
   if (error) {
@@ -137,9 +140,12 @@ export async function createEvent(
 }
 
 export async function getEventDoc(id: string): Promise<EventDoc | null> {
+  await requireSupabaseSession("eventRepo.getEventDoc");
   const { data, error } = await supabase
     .from("events")
-    .select("*")
+    .select(
+      "id, society_id, name, date, created_by, created_at, updated_at, status, course_id, course_name, male_tee_set_id, female_tee_set_id, handicap_allowance_pct, handicap_allowance, format, player_ids, tee_sheet, is_completed, is_oom, winner_id, winner_name, tee_sheet_notes, results, event_fee"
+    )
     .eq("id", id)
     .maybeSingle();
 
@@ -153,9 +159,12 @@ export async function getEvent(
   societyId: string,
   eventId: string
 ): Promise<EventDoc | null> {
+  await requireSupabaseSession("eventRepo.getEvent");
   const { data, error } = await supabase
     .from("events")
-    .select("*")
+    .select(
+      "id, society_id, name, date, created_by, created_at, updated_at, status, course_id, course_name, male_tee_set_id, female_tee_set_id, handicap_allowance_pct, handicap_allowance, format, player_ids, tee_sheet, is_completed, is_oom, winner_id, winner_name, tee_sheet_notes, results, event_fee"
+    )
     .eq("id", eventId)
     .eq("society_id", societyId)
     .maybeSingle();
@@ -196,6 +205,7 @@ export function subscribeEventDoc(
 }
 
 export async function updateEventDoc(id: string, updates: Partial<EventDoc>): Promise<void> {
+  await requireSupabaseSession("eventRepo.updateEventDoc");
   const payload: Record<string, unknown> = {};
 
   if (updates.name !== undefined) payload.name = updates.name;
@@ -235,9 +245,12 @@ export async function updateEventDoc(id: string, updates: Partial<EventDoc>): Pr
 }
 
 export async function listEventsBySociety(societyId: string): Promise<EventDoc[]> {
+  await requireSupabaseSession("eventRepo.listEventsBySociety");
   const { data, error } = await supabase
     .from("events")
-    .select("*")
+    .select(
+      "id, society_id, name, date, created_by, created_at, updated_at, status, course_id, course_name, male_tee_set_id, female_tee_set_id, handicap_allowance_pct, handicap_allowance, format, player_ids, tee_sheet, is_completed, is_oom, winner_id, winner_name, tee_sheet_notes, results, event_fee"
+    )
     .eq("society_id", societyId)
     .order("date", { ascending: false });
 
@@ -282,6 +295,7 @@ export async function setEventFee(
   eventId: string,
   fee: number
 ): Promise<void> {
+  await requireSupabaseSession("eventRepo.setEventFee");
   const { error } = await supabase
     .from("events")
     .update({ event_fee: fee, updated_at: new Date().toISOString() })
@@ -299,6 +313,7 @@ export async function setEventPaymentStatus(
   memberId: string,
   paid: boolean
 ): Promise<void> {
+  await requireSupabaseSession("eventRepo.setEventPaymentStatus");
   const payloadWithSociety: Record<string, unknown> = {
     society_id: societyId,
     event_id: eventId,

@@ -1,4 +1,4 @@
-import { supabase } from "@/lib/supabase";
+import { supabase, requireSupabaseSession } from "@/lib/supabase";
 
 /**
  * Best-effort client-side reset (Supabase).
@@ -8,6 +8,7 @@ import { supabase } from "@/lib/supabase";
  * - For large datasets, move this to a privileged backend.
  */
 export async function resetSocietyData(societyId: string): Promise<void> {
+  await requireSupabaseSession("resetSociety.resetSocietyData");
   if (!societyId) throw new Error("resetSocietyData: missing societyId");
 
   const { data: events, error: eventsError } = await supabase

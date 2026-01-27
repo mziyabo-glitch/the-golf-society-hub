@@ -1,5 +1,5 @@
 // lib/db/memberRepo.ts
-import { supabase } from "@/lib/supabase";
+import { supabase, requireSupabaseSession } from "@/lib/supabase";
 
 export type MemberDoc = {
   id: string;
@@ -99,6 +99,7 @@ export async function createMember(
     email?: string;
   }
 ): Promise<string> {
+  await requireSupabaseSession("memberRepo.createMember");
   let payload: MemberInsert;
 
   if (typeof input === "string") {
@@ -214,6 +215,7 @@ export function subscribeMembersBySociety(
  * One-shot fetch.
  */
 export async function getMembersBySocietyId(societyId: string): Promise<MemberDoc[]> {
+  await requireSupabaseSession("memberRepo.getMembersBySocietyId");
   const { data, error } = await supabase
     .from("members")
     .select(
@@ -266,6 +268,7 @@ export async function updateMemberDoc(
   memberIdOrUpdates: string | Partial<MemberDoc>,
   updatesMaybe?: Partial<MemberDoc>
 ): Promise<void> {
+  await requireSupabaseSession("memberRepo.updateMemberDoc");
   const memberId =
     typeof memberIdOrUpdates === "string" ? memberIdOrUpdates : societyIdOrMemberId;
   const updates =
@@ -288,6 +291,7 @@ export async function updateMemberDoc(
  * Captain/Treasurer can remove a member.
  */
 export async function deleteMember(memberId: string): Promise<void> {
+  await requireSupabaseSession("memberRepo.deleteMember");
   if (!memberId) throw new Error("deleteMember: missing memberId");
 
   const { error } = await supabase.from("members").delete().eq("id", memberId);
@@ -300,6 +304,7 @@ export async function deleteMember(memberId: string): Promise<void> {
  * Helper: read a member.
  */
 export async function getMember(memberId: string): Promise<MemberDoc | null> {
+  await requireSupabaseSession("memberRepo.getMember");
   const { data, error } = await supabase
     .from("members")
     .select(
