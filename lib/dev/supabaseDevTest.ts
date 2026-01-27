@@ -29,8 +29,6 @@ export async function runSupabaseDevTest() {
     society_id: society.id,
     user_id: user.id,
     name: user.email ? user.email.split("@")[0] : "Dev Captain",
-    display_name: "Dev Captain",
-    email: user.email ?? null,
     role: "captain",
   });
 

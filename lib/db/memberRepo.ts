@@ -28,12 +28,7 @@ type MemberInsert = {
   society_id: string;
   user_id?: string | null;
   name: string;
-  display_name?: string | null;
-  email?: string | null;
   role?: string | null;
-  status?: string | null;
-  handicap?: number | null;
-  sex?: "male" | "female" | null;
 };
 
 function normalizeRoles(raw: unknown): string[] {
@@ -81,43 +76,6 @@ function mapMember(row: any): MemberDoc {
   };
 }
 
-async function adminAddMember(payload: MemberInsert): Promise<MemberDoc> {
-  const { data, error } = await supabase.rpc("admin_add_member", {
-    p_society_id: payload.society_id,
-    p_user_id: payload.user_id ?? null,
-    p_name: payload.name,
-    p_display_name: payload.display_name ?? payload.name,
-    p_email: payload.email ?? null,
-    p_role: payload.role ?? "member",
-  });
-
-  if (error) {
-    throw new Error(error.message || "Failed to create member (admin)");
-  }
-  return mapMember(data);
-}
-
-async function adminUpdateMember(memberId: string, updates: Record<string, unknown>): Promise<void> {
-  const { error } = await supabase.rpc("admin_update_member", {
-    p_member_id: memberId,
-    p_updates: updates,
-  });
-
-  if (error) {
-    throw new Error(error.message || "Failed to update member (admin)");
-  }
-}
-
-async function adminDeleteMember(memberId: string): Promise<void> {
-  const { error } = await supabase.rpc("admin_delete_member", {
-    p_member_id: memberId,
-  });
-
-  if (error) {
-    throw new Error(error.message || "Failed to delete member (admin)");
-  }
-}
-
 /**
  * Used by create-society / add-member flows
  * Creates a new member in "members" table and returns the new memberId.
@@ -151,12 +109,7 @@ export async function createMember(
       society_id: societyId,
       user_id: safe.userId ?? null,
       name: safe.name ?? safe.displayName ?? "Member",
-      display_name: safe.displayName ?? safe.name ?? "Member",
-      email: safe.email ?? null,
       role: pickPrimaryRole(safe.roles),
-      status: safe.status ?? "active",
-      handicap: safe.handicap ?? null,
-      sex: safe.sex ?? null,
     };
   } else if ("societyId" in input) {
     const safe = input;
@@ -164,33 +117,18 @@ export async function createMember(
       society_id: safe.societyId,
       user_id: safe.userId ?? null,
       name: safe.name ?? safe.displayName ?? "Member",
-      display_name: safe.displayName ?? safe.name ?? "Member",
-      email: safe.email ?? null,
       role: pickPrimaryRole(safe.roles),
-      status: safe.status ?? "active",
-      handicap: safe.handicap ?? null,
-      sex: safe.sex ?? null,
     };
   } else {
     payload = {
       society_id: input.society_id,
       user_id: input.user_id ?? null,
       name: input.name,
-      display_name: input.display_name ?? input.name,
-      email: input.email ?? null,
       role: pickPrimaryRole(input.role),
-      status: input.status ?? "active",
-      handicap: input.handicap ?? null,
-      sex: input.sex ?? null,
     };
   }
 
   if (!payload.society_id) throw new Error("createMember: missing society_id");
-
-  if (!payload.user_id) {
-    const adminRow = await adminAddMember(payload);
-    return adminRow.id;
-  }
 
   const { data: row, error } = await supabase
     .from("members")
@@ -198,21 +136,12 @@ export async function createMember(
       society_id: payload.society_id,
       user_id: payload.user_id,
       name: payload.name,
-      display_name: payload.display_name ?? payload.name,
-      email: payload.email ?? null,
       role: payload.role ?? "member",
-      status: payload.status ?? "active",
-      handicap: payload.handicap ?? null,
-      sex: payload.sex ?? null,
     })
     .select("id")
     .single();
 
   if (error) {
-    if (error.code === "42501" || error.message?.includes("row-level security")) {
-      const adminRow = await adminAddMember(payload);
-      return adminRow.id;
-    }
     throw new Error(error.message || "Failed to create member");
   }
 
@@ -287,7 +216,9 @@ export function subscribeMembersBySociety(
 export async function getMembersBySocietyId(societyId: string): Promise<MemberDoc[]> {
   const { data, error } = await supabase
     .from("members")
-    .select("*")
+    .select(
+      "id, society_id, user_id, name, display_name, email, handicap, sex, status, role, created_at, updated_at, paid, amount_paid_pence, paid_at"
+    )
     .eq("society_id", societyId)
     .order("created_at", { ascending: false });
 
@@ -348,14 +279,9 @@ export async function updateMemberDoc(
     .update({ ...payload, updated_at: new Date().toISOString() })
     .eq("id", memberId);
 
-  if (!error) return;
-
-  if (error.code === "42501" || error.message?.includes("row-level security")) {
-    await adminUpdateMember(memberId, payload);
-    return;
+  if (error) {
+    throw new Error(error.message || "Failed to update member");
   }
-
-  throw new Error(error.message || "Failed to update member");
 }
 
 /**
@@ -365,14 +291,9 @@ export async function deleteMember(memberId: string): Promise<void> {
   if (!memberId) throw new Error("deleteMember: missing memberId");
 
   const { error } = await supabase.from("members").delete().eq("id", memberId);
-  if (!error) return;
-
-  if (error.code === "42501" || error.message?.includes("row-level security")) {
-    await adminDeleteMember(memberId);
-    return;
+  if (error) {
+    throw new Error(error.message || "Failed to delete member");
   }
-
-  throw new Error(error.message || "Failed to delete member");
 }
 
 /**
@@ -381,7 +302,9 @@ export async function deleteMember(memberId: string): Promise<void> {
 export async function getMember(memberId: string): Promise<MemberDoc | null> {
   const { data, error } = await supabase
     .from("members")
-    .select("*")
+    .select(
+      "id, society_id, user_id, name, display_name, email, handicap, sex, status, role, created_at, updated_at, paid, amount_paid_pence, paid_at"
+    )
     .eq("id", memberId)
     .maybeSingle();
 
