@@ -1,4 +1,8 @@
 // lib/db_supabase/memberRepo.ts
+// Member management - uses singleton supabase client
+// IMPORTANT: Only send columns that exist in the members table:
+// id, society_id, user_id, name, email, role, paid, amount_paid_pence, paid_at, created_at, display_name
+
 import { supabase } from "@/lib/supabase";
 
 export type MemberDoc = {
@@ -6,27 +10,28 @@ export type MemberDoc = {
   society_id: string;
   user_id?: string | null;
   name?: string;
-  displayName?: string; // alias for name
+  display_name?: string;
+  displayName?: string; // alias for name (camelCase for app compatibility)
   email?: string;
-  handicap?: number | null;
   role?: string;
   roles?: string[]; // computed from role for compatibility
   paid?: boolean;
-  paid_date?: string | null;
+  amount_paid_pence?: number;
+  paid_at?: string | null;
   created_at?: string;
-  updated_at?: string;
 };
 
 function mapMember(row: any): MemberDoc {
   return {
     ...row,
-    displayName: row.name,
+    displayName: row.name || row.display_name,
     roles: row.role ? [row.role] : ["member"],
   };
 }
 
 /**
  * Creates a new member in "members" table and returns the new memberId.
+ * Only sends valid columns: society_id, user_id, name, email, role, paid, amount_paid_pence
  */
 export async function createMember(
   societyId: string,
@@ -38,6 +43,8 @@ export async function createMember(
     email?: string;
   }
 ): Promise<string> {
+  console.log("[onboarding] createMember start");
+
   if (!societyId) throw new Error("createMember: missing societyId");
 
   const safe = data ?? {};
@@ -49,13 +56,20 @@ export async function createMember(
 
   const name = safe.displayName ?? safe.name ?? "Member";
 
+  // ONLY send columns that exist in the members table
   const payload: Record<string, unknown> = {
     society_id: societyId,
     user_id: safe.userId ?? null,
     name: name,
     role: role,
-    email: safe.email ?? null,
+    paid: false,
+    amount_paid_pence: 0,
   };
+
+  // Only add email if provided
+  if (safe.email) {
+    payload.email = safe.email;
+  }
 
   console.log("[memberRepo] createMember payload:", JSON.stringify(payload, null, 2));
 
@@ -72,11 +86,54 @@ export async function createMember(
       hint: error.hint,
       code: error.code,
     });
+
+    // Provide helpful error for RLS failures
+    if (error.code === "42501" || error.code === "403" || error.message?.includes("row-level security")) {
+      throw new Error("Permission denied. You can only add yourself as a member.");
+    }
+
     throw new Error(error.message || "Failed to create member");
   }
 
-  console.log("[memberRepo] createMember success:", row?.id);
+  console.log("[onboarding] createMember success:", row?.id);
   return row.id;
+}
+
+/**
+ * Find existing membership for a user in a society
+ * Returns the member if found, null otherwise
+ */
+export async function findMemberByUserAndSociety(
+  societyId: string,
+  userId: string
+): Promise<MemberDoc | null> {
+  console.log("[memberRepo] findMemberByUserAndSociety:", { societyId, userId });
+
+  const { data, error } = await supabase
+    .from("members")
+    .select("*")
+    .eq("society_id", societyId)
+    .eq("user_id", userId)
+    .maybeSingle();
+
+  if (error) {
+    console.error("[memberRepo] findMemberByUserAndSociety failed:", {
+      message: error.message,
+      details: error.details,
+      hint: error.hint,
+      code: error.code,
+    });
+    // Don't throw - just return null if we can't find it
+    return null;
+  }
+
+  if (data) {
+    console.log("[memberRepo] Found existing membership:", data.id);
+    return mapMember(data);
+  }
+
+  console.log("[memberRepo] No existing membership found");
+  return null;
 }
 
 /**
@@ -127,6 +184,7 @@ export async function getMembersBySocietyId(
 
 /**
  * Update member document
+ * ONLY sends columns that exist in the members table
  * Note: societyId param is for API compatibility but not used
  */
 export async function updateMemberDoc(
@@ -136,23 +194,30 @@ export async function updateMemberDoc(
     displayName: string;
     name: string;
     email: string;
-    handicap: number | null;
     role: string;
     paid: boolean;
-    paidDate: string | null;
+    amount_paid_pence: number;
+    paid_at: string | null;
   }>
 ): Promise<void> {
-  const payload: Record<string, unknown> = {
-    updated_at: new Date().toISOString(),
-  };
+  const payload: Record<string, unknown> = {};
 
+  // Only include fields that exist in the DB schema
   if (updates.displayName !== undefined) payload.name = updates.displayName;
   if (updates.name !== undefined) payload.name = updates.name;
   if (updates.email !== undefined) payload.email = updates.email;
-  if (updates.handicap !== undefined) payload.handicap = updates.handicap;
   if (updates.role !== undefined) payload.role = updates.role;
   if (updates.paid !== undefined) payload.paid = updates.paid;
-  if (updates.paidDate !== undefined) payload.paid_date = updates.paidDate;
+  if (updates.amount_paid_pence !== undefined) payload.amount_paid_pence = updates.amount_paid_pence;
+  if (updates.paid_at !== undefined) payload.paid_at = updates.paid_at;
+
+  // Don't update if nothing to change
+  if (Object.keys(payload).length === 0) {
+    console.log("[memberRepo] updateMemberDoc: no valid fields to update");
+    return;
+  }
+
+  console.log("[memberRepo] updateMemberDoc payload:", JSON.stringify(payload, null, 2));
 
   const { error } = await supabase
     .from("members")

@@ -159,7 +159,7 @@ export default function MembersScreen() {
     try {
       await updateMemberDoc(societyId, member.id, {
         paid: !member.paid,
-        paidDate: !member.paid ? new Date().toISOString() : null,
+        paid_at: !member.paid ? new Date().toISOString() : null,
       });
       loadMembers();
     } catch (e: any) {
