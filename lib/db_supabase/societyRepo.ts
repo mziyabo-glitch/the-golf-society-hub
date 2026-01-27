@@ -24,6 +24,11 @@ type SocietyInput = {
   createdBy: string;
 };
 
+// Result type for join code lookup - distinguishes between different failure modes
+export type JoinCodeLookupResult =
+  | { ok: true; society: SocietyDoc }
+  | { ok: false; reason: "NOT_FOUND" | "FORBIDDEN" | "ERROR"; message?: string };
+
 /**
  * Generate a unique, human-friendly join code
  * Format: 6 uppercase alphanumeric characters (no confusing chars like 0/O, 1/I/L)
@@ -35,6 +40,16 @@ function generateJoinCode(): string {
     code += chars.charAt(Math.floor(Math.random() * chars.length));
   }
   return code;
+}
+
+/**
+ * Normalize a join code for consistent lookup:
+ * - Trim whitespace
+ * - Remove ALL internal spaces
+ * - Convert to uppercase
+ */
+export function normalizeJoinCode(code: string): string {
+  return code.trim().replace(/\s+/g, "").toUpperCase();
 }
 
 export async function createSociety(input: SocietyInput): Promise<SocietyDoc> {
@@ -104,7 +119,7 @@ export async function createSociety(input: SocietyInput): Promise<SocietyDoc> {
     throw new Error(error.message || "Failed to create society");
   }
 
-  console.log("[societyRepo] createSociety success:", data?.id);
+  console.log("[societyRepo] createSociety success:", data?.id, "joinCode:", data?.join_code);
   return data;
 }
 
@@ -149,32 +164,99 @@ export async function updateSocietyDoc(
 
 /**
  * Find a society by its join code.
- * Returns the society doc if found, null if not found.
+ * Returns structured result to distinguish between:
+ * - NOT_FOUND: no society with that code
+ * - FORBIDDEN: RLS policy blocked the query
+ * - ERROR: other database error
  */
-export async function findSocietyByJoinCode(
+export async function lookupSocietyByJoinCode(
   joinCode: string
-): Promise<SocietyDoc | null> {
-  const normalizedCode = joinCode.trim().toUpperCase();
-  if (!normalizedCode || normalizedCode.length < 4) {
-    return null;
+): Promise<JoinCodeLookupResult> {
+  // Normalize: trim, remove ALL spaces, uppercase
+  const normalized = normalizeJoinCode(joinCode);
+
+  console.log("[join] lookupSocietyByJoinCode:", {
+    raw: joinCode,
+    normalized: normalized,
+    length: normalized.length,
+  });
+
+  // Validate minimum length
+  if (!normalized || normalized.length < 4) {
+    console.warn("[join] Join code too short:", normalized);
+    return { ok: false, reason: "NOT_FOUND", message: "Join code must be at least 4 characters" };
   }
 
+  // Query with explicit column selection for debugging
   const { data, error } = await supabase
     .from("societies")
-    .select("*")
-    .eq("join_code", normalizedCode)
+    .select("id, join_code, name, country, created_by")
+    .eq("join_code", normalized)
+    .limit(1)
     .maybeSingle();
 
+  // Handle errors first
   if (error) {
-    console.error("[societyRepo] findSocietyByJoinCode failed:", {
+    console.error("[join] society lookup error:", {
       message: error.message,
       details: error.details,
       hint: error.hint,
       code: error.code,
     });
-    throw new Error(error.message || "Failed to find society");
+
+    // Check for RLS/permission errors
+    if (
+      error.code === "42501" ||
+      error.code === "PGRST301" ||
+      error.message?.includes("row-level security") ||
+      error.message?.includes("permission denied")
+    ) {
+      return {
+        ok: false,
+        reason: "FORBIDDEN",
+        message: "Permission denied. RLS policy may be blocking society lookup.",
+      };
+    }
+
+    return {
+      ok: false,
+      reason: "ERROR",
+      message: error.message || "Database error during lookup",
+    };
   }
-  return data;
+
+  // Handle not found
+  if (!data) {
+    console.warn("[join] Society not found for code:", normalized);
+    return { ok: false, reason: "NOT_FOUND" };
+  }
+
+  // Success!
+  console.log("[join] Society found:", {
+    id: data.id,
+    name: data.name,
+    join_code: data.join_code,
+  });
+
+  return { ok: true, society: data as SocietyDoc };
+}
+
+/**
+ * Find a society by its join code.
+ * Returns the society doc if found, null if not found.
+ * @deprecated Use lookupSocietyByJoinCode for better error handling
+ */
+export async function findSocietyByJoinCode(
+  joinCode: string
+): Promise<SocietyDoc | null> {
+  const result = await lookupSocietyByJoinCode(joinCode);
+  if (result.ok) {
+    return result.society;
+  }
+  if (result.reason === "FORBIDDEN" || result.reason === "ERROR") {
+    throw new Error(result.message || "Failed to find society");
+  }
+  return null;
 }
 
 /**

@@ -11,7 +11,7 @@ import { PrimaryButton, SecondaryButton } from "@/components/ui/Button";
 import { LoadingState } from "@/components/ui/LoadingState";
 import { useBootstrap } from "@/lib/useBootstrap";
 import { ensureSignedIn } from "@/lib/auth_supabase";
-import { createSociety, findSocietyByJoinCode } from "@/lib/db_supabase/societyRepo";
+import { createSociety, lookupSocietyByJoinCode, normalizeJoinCode } from "@/lib/db_supabase/societyRepo";
 import { createMember, findMemberByUserAndSociety } from "@/lib/db_supabase/memberRepo";
 import { setActiveSocietyAndMember } from "@/lib/db_supabase/profileRepo";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
@@ -65,8 +65,14 @@ export default function OnboardingScreen() {
    * 5. Redirect to app home
    */
   const handleJoinSociety = async () => {
-    if (!joinCode.trim()) {
+    const normalizedCode = normalizeJoinCode(joinCode);
+
+    if (!normalizedCode) {
       Alert.alert("Missing Code", "Please enter the society join code.");
+      return;
+    }
+    if (normalizedCode.length < 4) {
+      Alert.alert("Invalid Code", "Join code must be at least 4 characters.");
       return;
     }
     if (!displayName.trim()) {
@@ -76,6 +82,8 @@ export default function OnboardingScreen() {
 
     setLoading(true);
     console.log("[join] === JOIN SOCIETY START ===");
+    console.log("[join] Raw input:", JSON.stringify(joinCode));
+    console.log("[join] Normalized code:", normalizedCode);
 
     try {
       // Step 1: Ensure signed in
@@ -89,16 +97,43 @@ export default function OnboardingScreen() {
       }
       console.log("[join] Authenticated as:", uid);
 
-      // Step 2: Lookup society by join code
-      console.log("[join] code lookup start:", joinCode.trim().toUpperCase());
-      const society = await findSocietyByJoinCode(joinCode);
-      if (!society) {
-        console.log("[join] Society not found");
-        Alert.alert("Not Found", "No society found with that code. Please check and try again.");
+      // Step 2: Lookup society by join code using new structured result
+      console.log("[join] code lookup start:", normalizedCode);
+      const lookupResult = await lookupSocietyByJoinCode(joinCode);
+
+      if (!lookupResult.ok) {
+        console.log("[join] Lookup failed:", lookupResult.reason, lookupResult.message);
+
+        switch (lookupResult.reason) {
+          case "NOT_FOUND":
+            Alert.alert(
+              "Society Not Found",
+              `No society found with code "${normalizedCode}". Please check the code and try again.`
+            );
+            break;
+          case "FORBIDDEN":
+            Alert.alert(
+              "Access Denied",
+              "Unable to look up societies. This may be a server configuration issue. Please try again or contact support."
+            );
+            break;
+          case "ERROR":
+            Alert.alert(
+              "Lookup Failed",
+              lookupResult.message || "Failed to look up society. Please try again."
+            );
+            break;
+        }
         setLoading(false);
         return;
       }
-      console.log("[join] code lookup success:", society.id, society.name);
+
+      const society = lookupResult.society;
+      console.log("[join] code lookup success:", {
+        id: society.id,
+        name: society.name,
+        join_code: society.join_code,
+      });
 
       // Step 3: Check if membership already exists
       console.log("[join] Checking for existing membership...");
@@ -111,21 +146,21 @@ export default function OnboardingScreen() {
         console.log("[join] Existing membership found:", existingMember.id);
         memberId = existingMember.id;
       } else {
-        // Step 4: Create new member row
-        console.log("[onboarding] createMember start (join flow)");
+        // Step 4: Create new member row with schema-correct payload
+        console.log("[join] createMember start");
         memberId = await createMember(society.id, {
           displayName: displayName.trim(),
           name: displayName.trim(),
           roles: ["member"],
           userId: uid,
         });
-        console.log("[onboarding] createMember success:", memberId);
+        console.log("[join] createMember success:", memberId);
       }
 
       // Step 5: Update profile with active society/member
-      console.log("[onboarding] updateProfile start");
+      console.log("[join] updateProfile start");
       await setActiveSocietyAndMember(uid, society.id, memberId);
-      console.log("[onboarding] updateProfile success");
+      console.log("[join] updateProfile success");
 
       // Refresh bootstrap state to pick up the new active society
       refresh();
@@ -186,7 +221,7 @@ export default function OnboardingScreen() {
       });
       console.log("[onboarding] createSociety success:", society.id, "joinCode:", society.join_code);
 
-      // Step 3: Create captain member
+      // Step 3: Create captain member with schema-correct payload
       console.log("[onboarding] createMember start (captain)");
       const memberId = await createMember(society.id, {
         displayName: captainName.trim(),
@@ -261,7 +296,7 @@ export default function OnboardingScreen() {
                 <AppInput
                   placeholder="e.g. ABC123"
                   value={joinCode}
-                  onChangeText={(text) => setJoinCode(text.toUpperCase())}
+                  onChangeText={(text) => setJoinCode(text.toUpperCase().replace(/\s/g, ""))}
                   autoCapitalize="characters"
                   autoCorrect={false}
                   maxLength={8}
