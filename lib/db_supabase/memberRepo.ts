@@ -1,7 +1,7 @@
 // lib/db_supabase/memberRepo.ts
 // Member management - uses singleton supabase client
 // IMPORTANT: Only send columns that exist in the members table:
-// id, society_id, user_id, name, email, role, paid, amount_paid_pence, paid_at, created_at, display_name
+// id, society_id, user_id, name, email, role, paid, amount_paid_pence, paid_at, created_at, display_name, whs_number, handicap_index
 
 import { supabase } from "@/lib/supabase";
 
@@ -19,6 +19,11 @@ export type MemberDoc = {
   amount_paid_pence?: number;
   paid_at?: string | null;
   created_at?: string;
+  // WHS / Handicap fields
+  whs_number?: string | null;
+  handicap_index?: number | null;
+  whsNumber?: string | null; // camelCase alias
+  handicapIndex?: number | null; // camelCase alias
 };
 
 function mapMember(row: any): MemberDoc {
@@ -26,6 +31,8 @@ function mapMember(row: any): MemberDoc {
     ...row,
     displayName: row.name || row.display_name,
     roles: row.role ? [row.role] : ["member"],
+    whsNumber: row.whs_number ?? null,
+    handicapIndex: row.handicap_index ?? null,
   };
 }
 
@@ -348,6 +355,76 @@ export async function addMemberAsCaptain(
   }
 
   console.log("[memberRepo] addMemberAsCaptain RPC success, member id:", row.id);
+
+  return mapMember(row);
+}
+
+/**
+ * Update a member's WHS number and handicap index (Captain/Handicapper only)
+ *
+ * This function calls the `update_member_handicap` Supabase RPC which:
+ * - Validates the caller is a Captain or Handicapper of the society
+ * - Updates the member's WHS number and handicap index
+ * - Returns the updated member data
+ *
+ * @param memberId - The member to update
+ * @param whsNumber - Optional WHS number (pass null to clear)
+ * @param handicapIndex - Optional handicap index (pass null to clear)
+ * @returns The updated member data
+ */
+export async function updateMemberHandicap(
+  memberId: string,
+  whsNumber?: string | null,
+  handicapIndex?: number | null
+): Promise<MemberDoc> {
+  console.log("[memberRepo] updateMemberHandicap RPC starting:", {
+    memberId,
+    whsNumber: whsNumber ?? "(unchanged)",
+    handicapIndex: handicapIndex ?? "(unchanged)",
+  });
+
+  if (!memberId) throw new Error("updateMemberHandicap: missing memberId");
+
+  const { data, error } = await supabase.rpc("update_member_handicap", {
+    p_member_id: memberId,
+    p_whs_number: whsNumber,
+    p_handicap_index: handicapIndex,
+  });
+
+  if (error) {
+    console.error("[memberRepo] updateMemberHandicap RPC error:", {
+      message: error.message,
+      details: error.details,
+      hint: error.hint,
+      code: error.code,
+    });
+
+    // Provide user-friendly error messages
+    if (error.message?.includes("Permission denied")) {
+      throw new Error("Only Captain or Handicapper can update handicaps.");
+    }
+    if (error.message?.includes("Not authenticated")) {
+      throw new Error("Please sign in to update handicaps.");
+    }
+    if (error.message?.includes("Member not found")) {
+      throw new Error("Member not found.");
+    }
+    if (error.message?.includes("Handicap index must be")) {
+      throw new Error("Handicap index must be between -10 and 54.");
+    }
+
+    throw new Error(error.message || "Failed to update handicap");
+  }
+
+  // RPC returns an array with the updated row
+  const row = Array.isArray(data) ? data[0] : data;
+
+  if (!row || !row.id) {
+    console.error("[memberRepo] updateMemberHandicap: no data returned");
+    throw new Error("Failed to update handicap - no data returned");
+  }
+
+  console.log("[memberRepo] updateMemberHandicap RPC success, member id:", row.id);
 
   return mapMember(row);
 }

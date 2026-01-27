@@ -15,6 +15,7 @@ import {
   getMembersBySocietyId,
   addMemberAsCaptain,
   updateMemberDoc,
+  updateMemberHandicap,
   deleteMember,
   type MemberDoc,
 } from "@/lib/db_supabase/memberRepo";
@@ -89,6 +90,8 @@ export default function MembersScreen() {
   // Form state
   const [formName, setFormName] = useState("");
   const [formEmail, setFormEmail] = useState("");
+  const [formWhsNumber, setFormWhsNumber] = useState("");
+  const [formHandicapIndex, setFormHandicapIndex] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
   // Get permissions for current member
@@ -159,6 +162,8 @@ export default function MembersScreen() {
   const openAddModal = () => {
     setFormName("");
     setFormEmail("");
+    setFormWhsNumber("");
+    setFormHandicapIndex("");
     setEditingMember(null);
     setModalMode("add");
   };
@@ -166,6 +171,14 @@ export default function MembersScreen() {
   const openEditModal = (member: MemberDoc) => {
     setFormName(member.displayName || member.name || "");
     setFormEmail(member.email || "");
+    setFormWhsNumber(member.whsNumber || member.whs_number || "");
+    setFormHandicapIndex(
+      member.handicapIndex != null
+        ? String(member.handicapIndex)
+        : member.handicap_index != null
+        ? String(member.handicap_index)
+        : ""
+    );
     setEditingMember(member);
     setModalMode("edit");
   };
@@ -175,6 +188,8 @@ export default function MembersScreen() {
     setEditingMember(null);
     setFormName("");
     setFormEmail("");
+    setFormWhsNumber("");
+    setFormHandicapIndex("");
   };
 
   const handleAddMember = async () => {
@@ -219,13 +234,40 @@ export default function MembersScreen() {
     }
     if (!societyId || !editingMember) return;
 
+    // Validate handicap index if provided
+    if (formHandicapIndex.trim()) {
+      const hcap = parseFloat(formHandicapIndex.trim());
+      if (isNaN(hcap) || hcap < -10 || hcap > 54) {
+        Alert.alert("Invalid Handicap", "Handicap index must be between -10 and 54.");
+        return;
+      }
+    }
+
     setSubmitting(true);
     try {
+      // Update basic member info
       await updateMemberDoc(societyId, editingMember.id, {
         displayName: formName.trim(),
         name: formName.trim(),
         email: formEmail.trim() || undefined,
       });
+
+      // Update handicap if Captain/Handicapper and values changed
+      if (permissions.canManageHandicaps) {
+        const oldWhs = editingMember.whsNumber || editingMember.whs_number || "";
+        const oldHcap = editingMember.handicapIndex ?? editingMember.handicap_index ?? null;
+        const newWhs = formWhsNumber.trim() || null;
+        const newHcap = formHandicapIndex.trim() ? parseFloat(formHandicapIndex.trim()) : null;
+
+        const whsChanged = (newWhs || "") !== oldWhs;
+        const hcapChanged = newHcap !== oldHcap;
+
+        if (whsChanged || hcapChanged) {
+          console.log("[members] Updating handicap info:", { newWhs, newHcap });
+          await updateMemberHandicap(editingMember.id, newWhs, newHcap);
+        }
+      }
+
       closeModal();
       loadMembers();
     } catch (e: any) {
@@ -347,6 +389,34 @@ export default function MembersScreen() {
             />
           </View>
 
+          {/* Handicap fields - only shown in edit mode for Captain/Handicapper */}
+          {modalMode === "edit" && permissions.canManageHandicaps && (
+            <>
+              <View style={[styles.formField, { marginTop: spacing.sm }]}>
+                <AppText variant="captionBold" style={styles.label}>WHS Number (optional)</AppText>
+                <AppInput
+                  placeholder="e.g. 1234567"
+                  value={formWhsNumber}
+                  onChangeText={setFormWhsNumber}
+                  autoCapitalize="none"
+                />
+              </View>
+
+              <View style={styles.formField}>
+                <AppText variant="captionBold" style={styles.label}>Handicap Index (optional)</AppText>
+                <AppInput
+                  placeholder="e.g. 12.4"
+                  value={formHandicapIndex}
+                  onChangeText={setFormHandicapIndex}
+                  keyboardType="decimal-pad"
+                />
+                <AppText variant="small" color="tertiary" style={{ marginTop: 4 }}>
+                  Valid range: -10 to 54
+                </AppText>
+              </View>
+            </>
+          )}
+
           <PrimaryButton
             onPress={modalMode === "add" ? handleAddMember : handleUpdateMember}
             loading={submitting}
@@ -436,6 +506,15 @@ export default function MembersScreen() {
 
                       {member.email && (
                         <AppText variant="caption" color="tertiary">{member.email}</AppText>
+                      )}
+
+                      {/* Show handicap if available */}
+                      {(member.handicapIndex != null || member.handicap_index != null) && (
+                        <View style={[styles.badge, { backgroundColor: colors.info + "20", marginTop: 2 }]}>
+                          <AppText variant="small" style={{ color: colors.info }}>
+                            HI: {member.handicapIndex ?? member.handicap_index}
+                          </AppText>
+                        </View>
                       )}
                     </View>
 

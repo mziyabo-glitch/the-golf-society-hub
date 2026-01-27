@@ -11,9 +11,50 @@ import { PrimaryButton, SecondaryButton } from "@/components/ui/Button";
 import { LoadingState } from "@/components/ui/LoadingState";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { useBootstrap } from "@/lib/useBootstrap";
-import { getEventsBySocietyId, createEvent, type EventDoc } from "@/lib/db_supabase/eventRepo";
+import {
+  getEventsBySocietyId,
+  createEvent,
+  type EventDoc,
+  type EventFormat,
+  type EventClassification,
+  EVENT_FORMATS,
+  EVENT_CLASSIFICATIONS,
+} from "@/lib/db_supabase/eventRepo";
 import { getPermissionsForMember } from "@/lib/rbac";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
+
+// Simple picker option component
+function PickerOption({
+  label,
+  selected,
+  onPress,
+  colors,
+}: {
+  label: string;
+  selected: boolean;
+  onPress: () => void;
+  colors: ReturnType<typeof getColors>;
+}) {
+  return (
+    <Pressable
+      onPress={onPress}
+      style={[
+        styles.pickerOption,
+        {
+          backgroundColor: selected ? colors.primary : colors.backgroundSecondary,
+          borderColor: selected ? colors.primary : colors.border,
+        },
+      ]}
+    >
+      <AppText
+        variant="caption"
+        style={{ color: selected ? "#fff" : colors.text }}
+      >
+        {label}
+      </AppText>
+    </Pressable>
+  );
+}
 
 export default function EventsScreen() {
   const router = useRouter();
@@ -25,6 +66,8 @@ export default function EventsScreen() {
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [formName, setFormName] = useState("");
   const [formDate, setFormDate] = useState("");
+  const [formFormat, setFormFormat] = useState<EventFormat>("stableford");
+  const [formClassification, setFormClassification] = useState<EventClassification>("general");
   const [submitting, setSubmitting] = useState(false);
 
   const permissions = getPermissionsForMember(member as any);
@@ -75,10 +118,14 @@ export default function EventsScreen() {
       await createEvent(societyId, {
         name: formName.trim(),
         date: formDate.trim(),
+        format: formFormat,
+        classification: formClassification,
         createdBy: user.uid,
       });
       setFormName("");
       setFormDate("");
+      setFormFormat("stableford");
+      setFormClassification("general");
       setShowCreateForm(false);
       loadEvents();
     } catch (e: any) {
@@ -131,6 +178,36 @@ export default function EventsScreen() {
               keyboardType="numbers-and-punctuation"
               autoCapitalize="none"
             />
+          </View>
+
+          <View style={styles.formField}>
+            <AppText variant="captionBold" style={styles.label}>Format</AppText>
+            <View style={styles.pickerRow}>
+              {EVENT_FORMATS.map((f) => (
+                <PickerOption
+                  key={f.value}
+                  label={f.label}
+                  selected={formFormat === f.value}
+                  onPress={() => setFormFormat(f.value)}
+                  colors={colors}
+                />
+              ))}
+            </View>
+          </View>
+
+          <View style={styles.formField}>
+            <AppText variant="captionBold" style={styles.label}>Classification</AppText>
+            <View style={styles.pickerRow}>
+              {EVENT_CLASSIFICATIONS.map((c) => (
+                <PickerOption
+                  key={c.value}
+                  label={c.label}
+                  selected={formClassification === c.value}
+                  onPress={() => setFormClassification(c.value)}
+                  colors={colors}
+                />
+              ))}
+            </View>
           </View>
 
           <PrimaryButton
@@ -197,12 +274,20 @@ export default function EventsScreen() {
                 </AppText>
               </View>
               {event.format && (
-                <AppText variant="small" color="tertiary">{event.format}</AppText>
+                <AppText variant="small" color="tertiary">
+                  {EVENT_FORMATS.find((f) => f.value === event.format)?.label ?? event.format}
+                </AppText>
               )}
-              {event.isOOM && (
+              {event.classification === "oom" && (
                 <View style={[styles.oomBadge, { backgroundColor: colors.warning + "20" }]}>
                   <Feather name="award" size={10} color={colors.warning} />
                   <AppText variant="small" style={{ color: colors.warning }}>OOM</AppText>
+                </View>
+              )}
+              {event.classification === "major" && (
+                <View style={[styles.oomBadge, { backgroundColor: colors.info + "20" }]}>
+                  <Feather name="star" size={10} color={colors.info} />
+                  <AppText variant="small" style={{ color: colors.info }}>Major</AppText>
                 </View>
               )}
             </View>
@@ -331,5 +416,16 @@ const styles = StyleSheet.create({
   },
   label: {
     marginBottom: spacing.xs,
+  },
+  pickerRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: spacing.xs,
+  },
+  pickerOption: {
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+    borderRadius: radius.sm,
+    borderWidth: 1,
   },
 });
