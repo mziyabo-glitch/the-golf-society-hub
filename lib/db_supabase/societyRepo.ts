@@ -187,6 +187,14 @@ export async function lookupSocietyByJoinCode(
     return { ok: false, reason: "NOT_FOUND", message: "Join code must be at least 4 characters" };
   }
 
+  // Check auth state before query (for debugging RLS issues)
+  const { data: authData } = await supabase.auth.getUser();
+  const authUid = authData?.user?.id;
+  console.log("[join] Auth state before lookup:", {
+    authenticated: !!authUid,
+    uid: authUid ? authUid.substring(0, 8) + "..." : "none",
+  });
+
   // Query with explicit column selection for debugging
   const { data, error } = await supabase
     .from("societies")
@@ -225,9 +233,13 @@ export async function lookupSocietyByJoinCode(
     };
   }
 
-  // Handle not found
+  // Handle not found - could be RLS hiding rows OR genuinely not found
   if (!data) {
-    console.warn("[join] Society not found for code:", normalized);
+    console.warn("[join] RLS_OR_NOT_FOUND: No society returned for code:", {
+      joinCode: normalized,
+      authenticated: !!authUid,
+      hint: "If society exists but RLS returns 0 rows, check that societies_select policy allows authenticated users to see rows with join_code IS NOT NULL",
+    });
     return { ok: false, reason: "NOT_FOUND" };
   }
 

@@ -32,6 +32,9 @@ function mapMember(row: any): MemberDoc {
 /**
  * Creates a new member in "members" table and returns the new memberId.
  * Only sends valid columns: society_id, user_id, name, email, role, paid, amount_paid_pence
+ *
+ * IMPORTANT: RLS policy only allows inserting where user_id = auth.uid() or user_id IS NULL.
+ * This function validates that constraint before sending to prevent RLS errors.
  */
 export async function createMember(
   societyId: string,
@@ -43,11 +46,33 @@ export async function createMember(
     email?: string;
   }
 ): Promise<string> {
-  console.log("[onboarding] createMember start");
+  console.log("[memberRepo] createMember start");
 
   if (!societyId) throw new Error("createMember: missing societyId");
 
+  // Verify auth state and validate user_id matches
+  const { data: authData, error: authError } = await supabase.auth.getUser();
+  if (authError) {
+    console.error("[memberRepo] Auth error:", authError.message);
+    throw new Error("Authentication error: " + authError.message);
+  }
+
+  const authUid = authData?.user?.id;
+  if (!authUid) {
+    console.error("[memberRepo] No authenticated user found");
+    throw new Error("You must be signed in to create a member record.");
+  }
+
   const safe = data ?? {};
+
+  // App-level safety: Ensure user_id matches auth.uid() (RLS enforces this too)
+  if (safe.userId && safe.userId !== authUid) {
+    console.error("[memberRepo] user_id mismatch - cannot create member for another user:", {
+      providedUserId: safe.userId,
+      authUid: authUid,
+    });
+    throw new Error("Permission denied. You can only add yourself as a member.");
+  }
 
   // Use first role or default to "member"
   const role = Array.isArray(safe.roles) && safe.roles.length > 0
@@ -57,9 +82,10 @@ export async function createMember(
   const name = safe.displayName ?? safe.name ?? "Member";
 
   // ONLY send columns that exist in the members table
+  // Always use auth.uid() as user_id for safety
   const payload: Record<string, unknown> = {
     society_id: societyId,
-    user_id: safe.userId ?? null,
+    user_id: authUid,
     name: name,
     role: role,
     paid: false,
@@ -95,7 +121,7 @@ export async function createMember(
     throw new Error(error.message || "Failed to create member");
   }
 
-  console.log("[onboarding] createMember success:", row?.id);
+  console.log("[memberRepo] createMember success:", row?.id);
   return row.id;
 }
 
