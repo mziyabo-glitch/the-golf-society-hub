@@ -11,19 +11,18 @@ import { PrimaryButton, SecondaryButton } from "@/components/ui/Button";
 import { LoadingState } from "@/components/ui/LoadingState";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { useBootstrap } from "@/lib/useBootstrap";
-import { auth } from "@/lib/firebase";
 import {
-  subscribeEventsBySociety,
+  getEventsBySocietyId,
   createEvent,
   type EventDoc,
-} from "@/lib/db/eventRepo";
+} from "@/lib/db_supabase/eventRepo";
 import { getPermissionsForMember } from "@/lib/rbac";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
 
 type ModalMode = "none" | "create";
 
 export default function EventIndexScreen() {
-  const { societyId, member: currentMember, loading: bootstrapLoading } = useBootstrap();
+  const { societyId, member: currentMember, user, loading: bootstrapLoading } = useBootstrap();
   const colors = getColors();
 
   const [events, setEvents] = useState<EventDoc[]>([]);
@@ -39,26 +38,25 @@ export default function EventIndexScreen() {
   // Get permissions for current member
   const permissions = getPermissionsForMember(currentMember as any);
 
-  useEffect(() => {
+  const loadEvents = async () => {
     if (!societyId) {
       setLoading(false);
       return;
     }
+    setLoading(true);
+    try {
+      const data = await getEventsBySocietyId(societyId);
+      setEvents(data);
+    } catch (err) {
+      console.error("Failed to load events:", err);
+      Alert.alert("Error", "Failed to load events");
+    } finally {
+      setLoading(false);
+    }
+  };
 
-    const unsub = subscribeEventsBySociety(
-      societyId,
-      (docs) => {
-        setEvents(docs);
-        setLoading(false);
-      },
-      (err) => {
-        console.error("Events subscription error:", err);
-        Alert.alert("Error", "Failed to load events");
-        setLoading(false);
-      }
-    );
-
-    return unsub;
+  useEffect(() => {
+    loadEvents();
   }, [societyId]);
 
   const openCreateModal = () => {
@@ -89,7 +87,7 @@ export default function EventIndexScreen() {
       return;
     }
 
-    const uid = auth.currentUser?.uid;
+    const uid = user?.uid;
     if (!uid) {
       Alert.alert("Error", "You must be signed in to create events.");
       return;
@@ -104,6 +102,7 @@ export default function EventIndexScreen() {
         isOOM: formIsOOM,
       });
       closeModal();
+      loadEvents();
     } catch (e: any) {
       console.error("Create event error:", e);
       Alert.alert("Error", e?.message || "Failed to create event.");
@@ -244,7 +243,7 @@ export default function EventIndexScreen() {
                     {/* Date badge */}
                     <View style={[styles.dateBadge, { backgroundColor: colors.backgroundTertiary }]}>
                       <AppText variant="small" color="secondary">
-                        {formatDateDisplay(event.date)}
+                        {event.date ? formatDateDisplay(event.date) : "TBD"}
                       </AppText>
                     </View>
 

@@ -8,8 +8,8 @@ import { AppCard } from "@/components/ui/AppCard";
 import { LoadingState } from "@/components/ui/LoadingState";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { useBootstrap } from "@/lib/useBootstrap";
-import { subscribeEventsBySociety, type EventDoc } from "@/lib/db/eventRepo";
-import { subscribeMembersBySociety, type MemberDoc } from "@/lib/db/memberRepo";
+import { getEventsBySocietyId, type EventDoc } from "@/lib/db_supabase/eventRepo";
+import { getMembersBySocietyId, type MemberDoc } from "@/lib/db_supabase/memberRepo";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
 
 type OOMEntry = {
@@ -29,52 +29,27 @@ export default function LeaderboardScreen() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    if (!societyId) {
-      setLoading(false);
-      return;
-    }
-
-    let eventsLoaded = false;
-    let membersLoaded = false;
-
-    const checkLoaded = () => {
-      if (eventsLoaded && membersLoaded) {
+    const loadData = async () => {
+      if (!societyId) {
+        setLoading(false);
+        return;
+      }
+      setLoading(true);
+      try {
+        const [eventsData, membersData] = await Promise.all([
+          getEventsBySocietyId(societyId),
+          getMembersBySocietyId(societyId),
+        ]);
+        setEvents(eventsData);
+        setMembers(membersData);
+      } catch (err) {
+        console.error("Failed to load leaderboard data:", err);
+      } finally {
         setLoading(false);
       }
     };
 
-    const unsubEvents = subscribeEventsBySociety(
-      societyId,
-      (docs) => {
-        setEvents(docs);
-        eventsLoaded = true;
-        checkLoaded();
-      },
-      (err) => {
-        console.error("Events subscription error:", err);
-        eventsLoaded = true;
-        checkLoaded();
-      }
-    );
-
-    const unsubMembers = subscribeMembersBySociety(
-      societyId,
-      (docs) => {
-        setMembers(docs);
-        membersLoaded = true;
-        checkLoaded();
-      },
-      (err) => {
-        console.error("Members subscription error:", err);
-        membersLoaded = true;
-        checkLoaded();
-      }
-    );
-
-    return () => {
-      unsubEvents();
-      unsubMembers();
-    };
+    loadData();
   }, [societyId]);
 
   // Get relevant events for OOM: prefer isOOM events, fallback to all completed events
