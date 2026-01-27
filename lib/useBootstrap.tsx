@@ -111,8 +111,10 @@ function useBootstrapInternal(): BootstrapState {
 
         // ----------------------------------------------------------------
         // Step 1: Get existing session or sign in anonymously
+        // Session persistence: localStorage on web, SecureStore on native
         // ----------------------------------------------------------------
-        console.log("[useBootstrap] Checking for existing session...");
+        console.log("[useBootstrap] === SESSION PERSISTENCE CHECK ===");
+        console.log("[useBootstrap] Checking for existing session from storage...");
 
         const { data: { session: existingSession }, error: sessionError } =
           await supabase.auth.getSession();
@@ -121,11 +123,20 @@ function useBootstrapInternal(): BootstrapState {
           console.error("[useBootstrap] getSession error:", sessionError.message);
         }
 
+        // Log session state BEFORE any sign-in
+        console.log("[useBootstrap] Session from storage:", existingSession ? "FOUND" : "NOT FOUND");
+        if (existingSession) {
+          console.log("[useBootstrap] Persisted user ID:", existingSession.user?.id);
+          console.log("[useBootstrap] Token expires at:", existingSession.expires_at
+            ? new Date(existingSession.expires_at * 1000).toISOString()
+            : "unknown");
+        }
+
         let currentSession = existingSession;
         let currentUser: User | null = existingSession?.user ?? null;
 
         if (!currentSession) {
-          console.log("[useBootstrap] No session found, signing in anonymously...");
+          console.log("[useBootstrap] No persisted session, signing in anonymously...");
 
           const { data: signInData, error: signInError } =
             await supabase.auth.signInAnonymously();
@@ -256,7 +267,10 @@ function useBootstrapInternal(): BootstrapState {
           }
         }, 5000);
 
-        console.log("[useBootstrap] Bootstrap complete");
+        // Log session state AFTER bootstrap
+        console.log("[useBootstrap] === BOOTSTRAP COMPLETE ===");
+        console.log("[useBootstrap] Final session user ID:", currentUser?.id);
+        console.log("[useBootstrap] Session will persist across reloads");
 
       } catch (e: any) {
         console.error("[useBootstrap] Bootstrap error:", e);

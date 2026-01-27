@@ -2,7 +2,9 @@
 // SINGLETON Supabase client - use this everywhere
 // DO NOT create additional clients elsewhere
 
+import "react-native-url-polyfill/auto";
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
+import { supabaseStorage } from "@/lib/supabaseStorage";
 
 const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
 const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
@@ -24,14 +26,16 @@ function getSupabaseClient(): SupabaseClient {
 
   supabaseInstance = createClient(supabaseUrl, supabaseAnonKey, {
     auth: {
-      // Persist session in localStorage (web) or AsyncStorage (native)
+      // Use cross-platform storage adapter (localStorage on web, SecureStore on native)
+      storage: supabaseStorage,
+      // Persist session across app restarts
       persistSession: true,
       // Automatically refresh token before expiry
       autoRefreshToken: true,
       // Detect OAuth callback in URL (for social logins)
       detectSessionInUrl: true,
-      // Storage key for session
-      storageKey: "golf-society-hub-auth",
+      // Storage key for session (will be prefixed by supabaseStorage with "gsh:")
+      storageKey: "supabase-auth",
     },
   });
 
