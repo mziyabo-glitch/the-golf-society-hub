@@ -115,7 +115,7 @@ export default function HomeScreen() {
             styles.statCard,
             { backgroundColor: colors.surface, borderColor: colors.border, opacity: pressed ? 0.8 : 1 },
           ]}
-          onPress={() => router.push("/(app)/(tabs)/event")}
+          onPress={() => router.push("/events")}
         >
           <Feather name="calendar" size={24} color={colors.primary} />
           <AppText variant="h1" style={{ marginTop: spacing.xs }}>{events.length}</AppText>
