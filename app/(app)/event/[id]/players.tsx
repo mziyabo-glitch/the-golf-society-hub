@@ -63,6 +63,8 @@ export default function EventPlayersScreen() {
       setError(null);
 
       try {
+        console.log("[players] loading event + members", { eventId, societyId });
+
         const [evt, mems] = await Promise.all([
           getEvent(eventId),
           getMembersBySocietyId(societyId),
@@ -70,16 +72,20 @@ export default function EventPlayersScreen() {
 
         if (cancelled) return;
 
+        console.log("[players] loaded event:", {
+          id: evt?.id,
+          playerIds: evt?.playerIds,
+        });
+
         setEvent(evt);
         setMembers(mems);
 
-        const existing =
-          (evt as any)?.player_ids ??
-          (evt as any)?.playerIds ??
-          [];
-
+        // Use playerIds (camelCase) as returned by mapEvent
+        const existing = evt?.playerIds ?? [];
+        console.log("[players] initializing selection from:", existing);
         setSelectedPlayerIds(new Set(existing.map(String)));
       } catch (e: any) {
+        console.error("[players] load FAILED", e);
         if (!cancelled) {
           setError(e?.message ?? "Failed to load players");
         }
@@ -107,11 +113,25 @@ export default function EventPlayersScreen() {
     setSaving(true);
 
     const ids = Array.from(selectedPlayerIds);
-    console.log("[players] saving", { eventId: event?.id, ids });
+    console.log("[players] saving", {
+      eventId: event?.id,
+      societyId,
+      playerIds: ids,
+    });
 
-    await updateEvent(event!.id, { player_ids: ids } as any);
+    await updateEvent(event!.id, { playerIds: ids });
 
-    console.log("[players] save OK");
+    console.log("[players] save OK, refetching event...");
+
+    // Refetch to confirm persistence
+    const refreshed = await getEvent(event!.id);
+    if (refreshed) {
+      setEvent(refreshed);
+      const reloaded = refreshed.playerIds ?? [];
+      console.log("[players] reloaded playerIds:", reloaded);
+      setSelectedPlayerIds(new Set(reloaded.map(String)));
+    }
+
     Alert.alert("Saved", "Players saved");
   } catch (e: any) {
     console.error("[players] save FAILED", e);
