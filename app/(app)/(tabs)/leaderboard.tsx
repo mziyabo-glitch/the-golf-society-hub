@@ -1,118 +1,216 @@
-import { useEffect, useState } from "react";
-import { StyleSheet, View } from "react-native";
+import { useCallback, useEffect, useState, useRef } from "react";
+import { StyleSheet, View, Platform, Alert } from "react-native";
+import { useFocusEffect } from "@react-navigation/native";
 import { Feather } from "@expo/vector-icons";
+import * as Print from "expo-print";
+import * as Sharing from "expo-sharing";
 
 import { Screen } from "@/components/ui/Screen";
 import { AppText } from "@/components/ui/AppText";
 import { AppCard } from "@/components/ui/AppCard";
+import { SecondaryButton } from "@/components/ui/Button";
 import { LoadingState } from "@/components/ui/LoadingState";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { useBootstrap } from "@/lib/useBootstrap";
 import { getEventsBySocietyId, type EventDoc } from "@/lib/db_supabase/eventRepo";
-import { getMembersBySocietyId, type MemberDoc } from "@/lib/db_supabase/memberRepo";
+import {
+  getOrderOfMeritTotals,
+  type OrderOfMeritEntry,
+} from "@/lib/db_supabase/resultsRepo";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
 
-type OOMEntry = {
-  memberId: string;
-  memberName: string;
-  points: number;
-  wins: number;
-  eventsPlayed: number;
-};
-
 export default function LeaderboardScreen() {
-  const { societyId, loading: bootstrapLoading } = useBootstrap();
+  const { society, societyId, loading: bootstrapLoading } = useBootstrap();
   const colors = getColors();
 
+  const [standings, setStandings] = useState<OrderOfMeritEntry[]>([]);
   const [events, setEvents] = useState<EventDoc[]>([]);
-  const [members, setMembers] = useState<MemberDoc[]>([]);
   const [loading, setLoading] = useState(true);
+  const [sharing, setSharing] = useState(false);
 
-  useEffect(() => {
-    const loadData = async () => {
-      if (!societyId) {
-        setLoading(false);
-        return;
-      }
-      setLoading(true);
-      try {
-        const [eventsData, membersData] = await Promise.all([
-          getEventsBySocietyId(societyId),
-          getMembersBySocietyId(societyId),
-        ]);
-        setEvents(eventsData);
-        setMembers(membersData);
-      } catch (err) {
-        console.error("Failed to load leaderboard data:", err);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    loadData();
+  const loadData = useCallback(async () => {
+    if (!societyId) {
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    try {
+      const [totals, eventsData] = await Promise.all([
+        getOrderOfMeritTotals(societyId),
+        getEventsBySocietyId(societyId),
+      ]);
+      setStandings(totals);
+      setEvents(eventsData);
+    } catch (err) {
+      console.error("Failed to load leaderboard data:", err);
+    } finally {
+      setLoading(false);
+    }
   }, [societyId]);
 
-  // Get relevant events for OOM: prefer isOOM events, fallback to all completed events
-  const getOOMEvents = (): EventDoc[] => {
-    const completedWithResults = events.filter((e) => e.isCompleted && e.results);
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
 
-    // Check if any events have isOOM explicitly set to true
-    const oomEvents = completedWithResults.filter((e) => e.isOOM === true);
+  // Refetch on focus to pick up changes after entering points
+  useFocusEffect(
+    useCallback(() => {
+      if (societyId) {
+        loadData();
+      }
+    }, [societyId, loadData])
+  );
 
-    // If we have OOM-flagged events, use only those; otherwise use all completed events
-    return oomEvents.length > 0 ? oomEvents : completedWithResults;
+  // Count OOM events
+  const oomEventCount = events.filter(
+    (e) => e.classification === "oom" || e.isOOM === true
+  ).length;
+
+  // Generate HTML for PDF
+  const generateHTML = () => {
+    const societyName = society?.name || "Golf Society";
+    const date = new Date().toLocaleDateString("en-GB", {
+      day: "numeric",
+      month: "long",
+      year: "numeric",
+    });
+
+    const rows = standings
+      .map(
+        (entry, index) => `
+      <tr>
+        <td style="padding: 12px; border-bottom: 1px solid #eee; text-align: center; font-weight: ${
+          index < 3 ? "bold" : "normal"
+        }; color: ${index === 0 ? "#FFD700" : index === 1 ? "#C0C0C0" : index === 2 ? "#CD7F32" : "#333"};">
+          ${index + 1}
+        </td>
+        <td style="padding: 12px; border-bottom: 1px solid #eee;">${entry.memberName}</td>
+        <td style="padding: 12px; border-bottom: 1px solid #eee; text-align: center;">${entry.eventsPlayed}</td>
+        <td style="padding: 12px; border-bottom: 1px solid #eee; text-align: right; font-weight: bold; color: #0A7C4A;">${entry.totalPoints}</td>
+      </tr>
+    `
+      )
+      .join("");
+
+    return `
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <meta charset="utf-8">
+          <title>Order of Merit - ${societyName}</title>
+          <style>
+            body {
+              font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+              padding: 40px;
+              color: #333;
+            }
+            h1 {
+              color: #0A7C4A;
+              margin-bottom: 8px;
+            }
+            h2 {
+              color: #666;
+              font-weight: normal;
+              margin-top: 0;
+            }
+            .date {
+              color: #999;
+              margin-bottom: 24px;
+            }
+            table {
+              width: 100%;
+              border-collapse: collapse;
+              margin-top: 16px;
+            }
+            th {
+              background: #0A7C4A;
+              color: white;
+              padding: 12px;
+              text-align: left;
+            }
+            th:first-child, th:last-child {
+              text-align: center;
+            }
+            th:nth-child(3) {
+              text-align: center;
+            }
+            .footer {
+              margin-top: 32px;
+              padding-top: 16px;
+              border-top: 1px solid #eee;
+              color: #999;
+              font-size: 12px;
+            }
+          </style>
+        </head>
+        <body>
+          <h1>${societyName}</h1>
+          <h2>Season Leaderboard - Order of Merit</h2>
+          <p class="date">${date} | ${oomEventCount} Order of Merit event${oomEventCount !== 1 ? "s" : ""}</p>
+
+          ${
+            standings.length > 0
+              ? `
+            <table>
+              <thead>
+                <tr>
+                  <th style="text-align: center;">Rank</th>
+                  <th>Player</th>
+                  <th style="text-align: center;">Events</th>
+                  <th style="text-align: right;">Points</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${rows}
+              </tbody>
+            </table>
+          `
+              : `<p>No Order of Merit results yet.</p>`
+          }
+
+          <div class="footer">
+            Generated by Golf Society Hub
+          </div>
+        </body>
+      </html>
+    `;
   };
 
-  // Calculate OOM standings from completed OOM events
-  const calculateOOMStandings = (): OOMEntry[] => {
-    const relevantEvents = getOOMEvents();
-    const standings: Record<string, OOMEntry> = {};
+  const handleShare = async () => {
+    try {
+      setSharing(true);
 
-    // Initialize standings for all members
-    members.forEach((m) => {
-      standings[m.id] = {
-        memberId: m.id,
-        memberName: m.displayName || m.name || "Unknown",
-        points: 0,
-        wins: 0,
-        eventsPlayed: 0,
-      };
-    });
+      const html = generateHTML();
 
-    // Calculate points from each event
-    relevantEvents.forEach((event) => {
-      if (!event.results) return;
-
-      // Get sorted results for this event (by stableford or grossScore)
-      const eventResults = Object.entries(event.results)
-        .map(([memberId, result]) => ({
-          memberId,
-          score: result.stableford ?? result.netScore ?? result.grossScore ?? 0,
-        }))
-        .sort((a, b) => b.score - a.score);
-
-      // Award points based on position (simple: 10 for 1st, 8 for 2nd, etc.)
-      const pointsTable = [10, 8, 6, 5, 4, 3, 2, 1];
-
-      eventResults.forEach((result, index) => {
-        if (standings[result.memberId]) {
-          standings[result.memberId].eventsPlayed++;
-          standings[result.memberId].points += pointsTable[index] ?? 1;
-
-          if (index === 0) {
-            standings[result.memberId].wins++;
-          }
-        }
+      // Generate PDF
+      const { uri } = await Print.printToFileAsync({
+        html,
+        base64: false,
       });
-    });
 
-    // Sort by points, then wins
-    return Object.values(standings)
-      .filter((s) => s.eventsPlayed > 0)
-      .sort((a, b) => {
-        if (b.points !== a.points) return b.points - a.points;
-        return b.wins - a.wins;
-      });
+      console.log("[Leaderboard] PDF generated:", uri);
+
+      // Check if sharing is available
+      const canShare = await Sharing.isAvailableAsync();
+
+      if (canShare) {
+        await Sharing.shareAsync(uri, {
+          mimeType: "application/pdf",
+          dialogTitle: "Share Order of Merit",
+          UTI: "com.adobe.pdf",
+        });
+      } else {
+        Alert.alert(
+          "Sharing Unavailable",
+          "Sharing is not available on this device."
+        );
+      }
+    } catch (err: any) {
+      console.error("[Leaderboard] Share error:", err);
+      Alert.alert("Error", err?.message || "Failed to share leaderboard");
+    } finally {
+      setSharing(false);
+    }
   };
 
   if (bootstrapLoading || loading) {
@@ -125,26 +223,34 @@ export default function LeaderboardScreen() {
     );
   }
 
-  const relevantEvents = getOOMEvents();
-  const hasOOMFlaggedEvents = events.some((e) => e.isOOM === true);
-  const standings = calculateOOMStandings();
-
   return (
     <Screen>
       {/* Header */}
       <View style={styles.header}>
-        <AppText variant="title">Order of Merit</AppText>
-        <AppText variant="caption" color="secondary">
-          {relevantEvents.length} event{relevantEvents.length !== 1 ? "s" : ""} completed
-          {!hasOOMFlaggedEvents && relevantEvents.length > 0 ? " (all events)" : ""}
-        </AppText>
+        <View style={{ flex: 1 }}>
+          <AppText variant="title">Season Leaderboard</AppText>
+          <AppText variant="caption" color="secondary">
+            {oomEventCount} Order of Merit event{oomEventCount !== 1 ? "s" : ""}
+          </AppText>
+        </View>
+        {standings.length > 0 && (
+          <SecondaryButton onPress={handleShare} size="sm" disabled={sharing}>
+            <Feather name="share" size={16} color={colors.text} />
+            {sharing ? " Sharing..." : " Share"}
+          </SecondaryButton>
+        )}
       </View>
+
+      {/* Order of Merit Section */}
+      <AppText variant="h2" style={styles.sectionTitle}>
+        Order of Merit
+      </AppText>
 
       {standings.length === 0 ? (
         <EmptyState
           icon={<Feather name="award" size={24} color={colors.textTertiary} />}
           title="No Order of Merit Points Yet"
-          message="Complete events with results to see the leaderboard. Mark events as 'Order of Merit' to track season standings separately."
+          message="Enter points for Order of Merit events to see the leaderboard. Create an event with 'Order of Merit' classification, then add players and enter their points."
         />
       ) : (
         <View style={styles.list}>
@@ -182,24 +288,19 @@ export default function LeaderboardScreen() {
                   {/* Member Info */}
                   <View style={styles.memberInfo}>
                     <AppText variant="bodyBold">{entry.memberName}</AppText>
-                    <View style={styles.statsRow}>
-                      <AppText variant="caption" color="secondary">
-                        {entry.eventsPlayed} event{entry.eventsPlayed !== 1 ? "s" : ""}
-                      </AppText>
-                      {entry.wins > 0 && (
-                        <View style={[styles.winsBadge, { backgroundColor: colors.success + "20" }]}>
-                          <AppText variant="small" style={{ color: colors.success }}>
-                            {entry.wins} win{entry.wins !== 1 ? "s" : ""}
-                          </AppText>
-                        </View>
-                      )}
-                    </View>
+                    <AppText variant="caption" color="secondary">
+                      {entry.eventsPlayed} event{entry.eventsPlayed !== 1 ? "s" : ""}
+                    </AppText>
                   </View>
 
                   {/* Points */}
                   <View style={styles.pointsContainer}>
-                    <AppText variant="h1" color="primary">{entry.points}</AppText>
-                    <AppText variant="small" color="tertiary">pts</AppText>
+                    <AppText variant="h1" color="primary">
+                      {entry.totalPoints}
+                    </AppText>
+                    <AppText variant="small" color="tertiary">
+                      pts
+                    </AppText>
                   </View>
                 </View>
               </AppCard>
@@ -208,12 +309,12 @@ export default function LeaderboardScreen() {
         </View>
       )}
 
-      {/* Info card about OOM */}
+      {/* Info card */}
       <AppCard style={styles.infoCard}>
         <View style={styles.infoContent}>
           <Feather name="info" size={16} color={colors.textTertiary} />
           <AppText variant="caption" color="secondary" style={{ flex: 1 }}>
-            Points are awarded based on finishing position: 1st = 10pts, 2nd = 8pts, 3rd = 6pts, etc.
+            Points are entered manually for each Order of Merit event. Go to an OOM event and tap "Enter Points" to add results.
           </AppText>
         </View>
       </AppCard>
@@ -228,7 +329,12 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   header: {
+    flexDirection: "row",
+    alignItems: "center",
     marginBottom: spacing.lg,
+  },
+  sectionTitle: {
+    marginBottom: spacing.sm,
   },
   list: {
     gap: spacing.xs,
@@ -251,17 +357,6 @@ const styles = StyleSheet.create({
   },
   memberInfo: {
     flex: 1,
-  },
-  statsRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing.xs,
-    marginTop: 2,
-  },
-  winsBadge: {
-    paddingHorizontal: spacing.xs,
-    paddingVertical: 1,
-    borderRadius: radius.sm,
   },
   pointsContainer: {
     alignItems: "center",

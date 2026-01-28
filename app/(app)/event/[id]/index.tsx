@@ -17,13 +17,18 @@ import {
   EVENT_FORMATS,
   EVENT_CLASSIFICATIONS,
 } from "@/lib/db_supabase/eventRepo";
+import { getPermissionsForMember } from "@/lib/rbac";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
 
 export default function EventDetailScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ id: string }>();
-  const { societyId, userId, loading: bootstrapLoading } = useBootstrap();
+  const { societyId, userId, member: currentMember, loading: bootstrapLoading } = useBootstrap();
   const colors = getColors();
+
+  // Permissions for entering points (Captain/Handicapper)
+  const permissions = getPermissionsForMember(currentMember as any);
+  const canEnterPoints = permissions.canManageHandicaps;
 
   // Safely extract eventId (could be string or array from URL params)
   const eventId = Array.isArray(params.id) ? params.id[0] : params.id;
@@ -195,6 +200,18 @@ export default function EventDetailScreen() {
     router.push({ pathname: "/(app)/event/[id]/players", params: { id: eventId } });
   };
 
+  const handleOpenPoints = () => {
+    if (!eventId) {
+      console.error("[EventDetail] Cannot open points: eventId is undefined");
+      return;
+    }
+    console.log("[EventDetail] opening points for event:", eventId);
+    router.push({ pathname: "/(app)/event/[id]/points", params: { id: eventId } });
+  };
+
+  // Check if this is an OOM event
+  const isOOMEvent = event?.classification === "oom" || event?.isOOM === true;
+
   return (
     <Screen>
       {/* Header with back button */}
@@ -318,6 +335,29 @@ export default function EventDetailScreen() {
           </View>
         </AppCard>
       </Pressable>
+
+      {/* Enter Points Section - Only for OOM events and Captain/Handicapper */}
+      {isOOMEvent && canEnterPoints && (
+        <Pressable
+          onPress={handleOpenPoints}
+          style={({ pressed }) => ({ opacity: pressed ? 0.8 : 1 })}
+        >
+          <AppCard style={styles.actionCard}>
+            <View style={styles.actionRow}>
+              <View style={[styles.iconContainer, { backgroundColor: colors.warning + "20" }]}>
+                <Feather name="edit-3" size={18} color={colors.warning} />
+              </View>
+              <View style={styles.actionContent}>
+                <AppText variant="bodyBold">Enter Points</AppText>
+                <AppText variant="caption" color="secondary">
+                  Add Order of Merit points for players
+                </AppText>
+              </View>
+              <Feather name="chevron-right" size={20} color={colors.textTertiary} />
+            </View>
+          </AppCard>
+        </Pressable>
+      )}
 
       {/* Created info */}
       {event.created_at && (
