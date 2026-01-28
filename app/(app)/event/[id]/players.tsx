@@ -63,6 +63,8 @@ export default function EventPlayersScreen() {
       setError(null);
 
       try {
+        console.log("[players] loading event + members", { eventId, societyId });
+
         const [evt, mems] = await Promise.all([
           getEvent(eventId),
           getMembersBySocietyId(societyId),
@@ -70,16 +72,20 @@ export default function EventPlayersScreen() {
 
         if (cancelled) return;
 
+        console.log("[players] loaded event:", {
+          id: evt?.id,
+          playerIds: evt?.playerIds,
+        });
+
         setEvent(evt);
         setMembers(mems);
 
-        const existing =
-          (evt as any)?.player_ids ??
-          (evt as any)?.playerIds ??
-          [];
-
+        // Use playerIds (camelCase) as returned by mapEvent
+        const existing = evt?.playerIds ?? [];
+        console.log("[players] initializing selection from:", existing);
         setSelectedPlayerIds(new Set(existing.map(String)));
       } catch (e: any) {
+        console.error("[players] load FAILED", e);
         if (!cancelled) {
           setError(e?.message ?? "Failed to load players");
         }
@@ -102,24 +108,37 @@ export default function EventPlayersScreen() {
     });
   }
 
- async function save() {
-  try {
-    setSaving(true);
+  async function save() {
+    try {
+      setSaving(true);
 
-    const ids = Array.from(selectedPlayerIds);
-    console.log("[players] saving", { eventId: event?.id, ids });
+      const ids = Array.from(selectedPlayerIds);
+      console.log("[players] saving", {
+        eventId: event?.id,
+        societyId,
+        playerIds: ids,
+      });
 
-    await updateEvent(event!.id, { player_ids: ids } as any);
+      await updateEvent(event!.id, { playerIds: ids });
 
-    console.log("[players] save OK");
-    Alert.alert("Saved", "Players saved");
-  } catch (e: any) {
-    console.error("[players] save FAILED", e);
-    Alert.alert("Save failed", e?.message ?? JSON.stringify(e));
-  } finally {
-    setSaving(false);
+      console.log("[players] save OK, refetching to confirm...");
+
+      // Refetch to confirm persistence
+      const refreshed = await getEvent(event!.id);
+      if (refreshed) {
+        const reloaded = refreshed.playerIds ?? [];
+        console.log("[players] confirmed playerIds:", reloaded);
+      }
+
+      // Navigate back - Event Detail will refetch via useFocusEffect
+      router.back();
+    } catch (e: any) {
+      console.error("[players] save FAILED", e);
+      Alert.alert("Save failed", e?.message ?? JSON.stringify(e));
+    } finally {
+      setSaving(false);
+    }
   }
-}
 
   if (bootstrapLoading || loading) {
     return (
