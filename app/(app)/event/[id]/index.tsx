@@ -43,7 +43,7 @@ export default function EventDetailScreen() {
     if (!eventId) {
       console.log("[EventDetail] No eventId, skipping load");
       setLoading(false);
-      setError("No event ID provided");
+      setError("Missing event id in route params");
       return;
     }
 
@@ -59,8 +59,8 @@ export default function EventDetailScreen() {
           console.log("[EventDetail] Event loaded:", data.name);
           setEvent(data);
         } else {
-          console.log("[EventDetail] Event not found");
-          setError("Event not found");
+          console.log("[EventDetail] Event not found or blocked by RLS");
+          setError("Event not found (or blocked by permissions)");
         }
       } catch (err: any) {
         console.error("[EventDetail] Load error:", err);
@@ -176,6 +176,15 @@ export default function EventDetailScreen() {
     }
   };
 
+  const handleOpenPlayers = () => {
+    if (!eventId) {
+      console.error("[EventDetail] Cannot open players: eventId is undefined");
+      return;
+    }
+    console.log("[EventDetail] opening players for event:", eventId);
+    router.push({ pathname: "/(app)/event/[id]/players", params: { id: eventId } });
+  };
+
   return (
     <Screen>
       {/* Header with back button */}
@@ -281,7 +290,7 @@ export default function EventDetailScreen() {
 
       {/* Players Section */}
       <Pressable
-        onPress={() => router.push(`/(app)/event/${eventId}/players`)}
+        onPress={handleOpenPlayers}
         style={({ pressed }) => ({ opacity: pressed ? 0.8 : 1 })}
       >
         <AppCard style={styles.actionCard}>

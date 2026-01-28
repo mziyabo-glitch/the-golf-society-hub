@@ -84,9 +84,11 @@ export async function getEventsBySocietyId(societyId: string): Promise<EventDoc[
  * Get a single event by ID
  */
 export async function getEvent(eventId: string): Promise<EventDoc | null> {
+  console.log("[eventRepo] getEvent called with id:", eventId);
+
   const { data, error } = await supabase
     .from("events")
-    .select("*")
+    .select("id,name,date,format,classification,course_name,status,is_completed,winner_name,player_ids,created_at,created_by,society_id")
     .eq("id", eventId)
     .maybeSingle();
 
