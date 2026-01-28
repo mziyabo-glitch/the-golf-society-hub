@@ -144,7 +144,7 @@ export default function HomeScreen() {
               key={event.id}
               onPress={() => {
                 console.log("[Home] opening event:", event.id);
-                router.push({ pathname: "/(app)/event/[id]", params: { id: event.id } });
+                router.push({ pathname: "/(app)/(tabs)/event/[id]", params: { id: event.id } });
               }}
             >
               <AppCard style={styles.eventCard}>
@@ -177,7 +177,7 @@ export default function HomeScreen() {
               key={event.id}
               onPress={() => {
                 console.log("[Home] opening event:", event.id);
-                router.push({ pathname: "/(app)/event/[id]", params: { id: event.id } });
+                router.push({ pathname: "/(app)/(tabs)/event/[id]", params: { id: event.id } });
               }}
             >
               <AppCard style={styles.eventCard}>
