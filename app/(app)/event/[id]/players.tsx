@@ -102,29 +102,24 @@ export default function EventPlayersScreen() {
     });
   }
 
-  async function save() {
-    if (!event) return;
+ async function save() {
+  try {
+    setSaving(true);
 
-    if (!permissions?.canEditEvents) {
-      Alert.alert("No access", "You don't have permission to edit this event.");
-      return;
-    }
+    const ids = Array.from(selectedPlayerIds);
+    console.log("[players] saving", { eventId: event?.id, ids });
 
-    try {
-      setSaving(true);
-      const ids = Array.from(selectedPlayerIds);
+    await updateEvent(event!.id, { player_ids: ids } as any);
 
-      await updateEvent(event.id, { player_ids: ids } as any);
-
-      Alert.alert("Success", "Players saved successfully", [
-        { text: "OK", onPress: () => router.back() },
-      ]);
-    } catch (e: any) {
-      Alert.alert("Error", e?.message ?? "Failed to save players");
-    } finally {
-      setSaving(false);
-    }
+    console.log("[players] save OK");
+    Alert.alert("Saved", "Players saved");
+  } catch (e: any) {
+    console.error("[players] save FAILED", e);
+    Alert.alert("Save failed", e?.message ?? JSON.stringify(e));
+  } finally {
+    setSaving(false);
   }
+}
 
   if (bootstrapLoading || loading) {
     return (
