@@ -1,156 +1,88 @@
 /**
- * Event Players / Tee Sheet Screen
+ * Event Players Screen
  * - Select players for the event
- * - Choose male/female tee sets
- * - Add tee sheet notes
+ * - Uses Supabase instead of Firebase
  */
 
-import { router, useLocalSearchParams } from "expo-router";
-import { useEffect, useMemo, useState } from "react";
-import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { useLocalSearchParams, useRouter } from "expo-router";
+import { useEffect, useState } from "react";
+import { Alert, Pressable, ScrollView, StyleSheet, View } from "react-native";
+import { Feather } from "@expo/vector-icons";
 
-import { getCourseHandicap, getPlayingHandicap } from "@/lib/handicap";
-import { canCreateEvents, normalizeMemberRoles, normalizeSessionRole } from "@/lib/permissions";
+import { Screen } from "@/components/ui/Screen";
+import { AppText } from "@/components/ui/AppText";
+import { AppCard } from "@/components/ui/AppCard";
+import { PrimaryButton, SecondaryButton } from "@/components/ui/Button";
+import { LoadingState } from "@/components/ui/LoadingState";
+import { EmptyState } from "@/components/ui/EmptyState";
 import { useBootstrap } from "@/lib/useBootstrap";
-import { subscribeEventDoc, updateEventDoc, type EventDoc } from "@/lib/db/eventRepo";
-import { subscribeMembersBySociety, type MemberDoc } from "@/lib/db/memberRepo";
-import type { MemberData } from "@/lib/models";
-import { subscribeCoursesBySociety, type CourseDoc } from "@/lib/db/courseRepo";
-import { subscribeTeesetsBySociety, type TeeSetDoc } from "@/lib/db/teesetRepo";
-
-type EventData = EventDoc;
-type MemberRow = MemberDoc;
-type CourseWithTees = CourseDoc & { teeSets: TeeSetDoc[] };
+import { getEvent, updateEvent, type EventDoc } from "@/lib/db_supabase/eventRepo";
+import { getMembersBySocietyId, type MemberDoc } from "@/lib/db_supabase/memberRepo";
+import { getPermissionsForMember } from "@/lib/rbac";
+import { getColors, spacing, radius } from "@/lib/ui/theme";
 
 export default function EventPlayersScreen() {
-  const { id: eventId } = useLocalSearchParams<{ id: string }>();
-  const { user, activeSocietyId } = useBootstrap();
-  const [event, setEvent] = useState<EventData | null>(null);
-  const [members, setMembers] = useState<MemberRow[]>([]);
+  const router = useRouter();
+  const params = useLocalSearchParams<{ id: string }>();
+  const { societyId, member, loading: bootstrapLoading } = useBootstrap();
+  const colors = getColors();
+
+  const eventId = Array.isArray(params.id) ? params.id[0] : params.id;
+
+  const [event, setEvent] = useState<EventDoc | null>(null);
+  const [members, setMembers] = useState<MemberDoc[]>([]);
   const [selectedPlayerIds, setSelectedPlayerIds] = useState<Set<string>>(new Set());
-  const [loadingEvent, setLoadingEvent] = useState(true);
-  const [loadingMembers, setLoadingMembers] = useState(true);
-  const [canManagePlayers, setCanManagePlayers] = useState(false);
-  const [courses, setCourses] = useState<CourseDoc[]>([]);
-  const [teeSets, setTeeSets] = useState<TeeSetDoc[]>([]);
-  const [selectedCourse, setSelectedCourse] = useState<CourseWithTees | null>(null);
-  const [selectedMaleTeeSet, setSelectedMaleTeeSet] = useState<TeeSetDoc | null>(null);
-  const [selectedFemaleTeeSet, setSelectedFemaleTeeSet] = useState<TeeSetDoc | null>(null);
-  const [teeSheetNotes, setTeeSheetNotes] = useState("");
+  const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  const societyId = activeSocietyId ?? user?.activeSocietyId;
+  const permissions = getPermissionsForMember(member as any);
 
-  const coursesWithTees = useMemo<CourseWithTees[]>(
-    () =>
-      courses.map((course) => ({
-        ...course,
-        teeSets: teeSets.filter((tee) => tee.courseId === course.id),
-      })),
-    [courses, teeSets]
-  );
-
-  useEffect(() => {
-    if (!eventId) return;
-    setLoadingEvent(true);
-    const unsubscribe = subscribeEventDoc(
-      eventId,
-      (doc) => {
-        setEvent(doc);
-        setSelectedPlayerIds(new Set(doc?.playerIds || []));
-        setTeeSheetNotes(doc?.teeSheetNotes || "");
-        setLoadingEvent(false);
-      },
-      (err) => {
-        console.error("subscribeEventDoc error:", err);
-        Alert.alert("Error", "Failed to load event");
-        setLoadingEvent(false);
-      }
-    );
-    return () => unsubscribe();
-  }, [eventId]);
-
-  useEffect(() => {
-    if (!societyId) {
-      setMembers([]);
-      setLoadingMembers(false);
-      return;
-    }
-    setLoadingMembers(true);
-    const unsubscribe = subscribeMembersBySociety(
-      societyId,
-      (items) => {
-        setMembers(items);
-        setLoadingMembers(false);
-      },
-      (err) => {
-        console.error("subscribeMembersBySociety error:", err);
-        setLoadingMembers(false);
-      }
-    );
-    return () => unsubscribe();
-  }, [societyId]);
-
-  useEffect(() => {
-    if (!societyId) {
-      setCourses([]);
-      setTeeSets([]);
-      return;
-    }
-    const unsubscribeCourses = subscribeCoursesBySociety(societyId, (items) => {
-      setCourses(items);
-    });
-    const unsubscribeTees = subscribeTeesetsBySociety(societyId, (items) => {
-      setTeeSets(items);
-    });
-    return () => {
-      unsubscribeCourses();
-      unsubscribeTees();
-    };
-  }, [societyId]);
-
-  useEffect(() => {
-    if (!event) return;
-    if (event.courseId) {
-      const course = coursesWithTees.find((c) => c.id === event.courseId) || null;
-      setSelectedCourse(course);
-      if (course && event.maleTeeSetId) {
-        setSelectedMaleTeeSet(course.teeSets.find((t) => t.id === event.maleTeeSetId) || null);
-      } else {
-        setSelectedMaleTeeSet(null);
-      }
-      if (course && event.femaleTeeSetId) {
-        setSelectedFemaleTeeSet(course.teeSets.find((t) => t.id === event.femaleTeeSetId) || null);
-      } else {
-        setSelectedFemaleTeeSet(null);
-      }
-    }
-  }, [coursesWithTees, event]);
-
-  useEffect(() => {
-    if (loadingMembers) return;
-    if (!user?.activeMemberId) {
-      setCanManagePlayers(false);
-      return;
-    }
-    const currentMember = members.find((m) => m.id === user.activeMemberId) || null;
-    const sessionRole = normalizeSessionRole("member");
-    const roles = normalizeMemberRoles(currentMember?.roles);
-    const canManage = canCreateEvents(sessionRole, roles);
-    setCanManagePlayers(canManage);
-
-    if (!canManage) {
-      Alert.alert("Access Denied", "Only Captain or Admin can manage players", [
-        { text: "OK", onPress: () => router.back() },
-      ]);
-    }
-  }, [loadingMembers, members, user?.activeMemberId]);
-
-  const loading = loadingEvent || loadingMembers;
-
-  if (!canManagePlayers && !loading) {
-    return null; // Will redirect via Alert
+  // Debug logging
+  if (__DEV__) {
+    console.log("[EventPlayers] eventId:", eventId);
+    console.log("[EventPlayers] societyId:", societyId);
   }
+
+  useEffect(() => {
+    if (!eventId || !societyId) {
+      setLoading(false);
+      if (!eventId) setError("Missing event ID");
+      return;
+    }
+
+    const loadData = async () => {
+      setLoading(true);
+      setError(null);
+
+      try {
+        // Load event and members in parallel
+        const [eventData, membersData] = await Promise.all([
+          getEvent(eventId),
+          getMembersBySocietyId(societyId),
+        ]);
+
+        if (!eventData) {
+          setError("Event not found");
+          return;
+        }
+
+        console.log("[EventPlayers] Event loaded:", eventData.name);
+        console.log("[EventPlayers] Members loaded:", membersData.length);
+
+        setEvent(eventData);
+        setMembers(membersData);
+        setSelectedPlayerIds(new Set(eventData.playerIds || []));
+      } catch (err: any) {
+        console.error("[EventPlayers] Load error:", err);
+        setError(err?.message || "Failed to load data");
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadData();
+  }, [eventId, societyId]);
 
   const togglePlayer = (memberId: string) => {
     setSelectedPlayerIds((prev) => {
@@ -169,319 +101,231 @@ export default function EventPlayersScreen() {
 
     setSaving(true);
     try {
-      await updateEventDoc(event.id, {
-        playerIds: Array.from(selectedPlayerIds),
-        maleTeeSetId: selectedMaleTeeSet?.id,
-        femaleTeeSetId: selectedFemaleTeeSet?.id,
-        teeSheetNotes: teeSheetNotes.trim() || undefined,
-      });
-      Alert.alert("Success", "Players saved successfully");
-      router.back();
-    } catch (error: any) {
-      console.error("Error saving players:", error);
-      Alert.alert("Error", error?.message || "Failed to save players");
+      // Note: updateEvent in Supabase repo doesn't support playerIds yet
+      // For now we'll use a direct Supabase call
+      const { supabase } = await import("@/lib/supabase");
+
+      const { error: updateError } = await supabase
+        .from("events")
+        .update({
+          player_ids: Array.from(selectedPlayerIds),
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", event.id);
+
+      if (updateError) {
+        throw new Error(updateError.message);
+      }
+
+      Alert.alert("Success", "Players saved successfully", [
+        { text: "OK", onPress: () => router.back() },
+      ]);
+    } catch (err: any) {
+      console.error("[EventPlayers] Save error:", err);
+      Alert.alert("Error", err?.message || "Failed to save players");
     } finally {
       setSaving(false);
     }
   };
 
-  if (loading) {
+  // Loading state
+  if (bootstrapLoading || loading) {
     return (
-      <View style={[styles.container, styles.centerContent]}>
-        <Text style={styles.loadingText}>Loading...</Text>
-      </View>
+      <Screen scrollable={false}>
+        <View style={styles.centered}>
+          <LoadingState message="Loading players..." />
+        </View>
+      </Screen>
     );
   }
 
+  // Error state
+  if (error) {
+    return (
+      <Screen>
+        <View style={styles.header}>
+          <SecondaryButton onPress={() => router.back()} size="sm">
+            <Feather name="arrow-left" size={16} color={colors.text} />
+            {" Back"}
+          </SecondaryButton>
+        </View>
+        <EmptyState
+          icon={<Feather name="alert-circle" size={24} color={colors.error} />}
+          title="Error"
+          message={error}
+          action={{
+            label: "Go Back",
+            onPress: () => router.back(),
+          }}
+        />
+      </Screen>
+    );
+  }
+
+  // Permission check
+  if (!permissions.canCreateEvents) {
+    return (
+      <Screen>
+        <View style={styles.header}>
+          <SecondaryButton onPress={() => router.back()} size="sm">
+            <Feather name="arrow-left" size={16} color={colors.text} />
+            {" Back"}
+          </SecondaryButton>
+        </View>
+        <EmptyState
+          icon={<Feather name="lock" size={24} color={colors.warning} />}
+          title="Access Denied"
+          message="Only Captains and Admins can manage event players."
+          action={{
+            label: "Go Back",
+            onPress: () => router.back(),
+          }}
+        />
+      </Screen>
+    );
+  }
+
+  // Event not found
   if (!event) {
     return (
-      <View style={[styles.container, styles.centerContent]}>
-        <Text style={styles.errorText}>Event not found</Text>
-        <Pressable onPress={() => router.back()} style={styles.backButton}>
-          <Text style={styles.buttonText}>Back</Text>
-        </Pressable>
-      </View>
+      <Screen>
+        <View style={styles.header}>
+          <SecondaryButton onPress={() => router.back()} size="sm">
+            <Feather name="arrow-left" size={16} color={colors.text} />
+            {" Back"}
+          </SecondaryButton>
+        </View>
+        <EmptyState
+          icon={<Feather name="calendar" size={24} color={colors.textTertiary} />}
+          title="Event Not Found"
+          message="This event may have been deleted."
+          action={{
+            label: "Go Back",
+            onPress: () => router.back(),
+          }}
+        />
+      </Screen>
     );
   }
 
-  // Get available tee sets for the selected course
-  const maleTeeSets = selectedCourse?.teeSets.filter((t) => t.appliesTo === "male") || [];
-  const femaleTeeSets = selectedCourse?.teeSets.filter((t) => t.appliesTo === "female") || [];
-
   return (
-    <ScrollView style={styles.container}>
-      <View style={styles.content}>
-        <Text style={styles.title}>Event Players</Text>
-        <Text style={styles.subtitle}>{event.name}</Text>
-
-        {/* Tee Set Selection */}
-        {selectedCourse && (maleTeeSets.length > 0 || femaleTeeSets.length > 0) && (
-          <View style={styles.teeSection}>
-            <Text style={styles.sectionTitle}>Tee Sets</Text>
-
-            {maleTeeSets.length > 0 && (
-              <View style={styles.teeRow}>
-                <Text style={styles.teeLabel}>Male Tees:</Text>
-                <View style={styles.teeOptions}>
-                  {maleTeeSets.map((tee) => (
-                    <Pressable
-                      key={tee.id}
-                      onPress={() => setSelectedMaleTeeSet(tee.id === selectedMaleTeeSet?.id ? null : tee)}
-                      style={[
-                        styles.teeOption,
-                        selectedMaleTeeSet?.id === tee.id && styles.teeOptionSelected,
-                      ]}
-                    >
-                      <Text style={[
-                        styles.teeOptionText,
-                        selectedMaleTeeSet?.id === tee.id && styles.teeOptionTextSelected,
-                      ]}>
-                        {tee.teeColor || tee.name}
-                      </Text>
-                    </Pressable>
-                  ))}
-                </View>
-              </View>
-            )}
-
-            {femaleTeeSets.length > 0 && (
-              <View style={styles.teeRow}>
-                <Text style={styles.teeLabel}>Female Tees:</Text>
-                <View style={styles.teeOptions}>
-                  {femaleTeeSets.map((tee) => (
-                    <Pressable
-                      key={tee.id}
-                      onPress={() => setSelectedFemaleTeeSet(tee.id === selectedFemaleTeeSet?.id ? null : tee)}
-                      style={[
-                        styles.teeOption,
-                        selectedFemaleTeeSet?.id === tee.id && styles.teeOptionSelected,
-                      ]}
-                    >
-                      <Text style={[
-                        styles.teeOptionText,
-                        selectedFemaleTeeSet?.id === tee.id && styles.teeOptionTextSelected,
-                      ]}>
-                        {tee.teeColor || tee.name}
-                      </Text>
-                    </Pressable>
-                  ))}
-                </View>
-              </View>
-            )}
-          </View>
-        )}
-
-        {/* Tee Sheet Notes */}
-        <View style={styles.notesSection}>
-          <Text style={styles.sectionTitle}>Tee Sheet Notes</Text>
-          <TextInput
-            style={styles.notesInput}
-            placeholder="Add any notes for the tee sheet..."
-            value={teeSheetNotes}
-            onChangeText={setTeeSheetNotes}
-            multiline
-            numberOfLines={3}
-          />
-        </View>
-
-        {/* Players List */}
-        {members.length === 0 ? (
-          <View style={styles.emptyState}>
-            <Text style={styles.emptyText}>No members added to society yet</Text>
-            <Text style={styles.emptySubtext}>Add members first, then select players for this event</Text>
-          </View>
-        ) : (
-          <>
-            <Text style={styles.sectionTitle}>Select Players</Text>
-            <View style={styles.membersList}>
-              {members.map((member) => {
-                const isSelected = selectedPlayerIds.has(member.id);
-                const memberData: MemberData = {
-                  id: member.id,
-                  societyId: member.societyId,
-                  name: member.name ?? member.displayName ?? "Member",
-                  handicap: member.handicap ?? null,
-                  sex: member.sex,
-                  roles: member.roles,
-                  status: member.status,
-                  paid: member.paid,
-                  amountPaid: member.amountPaid,
-                  paidDate: member.paidDate ?? undefined,
-                };
-                return (
-                  <Pressable
-                    key={member.id}
-                    onPress={() => togglePlayer(member.id)}
-                    style={[styles.memberCard, isSelected && styles.memberCardSelected]}
-                  >
-                    <View style={styles.memberInfo}>
-                      <Text style={styles.memberName}>{memberData.name}</Text>
-                      {(() => {
-                        const ch = getCourseHandicap(memberData, selectedMaleTeeSet, selectedFemaleTeeSet);
-                        const ph = event
-                          ? getPlayingHandicap(
-                              memberData,
-                              event,
-                              selectedCourse,
-                              selectedMaleTeeSet,
-                              selectedFemaleTeeSet
-                            )
-                          : null;
-                        return (
-                          <View style={styles.handicapInfo}>
-                            {member.handicap !== undefined && member.handicap !== null && (
-                              <Text style={styles.memberHandicap}>HI: {member.handicap}</Text>
-                            )}
-                            {ch !== null && (
-                              <Text style={styles.memberHandicap}> | CH: {ch}</Text>
-                            )}
-                            {ph !== null && (
-                              <Text style={styles.memberHandicap}> | PH: {ph}</Text>
-                            )}
-                          </View>
-                        );
-                      })()}
-                    </View>
-                    <View style={[styles.checkbox, isSelected && styles.checkboxSelected]}>
-                      {isSelected && <View style={styles.checkmark} />}
-                    </View>
-                  </Pressable>
-                );
-              })}
-            </View>
-
-            <Text style={styles.countText}>
-              {selectedPlayerIds.size} of {members.length} players selected
-            </Text>
-          </>
-        )}
-
-        <Pressable onPress={handleSave} style={[styles.saveButton, saving && styles.buttonDisabled]} disabled={saving}>
-          <Text style={styles.buttonText}>{saving ? "Saving..." : "Save Players"}</Text>
-        </Pressable>
-
-        <Pressable onPress={() => router.back()} style={styles.backButton}>
-          <Text style={styles.buttonText}>Cancel</Text>
-        </Pressable>
+    <Screen>
+      {/* Header */}
+      <View style={styles.header}>
+        <SecondaryButton onPress={() => router.back()} size="sm">
+          <Feather name="arrow-left" size={16} color={colors.text} />
+          {" Back"}
+        </SecondaryButton>
       </View>
-    </ScrollView>
+
+      {/* Title */}
+      <View style={styles.titleSection}>
+        <AppText variant="title">Select Players</AppText>
+        <AppText variant="caption" color="secondary">
+          {event.name}
+        </AppText>
+      </View>
+
+      {/* Selection count */}
+      <AppCard style={styles.countCard}>
+        <View style={styles.countRow}>
+          <Feather name="users" size={20} color={colors.primary} />
+          <AppText variant="bodyBold" style={{ marginLeft: spacing.sm }}>
+            {selectedPlayerIds.size} of {members.length} selected
+          </AppText>
+        </View>
+      </AppCard>
+
+      {/* Members list */}
+      {members.length === 0 ? (
+        <EmptyState
+          icon={<Feather name="users" size={24} color={colors.textTertiary} />}
+          title="No Members"
+          message="Add members to your society first, then select them for events."
+        />
+      ) : (
+        <ScrollView style={styles.membersList} showsVerticalScrollIndicator={false}>
+          {members.map((m) => {
+            const isSelected = selectedPlayerIds.has(m.id);
+            const displayName = m.name || m.displayName || "Member";
+
+            return (
+              <Pressable
+                key={m.id}
+                onPress={() => togglePlayer(m.id)}
+                style={({ pressed }) => [
+                  styles.memberCard,
+                  isSelected && styles.memberCardSelected,
+                  pressed && styles.memberCardPressed,
+                ]}
+              >
+                <View style={styles.memberInfo}>
+                  <AppText variant="bodyBold">{displayName}</AppText>
+                  {m.handicap_index !== undefined && m.handicap_index !== null && (
+                    <AppText variant="caption" color="secondary">
+                      Handicap: {m.handicap_index}
+                    </AppText>
+                  )}
+                </View>
+                <View
+                  style={[
+                    styles.checkbox,
+                    isSelected && { backgroundColor: colors.primary, borderColor: colors.primary },
+                  ]}
+                >
+                  {isSelected && <Feather name="check" size={14} color="#fff" />}
+                </View>
+              </Pressable>
+            );
+          })}
+        </ScrollView>
+      )}
+
+      {/* Save button */}
+      {members.length > 0 && (
+        <View style={styles.footer}>
+          <PrimaryButton onPress={handleSave} loading={saving} style={styles.saveButton}>
+            Save Players
+          </PrimaryButton>
+        </View>
+      )}
+    </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
+  centered: {
     flex: 1,
-    backgroundColor: "#fff",
-  },
-  content: {
-    flex: 1,
-    padding: 24,
-  },
-  centerContent: {
     justifyContent: "center",
     alignItems: "center",
   },
-  title: {
-    fontSize: 34,
-    fontWeight: "800",
-    marginBottom: 6,
-  },
-  subtitle: {
-    fontSize: 16,
-    opacity: 0.75,
-    marginBottom: 24,
-  },
-  loadingText: {
-    fontSize: 16,
-    opacity: 0.7,
-  },
-  errorText: {
-    fontSize: 16,
-    color: "#ef4444",
-    marginBottom: 16,
-  },
-  sectionTitle: {
-    fontSize: 18,
-    fontWeight: "700",
-    marginBottom: 12,
-    color: "#111827",
-  },
-  teeSection: {
-    marginBottom: 24,
-    padding: 16,
-    backgroundColor: "#f9fafb",
-    borderRadius: 12,
-  },
-  teeRow: {
-    marginBottom: 12,
-  },
-  teeLabel: {
-    fontSize: 14,
-    fontWeight: "600",
-    marginBottom: 8,
-    color: "#374151",
-  },
-  teeOptions: {
+  header: {
     flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 8,
-  },
-  teeOption: {
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 8,
-    backgroundColor: "#e5e7eb",
-  },
-  teeOptionSelected: {
-    backgroundColor: "#0B6E4F",
-  },
-  teeOptionText: {
-    fontSize: 14,
-    fontWeight: "600",
-    color: "#374151",
-  },
-  teeOptionTextSelected: {
-    color: "#fff",
-  },
-  notesSection: {
-    marginBottom: 24,
-  },
-  notesInput: {
-    borderWidth: 1,
-    borderColor: "#d1d5db",
-    borderRadius: 12,
-    padding: 12,
-    fontSize: 16,
-    minHeight: 80,
-    textAlignVertical: "top",
-  },
-  emptyState: {
     alignItems: "center",
-    paddingVertical: 40,
+    marginBottom: spacing.lg,
   },
-  emptyText: {
-    fontSize: 16,
-    fontWeight: "600",
-    color: "#111827",
-    marginBottom: 8,
+  titleSection: {
+    marginBottom: spacing.lg,
   },
-  emptySubtext: {
-    fontSize: 14,
-    opacity: 0.7,
-    color: "#111827",
-    textAlign: "center",
+  countCard: {
+    marginBottom: spacing.lg,
+  },
+  countRow: {
+    flexDirection: "row",
+    alignItems: "center",
   },
   membersList: {
-    marginBottom: 16,
+    flex: 1,
+    marginBottom: spacing.lg,
   },
   memberCard: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
+    padding: spacing.base,
+    marginBottom: spacing.xs,
+    borderRadius: radius.md,
     backgroundColor: "#f9fafb",
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 8,
     borderWidth: 2,
     borderColor: "transparent",
   },
@@ -489,73 +333,28 @@ const styles = StyleSheet.create({
     backgroundColor: "#f0fdf4",
     borderColor: "#0B6E4F",
   },
+  memberCardPressed: {
+    opacity: 0.8,
+  },
   memberInfo: {
     flex: 1,
-  },
-  memberName: {
-    fontSize: 16,
-    fontWeight: "600",
-    color: "#111827",
-    marginBottom: 4,
-  },
-  handicapInfo: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    marginTop: 4,
-  },
-  memberHandicap: {
-    fontSize: 14,
-    opacity: 0.7,
-    color: "#111827",
   },
   checkbox: {
     width: 24,
     height: 24,
-    borderRadius: 6,
+    borderRadius: radius.sm,
     borderWidth: 2,
     borderColor: "#d1d5db",
     backgroundColor: "#fff",
     justifyContent: "center",
     alignItems: "center",
   },
-  checkboxSelected: {
-    backgroundColor: "#0B6E4F",
-    borderColor: "#0B6E4F",
-  },
-  checkmark: {
-    width: 6,
-    height: 10,
-    borderBottomWidth: 2,
-    borderRightWidth: 2,
-    borderColor: "#fff",
-    transform: [{ rotate: "45deg" }],
-  },
-  countText: {
-    fontSize: 14,
-    fontWeight: "600",
-    color: "#6b7280",
-    textAlign: "center",
-    marginBottom: 24,
+  footer: {
+    paddingTop: spacing.sm,
+    borderTopWidth: 1,
+    borderTopColor: "#e5e7eb",
   },
   saveButton: {
-    backgroundColor: "#0B6E4F",
-    paddingVertical: 14,
-    borderRadius: 14,
-    alignItems: "center",
-    marginBottom: 12,
-  },
-  backButton: {
-    backgroundColor: "#111827",
-    paddingVertical: 14,
-    borderRadius: 14,
-    alignItems: "center",
-  },
-  buttonText: {
-    color: "white",
-    fontSize: 18,
-    fontWeight: "700",
-  },
-  buttonDisabled: {
-    opacity: 0.6,
+    width: "100%",
   },
 });
