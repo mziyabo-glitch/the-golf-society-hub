@@ -236,7 +236,10 @@ export default function EventIndexScreen() {
             return (
               <Pressable
                 key={event.id}
-                onPress={() => router.push(`/event/${event.id}`)}
+                onPress={() => {
+                  console.log("[EventIndex] opening event:", event.id);
+                  router.push({ pathname: "/(app)/event/[id]", params: { id: event.id } });
+                }}
               >
                 <AppCard style={styles.eventCard}>
                   <View style={styles.eventRow}>

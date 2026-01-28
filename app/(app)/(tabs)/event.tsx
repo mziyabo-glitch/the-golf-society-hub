@@ -241,7 +241,10 @@ export default function EventsScreen() {
   const renderEventCard = (event: EventDoc) => (
     <Pressable
       key={event.id}
-      onPress={() => router.push(`/(app)/event/${event.id}`)}
+      onPress={() => {
+        console.log("[Events] opening event:", event.id);
+        router.push({ pathname: "/(app)/event/[id]", params: { id: event.id } });
+      }}
     >
       <AppCard style={styles.eventCard}>
         <View style={styles.eventRow}>
