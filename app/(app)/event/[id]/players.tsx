@@ -108,38 +108,37 @@ export default function EventPlayersScreen() {
     });
   }
 
- async function save() {
-  try {
-    setSaving(true);
+  async function save() {
+    try {
+      setSaving(true);
 
-    const ids = Array.from(selectedPlayerIds);
-    console.log("[players] saving", {
-      eventId: event?.id,
-      societyId,
-      playerIds: ids,
-    });
+      const ids = Array.from(selectedPlayerIds);
+      console.log("[players] saving", {
+        eventId: event?.id,
+        societyId,
+        playerIds: ids,
+      });
 
-    await updateEvent(event!.id, { playerIds: ids });
+      await updateEvent(event!.id, { playerIds: ids });
 
-    console.log("[players] save OK, refetching event...");
+      console.log("[players] save OK, refetching to confirm...");
 
-    // Refetch to confirm persistence
-    const refreshed = await getEvent(event!.id);
-    if (refreshed) {
-      setEvent(refreshed);
-      const reloaded = refreshed.playerIds ?? [];
-      console.log("[players] reloaded playerIds:", reloaded);
-      setSelectedPlayerIds(new Set(reloaded.map(String)));
+      // Refetch to confirm persistence
+      const refreshed = await getEvent(event!.id);
+      if (refreshed) {
+        const reloaded = refreshed.playerIds ?? [];
+        console.log("[players] confirmed playerIds:", reloaded);
+      }
+
+      // Navigate back - Event Detail will refetch via useFocusEffect
+      router.back();
+    } catch (e: any) {
+      console.error("[players] save FAILED", e);
+      Alert.alert("Save failed", e?.message ?? JSON.stringify(e));
+    } finally {
+      setSaving(false);
     }
-
-    Alert.alert("Saved", "Players saved");
-  } catch (e: any) {
-    console.error("[players] save FAILED", e);
-    Alert.alert("Save failed", e?.message ?? JSON.stringify(e));
-  } finally {
-    setSaving(false);
   }
-}
 
   if (bootstrapLoading || loading) {
     return (
