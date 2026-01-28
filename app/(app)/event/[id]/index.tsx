@@ -43,7 +43,7 @@ export default function EventDetailScreen() {
     if (!eventId) {
       console.log("[EventDetail] No eventId, skipping load");
       setLoading(false);
-      setError("No event ID provided");
+      setError("Missing event id in route params");
       return;
     }
 
@@ -59,8 +59,8 @@ export default function EventDetailScreen() {
           console.log("[EventDetail] Event loaded:", data.name);
           setEvent(data);
         } else {
-          console.log("[EventDetail] Event not found");
-          setError("Event not found");
+          console.log("[EventDetail] Event not found or blocked by RLS");
+          setError("Event not found (or blocked by permissions)");
         }
       } catch (err: any) {
         console.error("[EventDetail] Load error:", err);
