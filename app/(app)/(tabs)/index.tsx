@@ -143,8 +143,12 @@ export default function HomeScreen() {
             <Pressable
               key={event.id}
               onPress={() => {
+                if (!event?.id) {
+                  console.error("[Home] Cannot open event: event.id is undefined");
+                  return;
+                }
                 console.log("[Home] opening event:", event.id);
-                router.push({ pathname: "/(app)/(tabs)/event/[id]", params: { id: event.id } });
+                router.push({ pathname: "/(app)/event/[id]", params: { id: event.id } });
               }}
             >
               <AppCard style={styles.eventCard}>
@@ -176,8 +180,12 @@ export default function HomeScreen() {
             <Pressable
               key={event.id}
               onPress={() => {
+                if (!event?.id) {
+                  console.error("[Home] Cannot open event: event.id is undefined");
+                  return;
+                }
                 console.log("[Home] opening event:", event.id);
-                router.push({ pathname: "/(app)/(tabs)/event/[id]", params: { id: event.id } });
+                router.push({ pathname: "/(app)/event/[id]", params: { id: event.id } });
               }}
             >
               <AppCard style={styles.eventCard}>

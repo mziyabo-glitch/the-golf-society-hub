@@ -176,6 +176,15 @@ export default function EventDetailScreen() {
     }
   };
 
+  const handleOpenPlayers = () => {
+    if (!eventId) {
+      console.error("[EventDetail] Cannot open players: eventId is undefined");
+      return;
+    }
+    console.log("[EventDetail] opening players for event:", eventId);
+    router.push({ pathname: "/(app)/event/[id]/players", params: { id: eventId } });
+  };
+
   return (
     <Screen>
       {/* Header with back button */}
@@ -281,10 +290,7 @@ export default function EventDetailScreen() {
 
       {/* Players Section */}
       <Pressable
-        onPress={() => {
-          console.log("[EventDetail] opening players for event:", eventId);
-          router.push({ pathname: "/(app)/(tabs)/event/[id]/players", params: { id: eventId } });
-        }}
+        onPress={handleOpenPlayers}
         style={({ pressed }) => ({ opacity: pressed ? 0.8 : 1 })}
       >
         <AppCard style={styles.actionCard}>

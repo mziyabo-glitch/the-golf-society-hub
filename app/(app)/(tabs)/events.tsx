@@ -136,6 +136,15 @@ export default function EventsScreen() {
     }
   };
 
+  const handleOpenEvent = (event: EventDoc) => {
+    if (!event?.id) {
+      console.error("[Events] Cannot open event: event.id is undefined");
+      return;
+    }
+    console.log("[Events] opening event:", event.id);
+    router.push({ pathname: "/(app)/event/[id]", params: { id: event.id } });
+  };
+
   if (bootstrapLoading || loading) {
     return (
       <Screen scrollable={false}>
@@ -241,10 +250,7 @@ export default function EventsScreen() {
   const renderEventCard = (event: EventDoc) => (
     <Pressable
       key={event.id}
-      onPress={() => {
-        console.log("[Events] opening event:", event.id);
-        router.push({ pathname: "/(app)/(tabs)/event/[id]", params: { id: event.id } });
-      }}
+      onPress={() => handleOpenEvent(event)}
     >
       <AppCard style={styles.eventCard}>
         <View style={styles.eventRow}>

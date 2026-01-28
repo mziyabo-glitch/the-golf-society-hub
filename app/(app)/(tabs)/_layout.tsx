@@ -9,7 +9,7 @@ export default function TabsLayout() {
         options={{ title: "Home", tabBarIcon: ({ color, size }) => <Feather name="home" color={color} size={size} /> }}
       />
       <Tabs.Screen
-        name="event"
+        name="events"
         options={{ title: "Events", tabBarIcon: ({ color, size }) => <Feather name="calendar" color={color} size={size} /> }}
       />
       <Tabs.Screen
