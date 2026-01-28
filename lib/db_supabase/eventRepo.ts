@@ -175,6 +175,7 @@ export async function updateEvent(
     status: string;
     isCompleted: boolean;
     winnerName: string;
+    playerIds: string[];
   }>
 ): Promise<void> {
   const payload: Record<string, unknown> = {
@@ -193,11 +194,15 @@ export async function updateEvent(
   if (updates.status !== undefined) payload.status = updates.status;
   if (updates.isCompleted !== undefined) payload.is_completed = updates.isCompleted;
   if (updates.winnerName !== undefined) payload.winner_name = updates.winnerName;
+  if (updates.playerIds !== undefined) payload.player_ids = updates.playerIds;
 
-  const { error } = await supabase
+  console.log("[eventRepo] updateEvent:", { eventId, payload });
+
+  const { data, error } = await supabase
     .from("events")
     .update(payload)
-    .eq("id", eventId);
+    .eq("id", eventId)
+    .select();
 
   if (error) {
     console.error("[eventRepo] updateEvent failed:", {
@@ -208,6 +213,8 @@ export async function updateEvent(
     });
     throw new Error(error.message || "Failed to update event");
   }
+
+  console.log("[eventRepo] updateEvent success:", data);
 }
 
 /**

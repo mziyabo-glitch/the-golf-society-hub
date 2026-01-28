@@ -174,7 +174,7 @@ export default function SettingsScreen() {
 
         <Pressable
           style={({ pressed }) => [styles.linkRow, { opacity: pressed ? 0.7 : 1 }]}
-          onPress={() => router.push("/(app)/(tabs)/event")}
+          onPress={() => router.push("/events")}
         >
           <View style={[styles.linkIcon, { backgroundColor: colors.backgroundTertiary }]}>
             <Feather name="calendar" size={16} color={colors.primary} />
