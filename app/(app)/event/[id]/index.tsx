@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+﻿import { useCallback, useEffect, useState  } from "react";
 import { StyleSheet, View, Pressable } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
@@ -118,6 +118,26 @@ export default function EventDetailScreen() {
             <Feather name="arrow-left" size={16} color={colors.text} />
             {" Back"}
           </SecondaryButton>
+        <SecondaryButton
+          onPress={() =>
+            router.push({ pathname: "/(app)/event/[id]/points", params: { id: eventId } })
+          }
+          size="sm"
+        >
+          <Feather name="award" size={16} color={colors.text} />
+          {" Points"}
+        </SecondaryButton>
+
+        <SecondaryButton
+          onPress={() =>
+            router.push({ pathname: "/(app)/event/[id]/points", params: { id: eventId } })
+          }
+          size="sm"
+        >
+          <Feather name="award" size={16} color={colors.text} />
+          {" Points"}
+        </SecondaryButton>
+
         </View>
         <EmptyState
           icon={<Feather name="alert-circle" size={24} color={colors.error} />}
@@ -141,6 +161,26 @@ export default function EventDetailScreen() {
             <Feather name="arrow-left" size={16} color={colors.text} />
             {" Back"}
           </SecondaryButton>
+        <SecondaryButton
+          onPress={() =>
+            router.push({ pathname: "/(app)/event/[id]/points", params: { id: eventId } })
+          }
+          size="sm"
+        >
+          <Feather name="award" size={16} color={colors.text} />
+          {" Points"}
+        </SecondaryButton>
+
+        <SecondaryButton
+          onPress={() =>
+            router.push({ pathname: "/(app)/event/[id]/points", params: { id: eventId } })
+          }
+          size="sm"
+        >
+          <Feather name="award" size={16} color={colors.text} />
+          {" Points"}
+        </SecondaryButton>
+
         </View>
         <EmptyState
           icon={<Feather name="calendar" size={24} color={colors.textTertiary} />}
@@ -203,6 +243,26 @@ export default function EventDetailScreen() {
           <Feather name="arrow-left" size={16} color={colors.text} />
           {" Back"}
         </SecondaryButton>
+        <SecondaryButton
+          onPress={() =>
+            router.push({ pathname: "/(app)/event/[id]/points", params: { id: eventId } })
+          }
+          size="sm"
+        >
+          <Feather name="award" size={16} color={colors.text} />
+          {" Points"}
+        </SecondaryButton>
+
+        <SecondaryButton
+          onPress={() =>
+            router.push({ pathname: "/(app)/event/[id]/points", params: { id: eventId } })
+          }
+          size="sm"
+        >
+          <Feather name="award" size={16} color={colors.text} />
+          {" Points"}
+        </SecondaryButton>
+
       </View>
 
       {/* Event Title */}
@@ -390,3 +450,9 @@ const styles = StyleSheet.create({
     marginTop: spacing.lg,
   },
 });
+
+
+
+
+
+

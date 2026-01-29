@@ -154,7 +154,7 @@ export default function EventPlayersScreen() {
         <EmptyState
           title="Error"
           message={error}
-          action={{ label: "Go Back", onPress: () => router.back() }}
+          action={{ label: "Go Back", onPress: () => router.replace({ pathname: "/event/[id]", params: { id: eventId, refresh: Date.now().toString() } }) }}
         />
       </Screen>
     );
@@ -166,7 +166,7 @@ export default function EventPlayersScreen() {
         <EmptyState
           title="Not found"
           message="Event not found."
-          action={{ label: "Go Back", onPress: () => router.back() }}
+          action={{ label: "Go Back", onPress: () => router.replace({ pathname: "/event/[id]", params: { id: eventId, refresh: Date.now().toString() } }) }}
         />
       </Screen>
     );
@@ -200,7 +200,7 @@ export default function EventPlayersScreen() {
           <EmptyState
             title="No members"
             message="Add members first, then you can select players."
-            action={{ label: "Go Back", onPress: () => router.back() }}
+            action={{ label: "Go Back", onPress: () => router.replace({ pathname: "/event/[id]", params: { id: eventId, refresh: Date.now().toString() } }) }}
           />
         ) : (
           <View style={{ gap: spacing.md }}>
@@ -267,4 +267,5 @@ const styles = StyleSheet.create({
     opacity: 0.7,
   },
 });
+
 
