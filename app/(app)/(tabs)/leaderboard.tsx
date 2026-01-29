@@ -77,12 +77,12 @@ export default function LeaderboardScreen() {
 
     const rows = standings
       .map(
-        (entry, index) => `
+        (entry) => `
       <tr>
         <td style="padding: 12px; border-bottom: 1px solid #eee; text-align: center; font-weight: ${
-          index < 3 ? "bold" : "normal"
-        }; color: ${index === 0 ? "#FFD700" : index === 1 ? "#C0C0C0" : index === 2 ? "#CD7F32" : "#333"};">
-          ${index + 1}
+          entry.rank <= 3 ? "bold" : "normal"
+        }; color: ${entry.rank === 1 ? "#FFD700" : entry.rank === 2 ? "#C0C0C0" : entry.rank === 3 ? "#CD7F32" : "#333"};">
+          ${entry.rank}
         </td>
         <td style="padding: 12px; border-bottom: 1px solid #eee;">${entry.memberName}</td>
         <td style="padding: 12px; border-bottom: 1px solid #eee; text-align: center;">${entry.eventsPlayed}</td>
@@ -254,9 +254,15 @@ export default function LeaderboardScreen() {
         />
       ) : (
         <View style={styles.list}>
-          {standings.map((entry, index) => {
-            const isTop3 = index < 3;
-            const medalColors = [colors.warning, "#C0C0C0", "#CD7F32"];
+          {standings.map((entry) => {
+            const isTop3 = entry.rank <= 3;
+            // Medal colors: gold (1st), silver (2nd), bronze (3rd)
+            const medalColorMap: Record<number, string> = {
+              1: colors.warning,  // Gold
+              2: "#C0C0C0",       // Silver
+              3: "#CD7F32",       // Bronze
+            };
+            const medalColor = medalColorMap[entry.rank];
 
             return (
               <AppCard key={entry.memberId} style={styles.standingCard}>
@@ -266,21 +272,21 @@ export default function LeaderboardScreen() {
                     style={[
                       styles.positionBadge,
                       {
-                        backgroundColor: isTop3
-                          ? medalColors[index] + "20"
+                        backgroundColor: isTop3 && medalColor
+                          ? medalColor + "20"
                           : colors.backgroundTertiary,
                       },
                     ]}
                   >
-                    {isTop3 ? (
+                    {isTop3 && medalColor ? (
                       <Feather
                         name="award"
                         size={16}
-                        color={medalColors[index]}
+                        color={medalColor}
                       />
                     ) : (
                       <AppText variant="captionBold" color="secondary">
-                        {index + 1}
+                        {entry.rank}
                       </AppText>
                     )}
                   </View>

@@ -21,6 +21,7 @@ export type OrderOfMeritEntry = {
   memberName: string;
   totalPoints: number;
   eventsPlayed: number;
+  rank: number;
 };
 
 /**
@@ -166,6 +167,7 @@ export async function getOrderOfMeritTotals(
         memberName,
         totalPoints: 0,
         eventsPlayed: 0,
+        rank: 0, // Will be computed after sorting
       };
     }
 
@@ -178,8 +180,19 @@ export async function getOrderOfMeritTotals(
     .filter((entry) => entry.totalPoints > 0)
     .sort((a, b) => b.totalPoints - a.totalPoints);
 
-  console.log("[resultsRepo] getOrderOfMeritTotals returning:", sorted.length, "entries");
-  return sorted;
+  // Assign ranks with tie-handling (same points = same rank)
+  // e.g., 1, 1, 3, 4, 4, 6
+  let currentRank = 1;
+  const rankedEntries: OrderOfMeritEntry[] = sorted.map((entry, index) => {
+    // If not first entry, check if points differ from previous
+    if (index > 0 && entry.totalPoints < sorted[index - 1].totalPoints) {
+      currentRank = index + 1;
+    }
+    return { ...entry, rank: currentRank };
+  });
+
+  console.log("[resultsRepo] getOrderOfMeritTotals returning:", rankedEntries.length, "entries");
+  return rankedEntries;
 }
 
 /**
