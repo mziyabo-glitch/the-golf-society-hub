@@ -96,6 +96,11 @@ export async function getEventResults(eventId: string): Promise<EventResultDoc[]
       hint: error.hint,
       code: error.code,
     });
+    // Return empty array if table doesn't exist yet (migration not run)
+    if (error.code === "42P01" || error.message?.includes("does not exist")) {
+      console.warn("[resultsRepo] event_results table does not exist yet - run migration");
+      return [];
+    }
     throw new Error(error.message || "Failed to get event results");
   }
 
@@ -116,49 +121,78 @@ export async function getOrderOfMeritTotals(
     throw new Error("Missing societyId");
   }
 
-  // Get all event results for the society, joining with members for names
-  // and events to filter OOM events only
-  const { data, error } = await supabase
+  // First, get all event results for the society (separate query for reliability)
+  const { data: resultsData, error: resultsError } = await supabase
     .from("event_results")
-    .select(`
-      member_id,
-      points,
-      events!inner (
-        id,
-        classification,
-        is_oom
-      ),
-      members!inner (
-        id,
-        name
-      )
-    `)
+    .select("event_id, member_id, points")
     .eq("society_id", societyId);
 
-  if (error) {
-    console.error("[resultsRepo] getOrderOfMeritTotals failed:", {
-      message: error.message,
-      details: error.details,
-      hint: error.hint,
-      code: error.code,
+  if (resultsError) {
+    console.error("[resultsRepo] getOrderOfMeritTotals results query failed:", {
+      message: resultsError.message,
+      details: resultsError.details,
+      hint: resultsError.hint,
+      code: resultsError.code,
     });
-    throw new Error(error.message || "Failed to get Order of Merit totals");
+    // Return empty array if table doesn't exist yet (migration not run)
+    if (resultsError.code === "42P01" || resultsError.message?.includes("does not exist")) {
+      console.warn("[resultsRepo] event_results table does not exist yet - run migration");
+      return [];
+    }
+    throw new Error(resultsError.message || "Failed to get Order of Merit totals");
   }
 
-  console.log("[resultsRepo] raw results:", data?.length ?? 0, "rows");
+  if (!resultsData || resultsData.length === 0) {
+    console.log("[resultsRepo] No results found");
+    return [];
+  }
+
+  // Get unique event IDs and member IDs
+  const eventIds = [...new Set(resultsData.map((r) => r.event_id))];
+  const memberIds = [...new Set(resultsData.map((r) => r.member_id))];
+
+  // Fetch events to filter OOM only
+  const { data: eventsData, error: eventsError } = await supabase
+    .from("events")
+    .select("id, classification, is_oom")
+    .in("id", eventIds);
+
+  if (eventsError) {
+    console.error("[resultsRepo] events query failed:", eventsError);
+    throw new Error(eventsError.message || "Failed to get events");
+  }
+
+  // Fetch members for names
+  const { data: membersData, error: membersError } = await supabase
+    .from("members")
+    .select("id, name")
+    .in("id", memberIds);
+
+  if (membersError) {
+    console.error("[resultsRepo] members query failed:", membersError);
+    throw new Error(membersError.message || "Failed to get members");
+  }
+
+  // Build lookup maps
+  const eventsMap = new Map((eventsData ?? []).map((e) => [e.id, e]));
+  const membersMap = new Map((membersData ?? []).map((m) => [m.id, m]));
+
+  console.log("[resultsRepo] raw results:", resultsData.length, "rows");
 
   // Filter to only OOM events and aggregate by member
   const memberTotals: Record<string, OrderOfMeritEntry> = {};
 
-  (data ?? []).forEach((row: any) => {
-    // Check if this is an OOM event
-    const isOOM =
-      row.events?.classification === "oom" || row.events?.is_oom === true;
+  resultsData.forEach((row) => {
+    const event = eventsMap.get(row.event_id);
+    if (!event) return;
 
+    // Check if this is an OOM event
+    const isOOM = event.classification === "oom" || event.is_oom === true;
     if (!isOOM) return;
 
     const memberId = row.member_id;
-    const memberName = row.members?.name || "Unknown";
+    const member = membersMap.get(memberId);
+    const memberName = member?.name || "Unknown";
     const points = row.points || 0;
 
     if (!memberTotals[memberId]) {
