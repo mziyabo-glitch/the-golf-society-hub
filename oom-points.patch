@@ -1,0 +1,530 @@
+﻿diff --git a/app/(app)/event/[id]/index.tsx b/app/(app)/event/[id]/index.tsx
+index 33cf3869..d2db9e46 100644
+--- a/app/(app)/event/[id]/index.tsx
++++ b/app/(app)/event/[id]/index.tsx
+@@ -1,7 +1,7 @@
+-import { useEffect, useState } from "react";
+-import { StyleSheet, View, Pressable } from "react-native";
+-import { useLocalSearchParams, useRouter } from "expo-router";
+-import { Feather } from "@expo/vector-icons";
++import { useCallback, useEffect, useState } from "react";
++import { StyleSheet, View, Pressable } from "react-native";
++import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
++import { Feather } from "@expo/vector-icons";
+@@
+-  useEffect(() => {
+-    if (!eventId) {
+-      console.log("[EventDetail] No eventId, skipping load");
+-      setLoading(false);
+-      setError("Missing event id in route params");
+-      return;
+-    }
+-
+-    const loadEvent = async () => {
+-      setLoading(true);
+-      setError(null);
+-
+-      try {
+-        console.log("[EventDetail] Fetching event:", eventId);
+-        const data = await getEvent(eventId);
+-
+-        if (data) {
+-          console.log("[EventDetail] Event loaded:", data.name);
+-          setEvent(data);
+-        } else {
+-          console.log("[EventDetail] Event not found or blocked by RLS");
+-          setError("Event not found (or blocked by permissions)");
+-        }
+-      } catch (err: any) {
+-        console.error("[EventDetail] Load error:", err);
+-
+-        // Handle permission/RLS errors
+-        const errorCode = err?.code || err?.statusCode;
+-        const errorMessage = err?.message || "";
+-        const is403 =
+-          errorCode === "403" ||
+-          errorCode === 403 ||
+-          errorCode === "42501" ||
+-          errorMessage.includes("permission") ||
+-          errorMessage.includes("row-level security");
+-
+-        if (is403) {
+-          setError("You don't have permission to view this event.");
+-        } else {
+-          setError(err?.message || "Failed to load event");
+-        }
+-      } finally {
+-        setLoading(false);
+-      }
+-    };
+-
+-    loadEvent();
+-  }, [eventId]);
++  const loadEvent = useCallback(async () => {
++    if (!eventId) {
++      console.log("[EventDetail] No eventId, skipping load");
++      setLoading(false);
++      setError("Missing event id in route params");
++      return;
++    }
++
++    setLoading(true);
++    setError(null);
++
++    try {
++      console.log("[EventDetail] Fetching event:", eventId);
++      const data = await getEvent(eventId);
++
++      if (data) {
++        console.log("[EventDetail] Event loaded:", data.name);
++        setEvent(data);
++      } else {
++        console.log("[EventDetail] Event not found or blocked by RLS");
++        setError("Event not found (or blocked by permissions)");
++      }
++    } catch (err: any) {
++      console.error("[EventDetail] Load error:", err);
++
++      // Handle permission/RLS errors
++      const errorCode = err?.code || err?.statusCode;
++      const errorMessage = err?.message || "";
++      const is403 =
++        errorCode === "403" ||
++        errorCode === 403 ||
++        errorCode === "42501" ||
++        errorMessage.includes("permission") ||
++        errorMessage.includes("row-level security");
++
++      if (is403) {
++        setError("You don't have permission to view this event.");
++      } else {
++        setError(err?.message || "Failed to load event");
++      }
++    } finally {
++      setLoading(false);
++    }
++  }, [eventId]);
++
++  useEffect(() => {
++    loadEvent();
++  }, [loadEvent]);
++
++  useFocusEffect(
++    useCallback(() => {
++      loadEvent();
++    }, [loadEvent])
++  );
+@@
+-  const handleOpenPlayers = () => {
++  const handleOpenPlayers = () => {
+     if (!eventId) {
+       console.error("[EventDetail] Cannot open players: eventId is undefined");
+       return;
+@@
+     console.log("[EventDetail] opening players for event:", eventId);
+     router.push({ pathname: "/event/[id]/players", params: { id: eventId } });
+   };
++
++  const handleOpenPoints = () => {
++    if (!eventId) {
++      console.error("[EventDetail] Cannot open points: eventId is undefined");
++      return;
++    }
++    console.log("[EventDetail] opening points for event:", eventId);
++    router.push({ pathname: "/event/[id]/points", params: { id: eventId } });
++  };
+@@
+-      <Pressable
+-        onPress={handleOpenPlayers}
+-        style={({ pressed }) => ({ opacity: pressed ? 0.8 : 1 })}
+-      >
+-        <AppCard style={styles.actionCard}>
++      <Pressable
++        onPress={handleOpenPlayers}
++        style={({ pressed }) => ({ opacity: pressed ? 0.8 : 1 })}
++      >
++        <AppCard style={styles.actionCard}>
+           <View style={styles.actionRow}>
+             <View style={[styles.iconContainer, { backgroundColor: colors.backgroundTertiary }]}>
+               <Feather name="users" size={18} color={colors.primary} />
+@@
+           </View>
+-        </AppCard>
+-      </Pressable>
++        </AppCard>
++      </Pressable>
++
++      {/* Points Section */}
++      {event.classification === "oom" && (
++        <Pressable
++          onPress={handleOpenPoints}
++          style={({ pressed }) => ({ opacity: pressed ? 0.8 : 1 })}
++        >
++          <AppCard style={styles.actionCard}>
++            <View style={styles.actionRow}>
++              <View style={[styles.iconContainer, { backgroundColor: colors.backgroundTertiary }]}>
++                <Feather name="award" size={18} color={colors.primary} />
++              </View>
++              <View style={styles.actionContent}>
++                <AppText variant="bodyBold">Enter Points</AppText>
++                <AppText variant="caption" color="secondary">
++                  Record Order of Merit points
++                </AppText>
++              </View>
++              <Feather name="chevron-right" size={20} color={colors.textTertiary} />
++            </View>
++          </AppCard>
++        </Pressable>
++      )}
+diff --git a/app/(app)/event/[id]/points.tsx b/app/(app)/event/[id]/points.tsx
+new file mode 100644
+index 00000000..db9ee640
+--- /dev/null
++++ b/app/(app)/event/[id]/points.tsx
+@@ -0,0 +1,250 @@
++import { useEffect, useState } from "react";
++import { Alert, Pressable, StyleSheet, View } from "react-native";
++import { useLocalSearchParams, useRouter } from "expo-router";
++import { Feather } from "@expo/vector-icons";
++
++import { Screen } from "@/components/ui/Screen";
++import { AppText } from "@/components/ui/AppText";
++import { AppCard } from "@/components/ui/AppCard";
++import { AppInput } from "@/components/ui/AppInput";
++import { PrimaryButton, SecondaryButton } from "@/components/ui/Button";
++import { LoadingState } from "@/components/ui/LoadingState";
++import { EmptyState } from "@/components/ui/EmptyState";
++import { useBootstrap } from "@/lib/useBootstrap";
++import { getEvent, type EventDoc } from "@/lib/db_supabase/eventRepo";
++import { getMembersBySocietyId, type MemberDoc } from "@/lib/db_supabase/memberRepo";
++import { getEventResults, upsertEventResults } from "@/lib/db_supabase/resultsRepo";
++import { getColors, spacing, radius } from "@/lib/ui/theme";
++
++type PointsRow = {
++  member: MemberDoc;
++  points: number;
++};
++
++export default function EventPointsScreen() {
++  const router = useRouter();
++  const params = useLocalSearchParams<{ id: string }>();
++  const { societyId, loading: bootstrapLoading } = useBootstrap();
++  const colors = getColors();
++
++  const eventId = Array.isArray(params.id) ? params.id[0] : params.id;
++
++  const [event, setEvent] = useState<EventDoc | null>(null);
++  const [rows, setRows] = useState<PointsRow[]>([]);
++  const [loading, setLoading] = useState(true);
++  const [saving, setSaving] = useState(false);
++  const [error, setError] = useState<string | null>(null);
++
++  useEffect(() => {
++    if (!eventId || !societyId) {
++      setLoading(false);
++      if (!eventId) setError("Missing event ID");
++      return;
++    }
++
++    const loadData = async () => {
++      setLoading(true);
++      setError(null);
++
++      try {
++        const [eventData, membersData, resultsData] = await Promise.all([
++          getEvent(eventId),
++          getMembersBySocietyId(societyId),
++          getEventResults(eventId),
++        ]);
++
++        if (!eventData) {
++          setError("Event not found");
++          return;
++        }
++
++        const playerIds = new Set(eventData.playerIds || []);
++        const memberRows = membersData.filter((member) => playerIds.has(member.id));
++        const resultsByMember = new Map(
++          resultsData.map((result) => [result.member_id, result.points])
++        );
++
++        setEvent(eventData);
++        setRows(
++          memberRows.map((member) => ({
++            member,
++            points: resultsByMember.get(member.id) ?? 0,
++          }))
++        );
++      } catch (err: any) {
++        console.error("[EventPoints] Load error:", err);
++        setError(err?.message || "Failed to load data");
++      } finally {
++        setLoading(false);
++      }
++    };
++
++    loadData();
++  }, [eventId, societyId]);
++
++  const updatePoints = (memberId: string, value: string) => {
++    const numeric = Number.parseInt(value, 10);
++    setRows((prev) =>
++      prev.map((row) =>
++        row.member.id === memberId
++          ? { ...row, points: Number.isNaN(numeric) ? 0 : numeric }
++          : row
++      )
++    );
++  };
++
++  const handleSave = async () => {
++    if (!eventId) return;
++
++    setSaving(true);
++    try {
++      await upsertEventResults(
++        eventId,
++        rows.map((row) => ({
++          memberId: row.member.id,
++          points: row.points,
++        }))
++      );
++      Alert.alert("Saved", "Points updated successfully.", [
++        { text: "OK", onPress: () => router.back() },
++      ]);
++    } catch (err: any) {
++      console.error("[EventPoints] Save error:", err);
++      Alert.alert("Error", err?.message || "Failed to save points");
++    } finally {
++      setSaving(false);
++    }
++  };
++
++  if (bootstrapLoading || loading) {
++    return (
++      <Screen scrollable={false}>
++        <View style={styles.centered}>
++          <LoadingState message="Loading points..." />
++        </View>
++      </Screen>
++    );
++  }
++
++  if (error) {
++    return (
++      <Screen>
++        <View style={styles.header}>
++          <SecondaryButton onPress={() => router.back()} size="sm">
++            <Feather name="arrow-left" size={16} color={colors.text} />
++            {" Back"}
++          </SecondaryButton>
++        </View>
++        <EmptyState
++          icon={<Feather name="alert-circle" size={24} color={colors.error} />}
++          title="Error"
++          message={error}
++          action={{ label: "Go Back", onPress: () => router.back() }}
++        />
++      </Screen>
++    );
++  }
++
++  if (!event || rows.length === 0) {
++    return (
++      <Screen>
++        <View style={styles.header}>
++          <SecondaryButton onPress={() => router.back()} size="sm">
++            <Feather name="arrow-left" size={16} color={colors.text} />
++            {" Back"}
++          </SecondaryButton>
++        </View>
++        <EmptyState
++          icon={<Feather name="users" size={24} color={colors.textTertiary} />}
++          title="No Players"
++          message="Add players to this event before entering points."
++          action={{ label: "Go Back", onPress: () => router.back() }}
++        />
++      </Screen>
++    );
++  }
++
++  return (
++    <Screen>
++      <View style={styles.header}>
++        <SecondaryButton onPress={() => router.back()} size="sm">
++          <Feather name="arrow-left" size={16} color={colors.text} />
++          {" Back"}
++        </SecondaryButton>
++        <AppText variant="h2">Enter Points</AppText>
++        <View style={{ width: 60 }} />
++      </View>
++
++      <AppText variant="caption" color="secondary" style={styles.subtitle}>
++        {event.name}
++      </AppText>
++
++      <View style={styles.list}>
++        {rows.map((row) => (
++          <AppCard key={row.member.id} style={styles.rowCard}>
++            <View style={styles.rowContent}>
++              <View style={styles.memberInfo}>
++                <AppText variant="bodyBold">
++                  {row.member.displayName || row.member.name || "Member"}
++                </AppText>
++                <AppText variant="caption" color="secondary">
++                  Points
++                </AppText>
++              </View>
++              <AppInput
++                value={String(row.points)}
++                onChangeText={(value) => updatePoints(row.member.id, value)}
++                keyboardType="number-pad"
++                style={styles.pointsInput}
++                size="sm"
++              />
++            </View>
++          </AppCard>
++        ))}
++      </View>
++
++      <PrimaryButton onPress={handleSave} loading={saving} style={styles.saveButton}>
++        Save Points
++      </PrimaryButton>
++    </Screen>
++  );
++}
++
++const styles = StyleSheet.create({
++  centered: {
++    flex: 1,
++    justifyContent: "center",
++    alignItems: "center",
++  },
++  header: {
++    flexDirection: "row",
++    justifyContent: "space-between",
++    alignItems: "center",
++    marginBottom: spacing.base,
++  },
++  subtitle: {
++    marginBottom: spacing.base,
++  },
++  list: {
++    gap: spacing.sm,
++  },
++  rowCard: {
++    paddingVertical: spacing.base,
++  },
++  rowContent: {
++    flexDirection: "row",
++    alignItems: "center",
++    justifyContent: "space-between",
++    gap: spacing.base,
++  },
++  memberInfo: {
++    flex: 1,
++  },
++  pointsInput: {
++    width: 80,
++    textAlign: "center",
++  },
++  saveButton: {
++    marginTop: spacing.lg,
++  },
++});
+diff --git a/lib/db_supabase/resultsRepo.ts b/lib/db_supabase/resultsRepo.ts
+new file mode 100644
+index 00000000..71396a0d
+--- /dev/null
++++ b/lib/db_supabase/resultsRepo.ts
+@@ -0,0 +1,56 @@
++import { supabase } from "@/lib/supabase";
++
++export type EventResultDoc = {
++  id: string;
++  event_id: string;
++  member_id: string;
++  points: number;
++  created_at?: string;
++  updated_at?: string;
++};
++
++export async function getEventResults(eventId: string): Promise<EventResultDoc[]> {
++  const { data, error } = await supabase
++    .from("event_results")
++    .select("id,event_id,member_id,points,created_at,updated_at")
++    .eq("event_id", eventId);
++
++  if (error) {
++    console.error("[resultsRepo] getEventResults failed:", {
++      message: error.message,
++      details: error.details,
++      hint: error.hint,
++      code: error.code,
++    });
++    return [];
++  }
++
++  return data ?? [];
++}
++
++export async function upsertEventResults(
++  eventId: string,
++  rows: { memberId: string; points: number }[]
++): Promise<void> {
++  if (!rows.length) return;
++
++  const payload = rows.map((row) => ({
++    event_id: eventId,
++    member_id: row.memberId,
++    points: row.points,
++  }));
++
++  const { error } = await supabase
++    .from("event_results")
++    .upsert(payload, { onConflict: "event_id,member_id" });
++
++  if (error) {
++    console.error("[resultsRepo] upsertEventResults failed:", {
++      message: error.message,
++      details: error.details,
++      hint: error.hint,
++      code: error.code,
++    });
++    throw new Error(error.message || "Failed to save event results");
++  }
++}
+diff --git a/supabase/migrations/007_create_event_results.sql b/supabase/migrations/007_create_event_results.sql
+new file mode 100644
+index 00000000..ada7037d
+--- /dev/null
++++ b/supabase/migrations/007_create_event_results.sql
+@@ -0,0 +1,28 @@
++-- Create event_results table for OOM points entry
++CREATE TABLE IF NOT EXISTS public.event_results (
++  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
++  event_id uuid NOT NULL,
++  member_id uuid NOT NULL,
++  points int NOT NULL DEFAULT 0,
++  created_at timestamptz NOT NULL DEFAULT now(),
++  updated_at timestamptz NOT NULL DEFAULT now(),
++  UNIQUE (event_id, member_id)
++);
++
++-- Updated-at trigger function
++CREATE OR REPLACE FUNCTION public.set_updated_at()
++RETURNS trigger
++LANGUAGE plpgsql
++AS $$
++BEGIN
++  NEW.updated_at = now();
++  RETURN NEW;
++END;
++$$;
++
++DROP TRIGGER IF EXISTS set_event_results_updated_at ON public.event_results;
++
++CREATE TRIGGER set_event_results_updated_at
++BEFORE UPDATE ON public.event_results
++FOR EACH ROW
++EXECUTE FUNCTION public.set_updated_at();
