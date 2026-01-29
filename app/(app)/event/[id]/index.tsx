@@ -1,4 +1,4 @@
-﻿import { useCallback, useEffect, useState  } from "react";
+﻿import { useCallback, useEffect, useState } from "react";
 import { StyleSheet, View, Pressable } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
@@ -10,6 +10,7 @@ import { AppCard } from "@/components/ui/AppCard";
 import { SecondaryButton } from "@/components/ui/Button";
 import { LoadingState } from "@/components/ui/LoadingState";
 import { EmptyState } from "@/components/ui/EmptyState";
+
 import { useBootstrap } from "@/lib/useBootstrap";
 import {
   getEvent,
@@ -25,14 +26,12 @@ export default function EventDetailScreen() {
   const { societyId, userId, loading: bootstrapLoading } = useBootstrap();
   const colors = getColors();
 
-  // Safely extract eventId (could be string or array from URL params)
   const eventId = Array.isArray(params.id) ? params.id[0] : params.id;
 
   const [event, setEvent] = useState<EventDoc | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Debug logging in development
   if (__DEV__) {
     console.log("[EventDetail] params:", params);
     console.log("[EventDetail] eventId:", eventId);
@@ -42,9 +41,8 @@ export default function EventDetailScreen() {
 
   const loadEvent = useCallback(async () => {
     if (!eventId) {
-      console.log("[EventDetail] No eventId, skipping load");
-      setLoading(false);
       setError("Missing event id in route params");
+      setLoading(false);
       return;
     }
 
@@ -52,53 +50,45 @@ export default function EventDetailScreen() {
     setError(null);
 
     try {
-      console.log("[EventDetail] Fetching event:", eventId);
       const data = await getEvent(eventId);
 
-      if (data) {
-        console.log("[EventDetail] Event loaded:", data.name, "playerIds:", data.playerIds);
-        setEvent(data);
-      } else {
-        console.log("[EventDetail] Event not found or blocked by RLS");
+      if (!data) {
         setError("Event not found (or blocked by permissions)");
+        return;
       }
+
+      setEvent(data);
     } catch (err: any) {
       console.error("[EventDetail] Load error:", err);
 
-      // Handle permission/RLS errors
-      const errorCode = err?.code || err?.statusCode;
-      const errorMessage = err?.message || "";
-      const is403 =
-        errorCode === "403" ||
-        errorCode === 403 ||
-        errorCode === "42501" ||
-        errorMessage.includes("permission") ||
-        errorMessage.includes("row-level security");
+      const message = err?.message ?? "Failed to load event";
+      const isPermissionError =
+        message.includes("permission") ||
+        message.includes("row-level security") ||
+        err?.code === "42501";
 
-      if (is403) {
-        setError("You don't have permission to view this event.");
-      } else {
-        setError(err?.message || "Failed to load event");
-      }
+      setError(
+        isPermissionError
+          ? "You don't have permission to view this event."
+          : message
+      );
     } finally {
       setLoading(false);
     }
   }, [eventId]);
 
+  // Initial load
   useEffect(() => {
     loadEvent();
   }, [loadEvent]);
 
-  // Refetch on focus to pick up changes (e.g., after editing players)
+  // Refetch when screen regains focus (players / points updates)
   useFocusEffect(
     useCallback(() => {
-      if (eventId) {
-        loadEvent();
-      }
-    }, [eventId, loadEvent])
+      loadEvent();
+    }, [loadEvent])
   );
 
-  // Loading state
   if (bootstrapLoading || loading) {
     return (
       <Screen scrollable={false}>
@@ -109,174 +99,80 @@ export default function EventDetailScreen() {
     );
   }
 
-  // Error state
   if (error) {
     return (
       <Screen>
-        <View style={styles.header}>
-          <SecondaryButton onPress={() => router.back()} size="sm">
-            <Feather name="arrow-left" size={16} color={colors.text} />
-            {" Back"}
-          </SecondaryButton>
-        <SecondaryButton
-          onPress={() =>
-            router.push({ pathname: "/(app)/event/[id]/points", params: { id: eventId } })
-          }
-          size="sm"
-        >
-          <Feather name="award" size={16} color={colors.text} />
-          {" Points"}
-        </SecondaryButton>
-
-        <SecondaryButton
-          onPress={() =>
-            router.push({ pathname: "/(app)/event/[id]/points", params: { id: eventId } })
-          }
-          size="sm"
-        >
-          <Feather name="award" size={16} color={colors.text} />
-          {" Points"}
-        </SecondaryButton>
-
-        </View>
+        <HeaderBack router={router} colors={colors} />
         <EmptyState
           icon={<Feather name="alert-circle" size={24} color={colors.error} />}
           title="Error"
           message={error}
-          action={{
-            label: "Go Back",
-            onPress: () => router.back(),
-          }}
+          action={{ label: "Go Back", onPress: () => router.back() }}
         />
       </Screen>
     );
   }
 
-  // Not found state
   if (!event) {
     return (
       <Screen>
-        <View style={styles.header}>
-          <SecondaryButton onPress={() => router.back()} size="sm">
-            <Feather name="arrow-left" size={16} color={colors.text} />
-            {" Back"}
-          </SecondaryButton>
-        <SecondaryButton
-          onPress={() =>
-            router.push({ pathname: "/(app)/event/[id]/points", params: { id: eventId } })
-          }
-          size="sm"
-        >
-          <Feather name="award" size={16} color={colors.text} />
-          {" Points"}
-        </SecondaryButton>
-
-        <SecondaryButton
-          onPress={() =>
-            router.push({ pathname: "/(app)/event/[id]/points", params: { id: eventId } })
-          }
-          size="sm"
-        >
-          <Feather name="award" size={16} color={colors.text} />
-          {" Points"}
-        </SecondaryButton>
-
-        </View>
+        <HeaderBack router={router} colors={colors} />
         <EmptyState
           icon={<Feather name="calendar" size={24} color={colors.textTertiary} />}
           title="Event Not Found"
           message="This event may have been deleted or you don't have access."
-          action={{
-            label: "Go Back",
-            onPress: () => router.back(),
-          }}
+          action={{ label: "Go Back", onPress: () => router.back() }}
         />
       </Screen>
     );
   }
 
-  // Format helpers
-  const formatLabel = EVENT_FORMATS.find((f) => f.value === event.format)?.label ?? event.format;
-  const classificationLabel = EVENT_CLASSIFICATIONS.find((c) => c.value === event.classification)?.label ?? event.classification;
+  const formatLabel =
+    EVENT_FORMATS.find((f) => f.value === event.format)?.label ?? event.format;
 
-  const getStatusColor = () => {
-    if (event.isCompleted) return colors.success;
-    if (event.status === "cancelled") return colors.error;
-    return colors.primary;
-  };
+  const classificationLabel =
+    EVENT_CLASSIFICATIONS.find((c) => c.value === event.classification)?.label ??
+    event.classification;
 
-  const getStatusLabel = () => {
-    if (event.isCompleted) return "Completed";
-    if (event.status === "cancelled") return "Cancelled";
-    if (event.status === "in_progress") return "In Progress";
-    return "Scheduled";
-  };
+  const statusLabel = event.isCompleted
+    ? "Completed"
+    : event.status === "cancelled"
+    ? "Cancelled"
+    : event.status === "in_progress"
+    ? "In Progress"
+    : "Scheduled";
 
-  const formatDate = (dateStr?: string) => {
-    if (!dateStr) return "TBC";
-    try {
-      return new Date(dateStr).toLocaleDateString("en-GB", {
-        weekday: "long",
-        day: "numeric",
-        month: "long",
-        year: "numeric",
-      });
-    } catch {
-      return dateStr;
-    }
-  };
+  const statusColor = event.isCompleted
+    ? colors.success
+    : event.status === "cancelled"
+    ? colors.error
+    : colors.primary;
 
-  const handleOpenPlayers = () => {
-    if (!eventId) {
-      console.error("[EventDetail] Cannot open players: eventId is undefined");
-      return;
-    }
-    console.log("[EventDetail] opening players for event:", eventId);
-    router.push({ pathname: "/(app)/event/[id]/players", params: { id: eventId } });
+  const formatDate = (date?: string) => {
+    if (!date) return "TBC";
+    return new Date(date).toLocaleDateString("en-GB", {
+      weekday: "long",
+      day: "numeric",
+      month: "long",
+      year: "numeric",
+    });
   };
 
   return (
     <Screen>
-      {/* Header with back button */}
-      <View style={styles.header}>
-        <SecondaryButton onPress={() => router.back()} size="sm">
-          <Feather name="arrow-left" size={16} color={colors.text} />
-          {" Back"}
-        </SecondaryButton>
-        <SecondaryButton
-          onPress={() =>
-            router.push({ pathname: "/(app)/event/[id]/points", params: { id: eventId } })
-          }
-          size="sm"
-        >
-          <Feather name="award" size={16} color={colors.text} />
-          {" Points"}
-        </SecondaryButton>
+      <HeaderBack router={router} colors={colors} />
 
-        <SecondaryButton
-          onPress={() =>
-            router.push({ pathname: "/(app)/event/[id]/points", params: { id: eventId } })
-          }
-          size="sm"
-        >
-          <Feather name="award" size={16} color={colors.text} />
-          {" Points"}
-        </SecondaryButton>
-
-      </View>
-
-      {/* Event Title */}
+      {/* Title */}
       <View style={styles.titleSection}>
         <AppText variant="title">{event.name}</AppText>
+
         <View style={styles.badgeRow}>
-          {/* Status badge */}
-          <View style={[styles.badge, { backgroundColor: getStatusColor() + "20" }]}>
-            <AppText variant="small" style={{ color: getStatusColor() }}>
-              {getStatusLabel()}
+          <View style={[styles.badge, { backgroundColor: statusColor + "20" }]}>
+            <AppText variant="small" style={{ color: statusColor }}>
+              {statusLabel}
             </AppText>
           </View>
 
-          {/* OOM badge */}
           {event.classification === "oom" && (
             <View style={[styles.badge, { backgroundColor: colors.warning + "20" }]}>
               <Feather name="award" size={12} color={colors.warning} />
@@ -285,130 +181,85 @@ export default function EventDetailScreen() {
               </AppText>
             </View>
           )}
-
-          {/* Major badge */}
-          {event.classification === "major" && (
-            <View style={[styles.badge, { backgroundColor: colors.info + "20" }]}>
-              <Feather name="star" size={12} color={colors.info} />
-              <AppText variant="small" style={{ color: colors.info, marginLeft: 4 }}>
-                Major
-              </AppText>
-            </View>
-          )}
         </View>
       </View>
 
-      {/* Event Details Card */}
+      {/* Details */}
       <AppCard style={styles.detailsCard}>
-        {/* Date */}
-        <View style={styles.detailRow}>
-          <View style={[styles.iconContainer, { backgroundColor: colors.backgroundTertiary }]}>
-            <Feather name="calendar" size={18} color={colors.primary} />
-          </View>
-          <View style={styles.detailContent}>
-            <AppText variant="caption" color="secondary">Date</AppText>
-            <AppText variant="body">{formatDate(event.date)}</AppText>
-          </View>
-        </View>
-
-        {/* Course */}
-        <View style={styles.detailRow}>
-          <View style={[styles.iconContainer, { backgroundColor: colors.backgroundTertiary }]}>
-            <Feather name="map-pin" size={18} color={colors.primary} />
-          </View>
-          <View style={styles.detailContent}>
-            <AppText variant="caption" color="secondary">Course</AppText>
-            <AppText variant="body">{event.courseName || "TBC"}</AppText>
-          </View>
-        </View>
-
-        {/* Format */}
-        <View style={styles.detailRow}>
-          <View style={[styles.iconContainer, { backgroundColor: colors.backgroundTertiary }]}>
-            <Feather name="target" size={18} color={colors.primary} />
-          </View>
-          <View style={styles.detailContent}>
-            <AppText variant="caption" color="secondary">Format</AppText>
-            <AppText variant="body">{formatLabel}</AppText>
-          </View>
-        </View>
-
-        {/* Classification */}
-        <View style={styles.detailRow}>
-          <View style={[styles.iconContainer, { backgroundColor: colors.backgroundTertiary }]}>
-            <Feather name="tag" size={18} color={colors.primary} />
-          </View>
-          <View style={styles.detailContent}>
-            <AppText variant="caption" color="secondary">Classification</AppText>
-            <AppText variant="body">{classificationLabel}</AppText>
-          </View>
-        </View>
-
-        {/* Winner (if completed) */}
-        {event.isCompleted && event.winnerName && (
-          <View style={styles.detailRow}>
-            <View style={[styles.iconContainer, { backgroundColor: colors.success + "20" }]}>
-              <Feather name="award" size={18} color={colors.success} />
-            </View>
-            <View style={styles.detailContent}>
-              <AppText variant="caption" color="secondary">Winner</AppText>
-              <AppText variant="body">{event.winnerName}</AppText>
-            </View>
-          </View>
-        )}
+        <DetailRow icon="calendar" label="Date" value={formatDate(event.date)} />
+        <DetailRow icon="map-pin" label="Course" value={event.courseName || "TBC"} />
+        <DetailRow icon="target" label="Format" value={formatLabel} />
+        <DetailRow icon="tag" label="Classification" value={classificationLabel} />
       </AppCard>
 
-      {/* Players Section */}
+      {/* Players */}
       <Pressable
-        onPress={handleOpenPlayers}
-        style={({ pressed }) => ({ opacity: pressed ? 0.8 : 1 })}
+        onPress={() =>
+          router.push({
+            pathname: "/(app)/event/[id]/players",
+            params: { id: eventId },
+          })
+        }
       >
         <AppCard style={styles.actionCard}>
           <View style={styles.actionRow}>
-            <View style={[styles.iconContainer, { backgroundColor: colors.backgroundTertiary }]}>
-              <Feather name="users" size={18} color={colors.primary} />
-            </View>
+            <Icon icon="users" colors={colors} />
             <View style={styles.actionContent}>
               <AppText variant="bodyBold">Players</AppText>
               <AppText variant="caption" color="secondary">
-                {event.playerIds?.length ?? 0} player{(event.playerIds?.length ?? 0) !== 1 ? "s" : ""} registered
+                {event.playerIds?.length ?? 0} registered
               </AppText>
             </View>
             <Feather name="chevron-right" size={20} color={colors.textTertiary} />
           </View>
         </AppCard>
       </Pressable>
-
-      {/* Created info */}
-      {event.created_at && (
-        <AppText variant="small" color="tertiary" style={styles.createdText}>
-          Created {new Date(event.created_at).toLocaleDateString("en-GB")}
-        </AppText>
-      )}
     </Screen>
   );
 }
 
+/* ---------- Small helpers ---------- */
+
+function HeaderBack({ router, colors }: any) {
+  return (
+    <View style={styles.header}>
+      <SecondaryButton onPress={() => router.back()} size="sm">
+        <Feather name="arrow-left" size={16} color={colors.text} />
+        {" Back"}
+      </SecondaryButton>
+    </View>
+  );
+}
+
+function Icon({ icon, colors }: any) {
+  return (
+    <View style={[styles.iconContainer, { backgroundColor: colors.backgroundTertiary }]}>
+      <Feather name={icon} size={18} color={colors.primary} />
+    </View>
+  );
+}
+
+function DetailRow({ icon, label, value }: any) {
+  return (
+    <View style={styles.detailRow}>
+      <Icon icon={icon} />
+      <View style={styles.detailContent}>
+        <AppText variant="caption" color="secondary">
+          {label}
+        </AppText>
+        <AppText variant="body">{value}</AppText>
+      </View>
+    </View>
+  );
+}
+
+/* ---------- Styles ---------- */
+
 const styles = StyleSheet.create({
-  centered: {
-    flex: 1,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  header: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginBottom: spacing.lg,
-  },
-  titleSection: {
-    marginBottom: spacing.lg,
-  },
-  badgeRow: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: spacing.xs,
-    marginTop: spacing.xs,
-  },
+  centered: { flex: 1, justifyContent: "center", alignItems: "center" },
+  header: { marginBottom: spacing.lg },
+  titleSection: { marginBottom: spacing.lg },
+  badgeRow: { flexDirection: "row", gap: spacing.xs, marginTop: spacing.xs },
   badge: {
     flexDirection: "row",
     alignItems: "center",
@@ -416,14 +267,8 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.xs,
     borderRadius: radius.sm,
   },
-  detailsCard: {
-    marginBottom: spacing.lg,
-  },
-  detailRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginBottom: spacing.base,
-  },
+  detailsCard: { marginBottom: spacing.lg },
+  detailRow: { flexDirection: "row", alignItems: "center", marginBottom: spacing.base },
   iconContainer: {
     width: 40,
     height: 40,
@@ -432,27 +277,8 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     marginRight: spacing.sm,
   },
-  detailContent: {
-    flex: 1,
-  },
-  actionCard: {
-    marginBottom: spacing.sm,
-  },
-  actionRow: {
-    flexDirection: "row",
-    alignItems: "center",
-  },
-  actionContent: {
-    flex: 1,
-  },
-  createdText: {
-    textAlign: "center",
-    marginTop: spacing.lg,
-  },
+  detailContent: { flex: 1 },
+  actionCard: { marginBottom: spacing.sm },
+  actionRow: { flexDirection: "row", alignItems: "center" },
+  actionContent: { flex: 1 },
 });
-
-
-
-
-
-
