@@ -380,28 +380,6 @@ export default function EventPointsScreen() {
     );
   }
 
-  // Check if OOM event
-  const isOOM = event.classification === "oom" || event.isOOM === true;
-
-  if (!isOOM) {
-    return (
-      <Screen>
-        <View style={styles.header}>
-          <SecondaryButton onPress={() => router.back()} size="sm">
-            <Feather name="arrow-left" size={16} color={colors.text} />
-            {" Back"}
-          </SecondaryButton>
-        </View>
-        <EmptyState
-          icon={<Feather name="info" size={24} color={colors.textTertiary} />}
-          title="Not an OOM Event"
-          message="Points can only be entered for Order of Merit events."
-          action={{ label: "Go Back", onPress: () => router.back() }}
-        />
-      </Screen>
-    );
-  }
-
   // No players
   if (players.length === 0) {
     return (
