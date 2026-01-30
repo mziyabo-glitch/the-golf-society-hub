@@ -62,20 +62,14 @@ export async function upsertEventResults(
   }
 
   // Prepare rows for upsert
-  // Note: day_value and position are optional audit columns (migration 013)
-  // We include them if provided, but the upsert will work without them
-  const rows = results.map((r) => {
-    const row: Record<string, unknown> = {
-      event_id: eventId,
-      society_id: societyId,
-      member_id: r.member_id,
-      points: r.points,
-    };
-    // Only include audit columns if they have values (avoids errors if columns don't exist yet)
-    if (r.day_value !== undefined) row.day_value = r.day_value;
-    if (r.position !== undefined) row.position = r.position;
-    return row;
-  });
+  // Note: day_value and position columns require migration 013
+  // We skip them entirely to avoid errors if columns don't exist yet
+  const rows = results.map((r) => ({
+    event_id: eventId,
+    society_id: societyId,
+    member_id: r.member_id,
+    points: r.points,
+  }));
 
   console.log("[resultsRepo] upserting rows:", JSON.stringify(rows, null, 2));
 
