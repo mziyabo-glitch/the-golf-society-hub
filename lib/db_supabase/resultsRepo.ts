@@ -226,17 +226,14 @@ export async function getOrderOfMeritTotals(
 
   console.log("[resultsRepo] raw results:", resultsData.length, "rows");
 
-  // Filter to only OOM events and aggregate by member
+  // Aggregate points by member (include all events, not just OOM)
   const memberTotals: Record<string, OrderOfMeritEntry> = {};
 
   resultsData.forEach((row) => {
     const event = eventsMap.get(row.event_id);
     if (!event) return;
 
-    // Check if this is an OOM event
-    const isOOM = event.classification === "oom" || event.is_oom === true;
-    if (!isOOM) return;
-
+    // Include ALL events with results (not just OOM classified)
     const memberId = row.member_id;
     const member = membersMap.get(memberId);
     const memberName = member?.name || "Unknown";
@@ -326,12 +323,11 @@ export async function getOrderOfMeritLog(
     throw new Error("Missing societyId");
   }
 
-  // Fetch OOM events for this society, ordered by date desc
+  // Fetch all events for this society with results, ordered by date desc
   const { data: eventsData, error: eventsError } = await supabase
     .from("events")
     .select("id, name, date, format, classification, is_oom")
     .eq("society_id", societyId)
-    .or("classification.eq.oom,is_oom.eq.true")
     .order("date", { ascending: false });
 
   if (eventsError) {
@@ -343,7 +339,7 @@ export async function getOrderOfMeritLog(
   }
 
   if (!eventsData || eventsData.length === 0) {
-    console.log("[resultsRepo] No OOM events found");
+    console.log("[resultsRepo] No events found");
     return [];
   }
 
