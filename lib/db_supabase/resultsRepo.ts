@@ -232,13 +232,21 @@ export async function getOrderOfMeritTotals(
   const membersMap = new Map((membersData ?? []).map((m) => [m.id, m]));
 
   // Filter to OOM events only (check both is_oom flag and classification for backward compatibility)
+  // Use case-insensitive comparison for classification
   const oomEventIds = new Set(
     (eventsData ?? [])
-      .filter((e) => e.is_oom === true || e.classification === 'oom')
+      .filter((e) => {
+        const isOom = e.is_oom === true || (e.classification && e.classification.toLowerCase() === 'oom');
+        return isOom;
+      })
       .map((e) => e.id)
   );
 
-  console.log("[resultsRepo] raw results:", resultsData.length, "rows, OOM events:", oomEventIds.size);
+  console.log("[resultsRepo] getOrderOfMeritTotals filter:", {
+    totalEvents: (eventsData ?? []).length,
+    oomEvents: oomEventIds.size,
+    eventDetails: (eventsData ?? []).map((e) => ({ id: e.id, is_oom: e.is_oom, classification: e.classification })),
+  });
 
   // Aggregate points by member (OOM events only)
   const memberTotals: Record<string, OrderOfMeritEntry> = {};
@@ -362,7 +370,17 @@ export async function getOrderOfMeritLog(
   }
 
   // Filter to OOM events only (check both is_oom flag and classification for backward compatibility)
-  const oomEvents = eventsData.filter((e) => e.is_oom === true || e.classification === 'oom');
+  // Use case-insensitive comparison for classification
+  const oomEvents = eventsData.filter((e) => {
+    const isOom = e.is_oom === true || (e.classification && e.classification.toLowerCase() === 'oom');
+    return isOom;
+  });
+
+  console.log("[resultsRepo] getOrderOfMeritLog filter:", {
+    totalEvents: eventsData.length,
+    oomEvents: oomEvents.length,
+    eventDetails: eventsData.map((e) => ({ id: e.id, name: e.name, is_oom: e.is_oom, classification: e.classification })),
+  });
 
   if (oomEvents.length === 0) {
     console.log("[resultsRepo] No OOM events found");
@@ -370,7 +388,6 @@ export async function getOrderOfMeritLog(
   }
 
   const eventIds = oomEvents.map((e) => e.id);
-  console.log("[resultsRepo] OOM events:", oomEvents.length, "of", eventsData.length, "total");
 
   // Fetch event results for these events including audit columns
   // day_value and position require migration 013
