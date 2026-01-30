@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useState, useRef } from "react";
-import { StyleSheet, View, Platform, Alert } from "react-native";
+import { useCallback, useEffect, useState, useMemo } from "react";
+import { StyleSheet, View, Platform, Alert, Pressable } from "react-native";
 import { useFocusEffect } from "@react-navigation/native";
 import { Feather } from "@expo/vector-icons";
 import * as Print from "expo-print";
@@ -15,15 +15,21 @@ import { useBootstrap } from "@/lib/useBootstrap";
 import { getEventsBySocietyId, type EventDoc } from "@/lib/db_supabase/eventRepo";
 import {
   getOrderOfMeritTotals,
+  getOrderOfMeritLog,
   type OrderOfMeritEntry,
+  type ResultsLogEntry,
 } from "@/lib/db_supabase/resultsRepo";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
+
+type TabType = "leaderboard" | "resultsLog";
 
 export default function LeaderboardScreen() {
   const { society, societyId, loading: bootstrapLoading } = useBootstrap();
   const colors = getColors();
 
+  const [activeTab, setActiveTab] = useState<TabType>("leaderboard");
   const [standings, setStandings] = useState<OrderOfMeritEntry[]>([]);
+  const [resultsLog, setResultsLog] = useState<ResultsLogEntry[]>([]);
   const [events, setEvents] = useState<EventDoc[]>([]);
   const [loading, setLoading] = useState(true);
   const [sharing, setSharing] = useState(false);
@@ -35,18 +41,53 @@ export default function LeaderboardScreen() {
     }
     setLoading(true);
     try {
-      const [totals, eventsData] = await Promise.all([
+      const [totals, eventsData, logData] = await Promise.all([
         getOrderOfMeritTotals(societyId),
         getEventsBySocietyId(societyId),
+        getOrderOfMeritLog(societyId),
       ]);
       setStandings(totals);
       setEvents(eventsData);
+      setResultsLog(logData);
     } catch (err) {
       console.error("Failed to load leaderboard data:", err);
     } finally {
       setLoading(false);
     }
   }, [societyId]);
+
+  // Group results log by event for display
+  const groupedResultsLog = useMemo(() => {
+    const groups: Array<{
+      eventId: string;
+      eventName: string;
+      eventDate: string | null;
+      format: string | null;
+      results: Array<{ memberId: string; memberName: string; points: number }>;
+    }> = [];
+
+    let currentEventId: string | null = null;
+
+    for (const entry of resultsLog) {
+      if (entry.eventId !== currentEventId) {
+        groups.push({
+          eventId: entry.eventId,
+          eventName: entry.eventName,
+          eventDate: entry.eventDate,
+          format: entry.format,
+          results: [],
+        });
+        currentEventId = entry.eventId;
+      }
+      groups[groups.length - 1].results.push({
+        memberId: entry.memberId,
+        memberName: entry.memberName,
+        points: entry.points,
+      });
+    }
+
+    return groups;
+  }, [resultsLog]);
 
   useEffect(() => {
     loadData();
@@ -223,6 +264,23 @@ export default function LeaderboardScreen() {
     );
   }
 
+  // Format date for display
+  const formatDate = (dateStr: string | null) => {
+    if (!dateStr) return "";
+    const date = new Date(dateStr);
+    return date.toLocaleDateString("en-GB", {
+      day: "numeric",
+      month: "short",
+      year: "numeric",
+    });
+  };
+
+  // Format label for event format
+  const formatLabel = (format: string | null) => {
+    if (!format) return "";
+    return format.charAt(0).toUpperCase() + format.slice(1);
+  };
+
   return (
     <Screen>
       {/* Header */}
@@ -233,7 +291,7 @@ export default function LeaderboardScreen() {
             {oomEventCount} Order of Merit event{oomEventCount !== 1 ? "s" : ""}
           </AppText>
         </View>
-        {standings.length > 0 && (
+        {activeTab === "leaderboard" && standings.length > 0 && (
           <SecondaryButton onPress={handleShare} size="sm" disabled={sharing}>
             <Feather name="share" size={16} color={colors.text} />
             {sharing ? " Sharing..." : " Share"}
@@ -241,89 +299,209 @@ export default function LeaderboardScreen() {
         )}
       </View>
 
-      {/* Order of Merit Section */}
-      <AppText variant="h2" style={styles.sectionTitle}>
-        Order of Merit
-      </AppText>
+      {/* Tab Toggle */}
+      <View style={[styles.tabContainer, { backgroundColor: colors.backgroundSecondary }]}>
+        <Pressable
+          style={[
+            styles.tab,
+            activeTab === "leaderboard" && { backgroundColor: colors.background },
+          ]}
+          onPress={() => setActiveTab("leaderboard")}
+        >
+          <Feather
+            name="award"
+            size={14}
+            color={activeTab === "leaderboard" ? colors.primary : colors.textSecondary}
+          />
+          <AppText
+            variant="captionBold"
+            color={activeTab === "leaderboard" ? "primary" : "secondary"}
+          >
+            Order of Merit
+          </AppText>
+        </Pressable>
+        <Pressable
+          style={[
+            styles.tab,
+            activeTab === "resultsLog" && { backgroundColor: colors.background },
+          ]}
+          onPress={() => setActiveTab("resultsLog")}
+        >
+          <Feather
+            name="list"
+            size={14}
+            color={activeTab === "resultsLog" ? colors.primary : colors.textSecondary}
+          />
+          <AppText
+            variant="captionBold"
+            color={activeTab === "resultsLog" ? "primary" : "secondary"}
+          >
+            Results Log
+          </AppText>
+        </Pressable>
+      </View>
 
-      {standings.length === 0 ? (
-        <EmptyState
-          icon={<Feather name="award" size={24} color={colors.textTertiary} />}
-          title="No Order of Merit Points Yet"
-          message="Enter points for Order of Merit events to see the leaderboard. Create an event with 'Order of Merit' classification, then add players and enter their points."
-        />
-      ) : (
-        <View style={styles.list}>
-          {standings.map((entry) => {
-            const isTop3 = entry.rank <= 3;
-            // Medal colors: gold (1st), silver (2nd), bronze (3rd)
-            const medalColorMap: Record<number, string> = {
-              1: colors.warning,  // Gold
-              2: "#C0C0C0",       // Silver
-              3: "#CD7F32",       // Bronze
-            };
-            const medalColor = medalColorMap[entry.rank];
+      {/* Leaderboard Tab Content */}
+      {activeTab === "leaderboard" && (
+        <>
+          {standings.length === 0 ? (
+            <EmptyState
+              icon={<Feather name="award" size={24} color={colors.textTertiary} />}
+              title="No Order of Merit Points Yet"
+              message="Enter points for Order of Merit events to see the leaderboard. Create an event with 'Order of Merit' classification, then add players and enter their points."
+            />
+          ) : (
+            <View style={styles.list}>
+              {standings.map((entry) => {
+                const isTop3 = entry.rank <= 3;
+                // Medal colors: gold (1st), silver (2nd), bronze (3rd)
+                const medalColorMap: Record<number, string> = {
+                  1: colors.warning,  // Gold
+                  2: "#C0C0C0",       // Silver
+                  3: "#CD7F32",       // Bronze
+                };
+                const medalColor = medalColorMap[entry.rank];
 
-            return (
-              <AppCard key={entry.memberId} style={styles.standingCard}>
-                <View style={styles.standingRow}>
-                  {/* Position */}
-                  <View
-                    style={[
-                      styles.positionBadge,
-                      {
-                        backgroundColor: isTop3 && medalColor
-                          ? medalColor + "20"
-                          : colors.backgroundTertiary,
-                      },
-                    ]}
-                  >
-                    {isTop3 && medalColor ? (
-                      <Feather
-                        name="award"
-                        size={16}
-                        color={medalColor}
-                      />
-                    ) : (
-                      <AppText variant="captionBold" color="secondary">
-                        {entry.rank}
-                      </AppText>
-                    )}
-                  </View>
+                return (
+                  <AppCard key={entry.memberId} style={styles.standingCard}>
+                    <View style={styles.standingRow}>
+                      {/* Position */}
+                      <View
+                        style={[
+                          styles.positionBadge,
+                          {
+                            backgroundColor: isTop3 && medalColor
+                              ? medalColor + "20"
+                              : colors.backgroundTertiary,
+                          },
+                        ]}
+                      >
+                        {isTop3 && medalColor ? (
+                          <Feather
+                            name="award"
+                            size={16}
+                            color={medalColor}
+                          />
+                        ) : (
+                          <AppText variant="captionBold" color="secondary">
+                            {entry.rank}
+                          </AppText>
+                        )}
+                      </View>
 
-                  {/* Member Info */}
-                  <View style={styles.memberInfo}>
-                    <AppText variant="bodyBold">{entry.memberName}</AppText>
-                    <AppText variant="caption" color="secondary">
-                      {entry.eventsPlayed} event{entry.eventsPlayed !== 1 ? "s" : ""}
-                    </AppText>
-                  </View>
+                      {/* Member Info */}
+                      <View style={styles.memberInfo}>
+                        <AppText variant="bodyBold">{entry.memberName}</AppText>
+                        <AppText variant="caption" color="secondary">
+                          {entry.eventsPlayed} event{entry.eventsPlayed !== 1 ? "s" : ""}
+                        </AppText>
+                      </View>
 
-                  {/* Points */}
-                  <View style={styles.pointsContainer}>
-                    <AppText variant="h1" color="primary">
-                      {entry.totalPoints}
-                    </AppText>
-                    <AppText variant="small" color="tertiary">
-                      pts
-                    </AppText>
-                  </View>
-                </View>
-              </AppCard>
-            );
-          })}
-        </View>
+                      {/* Points */}
+                      <View style={styles.pointsContainer}>
+                        <AppText variant="h1" color="primary">
+                          {entry.totalPoints}
+                        </AppText>
+                        <AppText variant="small" color="tertiary">
+                          pts
+                        </AppText>
+                      </View>
+                    </View>
+                  </AppCard>
+                );
+              })}
+            </View>
+          )}
+
+          {/* Info card */}
+          <AppCard style={styles.infoCard}>
+            <View style={styles.infoContent}>
+              <Feather name="info" size={16} color={colors.textTertiary} />
+              <AppText variant="caption" color="secondary" style={{ flex: 1 }}>
+                Points are entered manually for each Order of Merit event. Go to an OOM event and tap "Enter Points" to add results.
+              </AppText>
+            </View>
+          </AppCard>
+        </>
       )}
 
-      {/* Info card */}
-      <AppCard style={styles.infoCard}>
-        <View style={styles.infoContent}>
-          <Feather name="info" size={16} color={colors.textTertiary} />
-          <AppText variant="caption" color="secondary" style={{ flex: 1 }}>
-            Points are entered manually for each Order of Merit event. Go to an OOM event and tap "Enter Points" to add results.
-          </AppText>
-        </View>
-      </AppCard>
+      {/* Results Log Tab Content */}
+      {activeTab === "resultsLog" && (
+        <>
+          {groupedResultsLog.length === 0 ? (
+            <EmptyState
+              icon={<Feather name="list" size={24} color={colors.textTertiary} />}
+              title="No Results Recorded"
+              message="No Order of Merit results have been entered yet. Go to an OOM event and enter points to see the results log."
+            />
+          ) : (
+            <View style={styles.list}>
+              {groupedResultsLog.map((group) => (
+                <View key={group.eventId} style={styles.eventGroup}>
+                  {/* Event Header */}
+                  <View style={[styles.eventHeader, { backgroundColor: colors.backgroundSecondary }]}>
+                    <View style={{ flex: 1 }}>
+                      <AppText variant="bodyBold">{group.eventName}</AppText>
+                      <View style={styles.eventMeta}>
+                        {group.eventDate && (
+                          <AppText variant="small" color="tertiary">
+                            {formatDate(group.eventDate)}
+                          </AppText>
+                        )}
+                        {group.format && (
+                          <>
+                            <AppText variant="small" color="tertiary"> • </AppText>
+                            <AppText variant="small" color="tertiary">
+                              {formatLabel(group.format)}
+                            </AppText>
+                          </>
+                        )}
+                      </View>
+                    </View>
+                    <View style={[styles.eventBadge, { backgroundColor: colors.primary + "20" }]}>
+                      <AppText variant="small" color="primary">
+                        {group.results.length} player{group.results.length !== 1 ? "s" : ""}
+                      </AppText>
+                    </View>
+                  </View>
+
+                  {/* Results Rows */}
+                  {group.results.map((result, idx) => (
+                    <View
+                      key={result.memberId}
+                      style={[
+                        styles.resultRow,
+                        { borderBottomColor: colors.border },
+                        idx === group.results.length - 1 && { borderBottomWidth: 0 },
+                      ]}
+                    >
+                      <AppText variant="body" style={{ flex: 1 }}>
+                        {result.memberName}
+                      </AppText>
+                      <View style={styles.pointsBadge}>
+                        <AppText variant="bodyBold" color="primary">
+                          {result.points}
+                        </AppText>
+                        <AppText variant="small" color="tertiary"> pts</AppText>
+                      </View>
+                    </View>
+                  ))}
+                </View>
+              ))}
+            </View>
+          )}
+
+          {/* Info card for results log */}
+          <AppCard style={styles.infoCard}>
+            <View style={styles.infoContent}>
+              <Feather name="info" size={16} color={colors.textTertiary} />
+              <AppText variant="caption" color="secondary" style={{ flex: 1 }}>
+                This log shows all Order of Merit points entered, grouped by event. Use this as an audit trail to verify points allocation.
+              </AppText>
+            </View>
+          </AppCard>
+        </>
+      )}
     </Screen>
   );
 }
@@ -337,13 +515,27 @@ const styles = StyleSheet.create({
   header: {
     flexDirection: "row",
     alignItems: "center",
-    marginBottom: spacing.lg,
+    marginBottom: spacing.md,
   },
-  sectionTitle: {
-    marginBottom: spacing.sm,
+  tabContainer: {
+    flexDirection: "row",
+    padding: spacing.xs,
+    borderRadius: radius.md,
+    marginBottom: spacing.lg,
+    gap: spacing.xs,
+  },
+  tab: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: spacing.xs,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.md,
+    borderRadius: radius.sm,
   },
   list: {
-    gap: spacing.xs,
+    gap: spacing.sm,
     marginBottom: spacing.lg,
   },
   standingCard: {
@@ -366,6 +558,36 @@ const styles = StyleSheet.create({
   },
   pointsContainer: {
     alignItems: "center",
+  },
+  eventGroup: {
+    borderRadius: radius.md,
+    overflow: "hidden",
+  },
+  eventHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    padding: spacing.sm,
+    paddingHorizontal: spacing.md,
+  },
+  eventMeta: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  eventBadge: {
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+    borderRadius: radius.sm,
+  },
+  resultRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.md,
+    borderBottomWidth: 1,
+  },
+  pointsBadge: {
+    flexDirection: "row",
+    alignItems: "baseline",
   },
   infoCard: {
     marginTop: spacing.sm,

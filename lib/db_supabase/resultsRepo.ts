@@ -290,3 +290,115 @@ export async function deleteEventResults(eventId: string): Promise<void> {
 
   console.log("[resultsRepo] deleteEventResults success");
 }
+
+/**
+ * Results Log entry for audit trail view
+ */
+export type ResultsLogEntry = {
+  eventId: string;
+  eventName: string;
+  eventDate: string | null;
+  format: "stableford" | "medal" | string | null;
+  memberId: string;
+  memberName: string;
+  points: number;
+};
+
+/**
+ * Get Order of Merit results log (audit trail)
+ * Returns raw event results grouped by event, for OOM events only
+ */
+export async function getOrderOfMeritLog(
+  societyId: string
+): Promise<ResultsLogEntry[]> {
+  console.log("[resultsRepo] getOrderOfMeritLog:", societyId);
+
+  if (!societyId) {
+    throw new Error("Missing societyId");
+  }
+
+  // Fetch OOM events for this society, ordered by date desc
+  const { data: eventsData, error: eventsError } = await supabase
+    .from("events")
+    .select("id, name, date, format, classification, is_oom")
+    .eq("society_id", societyId)
+    .or("classification.eq.oom,is_oom.eq.true")
+    .order("date", { ascending: false });
+
+  if (eventsError) {
+    console.error("[resultsRepo] getOrderOfMeritLog events query failed:", eventsError);
+    if (eventsError.code === "42P01") {
+      return [];
+    }
+    throw new Error(eventsError.message || "Failed to get events");
+  }
+
+  if (!eventsData || eventsData.length === 0) {
+    console.log("[resultsRepo] No OOM events found");
+    return [];
+  }
+
+  const eventIds = eventsData.map((e) => e.id);
+
+  // Fetch event results for these events
+  const { data: resultsData, error: resultsError } = await supabase
+    .from("event_results")
+    .select("event_id, member_id, points")
+    .in("event_id", eventIds);
+
+  if (resultsError) {
+    console.error("[resultsRepo] getOrderOfMeritLog results query failed:", resultsError);
+    if (resultsError.code === "42P01") {
+      return [];
+    }
+    throw new Error(resultsError.message || "Failed to get results");
+  }
+
+  if (!resultsData || resultsData.length === 0) {
+    console.log("[resultsRepo] No results found for OOM events");
+    return [];
+  }
+
+  // Get unique member IDs and fetch members
+  const memberIds = [...new Set(resultsData.map((r) => r.member_id))];
+
+  const { data: membersData, error: membersError } = await supabase
+    .from("members")
+    .select("id, name")
+    .in("id", memberIds);
+
+  if (membersError) {
+    console.error("[resultsRepo] getOrderOfMeritLog members query failed:", membersError);
+    throw new Error(membersError.message || "Failed to get members");
+  }
+
+  // Build lookup maps
+  const eventsMap = new Map(eventsData.map((e) => [e.id, e]));
+  const membersMap = new Map((membersData ?? []).map((m) => [m.id, m]));
+
+  // Build results log entries, maintaining event order (by date desc)
+  const logEntries: ResultsLogEntry[] = [];
+
+  // Group results by event, preserving event order
+  for (const event of eventsData) {
+    const eventResults = resultsData
+      .filter((r) => r.event_id === event.id)
+      .sort((a, b) => (b.points || 0) - (a.points || 0)); // Sort by points desc within event
+
+    for (const result of eventResults) {
+      const member = membersMap.get(result.member_id);
+      logEntries.push({
+        eventId: event.id,
+        eventName: event.name || "Unnamed Event",
+        eventDate: event.date || null,
+        format: event.format || null,
+        memberId: result.member_id,
+        memberName: member?.name || "Unknown",
+        points: result.points || 0,
+      });
+    }
+  }
+
+  console.log("[resultsRepo] getOrderOfMeritLog returning:", logEntries.length, "entries");
+  return logEntries;
+}
