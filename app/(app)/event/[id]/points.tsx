@@ -299,7 +299,7 @@ export default function EventPointsScreen() {
   const handleSave = async () => {
     if (!event || !societyId) return;
 
-    // Validate all points are valid F1 values
+    // Validate points are valid numbers
     for (const p of playerPoints) {
       if (p.points.trim() !== "") {
         const num = parseInt(p.points.trim(), 10);
@@ -307,14 +307,6 @@ export default function EventPointsScreen() {
           Alert.alert(
             "Invalid Points",
             `Points for ${p.memberName} must be a non-negative number.`
-          );
-          return;
-        }
-        // Enforce F1-style points only
-        if (!isValidF1Points(num)) {
-          Alert.alert(
-            "Invalid F1 Points",
-            `Points for ${p.memberName} must be a valid F1 value (25, 18, 15, 12, 10, 8, 6, 4, 2, 1, or 0).\n\nUse the "From Positions" button to auto-assign F1 points based on finish positions.`
           );
           return;
         }
