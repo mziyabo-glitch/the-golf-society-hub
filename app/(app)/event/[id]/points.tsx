@@ -300,13 +300,14 @@ export default function EventPointsScreen() {
       await upsertEventResults(event.id, societyId, results);
 
       console.log("[points] Save SUCCESS");
+      console.log("[points] save complete → routing to OOM log");
 
       Alert.alert("Saved", "OOM points saved successfully.", [
         {
           text: "OK",
           onPress: () => {
-            // Use replace to ensure leaderboard refetches
-            router.back();
+            // Navigate to leaderboard with Results Log view
+            router.replace("/(app)/(tabs)/leaderboard?view=log");
           },
         },
       ]);

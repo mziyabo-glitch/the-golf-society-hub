@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState, useMemo } from "react";
 import { StyleSheet, View, Platform, Alert, Pressable } from "react-native";
+import { useLocalSearchParams } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
 import { Feather } from "@expo/vector-icons";
 import * as Print from "expo-print";
@@ -27,7 +28,11 @@ export default function LeaderboardScreen() {
   const { society, societyId, loading: bootstrapLoading } = useBootstrap();
   const colors = getColors();
 
-  const [activeTab, setActiveTab] = useState<TabType>("leaderboard");
+  // Read query param to determine initial view
+  const params = useLocalSearchParams<{ view?: string }>();
+  const initialTab: TabType = params.view === "log" ? "resultsLog" : "leaderboard";
+
+  const [activeTab, setActiveTab] = useState<TabType>(initialTab);
   const [standings, setStandings] = useState<OrderOfMeritEntry[]>([]);
   const [resultsLog, setResultsLog] = useState<ResultsLogEntry[]>([]);
   const [events, setEvents] = useState<EventDoc[]>([]);
@@ -92,6 +97,13 @@ export default function LeaderboardScreen() {
   useEffect(() => {
     loadData();
   }, [loadData]);
+
+  // Update activeTab when view param changes (e.g., navigating from points save)
+  useEffect(() => {
+    if (params.view === "log") {
+      setActiveTab("resultsLog");
+    }
+  }, [params.view]);
 
   // Refetch on focus to pick up changes after entering points
   useFocusEffect(
