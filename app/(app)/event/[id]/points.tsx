@@ -194,45 +194,96 @@ export default function EventPointsScreen() {
     return [...positioned, ...withoutPoints];
   };
 
-  // Save OOM points to database
-  const handleSave = async () => {
-    if (!event || !societyId) return;
-
-    // Validate at least one player has day points
-    const playersWithPoints = players.filter(
+  // Calculate players with valid day points (used for canSave and save)
+  const playersWithDayPoints = useMemo(() => {
+    return players.filter(
       (p) => p.dayPoints.trim() !== "" && !isNaN(parseInt(p.dayPoints.trim(), 10))
     );
+  }, [players]);
 
-    if (playersWithPoints.length === 0) {
-      Alert.alert(
-        "No Points Entered",
-        "Please enter day points for at least one player."
-      );
+  // Compute canSave with clear reasons
+  const saveReadiness = useMemo(() => {
+    if (!eventId) return { canSave: false, reason: "Missing event ID" };
+    if (!societyId) return { canSave: false, reason: "Missing society ID" };
+    if (!event) return { canSave: false, reason: "Event not loaded" };
+    if (players.length === 0) return { canSave: false, reason: "No players in event" };
+    if (playersWithDayPoints.length === 0) return { canSave: false, reason: "Enter day points for at least one player" };
+    if (saving) return { canSave: false, reason: "Save in progress..." };
+    return { canSave: true, reason: null };
+  }, [eventId, societyId, event, players.length, playersWithDayPoints.length, saving]);
+
+  // Save OOM points to database - wrapped in useCallback with all dependencies
+  const handleSave = useCallback(async () => {
+    // Log what we're working with
+    console.log("[points] Save pressed", {
+      eventId,
+      societyId,
+      eventLoaded: !!event,
+      playerCount: players.length,
+      playersWithDayPoints: playersWithDayPoints.length,
+      saving,
+    });
+
+    // Gate checks with logging
+    if (!eventId) {
+      console.warn("[points] Save blocked: missing eventId");
+      Alert.alert("Cannot Save", "Event ID is missing. Please go back and try again.");
+      return;
+    }
+
+    if (!societyId) {
+      console.warn("[points] Save blocked: missing societyId");
+      Alert.alert("Cannot Save", "Society ID is missing. Please go back and try again.");
+      return;
+    }
+
+    if (!event) {
+      console.warn("[points] Save blocked: event not loaded");
+      Alert.alert("Cannot Save", "Event data not loaded. Please wait or refresh.");
+      return;
+    }
+
+    if (playersWithDayPoints.length === 0) {
+      console.warn("[points] Save blocked: no day points entered");
+      Alert.alert("No Points Entered", "Please enter day points for at least one player.");
+      return;
+    }
+
+    if (saving) {
+      console.warn("[points] Save blocked: already saving");
       return;
     }
 
     setSaving(true);
     try {
       // Build results array with OOM points for all players with day points
-      const results = playersWithPoints.map((p) => ({
+      const results = playersWithDayPoints.map((p) => ({
         member_id: p.memberId,
         points: p.oomPoints,
       }));
 
-      console.log("[points] saving OOM results:", results);
+      console.log("[points] Upserting", results.length, "results to event_results:", results);
 
       await upsertEventResults(event.id, societyId, results);
 
+      console.log("[points] Save SUCCESS");
+
       Alert.alert("Saved", "OOM points saved successfully.", [
-        { text: "OK", onPress: () => router.back() },
+        {
+          text: "OK",
+          onPress: () => {
+            // Use replace to ensure leaderboard refetches
+            router.back();
+          },
+        },
       ]);
     } catch (e: any) {
-      console.error("[points] save FAILED", e);
-      Alert.alert("Save Failed", e?.message ?? "Failed to save points");
+      console.error("[points] Save FAILED", e);
+      Alert.alert("Save Failed", e?.message ?? "Failed to save points. Check console for details.");
     } finally {
       setSaving(false);
     }
-  };
+  }, [eventId, societyId, event, playersWithDayPoints, saving, router]);
 
   // Loading state
   if (bootstrapLoading || loading) {
@@ -345,11 +396,6 @@ export default function EventPointsScreen() {
     );
   }
 
-  // Count players with points entered
-  const playersWithPoints = players.filter(
-    (p) => p.dayPoints.trim() !== "" && !isNaN(parseInt(p.dayPoints.trim(), 10))
-  ).length;
-
   return (
     <Screen>
       {/* Header */}
@@ -359,7 +405,11 @@ export default function EventPointsScreen() {
           {" Back"}
         </SecondaryButton>
         <View style={{ flex: 1 }} />
-        <PrimaryButton onPress={handleSave} disabled={saving || playersWithPoints === 0} size="sm">
+        <PrimaryButton
+          onPress={handleSave}
+          disabled={!saveReadiness.canSave}
+          size="sm"
+        >
           {saving ? "Saving..." : "Save"}
         </PrimaryButton>
       </View>
@@ -381,6 +431,24 @@ export default function EventPointsScreen() {
           </AppText>
         </View>
       </AppCard>
+
+      {/* Save status helper */}
+      {!saveReadiness.canSave && saveReadiness.reason && (
+        <View style={styles.saveHelper}>
+          <Feather name="alert-circle" size={14} color={colors.warning} />
+          <AppText variant="small" color="secondary">
+            {saveReadiness.reason}
+          </AppText>
+        </View>
+      )}
+      {saveReadiness.canSave && playersWithDayPoints.length > 0 && (
+        <View style={styles.saveHelper}>
+          <Feather name="check-circle" size={14} color={colors.success} />
+          <AppText variant="small" color="secondary">
+            Ready to save {playersWithDayPoints.length} player{playersWithDayPoints.length !== 1 ? "s" : ""}
+          </AppText>
+        </View>
+      )}
 
       {/* Column Headers */}
       <View style={styles.columnHeaders}>
@@ -457,12 +525,19 @@ const styles = StyleSheet.create({
     marginBottom: spacing.lg,
   },
   instructionCard: {
-    marginBottom: spacing.md,
+    marginBottom: spacing.sm,
   },
   instructionContent: {
     flexDirection: "row",
     alignItems: "flex-start",
     gap: spacing.sm,
+  },
+  saveHelper: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.xs,
+    marginBottom: spacing.md,
+    paddingHorizontal: spacing.xs,
   },
   columnHeaders: {
     flexDirection: "row",
