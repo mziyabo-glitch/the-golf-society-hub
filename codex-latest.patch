@@ -1,0 +1,71 @@
+﻿diff --git a/app/(app)/event/[id]/index.tsx b/app/(app)/event/[id]/index.tsx
+index 9df3eb96..fc20b47a 100644
+--- a/app/(app)/event/[id]/index.tsx
++++ b/app/(app)/event/[id]/index.tsx
+@@ -22,7 +22,7 @@ import { getColors, spacing, radius } from "@/lib/ui/theme";
+ export default function EventDetailScreen() {
+   const router = useRouter();
+   const params = useLocalSearchParams<{ id: string }>();
+-  const { societyId, userId, loading: bootstrapLoading } = useBootstrap();
++  const { loading: bootstrapLoading } = useBootstrap();
+   const colors = getColors();
+ 
+   // Safely extract eventId (could be string or array from URL params)
+@@ -36,8 +36,6 @@ export default function EventDetailScreen() {
+   if (__DEV__) {
+     console.log("[EventDetail] params:", params);
+     console.log("[EventDetail] eventId:", eventId);
+-    console.log("[EventDetail] societyId:", societyId);
+-    console.log("[EventDetail] userId:", userId);
+   }
+ 
+   const loadEvent = useCallback(async () => {
+diff --git a/app/(app)/event/[id]/players.tsx b/app/(app)/event/[id]/players.tsx
+index 8a58b919..ed322126 100644
+--- a/app/(app)/event/[id]/players.tsx
++++ b/app/(app)/event/[id]/players.tsx
+@@ -16,7 +16,7 @@ import { PrimaryButton, SecondaryButton } from "@/components/ui/Button";
+ import { LoadingState } from "@/components/ui/LoadingState";
+ import { EmptyState } from "@/components/ui/EmptyState";
+ import { useBootstrap } from "@/lib/useBootstrap";
+-import { getEvent, updateEvent, type EventDoc } from "@/lib/db_supabase/eventRepo";
++import { getEvent, type EventDoc } from "@/lib/db_supabase/eventRepo";
+ import { getMembersBySocietyId, type MemberDoc } from "@/lib/db_supabase/memberRepo";
+ import { getPermissionsForMember } from "@/lib/rbac";
+ import { getColors, spacing, radius } from "@/lib/ui/theme";
+@@ -327,13 +327,12 @@ const styles = StyleSheet.create({
+     flex: 1,
+     marginBottom: spacing.lg,
+   },
+-  memberCard: {
++  memberCard: {
+     flexDirection: "row",
+     alignItems: "center",
+     justifyContent: "space-between",
+     padding: spacing.base,
+-    marginBottom: spacing.xs,
+-    marginBottom: spacing.xs,
++    marginBottom: spacing.xs,
+     borderRadius: radius.md,
+     backgroundColor: "#f9fafb",
+     borderWidth: 2,
+diff --git a/app/(app)/event/[id]/points.tsx b/app/(app)/event/[id]/points.tsx
+index 5e4fdafd..17d9097b 100644
+--- a/app/(app)/event/[id]/points.tsx
++++ b/app/(app)/event/[id]/points.tsx
+@@ -1,5 +1,5 @@
+ import { useEffect, useState } from "react";
+-import { Alert, Pressable, StyleSheet, View } from "react-native";
++import { Alert, StyleSheet, View } from "react-native";
+ import { useLocalSearchParams, useRouter } from "expo-router";
+ import { Feather } from "@expo/vector-icons";
+ 
+@@ -14,7 +14,7 @@ import { useBootstrap } from "@/lib/useBootstrap";
+ import { getEvent, type EventDoc } from "@/lib/db_supabase/eventRepo";
+ import { getMembersBySocietyId, type MemberDoc } from "@/lib/db_supabase/memberRepo";
+ import { getEventResults, upsertEventResults } from "@/lib/db_supabase/resultsRepo";
+-import { getColors, spacing, radius } from "@/lib/ui/theme";
++import { getColors, spacing } from "@/lib/ui/theme";
+ 
+ type PointsRow = {
+   member: MemberDoc;

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+﻿import { useCallback, useState } from "react";
 import { StyleSheet, View, Pressable } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
@@ -37,168 +37,69 @@ export default function EventDetailScreen() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Debug logging in development
-  if (__DEV__) {
-    console.log("[EventDetail] params:", params);
-    console.log("[EventDetail] eventId:", eventId);
-    console.log("[EventDetail] societyId:", societyId);
-    console.log("[EventDetail] userId:", userId);
-  }
-
   const loadEvent = useCallback(async () => {
-    if (!eventId) {
-      console.log("[EventDetail] No eventId, skipping load");
+    if (!eventId || !societyId) {
+      setError("Missing event or society");
       setLoading(false);
-      setError("Missing event id in route params");
       return;
     }
 
-    setLoading(true);
-    setError(null);
-
     try {
-      console.log("[EventDetail] Fetching event:", eventId);
+      setLoading(true);
+      setError(null);
       const data = await getEvent(eventId);
-
-      if (data) {
-        console.log("[EventDetail] Event loaded:", data.name, "playerIds:", data.playerIds);
-        setEvent(data);
+      if (!data) {
+        setError("Event not found");
       } else {
-        console.log("[EventDetail] Event not found or blocked by RLS");
-        setError("Event not found (or blocked by permissions)");
+        setEvent(data);
       }
     } catch (err: any) {
-      console.error("[EventDetail] Load error:", err);
-
-      // Handle permission/RLS errors
-      const errorCode = err?.code || err?.statusCode;
-      const errorMessage = err?.message || "";
-      const is403 =
-        errorCode === "403" ||
-        errorCode === 403 ||
-        errorCode === "42501" ||
-        errorMessage.includes("permission") ||
-        errorMessage.includes("row-level security");
-
-      if (is403) {
-        setError("You don't have permission to view this event.");
-      } else {
-        setError(err?.message || "Failed to load event");
-      }
+      setError(err?.message ?? "Failed to load event");
     } finally {
       setLoading(false);
     }
-  }, [eventId]);
+  }, [eventId, societyId]);
 
-  useEffect(() => {
-    loadEvent();
-  }, [loadEvent]);
-
-  // Refetch on focus to pick up changes (e.g., after editing players)
   useFocusEffect(
     useCallback(() => {
-      if (eventId) {
-        loadEvent();
-      }
-    }, [eventId, loadEvent])
+      loadEvent();
+    }, [loadEvent])
   );
 
-  // Loading state
   if (bootstrapLoading || loading) {
     return (
-      <Screen scrollable={false}>
-        <View style={styles.centered}>
-          <LoadingState message="Loading event..." />
-        </View>
+      <Screen>
+        <LoadingState label="Loading event..." />
       </Screen>
     );
   }
 
-  // Error state
   if (error) {
     return (
       <Screen>
-        <View style={styles.header}>
-          <SecondaryButton onPress={() => router.back()} size="sm">
-            <Feather name="arrow-left" size={16} color={colors.text} />
-            {" Back"}
-          </SecondaryButton>
-        </View>
-        <EmptyState
-          icon={<Feather name="alert-circle" size={24} color={colors.error} />}
-          title="Error"
-          message={error}
-          action={{
-            label: "Go Back",
-            onPress: () => router.back(),
-          }}
-        />
+        <SecondaryButton onPress={() => router.back()} size="sm">
+          <Feather name="arrow-left" size={16} color={colors.text} /> Back
+        </SecondaryButton>
+        <EmptyState title="Error" message={error} />
       </Screen>
     );
   }
 
-  // Not found state
   if (!event) {
     return (
       <Screen>
-        <View style={styles.header}>
-          <SecondaryButton onPress={() => router.back()} size="sm">
-            <Feather name="arrow-left" size={16} color={colors.text} />
-            {" Back"}
-          </SecondaryButton>
-        </View>
-        <EmptyState
-          icon={<Feather name="calendar" size={24} color={colors.textTertiary} />}
-          title="Event Not Found"
-          message="This event may have been deleted or you don't have access."
-          action={{
-            label: "Go Back",
-            onPress: () => router.back(),
-          }}
-        />
+        <EmptyState title="Not found" message="Event not available." />
       </Screen>
     );
   }
 
-  // Format helpers
-  const formatLabel = EVENT_FORMATS.find((f) => f.value === event.format)?.label ?? event.format;
-  const classificationLabel = EVENT_CLASSIFICATIONS.find((c) => c.value === event.classification)?.label ?? event.classification;
+  const formatLabel =
+    EVENT_FORMATS.find((f) => f.value === event.format)?.label ??
+    event.format;
 
-  const getStatusColor = () => {
-    if (event.isCompleted) return colors.success;
-    if (event.status === "cancelled") return colors.error;
-    return colors.primary;
-  };
-
-  const getStatusLabel = () => {
-    if (event.isCompleted) return "Completed";
-    if (event.status === "cancelled") return "Cancelled";
-    if (event.status === "in_progress") return "In Progress";
-    return "Scheduled";
-  };
-
-  const formatDate = (dateStr?: string) => {
-    if (!dateStr) return "TBC";
-    try {
-      return new Date(dateStr).toLocaleDateString("en-GB", {
-        weekday: "long",
-        day: "numeric",
-        month: "long",
-        year: "numeric",
-      });
-    } catch {
-      return dateStr;
-    }
-  };
-
-  const handleOpenPlayers = () => {
-    if (!eventId) {
-      console.error("[EventDetail] Cannot open players: eventId is undefined");
-      return;
-    }
-    console.log("[EventDetail] opening players for event:", eventId);
-    router.push({ pathname: "/(app)/event/[id]/players", params: { id: eventId } });
-  };
+  const classificationLabel =
+    EVENT_CLASSIFICATIONS.find((c) => c.value === event.classification)
+      ?.label ?? event.classification;
 
   const handleOpenPoints = () => {
     if (!eventId) {
@@ -214,125 +115,41 @@ export default function EventDetailScreen() {
 
   return (
     <Screen>
-      {/* Header with back button */}
+      {/* Header */}
       <View style={styles.header}>
         <SecondaryButton onPress={() => router.back()} size="sm">
-          <Feather name="arrow-left" size={16} color={colors.text} />
-          {" Back"}
+          <Feather name="arrow-left" size={16} color={colors.text} /> Back
         </SecondaryButton>
       </View>
 
-      {/* Event Title */}
-      <View style={styles.titleSection}>
-        <AppText variant="title">{event.name}</AppText>
-        <View style={styles.badgeRow}>
-          {/* Status badge */}
-          <View style={[styles.badge, { backgroundColor: getStatusColor() + "20" }]}>
-            <AppText variant="small" style={{ color: getStatusColor() }}>
-              {getStatusLabel()}
-            </AppText>
-          </View>
+      {/* Title */}
+      <AppText variant="title" style={{ marginBottom: spacing.sm }}>
+        {event.name}
+      </AppText>
 
-          {/* OOM badge */}
-          {event.classification === "oom" && (
-            <View style={[styles.badge, { backgroundColor: colors.warning + "20" }]}>
-              <Feather name="award" size={12} color={colors.warning} />
-              <AppText variant="small" style={{ color: colors.warning, marginLeft: 4 }}>
-                OOM
-              </AppText>
-            </View>
-          )}
-
-          {/* Major badge */}
-          {event.classification === "major" && (
-            <View style={[styles.badge, { backgroundColor: colors.info + "20" }]}>
-              <Feather name="star" size={12} color={colors.info} />
-              <AppText variant="small" style={{ color: colors.info, marginLeft: 4 }}>
-                Major
-              </AppText>
-            </View>
-          )}
-        </View>
-      </View>
-
-      {/* Event Details Card */}
-      <AppCard style={styles.detailsCard}>
-        {/* Date */}
-        <View style={styles.detailRow}>
-          <View style={[styles.iconContainer, { backgroundColor: colors.backgroundTertiary }]}>
-            <Feather name="calendar" size={18} color={colors.primary} />
-          </View>
-          <View style={styles.detailContent}>
-            <AppText variant="caption" color="secondary">Date</AppText>
-            <AppText variant="body">{formatDate(event.date)}</AppText>
-          </View>
-        </View>
-
-        {/* Course */}
-        <View style={styles.detailRow}>
-          <View style={[styles.iconContainer, { backgroundColor: colors.backgroundTertiary }]}>
-            <Feather name="map-pin" size={18} color={colors.primary} />
-          </View>
-          <View style={styles.detailContent}>
-            <AppText variant="caption" color="secondary">Course</AppText>
-            <AppText variant="body">{event.courseName || "TBC"}</AppText>
-          </View>
-        </View>
-
-        {/* Format */}
-        <View style={styles.detailRow}>
-          <View style={[styles.iconContainer, { backgroundColor: colors.backgroundTertiary }]}>
-            <Feather name="target" size={18} color={colors.primary} />
-          </View>
-          <View style={styles.detailContent}>
-            <AppText variant="caption" color="secondary">Format</AppText>
-            <AppText variant="body">{formatLabel}</AppText>
-          </View>
-        </View>
-
-        {/* Classification */}
-        <View style={styles.detailRow}>
-          <View style={[styles.iconContainer, { backgroundColor: colors.backgroundTertiary }]}>
-            <Feather name="tag" size={18} color={colors.primary} />
-          </View>
-          <View style={styles.detailContent}>
-            <AppText variant="caption" color="secondary">Classification</AppText>
-            <AppText variant="body">{classificationLabel}</AppText>
-          </View>
-        </View>
-
-        {/* Winner (if completed) */}
-        {event.isCompleted && event.winnerName && (
-          <View style={styles.detailRow}>
-            <View style={[styles.iconContainer, { backgroundColor: colors.success + "20" }]}>
-              <Feather name="award" size={18} color={colors.success} />
-            </View>
-            <View style={styles.detailContent}>
-              <AppText variant="caption" color="secondary">Winner</AppText>
-              <AppText variant="body">{event.winnerName}</AppText>
-            </View>
-          </View>
-        )}
+      {/* Details */}
+      <AppCard style={styles.card}>
+        <Row icon="calendar" label="Date" value={event.date ?? "TBC"} />
+        <Row icon="map-pin" label="Course" value={event.courseName ?? "TBC"} />
+        <Row icon="target" label="Format" value={formatLabel} />
+        <Row icon="tag" label="Classification" value={classificationLabel} />
       </AppCard>
 
-      {/* Players Section */}
+      {/* Players */}
       <Pressable
-        onPress={handleOpenPlayers}
-        style={({ pressed }) => ({ opacity: pressed ? 0.8 : 1 })}
+        onPress={() =>
+          router.push({
+            pathname: "/(app)/event/[id]/players",
+            params: { id: eventId },
+          })
+        }
       >
         <AppCard style={styles.actionCard}>
-          <View style={styles.actionRow}>
-            <View style={[styles.iconContainer, { backgroundColor: colors.backgroundTertiary }]}>
-              <Feather name="users" size={18} color={colors.primary} />
-            </View>
-            <View style={styles.actionContent}>
-              <AppText variant="bodyBold">Players</AppText>
-              <AppText variant="caption" color="secondary">
-                {event.playerIds?.length ?? 0} player{(event.playerIds?.length ?? 0) !== 1 ? "s" : ""} registered
-              </AppText>
-            </View>
-            <Feather name="chevron-right" size={20} color={colors.textTertiary} />
-          </View>
+          <ActionRow
+            icon="users"
+            title="Players"
+            subtitle={`${event.player_ids?.length ?? 0} registered`}
+          />
         </AppCard>
       </Pressable>
 
@@ -369,51 +186,64 @@ export default function EventDetailScreen() {
   );
 }
 
+/* ---------- Helpers ---------- */
+
+function Row({
+  icon,
+  label,
+  value,
+}: {
+  icon: any;
+  label: string;
+  value: string;
+}) {
+  const colors = getColors();
+  return (
+    <View style={styles.row}>
+      <Feather name={icon} size={16} color={colors.primary} />
+      <View style={{ marginLeft: spacing.sm }}>
+        <AppText variant="caption">{label}</AppText>
+        <AppText>{value}</AppText>
+      </View>
+    </View>
+  );
+}
+
+function ActionRow({
+  icon,
+  title,
+  subtitle,
+}: {
+  icon: any;
+  title: string;
+  subtitle: string;
+}) {
+  const colors = getColors();
+  return (
+    <View style={styles.actionRow}>
+      <Feather name={icon} size={18} color={colors.primary} />
+      <View style={{ flex: 1, marginLeft: spacing.sm }}>
+        <AppText variant="bodyBold">{title}</AppText>
+        <AppText variant="caption">{subtitle}</AppText>
+      </View>
+      <Feather name="chevron-right" size={18} color={colors.textTertiary} />
+    </View>
+  );
+}
+
+/* ---------- Styles ---------- */
+
 const styles = StyleSheet.create({
-  centered: {
-    flex: 1,
-    justifyContent: "center",
-    alignItems: "center",
-  },
   header: {
-    flexDirection: "row",
-    alignItems: "center",
     marginBottom: spacing.lg,
   },
-  titleSection: {
+  card: {
     marginBottom: spacing.lg,
   },
-  badgeRow: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: spacing.xs,
-    marginTop: spacing.xs,
-  },
-  badge: {
+  row: {
     flexDirection: "row",
     alignItems: "center",
-    paddingHorizontal: spacing.sm,
-    paddingVertical: spacing.xs,
-    borderRadius: radius.sm,
-  },
-  detailsCard: {
-    marginBottom: spacing.lg,
-  },
-  detailRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginBottom: spacing.base,
-  },
-  iconContainer: {
-    width: 40,
-    height: 40,
-    borderRadius: radius.sm,
-    alignItems: "center",
-    justifyContent: "center",
-    marginRight: spacing.sm,
-  },
-  detailContent: {
-    flex: 1,
+    marginBottom: spacing.md,
   },
   actionCard: {
     marginBottom: spacing.sm,
@@ -421,12 +251,5 @@ const styles = StyleSheet.create({
   actionRow: {
     flexDirection: "row",
     alignItems: "center",
-  },
-  actionContent: {
-    flex: 1,
-  },
-  createdText: {
-    textAlign: "center",
-    marginTop: spacing.lg,
   },
 });

@@ -1,0 +1,691 @@
+﻿diff --git a/app/(app)/(tabs)/events.tsx b/app/(app)/(tabs)/events.tsx
+index a11c9930..f2509300 100644
+--- a/app/(app)/(tabs)/events.tsx
++++ b/app/(app)/(tabs)/events.tsx
+@@ -11,17 +11,17 @@ import { PrimaryButton, SecondaryButton } from "@/components/ui/Button";
+ import { LoadingState } from "@/components/ui/LoadingState";
+ import { EmptyState } from "@/components/ui/EmptyState";
+ import { useBootstrap } from "@/lib/useBootstrap";
+-import {
+-  getEventsBySocietyId,
+-  createEvent,
+-  type EventDoc,
++import {
++  getEventsBySocietyId,
++  createEvent,
++  type EventDoc,
+   type EventFormat,
+   type EventClassification,
+   EVENT_FORMATS,
+   EVENT_CLASSIFICATIONS,
+-} from "@/lib/db_supabase/eventRepo";
+-import { getPermissionsForMember } from "@/lib/rbac";
+-import { getColors, spacing, radius } from "@/lib/ui/theme";
++} from "@/lib/db_supabase/eventRepo";
++import { getPermissionsForMember } from "@/lib/rbac";
++import { getColors, spacing, radius } from "@/lib/ui/theme";
+ 
+ // Simple picker option component
+ function PickerOption({
+@@ -136,14 +136,14 @@ export default function EventsScreen() {
+     }
+   };
+ 
+-  const handleOpenEvent = (event: EventDoc) => {
+-    if (!event?.id) {
+-      console.error("[Events] Cannot open event: event.id is undefined");
+-      return;
+-    }
+-    console.log("[Events] opening event:", event.id);
+-    router.push({ pathname: "/(app)/event/[id]", params: { id: event.id } });
+-  };
++  const handleOpenEvent = (event: EventDoc) => {
++    if (!event?.id) {
++      console.error("[Events] Cannot open event: event.id is undefined");
++      return;
++    }
++    console.log("[Events] opening event:", event.id);
++    router.push({ pathname: "/event/[id]", params: { id: String(event.id) } });
++  };
+diff --git a/app/(app)/(tabs)/index.tsx b/app/(app)/(tabs)/index.tsx
+index 4fccf32b..68f40d16 100644
+--- a/app/(app)/(tabs)/index.tsx
++++ b/app/(app)/(tabs)/index.tsx
+@@ -103,7 +103,7 @@ export default function HomeScreen() {
+           style={({ pressed }) => [
+             styles.statCard,
+             { backgroundColor: colors.surface, borderColor: colors.border, opacity: pressed ? 0.8 : 1 },
+           ]}
+-          onPress={() => router.push("/(app)/(tabs)/members")}
++          onPress={() => router.push("/members")}
+         >
+           <Feather name="users" size={24} color={colors.primary} />
+           <AppText variant="h1" style={{ marginTop: spacing.xs }}>{members.length}</AppText>
+@@ -115,7 +115,7 @@ export default function HomeScreen() {
+           style={({ pressed }) => [
+             styles.statCard,
+             { backgroundColor: colors.surface, borderColor: colors.border, opacity: pressed ? 0.8 : 1 },
+           ]}
+-          onPress={() => router.push("/(app)/(tabs)/event")}
++          onPress={() => router.push("/events")}
+         >
+           <Feather name="calendar" size={24} color={colors.primary} />
+           <AppText variant="h1" style={{ marginTop: spacing.xs }}>{events.length}</AppText>
+@@ -127,7 +127,7 @@ export default function HomeScreen() {
+           style={({ pressed }) => [
+             styles.statCard,
+             { backgroundColor: colors.surface, borderColor: colors.border, opacity: pressed ? 0.8 : 1 },
+           ]}
+-          onPress={() => router.push("/(app)/(tabs)/leaderboard")}
++          onPress={() => router.push("/leaderboard")}
+         >
+           <Feather name="award" size={24} color={colors.primary} />
+           <AppText variant="h1" style={{ marginTop: spacing.xs }}>{events.filter((e) => e.isOOM).length}</AppText>
+@@ -148,7 +148,7 @@ export default function HomeScreen() {
+                 if (!event?.id) {
+                   console.error("[Home] Cannot open event: event.id is undefined");
+                   return;
+                 }
+                 console.log("[Home] opening event:", event.id);
+-                router.push({ pathname: "/event/[id]", params: { id: event.id } });
++                router.push({ pathname: "/event/[id]", params: { id: String(event.id) } });
+               }}
+             >
+               <AppCard style={styles.eventCard}>
+@@ -183,7 +183,7 @@ export default function HomeScreen() {
+                 if (!event?.id) {
+                   console.error("[Home] Cannot open event: event.id is undefined");
+                   return;
+                 }
+                 console.log("[Home] opening event:", event.id);
+-                router.push({ pathname: "/event/[id]", params: { id: event.id } });
++                router.push({ pathname: "/event/[id]", params: { id: String(event.id) } });
+               }}
+             >
+               <AppCard style={styles.eventCard}>
+diff --git a/app/(app)/(tabs)/settings.tsx b/app/(app)/(tabs)/settings.tsx
+index d5d2e884..6d4ae3c8 100644
+--- a/app/(app)/(tabs)/settings.tsx
++++ b/app/(app)/(tabs)/settings.tsx
+@@ -116,7 +116,7 @@ export default function SettingsScreen() {
+         <Pressable
+           style={({ pressed }) => [styles.linkRow, { opacity: pressed ? 0.7 : 1 }]}
+-          onPress={() => router.push("/(app)/(tabs)/members")}
++          onPress={() => router.push("/members")}
+         >
+           <View style={[styles.linkIcon, { backgroundColor: colors.backgroundTertiary }]}>
+             <Feather name="users" size={16} color={colors.primary} />
+@@ -123,7 +123,7 @@ export default function SettingsScreen() {
+         <Pressable
+           style={({ pressed }) => [styles.linkRow, { opacity: pressed ? 0.7 : 1 }]}
+-          onPress={() => router.push("/(app)/(tabs)/event")}
++          onPress={() => router.push("/events")}
+         >
+           <View style={[styles.linkIcon, { backgroundColor: colors.backgroundTertiary }]}>
+             <Feather name="calendar" size={16} color={colors.primary} />
+@@ -131,7 +131,7 @@ export default function SettingsScreen() {
+         <Pressable
+           style={({ pressed }) => [styles.linkRow, { opacity: pressed ? 0.7 : 1 }]}
+-          onPress={() => router.push("/(app)/(tabs)/leaderboard")}
++          onPress={() => router.push("/leaderboard")}
+         >
+           <View style={[styles.linkIcon, { backgroundColor: colors.backgroundTertiary }]}>
+             <Feather name="award" size={16} color={colors.primary} />
+diff --git a/app/(app)/event/[id]/index.tsx b/app/(app)/event/[id]/index.tsx
+index d2db9e46..fc20b47a 100644
+--- a/app/(app)/event/[id]/index.tsx
++++ b/app/(app)/event/[id]/index.tsx
+@@ -1,6 +1,7 @@
+ import { useCallback, useEffect, useState } from "react";
+ import { StyleSheet, View, Pressable } from "react-native";
+ import { useLocalSearchParams, useRouter } from "expo-router";
++import { useFocusEffect } from "@react-navigation/native";
+ import { Feather } from "@expo/vector-icons";
+ 
+ import { Screen } from "@/components/ui/Screen";
+@@ -22,7 +23,7 @@ import { getColors, spacing, radius } from "@/lib/ui/theme";
+ export default function EventDetailScreen() {
+   const router = useRouter();
+   const params = useLocalSearchParams<{ id: string }>();
+-  const { societyId, userId, loading: bootstrapLoading } = useBootstrap();
++  const { loading: bootstrapLoading } = useBootstrap();
+   const colors = getColors();
+ 
+   // Safely extract eventId (could be string or array from URL params)
+@@ -36,8 +37,6 @@ export default function EventDetailScreen() {
+   if (__DEV__) {
+     console.log("[EventDetail] params:", params);
+     console.log("[EventDetail] eventId:", eventId);
+-    console.log("[EventDetail] societyId:", societyId);
+-    console.log("[EventDetail] userId:", userId);
+   }
+ 
+   const loadEvent = useCallback(async () => {
+@@ -86,6 +85,12 @@ export default function EventDetailScreen() {
+     loadEvent();
+   }, [loadEvent]);
+ 
++  useFocusEffect(
++    useCallback(() => {
++      loadEvent();
++    }, [loadEvent])
++  );
++
+   // Loading state
+   if (bootstrapLoading || loading) {
+     return (
+@@ -188,6 +193,16 @@ export default function EventDetailScreen() {
+     console.log("[EventDetail] opening players for event:", eventId);
+     router.push({ pathname: "/event/[id]/players", params: { id: eventId } });
+   };
++
++  const handleOpenPoints = () => {
++    if (!eventId) {
++      console.error("[EventDetail] Cannot open points: eventId is undefined");
++      return;
++    }
++    console.log("[EventDetail] opening points for event:", eventId);
++    router.push({ pathname: "/event/[id]/points", params: { id: eventId } });
++  };
+ 
+   return (
+     <Screen>
+@@ -311,6 +326,31 @@ export default function EventDetailScreen() {
+           </View>
+         </AppCard>
+       </Pressable>
++
++      {event.classification === "oom" && (
++        <Pressable
++          onPress={handleOpenPoints}
++          style={({ pressed }) => ({ opacity: pressed ? 0.8 : 1 })}
++        >
++          <AppCard style={styles.actionCard}>
++            <View style={styles.actionRow}>
++              <View style={[styles.iconContainer, { backgroundColor: colors.backgroundTertiary }]}>
++                <Feather name="award" size={18} color={colors.primary} />
++              </View>
++              <View style={styles.actionContent}>
++                <AppText variant="bodyBold">Enter Points</AppText>
++                <AppText variant="caption" color="secondary">
++                  Record Order of Merit points
++                </AppText>
++              </View>
++              <Feather name="chevron-right" size={20} color={colors.textTertiary} />
++            </View>
++          </AppCard>
++        </Pressable>
++      )}
+diff --git a/app/(app)/event/[id]/points.tsx b/app/(app)/event/[id]/points.tsx
+new file mode 100644
+index 00000000..17d9097b
+--- /dev/null
++++ b/app/(app)/event/[id]/points.tsx
+@@ -0,0 +1,250 @@
++import { useEffect, useState } from "react";
++import { Alert, StyleSheet, View } from "react-native";
++import { useLocalSearchParams, useRouter } from "expo-router";
++import { Feather } from "@expo/vector-icons";
++
++import { Screen } from "@/components/ui/Screen";
++import { AppText } from "@/components/ui/AppText";
++import { AppCard } from "@/components/ui/AppCard";
++import { AppInput } from "@/components/ui/AppInput";
++import { PrimaryButton, SecondaryButton } from "@/components/ui/Button";
++import { LoadingState } from "@/components/ui/LoadingState";
++import { EmptyState } from "@/components/ui/EmptyState";
++import { useBootstrap } from "@/lib/useBootstrap";
++import { getEvent, type EventDoc } from "@/lib/db_supabase/eventRepo";
++import { getMembersBySocietyId, type MemberDoc } from "@/lib/db_supabase/memberRepo";
++import { getEventResults, upsertEventResults } from "@/lib/db_supabase/resultsRepo";
++import { getColors, spacing } from "@/lib/ui/theme";
++
++type PointsRow = {
++  member: MemberDoc;
++  points: number;
++};
++
++export default function EventPointsScreen() {
++  const router = useRouter();
++  const params = useLocalSearchParams<{ id: string }>();
++  const { societyId, loading: bootstrapLoading } = useBootstrap();
++  const colors = getColors();
++
++  const eventId = Array.isArray(params.id) ? params.id[0] : params.id;
++
++  const [event, setEvent] = useState<EventDoc | null>(null);
++  const [rows, setRows] = useState<PointsRow[]>([]);
++  const [loading, setLoading] = useState(true);
++  const [saving, setSaving] = useState(false);
++  const [error, setError] = useState<string | null>(null);
++
++  useEffect(() => {
++    if (!eventId || !societyId) {
++      setLoading(false);
++      if (!eventId) setError("Missing event ID");
++      return;
++    }
++
++    const loadData = async () => {
++      setLoading(true);
++      setError(null);
++
++      try {
++        const [eventData, membersData, resultsData] = await Promise.all([
++          getEvent(eventId),
++          getMembersBySocietyId(societyId),
++          getEventResults(eventId),
++        ]);
++
++        if (!eventData) {
++          setError("Event not found");
++          return;
++        }
++
++        const playerIds = new Set(eventData.playerIds || (eventData as any).player_ids || []);
++        const memberRows = membersData.filter((member) => playerIds.has(member.id));
++        const resultsByMember = new Map(
++          resultsData.map((result) => [result.member_id, result.points])
++        );
++
++        setEvent(eventData);
++        setRows(
++          memberRows.map((member) => ({
++            member,
++            points: resultsByMember.get(member.id) ?? 0,
++          }))
++        );
++      } catch (err: any) {
++        console.error("[EventPoints] Load error:", err);
++        setError(err?.message || "Failed to load data");
++      } finally {
++        setLoading(false);
++      }
++    };
++
++    loadData();
++  }, [eventId, societyId]);
++
++  const updatePoints = (memberId: string, value: string) => {
++    const numeric = Number.parseInt(value, 10);
++    setRows((prev) =>
++      prev.map((row) =>
++        row.member.id === memberId
++          ? { ...row, points: Number.isNaN(numeric) ? 0 : numeric }
++          : row
++      )
++    );
++  };
++
++  const handleSave = async () => {
++    if (!eventId) return;
++
++    setSaving(true);
++    try {
++      await upsertEventResults(
++        eventId,
++        rows.map((row) => ({
++          member_id: row.member.id,
++          points: row.points,
++        }))
++      );
++      Alert.alert("Saved", "Points updated successfully.", [
++        { text: "OK", onPress: () => router.back() },
++      ]);
++    } catch (err: any) {
++      console.error("[EventPoints] Save error:", err);
++      Alert.alert("Error", err?.message || "Failed to save points");
++    } finally {
++      setSaving(false);
++    }
++  };
++
++  if (bootstrapLoading || loading) {
++    return (
++      <Screen scrollable={false}>
++        <View style={styles.centered}>
++          <LoadingState message="Loading points..." />
++        </View>
++      </Screen>
++    );
++  }
++
++  if (error) {
++    return (
++      <Screen>
++        <View style={styles.header}>
++          <SecondaryButton onPress={() => router.back()} size="sm">
++            <Feather name="arrow-left" size={16} color={colors.text} />
++            {" Back"}
++          </SecondaryButton>
++        </View>
++        <EmptyState
++          icon={<Feather name="alert-circle" size={24} color={colors.error} />}
++          title="Error"
++          message={error}
++          action={{ label: "Go Back", onPress: () => router.back() }}
++        />
++      </Screen>
++    );
++  }
++
++  if (!event || rows.length === 0) {
++    return (
++      <Screen>
++        <View style={styles.header}>
++          <SecondaryButton onPress={() => router.back()} size="sm">
++            <Feather name="arrow-left" size={16} color={colors.text} />
++            {" Back"}
++          </SecondaryButton>
++        </View>
++        <EmptyState
++          icon={<Feather name="users" size={24} color={colors.textTertiary} />}
++          title="No Players"
++          message="Add players to this event before entering points."
++          action={{ label: "Go Back", onPress: () => router.back() }}
++        />
++      </Screen>
++    );
++  }
++
++  return (
++    <Screen>
++      <View style={styles.header}>
++        <SecondaryButton onPress={() => router.back()} size="sm">
++          <Feather name="arrow-left" size={16} color={colors.text} />
++          {" Back"}
++        </SecondaryButton>
++        <AppText variant="h2">Enter Points</AppText>
++        <View style={{ width: 60 }} />
++      </View>
++
++      <AppText variant="caption" color="secondary" style={styles.subtitle}>
++        {event.name}
++      </AppText>
++
++      <View style={styles.list}>
++        {rows.map((row) => (
++          <AppCard key={row.member.id} style={styles.rowCard}>
++            <View style={styles.rowContent}>
++              <View style={styles.memberInfo}>
++                <AppText variant="bodyBold">
++                  {row.member.displayName || row.member.name || "Member"}
++                </AppText>
++                <AppText variant="caption" color="secondary">
++                  Points
++                </AppText>
++              </View>
++              <AppInput
++                value={String(row.points)}
++                onChangeText={(value) => updatePoints(row.member.id, value)}
++                keyboardType="number-pad"
++                style={styles.pointsInput}
++                size="sm"
++              />
++            </View>
++          </AppCard>
++        ))}
++      </View>
++
++      <PrimaryButton onPress={handleSave} loading={saving} style={styles.saveButton}>
++        Save Points
++      </PrimaryButton>
++    </Screen>
++  );
++}
++
++const styles = StyleSheet.create({
++  centered: {
++    flex: 1,
++    justifyContent: "center",
++    alignItems: "center",
++  },
++  header: {
++    flexDirection: "row",
++    justifyContent: "space-between",
++    alignItems: "center",
++    marginBottom: spacing.base,
++  },
++  subtitle: {
++    marginBottom: spacing.base,
++  },
++  list: {
++    gap: spacing.sm,
++  },
++  rowCard: {
++    paddingVertical: spacing.base,
++  },
++  rowContent: {
++    flexDirection: "row",
++    alignItems: "center",
++    justifyContent: "space-between",
++    gap: spacing.base,
++  },
++  memberInfo: {
++    flex: 1,
++  },
++  pointsInput: {
++    width: 80,
++    textAlign: "center",
++  },
++  saveButton: {
++    marginTop: spacing.lg,
++  },
++});
+diff --git a/app/(app)/society.tsx b/app/(app)/society.tsx
+index 03dcf71a..65a3d069 100644
+--- a/app/(app)/society.tsx
++++ b/app/(app)/society.tsx
+@@ -22,15 +22,15 @@ export default function SocietyDashboardScreen() {
+             <SectionHeader title="ManCo Tools" />
+ 
+             <View style={styles.stack}>
+-              <SecondaryButton onPress={() => router.push("/(app)/members")}>
++              <SecondaryButton onPress={() => router.push("/members")}>
+                 Members
+               </SecondaryButton>
+ 
+-              <SecondaryButton onPress={() => router.push("/(app)/leaderboard")}>
++              <SecondaryButton onPress={() => router.push("/leaderboard")}>
+                 Leaderboard
+               </SecondaryButton>
+ 
+-              <SecondaryButton onPress={() => router.push("/(app)/settings")}>
++              <SecondaryButton onPress={() => router.push("/settings")}>
+                 Settings
+               </SecondaryButton>
+             </View>
+@@ -38,7 +38,7 @@ export default function SocietyDashboardScreen() {
+         )}
+ 
+         <SectionHeader title="General" />
+-        <SecondaryButton onPress={() => router.push("/(app)/explore")}>
++        <SecondaryButton onPress={() => router.push("/explore")}>
+           Explore
+         </SecondaryButton>
+       </View>
+diff --git a/app/_layout.tsx b/app/_layout.tsx
+index 5b223ce6..3c0a5b6e 100644
+--- a/app/_layout.tsx
++++ b/app/_layout.tsx
+@@ -48,9 +48,9 @@ function RootNavigator() {
+       router.replace("/onboarding");
+     } else if (hasSociety && inOnboarding) {
+       // Has society but on onboarding -> go to app home
+-      console.log("[_layout] Has society, redirecting to /(app)/(tabs)");
++      console.log("[_layout] Has society, redirecting to app home");
+       hasRouted.current = true;
+-      router.replace("/(app)/(tabs)");
++      router.replace("/");
+     } else {
+       console.log("[_layout] Route guard: no redirect needed");
+     }
+diff --git a/app/onboarding.tsx b/app/onboarding.tsx
+index 57456292..387574f7 100644
+--- a/app/onboarding.tsx
++++ b/app/onboarding.tsx
+@@ -165,9 +165,9 @@ export default function OnboardingScreen() {
+       // Refresh bootstrap state to pick up the new active society
+       refresh();
+ 
+-      // Step 6: Navigate to app home
+-      console.log("[join] === JOIN SOCIETY COMPLETE ===");
+-      router.replace("/(app)/(tabs)");
++      // Step 6: Navigate to app home
++      console.log("[join] === JOIN SOCIETY COMPLETE ===");
++      router.replace("/");
+     } catch (e: any) {
+       console.error("[join] Join society error:", e);
+       showRlsError(e);
+@@ -239,9 +239,9 @@ export default function OnboardingScreen() {
+       // Refresh bootstrap state to pick up the new active society
+       refresh();
+ 
+-      // Step 5: Navigate to app home
+-      console.log("[onboarding] === CREATE SOCIETY COMPLETE ===");
+-      router.replace("/(app)/(tabs)");
++      // Step 5: Navigate to app home
++      console.log("[onboarding] === CREATE SOCIETY COMPLETE ===");
++      router.replace("/");
+     } catch (e: any) {
+       console.error("[onboarding] Create society error:", e);
+       showRlsError(e);
+diff --git a/components/guards/RouteGuards.tsx b/components/guards/RouteGuards.tsx
+index 9c6adf5d..d2d6967d 100644
+--- a/components/guards/RouteGuards.tsx
++++ b/components/guards/RouteGuards.tsx
+@@ -98,7 +98,7 @@ export function RequireNoSociety({ children }: GuardProps) {
+     }
+     if (activeSocietyId && canRedirect()) {
+       markRedirected();
+-      router.replace("/(app)/society");
++      router.replace("/society");
+     }
+   }, [
+     activeSocietyId,
+diff --git a/lib/db_supabase/resultsRepo.ts b/lib/db_supabase/resultsRepo.ts
+new file mode 100644
+index 00000000..5554c72c
+--- /dev/null
++++ b/lib/db_supabase/resultsRepo.ts
+@@ -0,0 +1,56 @@
++import { supabase } from "@/lib/supabase";
++
++export type EventResultDoc = {
++  id: string;
++  event_id: string;
++  member_id: string;
++  points: number;
++  created_at?: string;
++  updated_at?: string;
++};
++
++export async function getEventResults(eventId: string): Promise<EventResultDoc[]> {
++  const { data, error } = await supabase
++    .from("event_results")
++    .select("member_id,points")
++    .eq("event_id", eventId);
++
++  if (error) {
++    console.error("[resultsRepo] getEventResults failed:", {
++      message: error.message,
++      details: error.details,
++      hint: error.hint,
++      code: error.code,
++    });
++    return [];
++  }
++
++  return (data ?? []).map((row) => ({
++    id: "",
++    event_id: eventId,
++    member_id: row.member_id,
++    points: row.points,
++  }));
++}
++
++export async function upsertEventResults(
++  eventId: string,
++  rows: { member_id: string; points: number }[]
++): Promise<void> {
++  if (!rows.length) return;
++
++  const payload = rows.map((row) => ({
++    event_id: eventId,
++    member_id: row.member_id,
++    points: row.points,
++  }));
++
++  const { error } = await supabase
++    .from("event_results")
++    .upsert(payload, { onConflict: "event_id,member_id" });
++
++  if (error) {
++    console.error("[resultsRepo] upsertEventResults failed:", {
++      message: error.message,
++      details: error.details,
++      hint: error.hint,
++      code: error.code,
++    });
++    throw new Error(error.message || "Failed to save event results");
++  }
++}
+diff --git a/supabase/migrations/007_create_event_results.sql b/supabase/migrations/007_create_event_results.sql
+new file mode 100644
+index 00000000..633cd645
+--- /dev/null
++++ b/supabase/migrations/007_create_event_results.sql
+@@ -0,0 +1,53 @@
++-- Create event_results table for OOM points entry
++CREATE TABLE IF NOT EXISTS public.event_results (
++  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
++  event_id uuid NOT NULL,
++  member_id uuid NOT NULL,
++  points int NOT NULL DEFAULT 0,
++  created_at timestamptz NOT NULL DEFAULT now(),
++  updated_at timestamptz NOT NULL DEFAULT now(),
++  UNIQUE (event_id, member_id)
++);
++
++-- Updated-at trigger function
++CREATE OR REPLACE FUNCTION public.set_updated_at()
++RETURNS trigger
++LANGUAGE plpgsql
++AS $$
++BEGIN
++  NEW.updated_at = now();
++  RETURN NEW;
++END;
++$$;
++
++DROP TRIGGER IF EXISTS trg_event_results_updated_at ON public.event_results;
++
++CREATE TRIGGER trg_event_results_updated_at
++BEFORE UPDATE ON public.event_results
++FOR EACH ROW
++EXECUTE FUNCTION public.set_updated_at();
++
++-- Enable RLS and permissive policies for authenticated users (dev only)
++ALTER TABLE public.event_results ENABLE ROW LEVEL SECURITY;
++
++DROP POLICY IF EXISTS event_results_select_authenticated ON public.event_results;
++DROP POLICY IF EXISTS event_results_insert_authenticated ON public.event_results;
++DROP POLICY IF EXISTS event_results_update_authenticated ON public.event_results;
++
++CREATE POLICY event_results_select_authenticated
++  ON public.event_results
++  FOR SELECT
++  TO authenticated
++  USING (true);
++
++CREATE POLICY event_results_insert_authenticated
++  ON public.event_results
++  FOR INSERT
++  TO authenticated
++  WITH CHECK (true);
++
++CREATE POLICY event_results_update_authenticated
++  ON public.event_results
++  FOR UPDATE
++  TO authenticated
++  USING (true);
