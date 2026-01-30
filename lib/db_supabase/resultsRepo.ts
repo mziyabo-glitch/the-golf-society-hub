@@ -33,6 +33,15 @@ export async function upsertEventResults(
   societyId: string,
   results: EventResultInput[]
 ): Promise<void> {
+  // Defensive check: ensure results is an array
+  if (!Array.isArray(results)) {
+    console.error("[resultsRepo] upsertEventResults: results is not an array!", {
+      type: typeof results,
+      value: results,
+    });
+    throw new Error("Invalid results: expected an array");
+  }
+
   console.log("[resultsRepo] upsertEventResults:", {
     eventId,
     societyId,

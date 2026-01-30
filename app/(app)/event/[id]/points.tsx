@@ -257,12 +257,32 @@ export default function EventPointsScreen() {
     setSaving(true);
     try {
       // Build results array with OOM points for all players with day points
-      const results = playersWithDayPoints.map((p) => ({
-        member_id: p.memberId,
-        points: p.oomPoints,
-      }));
+      // Use Array.from() to ensure we have a proper array (not a stale memoized value)
+      const playersToSave = Array.from(playersWithDayPoints);
 
-      console.log("[points] Upserting", results.length, "results to event_results:", results);
+      console.log("[points] playersToSave:", {
+        isArray: Array.isArray(playersToSave),
+        length: playersToSave.length,
+        players: playersToSave,
+      });
+
+      const results: Array<{ member_id: string; points: number }> = [];
+      for (const p of playersToSave) {
+        results.push({
+          member_id: p.memberId,
+          points: p.oomPoints,
+        });
+      }
+
+      console.log("[points] results array:", {
+        isArray: Array.isArray(results),
+        length: results.length,
+        results: JSON.stringify(results),
+      });
+
+      if (!Array.isArray(results) || results.length === 0) {
+        throw new Error("Failed to build results array");
+      }
 
       await upsertEventResults(event.id, societyId, results);
 
