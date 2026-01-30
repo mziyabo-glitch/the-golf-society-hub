@@ -24,6 +24,16 @@ import { getOrderOfMeritTotals, type OrderOfMeritEntry } from "@/lib/db_supabase
 import { getPermissionsForMember } from "@/lib/rbac";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
 
+/**
+ * Format OOM points for display (handles decimals from tie averaging)
+ */
+function formatPoints(pts: number): string {
+  if (pts === Math.floor(pts)) {
+    return pts.toString();
+  }
+  return pts.toFixed(2).replace(/\.?0+$/, "");
+}
+
 type ModalMode = "none" | "add" | "edit";
 
 // Role priority for sorting (lower number = higher priority)
@@ -555,7 +565,7 @@ export default function MembersScreen() {
                             </AppText>
                           </View>
                           <AppText variant="caption" color="tertiary">
-                            {oomEntry.totalPoints} pts ({oomEntry.eventsPlayed} event{oomEntry.eventsPlayed !== 1 ? "s" : ""})
+                            {formatPoints(oomEntry.totalPoints)} pts ({oomEntry.eventsPlayed} event{oomEntry.eventsPlayed !== 1 ? "s" : ""})
                           </AppText>
                         </View>
                       )}
