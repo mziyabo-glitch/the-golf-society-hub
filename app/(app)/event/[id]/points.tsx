@@ -1,12 +1,14 @@
-/**
+﻿/**
  * Event Points Entry Screen
  *
- * Workflow:
- * 1. User enters Day Points (stableford/competition score) for each player
- * 2. App auto-sorts by Day Points DESC (ties broken by name ASC)
- * 3. App auto-assigns positions (1, 2, 3...)
- * 4. App auto-calculates OOM points using F1 top-10: [25,18,15,12,10,8,6,4,2,1]
- * 5. Save stores ONLY the OOM points to event_results
+ * Workflow (simple + real-world):
+ * 1) Captain/Handicapper enters the day value from the scorecard/gamebook for each player:
+ *    - Stableford: enter Stableford points (higher is better)
+ *    - Medal: enter Net score (lower is better)
+ * 2) App sorts by format rule, assigns finishing positions, then allocates
+ *    F1-style Order of Merit points to the top 10: [25,18,15,12,10,8,6,4,2,1]
+ * 3) Save stores ONLY the OOM points to event_results.
+ * 4) After Save, navigate straight to Order of Merit and open Results Log.
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -21,34 +23,82 @@ import { AppInput } from "@/components/ui/AppInput";
 import { PrimaryButton, SecondaryButton } from "@/components/ui/Button";
 import { LoadingState } from "@/components/ui/LoadingState";
 import { EmptyState } from "@/components/ui/EmptyState";
+
 import { useBootstrap } from "@/lib/useBootstrap";
 import { getEvent, type EventDoc } from "@/lib/db_supabase/eventRepo";
-import { getMembersBySocietyId, type MemberDoc } from "@/lib/db_supabase/memberRepo";
-import {
-  upsertEventResults,
-  getEventResults,
-  type EventResultDoc,
-} from "@/lib/db_supabase/resultsRepo";
+import { getMembersBySocietyId } from "@/lib/db_supabase/memberRepo";
+import { upsertEventResults, getEventResults } from "@/lib/db_supabase/resultsRepo";
 import { getPermissionsForMember } from "@/lib/rbac";
-import { getColors, spacing, radius } from "@/lib/ui/theme";
-
-// F1-style OOM points: positions 1-10 get points, rest get 0
-const F1_OOM_POINTS = [25, 18, 15, 12, 10, 8, 6, 4, 2, 1];
-
-function getOOMPoints(position: number): number {
-  if (position >= 1 && position <= 10) {
-    return F1_OOM_POINTS[position - 1];
-  }
-  return 0;
-}
+import { getColors, spacing } from "@/lib/ui/theme";
 
 type PlayerEntry = {
   memberId: string;
   memberName: string;
-  dayPoints: string; // User input - the competition/stableford score
-  position: number | null; // Auto-calculated
-  oomPoints: number; // Auto-calculated F1 points
+  dayValue: string; // string for input handling
+  position: number | null;
+  oomPoints: number;
 };
+
+const F1_OOM_POINTS = [25, 18, 15, 12, 10, 8, 6, 4, 2, 1];
+
+function getOOMPoints(position: number | null): number {
+  if (!position) return 0;
+  const idx = position - 1;
+  return idx >= 0 && idx < F1_OOM_POINTS.length ? F1_OOM_POINTS[idx] : 0;
+}
+
+function parseIntOrNull(s: string): number | null {
+  const t = (s ?? "").trim();
+  if (!t) return null;
+  const n = parseInt(t, 10);
+  return Number.isFinite(n) ? n : null;
+}
+
+function calculatePositionsAndOOM(
+  list: PlayerEntry[],
+  format: EventDoc["format"] | null | undefined
+): PlayerEntry[] {
+  const isMedal = format === "medal";
+
+  const withValues: Array<{ p: PlayerEntry; v: number }> = [];
+  const withoutValues: PlayerEntry[] = [];
+
+  for (const p of list) {
+    const v = parseIntOrNull(p.dayValue);
+    if (v === null) {
+      withoutValues.push({ ...p, position: null, oomPoints: 0 });
+    } else {
+      withValues.push({ p: { ...p, position: null, oomPoints: 0 }, v });
+    }
+  }
+
+  // Sort:
+  // - Stableford: higher is better (DESC)
+  // - Medal: lower is better (ASC)
+  // Tie-break: memberName ASC (deterministic MVP)
+  withValues.sort((a, b) => {
+    if (a.v !== b.v) return isMedal ? a.v - b.v : b.v - a.v;
+    return a.p.memberName.localeCompare(b.p.memberName);
+  });
+
+  // Assign positions (ties share the same position)
+  let currentPosition = 1;
+  const positioned: PlayerEntry[] = withValues.map((item, index) => {
+    if (index > 0) {
+      const prev = withValues[index - 1].v;
+      const curr = item.v;
+      const isWorse = isMedal ? curr > prev : curr < prev;
+      if (isWorse) currentPosition = index + 1;
+    }
+    return {
+      ...item.p,
+      position: currentPosition,
+      oomPoints: getOOMPoints(currentPosition),
+    };
+  });
+
+  return [...positioned, ...withoutValues];
+}
 
 export default function EventPointsScreen() {
   const router = useRouter();
@@ -68,9 +118,15 @@ export default function EventPointsScreen() {
   const [error, setError] = useState<string | null>(null);
 
   const permissions = getPermissionsForMember(currentMember as any);
+  // Your app already uses this permission for Captain/Handicapper entry
   const canEnterPoints = permissions.canManageHandicaps;
 
-  // Load event data and existing results
+  const eventFormat = event?.format ?? "stableford";
+  const isMedalFormat = eventFormat === "medal";
+  const dayValueLabel = isMedalFormat ? "Net Score (Medal)" : "Day Points (Stableford)";
+  const dayValueHelper = isMedalFormat ? "Lower is better" : "Higher is better";
+  const dayValueColumnLabel = isMedalFormat ? "Net" : "Day Pts";
+
   const loadData = useCallback(async () => {
     if (bootstrapLoading) return;
 
@@ -90,7 +146,9 @@ export default function EventPointsScreen() {
     setError(null);
 
     try {
-      const [evt, members, existingResults] = await Promise.all([
+      console.log("[points] loading event + members + results", { eventId, societyId });
+
+      const [evt, mems, results] = await Promise.all([
         getEvent(eventId),
         getMembersBySocietyId(societyId),
         getEventResults(eventId),
@@ -104,25 +162,24 @@ export default function EventPointsScreen() {
 
       setEvent(evt);
 
-      // Build player list from event's playerIds
       const playerIds = evt.playerIds ?? [];
-      const memberMap = new Map(members.map((m) => [m.id, m]));
-      const resultMap = new Map(existingResults.map((r) => [r.member_id, r]));
+      const memberMap = new Map(mems.map((m: any) => [m.id, m]));
+      const resultMap = new Map(results.map((r: any) => [r.member_id, r]));
 
-      // Initialize players with empty day points
-      // If existing OOM points exist, we can't reverse-engineer day points, so leave blank
-      const playerList: PlayerEntry[] = playerIds.map((pid) => {
+      const initial: PlayerEntry[] = playerIds.map((pid) => {
         const member = memberMap.get(pid);
+        const existing = resultMap.get(pid);
         return {
           memberId: pid,
           memberName: member?.displayName || member?.name || "Unknown",
-          dayPoints: "",
+          dayValue: "",
           position: null,
-          oomPoints: 0,
+          // show already saved OOM points if any
+          oomPoints: existing?.points != null ? existing.points : 0,
         };
       });
 
-      setPlayers(playerList);
+      setPlayers(initial);
     } catch (e: any) {
       console.error("[points] load FAILED", e);
       setError(e?.message ?? "Failed to load data");
@@ -135,157 +192,87 @@ export default function EventPointsScreen() {
     loadData();
   }, [loadData]);
 
-  // Update day points for a player and recalculate positions/OOM
-  const updateDayPoints = (memberId: string, value: string) => {
+  const updateDayValue = (memberId: string, value: string) => {
     setPlayers((prev) => {
-      // Update the day points value
-      const updated = prev.map((p) =>
-        p.memberId === memberId ? { ...p, dayPoints: value } : p
-      );
-
-      // Recalculate positions and OOM points
-      return calculatePositionsAndOOM(updated);
+      const updated = prev.map((p) => (p.memberId === memberId ? { ...p, dayValue: value } : p));
+      return calculatePositionsAndOOM(updated, eventFormat);
     });
   };
 
-  // Calculate positions and OOM points based on day points
-  const calculatePositionsAndOOM = (playerList: PlayerEntry[]): PlayerEntry[] => {
-    // Separate players with valid day points from those without
-    const withPoints: PlayerEntry[] = [];
-    const withoutPoints: PlayerEntry[] = [];
-
-    for (const p of playerList) {
-      const dayPts = parseInt(p.dayPoints.trim(), 10);
-      if (!isNaN(dayPts) && p.dayPoints.trim() !== "") {
-        withPoints.push({ ...p, position: null, oomPoints: 0 });
-      } else {
-        withoutPoints.push({ ...p, position: null, oomPoints: 0 });
-      }
-    }
-
-    // Sort by day points DESC, then by name ASC for tie-breaking
-    withPoints.sort((a, b) => {
-      const aPts = parseInt(a.dayPoints.trim(), 10);
-      const bPts = parseInt(b.dayPoints.trim(), 10);
-      if (bPts !== aPts) return bPts - aPts; // Higher points = better position
-      return a.memberName.localeCompare(b.memberName); // Alphabetical tie-break
-    });
-
-    // Assign positions and OOM points
-    // Handle ties: same day points = same position
-    let currentPosition = 1;
-    const positioned = withPoints.map((p, index) => {
-      if (index > 0) {
-        const prevPts = parseInt(withPoints[index - 1].dayPoints.trim(), 10);
-        const currPts = parseInt(p.dayPoints.trim(), 10);
-        if (currPts < prevPts) {
-          currentPosition = index + 1;
-        }
-        // If equal, keep same position (tie)
-      }
-      return {
-        ...p,
-        position: currentPosition,
-        oomPoints: getOOMPoints(currentPosition),
-      };
-    });
-
-    // Combine: players with points (sorted) + players without points (original order)
-    return [...positioned, ...withoutPoints];
-  };
-
-  // Calculate players with valid day points (used for canSave and save)
-  const playersWithDayPoints = useMemo(() => {
-    return players.filter(
-      (p) => p.dayPoints.trim() !== "" && !isNaN(parseInt(p.dayPoints.trim(), 10))
-    );
+  const playersWithDayValues = useMemo(() => {
+    return players.filter((p) => parseIntOrNull(p.dayValue) !== null);
   }, [players]);
 
-  // Compute canSave with clear reasons
-  const saveReadiness = useMemo(() => {
-    if (!eventId) return { canSave: false, reason: "Missing event ID" };
-    if (!societyId) return { canSave: false, reason: "Missing society ID" };
-    if (!event) return { canSave: false, reason: "Event not loaded" };
-    if (players.length === 0) return { canSave: false, reason: "No players in event" };
-    if (playersWithDayPoints.length === 0) return { canSave: false, reason: "Enter day points for at least one player" };
-    if (saving) return { canSave: false, reason: "Save in progress..." };
-    return { canSave: true, reason: null };
-  }, [eventId, societyId, event, players.length, playersWithDayPoints.length, saving]);
+  const canSave = useMemo(() => {
+    return !!event && !!societyId && !saving && playersWithDayValues.length > 0;
+  }, [event, societyId, saving, playersWithDayValues.length]);
 
-  // Save OOM points to database - wrapped in useCallback with all dependencies
   const handleSave = useCallback(async () => {
-    // Log what we're working with
-    console.log("[points] Save pressed", {
+    // This MUST log every click. If you don’t see this, the button isn’t firing.
+    console.log("[points] SAVE CLICKED", {
       eventId,
       societyId,
-      eventLoaded: !!event,
+      format: event?.format,
       playerCount: players.length,
-      playersWithDayPoints: playersWithDayPoints.length,
+      playersWithDayValues: playersWithDayValues.length,
       saving,
     });
 
-    // Gate checks with logging
-    if (!eventId) {
-      console.warn("[points] Save blocked: missing eventId");
-      Alert.alert("Cannot Save", "Event ID is missing. Please go back and try again.");
+    if (!event || !societyId) {
+      Alert.alert("Not ready", "Event or society not loaded yet.");
       return;
     }
 
-    if (!societyId) {
-      console.warn("[points] Save blocked: missing societyId");
-      Alert.alert("Cannot Save", "Society ID is missing. Please go back and try again.");
+    if (playersWithDayValues.length === 0) {
+      Alert.alert("Nothing to save", `Enter ${dayValueLabel} for at least one player.`);
       return;
     }
 
-    if (!event) {
-      console.warn("[points] Save blocked: event not loaded");
-      Alert.alert("Cannot Save", "Event data not loaded. Please wait or refresh.");
-      return;
-    }
-
-    if (playersWithDayPoints.length === 0) {
-      console.warn("[points] Save blocked: no day points entered");
-      Alert.alert("No Points Entered", "Please enter day points for at least one player.");
-      return;
-    }
-
-    if (saving) {
-      console.warn("[points] Save blocked: already saving");
-      return;
+    // Validate values
+    for (const p of playersWithDayValues) {
+      const n = parseIntOrNull(p.dayValue);
+      if (n === null || n < 0) {
+        Alert.alert(
+          "Invalid Value",
+          `${dayValueLabel} for ${p.memberName} must be a non-negative number.`
+        );
+        return;
+      }
     }
 
     setSaving(true);
     try {
-      // Build results array with OOM points for all players with day points
-      const results = playersWithDayPoints.map((p) => ({
+      // Persist ONLY OOM points (derived)
+      const rows = playersWithDayValues.map((p) => ({
         member_id: p.memberId,
         points: p.oomPoints,
       }));
 
-      console.log("[points] Upserting", results.length, "results to event_results:", results);
+      console.log("[points] upserting event_results rows:", rows.length, rows);
 
-      await upsertEventResults(event.id, societyId, results);
+      await upsertEventResults(event.id, societyId, rows);
 
-      console.log("[points] Save SUCCESS");
+      console.log("[points] save OK -> navigating to leaderboard log");
 
-      Alert.alert("Saved", "OOM points saved successfully.", [
-        {
-          text: "OK",
-          onPress: () => {
-            // Use replace to ensure leaderboard refetches
-            router.back();
-          },
-        },
-      ]);
+      // Go straight to Order of Merit leaderboard and show Results Log view
+      router.replace("/(app)/(tabs)/leaderboard?view=log" as any);
     } catch (e: any) {
-      console.error("[points] Save FAILED", e);
-      Alert.alert("Save Failed", e?.message ?? "Failed to save points. Check console for details.");
+      console.error("[points] save FAILED", e);
+      Alert.alert("Save Failed", e?.message ?? "Failed to save points");
     } finally {
       setSaving(false);
     }
-  }, [eventId, societyId, event, playersWithDayPoints, saving, router]);
+  }, [
+    event,
+    societyId,
+    eventId,
+    players.length,
+    playersWithDayValues,
+    saving,
+    dayValueLabel,
+    router,
+  ]);
 
-  // Loading state
   if (bootstrapLoading || loading) {
     return (
       <Screen>
@@ -294,103 +281,39 @@ export default function EventPointsScreen() {
     );
   }
 
-  // Permission check
-  if (!canEnterPoints) {
-    return (
-      <Screen>
-        <View style={styles.header}>
-          <SecondaryButton onPress={() => router.back()} size="sm">
-            <Feather name="arrow-left" size={16} color={colors.text} />
-            {" Back"}
-          </SecondaryButton>
-        </View>
-        <EmptyState
-          icon={<Feather name="lock" size={24} color={colors.error} />}
-          title="No Access"
-          message="Only Captain or Handicapper can enter points."
-          action={{ label: "Go Back", onPress: () => router.back() }}
-        />
-      </Screen>
-    );
-  }
-
-  // Error state
   if (error) {
     return (
       <Screen>
-        <View style={styles.header}>
-          <SecondaryButton onPress={() => router.back()} size="sm">
-            <Feather name="arrow-left" size={16} color={colors.text} />
-            {" Back"}
-          </SecondaryButton>
-        </View>
         <EmptyState
-          icon={<Feather name="alert-circle" size={24} color={colors.error} />}
-          title="Error"
+          icon={<Feather name="alert-triangle" size={24} color={colors.error} />}
+          title="Something went wrong"
           message={error}
-          action={{ label: "Go Back", onPress: () => router.back() }}
         />
       </Screen>
     );
   }
 
-  // Event not found
-  if (!event) {
+  if (!canEnterPoints) {
     return (
       <Screen>
         <EmptyState
-          title="Not Found"
-          message="Event not found."
-          action={{ label: "Go Back", onPress: () => router.back() }}
+          icon={<Feather name="lock" size={24} color={colors.error} />}
+          title="No Access"
+          message="Only the Captain or Handicapper can enter points."
         />
       </Screen>
     );
   }
 
-  // Check if OOM event
-  const isOOM = event.classification === "oom" || event.isOOM === true;
-
-  if (!isOOM) {
+  if (!event?.playerIds || event.playerIds.length === 0) {
     return (
       <Screen>
-        <View style={styles.header}>
-          <SecondaryButton onPress={() => router.back()} size="sm">
-            <Feather name="arrow-left" size={16} color={colors.text} />
-            {" Back"}
-          </SecondaryButton>
-        </View>
         <EmptyState
-          icon={<Feather name="info" size={24} color={colors.textTertiary} />}
-          title="Not an OOM Event"
-          message="Points can only be entered for Order of Merit events."
-          action={{ label: "Go Back", onPress: () => router.back() }}
-        />
-      </Screen>
-    );
-  }
-
-  // No players
-  if (players.length === 0) {
-    return (
-      <Screen>
-        <View style={styles.header}>
-          <SecondaryButton onPress={() => router.back()} size="sm">
-            <Feather name="arrow-left" size={16} color={colors.text} />
-            {" Back"}
-          </SecondaryButton>
-        </View>
-        <EmptyState
-          icon={<Feather name="user-plus" size={24} color={colors.primary} />}
-          title="Select Players First"
-          message="Add players to this event before entering points."
-          action={{
-            label: "Select Players",
-            onPress: () =>
-              router.push({
-                pathname: "/(app)/event/[id]/players",
-                params: { id: eventId },
-              }),
-          }}
+          icon={<Feather name="users" size={24} color={colors.textMuted} />}
+          title="No players selected"
+          message="Select players for this event before entering points."
+          actionLabel="Select Players"
+          onAction={() => router.push(`/event/${eventId}/players` as any)}
         />
       </Screen>
     );
@@ -398,143 +321,117 @@ export default function EventPointsScreen() {
 
   return (
     <Screen>
-      {/* Header */}
-      <View style={styles.header}>
+      <ScrollView contentContainerStyle={styles.container}>
+        <AppText variant="h2" style={{ marginBottom: spacing.xs }}>
+          Enter Day Values
+        </AppText>
+        <AppText variant="body" color="secondary" style={{ marginBottom: spacing.md }}>
+          {event?.name}
+        </AppText>
+
+        <AppCard style={styles.instructionCard}>
+          <View style={styles.instructionContent}>
+            <Feather name="info" size={16} color={colors.primary} />
+            <AppText variant="caption" color="secondary" style={{ flex: 1 }}>
+              Enter the day value from the scorecard/gamebook. Positions and OOM points are calculated automatically.
+              Top 10 earn F1 points: 25, 18, 15, 12, 10, 8, 6, 4, 2, 1.
+            </AppText>
+          </View>
+        </AppCard>
+
+        <View style={styles.dayValueHelper}>
+          <AppText variant="captionBold" color="secondary">
+            {dayValueLabel}
+          </AppText>
+          <AppText variant="small" color="secondary">
+            {dayValueHelper}
+          </AppText>
+        </View>
+
+        {/* In-screen Save button to avoid flaky header handlers */}
+        <PrimaryButton onPress={handleSave} disabled={!canSave} loading={saving}>
+          <Feather name="save" size={16} color={colors.onPrimary} />
+          {" Save & View OOM"}
+        </PrimaryButton>
+
+        <View style={{ height: spacing.md }} />
+
+        <View style={styles.columnHeaders}>
+          <AppText variant="captionBold" color="tertiary" style={{ flex: 1 }}>
+            Player
+          </AppText>
+          <AppText variant="captionBold" color="tertiary" style={styles.colDayValue}>
+            {dayValueColumnLabel}
+          </AppText>
+          <AppText variant="captionBold" color="tertiary" style={styles.colPos}>
+            Pos
+          </AppText>
+          <AppText variant="captionBold" color="tertiary" style={styles.colOOM}>
+            OOM
+          </AppText>
+        </View>
+
+        <View style={{ gap: spacing.sm }}>
+          {players.map((p) => (
+            <AppCard key={p.memberId} style={styles.rowCard}>
+              <View style={styles.row}>
+                <AppText variant="body" style={{ flex: 1 }}>
+                  {p.memberName}
+                </AppText>
+
+                <View style={styles.colDayValue}>
+                  <AppInput
+                    value={p.dayValue}
+                    onChangeText={(v) => updateDayValue(p.memberId, v)}
+                    keyboardType="numeric"
+                    placeholder="-"
+                    style={styles.input}
+                  />
+                </View>
+
+                <View style={styles.colPos}>
+                  <AppText variant="body" style={styles.centerText}>
+                    {p.position ?? "-"}
+                  </AppText>
+                </View>
+
+                <View style={styles.colOOM}>
+                  <AppText variant="body" style={styles.centerText}>
+                    {p.oomPoints}
+                  </AppText>
+                </View>
+              </View>
+            </AppCard>
+          ))}
+        </View>
+
+        <View style={{ height: spacing.xl }} />
+
+        {/* Back button at bottom (optional) */}
         <SecondaryButton onPress={() => router.back()} size="sm">
           <Feather name="arrow-left" size={16} color={colors.text} />
           {" Back"}
         </SecondaryButton>
-        <View style={{ flex: 1 }} />
-        <PrimaryButton
-          onPress={handleSave}
-          disabled={!saveReadiness.canSave}
-          size="sm"
-        >
-          {saving ? "Saving..." : "Save"}
-        </PrimaryButton>
-      </View>
-
-      {/* Title */}
-      <AppText variant="h2" style={{ marginBottom: spacing.xs }}>
-        Enter Day Points
-      </AppText>
-      <AppText variant="body" color="secondary" style={{ marginBottom: spacing.md }}>
-        {event.name}
-      </AppText>
-
-      {/* Instructions */}
-      <AppCard style={styles.instructionCard}>
-        <View style={styles.instructionContent}>
-          <Feather name="info" size={16} color={colors.primary} />
-          <AppText variant="caption" color="secondary" style={{ flex: 1 }}>
-            Enter competition points from the scorecard. Positions and OOM points are calculated automatically. Top 10 earn F1 points: 25, 18, 15, 12, 10, 8, 6, 4, 2, 1.
-          </AppText>
-        </View>
-      </AppCard>
-
-      {/* Save status helper */}
-      {!saveReadiness.canSave && saveReadiness.reason && (
-        <View style={styles.saveHelper}>
-          <Feather name="alert-circle" size={14} color={colors.warning} />
-          <AppText variant="small" color="secondary">
-            {saveReadiness.reason}
-          </AppText>
-        </View>
-      )}
-      {saveReadiness.canSave && playersWithDayPoints.length > 0 && (
-        <View style={styles.saveHelper}>
-          <Feather name="check-circle" size={14} color={colors.success} />
-          <AppText variant="small" color="secondary">
-            Ready to save {playersWithDayPoints.length} player{playersWithDayPoints.length !== 1 ? "s" : ""}
-          </AppText>
-        </View>
-      )}
-
-      {/* Column Headers */}
-      <View style={styles.columnHeaders}>
-        <AppText variant="captionBold" color="tertiary" style={{ flex: 1 }}>
-          Player
-        </AppText>
-        <AppText variant="captionBold" color="tertiary" style={styles.colDayPoints}>
-          Day Pts
-        </AppText>
-        <AppText variant="captionBold" color="tertiary" style={styles.colPos}>
-          Pos
-        </AppText>
-        <AppText variant="captionBold" color="tertiary" style={styles.colOOM}>
-          OOM
-        </AppText>
-      </View>
-
-      {/* Player List */}
-      <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: spacing.xl }}>
-        <View style={{ gap: spacing.xs }}>
-          {players.map((player) => (
-            <View
-              key={player.memberId}
-              style={[styles.playerRow, { backgroundColor: colors.backgroundSecondary }]}
-            >
-              {/* Player Name */}
-              <AppText variant="body" style={{ flex: 1 }} numberOfLines={1}>
-                {player.memberName}
-              </AppText>
-
-              {/* Day Points Input */}
-              <View style={styles.colDayPoints}>
-                <AppInput
-                  placeholder="-"
-                  value={player.dayPoints}
-                  onChangeText={(v) => updateDayPoints(player.memberId, v)}
-                  keyboardType="number-pad"
-                  style={styles.inputBox}
-                />
-              </View>
-
-              {/* Position (read-only) */}
-              <View style={styles.colPos}>
-                <AppText
-                  variant="bodyBold"
-                  color={player.position && player.position <= 3 ? "primary" : "secondary"}
-                >
-                  {player.position ?? "-"}
-                </AppText>
-              </View>
-
-              {/* OOM Points (read-only) */}
-              <View style={styles.colOOM}>
-                <AppText
-                  variant="bodyBold"
-                  color={player.oomPoints > 0 ? "primary" : "tertiary"}
-                >
-                  {player.oomPoints}
-                </AppText>
-              </View>
-            </View>
-          ))}
-        </View>
       </ScrollView>
     </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  header: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing.sm,
-    marginBottom: spacing.lg,
+  container: {
+    paddingHorizontal: spacing.md,
+    paddingTop: spacing.md,
+    paddingBottom: spacing.xl,
   },
   instructionCard: {
-    marginBottom: spacing.sm,
+    marginBottom: spacing.md,
   },
   instructionContent: {
     flexDirection: "row",
     alignItems: "flex-start",
     gap: spacing.sm,
   },
-  saveHelper: {
-    flexDirection: "row",
-    alignItems: "center",
+  dayValueHelper: {
     gap: spacing.xs,
     marginBottom: spacing.md,
     paddingHorizontal: spacing.xs,
@@ -542,32 +439,31 @@ const styles = StyleSheet.create({
   columnHeaders: {
     flexDirection: "row",
     alignItems: "center",
-    paddingHorizontal: spacing.sm,
-    paddingVertical: spacing.xs,
-    marginBottom: spacing.xs,
+    marginBottom: spacing.sm,
+    paddingHorizontal: spacing.xs,
   },
-  colDayPoints: {
-    width: 70,
-    alignItems: "center",
+  rowCard: {
+    padding: spacing.sm,
   },
-  colPos: {
-    width: 40,
-    alignItems: "center",
-  },
-  colOOM: {
-    width: 45,
-    alignItems: "center",
-  },
-  playerRow: {
+  row: {
     flexDirection: "row",
     alignItems: "center",
-    paddingVertical: spacing.sm,
-    paddingHorizontal: spacing.sm,
-    borderRadius: radius.sm,
+    gap: spacing.sm,
   },
-  inputBox: {
+  colDayValue: {
+    width: 78,
+  },
+  colPos: {
+    width: 44,
+  },
+  colOOM: {
+    width: 52,
+  },
+  input: {
     textAlign: "center",
-    width: 60,
-    paddingHorizontal: spacing.xs,
+    paddingVertical: spacing.xs,
+  },
+  centerText: {
+    textAlign: "center",
   },
 });

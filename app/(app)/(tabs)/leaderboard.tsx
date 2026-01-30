@@ -1,9 +1,8 @@
-import { useCallback, useEffect, useState, useMemo } from "react";
-import { StyleSheet, View, Platform, Alert, Pressable } from "react-native";
+import { useCallback, useMemo, useState } from "react";
+import { ScrollView, StyleSheet, View } from "react-native";
 import { useFocusEffect } from "@react-navigation/native";
+import { useLocalSearchParams } from "expo-router";
 import { Feather } from "@expo/vector-icons";
-import * as Print from "expo-print";
-import * as Sharing from "expo-sharing";
 
 import { Screen } from "@/components/ui/Screen";
 import { AppText } from "@/components/ui/AppText";
@@ -11,255 +10,117 @@ import { AppCard } from "@/components/ui/AppCard";
 import { SecondaryButton } from "@/components/ui/Button";
 import { LoadingState } from "@/components/ui/LoadingState";
 import { EmptyState } from "@/components/ui/EmptyState";
-import { useBootstrap } from "@/lib/useBootstrap";
-import { getEventsBySocietyId, type EventDoc } from "@/lib/db_supabase/eventRepo";
-import {
-  getOrderOfMeritTotals,
-  getOrderOfMeritLog,
-  type OrderOfMeritEntry,
-  type ResultsLogEntry,
-} from "@/lib/db_supabase/resultsRepo";
-import { getColors, spacing, radius } from "@/lib/ui/theme";
+import { PrimaryButton, SecondaryButton } from "@/components/ui/Button";
 
-type TabType = "leaderboard" | "resultsLog";
+import { useBootstrap } from "@/lib/useBootstrap";
+import { getColors, spacing } from "@/lib/ui/theme";
+import { getOrderOfMeritTotals, getOrderOfMeritLog } from "@/lib/db_supabase/resultsRepo";
+
+type ViewMode = "leaderboard" | "log";
 
 export default function LeaderboardScreen() {
-  const { society, societyId, loading: bootstrapLoading } = useBootstrap();
+  const params = useLocalSearchParams<{ view?: string }>();
+  const { societyId, loading: bootstrapLoading } = useBootstrap();
   const colors = getColors();
 
-  const [activeTab, setActiveTab] = useState<TabType>("leaderboard");
-  const [standings, setStandings] = useState<OrderOfMeritEntry[]>([]);
-  const [resultsLog, setResultsLog] = useState<ResultsLogEntry[]>([]);
-  const [events, setEvents] = useState<EventDoc[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [sharing, setSharing] = useState(false);
+  const initialMode: ViewMode = params?.view === "log" ? "log" : "leaderboard";
+  const [mode, setMode] = useState<ViewMode>(initialMode);
 
-  const loadData = useCallback(async () => {
-    if (!societyId) {
-      setLoading(false);
-      return;
-    }
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const [totals, setTotals] = useState<any[]>([]);
+  const [oomEventCount, setOomEventCount] = useState<number>(0);
+
+  const [logRows, setLogRows] = useState<any[]>([]);
+
+  const fetchData = useCallback(async () => {
+    if (!societyId) return;
+
     setLoading(true);
+    setError(null);
+
     try {
-      const [totals, eventsData, logData] = await Promise.all([
-        getOrderOfMeritTotals(societyId),
-        getEventsBySocietyId(societyId),
-        getOrderOfMeritLog(societyId),
-      ]);
-      setStandings(totals);
-      setEvents(eventsData);
-      setResultsLog(logData);
-    } catch (err) {
-      console.error("Failed to load leaderboard data:", err);
+      if (mode === "leaderboard") {
+        const res = await getOrderOfMeritTotals(societyId);
+        setTotals(res?.totals ?? res ?? []);
+        setOomEventCount(res?.oomEventCount ?? res?.eventsCount ?? 0);
+      } else {
+        const rows = await getOrderOfMeritLog(societyId);
+        setLogRows(rows ?? []);
+      }
+    } catch (e: any) {
+      setError(e?.message ?? "Failed to load leaderboard");
     } finally {
       setLoading(false);
     }
-  }, [societyId]);
-
-  // Group results log by event for display
-  const groupedResultsLog = useMemo(() => {
-    const groups: Array<{
-      eventId: string;
-      eventName: string;
-      eventDate: string | null;
-      format: string | null;
-      results: Array<{ memberId: string; memberName: string; points: number }>;
-    }> = [];
-
-    let currentEventId: string | null = null;
-
-    for (const entry of resultsLog) {
-      if (entry.eventId !== currentEventId) {
-        groups.push({
-          eventId: entry.eventId,
-          eventName: entry.eventName,
-          eventDate: entry.eventDate,
-          format: entry.format,
-          results: [],
-        });
-        currentEventId = entry.eventId;
-      }
-      groups[groups.length - 1].results.push({
-        memberId: entry.memberId,
-        memberName: entry.memberName,
-        points: entry.points,
-      });
-    }
-
-    return groups;
-  }, [resultsLog]);
-
-  useEffect(() => {
-    loadData();
-  }, [loadData]);
+  }, [societyId, mode]);
 
   // Refetch on focus to pick up changes after entering points
   useFocusEffect(
     useCallback(() => {
-      if (societyId) {
-        loadData();
-      }
-    }, [societyId, loadData])
+      fetchData();
+    }, [fetchData])
   );
 
-  // Count OOM events
-  const oomEventCount = events.filter(
-    (e) => e.classification === "oom" || e.isOOM === true
-  ).length;
-
-  // Generate HTML for PDF
-  const generateHTML = () => {
-    const societyName = society?.name || "Golf Society";
-    const date = new Date().toLocaleDateString("en-GB", {
-      day: "numeric",
-      month: "long",
-      year: "numeric",
-    });
-
-    const rows = standings
-      .map(
-        (entry) => `
-      <tr>
-        <td style="padding: 12px; border-bottom: 1px solid #eee; text-align: center; font-weight: ${
-          entry.rank <= 3 ? "bold" : "normal"
-        }; color: ${entry.rank === 1 ? "#FFD700" : entry.rank === 2 ? "#C0C0C0" : entry.rank === 3 ? "#CD7F32" : "#333"};">
-          ${entry.rank}
-        </td>
-        <td style="padding: 12px; border-bottom: 1px solid #eee;">${entry.memberName}</td>
-        <td style="padding: 12px; border-bottom: 1px solid #eee; text-align: center;">${entry.eventsPlayed}</td>
-        <td style="padding: 12px; border-bottom: 1px solid #eee; text-align: right; font-weight: bold; color: #0A7C4A;">${entry.totalPoints}</td>
-      </tr>
-    `
-      )
-      .join("");
-
-    return `
-      <!DOCTYPE html>
-      <html>
-        <head>
-          <meta charset="utf-8">
-          <title>Order of Merit - ${societyName}</title>
-          <style>
-            body {
-              font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-              padding: 40px;
-              color: #333;
-            }
-            h1 {
-              color: #0A7C4A;
-              margin-bottom: 8px;
-            }
-            h2 {
-              color: #666;
-              font-weight: normal;
-              margin-top: 0;
-            }
-            .date {
-              color: #999;
-              margin-bottom: 24px;
-            }
-            table {
-              width: 100%;
-              border-collapse: collapse;
-              margin-top: 16px;
-            }
-            th {
-              background: #0A7C4A;
-              color: white;
-              padding: 12px;
-              text-align: left;
-            }
-            th:first-child, th:last-child {
-              text-align: center;
-            }
-            th:nth-child(3) {
-              text-align: center;
-            }
-            .footer {
-              margin-top: 32px;
-              padding-top: 16px;
-              border-top: 1px solid #eee;
-              color: #999;
-              font-size: 12px;
-            }
-          </style>
-        </head>
-        <body>
-          <h1>${societyName}</h1>
-          <h2>Season Leaderboard - Order of Merit</h2>
-          <p class="date">${date} | ${oomEventCount} Order of Merit event${oomEventCount !== 1 ? "s" : ""}</p>
-
-          ${
-            standings.length > 0
-              ? `
-            <table>
-              <thead>
-                <tr>
-                  <th style="text-align: center;">Rank</th>
-                  <th>Player</th>
-                  <th style="text-align: center;">Events</th>
-                  <th style="text-align: right;">Points</th>
-                </tr>
-              </thead>
-              <tbody>
-                ${rows}
-              </tbody>
-            </table>
-          `
-              : `<p>No Order of Merit results yet.</p>`
-          }
-
-          <div class="footer">
-            Generated by Golf Society Hub
-          </div>
-        </body>
-      </html>
-    `;
-  };
-
-  const handleShare = async () => {
-    try {
-      setSharing(true);
-
-      const html = generateHTML();
-
-      // Generate PDF
-      const { uri } = await Print.printToFileAsync({
-        html,
-        base64: false,
-      });
-
-      console.log("[Leaderboard] PDF generated:", uri);
-
-      // Check if sharing is available
-      const canShare = await Sharing.isAvailableAsync();
-
-      if (canShare) {
-        await Sharing.shareAsync(uri, {
-          mimeType: "application/pdf",
-          dialogTitle: "Share Order of Merit",
-          UTI: "com.adobe.pdf",
-        });
-      } else {
-        Alert.alert(
-          "Sharing Unavailable",
-          "Sharing is not available on this device."
-        );
-      }
-    } catch (err: any) {
-      console.error("[Leaderboard] Share error:", err);
-      Alert.alert("Error", err?.message || "Failed to share leaderboard");
-    } finally {
-      setSharing(false);
+  const groupedLog = useMemo(() => {
+    // Expect rows like:
+    // { eventId, eventName, eventDate, format, memberName, points }
+    const groups = new Map<string, any[]>();
+    for (const r of logRows) {
+      const key = r.eventId ?? r.event_id ?? "unknown";
+      const arr = groups.get(key) ?? [];
+      arr.push(r);
+      groups.set(key, arr);
     }
-  };
+    return Array.from(groups.entries()).map(([eventId, rows]) => {
+      const first = rows[0] ?? {};
+      return {
+        eventId,
+        eventName: first.eventName ?? first.event_name ?? "Event",
+        eventDate: first.eventDate ?? first.event_date ?? null,
+        format: first.format ?? null,
+        rows,
+      };
+    });
+  }, [logRows]);
 
-  if (bootstrapLoading || loading) {
+  if (bootstrapLoading) {
     return (
-      <Screen scrollable={false}>
-        <View style={styles.centered}>
-          <LoadingState message="Loading leaderboard..." />
-        </View>
+      <Screen>
+        <LoadingState label="Loading..." />
+      </Screen>
+    );
+  }
+
+  if (!societyId) {
+    return (
+      <Screen>
+        <EmptyState
+          icon={<Feather name="alert-triangle" size={24} color={colors.error} />}
+          title="No society"
+          message="Join or create a society to view leaderboards."
+        />
+      </Screen>
+    );
+  }
+
+  if (loading) {
+    return (
+      <Screen>
+        <LoadingState label="Loading leaderboard..." />
+      </Screen>
+    );
+  }
+
+  if (error) {
+    return (
+      <Screen>
+        <EmptyState
+          icon={<Feather name="alert-triangle" size={24} color={colors.error} />}
+          title="Couldn’t load"
+          message={error}
+        />
       </Screen>
     );
   }
@@ -283,318 +144,138 @@ export default function LeaderboardScreen() {
 
   return (
     <Screen>
-      {/* Header */}
-      <View style={styles.header}>
-        <View style={{ flex: 1 }}>
-          <AppText variant="title">Season Leaderboard</AppText>
-          <AppText variant="caption" color="secondary">
-            {oomEventCount} Order of Merit event{oomEventCount !== 1 ? "s" : ""}
-          </AppText>
-        </View>
-        {activeTab === "leaderboard" && standings.length > 0 && (
-          <SecondaryButton onPress={handleShare} size="sm" disabled={sharing}>
-            <Feather name="share" size={16} color={colors.text} />
-            {sharing ? " Sharing..." : " Share"}
+      <ScrollView contentContainerStyle={styles.container}>
+        <AppText variant="h2" style={{ marginBottom: spacing.xs }}>
+          Order of Merit
+        </AppText>
+
+        <View style={styles.toggleRow}>
+          <SecondaryButton
+            size="sm"
+            onPress={() => setMode("leaderboard")}
+            disabled={mode === "leaderboard"}
+          >
+            Season Leaderboard
           </SecondaryButton>
-        )}
-      </View>
 
-      {/* Tab Toggle */}
-      <View style={[styles.tabContainer, { backgroundColor: colors.backgroundSecondary }]}>
-        <Pressable
-          style={[
-            styles.tab,
-            activeTab === "leaderboard" && { backgroundColor: colors.background },
-          ]}
-          onPress={() => setActiveTab("leaderboard")}
-        >
-          <Feather
-            name="award"
-            size={14}
-            color={activeTab === "leaderboard" ? colors.primary : colors.textSecondary}
-          />
-          <AppText
-            variant="captionBold"
-            color={activeTab === "leaderboard" ? "primary" : "secondary"}
-          >
-            Order of Merit
-          </AppText>
-        </Pressable>
-        <Pressable
-          style={[
-            styles.tab,
-            activeTab === "resultsLog" && { backgroundColor: colors.background },
-          ]}
-          onPress={() => setActiveTab("resultsLog")}
-        >
-          <Feather
-            name="list"
-            size={14}
-            color={activeTab === "resultsLog" ? colors.primary : colors.textSecondary}
-          />
-          <AppText
-            variant="captionBold"
-            color={activeTab === "resultsLog" ? "primary" : "secondary"}
-          >
+          <SecondaryButton size="sm" onPress={() => setMode("log")} disabled={mode === "log"}>
             Results Log
-          </AppText>
-        </Pressable>
-      </View>
+          </SecondaryButton>
 
-      {/* Leaderboard Tab Content */}
-      {activeTab === "leaderboard" && (
-        <>
-          {standings.length === 0 ? (
-            <EmptyState
-              icon={<Feather name="award" size={24} color={colors.textTertiary} />}
-              title="No Order of Merit Points Yet"
-              message="Enter points for Order of Merit events to see the leaderboard. Create an event with 'Order of Merit' classification, then add players and enter their points."
-            />
-          ) : (
-            <View style={styles.list}>
-              {standings.map((entry) => {
-                const isTop3 = entry.rank <= 3;
-                // Medal colors: gold (1st), silver (2nd), bronze (3rd)
-                const medalColorMap: Record<number, string> = {
-                  1: colors.warning,  // Gold
-                  2: "#C0C0C0",       // Silver
-                  3: "#CD7F32",       // Bronze
-                };
-                const medalColor = medalColorMap[entry.rank];
+          <PrimaryButton size="sm" onPress={fetchData}>
+            Refresh
+          </PrimaryButton>
+        </View>
 
-                return (
-                  <AppCard key={entry.memberId} style={styles.standingCard}>
-                    <View style={styles.standingRow}>
-                      {/* Position */}
-                      <View
-                        style={[
-                          styles.positionBadge,
-                          {
-                            backgroundColor: isTop3 && medalColor
-                              ? medalColor + "20"
-                              : colors.backgroundTertiary,
-                          },
-                        ]}
-                      >
-                        {isTop3 && medalColor ? (
-                          <Feather
-                            name="award"
-                            size={16}
-                            color={medalColor}
-                          />
-                        ) : (
-                          <AppText variant="captionBold" color="secondary">
-                            {entry.rank}
+        {mode === "leaderboard" && (
+          <>
+            <AppText variant="caption" color="secondary" style={{ marginBottom: spacing.md }}>
+              {oomEventCount ? `${oomEventCount} Order of Merit event(s)` : "No Order of Merit events yet"}
+            </AppText>
+
+            {(!totals || totals.length === 0) ? (
+              <EmptyState
+                icon={<Feather name="award" size={24} color={colors.textMuted} />}
+                title="No OOM points yet"
+                message="Enter points for an Order of Merit event to see the standings."
+              />
+            ) : (
+              <View style={{ gap: spacing.sm }}>
+                {totals.map((row: any, idx: number) => (
+                  <AppCard key={row.memberId ?? row.member_id ?? idx} style={styles.rowCard}>
+                    <View style={styles.row}>
+                      <AppText variant="body" style={{ width: 28, color: colors.textMuted }}>
+                        {idx + 1}
+                      </AppText>
+                      <AppText variant="body" style={{ flex: 1 }}>
+                        {row.memberName ?? row.member_name ?? row.initials ?? "Member"}
+                      </AppText>
+                      <AppText variant="body" style={{ width: 70, textAlign: "right" }}>
+                        {row.totalPoints ?? row.total_points ?? row.points ?? 0} pts
+                      </AppText>
+                    </View>
+                    <AppText variant="caption" color="secondary" style={{ marginTop: spacing.xs }}>
+                      {row.eventsPlayed ?? row.events_played ?? 0} event(s)
+                    </AppText>
+                  </AppCard>
+                ))}
+              </View>
+            )}
+          </>
+        )}
+
+        {mode === "log" && (
+          <>
+            {(!groupedLog || groupedLog.length === 0) ? (
+              <EmptyState
+                icon={<Feather name="list" size={24} color={colors.textMuted} />}
+                title="No results yet"
+                message="Once points are saved for OOM events, the results log will appear here."
+              />
+            ) : (
+              <View style={{ gap: spacing.md }}>
+                {groupedLog.map((g) => (
+                  <AppCard key={g.eventId} style={styles.eventCard}>
+                    <AppText variant="h3" style={{ marginBottom: spacing.xs }}>
+                      {g.eventName}
+                    </AppText>
+                    <AppText variant="caption" color="secondary" style={{ marginBottom: spacing.sm }}>
+                      {(g.eventDate ? `${g.eventDate} · ` : "")}{g.format ? `${g.format}` : ""}
+                    </AppText>
+
+                    <View style={{ gap: spacing.xs }}>
+                      {g.rows.map((r: any, i: number) => (
+                        <View key={`${g.eventId}-${i}`} style={styles.logRow}>
+                          <AppText variant="body" style={{ flex: 1 }}>
+                            {r.memberName ?? r.member_name ?? "Member"}
                           </AppText>
-                        )}
-                      </View>
-
-                      {/* Member Info */}
-                      <View style={styles.memberInfo}>
-                        <AppText variant="bodyBold">{entry.memberName}</AppText>
-                        <AppText variant="caption" color="secondary">
-                          {entry.eventsPlayed} event{entry.eventsPlayed !== 1 ? "s" : ""}
-                        </AppText>
-                      </View>
-
-                      {/* Points */}
-                      <View style={styles.pointsContainer}>
-                        <AppText variant="h1" color="primary">
-                          {entry.totalPoints}
-                        </AppText>
-                        <AppText variant="small" color="tertiary">
-                          pts
-                        </AppText>
-                      </View>
+                          <AppText variant="body" style={{ width: 70, textAlign: "right" }}>
+                            {r.points ?? 0} pts
+                          </AppText>
+                        </View>
+                      ))}
                     </View>
                   </AppCard>
-                );
-              })}
-            </View>
-          )}
+                ))}
+              </View>
+            )}
+          </>
+        )}
 
-          {/* Info card */}
-          <AppCard style={styles.infoCard}>
-            <View style={styles.infoContent}>
-              <Feather name="info" size={16} color={colors.textTertiary} />
-              <AppText variant="caption" color="secondary" style={{ flex: 1 }}>
-                F1-style points (25, 18, 15, 12, 10, 8, 6, 4, 2, 1) for positions 1-10. Points accumulate across all OOM events.
-              </AppText>
-            </View>
-          </AppCard>
-        </>
-      )}
-
-      {/* Results Log Tab Content */}
-      {activeTab === "resultsLog" && (
-        <>
-          {groupedResultsLog.length === 0 ? (
-            <EmptyState
-              icon={<Feather name="list" size={24} color={colors.textTertiary} />}
-              title="No Results Recorded"
-              message="No Order of Merit results have been entered yet. Go to an OOM event and enter points to see the results log."
-            />
-          ) : (
-            <View style={styles.list}>
-              {groupedResultsLog.map((group) => (
-                <View key={group.eventId} style={styles.eventGroup}>
-                  {/* Event Header */}
-                  <View style={[styles.eventHeader, { backgroundColor: colors.backgroundSecondary }]}>
-                    <View style={{ flex: 1 }}>
-                      <AppText variant="bodyBold">{group.eventName}</AppText>
-                      <View style={styles.eventMeta}>
-                        {group.eventDate && (
-                          <AppText variant="small" color="tertiary">
-                            {formatDate(group.eventDate)}
-                          </AppText>
-                        )}
-                        {group.format && (
-                          <>
-                            <AppText variant="small" color="tertiary"> • </AppText>
-                            <AppText variant="small" color="tertiary">
-                              {formatLabel(group.format)}
-                            </AppText>
-                          </>
-                        )}
-                      </View>
-                    </View>
-                    <View style={[styles.eventBadge, { backgroundColor: colors.primary + "20" }]}>
-                      <AppText variant="small" color="primary">
-                        {group.results.length} player{group.results.length !== 1 ? "s" : ""}
-                      </AppText>
-                    </View>
-                  </View>
-
-                  {/* Results Rows */}
-                  {group.results.map((result, idx) => (
-                    <View
-                      key={result.memberId}
-                      style={[
-                        styles.resultRow,
-                        { borderBottomColor: colors.border },
-                        idx === group.results.length - 1 && { borderBottomWidth: 0 },
-                      ]}
-                    >
-                      <AppText variant="body" style={{ flex: 1 }}>
-                        {result.memberName}
-                      </AppText>
-                      <View style={styles.pointsBadge}>
-                        <AppText variant="bodyBold" color="primary">
-                          {result.points}
-                        </AppText>
-                        <AppText variant="small" color="tertiary"> pts</AppText>
-                      </View>
-                    </View>
-                  ))}
-                </View>
-              ))}
-            </View>
-          )}
-
-          {/* Info card for results log */}
-          <AppCard style={styles.infoCard}>
-            <View style={styles.infoContent}>
-              <Feather name="info" size={16} color={colors.textTertiary} />
-              <AppText variant="caption" color="secondary" style={{ flex: 1 }}>
-                This log shows all Order of Merit points entered, grouped by event. Use this as an audit trail to verify points allocation.
-              </AppText>
-            </View>
-          </AppCard>
-        </>
-      )}
+        <View style={{ height: spacing.xl }} />
+      </ScrollView>
     </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  centered: {
-    flex: 1,
-    justifyContent: "center",
-    alignItems: "center",
+  container: {
+    paddingHorizontal: spacing.md,
+    paddingTop: spacing.md,
+    paddingBottom: spacing.xl,
   },
-  header: {
+  toggleRow: {
     flexDirection: "row",
     alignItems: "center",
+    gap: spacing.sm,
     marginBottom: spacing.md,
+    flexWrap: "wrap",
   },
-  tabContainer: {
-    flexDirection: "row",
-    padding: spacing.xs,
-    borderRadius: radius.md,
-    marginBottom: spacing.lg,
-    gap: spacing.xs,
-  },
-  tab: {
-    flex: 1,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: spacing.xs,
-    paddingVertical: spacing.sm,
-    paddingHorizontal: spacing.md,
-    borderRadius: radius.sm,
-  },
-  list: {
-    gap: spacing.sm,
-    marginBottom: spacing.lg,
-  },
-  standingCard: {
-    marginBottom: 0,
-  },
-  standingRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing.sm,
-  },
-  positionBadge: {
-    width: 40,
-    height: 40,
-    borderRadius: radius.full,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  memberInfo: {
-    flex: 1,
-  },
-  pointsContainer: {
-    alignItems: "center",
-  },
-  eventGroup: {
-    borderRadius: radius.md,
-    overflow: "hidden",
-  },
-  eventHeader: {
-    flexDirection: "row",
-    alignItems: "center",
+  rowCard: {
     padding: spacing.sm,
-    paddingHorizontal: spacing.md,
   },
-  eventMeta: {
+  row: {
     flexDirection: "row",
     alignItems: "center",
-  },
-  eventBadge: {
-    paddingHorizontal: spacing.sm,
-    paddingVertical: spacing.xs,
-    borderRadius: radius.sm,
-  },
-  resultRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingVertical: spacing.sm,
-    paddingHorizontal: spacing.md,
-    borderBottomWidth: 1,
-  },
-  pointsBadge: {
-    flexDirection: "row",
-    alignItems: "baseline",
-  },
-  infoCard: {
-    marginTop: spacing.sm,
-  },
-  infoContent: {
-    flexDirection: "row",
-    alignItems: "flex-start",
     gap: spacing.sm,
+  },
+  eventCard: {
+    padding: spacing.md,
+  },
+  logRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+    paddingVertical: 4,
   },
 });
