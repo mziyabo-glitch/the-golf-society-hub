@@ -56,14 +56,16 @@ export async function upsertEventResults(
     points: r.points,
   }));
 
-  console.log("[resultsRepo] upserting rows:", rows);
+  console.log("[resultsRepo] upserting rows:", JSON.stringify(rows, null, 2));
 
-  const { error } = await supabase
+  // Use .select() to verify rows were actually inserted/updated
+  const { data, error } = await supabase
     .from("event_results")
     .upsert(rows, {
       onConflict: "event_id,member_id",
       ignoreDuplicates: false,
-    });
+    })
+    .select();
 
   if (error) {
     console.error("[resultsRepo] upsertEventResults failed:", {
@@ -72,10 +74,31 @@ export async function upsertEventResults(
       hint: error.hint,
       code: error.code,
     });
+
+    // Check for common RLS/permission errors
+    if (error.code === "42501" || error.message?.includes("policy")) {
+      throw new Error("Permission denied. Only Captain or Handicapper can save points.");
+    }
+    if (error.code === "42P01" || error.message?.includes("does not exist")) {
+      throw new Error("Results table not found. Please contact support.");
+    }
+
     throw new Error(error.message || "Failed to save event results");
   }
 
-  console.log("[resultsRepo] upsertEventResults success");
+  // Verify data was actually saved (RLS can silently block without error)
+  console.log("[resultsRepo] upsert returned:", data?.length ?? 0, "rows");
+
+  if (!data || data.length === 0) {
+    console.error("[resultsRepo] upsert returned no data - RLS may be blocking");
+    throw new Error("Failed to save points. You may not have permission.");
+  }
+
+  if (data.length !== rows.length) {
+    console.warn("[resultsRepo] Expected", rows.length, "rows but got", data.length);
+  }
+
+  console.log("[resultsRepo] upsertEventResults success, saved", data.length, "rows");
 }
 
 /**
