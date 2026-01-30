@@ -414,8 +414,8 @@ export default function LeaderboardScreen() {
           {standings.length === 0 ? (
             <EmptyState
               icon={<Feather name="award" size={24} color={colors.textTertiary} />}
-              title="No Points Yet"
-              message="Enter points for events to see the Order of Merit standings. Go to an event, add players, and enter their scores."
+              title="No Order of Merit points yet"
+              message="No Order of Merit points recorded yet. Save points for an OOM event to start the standings."
             />
           ) : (
             <View style={styles.list}>
@@ -498,8 +498,8 @@ export default function LeaderboardScreen() {
           {groupedResultsLog.length === 0 ? (
             <EmptyState
               icon={<Feather name="list" size={24} color={colors.textTertiary} />}
-              title="No Results Recorded"
-              message="No results have been entered yet. Go to an event and enter points to see the results log."
+              title="No results yet"
+              message="No Order of Merit results recorded yet. Once you save points for an OOM event, the audit trail will appear here."
             />
           ) : (
             <View style={styles.list}>
@@ -538,7 +538,7 @@ export default function LeaderboardScreen() {
                       Player
                     </AppText>
                     <AppText variant="captionBold" color="tertiary" style={styles.auditCol}>
-                      {group.format?.includes('strokeplay') || group.format === 'medal' ? 'Score' : 'Day Pts'}
+                      {group.format?.includes('strokeplay') || group.format === 'medal' ? 'Net' : 'Points'}
                     </AppText>
                     <AppText variant="captionBold" color="tertiary" style={styles.auditCol}>
                       Pos
