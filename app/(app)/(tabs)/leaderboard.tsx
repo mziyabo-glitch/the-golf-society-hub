@@ -38,24 +38,37 @@ export default function LeaderboardScreen() {
   const [events, setEvents] = useState<EventDoc[]>([]);
   const [loading, setLoading] = useState(true);
   const [sharing, setSharing] = useState(false);
+  const [fetchError, setFetchError] = useState<string | null>(null);
 
   const loadData = useCallback(async () => {
+    // Don't fetch with undefined societyId
     if (!societyId) {
+      console.log("[leaderboard] No societyId, skipping fetch");
       setLoading(false);
       return;
     }
+
+    console.log("[leaderboard] Loading data for society:", societyId);
     setLoading(true);
+    setFetchError(null);
+
     try {
       const [totals, eventsData, logData] = await Promise.all([
         getOrderOfMeritTotals(societyId),
         getEventsBySocietyId(societyId),
         getOrderOfMeritLog(societyId),
       ]);
+      console.log("[leaderboard] Data loaded:", {
+        standings: totals.length,
+        events: eventsData.length,
+        resultsLog: logData.length,
+      });
       setStandings(totals);
       setEvents(eventsData);
       setResultsLog(logData);
-    } catch (err) {
-      console.error("Failed to load leaderboard data:", err);
+    } catch (err: any) {
+      console.error("[leaderboard] Failed to load data:", err);
+      setFetchError(err?.message || "Failed to load data");
     } finally {
       setLoading(false);
     }
@@ -274,11 +287,43 @@ export default function LeaderboardScreen() {
     }
   };
 
+  // Show loading state while bootstrap or data is loading
   if (bootstrapLoading || loading) {
     return (
       <Screen scrollable={false}>
         <View style={styles.centered}>
-          <LoadingState message="Loading leaderboard..." />
+          <LoadingState message="Loading Order of Merit..." />
+        </View>
+      </Screen>
+    );
+  }
+
+  // Show error state if fetch failed
+  if (fetchError) {
+    return (
+      <Screen scrollable={false}>
+        <View style={styles.centered}>
+          <EmptyState
+            icon={<Feather name="alert-circle" size={24} color={colors.error} />}
+            title="Failed to Load"
+            message={fetchError}
+            action={{ label: "Try Again", onPress: loadData }}
+          />
+        </View>
+      </Screen>
+    );
+  }
+
+  // Show empty state if no society selected
+  if (!societyId) {
+    return (
+      <Screen scrollable={false}>
+        <View style={styles.centered}>
+          <EmptyState
+            icon={<Feather name="users" size={24} color={colors.textTertiary} />}
+            title="No Society Selected"
+            message="Please select or join a golf society to view the Order of Merit."
+          />
         </View>
       </Screen>
     );
