@@ -20,8 +20,19 @@ import {
   deleteMember,
   type MemberDoc,
 } from "@/lib/db_supabase/memberRepo";
+import { getOrderOfMeritTotals, type OrderOfMeritEntry } from "@/lib/db_supabase/resultsRepo";
 import { getPermissionsForMember } from "@/lib/rbac";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
+
+/**
+ * Format OOM points for display (handles decimals from tie averaging)
+ */
+function formatPoints(pts: number): string {
+  if (pts === Math.floor(pts)) {
+    return pts.toString();
+  }
+  return pts.toFixed(2).replace(/\.?0+$/, "");
+}
 
 type ModalMode = "none" | "add" | "edit";
 
@@ -83,6 +94,7 @@ export default function MembersScreen() {
   const colors = getColors();
 
   const [members, setMembers] = useState<MemberDoc[]>([]);
+  const [oomStandings, setOomStandings] = useState<Map<string, OrderOfMeritEntry>>(new Map());
   const [loading, setLoading] = useState(true);
   const [permissionError, setPermissionError] = useState<string | null>(null);
   const [modalMode, setModalMode] = useState<ModalMode>("none");
@@ -115,13 +127,28 @@ export default function MembersScreen() {
 
     try {
       console.log("[members] Fetching members for society:", societyId);
-      const data = await getMembersBySocietyId(societyId);
 
-      // Sort by role priority, then name
-      const sorted = sortMembersByRoleThenName(data);
+      // Fetch members and OOM standings in parallel
+      const [membersData, oomData] = await Promise.all([
+        getMembersBySocietyId(societyId),
+        getOrderOfMeritTotals(societyId).catch((err) => {
+          console.warn("[members] Failed to fetch OOM standings:", err);
+          return [] as OrderOfMeritEntry[];
+        }),
+      ]);
+
+      // Sort members by role priority, then name
+      const sorted = sortMembersByRoleThenName(membersData);
       setMembers(sorted);
 
-      console.log("[members] Query success, count:", sorted.length);
+      // Create OOM lookup map by memberId
+      const oomMap = new Map<string, OrderOfMeritEntry>();
+      for (const entry of oomData) {
+        oomMap.set(entry.memberId, entry);
+      }
+      setOomStandings(oomMap);
+
+      console.log("[members] Query success, members:", sorted.length, "OOM entries:", oomData.length);
     } catch (err: any) {
       console.error("[members] select error:", err);
 
@@ -476,6 +503,7 @@ export default function MembersScreen() {
           {members.map((member) => {
             const roleBadges = getRoleBadges(member);
             const isCurrentUser = member.id === currentMember?.id;
+            const oomEntry = oomStandings.get(member.id);
 
             return (
               <Pressable
@@ -523,6 +551,21 @@ export default function MembersScreen() {
                         <View style={[styles.badge, { backgroundColor: colors.info + "20", marginTop: 2 }]}>
                           <AppText variant="small" style={{ color: colors.info }}>
                             HI: {member.handicapIndex ?? member.handicap_index}
+                          </AppText>
+                        </View>
+                      )}
+
+                      {/* OOM Position + Points - only show if member has OOM points */}
+                      {oomEntry && oomEntry.totalPoints > 0 && (
+                        <View style={styles.oomRow}>
+                          <View style={[styles.oomBadge, { backgroundColor: colors.warning + "15" }]}>
+                            <Feather name="award" size={12} color={colors.warning} />
+                            <AppText variant="small" style={{ color: colors.warning }}>
+                              #{oomEntry.rank}
+                            </AppText>
+                          </View>
+                          <AppText variant="caption" color="tertiary">
+                            {formatPoints(oomEntry.totalPoints)} pts ({oomEntry.eventsPlayed} event{oomEntry.eventsPlayed !== 1 ? "s" : ""})
                           </AppText>
                         </View>
                       )}
@@ -619,6 +662,20 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   badge: {
+    paddingHorizontal: spacing.xs,
+    paddingVertical: 2,
+    borderRadius: radius.sm,
+  },
+  oomRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.xs,
+    marginTop: 4,
+  },
+  oomBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 3,
     paddingHorizontal: spacing.xs,
     paddingVertical: 2,
     borderRadius: radius.sm,

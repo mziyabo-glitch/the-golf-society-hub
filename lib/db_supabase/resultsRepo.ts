@@ -6,7 +6,7 @@ export type EventResultDoc = {
   society_id: string;
   event_id: string;
   member_id: string;
-  points: number;
+  points: number;  // OOM points (can be decimal for tie averaging, e.g., 16.5)
   day_value?: number | null;  // Raw score: stableford pts or net score
   position?: number | null;   // Finishing position (1, 2, 3...)
   created_at: string;
@@ -15,7 +15,7 @@ export type EventResultDoc = {
 
 export type EventResultInput = {
   member_id: string;
-  points: number;
+  points: number;  // OOM points (can be decimal for tie averaging)
   day_value?: number;  // Raw score for audit trail
   position?: number;   // Finishing position for audit trail
 };
@@ -231,16 +231,33 @@ export async function getOrderOfMeritTotals(
   const eventsMap = new Map((eventsData ?? []).map((e) => [e.id, e]));
   const membersMap = new Map((membersData ?? []).map((m) => [m.id, m]));
 
-  console.log("[resultsRepo] raw results:", resultsData.length, "rows");
+  // Filter to OOM events only (check both is_oom flag and classification for backward compatibility)
+  // Use case-insensitive comparison for classification
+  const oomEventIds = new Set(
+    (eventsData ?? [])
+      .filter((e) => {
+        const isOom = e.is_oom === true || (e.classification && e.classification.toLowerCase() === 'oom');
+        return isOom;
+      })
+      .map((e) => e.id)
+  );
 
-  // Aggregate points by member (include all events, not just OOM)
+  console.log("[resultsRepo] getOrderOfMeritTotals filter:", {
+    totalEvents: (eventsData ?? []).length,
+    oomEvents: oomEventIds.size,
+    eventDetails: (eventsData ?? []).map((e) => ({ id: e.id, is_oom: e.is_oom, classification: e.classification })),
+  });
+
+  // Aggregate points by member (OOM events only)
   const memberTotals: Record<string, OrderOfMeritEntry> = {};
 
   resultsData.forEach((row) => {
+    // Skip non-OOM events
+    if (!oomEventIds.has(row.event_id)) return;
+
     const event = eventsMap.get(row.event_id);
     if (!event) return;
 
-    // Include ALL events with results (not just OOM classified)
     const memberId = row.member_id;
     const member = membersMap.get(memberId);
     const memberName = member?.name || "Unknown";
@@ -352,7 +369,25 @@ export async function getOrderOfMeritLog(
     return [];
   }
 
-  const eventIds = eventsData.map((e) => e.id);
+  // Filter to OOM events only (check both is_oom flag and classification for backward compatibility)
+  // Use case-insensitive comparison for classification
+  const oomEvents = eventsData.filter((e) => {
+    const isOom = e.is_oom === true || (e.classification && e.classification.toLowerCase() === 'oom');
+    return isOom;
+  });
+
+  console.log("[resultsRepo] getOrderOfMeritLog filter:", {
+    totalEvents: eventsData.length,
+    oomEvents: oomEvents.length,
+    eventDetails: eventsData.map((e) => ({ id: e.id, name: e.name, is_oom: e.is_oom, classification: e.classification })),
+  });
+
+  if (oomEvents.length === 0) {
+    console.log("[resultsRepo] No OOM events found");
+    return [];
+  }
+
+  const eventIds = oomEvents.map((e) => e.id);
 
   // Fetch event results for these events including audit columns
   // day_value and position require migration 013
@@ -387,15 +422,15 @@ export async function getOrderOfMeritLog(
     throw new Error(membersError.message || "Failed to get members");
   }
 
-  // Build lookup maps
-  const eventsMap = new Map(eventsData.map((e) => [e.id, e]));
+  // Build lookup maps (use oomEvents for iteration)
+  const eventsMap = new Map(oomEvents.map((e) => [e.id, e]));
   const membersMap = new Map((membersData ?? []).map((m) => [m.id, m]));
 
   // Build results log entries, maintaining event order (by date desc)
   const logEntries: ResultsLogEntry[] = [];
 
-  // Group results by event, preserving event order
-  for (const event of eventsData) {
+  // Group results by event, preserving event order (OOM events only)
+  for (const event of oomEvents) {
     const eventResults = resultsData
       .filter((r) => r.event_id === event.id)
       .sort((a, b) => {

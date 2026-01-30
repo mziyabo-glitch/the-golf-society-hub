@@ -22,6 +22,19 @@ import {
 } from "@/lib/db_supabase/resultsRepo";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
 
+/**
+ * Format OOM points for display
+ * - Shows decimals only when needed (e.g., 16.5, not 25.00)
+ * - Hides .00 for whole numbers (e.g., 25, not 25.00)
+ */
+function formatPoints(pts: number): string {
+  if (pts === Math.floor(pts)) {
+    return pts.toString();
+  }
+  // Show up to 2 decimal places, trimming trailing zeros
+  return pts.toFixed(2).replace(/\.?0+$/, "");
+}
+
 type TabType = "leaderboard" | "resultsLog";
 
 export default function LeaderboardScreen() {
@@ -135,10 +148,9 @@ export default function LeaderboardScreen() {
     }, [societyId, loadData])
   );
 
-  // Count OOM events
-  const oomEventCount = events.filter(
-    (e) => e.classification === "oom" || e.isOOM === true
-  ).length;
+  // Count OOM events with results (from the results log which is already filtered)
+  const uniqueOOMEventIds = new Set(resultsLog.map((r) => r.eventId));
+  const oomEventCount = uniqueOOMEventIds.size;
 
   // Generate HTML for PDF
   const generateHTML = () => {
@@ -160,7 +172,7 @@ export default function LeaderboardScreen() {
         </td>
         <td style="padding: 12px; border-bottom: 1px solid #eee;">${entry.memberName}</td>
         <td style="padding: 12px; border-bottom: 1px solid #eee; text-align: center;">${entry.eventsPlayed}</td>
-        <td style="padding: 12px; border-bottom: 1px solid #eee; text-align: right; font-weight: bold; color: #0A7C4A;">${entry.totalPoints}</td>
+        <td style="padding: 12px; border-bottom: 1px solid #eee; text-align: right; font-weight: bold; color: #0A7C4A;">${formatPoints(entry.totalPoints)}</td>
       </tr>
     `
       )
@@ -415,7 +427,7 @@ export default function LeaderboardScreen() {
             <EmptyState
               icon={<Feather name="award" size={24} color={colors.textTertiary} />}
               title="No Order of Merit points yet"
-              message="No Order of Merit points recorded yet. Save points for an OOM event to start the standings."
+              message="Create an OOM-classified event, add players, and enter scores to start the standings."
             />
           ) : (
             <View style={styles.list}>
@@ -467,7 +479,7 @@ export default function LeaderboardScreen() {
                       {/* Points */}
                       <View style={styles.pointsContainer}>
                         <AppText variant="h1" color="primary">
-                          {entry.totalPoints}
+                          {formatPoints(entry.totalPoints)}
                         </AppText>
                         <AppText variant="small" color="tertiary">
                           pts
@@ -485,7 +497,7 @@ export default function LeaderboardScreen() {
             <View style={styles.infoContent}>
               <Feather name="info" size={16} color={colors.textTertiary} />
               <AppText variant="caption" color="secondary" style={{ flex: 1 }}>
-                F1-style points (25, 18, 15, 12, 10, 8, 6, 4, 2, 1) for positions 1-10. Points accumulate across all events.
+                F1-style points (25, 18, 15, 12, 10, 8, 6, 4, 2, 1) for positions 1-10. Ties share averaged points. Only OOM events count.
               </AppText>
             </View>
           </AppCard>
@@ -498,8 +510,8 @@ export default function LeaderboardScreen() {
           {groupedResultsLog.length === 0 ? (
             <EmptyState
               icon={<Feather name="list" size={24} color={colors.textTertiary} />}
-              title="No results yet"
-              message="No Order of Merit results recorded yet. Once you save points for an OOM event, the audit trail will appear here."
+              title="No OOM results yet"
+              message="Only OOM-classified events appear here. Create an OOM event and enter scores to see the audit trail."
             />
           ) : (
             <View style={styles.list}>
@@ -568,7 +580,7 @@ export default function LeaderboardScreen() {
                         {result.position ?? '-'}
                       </AppText>
                       <AppText variant="bodyBold" color="primary" style={styles.auditCol}>
-                        {result.points}
+                        {formatPoints(result.points)}
                       </AppText>
                     </View>
                   ))}

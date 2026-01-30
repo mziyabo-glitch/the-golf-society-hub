@@ -37,11 +37,39 @@ import { getColors, spacing, radius } from "@/lib/ui/theme";
 // F1-style OOM points: positions 1-10 get points, rest get 0
 const F1_OOM_POINTS = [25, 18, 15, 12, 10, 8, 6, 4, 2, 1];
 
-function getOOMPoints(position: number): number {
+function getOOMPointsForPosition(position: number): number {
   if (position >= 1 && position <= 10) {
     return F1_OOM_POINTS[position - 1];
   }
   return 0;
+}
+
+/**
+ * Calculate averaged OOM points for a tie block
+ * Example: Two players tied for 2nd place occupy positions 2 and 3
+ * They share: (18 + 15) / 2 = 16.5 points each
+ */
+function getAveragedOOMPoints(startPosition: number, tieCount: number): number {
+  if (tieCount <= 0) return 0;
+
+  let totalPoints = 0;
+  for (let i = 0; i < tieCount; i++) {
+    totalPoints += getOOMPointsForPosition(startPosition + i);
+  }
+  return totalPoints / tieCount;
+}
+
+/**
+ * Format OOM points for display
+ * - Shows decimals only when needed (e.g., 16.5, not 25.00)
+ * - Hides .00 for whole numbers (e.g., 25, not 25.00)
+ */
+function formatPoints(pts: number): string {
+  if (pts === Math.floor(pts)) {
+    return pts.toString();
+  }
+  // Show up to 2 decimal places, trimming trailing zeros
+  return pts.toFixed(2).replace(/\.?0+$/, "");
 }
 
 type PlayerEntry = {
@@ -154,6 +182,7 @@ export default function EventPointsScreen() {
   const sortOrder = getFormatSortOrder(event?.format);
 
   // Calculate positions and OOM points based on day points
+  // Uses tie averaging: tied players share averaged OOM points for positions they occupy
   const calculatePositionsAndOOM = (playerList: PlayerEntry[]): PlayerEntry[] => {
     // Separate players with valid day points from those without
     const withPoints: PlayerEntry[] = [];
@@ -171,7 +200,6 @@ export default function EventPointsScreen() {
     // Sort based on format:
     // - Stableford (high_wins): Higher points = better position (DESC)
     // - Strokeplay (low_wins): Lower score = better position (ASC)
-    // NOTE: No tie-breaking - tied players remain in original order
     withPoints.sort((a, b) => {
       const aPts = parseInt(a.dayPoints.trim(), 10);
       const bPts = parseInt(b.dayPoints.trim(), 10);
@@ -180,27 +208,42 @@ export default function EventPointsScreen() {
         return aPts - bPts; // Lower is better for strokeplay
       }
       return bPts - aPts; // Higher is better for stableford
-      // Ties: return 0 implicitly (stable sort preserves original order)
     });
 
-    // Assign positions and OOM points
-    // Handle ties: same day points = same position
+    // Group into tie blocks and assign positions + averaged OOM points
+    // Example: [40, 38, 38, 35] → positions [1, 2, 2, 4] with tie averaging for 2nd/3rd
+    const positioned: PlayerEntry[] = [];
     let currentPosition = 1;
-    const positioned = withPoints.map((p, index) => {
-      if (index > 0) {
-        const prevPts = parseInt(withPoints[index - 1].dayPoints.trim(), 10);
-        const currPts = parseInt(p.dayPoints.trim(), 10);
-        if (currPts !== prevPts) {
-          currentPosition = index + 1;
-        }
-        // If equal, keep same position (tie)
+    let i = 0;
+
+    while (i < withPoints.length) {
+      // Find the tie block (players with same day value)
+      const currentDayValue = parseInt(withPoints[i].dayPoints.trim(), 10);
+      let tieCount = 1;
+
+      while (
+        i + tieCount < withPoints.length &&
+        parseInt(withPoints[i + tieCount].dayPoints.trim(), 10) === currentDayValue
+      ) {
+        tieCount++;
       }
-      return {
-        ...p,
-        position: currentPosition,
-        oomPoints: getOOMPoints(currentPosition),
-      };
-    });
+
+      // Calculate averaged OOM points for this tie block
+      const averagedOOM = getAveragedOOMPoints(currentPosition, tieCount);
+
+      // Assign to all players in the tie block
+      for (let j = 0; j < tieCount; j++) {
+        positioned.push({
+          ...withPoints[i + j],
+          position: currentPosition, // All tied players share the same position
+          oomPoints: averagedOOM,
+        });
+      }
+
+      // Move to next position block (skip positions consumed by ties)
+      currentPosition += tieCount;
+      i += tieCount;
+    }
 
     // Combine: players with points (sorted) + players without points (original order)
     return [...positioned, ...withoutPoints];
@@ -443,8 +486,8 @@ export default function EventPointsScreen() {
           <Feather name="info" size={16} color={colors.primary} />
           <AppText variant="caption" color="secondary" style={{ flex: 1 }}>
             {sortOrder === 'low_wins'
-              ? "Lower is better. Positions and Order of Merit points are calculated automatically. Top 10 earn F1 points: 25, 18, 15, 12, 10, 8, 6, 4, 2, 1."
-              : "Higher is better. Positions and Order of Merit points are calculated automatically. Top 10 earn F1 points: 25, 18, 15, 12, 10, 8, 6, 4, 2, 1."}
+              ? "Lower is better. Top 10 earn F1 points (25, 18, 15...). Ties share averaged points."
+              : "Higher is better. Top 10 earn F1 points (25, 18, 15...). Ties share averaged points."}
           </AppText>
         </View>
       </AppCard>
@@ -523,7 +566,7 @@ export default function EventPointsScreen() {
                   variant="bodyBold"
                   color={player.oomPoints > 0 ? "primary" : "tertiary"}
                 >
-                  {player.oomPoints}
+                  {formatPoints(player.oomPoints)}
                 </AppText>
               </View>
             </View>
