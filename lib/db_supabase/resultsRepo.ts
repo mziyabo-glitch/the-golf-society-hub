@@ -61,15 +61,21 @@ export async function upsertEventResults(
     return;
   }
 
-  // Prepare rows for upsert (including audit columns)
-  const rows = results.map((r) => ({
-    event_id: eventId,
-    society_id: societyId,
-    member_id: r.member_id,
-    points: r.points,
-    day_value: r.day_value ?? null,
-    position: r.position ?? null,
-  }));
+  // Prepare rows for upsert
+  // Note: day_value and position are optional audit columns (migration 013)
+  // We include them if provided, but the upsert will work without them
+  const rows = results.map((r) => {
+    const row: Record<string, unknown> = {
+      event_id: eventId,
+      society_id: societyId,
+      member_id: r.member_id,
+      points: r.points,
+    };
+    // Only include audit columns if they have values (avoids errors if columns don't exist yet)
+    if (r.day_value !== undefined) row.day_value = r.day_value;
+    if (r.position !== undefined) row.position = r.position;
+    return row;
+  });
 
   console.log("[resultsRepo] upserting rows:", JSON.stringify(rows, null, 2));
 
@@ -353,10 +359,11 @@ export async function getOrderOfMeritLog(
 
   const eventIds = eventsData.map((e) => e.id);
 
-  // Fetch event results for these events (including audit columns)
+  // Fetch event results for these events
+  // Note: day_value and position are optional audit columns (migration 013)
   const { data: resultsData, error: resultsError } = await supabase
     .from("event_results")
-    .select("event_id, member_id, points, day_value, position")
+    .select("event_id, member_id, points")
     .in("event_id", eventIds);
 
   if (resultsError) {
@@ -396,13 +403,7 @@ export async function getOrderOfMeritLog(
   for (const event of eventsData) {
     const eventResults = resultsData
       .filter((r) => r.event_id === event.id)
-      .sort((a, b) => {
-        // Sort by position first (ascending), then by points desc as fallback
-        const posA = a.position ?? 999;
-        const posB = b.position ?? 999;
-        if (posA !== posB) return posA - posB;
-        return (b.points || 0) - (a.points || 0);
-      });
+      .sort((a, b) => (b.points || 0) - (a.points || 0)); // Sort by points desc
 
     for (const result of eventResults) {
       const member = membersMap.get(result.member_id);
@@ -414,8 +415,8 @@ export async function getOrderOfMeritLog(
         memberId: result.member_id,
         memberName: member?.name || "Unknown",
         points: result.points || 0,
-        dayValue: result.day_value ?? null,
-        position: result.position ?? null,
+        dayValue: null,  // Audit columns not stored yet (migration 013)
+        position: null,
       });
     }
   }
