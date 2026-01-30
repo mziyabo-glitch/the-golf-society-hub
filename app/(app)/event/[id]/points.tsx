@@ -171,17 +171,16 @@ export default function EventPointsScreen() {
     // Sort based on format:
     // - Stableford (high_wins): Higher points = better position (DESC)
     // - Strokeplay (low_wins): Lower score = better position (ASC)
+    // NOTE: No tie-breaking - tied players remain in original order
     withPoints.sort((a, b) => {
       const aPts = parseInt(a.dayPoints.trim(), 10);
       const bPts = parseInt(b.dayPoints.trim(), 10);
 
-      if (aPts !== bPts) {
-        if (sortOrder === 'low_wins') {
-          return aPts - bPts; // Lower is better for strokeplay
-        }
-        return bPts - aPts; // Higher is better for stableford
+      if (sortOrder === 'low_wins') {
+        return aPts - bPts; // Lower is better for strokeplay
       }
-      return a.memberName.localeCompare(b.memberName); // Alphabetical tie-break
+      return bPts - aPts; // Higher is better for stableford
+      // Ties: return 0 implicitly (stable sort preserves original order)
     });
 
     // Assign positions and OOM points
