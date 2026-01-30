@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { StyleSheet, View, Pressable } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
+import { useFocusEffect } from "@react-navigation/native";
 import { Feather } from "@expo/vector-icons";
 
 import { Screen } from "@/components/ui/Screen";
@@ -16,13 +17,18 @@ import {
   EVENT_FORMATS,
   EVENT_CLASSIFICATIONS,
 } from "@/lib/db_supabase/eventRepo";
+import { getPermissionsForMember } from "@/lib/rbac";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
 
 export default function EventDetailScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ id: string }>();
-  const { societyId, userId, loading: bootstrapLoading } = useBootstrap();
+  const { societyId, userId, member: currentMember, loading: bootstrapLoading } = useBootstrap();
   const colors = getColors();
+
+  // Permissions for entering points (Captain/Handicapper)
+  const permissions = getPermissionsForMember(currentMember as any);
+  const canEnterPoints = permissions.canManageHandicaps;
 
   // Safely extract eventId (could be string or array from URL params)
   const eventId = Array.isArray(params.id) ? params.id[0] : params.id;
@@ -39,7 +45,7 @@ export default function EventDetailScreen() {
     console.log("[EventDetail] userId:", userId);
   }
 
-  useEffect(() => {
+  const loadEvent = useCallback(async () => {
     if (!eventId) {
       console.log("[EventDetail] No eventId, skipping load");
       setLoading(false);
@@ -47,46 +53,55 @@ export default function EventDetailScreen() {
       return;
     }
 
-    const loadEvent = async () => {
-      setLoading(true);
-      setError(null);
+    setLoading(true);
+    setError(null);
 
-      try {
-        console.log("[EventDetail] Fetching event:", eventId);
-        const data = await getEvent(eventId);
+    try {
+      console.log("[EventDetail] Fetching event:", eventId);
+      const data = await getEvent(eventId);
 
-        if (data) {
-          console.log("[EventDetail] Event loaded:", data.name);
-          setEvent(data);
-        } else {
-          console.log("[EventDetail] Event not found or blocked by RLS");
-          setError("Event not found (or blocked by permissions)");
-        }
-      } catch (err: any) {
-        console.error("[EventDetail] Load error:", err);
-
-        // Handle permission/RLS errors
-        const errorCode = err?.code || err?.statusCode;
-        const errorMessage = err?.message || "";
-        const is403 =
-          errorCode === "403" ||
-          errorCode === 403 ||
-          errorCode === "42501" ||
-          errorMessage.includes("permission") ||
-          errorMessage.includes("row-level security");
-
-        if (is403) {
-          setError("You don't have permission to view this event.");
-        } else {
-          setError(err?.message || "Failed to load event");
-        }
-      } finally {
-        setLoading(false);
+      if (data) {
+        console.log("[EventDetail] Event loaded:", data.name, "playerIds:", data.playerIds);
+        setEvent(data);
+      } else {
+        console.log("[EventDetail] Event not found or blocked by RLS");
+        setError("Event not found (or blocked by permissions)");
       }
-    };
+    } catch (err: any) {
+      console.error("[EventDetail] Load error:", err);
 
-    loadEvent();
+      // Handle permission/RLS errors
+      const errorCode = err?.code || err?.statusCode;
+      const errorMessage = err?.message || "";
+      const is403 =
+        errorCode === "403" ||
+        errorCode === 403 ||
+        errorCode === "42501" ||
+        errorMessage.includes("permission") ||
+        errorMessage.includes("row-level security");
+
+      if (is403) {
+        setError("You don't have permission to view this event.");
+      } else {
+        setError(err?.message || "Failed to load event");
+      }
+    } finally {
+      setLoading(false);
+    }
   }, [eventId]);
+
+  useEffect(() => {
+    loadEvent();
+  }, [loadEvent]);
+
+  // Refetch on focus to pick up changes (e.g., after editing players)
+  useFocusEffect(
+    useCallback(() => {
+      if (eventId) {
+        loadEvent();
+      }
+    }, [eventId, loadEvent])
+  );
 
   // Loading state
   if (bootstrapLoading || loading) {
@@ -184,6 +199,18 @@ export default function EventDetailScreen() {
     console.log("[EventDetail] opening players for event:", eventId);
     router.push({ pathname: "/(app)/event/[id]/players", params: { id: eventId } });
   };
+
+  const handleOpenPoints = () => {
+    if (!eventId) {
+      console.error("[EventDetail] Cannot open points: eventId is undefined");
+      return;
+    }
+    console.log("[EventDetail] opening points for event:", eventId);
+    router.push({ pathname: "/(app)/event/[id]/points", params: { id: eventId } });
+  };
+
+  // Check if this is an OOM event
+  const isOOMEvent = event?.classification === "oom" || event?.isOOM === true;
 
   return (
     <Screen>
@@ -308,6 +335,29 @@ export default function EventDetailScreen() {
           </View>
         </AppCard>
       </Pressable>
+
+      {/* Enter Points Section - Only for OOM events and Captain/Handicapper */}
+      {isOOMEvent && canEnterPoints && (
+        <Pressable
+          onPress={handleOpenPoints}
+          style={({ pressed }) => ({ opacity: pressed ? 0.8 : 1 })}
+        >
+          <AppCard style={styles.actionCard}>
+            <View style={styles.actionRow}>
+              <View style={[styles.iconContainer, { backgroundColor: colors.warning + "20" }]}>
+                <Feather name="edit-3" size={18} color={colors.warning} />
+              </View>
+              <View style={styles.actionContent}>
+                <AppText variant="bodyBold">Enter Points</AppText>
+                <AppText variant="caption" color="secondary">
+                  Add Order of Merit points for players
+                </AppText>
+              </View>
+              <Feather name="chevron-right" size={20} color={colors.textTertiary} />
+            </View>
+          </AppCard>
+        </Pressable>
+      )}
 
       {/* Created info */}
       {event.created_at && (

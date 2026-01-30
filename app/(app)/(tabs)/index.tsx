@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { StyleSheet, View, Pressable } from "react-native";
 import { useRouter } from "expo-router";
+import { useFocusEffect } from "@react-navigation/native";
 import { Feather } from "@expo/vector-icons";
 
 import { Screen } from "@/components/ui/Screen";
@@ -21,30 +22,39 @@ export default function HomeScreen() {
   const [events, setEvents] = useState<EventDoc[]>([]);
   const [dataLoading, setDataLoading] = useState(true);
 
-  useEffect(() => {
+  const loadData = useCallback(async () => {
     if (!societyId) {
       setDataLoading(false);
       return;
     }
 
-    const loadData = async () => {
-      setDataLoading(true);
-      try {
-        const [membersData, eventsData] = await Promise.all([
-          getMembersBySocietyId(societyId),
-          getEventsBySocietyId(societyId),
-        ]);
-        setMembers(membersData);
-        setEvents(eventsData);
-      } catch (err) {
-        console.error("Failed to load home data:", err);
-      } finally {
-        setDataLoading(false);
-      }
-    };
-
-    loadData();
+    setDataLoading(true);
+    try {
+      const [membersData, eventsData] = await Promise.all([
+        getMembersBySocietyId(societyId),
+        getEventsBySocietyId(societyId),
+      ]);
+      setMembers(membersData);
+      setEvents(eventsData);
+    } catch (err) {
+      console.error("Failed to load home data:", err);
+    } finally {
+      setDataLoading(false);
+    }
   }, [societyId]);
+
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
+
+  // Refetch on focus to pick up changes from other screens
+  useFocusEffect(
+    useCallback(() => {
+      if (societyId) {
+        loadData();
+      }
+    }, [societyId, loadData])
+  );
 
   if (bootstrapLoading || dataLoading) {
     return (
@@ -115,7 +125,7 @@ export default function HomeScreen() {
             styles.statCard,
             { backgroundColor: colors.surface, borderColor: colors.border, opacity: pressed ? 0.8 : 1 },
           ]}
-          onPress={() => router.push("/(app)/(tabs)/event")}
+          onPress={() => router.push("/events")}
         >
           <Feather name="calendar" size={24} color={colors.primary} />
           <AppText variant="h1" style={{ marginTop: spacing.xs }}>{events.length}</AppText>

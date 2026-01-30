@@ -1,11 +1,11 @@
-/**
+﻿/**
  * Event Players Screen
  * - Select players for the event
  * - Uses Supabase instead of Firebase
  */
 
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Alert, Pressable, ScrollView, StyleSheet, View } from "react-native";
 import { Feather } from "@expo/vector-icons";
 
@@ -27,7 +27,10 @@ export default function EventPlayersScreen() {
   const { societyId, member, loading: bootstrapLoading } = useBootstrap();
   const colors = getColors();
 
-  const eventId = Array.isArray(params.id) ? params.id[0] : params.id;
+  const eventId = useMemo(() => {
+    const raw = (params as any)?.id;
+    return Array.isArray(raw) ? raw[0] : raw;
+  }, [params]);
 
   const [event, setEvent] = useState<EventDoc | null>(null);
   const [members, setMembers] = useState<MemberDoc[]>([]);
@@ -38,171 +41,132 @@ export default function EventPlayersScreen() {
 
   const permissions = getPermissionsForMember(member as any);
 
-  // Debug logging
-  if (__DEV__) {
-    console.log("[EventPlayers] eventId:", eventId);
-    console.log("[EventPlayers] societyId:", societyId);
-  }
-
   useEffect(() => {
-    if (!eventId || !societyId) {
-      setLoading(false);
-      if (!eventId) setError("Missing event ID");
-      return;
-    }
+    let cancelled = false;
 
-    const loadData = async () => {
+    async function load() {
+      if (bootstrapLoading) return;
+
+      if (!societyId) {
+        setError("Missing society");
+        setLoading(false);
+        return;
+      }
+
+      if (!eventId) {
+        setError("Missing event ID");
+        setLoading(false);
+        return;
+      }
+
       setLoading(true);
       setError(null);
 
       try {
-        // Load event and members in parallel
-        const [eventData, membersData] = await Promise.all([
+        console.log("[players] loading event + members", { eventId, societyId });
+
+        const [evt, mems] = await Promise.all([
           getEvent(eventId),
           getMembersBySocietyId(societyId),
         ]);
 
-        if (!eventData) {
-          setError("Event not found");
-          return;
+        if (cancelled) return;
+
+        console.log("[players] loaded event:", {
+          id: evt?.id,
+          playerIds: evt?.playerIds,
+        });
+
+        setEvent(evt);
+        setMembers(mems);
+
+        // Use playerIds (camelCase) as returned by mapEvent
+        const existing = evt?.playerIds ?? [];
+        console.log("[players] initializing selection from:", existing);
+        setSelectedPlayerIds(new Set(existing.map(String)));
+      } catch (e: any) {
+        console.error("[players] load FAILED", e);
+        if (!cancelled) {
+          setError(e?.message ?? "Failed to load players");
         }
-
-        console.log("[EventPlayers] Event loaded:", eventData.name);
-        console.log("[EventPlayers] Members loaded:", membersData.length);
-
-        setEvent(eventData);
-        setMembers(membersData);
-        setSelectedPlayerIds(new Set(eventData.playerIds || []));
-      } catch (err: any) {
-        console.error("[EventPlayers] Load error:", err);
-        setError(err?.message || "Failed to load data");
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
+    }
+
+    load();
+    return () => {
+      cancelled = true;
     };
+  }, [bootstrapLoading, societyId, eventId]);
 
-    loadData();
-  }, [eventId, societyId]);
-
-  const togglePlayer = (memberId: string) => {
+  function togglePlayer(id: string) {
     setSelectedPlayerIds((prev) => {
-      const newSet = new Set(prev);
-      if (newSet.has(memberId)) {
-        newSet.delete(memberId);
-      } else {
-        newSet.add(memberId);
-      }
-      return newSet;
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
     });
-  };
+  }
 
-  const handleSave = async () => {
-    if (!event) return;
-
-    setSaving(true);
+  async function save() {
     try {
-      // Note: updateEvent in Supabase repo doesn't support playerIds yet
-      // For now we'll use a direct Supabase call
-      const { supabase } = await import("@/lib/supabase");
+      setSaving(true);
 
-      const { error: updateError } = await supabase
-        .from("events")
-        .update({
-          player_ids: Array.from(selectedPlayerIds),
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", event.id);
+      const ids = Array.from(selectedPlayerIds);
+      console.log("[players] saving", {
+        eventId: event?.id,
+        societyId,
+        playerIds: ids,
+      });
 
-      if (updateError) {
-        throw new Error(updateError.message);
+      await updateEvent(event!.id, { playerIds: ids });
+
+      console.log("[players] save OK, refetching to confirm...");
+
+      // Refetch to confirm persistence
+      const refreshed = await getEvent(event!.id);
+      if (refreshed) {
+        const reloaded = refreshed.playerIds ?? [];
+        console.log("[players] confirmed playerIds:", reloaded);
       }
 
-      Alert.alert("Success", "Players saved successfully", [
-        { text: "OK", onPress: () => router.back() },
-      ]);
-    } catch (err: any) {
-      console.error("[EventPlayers] Save error:", err);
-      Alert.alert("Error", err?.message || "Failed to save players");
+      // Navigate back - Event Detail will refetch via useFocusEffect
+      router.back();
+    } catch (e: any) {
+      console.error("[players] save FAILED", e);
+      Alert.alert("Save failed", e?.message ?? JSON.stringify(e));
     } finally {
       setSaving(false);
     }
-  };
+  }
 
-  // Loading state
   if (bootstrapLoading || loading) {
     return (
-      <Screen scrollable={false}>
-        <View style={styles.centered}>
-          <LoadingState message="Loading players..." />
-        </View>
+      <Screen>
+        <LoadingState label="Loading players..." />
       </Screen>
     );
   }
 
-  // Error state
   if (error) {
     return (
       <Screen>
-        <View style={styles.header}>
-          <SecondaryButton onPress={() => router.back()} size="sm">
-            <Feather name="arrow-left" size={16} color={colors.text} />
-            {" Back"}
-          </SecondaryButton>
-        </View>
         <EmptyState
-          icon={<Feather name="alert-circle" size={24} color={colors.error} />}
           title="Error"
           message={error}
-          action={{
-            label: "Go Back",
-            onPress: () => router.back(),
-          }}
+          action={{ label: "Go Back", onPress: () => router.back() }}
         />
       </Screen>
     );
   }
 
-  // Permission check
-  if (!permissions.canCreateEvents) {
-    return (
-      <Screen>
-        <View style={styles.header}>
-          <SecondaryButton onPress={() => router.back()} size="sm">
-            <Feather name="arrow-left" size={16} color={colors.text} />
-            {" Back"}
-          </SecondaryButton>
-        </View>
-        <EmptyState
-          icon={<Feather name="lock" size={24} color={colors.warning} />}
-          title="Access Denied"
-          message="Only Captains and Admins can manage event players."
-          action={{
-            label: "Go Back",
-            onPress: () => router.back(),
-          }}
-        />
-      </Screen>
-    );
-  }
-
-  // Event not found
   if (!event) {
     return (
       <Screen>
-        <View style={styles.header}>
-          <SecondaryButton onPress={() => router.back()} size="sm">
-            <Feather name="arrow-left" size={16} color={colors.text} />
-            {" Back"}
-          </SecondaryButton>
-        </View>
         <EmptyState
-          icon={<Feather name="calendar" size={24} color={colors.textTertiary} />}
-          title="Event Not Found"
-          message="This event may have been deleted."
-          action={{
-            label: "Go Back",
-            onPress: () => router.back(),
-          }}
+          title="Not found"
+          message="Event not found."
+          action={{ label: "Go Back", onPress: () => router.back() }}
         />
       </Screen>
     );
@@ -210,152 +174,97 @@ export default function EventPlayersScreen() {
 
   return (
     <Screen>
-      {/* Header */}
       <View style={styles.header}>
         <SecondaryButton onPress={() => router.back()} size="sm">
           <Feather name="arrow-left" size={16} color={colors.text} />
           {" Back"}
         </SecondaryButton>
+
+        <View style={{ flex: 1 }} />
+
+        <PrimaryButton
+          onPress={save}
+          disabled={saving || !permissions?.canEditEvents}
+          size="sm"
+        >
+          {saving ? "Saving..." : "Save"}
+        </PrimaryButton>
       </View>
 
-      {/* Title */}
-      <View style={styles.titleSection}>
-        <AppText variant="title">Select Players</AppText>
-        <AppText variant="caption" color="secondary">
-          {event.name}
-        </AppText>
-      </View>
+      <AppText variant="h2" style={{ marginBottom: spacing.lg }}>
+        Players
+      </AppText>
 
-      {/* Selection count */}
-      <AppCard style={styles.countCard}>
-        <View style={styles.countRow}>
-          <Feather name="users" size={20} color={colors.primary} />
-          <AppText variant="bodyBold" style={{ marginLeft: spacing.sm }}>
-            {selectedPlayerIds.size} of {members.length} selected
-          </AppText>
-        </View>
-      </AppCard>
+      <ScrollView contentContainerStyle={{ paddingBottom: spacing.xl }}>
+        {members.length === 0 ? (
+          <EmptyState
+            title="No members"
+            message="Add members first, then you can select players."
+            action={{ label: "Go Back", onPress: () => router.back() }}
+          />
+        ) : (
+          <View style={{ gap: spacing.md }}>
+            {members.map((m) => {
+              const id = String(m.id);
+              const selected = selectedPlayerIds.has(id);
 
-      {/* Members list */}
-      {members.length === 0 ? (
-        <EmptyState
-          icon={<Feather name="users" size={24} color={colors.textTertiary} />}
-          title="No Members"
-          message="Add members to your society first, then select them for events."
-        />
-      ) : (
-        <ScrollView style={styles.membersList} showsVerticalScrollIndicator={false}>
-          {members.map((m) => {
-            const isSelected = selectedPlayerIds.has(m.id);
-            const displayName = m.name || m.displayName || "Member";
+              return (
+                <Pressable key={id} onPress={() => togglePlayer(id)}>
+                  <AppCard style={[styles.row, selected && styles.rowSelected]}>
+                    <View style={{ flex: 1 }}>
+                      <AppText style={styles.name}>
+                        {(m as any).name ??
+                          (m as any).full_name ??
+                          "Member"}
+                      </AppText>
 
-            return (
-              <Pressable
-                key={m.id}
-                onPress={() => togglePlayer(m.id)}
-                style={({ pressed }) => [
-                  styles.memberCard,
-                  isSelected && styles.memberCardSelected,
-                  pressed && styles.memberCardPressed,
-                ]}
-              >
-                <View style={styles.memberInfo}>
-                  <AppText variant="bodyBold">{displayName}</AppText>
-                  {m.handicap_index !== undefined && m.handicap_index !== null && (
-                    <AppText variant="caption" color="secondary">
-                      Handicap: {m.handicap_index}
-                    </AppText>
-                  )}
-                </View>
-                <View
-                  style={[
-                    styles.checkbox,
-                    isSelected && { backgroundColor: colors.primary, borderColor: colors.primary },
-                  ]}
-                >
-                  {isSelected && <Feather name="check" size={14} color="#fff" />}
-                </View>
-              </Pressable>
-            );
-          })}
-        </ScrollView>
-      )}
+                      {!!(m as any).whs_id && (
+                        <AppText style={styles.subtle}>
+                          WHS: {(m as any).whs_id}
+                        </AppText>
+                      )}
+                    </View>
 
-      {/* Save button */}
-      {members.length > 0 && (
-        <View style={styles.footer}>
-          <PrimaryButton onPress={handleSave} loading={saving} style={styles.saveButton}>
-            Save Players
-          </PrimaryButton>
-        </View>
-      )}
+                    <Feather
+                      name={selected ? "check-circle" : "circle"}
+                      size={22}
+                      color={selected ? colors.primary : colors.muted}
+                    />
+                  </AppCard>
+                </Pressable>
+              );
+            })}
+          </View>
+        )}
+      </ScrollView>
     </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  centered: {
-    flex: 1,
-    justifyContent: "center",
-    alignItems: "center",
-  },
   header: {
     flexDirection: "row",
     alignItems: "center",
+    gap: spacing.sm,
     marginBottom: spacing.lg,
   },
-  titleSection: {
-    marginBottom: spacing.lg,
-  },
-  countCard: {
-    marginBottom: spacing.lg,
-  },
-  countRow: {
+  row: {
+    padding: spacing.md,
     flexDirection: "row",
     alignItems: "center",
+    borderRadius: radius.lg,
   },
-  membersList: {
-    flex: 1,
-    marginBottom: spacing.lg,
+  rowSelected: {
+    borderWidth: 1,
+    borderColor: "#0A7C4A",
   },
-  memberCard: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    padding: spacing.base,
-    marginBottom: spacing.xs,
-    marginBottom: spacing.xs,
-    borderRadius: radius.md,
-    backgroundColor: "#f9fafb",
-    borderWidth: 2,
-    borderColor: "transparent",
+  name: {
+    fontSize: 16,
+    fontWeight: "600",
   },
-  memberCardSelected: {
-    backgroundColor: "#f0fdf4",
-    borderColor: "#0B6E4F",
-  },
-  memberCardPressed: {
-    opacity: 0.8,
-  },
-  memberInfo: {
-    flex: 1,
-  },
-  checkbox: {
-    width: 24,
-    height: 24,
-    borderRadius: radius.sm,
-    borderWidth: 2,
-    borderColor: "#d1d5db",
-    backgroundColor: "#fff",
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  footer: {
-    paddingTop: spacing.sm,
-    borderTopWidth: 1,
-    borderTopColor: "#e5e7eb",
-  },
-  saveButton: {
-    width: "100%",
+  subtle: {
+    marginTop: 4,
+    opacity: 0.7,
   },
 });
+

@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { StyleSheet, View, Pressable, Alert } from "react-native";
 import { useRouter } from "expo-router";
+import { useFocusEffect } from "@react-navigation/native";
 import { Feather } from "@expo/vector-icons";
 
 import { Screen } from "@/components/ui/Screen";
@@ -91,6 +92,15 @@ export default function EventsScreen() {
   useEffect(() => {
     loadEvents();
   }, [societyId]);
+
+  // Refetch on focus to pick up changes from other screens
+  useFocusEffect(
+    useCallback(() => {
+      if (societyId) {
+        loadEvents();
+      }
+    }, [societyId])
+  );
 
   const handleCreateEvent = async () => {
     if (!formName.trim()) {
