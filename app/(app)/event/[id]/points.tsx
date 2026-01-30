@@ -32,11 +32,21 @@ import { getColors, spacing, radius } from "@/lib/ui/theme";
 const F1_POINTS = [25, 18, 15, 12, 10, 8, 6, 4, 2, 1];
 const VALID_F1_POINTS = new Set([0, ...F1_POINTS]); // 0, 1, 2, 4, 6, 8, 10, 12, 15, 18, 25
 
+// Reverse map: points → position
+const POINTS_TO_POSITION: Record<number, number> = {
+  25: 1, 18: 2, 15: 3, 12: 4, 10: 5,
+  8: 6, 6: 7, 4: 8, 2: 9, 1: 10,
+};
+
 function getF1Points(position: number): number {
   if (position >= 1 && position <= 10) {
     return F1_POINTS[position - 1];
   }
   return 0;
+}
+
+function getPositionFromF1Points(points: number): number | null {
+  return POINTS_TO_POSITION[points] ?? null;
 }
 
 function isValidF1Points(points: number): boolean {
@@ -155,7 +165,19 @@ export default function EventPointsScreen() {
 
   const updatePoints = (memberId: string, value: string) => {
     setPlayerPoints((prev) =>
-      prev.map((p) => (p.memberId === memberId ? { ...p, points: value } : p))
+      prev.map((p) => {
+        if (p.memberId !== memberId) return p;
+
+        // Auto-fill position when valid F1 points are entered
+        const num = parseInt(value.trim(), 10);
+        const position = !isNaN(num) ? getPositionFromF1Points(num) : null;
+
+        return {
+          ...p,
+          points: value,
+          finishPosition: position ? String(position) : p.finishPosition,
+        };
+      })
     );
   };
 
