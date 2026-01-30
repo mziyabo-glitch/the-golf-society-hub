@@ -431,10 +431,10 @@ export default function EventPointsScreen() {
 
       {/* Title */}
       <AppText variant="h2" style={{ marginBottom: spacing.xs }}>
-        {sortOrder === 'low_wins' ? "Enter Scores" : "Enter Points"}
+        {sortOrder === 'low_wins' ? "Enter Net Scores" : "Enter Stableford Points"}
       </AppText>
       <AppText variant="body" color="secondary" style={{ marginBottom: spacing.md }}>
-        {event.name} ({event.format === 'stableford' ? 'Stableford' : event.format === 'strokeplay_net' ? 'Strokeplay Net' : event.format === 'strokeplay_gross' ? 'Strokeplay Gross' : event.format})
+        {event.name}
       </AppText>
 
       {/* Instructions - format-specific */}
@@ -443,8 +443,8 @@ export default function EventPointsScreen() {
           <Feather name="info" size={16} color={colors.primary} />
           <AppText variant="caption" color="secondary" style={{ flex: 1 }}>
             {sortOrder === 'low_wins'
-              ? "Enter scores (lower is better). Positions and OOM points are calculated automatically. Top 10 earn F1 points: 25, 18, 15, 12, 10, 8, 6, 4, 2, 1."
-              : "Enter stableford points (higher is better). Positions and OOM points are calculated automatically. Top 10 earn F1 points: 25, 18, 15, 12, 10, 8, 6, 4, 2, 1."}
+              ? "Lower is better. Positions and Order of Merit points are calculated automatically. Top 10 earn F1 points: 25, 18, 15, 12, 10, 8, 6, 4, 2, 1."
+              : "Higher is better. Positions and Order of Merit points are calculated automatically. Top 10 earn F1 points: 25, 18, 15, 12, 10, 8, 6, 4, 2, 1."}
           </AppText>
         </View>
       </AppCard>

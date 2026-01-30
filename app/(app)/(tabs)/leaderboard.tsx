@@ -306,9 +306,11 @@ export default function LeaderboardScreen() {
       {/* Header */}
       <View style={styles.header}>
         <View style={{ flex: 1 }}>
-          <AppText variant="title">Season Leaderboard</AppText>
+          <AppText variant="title">Order of Merit</AppText>
           <AppText variant="caption" color="secondary">
-            {oomEventCount} Order of Merit event{oomEventCount !== 1 ? "s" : ""}
+            {activeTab === "leaderboard"
+              ? `${oomEventCount} event${oomEventCount !== 1 ? "s" : ""} completed`
+              : "Audit trail of Order of Merit points by event"}
           </AppText>
         </View>
         {activeTab === "leaderboard" && standings.length > 0 && (
@@ -367,8 +369,8 @@ export default function LeaderboardScreen() {
           {standings.length === 0 ? (
             <EmptyState
               icon={<Feather name="award" size={24} color={colors.textTertiary} />}
-              title="No Order of Merit Points Yet"
-              message="Enter points for Order of Merit events to see the leaderboard. Create an event with 'Order of Merit' classification, then add players and enter their points."
+              title="No Points Yet"
+              message="Enter points for events to see the Order of Merit standings. Go to an event, add players, and enter their scores."
             />
           ) : (
             <View style={styles.list}>
@@ -438,7 +440,7 @@ export default function LeaderboardScreen() {
             <View style={styles.infoContent}>
               <Feather name="info" size={16} color={colors.textTertiary} />
               <AppText variant="caption" color="secondary" style={{ flex: 1 }}>
-                F1-style points (25, 18, 15, 12, 10, 8, 6, 4, 2, 1) for positions 1-10. Points accumulate across all OOM events.
+                F1-style points (25, 18, 15, 12, 10, 8, 6, 4, 2, 1) for positions 1-10. Points accumulate across all events.
               </AppText>
             </View>
           </AppCard>
@@ -452,7 +454,7 @@ export default function LeaderboardScreen() {
             <EmptyState
               icon={<Feather name="list" size={24} color={colors.textTertiary} />}
               title="No Results Recorded"
-              message="No Order of Merit results have been entered yet. Go to an OOM event and enter points to see the results log."
+              message="No results have been entered yet. Go to an event and enter points to see the results log."
             />
           ) : (
             <View style={styles.list}>
@@ -535,7 +537,7 @@ export default function LeaderboardScreen() {
             <View style={styles.infoContent}>
               <Feather name="info" size={16} color={colors.textTertiary} />
               <AppText variant="caption" color="secondary" style={{ flex: 1 }}>
-                This log shows all Order of Merit points entered, grouped by event. Use this as an audit trail to verify points allocation.
+                Day Value shows the raw score entered. Position and OOM points are calculated automatically.
               </AppText>
             </View>
           </AppCard>
