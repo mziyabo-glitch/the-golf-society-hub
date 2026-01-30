@@ -75,12 +75,27 @@ export async function upsertEventResults(
       code: error.code,
     });
 
-    // Check for common RLS/permission errors
-    if (error.code === "42501" || error.message?.includes("policy")) {
-      throw new Error("Permission denied. Only Captain or Handicapper can save points.");
+    // PGRST204: Schema mismatch - column doesn't exist in PostgREST cache
+    if (error.code === "PGRST204" || error.message?.includes("PGRST204") || error.message?.includes("schema cache")) {
+      throw new Error(
+        "Database schema mismatch (PGRST204). The event_results table may be missing the society_id column. " +
+        "Please run migration 011 and refresh the API schema in Supabase Dashboard → Settings → API → Reload schema."
+      );
     }
+
+    // 42501: RLS permission denied
+    if (error.code === "42501" || error.message?.includes("policy")) {
+      throw new Error("Permission denied. Only Captain, Handicapper, or Secretary can save points.");
+    }
+
+    // 42P01: Table doesn't exist
     if (error.code === "42P01" || error.message?.includes("does not exist")) {
-      throw new Error("Results table not found. Please contact support.");
+      throw new Error("Results table not found. Please run migration 011 in Supabase.");
+    }
+
+    // 23503: Foreign key violation
+    if (error.code === "23503") {
+      throw new Error("Invalid event or member reference. Please refresh and try again.");
     }
 
     throw new Error(error.message || "Failed to save event results");

@@ -2,6 +2,7 @@
  * Event Points Entry Screen
  * - Enter Order of Merit points for players in an event
  * - Captain/Handicapper only
+ * - F1-style points: 25,18,15,12,10,8,6,4,2,1 for positions 1-10
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -27,10 +28,23 @@ import {
 import { getPermissionsForMember } from "@/lib/rbac";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
 
+// F1-style points: positions 1-10 get points, rest get 0
+const F1_POINTS = [25, 18, 15, 12, 10, 8, 6, 4, 2, 1];
+
+function getF1Points(position: number): number {
+  if (position >= 1 && position <= 10) {
+    return F1_POINTS[position - 1];
+  }
+  return 0;
+}
+
 type PlayerPoints = {
   memberId: string;
   memberName: string;
   points: string; // String for input handling
+  finishPosition: string; // For F1 auto-assign
+  stablefordScore?: number; // From event results if available
+  netScore?: number; // From event results if available
 };
 
 export default function EventPointsScreen() {
@@ -104,13 +118,20 @@ export default function EventPointsScreen() {
       const memberMap = new Map(mems.map((m) => [m.id, m]));
       const resultMap = new Map(results.map((r) => [r.member_id, r]));
 
-      const points: PlayerPoints[] = playerIds.map((pid) => {
+      // Get event results (stableford/net scores) if available
+      const eventResults = evt.results ?? {};
+
+      const points: PlayerPoints[] = playerIds.map((pid, index) => {
         const member = memberMap.get(pid);
         const existing = resultMap.get(pid);
+        const playerResult = eventResults[pid] as { stableford?: number; netScore?: number } | undefined;
         return {
           memberId: pid,
           memberName: member?.displayName || member?.name || "Unknown",
           points: existing?.points != null ? String(existing.points) : "",
+          finishPosition: "", // Will be set by user or auto-computed
+          stablefordScore: playerResult?.stableford,
+          netScore: playerResult?.netScore,
         };
       });
 
@@ -130,6 +151,121 @@ export default function EventPointsScreen() {
   const updatePoints = (memberId: string, value: string) => {
     setPlayerPoints((prev) =>
       prev.map((p) => (p.memberId === memberId ? { ...p, points: value } : p))
+    );
+  };
+
+  const updateFinishPosition = (memberId: string, value: string) => {
+    setPlayerPoints((prev) =>
+      prev.map((p) => (p.memberId === memberId ? { ...p, finishPosition: value } : p))
+    );
+  };
+
+  /**
+   * Auto-assign F1 points based on finish positions entered by user
+   * F1 points: 25,18,15,12,10,8,6,4,2,1 for positions 1-10
+   */
+  const autoAssignF1FromPositions = () => {
+    // Check if any positions are entered
+    const withPositions = playerPoints.filter((p) => p.finishPosition.trim() !== "");
+
+    if (withPositions.length === 0) {
+      Alert.alert(
+        "Enter Finish Positions",
+        "Please enter finish positions (1, 2, 3...) for each player first, then tap Auto-assign."
+      );
+      return;
+    }
+
+    // Validate positions are numbers
+    for (const p of withPositions) {
+      const pos = parseInt(p.finishPosition.trim(), 10);
+      if (isNaN(pos) || pos < 1) {
+        Alert.alert(
+          "Invalid Position",
+          `Position for ${p.memberName} must be a positive number (1, 2, 3...).`
+        );
+        return;
+      }
+    }
+
+    // Assign F1 points based on position
+    setPlayerPoints((prev) =>
+      prev.map((p) => {
+        const pos = parseInt(p.finishPosition.trim(), 10);
+        if (!isNaN(pos) && pos >= 1) {
+          return { ...p, points: String(getF1Points(pos)) };
+        }
+        return { ...p, points: "0" }; // No position = 0 points
+      })
+    );
+
+    Alert.alert("Points Assigned", "F1 points have been assigned based on finish positions. Review and save.");
+  };
+
+  /**
+   * Auto-compute ranking from event scores (stableford or medal)
+   * Then assign F1 points to top 10
+   */
+  const autoAssignF1FromScores = () => {
+    if (!event) return;
+
+    // Check if we have scores to rank from
+    const withScores = playerPoints.filter(
+      (p) => p.stablefordScore != null || p.netScore != null
+    );
+
+    if (withScores.length === 0) {
+      Alert.alert(
+        "No Scores Available",
+        "This event doesn't have stableford or net scores recorded. Please enter finish positions manually instead."
+      );
+      return;
+    }
+
+    // Sort based on event format
+    const format = event.format?.toLowerCase() || "stableford";
+    let sorted: PlayerPoints[];
+
+    if (format === "medal" || format === "strokeplay") {
+      // Medal: lowest net score wins
+      sorted = [...playerPoints].sort((a, b) => {
+        const aScore = a.netScore ?? Infinity;
+        const bScore = b.netScore ?? Infinity;
+        return aScore - bScore;
+      });
+    } else {
+      // Stableford (default): highest stableford wins
+      sorted = [...playerPoints].sort((a, b) => {
+        const aScore = a.stablefordScore ?? -Infinity;
+        const bScore = b.stablefordScore ?? -Infinity;
+        return bScore - aScore;
+      });
+    }
+
+    // Assign finish positions (handling ties with same score = same position)
+    let currentPosition = 1;
+    const positionedPlayers = sorted.map((p, index) => {
+      if (index > 0) {
+        const prevPlayer = sorted[index - 1];
+        const prevScore = format === "medal" ? prevPlayer.netScore : prevPlayer.stablefordScore;
+        const currScore = format === "medal" ? p.netScore : p.stablefordScore;
+        if (currScore !== prevScore) {
+          currentPosition = index + 1;
+        }
+      }
+      return { ...p, finishPosition: String(currentPosition) };
+    });
+
+    // Assign F1 points
+    const withPoints = positionedPlayers.map((p) => {
+      const pos = parseInt(p.finishPosition, 10);
+      return { ...p, points: String(getF1Points(pos)) };
+    });
+
+    setPlayerPoints(withPoints);
+    Alert.alert(
+      "Points Assigned",
+      `F1 points assigned based on ${format === "medal" ? "net score (low wins)" : "stableford (high wins)"}. Review and save.`
     );
   };
 
@@ -300,11 +436,45 @@ export default function EventPointsScreen() {
           style={{ flex: 1 }}
           contentContainerStyle={{ paddingBottom: spacing.xl }}
         >
+          {/* F1 Auto-assign buttons */}
+          <AppCard style={styles.f1Card}>
+            <AppText variant="bodyBold" style={{ marginBottom: spacing.xs }}>
+              F1-Style Points (Top 10)
+            </AppText>
+            <AppText variant="caption" color="secondary" style={{ marginBottom: spacing.sm }}>
+              25, 18, 15, 12, 10, 8, 6, 4, 2, 1 for positions 1-10
+            </AppText>
+            <View style={styles.f1ButtonRow}>
+              <SecondaryButton onPress={autoAssignF1FromPositions} size="sm" style={{ flex: 1 }}>
+                <Feather name="hash" size={14} color={colors.text} />
+                {" From Positions"}
+              </SecondaryButton>
+              <SecondaryButton onPress={autoAssignF1FromScores} size="sm" style={{ flex: 1 }}>
+                <Feather name="zap" size={14} color={colors.text} />
+                {" From Scores"}
+              </SecondaryButton>
+            </View>
+          </AppCard>
+
+          {/* Column headers */}
+          <View style={styles.columnHeaders}>
+            <View style={{ width: 32 }} />
+            <AppText variant="caption" color="tertiary" style={{ flex: 1 }}>
+              Player
+            </AppText>
+            <AppText variant="caption" color="tertiary" style={{ width: 50, textAlign: "center" }}>
+              Pos
+            </AppText>
+            <AppText variant="caption" color="tertiary" style={{ width: 70, textAlign: "center" }}>
+              Points
+            </AppText>
+          </View>
+
           <View style={{ gap: spacing.sm }}>
             {playerPoints.map((player, index) => (
               <AppCard key={player.memberId} style={styles.playerCard}>
                 <View style={styles.playerRow}>
-                  {/* Rank number */}
+                  {/* List number */}
                   <View
                     style={[
                       styles.rankBadge,
@@ -316,10 +486,30 @@ export default function EventPointsScreen() {
                     </AppText>
                   </View>
 
-                  {/* Player name */}
-                  <AppText variant="body" style={{ flex: 1 }}>
-                    {player.memberName}
-                  </AppText>
+                  {/* Player name + score info */}
+                  <View style={{ flex: 1 }}>
+                    <AppText variant="body">
+                      {player.memberName}
+                    </AppText>
+                    {(player.stablefordScore != null || player.netScore != null) && (
+                      <AppText variant="small" color="tertiary">
+                        {player.stablefordScore != null && `${player.stablefordScore} stb`}
+                        {player.stablefordScore != null && player.netScore != null && " | "}
+                        {player.netScore != null && `Net ${player.netScore}`}
+                      </AppText>
+                    )}
+                  </View>
+
+                  {/* Finish position input */}
+                  <View style={styles.positionInput}>
+                    <AppInput
+                      placeholder="#"
+                      value={player.finishPosition}
+                      onChangeText={(v) => updateFinishPosition(player.memberId, v)}
+                      keyboardType="number-pad"
+                      style={{ textAlign: "center", minWidth: 45 }}
+                    />
+                  </View>
 
                   {/* Points input */}
                   <View style={styles.pointsInput}>
@@ -328,7 +518,7 @@ export default function EventPointsScreen() {
                       value={player.points}
                       onChangeText={(v) => updatePoints(player.memberId, v)}
                       keyboardType="number-pad"
-                      style={{ textAlign: "center", minWidth: 60 }}
+                      style={{ textAlign: "center", minWidth: 55 }}
                     />
                     <AppText variant="small" color="tertiary">
                       pts
@@ -344,7 +534,7 @@ export default function EventPointsScreen() {
             <View style={styles.infoContent}>
               <Feather name="info" size={16} color={colors.textTertiary} />
               <AppText variant="caption" color="secondary" style={{ flex: 1 }}>
-                Enter points for each player. Leave blank for players with no points. Points are used for the Order of Merit leaderboard.
+                Enter finish positions (1, 2, 3...) and tap "From Positions" to auto-assign F1 points, or enter points directly. Only top 10 positions earn points.
               </AppText>
             </View>
           </AppCard>
@@ -361,6 +551,20 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
     marginBottom: spacing.lg,
   },
+  f1Card: {
+    marginBottom: spacing.md,
+  },
+  f1ButtonRow: {
+    flexDirection: "row",
+    gap: spacing.sm,
+  },
+  columnHeaders: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+    paddingHorizontal: spacing.sm,
+    marginBottom: spacing.xs,
+  },
   playerCard: {
     marginBottom: 0,
   },
@@ -375,6 +579,10 @@ const styles = StyleSheet.create({
     borderRadius: radius.full,
     alignItems: "center",
     justifyContent: "center",
+  },
+  positionInput: {
+    flexDirection: "row",
+    alignItems: "center",
   },
   pointsInput: {
     flexDirection: "row",
