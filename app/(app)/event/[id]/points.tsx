@@ -30,12 +30,17 @@ import { getColors, spacing, radius } from "@/lib/ui/theme";
 
 // F1-style points: positions 1-10 get points, rest get 0
 const F1_POINTS = [25, 18, 15, 12, 10, 8, 6, 4, 2, 1];
+const VALID_F1_POINTS = new Set([0, ...F1_POINTS]); // 0, 1, 2, 4, 6, 8, 10, 12, 15, 18, 25
 
 function getF1Points(position: number): number {
   if (position >= 1 && position <= 10) {
     return F1_POINTS[position - 1];
   }
   return 0;
+}
+
+function isValidF1Points(points: number): boolean {
+  return VALID_F1_POINTS.has(points);
 }
 
 type PlayerPoints = {
@@ -272,7 +277,7 @@ export default function EventPointsScreen() {
   const handleSave = async () => {
     if (!event || !societyId) return;
 
-    // Validate all points are valid numbers
+    // Validate all points are valid F1 values
     for (const p of playerPoints) {
       if (p.points.trim() !== "") {
         const num = parseInt(p.points.trim(), 10);
@@ -280,6 +285,14 @@ export default function EventPointsScreen() {
           Alert.alert(
             "Invalid Points",
             `Points for ${p.memberName} must be a non-negative number.`
+          );
+          return;
+        }
+        // Enforce F1-style points only
+        if (!isValidF1Points(num)) {
+          Alert.alert(
+            "Invalid F1 Points",
+            `Points for ${p.memberName} must be a valid F1 value (25, 18, 15, 12, 10, 8, 6, 4, 2, 1, or 0).\n\nUse the "From Positions" button to auto-assign F1 points based on finish positions.`
           );
           return;
         }

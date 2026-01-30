@@ -418,7 +418,7 @@ export default function LeaderboardScreen() {
             <View style={styles.infoContent}>
               <Feather name="info" size={16} color={colors.textTertiary} />
               <AppText variant="caption" color="secondary" style={{ flex: 1 }}>
-                Points are entered manually for each Order of Merit event. Go to an OOM event and tap "Enter Points" to add results.
+                F1-style points (25, 18, 15, 12, 10, 8, 6, 4, 2, 1) for positions 1-10. Points accumulate across all OOM events.
               </AppText>
             </View>
           </AppCard>
