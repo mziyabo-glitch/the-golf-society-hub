@@ -231,10 +231,10 @@ export async function getOrderOfMeritTotals(
   const eventsMap = new Map((eventsData ?? []).map((e) => [e.id, e]));
   const membersMap = new Map((membersData ?? []).map((m) => [m.id, m]));
 
-  // Filter to OOM events only
+  // Filter to OOM events only (check both is_oom flag and classification for backward compatibility)
   const oomEventIds = new Set(
     (eventsData ?? [])
-      .filter((e) => e.is_oom === true)
+      .filter((e) => e.is_oom === true || e.classification === 'oom')
       .map((e) => e.id)
   );
 
@@ -361,8 +361,8 @@ export async function getOrderOfMeritLog(
     return [];
   }
 
-  // Filter to OOM events only
-  const oomEvents = eventsData.filter((e) => e.is_oom === true);
+  // Filter to OOM events only (check both is_oom flag and classification for backward compatibility)
+  const oomEvents = eventsData.filter((e) => e.is_oom === true || e.classification === 'oom');
 
   if (oomEvents.length === 0) {
     console.log("[resultsRepo] No OOM events found");
