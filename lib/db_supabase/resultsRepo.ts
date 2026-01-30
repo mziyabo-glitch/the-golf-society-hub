@@ -61,14 +61,15 @@ export async function upsertEventResults(
     return;
   }
 
-  // Prepare rows for upsert
-  // Note: day_value and position columns require migration 013
-  // We skip them entirely to avoid errors if columns don't exist yet
+  // Prepare rows for upsert including audit columns (day_value, position)
+  // Requires migration 013 to add these columns to the database
   const rows = results.map((r) => ({
     event_id: eventId,
     society_id: societyId,
     member_id: r.member_id,
     points: r.points,
+    day_value: r.day_value ?? null,
+    position: r.position ?? null,
   }));
 
   console.log("[resultsRepo] upserting rows:", JSON.stringify(rows, null, 2));
@@ -353,11 +354,11 @@ export async function getOrderOfMeritLog(
 
   const eventIds = eventsData.map((e) => e.id);
 
-  // Fetch event results for these events
-  // Note: day_value and position are optional audit columns (migration 013)
+  // Fetch event results for these events including audit columns
+  // day_value and position require migration 013
   const { data: resultsData, error: resultsError } = await supabase
     .from("event_results")
-    .select("event_id, member_id, points")
+    .select("event_id, member_id, points, day_value, position")
     .in("event_id", eventIds);
 
   if (resultsError) {
@@ -397,7 +398,13 @@ export async function getOrderOfMeritLog(
   for (const event of eventsData) {
     const eventResults = resultsData
       .filter((r) => r.event_id === event.id)
-      .sort((a, b) => (b.points || 0) - (a.points || 0)); // Sort by points desc
+      .sort((a, b) => {
+        // Sort by position first (if available), then by points desc
+        const posA = (a as any).position ?? 999;
+        const posB = (b as any).position ?? 999;
+        if (posA !== posB) return posA - posB;
+        return (b.points || 0) - (a.points || 0);
+      });
 
     for (const result of eventResults) {
       const member = membersMap.get(result.member_id);
@@ -409,8 +416,8 @@ export async function getOrderOfMeritLog(
         memberId: result.member_id,
         memberName: member?.name || "Unknown",
         points: result.points || 0,
-        dayValue: null,  // Audit columns not stored yet (migration 013)
-        position: null,
+        dayValue: (result as any).day_value ?? null,
+        position: (result as any).position ?? null,
       });
     }
   }
