@@ -17,14 +17,20 @@ import {
   EVENT_FORMATS,
   EVENT_CLASSIFICATIONS,
 } from "@/lib/db_supabase/eventRepo";
+import { getPermissionsForMember } from "@/lib/rbac";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
 
 export default function EventDetailScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ id: string }>();
-  const { societyId, loading: bootstrapLoading } = useBootstrap();
+  const { societyId, userId, member: currentMember, loading: bootstrapLoading } = useBootstrap();
   const colors = getColors();
 
+  // Permissions for entering points (Captain/Handicapper)
+  const permissions = getPermissionsForMember(currentMember as any);
+  const canEnterPoints = permissions.canManageHandicaps;
+
+  // Safely extract eventId (could be string or array from URL params)
   const eventId = Array.isArray(params.id) ? params.id[0] : params.id;
 
   const [event, setEvent] = useState<EventDoc | null>(null);
@@ -95,6 +101,18 @@ export default function EventDetailScreen() {
     EVENT_CLASSIFICATIONS.find((c) => c.value === event.classification)
       ?.label ?? event.classification;
 
+  const handleOpenPoints = () => {
+    if (!eventId) {
+      console.error("[EventDetail] Cannot open points: eventId is undefined");
+      return;
+    }
+    console.log("[EventDetail] opening points for event:", eventId);
+    router.push({ pathname: "/(app)/event/[id]/points", params: { id: eventId } });
+  };
+
+  // Check if this is an OOM event
+  const isOOMEvent = event?.classification === "oom" || event?.isOOM === true;
+
   return (
     <Screen>
       {/* Header */}
@@ -135,24 +153,34 @@ export default function EventDetailScreen() {
         </AppCard>
       </Pressable>
 
-      {/* Points — SINGLE ENTRY POINT */}
-      {event.classification === "oom" && (
+      {/* Enter Points Section - Only for OOM events and Captain/Handicapper */}
+      {isOOMEvent && canEnterPoints && (
         <Pressable
-          onPress={() =>
-            router.push({
-              pathname: "/(app)/event/[id]/points",
-              params: { id: eventId },
-            })
-          }
+          onPress={handleOpenPoints}
+          style={({ pressed }) => ({ opacity: pressed ? 0.8 : 1 })}
         >
           <AppCard style={styles.actionCard}>
-            <ActionRow
-              icon="award"
-              title="Points"
-              subtitle="Enter Order of Merit points"
-            />
+            <View style={styles.actionRow}>
+              <View style={[styles.iconContainer, { backgroundColor: colors.warning + "20" }]}>
+                <Feather name="edit-3" size={18} color={colors.warning} />
+              </View>
+              <View style={styles.actionContent}>
+                <AppText variant="bodyBold">Enter Points</AppText>
+                <AppText variant="caption" color="secondary">
+                  Add Order of Merit points for players
+                </AppText>
+              </View>
+              <Feather name="chevron-right" size={20} color={colors.textTertiary} />
+            </View>
           </AppCard>
         </Pressable>
+      )}
+
+      {/* Created info */}
+      {event.created_at && (
+        <AppText variant="small" color="tertiary" style={styles.createdText}>
+          Created {new Date(event.created_at).toLocaleDateString("en-GB")}
+        </AppText>
       )}
     </Screen>
   );

@@ -7,6 +7,7 @@ import { Feather } from "@expo/vector-icons";
 import { Screen } from "@/components/ui/Screen";
 import { AppText } from "@/components/ui/AppText";
 import { AppCard } from "@/components/ui/AppCard";
+import { SecondaryButton } from "@/components/ui/Button";
 import { LoadingState } from "@/components/ui/LoadingState";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { PrimaryButton, SecondaryButton } from "@/components/ui/Button";
@@ -55,6 +56,7 @@ export default function LeaderboardScreen() {
     }
   }, [societyId, mode]);
 
+  // Refetch on focus to pick up changes after entering points
   useFocusEffect(
     useCallback(() => {
       fetchData();
@@ -122,6 +124,23 @@ export default function LeaderboardScreen() {
       </Screen>
     );
   }
+
+  // Format date for display
+  const formatDate = (dateStr: string | null) => {
+    if (!dateStr) return "";
+    const date = new Date(dateStr);
+    return date.toLocaleDateString("en-GB", {
+      day: "numeric",
+      month: "short",
+      year: "numeric",
+    });
+  };
+
+  // Format label for event format
+  const formatLabel = (format: string | null) => {
+    if (!format) return "";
+    return format.charAt(0).toUpperCase() + format.slice(1);
+  };
 
   return (
     <Screen>

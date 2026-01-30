@@ -428,3 +428,83 @@ export async function updateMemberHandicap(
 
   return mapMember(row);
 }
+
+/**
+ * Update a member (unified function)
+ *
+ * Updates member fields and optionally handicap data.
+ * Throws on Supabase error and returns the updated member.
+ *
+ * @param memberId - The member to update
+ * @param patch - Fields to update
+ * @returns The updated member data
+ */
+export async function updateMember(
+  memberId: string,
+  patch: Partial<{
+    name: string;
+    displayName: string;
+    email: string;
+    whsNumber: string | null;
+    handicapIndex: number | null;
+  }>
+): Promise<MemberDoc> {
+  console.log("[memberRepo] updateMember starting:", { memberId, patch });
+
+  if (!memberId) throw new Error("updateMember: missing memberId");
+
+  // Build payload for basic fields
+  const basicPayload: Record<string, unknown> = {};
+
+  if (patch.name !== undefined) basicPayload.name = patch.name;
+  if (patch.displayName !== undefined) basicPayload.name = patch.displayName;
+  if (patch.email !== undefined) basicPayload.email = patch.email;
+
+  // Update basic fields if any
+  if (Object.keys(basicPayload).length > 0) {
+    console.log("[memberRepo] updateMember basic payload:", basicPayload);
+
+    const { error } = await supabase
+      .from("members")
+      .update(basicPayload)
+      .eq("id", memberId);
+
+    if (error) {
+      console.error("[memberRepo] updateMember basic fields failed:", {
+        message: error.message,
+        details: error.details,
+        hint: error.hint,
+        code: error.code,
+      });
+      throw new Error(error.message || "Failed to update member");
+    }
+  }
+
+  // Update handicap fields if provided (uses RPC for permission check)
+  const hasHandicapUpdate =
+    patch.whsNumber !== undefined || patch.handicapIndex !== undefined;
+
+  if (hasHandicapUpdate) {
+    // Validate handicap range
+    if (patch.handicapIndex !== undefined && patch.handicapIndex !== null) {
+      if (patch.handicapIndex < -10 || patch.handicapIndex > 54) {
+        throw new Error("Handicap index must be between -10 and 54.");
+      }
+    }
+
+    return await updateMemberHandicap(
+      memberId,
+      patch.whsNumber,
+      patch.handicapIndex
+    );
+  }
+
+  // Fetch and return updated member
+  const updated = await getMember(memberId);
+  if (!updated) {
+    throw new Error("Member not found after update");
+  }
+
+  console.log("[memberRepo] updateMember success:", updated.id);
+  return updated;
+}
