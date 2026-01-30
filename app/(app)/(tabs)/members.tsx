@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { StyleSheet, View, Pressable, Alert } from "react-native";
 import { useRouter } from "expo-router";
+import { useFocusEffect } from "@react-navigation/native";
 import { Feather } from "@expo/vector-icons";
 
 import { Screen } from "@/components/ui/Screen";
@@ -158,6 +159,15 @@ export default function MembersScreen() {
   useEffect(() => {
     loadMembers();
   }, [societyId]);
+
+  // Refetch on focus to pick up changes from detail screen
+  useFocusEffect(
+    useCallback(() => {
+      if (societyId) {
+        loadMembers();
+      }
+    }, [societyId])
+  );
 
   const openAddModal = () => {
     setFormName("");
@@ -470,7 +480,7 @@ export default function MembersScreen() {
             return (
               <Pressable
                 key={member.id}
-                onPress={permissions.canEditMembers ? () => openEditModal(member) : undefined}
+                onPress={() => router.push({ pathname: "/(app)/members/[id]", params: { id: member.id } })}
               >
                 <AppCard style={styles.memberCard}>
                   <View style={styles.memberRow}>
