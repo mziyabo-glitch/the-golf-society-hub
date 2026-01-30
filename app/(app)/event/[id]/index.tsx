@@ -110,9 +110,6 @@ export default function EventDetailScreen() {
     router.push({ pathname: "/(app)/event/[id]/points", params: { id: eventId } });
   };
 
-  // Check if this is an OOM event
-  const isOOMEvent = event?.classification === "oom" || event?.isOOM === true;
-
   return (
     <Screen>
       {/* Header */}
@@ -153,8 +150,8 @@ export default function EventDetailScreen() {
         </AppCard>
       </Pressable>
 
-      {/* Enter Points Section - Only for OOM events and Captain/Handicapper */}
-      {isOOMEvent && canEnterPoints && (
+      {/* Enter Points Section - Captain/Handicapper only */}
+      {canEnterPoints && (
         <Pressable
           onPress={handleOpenPoints}
           style={({ pressed }) => ({ opacity: pressed ? 0.8 : 1 })}

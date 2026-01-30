@@ -7,6 +7,8 @@ export type EventResultDoc = {
   event_id: string;
   member_id: string;
   points: number;
+  day_value?: number | null;  // Raw score: stableford pts or net score
+  position?: number | null;   // Finishing position (1, 2, 3...)
   created_at: string;
   updated_at: string;
 };
@@ -14,6 +16,8 @@ export type EventResultDoc = {
 export type EventResultInput = {
   member_id: string;
   points: number;
+  day_value?: number;  // Raw score for audit trail
+  position?: number;   // Finishing position for audit trail
 };
 
 export type OrderOfMeritEntry = {
@@ -33,6 +37,15 @@ export async function upsertEventResults(
   societyId: string,
   results: EventResultInput[]
 ): Promise<void> {
+  // Defensive check: ensure results is an array
+  if (!Array.isArray(results)) {
+    console.error("[resultsRepo] upsertEventResults: results is not an array!", {
+      type: typeof results,
+      value: results,
+    });
+    throw new Error("Invalid results: expected an array");
+  }
+
   console.log("[resultsRepo] upsertEventResults:", {
     eventId,
     societyId,
@@ -48,12 +61,15 @@ export async function upsertEventResults(
     return;
   }
 
-  // Prepare rows for upsert
+  // Prepare rows for upsert including audit columns (day_value, position)
+  // Requires migration 013 to add these columns to the database
   const rows = results.map((r) => ({
     event_id: eventId,
     society_id: societyId,
     member_id: r.member_id,
     points: r.points,
+    day_value: r.day_value ?? null,
+    position: r.position ?? null,
   }));
 
   console.log("[resultsRepo] upserting rows:", JSON.stringify(rows, null, 2));
@@ -217,17 +233,14 @@ export async function getOrderOfMeritTotals(
 
   console.log("[resultsRepo] raw results:", resultsData.length, "rows");
 
-  // Filter to only OOM events and aggregate by member
+  // Aggregate points by member (include all events, not just OOM)
   const memberTotals: Record<string, OrderOfMeritEntry> = {};
 
   resultsData.forEach((row) => {
     const event = eventsMap.get(row.event_id);
     if (!event) return;
 
-    // Check if this is an OOM event
-    const isOOM = event.classification === "oom" || event.is_oom === true;
-    if (!isOOM) return;
-
+    // Include ALL events with results (not just OOM classified)
     const memberId = row.member_id;
     const member = membersMap.get(memberId);
     const memberName = member?.name || "Unknown";
@@ -302,6 +315,8 @@ export type ResultsLogEntry = {
   memberId: string;
   memberName: string;
   points: number;
+  dayValue: number | null;   // Raw score (stableford pts or net score)
+  position: number | null;   // Finishing position (1, 2, 3...)
 };
 
 /**
@@ -317,12 +332,11 @@ export async function getOrderOfMeritLog(
     throw new Error("Missing societyId");
   }
 
-  // Fetch OOM events for this society, ordered by date desc
+  // Fetch all events for this society with results, ordered by date desc
   const { data: eventsData, error: eventsError } = await supabase
     .from("events")
     .select("id, name, date, format, classification, is_oom")
     .eq("society_id", societyId)
-    .or("classification.eq.oom,is_oom.eq.true")
     .order("date", { ascending: false });
 
   if (eventsError) {
@@ -334,16 +348,17 @@ export async function getOrderOfMeritLog(
   }
 
   if (!eventsData || eventsData.length === 0) {
-    console.log("[resultsRepo] No OOM events found");
+    console.log("[resultsRepo] No events found");
     return [];
   }
 
   const eventIds = eventsData.map((e) => e.id);
 
-  // Fetch event results for these events
+  // Fetch event results for these events including audit columns
+  // day_value and position require migration 013
   const { data: resultsData, error: resultsError } = await supabase
     .from("event_results")
-    .select("event_id, member_id, points")
+    .select("event_id, member_id, points, day_value, position")
     .in("event_id", eventIds);
 
   if (resultsError) {
@@ -383,7 +398,13 @@ export async function getOrderOfMeritLog(
   for (const event of eventsData) {
     const eventResults = resultsData
       .filter((r) => r.event_id === event.id)
-      .sort((a, b) => (b.points || 0) - (a.points || 0)); // Sort by points desc within event
+      .sort((a, b) => {
+        // Sort by position first (if available), then by points desc
+        const posA = (a as any).position ?? 999;
+        const posB = (b as any).position ?? 999;
+        if (posA !== posB) return posA - posB;
+        return (b.points || 0) - (a.points || 0);
+      });
 
     for (const result of eventResults) {
       const member = membersMap.get(result.member_id);
@@ -395,6 +416,8 @@ export async function getOrderOfMeritLog(
         memberId: result.member_id,
         memberName: member?.name || "Unknown",
         points: result.points || 0,
+        dayValue: (result as any).day_value ?? null,
+        position: (result as any).position ?? null,
       });
     }
   }

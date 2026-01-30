@@ -2,9 +2,11 @@
  * Event Points Entry Screen
  *
  * Workflow:
- * 1. User enters Day Points (stableford/competition score) for each player
- * 2. App auto-sorts by Day Points DESC (ties broken by name ASC)
- * 3. App auto-assigns positions (1, 2, 3...)
+ * 1. User enters Day Points (stableford score or strokeplay score) for each player
+ * 2. App auto-sorts based on event format:
+ *    - Stableford (high_wins): Higher points = better position
+ *    - Strokeplay (low_wins): Lower score = better position
+ * 3. App auto-assigns positions (1, 2, 3...) with tie handling
  * 4. App auto-calculates OOM points using F1 top-10: [25,18,15,12,10,8,6,4,2,1]
  * 5. Save stores ONLY the OOM points to event_results
  */
@@ -22,7 +24,7 @@ import { PrimaryButton, SecondaryButton } from "@/components/ui/Button";
 import { LoadingState } from "@/components/ui/LoadingState";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { useBootstrap } from "@/lib/useBootstrap";
-import { getEvent, type EventDoc } from "@/lib/db_supabase/eventRepo";
+import { getEvent, getFormatSortOrder, type EventDoc } from "@/lib/db_supabase/eventRepo";
 import { getMembersBySocietyId, type MemberDoc } from "@/lib/db_supabase/memberRepo";
 import {
   upsertEventResults,
@@ -148,6 +150,9 @@ export default function EventPointsScreen() {
     });
   };
 
+  // Get sort order based on event format
+  const sortOrder = getFormatSortOrder(event?.format);
+
   // Calculate positions and OOM points based on day points
   const calculatePositionsAndOOM = (playerList: PlayerEntry[]): PlayerEntry[] => {
     // Separate players with valid day points from those without
@@ -163,12 +168,19 @@ export default function EventPointsScreen() {
       }
     }
 
-    // Sort by day points DESC, then by name ASC for tie-breaking
+    // Sort based on format:
+    // - Stableford (high_wins): Higher points = better position (DESC)
+    // - Strokeplay (low_wins): Lower score = better position (ASC)
+    // NOTE: No tie-breaking - tied players remain in original order
     withPoints.sort((a, b) => {
       const aPts = parseInt(a.dayPoints.trim(), 10);
       const bPts = parseInt(b.dayPoints.trim(), 10);
-      if (bPts !== aPts) return bPts - aPts; // Higher points = better position
-      return a.memberName.localeCompare(b.memberName); // Alphabetical tie-break
+
+      if (sortOrder === 'low_wins') {
+        return aPts - bPts; // Lower is better for strokeplay
+      }
+      return bPts - aPts; // Higher is better for stableford
+      // Ties: return 0 implicitly (stable sort preserves original order)
     });
 
     // Assign positions and OOM points
@@ -178,7 +190,7 @@ export default function EventPointsScreen() {
       if (index > 0) {
         const prevPts = parseInt(withPoints[index - 1].dayPoints.trim(), 10);
         const currPts = parseInt(p.dayPoints.trim(), 10);
-        if (currPts < prevPts) {
+        if (currPts !== prevPts) {
           currentPosition = index + 1;
         }
         // If equal, keep same position (tie)
@@ -257,23 +269,48 @@ export default function EventPointsScreen() {
     setSaving(true);
     try {
       // Build results array with OOM points for all players with day points
-      const results = playersWithDayPoints.map((p) => ({
-        member_id: p.memberId,
-        points: p.oomPoints,
-      }));
+      // Use Array.from() to ensure we have a proper array (not a stale memoized value)
+      const playersToSave = Array.from(playersWithDayPoints);
 
-      console.log("[points] Upserting", results.length, "results to event_results:", results);
+      console.log("[points] playersToSave:", {
+        isArray: Array.isArray(playersToSave),
+        length: playersToSave.length,
+        players: playersToSave,
+      });
+
+      // Include day_value and position for audit trail
+      const results: Array<{ member_id: string; points: number; day_value?: number; position?: number }> = [];
+      for (const p of playersToSave) {
+        const dayValue = parseInt(p.dayPoints.trim(), 10);
+        results.push({
+          member_id: p.memberId,
+          points: p.oomPoints,
+          day_value: !isNaN(dayValue) ? dayValue : undefined,
+          position: p.position ?? undefined,
+        });
+      }
+
+      console.log("[points] results array:", {
+        isArray: Array.isArray(results),
+        length: results.length,
+        results: JSON.stringify(results),
+      });
+
+      if (!Array.isArray(results) || results.length === 0) {
+        throw new Error("Failed to build results array");
+      }
 
       await upsertEventResults(event.id, societyId, results);
 
       console.log("[points] Save SUCCESS");
+      console.log("[points] save complete → routing to OOM log");
 
       Alert.alert("Saved", "OOM points saved successfully.", [
         {
           text: "OK",
           onPress: () => {
-            // Use replace to ensure leaderboard refetches
-            router.back();
+            // Navigate to leaderboard with Results Log view
+            router.replace("/(app)/(tabs)/leaderboard?view=log");
           },
         },
       ]);
@@ -347,28 +384,6 @@ export default function EventPointsScreen() {
     );
   }
 
-  // Check if OOM event
-  const isOOM = event.classification === "oom" || event.isOOM === true;
-
-  if (!isOOM) {
-    return (
-      <Screen>
-        <View style={styles.header}>
-          <SecondaryButton onPress={() => router.back()} size="sm">
-            <Feather name="arrow-left" size={16} color={colors.text} />
-            {" Back"}
-          </SecondaryButton>
-        </View>
-        <EmptyState
-          icon={<Feather name="info" size={24} color={colors.textTertiary} />}
-          title="Not an OOM Event"
-          message="Points can only be entered for Order of Merit events."
-          action={{ label: "Go Back", onPress: () => router.back() }}
-        />
-      </Screen>
-    );
-  }
-
   // No players
   if (players.length === 0) {
     return (
@@ -416,18 +431,20 @@ export default function EventPointsScreen() {
 
       {/* Title */}
       <AppText variant="h2" style={{ marginBottom: spacing.xs }}>
-        Enter Day Points
+        {sortOrder === 'low_wins' ? "Enter Net Scores" : "Enter Stableford Points"}
       </AppText>
       <AppText variant="body" color="secondary" style={{ marginBottom: spacing.md }}>
         {event.name}
       </AppText>
 
-      {/* Instructions */}
+      {/* Instructions - format-specific */}
       <AppCard style={styles.instructionCard}>
         <View style={styles.instructionContent}>
           <Feather name="info" size={16} color={colors.primary} />
           <AppText variant="caption" color="secondary" style={{ flex: 1 }}>
-            Enter competition points from the scorecard. Positions and OOM points are calculated automatically. Top 10 earn F1 points: 25, 18, 15, 12, 10, 8, 6, 4, 2, 1.
+            {sortOrder === 'low_wins'
+              ? "Lower is better. Positions and Order of Merit points are calculated automatically. Top 10 earn F1 points: 25, 18, 15, 12, 10, 8, 6, 4, 2, 1."
+              : "Higher is better. Positions and Order of Merit points are calculated automatically. Top 10 earn F1 points: 25, 18, 15, 12, 10, 8, 6, 4, 2, 1."}
           </AppText>
         </View>
       </AppCard>
@@ -456,7 +473,7 @@ export default function EventPointsScreen() {
           Player
         </AppText>
         <AppText variant="captionBold" color="tertiary" style={styles.colDayPoints}>
-          Day Pts
+          {sortOrder === 'low_wins' ? "Score" : "Pts"}
         </AppText>
         <AppText variant="captionBold" color="tertiary" style={styles.colPos}>
           Pos

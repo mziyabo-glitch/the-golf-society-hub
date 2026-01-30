@@ -16,30 +16,36 @@ function RootNavigator() {
 
   // Track if we've already routed to prevent loops
   const hasRouted = useRef(false);
+  // Track last known state to prevent redundant logs
+  const lastState = useRef<string>("");
 
   useEffect(() => {
     // Don't route while loading
     if (loading) {
-      console.log("[_layout] Still loading, skipping route guard");
       return;
     }
 
     // Prevent routing loops - only route once per bootstrap cycle
     if (hasRouted.current) {
-      console.log("[_layout] Already routed, skipping");
       return;
     }
 
     const inOnboarding = segments[0] === "onboarding";
     const hasSociety = !!activeSocietyId;
 
-    console.log("[_layout] Route guard check:", {
-      loading,
-      hasSociety,
-      activeSocietyId,
-      inOnboarding,
-      segments: segments.join("/"),
-    });
+    // Create a state key to detect actual changes
+    const stateKey = `${hasSociety}-${inOnboarding}-${segments.join("/")}`;
+
+    // Only log if state actually changed
+    if (stateKey !== lastState.current) {
+      lastState.current = stateKey;
+      console.log("[_layout] Route guard check:", {
+        hasSociety,
+        activeSocietyId,
+        inOnboarding,
+        segments: segments.join("/"),
+      });
+    }
 
     if (!hasSociety && !inOnboarding) {
       // No society and not on onboarding -> go to onboarding
@@ -51,15 +57,15 @@ function RootNavigator() {
       console.log("[_layout] Has society, redirecting to /(app)/(tabs)");
       hasRouted.current = true;
       router.replace("/(app)/(tabs)");
-    } else {
-      console.log("[_layout] Route guard: no redirect needed");
     }
+    // Note: Removed "no redirect needed" log to reduce console spam
   }, [loading, activeSocietyId, segments, router]);
 
   // Reset hasRouted when loading changes (new bootstrap cycle)
   useEffect(() => {
     if (loading) {
       hasRouted.current = false;
+      lastState.current = "";
     }
   }, [loading]);
 

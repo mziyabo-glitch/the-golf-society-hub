@@ -1,19 +1,29 @@
 // lib/db_supabase/eventRepo.ts
 import { supabase } from "@/lib/supabase";
 
-// Event format types
-export type EventFormat = 'medal' | 'stableford' | 'matchplay' | 'scramble' | 'texas_scramble' | 'fourball' | 'foursomes';
+// Event format types - simplified to core formats
+// 'medal' kept as alias for backwards compatibility with existing data
+export type EventFormat = 'stableford' | 'strokeplay_net' | 'strokeplay_gross' | 'medal';
 export type EventClassification = 'general' | 'oom' | 'major' | 'friendly';
 
-export const EVENT_FORMATS: { value: EventFormat; label: string }[] = [
-  { value: 'stableford', label: 'Stableford' },
-  { value: 'medal', label: 'Medal (Stroke Play)' },
-  { value: 'matchplay', label: 'Match Play' },
-  { value: 'scramble', label: 'Scramble' },
-  { value: 'texas_scramble', label: 'Texas Scramble' },
-  { value: 'fourball', label: 'Four-Ball' },
-  { value: 'foursomes', label: 'Foursomes' },
+// Sort order: high_wins = highest score wins (stableford), low_wins = lowest score wins (strokeplay)
+export const EVENT_FORMATS: { value: EventFormat; label: string; sortOrder: 'high_wins' | 'low_wins' }[] = [
+  { value: 'stableford', label: 'Stableford', sortOrder: 'high_wins' },
+  { value: 'strokeplay_net', label: 'Strokeplay (Net)', sortOrder: 'low_wins' },
+  { value: 'strokeplay_gross', label: 'Strokeplay (Gross)', sortOrder: 'low_wins' },
 ];
+
+// Helper to get sort order for a format (handles legacy 'medal' format)
+export function getFormatSortOrder(format: string | undefined): 'high_wins' | 'low_wins' {
+  if (!format) return 'high_wins'; // Default to stableford behavior
+  const normalized = format.toLowerCase();
+  // Strokeplay formats = low wins
+  if (normalized.includes('strokeplay') || normalized.includes('medal') || normalized.includes('gross') || normalized.includes('net')) {
+    return 'low_wins';
+  }
+  // Everything else (stableford) = high wins
+  return 'high_wins';
+}
 
 export const EVENT_CLASSIFICATIONS: { value: EventClassification; label: string }[] = [
   { value: 'general', label: 'General' },

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState, useMemo } from "react";
 import { StyleSheet, View, Platform, Alert, Pressable } from "react-native";
+import { useLocalSearchParams } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
 import { Feather } from "@expo/vector-icons";
 import * as Print from "expo-print";
@@ -27,43 +28,66 @@ export default function LeaderboardScreen() {
   const { society, societyId, loading: bootstrapLoading } = useBootstrap();
   const colors = getColors();
 
-  const [activeTab, setActiveTab] = useState<TabType>("leaderboard");
+  // Read query param to determine initial view
+  const params = useLocalSearchParams<{ view?: string }>();
+  const initialTab: TabType = params.view === "log" ? "resultsLog" : "leaderboard";
+
+  const [activeTab, setActiveTab] = useState<TabType>(initialTab);
   const [standings, setStandings] = useState<OrderOfMeritEntry[]>([]);
   const [resultsLog, setResultsLog] = useState<ResultsLogEntry[]>([]);
   const [events, setEvents] = useState<EventDoc[]>([]);
   const [loading, setLoading] = useState(true);
   const [sharing, setSharing] = useState(false);
+  const [fetchError, setFetchError] = useState<string | null>(null);
 
   const loadData = useCallback(async () => {
+    // Don't fetch with undefined societyId
     if (!societyId) {
+      console.log("[leaderboard] No societyId, skipping fetch");
       setLoading(false);
       return;
     }
+
+    console.log("[leaderboard] Loading data for society:", societyId);
     setLoading(true);
+    setFetchError(null);
+
     try {
       const [totals, eventsData, logData] = await Promise.all([
         getOrderOfMeritTotals(societyId),
         getEventsBySocietyId(societyId),
         getOrderOfMeritLog(societyId),
       ]);
+      console.log("[leaderboard] Data loaded:", {
+        standings: totals.length,
+        events: eventsData.length,
+        resultsLog: logData.length,
+      });
       setStandings(totals);
       setEvents(eventsData);
       setResultsLog(logData);
-    } catch (err) {
-      console.error("Failed to load leaderboard data:", err);
+    } catch (err: any) {
+      console.error("[leaderboard] Failed to load data:", err);
+      setFetchError(err?.message || "Failed to load data");
     } finally {
       setLoading(false);
     }
   }, [societyId]);
 
-  // Group results log by event for display
+  // Group results log by event for display (audit trail)
   const groupedResultsLog = useMemo(() => {
     const groups: Array<{
       eventId: string;
       eventName: string;
       eventDate: string | null;
       format: string | null;
-      results: Array<{ memberId: string; memberName: string; points: number }>;
+      results: Array<{
+        memberId: string;
+        memberName: string;
+        points: number;
+        dayValue: number | null;
+        position: number | null;
+      }>;
     }> = [];
 
     let currentEventId: string | null = null;
@@ -83,6 +107,8 @@ export default function LeaderboardScreen() {
         memberId: entry.memberId,
         memberName: entry.memberName,
         points: entry.points,
+        dayValue: entry.dayValue,
+        position: entry.position,
       });
     }
 
@@ -92,6 +118,13 @@ export default function LeaderboardScreen() {
   useEffect(() => {
     loadData();
   }, [loadData]);
+
+  // Update activeTab when view param changes (e.g., navigating from points save)
+  useEffect(() => {
+    if (params.view === "log") {
+      setActiveTab("resultsLog");
+    }
+  }, [params.view]);
 
   // Refetch on focus to pick up changes after entering points
   useFocusEffect(
@@ -254,11 +287,43 @@ export default function LeaderboardScreen() {
     }
   };
 
+  // Show loading state while bootstrap or data is loading
   if (bootstrapLoading || loading) {
     return (
       <Screen scrollable={false}>
         <View style={styles.centered}>
-          <LoadingState message="Loading leaderboard..." />
+          <LoadingState message="Loading Order of Merit..." />
+        </View>
+      </Screen>
+    );
+  }
+
+  // Show error state if fetch failed
+  if (fetchError) {
+    return (
+      <Screen scrollable={false}>
+        <View style={styles.centered}>
+          <EmptyState
+            icon={<Feather name="alert-circle" size={24} color={colors.error} />}
+            title="Failed to Load"
+            message={fetchError}
+            action={{ label: "Try Again", onPress: loadData }}
+          />
+        </View>
+      </Screen>
+    );
+  }
+
+  // Show empty state if no society selected
+  if (!societyId) {
+    return (
+      <Screen scrollable={false}>
+        <View style={styles.centered}>
+          <EmptyState
+            icon={<Feather name="users" size={24} color={colors.textTertiary} />}
+            title="No Society Selected"
+            message="Please select or join a golf society to view the Order of Merit."
+          />
         </View>
       </Screen>
     );
@@ -286,9 +351,11 @@ export default function LeaderboardScreen() {
       {/* Header */}
       <View style={styles.header}>
         <View style={{ flex: 1 }}>
-          <AppText variant="title">Season Leaderboard</AppText>
+          <AppText variant="title">Order of Merit</AppText>
           <AppText variant="caption" color="secondary">
-            {oomEventCount} Order of Merit event{oomEventCount !== 1 ? "s" : ""}
+            {activeTab === "leaderboard"
+              ? `${oomEventCount} event${oomEventCount !== 1 ? "s" : ""} completed`
+              : "Audit trail of Order of Merit points by event"}
           </AppText>
         </View>
         {activeTab === "leaderboard" && standings.length > 0 && (
@@ -347,8 +414,8 @@ export default function LeaderboardScreen() {
           {standings.length === 0 ? (
             <EmptyState
               icon={<Feather name="award" size={24} color={colors.textTertiary} />}
-              title="No Order of Merit Points Yet"
-              message="Enter points for Order of Merit events to see the leaderboard. Create an event with 'Order of Merit' classification, then add players and enter their points."
+              title="No Order of Merit points yet"
+              message="No Order of Merit points recorded yet. Save points for an OOM event to start the standings."
             />
           ) : (
             <View style={styles.list}>
@@ -418,7 +485,7 @@ export default function LeaderboardScreen() {
             <View style={styles.infoContent}>
               <Feather name="info" size={16} color={colors.textTertiary} />
               <AppText variant="caption" color="secondary" style={{ flex: 1 }}>
-                F1-style points (25, 18, 15, 12, 10, 8, 6, 4, 2, 1) for positions 1-10. Points accumulate across all OOM events.
+                F1-style points (25, 18, 15, 12, 10, 8, 6, 4, 2, 1) for positions 1-10. Points accumulate across all events.
               </AppText>
             </View>
           </AppCard>
@@ -431,8 +498,8 @@ export default function LeaderboardScreen() {
           {groupedResultsLog.length === 0 ? (
             <EmptyState
               icon={<Feather name="list" size={24} color={colors.textTertiary} />}
-              title="No Results Recorded"
-              message="No Order of Merit results have been entered yet. Go to an OOM event and enter points to see the results log."
+              title="No results yet"
+              message="No Order of Merit results recorded yet. Once you save points for an OOM event, the audit trail will appear here."
             />
           ) : (
             <View style={styles.list}>
@@ -465,6 +532,22 @@ export default function LeaderboardScreen() {
                     </View>
                   </View>
 
+                  {/* Column Headers */}
+                  <View style={[styles.resultHeaderRow, { borderBottomColor: colors.border }]}>
+                    <AppText variant="captionBold" color="tertiary" style={{ flex: 1 }}>
+                      Player
+                    </AppText>
+                    <AppText variant="captionBold" color="tertiary" style={styles.auditCol}>
+                      {group.format?.includes('strokeplay') || group.format === 'medal' ? 'Net' : 'Points'}
+                    </AppText>
+                    <AppText variant="captionBold" color="tertiary" style={styles.auditCol}>
+                      Pos
+                    </AppText>
+                    <AppText variant="captionBold" color="tertiary" style={styles.auditCol}>
+                      OOM
+                    </AppText>
+                  </View>
+
                   {/* Results Rows */}
                   {group.results.map((result, idx) => (
                     <View
@@ -475,15 +558,18 @@ export default function LeaderboardScreen() {
                         idx === group.results.length - 1 && { borderBottomWidth: 0 },
                       ]}
                     >
-                      <AppText variant="body" style={{ flex: 1 }}>
+                      <AppText variant="body" style={{ flex: 1 }} numberOfLines={1}>
                         {result.memberName}
                       </AppText>
-                      <View style={styles.pointsBadge}>
-                        <AppText variant="bodyBold" color="primary">
-                          {result.points}
-                        </AppText>
-                        <AppText variant="small" color="tertiary"> pts</AppText>
-                      </View>
+                      <AppText variant="body" color="secondary" style={styles.auditCol}>
+                        {result.dayValue ?? '-'}
+                      </AppText>
+                      <AppText variant="body" color="secondary" style={styles.auditCol}>
+                        {result.position ?? '-'}
+                      </AppText>
+                      <AppText variant="bodyBold" color="primary" style={styles.auditCol}>
+                        {result.points}
+                      </AppText>
                     </View>
                   ))}
                 </View>
@@ -496,7 +582,7 @@ export default function LeaderboardScreen() {
             <View style={styles.infoContent}>
               <Feather name="info" size={16} color={colors.textTertiary} />
               <AppText variant="caption" color="secondary" style={{ flex: 1 }}>
-                This log shows all Order of Merit points entered, grouped by event. Use this as an audit trail to verify points allocation.
+                Day Value shows the raw score entered. Position and OOM points are calculated automatically.
               </AppText>
             </View>
           </AppCard>
@@ -578,12 +664,23 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.xs,
     borderRadius: radius.sm,
   },
+  resultHeaderRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: spacing.xs,
+    paddingHorizontal: spacing.md,
+    borderBottomWidth: 1,
+  },
   resultRow: {
     flexDirection: "row",
     alignItems: "center",
     paddingVertical: spacing.sm,
     paddingHorizontal: spacing.md,
     borderBottomWidth: 1,
+  },
+  auditCol: {
+    width: 50,
+    textAlign: "center",
   },
   pointsBadge: {
     flexDirection: "row",
