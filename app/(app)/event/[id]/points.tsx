@@ -278,11 +278,15 @@ export default function EventPointsScreen() {
         players: playersToSave,
       });
 
-      const results: Array<{ member_id: string; points: number }> = [];
+      // Include day_value and position for audit trail
+      const results: Array<{ member_id: string; points: number; day_value?: number; position?: number }> = [];
       for (const p of playersToSave) {
+        const dayValue = parseInt(p.dayPoints.trim(), 10);
         results.push({
           member_id: p.memberId,
           points: p.oomPoints,
+          day_value: !isNaN(dayValue) ? dayValue : undefined,
+          position: p.position ?? undefined,
         });
       }
 

@@ -61,14 +61,20 @@ export default function LeaderboardScreen() {
     }
   }, [societyId]);
 
-  // Group results log by event for display
+  // Group results log by event for display (audit trail)
   const groupedResultsLog = useMemo(() => {
     const groups: Array<{
       eventId: string;
       eventName: string;
       eventDate: string | null;
       format: string | null;
-      results: Array<{ memberId: string; memberName: string; points: number }>;
+      results: Array<{
+        memberId: string;
+        memberName: string;
+        points: number;
+        dayValue: number | null;
+        position: number | null;
+      }>;
     }> = [];
 
     let currentEventId: string | null = null;
@@ -88,6 +94,8 @@ export default function LeaderboardScreen() {
         memberId: entry.memberId,
         memberName: entry.memberName,
         points: entry.points,
+        dayValue: entry.dayValue,
+        position: entry.position,
       });
     }
 
@@ -477,6 +485,22 @@ export default function LeaderboardScreen() {
                     </View>
                   </View>
 
+                  {/* Column Headers */}
+                  <View style={[styles.resultHeaderRow, { borderBottomColor: colors.border }]}>
+                    <AppText variant="captionBold" color="tertiary" style={{ flex: 1 }}>
+                      Player
+                    </AppText>
+                    <AppText variant="captionBold" color="tertiary" style={styles.auditCol}>
+                      {group.format?.includes('strokeplay') || group.format === 'medal' ? 'Score' : 'Day Pts'}
+                    </AppText>
+                    <AppText variant="captionBold" color="tertiary" style={styles.auditCol}>
+                      Pos
+                    </AppText>
+                    <AppText variant="captionBold" color="tertiary" style={styles.auditCol}>
+                      OOM
+                    </AppText>
+                  </View>
+
                   {/* Results Rows */}
                   {group.results.map((result, idx) => (
                     <View
@@ -487,15 +511,18 @@ export default function LeaderboardScreen() {
                         idx === group.results.length - 1 && { borderBottomWidth: 0 },
                       ]}
                     >
-                      <AppText variant="body" style={{ flex: 1 }}>
+                      <AppText variant="body" style={{ flex: 1 }} numberOfLines={1}>
                         {result.memberName}
                       </AppText>
-                      <View style={styles.pointsBadge}>
-                        <AppText variant="bodyBold" color="primary">
-                          {result.points}
-                        </AppText>
-                        <AppText variant="small" color="tertiary"> pts</AppText>
-                      </View>
+                      <AppText variant="body" color="secondary" style={styles.auditCol}>
+                        {result.dayValue ?? '-'}
+                      </AppText>
+                      <AppText variant="body" color="secondary" style={styles.auditCol}>
+                        {result.position ?? '-'}
+                      </AppText>
+                      <AppText variant="bodyBold" color="primary" style={styles.auditCol}>
+                        {result.points}
+                      </AppText>
                     </View>
                   ))}
                 </View>
@@ -590,12 +617,23 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.xs,
     borderRadius: radius.sm,
   },
+  resultHeaderRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: spacing.xs,
+    paddingHorizontal: spacing.md,
+    borderBottomWidth: 1,
+  },
   resultRow: {
     flexDirection: "row",
     alignItems: "center",
     paddingVertical: spacing.sm,
     paddingHorizontal: spacing.md,
     borderBottomWidth: 1,
+  },
+  auditCol: {
+    width: 50,
+    textAlign: "center",
   },
   pointsBadge: {
     flexDirection: "row",

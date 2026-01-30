@@ -7,6 +7,8 @@ export type EventResultDoc = {
   event_id: string;
   member_id: string;
   points: number;
+  day_value?: number | null;  // Raw score: stableford pts or net score
+  position?: number | null;   // Finishing position (1, 2, 3...)
   created_at: string;
   updated_at: string;
 };
@@ -14,6 +16,8 @@ export type EventResultDoc = {
 export type EventResultInput = {
   member_id: string;
   points: number;
+  day_value?: number;  // Raw score for audit trail
+  position?: number;   // Finishing position for audit trail
 };
 
 export type OrderOfMeritEntry = {
@@ -57,12 +61,14 @@ export async function upsertEventResults(
     return;
   }
 
-  // Prepare rows for upsert
+  // Prepare rows for upsert (including audit columns)
   const rows = results.map((r) => ({
     event_id: eventId,
     society_id: societyId,
     member_id: r.member_id,
     points: r.points,
+    day_value: r.day_value ?? null,
+    position: r.position ?? null,
   }));
 
   console.log("[resultsRepo] upserting rows:", JSON.stringify(rows, null, 2));
@@ -308,6 +314,8 @@ export type ResultsLogEntry = {
   memberId: string;
   memberName: string;
   points: number;
+  dayValue: number | null;   // Raw score (stableford pts or net score)
+  position: number | null;   // Finishing position (1, 2, 3...)
 };
 
 /**
@@ -345,10 +353,10 @@ export async function getOrderOfMeritLog(
 
   const eventIds = eventsData.map((e) => e.id);
 
-  // Fetch event results for these events
+  // Fetch event results for these events (including audit columns)
   const { data: resultsData, error: resultsError } = await supabase
     .from("event_results")
-    .select("event_id, member_id, points")
+    .select("event_id, member_id, points, day_value, position")
     .in("event_id", eventIds);
 
   if (resultsError) {
@@ -388,7 +396,13 @@ export async function getOrderOfMeritLog(
   for (const event of eventsData) {
     const eventResults = resultsData
       .filter((r) => r.event_id === event.id)
-      .sort((a, b) => (b.points || 0) - (a.points || 0)); // Sort by points desc within event
+      .sort((a, b) => {
+        // Sort by position first (ascending), then by points desc as fallback
+        const posA = a.position ?? 999;
+        const posB = b.position ?? 999;
+        if (posA !== posB) return posA - posB;
+        return (b.points || 0) - (a.points || 0);
+      });
 
     for (const result of eventResults) {
       const member = membersMap.get(result.member_id);
@@ -400,6 +414,8 @@ export async function getOrderOfMeritLog(
         memberId: result.member_id,
         memberName: member?.name || "Unknown",
         points: result.points || 0,
+        dayValue: result.day_value ?? null,
+        position: result.position ?? null,
       });
     }
   }
