@@ -283,11 +283,11 @@ export default function EventPointsScreen() {
 
       {playerPoints.length === 0 ? (
         <EmptyState
-          icon={<Feather name="users" size={24} color={colors.textTertiary} />}
-          title="No Players"
-          message="Add players to this event first, then you can enter their points."
+          icon={<Feather name="user-plus" size={24} color={colors.primary} />}
+          title="Select Players First"
+          message="Before entering points, you need to select which players participated in this event. Tap the button below to manage the player list."
           action={{
-            label: "Manage Players",
+            label: "Select Players",
             onPress: () =>
               router.push({
                 pathname: "/(app)/event/[id]/players",
