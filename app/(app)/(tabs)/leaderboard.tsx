@@ -361,43 +361,6 @@ export default function LeaderboardScreen() {
     `;
   };
 
-  const handleShare = async () => {
-    try {
-      setSharing(true);
-
-      const html = generateHTML();
-
-      // Generate PDF
-      const { uri } = await Print.printToFileAsync({
-        html,
-        base64: false,
-      });
-
-      console.log("[Leaderboard] PDF generated:", uri);
-
-      // Check if sharing is available
-      const canShare = await Sharing.isAvailableAsync();
-
-      if (canShare) {
-        await Sharing.shareAsync(uri, {
-          mimeType: "application/pdf",
-          dialogTitle: "Share Order of Merit",
-          UTI: "com.adobe.pdf",
-        });
-      } else {
-        Alert.alert(
-          "Sharing Unavailable",
-          "Sharing is not available on this device."
-        );
-      }
-    } catch (err: any) {
-      console.error("[Leaderboard] Share error:", err);
-      Alert.alert("Error", err?.message || "Failed to share leaderboard");
-    } finally {
-      setSharing(false);
-    }
-  };
-
   // Show loading state while bootstrap or data is loading
   if (bootstrapLoading || loading) {
     return (
