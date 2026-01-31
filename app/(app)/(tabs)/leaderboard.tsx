@@ -4,7 +4,11 @@ import { useLocalSearchParams } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
 import { Feather } from "@expo/vector-icons";
 import * as Sharing from "expo-sharing";
-import { captureRef } from "react-native-view-shot";
+import * as Print from "expo-print";
+// Only import captureRef on native platforms
+const captureRef = Platform.OS !== "web"
+  ? require("react-native-view-shot").captureRef
+  : null;
 
 import { Screen } from "@/components/ui/Screen";
 import { AppText } from "@/components/ui/AppText";
@@ -171,17 +175,9 @@ export default function LeaderboardScreen() {
     return `${year} Season - ${oomEventCount} event${oomEventCount !== 1 ? "s" : ""}`;
   }, [oomEventCount]);
 
-  // Share as image using react-native-view-shot
-  const handleShareImage = async () => {
-    console.log("[Leaderboard] Share button pressed");
-    console.log("[Leaderboard] shareCardRef.current:", !!shareCardRef.current);
-    console.log("[Leaderboard] standings count:", standings.length);
-
-    if (!shareCardRef.current) {
-      console.error("[Leaderboard] Share card ref is null");
-      Alert.alert("Error", "Share card not ready. Please try again.");
-      return;
-    }
+  // Share handler - uses PDF on web, image on native
+  const handleShare = async () => {
+    console.log("[Leaderboard] Share button pressed, platform:", Platform.OS);
 
     if (standings.length === 0) {
       Alert.alert("No Data", "No standings to share.");
@@ -190,9 +186,39 @@ export default function LeaderboardScreen() {
 
     try {
       setSharing(true);
-      console.log("[Leaderboard] Starting capture...");
 
-      // Capture the share card as an image
+      // On web, use PDF generation (expo-print)
+      if (Platform.OS === "web") {
+        console.log("[Leaderboard] Using PDF share for web");
+        const html = generateHTML();
+        const { uri } = await Print.printToFileAsync({ html, base64: false });
+        console.log("[Leaderboard] PDF generated:", uri);
+
+        const canShare = await Sharing.isAvailableAsync();
+        if (canShare) {
+          await Sharing.shareAsync(uri, {
+            mimeType: "application/pdf",
+            dialogTitle: "Share Order of Merit",
+            UTI: "com.adobe.pdf",
+          });
+        } else {
+          // On web, fall back to opening print dialog
+          await Print.printAsync({ html });
+        }
+        return;
+      }
+
+      // On native, use image capture (react-native-view-shot)
+      console.log("[Leaderboard] Using image share for native");
+      console.log("[Leaderboard] shareCardRef.current:", !!shareCardRef.current);
+
+      if (!shareCardRef.current || !captureRef) {
+        console.error("[Leaderboard] Share card ref or captureRef is null");
+        Alert.alert("Error", "Share card not ready. Please try again.");
+        return;
+      }
+
+      console.log("[Leaderboard] Starting capture...");
       const uri = await captureRef(shareCardRef, {
         format: "png",
         quality: 1,
@@ -201,7 +227,6 @@ export default function LeaderboardScreen() {
 
       console.log("[Leaderboard] Image captured:", uri);
 
-      // Check if sharing is available
       const canShare = await Sharing.isAvailableAsync();
       console.log("[Leaderboard] Can share:", canShare);
 
@@ -219,7 +244,7 @@ export default function LeaderboardScreen() {
         );
       }
     } catch (err: any) {
-      console.error("[Leaderboard] Share image error:", err);
+      console.error("[Leaderboard] Share error:", err);
       Alert.alert("Error", err?.message || "Failed to share leaderboard");
     } finally {
       setSharing(false);
@@ -445,7 +470,7 @@ export default function LeaderboardScreen() {
           </AppText>
         </View>
         {activeTab === "leaderboard" && standings.length > 0 && (
-          <SecondaryButton onPress={handleShareImage} size="sm" disabled={sharing}>
+          <SecondaryButton onPress={handleShare} size="sm" disabled={sharing}>
             <Feather name="share" size={16} color={colors.text} />
             {sharing ? " Sharing..." : " Share"}
           </SecondaryButton>
@@ -675,22 +700,23 @@ export default function LeaderboardScreen() {
         </>
       )}
 
-      {/* Off-screen share card for image capture */}
-      {/* Using opacity:0 and pointerEvents:none to keep in layout but invisible */}
-      <View
-        style={styles.offScreen}
-        pointerEvents="none"
-        collapsable={false}
-      >
-        <View collapsable={false}>
-          <OOMShareCard
-            ref={shareCardRef}
-            societyName={society?.name || "Golf Society"}
-            seasonLabel={seasonLabel}
-            rows={shareCardRows}
-          />
+      {/* Off-screen share card for image capture (native only) */}
+      {Platform.OS !== "web" && (
+        <View
+          style={styles.offScreen}
+          pointerEvents="none"
+          collapsable={false}
+        >
+          <View collapsable={false}>
+            <OOMShareCard
+              ref={shareCardRef}
+              societyName={society?.name || "Golf Society"}
+              seasonLabel={seasonLabel}
+              rows={shareCardRows}
+            />
+          </View>
         </View>
-      </View>
+      )}
     </Screen>
   );
 }
