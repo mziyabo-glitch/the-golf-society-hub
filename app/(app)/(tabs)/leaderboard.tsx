@@ -219,10 +219,13 @@ export default function LeaderboardScreen() {
       }
 
       console.log("[Leaderboard] Starting capture...");
+      // Capture ONLY the specific ref (OOMShareCard), not the screen
       const uri = await captureRef(shareCardRef, {
         format: "png",
         quality: 1,
         result: "tmpfile",
+        // Ensure we capture only the view bounds, not the screen
+        snapshotContentContainer: false,
       });
 
       console.log("[Leaderboard] Image captured:", uri);
@@ -664,20 +667,19 @@ export default function LeaderboardScreen() {
       )}
 
       {/* Off-screen share card for image capture (native only) */}
+      {/* Rendered completely outside visible area to avoid capturing tab bar */}
       {Platform.OS !== "web" && (
         <View
-          style={styles.offScreen}
+          style={styles.offScreenContainer}
           pointerEvents="none"
           collapsable={false}
         >
-          <View collapsable={false}>
-            <OOMShareCard
-              ref={shareCardRef}
-              societyName={society?.name || "Golf Society"}
-              seasonLabel={seasonLabel}
-              rows={shareCardRows}
-            />
-          </View>
+          <OOMShareCard
+            ref={shareCardRef}
+            societyName={society?.name || "Golf Society"}
+            seasonLabel={seasonLabel}
+            rows={shareCardRows}
+          />
         </View>
       )}
     </Screen>
@@ -786,10 +788,16 @@ const styles = StyleSheet.create({
     alignItems: "flex-start",
     gap: spacing.sm,
   },
-  offScreen: {
+  offScreenContainer: {
     position: "absolute",
-    top: -10000,
+    // Position far off-screen so it's never visible but still rendered
+    top: -5000,
     left: 0,
-    opacity: 0,
+    // Explicit width to match the card
+    width: 360,
+    // Ensure the view is rendered and not optimized away
+    opacity: 1,
+    // Ensure it's above other content for proper capture
+    zIndex: -1,
   },
 });

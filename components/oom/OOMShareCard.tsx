@@ -115,6 +115,7 @@ const styles = StyleSheet.create({
     paddingVertical: 24,
     paddingHorizontal: 20,
     borderRadius: 16,
+    overflow: "hidden", // Ensure nothing bleeds outside the card
   },
   header: {
     alignItems: "center",
