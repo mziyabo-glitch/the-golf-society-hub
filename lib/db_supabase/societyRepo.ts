@@ -15,7 +15,6 @@ export type SocietyDoc = {
   logo_url?: string | null;
   admin_pin?: string;
   annual_fee?: number;
-  updated_at?: string;
 };
 
 type SocietyInput = {
@@ -148,7 +147,7 @@ export async function updateSocietyDoc(
 ): Promise<void> {
   const { error } = await supabase
     .from("societies")
-    .update({ ...updates, updated_at: new Date().toISOString() })
+    .update(updates)
     .eq("id", id);
 
   if (error) {
