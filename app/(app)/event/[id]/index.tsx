@@ -10,6 +10,7 @@ import { AppCard } from "@/components/ui/AppCard";
 import { SecondaryButton } from "@/components/ui/Button";
 import { LoadingState } from "@/components/ui/LoadingState";
 import { EmptyState } from "@/components/ui/EmptyState";
+import { SocietyBadge } from "@/components/ui/SocietyHeader";
 import { useBootstrap } from "@/lib/useBootstrap";
 import {
   getEvent,
@@ -23,8 +24,11 @@ import { getColors, spacing, radius } from "@/lib/ui/theme";
 export default function EventDetailScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ id: string }>();
-  const { societyId, userId, member: currentMember, loading: bootstrapLoading } = useBootstrap();
+  const { societyId, society, userId, member: currentMember, loading: bootstrapLoading } = useBootstrap();
   const colors = getColors();
+
+  // Get logo URL from society
+  const logoUrl = (society as any)?.logo_url || (society as any)?.logoUrl || null;
 
   // Permissions for entering points (Captain/Handicapper)
   const permissions = getPermissionsForMember(currentMember as any);
@@ -69,7 +73,7 @@ export default function EventDetailScreen() {
   if (bootstrapLoading || loading) {
     return (
       <Screen>
-        <LoadingState label="Loading event..." />
+        <LoadingState message="Loading event..." />
       </Screen>
     );
   }
@@ -112,11 +116,17 @@ export default function EventDetailScreen() {
 
   return (
     <Screen>
-      {/* Header */}
+      {/* Header with Back and Society Badge */}
       <View style={styles.header}>
         <SecondaryButton onPress={() => router.back()} size="sm">
           <Feather name="arrow-left" size={16} color={colors.text} /> Back
         </SecondaryButton>
+        <SocietyBadge
+          societyName={society?.name || "Golf Society"}
+          logoUrl={logoUrl}
+          size="sm"
+          showName={false}
+        />
       </View>
 
       {/* Title */}
@@ -145,7 +155,7 @@ export default function EventDetailScreen() {
           <ActionRow
             icon="users"
             title="Players"
-            subtitle={`${event.player_ids?.length ?? 0} registered`}
+            subtitle={`${(event as any).player_ids?.length ?? event.playerIds?.length ?? 0} registered`}
           />
         </AppCard>
       </Pressable>
@@ -232,6 +242,9 @@ function ActionRow({
 
 const styles = StyleSheet.create({
   header: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
     marginBottom: spacing.lg,
   },
   card: {
@@ -248,5 +261,20 @@ const styles = StyleSheet.create({
   actionRow: {
     flexDirection: "row",
     alignItems: "center",
+  },
+  iconContainer: {
+    width: 36,
+    height: 36,
+    borderRadius: radius.sm,
+    alignItems: "center",
+    justifyContent: "center",
+    marginRight: spacing.sm,
+  },
+  actionContent: {
+    flex: 1,
+  },
+  createdText: {
+    marginTop: spacing.lg,
+    textAlign: "center",
   },
 });

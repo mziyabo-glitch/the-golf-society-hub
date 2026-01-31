@@ -8,6 +8,7 @@ import { Screen } from "@/components/ui/Screen";
 import { AppText } from "@/components/ui/AppText";
 import { AppCard } from "@/components/ui/AppCard";
 import { LoadingState } from "@/components/ui/LoadingState";
+import { SocietyHeader } from "@/components/ui/SocietyHeader";
 import { useBootstrap } from "@/lib/useBootstrap";
 import { getMembersBySocietyId, type MemberDoc } from "@/lib/db_supabase/memberRepo";
 import { getEventsBySocietyId, type EventDoc } from "@/lib/db_supabase/eventRepo";
@@ -74,19 +75,17 @@ export default function HomeScreen() {
     .filter((e) => e.isCompleted)
     .slice(0, 2);
 
+  // Get logo URL from society
+  const logoUrl = (society as any)?.logo_url || (society as any)?.logoUrl || null;
+
   return (
     <Screen>
-      {/* Welcome Header */}
-      <View style={styles.header}>
-        <AppText variant="title">
-          {society?.name || "Golf Society"}
-        </AppText>
-        {member?.displayName && (
-          <AppText variant="body" color="secondary">
-            Welcome back, {member.displayName}
-          </AppText>
-        )}
-      </View>
+      {/* Society Header with Logo */}
+      <SocietyHeader
+        societyName={society?.name || "Golf Society"}
+        logoUrl={logoUrl}
+        subtitle={member?.displayName ? `Welcome back, ${member.displayName}` : undefined}
+      />
 
       {/* Join Code Card */}
       {society?.joinCode && (
@@ -239,9 +238,6 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: "center",
     alignItems: "center",
-  },
-  header: {
-    marginBottom: spacing.lg,
   },
   joinCodeCard: {
     marginBottom: spacing.lg,

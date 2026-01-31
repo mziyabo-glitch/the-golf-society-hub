@@ -16,6 +16,7 @@ import { AppCard } from "@/components/ui/AppCard";
 import { SecondaryButton } from "@/components/ui/Button";
 import { LoadingState } from "@/components/ui/LoadingState";
 import { EmptyState } from "@/components/ui/EmptyState";
+import { SocietyBadge } from "@/components/ui/SocietyHeader";
 import { useBootstrap } from "@/lib/useBootstrap";
 import { getEventsBySocietyId, type EventDoc } from "@/lib/db_supabase/eventRepo";
 import {
@@ -553,9 +554,20 @@ export default function LeaderboardScreen() {
   const canShareLeaderboard = standings.length > 0;
   const canShareLog = groupedResultsLog.length > 0;
 
+  // Get logo URL from society
+  const logoUrl = (society as any)?.logo_url || (society as any)?.logoUrl || null;
+
   return (
     <>
       <Screen>
+        {/* Society Badge */}
+        <SocietyBadge
+          societyName={society?.name || "Golf Society"}
+          logoUrl={logoUrl}
+          size="md"
+          style={{ marginBottom: spacing.sm }}
+        />
+
         {/* Header with Share Buttons */}
         <View style={styles.header}>
           <View style={{ flex: 1 }}>

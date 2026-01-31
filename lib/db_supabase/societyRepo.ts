@@ -279,3 +279,172 @@ export async function regenerateJoinCode(societyId: string): Promise<string> {
   await updateSocietyDoc(societyId, { join_code: newCode });
   return newCode;
 }
+
+// =====================================================
+// LOGO MANAGEMENT
+// =====================================================
+
+const LOGO_BUCKET = "society-logos";
+const MAX_LOGO_SIZE_BYTES = 2 * 1024 * 1024; // 2MB
+const ALLOWED_LOGO_TYPES = ["image/jpeg", "image/png", "image/gif", "image/webp"];
+
+export type LogoUploadResult = {
+  success: boolean;
+  logoUrl?: string;
+  error?: string;
+};
+
+/**
+ * Validate logo file before upload
+ */
+function validateLogoFile(
+  file: { uri: string; type?: string; size?: number; name?: string }
+): string | null {
+  // Check file size if available
+  if (file.size && file.size > MAX_LOGO_SIZE_BYTES) {
+    return `Logo must be smaller than ${MAX_LOGO_SIZE_BYTES / 1024 / 1024}MB`;
+  }
+
+  // Check file type if available
+  if (file.type && !ALLOWED_LOGO_TYPES.includes(file.type)) {
+    return "Logo must be a JPEG, PNG, GIF, or WebP image";
+  }
+
+  return null;
+}
+
+/**
+ * Get file extension from mime type or filename
+ */
+function getExtension(mimeType?: string, fileName?: string): string {
+  if (mimeType) {
+    const extensions: Record<string, string> = {
+      "image/jpeg": "jpg",
+      "image/png": "png",
+      "image/gif": "gif",
+      "image/webp": "webp",
+    };
+    if (extensions[mimeType]) return extensions[mimeType];
+  }
+
+  if (fileName) {
+    const ext = fileName.split(".").pop()?.toLowerCase();
+    if (ext && ["jpg", "jpeg", "png", "gif", "webp"].includes(ext)) {
+      return ext === "jpeg" ? "jpg" : ext;
+    }
+  }
+
+  return "jpg"; // Default
+}
+
+/**
+ * Upload society logo to Supabase Storage
+ * Path format: {societyId}/logo.{ext}
+ *
+ * @param societyId - Society to upload logo for
+ * @param file - File object with uri, type, size, name
+ * @returns Upload result with success status and public URL
+ */
+export async function uploadSocietyLogo(
+  societyId: string,
+  file: { uri: string; type?: string; size?: number; name?: string }
+): Promise<LogoUploadResult> {
+  console.log("[societyRepo] uploadSocietyLogo:", { societyId, file: { ...file, uri: file.uri.substring(0, 50) + "..." } });
+
+  // Validate file
+  const validationError = validateLogoFile(file);
+  if (validationError) {
+    return { success: false, error: validationError };
+  }
+
+  try {
+    // Get file extension
+    const ext = getExtension(file.type, file.name);
+    const filePath = `${societyId}/logo.${ext}`;
+
+    // Fetch the file as blob for upload
+    const response = await fetch(file.uri);
+    const blob = await response.blob();
+
+    // Check blob size as fallback validation
+    if (blob.size > MAX_LOGO_SIZE_BYTES) {
+      return { success: false, error: `Logo must be smaller than ${MAX_LOGO_SIZE_BYTES / 1024 / 1024}MB` };
+    }
+
+    // Delete existing logo first (if any) - ignore errors
+    await supabase.storage.from(LOGO_BUCKET).remove([`${societyId}/logo.jpg`, `${societyId}/logo.png`, `${societyId}/logo.gif`, `${societyId}/logo.webp`]);
+
+    // Upload new logo
+    const { data, error } = await supabase.storage
+      .from(LOGO_BUCKET)
+      .upload(filePath, blob, {
+        contentType: file.type || "image/jpeg",
+        upsert: true,
+      });
+
+    if (error) {
+      console.error("[societyRepo] uploadSocietyLogo storage error:", error);
+      return { success: false, error: error.message || "Failed to upload logo" };
+    }
+
+    // Get public URL
+    const { data: urlData } = supabase.storage
+      .from(LOGO_BUCKET)
+      .getPublicUrl(filePath);
+
+    const logoUrl = urlData?.publicUrl;
+    if (!logoUrl) {
+      return { success: false, error: "Failed to get logo URL" };
+    }
+
+    // Add cache-busting parameter
+    const logoUrlWithCache = `${logoUrl}?v=${Date.now()}`;
+
+    // Update society record with new logo URL
+    await updateSocietyDoc(societyId, { logo_url: logoUrlWithCache });
+
+    console.log("[societyRepo] uploadSocietyLogo success:", logoUrlWithCache);
+    return { success: true, logoUrl: logoUrlWithCache };
+
+  } catch (e: any) {
+    console.error("[societyRepo] uploadSocietyLogo error:", e);
+    return { success: false, error: e?.message || "Failed to upload logo" };
+  }
+}
+
+/**
+ * Remove society logo
+ * Deletes from storage and clears logo_url in database
+ *
+ * @param societyId - Society to remove logo from
+ */
+export async function removeSocietyLogo(societyId: string): Promise<LogoUploadResult> {
+  console.log("[societyRepo] removeSocietyLogo:", societyId);
+
+  try {
+    // Remove all possible logo files
+    const { error } = await supabase.storage
+      .from(LOGO_BUCKET)
+      .remove([
+        `${societyId}/logo.jpg`,
+        `${societyId}/logo.png`,
+        `${societyId}/logo.gif`,
+        `${societyId}/logo.webp`,
+      ]);
+
+    if (error) {
+      console.warn("[societyRepo] removeSocietyLogo storage warning:", error);
+      // Continue anyway - file might not exist
+    }
+
+    // Clear logo_url in database
+    await updateSocietyDoc(societyId, { logo_url: null });
+
+    console.log("[societyRepo] removeSocietyLogo success");
+    return { success: true };
+
+  } catch (e: any) {
+    console.error("[societyRepo] removeSocietyLogo error:", e);
+    return { success: false, error: e?.message || "Failed to remove logo" };
+  }
+}
