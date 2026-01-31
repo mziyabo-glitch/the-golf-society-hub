@@ -5,11 +5,12 @@
  * - Select an event
  * - Configure NTP/LD holes
  * - Set start time and interval
- * - Generate grouped tee sheet PDF
+ * - Edit player groups (move players between groups)
+ * - Generate grouped tee sheet PDF with gender-based tee settings
  */
 
 import { useCallback, useEffect, useState } from "react";
-import { StyleSheet, View, Alert, Pressable, ScrollView } from "react-native";
+import { StyleSheet, View, Alert, Pressable, ScrollView, Platform } from "react-native";
 import { useRouter } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
 import { Feather } from "@expo/vector-icons";
@@ -23,12 +24,25 @@ import { LoadingState } from "@/components/ui/LoadingState";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { useBootstrap } from "@/lib/useBootstrap";
 import { getEventsBySocietyId, getEvent, updateEvent, type EventDoc } from "@/lib/db_supabase/eventRepo";
-import { getMembersBySocietyId, getManCoRoleHolders, type MemberDoc } from "@/lib/db_supabase/memberRepo";
+import { getMembersBySocietyId, getManCoRoleHolders, type MemberDoc, type Gender } from "@/lib/db_supabase/memberRepo";
 import { getPermissionsForMember } from "@/lib/rbac";
-import { generateTeeSheetPdf, type TeeSheetPlayer } from "@/lib/teeSheetPdf";
+import { generateTeeSheetPdf, type TeeSheetPlayer, type TeeSheetData } from "@/lib/teeSheetPdf";
 import { type TeeSettings } from "@/lib/handicapUtils";
-import { parseHoleNumbers, formatHoleNumbers } from "@/lib/teeSheetGrouping";
+import { parseHoleNumbers, formatHoleNumbers, calculateGroupSizes } from "@/lib/teeSheetGrouping";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
+
+type EditablePlayer = {
+  id: string;
+  name: string;
+  handicapIndex: number | null;
+  gender: Gender;
+  groupIndex: number;
+};
+
+type PlayerGroup = {
+  groupNumber: number;
+  players: EditablePlayer[];
+};
 
 export default function TeeSheetScreen() {
   const router = useRouter();
@@ -48,6 +62,10 @@ export default function TeeSheetScreen() {
   const [ldHolesInput, setLdHolesInput] = useState("");
   const [startTime, setStartTime] = useState("08:00");
   const [teeInterval, setTeeInterval] = useState("10");
+
+  // Editable groups state
+  const [groups, setGroups] = useState<PlayerGroup[]>([]);
+  const [showGroupEditor, setShowGroupEditor] = useState(false);
 
   const permissions = getPermissionsForMember(member as any);
   const canGenerateTeeSheet = permissions.canGenerateTeeSheet;
@@ -86,11 +104,12 @@ export default function TeeSheetScreen() {
     loadData();
   }, [loadData]);
 
-  // Load selected event details
+  // Load selected event details and initialize groups
   useEffect(() => {
     const loadEventDetails = async () => {
       if (!selectedEventId) {
         setSelectedEvent(null);
+        setGroups([]);
         return;
       }
 
@@ -102,6 +121,9 @@ export default function TeeSheetScreen() {
         if (event) {
           setNtpHolesInput(formatHoleNumbers(event.nearestPinHoles));
           setLdHolesInput(formatHoleNumbers(event.longestDriveHoles));
+
+          // Initialize groups from event players
+          initializeGroups(event);
         }
       } catch (err) {
         console.error("[TeeSheet] loadEventDetails error:", err);
@@ -109,7 +131,59 @@ export default function TeeSheetScreen() {
     };
 
     loadEventDetails();
-  }, [selectedEventId]);
+  }, [selectedEventId, members]);
+
+  // Initialize groups from event players
+  const initializeGroups = (event: EventDoc) => {
+    const playerIds = event.playerIds || [];
+    const eventMembers = members.filter((m) => playerIds.includes(m.id));
+
+    if (eventMembers.length === 0) {
+      setGroups([]);
+      return;
+    }
+
+    // Sort by handicap (high to low, nulls last)
+    const sorted = [...eventMembers].sort((a, b) => {
+      const hiA = a.handicapIndex ?? a.handicap_index ?? null;
+      const hiB = b.handicapIndex ?? b.handicap_index ?? null;
+      if (hiA == null && hiB == null) return 0;
+      if (hiA == null) return 1;
+      if (hiB == null) return -1;
+      return hiB - hiA;
+    });
+
+    // Calculate group sizes
+    const groupSizes = calculateGroupSizes(sorted.length);
+
+    // Create groups
+    const newGroups: PlayerGroup[] = [];
+    let playerIndex = 0;
+
+    for (let i = 0; i < groupSizes.length; i++) {
+      const groupPlayers: EditablePlayer[] = [];
+      const size = groupSizes[i];
+
+      for (let j = 0; j < size && playerIndex < sorted.length; j++) {
+        const m = sorted[playerIndex];
+        groupPlayers.push({
+          id: m.id,
+          name: m.name || m.displayName || "Member",
+          handicapIndex: m.handicapIndex ?? m.handicap_index ?? null,
+          gender: m.gender ?? null,
+          groupIndex: i,
+        });
+        playerIndex++;
+      }
+
+      newGroups.push({
+        groupNumber: i + 1,
+        players: groupPlayers,
+      });
+    }
+
+    setGroups(newGroups);
+  };
 
   // Refresh on focus
   useFocusEffect(
@@ -141,34 +215,87 @@ export default function TeeSheetScreen() {
     }
   };
 
+  // Move player to a different group
+  const movePlayer = (playerId: string, fromGroup: number, toGroup: number) => {
+    if (fromGroup === toGroup) return;
+
+    setGroups((prev) => {
+      const newGroups = prev.map((g) => ({
+        ...g,
+        players: [...g.players],
+      }));
+
+      // Find and remove player from source group
+      const sourceGroup = newGroups[fromGroup];
+      const playerIndex = sourceGroup.players.findIndex((p) => p.id === playerId);
+      if (playerIndex === -1) return prev;
+
+      const [player] = sourceGroup.players.splice(playerIndex, 1);
+
+      // Add to target group
+      const targetGroup = newGroups[toGroup];
+      player.groupIndex = toGroup;
+      targetGroup.players.push(player);
+
+      return newGroups;
+    });
+  };
+
+  // Add an empty group
+  const addGroup = () => {
+    setGroups((prev) => [
+      ...prev,
+      {
+        groupNumber: prev.length + 1,
+        players: [],
+      },
+    ]);
+  };
+
+  // Remove empty groups
+  const cleanupGroups = () => {
+    setGroups((prev) => {
+      const nonEmpty = prev.filter((g) => g.players.length > 0);
+      return nonEmpty.map((g, i) => ({
+        ...g,
+        groupNumber: i + 1,
+        players: g.players.map((p) => ({ ...p, groupIndex: i })),
+      }));
+    });
+  };
+
   // Generate tee sheet
   const handleGenerateTeeSheet = async () => {
     if (!selectedEvent || !societyId) return;
+
+    // Clean up empty groups first
+    const cleanedGroups = groups.filter((g) => g.players.length > 0);
+    if (cleanedGroups.length === 0) {
+      Alert.alert("No Players", "Please add players to the event first.");
+      return;
+    }
 
     setGenerating(true);
     try {
       // Get ManCo details
       const manCo = await getManCoRoleHolders(societyId);
 
-      // Get players for this event
-      const playerIds = selectedEvent.playerIds || [];
-      const eventMembers = members.filter((m) => playerIds.includes(m.id));
-
-      if (eventMembers.length === 0) {
-        Alert.alert("No Players", "Please add players to the event first.");
-        setGenerating(false);
-        return;
+      // Build player list from edited groups (preserving order)
+      const players: TeeSheetPlayer[] = [];
+      for (const group of cleanedGroups) {
+        for (const p of group.players) {
+          players.push({
+            id: p.id,
+            name: p.name,
+            handicapIndex: p.handicapIndex,
+            gender: p.gender,
+            group: group.groupNumber,
+          });
+        }
       }
 
-      // Build player list
-      const players: TeeSheetPlayer[] = eventMembers.map((m) => ({
-        id: m.id,
-        name: m.name || m.displayName || "Member",
-        handicapIndex: m.handicapIndex ?? m.handicap_index ?? null,
-      }));
-
-      // Build tee settings
-      const teeSettings: TeeSettings | null =
+      // Build Men's tee settings
+      const menTeeSettings: TeeSettings | null =
         selectedEvent.par != null &&
         selectedEvent.courseRating != null &&
         selectedEvent.slopeRating != null
@@ -180,11 +307,24 @@ export default function TeeSheetScreen() {
             }
           : null;
 
+      // Build Ladies' tee settings
+      const ladiesTeeSettings: TeeSettings | null =
+        selectedEvent.ladiesPar != null &&
+        selectedEvent.ladiesCourseRating != null &&
+        selectedEvent.ladiesSlopeRating != null
+          ? {
+              par: selectedEvent.ladiesPar,
+              courseRating: selectedEvent.ladiesCourseRating,
+              slopeRating: selectedEvent.ladiesSlopeRating,
+              handicapAllowance: selectedEvent.handicapAllowance ?? null,
+            }
+          : null;
+
       // Parse interval
       const interval = parseInt(teeInterval, 10) || 10;
 
       // Generate PDF
-      await generateTeeSheetPdf({
+      const data: TeeSheetData = {
         societyName: society?.name || "Golf Society",
         logoUrl,
         manCo,
@@ -192,14 +332,19 @@ export default function TeeSheetScreen() {
         eventDate: selectedEvent.date || null,
         courseName: selectedEvent.courseName || null,
         teeName: selectedEvent.teeName || null,
+        ladiesTeeName: selectedEvent.ladiesTeeName || null,
         format: selectedEvent.format || null,
-        teeSettings,
+        teeSettings: menTeeSettings,
+        ladiesTeeSettings,
         nearestPinHoles: selectedEvent.nearestPinHoles,
         longestDriveHoles: selectedEvent.longestDriveHoles,
         players,
         startTime: startTime || null,
         teeTimeInterval: interval,
-      });
+        preGrouped: true, // Signal that groups are already set
+      };
+
+      await generateTeeSheetPdf(data);
 
       console.log("[TeeSheet] PDF generated successfully");
     } catch (err: any) {
@@ -235,8 +380,17 @@ export default function TeeSheetScreen() {
     );
   }
 
-  const selectedPlayerCount = selectedEvent?.playerIds?.length || 0;
-  const groupCount = Math.ceil(selectedPlayerCount / 4);
+  const selectedPlayerCount = groups.reduce((sum, g) => sum + g.players.length, 0);
+  const groupCount = groups.filter((g) => g.players.length > 0).length;
+
+  // Count men and women
+  const menCount = groups.reduce((sum, g) => sum + g.players.filter((p) => p.gender === "M").length, 0);
+  const womenCount = groups.reduce((sum, g) => sum + g.players.filter((p) => p.gender === "F").length, 0);
+  const unspecifiedCount = selectedPlayerCount - menCount - womenCount;
+
+  // Check if we have tee settings configured
+  const hasMenTees = selectedEvent?.par != null && selectedEvent?.slopeRating != null;
+  const hasLadiesTees = selectedEvent?.ladiesPar != null && selectedEvent?.ladiesSlopeRating != null;
 
   return (
     <Screen>
@@ -252,7 +406,7 @@ export default function TeeSheetScreen() {
         <Feather name="file-text" size={24} color={colors.primary} /> Tee Sheet
       </AppText>
       <AppText variant="body" color="secondary" style={{ marginBottom: spacing.lg }}>
-        Generate grouped tee sheets with WHS handicaps, NTP/LD holes.
+        Generate grouped tee sheets with WHS handicaps for Men and Ladies.
       </AppText>
 
       {events.length === 0 ? (
@@ -339,9 +493,120 @@ export default function TeeSheetScreen() {
                   </View>
                 </View>
                 <AppText variant="small" color="tertiary" style={{ marginTop: spacing.xs }}>
-                  {selectedPlayerCount} players → ~{groupCount} group{groupCount !== 1 ? "s" : ""} (max 4 per group)
+                  {selectedPlayerCount} players → {groupCount} group{groupCount !== 1 ? "s" : ""}
+                  {menCount > 0 || womenCount > 0
+                    ? ` (${menCount}M, ${womenCount}F${unspecifiedCount > 0 ? `, ${unspecifiedCount}?` : ""})`
+                    : ""}
                 </AppText>
               </AppCard>
+
+              {/* Group Editor Toggle */}
+              <View style={styles.sectionHeader}>
+                <AppText variant="h2">Player Groups</AppText>
+                <SecondaryButton
+                  size="sm"
+                  onPress={() => setShowGroupEditor(!showGroupEditor)}
+                >
+                  <Feather name={showGroupEditor ? "eye-off" : "edit-2"} size={14} color={colors.text} />
+                  {showGroupEditor ? " Hide Editor" : " Edit Groups"}
+                </SecondaryButton>
+              </View>
+
+              {showGroupEditor ? (
+                /* Editable Group View */
+                <View style={styles.groupEditor}>
+                  {groups.map((group, groupIdx) => (
+                    <AppCard key={groupIdx} style={styles.groupCard}>
+                      <View style={styles.groupHeader}>
+                        <AppText variant="bodyBold" color="primary">
+                          Group {group.groupNumber}
+                        </AppText>
+                        <AppText variant="small" color="tertiary">
+                          {group.players.length} player{group.players.length !== 1 ? "s" : ""}
+                        </AppText>
+                      </View>
+
+                      {group.players.length === 0 ? (
+                        <AppText variant="small" color="tertiary" style={{ fontStyle: "italic", paddingVertical: spacing.sm }}>
+                          Empty group
+                        </AppText>
+                      ) : (
+                        group.players.map((player) => (
+                          <View key={player.id} style={styles.playerRow}>
+                            <View style={styles.playerInfo}>
+                              <View style={styles.playerNameRow}>
+                                <AppText variant="body" numberOfLines={1} style={{ flex: 1 }}>
+                                  {player.name}
+                                </AppText>
+                                {player.gender && (
+                                  <View style={[
+                                    styles.genderBadge,
+                                    { backgroundColor: player.gender === "F" ? colors.error + "20" : colors.info + "20" }
+                                  ]}>
+                                    <AppText variant="small" style={{ color: player.gender === "F" ? colors.error : colors.info }}>
+                                      {player.gender}
+                                    </AppText>
+                                  </View>
+                                )}
+                              </View>
+                              <AppText variant="caption" color="secondary">
+                                HI: {player.handicapIndex != null ? player.handicapIndex.toFixed(1) : "-"}
+                              </AppText>
+                            </View>
+
+                            {/* Move buttons */}
+                            <View style={styles.moveButtons}>
+                              {groupIdx > 0 && (
+                                <Pressable
+                                  style={({ pressed }) => [styles.moveBtn, pressed && { opacity: 0.6 }]}
+                                  onPress={() => movePlayer(player.id, groupIdx, groupIdx - 1)}
+                                >
+                                  <Feather name="arrow-up" size={16} color={colors.primary} />
+                                </Pressable>
+                              )}
+                              {groupIdx < groups.length - 1 && (
+                                <Pressable
+                                  style={({ pressed }) => [styles.moveBtn, pressed && { opacity: 0.6 }]}
+                                  onPress={() => movePlayer(player.id, groupIdx, groupIdx + 1)}
+                                >
+                                  <Feather name="arrow-down" size={16} color={colors.primary} />
+                                </Pressable>
+                              )}
+                            </View>
+                          </View>
+                        ))
+                      )}
+                    </AppCard>
+                  ))}
+
+                  <View style={styles.groupActions}>
+                    <SecondaryButton size="sm" onPress={addGroup}>
+                      <Feather name="plus" size={14} color={colors.text} /> Add Group
+                    </SecondaryButton>
+                    <SecondaryButton size="sm" onPress={cleanupGroups}>
+                      <Feather name="trash-2" size={14} color={colors.text} /> Remove Empty
+                    </SecondaryButton>
+                    <SecondaryButton size="sm" onPress={() => selectedEvent && initializeGroups(selectedEvent)}>
+                      <Feather name="refresh-cw" size={14} color={colors.text} /> Reset
+                    </SecondaryButton>
+                  </View>
+                </View>
+              ) : (
+                /* Compact Group Summary */
+                <AppCard>
+                  {groups.filter((g) => g.players.length > 0).map((group, idx) => (
+                    <View key={idx} style={[styles.groupSummary, idx > 0 && { borderTopWidth: 1, borderTopColor: colors.border }]}>
+                      <AppText variant="caption" color="secondary">Group {group.groupNumber}</AppText>
+                      <AppText variant="body" numberOfLines={1}>
+                        {group.players.map((p) => {
+                          const genderIcon = p.gender === "F" ? "♀" : p.gender === "M" ? "♂" : "";
+                          return `${p.name}${genderIcon}`;
+                        }).join(", ")}
+                      </AppText>
+                    </View>
+                  ))}
+                </AppCard>
+              )}
 
               {/* Competition Holes */}
               <AppText variant="h2" style={styles.sectionTitle}>Competition Holes</AppText>
@@ -382,45 +647,52 @@ export default function TeeSheetScreen() {
               </AppCard>
 
               {/* Course Setup Info */}
-              {selectedEvent.par != null && selectedEvent.slopeRating != null && (
+              {(hasMenTees || hasLadiesTees) && (
                 <>
                   <AppText variant="h2" style={styles.sectionTitle}>Course Setup</AppText>
                   <AppCard>
-                    <View style={styles.courseInfo}>
-                      {selectedEvent.teeName && (
-                        <View style={styles.courseInfoItem}>
-                          <AppText variant="caption" color="secondary">Tee</AppText>
-                          <AppText variant="bodyBold">{selectedEvent.teeName}</AppText>
-                        </View>
-                      )}
-                      <View style={styles.courseInfoItem}>
-                        <AppText variant="caption" color="secondary">Par</AppText>
-                        <AppText variant="bodyBold">{selectedEvent.par}</AppText>
+                    {hasMenTees && (
+                      <View style={styles.teeRow}>
+                        <View style={[styles.teeColorDot, { backgroundColor: "#FFD700" }]} />
+                        <AppText variant="bodyBold" style={{ minWidth: 60 }}>
+                          {selectedEvent.teeName || "Men's"}
+                        </AppText>
+                        <AppText variant="small" color="secondary">
+                          Par {selectedEvent.par} • CR {selectedEvent.courseRating} • Slope {selectedEvent.slopeRating}
+                        </AppText>
                       </View>
-                      {selectedEvent.courseRating != null && (
-                        <View style={styles.courseInfoItem}>
-                          <AppText variant="caption" color="secondary">CR</AppText>
-                          <AppText variant="bodyBold">{selectedEvent.courseRating}</AppText>
-                        </View>
-                      )}
-                      <View style={styles.courseInfoItem}>
-                        <AppText variant="caption" color="secondary">Slope</AppText>
-                        <AppText variant="bodyBold">{selectedEvent.slopeRating}</AppText>
+                    )}
+                    {hasLadiesTees && (
+                      <View style={[styles.teeRow, { marginTop: spacing.xs }]}>
+                        <View style={[styles.teeColorDot, { backgroundColor: "#E53935" }]} />
+                        <AppText variant="bodyBold" style={{ minWidth: 60 }}>
+                          {selectedEvent.ladiesTeeName || "Ladies'"}
+                        </AppText>
+                        <AppText variant="small" color="secondary">
+                          Par {selectedEvent.ladiesPar} • CR {selectedEvent.ladiesCourseRating} • Slope {selectedEvent.ladiesSlopeRating}
+                        </AppText>
                       </View>
-                      {selectedEvent.handicapAllowance != null && (
-                        <View style={styles.courseInfoItem}>
-                          <AppText variant="caption" color="secondary">Allow.</AppText>
-                          <AppText variant="bodyBold">
-                            {Math.round(selectedEvent.handicapAllowance * 100)}%
-                          </AppText>
-                        </View>
-                      )}
-                    </View>
-                    <AppText variant="small" color="tertiary" style={{ marginTop: spacing.sm }}>
-                      WHS handicaps will be calculated (HI, CH, PH)
+                    )}
+                    {selectedEvent.handicapAllowance != null && (
+                      <AppText variant="small" color="tertiary" style={{ marginTop: spacing.sm }}>
+                        Handicap Allowance: {Math.round(selectedEvent.handicapAllowance * 100)}%
+                      </AppText>
+                    )}
+                    <AppText variant="small" color="tertiary" style={{ marginTop: spacing.xs }}>
+                      WHS handicaps (HI, CH, PH) calculated per player's gender
                     </AppText>
                   </AppCard>
                 </>
+              )}
+
+              {/* Warning if women but no ladies tees */}
+              {womenCount > 0 && !hasLadiesTees && (
+                <View style={[styles.warningBox, { backgroundColor: colors.warning + "20" }]}>
+                  <Feather name="alert-triangle" size={16} color={colors.warning} />
+                  <AppText variant="small" style={{ flex: 1, marginLeft: spacing.xs, color: colors.warning }}>
+                    {womenCount} female player{womenCount !== 1 ? "s" : ""} but no Ladies' tee configured. They will use Men's tee settings.
+                  </AppText>
+                </View>
               )}
 
               {/* Generate Button */}
@@ -460,6 +732,13 @@ const styles = StyleSheet.create({
     marginTop: spacing.base,
     marginBottom: spacing.sm,
   },
+  sectionHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginTop: spacing.base,
+    marginBottom: spacing.sm,
+  },
   eventList: {
     gap: spacing.xs,
   },
@@ -483,13 +762,72 @@ const styles = StyleSheet.create({
   label: {
     marginBottom: spacing.xs,
   },
-  courseInfo: {
-    flexDirection: "row",
-    flexWrap: "wrap",
+  groupEditor: {
     gap: spacing.sm,
   },
-  courseInfoItem: {
+  groupCard: {
+    marginBottom: 0,
+  },
+  groupHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
     alignItems: "center",
-    minWidth: 50,
+    marginBottom: spacing.xs,
+    paddingBottom: spacing.xs,
+    borderBottomWidth: 1,
+    borderBottomColor: "#E5E7EB",
+  },
+  playerRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: spacing.xs,
+  },
+  playerInfo: {
+    flex: 1,
+  },
+  playerNameRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.xs,
+  },
+  genderBadge: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: radius.sm,
+  },
+  moveButtons: {
+    flexDirection: "row",
+    gap: spacing.xs,
+  },
+  moveBtn: {
+    padding: spacing.xs,
+    borderRadius: radius.sm,
+    backgroundColor: "#F3F4F6",
+  },
+  groupActions: {
+    flexDirection: "row",
+    gap: spacing.sm,
+    flexWrap: "wrap",
+    marginTop: spacing.xs,
+  },
+  groupSummary: {
+    paddingVertical: spacing.xs,
+  },
+  teeRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+  },
+  teeColorDot: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+  },
+  warningBox: {
+    flexDirection: "row",
+    alignItems: "center",
+    padding: spacing.sm,
+    borderRadius: radius.md,
+    marginTop: spacing.sm,
   },
 });

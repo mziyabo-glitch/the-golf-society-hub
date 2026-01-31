@@ -50,12 +50,17 @@ export type EventDoc = {
   created_by?: string;
   created_at?: string;
   updated_at?: string;
-  // Tee settings for WHS handicap calculations
+  // Men's tee settings for WHS handicap calculations
   teeName?: string | null;
   par?: number | null;
   courseRating?: number | null;
   slopeRating?: number | null;
   handicapAllowance?: number | null;
+  // Ladies' tee settings (different CR/Slope)
+  ladiesTeeName?: string | null;
+  ladiesPar?: number | null;
+  ladiesCourseRating?: number | null;
+  ladiesSlopeRating?: number | null;
   // Competition holes
   nearestPinHoles?: number[] | null;
   longestDriveHoles?: number[] | null;
@@ -82,12 +87,17 @@ function mapEvent(row: any): EventDoc {
     winnerName: row.winner_name,
     playerIds: row.player_ids ?? [],
     results: row.results ?? {},
-    // Map tee settings from snake_case
+    // Map Men's tee settings from snake_case
     teeName: row.tee_name ?? null,
     par: row.par ?? null,
     courseRating: row.course_rating ?? null,
     slopeRating: row.slope_rating ?? null,
     handicapAllowance: row.handicap_allowance ?? null,
+    // Map Ladies' tee settings from snake_case
+    ladiesTeeName: row.ladies_tee_name ?? null,
+    ladiesPar: row.ladies_par ?? null,
+    ladiesCourseRating: row.ladies_course_rating ?? null,
+    ladiesSlopeRating: row.ladies_slope_rating ?? null,
     // Map competition holes
     nearestPinHoles: row.nearest_pin_holes ?? null,
     longestDriveHoles: row.longest_drive_holes ?? null,
@@ -125,7 +135,7 @@ export async function getEvent(eventId: string): Promise<EventDoc | null> {
 
   const { data, error } = await supabase
     .from("events")
-    .select("id,name,date,format,classification,course_name,status,is_completed,winner_name,player_ids,created_at,created_by,society_id,tee_name,par,course_rating,slope_rating,handicap_allowance,nearest_pin_holes,longest_drive_holes")
+    .select("id,name,date,format,classification,course_name,status,is_completed,winner_name,player_ids,created_at,created_by,society_id,tee_name,par,course_rating,slope_rating,handicap_allowance,ladies_tee_name,ladies_par,ladies_course_rating,ladies_slope_rating,nearest_pin_holes,longest_drive_holes")
     .eq("id", eventId)
     .maybeSingle();
 
@@ -226,12 +236,17 @@ export async function updateEvent(
     isCompleted: boolean;
     winnerName: string;
     playerIds: string[];
-    // Tee settings
+    // Men's tee settings
     teeName: string;
     par: number;
     courseRating: number;
     slopeRating: number;
     handicapAllowance: number;
+    // Ladies' tee settings
+    ladiesTeeName: string;
+    ladiesPar: number;
+    ladiesCourseRating: number;
+    ladiesSlopeRating: number;
     // Competition holes
     nearestPinHoles: number[];
     longestDriveHoles: number[];
@@ -255,12 +270,18 @@ export async function updateEvent(
   if (updates.winnerName !== undefined) payload.winner_name = updates.winnerName;
   if (updates.playerIds !== undefined) payload.player_ids = updates.playerIds;
 
-  // Tee settings
+  // Men's tee settings
   if (updates.teeName !== undefined) payload.tee_name = updates.teeName;
   if (updates.par !== undefined) payload.par = updates.par;
   if (updates.courseRating !== undefined) payload.course_rating = updates.courseRating;
   if (updates.slopeRating !== undefined) payload.slope_rating = updates.slopeRating;
   if (updates.handicapAllowance !== undefined) payload.handicap_allowance = updates.handicapAllowance;
+
+  // Ladies' tee settings
+  if (updates.ladiesTeeName !== undefined) payload.ladies_tee_name = updates.ladiesTeeName;
+  if (updates.ladiesPar !== undefined) payload.ladies_par = updates.ladiesPar;
+  if (updates.ladiesCourseRating !== undefined) payload.ladies_course_rating = updates.ladiesCourseRating;
+  if (updates.ladiesSlopeRating !== undefined) payload.ladies_slope_rating = updates.ladiesSlopeRating;
 
   // Competition holes
   if (updates.nearestPinHoles !== undefined) payload.nearest_pin_holes = updates.nearestPinHoles;

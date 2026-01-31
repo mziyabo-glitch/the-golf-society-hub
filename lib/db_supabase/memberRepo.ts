@@ -1,9 +1,11 @@
 // lib/db_supabase/memberRepo.ts
 // Member management - uses singleton supabase client
 // IMPORTANT: Only send columns that exist in the members table:
-// id, society_id, user_id, name, email, role, paid, amount_paid_pence, paid_at, created_at, display_name, whs_number, handicap_index
+// id, society_id, user_id, name, email, role, paid, amount_paid_pence, paid_at, created_at, display_name, whs_number, handicap_index, gender
 
 import { supabase } from "@/lib/supabase";
+
+export type Gender = "M" | "F" | null;
 
 export type MemberDoc = {
   id: string;
@@ -24,6 +26,8 @@ export type MemberDoc = {
   handicap_index?: number | null;
   whsNumber?: string | null; // camelCase alias
   handicapIndex?: number | null; // camelCase alias
+  // Gender for tee selection
+  gender?: Gender;
 };
 
 function mapMember(row: any): MemberDoc {
@@ -33,6 +37,7 @@ function mapMember(row: any): MemberDoc {
     roles: row.role ? [row.role] : ["member"],
     whsNumber: row.whs_number ?? null,
     handicapIndex: row.handicap_index ?? null,
+    gender: row.gender ?? null,
   };
 }
 
@@ -447,6 +452,7 @@ export async function updateMember(
     email: string;
     whsNumber: string | null;
     handicapIndex: number | null;
+    gender: Gender;
   }>
 ): Promise<MemberDoc> {
   console.log("[memberRepo] updateMember starting:", { memberId, patch });
@@ -459,6 +465,7 @@ export async function updateMember(
   if (patch.name !== undefined) basicPayload.name = patch.name;
   if (patch.displayName !== undefined) basicPayload.name = patch.displayName;
   if (patch.email !== undefined) basicPayload.email = patch.email;
+  if (patch.gender !== undefined) basicPayload.gender = patch.gender;
 
   // Update basic fields if any
   if (Object.keys(basicPayload).length > 0) {
