@@ -1,6 +1,6 @@
 /**
  * Order of Merit Dashboard
- * Glassmorphism design with podium, trend indicators, and matrix view
+ * Glassmorphism design with podium, trend indicators, and accordion results log
  */
 
 import { useCallback, useEffect, useState, useMemo, useRef } from "react";
@@ -12,12 +12,10 @@ import {
   Pressable,
   ScrollView,
   Image,
-  Dimensions,
 } from "react-native";
 import { useLocalSearchParams } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
 import { Feather } from "@expo/vector-icons";
-import { LinearGradient } from "expo-linear-gradient";
 import * as Sharing from "expo-sharing";
 import * as Print from "expo-print";
 
@@ -25,11 +23,9 @@ import * as Print from "expo-print";
 const captureRef =
   Platform.OS !== "web" ? require("react-native-view-shot").captureRef : null;
 
-import { Screen } from "@/components/ui/Screen";
 import { AppText } from "@/components/ui/AppText";
 import { LoadingState } from "@/components/ui/LoadingState";
 import { EmptyState } from "@/components/ui/EmptyState";
-import { SecondaryButton } from "@/components/ui/Button";
 import { useBootstrap } from "@/lib/useBootstrap";
 import { getEventsBySocietyId, type EventDoc } from "@/lib/db_supabase/eventRepo";
 import {
@@ -38,13 +34,11 @@ import {
   type OrderOfMeritEntry,
   type ResultsLogEntry,
 } from "@/lib/db_supabase/resultsRepo";
-import { getColors, spacing, radius } from "@/lib/ui/theme";
+import { getColors } from "@/lib/ui/theme";
 import OOMShareCard, { type OOMShareRow } from "@/components/oom/OOMShareCard";
 import OOMResultsLogShareCard, {
   type EventLogData,
 } from "@/components/oom/OOMResultsLogShareCard";
-
-const { width: SCREEN_WIDTH } = Dimensions.get("window");
 
 // ============================================================================
 // HELPERS
@@ -129,7 +123,9 @@ export default function LeaderboardScreen() {
 
   const leaderboardShareRef = useRef<View>(null);
   const resultsLogShareRef = useRef<View>(null);
-  const matrixScrollRef = useRef<ScrollView>(null);
+
+  // Track which events are expanded in the accordion
+  const [expandedEvents, setExpandedEvents] = useState<Set<string>>(new Set());
 
   // Get logo URL
   const logoUrl = (society as any)?.logo_url || (society as any)?.logoUrl || null;
@@ -201,48 +197,6 @@ export default function LeaderboardScreen() {
     return groups;
   }, [resultsLog]);
 
-  // Build matrix data for Results Log
-  const matrixData = useMemo(() => {
-    if (groupedResultsLog.length === 0) return { players: [], events: [] };
-
-    // Get all unique players
-    const playerMap = new Map<string, { id: string; name: string; totalPoints: number }>();
-
-    for (const group of groupedResultsLog) {
-      for (const result of group.results) {
-        if (!playerMap.has(result.memberId)) {
-          playerMap.set(result.memberId, {
-            id: result.memberId,
-            name: result.memberName,
-            totalPoints: 0,
-          });
-        }
-        playerMap.get(result.memberId)!.totalPoints += result.points;
-      }
-    }
-
-    // Sort players by total points
-    const players = Array.from(playerMap.values()).sort(
-      (a, b) => b.totalPoints - a.totalPoints
-    );
-
-    // Build event columns with results for each player
-    const eventColumns = groupedResultsLog.map((group) => {
-      const resultMap = new Map<string, number>();
-      for (const r of group.results) {
-        resultMap.set(r.memberId, r.points);
-      }
-      return {
-        eventId: group.eventId,
-        eventName: group.eventName,
-        eventDate: group.eventDate,
-        results: resultMap,
-      };
-    });
-
-    return { players, events: eventColumns };
-  }, [groupedResultsLog]);
-
   useEffect(() => {
     loadData();
   }, [loadData]);
@@ -273,6 +227,30 @@ export default function LeaderboardScreen() {
     const year = new Date().getFullYear();
     return `${year} Season • ${oomEventCount} event${oomEventCount !== 1 ? "s" : ""}`;
   }, [oomEventCount]);
+
+  // Toggle event accordion expansion
+  const toggleEventExpanded = useCallback((eventId: string) => {
+    setExpandedEvents((prev) => {
+      const next = new Set(prev);
+      if (next.has(eventId)) {
+        next.delete(eventId);
+      } else {
+        next.add(eventId);
+      }
+      return next;
+    });
+  }, []);
+
+  // Format event date for display
+  const formatEventDate = (dateStr: string | null): string => {
+    if (!dateStr) return "";
+    try {
+      const date = new Date(dateStr);
+      return date.toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+    } catch {
+      return "";
+    }
+  };
 
   const latestEventForShare: EventLogData | null = useMemo(() => {
     if (groupedResultsLog.length === 0) return null;
@@ -593,8 +571,8 @@ export default function LeaderboardScreen() {
                         <View style={styles.podiumMedal}>
                           <AppText style={styles.podiumMedalText}>🥈</AppText>
                         </View>
-                        <AppText style={styles.podiumName} numberOfLines={1}>
-                          {top3[1]?.memberName.split(" ")[0]}
+                        <AppText style={styles.podiumName} numberOfLines={2}>
+                          {top3[1]?.memberName}
                         </AppText>
                         <AppText style={styles.podiumPoints}>
                           {formatPoints(top3[1]?.totalPoints || 0)}
@@ -610,8 +588,8 @@ export default function LeaderboardScreen() {
                         <View style={[styles.podiumMedal, styles.podiumMedalGold]}>
                           <AppText style={styles.podiumMedalText}>🥇</AppText>
                         </View>
-                        <AppText style={styles.podiumName} numberOfLines={1}>
-                          {top3[0]?.memberName.split(" ")[0]}
+                        <AppText style={styles.podiumName} numberOfLines={2}>
+                          {top3[0]?.memberName}
                         </AppText>
                         <AppText style={[styles.podiumPoints, styles.podiumPointsGold]}>
                           {formatPoints(top3[0]?.totalPoints || 0)}
@@ -627,8 +605,8 @@ export default function LeaderboardScreen() {
                         <View style={styles.podiumMedal}>
                           <AppText style={styles.podiumMedalText}>🥉</AppText>
                         </View>
-                        <AppText style={styles.podiumName} numberOfLines={1}>
-                          {top3[2]?.memberName.split(" ")[0]}
+                        <AppText style={styles.podiumName} numberOfLines={2}>
+                          {top3[2]?.memberName}
                         </AppText>
                         <AppText style={styles.podiumPoints}>
                           {formatPoints(top3[2]?.totalPoints || 0)}
@@ -671,7 +649,7 @@ export default function LeaderboardScreen() {
                             )}
                           </View>
 
-                          <AppText style={styles.fieldName} numberOfLines={1}>
+                          <AppText style={styles.fieldName} numberOfLines={2}>
                             {entry.memberName}
                           </AppText>
 
@@ -703,7 +681,7 @@ export default function LeaderboardScreen() {
                         <View style={styles.trendContainer}>
                           <Feather name="minus" size={12} color="#D1D5DB" />
                         </View>
-                        <AppText style={styles.fieldName} numberOfLines={1}>
+                        <AppText style={styles.fieldName} numberOfLines={2}>
                           {entry.memberName}
                         </AppText>
                         <AppText style={styles.fieldEvents}>{entry.eventsPlayed}</AppText>
@@ -719,85 +697,102 @@ export default function LeaderboardScreen() {
           </>
         )}
 
-        {/* ========== RESULTS MATRIX TAB ========== */}
+        {/* ========== RESULTS LOG TAB (Accordion) ========== */}
         {activeTab === "resultsLog" && (
           <>
-            {matrixData.players.length === 0 ? (
+            {groupedResultsLog.length === 0 ? (
               <GlassCard style={styles.emptyCard}>
-                <Feather name="grid" size={32} color="#D1D5DB" />
+                <Feather name="calendar" size={32} color="#D1D5DB" />
                 <AppText style={styles.emptyTitle}>No results yet</AppText>
                 <AppText style={styles.emptyText}>
-                  Create an OOM event and enter scores to see the matrix.
+                  Create an OOM event and enter scores to see the results log.
                 </AppText>
               </GlassCard>
             ) : (
-              <GlassCard style={styles.matrixCard}>
-                {/* Matrix Header */}
-                <View style={styles.matrixHeader}>
-                  <View style={styles.matrixPlayerColHeader}>
-                    <AppText style={styles.matrixHeaderText}>Player</AppText>
-                  </View>
-                  <ScrollView
-                    horizontal
-                    showsHorizontalScrollIndicator={false}
-                    style={styles.matrixEventsScroll}
-                  >
-                    {matrixData.events.map((event, idx) => (
-                      <View key={event.eventId} style={styles.matrixEventCol}>
-                        <AppText style={styles.matrixEventText} numberOfLines={1}>
-                          E{idx + 1}
-                        </AppText>
-                      </View>
-                    ))}
-                    <View style={styles.matrixTotalCol}>
-                      <AppText style={styles.matrixTotalHeader}>Total</AppText>
-                    </View>
-                  </ScrollView>
-                </View>
+              <View style={styles.accordionContainer}>
+                {groupedResultsLog.map((event, eventIdx) => {
+                  const isExpanded = expandedEvents.has(event.eventId);
+                  const eventNumber = groupedResultsLog.length - eventIdx;
 
-                {/* Matrix Rows */}
-                <ScrollView style={{ maxHeight: 400 }}>
-                  {matrixData.players.map((player, rowIdx) => (
-                    <View
-                      key={player.id}
-                      style={[
-                        styles.matrixRow,
-                        rowIdx % 2 === 1 && styles.matrixRowAlt,
-                      ]}
-                    >
-                      {/* Sticky Player Name */}
-                      <View style={styles.matrixPlayerCol}>
-                        <AppText style={styles.matrixPlayerName} numberOfLines={1}>
-                          {player.name}
-                        </AppText>
-                      </View>
-
-                      {/* Scrollable Event Scores */}
-                      <ScrollView
-                        horizontal
-                        showsHorizontalScrollIndicator={false}
-                        style={styles.matrixEventsScroll}
+                  return (
+                    <GlassCard key={event.eventId} style={styles.accordionCard} elevated={isExpanded}>
+                      {/* Accordion Header - Tappable */}
+                      <Pressable
+                        style={styles.accordionHeader}
+                        onPress={() => toggleEventExpanded(event.eventId)}
                       >
-                        {matrixData.events.map((event) => {
-                          const pts = event.results.get(player.id);
-                          return (
-                            <View key={event.eventId} style={styles.matrixCell}>
-                              <AppText style={styles.matrixCellText}>
-                                {pts !== undefined ? formatPoints(pts) : "·"}
+                        <View style={styles.accordionEventInfo}>
+                          <View style={styles.accordionEventBadge}>
+                            <AppText style={styles.accordionEventNumber}>E{eventNumber}</AppText>
+                          </View>
+                          <View style={styles.accordionEventDetails}>
+                            <AppText style={styles.accordionEventName} numberOfLines={1}>
+                              {event.eventName}
+                            </AppText>
+                            <AppText style={styles.accordionEventMeta}>
+                              {formatEventDate(event.eventDate)}
+                              {event.format ? ` • ${event.format}` : ""}
+                              {` • ${event.results.length} player${event.results.length !== 1 ? "s" : ""}`}
+                            </AppText>
+                          </View>
+                        </View>
+                        <View style={styles.accordionChevron}>
+                          <Feather
+                            name={isExpanded ? "chevron-up" : "chevron-down"}
+                            size={20}
+                            color="#9CA3AF"
+                          />
+                        </View>
+                      </Pressable>
+
+                      {/* Accordion Content - Event Leaderboard */}
+                      {isExpanded && (
+                        <View style={styles.accordionContent}>
+                          {/* Column Headers */}
+                          <View style={styles.accordionTableHeader}>
+                            <AppText style={[styles.accordionColHeader, { width: 36 }]}>Pos</AppText>
+                            <AppText style={[styles.accordionColHeader, { flex: 1 }]}>Player</AppText>
+                            <AppText style={[styles.accordionColHeader, { width: 50, textAlign: "center" }]}>Score</AppText>
+                            <AppText style={[styles.accordionColHeader, { width: 50, textAlign: "right" }]}>OOM</AppText>
+                          </View>
+
+                          {/* Player Rows */}
+                          {event.results.map((result, resultIdx) => (
+                            <View
+                              key={result.memberId}
+                              style={[
+                                styles.accordionRow,
+                                resultIdx === event.results.length - 1 && { borderBottomWidth: 0 },
+                              ]}
+                            >
+                              <View style={styles.accordionPosition}>
+                                {result.position && result.position <= 3 ? (
+                                  <AppText style={styles.accordionPositionMedal}>
+                                    {result.position === 1 ? "🥇" : result.position === 2 ? "🥈" : "🥉"}
+                                  </AppText>
+                                ) : (
+                                  <AppText style={styles.accordionPositionText}>
+                                    {result.position ?? "–"}
+                                  </AppText>
+                                )}
+                              </View>
+                              <AppText style={styles.accordionPlayerName} numberOfLines={2}>
+                                {result.memberName}
+                              </AppText>
+                              <AppText style={styles.accordionScore}>
+                                {result.dayValue ?? "–"}
+                              </AppText>
+                              <AppText style={styles.accordionPoints}>
+                                {formatPoints(result.points)}
                               </AppText>
                             </View>
-                          );
-                        })}
-                        <View style={styles.matrixTotalCell}>
-                          <AppText style={styles.matrixTotalText}>
-                            {formatPoints(player.totalPoints)}
-                          </AppText>
+                          ))}
                         </View>
-                      </ScrollView>
-                    </View>
-                  ))}
-                </ScrollView>
-              </GlassCard>
+                      )}
+                    </GlassCard>
+                  );
+                })}
+              </View>
             )}
           </>
         )}
@@ -1017,11 +1012,14 @@ const styles = StyleSheet.create({
     fontSize: 20,
   },
   podiumName: {
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: "600",
     color: "#374151",
-    marginBottom: 4,
+    marginBottom: 6,
     textAlign: "center",
+    lineHeight: 16,
+    minHeight: 32,
+    paddingHorizontal: 4,
   },
   podiumPoints: {
     fontSize: 22,
@@ -1072,7 +1070,8 @@ const styles = StyleSheet.create({
   fieldRow: {
     flexDirection: "row",
     alignItems: "center",
-    paddingVertical: 12,
+    paddingVertical: 14,
+    minHeight: 48,
     borderBottomWidth: 1,
     borderBottomColor: "rgba(0, 0, 0, 0.04)",
   },
@@ -1090,9 +1089,11 @@ const styles = StyleSheet.create({
   },
   fieldName: {
     flex: 1,
-    fontSize: 15,
+    fontSize: 14,
     fontWeight: "500",
     color: "#111827",
+    lineHeight: 20,
+    paddingRight: 8,
   },
   fieldEvents: {
     width: 32,
@@ -1109,96 +1110,120 @@ const styles = StyleSheet.create({
     fontVariant: ["tabular-nums"],
   },
 
-  // Matrix
-  matrixCard: {
+  // Accordion (Results Log)
+  accordionContainer: {
+    gap: 12,
+  },
+  accordionCard: {
     padding: 0,
     overflow: "hidden",
   },
-  matrixHeader: {
+  accordionHeader: {
     flexDirection: "row",
-    backgroundColor: "#0B6E4F",
+    alignItems: "center",
+    padding: 16,
   },
-  matrixPlayerColHeader: {
-    width: 120,
-    padding: 12,
-    borderRightWidth: 1,
-    borderRightColor: "rgba(255, 255, 255, 0.1)",
+  accordionEventInfo: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
   },
-  matrixHeaderText: {
-    fontSize: 11,
+  accordionEventBadge: {
+    width: 40,
+    height: 40,
+    borderRadius: 10,
+    backgroundColor: "rgba(11, 110, 79, 0.1)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  accordionEventNumber: {
+    fontSize: 13,
     fontWeight: "700",
-    color: "#FFFFFF",
+    color: "#0B6E4F",
+  },
+  accordionEventDetails: {
+    flex: 1,
+  },
+  accordionEventName: {
+    fontSize: 15,
+    fontWeight: "600",
+    color: "#111827",
+    marginBottom: 2,
+  },
+  accordionEventMeta: {
+    fontSize: 12,
+    color: "#9CA3AF",
+  },
+  accordionChevron: {
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+    backgroundColor: "rgba(0, 0, 0, 0.03)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  accordionContent: {
+    borderTopWidth: 1,
+    borderTopColor: "rgba(0, 0, 0, 0.06)",
+    backgroundColor: "rgba(249, 250, 251, 0.5)",
+  },
+  accordionTableHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: "rgba(0, 0, 0, 0.04)",
+    backgroundColor: "rgba(0, 0, 0, 0.02)",
+  },
+  accordionColHeader: {
+    fontSize: 10,
+    fontWeight: "700",
+    color: "#9CA3AF",
     textTransform: "uppercase",
     letterSpacing: 0.5,
   },
-  matrixEventsScroll: {
+  accordionRow: {
     flexDirection: "row",
-  },
-  matrixEventCol: {
-    width: 50,
-    padding: 12,
     alignItems: "center",
-  },
-  matrixEventText: {
-    fontSize: 11,
-    fontWeight: "600",
-    color: "rgba(255, 255, 255, 0.8)",
-  },
-  matrixTotalCol: {
-    width: 60,
-    padding: 12,
-    alignItems: "center",
-    backgroundColor: "rgba(0, 0, 0, 0.1)",
-  },
-  matrixTotalHeader: {
-    fontSize: 11,
-    fontWeight: "700",
-    color: "#FFFFFF",
-    textTransform: "uppercase",
-  },
-  matrixRow: {
-    flexDirection: "row",
+    paddingVertical: 12,
+    paddingHorizontal: 16,
     borderBottomWidth: 1,
     borderBottomColor: "rgba(0, 0, 0, 0.04)",
   },
-  matrixRowAlt: {
-    backgroundColor: "rgba(0, 0, 0, 0.02)",
+  accordionPosition: {
+    width: 36,
+    alignItems: "center",
   },
-  matrixPlayerCol: {
-    width: 120,
-    padding: 10,
-    justifyContent: "center",
-    borderRightWidth: 1,
-    borderRightColor: "rgba(0, 0, 0, 0.04)",
-    backgroundColor: "rgba(255, 255, 255, 0.9)",
+  accordionPositionText: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: "#6B7280",
   },
-  matrixPlayerName: {
-    fontSize: 13,
+  accordionPositionMedal: {
+    fontSize: 16,
+  },
+  accordionPlayerName: {
+    flex: 1,
+    fontSize: 14,
     fontWeight: "500",
     color: "#374151",
+    paddingRight: 8,
   },
-  matrixCell: {
+  accordionScore: {
     width: 50,
-    padding: 10,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  matrixCellText: {
     fontSize: 13,
     color: "#6B7280",
+    textAlign: "center",
     fontVariant: ["tabular-nums"],
   },
-  matrixTotalCell: {
-    width: 60,
-    padding: 10,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "rgba(11, 110, 79, 0.05)",
-  },
-  matrixTotalText: {
-    fontSize: 14,
+  accordionPoints: {
+    width: 50,
+    fontSize: 15,
     fontWeight: "700",
     color: "#0B6E4F",
+    textAlign: "right",
     fontVariant: ["tabular-nums"],
   },
 
