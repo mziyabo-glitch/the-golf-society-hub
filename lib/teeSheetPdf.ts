@@ -1,7 +1,11 @@
 /**
  * Tee Sheet PDF Generator
- * Generates branded PDF tee sheets with society logo, ManCo details,
- * and WHS handicap information (HI, CH, PH)
+ *
+ * Generates branded PDF tee sheets with:
+ * - Society logo and ManCo details
+ * - WHS handicap information (HI, CH, PH)
+ * - Proper player grouping (max 4 per group, avoid singles)
+ * - NTP/LD competition holes
  */
 
 import * as Print from "expo-print";
@@ -14,8 +18,16 @@ import {
   hasTeeSettings,
   type TeeSettings,
 } from "./handicapUtils";
+import {
+  groupPlayers,
+  sortPlayersByHandicap,
+  formatHoleNumbers,
+  type GroupedPlayer,
+  type PlayerGroup,
+} from "./teeSheetGrouping";
 
 export type TeeSheetPlayer = {
+  id?: string;
   name: string;
   handicapIndex?: number | null;
   teeTime?: string | null;
@@ -38,8 +50,16 @@ export type TeeSheetData = {
   // Tee settings for handicap calculations
   teeSettings?: TeeSettings | null;
 
+  // Competition holes
+  nearestPinHoles?: number[] | null;
+  longestDriveHoles?: number[] | null;
+
   // Players
   players: TeeSheetPlayer[];
+
+  // Optional start time for tee times
+  startTime?: string | null;
+  teeTimeInterval?: number; // Minutes between groups (default 10)
 };
 
 /**
@@ -56,7 +76,11 @@ function generateTeeSheetHTML(data: TeeSheetData): string {
     teeName,
     format,
     teeSettings,
+    nearestPinHoles,
+    longestDriveHoles,
     players,
+    startTime,
+    teeTimeInterval = 10,
   } = data;
 
   // Check if we can calculate handicaps
@@ -87,7 +111,7 @@ function generateTeeSheetHTML(data: TeeSheetData): string {
     ? `<img src="${logoUrl}" alt="Society Logo" style="width: 60px; height: 60px; object-fit: contain; border-radius: 8px;" onerror="this.style.display='none'" />`
     : `<div style="width: 60px; height: 60px; background: #E8F5F0; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 20px; font-weight: 700; color: #0B6E4F;">${getInitials(societyName)}</div>`;
 
-  // ManCo block - only show roles that are assigned
+  // ManCo block
   const manCoItems: string[] = [];
   if (manCo.captain) manCoItems.push(`<span style="color: #6B7280;">Captain:</span> ${manCo.captain}`);
   if (manCo.secretary) manCoItems.push(`<span style="color: #6B7280;">Secretary:</span> ${manCo.secretary}`);
@@ -95,9 +119,9 @@ function generateTeeSheetHTML(data: TeeSheetData): string {
   if (manCo.handicapper) manCoItems.push(`<span style="color: #6B7280;">Handicapper:</span> ${manCo.handicapper}`);
 
   const manCoHTML = manCoItems.length > 0
-    ? `<div style="background: #F9FAFB; padding: 12px 16px; border-radius: 8px; margin-bottom: 20px;">
-         <div style="font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: #9CA3AF; margin-bottom: 8px;">Management Committee</div>
-         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 4px 16px; font-size: 13px;">
+    ? `<div style="background: #F9FAFB; padding: 12px 16px; border-radius: 8px; margin-bottom: 16px;">
+         <div style="font-size: 10px; text-transform: uppercase; letter-spacing: 1px; color: #9CA3AF; margin-bottom: 6px;">Management Committee</div>
+         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 4px 16px; font-size: 12px;">
            ${manCoItems.map(item => `<div>${item}</div>`).join("")}
          </div>
        </div>`
@@ -106,56 +130,102 @@ function generateTeeSheetHTML(data: TeeSheetData): string {
   // Tee settings info box
   const teeSettingsHTML = canCalculateHandicaps
     ? `<div style="background: #FEF3C7; padding: 10px 16px; border-radius: 8px; margin-bottom: 16px; border-left: 4px solid #F59E0B;">
-         <div style="font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: #92400E; margin-bottom: 4px;">Course Setup</div>
-         <div style="font-size: 13px; color: #78350F;">
+         <div style="font-size: 10px; text-transform: uppercase; letter-spacing: 1px; color: #92400E; margin-bottom: 4px;">Course Setup</div>
+         <div style="font-size: 12px; color: #78350F;">
            Par ${teeSettings?.par} • CR ${teeSettings?.courseRating} • Slope ${teeSettings?.slopeRating} • Allowance ${Math.round((teeSettings?.handicapAllowance ?? 0.95) * 100)}%
          </div>
        </div>`
     : "";
 
-  // Players table - group by tee time if available
-  const playersWithGroups = players.map((p, idx) => ({
-    ...p,
-    displayGroup: p.group ?? Math.floor(idx / 4) + 1,
-  }));
+  // NTP/LD info box
+  const hasCompetitions = (nearestPinHoles && nearestPinHoles.length > 0) ||
+                          (longestDriveHoles && longestDriveHoles.length > 0);
+  const competitionsHTML = hasCompetitions
+    ? `<div style="background: #EDE9FE; padding: 10px 16px; border-radius: 8px; margin-bottom: 16px; border-left: 4px solid #8B5CF6;">
+         <div style="font-size: 10px; text-transform: uppercase; letter-spacing: 1px; color: #5B21B6; margin-bottom: 4px;">Competitions</div>
+         <div style="font-size: 12px; color: #4C1D95; display: flex; gap: 24px;">
+           ${nearestPinHoles && nearestPinHoles.length > 0 ? `<div><strong>Nearest the Pin:</strong> Hole${nearestPinHoles.length > 1 ? 's' : ''} ${formatHoleNumbers(nearestPinHoles)}</div>` : ''}
+           ${longestDriveHoles && longestDriveHoles.length > 0 ? `<div><strong>Longest Drive:</strong> Hole${longestDriveHoles.length > 1 ? 's' : ''} ${formatHoleNumbers(longestDriveHoles)}</div>` : ''}
+         </div>
+       </div>`
+    : "";
 
-  // Calculate handicaps for each player
-  const playersWithHandicaps = playersWithGroups.map((player) => {
+  // Calculate handicaps for each player and create grouped players
+  const playersWithHandicaps: GroupedPlayer[] = players.map((player, idx) => {
     const handicaps = calculateHandicaps(player.handicapIndex, teeSettings);
     return {
-      ...player,
-      ...handicaps,
+      id: player.id || String(idx),
+      name: player.name,
+      handicapIndex: player.handicapIndex ?? null,
+      courseHandicap: handicaps.courseHandicap,
+      playingHandicap: handicaps.playingHandicap,
     };
   });
 
-  const playerRows = playersWithHandicaps
-    .map((player, idx) => {
-      const isNewGroup = idx === 0 || player.displayGroup !== playersWithHandicaps[idx - 1].displayGroup;
-      const groupHeader = isNewGroup
-        ? `<tr>
-             <td colspan="${canCalculateHandicaps ? 6 : 4}" style="background: #F3F4F6; padding: 8px 12px; font-weight: 600; font-size: 12px; color: #374151; border-bottom: 1px solid #E5E7EB;">
-               Group ${player.displayGroup}${player.teeTime ? ` • ${player.teeTime}` : ""}
-             </td>
-           </tr>`
-        : "";
+  // Group players (sorted by handicap descending)
+  const groups = groupPlayers(playersWithHandicaps, true);
 
+  // Assign tee times if start time provided
+  let groupsWithTimes = groups;
+  if (startTime) {
+    const [hours, minutes] = startTime.split(":").map(Number);
+    if (!isNaN(hours) && !isNaN(minutes)) {
+      let currentMinutes = hours * 60 + minutes;
+      groupsWithTimes = groups.map((group) => {
+        const teeHours = Math.floor(currentMinutes / 60);
+        const teeMins = currentMinutes % 60;
+        const teeTime = `${String(teeHours).padStart(2, "0")}:${String(teeMins).padStart(2, "0")}`;
+        currentMinutes += teeTimeInterval;
+        return { ...group, teeTime };
+      });
+    }
+  }
+
+  // Generate group blocks
+  const groupsHTML = groupsWithTimes.map((group) => {
+    const playerRows = group.players.map((player) => {
       const hiDisplay = formatHandicapIndex(player.handicapIndex);
-      const chDisplay = player.courseHandicap != null ? player.courseHandicap.toString() : "-";
-      const phDisplay = player.playingHandicap != null ? player.playingHandicap.toString() : "-";
+      const chDisplay = player.courseHandicap != null ? String(player.courseHandicap) : "-";
+      const phDisplay = player.playingHandicap != null ? String(player.playingHandicap) : "-";
 
-      return `${groupHeader}
-        <tr style="background: ${idx % 2 === 0 ? "#FFFFFF" : "#FAFAFA"};">
-          <td style="padding: 10px 12px; border-bottom: 1px solid #F3F4F6;">${player.name}</td>
-          <td style="padding: 10px 12px; border-bottom: 1px solid #F3F4F6; text-align: center; color: #6B7280; font-family: 'SF Mono', monospace;">${hiDisplay}</td>
+      return `
+        <tr>
+          <td style="padding: 8px 10px; border-bottom: 1px solid #F3F4F6; font-weight: 500;">${player.name}</td>
+          <td style="padding: 8px 10px; border-bottom: 1px solid #F3F4F6; text-align: center; color: #6B7280; font-family: 'SF Mono', Consolas, monospace; font-size: 12px;">${hiDisplay}</td>
           ${canCalculateHandicaps ? `
-          <td style="padding: 10px 12px; border-bottom: 1px solid #F3F4F6; text-align: center; color: #6B7280; font-family: 'SF Mono', monospace;">${chDisplay}</td>
-          <td style="padding: 10px 12px; border-bottom: 1px solid #F3F4F6; text-align: center; font-weight: 600; color: #0B6E4F; font-family: 'SF Mono', monospace;">${phDisplay}</td>
-          ` : ""}
-          <td style="padding: 10px 12px; border-bottom: 1px solid #F3F4F6; text-align: center; color: #6B7280;">${player.teeTime || "-"}</td>
-          <td style="padding: 10px 12px; border-bottom: 1px solid #F3F4F6; text-align: center;"></td>
-        </tr>`;
-    })
-    .join("");
+          <td style="padding: 8px 10px; border-bottom: 1px solid #F3F4F6; text-align: center; color: #6B7280; font-family: 'SF Mono', Consolas, monospace; font-size: 12px;">${chDisplay}</td>
+          <td style="padding: 8px 10px; border-bottom: 1px solid #F3F4F6; text-align: center; font-weight: 600; color: #0B6E4F; font-family: 'SF Mono', Consolas, monospace; font-size: 12px;">${phDisplay}</td>
+          ` : ''}
+          <td style="padding: 8px 10px; border-bottom: 1px solid #F3F4F6; text-align: center; width: 80px;"></td>
+        </tr>
+      `;
+    }).join("");
+
+    return `
+      <div style="margin-bottom: 16px; background: white; border: 1px solid #E5E7EB; border-radius: 8px; overflow: hidden; break-inside: avoid;">
+        <div style="background: #0B6E4F; color: white; padding: 8px 12px; font-weight: 600; font-size: 13px; display: flex; justify-content: space-between; align-items: center;">
+          <span>Group ${group.groupNumber}</span>
+          ${group.teeTime ? `<span style="font-weight: 400; font-size: 12px;">${group.teeTime}</span>` : ''}
+        </div>
+        <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
+          <thead>
+            <tr style="background: #F9FAFB;">
+              <th style="padding: 8px 10px; text-align: left; font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; color: #6B7280; font-weight: 600;">Player</th>
+              <th style="padding: 8px 10px; text-align: center; font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; color: #6B7280; font-weight: 600;" title="Handicap Index">HI</th>
+              ${canCalculateHandicaps ? `
+              <th style="padding: 8px 10px; text-align: center; font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; color: #6B7280; font-weight: 600;" title="Course Handicap">CH</th>
+              <th style="padding: 8px 10px; text-align: center; font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; color: #6B7280; font-weight: 600;" title="Playing Handicap">PH</th>
+              ` : ''}
+              <th style="padding: 8px 10px; text-align: center; font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; color: #6B7280; font-weight: 600;">Notes</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${playerRows}
+          </tbody>
+        </table>
+      </div>
+    `;
+  }).join("");
 
   return `
     <!DOCTYPE html>
@@ -167,11 +237,11 @@ function generateTeeSheetHTML(data: TeeSheetData): string {
           * { box-sizing: border-box; margin: 0; padding: 0; }
           body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            padding: 32px;
+            padding: 24px;
             color: #111827;
             background: #fff;
-            font-size: 14px;
-            line-height: 1.5;
+            font-size: 13px;
+            line-height: 1.4;
           }
           .container { max-width: 700px; margin: 0 auto; }
 
@@ -180,99 +250,74 @@ function generateTeeSheetHTML(data: TeeSheetData): string {
             display: flex;
             align-items: flex-start;
             gap: 16px;
-            margin-bottom: 20px;
-            padding-bottom: 16px;
+            margin-bottom: 16px;
+            padding-bottom: 12px;
             border-bottom: 2px solid #0B6E4F;
           }
           .header-text { flex: 1; }
           .society-name {
-            font-size: 18px;
+            font-size: 16px;
             font-weight: 700;
             color: #0B6E4F;
             margin-bottom: 2px;
           }
           .branding {
-            font-size: 11px;
+            font-size: 10px;
             color: #9CA3AF;
             font-style: italic;
           }
 
           /* Event details */
           .event-header {
-            margin-bottom: 20px;
+            margin-bottom: 16px;
           }
           .event-name {
-            font-size: 22px;
+            font-size: 20px;
             font-weight: 700;
             color: #111827;
             margin-bottom: 4px;
           }
           .event-meta {
-            font-size: 14px;
+            font-size: 13px;
             color: #6B7280;
           }
 
-          /* Players table */
-          .players-section {
-            margin-top: 16px;
-          }
-          .section-title {
-            font-size: 12px;
-            text-transform: uppercase;
-            letter-spacing: 1px;
-            color: #9CA3AF;
-            margin-bottom: 8px;
-          }
-          table {
-            width: 100%;
-            border-collapse: collapse;
-            border: 1px solid #E5E7EB;
-            border-radius: 8px;
-            overflow: hidden;
-          }
-          th {
-            background: #0B6E4F;
-            color: white;
-            padding: 10px 12px;
-            text-align: left;
-            font-size: 11px;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-            font-weight: 600;
-          }
-          th.center { text-align: center; }
-
           /* Footer */
           .footer {
-            margin-top: 24px;
-            padding-top: 16px;
+            margin-top: 20px;
+            padding-top: 12px;
             border-top: 1px solid #E5E7EB;
             text-align: center;
           }
           .footer-text {
-            font-size: 11px;
+            font-size: 10px;
             color: #9CA3AF;
             font-style: italic;
           }
           .player-count {
-            font-size: 12px;
+            font-size: 11px;
             color: #6B7280;
-            margin-bottom: 8px;
+            margin-bottom: 6px;
           }
 
           /* Handicap legend */
           .legend {
-            margin-top: 16px;
-            padding: 12px;
+            margin-top: 12px;
+            padding: 10px;
             background: #F9FAFB;
-            border-radius: 8px;
-            font-size: 11px;
+            border-radius: 6px;
+            font-size: 10px;
             color: #6B7280;
           }
           .legend-title {
             font-weight: 600;
             color: #374151;
-            margin-bottom: 4px;
+            margin-bottom: 3px;
+          }
+
+          @media print {
+            body { padding: 16px; }
+            .container { max-width: 100%; }
           }
         </style>
       </head>
@@ -301,29 +346,11 @@ function generateTeeSheetHTML(data: TeeSheetData): string {
           <!-- Tee Settings Info -->
           ${teeSettingsHTML}
 
-          <!-- Players Table -->
-          <div class="players-section">
-            <div class="section-title">Tee Sheet</div>
-            ${players.length > 0 ? `
-            <table>
-              <thead>
-                <tr>
-                  <th>Player</th>
-                  <th class="center" title="Handicap Index">HI</th>
-                  ${canCalculateHandicaps ? `
-                  <th class="center" title="Course Handicap">CH</th>
-                  <th class="center" title="Playing Handicap">PH</th>
-                  ` : ""}
-                  <th class="center">Tee Time</th>
-                  <th class="center">Score</th>
-                </tr>
-              </thead>
-              <tbody>
-                ${playerRows}
-              </tbody>
-            </table>
-            ` : `<p style="color: #6B7280; text-align: center; padding: 24px;">No players registered yet.</p>`}
-          </div>
+          <!-- Competition Holes -->
+          ${competitionsHTML}
+
+          <!-- Player Groups -->
+          ${players.length > 0 ? groupsHTML : `<p style="color: #6B7280; text-align: center; padding: 24px;">No players registered yet.</p>`}
 
           ${canCalculateHandicaps ? `
           <!-- Handicap Legend -->
@@ -335,7 +362,7 @@ function generateTeeSheetHTML(data: TeeSheetData): string {
 
           <!-- Footer -->
           <div class="footer">
-            <div class="player-count">${players.length} player${players.length !== 1 ? "s" : ""} registered</div>
+            <div class="player-count">${players.length} player${players.length !== 1 ? "s" : ""} • ${groupsWithTimes.length} group${groupsWithTimes.length !== 1 ? "s" : ""}</div>
             <div class="footer-text">Generated on ${new Date().toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" })}</div>
           </div>
         </div>

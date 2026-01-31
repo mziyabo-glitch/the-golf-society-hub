@@ -56,6 +56,9 @@ export type EventDoc = {
   courseRating?: number | null;
   slopeRating?: number | null;
   handicapAllowance?: number | null;
+  // Competition holes
+  nearestPinHoles?: number[] | null;
+  longestDriveHoles?: number[] | null;
   [key: string]: unknown;
 };
 
@@ -85,6 +88,9 @@ function mapEvent(row: any): EventDoc {
     courseRating: row.course_rating ?? null,
     slopeRating: row.slope_rating ?? null,
     handicapAllowance: row.handicap_allowance ?? null,
+    // Map competition holes
+    nearestPinHoles: row.nearest_pin_holes ?? null,
+    longestDriveHoles: row.longest_drive_holes ?? null,
   };
 }
 
@@ -119,7 +125,7 @@ export async function getEvent(eventId: string): Promise<EventDoc | null> {
 
   const { data, error } = await supabase
     .from("events")
-    .select("id,name,date,format,classification,course_name,status,is_completed,winner_name,player_ids,created_at,created_by,society_id,tee_name,par,course_rating,slope_rating,handicap_allowance")
+    .select("id,name,date,format,classification,course_name,status,is_completed,winner_name,player_ids,created_at,created_by,society_id,tee_name,par,course_rating,slope_rating,handicap_allowance,nearest_pin_holes,longest_drive_holes")
     .eq("id", eventId)
     .maybeSingle();
 
@@ -226,6 +232,9 @@ export async function updateEvent(
     courseRating: number;
     slopeRating: number;
     handicapAllowance: number;
+    // Competition holes
+    nearestPinHoles: number[];
+    longestDriveHoles: number[];
   }>
 ): Promise<void> {
   const payload: Record<string, unknown> = {
@@ -252,6 +261,10 @@ export async function updateEvent(
   if (updates.courseRating !== undefined) payload.course_rating = updates.courseRating;
   if (updates.slopeRating !== undefined) payload.slope_rating = updates.slopeRating;
   if (updates.handicapAllowance !== undefined) payload.handicap_allowance = updates.handicapAllowance;
+
+  // Competition holes
+  if (updates.nearestPinHoles !== undefined) payload.nearest_pin_holes = updates.nearestPinHoles;
+  if (updates.longestDriveHoles !== undefined) payload.longest_drive_holes = updates.longestDriveHoles;
 
   console.log("[eventRepo] updateEvent:", { eventId, payload });
 

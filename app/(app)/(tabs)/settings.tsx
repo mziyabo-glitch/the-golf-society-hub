@@ -316,6 +316,28 @@ export default function SettingsScreen() {
         </>
       )}
 
+      {/* ManCo Tools - Only visible to ManCo members */}
+      {permissions.canGenerateTeeSheet && (
+        <>
+          <AppText variant="h2" style={styles.sectionTitle}>ManCo Tools</AppText>
+          <AppCard padding="sm">
+            <Pressable
+              style={({ pressed }) => [styles.linkRow, { opacity: pressed ? 0.7 : 1 }]}
+              onPress={() => router.push("/(app)/tee-sheet")}
+            >
+              <View style={[styles.linkIcon, { backgroundColor: colors.warning + "20" }]}>
+                <Feather name="file-text" size={16} color={colors.warning} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <AppText variant="body">Tee Sheet Generator</AppText>
+                <AppText variant="small" color="secondary">Grouped tee sheets with WHS handicaps</AppText>
+              </View>
+              <Feather name="chevron-right" size={18} color={colors.textTertiary} />
+            </Pressable>
+          </AppCard>
+        </>
+      )}
+
       {/* Quick Links */}
       <AppText variant="h2" style={styles.sectionTitle}>Quick Actions</AppText>
       <AppCard padding="sm">

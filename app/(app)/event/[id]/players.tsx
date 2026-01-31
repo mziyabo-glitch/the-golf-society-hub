@@ -1,8 +1,8 @@
 /**
  * Event Players Screen
  * - Select players for the event
- * - Generate branded tee sheet PDF
  * - Uses Supabase instead of Firebase
+ * Note: Tee sheet generation moved to ManCo Tools
  */
 
 import { useLocalSearchParams, useRouter } from "expo-router";
@@ -18,10 +18,8 @@ import { LoadingState } from "@/components/ui/LoadingState";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { useBootstrap } from "@/lib/useBootstrap";
 import { getEvent, updateEvent, type EventDoc } from "@/lib/db_supabase/eventRepo";
-import { getMembersBySocietyId, getManCoRoleHolders, type MemberDoc } from "@/lib/db_supabase/memberRepo";
+import { getMembersBySocietyId, type MemberDoc } from "@/lib/db_supabase/memberRepo";
 import { getPermissionsForMember } from "@/lib/rbac";
-import { generateTeeSheetPdf, type TeeSheetPlayer } from "@/lib/teeSheetPdf";
-import { type TeeSettings } from "@/lib/handicapUtils";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
 
 export default function EventPlayersScreen() {
@@ -40,14 +38,9 @@ export default function EventPlayersScreen() {
   const [selectedPlayerIds, setSelectedPlayerIds] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [generatingPdf, setGeneratingPdf] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const permissions = getPermissionsForMember(member as any);
-  const canGenerateTeeSheet = permissions.canGenerateTeeSheet;
-
-  // Get logo URL from society
-  const logoUrl = (society as any)?.logo_url || (society as any)?.logoUrl || null;
 
   useEffect(() => {
     let cancelled = false;
@@ -148,58 +141,6 @@ export default function EventPlayersScreen() {
     }
   }
 
-  async function handleGenerateTeeSheet() {
-    if (!event || !societyId) return;
-
-    try {
-      setGeneratingPdf(true);
-
-      // Get ManCo role holders
-      const manCo = await getManCoRoleHolders(societyId);
-
-      // Build player list from selected members
-      const selectedMembers = members.filter((m) => selectedPlayerIds.has(String(m.id)));
-      const players: TeeSheetPlayer[] = selectedMembers.map((m, idx) => ({
-        name: m.name || m.displayName || "Member",
-        handicapIndex: m.handicapIndex ?? m.handicap_index ?? null,
-        group: Math.floor(idx / 4) + 1,
-        teeTime: null, // Could be enhanced to include tee times if available
-      }));
-
-      // Build tee settings from event
-      const teeSettings: TeeSettings | null =
-        event.par != null && event.courseRating != null && event.slopeRating != null
-          ? {
-              par: event.par,
-              courseRating: event.courseRating,
-              slopeRating: event.slopeRating,
-              handicapAllowance: event.handicapAllowance ?? null,
-            }
-          : null;
-
-      // Generate PDF
-      await generateTeeSheetPdf({
-        societyName: society?.name || "Golf Society",
-        logoUrl,
-        manCo,
-        eventName: event.name || "Event",
-        eventDate: event.date || null,
-        courseName: event.courseName || null,
-        teeName: event.teeName || null,
-        format: event.format || null,
-        teeSettings,
-        players,
-      });
-
-      console.log("[players] Tee sheet generated successfully");
-    } catch (e: any) {
-      console.error("[players] generateTeeSheet FAILED", e);
-      Alert.alert("Error", e?.message || "Failed to generate tee sheet");
-    } finally {
-      setGeneratingPdf(false);
-    }
-  }
-
   if (bootstrapLoading || loading) {
     return (
       <Screen>
@@ -260,18 +201,6 @@ export default function EventPlayersScreen() {
             {selectedCount} selected
           </AppText>
         </View>
-
-        {/* Generate Tee Sheet button */}
-        {canGenerateTeeSheet && selectedCount > 0 && (
-          <SecondaryButton
-            onPress={handleGenerateTeeSheet}
-            size="sm"
-            disabled={generatingPdf}
-          >
-            <Feather name="file-text" size={14} color={colors.text} />
-            {generatingPdf ? " ..." : " Tee Sheet"}
-          </SecondaryButton>
-        )}
       </View>
 
       <ScrollView contentContainerStyle={{ paddingBottom: spacing.xl }}>
