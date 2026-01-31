@@ -1,10 +1,10 @@
-import { useCallback, useEffect, useState, useMemo } from "react";
+import { useCallback, useEffect, useState, useMemo, useRef } from "react";
 import { StyleSheet, View, Platform, Alert, Pressable } from "react-native";
 import { useLocalSearchParams } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
 import { Feather } from "@expo/vector-icons";
-import * as Print from "expo-print";
 import * as Sharing from "expo-sharing";
+import { captureRef } from "react-native-view-shot";
 
 import { Screen } from "@/components/ui/Screen";
 import { AppText } from "@/components/ui/AppText";
@@ -21,6 +21,7 @@ import {
   type ResultsLogEntry,
 } from "@/lib/db_supabase/resultsRepo";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
+import OOMShareCard, { type OOMShareRow } from "@/components/oom/OOMShareCard";
 
 /**
  * Format OOM points for display
@@ -52,6 +53,9 @@ export default function LeaderboardScreen() {
   const [loading, setLoading] = useState(true);
   const [sharing, setSharing] = useState(false);
   const [fetchError, setFetchError] = useState<string | null>(null);
+
+  // Ref for capturing the share card as an image
+  const shareCardRef = useRef<View>(null);
 
   const loadData = useCallback(async () => {
     // Don't fetch with undefined societyId
@@ -151,6 +155,63 @@ export default function LeaderboardScreen() {
   // Count OOM events with results (from the results log which is already filtered)
   const uniqueOOMEventIds = new Set(resultsLog.map((r) => r.eventId));
   const oomEventCount = uniqueOOMEventIds.size;
+
+  // Prepare data for share card
+  const shareCardRows: OOMShareRow[] = useMemo(() => {
+    return standings.map((entry) => ({
+      position: entry.rank,
+      name: entry.memberName,
+      points: entry.totalPoints,
+    }));
+  }, [standings]);
+
+  // Season label for the share card
+  const seasonLabel = useMemo(() => {
+    const year = new Date().getFullYear();
+    return `${year} Season - ${oomEventCount} event${oomEventCount !== 1 ? "s" : ""}`;
+  }, [oomEventCount]);
+
+  // Share as image using react-native-view-shot
+  const handleShareImage = async () => {
+    if (!shareCardRef.current) {
+      Alert.alert("Error", "Share card not ready. Please try again.");
+      return;
+    }
+
+    try {
+      setSharing(true);
+
+      // Capture the share card as an image
+      const uri = await captureRef(shareCardRef, {
+        format: "png",
+        quality: 1,
+        result: "tmpfile",
+      });
+
+      console.log("[Leaderboard] Image captured:", uri);
+
+      // Check if sharing is available
+      const canShare = await Sharing.isAvailableAsync();
+
+      if (canShare) {
+        await Sharing.shareAsync(uri, {
+          mimeType: "image/png",
+          dialogTitle: "Share Order of Merit",
+          UTI: "public.png",
+        });
+      } else {
+        Alert.alert(
+          "Sharing Unavailable",
+          "Sharing is not available on this device."
+        );
+      }
+    } catch (err: any) {
+      console.error("[Leaderboard] Share image error:", err);
+      Alert.alert("Error", err?.message || "Failed to share leaderboard");
+    } finally {
+      setSharing(false);
+    }
+  };
 
   // Generate HTML for PDF
   const generateHTML = () => {
@@ -371,7 +432,7 @@ export default function LeaderboardScreen() {
           </AppText>
         </View>
         {activeTab === "leaderboard" && standings.length > 0 && (
-          <SecondaryButton onPress={handleShare} size="sm" disabled={sharing}>
+          <SecondaryButton onPress={handleShareImage} size="sm" disabled={sharing}>
             <Feather name="share" size={16} color={colors.text} />
             {sharing ? " Sharing..." : " Share"}
           </SecondaryButton>
@@ -600,6 +661,16 @@ export default function LeaderboardScreen() {
           </AppCard>
         </>
       )}
+
+      {/* Off-screen share card for image capture */}
+      <View style={styles.offScreen} pointerEvents="none">
+        <OOMShareCard
+          ref={shareCardRef}
+          societyName={society?.name || "Golf Society"}
+          seasonLabel={seasonLabel}
+          rows={shareCardRows}
+        />
+      </View>
     </Screen>
   );
 }
@@ -705,5 +776,10 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "flex-start",
     gap: spacing.sm,
+  },
+  offScreen: {
+    position: "absolute",
+    left: -9999,
+    top: 0,
   },
 });
