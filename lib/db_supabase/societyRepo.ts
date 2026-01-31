@@ -389,32 +389,40 @@ export async function uploadSocietyLogo(
       });
 
     if (error) {
+      // Log full error object for debugging
       console.error("[societyRepo] uploadSocietyLogo storage error:", {
         message: error.message,
         name: error.name,
+        statusCode: (error as any).statusCode,
+        error: (error as any).error,
         bucket: LOGO_BUCKET,
+        fullError: JSON.stringify(error),
       });
 
+      const errMsg = error.message?.toLowerCase() || "";
+
       // Check for bucket not found error
-      if (
-        error.message?.toLowerCase().includes("bucket") &&
-        error.message?.toLowerCase().includes("not found")
-      ) {
+      if (errMsg.includes("bucket") && errMsg.includes("not found")) {
         return {
           success: false,
-          error: `Storage bucket "${LOGO_BUCKET}" not found. Please ask your administrator to create the bucket in Supabase Storage.`,
+          error: `Storage bucket "${LOGO_BUCKET}" not found. Please create it in Supabase Dashboard > Storage.`,
         };
       }
 
-      // Check for permission/policy errors
+      // Check for 400/policy/permission errors (common when bucket has no INSERT policy)
       if (
-        error.message?.toLowerCase().includes("policy") ||
-        error.message?.toLowerCase().includes("permission") ||
-        error.message?.toLowerCase().includes("not allowed")
+        (error as any).statusCode === 400 ||
+        (error as any).statusCode === "400" ||
+        errMsg.includes("policy") ||
+        errMsg.includes("permission") ||
+        errMsg.includes("not allowed") ||
+        errMsg.includes("violates") ||
+        errMsg.includes("row-level security") ||
+        !error.message // Empty message often means policy block
       ) {
         return {
           success: false,
-          error: "Permission denied. Storage policies may need to be configured.",
+          error: `Upload blocked. Please add storage policies for bucket "${LOGO_BUCKET}" in Supabase Dashboard > Storage > Policies. Required: Allow authenticated users to INSERT.`,
         };
       }
 
