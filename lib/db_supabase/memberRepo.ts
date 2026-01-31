@@ -508,3 +508,66 @@ export async function updateMember(
   console.log("[memberRepo] updateMember success:", updated.id);
   return updated;
 }
+
+// =====================================================
+// MANCO ROLE HOLDERS
+// =====================================================
+
+export type ManCoRoleHolder = {
+  role: string;
+  name: string;
+};
+
+export type ManCoDetails = {
+  captain: string | null;
+  secretary: string | null;
+  treasurer: string | null;
+  handicapper: string | null;
+};
+
+/**
+ * Get ManCo role holders for a society
+ * Returns the name of each role holder, or null if not assigned
+ * If multiple holders exist for a role, joins names with comma
+ */
+export async function getManCoRoleHolders(societyId: string): Promise<ManCoDetails> {
+  console.log("[memberRepo] getManCoRoleHolders:", societyId);
+
+  const { data, error } = await supabase
+    .from("members")
+    .select("name, role")
+    .eq("society_id", societyId)
+    .in("role", ["captain", "secretary", "treasurer", "handicapper"]);
+
+  if (error) {
+    console.error("[memberRepo] getManCoRoleHolders error:", error);
+    return {
+      captain: null,
+      secretary: null,
+      treasurer: null,
+      handicapper: null,
+    };
+  }
+
+  // Group by role
+  const roleMap: Record<string, string[]> = {
+    captain: [],
+    secretary: [],
+    treasurer: [],
+    handicapper: [],
+  };
+
+  for (const member of data || []) {
+    const role = member.role?.toLowerCase();
+    if (role && roleMap[role]) {
+      roleMap[role].push(member.name || "Unknown");
+    }
+  }
+
+  return {
+    captain: roleMap.captain.length > 0 ? roleMap.captain.join(", ") : null,
+    secretary: roleMap.secretary.length > 0 ? roleMap.secretary.join(", ") : null,
+    treasurer: roleMap.treasurer.length > 0 ? roleMap.treasurer.join(", ") : null,
+    handicapper: roleMap.handicapper.length > 0 ? roleMap.handicapper.join(", ") : null,
+  };
+}

@@ -1,28 +1,33 @@
 import { useState } from "react";
-import { StyleSheet, View, Alert, Pressable } from "react-native";
+import { StyleSheet, View, Alert, Pressable, Image, Platform } from "react-native";
 import { useRouter } from "expo-router";
 import { Feather } from "@expo/vector-icons";
+import * as ImagePicker from "expo-image-picker";
 
 import { Screen } from "@/components/ui/Screen";
 import { AppText } from "@/components/ui/AppText";
 import { AppCard } from "@/components/ui/AppCard";
-import { DestructiveButton, SecondaryButton } from "@/components/ui/Button";
+import { DestructiveButton, SecondaryButton, PrimaryButton } from "@/components/ui/Button";
 import { LoadingState } from "@/components/ui/LoadingState";
 import { useBootstrap } from "@/lib/useBootstrap";
 import { clearActiveSociety } from "@/lib/db_supabase/profileRepo";
-import { regenerateJoinCode } from "@/lib/db_supabase/societyRepo";
-import { isCaptain } from "@/lib/rbac";
+import { regenerateJoinCode, uploadSocietyLogo, removeSocietyLogo } from "@/lib/db_supabase/societyRepo";
+import { isCaptain, isSecretary, getPermissionsForMember } from "@/lib/rbac";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
 
 export default function SettingsScreen() {
   const router = useRouter();
-  const { user, society, member, loading } = useBootstrap();
+  const { user, society, member, loading, refresh } = useBootstrap();
   const colors = getColors();
 
   const [leaving, setLeaving] = useState(false);
   const [regenerating, setRegenerating] = useState(false);
+  const [uploadingLogo, setUploadingLogo] = useState(false);
+  const [removingLogo, setRemovingLogo] = useState(false);
 
+  const permissions = getPermissionsForMember(member as any);
   const canRegenCode = isCaptain(member as any);
+  const canManageLogo = permissions.canManageSocietyLogo;
 
   const handleLeaveSociety = () => {
     Alert.alert(
@@ -63,10 +68,102 @@ export default function SettingsScreen() {
             try {
               const newCode = await regenerateJoinCode(society.id);
               Alert.alert("Success", `New join code: ${newCode}`);
+              refresh();
             } catch (e: any) {
               Alert.alert("Error", e?.message || "Failed to regenerate code.");
             } finally {
               setRegenerating(false);
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  const handleUploadLogo = async () => {
+    if (!society?.id) return;
+
+    try {
+      // Request permission on native
+      if (Platform.OS !== "web") {
+        const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+        if (status !== "granted") {
+          Alert.alert("Permission Required", "Please allow access to your photo library to upload a logo.");
+          return;
+        }
+      }
+
+      // Launch image picker
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: "images",
+        allowsEditing: true,
+        aspect: [1, 1],
+        quality: 0.8,
+        base64: false,
+      });
+
+      if (result.canceled || !result.assets || result.assets.length === 0) {
+        return;
+      }
+
+      const asset = result.assets[0];
+
+      // Validate file size (2MB max)
+      if (asset.fileSize && asset.fileSize > 2 * 1024 * 1024) {
+        Alert.alert("File Too Large", "Logo must be smaller than 2MB. Please choose a smaller image.");
+        return;
+      }
+
+      setUploadingLogo(true);
+
+      const uploadResult = await uploadSocietyLogo(society.id, {
+        uri: asset.uri,
+        type: asset.mimeType || "image/jpeg",
+        size: asset.fileSize,
+        name: asset.fileName || "logo.jpg",
+      });
+
+      if (!uploadResult.success) {
+        Alert.alert("Upload Failed", uploadResult.error || "Failed to upload logo.");
+        return;
+      }
+
+      Alert.alert("Success", "Society logo updated successfully.");
+      refresh();
+
+    } catch (e: any) {
+      console.error("[Settings] handleUploadLogo error:", e);
+      Alert.alert("Error", e?.message || "Failed to upload logo.");
+    } finally {
+      setUploadingLogo(false);
+    }
+  };
+
+  const handleRemoveLogo = () => {
+    if (!society?.id) return;
+
+    Alert.alert(
+      "Remove Logo",
+      "Are you sure you want to remove the society logo?",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Remove",
+          style: "destructive",
+          onPress: async () => {
+            setRemovingLogo(true);
+            try {
+              const result = await removeSocietyLogo(society.id);
+              if (!result.success) {
+                Alert.alert("Error", result.error || "Failed to remove logo.");
+                return;
+              }
+              Alert.alert("Success", "Logo removed.");
+              refresh();
+            } catch (e: any) {
+              Alert.alert("Error", e?.message || "Failed to remove logo.");
+            } finally {
+              setRemovingLogo(false);
             }
           },
         },
@@ -96,6 +193,9 @@ export default function SettingsScreen() {
       </Screen>
     );
   }
+
+  // Get logo URL from society (handle both snake_case and camelCase)
+  const logoUrl = (society as any)?.logo_url || (society as any)?.logoUrl || null;
 
   return (
     <Screen>
@@ -157,6 +257,64 @@ export default function SettingsScreen() {
           </View>
         )}
       </AppCard>
+
+      {/* Society Logo - Captain/Secretary only */}
+      {canManageLogo && (
+        <>
+          <AppText variant="h2" style={styles.sectionTitle}>Society Logo</AppText>
+          <AppCard>
+            <View style={styles.logoSection}>
+              {/* Logo Preview */}
+              <View style={styles.logoPreviewContainer}>
+                {logoUrl ? (
+                  <Image
+                    source={{ uri: logoUrl }}
+                    style={styles.logoPreview}
+                    resizeMode="contain"
+                  />
+                ) : (
+                  <View style={[styles.logoPlaceholder, { backgroundColor: colors.backgroundTertiary }]}>
+                    <Feather name="image" size={32} color={colors.textTertiary} />
+                    <AppText variant="caption" color="tertiary" style={{ marginTop: spacing.xs }}>
+                      No logo
+                    </AppText>
+                  </View>
+                )}
+              </View>
+
+              {/* Logo Actions */}
+              <View style={styles.logoActions}>
+                <PrimaryButton
+                  onPress={handleUploadLogo}
+                  size="sm"
+                  loading={uploadingLogo}
+                  disabled={uploadingLogo || removingLogo}
+                >
+                  <Feather name="upload" size={14} color={colors.textInverse} />
+                  {" "}
+                  {logoUrl ? "Change Logo" : "Upload Logo"}
+                </PrimaryButton>
+
+                {logoUrl && (
+                  <SecondaryButton
+                    onPress={handleRemoveLogo}
+                    size="sm"
+                    loading={removingLogo}
+                    disabled={uploadingLogo || removingLogo}
+                  >
+                    <Feather name="trash-2" size={14} color={colors.error} />
+                    {" Remove"}
+                  </SecondaryButton>
+                )}
+              </View>
+
+              <AppText variant="small" color="tertiary" style={{ marginTop: spacing.sm }}>
+                Recommended: Square image, max 2MB (JPEG, PNG, GIF, WebP)
+              </AppText>
+            </View>
+          </AppCard>
+        </>
+      )}
 
       {/* Quick Links */}
       <AppText variant="h2" style={styles.sectionTitle}>Quick Actions</AppText>
@@ -269,6 +427,28 @@ const styles = StyleSheet.create({
   },
   settingInfo: {
     flex: 1,
+  },
+  logoSection: {
+    alignItems: "center",
+  },
+  logoPreviewContainer: {
+    marginBottom: spacing.base,
+  },
+  logoPreview: {
+    width: 120,
+    height: 120,
+    borderRadius: radius.md,
+  },
+  logoPlaceholder: {
+    width: 120,
+    height: 120,
+    borderRadius: radius.md,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  logoActions: {
+    flexDirection: "row",
+    gap: spacing.sm,
   },
   linkRow: {
     flexDirection: "row",
