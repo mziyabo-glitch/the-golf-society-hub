@@ -349,7 +349,11 @@ export async function uploadSocietyLogo(
   societyId: string,
   file: { uri: string; type?: string; size?: number; name?: string }
 ): Promise<LogoUploadResult> {
-  console.log("[societyRepo] uploadSocietyLogo:", { societyId, file: { ...file, uri: file.uri.substring(0, 50) + "..." } });
+  console.log("[societyRepo] uploadSocietyLogo:", {
+    societyId,
+    bucket: LOGO_BUCKET,
+    file: { ...file, uri: file.uri.substring(0, 50) + "..." },
+  });
 
   // Validate file
   const validationError = validateLogoFile(file);
@@ -361,6 +365,8 @@ export async function uploadSocietyLogo(
     // Get file extension
     const ext = getExtension(file.type, file.name);
     const filePath = `${societyId}/logo.${ext}`;
+
+    console.log("[societyRepo] Uploading to bucket:", LOGO_BUCKET, "path:", filePath);
 
     // Fetch the file as blob for upload
     const response = await fetch(file.uri);
@@ -383,7 +389,35 @@ export async function uploadSocietyLogo(
       });
 
     if (error) {
-      console.error("[societyRepo] uploadSocietyLogo storage error:", error);
+      console.error("[societyRepo] uploadSocietyLogo storage error:", {
+        message: error.message,
+        name: error.name,
+        bucket: LOGO_BUCKET,
+      });
+
+      // Check for bucket not found error
+      if (
+        error.message?.toLowerCase().includes("bucket") &&
+        error.message?.toLowerCase().includes("not found")
+      ) {
+        return {
+          success: false,
+          error: `Storage bucket "${LOGO_BUCKET}" not found. Please ask your administrator to create the bucket in Supabase Storage.`,
+        };
+      }
+
+      // Check for permission/policy errors
+      if (
+        error.message?.toLowerCase().includes("policy") ||
+        error.message?.toLowerCase().includes("permission") ||
+        error.message?.toLowerCase().includes("not allowed")
+      ) {
+        return {
+          success: false,
+          error: "Permission denied. Storage policies may need to be configured.",
+        };
+      }
+
       return { success: false, error: error.message || "Failed to upload logo" };
     }
 
@@ -407,7 +441,22 @@ export async function uploadSocietyLogo(
     return { success: true, logoUrl: logoUrlWithCache };
 
   } catch (e: any) {
-    console.error("[societyRepo] uploadSocietyLogo error:", e);
+    console.error("[societyRepo] uploadSocietyLogo error:", {
+      message: e?.message,
+      bucket: LOGO_BUCKET,
+    });
+
+    // Check for bucket not found in catch block too
+    if (
+      e?.message?.toLowerCase().includes("bucket") &&
+      e?.message?.toLowerCase().includes("not found")
+    ) {
+      return {
+        success: false,
+        error: `Storage bucket "${LOGO_BUCKET}" not found. Please ask your administrator to create the bucket in Supabase Storage.`,
+      };
+    }
+
     return { success: false, error: e?.message || "Failed to upload logo" };
   }
 }
@@ -419,7 +468,7 @@ export async function uploadSocietyLogo(
  * @param societyId - Society to remove logo from
  */
 export async function removeSocietyLogo(societyId: string): Promise<LogoUploadResult> {
-  console.log("[societyRepo] removeSocietyLogo:", societyId);
+  console.log("[societyRepo] removeSocietyLogo:", { societyId, bucket: LOGO_BUCKET });
 
   try {
     // Remove all possible logo files
@@ -433,8 +482,11 @@ export async function removeSocietyLogo(societyId: string): Promise<LogoUploadRe
       ]);
 
     if (error) {
-      console.warn("[societyRepo] removeSocietyLogo storage warning:", error);
-      // Continue anyway - file might not exist
+      console.warn("[societyRepo] removeSocietyLogo storage warning:", {
+        message: error.message,
+        bucket: LOGO_BUCKET,
+      });
+      // Continue anyway - file might not exist, bucket might not exist yet
     }
 
     // Clear logo_url in database
@@ -444,7 +496,10 @@ export async function removeSocietyLogo(societyId: string): Promise<LogoUploadRe
     return { success: true };
 
   } catch (e: any) {
-    console.error("[societyRepo] removeSocietyLogo error:", e);
+    console.error("[societyRepo] removeSocietyLogo error:", {
+      message: e?.message,
+      bucket: LOGO_BUCKET,
+    });
     return { success: false, error: e?.message || "Failed to remove logo" };
   }
 }
