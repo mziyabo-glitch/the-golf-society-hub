@@ -1,14 +1,14 @@
 import { useCallback, useEffect, useState, useMemo, useRef } from "react";
-import { StyleSheet, View, Platform, Alert, Pressable } from "react-native";
+import { StyleSheet, View, Platform, Alert, Pressable, ScrollView } from "react-native";
 import { useLocalSearchParams } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
 import { Feather } from "@expo/vector-icons";
 import * as Sharing from "expo-sharing";
 import * as Print from "expo-print";
+
 // Only import captureRef on native platforms
-const captureRef = Platform.OS !== "web"
-  ? require("react-native-view-shot").captureRef
-  : null;
+const captureRef =
+  Platform.OS !== "web" ? require("react-native-view-shot").captureRef : null;
 
 import { Screen } from "@/components/ui/Screen";
 import { AppText } from "@/components/ui/AppText";
@@ -26,6 +26,9 @@ import {
 } from "@/lib/db_supabase/resultsRepo";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
 import OOMShareCard, { type OOMShareRow } from "@/components/oom/OOMShareCard";
+import OOMResultsLogShareCard, {
+  type EventLogData,
+} from "@/components/oom/OOMResultsLogShareCard";
 
 /**
  * Format OOM points for display
@@ -36,7 +39,6 @@ function formatPoints(pts: number): string {
   if (pts === Math.floor(pts)) {
     return pts.toString();
   }
-  // Show up to 2 decimal places, trimming trailing zeros
   return pts.toFixed(2).replace(/\.?0+$/, "");
 }
 
@@ -55,14 +57,15 @@ export default function LeaderboardScreen() {
   const [resultsLog, setResultsLog] = useState<ResultsLogEntry[]>([]);
   const [events, setEvents] = useState<EventDoc[]>([]);
   const [loading, setLoading] = useState(true);
-  const [sharing, setSharing] = useState(false);
+  const [sharingLeaderboard, setSharingLeaderboard] = useState(false);
+  const [sharingLog, setSharingLog] = useState(false);
   const [fetchError, setFetchError] = useState<string | null>(null);
 
-  // Ref for capturing the share card as an image
-  const shareCardRef = useRef<View>(null);
+  // Refs for capturing share cards as images (completely isolated from main UI)
+  const leaderboardShareRef = useRef<View>(null);
+  const resultsLogShareRef = useRef<View>(null);
 
   const loadData = useCallback(async () => {
-    // Don't fetch with undefined societyId
     if (!societyId) {
       console.log("[leaderboard] No societyId, skipping fetch");
       setLoading(false);
@@ -95,7 +98,7 @@ export default function LeaderboardScreen() {
     }
   }, [societyId]);
 
-  // Group results log by event for display (audit trail)
+  // Group results log by event for display
   const groupedResultsLog = useMemo(() => {
     const groups: Array<{
       eventId: string;
@@ -140,14 +143,12 @@ export default function LeaderboardScreen() {
     loadData();
   }, [loadData]);
 
-  // Update activeTab when view param changes (e.g., navigating from points save)
   useEffect(() => {
     if (params.view === "log") {
       setActiveTab("resultsLog");
     }
   }, [params.view]);
 
-  // Refetch on focus to pick up changes after entering points
   useFocusEffect(
     useCallback(() => {
       if (societyId) {
@@ -156,28 +157,46 @@ export default function LeaderboardScreen() {
     }, [societyId, loadData])
   );
 
-  // Count OOM events with results (from the results log which is already filtered)
+  // Count OOM events with results
   const uniqueOOMEventIds = new Set(resultsLog.map((r) => r.eventId));
   const oomEventCount = uniqueOOMEventIds.size;
 
-  // Prepare data for share card
+  // Prepare data for leaderboard share card
   const shareCardRows: OOMShareRow[] = useMemo(() => {
     return standings.map((entry) => ({
       position: entry.rank,
       name: entry.memberName,
       points: entry.totalPoints,
+      eventsPlayed: entry.eventsPlayed,
     }));
   }, [standings]);
 
   // Season label for the share card
   const seasonLabel = useMemo(() => {
     const year = new Date().getFullYear();
-    return `${year} Season - ${oomEventCount} event${oomEventCount !== 1 ? "s" : ""}`;
+    return `${year} Season • ${oomEventCount} event${oomEventCount !== 1 ? "s" : ""}`;
   }, [oomEventCount]);
 
-  // Share handler - uses PDF on web, image on native
-  const handleShare = async () => {
-    console.log("[Leaderboard] Share button pressed, platform:", Platform.OS);
+  // Prepare data for results log share card (latest event only)
+  const latestEventForShare: EventLogData | null = useMemo(() => {
+    if (groupedResultsLog.length === 0) return null;
+    const latest = groupedResultsLog[0];
+    return {
+      eventName: latest.eventName,
+      eventDate: latest.eventDate,
+      format: latest.format,
+      results: latest.results.map((r) => ({
+        memberName: r.memberName,
+        dayValue: r.dayValue,
+        position: r.position,
+        points: r.points,
+      })),
+    };
+  }, [groupedResultsLog]);
+
+  // Share Leaderboard handler
+  const handleShareLeaderboard = async () => {
+    console.log("[Leaderboard] Share Leaderboard pressed, platform:", Platform.OS);
 
     if (standings.length === 0) {
       Alert.alert("No Data", "No standings to share.");
@@ -185,15 +204,12 @@ export default function LeaderboardScreen() {
     }
 
     try {
-      setSharing(true);
+      setSharingLeaderboard(true);
 
-      // On web, use PDF generation (expo-print)
+      // On web, use PDF generation
       if (Platform.OS === "web") {
-        console.log("[Leaderboard] Using PDF share for web");
-        const html = generateHTML();
+        const html = generateLeaderboardHTML();
         const { uri } = await Print.printToFileAsync({ html, base64: false });
-        console.log("[Leaderboard] PDF generated:", uri);
-
         const canShare = await Sharing.isAvailableAsync();
         if (canShare) {
           await Sharing.shareAsync(uri, {
@@ -202,60 +218,106 @@ export default function LeaderboardScreen() {
             UTI: "com.adobe.pdf",
           });
         } else {
-          // On web, fall back to opening print dialog
           await Print.printAsync({ html });
         }
         return;
       }
 
-      // On native, use image capture (react-native-view-shot)
-      console.log("[Leaderboard] Using image share for native");
-      console.log("[Leaderboard] shareCardRef.current:", !!shareCardRef.current);
-
-      if (!shareCardRef.current || !captureRef) {
-        console.error("[Leaderboard] Share card ref or captureRef is null");
+      // On native, capture the off-screen share card
+      if (!leaderboardShareRef.current || !captureRef) {
         Alert.alert("Error", "Share card not ready. Please try again.");
         return;
       }
 
-      console.log("[Leaderboard] Starting capture...");
-      // Capture ONLY the specific ref (OOMShareCard), not the screen
-      const uri = await captureRef(shareCardRef, {
+      const uri = await captureRef(leaderboardShareRef, {
         format: "png",
         quality: 1,
         result: "tmpfile",
-        // Ensure we capture only the view bounds, not the screen
-        snapshotContentContainer: false,
       });
 
       console.log("[Leaderboard] Image captured:", uri);
 
       const canShare = await Sharing.isAvailableAsync();
-      console.log("[Leaderboard] Can share:", canShare);
-
       if (canShare) {
         await Sharing.shareAsync(uri, {
           mimeType: "image/png",
           dialogTitle: "Share Order of Merit",
           UTI: "public.png",
         });
-        console.log("[Leaderboard] Share dialog opened");
       } else {
-        Alert.alert(
-          "Sharing Unavailable",
-          "Sharing is not available on this device."
-        );
+        Alert.alert("Sharing Unavailable", "Sharing is not available on this device.");
       }
     } catch (err: any) {
       console.error("[Leaderboard] Share error:", err);
       Alert.alert("Error", err?.message || "Failed to share leaderboard");
     } finally {
-      setSharing(false);
+      setSharingLeaderboard(false);
     }
   };
 
-  // Generate HTML for PDF
-  const generateHTML = () => {
+  // Share Results Log handler
+  const handleShareResultsLog = async () => {
+    console.log("[Leaderboard] Share Results Log pressed, platform:", Platform.OS);
+
+    if (!latestEventForShare) {
+      Alert.alert("No Data", "No results to share.");
+      return;
+    }
+
+    try {
+      setSharingLog(true);
+
+      // On web, use PDF generation
+      if (Platform.OS === "web") {
+        const html = generateResultsLogHTML();
+        const { uri } = await Print.printToFileAsync({ html, base64: false });
+        const canShare = await Sharing.isAvailableAsync();
+        if (canShare) {
+          await Sharing.shareAsync(uri, {
+            mimeType: "application/pdf",
+            dialogTitle: "Share Results Log",
+            UTI: "com.adobe.pdf",
+          });
+        } else {
+          await Print.printAsync({ html });
+        }
+        return;
+      }
+
+      // On native, capture the off-screen share card
+      if (!resultsLogShareRef.current || !captureRef) {
+        Alert.alert("Error", "Share card not ready. Please try again.");
+        return;
+      }
+
+      const uri = await captureRef(resultsLogShareRef, {
+        format: "png",
+        quality: 1,
+        result: "tmpfile",
+      });
+
+      console.log("[Leaderboard] Results Log image captured:", uri);
+
+      const canShare = await Sharing.isAvailableAsync();
+      if (canShare) {
+        await Sharing.shareAsync(uri, {
+          mimeType: "image/png",
+          dialogTitle: "Share Results Log",
+          UTI: "public.png",
+        });
+      } else {
+        Alert.alert("Sharing Unavailable", "Sharing is not available on this device.");
+      }
+    } catch (err: any) {
+      console.error("[Leaderboard] Share error:", err);
+      Alert.alert("Error", err?.message || "Failed to share results log");
+    } finally {
+      setSharingLog(false);
+    }
+  };
+
+  // Generate HTML for Leaderboard PDF (web)
+  const generateLeaderboardHTML = () => {
     const societyName = society?.name || "Golf Society";
     const date = new Date().toLocaleDateString("en-GB", {
       day: "numeric",
@@ -266,15 +328,15 @@ export default function LeaderboardScreen() {
     const rows = standings
       .map(
         (entry) => `
-      <tr>
-        <td style="padding: 12px; border-bottom: 1px solid #eee; text-align: center; font-weight: ${
-          entry.rank <= 3 ? "bold" : "normal"
-        }; color: ${entry.rank === 1 ? "#FFD700" : entry.rank === 2 ? "#C0C0C0" : entry.rank === 3 ? "#CD7F32" : "#333"};">
+      <tr style="background: ${entry.rank <= 3 ? "#FFFBEB" : entry.rank % 2 === 0 ? "#FAFAFA" : "#FFF"};">
+        <td style="padding: 14px 12px; border-bottom: 1px solid #F3F4F6; text-align: center; font-weight: ${
+          entry.rank <= 3 ? "600" : "500"
+        }; color: ${entry.rank === 1 ? "#D4AF37" : entry.rank === 2 ? "#9CA3AF" : entry.rank === 3 ? "#CD7F32" : "#6B7280"};">
           ${entry.rank}
         </td>
-        <td style="padding: 12px; border-bottom: 1px solid #eee;">${entry.memberName}</td>
-        <td style="padding: 12px; border-bottom: 1px solid #eee; text-align: center;">${entry.eventsPlayed}</td>
-        <td style="padding: 12px; border-bottom: 1px solid #eee; text-align: right; font-weight: bold; color: #0A7C4A;">${formatPoints(entry.totalPoints)}</td>
+        <td style="padding: 14px 12px; border-bottom: 1px solid #F3F4F6; font-weight: ${entry.rank <= 3 ? "600" : "500"};">${entry.memberName}</td>
+        <td style="padding: 14px 12px; border-bottom: 1px solid #F3F4F6; text-align: center; color: #6B7280;">${entry.eventsPlayed}</td>
+        <td style="padding: 14px 12px; border-bottom: 1px solid #F3F4F6; text-align: right; font-weight: 600; color: #0B6E4F;">${formatPoints(entry.totalPoints)}</td>
       </tr>
     `
       )
@@ -287,84 +349,149 @@ export default function LeaderboardScreen() {
           <meta charset="utf-8">
           <title>Order of Merit - ${societyName}</title>
           <style>
-            body {
-              font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-              padding: 40px;
-              color: #333;
-            }
-            h1 {
-              color: #0A7C4A;
-              margin-bottom: 8px;
-            }
-            h2 {
-              color: #666;
-              font-weight: normal;
-              margin-top: 0;
-            }
-            .date {
-              color: #999;
-              margin-bottom: 24px;
-            }
-            table {
-              width: 100%;
-              border-collapse: collapse;
-              margin-top: 16px;
-            }
-            th {
-              background: #0A7C4A;
-              color: white;
-              padding: 12px;
-              text-align: left;
-            }
-            th:first-child, th:last-child {
-              text-align: center;
-            }
-            th:nth-child(3) {
-              text-align: center;
-            }
-            .footer {
-              margin-top: 32px;
-              padding-top: 16px;
-              border-top: 1px solid #eee;
-              color: #999;
-              font-size: 12px;
-            }
+            body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; padding: 40px; color: #111827; background: #fff; }
+            .container { max-width: 500px; margin: 0 auto; }
+            .header { text-align: center; margin-bottom: 24px; }
+            .society { font-size: 14px; color: #6B7280; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 4px; }
+            h1 { color: #0B6E4F; margin: 0 0 4px 0; font-size: 28px; }
+            .subtitle { color: #374151; font-size: 16px; margin-bottom: 4px; }
+            .date { color: #9CA3AF; font-size: 13px; }
+            .divider { height: 3px; background: #0B6E4F; margin: 20px 0; border-radius: 2px; }
+            table { width: 100%; border-collapse: collapse; border: 1px solid #E5E7EB; border-radius: 8px; overflow: hidden; }
+            th { background: #0B6E4F; color: white; padding: 12px; text-align: left; font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; }
+            th:first-child { text-align: center; }
+            th:nth-child(3) { text-align: center; }
+            th:last-child { text-align: right; }
+            .footer { margin-top: 24px; text-align: center; padding-top: 16px; border-top: 2px solid #E5E7EB; }
+            .footer-text { color: #9CA3AF; font-size: 11px; font-style: italic; }
           </style>
         </head>
         <body>
-          <h1>${societyName}</h1>
-          <h2>Season Leaderboard - Order of Merit</h2>
-          <p class="date">${date} | ${oomEventCount} Order of Merit event${oomEventCount !== 1 ? "s" : ""}</p>
-
-          ${
-            standings.length > 0
-              ? `
+          <div class="container">
+            <div class="header">
+              <p class="society">${societyName}</p>
+              <h1>Order of Merit</h1>
+              <p class="subtitle">Season Leaderboard</p>
+              <p class="date">${seasonLabel}</p>
+            </div>
+            <div class="divider"></div>
+            ${standings.length > 0 ? `
             <table>
               <thead>
                 <tr>
-                  <th style="text-align: center;">Rank</th>
+                  <th style="text-align: center;">Pos</th>
                   <th>Player</th>
                   <th style="text-align: center;">Events</th>
                   <th style="text-align: right;">Points</th>
                 </tr>
               </thead>
-              <tbody>
-                ${rows}
-              </tbody>
+              <tbody>${rows}</tbody>
             </table>
-          `
-              : `<p>No Order of Merit results yet.</p>`
-          }
-
-          <div class="footer">
-            Generated by Golf Society Hub
+            ` : `<p style="text-align: center; color: #6B7280;">No standings yet.</p>`}
+            <div class="footer">
+              <p class="footer-text">Produced by The Golf Society Hub</p>
+            </div>
           </div>
         </body>
       </html>
     `;
   };
 
-  // Show loading state while bootstrap or data is loading
+  // Generate HTML for Results Log PDF (web)
+  const generateResultsLogHTML = () => {
+    const societyName = society?.name || "Golf Society";
+    if (!latestEventForShare) return "";
+
+    const isStrokeplay =
+      latestEventForShare.format?.includes("strokeplay") ||
+      latestEventForShare.format === "medal";
+
+    const rows = latestEventForShare.results
+      .map(
+        (r, idx) => `
+      <tr style="background: ${r.position && r.position <= 3 ? "#FFFBEB" : idx % 2 === 1 ? "#FAFAFA" : "#FFF"};">
+        <td style="padding: 12px; border-bottom: 1px solid #F3F4F6; font-weight: ${r.position && r.position <= 3 ? "600" : "500"};">${r.memberName}</td>
+        <td style="padding: 12px; border-bottom: 1px solid #F3F4F6; text-align: center; color: #6B7280;">${r.dayValue ?? "-"}</td>
+        <td style="padding: 12px; border-bottom: 1px solid #F3F4F6; text-align: center; color: ${r.position && r.position <= 3 ? "#D97706" : "#6B7280"}; font-weight: ${r.position && r.position <= 3 ? "600" : "500"};">${r.position ?? "-"}</td>
+        <td style="padding: 12px; border-bottom: 1px solid #F3F4F6; text-align: right; font-weight: 600; color: #0B6E4F;">${formatPoints(r.points)}</td>
+      </tr>
+    `
+      )
+      .join("");
+
+    const formatLabel = latestEventForShare.format
+      ? latestEventForShare.format.charAt(0).toUpperCase() +
+        latestEventForShare.format.slice(1)
+      : "";
+    const dateStr = latestEventForShare.eventDate
+      ? new Date(latestEventForShare.eventDate).toLocaleDateString("en-GB", {
+          day: "numeric",
+          month: "short",
+          year: "numeric",
+        })
+      : "";
+
+    return `
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <meta charset="utf-8">
+          <title>Results Log - ${societyName}</title>
+          <style>
+            body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; padding: 40px; color: #111827; background: #fff; }
+            .container { max-width: 500px; margin: 0 auto; }
+            .header { text-align: center; margin-bottom: 24px; }
+            .society { font-size: 14px; color: #6B7280; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 4px; }
+            h1 { color: #0B6E4F; margin: 0 0 4px 0; font-size: 28px; }
+            .subtitle { color: #374151; font-size: 16px; }
+            .divider { height: 3px; background: #0B6E4F; margin: 20px 0; border-radius: 2px; }
+            .event-card { border: 1px solid #E5E7EB; border-radius: 12px; overflow: hidden; }
+            .event-header { background: #F9FAFB; padding: 14px; border-bottom: 1px solid #E5E7EB; }
+            .event-name { font-size: 16px; font-weight: 600; color: #111827; margin-bottom: 4px; }
+            .event-meta { font-size: 13px; color: #6B7280; }
+            table { width: 100%; border-collapse: collapse; }
+            th { background: #0B6E4F; color: white; padding: 10px 12px; text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; }
+            th:nth-child(2), th:nth-child(3) { text-align: center; }
+            th:last-child { text-align: right; }
+            .footer { margin-top: 24px; text-align: center; padding-top: 16px; border-top: 2px solid #E5E7EB; }
+            .footer-text { color: #9CA3AF; font-size: 11px; font-style: italic; }
+          </style>
+        </head>
+        <body>
+          <div class="container">
+            <div class="header">
+              <p class="society">${societyName}</p>
+              <h1>Order of Merit</h1>
+              <p class="subtitle">Latest Event Results</p>
+            </div>
+            <div class="divider"></div>
+            <div class="event-card">
+              <div class="event-header">
+                <p class="event-name">${latestEventForShare.eventName}</p>
+                <p class="event-meta">${dateStr}${formatLabel ? ` • ${formatLabel}` : ""}</p>
+              </div>
+              <table>
+                <thead>
+                  <tr>
+                    <th>Player</th>
+                    <th style="text-align: center;">${isStrokeplay ? "Net" : "Pts"}</th>
+                    <th style="text-align: center;">Pos</th>
+                    <th style="text-align: right;">OOM</th>
+                  </tr>
+                </thead>
+                <tbody>${rows}</tbody>
+              </table>
+            </div>
+            <div class="footer">
+              <p class="footer-text">Produced by The Golf Society Hub</p>
+            </div>
+          </div>
+        </body>
+      </html>
+    `;
+  };
+
+  // Loading state
   if (bootstrapLoading || loading) {
     return (
       <Screen scrollable={false}>
@@ -375,7 +502,7 @@ export default function LeaderboardScreen() {
     );
   }
 
-  // Show error state if fetch failed
+  // Error state
   if (fetchError) {
     return (
       <Screen scrollable={false}>
@@ -391,7 +518,7 @@ export default function LeaderboardScreen() {
     );
   }
 
-  // Show empty state if no society selected
+  // No society state
   if (!societyId) {
     return (
       <Screen scrollable={false}>
@@ -418,271 +545,309 @@ export default function LeaderboardScreen() {
   };
 
   // Format label for event format
-  const formatLabel = (format: string | null) => {
+  const formatLabelDisplay = (format: string | null) => {
     if (!format) return "";
     return format.charAt(0).toUpperCase() + format.slice(1);
   };
 
+  const canShareLeaderboard = standings.length > 0;
+  const canShareLog = groupedResultsLog.length > 0;
+
   return (
-    <Screen>
-      {/* Header */}
-      <View style={styles.header}>
-        <View style={{ flex: 1 }}>
-          <AppText variant="title">Order of Merit</AppText>
-          <AppText variant="caption" color="secondary">
-            {activeTab === "leaderboard"
-              ? `${oomEventCount} event${oomEventCount !== 1 ? "s" : ""} completed`
-              : "Audit trail of Order of Merit points by event"}
-          </AppText>
+    <>
+      <Screen>
+        {/* Header with Share Buttons */}
+        <View style={styles.header}>
+          <View style={{ flex: 1 }}>
+            <AppText variant="title">Order of Merit</AppText>
+            <AppText variant="caption" color="secondary">
+              {activeTab === "leaderboard"
+                ? `${oomEventCount} event${oomEventCount !== 1 ? "s" : ""} completed`
+                : "Results by event"}
+            </AppText>
+          </View>
+
+          {/* Share buttons */}
+          <View style={styles.shareButtons}>
+            {activeTab === "leaderboard" ? (
+              <>
+                {canShareLeaderboard && (
+                  <SecondaryButton
+                    onPress={handleShareLeaderboard}
+                    size="sm"
+                    disabled={sharingLeaderboard}
+                  >
+                    <Feather name="share" size={14} color={colors.text} />
+                    {sharingLeaderboard ? " ..." : ""}
+                  </SecondaryButton>
+                )}
+              </>
+            ) : (
+              <>
+                {canShareLog && (
+                  <SecondaryButton
+                    onPress={handleShareResultsLog}
+                    size="sm"
+                    disabled={sharingLog}
+                  >
+                    <Feather name="share" size={14} color={colors.text} />
+                    {sharingLog ? " ..." : ""}
+                  </SecondaryButton>
+                )}
+              </>
+            )}
+          </View>
         </View>
-        {activeTab === "leaderboard" && standings.length > 0 && (
-          <SecondaryButton onPress={handleShare} size="sm" disabled={sharing}>
-            <Feather name="share" size={16} color={colors.text} />
-            {sharing ? " Sharing..." : " Share"}
-          </SecondaryButton>
-        )}
-      </View>
 
-      {/* Tab Toggle */}
-      <View style={[styles.tabContainer, { backgroundColor: colors.backgroundSecondary }]}>
-        <Pressable
-          style={[
-            styles.tab,
-            activeTab === "leaderboard" && { backgroundColor: colors.background },
-          ]}
-          onPress={() => setActiveTab("leaderboard")}
-        >
-          <Feather
-            name="award"
-            size={14}
-            color={activeTab === "leaderboard" ? colors.primary : colors.textSecondary}
-          />
-          <AppText
-            variant="captionBold"
-            color={activeTab === "leaderboard" ? "primary" : "secondary"}
+        {/* Tab Toggle */}
+        <View style={[styles.tabContainer, { backgroundColor: colors.backgroundSecondary }]}>
+          <Pressable
+            style={[
+              styles.tab,
+              activeTab === "leaderboard" && { backgroundColor: colors.background },
+            ]}
+            onPress={() => setActiveTab("leaderboard")}
           >
-            Order of Merit
-          </AppText>
-        </Pressable>
-        <Pressable
-          style={[
-            styles.tab,
-            activeTab === "resultsLog" && { backgroundColor: colors.background },
-          ]}
-          onPress={() => setActiveTab("resultsLog")}
-        >
-          <Feather
-            name="list"
-            size={14}
-            color={activeTab === "resultsLog" ? colors.primary : colors.textSecondary}
-          />
-          <AppText
-            variant="captionBold"
-            color={activeTab === "resultsLog" ? "primary" : "secondary"}
-          >
-            Results Log
-          </AppText>
-        </Pressable>
-      </View>
-
-      {/* Leaderboard Tab Content */}
-      {activeTab === "leaderboard" && (
-        <>
-          {standings.length === 0 ? (
-            <EmptyState
-              icon={<Feather name="award" size={24} color={colors.textTertiary} />}
-              title="No Order of Merit points yet"
-              message="Create an OOM-classified event, add players, and enter scores to start the standings."
+            <Feather
+              name="award"
+              size={14}
+              color={activeTab === "leaderboard" ? colors.primary : colors.textSecondary}
             />
-          ) : (
-            <View style={styles.list}>
-              {standings.map((entry) => {
-                const isTop3 = entry.rank <= 3;
-                // Medal colors: gold (1st), silver (2nd), bronze (3rd)
-                const medalColorMap: Record<number, string> = {
-                  1: colors.warning,  // Gold
-                  2: "#C0C0C0",       // Silver
-                  3: "#CD7F32",       // Bronze
-                };
-                const medalColor = medalColorMap[entry.rank];
+            <AppText
+              variant="captionBold"
+              color={activeTab === "leaderboard" ? "primary" : "secondary"}
+            >
+              Leaderboard
+            </AppText>
+          </Pressable>
+          <Pressable
+            style={[
+              styles.tab,
+              activeTab === "resultsLog" && { backgroundColor: colors.background },
+            ]}
+            onPress={() => setActiveTab("resultsLog")}
+          >
+            <Feather
+              name="list"
+              size={14}
+              color={activeTab === "resultsLog" ? colors.primary : colors.textSecondary}
+            />
+            <AppText
+              variant="captionBold"
+              color={activeTab === "resultsLog" ? "primary" : "secondary"}
+            >
+              Results Log
+            </AppText>
+          </Pressable>
+        </View>
 
-                return (
-                  <AppCard key={entry.memberId} style={styles.standingCard}>
-                    <View style={styles.standingRow}>
-                      {/* Position */}
+        {/* Leaderboard Tab Content */}
+        {activeTab === "leaderboard" && (
+          <>
+            {standings.length === 0 ? (
+              <EmptyState
+                icon={<Feather name="award" size={24} color={colors.textTertiary} />}
+                title="No standings yet"
+                message="Create an OOM event, add players, and enter scores to start the leaderboard."
+              />
+            ) : (
+              <View style={styles.list}>
+                {standings.map((entry) => {
+                  const isTop3 = entry.rank <= 3;
+                  const medalColorMap: Record<number, string> = {
+                    1: colors.warning,
+                    2: "#C0C0C0",
+                    3: "#CD7F32",
+                  };
+                  const medalColor = medalColorMap[entry.rank];
+
+                  return (
+                    <AppCard key={entry.memberId} style={styles.standingCard}>
+                      <View style={styles.standingRow}>
+                        <View
+                          style={[
+                            styles.positionBadge,
+                            {
+                              backgroundColor:
+                                isTop3 && medalColor
+                                  ? medalColor + "20"
+                                  : colors.backgroundTertiary,
+                            },
+                          ]}
+                        >
+                          {isTop3 && medalColor ? (
+                            <Feather name="award" size={16} color={medalColor} />
+                          ) : (
+                            <AppText variant="captionBold" color="secondary">
+                              {entry.rank}
+                            </AppText>
+                          )}
+                        </View>
+
+                        <View style={styles.memberInfo}>
+                          <AppText variant="bodyBold">{entry.memberName}</AppText>
+                          <AppText variant="caption" color="secondary">
+                            {entry.eventsPlayed} event{entry.eventsPlayed !== 1 ? "s" : ""}
+                          </AppText>
+                        </View>
+
+                        <View style={styles.pointsContainer}>
+                          <AppText variant="h1" color="primary">
+                            {formatPoints(entry.totalPoints)}
+                          </AppText>
+                          <AppText variant="small" color="tertiary">
+                            pts
+                          </AppText>
+                        </View>
+                      </View>
+                    </AppCard>
+                  );
+                })}
+              </View>
+            )}
+
+            <AppCard style={styles.infoCard}>
+              <View style={styles.infoContent}>
+                <Feather name="info" size={16} color={colors.textTertiary} />
+                <AppText variant="caption" color="secondary" style={{ flex: 1 }}>
+                  F1-style points (25, 18, 15, 12, 10, 8, 6, 4, 2, 1) for positions 1-10. Ties
+                  share averaged points. Only OOM events count.
+                </AppText>
+              </View>
+            </AppCard>
+          </>
+        )}
+
+        {/* Results Log Tab Content */}
+        {activeTab === "resultsLog" && (
+          <>
+            {groupedResultsLog.length === 0 ? (
+              <EmptyState
+                icon={<Feather name="list" size={24} color={colors.textTertiary} />}
+                title="No results yet"
+                message="Create an OOM event and enter scores to see the results log."
+              />
+            ) : (
+              <View style={styles.list}>
+                {groupedResultsLog.map((group) => (
+                  <View key={group.eventId} style={styles.eventGroup}>
+                    <View
+                      style={[styles.eventHeader, { backgroundColor: colors.backgroundSecondary }]}
+                    >
+                      <View style={{ flex: 1 }}>
+                        <AppText variant="bodyBold">{group.eventName}</AppText>
+                        <View style={styles.eventMeta}>
+                          {group.eventDate && (
+                            <AppText variant="small" color="tertiary">
+                              {formatDate(group.eventDate)}
+                            </AppText>
+                          )}
+                          {group.format && (
+                            <>
+                              <AppText variant="small" color="tertiary">
+                                {" "}
+                                •{" "}
+                              </AppText>
+                              <AppText variant="small" color="tertiary">
+                                {formatLabelDisplay(group.format)}
+                              </AppText>
+                            </>
+                          )}
+                        </View>
+                      </View>
+                      <View style={[styles.eventBadge, { backgroundColor: colors.primary + "20" }]}>
+                        <AppText variant="small" color="primary">
+                          {group.results.length} player{group.results.length !== 1 ? "s" : ""}
+                        </AppText>
+                      </View>
+                    </View>
+
+                    <View style={[styles.resultHeaderRow, { borderBottomColor: colors.border }]}>
+                      <AppText variant="captionBold" color="tertiary" style={{ flex: 1 }}>
+                        Player
+                      </AppText>
+                      <AppText variant="captionBold" color="tertiary" style={styles.auditCol}>
+                        {group.format?.includes("strokeplay") || group.format === "medal"
+                          ? "Net"
+                          : "Pts"}
+                      </AppText>
+                      <AppText variant="captionBold" color="tertiary" style={styles.auditCol}>
+                        Pos
+                      </AppText>
+                      <AppText variant="captionBold" color="tertiary" style={styles.auditCol}>
+                        OOM
+                      </AppText>
+                    </View>
+
+                    {group.results.map((result, idx) => (
                       <View
+                        key={result.memberId}
                         style={[
-                          styles.positionBadge,
-                          {
-                            backgroundColor: isTop3 && medalColor
-                              ? medalColor + "20"
-                              : colors.backgroundTertiary,
-                          },
+                          styles.resultRow,
+                          { borderBottomColor: colors.border },
+                          idx === group.results.length - 1 && { borderBottomWidth: 0 },
                         ]}
                       >
-                        {isTop3 && medalColor ? (
-                          <Feather
-                            name="award"
-                            size={16}
-                            color={medalColor}
-                          />
-                        ) : (
-                          <AppText variant="captionBold" color="secondary">
-                            {entry.rank}
-                          </AppText>
-                        )}
-                      </View>
-
-                      {/* Member Info */}
-                      <View style={styles.memberInfo}>
-                        <AppText variant="bodyBold">{entry.memberName}</AppText>
-                        <AppText variant="caption" color="secondary">
-                          {entry.eventsPlayed} event{entry.eventsPlayed !== 1 ? "s" : ""}
+                        <AppText variant="body" style={{ flex: 1 }} numberOfLines={1}>
+                          {result.memberName}
+                        </AppText>
+                        <AppText variant="body" color="secondary" style={styles.auditCol}>
+                          {result.dayValue ?? "-"}
+                        </AppText>
+                        <AppText variant="body" color="secondary" style={styles.auditCol}>
+                          {result.position ?? "-"}
+                        </AppText>
+                        <AppText variant="bodyBold" color="primary" style={styles.auditCol}>
+                          {formatPoints(result.points)}
                         </AppText>
                       </View>
-
-                      {/* Points */}
-                      <View style={styles.pointsContainer}>
-                        <AppText variant="h1" color="primary">
-                          {formatPoints(entry.totalPoints)}
-                        </AppText>
-                        <AppText variant="small" color="tertiary">
-                          pts
-                        </AppText>
-                      </View>
-                    </View>
-                  </AppCard>
-                );
-              })}
-            </View>
-          )}
-
-          {/* Info card */}
-          <AppCard style={styles.infoCard}>
-            <View style={styles.infoContent}>
-              <Feather name="info" size={16} color={colors.textTertiary} />
-              <AppText variant="caption" color="secondary" style={{ flex: 1 }}>
-                F1-style points (25, 18, 15, 12, 10, 8, 6, 4, 2, 1) for positions 1-10. Ties share averaged points. Only OOM events count.
-              </AppText>
-            </View>
-          </AppCard>
-        </>
-      )}
-
-      {/* Results Log Tab Content */}
-      {activeTab === "resultsLog" && (
-        <>
-          {groupedResultsLog.length === 0 ? (
-            <EmptyState
-              icon={<Feather name="list" size={24} color={colors.textTertiary} />}
-              title="No OOM results yet"
-              message="Only OOM-classified events appear here. Create an OOM event and enter scores to see the audit trail."
-            />
-          ) : (
-            <View style={styles.list}>
-              {groupedResultsLog.map((group) => (
-                <View key={group.eventId} style={styles.eventGroup}>
-                  {/* Event Header */}
-                  <View style={[styles.eventHeader, { backgroundColor: colors.backgroundSecondary }]}>
-                    <View style={{ flex: 1 }}>
-                      <AppText variant="bodyBold">{group.eventName}</AppText>
-                      <View style={styles.eventMeta}>
-                        {group.eventDate && (
-                          <AppText variant="small" color="tertiary">
-                            {formatDate(group.eventDate)}
-                          </AppText>
-                        )}
-                        {group.format && (
-                          <>
-                            <AppText variant="small" color="tertiary"> • </AppText>
-                            <AppText variant="small" color="tertiary">
-                              {formatLabel(group.format)}
-                            </AppText>
-                          </>
-                        )}
-                      </View>
-                    </View>
-                    <View style={[styles.eventBadge, { backgroundColor: colors.primary + "20" }]}>
-                      <AppText variant="small" color="primary">
-                        {group.results.length} player{group.results.length !== 1 ? "s" : ""}
-                      </AppText>
-                    </View>
+                    ))}
                   </View>
+                ))}
+              </View>
+            )}
 
-                  {/* Column Headers */}
-                  <View style={[styles.resultHeaderRow, { borderBottomColor: colors.border }]}>
-                    <AppText variant="captionBold" color="tertiary" style={{ flex: 1 }}>
-                      Player
-                    </AppText>
-                    <AppText variant="captionBold" color="tertiary" style={styles.auditCol}>
-                      {group.format?.includes('strokeplay') || group.format === 'medal' ? 'Net' : 'Points'}
-                    </AppText>
-                    <AppText variant="captionBold" color="tertiary" style={styles.auditCol}>
-                      Pos
-                    </AppText>
-                    <AppText variant="captionBold" color="tertiary" style={styles.auditCol}>
-                      OOM
-                    </AppText>
-                  </View>
+            <AppCard style={styles.infoCard}>
+              <View style={styles.infoContent}>
+                <Feather name="info" size={16} color={colors.textTertiary} />
+                <AppText variant="caption" color="secondary" style={{ flex: 1 }}>
+                  Day Value shows the raw score entered. Position and OOM points are calculated
+                  automatically.
+                </AppText>
+              </View>
+            </AppCard>
+          </>
+        )}
+      </Screen>
 
-                  {/* Results Rows */}
-                  {group.results.map((result, idx) => (
-                    <View
-                      key={result.memberId}
-                      style={[
-                        styles.resultRow,
-                        { borderBottomColor: colors.border },
-                        idx === group.results.length - 1 && { borderBottomWidth: 0 },
-                      ]}
-                    >
-                      <AppText variant="body" style={{ flex: 1 }} numberOfLines={1}>
-                        {result.memberName}
-                      </AppText>
-                      <AppText variant="body" color="secondary" style={styles.auditCol}>
-                        {result.dayValue ?? '-'}
-                      </AppText>
-                      <AppText variant="body" color="secondary" style={styles.auditCol}>
-                        {result.position ?? '-'}
-                      </AppText>
-                      <AppText variant="bodyBold" color="primary" style={styles.auditCol}>
-                        {formatPoints(result.points)}
-                      </AppText>
-                    </View>
-                  ))}
-                </View>
-              ))}
-            </View>
-          )}
-
-          {/* Info card for results log */}
-          <AppCard style={styles.infoCard}>
-            <View style={styles.infoContent}>
-              <Feather name="info" size={16} color={colors.textTertiary} />
-              <AppText variant="caption" color="secondary" style={{ flex: 1 }}>
-                Day Value shows the raw score entered. Position and OOM points are calculated automatically.
-              </AppText>
-            </View>
-          </AppCard>
-        </>
-      )}
-
-      {/* Off-screen share card for image capture (native only) */}
-      {/* Rendered completely outside visible area to avoid capturing tab bar */}
+      {/* OFF-SCREEN SHARE CARDS - Rendered outside Screen component to avoid tab bar */}
+      {/* These are positioned far off-screen and only used for image capture */}
       {Platform.OS !== "web" && (
-        <View
-          style={styles.offScreenContainer}
-          pointerEvents="none"
-          collapsable={false}
-        >
-          <OOMShareCard
-            ref={shareCardRef}
-            societyName={society?.name || "Golf Society"}
-            seasonLabel={seasonLabel}
-            rows={shareCardRows}
-          />
+        <View style={styles.offScreenWrapper} pointerEvents="none">
+          {/* Leaderboard Share Card */}
+          <View style={styles.offScreenCard} collapsable={false}>
+            <OOMShareCard
+              ref={leaderboardShareRef}
+              societyName={society?.name || "Golf Society"}
+              seasonLabel={seasonLabel}
+              rows={shareCardRows}
+            />
+          </View>
+
+          {/* Results Log Share Card */}
+          {latestEventForShare && (
+            <View style={styles.offScreenCard} collapsable={false}>
+              <OOMResultsLogShareCard
+                ref={resultsLogShareRef}
+                societyName={society?.name || "Golf Society"}
+                event={latestEventForShare}
+                isLatestOnly={true}
+              />
+            </View>
+          )}
         </View>
       )}
-    </Screen>
+    </>
   );
 }
 
@@ -696,6 +861,10 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     marginBottom: spacing.md,
+  },
+  shareButtons: {
+    flexDirection: "row",
+    gap: spacing.xs,
   },
   tabContainer: {
     flexDirection: "row",
@@ -776,10 +945,6 @@ const styles = StyleSheet.create({
     width: 50,
     textAlign: "center",
   },
-  pointsBadge: {
-    flexDirection: "row",
-    alignItems: "baseline",
-  },
   infoCard: {
     marginTop: spacing.sm,
   },
@@ -788,16 +953,14 @@ const styles = StyleSheet.create({
     alignItems: "flex-start",
     gap: spacing.sm,
   },
-  offScreenContainer: {
+  // Off-screen wrapper - OUTSIDE the Screen component to avoid capturing tabs
+  offScreenWrapper: {
     position: "absolute",
-    // Position far off-screen so it's never visible but still rendered
-    top: -5000,
-    left: 0,
-    // Explicit width to match the card
-    width: 360,
-    // Ensure the view is rendered and not optimized away
+    top: -10000,
+    left: -10000,
     opacity: 1,
-    // Ensure it's above other content for proper capture
-    zIndex: -1,
+  },
+  offScreenCard: {
+    marginBottom: 20,
   },
 });
