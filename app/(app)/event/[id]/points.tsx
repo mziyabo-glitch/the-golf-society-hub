@@ -2,9 +2,11 @@
  * Event Points Entry Screen
  *
  * Workflow:
- * 1. User enters Day Points (stableford/competition score) for each player
- * 2. App auto-sorts by Day Points DESC (ties broken by name ASC)
- * 3. App auto-assigns positions (1, 2, 3...)
+ * 1. User enters Day Points (stableford score or strokeplay score) for each player
+ * 2. App auto-sorts based on event format:
+ *    - Stableford (high_wins): Higher points = better position
+ *    - Strokeplay (low_wins): Lower score = better position
+ * 3. App auto-assigns positions (1, 2, 3...) with tie handling
  * 4. App auto-calculates OOM points using F1 top-10: [25,18,15,12,10,8,6,4,2,1]
  * 5. Save stores ONLY the OOM points to event_results
  */
@@ -22,7 +24,7 @@ import { PrimaryButton, SecondaryButton } from "@/components/ui/Button";
 import { LoadingState } from "@/components/ui/LoadingState";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { useBootstrap } from "@/lib/useBootstrap";
-import { getEvent, type EventDoc } from "@/lib/db_supabase/eventRepo";
+import { getEvent, getFormatSortOrder, type EventDoc } from "@/lib/db_supabase/eventRepo";
 import { getMembersBySocietyId, type MemberDoc } from "@/lib/db_supabase/memberRepo";
 import {
   upsertEventResults,
@@ -35,11 +37,39 @@ import { getColors, spacing, radius } from "@/lib/ui/theme";
 // F1-style OOM points: positions 1-10 get points, rest get 0
 const F1_OOM_POINTS = [25, 18, 15, 12, 10, 8, 6, 4, 2, 1];
 
-function getOOMPoints(position: number): number {
+function getOOMPointsForPosition(position: number): number {
   if (position >= 1 && position <= 10) {
     return F1_OOM_POINTS[position - 1];
   }
   return 0;
+}
+
+/**
+ * Calculate averaged OOM points for a tie block
+ * Example: Two players tied for 2nd place occupy positions 2 and 3
+ * They share: (18 + 15) / 2 = 16.5 points each
+ */
+function getAveragedOOMPoints(startPosition: number, tieCount: number): number {
+  if (tieCount <= 0) return 0;
+
+  let totalPoints = 0;
+  for (let i = 0; i < tieCount; i++) {
+    totalPoints += getOOMPointsForPosition(startPosition + i);
+  }
+  return totalPoints / tieCount;
+}
+
+/**
+ * Format OOM points for display
+ * - Shows decimals only when needed (e.g., 16.5, not 25.00)
+ * - Hides .00 for whole numbers (e.g., 25, not 25.00)
+ */
+function formatPoints(pts: number): string {
+  if (pts === Math.floor(pts)) {
+    return pts.toString();
+  }
+  // Show up to 2 decimal places, trimming trailing zeros
+  return pts.toFixed(2).replace(/\.?0+$/, "");
 }
 
 type PlayerEntry = {
@@ -148,7 +178,11 @@ export default function EventPointsScreen() {
     });
   };
 
+  // Get sort order based on event format
+  const sortOrder = getFormatSortOrder(event?.format);
+
   // Calculate positions and OOM points based on day points
+  // Uses tie averaging: tied players share averaged OOM points for positions they occupy
   const calculatePositionsAndOOM = (playerList: PlayerEntry[]): PlayerEntry[] => {
     // Separate players with valid day points from those without
     const withPoints: PlayerEntry[] = [];
@@ -163,32 +197,53 @@ export default function EventPointsScreen() {
       }
     }
 
-    // Sort by day points DESC, then by name ASC for tie-breaking
+    // Sort based on format:
+    // - Stableford (high_wins): Higher points = better position (DESC)
+    // - Strokeplay (low_wins): Lower score = better position (ASC)
     withPoints.sort((a, b) => {
       const aPts = parseInt(a.dayPoints.trim(), 10);
       const bPts = parseInt(b.dayPoints.trim(), 10);
-      if (bPts !== aPts) return bPts - aPts; // Higher points = better position
-      return a.memberName.localeCompare(b.memberName); // Alphabetical tie-break
+
+      if (sortOrder === 'low_wins') {
+        return aPts - bPts; // Lower is better for strokeplay
+      }
+      return bPts - aPts; // Higher is better for stableford
     });
 
-    // Assign positions and OOM points
-    // Handle ties: same day points = same position
+    // Group into tie blocks and assign positions + averaged OOM points
+    // Example: [40, 38, 38, 35] → positions [1, 2, 2, 4] with tie averaging for 2nd/3rd
+    const positioned: PlayerEntry[] = [];
     let currentPosition = 1;
-    const positioned = withPoints.map((p, index) => {
-      if (index > 0) {
-        const prevPts = parseInt(withPoints[index - 1].dayPoints.trim(), 10);
-        const currPts = parseInt(p.dayPoints.trim(), 10);
-        if (currPts < prevPts) {
-          currentPosition = index + 1;
-        }
-        // If equal, keep same position (tie)
+    let i = 0;
+
+    while (i < withPoints.length) {
+      // Find the tie block (players with same day value)
+      const currentDayValue = parseInt(withPoints[i].dayPoints.trim(), 10);
+      let tieCount = 1;
+
+      while (
+        i + tieCount < withPoints.length &&
+        parseInt(withPoints[i + tieCount].dayPoints.trim(), 10) === currentDayValue
+      ) {
+        tieCount++;
       }
-      return {
-        ...p,
-        position: currentPosition,
-        oomPoints: getOOMPoints(currentPosition),
-      };
-    });
+
+      // Calculate averaged OOM points for this tie block
+      const averagedOOM = getAveragedOOMPoints(currentPosition, tieCount);
+
+      // Assign to all players in the tie block
+      for (let j = 0; j < tieCount; j++) {
+        positioned.push({
+          ...withPoints[i + j],
+          position: currentPosition, // All tied players share the same position
+          oomPoints: averagedOOM,
+        });
+      }
+
+      // Move to next position block (skip positions consumed by ties)
+      currentPosition += tieCount;
+      i += tieCount;
+    }
 
     // Combine: players with points (sorted) + players without points (original order)
     return [...positioned, ...withoutPoints];
@@ -257,23 +312,48 @@ export default function EventPointsScreen() {
     setSaving(true);
     try {
       // Build results array with OOM points for all players with day points
-      const results = playersWithDayPoints.map((p) => ({
-        member_id: p.memberId,
-        points: p.oomPoints,
-      }));
+      // Use Array.from() to ensure we have a proper array (not a stale memoized value)
+      const playersToSave = Array.from(playersWithDayPoints);
 
-      console.log("[points] Upserting", results.length, "results to event_results:", results);
+      console.log("[points] playersToSave:", {
+        isArray: Array.isArray(playersToSave),
+        length: playersToSave.length,
+        players: playersToSave,
+      });
+
+      // Include day_value and position for audit trail
+      const results: Array<{ member_id: string; points: number; day_value?: number; position?: number }> = [];
+      for (const p of playersToSave) {
+        const dayValue = parseInt(p.dayPoints.trim(), 10);
+        results.push({
+          member_id: p.memberId,
+          points: p.oomPoints,
+          day_value: !isNaN(dayValue) ? dayValue : undefined,
+          position: p.position ?? undefined,
+        });
+      }
+
+      console.log("[points] results array:", {
+        isArray: Array.isArray(results),
+        length: results.length,
+        results: JSON.stringify(results),
+      });
+
+      if (!Array.isArray(results) || results.length === 0) {
+        throw new Error("Failed to build results array");
+      }
 
       await upsertEventResults(event.id, societyId, results);
 
       console.log("[points] Save SUCCESS");
+      console.log("[points] save complete → routing to OOM log");
 
       Alert.alert("Saved", "OOM points saved successfully.", [
         {
           text: "OK",
           onPress: () => {
-            // Use replace to ensure leaderboard refetches
-            router.back();
+            // Navigate to leaderboard with Results Log view
+            router.replace("/(app)/(tabs)/leaderboard?view=log");
           },
         },
       ]);
@@ -347,28 +427,6 @@ export default function EventPointsScreen() {
     );
   }
 
-  // Check if OOM event
-  const isOOM = event.classification === "oom" || event.isOOM === true;
-
-  if (!isOOM) {
-    return (
-      <Screen>
-        <View style={styles.header}>
-          <SecondaryButton onPress={() => router.back()} size="sm">
-            <Feather name="arrow-left" size={16} color={colors.text} />
-            {" Back"}
-          </SecondaryButton>
-        </View>
-        <EmptyState
-          icon={<Feather name="info" size={24} color={colors.textTertiary} />}
-          title="Not an OOM Event"
-          message="Points can only be entered for Order of Merit events."
-          action={{ label: "Go Back", onPress: () => router.back() }}
-        />
-      </Screen>
-    );
-  }
-
   // No players
   if (players.length === 0) {
     return (
@@ -416,18 +474,20 @@ export default function EventPointsScreen() {
 
       {/* Title */}
       <AppText variant="h2" style={{ marginBottom: spacing.xs }}>
-        Enter Day Points
+        {sortOrder === 'low_wins' ? "Enter Net Scores" : "Enter Stableford Points"}
       </AppText>
       <AppText variant="body" color="secondary" style={{ marginBottom: spacing.md }}>
         {event.name}
       </AppText>
 
-      {/* Instructions */}
+      {/* Instructions - format-specific */}
       <AppCard style={styles.instructionCard}>
         <View style={styles.instructionContent}>
           <Feather name="info" size={16} color={colors.primary} />
           <AppText variant="caption" color="secondary" style={{ flex: 1 }}>
-            Enter competition points from the scorecard. Positions and OOM points are calculated automatically. Top 10 earn F1 points: 25, 18, 15, 12, 10, 8, 6, 4, 2, 1.
+            {sortOrder === 'low_wins'
+              ? "Lower is better. Top 10 earn F1 points (25, 18, 15...). Ties share averaged points."
+              : "Higher is better. Top 10 earn F1 points (25, 18, 15...). Ties share averaged points."}
           </AppText>
         </View>
       </AppCard>
@@ -456,7 +516,7 @@ export default function EventPointsScreen() {
           Player
         </AppText>
         <AppText variant="captionBold" color="tertiary" style={styles.colDayPoints}>
-          Day Pts
+          {sortOrder === 'low_wins' ? "Score" : "Pts"}
         </AppText>
         <AppText variant="captionBold" color="tertiary" style={styles.colPos}>
           Pos
@@ -506,7 +566,7 @@ export default function EventPointsScreen() {
                   variant="bodyBold"
                   color={player.oomPoints > 0 ? "primary" : "tertiary"}
                 >
-                  {player.oomPoints}
+                  {formatPoints(player.oomPoints)}
                 </AppText>
               </View>
             </View>

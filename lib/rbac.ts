@@ -17,6 +17,7 @@ export type Role =
 export type Permissions = {
   // Society-level
   canResetSociety: boolean;
+  canManageSocietyLogo: boolean;
 
   // Members
   canCreateMembers: boolean;
@@ -32,6 +33,7 @@ export type Permissions = {
   canEditEvents: boolean;
   canDeleteEvents: boolean;
   canUploadTeeSheet: boolean;
+  canGenerateTeeSheet: boolean;
 
   // Finance / P&L
   canAccessFinance: boolean;
@@ -97,6 +99,7 @@ export const getPermissionsForMember = (
   return {
     // Society-level
     canResetSociety: captain || treasurer,
+    canManageSocietyLogo: captain || secretary,
 
     // Members
     canCreateMembers: captain || treasurer,
@@ -112,6 +115,7 @@ export const getPermissionsForMember = (
     canEditEvents: captain || secretary || handicapper,
     canDeleteEvents: captain,
     canUploadTeeSheet: captain || handicapper,
+    canGenerateTeeSheet: captain || secretary || handicapper,
 
     // Finance / P&L
     canAccessFinance: captain || treasurer,

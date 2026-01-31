@@ -103,6 +103,17 @@ export default function EventsScreen() {
   );
 
   const handleCreateEvent = async () => {
+    // First-line logging for debugging
+    console.log("[createEvent] CLICKED", {
+      formName: formName.trim(),
+      formDate: formDate.trim(),
+      formFormat,
+      formClassification,
+      societyId,
+      userId: user?.uid,
+      submitting,
+    });
+
     if (!formName.trim()) {
       Alert.alert("Missing Name", "Please enter an event name.");
       return;
@@ -112,6 +123,7 @@ export default function EventsScreen() {
       return;
     }
     if (!societyId || !user?.uid) {
+      console.error("[createEvent] Missing societyId or userId:", { societyId, userId: user?.uid });
       Alert.alert("Error", "Not signed in or no society selected.");
       return;
     }
@@ -125,6 +137,7 @@ export default function EventsScreen() {
 
     setSubmitting(true);
     try {
+      console.log("[createEvent] Calling createEvent...");
       await createEvent(societyId, {
         name: formName.trim(),
         date: formDate.trim(),
@@ -132,6 +145,7 @@ export default function EventsScreen() {
         classification: formClassification,
         createdBy: user.uid,
       });
+      console.log("[createEvent] SUCCESS");
       setFormName("");
       setFormDate("");
       setFormFormat("stableford");
@@ -139,7 +153,7 @@ export default function EventsScreen() {
       setShowCreateForm(false);
       loadEvents();
     } catch (e: any) {
-      console.error("Create event error:", e);
+      console.error("[createEvent] FAILED:", e);
       Alert.alert("Error", e?.message || "Failed to create event.");
     } finally {
       setSubmitting(false);
