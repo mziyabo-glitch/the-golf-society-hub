@@ -21,6 +21,7 @@ import {
   EVENT_FORMATS,
   EVENT_CLASSIFICATIONS,
 } from "@/lib/db_supabase/eventRepo";
+import { getRecommendedAllowance } from "@/lib/handicapUtils";
 import { getPermissionsForMember } from "@/lib/rbac";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
 
@@ -70,6 +71,15 @@ export default function EventsScreen() {
   const [formFormat, setFormFormat] = useState<EventFormat>("stableford");
   const [formClassification, setFormClassification] = useState<EventClassification>("general");
   const [submitting, setSubmitting] = useState(false);
+
+  // Tee Settings form state
+  const [showTeeSettings, setShowTeeSettings] = useState(false);
+  const [formCourseName, setFormCourseName] = useState("");
+  const [formTeeName, setFormTeeName] = useState("");
+  const [formPar, setFormPar] = useState("");
+  const [formCourseRating, setFormCourseRating] = useState("");
+  const [formSlopeRating, setFormSlopeRating] = useState("");
+  const [formHandicapAllowance, setFormHandicapAllowance] = useState("95");
 
   const permissions = getPermissionsForMember(member as any);
 
@@ -135,6 +145,28 @@ export default function EventsScreen() {
       return;
     }
 
+    // Parse tee settings
+    const par = formPar.trim() ? parseInt(formPar.trim(), 10) : undefined;
+    const courseRating = formCourseRating.trim() ? parseFloat(formCourseRating.trim()) : undefined;
+    const slopeRating = formSlopeRating.trim() ? parseInt(formSlopeRating.trim(), 10) : undefined;
+    const handicapAllowance = formHandicapAllowance.trim()
+      ? parseFloat(formHandicapAllowance.trim()) / 100
+      : undefined;
+
+    // Validate tee settings if provided
+    if (par !== undefined && (isNaN(par) || par < 27 || par > 90)) {
+      Alert.alert("Invalid Par", "Par must be between 27 and 90.");
+      return;
+    }
+    if (courseRating !== undefined && (isNaN(courseRating) || courseRating < 50 || courseRating > 85)) {
+      Alert.alert("Invalid Course Rating", "Course rating must be between 50 and 85.");
+      return;
+    }
+    if (slopeRating !== undefined && (isNaN(slopeRating) || slopeRating < 55 || slopeRating > 155)) {
+      Alert.alert("Invalid Slope Rating", "Slope rating must be between 55 and 155.");
+      return;
+    }
+
     setSubmitting(true);
     try {
       console.log("[createEvent] Calling createEvent...");
@@ -144,12 +176,27 @@ export default function EventsScreen() {
         format: formFormat,
         classification: formClassification,
         createdBy: user.uid,
+        // Tee settings
+        courseName: formCourseName.trim() || undefined,
+        teeName: formTeeName.trim() || undefined,
+        par,
+        courseRating,
+        slopeRating,
+        handicapAllowance,
       });
       console.log("[createEvent] SUCCESS");
+      // Reset form
       setFormName("");
       setFormDate("");
       setFormFormat("stableford");
       setFormClassification("general");
+      setFormCourseName("");
+      setFormTeeName("");
+      setFormPar("");
+      setFormCourseRating("");
+      setFormSlopeRating("");
+      setFormHandicapAllowance("95");
+      setShowTeeSettings(false);
       setShowCreateForm(false);
       loadEvents();
     } catch (e: any) {
@@ -242,6 +289,96 @@ export default function EventsScreen() {
               ))}
             </View>
           </View>
+
+          {/* Course / Tee Setup Toggle */}
+          <Pressable
+            onPress={() => setShowTeeSettings(!showTeeSettings)}
+            style={styles.teeSettingsToggle}
+          >
+            <View style={{ flex: 1 }}>
+              <AppText variant="captionBold">Course / Tee Setup</AppText>
+              <AppText variant="small" color="secondary">
+                Optional - for WHS handicap calculations
+              </AppText>
+            </View>
+            <Feather
+              name={showTeeSettings ? "chevron-up" : "chevron-down"}
+              size={20}
+              color={colors.textTertiary}
+            />
+          </Pressable>
+
+          {/* Tee Settings Fields (Collapsible) */}
+          {showTeeSettings && (
+            <View style={styles.teeSettingsContainer}>
+              <View style={styles.formField}>
+                <AppText variant="caption" style={styles.label}>Course Name</AppText>
+                <AppInput
+                  placeholder="e.g. Royal Liverpool"
+                  value={formCourseName}
+                  onChangeText={setFormCourseName}
+                  autoCapitalize="words"
+                />
+              </View>
+
+              <View style={styles.formField}>
+                <AppText variant="caption" style={styles.label}>Tee Name</AppText>
+                <AppInput
+                  placeholder="e.g. Yellow Tees"
+                  value={formTeeName}
+                  onChangeText={setFormTeeName}
+                  autoCapitalize="words"
+                />
+              </View>
+
+              <View style={styles.teeSettingsRow}>
+                <View style={[styles.formField, { flex: 1 }]}>
+                  <AppText variant="caption" style={styles.label}>Par</AppText>
+                  <AppInput
+                    placeholder="72"
+                    value={formPar}
+                    onChangeText={setFormPar}
+                    keyboardType="number-pad"
+                  />
+                </View>
+
+                <View style={[styles.formField, { flex: 1.5 }]}>
+                  <AppText variant="caption" style={styles.label}>Course Rating</AppText>
+                  <AppInput
+                    placeholder="72.5"
+                    value={formCourseRating}
+                    onChangeText={setFormCourseRating}
+                    keyboardType="decimal-pad"
+                  />
+                </View>
+
+                <View style={[styles.formField, { flex: 1 }]}>
+                  <AppText variant="caption" style={styles.label}>Slope</AppText>
+                  <AppInput
+                    placeholder="127"
+                    value={formSlopeRating}
+                    onChangeText={setFormSlopeRating}
+                    keyboardType="number-pad"
+                  />
+                </View>
+              </View>
+
+              <View style={styles.formField}>
+                <AppText variant="caption" style={styles.label}>
+                  Handicap Allowance (%)
+                </AppText>
+                <AppInput
+                  placeholder="95"
+                  value={formHandicapAllowance}
+                  onChangeText={setFormHandicapAllowance}
+                  keyboardType="number-pad"
+                />
+                <AppText variant="small" color="tertiary" style={{ marginTop: 4 }}>
+                  Standard: 95% individual, 85% fourball, 50% foursomes
+                </AppText>
+              </View>
+            </View>
+          )}
 
           <PrimaryButton
             onPress={handleCreateEvent}
@@ -460,5 +597,22 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.xs,
     borderRadius: radius.sm,
     borderWidth: 1,
+  },
+  teeSettingsToggle: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: spacing.sm,
+    borderTopWidth: 1,
+    borderTopColor: "rgba(0,0,0,0.06)",
+    marginTop: spacing.sm,
+  },
+  teeSettingsContainer: {
+    paddingTop: spacing.sm,
+    borderTopWidth: 1,
+    borderTopColor: "rgba(0,0,0,0.04)",
+  },
+  teeSettingsRow: {
+    flexDirection: "row",
+    gap: spacing.sm,
   },
 });

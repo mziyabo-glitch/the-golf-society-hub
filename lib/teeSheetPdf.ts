@@ -1,16 +1,23 @@
 /**
  * Tee Sheet PDF Generator
- * Generates branded PDF tee sheets with society logo, ManCo details, and player list
+ * Generates branded PDF tee sheets with society logo, ManCo details,
+ * and WHS handicap information (HI, CH, PH)
  */
 
 import * as Print from "expo-print";
 import * as Sharing from "expo-sharing";
 import { Platform } from "react-native";
 import { type ManCoDetails } from "./db_supabase/memberRepo";
+import {
+  calculateHandicaps,
+  formatHandicapIndex,
+  hasTeeSettings,
+  type TeeSettings,
+} from "./handicapUtils";
 
 export type TeeSheetPlayer = {
   name: string;
-  handicap?: number | null;
+  handicapIndex?: number | null;
   teeTime?: string | null;
   group?: number | null;
 };
@@ -25,7 +32,11 @@ export type TeeSheetData = {
   eventName: string;
   eventDate: string | null;
   courseName: string | null;
+  teeName?: string | null;
   format: string | null;
+
+  // Tee settings for handicap calculations
+  teeSettings?: TeeSettings | null;
 
   // Players
   players: TeeSheetPlayer[];
@@ -42,9 +53,14 @@ function generateTeeSheetHTML(data: TeeSheetData): string {
     eventName,
     eventDate,
     courseName,
+    teeName,
     format,
+    teeSettings,
     players,
   } = data;
+
+  // Check if we can calculate handicaps
+  const canCalculateHandicaps = hasTeeSettings(teeSettings);
 
   // Format date for display
   const dateStr = eventDate
@@ -59,6 +75,11 @@ function generateTeeSheetHTML(data: TeeSheetData): string {
   // Format label
   const formatLabel = format
     ? format.charAt(0).toUpperCase() + format.slice(1).replace(/_/g, " ")
+    : "";
+
+  // Tee info
+  const teeInfo = teeName
+    ? `${teeName}${teeSettings?.slopeRating ? ` (SR ${teeSettings.slopeRating})` : ""}`
     : "";
 
   // Logo HTML - either image or initials fallback
@@ -82,27 +103,54 @@ function generateTeeSheetHTML(data: TeeSheetData): string {
        </div>`
     : "";
 
+  // Tee settings info box
+  const teeSettingsHTML = canCalculateHandicaps
+    ? `<div style="background: #FEF3C7; padding: 10px 16px; border-radius: 8px; margin-bottom: 16px; border-left: 4px solid #F59E0B;">
+         <div style="font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: #92400E; margin-bottom: 4px;">Course Setup</div>
+         <div style="font-size: 13px; color: #78350F;">
+           Par ${teeSettings?.par} • CR ${teeSettings?.courseRating} • Slope ${teeSettings?.slopeRating} • Allowance ${Math.round((teeSettings?.handicapAllowance ?? 0.95) * 100)}%
+         </div>
+       </div>`
+    : "";
+
   // Players table - group by tee time if available
   const playersWithGroups = players.map((p, idx) => ({
     ...p,
     displayGroup: p.group ?? Math.floor(idx / 4) + 1,
   }));
 
-  const playerRows = playersWithGroups
+  // Calculate handicaps for each player
+  const playersWithHandicaps = playersWithGroups.map((player) => {
+    const handicaps = calculateHandicaps(player.handicapIndex, teeSettings);
+    return {
+      ...player,
+      ...handicaps,
+    };
+  });
+
+  const playerRows = playersWithHandicaps
     .map((player, idx) => {
-      const isNewGroup = idx === 0 || player.displayGroup !== playersWithGroups[idx - 1].displayGroup;
+      const isNewGroup = idx === 0 || player.displayGroup !== playersWithHandicaps[idx - 1].displayGroup;
       const groupHeader = isNewGroup
         ? `<tr>
-             <td colspan="4" style="background: #F3F4F6; padding: 8px 12px; font-weight: 600; font-size: 12px; color: #374151; border-bottom: 1px solid #E5E7EB;">
+             <td colspan="${canCalculateHandicaps ? 6 : 4}" style="background: #F3F4F6; padding: 8px 12px; font-weight: 600; font-size: 12px; color: #374151; border-bottom: 1px solid #E5E7EB;">
                Group ${player.displayGroup}${player.teeTime ? ` • ${player.teeTime}` : ""}
              </td>
            </tr>`
         : "";
 
+      const hiDisplay = formatHandicapIndex(player.handicapIndex);
+      const chDisplay = player.courseHandicap != null ? player.courseHandicap.toString() : "-";
+      const phDisplay = player.playingHandicap != null ? player.playingHandicap.toString() : "-";
+
       return `${groupHeader}
         <tr style="background: ${idx % 2 === 0 ? "#FFFFFF" : "#FAFAFA"};">
           <td style="padding: 10px 12px; border-bottom: 1px solid #F3F4F6;">${player.name}</td>
-          <td style="padding: 10px 12px; border-bottom: 1px solid #F3F4F6; text-align: center; color: #6B7280;">${player.handicap ?? "-"}</td>
+          <td style="padding: 10px 12px; border-bottom: 1px solid #F3F4F6; text-align: center; color: #6B7280; font-family: 'SF Mono', monospace;">${hiDisplay}</td>
+          ${canCalculateHandicaps ? `
+          <td style="padding: 10px 12px; border-bottom: 1px solid #F3F4F6; text-align: center; color: #6B7280; font-family: 'SF Mono', monospace;">${chDisplay}</td>
+          <td style="padding: 10px 12px; border-bottom: 1px solid #F3F4F6; text-align: center; font-weight: 600; color: #0B6E4F; font-family: 'SF Mono', monospace;">${phDisplay}</td>
+          ` : ""}
           <td style="padding: 10px 12px; border-bottom: 1px solid #F3F4F6; text-align: center; color: #6B7280;">${player.teeTime || "-"}</td>
           <td style="padding: 10px 12px; border-bottom: 1px solid #F3F4F6; text-align: center;"></td>
         </tr>`;
@@ -125,7 +173,7 @@ function generateTeeSheetHTML(data: TeeSheetData): string {
             font-size: 14px;
             line-height: 1.5;
           }
-          .container { max-width: 600px; margin: 0 auto; }
+          .container { max-width: 700px; margin: 0 auto; }
 
           /* Header with logo */
           .header {
@@ -192,7 +240,7 @@ function generateTeeSheetHTML(data: TeeSheetData): string {
             letter-spacing: 0.5px;
             font-weight: 600;
           }
-          th:nth-child(2), th:nth-child(3), th:nth-child(4) { text-align: center; }
+          th.center { text-align: center; }
 
           /* Footer */
           .footer {
@@ -211,6 +259,21 @@ function generateTeeSheetHTML(data: TeeSheetData): string {
             color: #6B7280;
             margin-bottom: 8px;
           }
+
+          /* Handicap legend */
+          .legend {
+            margin-top: 16px;
+            padding: 12px;
+            background: #F9FAFB;
+            border-radius: 8px;
+            font-size: 11px;
+            color: #6B7280;
+          }
+          .legend-title {
+            font-weight: 600;
+            color: #374151;
+            margin-bottom: 4px;
+          }
         </style>
       </head>
       <body>
@@ -228,12 +291,15 @@ function generateTeeSheetHTML(data: TeeSheetData): string {
           <div class="event-header">
             <div class="event-name">${eventName}</div>
             <div class="event-meta">
-              ${dateStr}${courseName ? ` • ${courseName}` : ""}${formatLabel ? ` • ${formatLabel}` : ""}
+              ${dateStr}${courseName ? ` • ${courseName}` : ""}${teeInfo ? ` • ${teeInfo}` : ""}${formatLabel ? ` • ${formatLabel}` : ""}
             </div>
           </div>
 
           <!-- ManCo Block -->
           ${manCoHTML}
+
+          <!-- Tee Settings Info -->
+          ${teeSettingsHTML}
 
           <!-- Players Table -->
           <div class="players-section">
@@ -243,9 +309,13 @@ function generateTeeSheetHTML(data: TeeSheetData): string {
               <thead>
                 <tr>
                   <th>Player</th>
-                  <th style="text-align: center;">HCP</th>
-                  <th style="text-align: center;">Tee Time</th>
-                  <th style="text-align: center;">Score</th>
+                  <th class="center" title="Handicap Index">HI</th>
+                  ${canCalculateHandicaps ? `
+                  <th class="center" title="Course Handicap">CH</th>
+                  <th class="center" title="Playing Handicap">PH</th>
+                  ` : ""}
+                  <th class="center">Tee Time</th>
+                  <th class="center">Score</th>
                 </tr>
               </thead>
               <tbody>
@@ -254,6 +324,14 @@ function generateTeeSheetHTML(data: TeeSheetData): string {
             </table>
             ` : `<p style="color: #6B7280; text-align: center; padding: 24px;">No players registered yet.</p>`}
           </div>
+
+          ${canCalculateHandicaps ? `
+          <!-- Handicap Legend -->
+          <div class="legend">
+            <div class="legend-title">WHS Handicap Calculations</div>
+            <div>HI = Handicap Index • CH = Course Handicap (HI × Slope/113 + CR-Par) • PH = Playing Handicap (CH × ${Math.round((teeSettings?.handicapAllowance ?? 0.95) * 100)}%)</div>
+          </div>
+          ` : ""}
 
           <!-- Footer -->
           <div class="footer">

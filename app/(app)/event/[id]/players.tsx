@@ -21,6 +21,7 @@ import { getEvent, updateEvent, type EventDoc } from "@/lib/db_supabase/eventRep
 import { getMembersBySocietyId, getManCoRoleHolders, type MemberDoc } from "@/lib/db_supabase/memberRepo";
 import { getPermissionsForMember } from "@/lib/rbac";
 import { generateTeeSheetPdf, type TeeSheetPlayer } from "@/lib/teeSheetPdf";
+import { type TeeSettings } from "@/lib/handicapUtils";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
 
 export default function EventPlayersScreen() {
@@ -160,10 +161,21 @@ export default function EventPlayersScreen() {
       const selectedMembers = members.filter((m) => selectedPlayerIds.has(String(m.id)));
       const players: TeeSheetPlayer[] = selectedMembers.map((m, idx) => ({
         name: m.name || m.displayName || "Member",
-        handicap: m.handicapIndex ?? m.handicap_index ?? null,
+        handicapIndex: m.handicapIndex ?? m.handicap_index ?? null,
         group: Math.floor(idx / 4) + 1,
         teeTime: null, // Could be enhanced to include tee times if available
       }));
+
+      // Build tee settings from event
+      const teeSettings: TeeSettings | null =
+        event.par != null && event.courseRating != null && event.slopeRating != null
+          ? {
+              par: event.par,
+              courseRating: event.courseRating,
+              slopeRating: event.slopeRating,
+              handicapAllowance: event.handicapAllowance ?? null,
+            }
+          : null;
 
       // Generate PDF
       await generateTeeSheetPdf({
@@ -173,7 +185,9 @@ export default function EventPlayersScreen() {
         eventName: event.name || "Event",
         eventDate: event.date || null,
         courseName: event.courseName || null,
+        teeName: event.teeName || null,
         format: event.format || null,
+        teeSettings,
         players,
       });
 

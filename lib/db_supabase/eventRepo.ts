@@ -50,7 +50,22 @@ export type EventDoc = {
   created_by?: string;
   created_at?: string;
   updated_at?: string;
+  // Tee settings for WHS handicap calculations
+  teeName?: string | null;
+  par?: number | null;
+  courseRating?: number | null;
+  slopeRating?: number | null;
+  handicapAllowance?: number | null;
   [key: string]: unknown;
+};
+
+// Tee settings type for handicap calculations
+export type EventTeeSettings = {
+  teeName: string | null;
+  par: number | null;
+  courseRating: number | null;
+  slopeRating: number | null;
+  handicapAllowance: number | null;
 };
 
 function mapEvent(row: any): EventDoc {
@@ -64,6 +79,12 @@ function mapEvent(row: any): EventDoc {
     winnerName: row.winner_name,
     playerIds: row.player_ids ?? [],
     results: row.results ?? {},
+    // Map tee settings from snake_case
+    teeName: row.tee_name ?? null,
+    par: row.par ?? null,
+    courseRating: row.course_rating ?? null,
+    slopeRating: row.slope_rating ?? null,
+    handicapAllowance: row.handicap_allowance ?? null,
   };
 }
 
@@ -98,7 +119,7 @@ export async function getEvent(eventId: string): Promise<EventDoc | null> {
 
   const { data, error } = await supabase
     .from("events")
-    .select("id,name,date,format,classification,course_name,status,is_completed,winner_name,player_ids,created_at,created_by,society_id")
+    .select("id,name,date,format,classification,course_name,status,is_completed,winner_name,player_ids,created_at,created_by,society_id,tee_name,par,course_rating,slope_rating,handicap_allowance")
     .eq("id", eventId)
     .maybeSingle();
 
@@ -128,6 +149,12 @@ export async function createEvent(
     format: EventFormat;
     classification?: EventClassification;
     createdBy?: string;
+    // Tee settings
+    teeName?: string;
+    par?: number;
+    courseRating?: number;
+    slopeRating?: number;
+    handicapAllowance?: number;
   }
 ): Promise<EventDoc> {
   const classification = data.classification ?? 'general';
@@ -148,6 +175,13 @@ export async function createEvent(
   if (data.createdBy) {
     payload.created_by = data.createdBy;
   }
+
+  // Add tee settings if provided
+  if (data.teeName !== undefined) payload.tee_name = data.teeName;
+  if (data.par !== undefined) payload.par = data.par;
+  if (data.courseRating !== undefined) payload.course_rating = data.courseRating;
+  if (data.slopeRating !== undefined) payload.slope_rating = data.slopeRating;
+  if (data.handicapAllowance !== undefined) payload.handicap_allowance = data.handicapAllowance;
 
   console.log("[eventRepo] createEvent payload:", JSON.stringify(payload, null, 2));
 
@@ -186,6 +220,12 @@ export async function updateEvent(
     isCompleted: boolean;
     winnerName: string;
     playerIds: string[];
+    // Tee settings
+    teeName: string;
+    par: number;
+    courseRating: number;
+    slopeRating: number;
+    handicapAllowance: number;
   }>
 ): Promise<void> {
   const payload: Record<string, unknown> = {
@@ -205,6 +245,13 @@ export async function updateEvent(
   if (updates.isCompleted !== undefined) payload.is_completed = updates.isCompleted;
   if (updates.winnerName !== undefined) payload.winner_name = updates.winnerName;
   if (updates.playerIds !== undefined) payload.player_ids = updates.playerIds;
+
+  // Tee settings
+  if (updates.teeName !== undefined) payload.tee_name = updates.teeName;
+  if (updates.par !== undefined) payload.par = updates.par;
+  if (updates.courseRating !== undefined) payload.course_rating = updates.courseRating;
+  if (updates.slopeRating !== undefined) payload.slope_rating = updates.slopeRating;
+  if (updates.handicapAllowance !== undefined) payload.handicap_allowance = updates.handicapAllowance;
 
   console.log("[eventRepo] updateEvent:", { eventId, payload });
 

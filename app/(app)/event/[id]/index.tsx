@@ -142,6 +142,30 @@ export default function EventDetailScreen() {
         <Row icon="tag" label="Classification" value={classificationLabel} />
       </AppCard>
 
+      {/* Tee Settings - only show if configured */}
+      {(event.teeName || event.par != null || event.slopeRating != null) && (
+        <AppCard style={styles.card}>
+          <AppText variant="captionBold" color="secondary" style={{ marginBottom: spacing.sm }}>
+            Course / Tee Setup
+          </AppText>
+          {event.teeName && <Row icon="flag" label="Tee" value={event.teeName} />}
+          {event.par != null && <Row icon="hash" label="Par" value={String(event.par)} />}
+          {event.courseRating != null && (
+            <Row icon="activity" label="Course Rating" value={String(event.courseRating)} />
+          )}
+          {event.slopeRating != null && (
+            <Row icon="trending-up" label="Slope Rating" value={String(event.slopeRating)} />
+          )}
+          {event.handicapAllowance != null && (
+            <Row
+              icon="percent"
+              label="Handicap Allowance"
+              value={`${Math.round(event.handicapAllowance * 100)}%`}
+            />
+          )}
+        </AppCard>
+      )}
+
       {/* Players */}
       <Pressable
         onPress={() =>
