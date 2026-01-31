@@ -173,13 +173,24 @@ export default function LeaderboardScreen() {
 
   // Share as image using react-native-view-shot
   const handleShareImage = async () => {
+    console.log("[Leaderboard] Share button pressed");
+    console.log("[Leaderboard] shareCardRef.current:", !!shareCardRef.current);
+    console.log("[Leaderboard] standings count:", standings.length);
+
     if (!shareCardRef.current) {
+      console.error("[Leaderboard] Share card ref is null");
       Alert.alert("Error", "Share card not ready. Please try again.");
+      return;
+    }
+
+    if (standings.length === 0) {
+      Alert.alert("No Data", "No standings to share.");
       return;
     }
 
     try {
       setSharing(true);
+      console.log("[Leaderboard] Starting capture...");
 
       // Capture the share card as an image
       const uri = await captureRef(shareCardRef, {
@@ -192,6 +203,7 @@ export default function LeaderboardScreen() {
 
       // Check if sharing is available
       const canShare = await Sharing.isAvailableAsync();
+      console.log("[Leaderboard] Can share:", canShare);
 
       if (canShare) {
         await Sharing.shareAsync(uri, {
@@ -199,6 +211,7 @@ export default function LeaderboardScreen() {
           dialogTitle: "Share Order of Merit",
           UTI: "public.png",
         });
+        console.log("[Leaderboard] Share dialog opened");
       } else {
         Alert.alert(
           "Sharing Unavailable",
@@ -663,13 +676,20 @@ export default function LeaderboardScreen() {
       )}
 
       {/* Off-screen share card for image capture */}
-      <View style={styles.offScreen} pointerEvents="none">
-        <OOMShareCard
-          ref={shareCardRef}
-          societyName={society?.name || "Golf Society"}
-          seasonLabel={seasonLabel}
-          rows={shareCardRows}
-        />
+      {/* Using opacity:0 and pointerEvents:none to keep in layout but invisible */}
+      <View
+        style={styles.offScreen}
+        pointerEvents="none"
+        collapsable={false}
+      >
+        <View collapsable={false}>
+          <OOMShareCard
+            ref={shareCardRef}
+            societyName={society?.name || "Golf Society"}
+            seasonLabel={seasonLabel}
+            rows={shareCardRows}
+          />
+        </View>
       </View>
     </Screen>
   );
@@ -779,7 +799,8 @@ const styles = StyleSheet.create({
   },
   offScreen: {
     position: "absolute",
-    left: -9999,
-    top: 0,
+    top: -10000,
+    left: 0,
+    opacity: 0,
   },
 });

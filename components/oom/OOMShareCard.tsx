@@ -43,7 +43,7 @@ function getMedalEmoji(position: number): string {
 const OOMShareCard = forwardRef<View, OOMShareCardProps>(
   ({ societyName, seasonLabel, rows }, ref) => {
     return (
-      <View ref={ref} style={styles.container}>
+      <View ref={ref} style={styles.container} collapsable={false}>
         {/* Header */}
         <View style={styles.header}>
           <Text style={styles.title}>Order of Merit</Text>
