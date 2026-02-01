@@ -27,7 +27,14 @@ import { getEventsBySocietyId, getEvent, updateEvent, type EventDoc } from "@/li
 import { getMembersBySocietyId, getManCoRoleHolders, type MemberDoc, type Gender } from "@/lib/db_supabase/memberRepo";
 import { getPermissionsForMember } from "@/lib/rbac";
 import { generateTeeSheetPdf, type TeeSheetPlayer, type TeeSheetData } from "@/lib/teeSheetPdf";
-import { type TeeBlock } from "@/lib/whs";
+import {
+  type TeeBlock,
+  calcCourseHandicap,
+  calcPlayingHandicap,
+  selectTeeByGender,
+  formatHandicap,
+  DEFAULT_ALLOWANCE,
+} from "@/lib/whs";
 import { parseHoleNumbers, formatHoleNumbers, calculateGroupSizes } from "@/lib/teeSheetGrouping";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
 
@@ -35,6 +42,7 @@ type EditablePlayer = {
   id: string;
   name: string;
   handicapIndex: number | null;
+  playingHandicap: number | null;
   gender: Gender;
   groupIndex: number;
 };
@@ -143,6 +151,17 @@ export default function TeeSheetScreen() {
       return;
     }
 
+    // Build tee settings for handicap calculations
+    const menTee: TeeBlock | null =
+      event.par != null && event.courseRating != null && event.slopeRating != null
+        ? { par: event.par, courseRating: event.courseRating, slopeRating: event.slopeRating }
+        : null;
+    const ladiesTee: TeeBlock | null =
+      event.ladiesPar != null && event.ladiesCourseRating != null && event.ladiesSlopeRating != null
+        ? { par: event.ladiesPar, courseRating: event.ladiesCourseRating, slopeRating: event.ladiesSlopeRating }
+        : null;
+    const allowance = event.handicapAllowance ?? DEFAULT_ALLOWANCE;
+
     // Sort by handicap (high to low, nulls last)
     const sorted = [...eventMembers].sort((a, b) => {
       const hiA = a.handicapIndex ?? a.handicap_index ?? null;
@@ -166,11 +185,20 @@ export default function TeeSheetScreen() {
 
       for (let j = 0; j < size && playerIndex < sorted.length; j++) {
         const m = sorted[playerIndex];
+        const gender = m.gender ?? null;
+        const hi = m.handicapIndex ?? m.handicap_index ?? null;
+
+        // Calculate playing handicap based on gender and tee settings
+        const playerTee = selectTeeByGender(gender, menTee, ladiesTee);
+        const courseHandicap = calcCourseHandicap(hi, playerTee);
+        const playingHandicap = calcPlayingHandicap(courseHandicap, allowance);
+
         groupPlayers.push({
           id: m.id,
           name: m.name || m.displayName || "Member",
-          handicapIndex: m.handicapIndex ?? m.handicap_index ?? null,
-          gender: m.gender ?? null,
+          handicapIndex: hi,
+          playingHandicap,
+          gender,
           groupIndex: i,
         });
         playerIndex++;
@@ -572,17 +600,36 @@ export default function TeeSheetScreen() {
                   </View>
                 </View>
               ) : (
-                /* Compact Group Summary */
-                <AppCard>
+                /* Compact Group Summary - Table format */
+                <View style={styles.groupsContainer}>
                   {groups.filter((g) => g.players.length > 0).map((group, idx) => (
-                    <View key={idx} style={[styles.groupSummary, idx > 0 && { borderTopWidth: 1, borderTopColor: colors.border }]}>
-                      <AppText variant="caption" color="secondary">Group {group.groupNumber}</AppText>
-                      <AppText variant="body" numberOfLines={1}>
-                        {group.players.map((p) => p.name).join(", ")}
+                    <AppCard key={idx} style={styles.groupTableCard}>
+                      <AppText variant="bodyBold" color="primary" style={styles.groupTitle}>
+                        Group {group.groupNumber}
                       </AppText>
-                    </View>
+                      {/* Table Header */}
+                      <View style={styles.tableHeader}>
+                        <AppText variant="caption" color="secondary" style={styles.nameCol}>Name</AppText>
+                        <AppText variant="caption" color="secondary" style={styles.hiCol}>HI</AppText>
+                        <AppText variant="caption" color="secondary" style={styles.phCol}>PH</AppText>
+                      </View>
+                      {/* Table Rows */}
+                      {group.players.map((player) => (
+                        <View key={player.id} style={styles.tableRow}>
+                          <AppText variant="body" numberOfLines={1} style={styles.nameCol}>
+                            {player.name}
+                          </AppText>
+                          <AppText variant="body" color="secondary" style={styles.hiCol}>
+                            {formatHandicap(player.handicapIndex, 1)}
+                          </AppText>
+                          <AppText variant="bodyBold" color="primary" style={styles.phCol}>
+                            {formatHandicap(player.playingHandicap)}
+                          </AppText>
+                        </View>
+                      ))}
+                    </AppCard>
                   ))}
-                </AppCard>
+                </View>
               )}
 
               {/* Competition Holes */}
@@ -777,8 +824,40 @@ const styles = StyleSheet.create({
     flexWrap: "wrap",
     marginTop: spacing.xs,
   },
-  groupSummary: {
+  groupsContainer: {
+    gap: spacing.sm,
+  },
+  groupTableCard: {
+    marginBottom: 0,
+  },
+  groupTitle: {
+    marginBottom: spacing.xs,
+    paddingBottom: spacing.xs,
+    borderBottomWidth: 1,
+    borderBottomColor: "#E5E7EB",
+  },
+  tableHeader: {
+    flexDirection: "row",
     paddingVertical: spacing.xs,
+    borderBottomWidth: 1,
+    borderBottomColor: "#F3F4F6",
+  },
+  tableRow: {
+    flexDirection: "row",
+    paddingVertical: spacing.sm,
+    borderBottomWidth: 1,
+    borderBottomColor: "#F3F4F6",
+  },
+  nameCol: {
+    flex: 1,
+  },
+  hiCol: {
+    width: 50,
+    textAlign: "right",
+  },
+  phCol: {
+    width: 50,
+    textAlign: "right",
   },
   teeRow: {
     flexDirection: "row",
