@@ -27,7 +27,7 @@ import { getEventsBySocietyId, getEvent, updateEvent, type EventDoc } from "@/li
 import { getMembersBySocietyId, getManCoRoleHolders, type MemberDoc, type Gender } from "@/lib/db_supabase/memberRepo";
 import { getPermissionsForMember } from "@/lib/rbac";
 import { generateTeeSheetPdf, type TeeSheetPlayer, type TeeSheetData } from "@/lib/teeSheetPdf";
-import { type TeeSettings } from "@/lib/handicapUtils";
+import { type TeeBlock } from "@/lib/whs";
 import { parseHoleNumbers, formatHoleNumbers, calculateGroupSizes } from "@/lib/teeSheetGrouping";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
 
@@ -295,7 +295,7 @@ export default function TeeSheetScreen() {
       }
 
       // Build Men's tee settings
-      const menTeeSettings: TeeSettings | null =
+      const menTeeSettings: TeeBlock | null =
         selectedEvent.par != null &&
         selectedEvent.courseRating != null &&
         selectedEvent.slopeRating != null
@@ -303,12 +303,11 @@ export default function TeeSheetScreen() {
               par: selectedEvent.par,
               courseRating: selectedEvent.courseRating,
               slopeRating: selectedEvent.slopeRating,
-              handicapAllowance: selectedEvent.handicapAllowance ?? null,
             }
           : null;
 
       // Build Ladies' tee settings
-      const ladiesTeeSettings: TeeSettings | null =
+      const ladiesTeeSettings: TeeBlock | null =
         selectedEvent.ladiesPar != null &&
         selectedEvent.ladiesCourseRating != null &&
         selectedEvent.ladiesSlopeRating != null
@@ -316,7 +315,6 @@ export default function TeeSheetScreen() {
               par: selectedEvent.ladiesPar,
               courseRating: selectedEvent.ladiesCourseRating,
               slopeRating: selectedEvent.ladiesSlopeRating,
-              handicapAllowance: selectedEvent.handicapAllowance ?? null,
             }
           : null;
 
@@ -336,6 +334,7 @@ export default function TeeSheetScreen() {
         format: selectedEvent.format || null,
         teeSettings: menTeeSettings,
         ladiesTeeSettings,
+        handicapAllowance: selectedEvent.handicapAllowance ?? null,
         nearestPinHoles: selectedEvent.nearestPinHoles,
         longestDriveHoles: selectedEvent.longestDriveHoles,
         players,

@@ -3,10 +3,10 @@
  *
  * Generates branded PDF tee sheets with:
  * - Society logo and ManCo details
- * - WHS handicap information (HI, CH, PH) based on player gender
+ * - WHS handicap information: Full Name | HI | PH
  * - Proper player grouping (max 4 per group, avoid singles)
  * - NTP/LD competition holes
- * - Support for different Men's and Ladies' tees
+ * - Support for different Men's and Women's tees
  */
 
 import * as Print from "expo-print";
@@ -14,11 +14,14 @@ import * as Sharing from "expo-sharing";
 import { Platform } from "react-native";
 import { type ManCoDetails } from "./db_supabase/memberRepo";
 import {
-  calculateHandicaps,
-  formatHandicapIndex,
+  calcCourseHandicap,
+  calcPlayingHandicap,
+  formatHandicap,
   hasTeeSettings,
-  type TeeSettings,
-} from "./handicapUtils";
+  selectTeeByGender,
+  type TeeBlock,
+  DEFAULT_ALLOWANCE,
+} from "./whs";
 import {
   groupPlayers,
   formatHoleNumbers,
@@ -50,9 +53,11 @@ export type TeeSheetData = {
   format: string | null;
 
   // Tee settings for handicap calculations (Men's)
-  teeSettings?: TeeSettings | null;
-  // Ladies' tee settings (optional, falls back to Men's if not provided)
-  ladiesTeeSettings?: TeeSettings | null;
+  teeSettings?: TeeBlock | null;
+  // Women's tee settings (optional, falls back to Men's if not provided)
+  ladiesTeeSettings?: TeeBlock | null;
+  // Handicap allowance (default 0.95)
+  handicapAllowance?: number | null;
 
   // Competition holes
   nearestPinHoles?: number[] | null;
@@ -71,7 +76,7 @@ export type TeeSheetData = {
 
 type PlayerWithCalcs = GroupedPlayer & {
   gender: "M" | "F" | null;
-  tee: string;
+  playingHandicap: number | null;
 };
 
 /**
@@ -90,6 +95,7 @@ function generateTeeSheetHTML(data: TeeSheetData): string {
     format,
     teeSettings,
     ladiesTeeSettings,
+    handicapAllowance,
     nearestPinHoles,
     longestDriveHoles,
     players,
@@ -98,10 +104,12 @@ function generateTeeSheetHTML(data: TeeSheetData): string {
     preGrouped = false,
   } = data;
 
+  const allowance = handicapAllowance ?? DEFAULT_ALLOWANCE;
+
   // Check if we can calculate handicaps
   const canCalculateMenHandicaps = hasTeeSettings(teeSettings);
-  const canCalculateLadiesHandicaps = hasTeeSettings(ladiesTeeSettings);
-  const canCalculateAnyHandicaps = canCalculateMenHandicaps || canCalculateLadiesHandicaps;
+  const canCalculateWomenHandicaps = hasTeeSettings(ladiesTeeSettings);
+  const canCalculateAnyHandicaps = canCalculateMenHandicaps || canCalculateWomenHandicaps;
 
   // Format date for display
   const dateStr = eventDate
@@ -116,11 +124,6 @@ function generateTeeSheetHTML(data: TeeSheetData): string {
   // Format label
   const formatLabel = format
     ? format.charAt(0).toUpperCase() + format.slice(1).replace(/_/g, " ")
-    : "";
-
-  // Tee info
-  const teeInfo = teeName
-    ? `${teeName}${teeSettings?.slopeRating ? ` (SR ${teeSettings.slopeRating})` : ""}`
     : "";
 
   // Logo HTML - either image or initials fallback
@@ -144,17 +147,16 @@ function generateTeeSheetHTML(data: TeeSheetData): string {
        </div>`
     : "";
 
-  // Tee settings info box (show both Men's and Ladies' if configured)
+  // Tee settings info box (show both Men's and Women's if configured)
   let teeSettingsHTML = "";
-  if (canCalculateMenHandicaps || canCalculateLadiesHandicaps) {
+  if (canCalculateMenHandicaps || canCalculateWomenHandicaps) {
     const teeLines: string[] = [];
     if (canCalculateMenHandicaps) {
       teeLines.push(`<div><span style="display: inline-block; width: 10px; height: 10px; background: #FFD700; border-radius: 50%; margin-right: 6px;"></span><strong>${teeName || "Men's"}</strong>: Par ${teeSettings?.par} • CR ${teeSettings?.courseRating} • Slope ${teeSettings?.slopeRating}</div>`);
     }
-    if (canCalculateLadiesHandicaps) {
-      teeLines.push(`<div><span style="display: inline-block; width: 10px; height: 10px; background: #E53935; border-radius: 50%; margin-right: 6px;"></span><strong>${ladiesTeeName || "Ladies'"}</strong>: Par ${ladiesTeeSettings?.par} • CR ${ladiesTeeSettings?.courseRating} • Slope ${ladiesTeeSettings?.slopeRating}</div>`);
+    if (canCalculateWomenHandicaps) {
+      teeLines.push(`<div><span style="display: inline-block; width: 10px; height: 10px; background: #E53935; border-radius: 50%; margin-right: 6px;"></span><strong>${ladiesTeeName || "Women's"}</strong>: Par ${ladiesTeeSettings?.par} • CR ${ladiesTeeSettings?.courseRating} • Slope ${ladiesTeeSettings?.slopeRating}</div>`);
     }
-    const allowance = teeSettings?.handicapAllowance ?? ladiesTeeSettings?.handicapAllowance ?? 0.95;
     teeSettingsHTML = `<div style="background: #FEF3C7; padding: 10px 16px; border-radius: 8px; margin-bottom: 16px; border-left: 4px solid #F59E0B;">
        <div style="font-size: 10px; text-transform: uppercase; letter-spacing: 1px; color: #92400E; margin-bottom: 4px;">Course Setup • Allowance ${Math.round(allowance * 100)}%</div>
        <div style="font-size: 12px; color: #78350F; display: flex; flex-direction: column; gap: 2px;">
@@ -179,22 +181,19 @@ function generateTeeSheetHTML(data: TeeSheetData): string {
   // Calculate handicaps for each player based on their gender
   const playersWithHandicaps: PlayerWithCalcs[] = players.map((player, idx) => {
     const gender = player.gender ?? null;
-    // Use ladies tee settings for female players if available
-    const useLadiesTees = gender === "F" && canCalculateLadiesHandicaps;
-    const playerTeeSettings = useLadiesTees ? ladiesTeeSettings : teeSettings;
-    const handicaps = calculateHandicaps(player.handicapIndex, playerTeeSettings);
-    const teeName = useLadiesTees
-      ? (ladiesTeeName || "Ladies'")
-      : (data.teeName || "Men's");
+    // Select appropriate tee based on gender
+    const playerTee = selectTeeByGender(gender, teeSettings, ladiesTeeSettings);
+    // Calculate course handicap then playing handicap
+    const courseHandicap = calcCourseHandicap(player.handicapIndex, playerTee);
+    const playingHandicap = calcPlayingHandicap(courseHandicap, allowance);
 
     return {
       id: player.id || String(idx),
       name: player.name,
       handicapIndex: player.handicapIndex ?? null,
-      courseHandicap: handicaps.courseHandicap,
-      playingHandicap: handicaps.playingHandicap,
+      courseHandicap,
+      playingHandicap,
       gender,
-      tee: teeName,
     };
   });
 
@@ -242,59 +241,44 @@ function generateTeeSheetHTML(data: TeeSheetData): string {
     }
   }
 
-  // Generate group blocks
+  // Generate group blocks with columns: Full Name | HI | PH
   const groupsHTML = groupsWithTimes.map((group) => {
     const playerRows = group.players.map((player: PlayerWithCalcs) => {
-      const hiDisplay = formatHandicapIndex(player.handicapIndex);
-      const chDisplay = player.courseHandicap != null ? String(player.courseHandicap) : "-";
-      const phDisplay = player.playingHandicap != null ? String(player.playingHandicap) : "-";
+      // HI: from members.handicap_index (nullable) - display "-" if null
+      const hiDisplay = formatHandicap(player.handicapIndex, 1);
+      // PH: calculated using WHS formula, display "-" if cannot calculate
+      const phDisplay = formatHandicap(player.playingHandicap);
 
-      // Gender indicator
+      // Gender indicator badge
       const genderBadge = player.gender === "F"
         ? `<span style="display: inline-block; padding: 1px 5px; border-radius: 4px; background: #FEE2E2; color: #DC2626; font-size: 10px; margin-left: 4px;">F</span>`
         : player.gender === "M"
         ? `<span style="display: inline-block; padding: 1px 5px; border-radius: 4px; background: #DBEAFE; color: #2563EB; font-size: 10px; margin-left: 4px;">M</span>`
         : "";
 
-      // Show tee if both men's and ladies' tees are configured
-      const showTee = canCalculateMenHandicaps && canCalculateLadiesHandicaps;
-
       return `
         <tr>
-          <td style="padding: 8px 10px; border-bottom: 1px solid #F3F4F6; font-weight: 500;">
+          <td style="padding: 10px 12px; border-bottom: 1px solid #F3F4F6; font-weight: 500;">
             ${player.name}${genderBadge}
           </td>
-          ${showTee ? `<td style="padding: 8px 10px; border-bottom: 1px solid #F3F4F6; text-align: center; font-size: 11px; color: #6B7280;">${player.tee}</td>` : ''}
-          <td style="padding: 8px 10px; border-bottom: 1px solid #F3F4F6; text-align: center; color: #6B7280; font-family: 'SF Mono', Consolas, monospace; font-size: 12px;">${hiDisplay}</td>
-          ${canCalculateAnyHandicaps ? `
-          <td style="padding: 8px 10px; border-bottom: 1px solid #F3F4F6; text-align: center; color: #6B7280; font-family: 'SF Mono', Consolas, monospace; font-size: 12px;">${chDisplay}</td>
-          <td style="padding: 8px 10px; border-bottom: 1px solid #F3F4F6; text-align: center; font-weight: 600; color: #0B6E4F; font-family: 'SF Mono', Consolas, monospace; font-size: 12px;">${phDisplay}</td>
-          ` : ''}
-          <td style="padding: 8px 10px; border-bottom: 1px solid #F3F4F6; text-align: center; width: 80px;"></td>
+          <td style="padding: 10px 12px; border-bottom: 1px solid #F3F4F6; text-align: center; color: #6B7280; font-family: 'SF Mono', Consolas, monospace; font-size: 13px;">${hiDisplay}</td>
+          <td style="padding: 10px 12px; border-bottom: 1px solid #F3F4F6; text-align: center; font-weight: 600; color: #0B6E4F; font-family: 'SF Mono', Consolas, monospace; font-size: 13px;">${phDisplay}</td>
         </tr>
       `;
     }).join("");
 
-    // Show tee column header if both tees configured
-    const showTeeHeader = canCalculateMenHandicaps && canCalculateLadiesHandicaps;
-
     return `
       <div style="margin-bottom: 16px; background: white; border: 1px solid #E5E7EB; border-radius: 8px; overflow: hidden; break-inside: avoid;">
-        <div style="background: #0B6E4F; color: white; padding: 8px 12px; font-weight: 600; font-size: 13px; display: flex; justify-content: space-between; align-items: center;">
+        <div style="background: #0B6E4F; color: white; padding: 10px 14px; font-weight: 600; font-size: 14px; display: flex; justify-content: space-between; align-items: center;">
           <span>Group ${group.groupNumber}</span>
-          ${group.teeTime ? `<span style="font-weight: 400; font-size: 12px;">${group.teeTime}</span>` : ''}
+          ${group.teeTime ? `<span style="font-weight: 400; font-size: 13px;">${group.teeTime}</span>` : ''}
         </div>
-        <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
+        <table style="width: 100%; border-collapse: collapse; font-size: 14px;">
           <thead>
             <tr style="background: #F9FAFB;">
-              <th style="padding: 8px 10px; text-align: left; font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; color: #6B7280; font-weight: 600;">Player</th>
-              ${showTeeHeader ? `<th style="padding: 8px 10px; text-align: center; font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; color: #6B7280; font-weight: 600;">Tee</th>` : ''}
-              <th style="padding: 8px 10px; text-align: center; font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; color: #6B7280; font-weight: 600;" title="Handicap Index">HI</th>
-              ${canCalculateAnyHandicaps ? `
-              <th style="padding: 8px 10px; text-align: center; font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; color: #6B7280; font-weight: 600;" title="Course Handicap">CH</th>
-              <th style="padding: 8px 10px; text-align: center; font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; color: #6B7280; font-weight: 600;" title="Playing Handicap">PH</th>
-              ` : ''}
-              <th style="padding: 8px 10px; text-align: center; font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; color: #6B7280; font-weight: 600;">Notes</th>
+              <th style="padding: 10px 12px; text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: #6B7280; font-weight: 600;">Full Name</th>
+              <th style="padding: 10px 12px; text-align: center; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: #6B7280; font-weight: 600; width: 60px;" title="Handicap Index">HI</th>
+              <th style="padding: 10px 12px; text-align: center; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: #6B7280; font-weight: 600; width: 60px;" title="Playing Handicap">PH</th>
             </tr>
           </thead>
           <tbody>
@@ -312,9 +296,6 @@ function generateTeeSheetHTML(data: TeeSheetData): string {
     ? ` (${menCount} men, ${womenCount} women)`
     : "";
 
-  // Allowance for legend
-  const allowance = teeSettings?.handicapAllowance ?? ladiesTeeSettings?.handicapAllowance ?? 0.95;
-
   return `
     <!DOCTYPE html>
     <html>
@@ -328,7 +309,7 @@ function generateTeeSheetHTML(data: TeeSheetData): string {
             padding: 24px;
             color: #111827;
             background: #fff;
-            font-size: 13px;
+            font-size: 14px;
             line-height: 1.4;
           }
           .container { max-width: 700px; margin: 0 auto; }
@@ -344,7 +325,7 @@ function generateTeeSheetHTML(data: TeeSheetData): string {
           }
           .header-text { flex: 1; }
           .society-name {
-            font-size: 16px;
+            font-size: 18px;
             font-weight: 700;
             color: #0B6E4F;
             margin-bottom: 2px;
@@ -360,19 +341,19 @@ function generateTeeSheetHTML(data: TeeSheetData): string {
             margin-bottom: 16px;
           }
           .event-name {
-            font-size: 20px;
+            font-size: 22px;
             font-weight: 700;
             color: #111827;
             margin-bottom: 4px;
           }
           .event-meta {
-            font-size: 13px;
+            font-size: 14px;
             color: #6B7280;
           }
 
           /* Footer */
           .footer {
-            margin-top: 20px;
+            margin-top: 24px;
             padding-top: 12px;
             border-top: 1px solid #E5E7EB;
             text-align: center;
@@ -383,24 +364,24 @@ function generateTeeSheetHTML(data: TeeSheetData): string {
             font-style: italic;
           }
           .player-count {
-            font-size: 11px;
+            font-size: 12px;
             color: #6B7280;
             margin-bottom: 6px;
           }
 
           /* Handicap legend */
           .legend {
-            margin-top: 12px;
-            padding: 10px;
+            margin-top: 16px;
+            padding: 12px;
             background: #F9FAFB;
             border-radius: 6px;
-            font-size: 10px;
+            font-size: 11px;
             color: #6B7280;
           }
           .legend-title {
             font-weight: 600;
             color: #374151;
-            margin-bottom: 3px;
+            margin-bottom: 4px;
           }
 
           @media print {
@@ -424,7 +405,7 @@ function generateTeeSheetHTML(data: TeeSheetData): string {
           <div class="event-header">
             <div class="event-name">${eventName}</div>
             <div class="event-meta">
-              ${dateStr}${courseName ? ` • ${courseName}` : ""}${teeInfo ? ` • ${teeInfo}` : ""}${formatLabel ? ` • ${formatLabel}` : ""}
+              ${dateStr}${courseName ? ` • ${courseName}` : ""}${formatLabel ? ` • ${formatLabel}` : ""}
             </div>
           </div>
 
@@ -444,10 +425,18 @@ function generateTeeSheetHTML(data: TeeSheetData): string {
           <!-- Handicap Legend -->
           <div class="legend">
             <div class="legend-title">WHS Handicap Calculations</div>
-            <div>HI = Handicap Index • CH = Course Handicap (HI × Slope/113 + CR-Par) • PH = Playing Handicap (CH × ${Math.round(allowance * 100)}%)</div>
-            ${canCalculateMenHandicaps && canCalculateLadiesHandicaps ? `<div style="margin-top: 4px;">Note: Handicaps calculated using the appropriate tee for each player's gender.</div>` : ""}
+            <div>HI = Handicap Index (from WHS)</div>
+            <div>CH = Course Handicap = HI × (Slope ÷ 113) + (CR − Par)</div>
+            <div>PH = Playing Handicap = CH × ${Math.round(allowance * 100)}%</div>
+            ${canCalculateMenHandicaps && canCalculateWomenHandicaps ? `<div style="margin-top: 4px;">Note: PH calculated using appropriate tee for each player's gender.</div>` : ""}
           </div>
-          ` : ""}
+          ` : `
+          <div class="legend">
+            <div class="legend-title">Handicap Information</div>
+            <div>HI = Handicap Index (from WHS) • PH = Playing Handicap</div>
+            <div style="margin-top: 4px; color: #DC2626;">Note: Course tee settings not configured. PH cannot be calculated.</div>
+          </div>
+          `}
 
           <!-- Footer -->
           <div class="footer">
