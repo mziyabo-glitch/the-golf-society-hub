@@ -165,12 +165,17 @@ export async function createEvent(
     format: EventFormat;
     classification?: EventClassification;
     createdBy?: string;
-    // Tee settings
+    // Men's tee settings
     teeName?: string;
     par?: number;
     courseRating?: number;
     slopeRating?: number;
     handicapAllowance?: number;
+    // Ladies' tee settings
+    ladiesTeeName?: string;
+    ladiesPar?: number;
+    ladiesCourseRating?: number;
+    ladiesSlopeRating?: number;
   }
 ): Promise<EventDoc> {
   const classification = data.classification ?? 'general';
@@ -192,12 +197,18 @@ export async function createEvent(
     payload.created_by = data.createdBy;
   }
 
-  // Add tee settings if provided
+  // Add Men's tee settings if provided
   if (data.teeName !== undefined) payload.tee_name = data.teeName;
   if (data.par !== undefined) payload.par = data.par;
   if (data.courseRating !== undefined) payload.course_rating = data.courseRating;
   if (data.slopeRating !== undefined) payload.slope_rating = data.slopeRating;
   if (data.handicapAllowance !== undefined) payload.handicap_allowance = data.handicapAllowance;
+
+  // Add Ladies' tee settings if provided
+  if (data.ladiesTeeName !== undefined) payload.ladies_tee_name = data.ladiesTeeName;
+  if (data.ladiesPar !== undefined) payload.ladies_par = data.ladiesPar;
+  if (data.ladiesCourseRating !== undefined) payload.ladies_course_rating = data.ladiesCourseRating;
+  if (data.ladiesSlopeRating !== undefined) payload.ladies_slope_rating = data.ladiesSlopeRating;
 
   console.log("[eventRepo] createEvent payload:", JSON.stringify(payload, null, 2));
 
