@@ -2,9 +2,9 @@
 -- This supports WHS calculations with different tees for Men and Women
 
 -- Add gender column to members
--- 'M' = Male, 'F' = Female, NULL = not specified
+-- 'male' = Male, 'female' = Female, NULL = not specified
 ALTER TABLE public.members
-ADD COLUMN IF NOT EXISTS gender text CHECK (gender IS NULL OR gender IN ('M', 'F'));
+ADD COLUMN IF NOT EXISTS gender text CHECK (gender IS NULL OR gender IN ('male', 'female'));
 
 -- Add Ladies' tee settings to events
 -- Men's settings use existing columns: par, course_rating, slope_rating, tee_name
@@ -16,7 +16,7 @@ ADD COLUMN IF NOT EXISTS ladies_course_rating numeric(4,1) CHECK (ladies_course_
 ADD COLUMN IF NOT EXISTS ladies_slope_rating integer CHECK (ladies_slope_rating IS NULL OR (ladies_slope_rating >= 55 AND ladies_slope_rating <= 155));
 
 -- Add comment explaining the dual-tee system
-COMMENT ON COLUMN public.members.gender IS 'Player gender for tee selection: M=Male, F=Female';
+COMMENT ON COLUMN public.members.gender IS 'Player gender for tee selection: male, female';
 COMMENT ON COLUMN public.events.ladies_tee_name IS 'Name of Ladies tee (e.g., Red, Forward)';
 COMMENT ON COLUMN public.events.ladies_par IS 'Par from Ladies tee';
 COMMENT ON COLUMN public.events.ladies_course_rating IS 'Course Rating from Ladies tee';

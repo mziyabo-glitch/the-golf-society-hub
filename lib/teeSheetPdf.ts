@@ -33,7 +33,7 @@ export type TeeSheetPlayer = {
   id?: string;
   name: string;
   handicapIndex?: number | null;
-  gender?: "M" | "F" | null;
+  gender?: "male" | "female" | null;
   teeTime?: string | null;
   group?: number | null;
 };
@@ -75,7 +75,7 @@ export type TeeSheetData = {
 };
 
 type PlayerWithCalcs = GroupedPlayer & {
-  gender: "M" | "F" | null;
+  gender: "male" | "female" | null;
   playingHandicap: number | null;
 };
 
@@ -250,9 +250,9 @@ function generateTeeSheetHTML(data: TeeSheetData): string {
       const phDisplay = formatHandicap(player.playingHandicap);
 
       // Gender indicator badge
-      const genderBadge = player.gender === "F"
+      const genderBadge = player.gender === "female"
         ? `<span style="display: inline-block; padding: 1px 5px; border-radius: 4px; background: #FEE2E2; color: #DC2626; font-size: 10px; margin-left: 4px;">F</span>`
-        : player.gender === "M"
+        : player.gender === "male"
         ? `<span style="display: inline-block; padding: 1px 5px; border-radius: 4px; background: #DBEAFE; color: #2563EB; font-size: 10px; margin-left: 4px;">M</span>`
         : "";
 
@@ -290,8 +290,8 @@ function generateTeeSheetHTML(data: TeeSheetData): string {
   }).join("");
 
   // Count men and women
-  const menCount = players.filter(p => p.gender === "M").length;
-  const womenCount = players.filter(p => p.gender === "F").length;
+  const menCount = players.filter(p => p.gender === "male").length;
+  const womenCount = players.filter(p => p.gender === "female").length;
   const genderSummary = (menCount > 0 || womenCount > 0)
     ? ` (${menCount} men, ${womenCount} women)`
     : "";

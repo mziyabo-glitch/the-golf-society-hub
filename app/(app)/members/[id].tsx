@@ -45,17 +45,17 @@ function GenderOption({
   colors: ReturnType<typeof getColors>;
 }) {
   const bgColor = selected
-    ? value === "F"
+    ? value === "female"
       ? colors.error + "20"
       : colors.info + "20"
     : colors.backgroundSecondary;
   const textColor = selected
-    ? value === "F"
+    ? value === "female"
       ? colors.error
       : colors.info
     : colors.text;
   const borderColor = selected
-    ? value === "F"
+    ? value === "female"
       ? colors.error
       : colors.info
     : colors.border;
@@ -267,8 +267,8 @@ export default function MemberDetailScreen() {
 
   // Format gender for display
   const formatGender = (gender: Gender): string => {
-    if (gender === "M") return "Male";
-    if (gender === "F") return "Female";
+    if (gender === "male") return "Male";
+    if (gender === "female") return "Female";
     return "Not set";
   };
 
@@ -311,13 +311,13 @@ export default function MemberDetailScreen() {
               {member.gender && (
                 <View style={[
                   styles.roleBadge,
-                  { backgroundColor: member.gender === "F" ? colors.error + "20" : colors.info + "20" }
+                  { backgroundColor: member.gender === "female" ? colors.error + "20" : colors.info + "20" }
                 ]}>
                   <AppText
                     variant="caption"
-                    style={{ color: member.gender === "F" ? colors.error : colors.info }}
+                    style={{ color: member.gender === "female" ? colors.error : colors.info }}
                   >
-                    {member.gender === "F" ? "Female" : "Male"}
+                    {member.gender === "female" ? "Female" : "Male"}
                   </AppText>
                 </View>
               )}
@@ -360,17 +360,17 @@ export default function MemberDetailScreen() {
             </AppText>
             <View style={styles.genderRow}>
               <GenderOption
-                value="M"
+                value="male"
                 label="Male"
-                selected={formGender === "M"}
-                onPress={() => setFormGender("M")}
+                selected={formGender === "male"}
+                onPress={() => setFormGender("male")}
                 colors={colors}
               />
               <GenderOption
-                value="F"
+                value="female"
                 label="Female"
-                selected={formGender === "F"}
-                onPress={() => setFormGender("F")}
+                selected={formGender === "female"}
+                onPress={() => setFormGender("female")}
                 colors={colors}
               />
               <Pressable

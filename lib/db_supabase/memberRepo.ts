@@ -5,7 +5,7 @@
 
 import { supabase } from "@/lib/supabase";
 
-export type Gender = "M" | "F" | null;
+export type Gender = "male" | "female" | null;
 
 export type MemberDoc = {
   id: string;

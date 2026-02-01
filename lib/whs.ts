@@ -123,18 +123,18 @@ export function hasTeeSettings(tee: TeeBlock | null | undefined): boolean {
 /**
  * Select appropriate tee block based on gender
  *
- * @param gender - Player's gender ('M', 'F', or null)
+ * @param gender - Player's gender ('male', 'female', or null)
  * @param menTee - Men's tee settings
  * @param womenTee - Women's tee settings
  * @returns The appropriate tee block, or null if not available
  */
 export function selectTeeByGender(
-  gender: "M" | "F" | null | undefined,
+  gender: "male" | "female" | null | undefined,
   menTee: TeeBlock | null | undefined,
   womenTee: TeeBlock | null | undefined
 ): TeeBlock | null {
   // Female players use women's tee if available
-  if (gender === "F" && hasTeeSettings(womenTee)) {
+  if (gender === "female" && hasTeeSettings(womenTee)) {
     return womenTee!;
   }
 

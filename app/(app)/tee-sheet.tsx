@@ -383,8 +383,8 @@ export default function TeeSheetScreen() {
   const groupCount = groups.filter((g) => g.players.length > 0).length;
 
   // Count men and women
-  const menCount = groups.reduce((sum, g) => sum + g.players.filter((p) => p.gender === "M").length, 0);
-  const womenCount = groups.reduce((sum, g) => sum + g.players.filter((p) => p.gender === "F").length, 0);
+  const menCount = groups.reduce((sum, g) => sum + g.players.filter((p) => p.gender === "male").length, 0);
+  const womenCount = groups.reduce((sum, g) => sum + g.players.filter((p) => p.gender === "female").length, 0);
   const unspecifiedCount = selectedPlayerCount - menCount - womenCount;
 
   // Check if we have tee settings configured
@@ -540,9 +540,9 @@ export default function TeeSheetScreen() {
                                 {player.gender && (
                                   <View style={[
                                     styles.genderBadge,
-                                    { backgroundColor: player.gender === "F" ? colors.error + "20" : colors.info + "20" }
+                                    { backgroundColor: player.gender === "female" ? colors.error + "20" : colors.info + "20" }
                                   ]}>
-                                    <AppText variant="small" style={{ color: player.gender === "F" ? colors.error : colors.info }}>
+                                    <AppText variant="small" style={{ color: player.gender === "female" ? colors.error : colors.info }}>
                                       {player.gender}
                                     </AppText>
                                   </View>
@@ -598,7 +598,7 @@ export default function TeeSheetScreen() {
                       <AppText variant="caption" color="secondary">Group {group.groupNumber}</AppText>
                       <AppText variant="body" numberOfLines={1}>
                         {group.players.map((p) => {
-                          const genderIcon = p.gender === "F" ? "♀" : p.gender === "M" ? "♂" : "";
+                          const genderIcon = p.gender === "female" ? "♀" : p.gender === "male" ? "♂" : "";
                           return `${p.name}${genderIcon}`;
                         }).join(", ")}
                       </AppText>
