@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { StyleSheet, View, Pressable, Alert } from "react-native";
+import { StyleSheet, View, Pressable, Alert, ScrollView } from "react-native";
 import { useRouter } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
 import { Feather } from "@expo/vector-icons";
@@ -57,6 +57,84 @@ function PickerOption({
   );
 }
 
+// Tee block component for reuse (Men's and Women's)
+function TeeBlockForm({
+  title,
+  color,
+  teeName,
+  par,
+  courseRating,
+  slopeRating,
+  onTeeNameChange,
+  onParChange,
+  onCourseRatingChange,
+  onSlopeRatingChange,
+}: {
+  title: string;
+  color: string;
+  teeName: string;
+  par: string;
+  courseRating: string;
+  slopeRating: string;
+  onTeeNameChange: (v: string) => void;
+  onParChange: (v: string) => void;
+  onCourseRatingChange: (v: string) => void;
+  onSlopeRatingChange: (v: string) => void;
+}) {
+  const colors = getColors();
+
+  return (
+    <View style={[styles.teeBlock, { borderLeftColor: color }]}>
+      <View style={styles.teeBlockHeader}>
+        <View style={[styles.teeColorDot, { backgroundColor: color }]} />
+        <AppText variant="captionBold">{title}</AppText>
+      </View>
+
+      <View style={styles.formField}>
+        <AppText variant="caption" style={styles.label}>Tee Name</AppText>
+        <AppInput
+          placeholder={title === "Men's Tees" ? "e.g. Yellow" : "e.g. Red"}
+          value={teeName}
+          onChangeText={onTeeNameChange}
+          autoCapitalize="words"
+        />
+      </View>
+
+      <View style={styles.teeSettingsRow}>
+        <View style={[styles.formField, { flex: 1 }]}>
+          <AppText variant="caption" style={styles.label}>Par</AppText>
+          <AppInput
+            placeholder="72"
+            value={par}
+            onChangeText={onParChange}
+            keyboardType="number-pad"
+          />
+        </View>
+
+        <View style={[styles.formField, { flex: 1.5 }]}>
+          <AppText variant="caption" style={styles.label}>Course Rating</AppText>
+          <AppInput
+            placeholder="72.5"
+            value={courseRating}
+            onChangeText={onCourseRatingChange}
+            keyboardType="decimal-pad"
+          />
+        </View>
+
+        <View style={[styles.formField, { flex: 1 }]}>
+          <AppText variant="caption" style={styles.label}>Slope</AppText>
+          <AppInput
+            placeholder="127"
+            value={slopeRating}
+            onChangeText={onSlopeRatingChange}
+            keyboardType="number-pad"
+          />
+        </View>
+      </View>
+    </View>
+  );
+}
+
 export default function EventsScreen() {
   const router = useRouter();
   const { societyId, member, user, loading: bootstrapLoading } = useBootstrap();
@@ -70,6 +148,25 @@ export default function EventsScreen() {
   const [formFormat, setFormFormat] = useState<EventFormat>("stableford");
   const [formClassification, setFormClassification] = useState<EventClassification>("general");
   const [submitting, setSubmitting] = useState(false);
+
+  // Tee Settings form state
+  const [showTeeSettings, setShowTeeSettings] = useState(false);
+  const [formCourseName, setFormCourseName] = useState("");
+
+  // Men's tee settings
+  const [formMenTeeName, setFormMenTeeName] = useState("");
+  const [formMenPar, setFormMenPar] = useState("");
+  const [formMenCourseRating, setFormMenCourseRating] = useState("");
+  const [formMenSlopeRating, setFormMenSlopeRating] = useState("");
+
+  // Women's tee settings
+  const [formWomenTeeName, setFormWomenTeeName] = useState("");
+  const [formWomenPar, setFormWomenPar] = useState("");
+  const [formWomenCourseRating, setFormWomenCourseRating] = useState("");
+  const [formWomenSlopeRating, setFormWomenSlopeRating] = useState("");
+
+  // Handicap allowance (shared)
+  const [formHandicapAllowance, setFormHandicapAllowance] = useState("95");
 
   const permissions = getPermissionsForMember(member as any);
 
@@ -102,8 +199,38 @@ export default function EventsScreen() {
     }, [societyId])
   );
 
+  // Validate numeric tee input
+  const validateTeeInput = (
+    par: string,
+    courseRating: string,
+    slopeRating: string,
+    label: string
+  ): boolean => {
+    if (par.trim()) {
+      const parNum = parseInt(par.trim(), 10);
+      if (isNaN(parNum) || parNum < 27 || parNum > 90) {
+        Alert.alert("Invalid Par", `${label} Par must be between 27 and 90.`);
+        return false;
+      }
+    }
+    if (courseRating.trim()) {
+      const crNum = parseFloat(courseRating.trim());
+      if (isNaN(crNum) || crNum < 50 || crNum > 90) {
+        Alert.alert("Invalid Course Rating", `${label} Course Rating must be between 50 and 90.`);
+        return false;
+      }
+    }
+    if (slopeRating.trim()) {
+      const srNum = parseInt(slopeRating.trim(), 10);
+      if (isNaN(srNum) || srNum < 55 || srNum > 155) {
+        Alert.alert("Invalid Slope Rating", `${label} Slope Rating must be between 55 and 155.`);
+        return false;
+      }
+    }
+    return true;
+  };
+
   const handleCreateEvent = async () => {
-    // First-line logging for debugging
     console.log("[createEvent] CLICKED", {
       formName: formName.trim(),
       formDate: formDate.trim(),
@@ -135,6 +262,38 @@ export default function EventsScreen() {
       return;
     }
 
+    // Validate Men's tee settings
+    if (!validateTeeInput(formMenPar, formMenCourseRating, formMenSlopeRating, "Men's")) {
+      return;
+    }
+
+    // Validate Women's tee settings
+    if (!validateTeeInput(formWomenPar, formWomenCourseRating, formWomenSlopeRating, "Women's")) {
+      return;
+    }
+
+    // Parse tee settings
+    const menPar = formMenPar.trim() ? parseInt(formMenPar.trim(), 10) : undefined;
+    const menCourseRating = formMenCourseRating.trim() ? parseFloat(formMenCourseRating.trim()) : undefined;
+    const menSlopeRating = formMenSlopeRating.trim() ? parseInt(formMenSlopeRating.trim(), 10) : undefined;
+
+    const womenPar = formWomenPar.trim() ? parseInt(formWomenPar.trim(), 10) : undefined;
+    const womenCourseRating = formWomenCourseRating.trim() ? parseFloat(formWomenCourseRating.trim()) : undefined;
+    const womenSlopeRating = formWomenSlopeRating.trim() ? parseInt(formWomenSlopeRating.trim(), 10) : undefined;
+
+    const handicapAllowance = formHandicapAllowance.trim()
+      ? parseFloat(formHandicapAllowance.trim()) / 100
+      : 0.95; // Default to 95%
+
+    // Warn if generating tee sheet without tee settings
+    const hasMenTees = menPar != null && menCourseRating != null && menSlopeRating != null;
+    const hasWomenTees = womenPar != null && womenCourseRating != null && womenSlopeRating != null;
+
+    if (!hasMenTees && !hasWomenTees) {
+      // Just a warning, not blocking
+      console.log("[createEvent] Warning: No tee settings configured");
+    }
+
     setSubmitting(true);
     try {
       console.log("[createEvent] Calling createEvent...");
@@ -144,13 +303,24 @@ export default function EventsScreen() {
         format: formFormat,
         classification: formClassification,
         createdBy: user.uid,
+        // Course name
+        courseName: formCourseName.trim() || undefined,
+        // Men's tee settings
+        teeName: formMenTeeName.trim() || undefined,
+        par: menPar,
+        courseRating: menCourseRating,
+        slopeRating: menSlopeRating,
+        // Women's tee settings
+        ladiesTeeName: formWomenTeeName.trim() || undefined,
+        ladiesPar: womenPar,
+        ladiesCourseRating: womenCourseRating,
+        ladiesSlopeRating: womenSlopeRating,
+        // Shared allowance
+        handicapAllowance,
       });
       console.log("[createEvent] SUCCESS");
-      setFormName("");
-      setFormDate("");
-      setFormFormat("stableford");
-      setFormClassification("general");
-      setShowCreateForm(false);
+      // Reset form
+      resetForm();
       loadEvents();
     } catch (e: any) {
       console.error("[createEvent] FAILED:", e);
@@ -158,6 +328,25 @@ export default function EventsScreen() {
     } finally {
       setSubmitting(false);
     }
+  };
+
+  const resetForm = () => {
+    setFormName("");
+    setFormDate("");
+    setFormFormat("stableford");
+    setFormClassification("general");
+    setFormCourseName("");
+    setFormMenTeeName("");
+    setFormMenPar("");
+    setFormMenCourseRating("");
+    setFormMenSlopeRating("");
+    setFormWomenTeeName("");
+    setFormWomenPar("");
+    setFormWomenCourseRating("");
+    setFormWomenSlopeRating("");
+    setFormHandicapAllowance("95");
+    setShowTeeSettings(false);
+    setShowCreateForm(false);
   };
 
   const handleOpenEvent = (event: EventDoc) => {
@@ -184,73 +373,152 @@ export default function EventsScreen() {
     return (
       <Screen>
         <View style={styles.formHeader}>
-          <SecondaryButton onPress={() => setShowCreateForm(false)} size="sm">
+          <SecondaryButton onPress={() => { resetForm(); setShowCreateForm(false); }} size="sm">
             Cancel
           </SecondaryButton>
           <AppText variant="h2">Create Event</AppText>
           <View style={{ width: 60 }} />
         </View>
 
-        <AppCard>
-          <View style={styles.formField}>
-            <AppText variant="captionBold" style={styles.label}>Event Name</AppText>
-            <AppInput
-              placeholder="e.g. Monthly Medal"
-              value={formName}
-              onChangeText={setFormName}
-              autoCapitalize="words"
-            />
-          </View>
-
-          <View style={styles.formField}>
-            <AppText variant="captionBold" style={styles.label}>Date (YYYY-MM-DD)</AppText>
-            <AppInput
-              placeholder="e.g. 2025-02-15"
-              value={formDate}
-              onChangeText={setFormDate}
-              keyboardType="numbers-and-punctuation"
-              autoCapitalize="none"
-            />
-          </View>
-
-          <View style={styles.formField}>
-            <AppText variant="captionBold" style={styles.label}>Format</AppText>
-            <View style={styles.pickerRow}>
-              {EVENT_FORMATS.map((f) => (
-                <PickerOption
-                  key={f.value}
-                  label={f.label}
-                  selected={formFormat === f.value}
-                  onPress={() => setFormFormat(f.value)}
-                  colors={colors}
-                />
-              ))}
+        <ScrollView showsVerticalScrollIndicator={false}>
+          <AppCard>
+            <View style={styles.formField}>
+              <AppText variant="captionBold" style={styles.label}>Event Name</AppText>
+              <AppInput
+                placeholder="e.g. Monthly Medal"
+                value={formName}
+                onChangeText={setFormName}
+                autoCapitalize="words"
+              />
             </View>
-          </View>
 
-          <View style={styles.formField}>
-            <AppText variant="captionBold" style={styles.label}>Classification</AppText>
-            <View style={styles.pickerRow}>
-              {EVENT_CLASSIFICATIONS.map((c) => (
-                <PickerOption
-                  key={c.value}
-                  label={c.label}
-                  selected={formClassification === c.value}
-                  onPress={() => setFormClassification(c.value)}
-                  colors={colors}
-                />
-              ))}
+            <View style={styles.formField}>
+              <AppText variant="captionBold" style={styles.label}>Date (YYYY-MM-DD)</AppText>
+              <AppInput
+                placeholder="e.g. 2025-02-15"
+                value={formDate}
+                onChangeText={setFormDate}
+                keyboardType="numbers-and-punctuation"
+                autoCapitalize="none"
+              />
             </View>
-          </View>
 
-          <PrimaryButton
-            onPress={handleCreateEvent}
-            loading={submitting}
-            style={{ marginTop: spacing.sm }}
-          >
-            Create Event
-          </PrimaryButton>
-        </AppCard>
+            <View style={styles.formField}>
+              <AppText variant="captionBold" style={styles.label}>Format</AppText>
+              <View style={styles.pickerRow}>
+                {EVENT_FORMATS.map((f) => (
+                  <PickerOption
+                    key={f.value}
+                    label={f.label}
+                    selected={formFormat === f.value}
+                    onPress={() => setFormFormat(f.value)}
+                    colors={colors}
+                  />
+                ))}
+              </View>
+            </View>
+
+            <View style={styles.formField}>
+              <AppText variant="captionBold" style={styles.label}>Classification</AppText>
+              <View style={styles.pickerRow}>
+                {EVENT_CLASSIFICATIONS.map((c) => (
+                  <PickerOption
+                    key={c.value}
+                    label={c.label}
+                    selected={formClassification === c.value}
+                    onPress={() => setFormClassification(c.value)}
+                    colors={colors}
+                  />
+                ))}
+              </View>
+            </View>
+
+            {/* Course / Tee Setup Toggle */}
+            <Pressable
+              onPress={() => setShowTeeSettings(!showTeeSettings)}
+              style={styles.teeSettingsToggle}
+            >
+              <View style={{ flex: 1 }}>
+                <AppText variant="captionBold">Course / Tee Setup</AppText>
+                <AppText variant="small" color="secondary">
+                  Optional - for WHS handicap calculations
+                </AppText>
+              </View>
+              <Feather
+                name={showTeeSettings ? "chevron-up" : "chevron-down"}
+                size={20}
+                color={colors.textTertiary}
+              />
+            </Pressable>
+
+            {/* Tee Settings Fields (Collapsible) */}
+            {showTeeSettings && (
+              <View style={styles.teeSettingsContainer}>
+                <View style={styles.formField}>
+                  <AppText variant="caption" style={styles.label}>Course Name</AppText>
+                  <AppInput
+                    placeholder="e.g. Royal Liverpool"
+                    value={formCourseName}
+                    onChangeText={setFormCourseName}
+                    autoCapitalize="words"
+                  />
+                </View>
+
+                {/* Men's Tee Block */}
+                <TeeBlockForm
+                  title="Men's Tees"
+                  color="#FFD700"
+                  teeName={formMenTeeName}
+                  par={formMenPar}
+                  courseRating={formMenCourseRating}
+                  slopeRating={formMenSlopeRating}
+                  onTeeNameChange={setFormMenTeeName}
+                  onParChange={setFormMenPar}
+                  onCourseRatingChange={setFormMenCourseRating}
+                  onSlopeRatingChange={setFormMenSlopeRating}
+                />
+
+                {/* Women's Tee Block */}
+                <TeeBlockForm
+                  title="Women's Tees"
+                  color="#E53935"
+                  teeName={formWomenTeeName}
+                  par={formWomenPar}
+                  courseRating={formWomenCourseRating}
+                  slopeRating={formWomenSlopeRating}
+                  onTeeNameChange={setFormWomenTeeName}
+                  onParChange={setFormWomenPar}
+                  onCourseRatingChange={setFormWomenCourseRating}
+                  onSlopeRatingChange={setFormWomenSlopeRating}
+                />
+
+                {/* Handicap Allowance */}
+                <View style={styles.formField}>
+                  <AppText variant="caption" style={styles.label}>
+                    Handicap Allowance (%)
+                  </AppText>
+                  <AppInput
+                    placeholder="95"
+                    value={formHandicapAllowance}
+                    onChangeText={setFormHandicapAllowance}
+                    keyboardType="number-pad"
+                  />
+                  <AppText variant="small" color="tertiary" style={{ marginTop: 4 }}>
+                    Default 95% for individual stroke play
+                  </AppText>
+                </View>
+              </View>
+            )}
+
+            <PrimaryButton
+              onPress={handleCreateEvent}
+              loading={submitting}
+              style={{ marginTop: spacing.sm }}
+            >
+              Create Event
+            </PrimaryButton>
+          </AppCard>
+        </ScrollView>
       </Screen>
     );
   }
@@ -460,5 +728,39 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.xs,
     borderRadius: radius.sm,
     borderWidth: 1,
+  },
+  teeSettingsToggle: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: spacing.sm,
+    borderTopWidth: 1,
+    borderTopColor: "rgba(0,0,0,0.06)",
+    marginTop: spacing.sm,
+  },
+  teeSettingsContainer: {
+    paddingTop: spacing.sm,
+    borderTopWidth: 1,
+    borderTopColor: "rgba(0,0,0,0.04)",
+  },
+  teeSettingsRow: {
+    flexDirection: "row",
+    gap: spacing.sm,
+  },
+  teeBlock: {
+    marginBottom: spacing.base,
+    paddingLeft: spacing.sm,
+    borderLeftWidth: 4,
+    borderLeftColor: "#FFD700",
+  },
+  teeBlockHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.xs,
+    marginBottom: spacing.sm,
+  },
+  teeColorDot: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
   },
 });

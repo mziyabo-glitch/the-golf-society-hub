@@ -1,11 +1,14 @@
 /**
  * Member Detail/Edit Screen
  * - View member info (all users)
- * - Edit member fields (Captain/Handicapper only)
+ * - Edit member fields:
+ *   - Captain/Handicapper can edit any member
+ *   - User can edit their own profile (name, email, gender)
+ * - Gender and Handicap Index editing for WHS calculations
  */
 
 import { useCallback, useEffect, useState } from "react";
-import { Alert, StyleSheet, View } from "react-native";
+import { Alert, Pressable, StyleSheet, View } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
 import { Feather } from "@expo/vector-icons";
@@ -22,9 +25,55 @@ import {
   getMember,
   updateMember,
   type MemberDoc,
+  type Gender,
 } from "@/lib/db_supabase/memberRepo";
 import { getPermissionsForMember } from "@/lib/rbac";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
+
+// Gender option component
+function GenderOption({
+  value,
+  label,
+  selected,
+  onPress,
+  colors,
+}: {
+  value: Gender;
+  label: string;
+  selected: boolean;
+  onPress: () => void;
+  colors: ReturnType<typeof getColors>;
+}) {
+  const bgColor = selected
+    ? value === "female"
+      ? colors.error + "20"
+      : colors.info + "20"
+    : colors.backgroundSecondary;
+  const textColor = selected
+    ? value === "female"
+      ? colors.error
+      : colors.info
+    : colors.text;
+  const borderColor = selected
+    ? value === "female"
+      ? colors.error
+      : colors.info
+    : colors.border;
+
+  return (
+    <Pressable
+      onPress={onPress}
+      style={[
+        styles.genderOption,
+        { backgroundColor: bgColor, borderColor },
+      ]}
+    >
+      <AppText variant="body" style={{ color: textColor }}>
+        {label}
+      </AppText>
+    </Pressable>
+  );
+}
 
 export default function MemberDetailScreen() {
   const router = useRouter();
@@ -45,10 +94,14 @@ export default function MemberDetailScreen() {
   const [formEmail, setFormEmail] = useState("");
   const [formWhsNumber, setFormWhsNumber] = useState("");
   const [formHandicapIndex, setFormHandicapIndex] = useState("");
+  const [formGender, setFormGender] = useState<Gender>(null);
 
   // Permissions
   const permissions = getPermissionsForMember(currentMember as any);
-  const canEdit = permissions.canEditMembers || permissions.canManageHandicaps;
+  const isOwnProfile = currentMember?.id === memberId;
+  const canEditBasic = isOwnProfile || permissions.canEditMembers;
+  const canEditHandicap = permissions.canManageHandicaps;
+  const canEdit = canEditBasic || canEditHandicap;
 
   const loadMember = useCallback(async () => {
     if (!memberId) {
@@ -78,6 +131,7 @@ export default function MemberDetailScreen() {
             ? String(data.handicap_index)
             : ""
         );
+        setFormGender(data.gender ?? null);
       } else {
         setError("Member not found");
       }
@@ -124,17 +178,22 @@ export default function MemberDetailScreen() {
     try {
       console.log("[MemberDetail] Saving member:", member.id);
 
-      const patch: Parameters<typeof updateMember>[1] = {
-        name: formName.trim(),
-        email: formEmail.trim() || undefined,
-      };
+      const patch: Parameters<typeof updateMember>[1] = {};
 
-      // Only include handicap fields if user has permission
-      if (permissions.canManageHandicaps) {
+      // Basic fields (anyone can edit their own, or Captain/Handicapper can edit any)
+      if (canEditBasic) {
+        patch.name = formName.trim();
+        patch.gender = formGender;
+      }
+
+      // Handicap fields (Captain/Handicapper only)
+      if (canEditHandicap) {
         patch.whsNumber = formWhsNumber.trim() || null;
         patch.handicapIndex = formHandicapIndex.trim()
           ? parseFloat(formHandicapIndex.trim())
           : null;
+        // Also allow gender to be set by handicapper
+        patch.gender = formGender;
       }
 
       const updated = await updateMember(member.id, patch);
@@ -164,6 +223,7 @@ export default function MemberDetailScreen() {
           ? String(member.handicap_index)
           : ""
       );
+      setFormGender(member.gender ?? null);
     }
     setIsEditing(false);
   };
@@ -205,6 +265,13 @@ export default function MemberDetailScreen() {
     return roleNames[lower] || role.charAt(0).toUpperCase() + role.slice(1);
   };
 
+  // Format gender for display
+  const formatGender = (gender: Gender): string => {
+    if (gender === "male") return "Male";
+    if (gender === "female") return "Female";
+    return "Not set";
+  };
+
   return (
     <Screen>
       {/* Header */}
@@ -235,10 +302,25 @@ export default function MemberDetailScreen() {
             <AppText variant="h2" style={{ marginTop: spacing.sm }}>
               {member.displayName || member.name || "Unknown"}
             </AppText>
-            <View style={[styles.roleBadge, { backgroundColor: colors.backgroundTertiary }]}>
-              <AppText variant="caption" color="secondary">
-                {formatRole(member.role)}
-              </AppText>
+            <View style={styles.badgeRow}>
+              <View style={[styles.roleBadge, { backgroundColor: colors.backgroundTertiary }]}>
+                <AppText variant="caption" color="secondary">
+                  {formatRole(member.role)}
+                </AppText>
+              </View>
+              {member.gender && (
+                <View style={[
+                  styles.roleBadge,
+                  { backgroundColor: member.gender === "female" ? colors.error + "20" : colors.info + "20" }
+                ]}>
+                  <AppText
+                    variant="caption"
+                    style={{ color: member.gender === "female" ? colors.error : colors.info }}
+                  >
+                    {member.gender === "female" ? "Female" : "Male"}
+                  </AppText>
+                </View>
+              )}
             </View>
           </>
         )}
@@ -254,6 +336,7 @@ export default function MemberDetailScreen() {
               value={formName}
               onChangeText={setFormName}
               autoCapitalize="words"
+              editable={canEditBasic}
             />
           </View>
 
@@ -265,10 +348,44 @@ export default function MemberDetailScreen() {
               onChangeText={setFormEmail}
               keyboardType="email-address"
               autoCapitalize="none"
+              editable={canEditBasic}
             />
           </View>
 
-          {permissions.canManageHandicaps ? (
+          {/* Gender Selection */}
+          <View style={styles.formField}>
+            <AppText variant="captionBold" style={styles.label}>Gender</AppText>
+            <AppText variant="small" color="tertiary" style={{ marginBottom: spacing.xs }}>
+              Required for WHS handicap calculations with different tees
+            </AppText>
+            <View style={styles.genderRow}>
+              <GenderOption
+                value="male"
+                label="Male"
+                selected={formGender === "male"}
+                onPress={() => setFormGender("male")}
+                colors={colors}
+              />
+              <GenderOption
+                value="female"
+                label="Female"
+                selected={formGender === "female"}
+                onPress={() => setFormGender("female")}
+                colors={colors}
+              />
+              <Pressable
+                onPress={() => setFormGender(null)}
+                style={[
+                  styles.genderClear,
+                  { opacity: formGender ? 1 : 0.5 }
+                ]}
+              >
+                <Feather name="x" size={16} color={colors.textTertiary} />
+              </Pressable>
+            </View>
+          </View>
+
+          {canEditHandicap ? (
             <>
               <View style={styles.formField}>
                 <AppText variant="captionBold" style={styles.label}>WHS Number (optional)</AppText>
@@ -281,7 +398,7 @@ export default function MemberDetailScreen() {
               </View>
 
               <View style={styles.formField}>
-                <AppText variant="captionBold" style={styles.label}>Handicap Index (optional)</AppText>
+                <AppText variant="captionBold" style={styles.label}>Handicap Index</AppText>
                 <AppInput
                   placeholder="e.g. 12.4"
                   value={formHandicapIndex}
@@ -327,6 +444,17 @@ export default function MemberDetailScreen() {
             </View>
           </View>
 
+          {/* Gender */}
+          <View style={styles.infoRow}>
+            <View style={[styles.infoIcon, { backgroundColor: colors.backgroundTertiary }]}>
+              <Feather name="user" size={16} color={colors.textSecondary} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <AppText variant="caption" color="tertiary">Gender</AppText>
+              <AppText variant="body">{formatGender(member.gender ?? null)}</AppText>
+            </View>
+          </View>
+
           {/* WHS Number */}
           <View style={styles.infoRow}>
             <View style={[styles.infoIcon, { backgroundColor: colors.backgroundTertiary }]}>
@@ -349,9 +477,9 @@ export default function MemberDetailScreen() {
               <AppText variant="caption" color="tertiary">Handicap Index</AppText>
               <AppText variant="body">
                 {member.handicapIndex != null
-                  ? member.handicapIndex
+                  ? Number(member.handicapIndex).toFixed(1)
                   : member.handicap_index != null
-                  ? member.handicap_index
+                  ? Number(member.handicap_index).toFixed(1)
                   : "Not set"}
               </AppText>
             </View>
@@ -420,17 +548,38 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
+  badgeRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.xs,
+    marginTop: spacing.xs,
+  },
   roleBadge: {
     paddingHorizontal: spacing.sm,
     paddingVertical: spacing.xs,
     borderRadius: radius.sm,
-    marginTop: spacing.xs,
   },
   formField: {
     marginBottom: spacing.base,
   },
   label: {
     marginBottom: spacing.xs,
+  },
+  genderRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+  },
+  genderOption: {
+    flex: 1,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.base,
+    borderRadius: radius.sm,
+    borderWidth: 1,
+    alignItems: "center",
+  },
+  genderClear: {
+    padding: spacing.sm,
   },
   buttonRow: {
     flexDirection: "row",
