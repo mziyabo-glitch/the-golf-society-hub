@@ -2,6 +2,7 @@
 // Member management - uses singleton supabase client
 // IMPORTANT: Only send columns that exist in the members table:
 // id, society_id, user_id, name, email, role, paid, amount_paid_pence, paid_at, created_at, display_name, whs_number, handicap_index, gender
+// annual_fee_paid, annual_fee_paid_at, annual_fee_note
 
 import { supabase } from "@/lib/supabase";
 
@@ -28,6 +29,14 @@ export type MemberDoc = {
   handicapIndex?: number | null; // camelCase alias
   // Gender for tee selection
   gender?: Gender;
+  // Annual membership fee tracking
+  annual_fee_paid?: boolean;
+  annual_fee_paid_at?: string | null;
+  annual_fee_note?: string | null;
+  // camelCase aliases for fee fields
+  annualFeePaid?: boolean;
+  annualFeePaidAt?: string | null;
+  annualFeeNote?: string | null;
 };
 
 function mapMember(row: any): MemberDoc {
@@ -38,6 +47,10 @@ function mapMember(row: any): MemberDoc {
     whsNumber: row.whs_number ?? null,
     handicapIndex: row.handicap_index ?? null,
     gender: row.gender ?? null,
+    // Map fee fields to camelCase
+    annualFeePaid: row.annual_fee_paid ?? false,
+    annualFeePaidAt: row.annual_fee_paid_at ?? null,
+    annualFeeNote: row.annual_fee_note ?? null,
   };
 }
 
@@ -577,4 +590,161 @@ export async function getManCoRoleHolders(societyId: string): Promise<ManCoDetai
     treasurer: roleMap.treasurer.length > 0 ? roleMap.treasurer.join(", ") : null,
     handicapper: roleMap.handicapper.length > 0 ? roleMap.handicapper.join(", ") : null,
   };
+}
+
+// =====================================================
+// ANNUAL MEMBERSHIP FEE FUNCTIONS (Captain/Treasurer only)
+// =====================================================
+
+/**
+ * Update a member's annual fee payment status
+ * Only Captain or Treasurer can perform this action (enforced by RLS)
+ *
+ * @param memberId - The member to update
+ * @param paid - Whether the fee is paid
+ * @param note - Optional note about the payment
+ * @returns The updated member data
+ */
+export async function updateMemberFeeStatus(
+  memberId: string,
+  paid: boolean,
+  note?: string | null
+): Promise<MemberDoc> {
+  console.log("[memberRepo] updateMemberFeeStatus:", { memberId, paid, note });
+
+  if (!memberId) throw new Error("updateMemberFeeStatus: missing memberId");
+
+  const payload: Record<string, unknown> = {
+    annual_fee_paid: paid,
+    annual_fee_paid_at: paid ? new Date().toISOString().split("T")[0] : null,
+  };
+
+  // Only update note if provided (allow explicit null to clear)
+  if (note !== undefined) {
+    payload.annual_fee_note = note;
+  }
+
+  const { error } = await supabase
+    .from("members")
+    .update(payload)
+    .eq("id", memberId);
+
+  if (error) {
+    console.error("[memberRepo] updateMemberFeeStatus failed:", {
+      message: error.message,
+      details: error.details,
+      hint: error.hint,
+      code: error.code,
+    });
+
+    // Handle RLS permission errors
+    if (error.code === "42501" || error.message?.includes("row-level security")) {
+      throw new Error("Only Captain or Treasurer can update fee status.");
+    }
+
+    throw new Error(error.message || "Failed to update fee status");
+  }
+
+  // Fetch and return updated member
+  const updated = await getMember(memberId);
+  if (!updated) {
+    throw new Error("Member not found after update");
+  }
+
+  console.log("[memberRepo] updateMemberFeeStatus success:", memberId);
+  return updated;
+}
+
+/**
+ * Get fee summary for a society
+ * Returns counts and totals for membership fee tracking
+ *
+ * @param societyId - The society to get summary for
+ * @param annualFeePence - The annual fee amount in pence
+ * @returns Fee summary with counts and amounts
+ */
+export type FeeSummary = {
+  totalMembers: number;
+  paidCount: number;
+  unpaidCount: number;
+  expectedPence: number;  // totalMembers * annualFeePence
+  receivedPence: number;  // paidCount * annualFeePence
+  outstandingPence: number; // unpaidCount * annualFeePence
+};
+
+export async function getMemberFeeSummary(
+  societyId: string,
+  annualFeePence: number
+): Promise<FeeSummary> {
+  console.log("[memberRepo] getMemberFeeSummary:", { societyId, annualFeePence });
+
+  const { data, error } = await supabase
+    .from("members")
+    .select("id, annual_fee_paid")
+    .eq("society_id", societyId);
+
+  if (error) {
+    console.error("[memberRepo] getMemberFeeSummary failed:", {
+      message: error.message,
+      details: error.details,
+      hint: error.hint,
+      code: error.code,
+    });
+    throw new Error(error.message || "Failed to get fee summary");
+  }
+
+  const members = data || [];
+  const totalMembers = members.length;
+  const paidCount = members.filter((m) => m.annual_fee_paid === true).length;
+  const unpaidCount = totalMembers - paidCount;
+
+  const fee = annualFeePence || 0;
+
+  return {
+    totalMembers,
+    paidCount,
+    unpaidCount,
+    expectedPence: totalMembers * fee,
+    receivedPence: paidCount * fee,
+    outstandingPence: unpaidCount * fee,
+  };
+}
+
+/**
+ * Reset all members' annual fee status to unpaid
+ * Useful at the start of a new membership year
+ * Only Captain or Treasurer can perform this action (enforced by RLS)
+ *
+ * @param societyId - The society to reset fees for
+ */
+export async function resetAllMemberFees(societyId: string): Promise<void> {
+  console.log("[memberRepo] resetAllMemberFees:", societyId);
+
+  if (!societyId) throw new Error("resetAllMemberFees: missing societyId");
+
+  const { error } = await supabase
+    .from("members")
+    .update({
+      annual_fee_paid: false,
+      annual_fee_paid_at: null,
+      annual_fee_note: null,
+    })
+    .eq("society_id", societyId);
+
+  if (error) {
+    console.error("[memberRepo] resetAllMemberFees failed:", {
+      message: error.message,
+      details: error.details,
+      hint: error.hint,
+      code: error.code,
+    });
+
+    if (error.code === "42501" || error.message?.includes("row-level security")) {
+      throw new Error("Only Captain or Treasurer can reset fee status.");
+    }
+
+    throw new Error(error.message || "Failed to reset fees");
+  }
+
+  console.log("[memberRepo] resetAllMemberFees success");
 }

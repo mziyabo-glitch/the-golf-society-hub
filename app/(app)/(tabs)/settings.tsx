@@ -338,6 +338,42 @@ export default function SettingsScreen() {
         </>
       )}
 
+      {/* Treasurer Tools - Only visible to Captain/Treasurer */}
+      {permissions.canAccessFinance && (
+        <>
+          <AppText variant="h2" style={styles.sectionTitle}>Treasurer</AppText>
+          <AppCard padding="sm">
+            <Pressable
+              style={({ pressed }) => [styles.linkRow, { opacity: pressed ? 0.7 : 1 }]}
+              onPress={() => router.push("/(app)/membership-fees")}
+            >
+              <View style={[styles.linkIcon, { backgroundColor: colors.success + "20" }]}>
+                <Feather name="credit-card" size={16} color={colors.success} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <AppText variant="body">Membership Fees</AppText>
+                <AppText variant="small" color="secondary">Track annual fee payments</AppText>
+              </View>
+              <Feather name="chevron-right" size={18} color={colors.textTertiary} />
+            </Pressable>
+
+            <Pressable
+              style={({ pressed }) => [styles.linkRow, { opacity: pressed ? 0.7 : 1 }]}
+              onPress={() => router.push("/(app)/event-finance")}
+            >
+              <View style={[styles.linkIcon, { backgroundColor: colors.info + "20" }]}>
+                <Feather name="bar-chart-2" size={16} color={colors.info} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <AppText variant="body">Event Finances</AppText>
+                <AppText variant="small" color="secondary">Income, costs, and P&L per event</AppText>
+              </View>
+              <Feather name="chevron-right" size={18} color={colors.textTertiary} />
+            </Pressable>
+          </AppCard>
+        </>
+      )}
+
       {/* Quick Links */}
       <AppText variant="h2" style={styles.sectionTitle}>Quick Actions</AppText>
       <AppCard padding="sm">

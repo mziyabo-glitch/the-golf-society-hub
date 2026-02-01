@@ -64,6 +64,11 @@ export type EventDoc = {
   // Competition holes
   nearestPinHoles?: number[] | null;
   longestDriveHoles?: number[] | null;
+  // Finance fields (Treasurer)
+  income_pence?: number | null;
+  costs_pence?: number | null;
+  incomePence?: number | null;  // camelCase alias
+  costsPence?: number | null;   // camelCase alias
   [key: string]: unknown;
 };
 
@@ -101,6 +106,9 @@ function mapEvent(row: any): EventDoc {
     // Map competition holes
     nearestPinHoles: row.nearest_pin_holes ?? null,
     longestDriveHoles: row.longest_drive_holes ?? null,
+    // Map finance fields
+    incomePence: row.income_pence ?? null,
+    costsPence: row.costs_pence ?? null,
   };
 }
 
@@ -135,7 +143,7 @@ export async function getEvent(eventId: string): Promise<EventDoc | null> {
 
   const { data, error } = await supabase
     .from("events")
-    .select("id,name,date,format,classification,course_name,status,is_completed,winner_name,player_ids,created_at,created_by,society_id,tee_name,par,course_rating,slope_rating,handicap_allowance,ladies_tee_name,ladies_par,ladies_course_rating,ladies_slope_rating,nearest_pin_holes,longest_drive_holes")
+    .select("id,name,date,format,classification,course_name,status,is_completed,winner_name,player_ids,created_at,created_by,society_id,tee_name,par,course_rating,slope_rating,handicap_allowance,ladies_tee_name,ladies_par,ladies_course_rating,ladies_slope_rating,nearest_pin_holes,longest_drive_holes,income_pence,costs_pence")
     .eq("id", eventId)
     .maybeSingle();
 
@@ -334,4 +342,132 @@ export async function deleteEvent(eventId: string): Promise<void> {
     });
     throw new Error(error.message || "Failed to delete event");
   }
+}
+
+// =====================================================
+// EVENT FINANCE FUNCTIONS (Captain/Treasurer only)
+// =====================================================
+
+/**
+ * Update event finance (income and costs)
+ * Only Captain or Treasurer can perform this action (enforced by RLS)
+ *
+ * @param eventId - The event to update
+ * @param incomePence - Total income in pence (null to clear)
+ * @param costsPence - Total costs in pence (null to clear)
+ * @returns The updated event data
+ */
+export async function updateEventFinance(
+  eventId: string,
+  incomePence: number | null,
+  costsPence: number | null
+): Promise<EventDoc> {
+  console.log("[eventRepo] updateEventFinance:", { eventId, incomePence, costsPence });
+
+  if (!eventId) throw new Error("updateEventFinance: missing eventId");
+
+  const payload: Record<string, unknown> = {
+    income_pence: incomePence,
+    costs_pence: costsPence,
+    updated_at: new Date().toISOString(),
+  };
+
+  const { error } = await supabase
+    .from("events")
+    .update(payload)
+    .eq("id", eventId);
+
+  if (error) {
+    console.error("[eventRepo] updateEventFinance failed:", {
+      message: error.message,
+      details: error.details,
+      hint: error.hint,
+      code: error.code,
+    });
+
+    // Handle RLS permission errors
+    if (error.code === "42501" || error.message?.includes("row-level security")) {
+      throw new Error("Only Captain or Treasurer can update event finances.");
+    }
+
+    throw new Error(error.message || "Failed to update event finances");
+  }
+
+  // Fetch and return updated event
+  const updated = await getEvent(eventId);
+  if (!updated) {
+    throw new Error("Event not found after update");
+  }
+
+  console.log("[eventRepo] updateEventFinance success:", eventId);
+  return updated;
+}
+
+/**
+ * Finance summary for a single event
+ */
+export type EventFinanceSummary = {
+  eventId: string;
+  eventName: string;
+  eventDate: string | null;
+  incomePence: number;
+  costsPence: number;
+  netPence: number;  // income - costs
+};
+
+/**
+ * Get finance summary for all events in a society
+ * Returns events with finance data (where income or costs are set)
+ *
+ * @param societyId - The society to get summary for
+ * @returns Array of event finance summaries
+ */
+export async function getEventsFinanceSummary(societyId: string): Promise<{
+  events: EventFinanceSummary[];
+  totalIncomePence: number;
+  totalCostsPence: number;
+  totalNetPence: number;
+}> {
+  console.log("[eventRepo] getEventsFinanceSummary:", societyId);
+
+  const { data, error } = await supabase
+    .from("events")
+    .select("id, name, date, income_pence, costs_pence")
+    .eq("society_id", societyId)
+    .order("date", { ascending: false });
+
+  if (error) {
+    console.error("[eventRepo] getEventsFinanceSummary failed:", {
+      message: error.message,
+      details: error.details,
+      hint: error.hint,
+      code: error.code,
+    });
+    throw new Error(error.message || "Failed to get event finance summary");
+  }
+
+  const events: EventFinanceSummary[] = (data || []).map((row) => {
+    const income = row.income_pence ?? 0;
+    const costs = row.costs_pence ?? 0;
+    return {
+      eventId: row.id,
+      eventName: row.name,
+      eventDate: row.date ?? null,
+      incomePence: income,
+      costsPence: costs,
+      netPence: income - costs,
+    };
+  });
+
+  // Calculate totals
+  const totalIncomePence = events.reduce((sum, e) => sum + e.incomePence, 0);
+  const totalCostsPence = events.reduce((sum, e) => sum + e.costsPence, 0);
+  const totalNetPence = totalIncomePence - totalCostsPence;
+
+  return {
+    events,
+    totalIncomePence,
+    totalCostsPence,
+    totalNetPence,
+  };
 }
