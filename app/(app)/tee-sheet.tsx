@@ -381,11 +381,7 @@ export default function TeeSheetScreen() {
 
   const selectedPlayerCount = groups.reduce((sum, g) => sum + g.players.length, 0);
   const groupCount = groups.filter((g) => g.players.length > 0).length;
-
-  // Count men and women
-  const menCount = groups.reduce((sum, g) => sum + g.players.filter((p) => p.gender === "male").length, 0);
   const womenCount = groups.reduce((sum, g) => sum + g.players.filter((p) => p.gender === "female").length, 0);
-  const unspecifiedCount = selectedPlayerCount - menCount - womenCount;
 
   // Check if we have tee settings configured
   const hasMenTees = selectedEvent?.par != null && selectedEvent?.slopeRating != null;
@@ -493,9 +489,6 @@ export default function TeeSheetScreen() {
                 </View>
                 <AppText variant="small" color="tertiary" style={{ marginTop: spacing.xs }}>
                   {selectedPlayerCount} players → {groupCount} group{groupCount !== 1 ? "s" : ""}
-                  {menCount > 0 || womenCount > 0
-                    ? ` (${menCount}M, ${womenCount}F${unspecifiedCount > 0 ? `, ${unspecifiedCount}?` : ""})`
-                    : ""}
                 </AppText>
               </AppCard>
 
@@ -533,21 +526,9 @@ export default function TeeSheetScreen() {
                         group.players.map((player) => (
                           <View key={player.id} style={styles.playerRow}>
                             <View style={styles.playerInfo}>
-                              <View style={styles.playerNameRow}>
-                                <AppText variant="body" numberOfLines={1} style={{ flex: 1 }}>
-                                  {player.name}
-                                </AppText>
-                                {player.gender && (
-                                  <View style={[
-                                    styles.genderBadge,
-                                    { backgroundColor: player.gender === "female" ? colors.error + "20" : colors.info + "20" }
-                                  ]}>
-                                    <AppText variant="small" style={{ color: player.gender === "female" ? colors.error : colors.info }}>
-                                      {player.gender}
-                                    </AppText>
-                                  </View>
-                                )}
-                              </View>
+                              <AppText variant="body" numberOfLines={1}>
+                                {player.name}
+                              </AppText>
                               <AppText variant="caption" color="secondary">
                                 HI: {player.handicapIndex != null ? player.handicapIndex.toFixed(1) : "-"}
                               </AppText>
@@ -597,10 +578,7 @@ export default function TeeSheetScreen() {
                     <View key={idx} style={[styles.groupSummary, idx > 0 && { borderTopWidth: 1, borderTopColor: colors.border }]}>
                       <AppText variant="caption" color="secondary">Group {group.groupNumber}</AppText>
                       <AppText variant="body" numberOfLines={1}>
-                        {group.players.map((p) => {
-                          const genderIcon = p.gender === "female" ? "♀" : p.gender === "male" ? "♂" : "";
-                          return `${p.name}${genderIcon}`;
-                        }).join(", ")}
+                        {group.players.map((p) => p.name).join(", ")}
                       </AppText>
                     </View>
                   ))}
@@ -783,16 +761,6 @@ const styles = StyleSheet.create({
   },
   playerInfo: {
     flex: 1,
-  },
-  playerNameRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing.xs,
-  },
-  genderBadge: {
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: radius.sm,
   },
   moveButtons: {
     flexDirection: "row",
