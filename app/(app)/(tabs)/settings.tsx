@@ -345,6 +345,20 @@ export default function SettingsScreen() {
           <AppCard padding="sm">
             <Pressable
               style={({ pressed }) => [styles.linkRow, { opacity: pressed ? 0.7 : 1 }]}
+              onPress={() => router.push("/(app)/treasurer")}
+            >
+              <View style={[styles.linkIcon, { backgroundColor: colors.primary + "20" }]}>
+                <Feather name="book" size={16} color={colors.primary} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <AppText variant="body">Society Ledger</AppText>
+                <AppText variant="small" color="secondary">Full financial ledger with running balance</AppText>
+              </View>
+              <Feather name="chevron-right" size={18} color={colors.textTertiary} />
+            </Pressable>
+
+            <Pressable
+              style={({ pressed }) => [styles.linkRow, { opacity: pressed ? 0.7 : 1 }]}
               onPress={() => router.push("/(app)/membership-fees")}
             >
               <View style={[styles.linkIcon, { backgroundColor: colors.success + "20" }]}>
