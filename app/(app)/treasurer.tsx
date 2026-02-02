@@ -1,15 +1,15 @@
 /**
  * Treasurer Ledger Screen
  *
- * Allows Captain/Treasurer to:
- * - View opening balance, income, costs, current balance
- * - View itemised ledger entries with running balance
- * - Add/Edit/Delete entries
- * - Set opening balance
- * - Export to PDF
+ * Premium UI for society financial management.
+ * Features:
+ * - 2x2 StatCard grid for key metrics
+ * - Bank-statement style ledger list
+ * - Polished Add/Edit entry modal with quick date chips
+ * - Toast feedback on actions
  */
 
-import { useCallback, useState } from "react";
+import { useCallback, useState, useMemo } from "react";
 import {
   StyleSheet,
   View,
@@ -17,8 +17,8 @@ import {
   Pressable,
   ScrollView,
   Modal,
-  TextInput,
   Platform,
+  KeyboardAvoidingView,
 } from "react-native";
 import { useRouter } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
@@ -30,7 +30,9 @@ import { Screen } from "@/components/ui/Screen";
 import { AppText } from "@/components/ui/AppText";
 import { AppCard } from "@/components/ui/AppCard";
 import { AppInput } from "@/components/ui/AppInput";
-import { PrimaryButton, SecondaryButton, DestructiveButton } from "@/components/ui/Button";
+import { StatCard } from "@/components/ui/StatCard";
+import { Toast } from "@/components/ui/Toast";
+import { PrimaryButton, SecondaryButton } from "@/components/ui/Button";
 import { LoadingState } from "@/components/ui/LoadingState";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { useBootstrap } from "@/lib/useBootstrap";
@@ -63,9 +65,22 @@ type EntryFormData = {
   description: string;
 };
 
+type FormErrors = {
+  amount?: string;
+  description?: string;
+  date?: string;
+};
+
+const getToday = () => new Date().toISOString().split("T")[0];
+const getYesterday = () => {
+  const d = new Date();
+  d.setDate(d.getDate() - 1);
+  return d.toISOString().split("T")[0];
+};
+
 const initialFormData: EntryFormData = {
   entryType: "income",
-  entryDate: new Date().toISOString().split("T")[0],
+  entryDate: getToday(),
   amountInput: "",
   description: "",
 };
@@ -88,12 +103,22 @@ export default function TreasurerScreen() {
   // Form state
   const [openingBalanceInput, setOpeningBalanceInput] = useState("");
   const [entryForm, setEntryForm] = useState<EntryFormData>(initialFormData);
+  const [formErrors, setFormErrors] = useState<FormErrors>({});
   const [saving, setSaving] = useState(false);
+
+  // Toast state
+  const [toast, setToast] = useState({ visible: false, message: "", type: "success" as const });
 
   const permissions = getPermissionsForMember(member as any);
   const canManageFinance = permissions.canAccessFinance;
 
-  // Load data
+  // Entries sorted newest first for display
+  const sortedEntries = useMemo(() => {
+    return [...entriesWithBalance].reverse();
+  }, [entriesWithBalance]);
+
+  // ========== DATA LOADING ==========
+
   const loadData = useCallback(async () => {
     if (!societyId) return;
 
@@ -103,7 +128,6 @@ export default function TreasurerScreen() {
       const data = await getFinanceSummary(societyId, openingBalance);
       setSummary(data);
 
-      // Calculate running balances
       const withBalances = calculateRunningBalances(data.entries, openingBalance);
       setEntriesWithBalance(withBalances);
     } catch (err: any) {
@@ -114,7 +138,6 @@ export default function TreasurerScreen() {
     }
   }, [societyId]);
 
-  // Refresh on focus
   useFocusEffect(
     useCallback(() => {
       if (societyId) {
@@ -122,6 +145,37 @@ export default function TreasurerScreen() {
       }
     }, [societyId, loadData])
   );
+
+  // ========== VALIDATION ==========
+
+  const validateForm = (): boolean => {
+    const errors: FormErrors = {};
+
+    // Amount validation
+    const pence = parseCurrencyToPence(entryForm.amountInput);
+    if (!entryForm.amountInput.trim()) {
+      errors.amount = "Amount is required";
+    } else if (pence === null || pence <= 0) {
+      errors.amount = "Enter a valid amount greater than 0";
+    }
+
+    // Description validation
+    if (!entryForm.description.trim()) {
+      errors.description = "Description is required";
+    } else if (entryForm.description.trim().length < 2) {
+      errors.description = "Description too short";
+    }
+
+    // Date validation
+    if (!entryForm.entryDate) {
+      errors.date = "Date is required";
+    } else if (!/^\d{4}-\d{2}-\d{2}$/.test(entryForm.entryDate)) {
+      errors.date = "Use format YYYY-MM-DD";
+    }
+
+    setFormErrors(errors);
+    return Object.keys(errors).length === 0;
+  };
 
   // ========== OPENING BALANCE ==========
 
@@ -141,6 +195,7 @@ export default function TreasurerScreen() {
     try {
       await updateOpeningBalance(societyId!, pence);
       setShowOpeningBalanceModal(false);
+      setToast({ visible: true, message: "Opening balance updated", type: "success" });
       await loadData();
     } catch (err: any) {
       console.error("[Treasurer] handleSaveOpeningBalance error:", err);
@@ -154,7 +209,8 @@ export default function TreasurerScreen() {
 
   const handleOpenAddEntry = () => {
     setEditingEntry(null);
-    setEntryForm(initialFormData);
+    setEntryForm({ ...initialFormData, entryDate: getToday() });
+    setFormErrors({});
     setShowEntryModal(true);
   };
 
@@ -166,42 +222,26 @@ export default function TreasurerScreen() {
       amountInput: formatPenceToPoundsInput(entry.amount_pence),
       description: entry.description,
     });
+    setFormErrors({});
     setShowEntryModal(true);
   };
 
   const handleSaveEntry = async () => {
-    // Validate
-    const amountPence = parseCurrencyToPence(entryForm.amountInput);
-    if (amountPence === null || amountPence <= 0) {
-      Alert.alert("Invalid Amount", "Please enter a valid amount greater than zero.");
-      return;
-    }
+    if (!validateForm()) return;
 
-    if (!entryForm.description.trim()) {
-      Alert.alert("Missing Description", "Please enter a description.");
-      return;
-    }
-
-    if (!entryForm.entryDate) {
-      Alert.alert("Missing Date", "Please enter a date.");
-      return;
-    }
+    const amountPence = parseCurrencyToPence(entryForm.amountInput)!;
 
     setSaving(true);
     try {
-      console.log("[Treasurer] handleSaveEntry - entryForm:", JSON.stringify(entryForm));
-      console.log("[Treasurer] handleSaveEntry - entryType value:", entryForm.entryType);
-
       if (editingEntry) {
-        // Update existing
         await updateFinanceEntry(editingEntry.id, {
           entry_type: entryForm.entryType,
           entry_date: entryForm.entryDate,
           amount_pence: amountPence,
           description: entryForm.description.trim(),
         });
+        setToast({ visible: true, message: "Entry updated", type: "success" });
       } else {
-        // Create new
         const newEntry = {
           society_id: societyId!,
           entry_type: entryForm.entryType,
@@ -209,8 +249,8 @@ export default function TreasurerScreen() {
           amount_pence: amountPence,
           description: entryForm.description.trim(),
         };
-        console.log("[Treasurer] Creating entry with:", JSON.stringify(newEntry));
         await createFinanceEntry(newEntry);
+        setToast({ visible: true, message: "Entry added", type: "success" });
       }
       setShowEntryModal(false);
       await loadData();
@@ -227,7 +267,7 @@ export default function TreasurerScreen() {
   const handleDeleteEntry = (entry: FinanceEntryDoc) => {
     Alert.alert(
       "Delete Entry",
-      `Are you sure you want to delete this ${entry.entry_type} entry for ${formatPenceToGBP(entry.amount_pence)}?`,
+      `Delete this ${entry.entry_type} of ${formatPenceToGBP(entry.amount_pence)}?`,
       [
         { text: "Cancel", style: "cancel" },
         {
@@ -236,6 +276,7 @@ export default function TreasurerScreen() {
           onPress: async () => {
             try {
               await deleteFinanceEntry(entry.id);
+              setToast({ visible: true, message: "Entry deleted", type: "success" });
               await loadData();
             } catch (err: any) {
               console.error("[Treasurer] handleDeleteEntry error:", err);
@@ -263,20 +304,12 @@ export default function TreasurerScreen() {
         currentBalancePence: summary.currentBalancePence,
       });
 
-      // On web, use printAsync which opens print dialog
       if (Platform.OS === "web") {
         await Print.printAsync({ html });
         return;
       }
 
-      // On native, generate PDF file and share
-      const { uri } = await Print.printToFileAsync({
-        html,
-        base64: false,
-      });
-
-      console.log("[Treasurer] PDF file created at:", uri);
-
+      const { uri } = await Print.printToFileAsync({ html, base64: false });
       const canShare = await Sharing.isAvailableAsync();
       if (canShare) {
         await Sharing.shareAsync(uri, {
@@ -285,7 +318,6 @@ export default function TreasurerScreen() {
           UTI: "com.adobe.pdf",
         });
       } else {
-        // Fallback to print if sharing not available
         await Print.printAsync({ html });
       }
     } catch (err: any) {
@@ -323,112 +355,131 @@ export default function TreasurerScreen() {
     );
   }
 
+  const currentBalance = summary?.currentBalancePence ?? 0;
+  const balanceVariant = currentBalance >= 0 ? "success" : "error";
+
   return (
     <Screen>
+      {/* Toast */}
+      <Toast
+        visible={toast.visible}
+        message={toast.message}
+        type={toast.type}
+        onHide={() => setToast((t) => ({ ...t, visible: false }))}
+      />
+
       {/* Header */}
       <View style={styles.header}>
-        <SecondaryButton onPress={() => router.back()} size="sm">
-          <Feather name="arrow-left" size={16} color={colors.text} /> Back
-        </SecondaryButton>
-        <SecondaryButton onPress={handleExportPdf} size="sm">
-          <Feather name="download" size={16} color={colors.text} /> Export PDF
-        </SecondaryButton>
+        <Pressable
+          style={({ pressed }) => [styles.backButton, { opacity: pressed ? 0.7 : 1 }]}
+          onPress={() => router.back()}
+        >
+          <Feather name="arrow-left" size={20} color={colors.text} />
+        </Pressable>
+        <AppText variant="h1" style={styles.title}>Treasurer</AppText>
+        <Pressable
+          style={({ pressed }) => [styles.exportButton, { opacity: pressed ? 0.7 : 1 }]}
+          onPress={handleExportPdf}
+        >
+          <Feather name="download" size={18} color={colors.primary} />
+          <AppText variant="small" style={{ color: colors.primary, marginLeft: 4 }}>PDF</AppText>
+        </Pressable>
       </View>
 
-      <AppText variant="title" style={styles.title}>
-        <Feather name="book" size={24} color={colors.primary} /> Treasurer
-      </AppText>
-
       <ScrollView showsVerticalScrollIndicator={false}>
-        {/* Summary Cards */}
-        <AppCard style={styles.summaryCard}>
-          <View style={styles.summaryGrid}>
-            <Pressable
-              style={styles.summaryItem}
-              onPress={handleOpenOpeningBalanceModal}
-            >
-              <AppText variant="caption" color="secondary">Opening Balance</AppText>
-              <AppText variant="h2">{formatPenceToGBP(summary?.openingBalancePence ?? 0)}</AppText>
-              <AppText variant="small" color="tertiary">Tap to edit</AppText>
-            </Pressable>
-            <View style={styles.summaryItem}>
-              <AppText variant="caption" color="secondary">Total Income</AppText>
-              <AppText variant="h2" style={{ color: colors.success }}>
-                {formatPenceToGBP(summary?.totalIncomePence ?? 0)}
-              </AppText>
-            </View>
-            <View style={styles.summaryItem}>
-              <AppText variant="caption" color="secondary">Total Costs</AppText>
-              <AppText variant="h2" style={{ color: colors.error }}>
-                {formatPenceToGBP(summary?.totalCostsPence ?? 0)}
-              </AppText>
-            </View>
-            <View style={styles.summaryItem}>
-              <AppText variant="caption" color="secondary">Current Balance</AppText>
-              <AppText
-                variant="h1"
-                style={{
-                  color: (summary?.currentBalancePence ?? 0) >= 0 ? colors.success : colors.error,
-                }}
-              >
-                {formatPenceToGBP(summary?.currentBalancePence ?? 0)}
-              </AppText>
-            </View>
-          </View>
-        </AppCard>
+        {/* 2x2 Stat Cards Grid */}
+        <View style={styles.statsGrid}>
+          <StatCard
+            label="Opening Balance"
+            value={formatPenceToGBP(summary?.openingBalancePence ?? 0)}
+            hint="Tap to edit"
+            variant="muted"
+            onPress={handleOpenOpeningBalanceModal}
+          />
+          <StatCard
+            label="Total Income"
+            value={formatPenceToGBP(summary?.totalIncomePence ?? 0)}
+            variant="success"
+            icon={<Feather name="trending-up" size={12} color={colors.success} />}
+          />
+          <StatCard
+            label="Total Costs"
+            value={formatPenceToGBP(summary?.totalCostsPence ?? 0)}
+            variant="error"
+            icon={<Feather name="trending-down" size={12} color={colors.error} />}
+          />
+          <StatCard
+            label="Current Balance"
+            value={formatPenceToGBP(currentBalance)}
+            variant={balanceVariant}
+            emphasis
+          />
+        </View>
 
         {/* Add Entry Button */}
-        <View style={styles.addButtonRow}>
-          <AppText variant="h2">Ledger Entries</AppText>
+        <View style={styles.sectionHeader}>
+          <AppText variant="h2">Transactions</AppText>
           <PrimaryButton onPress={handleOpenAddEntry} size="sm">
-            <Feather name="plus" size={16} color={colors.textInverse} /> Add Entry
+            <Feather name="plus" size={16} color="#fff" /> Add
           </PrimaryButton>
         </View>
 
-        {/* Entries List */}
-        {entriesWithBalance.length === 0 ? (
-          <AppCard>
-            <EmptyState
-              icon={<Feather name="inbox" size={32} color={colors.textTertiary} />}
-              title="No entries yet"
-              message="Add your first entry to start tracking finances."
-            />
-            <View style={{ marginTop: spacing.base, alignItems: "center" }}>
-              <PrimaryButton onPress={handleOpenAddEntry}>
-                <Feather name="plus" size={16} color={colors.textInverse} /> Add First Entry
+        {/* Ledger List - Bank Statement Style */}
+        {sortedEntries.length === 0 ? (
+          <AppCard style={styles.emptyCard}>
+            <View style={styles.emptyContent}>
+              <View style={[styles.emptyIcon, { backgroundColor: colors.backgroundTertiary }]}>
+                <Feather name="inbox" size={32} color={colors.textTertiary} />
+              </View>
+              <AppText variant="body" color="secondary" style={styles.emptyText}>
+                No transactions yet
+              </AppText>
+              <AppText variant="small" color="tertiary" style={styles.emptyHint}>
+                Add your first income or expense to get started
+              </AppText>
+              <PrimaryButton onPress={handleOpenAddEntry} size="sm" style={{ marginTop: spacing.base }}>
+                <Feather name="plus" size={16} color="#fff" /> Add First Entry
               </PrimaryButton>
             </View>
           </AppCard>
         ) : (
-          <>
-            {/* Table Header */}
-            <View style={[styles.tableHeader, { backgroundColor: colors.backgroundTertiary }]}>
-              <AppText variant="small" color="secondary" style={styles.colDate}>Date</AppText>
-              <AppText variant="small" color="secondary" style={styles.colType}>Type</AppText>
-              <AppText variant="small" color="secondary" style={styles.colDesc}>Description</AppText>
-              <AppText variant="small" color="secondary" style={styles.colAmount}>Amount</AppText>
-              <AppText variant="small" color="secondary" style={styles.colBalance}>Balance</AppText>
-              <View style={styles.colActions} />
-            </View>
-
-            {entriesWithBalance.map((entry) => (
-              <AppCard key={entry.id} style={styles.entryCard} padding="sm">
-                <Pressable
-                  style={styles.entryRow}
-                  onPress={() => handleOpenEditEntry(entry)}
-                >
-                  <AppText variant="small" style={styles.colDate}>
-                    {formatDate(entry.entry_date)}
+          <View style={styles.ledgerList}>
+            {sortedEntries.map((entry, index) => (
+              <Pressable
+                key={entry.id}
+                style={({ pressed }) => [
+                  styles.ledgerRow,
+                  {
+                    backgroundColor: pressed ? colors.backgroundTertiary : colors.surface,
+                    borderBottomColor: colors.border,
+                    borderBottomWidth: index < sortedEntries.length - 1 ? 1 : 0,
+                  },
+                ]}
+                onPress={() => handleOpenEditEntry(entry)}
+                onLongPress={() => handleDeleteEntry(entry)}
+              >
+                {/* Date Column */}
+                <View style={styles.dateCol}>
+                  <AppText variant="bodyBold" style={{ color: colors.text }}>
+                    {formatDayMonth(entry.entry_date)}
                   </AppText>
-                  <View style={styles.colType}>
+                  <AppText variant="small" color="tertiary">
+                    {formatYear(entry.entry_date)}
+                  </AppText>
+                </View>
+
+                {/* Description & Type */}
+                <View style={styles.descCol}>
+                  <AppText variant="body" numberOfLines={1} style={{ color: colors.text }}>
+                    {entry.description}
+                  </AppText>
+                  <View style={styles.typeBadgeRow}>
                     <View
                       style={[
                         styles.typeBadge,
                         {
                           backgroundColor:
-                            entry.entry_type === "income"
-                              ? colors.success + "20"
-                              : colors.error + "20",
+                            entry.entry_type === "income" ? colors.success + "15" : colors.error + "15",
                         },
                       ]}
                     >
@@ -436,198 +487,242 @@ export default function TreasurerScreen() {
                         variant="small"
                         style={{
                           color: entry.entry_type === "income" ? colors.success : colors.error,
+                          fontWeight: "600",
                         }}
                       >
-                        {entry.entry_type === "income" ? "IN" : "OUT"}
+                        {entry.entry_type === "income" ? "Income" : "Expense"}
                       </AppText>
                     </View>
                   </View>
-                  <AppText variant="body" numberOfLines={1} style={styles.colDesc}>
-                    {entry.description}
-                  </AppText>
+                </View>
+
+                {/* Amount Column */}
+                <View style={styles.amountCol}>
                   <AppText
                     variant="bodyBold"
-                    style={[
-                      styles.colAmount,
-                      { color: entry.entry_type === "income" ? colors.success : colors.error },
-                    ]}
+                    style={{
+                      color: entry.entry_type === "income" ? colors.success : colors.error,
+                      textAlign: "right",
+                    }}
                   >
                     {entry.entry_type === "income" ? "+" : "-"}
                     {formatPenceToGBP(entry.amount_pence)}
                   </AppText>
-                  <AppText
-                    variant="body"
-                    style={[
-                      styles.colBalance,
-                      { color: entry.runningBalancePence >= 0 ? colors.text : colors.error },
-                    ]}
-                  >
-                    {formatPenceToGBP(entry.runningBalancePence)}
-                  </AppText>
-                  <Pressable
-                    style={styles.colActions}
-                    onPress={() => handleDeleteEntry(entry)}
-                    hitSlop={8}
-                  >
-                    <Feather name="trash-2" size={16} color={colors.error} />
-                  </Pressable>
-                </Pressable>
-              </AppCard>
+                </View>
+              </Pressable>
             ))}
-          </>
+          </View>
         )}
 
-        <View style={{ height: spacing.xl }} />
+        <View style={{ height: spacing.xl * 2 }} />
       </ScrollView>
 
       {/* Opening Balance Modal */}
       <Modal
         visible={showOpeningBalanceModal}
-        animationType="slide"
-        transparent={true}
+        animationType="fade"
+        transparent
         onRequestClose={() => setShowOpeningBalanceModal(false)}
       >
-        <View style={styles.modalOverlay}>
+        <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={styles.modalOverlay}>
+          <Pressable style={styles.modalBackdrop} onPress={() => setShowOpeningBalanceModal(false)} />
           <View style={[styles.modalContent, { backgroundColor: colors.surface }]}>
-            <AppText variant="h2" style={{ marginBottom: spacing.base }}>
-              Set Opening Balance
+            <AppText variant="h2" style={styles.modalTitle}>Opening Balance</AppText>
+            <AppText variant="body" color="secondary" style={styles.modalSubtitle}>
+              Set the starting balance for your ledger
             </AppText>
-            <AppText variant="body" color="secondary" style={{ marginBottom: spacing.base }}>
-              Enter the starting balance for your society ledger.
-            </AppText>
-            <View style={styles.inputWrapper}>
-              <AppText variant="h2" style={{ marginRight: spacing.xs }}>£</AppText>
+
+            <View style={styles.amountInputRow}>
+              <AppText variant="h1" style={{ color: colors.textTertiary }}>£</AppText>
               <AppInput
                 placeholder="0.00"
                 value={openingBalanceInput}
                 onChangeText={setOpeningBalanceInput}
                 keyboardType="decimal-pad"
-                style={{ flex: 1 }}
+                style={styles.amountInput}
                 autoFocus
               />
             </View>
+
             <View style={styles.modalActions}>
-              <SecondaryButton
-                onPress={() => setShowOpeningBalanceModal(false)}
-                disabled={saving}
-              >
+              <SecondaryButton onPress={() => setShowOpeningBalanceModal(false)} disabled={saving} style={{ flex: 1 }}>
                 Cancel
               </SecondaryButton>
-              <PrimaryButton onPress={handleSaveOpeningBalance} loading={saving}>
+              <PrimaryButton onPress={handleSaveOpeningBalance} loading={saving} style={{ flex: 1 }}>
                 Save
               </PrimaryButton>
             </View>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
 
       {/* Add/Edit Entry Modal */}
       <Modal
         visible={showEntryModal}
         animationType="slide"
-        transparent={true}
+        transparent
         onRequestClose={() => setShowEntryModal(false)}
       >
-        <View style={styles.modalOverlay}>
-          <View style={[styles.modalContent, { backgroundColor: colors.surface }]}>
-            <AppText variant="h2" style={{ marginBottom: spacing.base }}>
+        <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={styles.modalOverlay}>
+          <Pressable style={styles.modalBackdrop} onPress={() => setShowEntryModal(false)} />
+          <View style={[styles.modalContent, styles.entryModal, { backgroundColor: colors.surface }]}>
+            <AppText variant="h2" style={styles.modalTitle}>
               {editingEntry ? "Edit Entry" : "Add Entry"}
             </AppText>
 
             {/* Type Selector */}
-            <AppText variant="caption" color="secondary" style={{ marginBottom: spacing.xs }}>
-              Type
-            </AppText>
-            <View style={styles.segmentedControl}>
-              <Pressable
-                style={[
-                  styles.segmentButton,
-                  entryForm.entryType === "income" && {
-                    backgroundColor: colors.success,
-                  },
-                ]}
-                onPress={() => setEntryForm({ ...entryForm, entryType: "income" })}
-              >
-                <AppText
-                  variant="bodyBold"
-                  style={{
-                    color: entryForm.entryType === "income" ? "#fff" : colors.text,
-                  }}
+            <View style={styles.formGroup}>
+              <AppText variant="caption" color="secondary" style={styles.formLabel}>Type</AppText>
+              <View style={[styles.segmentedControl, { borderColor: colors.border }]}>
+                <Pressable
+                  style={[
+                    styles.segmentButton,
+                    entryForm.entryType === "income" && { backgroundColor: colors.success },
+                  ]}
+                  onPress={() => setEntryForm({ ...entryForm, entryType: "income" })}
                 >
-                  Income
-                </AppText>
-              </Pressable>
-              <Pressable
-                style={[
-                  styles.segmentButton,
-                  entryForm.entryType === "cost" && {
-                    backgroundColor: colors.error,
-                  },
-                ]}
-                onPress={() => setEntryForm({ ...entryForm, entryType: "cost" })}
-              >
-                <AppText
-                  variant="bodyBold"
-                  style={{
-                    color: entryForm.entryType === "cost" ? "#fff" : colors.text,
-                  }}
+                  <Feather
+                    name="trending-up"
+                    size={14}
+                    color={entryForm.entryType === "income" ? "#fff" : colors.text}
+                    style={{ marginRight: 4 }}
+                  />
+                  <AppText
+                    variant="bodyBold"
+                    style={{ color: entryForm.entryType === "income" ? "#fff" : colors.text }}
+                  >
+                    Income
+                  </AppText>
+                </Pressable>
+                <Pressable
+                  style={[
+                    styles.segmentButton,
+                    entryForm.entryType === "cost" && { backgroundColor: colors.error },
+                  ]}
+                  onPress={() => setEntryForm({ ...entryForm, entryType: "cost" })}
                 >
-                  Cost
-                </AppText>
-              </Pressable>
+                  <Feather
+                    name="trending-down"
+                    size={14}
+                    color={entryForm.entryType === "cost" ? "#fff" : colors.text}
+                    style={{ marginRight: 4 }}
+                  />
+                  <AppText
+                    variant="bodyBold"
+                    style={{ color: entryForm.entryType === "cost" ? "#fff" : colors.text }}
+                  >
+                    Expense
+                  </AppText>
+                </Pressable>
+              </View>
             </View>
 
-            {/* Date Input */}
-            <AppText variant="caption" color="secondary" style={{ marginTop: spacing.base, marginBottom: spacing.xs }}>
-              Date (YYYY-MM-DD)
-            </AppText>
-            <AppInput
-              placeholder="2024-01-15"
-              value={entryForm.entryDate}
-              onChangeText={(text) => setEntryForm({ ...entryForm, entryDate: text })}
-              keyboardType="default"
-            />
-
-            {/* Amount Input */}
-            <AppText variant="caption" color="secondary" style={{ marginTop: spacing.base, marginBottom: spacing.xs }}>
-              Amount
-            </AppText>
-            <View style={styles.inputWrapper}>
-              <AppText variant="h2" style={{ marginRight: spacing.xs }}>£</AppText>
+            {/* Date with Quick Chips */}
+            <View style={styles.formGroup}>
+              <AppText variant="caption" color="secondary" style={styles.formLabel}>Date</AppText>
+              <View style={styles.dateChips}>
+                <Pressable
+                  style={[
+                    styles.dateChip,
+                    {
+                      backgroundColor: entryForm.entryDate === getToday() ? colors.primary : colors.backgroundTertiary,
+                    },
+                  ]}
+                  onPress={() => setEntryForm({ ...entryForm, entryDate: getToday() })}
+                >
+                  <AppText
+                    variant="small"
+                    style={{ color: entryForm.entryDate === getToday() ? "#fff" : colors.text, fontWeight: "600" }}
+                  >
+                    Today
+                  </AppText>
+                </Pressable>
+                <Pressable
+                  style={[
+                    styles.dateChip,
+                    {
+                      backgroundColor: entryForm.entryDate === getYesterday() ? colors.primary : colors.backgroundTertiary,
+                    },
+                  ]}
+                  onPress={() => setEntryForm({ ...entryForm, entryDate: getYesterday() })}
+                >
+                  <AppText
+                    variant="small"
+                    style={{ color: entryForm.entryDate === getYesterday() ? "#fff" : colors.text, fontWeight: "600" }}
+                  >
+                    Yesterday
+                  </AppText>
+                </Pressable>
+              </View>
               <AppInput
-                placeholder="0.00"
-                value={entryForm.amountInput}
-                onChangeText={(text) => setEntryForm({ ...entryForm, amountInput: text })}
-                keyboardType="decimal-pad"
-                style={{ flex: 1 }}
+                placeholder="YYYY-MM-DD"
+                value={entryForm.entryDate}
+                onChangeText={(text) => {
+                  setEntryForm({ ...entryForm, entryDate: text });
+                  if (formErrors.date) setFormErrors({ ...formErrors, date: undefined });
+                }}
+                style={[styles.input, formErrors.date && { borderColor: colors.error }]}
               />
+              {formErrors.date && (
+                <AppText variant="small" style={{ color: colors.error, marginTop: 4 }}>
+                  {formErrors.date}
+                </AppText>
+              )}
             </View>
 
-            {/* Description Input */}
-            <AppText variant="caption" color="secondary" style={{ marginTop: spacing.base, marginBottom: spacing.xs }}>
-              Description
-            </AppText>
-            <AppInput
-              placeholder="e.g., Annual membership fees"
-              value={entryForm.description}
-              onChangeText={(text) => setEntryForm({ ...entryForm, description: text })}
-              multiline
-              numberOfLines={2}
-            />
+            {/* Amount */}
+            <View style={styles.formGroup}>
+              <AppText variant="caption" color="secondary" style={styles.formLabel}>Amount</AppText>
+              <View style={[styles.amountInputRow, formErrors.amount && { borderColor: colors.error }]}>
+                <AppText variant="h2" style={{ color: colors.textTertiary }}>£</AppText>
+                <AppInput
+                  placeholder="0.00"
+                  value={entryForm.amountInput}
+                  onChangeText={(text) => {
+                    setEntryForm({ ...entryForm, amountInput: text });
+                    if (formErrors.amount) setFormErrors({ ...formErrors, amount: undefined });
+                  }}
+                  keyboardType="decimal-pad"
+                  style={styles.amountInput}
+                />
+              </View>
+              {formErrors.amount && (
+                <AppText variant="small" style={{ color: colors.error, marginTop: 4 }}>
+                  {formErrors.amount}
+                </AppText>
+              )}
+            </View>
 
+            {/* Description */}
+            <View style={styles.formGroup}>
+              <AppText variant="caption" color="secondary" style={styles.formLabel}>Description</AppText>
+              <AppInput
+                placeholder="e.g., Annual membership fees"
+                value={entryForm.description}
+                onChangeText={(text) => {
+                  setEntryForm({ ...entryForm, description: text });
+                  if (formErrors.description) setFormErrors({ ...formErrors, description: undefined });
+                }}
+                style={[styles.input, formErrors.description && { borderColor: colors.error }]}
+              />
+              {formErrors.description && (
+                <AppText variant="small" style={{ color: colors.error, marginTop: 4 }}>
+                  {formErrors.description}
+                </AppText>
+              )}
+            </View>
+
+            {/* Actions */}
             <View style={styles.modalActions}>
-              <SecondaryButton
-                onPress={() => setShowEntryModal(false)}
-                disabled={saving}
-              >
+              <SecondaryButton onPress={() => setShowEntryModal(false)} disabled={saving} style={{ flex: 1 }}>
                 Cancel
               </SecondaryButton>
-              <PrimaryButton onPress={handleSaveEntry} loading={saving}>
-                {editingEntry ? "Update" : "Add"}
+              <PrimaryButton onPress={handleSaveEntry} loading={saving} style={{ flex: 1 }}>
+                {editingEntry ? "Update" : "Add Entry"}
               </PrimaryButton>
             </View>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
     </Screen>
   );
@@ -635,15 +730,21 @@ export default function TreasurerScreen() {
 
 // ========== HELPERS ==========
 
-function formatDate(dateStr: string): string {
+function formatDayMonth(dateStr: string): string {
   try {
     const date = new Date(dateStr);
-    return date.toLocaleDateString("en-GB", {
-      day: "2-digit",
-      month: "short",
-    });
+    return date.toLocaleDateString("en-GB", { day: "numeric", month: "short" });
   } catch {
     return dateStr;
+  }
+}
+
+function formatYear(dateStr: string): string {
+  try {
+    const date = new Date(dateStr);
+    return date.getFullYear().toString();
+  } catch {
+    return "";
   }
 }
 
@@ -687,17 +788,13 @@ function generateLedgerPdfHtml(data: LedgerPdfData): string {
           (entry) => `
           <tr>
             <td style="padding: 8px 12px; border-bottom: 1px solid #E5E7EB;">
-              ${new Date(entry.entry_date).toLocaleDateString("en-GB", {
-                day: "2-digit",
-                month: "short",
-                year: "numeric",
-              })}
+              ${new Date(entry.entry_date).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" })}
             </td>
             <td style="padding: 8px 12px; border-bottom: 1px solid #E5E7EB;">
               <span style="display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; background: ${
                 entry.entry_type === "income" ? "#DEF7EC" : "#FDE8E8"
               }; color: ${entry.entry_type === "income" ? "#03543F" : "#9B1C1C"};">
-                ${entry.entry_type === "income" ? "Income" : "Cost"}
+                ${entry.entry_type === "income" ? "Income" : "Expense"}
               </span>
             </td>
             <td style="padding: 8px 12px; border-bottom: 1px solid #E5E7EB;">${entry.description}</td>
@@ -747,21 +844,9 @@ function generateLedgerPdfHtml(data: LedgerPdfData): string {
             letter-spacing: 0.5px;
             margin-bottom: 4px;
           }
-          .title {
-            font-size: 20px;
-            font-weight: 700;
-            color: #111827;
-            margin-bottom: 4px;
-          }
-          .date {
-            font-size: 12px;
-            color: #6B7280;
-          }
-          .summary {
-            display: flex;
-            gap: 16px;
-            margin-bottom: 24px;
-          }
+          .title { font-size: 20px; font-weight: 700; color: #111827; margin-bottom: 4px; }
+          .date { font-size: 12px; color: #6B7280; }
+          .summary { display: flex; gap: 16px; margin-bottom: 24px; }
           .summary-card {
             flex: 1;
             background: #F9FAFB;
@@ -770,69 +855,21 @@ function generateLedgerPdfHtml(data: LedgerPdfData): string {
             padding: 12px;
             text-align: center;
           }
-          .summary-card.highlight {
-            background: #0B6E4F;
-            border-color: #0B6E4F;
-          }
-          .summary-card.highlight .summary-label,
-          .summary-card.highlight .summary-value {
-            color: #fff;
-          }
-          .summary-label {
-            font-size: 10px;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-            color: #6B7280;
-            margin-bottom: 4px;
-          }
-          .summary-value {
-            font-size: 18px;
-            font-weight: 700;
-            color: #111827;
-            font-family: 'SF Mono', Consolas, monospace;
-          }
+          .summary-card.highlight { background: #0B6E4F; border-color: #0B6E4F; }
+          .summary-card.highlight .summary-label, .summary-card.highlight .summary-value { color: #fff; }
+          .summary-label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; color: #6B7280; margin-bottom: 4px; }
+          .summary-value { font-size: 18px; font-weight: 700; color: #111827; font-family: 'SF Mono', Consolas, monospace; }
           .summary-value.income { color: #03543F; }
           .summary-value.cost { color: #9B1C1C; }
-          table {
-            width: 100%;
-            border-collapse: collapse;
-            background: #fff;
-            border: 1px solid #E5E7EB;
-            border-radius: 8px;
-            overflow: hidden;
-          }
-          thead tr {
-            background: #F9FAFB;
-          }
-          th {
-            padding: 10px 12px;
-            text-align: left;
-            font-size: 10px;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-            color: #6B7280;
-            font-weight: 600;
-          }
-          th:nth-child(4), th:nth-child(5) {
-            text-align: right;
-          }
-          .footer {
-            margin-top: 24px;
-            padding-top: 16px;
-            border-top: 1px solid #E5E7EB;
-            text-align: center;
-            font-size: 11px;
-            color: #9CA3AF;
-          }
-          @media print {
-            body { padding: 16px; }
-            .container { max-width: 100%; }
-          }
+          table { width: 100%; border-collapse: collapse; background: #fff; border: 1px solid #E5E7EB; border-radius: 8px; overflow: hidden; }
+          thead tr { background: #F9FAFB; }
+          th { padding: 10px 12px; text-align: left; font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; color: #6B7280; font-weight: 600; }
+          th:nth-child(4), th:nth-child(5) { text-align: right; }
+          .footer { margin-top: 24px; padding-top: 16px; border-top: 1px solid #E5E7EB; text-align: center; font-size: 11px; color: #9CA3AF; }
         </style>
       </head>
       <body>
         <div class="container">
-          <!-- Header -->
           <div class="header">
             ${logoHtml}
             <div class="header-text">
@@ -841,8 +878,6 @@ function generateLedgerPdfHtml(data: LedgerPdfData): string {
               <div class="date">Generated on ${today}</div>
             </div>
           </div>
-
-          <!-- Summary -->
           <div class="summary">
             <div class="summary-card">
               <div class="summary-label">Opening Balance</div>
@@ -861,8 +896,6 @@ function generateLedgerPdfHtml(data: LedgerPdfData): string {
               <div class="summary-value">${formatPenceToGBP(currentBalancePence)}</div>
             </div>
           </div>
-
-          <!-- Ledger Table -->
           <table>
             <thead>
               <tr>
@@ -874,25 +907,18 @@ function generateLedgerPdfHtml(data: LedgerPdfData): string {
               </tr>
             </thead>
             <tbody>
-              <!-- Opening Balance Row -->
               <tr style="background: #F0FDF4;">
                 <td style="padding: 8px 12px; border-bottom: 1px solid #E5E7EB;">-</td>
                 <td style="padding: 8px 12px; border-bottom: 1px solid #E5E7EB;">
-                  <span style="display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; background: #E5E7EB; color: #374151;">
-                    Opening
-                  </span>
+                  <span style="display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; background: #E5E7EB; color: #374151;">Opening</span>
                 </td>
                 <td style="padding: 8px 12px; border-bottom: 1px solid #E5E7EB; font-style: italic;">Opening Balance</td>
                 <td style="padding: 8px 12px; border-bottom: 1px solid #E5E7EB; text-align: right;">-</td>
-                <td style="padding: 8px 12px; border-bottom: 1px solid #E5E7EB; text-align: right; font-family: 'SF Mono', Consolas, monospace; font-weight: 600;">
-                  ${formatPenceToGBP(openingBalancePence)}
-                </td>
+                <td style="padding: 8px 12px; border-bottom: 1px solid #E5E7EB; text-align: right; font-family: 'SF Mono', Consolas, monospace; font-weight: 600;">${formatPenceToGBP(openingBalancePence)}</td>
               </tr>
               ${entriesHtml}
             </tbody>
           </table>
-
-          <!-- Footer -->
           <div class="footer">
             ${entries.length} transaction${entries.length !== 1 ? "s" : ""} recorded<br/>
             Produced by The Golf Society Hub
@@ -913,109 +939,162 @@ const styles = StyleSheet.create({
   },
   header: {
     flexDirection: "row",
-    justifyContent: "space-between",
     alignItems: "center",
-    marginBottom: spacing.sm,
+    marginBottom: spacing.base,
+  },
+  backButton: {
+    padding: spacing.xs,
+    marginRight: spacing.sm,
   },
   title: {
-    marginBottom: spacing.base,
+    flex: 1,
   },
-  summaryCard: {
-    marginBottom: spacing.base,
+  exportButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    padding: spacing.xs,
   },
-  summaryGrid: {
+  statsGrid: {
     flexDirection: "row",
     flexWrap: "wrap",
-    justifyContent: "space-between",
+    gap: spacing.sm,
+    marginBottom: spacing.lg,
   },
-  summaryItem: {
-    width: "48%",
-    alignItems: "center",
-    paddingVertical: spacing.sm,
-  },
-  addButtonRow: {
+  sectionHeader: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
     marginBottom: spacing.sm,
   },
-  tableHeader: {
-    flexDirection: "row",
+  emptyCard: {
+    paddingVertical: spacing.xl,
+  },
+  emptyContent: {
     alignItems: "center",
-    paddingVertical: spacing.xs,
-    paddingHorizontal: spacing.sm,
-    borderRadius: radius.sm,
+  },
+  emptyIcon: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    justifyContent: "center",
+    alignItems: "center",
+    marginBottom: spacing.base,
+  },
+  emptyText: {
     marginBottom: spacing.xs,
   },
-  entryCard: {
-    marginBottom: spacing.xs,
+  emptyHint: {
+    textAlign: "center",
+    maxWidth: 240,
   },
-  entryRow: {
+  ledgerList: {
+    borderRadius: radius.lg,
+    overflow: "hidden",
+  },
+  ledgerRow: {
     flexDirection: "row",
     alignItems: "center",
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.base,
   },
-  colDate: {
-    width: 50,
+  dateCol: {
+    width: 56,
+    marginRight: spacing.sm,
   },
-  colType: {
-    width: 40,
-    alignItems: "center",
-  },
-  colDesc: {
+  descCol: {
     flex: 1,
-    marginHorizontal: spacing.xs,
+    marginRight: spacing.sm,
   },
-  colAmount: {
-    width: 70,
-    textAlign: "right",
-  },
-  colBalance: {
-    width: 70,
-    textAlign: "right",
-  },
-  colActions: {
-    width: 32,
-    alignItems: "center",
+  typeBadgeRow: {
+    flexDirection: "row",
+    marginTop: 2,
   },
   typeBadge: {
     paddingHorizontal: 6,
     paddingVertical: 2,
     borderRadius: radius.sm,
   },
+  amountCol: {
+    minWidth: 80,
+  },
   modalOverlay: {
     flex: 1,
+    justifyContent: "flex-end",
+  },
+  modalBackdrop: {
+    ...StyleSheet.absoluteFillObject,
     backgroundColor: "rgba(0, 0, 0, 0.5)",
-    justifyContent: "center",
-    alignItems: "center",
-    padding: spacing.base,
   },
   modalContent: {
-    width: "100%",
-    maxWidth: 400,
-    borderRadius: radius.lg,
+    borderTopLeftRadius: radius.xl,
+    borderTopRightRadius: radius.xl,
     padding: spacing.lg,
+    paddingBottom: spacing.xl,
   },
-  inputWrapper: {
+  entryModal: {
+    maxHeight: "90%",
+  },
+  modalTitle: {
+    marginBottom: spacing.xs,
+  },
+  modalSubtitle: {
+    marginBottom: spacing.lg,
+  },
+  formGroup: {
+    marginBottom: spacing.base,
+  },
+  formLabel: {
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+    fontSize: 11,
+    marginBottom: spacing.xs,
+  },
+  input: {
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
+    borderRadius: radius.md,
+  },
+  amountInputRow: {
     flexDirection: "row",
     alignItems: "center",
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.sm,
   },
-  modalActions: {
-    flexDirection: "row",
-    justifyContent: "flex-end",
-    gap: spacing.sm,
-    marginTop: spacing.lg,
+  amountInput: {
+    flex: 1,
+    borderWidth: 0,
+    fontSize: 24,
+    fontWeight: "600",
   },
   segmentedControl: {
     flexDirection: "row",
     borderRadius: radius.md,
     overflow: "hidden",
     borderWidth: 1,
-    borderColor: "#E5E7EB",
   },
   segmentButton: {
     flex: 1,
-    paddingVertical: spacing.sm,
+    flexDirection: "row",
+    justifyContent: "center",
     alignItems: "center",
-    backgroundColor: "#F9FAFB",
+    paddingVertical: spacing.sm,
+    backgroundColor: "transparent",
+  },
+  dateChips: {
+    flexDirection: "row",
+    gap: spacing.xs,
+    marginBottom: spacing.xs,
+  },
+  dateChip: {
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+    borderRadius: radius.full,
+  },
+  modalActions: {
+    flexDirection: "row",
+    gap: spacing.sm,
+    marginTop: spacing.lg,
   },
 });
