@@ -164,7 +164,8 @@ export async function getFinanceEntry(
 export async function createFinanceEntry(
   input: FinanceEntryInput
 ): Promise<FinanceEntryDoc> {
-  console.log("[financeRepo] createFinanceEntry:", input);
+  // IMPORTANT: DB column is "type", NOT "entry_type"
+  console.log("[financeRepo] createFinanceEntry INPUT:", JSON.stringify(input));
 
   // Validate amount is positive
   if (input.amount_pence <= 0) {
@@ -172,6 +173,7 @@ export async function createFinanceEntry(
   }
 
   // Map app field names to DB column names
+  // The database column is "type", the app uses "entry_type"
   const payload = {
     society_id: input.society_id,
     type: input.entry_type, // DB column is "type", not "entry_type"
@@ -181,7 +183,8 @@ export async function createFinanceEntry(
     event_id: input.event_id || null,
   };
 
-  console.log("[financeRepo] createFinanceEntry payload:", payload);
+  console.log("[financeRepo] createFinanceEntry PAYLOAD:", JSON.stringify(payload));
+  console.log("[financeRepo] type value being sent:", payload.type);
 
   const { data, error } = await supabase
     .from("finance_entries")

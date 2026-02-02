@@ -189,6 +189,9 @@ export default function TreasurerScreen() {
 
     setSaving(true);
     try {
+      console.log("[Treasurer] handleSaveEntry - entryForm:", JSON.stringify(entryForm));
+      console.log("[Treasurer] handleSaveEntry - entryType value:", entryForm.entryType);
+
       if (editingEntry) {
         // Update existing
         await updateFinanceEntry(editingEntry.id, {
@@ -199,13 +202,15 @@ export default function TreasurerScreen() {
         });
       } else {
         // Create new
-        await createFinanceEntry({
+        const newEntry = {
           society_id: societyId!,
           entry_type: entryForm.entryType,
           entry_date: entryForm.entryDate,
           amount_pence: amountPence,
           description: entryForm.description.trim(),
-        });
+        };
+        console.log("[Treasurer] Creating entry with:", JSON.stringify(newEntry));
+        await createFinanceEntry(newEntry);
       }
       setShowEntryModal(false);
       await loadData();
