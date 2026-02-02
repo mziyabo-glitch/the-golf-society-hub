@@ -6,6 +6,7 @@ export type SocietyDoc = {
   name: string;
   country?: string;
   join_code?: string;
+  joinCode?: string; // camelCase alias
   created_at?: string;
   created_by?: string;
   home_course_id?: string | null;
@@ -13,8 +14,11 @@ export type SocietyDoc = {
   scoring_mode?: string | null;
   handicap_rule?: string | null;
   logo_url?: string | null;
+  logoUrl?: string | null; // camelCase alias
   admin_pin?: string;
   annual_fee?: number;
+  annual_fee_pence?: number | null; // Annual membership fee in pence
+  annualFeePence?: number | null; // camelCase alias
 };
 
 type SocietyInput = {
@@ -508,5 +512,68 @@ export async function removeSocietyLogo(societyId: string): Promise<LogoUploadRe
       bucket: LOGO_BUCKET,
     });
     return { success: false, error: e?.message || "Failed to remove logo" };
+  }
+}
+
+// =====================================================
+// CONVENIENCE ALIASES
+// =====================================================
+
+/**
+ * Get a society by ID (alias for getSocietyDoc with mapping)
+ */
+export async function getSociety(societyId: string): Promise<SocietyDoc | null> {
+  const data = await getSocietyDoc(societyId);
+  if (!data) return null;
+
+  // Add camelCase aliases
+  return {
+    ...data,
+    joinCode: data.join_code,
+    logoUrl: data.logo_url,
+    annualFeePence: data.annual_fee_pence ?? null,
+  };
+}
+
+/**
+ * Update a society (with support for finance fields)
+ * Only Captain or Treasurer can update finance fields (enforced by RLS)
+ *
+ * @param societyId - The society to update
+ * @param updates - Fields to update
+ */
+export async function updateSociety(
+  societyId: string,
+  updates: Partial<{
+    name: string;
+    country: string;
+    home_course_id: string | null;
+    home_course: string | null;
+    scoring_mode: string | null;
+    handicap_rule: string | null;
+    annual_fee_pence: number | null;
+  }>
+): Promise<void> {
+  console.log("[societyRepo] updateSociety:", { societyId, updates });
+
+  const { error } = await supabase
+    .from("societies")
+    .update(updates)
+    .eq("id", societyId);
+
+  if (error) {
+    console.error("[societyRepo] updateSociety failed:", {
+      message: error.message,
+      details: error.details,
+      hint: error.hint,
+      code: error.code,
+    });
+
+    // Handle RLS permission errors
+    if (error.code === "42501" || error.message?.includes("row-level security")) {
+      throw new Error("Only Captain or Treasurer can update society settings.");
+    }
+
+    throw new Error(error.message || "Failed to update society");
   }
 }
