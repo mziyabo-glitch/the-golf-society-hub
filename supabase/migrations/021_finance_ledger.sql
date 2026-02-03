@@ -19,7 +19,7 @@ COMMENT ON COLUMN public.societies.opening_balance_pence IS 'Opening balance for
 CREATE TABLE IF NOT EXISTS public.finance_entries (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   society_id UUID NOT NULL REFERENCES public.societies(id) ON DELETE CASCADE,
-  entry_type TEXT NOT NULL CHECK (entry_type IN ('income', 'cost')),
+  type TEXT NOT NULL CHECK (type IN ('income', 'cost')),
   entry_date DATE NOT NULL,
   amount_pence INTEGER NOT NULL CHECK (amount_pence > 0),
   description TEXT NOT NULL,
@@ -31,7 +31,7 @@ CREATE TABLE IF NOT EXISTS public.finance_entries (
 -- Create indexes for efficient querying
 CREATE INDEX IF NOT EXISTS idx_finance_entries_society_id ON public.finance_entries(society_id);
 CREATE INDEX IF NOT EXISTS idx_finance_entries_entry_date ON public.finance_entries(entry_date);
-CREATE INDEX IF NOT EXISTS idx_finance_entries_entry_type ON public.finance_entries(entry_type);
+CREATE INDEX IF NOT EXISTS idx_finance_entries_type ON public.finance_entries(type);
 
 -- Add table comment
 COMMENT ON TABLE public.finance_entries IS 'Society financial ledger entries (income and cost items)';
