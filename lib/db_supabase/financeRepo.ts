@@ -4,10 +4,10 @@
  * CRUD operations for finance_entries table.
  * Handles the society ledger with income/cost entries.
  *
- * Database Schema (assumed):
+ * Database Schema:
  * - id: uuid (primary key)
  * - society_id: uuid (foreign key to societies)
- * - entry_type: text ('income' | 'cost')
+ * - type: text ('income' | 'cost')  <-- NOTE: column is "type" not "entry_type"
  * - entry_date: date (the date of the transaction)
  * - amount_pence: integer (amount in pence, always positive)
  * - description: text (description of the entry)
@@ -20,10 +20,28 @@ import { supabase } from "@/lib/supabase";
 
 export type FinanceEntryType = "income" | "cost";
 
+/**
+ * Database row shape (matches actual DB columns)
+ */
+type FinanceEntryRow = {
+  id: string;
+  society_id: string;
+  type: FinanceEntryType; // DB column is "type"
+  entry_date: string;
+  amount_pence: number;
+  description: string;
+  event_id: string | null;
+  created_at: string;
+  updated_at?: string;
+};
+
+/**
+ * App-facing document type (uses entry_type for clarity in app code)
+ */
 export type FinanceEntryDoc = {
   id: string;
   society_id: string;
-  entry_type: FinanceEntryType;
+  entry_type: FinanceEntryType; // App uses entry_type
   entry_date: string; // YYYY-MM-DD
   amount_pence: number;
   description: string;
@@ -58,6 +76,23 @@ export type FinanceSummary = {
 };
 
 /**
+ * Map database row to app document (type -> entry_type)
+ */
+function mapRowToDoc(row: FinanceEntryRow): FinanceEntryDoc {
+  return {
+    id: row.id,
+    society_id: row.society_id,
+    entry_type: row.type, // Map DB "type" to app "entry_type"
+    entry_date: row.entry_date,
+    amount_pence: row.amount_pence,
+    description: row.description,
+    event_id: row.event_id,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  };
+}
+
+/**
  * Get all finance entries for a society, sorted by entry_date ASC, then created_at ASC
  * This ordering ensures a stable running balance calculation.
  *
@@ -86,7 +121,8 @@ export async function getFinanceEntries(
     throw new Error(error.message || "Failed to load finance entries");
   }
 
-  return data || [];
+  // Map DB rows to app documents
+  return (data || []).map(mapRowToDoc);
 }
 
 /**
@@ -116,7 +152,7 @@ export async function getFinanceEntry(
     throw new Error(error.message || "Failed to load finance entry");
   }
 
-  return data;
+  return data ? mapRowToDoc(data) : null;
 }
 
 /**
@@ -128,23 +164,31 @@ export async function getFinanceEntry(
 export async function createFinanceEntry(
   input: FinanceEntryInput
 ): Promise<FinanceEntryDoc> {
-  console.log("[financeRepo] createFinanceEntry:", input);
+  // IMPORTANT: DB column is "type", NOT "entry_type"
+  console.log("[financeRepo] createFinanceEntry INPUT:", JSON.stringify(input));
 
   // Validate amount is positive
   if (input.amount_pence <= 0) {
     throw new Error("Amount must be greater than zero");
   }
 
+  // Map app field names to DB column names
+  // The database column is "type", the app uses "entry_type"
+  const payload = {
+    society_id: input.society_id,
+    type: input.entry_type, // DB column is "type", not "entry_type"
+    entry_date: input.entry_date,
+    amount_pence: input.amount_pence,
+    description: input.description.trim(),
+    event_id: input.event_id || null,
+  };
+
+  console.log("[financeRepo] createFinanceEntry PAYLOAD:", JSON.stringify(payload));
+  console.log("[financeRepo] type value being sent:", payload.type);
+
   const { data, error } = await supabase
     .from("finance_entries")
-    .insert({
-      society_id: input.society_id,
-      entry_type: input.entry_type,
-      entry_date: input.entry_date,
-      amount_pence: input.amount_pence,
-      description: input.description.trim(),
-      event_id: input.event_id || null,
-    })
+    .insert(payload)
     .select()
     .single();
 
@@ -165,7 +209,7 @@ export async function createFinanceEntry(
   }
 
   console.log("[financeRepo] createFinanceEntry success:", data.id);
-  return data;
+  return mapRowToDoc(data);
 }
 
 /**
@@ -186,11 +230,26 @@ export async function updateFinanceEntry(
     throw new Error("Amount must be greater than zero");
   }
 
-  // Trim description if provided
-  const payload: FinanceEntryUpdate = { ...updates };
-  if (payload.description !== undefined) {
-    payload.description = payload.description.trim();
+  // Build DB payload, mapping entry_type -> type
+  const payload: Record<string, unknown> = {};
+
+  if (updates.entry_type !== undefined) {
+    payload.type = updates.entry_type; // Map to DB column name
   }
+  if (updates.entry_date !== undefined) {
+    payload.entry_date = updates.entry_date;
+  }
+  if (updates.amount_pence !== undefined) {
+    payload.amount_pence = updates.amount_pence;
+  }
+  if (updates.description !== undefined) {
+    payload.description = updates.description.trim();
+  }
+  if (updates.event_id !== undefined) {
+    payload.event_id = updates.event_id;
+  }
+
+  console.log("[financeRepo] updateFinanceEntry payload:", payload);
 
   const { data, error } = await supabase
     .from("finance_entries")
@@ -216,7 +275,7 @@ export async function updateFinanceEntry(
   }
 
   console.log("[financeRepo] updateFinanceEntry success:", data.id);
-  return data;
+  return mapRowToDoc(data);
 }
 
 /**
