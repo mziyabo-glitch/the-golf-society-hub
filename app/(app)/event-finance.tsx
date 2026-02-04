@@ -30,22 +30,22 @@ import { getPermissionsForMember } from "@/lib/rbac";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
 import { guard } from "@/lib/guards";
 
-// Format pence to pounds string (e.g., 5000 -> "Â£50.00")
+// Format pence to pounds string (e.g., 5000 -> "£50.00")
 function formatPence(pence: number | null | undefined): string {
-  if (pence == null) return "Â£0.00";
+  if (pence == null) return "£0.00";
   const pounds = pence / 100;
-  return `Â£${pounds.toFixed(2)}`;
+  return `£${pounds.toFixed(2)}`;
 }
 
 // Format pence with sign for net values
 function formatPenceWithSign(pence: number): string {
   const pounds = Math.abs(pence) / 100;
-  return `${pence >= 0 ? "+" : "-"}Â£${pounds.toFixed(2)}`;
+  return `${pence >= 0 ? "+" : "-"}£${pounds.toFixed(2)}`;
 }
 
 // Parse pounds string to pence (e.g., "50.00" -> 5000)
 function parsePounds(str: string): number | null {
-  const cleaned = str.replace(/[Â£,\s]/g, "");
+  const cleaned = str.replace(/[£,\s]/g, "");
   if (!cleaned) return null;
   const num = parseFloat(cleaned);
   if (Number.isNaN(num)) return null;
@@ -280,7 +280,7 @@ export default function EventFinanceScreen() {
                         </AppText>
                         <View style={styles.inputWrapper}>
                           <AppText variant="body" style={{ marginRight: spacing.xs }}>
-                            Â£
+                            £
                           </AppText>
                           <AppInput
                             placeholder="0.00"
@@ -300,7 +300,7 @@ export default function EventFinanceScreen() {
                         </AppText>
                         <View style={styles.inputWrapper}>
                           <AppText variant="body" style={{ marginRight: spacing.xs }}>
-                            Â£
+                            £
                           </AppText>
                           <AppInput
                             placeholder="0.00"
