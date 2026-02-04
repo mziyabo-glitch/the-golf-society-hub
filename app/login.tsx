@@ -41,7 +41,7 @@ export default function LoginScreen() {
     const redirectTo =
       Platform.OS === "web"
         ? `${window.location.origin}/auth/callback`
-        : "gsh://auth/callback";
+        : "golfsocietypro://auth/callback";
 
     console.log("[login] send magic link", { platform: Platform.OS, redirectTo });
 
