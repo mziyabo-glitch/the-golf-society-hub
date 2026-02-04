@@ -13,7 +13,7 @@ import {
   ScrollView,
   Image,
 } from "react-native";
-import { useLocalSearchParams } from "expo-router";
+import { useLocalSearchParams, useRouter } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
 import { Feather } from "@expo/vector-icons";
 import * as Sharing from "expo-sharing";
@@ -35,7 +35,6 @@ import {
   type ResultsLogEntry,
 } from "@/lib/db_supabase/resultsRepo";
 import { getColors } from "@/lib/ui/theme";
-import OOMShareCard, { type OOMShareRow } from "@/components/oom/OOMShareCard";
 import OOMResultsLogShareCard, {
   type EventLogData,
 } from "@/components/oom/OOMResultsLogShareCard";
@@ -108,6 +107,7 @@ type TabType = "leaderboard" | "resultsLog";
 export default function LeaderboardScreen() {
   const { society, societyId, loading: bootstrapLoading } = useBootstrap();
   const colors = getColors();
+  const router = useRouter();
 
   const params = useLocalSearchParams<{ view?: string }>();
   const initialTab: TabType = params.view === "log" ? "resultsLog" : "leaderboard";
@@ -121,7 +121,6 @@ export default function LeaderboardScreen() {
   const [sharingLog, setSharingLog] = useState(false);
   const [fetchError, setFetchError] = useState<string | null>(null);
 
-  const leaderboardShareRef = useRef<View>(null);
   const resultsLogShareRef = useRef<View>(null);
 
   // Track which events are expanded in the accordion
@@ -208,20 +207,13 @@ export default function LeaderboardScreen() {
   useFocusEffect(
     useCallback(() => {
       if (societyId) loadData();
+      setSharingLeaderboard(false);
+      setSharingLog(false);
     }, [societyId, loadData])
   );
 
   const uniqueOOMEventIds = new Set(resultsLog.map((r) => r.eventId));
   const oomEventCount = uniqueOOMEventIds.size;
-
-  const shareCardRows: OOMShareRow[] = useMemo(() => {
-    return standings.map((entry) => ({
-      position: entry.rank,
-      name: entry.memberName,
-      points: entry.totalPoints,
-      eventsPlayed: entry.eventsPlayed,
-    }));
-  }, [standings]);
 
   const seasonLabel = useMemo(() => {
     const year = new Date().getFullYear();
@@ -277,35 +269,24 @@ export default function LeaderboardScreen() {
 
     try {
       setSharingLeaderboard(true);
+      const payload = {
+        societyName: society?.name || "Golf Society",
+        logoUrl,
+        seasonLabel,
+        entries: standings.map((entry) => ({
+          rank: entry.rank,
+          memberName: entry.memberName,
+          eventsPlayed: entry.eventsPlayed,
+          totalPoints: entry.totalPoints,
+        })),
+      };
 
-      if (Platform.OS === "web") {
-        const html = generateLeaderboardHTML();
-        await Print.printAsync({ html });
-        return;
-      }
-
-      if (!leaderboardShareRef.current || !captureRef) {
-        Alert.alert("Error", "Share card not ready.");
-        return;
-      }
-
-      const uri = await captureRef(leaderboardShareRef, {
-        format: "png",
-        quality: 1,
-        result: "tmpfile",
+      router.push({
+        pathname: "/(app)/oom-print",
+        params: { payload: encodeURIComponent(JSON.stringify(payload)) },
       });
-
-      const canShare = await Sharing.isAvailableAsync();
-      if (canShare) {
-        await Sharing.shareAsync(uri, {
-          mimeType: "image/png",
-          dialogTitle: "Share Order of Merit",
-        });
-      }
     } catch (err: any) {
       Alert.alert("Error", err?.message || "Failed to share");
-    } finally {
-      setSharingLeaderboard(false);
     }
   };
 
@@ -807,12 +788,6 @@ export default function LeaderboardScreen() {
       {/* ========== OFF-SCREEN SHARE CARDS ========== */}
       {Platform.OS !== "web" && (
         <View style={styles.offScreen} pointerEvents="none">
-          <OOMShareCard
-            ref={leaderboardShareRef}
-            societyName={society?.name || "Golf Society"}
-            seasonLabel={seasonLabel}
-            rows={shareCardRows}
-          />
           {latestEventForShare && (
             <OOMResultsLogShareCard
               ref={resultsLogShareRef}
