@@ -362,7 +362,8 @@ export default function TreasurerScreen() {
   }
 
   const currentBalance = summary?.currentBalancePence ?? 0;
-  const balanceVariant = currentBalance >= 0 ? "success" : "error";
+  const balanceVariant =
+    currentBalance > 0 ? "success" : currentBalance < 0 ? "error" : "muted";
 
   return (
     <Screen>
@@ -466,17 +467,14 @@ export default function TreasurerScreen() {
               >
                 {/* Date Column */}
                 <View style={styles.dateCol}>
-                  <AppText variant="bodyBold" style={{ color: colors.text }}>
-                    {formatDayMonth(entry.entry_date)}
-                  </AppText>
                   <AppText variant="small" color="tertiary">
-                    {formatYear(entry.entry_date)}
+                    {formatShortDate(entry.entry_date)}
                   </AppText>
                 </View>
 
                 {/* Description & Type */}
                 <View style={styles.descCol}>
-                  <AppText variant="body" numberOfLines={1} style={{ color: colors.text }}>
+                  <AppText variant="bodyBold" numberOfLines={1} style={{ color: colors.text }}>
                     {entry.description}
                   </AppText>
                   <View style={styles.typeBadgeRow}>
@@ -496,7 +494,7 @@ export default function TreasurerScreen() {
                           fontWeight: "600",
                         }}
                       >
-                        {entry.entry_type === "income" ? "Income" : "Expense"}
+                        {entry.entry_type === "income" ? "Income" : "Cost"}
                       </AppText>
                     </View>
                   </View>
@@ -514,6 +512,11 @@ export default function TreasurerScreen() {
                     {entry.entry_type === "income" ? "+" : "-"}
                     {formatPenceToGBP(entry.amount_pence)}
                   </AppText>
+                  {typeof entry.runningBalancePence === "number" && (
+                    <AppText variant="small" color="tertiary" style={styles.balanceText}>
+                      Bal {formatPenceToGBP(entry.runningBalancePence)}
+                    </AppText>
+                  )}
                 </View>
               </Pressable>
             ))}
@@ -688,7 +691,7 @@ export default function TreasurerScreen() {
                     setEntryForm({ ...entryForm, amountInput: text });
                     if (formErrors.amount) setFormErrors({ ...formErrors, amount: undefined });
                   }}
-                  keyboardType="decimal-pad"
+                  keyboardType="numeric"
                   style={styles.amountInput}
                 />
               </View>
@@ -736,21 +739,12 @@ export default function TreasurerScreen() {
 
 // ========== HELPERS ==========
 
-function formatDayMonth(dateStr: string): string {
+function formatShortDate(dateStr: string): string {
   try {
     const date = new Date(dateStr);
-    return date.toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+    return date.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
   } catch {
     return dateStr;
-  }
-}
-
-function formatYear(dateStr: string): string {
-  try {
-    const date = new Date(dateStr);
-    return date.getFullYear().toString();
-  } catch {
-    return "";
   }
 }
 
@@ -1004,7 +998,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.base,
   },
   dateCol: {
-    width: 56,
+    width: 88,
     marginRight: spacing.sm,
   },
   descCol: {
@@ -1021,7 +1015,12 @@ const styles = StyleSheet.create({
     borderRadius: radius.sm,
   },
   amountCol: {
-    minWidth: 80,
+    minWidth: 110,
+    alignItems: "flex-end",
+  },
+  balanceText: {
+    marginTop: 2,
+    textAlign: "right",
   },
   modalOverlay: {
     flex: 1,
