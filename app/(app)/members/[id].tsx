@@ -28,8 +28,11 @@ import {
   type Gender,
 } from "@/lib/db_supabase/memberRepo";
 import { getPermissionsForMember } from "@/lib/rbac";
+
+import { updateMemberRole } from "@/lib/db_supabase/memberRepo";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
 
+import { guard } from "@/lib/guards";
 // Gender option component
 function GenderOption({
   value,
@@ -59,8 +62,21 @@ function GenderOption({
       ? colors.error
       : colors.info
     : colors.border;
+  const handleUpdateRole = async () => {
+    if (!guard(canManageRoles, "Only the Captain can change roles.")) return;
+    if (!targetMemberId) return;
 
-  return (
+    try {
+      await updateMemberRole(targetMemberId, selectedRole);
+      Alert.alert("Updated", "Role updated.");
+      setMember((prev) => (prev ? ({ ...prev, role: selectedRole } as any) : prev));
+    } catch (err: any) {
+      console.error("[members/[id]] update role error:", err);
+      Alert.alert("Error", err?.message || "Failed to update role.");
+    }
+  };
+
+return (
     <Pressable
       onPress={onPress}
       style={[
@@ -84,9 +100,11 @@ export default function MemberDetailScreen() {
   const memberId = Array.isArray(params.id) ? params.id[0] : params.id;
 
   const [member, setMember] = useState<MemberDoc | null>(null);
-  const [loading, setLoading] = useState(true);
+
+  const [selectedRole, setSelectedRole] = useState<string>("member");
+const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [isEditing, setIsEditing] = useState(false);
+const [isEditing, setIsEditing] = useState(false);
   const [saving, setSaving] = useState(false);
 
   // Form state
@@ -95,10 +113,12 @@ export default function MemberDetailScreen() {
   const [formWhsNumber, setFormWhsNumber] = useState("");
   const [formHandicapIndex, setFormHandicapIndex] = useState("");
   const [formGender, setFormGender] = useState<Gender>(null);
-
-  // Permissions
+// Permissions
   const permissions = getPermissionsForMember(currentMember as any);
-  const isOwnProfile = currentMember?.id === memberId;
+  
+  
+  const canManageRoles = !!(permissions as any).canManageRoles || ((member as any)?.role === "captain");
+const isOwnProfile = currentMember?.id === memberId;
   const canEditBasic = isOwnProfile || permissions.canEditMembers;
   const canEditHandicap = permissions.canManageHandicaps;
   const canEdit = canEditBasic || canEditHandicap;
@@ -120,7 +140,9 @@ export default function MemberDetailScreen() {
       if (data) {
         console.log("[MemberDetail] Member loaded:", data.displayName || data.name);
         setMember(data);
-        // Initialize form with current values
+        
+      // Keep role picker in sync with loaded member
+// Initialize form with current values
         setFormName(data.displayName || data.name || "");
         setFormEmail(data.email || "");
         setFormWhsNumber(data.whsNumber || data.whs_number || "");
@@ -200,7 +222,9 @@ export default function MemberDetailScreen() {
 
       console.log("[MemberDetail] Save success");
       setMember(updated);
-      setIsEditing(false);
+      
+      // Keep role picker in sync with loaded member
+setIsEditing(false);
       Alert.alert("Saved", "Member updated successfully.");
     } catch (err: any) {
       console.error("[MemberDetail] Save error:", err);
@@ -229,17 +253,45 @@ export default function MemberDetailScreen() {
   };
 
   if (bootstrapLoading || loading) {
-    return (
+  const handleUpdateRole = async () => {
+    if (!guard(canManageRoles, "Only the Captain can change roles.")) return;
+    if (!targetMemberId) return;
+
+    try {
+      await updateMemberRole(targetMemberId, selectedRole);
+      Alert.alert("Updated", "Role updated.");
+      setMember((prev) => (prev ? ({ ...prev, role: selectedRole } as any) : prev));
+    } catch (err: any) {
+      console.error("[members/[id]] update role error:", err);
+      Alert.alert("Error", err?.message || "Failed to update role.");
+    }
+  };
+
+return (
       <Screen scrollable={false}>
         <View style={styles.centered}>
           <LoadingState message="Loading member..." />
         </View>
-      </Screen>
+</Screen>
     );
   }
 
   if (error || !member) {
-    return (
+  const handleUpdateRole = async () => {
+    if (!guard(canManageRoles, "Only the Captain can change roles.")) return;
+    if (!targetMemberId) return;
+
+    try {
+      await updateMemberRole(targetMemberId, selectedRole);
+      Alert.alert("Updated", "Role updated.");
+      setMember((prev) => (prev ? ({ ...prev, role: selectedRole } as any) : prev));
+    } catch (err: any) {
+      console.error("[members/[id]] update role error:", err);
+      Alert.alert("Error", err?.message || "Failed to update role.");
+    }
+  };
+
+return (
       <Screen>
         <EmptyState
           icon={<Feather name="alert-circle" size={24} color={colors.error} />}
@@ -247,7 +299,7 @@ export default function MemberDetailScreen() {
           message={error || "Member not found"}
           action={{ label: "Go Back", onPress: () => router.back() }}
         />
-      </Screen>
+</Screen>
     );
   }
 
@@ -271,8 +323,21 @@ export default function MemberDetailScreen() {
     if (gender === "female") return "Female";
     return "Not set";
   };
+  const handleUpdateRole = async () => {
+    if (!guard(canManageRoles, "Only the Captain can change roles.")) return;
+    if (!targetMemberId) return;
 
-  return (
+    try {
+      await updateMemberRole(targetMemberId, selectedRole);
+      Alert.alert("Updated", "Role updated.");
+      setMember((prev) => (prev ? ({ ...prev, role: selectedRole } as any) : prev));
+    } catch (err: any) {
+      console.error("[members/[id]] update role error:", err);
+      Alert.alert("Error", err?.message || "Failed to update role.");
+    }
+  };
+
+return (
     <Screen>
       {/* Header */}
       <View style={styles.header}>
@@ -521,7 +586,7 @@ export default function MemberDetailScreen() {
           )}
         </AppCard>
       )}
-    </Screen>
+</Screen>
   );
 }
 

@@ -748,3 +748,12 @@ export async function resetAllMemberFees(societyId: string): Promise<void> {
 
   console.log("[memberRepo] resetAllMemberFees success");
 }
+
+export async function updateMemberRole(memberId: string, role: string): Promise<void> {
+  const { error } = await supabase
+    .from("members")
+    .update({ role })
+    .eq("id", memberId);
+
+  if (error) throw error;
+}

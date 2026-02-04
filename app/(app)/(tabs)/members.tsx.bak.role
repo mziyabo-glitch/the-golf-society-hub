@@ -20,7 +20,6 @@ import {
   deleteMember,
   type MemberDoc,
 } from "@/lib/db_supabase/memberRepo";
-import { updateMemberRole } from "@/lib/db_supabase/memberRepo";
 import { getOrderOfMeritTotals, type OrderOfMeritEntry } from "@/lib/db_supabase/resultsRepo";
 import { getPermissionsForMember } from "@/lib/rbac";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
@@ -111,20 +110,7 @@ export default function MembersScreen() {
   // Get permissions for current member
   const permissions = getPermissionsForMember(currentMember as any);
 
-  
-
-  const handleUpdateRole = async (memberId: string, role: string) => {
-    if (!guard(permissions.canManageRoles, "Only the Captain can change roles.")) return;
-
-    try {
-      await updateMemberRole(memberId, role);
-      await loadMembers(); // existing loader
-    } catch (err: any) {
-      console.error("[members] update role error:", err);
-      Alert.alert("Error", err?.message || "Failed to update role.");
-    }
-  };
-// Debug: log activeSocietyId and permissions
+  // Debug: log activeSocietyId and permissions
   console.log("[members] activeSocietyId:", activeSocietyId || societyId);
   console.log("[members] currentMember:", currentMember?.id, "roles:", currentMember?.roles);
   console.log("[members] permissions.canCreateMembers:", permissions.canCreateMembers);

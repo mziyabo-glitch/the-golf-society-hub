@@ -8,7 +8,7 @@
  */
 
 import { useCallback, useEffect, useState } from "react";
-import { StyleSheet, View, Alert, Pressable, ScrollView, TextInput } from "react-native";
+import { StyleSheet, View, Alert, ScrollView } from "react-native";
 import { useRouter } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
 import { Feather } from "@expo/vector-icons";
@@ -28,29 +28,27 @@ import {
 } from "@/lib/db_supabase/eventRepo";
 import { getPermissionsForMember } from "@/lib/rbac";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
+import { guard } from "@/lib/guards";
 
-// Format pence to pounds string (e.g., 5000 -> "£50.00")
+// Format pence to pounds string (e.g., 5000 -> "Â£50.00")
 function formatPence(pence: number | null | undefined): string {
-  if (pence == null) return "£0.00";
+  if (pence == null) return "Â£0.00";
   const pounds = pence / 100;
-  return `£${pounds.toFixed(2)}`;
+  return `Â£${pounds.toFixed(2)}`;
 }
 
 // Format pence with sign for net values
 function formatPenceWithSign(pence: number): string {
-  const pounds = pence / 100;
-  if (pence >= 0) {
-    return `+£${pounds.toFixed(2)}`;
-  }
-  return `-£${Math.abs(pounds).toFixed(2)}`;
+  const pounds = Math.abs(pence) / 100;
+  return `${pence >= 0 ? "+" : "-"}Â£${pounds.toFixed(2)}`;
 }
 
 // Parse pounds string to pence (e.g., "50.00" -> 5000)
 function parsePounds(str: string): number | null {
-  const cleaned = str.replace(/[£,\s]/g, "");
+  const cleaned = str.replace(/[Â£,\s]/g, "");
   if (!cleaned) return null;
   const num = parseFloat(cleaned);
-  if (isNaN(num)) return null;
+  if (Number.isNaN(num)) return null;
   return Math.round(num * 100);
 }
 
@@ -102,9 +100,7 @@ export default function EventFinanceScreen() {
   // Refresh on focus
   useFocusEffect(
     useCallback(() => {
-      if (societyId) {
-        loadData();
-      }
+      if (societyId) loadData();
     }, [societyId, loadData])
   );
 
@@ -124,6 +120,7 @@ export default function EventFinanceScreen() {
 
   // Save event finance
   const handleSave = async () => {
+    if (!guard(permissions.canAccessFinance, "Only the Captain or Treasurer can edit event finance.")) return;
     if (!editing) return;
 
     const incomePence = parsePounds(editing.incomeInput);
@@ -141,11 +138,7 @@ export default function EventFinanceScreen() {
 
     setSaving(true);
     try {
-      await updateEventFinance(
-        editing.eventId,
-        incomePence ?? 0,
-        costsPence ?? 0
-      );
+      await updateEventFinance(editing.eventId, incomePence ?? 0, costsPence ?? 0);
       setEditing(null);
       await loadData();
     } catch (err: any) {
@@ -199,18 +192,30 @@ export default function EventFinanceScreen() {
       <ScrollView showsVerticalScrollIndicator={false}>
         {/* Totals Summary */}
         <AppCard style={styles.summaryCard}>
-          <AppText variant="h2" style={{ marginBottom: spacing.sm }}>Overall Summary</AppText>
+          <AppText variant="h2" style={{ marginBottom: spacing.sm }}>
+            Overall Summary
+          </AppText>
           <View style={styles.summaryGrid}>
             <View style={styles.summaryItem}>
-              <AppText variant="caption" color="secondary">Total Income</AppText>
-              <AppText variant="h1" style={{ color: colors.success }}>{formatPence(totalIncome)}</AppText>
+              <AppText variant="caption" color="secondary">
+                Total Income
+              </AppText>
+              <AppText variant="h1" style={{ color: colors.success }}>
+                {formatPence(totalIncome)}
+              </AppText>
             </View>
             <View style={styles.summaryItem}>
-              <AppText variant="caption" color="secondary">Total Costs</AppText>
-              <AppText variant="h1" style={{ color: colors.error }}>{formatPence(totalCosts)}</AppText>
+              <AppText variant="caption" color="secondary">
+                Total Costs
+              </AppText>
+              <AppText variant="h1" style={{ color: colors.error }}>
+                {formatPence(totalCosts)}
+              </AppText>
             </View>
             <View style={styles.summaryItem}>
-              <AppText variant="caption" color="secondary">Net</AppText>
+              <AppText variant="caption" color="secondary">
+                Net
+              </AppText>
               <AppText
                 variant="h1"
                 style={{ color: totalNet >= 0 ? colors.success : colors.error }}
@@ -246,7 +251,9 @@ export default function EventFinanceScreen() {
                 {/* Event Header */}
                 <View style={styles.eventHeader}>
                   <View style={{ flex: 1 }}>
-                    <AppText variant="bodyBold" numberOfLines={1}>{event.eventName}</AppText>
+                    <AppText variant="bodyBold" numberOfLines={1}>
+                      {event.eventName}
+                    </AppText>
                     <AppText variant="caption" color="secondary">
                       {event.eventDate
                         ? new Date(event.eventDate).toLocaleDateString("en-GB", {
@@ -265,13 +272,16 @@ export default function EventFinanceScreen() {
                 </View>
 
                 {isEditing ? (
-                  /* Edit Form */
                   <View style={styles.editForm}>
                     <View style={styles.inputRow}>
                       <View style={styles.inputGroup}>
-                        <AppText variant="caption" color="secondary">Income</AppText>
+                        <AppText variant="caption" color="secondary">
+                          Income
+                        </AppText>
                         <View style={styles.inputWrapper}>
-                          <AppText variant="body" style={{ marginRight: spacing.xs }}>£</AppText>
+                          <AppText variant="body" style={{ marginRight: spacing.xs }}>
+                            Â£
+                          </AppText>
                           <AppInput
                             placeholder="0.00"
                             value={editing.incomeInput}
@@ -283,10 +293,15 @@ export default function EventFinanceScreen() {
                           />
                         </View>
                       </View>
+
                       <View style={styles.inputGroup}>
-                        <AppText variant="caption" color="secondary">Costs</AppText>
+                        <AppText variant="caption" color="secondary">
+                          Costs
+                        </AppText>
                         <View style={styles.inputWrapper}>
-                          <AppText variant="body" style={{ marginRight: spacing.xs }}>£</AppText>
+                          <AppText variant="body" style={{ marginRight: spacing.xs }}>
+                            Â£
+                          </AppText>
                           <AppInput
                             placeholder="0.00"
                             value={editing.costsInput}
@@ -299,35 +314,54 @@ export default function EventFinanceScreen() {
                         </View>
                       </View>
                     </View>
+
                     <View style={styles.editActions}>
                       <SecondaryButton onPress={handleCancel} size="sm">
                         Cancel
                       </SecondaryButton>
-                      <PrimaryButton onPress={handleSave} loading={saving} size="sm">
+                      <PrimaryButton
+                        onPress={handleSave}
+                        loading={saving}
+                        size="sm"
+                        disabled={!canManageFinance || saving}
+                      >
                         Save
                       </PrimaryButton>
                     </View>
                   </View>
                 ) : (
-                  /* Finance Display */
                   <View style={styles.financeRow}>
                     <View style={styles.financeItem}>
-                      <AppText variant="small" color="secondary">Income</AppText>
+                      <AppText variant="small" color="secondary">
+                        Income
+                      </AppText>
                       <AppText variant="body" style={{ color: colors.success }}>
                         {hasFinance ? formatPence(event.incomePence) : "-"}
                       </AppText>
                     </View>
+
                     <View style={styles.financeItem}>
-                      <AppText variant="small" color="secondary">Costs</AppText>
+                      <AppText variant="small" color="secondary">
+                        Costs
+                      </AppText>
                       <AppText variant="body" style={{ color: colors.error }}>
                         {hasFinance ? formatPence(event.costsPence) : "-"}
                       </AppText>
                     </View>
+
                     <View style={styles.financeItem}>
-                      <AppText variant="small" color="secondary">Net</AppText>
+                      <AppText variant="small" color="secondary">
+                        Net
+                      </AppText>
                       <AppText
                         variant="bodyBold"
-                        style={{ color: hasFinance ? (net >= 0 ? colors.success : colors.error) : colors.textTertiary }}
+                        style={{
+                          color: hasFinance
+                            ? net >= 0
+                              ? colors.success
+                              : colors.error
+                            : colors.textTertiary,
+                        }}
                       >
                         {hasFinance ? formatPenceWithSign(net) : "-"}
                       </AppText>
