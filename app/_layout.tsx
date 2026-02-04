@@ -9,7 +9,7 @@ import { PrimaryButton } from "@/components/ui/Button";
 import { getColors, spacing } from "@/lib/ui/theme";
 
 function RootNavigator() {
-  const { loading, error, activeSocietyId, refresh } = useBootstrap();
+  const { loading, error, activeSocietyId, refresh, userId } = useBootstrap();
   const segments = useSegments();
   const router = useRouter();
   const colors = getColors();
@@ -31,10 +31,12 @@ function RootNavigator() {
     }
 
     const inOnboarding = segments[0] === "onboarding";
+    const inLogin = segments[0] === "login";
+    const isAuthed = !!userId;
     const hasSociety = !!activeSocietyId;
 
     // Create a state key to detect actual changes
-    const stateKey = `${hasSociety}-${inOnboarding}-${segments.join("/")}`;
+    const stateKey = `${isAuthed}-${hasSociety}-${inOnboarding}-${inLogin}-${segments.join("/")}`;
 
     // Only log if state actually changed
     if (stateKey !== lastState.current) {
@@ -47,7 +49,17 @@ function RootNavigator() {
       });
     }
 
-    if (!hasSociety && !inOnboarding) {
+    if (!isAuthed && !inLogin) {
+      // Not signed in -> go to login
+      console.log("[_layout] No session, redirecting to /login");
+      hasRouted.current = true;
+      router.replace("/login");
+    } else if (isAuthed && inLogin) {
+      // Signed in but on login -> go to onboarding or app
+      console.log("[_layout] Signed in, redirecting off /login");
+      hasRouted.current = true;
+      router.replace(hasSociety ? "/(app)/(tabs)" : "/onboarding");
+    } else if (!hasSociety && !inOnboarding) {
       // No society and not on onboarding -> go to onboarding
       console.log("[_layout] No society, redirecting to /onboarding");
       hasRouted.current = true;

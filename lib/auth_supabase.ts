@@ -43,11 +43,10 @@ export async function getCurrentUser(): Promise<User | null> {
 // ============================================================================
 
 /**
- * Ensure user is signed in. If no session exists, sign in anonymously.
+ * Ensure user is signed in. If no session exists, throw.
  * Returns the user object.
  */
 export async function ensureSignedIn(): Promise<User> {
-  // Check for existing session
   const { data: { session }, error: sessionError } = await supabase.auth.getSession();
 
   if (sessionError) {
@@ -59,22 +58,7 @@ export async function ensureSignedIn(): Promise<User> {
     return session.user;
   }
 
-  // No session, sign in anonymously
-  console.log("[auth] No session, signing in anonymously...");
-
-  const { data, error } = await supabase.auth.signInAnonymously();
-
-  if (error) {
-    console.error("[auth] signInAnonymously error:", error.message);
-    throw new Error(`Sign in failed: ${error.message}`);
-  }
-
-  if (!data.user) {
-    throw new Error("Sign in returned no user");
-  }
-
-  console.log("[auth] Signed in anonymously as:", data.user.id);
-  return data.user;
+  throw new Error("Not signed in. Please use the email link to sign in.");
 }
 
 /**
