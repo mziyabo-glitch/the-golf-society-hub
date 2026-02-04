@@ -749,11 +749,40 @@ export async function resetAllMemberFees(societyId: string): Promise<void> {
   console.log("[memberRepo] resetAllMemberFees success");
 }
 
-export async function updateMemberRole(memberId: string, role: string): Promise<void> {
-  const { error } = await supabase
-    .from("members")
-    .update({ role })
-    .eq("id", memberId);
+export async function updateMemberRole(
+  memberId: string,
+  role: string
+): Promise<MemberDoc> {
+  if (!memberId) throw new Error("updateMemberRole: missing memberId");
+  if (!role) throw new Error("updateMemberRole: missing role");
 
-  if (error) throw error;
+  const normalizedRole = role.toLowerCase();
+
+  const { data, error } = await supabase
+    .from("members")
+    .update({ role: normalizedRole })
+    .eq("id", memberId)
+    .select("*")
+    .maybeSingle();
+
+  if (error) {
+    console.error("[memberRepo] updateMemberRole failed:", {
+      message: error.message,
+      details: error.details,
+      hint: error.hint,
+      code: error.code,
+    });
+
+    if (error.code === "42501" || error.message?.includes("row-level security")) {
+      throw new Error("Only the Captain can change roles.");
+    }
+
+    throw new Error(error.message || "Failed to update member role");
+  }
+
+  if (!data) {
+    throw new Error("Member not found after role update");
+  }
+
+  return mapMember(data);
 }

@@ -49,17 +49,18 @@ export type MemberLike = {
   id: string;
   uid?: string;
   roles?: Role[] | string[];
+  role?: Role | string;
 };
 
-const normalizeRoles = (roles?: Role[] | string[]) => {
-  const r = Array.isArray(roles) ? roles : [];
+const normalizeRoles = (roles?: Role[] | string[] | string) => {
+  const r = Array.isArray(roles) ? roles : roles ? [roles] : [];
   // Convert to uppercase to handle lowercase roles from database
   const normalized = r.map((role) => role.toUpperCase() as Role);
   return normalized.length ? normalized : (["MEMBER"] as Role[]);
 };
 
 export const hasRole = (member: MemberLike | null | undefined, role: Role) => {
-  const roles = normalizeRoles(member?.roles);
+  const roles = normalizeRoles(member?.roles ?? member?.role);
   return roles.includes(role);
 };
 
@@ -76,7 +77,7 @@ export const isHandicapper = (member: MemberLike | null | undefined) =>
   hasRole(member, "HANDICAPPER");
 
 export const isManCo = (member: MemberLike | null | undefined) => {
-  const roles = normalizeRoles(member?.roles);
+  const roles = normalizeRoles(member?.roles ?? member?.role);
   return roles.some((r) =>
     ["CAPTAIN", "TREASURER", "SECRETARY", "HANDICAPPER"].includes(r)
   );
