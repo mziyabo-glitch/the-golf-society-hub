@@ -91,6 +91,9 @@ function useBootstrapInternal(): BootstrapState {
   const [refreshKey, setRefreshKey] = useState(0);
 
   const mounted = useRef(true);
+  const bootstrapRunRef = useRef(false);
+  const bootstrapInFlight = useRef(false);
+  const anonSignInAttempted = useRef(false);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -105,6 +108,11 @@ function useBootstrapInternal(): BootstrapState {
     let profilePollTimer: ReturnType<typeof setInterval> | null = null;
 
     const bootstrap = async () => {
+      if (bootstrapInFlight.current) return;
+      if (bootstrapRunRef.current && refreshKey === 0) return;
+      bootstrapInFlight.current = true;
+      bootstrapRunRef.current = true;
+
       try {
         setLoading(true);
         setError(null);
@@ -132,18 +140,36 @@ function useBootstrapInternal(): BootstrapState {
             : "unknown");
         }
 
-        const currentSession = existingSession ?? null;
-        const currentUser: User | null = existingSession?.user ?? null;
+        let currentSession = existingSession ?? null;
+        let currentUser: User | null = existingSession?.user ?? null;
 
         if (!currentSession || !currentUser) {
-          console.log("[useBootstrap] No session found. Waiting for email sign-in.");
+          if (anonSignInAttempted.current) {
+            console.warn("[useBootstrap] Anonymous sign-in already attempted.");
+            if (!mounted.current) return;
+            setSession(null);
+            setProfile(null);
+            setSociety(null);
+            setMember(null);
+            return;
+          }
 
-          if (!mounted.current) return;
-          setSession(null);
-          setProfile(null);
-          setSociety(null);
-          setMember(null);
-          return;
+          anonSignInAttempted.current = true;
+          console.log("[useBootstrap] No session found. Signing in anonymously...");
+
+          const { data: signInData, error: signInError } =
+            await supabase.auth.signInAnonymously();
+
+          if (signInError) {
+            throw new Error(`Anonymous sign-in failed: ${signInError.message}`);
+          }
+
+          currentSession = signInData.session ?? null;
+          currentUser = signInData.user ?? null;
+
+          if (!currentSession || !currentUser) {
+            throw new Error("Failed to establish auth session");
+          }
         }
 
         console.log("[useBootstrap] Existing session found:", currentUser.id);
@@ -269,6 +295,7 @@ function useBootstrapInternal(): BootstrapState {
           setError(e?.message || "Bootstrap failed");
         }
       } finally {
+        bootstrapInFlight.current = false;
         if (mounted.current) {
           setLoading(false);
         }
