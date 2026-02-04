@@ -24,15 +24,32 @@ import { useBootstrap } from "@/lib/useBootstrap";
 import {
   getMember,
   updateMember,
+  updateMemberRole,
   type MemberDoc,
   type Gender,
 } from "@/lib/db_supabase/memberRepo";
 import { getPermissionsForMember } from "@/lib/rbac";
-
-import { updateMemberRole } from "@/lib/db_supabase/memberRepo";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
-
 import { guard } from "@/lib/guards";
+
+type RoleValue = "member" | "treasurer" | "secretary" | "handicapper" | "captain";
+
+const ROLE_OPTIONS: Array<{ value: RoleValue; label: string }> = [
+  { value: "member", label: "Member" },
+  { value: "treasurer", label: "Treasurer" },
+  { value: "secretary", label: "Secretary" },
+  { value: "handicapper", label: "Handicapper" },
+];
+
+const normalizeRole = (role?: string | null): RoleValue => {
+  const lower = role?.toLowerCase().trim();
+  if (lower === "captain") return "captain";
+  if (lower === "treasurer") return "treasurer";
+  if (lower === "secretary") return "secretary";
+  if (lower === "handicapper") return "handicapper";
+  return "member";
+};
+
 // Gender option component
 function GenderOption({
   value,
@@ -62,26 +79,45 @@ function GenderOption({
       ? colors.error
       : colors.info
     : colors.border;
-  const handleUpdateRole = async () => {
-    if (!guard(canManageRoles, "Only the Captain can change roles.")) return;
-    if (!targetMemberId) return;
 
-    try {
-      await updateMemberRole(targetMemberId, selectedRole);
-      Alert.alert("Updated", "Role updated.");
-      setMember((prev) => (prev ? ({ ...prev, role: selectedRole } as any) : prev));
-    } catch (err: any) {
-      console.error("[members/[id]] update role error:", err);
-      Alert.alert("Error", err?.message || "Failed to update role.");
-    }
-  };
-
-return (
+  return (
     <Pressable
       onPress={onPress}
       style={[
         styles.genderOption,
         { backgroundColor: bgColor, borderColor },
+      ]}
+    >
+      <AppText variant="body" style={{ color: textColor }}>
+        {label}
+      </AppText>
+    </Pressable>
+  );
+}
+
+function RoleOption({
+  label,
+  selected,
+  disabled,
+  onPress,
+  colors,
+}: {
+  label: string;
+  selected: boolean;
+  disabled?: boolean;
+  onPress: () => void;
+  colors: ReturnType<typeof getColors>;
+}) {
+  const bgColor = selected ? colors.primary + "20" : colors.backgroundSecondary;
+  const textColor = selected ? colors.primary : colors.text;
+  const borderColor = selected ? colors.primary : colors.border;
+
+  return (
+    <Pressable
+      onPress={disabled ? undefined : onPress}
+      style={[
+        styles.roleOption,
+        { backgroundColor: bgColor, borderColor, opacity: disabled ? 0.5 : 1 },
       ]}
     >
       <AppText variant="body" style={{ color: textColor }}>
@@ -100,12 +136,12 @@ export default function MemberDetailScreen() {
   const memberId = Array.isArray(params.id) ? params.id[0] : params.id;
 
   const [member, setMember] = useState<MemberDoc | null>(null);
-
-  const [selectedRole, setSelectedRole] = useState<string>("member");
-const [loading, setLoading] = useState(true);
+  const [selectedRole, setSelectedRole] = useState<RoleValue>("member");
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-const [isEditing, setIsEditing] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [roleSaving, setRoleSaving] = useState(false);
 
   // Form state
   const [formName, setFormName] = useState("");
@@ -113,15 +149,18 @@ const [isEditing, setIsEditing] = useState(false);
   const [formWhsNumber, setFormWhsNumber] = useState("");
   const [formHandicapIndex, setFormHandicapIndex] = useState("");
   const [formGender, setFormGender] = useState<Gender>(null);
-// Permissions
+
+  // Permissions
   const permissions = getPermissionsForMember(currentMember as any);
-  
-  
-  const canManageRoles = !!(permissions as any).canManageRoles || ((member as any)?.role === "captain");
-const isOwnProfile = currentMember?.id === memberId;
+  const canManageRoles = permissions.canManageRoles;
+  const isOwnProfile = currentMember?.id === memberId;
   const canEditBasic = isOwnProfile || permissions.canEditMembers;
   const canEditHandicap = permissions.canManageHandicaps;
   const canEdit = canEditBasic || canEditHandicap;
+
+  const currentRole = normalizeRole(member?.role);
+  const roleLocked = currentRole === "captain";
+  const roleChanged = selectedRole !== currentRole;
 
   const loadMember = useCallback(async () => {
     if (!memberId) {
@@ -140,9 +179,8 @@ const isOwnProfile = currentMember?.id === memberId;
       if (data) {
         console.log("[MemberDetail] Member loaded:", data.displayName || data.name);
         setMember(data);
-        
-      // Keep role picker in sync with loaded member
-// Initialize form with current values
+
+        // Initialize form with current values
         setFormName(data.displayName || data.name || "");
         setFormEmail(data.email || "");
         setFormWhsNumber(data.whsNumber || data.whs_number || "");
@@ -168,6 +206,10 @@ const isOwnProfile = currentMember?.id === memberId;
   useEffect(() => {
     loadMember();
   }, [loadMember]);
+
+  useEffect(() => {
+    setSelectedRole(normalizeRole(member?.role));
+  }, [member?.role]);
 
   // Refetch on focus
   useFocusEffect(
@@ -202,7 +244,7 @@ const isOwnProfile = currentMember?.id === memberId;
 
       const patch: Parameters<typeof updateMember>[1] = {};
 
-      // Basic fields (anyone can edit their own, or Captain/Handicapper can edit any)
+      // Basic fields (anyone can edit their own, or Captain/Treasurer can edit any)
       if (canEditBasic) {
         patch.name = formName.trim();
         patch.gender = formGender;
@@ -222,9 +264,7 @@ const isOwnProfile = currentMember?.id === memberId;
 
       console.log("[MemberDetail] Save success");
       setMember(updated);
-      
-      // Keep role picker in sync with loaded member
-setIsEditing(false);
+      setIsEditing(false);
       Alert.alert("Saved", "Member updated successfully.");
     } catch (err: any) {
       console.error("[MemberDetail] Save error:", err);
@@ -252,46 +292,44 @@ setIsEditing(false);
     setIsEditing(false);
   };
 
-  if (bootstrapLoading || loading) {
   const handleUpdateRole = async () => {
     if (!guard(canManageRoles, "Only the Captain can change roles.")) return;
-    if (!targetMemberId) return;
+    if (!member) return;
+    if (roleLocked) {
+      Alert.alert("Not allowed", "Captain role cannot be changed here.");
+      return;
+    }
+    if (!roleChanged) {
+      Alert.alert("No changes", "Select a different role to update.");
+      return;
+    }
 
+    setRoleSaving(true);
     try {
-      await updateMemberRole(targetMemberId, selectedRole);
+      const updated = await updateMemberRole(member.id, selectedRole);
+      setMember(updated);
+      setSelectedRole(normalizeRole(updated.role));
       Alert.alert("Updated", "Role updated.");
-      setMember((prev) => (prev ? ({ ...prev, role: selectedRole } as any) : prev));
     } catch (err: any) {
       console.error("[members/[id]] update role error:", err);
       Alert.alert("Error", err?.message || "Failed to update role.");
+    } finally {
+      setRoleSaving(false);
     }
   };
 
-return (
+  if (bootstrapLoading || loading) {
+    return (
       <Screen scrollable={false}>
         <View style={styles.centered}>
           <LoadingState message="Loading member..." />
         </View>
-</Screen>
+      </Screen>
     );
   }
 
   if (error || !member) {
-  const handleUpdateRole = async () => {
-    if (!guard(canManageRoles, "Only the Captain can change roles.")) return;
-    if (!targetMemberId) return;
-
-    try {
-      await updateMemberRole(targetMemberId, selectedRole);
-      Alert.alert("Updated", "Role updated.");
-      setMember((prev) => (prev ? ({ ...prev, role: selectedRole } as any) : prev));
-    } catch (err: any) {
-      console.error("[members/[id]] update role error:", err);
-      Alert.alert("Error", err?.message || "Failed to update role.");
-    }
-  };
-
-return (
+    return (
       <Screen>
         <EmptyState
           icon={<Feather name="alert-circle" size={24} color={colors.error} />}
@@ -299,7 +337,7 @@ return (
           message={error || "Member not found"}
           action={{ label: "Go Back", onPress: () => router.back() }}
         />
-</Screen>
+      </Screen>
     );
   }
 
@@ -323,21 +361,8 @@ return (
     if (gender === "female") return "Female";
     return "Not set";
   };
-  const handleUpdateRole = async () => {
-    if (!guard(canManageRoles, "Only the Captain can change roles.")) return;
-    if (!targetMemberId) return;
 
-    try {
-      await updateMemberRole(targetMemberId, selectedRole);
-      Alert.alert("Updated", "Role updated.");
-      setMember((prev) => (prev ? ({ ...prev, role: selectedRole } as any) : prev));
-    } catch (err: any) {
-      console.error("[members/[id]] update role error:", err);
-      Alert.alert("Error", err?.message || "Failed to update role.");
-    }
-  };
-
-return (
+  return (
     <Screen>
       {/* Header */}
       <View style={styles.header}>
@@ -374,10 +399,15 @@ return (
                 </AppText>
               </View>
               {member.gender && (
-                <View style={[
-                  styles.roleBadge,
-                  { backgroundColor: member.gender === "female" ? colors.error + "20" : colors.info + "20" }
-                ]}>
+                <View
+                  style={[
+                    styles.roleBadge,
+                    {
+                      backgroundColor:
+                        member.gender === "female" ? colors.error + "20" : colors.info + "20",
+                    },
+                  ]}
+                >
                   <AppText
                     variant="caption"
                     style={{ color: member.gender === "female" ? colors.error : colors.info }}
@@ -395,7 +425,9 @@ return (
       {isEditing ? (
         <AppCard>
           <View style={styles.formField}>
-            <AppText variant="captionBold" style={styles.label}>Name</AppText>
+            <AppText variant="captionBold" style={styles.label}>
+              Name
+            </AppText>
             <AppInput
               placeholder="e.g. John Smith"
               value={formName}
@@ -406,7 +438,9 @@ return (
           </View>
 
           <View style={styles.formField}>
-            <AppText variant="captionBold" style={styles.label}>Email (optional)</AppText>
+            <AppText variant="captionBold" style={styles.label}>
+              Email (optional)
+            </AppText>
             <AppInput
               placeholder="e.g. john@example.com"
               value={formEmail}
@@ -419,7 +453,9 @@ return (
 
           {/* Gender Selection */}
           <View style={styles.formField}>
-            <AppText variant="captionBold" style={styles.label}>Gender</AppText>
+            <AppText variant="captionBold" style={styles.label}>
+              Gender
+            </AppText>
             <AppText variant="small" color="tertiary" style={{ marginBottom: spacing.xs }}>
               Required for WHS handicap calculations with different tees
             </AppText>
@@ -442,7 +478,7 @@ return (
                 onPress={() => setFormGender(null)}
                 style={[
                   styles.genderClear,
-                  { opacity: formGender ? 1 : 0.5 }
+                  { opacity: formGender ? 1 : 0.5 },
                 ]}
               >
                 <Feather name="x" size={16} color={colors.textTertiary} />
@@ -453,7 +489,9 @@ return (
           {canEditHandicap ? (
             <>
               <View style={styles.formField}>
-                <AppText variant="captionBold" style={styles.label}>WHS Number (optional)</AppText>
+                <AppText variant="captionBold" style={styles.label}>
+                  WHS Number (optional)
+                </AppText>
                 <AppInput
                   placeholder="e.g. 1234567"
                   value={formWhsNumber}
@@ -463,7 +501,9 @@ return (
               </View>
 
               <View style={styles.formField}>
-                <AppText variant="captionBold" style={styles.label}>Handicap Index</AppText>
+                <AppText variant="captionBold" style={styles.label}>
+                  Handicap Index
+                </AppText>
                 <AppInput
                   placeholder="e.g. 12.4"
                   value={formHandicapIndex}
@@ -504,7 +544,9 @@ return (
               <Feather name="mail" size={16} color={colors.textSecondary} />
             </View>
             <View style={{ flex: 1 }}>
-              <AppText variant="caption" color="tertiary">Email</AppText>
+              <AppText variant="caption" color="tertiary">
+                Email
+              </AppText>
               <AppText variant="body">{member.email || "Not set"}</AppText>
             </View>
           </View>
@@ -515,7 +557,9 @@ return (
               <Feather name="user" size={16} color={colors.textSecondary} />
             </View>
             <View style={{ flex: 1 }}>
-              <AppText variant="caption" color="tertiary">Gender</AppText>
+              <AppText variant="caption" color="tertiary">
+                Gender
+              </AppText>
               <AppText variant="body">{formatGender(member.gender ?? null)}</AppText>
             </View>
           </View>
@@ -526,7 +570,9 @@ return (
               <Feather name="hash" size={16} color={colors.textSecondary} />
             </View>
             <View style={{ flex: 1 }}>
-              <AppText variant="caption" color="tertiary">WHS Number</AppText>
+              <AppText variant="caption" color="tertiary">
+                WHS Number
+              </AppText>
               <AppText variant="body">
                 {member.whsNumber || member.whs_number || "Not set"}
               </AppText>
@@ -539,7 +585,9 @@ return (
               <Feather name="trending-down" size={16} color={colors.textSecondary} />
             </View>
             <View style={{ flex: 1 }}>
-              <AppText variant="caption" color="tertiary">Handicap Index</AppText>
+              <AppText variant="caption" color="tertiary">
+                Handicap Index
+              </AppText>
               <AppText variant="body">
                 {member.handicapIndex != null
                   ? Number(member.handicapIndex).toFixed(1)
@@ -556,7 +604,9 @@ return (
               <Feather name="credit-card" size={16} color={colors.textSecondary} />
             </View>
             <View style={{ flex: 1 }}>
-              <AppText variant="caption" color="tertiary">Membership Fee</AppText>
+              <AppText variant="caption" color="tertiary">
+                Membership Fee
+              </AppText>
               <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.xs }}>
                 <Feather
                   name={member.paid ? "check-circle" : "circle"}
@@ -586,7 +636,59 @@ return (
           )}
         </AppCard>
       )}
-</Screen>
+
+      {canManageRoles && (
+        <AppCard style={{ marginTop: spacing.base }}>
+          <AppText variant="captionBold" style={styles.label}>
+            Role (Captain only)
+          </AppText>
+          <AppText variant="small" color="tertiary" style={{ marginBottom: spacing.sm }}>
+            Assign Treasurer, Secretary, or Handicapper for this member.
+          </AppText>
+
+          <View style={{ marginBottom: spacing.sm }}>
+            <AppText variant="caption" color="tertiary">
+              Current role
+            </AppText>
+            <AppText variant="body">{formatRole(member.role)}</AppText>
+          </View>
+
+          {roleLocked ? (
+            <AppCard style={{ backgroundColor: colors.backgroundTertiary }}>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+                <Feather name="info" size={16} color={colors.textTertiary} />
+                <AppText variant="caption" color="tertiary">
+                  Captain role cannot be changed here.
+                </AppText>
+              </View>
+            </AppCard>
+          ) : (
+            <>
+              <View style={styles.roleRow}>
+                {ROLE_OPTIONS.map((option) => (
+                  <RoleOption
+                    key={option.value}
+                    label={option.label}
+                    selected={selectedRole === option.value}
+                    onPress={() => setSelectedRole(option.value)}
+                    colors={colors}
+                  />
+                ))}
+              </View>
+              <View style={styles.roleActions}>
+                <PrimaryButton
+                  onPress={handleUpdateRole}
+                  loading={roleSaving}
+                  disabled={!roleChanged || roleSaving}
+                >
+                  Save Role
+                </PrimaryButton>
+              </View>
+            </>
+          )}
+        </AppCard>
+      )}
+    </Screen>
   );
 }
 
@@ -650,6 +752,25 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     gap: spacing.sm,
     marginTop: spacing.base,
+  },
+  roleRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: spacing.sm,
+  },
+  roleOption: {
+    minWidth: 120,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.base,
+    borderRadius: radius.sm,
+    borderWidth: 1,
+    alignItems: "center",
+    flexGrow: 1,
+  },
+  roleActions: {
+    flexDirection: "row",
+    justifyContent: "flex-end",
+    marginTop: spacing.sm,
   },
   infoRow: {
     flexDirection: "row",
