@@ -1,54 +1,33 @@
 import { useEffect, useState } from "react";
 import { Alert, KeyboardAvoidingView, Platform, StyleSheet, View } from "react-native";
-import * as Linking from "expo-linking";
 
 import { Screen } from "@/components/ui/Screen";
 import { AppText } from "@/components/ui/AppText";
 import { AppCard } from "@/components/ui/AppCard";
 import { AppInput } from "@/components/ui/AppInput";
 import { PrimaryButton } from "@/components/ui/Button";
-import { LoadingState } from "@/components/ui/LoadingState";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
 import { supabase } from "@/lib/supabase";
-
-function looksLikeMagicLink(url: string): boolean {
-  return url.includes("code=") || url.includes("access_token=");
-}
 
 export default function LoginScreen() {
   const colors = getColors();
   const [email, setEmail] = useState("");
   const [sending, setSending] = useState(false);
   const [sent, setSent] = useState(false);
-  const [linking, setLinking] = useState(false);
+  const [cooldownSeconds, setCooldownSeconds] = useState(0);
 
   useEffect(() => {
-    const handleUrl = async (url: string | null) => {
-      if (!url || !looksLikeMagicLink(url)) return;
-      setLinking(true);
-      try {
-        const { error } = await supabase.auth.exchangeCodeForSession(url);
-        if (error) {
-          console.warn("[login] exchangeCodeForSession error:", error.message);
-        }
-      } catch (err) {
-        console.warn("[login] exchangeCodeForSession failed:", err);
-      } finally {
-        setLinking(false);
-      }
-    };
+    if (cooldownSeconds <= 0) return;
+    const timer = setTimeout(() => {
+      setCooldownSeconds((prev) => Math.max(prev - 1, 0));
+    }, 1000);
 
-    Linking.getInitialURL().then(handleUrl);
-    const subscription = Linking.addEventListener("url", ({ url }) => {
-      handleUrl(url);
-    });
-
-    return () => {
-      subscription.remove();
-    };
-  }, []);
+    return () => clearTimeout(timer);
+  }, [cooldownSeconds]);
 
   const handleSendMagicLink = async () => {
+    if (sending || cooldownSeconds > 0) return;
+
     const trimmedEmail = email.trim().toLowerCase();
     if (!trimmedEmail) {
       Alert.alert("Missing Email", "Please enter your email address.");
@@ -59,9 +38,16 @@ export default function LoginScreen() {
       return;
     }
 
+    const redirectTo =
+      Platform.OS === "web"
+        ? `${window.location.origin}/auth/callback`
+        : "gsh://auth/callback";
+
+    console.log("[login] send magic link", { platform: Platform.OS, redirectTo });
+
     setSending(true);
+    setCooldownSeconds(60);
     try {
-      const redirectTo = Linking.createURL("login");
       const { error } = await supabase.auth.signInWithOtp({
         email: trimmedEmail,
         options: {
@@ -70,6 +56,18 @@ export default function LoginScreen() {
       });
 
       if (error) {
+        const message = error?.message?.toLowerCase() ?? "";
+        const isRateLimit =
+          error?.status === 429 ||
+          message.includes("rate limit") ||
+          message.includes("too many requests");
+        if (isRateLimit) {
+          Alert.alert(
+            "Please wait",
+            "Too many requests. Please wait 60 seconds before trying again."
+          );
+          return;
+        }
         throw error;
       }
 
@@ -82,16 +80,6 @@ export default function LoginScreen() {
       setSending(false);
     }
   };
-
-  if (linking) {
-    return (
-      <Screen scrollable={false}>
-        <View style={styles.centered}>
-          <LoadingState message="Signing you in..." />
-        </View>
-      </Screen>
-    );
-  }
 
   return (
     <Screen>
@@ -130,10 +118,14 @@ export default function LoginScreen() {
             <PrimaryButton
               onPress={handleSendMagicLink}
               loading={sending}
-              disabled={sending}
+              disabled={sending || cooldownSeconds > 0}
               style={styles.submitButton}
             >
-              {sending ? "Sending..." : "Send Magic Link"}
+              {sending
+                ? "Sending..."
+                : cooldownSeconds > 0
+                ? `Try again in ${cooldownSeconds}s`
+                : "Send Magic Link"}
             </PrimaryButton>
           </AppCard>
 

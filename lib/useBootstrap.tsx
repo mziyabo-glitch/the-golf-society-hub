@@ -91,6 +91,8 @@ function useBootstrapInternal(): BootstrapState {
   const [refreshKey, setRefreshKey] = useState(0);
 
   const mounted = useRef(true);
+  const bootstrapRunRef = useRef(false);
+  const bootstrapInFlight = useRef(false);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -105,12 +107,17 @@ function useBootstrapInternal(): BootstrapState {
     let profilePollTimer: ReturnType<typeof setInterval> | null = null;
 
     const bootstrap = async () => {
+      if (bootstrapInFlight.current) return;
+      if (bootstrapRunRef.current && refreshKey === 0) return;
+      bootstrapInFlight.current = true;
+      bootstrapRunRef.current = true;
+
       try {
         setLoading(true);
         setError(null);
 
         // ----------------------------------------------------------------
-        // Step 1: Get existing session or sign in anonymously
+        // Step 1: Get existing session (no auto sign-in)
         // Session persistence: localStorage on web, SecureStore on native
         // ----------------------------------------------------------------
         console.log("[useBootstrap] === SESSION PERSISTENCE CHECK ===");
@@ -269,6 +276,7 @@ function useBootstrapInternal(): BootstrapState {
           setError(e?.message || "Bootstrap failed");
         }
       } finally {
+        bootstrapInFlight.current = false;
         if (mounted.current) {
           setLoading(false);
         }
