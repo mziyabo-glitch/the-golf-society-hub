@@ -35,6 +35,7 @@ import { updateSociety, getSociety } from "@/lib/db_supabase/societyRepo";
 import { getPermissionsForMember } from "@/lib/rbac";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
 
+import { guard } from "@/lib/guards";
 // Format pence to pounds string (e.g., 5000 -> "£50.00")
 function formatPence(pence: number | null | undefined): string {
   if (pence == null) return "£0.00";
@@ -117,6 +118,7 @@ export default function MembershipFeesScreen() {
 
   // Toggle member fee status
   const handleToggleFee = async (memberId: string, currentPaid: boolean) => {
+    if (!guard(permissions.canManageMembershipFees, "Only the Captain or Treasurer can update membership fee status.")) return;
     setUpdating(memberId);
     try {
       await updateMemberFeeStatus(memberId, !currentPaid);
@@ -149,6 +151,7 @@ export default function MembershipFeesScreen() {
 
   // Save annual fee amount
   const handleSaveFee = async () => {
+    if (!guard(permissions.canManageMembershipFees, "Only the Captain or Treasurer can set the annual fee.")) return;
     if (!societyId) return;
 
     const newFee = parsePounds(feeInputValue);
@@ -281,7 +284,7 @@ export default function MembershipFeesScreen() {
               keyboardType="decimal-pad"
               style={{ flex: 1 }}
             />
-            <PrimaryButton onPress={handleSaveFee} loading={savingFee} size="sm">
+            <PrimaryButton onPress={handleSaveFee} loading={savingFee} size="sm" disabled={!canManageFees || savingFee}>
               Save
             </PrimaryButton>
           </View>
@@ -329,8 +332,8 @@ export default function MembershipFeesScreen() {
                   </View>
 
                   <Pressable
-                    onPress={() => handleToggleFee(m.id, isPaid)}
-                    disabled={isUpdating}
+                    onPress={() => canManageFees && handleToggleFee(m.id, isPaid)}
+                    disabled={isUpdating || !canManageFees}
                     style={({ pressed }) => [
                       styles.statusBadge,
                       {
@@ -431,3 +434,4 @@ const styles = StyleSheet.create({
     borderRadius: radius.full,
   },
 });
+

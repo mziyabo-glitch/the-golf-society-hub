@@ -38,6 +38,8 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { useBootstrap } from "@/lib/useBootstrap";
 import { getPermissionsForMember } from "@/lib/rbac";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
+
+import { guard } from "@/lib/guards";
 import {
   parseCurrencyToPence,
   formatPenceToGBP,
@@ -185,6 +187,8 @@ export default function TreasurerScreen() {
   };
 
   const handleSaveOpeningBalance = async () => {
+    if (!guard(permissions.canAccessFinance, "Only the Captain or Treasurer can update the opening balance.")) return;
+
     const pence = parseCurrencyToPence(openingBalanceInput);
     if (pence === null) {
       Alert.alert("Invalid Amount", "Please enter a valid amount.");
@@ -227,6 +231,8 @@ export default function TreasurerScreen() {
   };
 
   const handleSaveEntry = async () => {
+    if (!guard(permissions.canAccessFinance, "Only the Captain or Treasurer can add or edit finance entries.")) return;
+
     if (!validateForm()) return;
 
     const amountPence = parseCurrencyToPence(entryForm.amountInput)!;
@@ -455,8 +461,8 @@ export default function TreasurerScreen() {
                     borderBottomWidth: index < sortedEntries.length - 1 ? 1 : 0,
                   },
                 ]}
-                onPress={() => handleOpenEditEntry(entry)}
-                onLongPress={() => handleDeleteEntry(entry)}
+                onPress={() => { if (!permissions.canAccessFinance) return; handleOpenEditEntry(entry); }}
+                onLongPress={() => { if (!permissions.canAccessFinance) return; handleDeleteEntry(entry); }}
               >
                 {/* Date Column */}
                 <View style={styles.dateCol}>

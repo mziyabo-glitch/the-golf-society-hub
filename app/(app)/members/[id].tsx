@@ -24,11 +24,31 @@ import { useBootstrap } from "@/lib/useBootstrap";
 import {
   getMember,
   updateMember,
+  updateMemberRole,
   type MemberDoc,
   type Gender,
 } from "@/lib/db_supabase/memberRepo";
 import { getPermissionsForMember } from "@/lib/rbac";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
+import { guard } from "@/lib/guards";
+
+type RoleValue = "member" | "treasurer" | "secretary" | "handicapper" | "captain";
+
+const ROLE_OPTIONS: Array<{ value: RoleValue; label: string }> = [
+  { value: "member", label: "Member" },
+  { value: "treasurer", label: "Treasurer" },
+  { value: "secretary", label: "Secretary" },
+  { value: "handicapper", label: "Handicapper" },
+];
+
+const normalizeRole = (role?: string | null): RoleValue => {
+  const lower = role?.toLowerCase().trim();
+  if (lower === "captain") return "captain";
+  if (lower === "treasurer") return "treasurer";
+  if (lower === "secretary") return "secretary";
+  if (lower === "handicapper") return "handicapper";
+  return "member";
+};
 
 // Gender option component
 function GenderOption({
@@ -75,6 +95,38 @@ function GenderOption({
   );
 }
 
+function RoleOption({
+  label,
+  selected,
+  disabled,
+  onPress,
+  colors,
+}: {
+  label: string;
+  selected: boolean;
+  disabled?: boolean;
+  onPress: () => void;
+  colors: ReturnType<typeof getColors>;
+}) {
+  const bgColor = selected ? colors.primary + "20" : colors.backgroundSecondary;
+  const textColor = selected ? colors.primary : colors.text;
+  const borderColor = selected ? colors.primary : colors.border;
+
+  return (
+    <Pressable
+      onPress={disabled ? undefined : onPress}
+      style={[
+        styles.roleOption,
+        { backgroundColor: bgColor, borderColor, opacity: disabled ? 0.5 : 1 },
+      ]}
+    >
+      <AppText variant="body" style={{ color: textColor }}>
+        {label}
+      </AppText>
+    </Pressable>
+  );
+}
+
 export default function MemberDetailScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ id: string }>();
@@ -84,10 +136,12 @@ export default function MemberDetailScreen() {
   const memberId = Array.isArray(params.id) ? params.id[0] : params.id;
 
   const [member, setMember] = useState<MemberDoc | null>(null);
+  const [selectedRole, setSelectedRole] = useState<RoleValue>("member");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [isEditing, setIsEditing] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [roleSaving, setRoleSaving] = useState(false);
 
   // Form state
   const [formName, setFormName] = useState("");
@@ -98,10 +152,15 @@ export default function MemberDetailScreen() {
 
   // Permissions
   const permissions = getPermissionsForMember(currentMember as any);
+  const canManageRoles = permissions.canManageRoles;
   const isOwnProfile = currentMember?.id === memberId;
   const canEditBasic = isOwnProfile || permissions.canEditMembers;
   const canEditHandicap = permissions.canManageHandicaps;
   const canEdit = canEditBasic || canEditHandicap;
+
+  const currentRole = normalizeRole(member?.role);
+  const roleLocked = currentRole === "captain";
+  const roleChanged = selectedRole !== currentRole;
 
   const loadMember = useCallback(async () => {
     if (!memberId) {
@@ -120,6 +179,7 @@ export default function MemberDetailScreen() {
       if (data) {
         console.log("[MemberDetail] Member loaded:", data.displayName || data.name);
         setMember(data);
+
         // Initialize form with current values
         setFormName(data.displayName || data.name || "");
         setFormEmail(data.email || "");
@@ -146,6 +206,10 @@ export default function MemberDetailScreen() {
   useEffect(() => {
     loadMember();
   }, [loadMember]);
+
+  useEffect(() => {
+    setSelectedRole(normalizeRole(member?.role));
+  }, [member?.role]);
 
   // Refetch on focus
   useFocusEffect(
@@ -180,7 +244,7 @@ export default function MemberDetailScreen() {
 
       const patch: Parameters<typeof updateMember>[1] = {};
 
-      // Basic fields (anyone can edit their own, or Captain/Handicapper can edit any)
+      // Basic fields (anyone can edit their own, or Captain/Treasurer can edit any)
       if (canEditBasic) {
         patch.name = formName.trim();
         patch.gender = formGender;
@@ -226,6 +290,32 @@ export default function MemberDetailScreen() {
       setFormGender(member.gender ?? null);
     }
     setIsEditing(false);
+  };
+
+  const handleUpdateRole = async () => {
+    if (!guard(canManageRoles, "Only the Captain can change roles.")) return;
+    if (!member) return;
+    if (roleLocked) {
+      Alert.alert("Not allowed", "Captain role cannot be changed here.");
+      return;
+    }
+    if (!roleChanged) {
+      Alert.alert("No changes", "Select a different role to update.");
+      return;
+    }
+
+    setRoleSaving(true);
+    try {
+      const updated = await updateMemberRole(member.id, selectedRole);
+      setMember(updated);
+      setSelectedRole(normalizeRole(updated.role));
+      Alert.alert("Updated", "Role updated.");
+    } catch (err: any) {
+      console.error("[members/[id]] update role error:", err);
+      Alert.alert("Error", err?.message || "Failed to update role.");
+    } finally {
+      setRoleSaving(false);
+    }
   };
 
   if (bootstrapLoading || loading) {
@@ -309,10 +399,15 @@ export default function MemberDetailScreen() {
                 </AppText>
               </View>
               {member.gender && (
-                <View style={[
-                  styles.roleBadge,
-                  { backgroundColor: member.gender === "female" ? colors.error + "20" : colors.info + "20" }
-                ]}>
+                <View
+                  style={[
+                    styles.roleBadge,
+                    {
+                      backgroundColor:
+                        member.gender === "female" ? colors.error + "20" : colors.info + "20",
+                    },
+                  ]}
+                >
                   <AppText
                     variant="caption"
                     style={{ color: member.gender === "female" ? colors.error : colors.info }}
@@ -330,7 +425,9 @@ export default function MemberDetailScreen() {
       {isEditing ? (
         <AppCard>
           <View style={styles.formField}>
-            <AppText variant="captionBold" style={styles.label}>Name</AppText>
+            <AppText variant="captionBold" style={styles.label}>
+              Name
+            </AppText>
             <AppInput
               placeholder="e.g. John Smith"
               value={formName}
@@ -341,7 +438,9 @@ export default function MemberDetailScreen() {
           </View>
 
           <View style={styles.formField}>
-            <AppText variant="captionBold" style={styles.label}>Email (optional)</AppText>
+            <AppText variant="captionBold" style={styles.label}>
+              Email (optional)
+            </AppText>
             <AppInput
               placeholder="e.g. john@example.com"
               value={formEmail}
@@ -354,7 +453,9 @@ export default function MemberDetailScreen() {
 
           {/* Gender Selection */}
           <View style={styles.formField}>
-            <AppText variant="captionBold" style={styles.label}>Gender</AppText>
+            <AppText variant="captionBold" style={styles.label}>
+              Gender
+            </AppText>
             <AppText variant="small" color="tertiary" style={{ marginBottom: spacing.xs }}>
               Required for WHS handicap calculations with different tees
             </AppText>
@@ -377,7 +478,7 @@ export default function MemberDetailScreen() {
                 onPress={() => setFormGender(null)}
                 style={[
                   styles.genderClear,
-                  { opacity: formGender ? 1 : 0.5 }
+                  { opacity: formGender ? 1 : 0.5 },
                 ]}
               >
                 <Feather name="x" size={16} color={colors.textTertiary} />
@@ -388,7 +489,9 @@ export default function MemberDetailScreen() {
           {canEditHandicap ? (
             <>
               <View style={styles.formField}>
-                <AppText variant="captionBold" style={styles.label}>WHS Number (optional)</AppText>
+                <AppText variant="captionBold" style={styles.label}>
+                  WHS Number (optional)
+                </AppText>
                 <AppInput
                   placeholder="e.g. 1234567"
                   value={formWhsNumber}
@@ -398,7 +501,9 @@ export default function MemberDetailScreen() {
               </View>
 
               <View style={styles.formField}>
-                <AppText variant="captionBold" style={styles.label}>Handicap Index</AppText>
+                <AppText variant="captionBold" style={styles.label}>
+                  Handicap Index
+                </AppText>
                 <AppInput
                   placeholder="e.g. 12.4"
                   value={formHandicapIndex}
@@ -439,7 +544,9 @@ export default function MemberDetailScreen() {
               <Feather name="mail" size={16} color={colors.textSecondary} />
             </View>
             <View style={{ flex: 1 }}>
-              <AppText variant="caption" color="tertiary">Email</AppText>
+              <AppText variant="caption" color="tertiary">
+                Email
+              </AppText>
               <AppText variant="body">{member.email || "Not set"}</AppText>
             </View>
           </View>
@@ -450,7 +557,9 @@ export default function MemberDetailScreen() {
               <Feather name="user" size={16} color={colors.textSecondary} />
             </View>
             <View style={{ flex: 1 }}>
-              <AppText variant="caption" color="tertiary">Gender</AppText>
+              <AppText variant="caption" color="tertiary">
+                Gender
+              </AppText>
               <AppText variant="body">{formatGender(member.gender ?? null)}</AppText>
             </View>
           </View>
@@ -461,7 +570,9 @@ export default function MemberDetailScreen() {
               <Feather name="hash" size={16} color={colors.textSecondary} />
             </View>
             <View style={{ flex: 1 }}>
-              <AppText variant="caption" color="tertiary">WHS Number</AppText>
+              <AppText variant="caption" color="tertiary">
+                WHS Number
+              </AppText>
               <AppText variant="body">
                 {member.whsNumber || member.whs_number || "Not set"}
               </AppText>
@@ -474,7 +585,9 @@ export default function MemberDetailScreen() {
               <Feather name="trending-down" size={16} color={colors.textSecondary} />
             </View>
             <View style={{ flex: 1 }}>
-              <AppText variant="caption" color="tertiary">Handicap Index</AppText>
+              <AppText variant="caption" color="tertiary">
+                Handicap Index
+              </AppText>
               <AppText variant="body">
                 {member.handicapIndex != null
                   ? Number(member.handicapIndex).toFixed(1)
@@ -491,7 +604,9 @@ export default function MemberDetailScreen() {
               <Feather name="credit-card" size={16} color={colors.textSecondary} />
             </View>
             <View style={{ flex: 1 }}>
-              <AppText variant="caption" color="tertiary">Membership Fee</AppText>
+              <AppText variant="caption" color="tertiary">
+                Membership Fee
+              </AppText>
               <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.xs }}>
                 <Feather
                   name={member.paid ? "check-circle" : "circle"}
@@ -518,6 +633,58 @@ export default function MemberDetailScreen() {
                 </AppText>
               </View>
             </AppCard>
+          )}
+        </AppCard>
+      )}
+
+      {canManageRoles && (
+        <AppCard style={{ marginTop: spacing.base }}>
+          <AppText variant="captionBold" style={styles.label}>
+            Role (Captain only)
+          </AppText>
+          <AppText variant="small" color="tertiary" style={{ marginBottom: spacing.sm }}>
+            Assign Treasurer, Secretary, or Handicapper for this member.
+          </AppText>
+
+          <View style={{ marginBottom: spacing.sm }}>
+            <AppText variant="caption" color="tertiary">
+              Current role
+            </AppText>
+            <AppText variant="body">{formatRole(member.role)}</AppText>
+          </View>
+
+          {roleLocked ? (
+            <AppCard style={{ backgroundColor: colors.backgroundTertiary }}>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+                <Feather name="info" size={16} color={colors.textTertiary} />
+                <AppText variant="caption" color="tertiary">
+                  Captain role cannot be changed here.
+                </AppText>
+              </View>
+            </AppCard>
+          ) : (
+            <>
+              <View style={styles.roleRow}>
+                {ROLE_OPTIONS.map((option) => (
+                  <RoleOption
+                    key={option.value}
+                    label={option.label}
+                    selected={selectedRole === option.value}
+                    onPress={() => setSelectedRole(option.value)}
+                    colors={colors}
+                  />
+                ))}
+              </View>
+              <View style={styles.roleActions}>
+                <PrimaryButton
+                  onPress={handleUpdateRole}
+                  loading={roleSaving}
+                  disabled={!roleChanged || roleSaving}
+                >
+                  Save Role
+                </PrimaryButton>
+              </View>
+            </>
           )}
         </AppCard>
       )}
@@ -585,6 +752,25 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     gap: spacing.sm,
     marginTop: spacing.base,
+  },
+  roleRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: spacing.sm,
+  },
+  roleOption: {
+    minWidth: 120,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.base,
+    borderRadius: radius.sm,
+    borderWidth: 1,
+    alignItems: "center",
+    flexGrow: 1,
+  },
+  roleActions: {
+    flexDirection: "row",
+    justifyContent: "flex-end",
+    marginTop: spacing.sm,
   },
   infoRow: {
     flexDirection: "row",
