@@ -132,30 +132,21 @@ function useBootstrapInternal(): BootstrapState {
             : "unknown");
         }
 
-        let currentSession = existingSession;
-        let currentUser: User | null = existingSession?.user ?? null;
-
-        if (!currentSession) {
-          console.log("[useBootstrap] No persisted session, signing in anonymously...");
-
-          const { data: signInData, error: signInError } =
-            await supabase.auth.signInAnonymously();
-
-          if (signInError) {
-            throw new Error(`Anonymous sign-in failed: ${signInError.message}`);
-          }
-
-          currentSession = signInData.session;
-          currentUser = signInData.user;
-
-          console.log("[useBootstrap] Signed in anonymously:", currentUser?.id);
-        } else {
-          console.log("[useBootstrap] Existing session found:", currentUser?.id);
-        }
+        const currentSession = existingSession ?? null;
+        const currentUser: User | null = existingSession?.user ?? null;
 
         if (!currentSession || !currentUser) {
-          throw new Error("Failed to establish auth session");
+          console.log("[useBootstrap] No session found. Waiting for email sign-in.");
+
+          if (!mounted.current) return;
+          setSession(null);
+          setProfile(null);
+          setSociety(null);
+          setMember(null);
+          return;
         }
+
+        console.log("[useBootstrap] Existing session found:", currentUser.id);
 
         if (!mounted.current) return;
         setSession(currentSession);
