@@ -21,6 +21,11 @@ type OomPdfOptions = {
   rows: OomPdfRow[];
 };
 
+/**
+ * Build clean HTML for OOM PDF export.
+ * Layout: centered logo, title "Order of Merit", subtitle "<SocietyName> – <SeasonYear>",
+ * then a table with columns: Pos | Member | Points | Wins | Played
+ */
 export function buildOomPdfHtml(options: OomPdfOptions): string {
   const { societyName, logoUrl, seasonYear, rows } = options;
 
@@ -32,120 +37,67 @@ export function buildOomPdfHtml(options: OomPdfOptions): string {
 
       return `
         <tr>
-          <td class="pos">${row.position}</td>
+          <td class="num">${row.position}</td>
           <td class="member">${memberLabel}</td>
           <td class="num">${formatPoints(row.points)}</td>
           <td class="num">${row.wins}</td>
           <td class="num">${row.played}</td>
-        </tr>
-      `;
+        </tr>`;
     })
     .join("");
 
   const logoHtml = logoUrl
-    ? `<img class="logo" src="${escapeAttribute(logoUrl)}" alt="Society logo" />`
+    ? `<img class="logo" src="${escapeAttribute(logoUrl)}" />`
     : "";
 
-  return `<!DOCTYPE html>
-  <html>
-    <head>
-      <meta charset="utf-8" />
-      <style>
-        * { box-sizing: border-box; }
-        body {
-          margin: 0;
-          padding: 32px;
-          font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
-          color: #111827;
-          background: #ffffff;
-        }
-        .page {
-          max-width: 794px;
-          margin: 0 auto;
-        }
-        .logo {
-          display: block;
-          width: 72px;
-          height: 72px;
-          object-fit: contain;
-          margin: 0 auto 12px;
-        }
-        h1 {
-          margin: 0;
-          text-align: center;
-          font-size: 26px;
-          color: #0B6E4F;
-        }
-        .subtitle {
-          text-align: center;
-          color: #6B7280;
-          margin-top: 6px;
-          margin-bottom: 20px;
-          font-size: 13px;
-        }
-        table {
-          width: 100%;
-          border-collapse: collapse;
-          border: 1px solid #E5E7EB;
-        }
-        th {
-          background: #0B6E4F;
-          color: #ffffff;
-          text-transform: uppercase;
-          letter-spacing: 0.4px;
-          font-size: 11px;
-          padding: 10px 8px;
-          text-align: left;
-        }
-        td {
-          padding: 10px 8px;
-          border-bottom: 1px solid #E5E7EB;
-          font-size: 12.5px;
-          vertical-align: top;
-        }
-        td.num {
-          text-align: right;
-          font-variant-numeric: tabular-nums;
-        }
-        td.pos {
-          width: 50px;
-        }
-        td.member {
-          width: 50%;
-        }
-        .footer {
-          text-align: center;
-          margin-top: 18px;
-          color: #9CA3AF;
-          font-size: 11px;
-        }
-      </style>
-    </head>
-    <body>
-      <div class="page">
-        ${logoHtml}
-        <h1>Order of Merit</h1>
-        <div class="subtitle">${escapeHtml(societyName)} – ${seasonYear}</div>
-        <table>
-          <thead>
-            <tr>
-              <th>Pos</th>
-              <th>Member</th>
-              <th style="text-align:right;">Points</th>
-              <th style="text-align:right;">Wins</th>
-              <th style="text-align:right;">Played</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${rowHtml || ""}
-          </tbody>
-        </table>
-        <div class="footer">Produced by The Golf Society Hub</div>
-      </div>
-    </body>
-  </html>`;
+  return `<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<style>
+  body { font-family: Arial, sans-serif; padding: 24px; color:#111; }
+  .wrap { max-width: 720px; margin: 0 auto; }
+  .logo { width: 56px; height: 56px; object-fit: contain; display:block; margin: 0 auto 8px; }
+  h1 { text-align:center; margin: 6px 0 2px; font-size: 20px; }
+  .sub { text-align:center; color:#444; margin: 0 0 16px; font-size: 12px; }
+  table { width:100%; border-collapse: collapse; font-size: 12px; }
+  th { background:#0f6b4a; color:#fff; text-align:left; padding:8px; border:1px solid #0b4f37; }
+  th.num { text-align:center; }
+  td { padding:8px; border:1px solid #d6d6d6; vertical-align: top; }
+  .num { text-align:center; width:64px; }
+  .member { width:auto; }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    ${logoHtml}
+    <h1>Order of Merit</h1>
+    <div class="sub">${escapeHtml(societyName)} – ${seasonYear}</div>
+
+    <table>
+      <thead>
+        <tr>
+          <th class="num">Pos</th>
+          <th class="member">Member</th>
+          <th class="num">Points</th>
+          <th class="num">Wins</th>
+          <th class="num">Played</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${rowHtml}
+      </tbody>
+    </table>
+  </div>
+</body>
+</html>`;
 }
 
+/**
+ * Export OOM leaderboard as a clean PDF.
+ * Uses expo-print HTML -> Print.printToFileAsync and Sharing.shareAsync.
+ * PDF contains only the document (no tabs, no app chrome).
+ */
 export async function exportOomPdf(societyId: string): Promise<void> {
   if (!societyId) {
     throw new Error("Missing society ID.");
@@ -162,14 +114,19 @@ export async function exportOomPdf(societyId: string): Promise<void> {
   const winsMap = buildWinsMap(log);
   const playedMap = buildPlayedMap(log);
 
+  // Filter to members with >0 points
   const filtered = totals.filter((entry) => entry.totalPoints > 0);
+
+  // Sort by Points desc, then Wins desc, then name asc
   const sorted = filtered.sort((a, b) => {
     if (b.totalPoints !== a.totalPoints) return b.totalPoints - a.totalPoints;
-    const winsDiff = (winsMap.get(b.memberId) || 0) - (winsMap.get(a.memberId) || 0);
-    if (winsDiff !== 0) return winsDiff;
+    const winsA = winsMap.get(a.memberId) || 0;
+    const winsB = winsMap.get(b.memberId) || 0;
+    if (winsB !== winsA) return winsB - winsA;
     return a.memberName.localeCompare(b.memberName);
   });
 
+  // Assign positions with tie handling (same points = same position)
   let currentPos = 1;
   let lastPoints: number | null = null;
 
@@ -180,10 +137,14 @@ export async function exportOomPdf(societyId: string): Promise<void> {
     lastPoints = entry.totalPoints;
 
     const member = memberMap.get(entry.memberId);
+    // Use playing_handicap or handicap_index (whichever exists)
     const handicapValue =
-      member?.handicapIndex ?? member?.handicap_index ?? null;
+      (member as any)?.playing_handicap ??
+      member?.handicapIndex ??
+      member?.handicap_index ??
+      null;
     const handicapLabel =
-      handicapValue != null ? handicapValue.toFixed(1) : null;
+      handicapValue != null ? Number(handicapValue).toFixed(1) : null;
 
     return {
       position: currentPos,
@@ -214,6 +175,10 @@ export async function exportOomPdf(societyId: string): Promise<void> {
   });
 }
 
+/**
+ * Build a map of memberId -> number of wins.
+ * A "win" is when a player finished position 1 or had the highest points in an event.
+ */
 function buildWinsMap(log: Array<{
   eventId: string;
   memberId: string;
@@ -248,6 +213,10 @@ function buildWinsMap(log: Array<{
   return wins;
 }
 
+/**
+ * Build a map of memberId -> number of events played.
+ * Only counts events where the player has OOM points > 0.
+ */
 function buildPlayedMap(log: Array<{
   eventId: string;
   memberId: string;
@@ -268,11 +237,17 @@ function buildPlayedMap(log: Array<{
   return counts;
 }
 
+/**
+ * Format points for display - show decimal only if not a whole number.
+ */
 function formatPoints(points: number): string {
   if (points === Math.floor(points)) return points.toString();
   return points.toFixed(1);
 }
 
+/**
+ * Escape HTML special characters to prevent XSS.
+ */
 function escapeHtml(input: string): string {
   return input
     .replace(/&/g, "&amp;")
@@ -282,6 +257,9 @@ function escapeHtml(input: string): string {
     .replace(/'/g, "&#39;");
 }
 
+/**
+ * Escape string for use in HTML attributes.
+ */
 function escapeAttribute(input: string): string {
   return escapeHtml(input).replace(/"/g, "&quot;");
 }
