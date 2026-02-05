@@ -12,7 +12,7 @@ import {
   ScrollView,
   Image,
 } from "react-native";
-import { useLocalSearchParams, useRouter } from "expo-router";
+import { useLocalSearchParams } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
 import { Feather } from "@expo/vector-icons";
 
@@ -28,6 +28,7 @@ import {
   type ResultsLogEntry,
 } from "@/lib/db_supabase/resultsRepo";
 import { getColors } from "@/lib/ui/theme";
+import { exportOomPdf } from "@/lib/pdf/oomPdf";
 
 // ============================================================================
 // HELPERS
@@ -97,7 +98,6 @@ type TabType = "leaderboard" | "resultsLog";
 export default function LeaderboardScreen() {
   const { society, societyId, loading: bootstrapLoading } = useBootstrap();
   const colors = getColors();
-  const router = useRouter();
 
   const params = useLocalSearchParams<{ view?: string }>();
   const initialTab: TabType = params.view === "log" ? "resultsLog" : "leaderboard";
@@ -242,12 +242,10 @@ export default function LeaderboardScreen() {
     try {
       setSharingLeaderboard(true);
       if (!societyId) throw new Error("Missing society ID.");
-      router.push({
-        pathname: "/oom/print",
-        params: { societyId, view: "leaderboard", auto: "1" },
-      });
+      await exportOomPdf(societyId);
     } catch (err: any) {
       Alert.alert("Error", err?.message || "Failed to share");
+    } finally {
       setSharingLeaderboard(false);
     }
   };
@@ -261,15 +259,11 @@ export default function LeaderboardScreen() {
     try {
       setSharingLog(true);
       if (!societyId) throw new Error("Missing society ID.");
-      router.push({
-        pathname: "/oom/print",
-        params: { societyId, view: "resultsLog", auto: "1" },
-      });
+      await exportOomPdf(societyId);
     } catch (err: any) {
       Alert.alert("Error", err?.message || "Failed to share");
-      setSharingLog(false);
     } finally {
-      // Reset when returning via focus effect
+      setSharingLog(false);
     }
   };
 
