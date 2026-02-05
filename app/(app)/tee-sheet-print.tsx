@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Alert, Platform, ScrollView, StyleSheet, View } from "react-native";
+import { Alert, Image, Platform, ScrollView, StyleSheet, View } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import * as Sharing from "expo-sharing";
 
@@ -54,8 +54,22 @@ export default function TeeSheetPrintScreen() {
     }
   }, [params.payload]);
 
+  // Track whether the logo has loaded (or there is no logo)
+  const [logoReady, setLogoReady] = useState(!payload?.logoUrl);
+
   useEffect(() => {
-    if (!payload || !layoutReady || hasCaptured.current) return;
+    if (!payload?.logoUrl) {
+      setLogoReady(true);
+      return;
+    }
+    // Prefetch the logo so it's available before capture
+    Image.prefetch(payload.logoUrl)
+      .then(() => setLogoReady(true))
+      .catch(() => setLogoReady(true)); // proceed even if prefetch fails
+  }, [payload?.logoUrl]);
+
+  useEffect(() => {
+    if (!payload || !layoutReady || !logoReady || hasCaptured.current) return;
     hasCaptured.current = true;
 
     const run = async () => {
@@ -77,6 +91,9 @@ export default function TeeSheetPrintScreen() {
         if (!scrollRef.current || !captureRef) {
           throw new Error("Share view not ready.");
         }
+
+        // Small delay to ensure the logo image has rendered after prefetch
+        await new Promise((r) => setTimeout(r, 200));
 
         const uri = await captureRef(scrollRef, {
           format: "png",
@@ -101,7 +118,7 @@ export default function TeeSheetPrintScreen() {
     };
 
     run();
-  }, [layoutReady, payload, router]);
+  }, [layoutReady, logoReady, payload, router]);
 
   if (!payload) {
     return (

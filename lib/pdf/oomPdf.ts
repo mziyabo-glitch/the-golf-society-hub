@@ -4,6 +4,7 @@ import * as Sharing from "expo-sharing";
 import { getOrderOfMeritTotals, getOrderOfMeritLog } from "@/lib/db_supabase/resultsRepo";
 import { getSociety } from "@/lib/db_supabase/societyRepo";
 import { getMembersBySocietyId } from "@/lib/db_supabase/memberRepo";
+import { imageUrlToBase64DataUri } from "./imageUtils";
 
 type OomPdfRow = {
   position: number;
@@ -66,6 +67,7 @@ export function buildOomPdfHtml(options: OomPdfOptions): string {
   td { padding:8px; border:1px solid #d6d6d6; vertical-align: top; }
   .num { text-align:center; width:64px; }
   .member { width:auto; }
+  .footer { text-align:center; margin-top: 24px; padding-top: 12px; border-top:1px solid #e5e7eb; font-size: 11px; color:#9ca3af; font-style:italic; }
 </style>
 </head>
 <body>
@@ -88,6 +90,8 @@ export function buildOomPdfHtml(options: OomPdfOptions): string {
         ${rowHtml}
       </tbody>
     </table>
+
+    <div class="footer">Produced by The Golf Society Hub</div>
   </div>
 </body>
 </html>`;
@@ -156,9 +160,13 @@ export async function exportOomPdf(societyId: string): Promise<void> {
     };
   });
 
+  // Convert remote logo URL to base64 data URI so expo-print can embed it
+  const rawLogoUrl = (society as any)?.logo_url || (society as any)?.logoUrl || null;
+  const logoDataUri = rawLogoUrl ? await imageUrlToBase64DataUri(rawLogoUrl) : null;
+
   const html = buildOomPdfHtml({
     societyName: society?.name || "Golf Society",
-    logoUrl: (society as any)?.logo_url || (society as any)?.logoUrl || null,
+    logoUrl: logoDataUri,
     seasonYear: new Date().getFullYear(),
     rows,
   });

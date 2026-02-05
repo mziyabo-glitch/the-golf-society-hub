@@ -26,6 +26,7 @@ import {
   type GroupedPlayer,
   type PlayerGroup,
 } from "./teeSheetGrouping";
+import { imageUrlToBase64DataUri } from "./pdf/imageUtils";
 
 export type TeeSheetPlayer = {
   id?: string;
@@ -80,12 +81,14 @@ type PlayerWithCalcs = GroupedPlayer & {
 /**
  * Generate HTML for the tee sheet PDF
  */
-function generateTeeSheetHTML(data: TeeSheetData): string {
+function generateTeeSheetHTML(data: TeeSheetData, logoDataUri?: string | null): string {
   const {
     societyName,
     eventName,
     eventDate,
     courseName,
+    teeName,
+    ladiesTeeName,
     format,
     teeSettings,
     ladiesTeeSettings,
@@ -96,6 +99,7 @@ function generateTeeSheetHTML(data: TeeSheetData): string {
     startTime,
     teeTimeInterval = 10,
     preGrouped = false,
+    manCo,
   } = data;
 
   const allowance = handicapAllowance ?? DEFAULT_ALLOWANCE;
@@ -232,6 +236,32 @@ function generateTeeSheetHTML(data: TeeSheetData): string {
     `;
   }).join("");
 
+  // Logo HTML
+  const logoHtml = logoDataUri
+    ? `<img class="logo" src="${logoDataUri}" />`
+    : "";
+
+  // ManCo roles
+  const manCoLines: string[] = [];
+  if (manCo?.captain) manCoLines.push(`Captain: ${manCo.captain}`);
+  if (manCo?.secretary) manCoLines.push(`Secretary: ${manCo.secretary}`);
+  if (manCo?.treasurer) manCoLines.push(`Treasurer: ${manCo.treasurer}`);
+  if (manCo?.handicapper) manCoLines.push(`Handicapper: ${manCo.handicapper}`);
+  const manCoHtml = manCoLines.length > 0
+    ? `<div class="manco">${manCoLines.join("<br/>")}</div>`
+    : "";
+
+  // Tee information box
+  const hasTeeInfo = teeSettings || ladiesTeeSettings;
+  const teeInfoHtml = hasTeeInfo
+    ? `<div class="tee-info">
+         <div class="tee-info-title">Tee Information</div>
+         ${teeSettings ? `<div><strong>Male:</strong> ${teeName || "Men's"}<br/>Par: ${teeSettings.par} | CR: ${teeSettings.courseRating} | SR: ${teeSettings.slopeRating}</div>` : ""}
+         ${ladiesTeeSettings ? `<div><strong>Female:</strong> ${ladiesTeeName || "Ladies'"}<br/>Par: ${ladiesTeeSettings.par} | CR: ${ladiesTeeSettings.courseRating} | SR: ${ladiesTeeSettings.slopeRating}</div>` : ""}
+         <div><strong>Allowance:</strong> ${Math.round((handicapAllowance ?? DEFAULT_ALLOWANCE) * 100)}%</div>
+       </div>`
+    : "";
+
   return `
     <!DOCTYPE html>
     <html>
@@ -250,19 +280,15 @@ function generateTeeSheetHTML(data: TeeSheetData): string {
           }
           .container { max-width: 700px; margin: 0 auto; }
 
+          /* Logo */
+          .logo { width: 56px; height: 56px; object-fit: contain; display: block; margin: 0 auto 8px; }
+
           /* Header */
           .header {
             margin-bottom: 20px;
             padding-bottom: 12px;
             border-bottom: 2px solid #0B6E4F;
-          }
-          .society-name {
-            font-size: 14px;
-            font-weight: 600;
-            color: #0B6E4F;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-            margin-bottom: 4px;
+            text-align: center;
           }
           .event-name {
             font-size: 22px;
@@ -273,6 +299,37 @@ function generateTeeSheetHTML(data: TeeSheetData): string {
           .event-meta {
             font-size: 14px;
             color: #6B7280;
+            margin-bottom: 6px;
+          }
+          .manco {
+            font-size: 12px;
+            color: #6B7280;
+            line-height: 1.6;
+            margin-top: 6px;
+          }
+
+          /* Produced by branding */
+          .produced-by {
+            text-align: right;
+            font-size: 10px;
+            color: #9CA3AF;
+            font-style: italic;
+            margin-bottom: 12px;
+          }
+
+          /* Tee Info */
+          .tee-info {
+            border: 1px solid #E5E7EB;
+            border-radius: 6px;
+            padding: 10px 14px;
+            margin-bottom: 16px;
+            font-size: 12px;
+            color: #374151;
+            line-height: 1.6;
+          }
+          .tee-info-title {
+            font-weight: 700;
+            margin-bottom: 4px;
           }
 
           /* Footer */
@@ -281,8 +338,9 @@ function generateTeeSheetHTML(data: TeeSheetData): string {
             padding-top: 12px;
             border-top: 1px solid #E5E7EB;
             text-align: center;
-            font-size: 12px;
-            color: #6B7280;
+            font-size: 11px;
+            color: #9CA3AF;
+            font-style: italic;
           }
 
           @media print {
@@ -295,12 +353,18 @@ function generateTeeSheetHTML(data: TeeSheetData): string {
         <div class="container">
           <!-- Header -->
           <div class="header">
-            <div class="society-name">${societyName}</div>
+            ${logoHtml}
             <div class="event-name">${eventName}</div>
             <div class="event-meta">
-              ${dateStr}${courseName ? ` • ${courseName}` : ""}${formatLabel ? ` • ${formatLabel}` : ""}
+              ${dateStr}${courseName ? ` | ${courseName}` : ""}${formatLabel ? ` | ${formatLabel}` : ""}
             </div>
+            ${manCoHtml}
           </div>
+
+          <div class="produced-by">Produced by The Golf Society Hub</div>
+
+          <!-- Tee Info -->
+          ${teeInfoHtml}
 
           <!-- Competition Holes -->
           ${competitionsHTML}
@@ -310,7 +374,7 @@ function generateTeeSheetHTML(data: TeeSheetData): string {
 
           <!-- Footer -->
           <div class="footer">
-            ${players.length} player${players.length !== 1 ? "s" : ""} • ${groupsWithTimes.length} group${groupsWithTimes.length !== 1 ? "s" : ""}
+            ${players.length} player${players.length !== 1 ? "s" : ""} &bull; ${groupsWithTimes.length} group${groupsWithTimes.length !== 1 ? "s" : ""}
           </div>
         </div>
       </body>
@@ -326,7 +390,12 @@ function generateTeeSheetHTML(data: TeeSheetData): string {
  */
 export async function generateTeeSheetPdf(data: TeeSheetData): Promise<boolean> {
   try {
-    const html = generateTeeSheetHTML(data);
+    // Convert remote logo URL to base64 so expo-print can embed it
+    const logoDataUri = data.logoUrl
+      ? await imageUrlToBase64DataUri(data.logoUrl)
+      : null;
+
+    const html = generateTeeSheetHTML(data, logoDataUri);
 
     // On web, use printAsync which opens print dialog
     if (Platform.OS === "web") {
