@@ -294,6 +294,7 @@ export default function TeeSheetScreen() {
   };
 
   // Share/export tee sheet as PDF
+  // IMPORTANT: This uses HTML-based PDF generation, NOT screen capture
   const handleGenerateTeeSheet = async () => {
     if (!selectedEvent || !societyId) return;
 
@@ -304,6 +305,7 @@ export default function TeeSheetScreen() {
       return;
     }
 
+    console.log("[TeeSheet] Starting HTML-based PDF generation (NOT screen capture)");
     setGenerating(true);
     try {
       const interval = parseInt(teeInterval, 10) || 10;
@@ -322,7 +324,10 @@ export default function TeeSheetScreen() {
         });
       });
 
-      // Generate PDF directly using expo-print (no view-shot)
+      // Generate PDF directly using expo-print HTML template (NOT screen capture)
+      // If you see app UI in the PDF, the app needs to be rebuilt with latest code
+      console.log("[TeeSheet] Calling exportTeeSheetPdf with", preGroupedPlayers.length, "players");
+      
       await exportTeeSheetPdf({
         eventId: selectedEvent.id,
         societyId,
@@ -331,6 +336,7 @@ export default function TeeSheetScreen() {
         preGroupedPlayers,
       });
 
+      console.log("[TeeSheet] PDF export completed successfully");
       Alert.alert("Success", "Tee sheet PDF generated successfully.");
     } catch (err: any) {
       console.error("[TeeSheet] export tee sheet error:", err);
