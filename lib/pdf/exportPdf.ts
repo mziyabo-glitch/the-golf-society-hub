@@ -41,24 +41,36 @@ export async function exportPdf(opts: ExportPdfOptions): Promise<void> {
     throw new Error("HTML content is required for PDF export");
   }
 
+  // Detect web platform reliably
+  const isWeb = Platform.OS === "web" || (typeof window !== "undefined" && typeof document !== "undefined");
+  
   console.log(`[exportPdf] Generating PDF: ${filename}`);
-  console.log(`[exportPdf] Platform: ${Platform.OS}`);
+  console.log(`[exportPdf] Platform.OS: ${Platform.OS}`);
+  console.log(`[exportPdf] isWeb: ${isWeb}`);
   console.log(`[exportPdf] HTML length: ${html.length}`);
 
   // WEB: Use printAsync to open print dialog (printToFileAsync doesn't work on web)
-  if (Platform.OS === "web") {
-    console.log("[exportPdf] Web platform - using printAsync for print dialog");
+  if (isWeb) {
+    console.log("[exportPdf] Web platform detected - opening print dialog");
     try {
+      // Try Print.printAsync first
       await Print.printAsync({ html });
       console.log("[exportPdf] Print dialog opened successfully");
     } catch (err: any) {
-      console.error("[exportPdf] Web print error:", err);
+      console.error("[exportPdf] Print.printAsync failed:", err);
       // Fallback: open HTML in new window for printing
-      const printWindow = window.open("", "_blank");
-      if (printWindow) {
-        printWindow.document.write(html);
-        printWindow.document.close();
-        printWindow.print();
+      try {
+        const printWindow = window.open("", "_blank");
+        if (printWindow) {
+          printWindow.document.write(html);
+          printWindow.document.close();
+          setTimeout(() => printWindow.print(), 250);
+        } else {
+          throw new Error("Could not open print window");
+        }
+      } catch (fallbackErr) {
+        console.error("[exportPdf] Fallback print also failed:", fallbackErr);
+        Alert.alert("Error", "Could not open print dialog. Please try on mobile.");
       }
     }
     return;
