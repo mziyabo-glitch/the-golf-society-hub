@@ -3,11 +3,10 @@
  * Glassmorphism design with podium, trend indicators, and accordion results log
  */
 
-import { useCallback, useEffect, useState, useMemo, useRef } from "react";
+import { useCallback, useEffect, useState, useMemo } from "react";
 import {
   StyleSheet,
   View,
-  Platform,
   Alert,
   Pressable,
   ScrollView,
@@ -16,12 +15,6 @@ import {
 import { useLocalSearchParams } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
 import { Feather } from "@expo/vector-icons";
-import * as Sharing from "expo-sharing";
-import * as Print from "expo-print";
-
-// Only import captureRef on native platforms
-const captureRef =
-  Platform.OS !== "web" ? require("react-native-view-shot").captureRef : null;
 
 import { AppText } from "@/components/ui/AppText";
 import { LoadingState } from "@/components/ui/LoadingState";
@@ -35,10 +28,7 @@ import {
   type ResultsLogEntry,
 } from "@/lib/db_supabase/resultsRepo";
 import { getColors } from "@/lib/ui/theme";
-import OOMShareCard, { type OOMShareRow } from "@/components/oom/OOMShareCard";
-import OOMResultsLogShareCard, {
-  type EventLogData,
-} from "@/components/oom/OOMResultsLogShareCard";
+import { exportOomPdf } from "@/lib/pdf/oomPdf";
 
 // ============================================================================
 // HELPERS
@@ -120,9 +110,6 @@ export default function LeaderboardScreen() {
   const [sharingLeaderboard, setSharingLeaderboard] = useState(false);
   const [sharingLog, setSharingLog] = useState(false);
   const [fetchError, setFetchError] = useState<string | null>(null);
-
-  const leaderboardShareRef = useRef<View>(null);
-  const resultsLogShareRef = useRef<View>(null);
 
   // Track which events are expanded in the accordion
   const [expandedEvents, setExpandedEvents] = useState<Set<string>>(new Set());
@@ -208,20 +195,13 @@ export default function LeaderboardScreen() {
   useFocusEffect(
     useCallback(() => {
       if (societyId) loadData();
+      setSharingLeaderboard(false);
+      setSharingLog(false);
     }, [societyId, loadData])
   );
 
   const uniqueOOMEventIds = new Set(resultsLog.map((r) => r.eventId));
   const oomEventCount = uniqueOOMEventIds.size;
-
-  const shareCardRows: OOMShareRow[] = useMemo(() => {
-    return standings.map((entry) => ({
-      position: entry.rank,
-      name: entry.memberName,
-      points: entry.totalPoints,
-      eventsPlayed: entry.eventsPlayed,
-    }));
-  }, [standings]);
 
   const seasonLabel = useMemo(() => {
     const year = new Date().getFullYear();
@@ -252,22 +232,6 @@ export default function LeaderboardScreen() {
     }
   };
 
-  const latestEventForShare: EventLogData | null = useMemo(() => {
-    if (groupedResultsLog.length === 0) return null;
-    const latest = groupedResultsLog[0];
-    return {
-      eventName: latest.eventName,
-      eventDate: latest.eventDate,
-      format: latest.format,
-      results: latest.results.map((r) => ({
-        memberName: r.memberName,
-        dayValue: r.dayValue,
-        position: r.position,
-        points: r.points,
-      })),
-    };
-  }, [groupedResultsLog]);
-
   // Share handlers
   const handleShareLeaderboard = async () => {
     if (standings.length === 0) {
@@ -277,31 +241,8 @@ export default function LeaderboardScreen() {
 
     try {
       setSharingLeaderboard(true);
-
-      if (Platform.OS === "web") {
-        const html = generateLeaderboardHTML();
-        await Print.printAsync({ html });
-        return;
-      }
-
-      if (!leaderboardShareRef.current || !captureRef) {
-        Alert.alert("Error", "Share card not ready.");
-        return;
-      }
-
-      const uri = await captureRef(leaderboardShareRef, {
-        format: "png",
-        quality: 1,
-        result: "tmpfile",
-      });
-
-      const canShare = await Sharing.isAvailableAsync();
-      if (canShare) {
-        await Sharing.shareAsync(uri, {
-          mimeType: "image/png",
-          dialogTitle: "Share Order of Merit",
-        });
-      }
+      if (!societyId) throw new Error("Missing society ID.");
+      await exportOomPdf(societyId);
     } catch (err: any) {
       Alert.alert("Error", err?.message || "Failed to share");
     } finally {
@@ -310,111 +251,20 @@ export default function LeaderboardScreen() {
   };
 
   const handleShareResultsLog = async () => {
-    if (!latestEventForShare) {
+    if (resultsLog.length === 0) {
       Alert.alert("No Data", "No results to share.");
       return;
     }
 
     try {
       setSharingLog(true);
-
-      if (Platform.OS === "web") {
-        const html = generateResultsLogHTML();
-        await Print.printAsync({ html });
-        return;
-      }
-
-      if (!resultsLogShareRef.current || !captureRef) {
-        Alert.alert("Error", "Share card not ready.");
-        return;
-      }
-
-      const uri = await captureRef(resultsLogShareRef, {
-        format: "png",
-        quality: 1,
-        result: "tmpfile",
-      });
-
-      const canShare = await Sharing.isAvailableAsync();
-      if (canShare) {
-        await Sharing.shareAsync(uri, {
-          mimeType: "image/png",
-          dialogTitle: "Share Results Log",
-        });
-      }
+      if (!societyId) throw new Error("Missing society ID.");
+      await exportOomPdf(societyId);
     } catch (err: any) {
       Alert.alert("Error", err?.message || "Failed to share");
     } finally {
       setSharingLog(false);
     }
-  };
-
-  // HTML generators for web PDF
-  const generateLeaderboardHTML = () => {
-    const societyName = society?.name || "Golf Society";
-    const rows = standings
-      .map(
-        (entry) => `
-      <tr style="background: ${entry.rank <= 3 ? "rgba(251, 191, 36, 0.1)" : entry.rank % 2 === 0 ? "#FAFAFA" : "#FFF"};">
-        <td style="padding: 12px; text-align: center; font-weight: ${entry.rank <= 3 ? "700" : "500"};">${entry.rank}</td>
-        <td style="padding: 12px;">${entry.memberName}</td>
-        <td style="padding: 12px; text-align: center; color: #6B7280;">${entry.eventsPlayed}</td>
-        <td style="padding: 12px; text-align: right; font-weight: 700; font-family: 'SF Mono', monospace; color: #0B6E4F;">${formatPoints(entry.totalPoints)}</td>
-      </tr>`
-      )
-      .join("");
-
-    return `<!DOCTYPE html><html><head><style>
-      body { font-family: 'Inter', -apple-system, sans-serif; padding: 40px; background: linear-gradient(180deg, #F9FAFB 0%, #F3F4F6 100%); }
-      .container { max-width: 500px; margin: 0 auto; background: rgba(255,255,255,0.9); border-radius: 24px; padding: 32px; box-shadow: 0 8px 32px rgba(0,0,0,0.08); }
-      h1 { color: #0B6E4F; margin: 0 0 4px; font-size: 28px; }
-      .subtitle { color: #6B7280; margin-bottom: 24px; }
-      table { width: 100%; border-collapse: collapse; }
-      th { background: #0B6E4F; color: white; padding: 12px; text-align: left; font-size: 11px; text-transform: uppercase; }
-      .footer { text-align: center; margin-top: 24px; color: #9CA3AF; font-size: 12px; font-style: italic; }
-    </style></head><body>
-      <div class="container">
-        <h1>Order of Merit</h1>
-        <p class="subtitle">${societyName} • ${seasonLabel}</p>
-        <table><thead><tr><th style="text-align:center">Pos</th><th>Player</th><th style="text-align:center">Events</th><th style="text-align:right">Points</th></tr></thead>
-        <tbody>${rows}</tbody></table>
-        <p class="footer">Produced by The Golf Society Hub</p>
-      </div>
-    </body></html>`;
-  };
-
-  const generateResultsLogHTML = () => {
-    if (!latestEventForShare) return "";
-    const societyName = society?.name || "Golf Society";
-    const rows = latestEventForShare.results
-      .map(
-        (r, i) => `
-      <tr style="background: ${i % 2 === 1 ? "#FAFAFA" : "#FFF"};">
-        <td style="padding: 10px;">${r.memberName}</td>
-        <td style="padding: 10px; text-align: center;">${r.dayValue ?? "·"}</td>
-        <td style="padding: 10px; text-align: center;">${r.position ?? "·"}</td>
-        <td style="padding: 10px; text-align: right; font-weight: 700; font-family: monospace; color: #0B6E4F;">${formatPoints(r.points)}</td>
-      </tr>`
-      )
-      .join("");
-
-    return `<!DOCTYPE html><html><head><style>
-      body { font-family: 'Inter', -apple-system, sans-serif; padding: 40px; background: linear-gradient(180deg, #F9FAFB 0%, #F3F4F6 100%); }
-      .container { max-width: 500px; margin: 0 auto; background: rgba(255,255,255,0.9); border-radius: 24px; padding: 32px; box-shadow: 0 8px 32px rgba(0,0,0,0.08); }
-      h1 { color: #0B6E4F; margin: 0 0 4px; font-size: 24px; }
-      .event { background: #F9FAFB; padding: 16px; border-radius: 12px; margin-bottom: 16px; }
-      table { width: 100%; border-collapse: collapse; }
-      th { background: #0B6E4F; color: white; padding: 10px; font-size: 11px; text-transform: uppercase; }
-      .footer { text-align: center; margin-top: 24px; color: #9CA3AF; font-size: 12px; font-style: italic; }
-    </style></head><body>
-      <div class="container">
-        <h1>${latestEventForShare.eventName}</h1>
-        <p style="color: #6B7280; margin-bottom: 20px;">${societyName}</p>
-        <table><thead><tr><th style="text-align:left">Player</th><th>Score</th><th>Pos</th><th style="text-align:right">OOM</th></tr></thead>
-        <tbody>${rows}</tbody></table>
-        <p class="footer">Produced by The Golf Society Hub</p>
-      </div>
-    </body></html>`;
   };
 
   // ============================================================================
@@ -804,25 +654,6 @@ export default function LeaderboardScreen() {
         </View>
       </ScrollView>
 
-      {/* ========== OFF-SCREEN SHARE CARDS ========== */}
-      {Platform.OS !== "web" && (
-        <View style={styles.offScreen} pointerEvents="none">
-          <OOMShareCard
-            ref={leaderboardShareRef}
-            societyName={society?.name || "Golf Society"}
-            seasonLabel={seasonLabel}
-            rows={shareCardRows}
-          />
-          {latestEventForShare && (
-            <OOMResultsLogShareCard
-              ref={resultsLogShareRef}
-              societyName={society?.name || "Golf Society"}
-              event={latestEventForShare}
-              isLatestOnly
-            />
-          )}
-        </View>
-      )}
     </>
   );
 }
@@ -1247,10 +1078,4 @@ const styles = StyleSheet.create({
     fontStyle: "italic",
   },
 
-  // Off-screen
-  offScreen: {
-    position: "absolute",
-    top: -10000,
-    left: -10000,
-  },
 });

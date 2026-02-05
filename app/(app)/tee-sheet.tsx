@@ -24,9 +24,8 @@ import { LoadingState } from "@/components/ui/LoadingState";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { useBootstrap } from "@/lib/useBootstrap";
 import { getEventsBySocietyId, getEvent, updateEvent, type EventDoc } from "@/lib/db_supabase/eventRepo";
-import { getMembersBySocietyId, getManCoRoleHolders, type MemberDoc, type Gender } from "@/lib/db_supabase/memberRepo";
+import { getMembersBySocietyId, type MemberDoc, type Gender } from "@/lib/db_supabase/memberRepo";
 import { getPermissionsForMember } from "@/lib/rbac";
-import { generateTeeSheetPdf, type TeeSheetPlayer, type TeeSheetData } from "@/lib/teeSheetPdf";
 import {
   type TeeBlock,
   calcCourseHandicap,
@@ -219,6 +218,7 @@ export default function TeeSheetScreen() {
       if (societyId) {
         loadData();
       }
+      setGenerating(false);
     }, [societyId, loadData])
   );
 
@@ -292,7 +292,7 @@ export default function TeeSheetScreen() {
     });
   };
 
-  // Generate tee sheet
+  // Share/export tee sheet
   const handleGenerateTeeSheet = async () => {
     if (!selectedEvent || !societyId) return;
 
@@ -305,79 +305,32 @@ export default function TeeSheetScreen() {
 
     setGenerating(true);
     try {
-      // Get ManCo details
-      const manCo = await getManCoRoleHolders(societyId);
-
-      // Build player list from edited groups (preserving order)
-      const players: TeeSheetPlayer[] = [];
-      for (const group of cleanedGroups) {
-        for (const p of group.players) {
-          players.push({
-            id: p.id,
-            name: p.name,
-            handicapIndex: p.handicapIndex,
-            gender: p.gender,
-            group: group.groupNumber,
-          });
-        }
-      }
-
-      // Build Men's tee settings
-      const menTeeSettings: TeeBlock | null =
-        selectedEvent.par != null &&
-        selectedEvent.courseRating != null &&
-        selectedEvent.slopeRating != null
-          ? {
-              par: selectedEvent.par,
-              courseRating: selectedEvent.courseRating,
-              slopeRating: selectedEvent.slopeRating,
-            }
-          : null;
-
-      // Build Ladies' tee settings
-      const ladiesTeeSettings: TeeBlock | null =
-        selectedEvent.ladiesPar != null &&
-        selectedEvent.ladiesCourseRating != null &&
-        selectedEvent.ladiesSlopeRating != null
-          ? {
-              par: selectedEvent.ladiesPar,
-              courseRating: selectedEvent.ladiesCourseRating,
-              slopeRating: selectedEvent.ladiesSlopeRating,
-            }
-          : null;
-
-      // Parse interval
       const interval = parseInt(teeInterval, 10) || 10;
 
-      // Generate PDF
-      const data: TeeSheetData = {
+      const payload = {
         societyName: society?.name || "Golf Society",
         logoUrl,
-        manCo,
         eventName: selectedEvent.name || "Event",
         eventDate: selectedEvent.date || null,
-        courseName: selectedEvent.courseName || null,
-        teeName: selectedEvent.teeName || null,
-        ladiesTeeName: selectedEvent.ladiesTeeName || null,
-        format: selectedEvent.format || null,
-        teeSettings: menTeeSettings,
-        ladiesTeeSettings,
-        handicapAllowance: selectedEvent.handicapAllowance ?? null,
-        nearestPinHoles: selectedEvent.nearestPinHoles,
-        longestDriveHoles: selectedEvent.longestDriveHoles,
-        players,
         startTime: startTime || null,
         teeTimeInterval: interval,
-        preGrouped: true, // Signal that groups are already set
+        groups: cleanedGroups.map((group) => ({
+          groupNumber: group.groupNumber,
+          players: group.players.map((p) => ({
+            name: p.name,
+            handicapIndex: p.handicapIndex ?? null,
+            playingHandicap: p.playingHandicap ?? null,
+          })),
+        })),
       };
 
-      await generateTeeSheetPdf(data);
-
-      console.log("[TeeSheet] PDF generated successfully");
+      router.push({
+        pathname: "/(app)/tee-sheet-print",
+        params: { payload: encodeURIComponent(JSON.stringify(payload)) },
+      });
     } catch (err: any) {
-      console.error("[TeeSheet] generateTeeSheet error:", err);
-      Alert.alert("Error", err?.message || "Failed to generate tee sheet.");
-    } finally {
+      console.error("[TeeSheet] share tee sheet error:", err);
+      Alert.alert("Error", err?.message || "Failed to share tee sheet.");
       setGenerating(false);
     }
   };
@@ -726,8 +679,8 @@ export default function TeeSheetScreen() {
                 disabled={selectedPlayerCount === 0}
                 style={{ marginTop: spacing.lg, marginBottom: spacing.xl }}
               >
-                <Feather name="file-text" size={18} color={colors.textInverse} />
-                {" Generate Tee Sheet PDF"}
+                <Feather name="share-2" size={18} color={colors.textInverse} />
+                {" Share Tee Sheet"}
               </PrimaryButton>
 
               {selectedPlayerCount === 0 && (
