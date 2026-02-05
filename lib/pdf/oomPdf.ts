@@ -4,6 +4,7 @@ import * as Sharing from "expo-sharing";
 import { getOrderOfMeritTotals, getOrderOfMeritLog } from "@/lib/db_supabase/resultsRepo";
 import { getSociety } from "@/lib/db_supabase/societyRepo";
 import { getMembersBySocietyId } from "@/lib/db_supabase/memberRepo";
+import { getLogoForPdf } from "./logoHelper";
 
 type OomPdfRow = {
   position: number;
@@ -156,9 +157,13 @@ export async function exportOomPdf(societyId: string): Promise<void> {
     };
   });
 
+  // Get logo as base64 for reliable PDF embedding
+  const rawLogoUrl = (society as any)?.logo_url || (society as any)?.logoUrl || null;
+  const { logoSrc } = await getLogoForPdf(rawLogoUrl);
+
   const html = buildOomPdfHtml({
     societyName: society?.name || "Golf Society",
-    logoUrl: (society as any)?.logo_url || (society as any)?.logoUrl || null,
+    logoUrl: logoSrc,
     seasonYear: new Date().getFullYear(),
     rows,
   });

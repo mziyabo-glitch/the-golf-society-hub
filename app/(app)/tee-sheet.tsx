@@ -35,6 +35,7 @@ import {
   DEFAULT_ALLOWANCE,
 } from "@/lib/whs";
 import { parseHoleNumbers, formatHoleNumbers, calculateGroupSizes } from "@/lib/teeSheetGrouping";
+import { exportTeeSheetPdf, type TeeSheetPlayer } from "@/lib/pdf/teeSheetPdf";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
 
 type EditablePlayer = {
@@ -292,7 +293,7 @@ export default function TeeSheetScreen() {
     });
   };
 
-  // Share/export tee sheet
+  // Share/export tee sheet as PDF
   const handleGenerateTeeSheet = async () => {
     if (!selectedEvent || !societyId) return;
 
@@ -307,30 +308,34 @@ export default function TeeSheetScreen() {
     try {
       const interval = parseInt(teeInterval, 10) || 10;
 
-      const payload = {
-        societyName: society?.name || "Golf Society",
-        logoUrl,
-        eventName: selectedEvent.name || "Event",
-        eventDate: selectedEvent.date || null,
-        startTime: startTime || null,
-        teeTimeInterval: interval,
-        groups: cleanedGroups.map((group) => ({
-          groupNumber: group.groupNumber,
-          players: group.players.map((p) => ({
+      // Build pre-grouped players list with group indices
+      const preGroupedPlayers: TeeSheetPlayer[] = [];
+      cleanedGroups.forEach((group, groupIdx) => {
+        group.players.forEach((p) => {
+          preGroupedPlayers.push({
+            id: p.id,
             name: p.name,
-            handicapIndex: p.handicapIndex ?? null,
-            playingHandicap: p.playingHandicap ?? null,
-          })),
-        })),
-      };
-
-      router.push({
-        pathname: "/(app)/tee-sheet-print",
-        params: { payload: encodeURIComponent(JSON.stringify(payload)) },
+            handicapIndex: p.handicapIndex,
+            gender: p.gender,
+            groupIndex: groupIdx,
+          });
+        });
       });
+
+      // Generate PDF directly using expo-print (no view-shot)
+      await exportTeeSheetPdf({
+        eventId: selectedEvent.id,
+        societyId,
+        startTime: startTime || undefined,
+        teeTimeInterval: interval,
+        preGroupedPlayers,
+      });
+
+      Alert.alert("Success", "Tee sheet PDF generated successfully.");
     } catch (err: any) {
-      console.error("[TeeSheet] share tee sheet error:", err);
-      Alert.alert("Error", err?.message || "Failed to share tee sheet.");
+      console.error("[TeeSheet] export tee sheet error:", err);
+      Alert.alert("Error", err?.message || "Failed to export tee sheet.");
+    } finally {
       setGenerating(false);
     }
   };
