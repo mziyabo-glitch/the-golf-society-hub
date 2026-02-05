@@ -1,17 +1,22 @@
 /**
  * Tee Sheet PDF Generator - ManCo Tool
  *
- * Generates print-ready tee sheets with:
+ * IMPORTANT: This generates a REAL PDF from HTML template.
+ * Do NOT use Print.printAsync for PDF exports - it prints the UI screen.
+ * Always use Print.printToFileAsync({ html }) to generate a PDF file.
+ *
+ * Features:
  * - Landscape A4 layout (fits 12+ groups per page)
  * - Header: Society logo (left), event name, date, course, "Tee Sheet"
  * - Subheader: ManCo list + "Produced by The Golf Society Hub"
  * - Competitions section: NTP holes, LD holes
  * - Dense group blocks with columns: Full Name | HI | PH
  * - WHS handicap calculations with gender-based tee selection
- * - Multi-page support with CSS page breaks
+ * - Multi-page support with CSS page breaks (12 groups per page)
  *
  * Uses expo-print HTML -> printToFileAsync and expo-sharing
  * Does NOT use view-shot/screenshot
+ * Does NOT use printAsync (which would print the app UI)
  */
 
 import * as Print from "expo-print";
@@ -64,11 +69,14 @@ type GroupWithTime = PlayerGroup & {
   teeTime?: string | null;
 };
 
+// Maximum groups per page for landscape A4
+const GROUPS_PER_PAGE = 12;
+
 /**
  * Generate and share tee sheet PDF
  *
  * Main entry point for ManCo tee sheet generation.
- * Fetches all required data and generates a print-ready PDF.
+ * Fetches all required data and generates a print-ready PDF FILE (not screen print).
  */
 export async function exportTeeSheetPdf(options: TeeSheetOptions): Promise<void> {
   const { eventId, societyId, startTime, teeTimeInterval = 10, preGroupedPlayers } = options;
@@ -92,6 +100,7 @@ export async function exportTeeSheetPdf(options: TeeSheetOptions): Promise<void>
   }
 
   // Get logo as base64 for reliable PDF embedding
+  // If fetch fails, logoSrc will be null and we'll show initials instead
   const logoUrl = (society as any)?.logo_url || (society as any)?.logoUrl || null;
   const { logoSrc } = await getLogoForPdf(logoUrl);
 
@@ -181,7 +190,7 @@ export async function exportTeeSheetPdf(options: TeeSheetOptions): Promise<void>
     }
   }
 
-  // Build HTML
+  // Build HTML template (contains ONLY tee sheet content, no app UI)
   const html = buildTeeSheetHtml({
     societyName: society?.name || "Golf Society",
     logoSrc,
@@ -199,27 +208,30 @@ export async function exportTeeSheetPdf(options: TeeSheetOptions): Promise<void>
     totalPlayers: playersToUse.length,
   });
 
-  // Generate PDF and share
-  if (Platform.OS === "web") {
-    await Print.printAsync({ html });
-    return;
-  }
-
+  // IMPORTANT: Generate PDF FILE from HTML template using printToFileAsync
+  // Do NOT use printAsync - it prints the current screen/UI
   const { uri } = await Print.printToFileAsync({
     html,
     base64: false,
+    // Landscape A4 dimensions in points (1 point = 1/72 inch)
+    // A4 landscape: 842 x 595 points
+    width: 842,
+    height: 595,
   });
 
-  console.log("[teeSheetPdf] PDF created at:", uri);
+  console.log("[teeSheetPdf] PDF file created at:", uri);
 
+  // Share the PDF file
   const canShare = await Sharing.isAvailableAsync();
   if (canShare) {
     await Sharing.shareAsync(uri, {
       mimeType: "application/pdf",
       dialogTitle: `Tee Sheet - ${event.name}`,
+      UTI: "com.adobe.pdf",
     });
   } else {
-    await Print.printAsync({ html });
+    // Fallback: alert user that sharing isn't available
+    throw new Error("Sharing is not available on this device. PDF was generated but cannot be shared.");
   }
 }
 
@@ -241,11 +253,16 @@ type TeeSheetHtmlOptions = {
 };
 
 /**
- * Build HTML for tee sheet PDF
+ * Build HTML template for tee sheet PDF
  *
- * Landscape A4 layout, dense grouping, fits 12+ groups per page
+ * This generates a standalone HTML document with:
+ * - NO app UI elements (tabs, buttons, headers)
+ * - Landscape A4 layout via @page CSS
+ * - 2-column grid for groups (fits 12 per page)
+ * - Page breaks after every 12 groups
+ * - Embedded logo as base64 data URI
  */
-function buildTeeSheetHtml(options: TeeSheetHtmlOptions): string {
+export function buildTeeSheetHtml(options: TeeSheetHtmlOptions): string {
   const {
     societyName,
     logoSrc,
@@ -266,9 +283,9 @@ function buildTeeSheetHtml(options: TeeSheetHtmlOptions): string {
   // Format date
   const dateStr = eventDate
     ? new Date(eventDate).toLocaleDateString("en-GB", {
-        weekday: "long",
+        weekday: "short",
         day: "numeric",
-        month: "long",
+        month: "short",
         year: "numeric",
       })
     : "Date TBC";
@@ -287,46 +304,104 @@ function buildTeeSheetHtml(options: TeeSheetHtmlOptions): string {
 
   // Check if tee settings are configured
   const hasTeesConfigured = teeSettings || ladiesTeeSettings;
-  const phNote = hasTeesConfigured ? "" : '<span style="color:#DC2626;font-size:10px;"> (Set tees to calculate PH)</span>';
 
-  // Logo HTML
+  // Logo HTML - use base64 data URI for reliable embedding
   const logoHtml = logoSrc
-    ? `<img src="${escapeAttribute(logoSrc)}" style="width:48px;height:48px;object-fit:contain;" />`
-    : `<div style="width:48px;height:48px;background:#0B6E4F;border-radius:8px;display:flex;align-items:center;justify-content:center;">
-         <span style="color:#fff;font-size:18px;font-weight:bold;">${societyName.charAt(0)}</span>
-       </div>`;
+    ? `<img src="${escapeAttribute(logoSrc)}" class="logo" />`
+    : `<div class="logo-placeholder">${societyName.charAt(0).toUpperCase()}</div>`;
 
-  // Build group blocks (3 columns layout for dense packing)
-  const groupsHtml = groups.map((group, idx) => {
-    const playerRows = (group.players as PlayerWithCalcs[]).map((player) => {
-      const hiDisplay = formatHandicap(player.handicapIndex, 1);
-      const phDisplay = formatHandicap(player.playingHandicap);
+  // Split groups into pages (12 groups per page max)
+  const pages: GroupWithTime[][] = [];
+  for (let i = 0; i < groups.length; i += GROUPS_PER_PAGE) {
+    pages.push(groups.slice(i, i + GROUPS_PER_PAGE));
+  }
 
-      return `<tr>
-        <td style="padding:4px 6px;border-bottom:1px solid #E5E7EB;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:120px;">${escapeHtml(player.name)}</td>
-        <td style="padding:4px 6px;border-bottom:1px solid #E5E7EB;font-size:11px;text-align:center;color:#6B7280;">${hiDisplay}</td>
-        <td style="padding:4px 6px;border-bottom:1px solid #E5E7EB;font-size:11px;text-align:center;font-weight:600;color:#0B6E4F;">${phDisplay}</td>
-      </tr>`;
+  // Build page HTML for each page
+  const pagesHtml = pages.map((pageGroups, pageIdx) => {
+    const groupsHtml = pageGroups.map((group) => {
+      const playerRows = (group.players as PlayerWithCalcs[]).map((player) => {
+        const hiDisplay = formatHandicap(player.handicapIndex, 1);
+        const phDisplay = formatHandicap(player.playingHandicap);
+
+        return `<tr>
+          <td class="name-cell">${escapeHtml(player.name)}</td>
+          <td class="num-cell">${hiDisplay}</td>
+          <td class="num-cell ph-cell">${phDisplay}</td>
+        </tr>`;
+      }).join("");
+
+      return `
+        <div class="group-card">
+          <div class="group-header">
+            <span class="group-num">Group ${group.groupNumber}</span>
+            ${group.teeTime ? `<span class="tee-time">${group.teeTime}</span>` : ''}
+          </div>
+          <table class="group-table">
+            <thead>
+              <tr>
+                <th class="th-name">Name</th>
+                <th class="th-num">HI</th>
+                <th class="th-num">PH</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${playerRows}
+            </tbody>
+          </table>
+        </div>
+      `;
     }).join("");
 
+    const isLastPage = pageIdx === pages.length - 1;
+
     return `
-      <div class="group-block">
-        <div class="group-header">
-          <span>Group ${group.groupNumber}</span>
-          ${group.teeTime ? `<span style="font-weight:400;">${group.teeTime}</span>` : ''}
+      <div class="page${!isLastPage ? ' page-break' : ''}">
+        <!-- Header (repeated on each page) -->
+        <div class="header">
+          ${logoHtml}
+          <div class="header-text">
+            <h1>${escapeHtml(eventName)}</h1>
+            <div class="meta">${escapeHtml(societyName)} • ${dateStr}${courseName ? ` • ${escapeHtml(courseName)}` : ''}</div>
+          </div>
+          <div class="header-badge">TEE SHEET</div>
         </div>
-        <table class="group-table">
-          <thead>
-            <tr>
-              <th style="text-align:left;">Name</th>
-              <th style="width:40px;">HI</th>
-              <th style="width:40px;">PH</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${playerRows}
-          </tbody>
-        </table>
+
+        <!-- Subheader - ManCo -->
+        <div class="subheader">
+          <div class="manco-list">${manCoList.map((m) => `<span>${escapeHtml(m)}</span>`).join('')}</div>
+          <span class="branding">Produced by The Golf Society Hub</span>
+        </div>
+
+        ${pageIdx === 0 ? `
+        <!-- Competitions (first page only) -->
+        ${hasCompetitions ? `
+        <div class="competitions">
+          ${hasNtp ? `<div><strong>NTP:</strong> Hole${nearestPinHoles!.length > 1 ? 's' : ''} ${formatHoleNumbers(nearestPinHoles)}</div>` : ''}
+          ${hasLd ? `<div><strong>LD:</strong> Hole${longestDriveHoles!.length > 1 ? 's' : ''} ${formatHoleNumbers(longestDriveHoles)}</div>` : ''}
+        </div>
+        ` : ''}
+
+        <!-- Tee info -->
+        ${hasTeesConfigured ? `
+        <div class="tee-info">
+          ${teeSettings ? `<span>Men (${teeName || 'Std'}): Par ${teeSettings.par}, CR ${teeSettings.courseRating}, Slope ${teeSettings.slopeRating}</span>` : ''}
+          ${ladiesTeeSettings ? `<span>Ladies (${ladiesTeeName || 'Std'}): Par ${ladiesTeeSettings.par}, CR ${ladiesTeeSettings.courseRating}, Slope ${ladiesTeeSettings.slopeRating}</span>` : ''}
+        </div>
+        ` : `
+        <div class="tee-warning">⚠ Tee settings not configured - PH cannot be calculated</div>
+        `}
+        ` : ''}
+
+        <!-- Groups Grid -->
+        <div class="groups-grid">
+          ${groupsHtml}
+        </div>
+
+        <!-- Footer -->
+        <div class="footer">
+          <span>${totalPlayers} player${totalPlayers !== 1 ? 's' : ''} • ${groups.length} group${groups.length !== 1 ? 's' : ''}${pages.length > 1 ? ` • Page ${pageIdx + 1}/${pages.length}` : ''}</span>
+          <span>Generated ${new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}</span>
+        </div>
       </div>
     `;
   }).join("");
@@ -335,53 +410,79 @@ function buildTeeSheetHtml(options: TeeSheetHtmlOptions): string {
 <html>
 <head>
   <meta charset="utf-8">
-  <title>Tee Sheet - ${eventName}</title>
+  <title>Tee Sheet - ${escapeHtml(eventName)}</title>
   <style>
+    /* Landscape A4 page setup */
     @page {
       size: A4 landscape;
       margin: 12mm;
     }
+
     * { box-sizing: border-box; margin: 0; padding: 0; }
+
     body {
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif;
       color: #111827;
       background: #fff;
-      font-size: 11px;
-      line-height: 1.3;
+      font-size: 10px;
+      line-height: 1.2;
     }
+
+    /* Page container */
     .page {
       width: 100%;
-      max-width: 100%;
+      min-height: 100%;
+    }
+    .page-break {
+      page-break-after: always;
     }
 
     /* Header */
     .header {
       display: flex;
       align-items: center;
-      gap: 16px;
-      padding-bottom: 10px;
+      gap: 12px;
+      padding-bottom: 8px;
       border-bottom: 2px solid #0B6E4F;
-      margin-bottom: 10px;
+      margin-bottom: 8px;
+    }
+    .logo {
+      width: 40px;
+      height: 40px;
+      object-fit: contain;
+    }
+    .logo-placeholder {
+      width: 40px;
+      height: 40px;
+      background: #0B6E4F;
+      border-radius: 6px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #fff;
+      font-size: 18px;
+      font-weight: bold;
     }
     .header-text {
       flex: 1;
     }
     .header-text h1 {
-      font-size: 18px;
+      font-size: 16px;
       font-weight: 700;
       color: #111827;
-      margin: 0 0 2px 0;
+      margin: 0;
     }
     .header-text .meta {
-      font-size: 11px;
+      font-size: 10px;
       color: #6B7280;
+      margin-top: 2px;
     }
     .header-badge {
       background: #0B6E4F;
       color: #fff;
-      padding: 6px 12px;
+      padding: 4px 10px;
       border-radius: 4px;
-      font-size: 12px;
+      font-size: 11px;
       font-weight: 600;
     }
 
@@ -390,156 +491,163 @@ function buildTeeSheetHtml(options: TeeSheetHtmlOptions): string {
       display: flex;
       justify-content: space-between;
       align-items: center;
-      font-size: 10px;
+      font-size: 9px;
       color: #6B7280;
-      margin-bottom: 10px;
-      padding-bottom: 8px;
+      margin-bottom: 8px;
+      padding-bottom: 6px;
       border-bottom: 1px solid #E5E7EB;
     }
     .manco-list {
       display: flex;
-      gap: 16px;
+      gap: 12px;
       flex-wrap: wrap;
     }
-    .manco-list span {
-      white-space: nowrap;
+    .branding {
+      font-style: italic;
     }
 
     /* Competitions */
     .competitions {
       display: flex;
-      gap: 24px;
+      gap: 20px;
       background: #F0FDF4;
-      padding: 8px 12px;
-      border-radius: 6px;
-      margin-bottom: 12px;
-      font-size: 11px;
-      border-left: 4px solid #0B6E4F;
+      padding: 6px 10px;
+      border-radius: 4px;
+      margin-bottom: 8px;
+      font-size: 10px;
+      border-left: 3px solid #0B6E4F;
     }
     .competitions strong {
       color: #0B6E4F;
     }
 
-    /* Groups grid - 3 columns */
+    /* Tee info */
+    .tee-info {
+      font-size: 9px;
+      color: #6B7280;
+      margin-bottom: 8px;
+      display: flex;
+      gap: 16px;
+    }
+    .tee-warning {
+      font-size: 9px;
+      color: #DC2626;
+      margin-bottom: 8px;
+    }
+
+    /* Groups grid - 2 columns for 12 groups per page */
     .groups-grid {
       display: grid;
-      grid-template-columns: repeat(3, 1fr);
-      gap: 10px;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
     }
-    .group-block {
-      border: 1px solid #E5E7EB;
-      border-radius: 6px;
+
+    /* Group card */
+    .group-card {
+      border: 1px solid #D1D5DB;
+      border-radius: 4px;
       overflow: hidden;
       break-inside: avoid;
     }
     .group-header {
       background: #0B6E4F;
       color: #fff;
-      padding: 6px 10px;
-      font-weight: 600;
-      font-size: 11px;
+      padding: 4px 8px;
+      font-size: 10px;
       display: flex;
       justify-content: space-between;
       align-items: center;
     }
+    .group-num {
+      font-weight: 600;
+    }
+    .tee-time {
+      font-weight: 400;
+      opacity: 0.9;
+    }
+
+    /* Group table */
     .group-table {
       width: 100%;
       border-collapse: collapse;
     }
     .group-table th {
       background: #F9FAFB;
-      padding: 4px 6px;
-      font-size: 9px;
+      padding: 3px 6px;
+      font-size: 8px;
       text-transform: uppercase;
       letter-spacing: 0.3px;
       color: #6B7280;
       font-weight: 600;
+      border-bottom: 1px solid #E5E7EB;
+    }
+    .th-name {
+      text-align: left;
+    }
+    .th-num {
       text-align: center;
+      width: 32px;
     }
     .group-table td {
-      font-size: 11px;
+      padding: 3px 6px;
+      font-size: 10px;
+      border-bottom: 1px solid #F3F4F6;
+    }
+    .name-cell {
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 140px;
+    }
+    .num-cell {
+      text-align: center;
+      color: #6B7280;
+      width: 32px;
+    }
+    .ph-cell {
+      font-weight: 600;
+      color: #0B6E4F;
+    }
+    .group-table tr:last-child td {
+      border-bottom: none;
     }
 
     /* Footer */
     .footer {
-      margin-top: 12px;
-      padding-top: 8px;
+      margin-top: 8px;
+      padding-top: 6px;
       border-top: 1px solid #E5E7EB;
       display: flex;
       justify-content: space-between;
-      font-size: 10px;
+      font-size: 9px;
       color: #9CA3AF;
     }
 
-    /* Page break for many groups */
-    .page-break {
-      page-break-before: always;
-    }
-
+    /* Print styles */
     @media print {
-      body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+      body {
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+      }
     }
   </style>
 </head>
 <body>
+  ${groups.length > 0 ? pagesHtml : `
   <div class="page">
-    <!-- Header -->
     <div class="header">
       ${logoHtml}
       <div class="header-text">
         <h1>${escapeHtml(eventName)}</h1>
-        <div class="meta">
-          ${escapeHtml(societyName)} • ${dateStr}${courseName ? ` • ${escapeHtml(courseName)}` : ''}
-        </div>
+        <div class="meta">${escapeHtml(societyName)} • ${dateStr}</div>
       </div>
       <div class="header-badge">TEE SHEET</div>
     </div>
-
-    <!-- Subheader - ManCo -->
-    <div class="subheader">
-      <div class="manco-list">
-        ${manCoList.map((m) => `<span>${escapeHtml(m)}</span>`).join('')}
-      </div>
-      <span>Produced by The Golf Society Hub</span>
-    </div>
-
-    <!-- Competitions -->
-    ${hasCompetitions ? `
-    <div class="competitions">
-      ${hasNtp ? `<div><strong>Nearest the Pin:</strong> Hole${nearestPinHoles!.length > 1 ? 's' : ''} ${formatHoleNumbers(nearestPinHoles)}</div>` : ''}
-      ${hasLd ? `<div><strong>Longest Drive:</strong> Hole${longestDriveHoles!.length > 1 ? 's' : ''} ${formatHoleNumbers(longestDriveHoles)}</div>` : ''}
-    </div>
-    ` : ''}
-
-    <!-- Tee info if configured -->
-    ${hasTeesConfigured ? `
-    <div style="font-size:10px;color:#6B7280;margin-bottom:8px;">
-      ${teeSettings ? `<span style="margin-right:16px;">Men (${teeName || 'Standard'}): Par ${teeSettings.par}, CR ${teeSettings.courseRating}, Slope ${teeSettings.slopeRating}</span>` : ''}
-      ${ladiesTeeSettings ? `<span>Ladies (${ladiesTeeName || 'Standard'}): Par ${ladiesTeeSettings.par}, CR ${ladiesTeeSettings.courseRating}, Slope ${ladiesTeeSettings.slopeRating}</span>` : ''}
-    </div>
-    ` : `
-    <div style="font-size:10px;color:#DC2626;margin-bottom:8px;">
-      ⚠️ Course tee settings not configured. Playing Handicaps (PH) cannot be calculated. Edit event to add tee settings.
-    </div>
-    `}
-
-    <!-- Groups -->
-    ${groups.length > 0 ? `
-    <div class="groups-grid">
-      ${groupsHtml}
-    </div>
-    ` : `
-    <div style="text-align:center;padding:32px;color:#6B7280;">
+    <div style="text-align:center;padding:40px;color:#6B7280;">
       No players registered for this event.
     </div>
-    `}
-
-    <!-- Footer -->
-    <div class="footer">
-      <span>${totalPlayers} player${totalPlayers !== 1 ? 's' : ''} • ${groups.length} group${groups.length !== 1 ? 's' : ''}</span>
-      <span>Generated ${new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
-    </div>
   </div>
+  `}
 </body>
 </html>`;
 }
@@ -557,5 +665,5 @@ function escapeAttribute(input: string): string {
   return escapeHtml(input).replace(/"/g, "&quot;");
 }
 
-// Re-export generateTeeSheetPdf for backward compatibility
+// Re-export for backward compatibility
 export { exportTeeSheetPdf as generateTeeSheetPdf };
