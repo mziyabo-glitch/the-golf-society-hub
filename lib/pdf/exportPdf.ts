@@ -41,66 +41,66 @@ export async function exportPdf(opts: ExportPdfOptions): Promise<void> {
     throw new Error("HTML content is required for PDF export");
   }
 
-  // Debug: Log first 500 chars of HTML to verify it's the template, not app content
+  // Detect web platform reliably
+  const isWeb = Platform.OS === "web" || (typeof window !== "undefined" && typeof document !== "undefined");
+  
   console.log(`[exportPdf] Generating PDF: ${filename}`);
+  console.log(`[exportPdf] Platform.OS: ${Platform.OS}`);
+  console.log(`[exportPdf] isWeb: ${isWeb}`);
   console.log(`[exportPdf] HTML length: ${html.length}`);
-  console.log(`[exportPdf] HTML preview: ${html.substring(0, 500)}...`);
 
-  // Generate PDF FILE from HTML template
-  // IMPORTANT: Use printToFileAsync, NOT printAsync
-  const printOptions: Print.FilePrintOptions = { html };
-
-  // Add dimensions if specified (useful for landscape orientation)
-  if (width) printOptions.width = width;
-  if (height) printOptions.height = height;
-
-  const { uri } = await Print.printToFileAsync(printOptions);
-  console.log(`[exportPdf] PDF file created: ${uri}`);
-
-  // Share the PDF file
-  // On web, this may open a print dialog as fallback
-  if (Platform.OS === "web") {
-    // On web, we can try to share or fall back to a download approach
-    // The web behavior is platform-dependent
+  // WEB: Use printAsync to open print dialog (printToFileAsync doesn't work on web)
+  if (isWeb) {
+    console.log("[exportPdf] Web platform detected - opening print dialog");
     try {
-      const canShare = await Sharing.isAvailableAsync();
-      if (canShare) {
-        await Sharing.shareAsync(uri, {
-          mimeType: "application/pdf",
-          dialogTitle: filename,
-        });
-      } else {
-        // Fallback: create a download link
-        const link = document.createElement("a");
-        link.href = uri;
-        link.download = `${filename}.pdf`;
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
+      // Try Print.printAsync first
+      await Print.printAsync({ html });
+      console.log("[exportPdf] Print dialog opened successfully");
+    } catch (err: any) {
+      console.error("[exportPdf] Print.printAsync failed:", err);
+      // Fallback: open HTML in new window for printing
+      try {
+        const printWindow = window.open("", "_blank");
+        if (printWindow) {
+          printWindow.document.write(html);
+          printWindow.document.close();
+          setTimeout(() => printWindow.print(), 250);
+        } else {
+          throw new Error("Could not open print window");
+        }
+      } catch (fallbackErr) {
+        console.error("[exportPdf] Fallback print also failed:", fallbackErr);
+        Alert.alert("Error", "Could not open print dialog. Please try on mobile.");
       }
-    } catch (err) {
-      console.warn("[exportPdf] Web share failed, trying download:", err);
-      // Try download approach
-      const link = document.createElement("a");
-      link.href = uri;
-      link.download = `${filename}.pdf`;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
     }
     return;
   }
 
-  // On mobile, use Sharing.shareAsync
+  // MOBILE: Generate PDF file and share it
+  console.log("[exportPdf] Mobile platform - generating PDF file");
+  
+  const printOptions: Print.FilePrintOptions = { html };
+  if (width) printOptions.width = width;
+  if (height) printOptions.height = height;
+
+  const result = await Print.printToFileAsync(printOptions);
+  
+  if (!result || !result.uri) {
+    throw new Error("Failed to generate PDF file - printToFileAsync returned no URI");
+  }
+  
+  const { uri } = result;
+  console.log(`[exportPdf] PDF file created: ${uri}`);
+
+  // Share the PDF file
   const canShare = await Sharing.isAvailableAsync();
   if (!canShare) {
-    // Cannot share - inform user
     Alert.alert(
       "Export Complete",
       `PDF "${filename}" was generated but sharing is not available on this device.`,
       [{ text: "OK" }]
     );
-    throw new Error("Sharing is not available on this device. PDF was generated but cannot be shared.");
+    throw new Error("Sharing is not available on this device.");
   }
 
   await Sharing.shareAsync(uri, {
