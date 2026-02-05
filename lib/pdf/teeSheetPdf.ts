@@ -3,7 +3,7 @@
  *
  * IMPORTANT: This generates a REAL PDF from HTML template.
  * Do NOT use Print.printAsync for PDF exports - it prints the UI screen.
- * Always use Print.printToFileAsync({ html }) to generate a PDF file.
+ * Always use the centralized exportPdf() function.
  *
  * Features:
  * - Landscape A4 layout (fits 12+ groups per page)
@@ -14,14 +14,8 @@
  * - WHS handicap calculations with gender-based tee selection
  * - Multi-page support with CSS page breaks (12 groups per page)
  *
- * Uses expo-print HTML -> printToFileAsync and expo-sharing
- * Does NOT use view-shot/screenshot
- * Does NOT use printAsync (which would print the app UI)
+ * Uses centralized exportPdf() - never calls Print.printAsync
  */
-
-import * as Print from "expo-print";
-import * as Sharing from "expo-sharing";
-import { Platform } from "react-native";
 
 import { type ManCoDetails, getManCoRoleHolders } from "@/lib/db_supabase/memberRepo";
 import { getSociety } from "@/lib/db_supabase/societyRepo";
@@ -42,7 +36,7 @@ import {
   type GroupedPlayer,
   type PlayerGroup,
 } from "@/lib/teeSheetGrouping";
-import { getLogoForPdf } from "./logoHelper";
+import { exportPdf, getLogoDataUri } from "./exportPdf";
 
 export type TeeSheetPlayer = {
   id?: string;
@@ -102,7 +96,7 @@ export async function exportTeeSheetPdf(options: TeeSheetOptions): Promise<void>
   // Get logo as base64 for reliable PDF embedding
   // If fetch fails, logoSrc will be null and we'll show initials instead
   const logoUrl = (society as any)?.logo_url || (society as any)?.logoUrl || null;
-  const { logoSrc } = await getLogoForPdf(logoUrl);
+  const { logoSrc } = await getLogoDataUri(logoUrl);
 
   // Build tee settings for handicap calculations
   const menTee: TeeBlock | null =
@@ -191,11 +185,12 @@ export async function exportTeeSheetPdf(options: TeeSheetOptions): Promise<void>
   }
 
   // Build HTML template (contains ONLY tee sheet content, no app UI)
+  const eventName = event.name || "Event";
   const html = buildTeeSheetHtml({
     societyName: society?.name || "Golf Society",
     logoSrc,
     manCo,
-    eventName: event.name || "Event",
+    eventName,
     eventDate: event.date || null,
     courseName: event.courseName || null,
     teeName: event.teeName || null,
@@ -208,31 +203,14 @@ export async function exportTeeSheetPdf(options: TeeSheetOptions): Promise<void>
     totalPlayers: playersToUse.length,
   });
 
-  // IMPORTANT: Generate PDF FILE from HTML template using printToFileAsync
-  // Do NOT use printAsync - it prints the current screen/UI
-  const { uri } = await Print.printToFileAsync({
+  // Use centralized export function - never printAsync
+  // Landscape A4 dimensions in points (1 point = 1/72 inch): 842 x 595
+  await exportPdf({
     html,
-    base64: false,
-    // Landscape A4 dimensions in points (1 point = 1/72 inch)
-    // A4 landscape: 842 x 595 points
+    filename: `Tee Sheet - ${eventName}`,
     width: 842,
     height: 595,
   });
-
-  console.log("[teeSheetPdf] PDF file created at:", uri);
-
-  // Share the PDF file
-  const canShare = await Sharing.isAvailableAsync();
-  if (canShare) {
-    await Sharing.shareAsync(uri, {
-      mimeType: "application/pdf",
-      dialogTitle: `Tee Sheet - ${event.name}`,
-      UTI: "com.adobe.pdf",
-    });
-  } else {
-    // Fallback: alert user that sharing isn't available
-    throw new Error("Sharing is not available on this device. PDF was generated but cannot be shared.");
-  }
 }
 
 type TeeSheetHtmlOptions = {

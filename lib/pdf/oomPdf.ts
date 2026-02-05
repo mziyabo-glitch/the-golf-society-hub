@@ -1,10 +1,14 @@
-import * as Print from "expo-print";
-import * as Sharing from "expo-sharing";
+/**
+ * Order of Merit PDF Generator
+ *
+ * Generates a clean PDF for the OOM leaderboard.
+ * Uses the centralized exportPdf() function - never calls Print.printAsync.
+ */
 
 import { getOrderOfMeritTotals, getOrderOfMeritLog } from "@/lib/db_supabase/resultsRepo";
 import { getSociety } from "@/lib/db_supabase/societyRepo";
 import { getMembersBySocietyId } from "@/lib/db_supabase/memberRepo";
-import { getLogoForPdf } from "./logoHelper";
+import { exportPdf, getLogoDataUri } from "./exportPdf";
 
 type OomPdfRow = {
   position: number;
@@ -159,24 +163,22 @@ export async function exportOomPdf(societyId: string): Promise<void> {
 
   // Get logo as base64 for reliable PDF embedding
   const rawLogoUrl = (society as any)?.logo_url || (society as any)?.logoUrl || null;
-  const { logoSrc } = await getLogoForPdf(rawLogoUrl);
+  const { logoSrc } = await getLogoDataUri(rawLogoUrl);
+
+  const societyName = society?.name || "Golf Society";
+  const seasonYear = new Date().getFullYear();
 
   const html = buildOomPdfHtml({
-    societyName: society?.name || "Golf Society",
+    societyName,
     logoUrl: logoSrc,
-    seasonYear: new Date().getFullYear(),
+    seasonYear,
     rows,
   });
 
-  const { uri } = await Print.printToFileAsync({ html });
-  const canShare = await Sharing.isAvailableAsync();
-  if (!canShare) {
-    throw new Error("Sharing is not available on this device.");
-  }
-
-  await Sharing.shareAsync(uri, {
-    mimeType: "application/pdf",
-    dialogTitle: "Order of Merit",
+  // Use centralized export function - never printAsync
+  await exportPdf({
+    html,
+    filename: `Order of Merit - ${societyName} ${seasonYear}`,
   });
 }
 
