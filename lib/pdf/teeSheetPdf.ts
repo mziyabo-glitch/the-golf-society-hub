@@ -186,6 +186,9 @@ export async function exportTeeSheetPdf(options: TeeSheetOptions): Promise<void>
 
   // Build HTML template (contains ONLY tee sheet content, no app UI)
   const eventName = event.name || "Event";
+  
+  console.log("[teeSheetPdf] Building HTML template with", groupsWithTimes.length, "groups");
+  
   const html = buildTeeSheetHtml({
     societyName: society?.name || "Golf Society",
     logoSrc,
@@ -203,6 +206,16 @@ export async function exportTeeSheetPdf(options: TeeSheetOptions): Promise<void>
     totalPlayers: playersToUse.length,
   });
 
+  // Verify HTML starts with DOCTYPE (not app content)
+  if (!html.startsWith("<!DOCTYPE")) {
+    console.error("[teeSheetPdf] ERROR: HTML does not start with DOCTYPE!");
+    console.error("[teeSheetPdf] HTML starts with:", html.substring(0, 100));
+    throw new Error("Invalid HTML template generated");
+  }
+  
+  console.log("[teeSheetPdf] HTML template built, length:", html.length);
+  console.log("[teeSheetPdf] Calling exportPdf with landscape A4 (842x595)");
+
   // Use centralized export function - never printAsync
   // Landscape A4 dimensions in points (1 point = 1/72 inch): 842 x 595
   await exportPdf({
@@ -211,6 +224,8 @@ export async function exportTeeSheetPdf(options: TeeSheetOptions): Promise<void>
     width: 842,
     height: 595,
   });
+  
+  console.log("[teeSheetPdf] Export complete");
 }
 
 type TeeSheetHtmlOptions = {

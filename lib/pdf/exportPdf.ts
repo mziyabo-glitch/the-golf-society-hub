@@ -41,7 +41,10 @@ export async function exportPdf(opts: ExportPdfOptions): Promise<void> {
     throw new Error("HTML content is required for PDF export");
   }
 
+  // Debug: Log first 500 chars of HTML to verify it's the template, not app content
   console.log(`[exportPdf] Generating PDF: ${filename}`);
+  console.log(`[exportPdf] HTML length: ${html.length}`);
+  console.log(`[exportPdf] HTML preview: ${html.substring(0, 500)}...`);
 
   // Generate PDF FILE from HTML template
   // IMPORTANT: Use printToFileAsync, NOT printAsync
