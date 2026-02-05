@@ -36,11 +36,23 @@ export function buildOomPdfHtml(options: OomPdfOptions): string {
         ? `${escapeHtml(row.memberName)} (HCP: ${escapeHtml(row.handicapLabel)})`
         : escapeHtml(row.memberName);
 
+      // Medal emoji for top 3, plain number for rest
+      const posDisplay =
+        row.position === 1
+          ? '<span class="medal">&#x1F947;</span>'
+          : row.position === 2
+            ? '<span class="medal">&#x1F948;</span>'
+            : row.position === 3
+              ? '<span class="medal">&#x1F949;</span>'
+              : `${row.position}`;
+
+      const top3Class = row.position <= 3 ? " top3" : "";
+
       return `
-        <tr>
-          <td class="num">${row.position}</td>
+        <tr class="${top3Class}">
+          <td class="num">${posDisplay}</td>
           <td class="member">${memberLabel}</td>
-          <td class="num">${formatPoints(row.points)}</td>
+          <td class="num bold">${formatPoints(row.points)}</td>
           <td class="num">${row.wins}</td>
           <td class="num">${row.played}</td>
         </tr>`;
@@ -66,7 +78,11 @@ export function buildOomPdfHtml(options: OomPdfOptions): string {
   th.num { text-align:center; }
   td { padding:8px; border:1px solid #d6d6d6; vertical-align: top; }
   .num { text-align:center; width:64px; }
+  .bold { font-weight:700; }
   .member { width:auto; }
+  .medal { font-size:18px; }
+  tr.top3 { background:#FFFBEB; }
+  tr.top3 td.member { font-weight:600; }
   .footer { text-align:center; margin-top: 24px; padding-top: 12px; border-top:1px solid #e5e7eb; font-size: 11px; color:#9ca3af; font-style:italic; }
 </style>
 </head>

@@ -24,7 +24,8 @@ import { LoadingState } from "@/components/ui/LoadingState";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { useBootstrap } from "@/lib/useBootstrap";
 import { getEventsBySocietyId, getEvent, updateEvent, type EventDoc } from "@/lib/db_supabase/eventRepo";
-import { getMembersBySocietyId, type MemberDoc, type Gender } from "@/lib/db_supabase/memberRepo";
+import { getMembersBySocietyId, getManCoRoleHolders, type MemberDoc, type Gender, type ManCoDetails } from "@/lib/db_supabase/memberRepo";
+import { generateTeeSheetPdf, type TeeSheetPlayer } from "@/lib/teeSheetPdf";
 import { getPermissionsForMember } from "@/lib/rbac";
 import {
   type TeeBlock,
@@ -73,6 +74,7 @@ export default function TeeSheetScreen() {
   // Editable groups state
   const [groups, setGroups] = useState<PlayerGroup[]>([]);
   const [showGroupEditor, setShowGroupEditor] = useState(false);
+  const [manCo, setManCo] = useState<ManCoDetails>({ captain: null, secretary: null, treasurer: null, handicapper: null });
 
   const permissions = getPermissionsForMember(member as any);
   const canGenerateTeeSheet = permissions.canGenerateTeeSheet;
@@ -86,15 +88,17 @@ export default function TeeSheetScreen() {
 
     setLoading(true);
     try {
-      const [eventsData, membersData] = await Promise.all([
+      const [eventsData, membersData, manCoData] = await Promise.all([
         getEventsBySocietyId(societyId),
         getMembersBySocietyId(societyId),
+        getManCoRoleHolders(societyId),
       ]);
 
       // Filter to upcoming or recent events (not completed)
       const upcomingEvents = eventsData.filter((e) => !e.isCompleted);
       setEvents(upcomingEvents);
       setMembers(membersData);
+      setManCo(manCoData);
 
       // Auto-select first event if none selected
       if (upcomingEvents.length > 0 && !selectedEventId) {
@@ -292,7 +296,7 @@ export default function TeeSheetScreen() {
     });
   };
 
-  // Share/export tee sheet
+  // Share/export tee sheet as PDF
   const handleGenerateTeeSheet = async () => {
     if (!selectedEvent || !societyId) return;
 
@@ -306,31 +310,59 @@ export default function TeeSheetScreen() {
     setGenerating(true);
     try {
       const interval = parseInt(teeInterval, 10) || 10;
+      const ntpHoles = parseHoleNumbers(ntpHolesInput === "-" ? "" : ntpHolesInput);
+      const ldHoles = parseHoleNumbers(ldHolesInput === "-" ? "" : ldHolesInput);
 
-      const payload = {
-        societyName: society?.name || "Golf Society",
-        logoUrl,
-        eventName: selectedEvent.name || "Event",
-        eventDate: selectedEvent.date || null,
-        startTime: startTime || null,
-        teeTimeInterval: interval,
-        groups: cleanedGroups.map((group) => ({
-          groupNumber: group.groupNumber,
-          players: group.players.map((p) => ({
+      // Build tee block settings from the event
+      const menTee: TeeBlock | null =
+        selectedEvent.par != null && selectedEvent.courseRating != null && selectedEvent.slopeRating != null
+          ? { par: selectedEvent.par, courseRating: selectedEvent.courseRating, slopeRating: selectedEvent.slopeRating }
+          : null;
+      const ladiesTee: TeeBlock | null =
+        selectedEvent.ladiesPar != null && selectedEvent.ladiesCourseRating != null && selectedEvent.ladiesSlopeRating != null
+          ? { par: selectedEvent.ladiesPar, courseRating: selectedEvent.ladiesCourseRating, slopeRating: selectedEvent.ladiesSlopeRating }
+          : null;
+
+      // Flatten all players from groups with their gender for the PDF generator
+      const allPlayers: TeeSheetPlayer[] = [];
+      let groupNum = 1;
+      for (const group of cleanedGroups) {
+        for (const p of group.players) {
+          allPlayers.push({
+            id: p.id,
             name: p.name,
             handicapIndex: p.handicapIndex ?? null,
-            playingHandicap: p.playingHandicap ?? null,
-          })),
-        })),
-      };
+            gender: p.gender ?? null,
+            group: groupNum,
+          });
+        }
+        groupNum++;
+      }
 
-      router.push({
-        pathname: "/(app)/tee-sheet-print",
-        params: { payload: encodeURIComponent(JSON.stringify(payload)) },
+      await generateTeeSheetPdf({
+        societyName: society?.name || "Golf Society",
+        logoUrl,
+        manCo,
+        eventName: selectedEvent.name || "Event",
+        eventDate: selectedEvent.date || null,
+        courseName: selectedEvent.courseName || null,
+        teeName: selectedEvent.teeName || null,
+        ladiesTeeName: selectedEvent.ladiesTeeName || null,
+        format: selectedEvent.format || null,
+        teeSettings: menTee,
+        ladiesTeeSettings: ladiesTee,
+        handicapAllowance: selectedEvent.handicapAllowance ?? null,
+        nearestPinHoles: ntpHoles.length > 0 ? ntpHoles : null,
+        longestDriveHoles: ldHoles.length > 0 ? ldHoles : null,
+        players: allPlayers,
+        startTime: startTime || null,
+        teeTimeInterval: interval,
+        preGrouped: true,
       });
     } catch (err: any) {
       console.error("[TeeSheet] share tee sheet error:", err);
       Alert.alert("Error", err?.message || "Failed to share tee sheet.");
+    } finally {
       setGenerating(false);
     }
   };
