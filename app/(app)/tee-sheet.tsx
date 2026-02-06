@@ -25,7 +25,6 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { useBootstrap } from "@/lib/useBootstrap";
 import { getEventsBySocietyId, getEvent, updateEvent, type EventDoc } from "@/lib/db_supabase/eventRepo";
 import { getMembersBySocietyId, getManCoRoleHolders, type MemberDoc, type Gender, type ManCoDetails } from "@/lib/db_supabase/memberRepo";
-import { generateTeeSheetPdf, type TeeSheetPlayer } from "@/lib/teeSheetPdf";
 import { getPermissionsForMember } from "@/lib/rbac";
 import {
   type TeeBlock,
@@ -296,7 +295,7 @@ export default function TeeSheetScreen() {
     });
   };
 
-  // Share/export tee sheet as PDF
+  // Share/export tee sheet
   const handleGenerateTeeSheet = async () => {
     if (!selectedEvent || !societyId) return;
 
@@ -313,56 +312,43 @@ export default function TeeSheetScreen() {
       const ntpHoles = parseHoleNumbers(ntpHolesInput === "-" ? "" : ntpHolesInput);
       const ldHoles = parseHoleNumbers(ldHolesInput === "-" ? "" : ldHolesInput);
 
-      // Build tee block settings from the event
-      const menTee: TeeBlock | null =
-        selectedEvent.par != null && selectedEvent.courseRating != null && selectedEvent.slopeRating != null
-          ? { par: selectedEvent.par, courseRating: selectedEvent.courseRating, slopeRating: selectedEvent.slopeRating }
-          : null;
-      const ladiesTee: TeeBlock | null =
-        selectedEvent.ladiesPar != null && selectedEvent.ladiesCourseRating != null && selectedEvent.ladiesSlopeRating != null
-          ? { par: selectedEvent.ladiesPar, courseRating: selectedEvent.ladiesCourseRating, slopeRating: selectedEvent.ladiesSlopeRating }
-          : null;
-
-      // Flatten all players from groups with their gender for the PDF generator
-      const allPlayers: TeeSheetPlayer[] = [];
-      let groupNum = 1;
-      for (const group of cleanedGroups) {
-        for (const p of group.players) {
-          allPlayers.push({
-            id: p.id,
-            name: p.name,
-            handicapIndex: p.handicapIndex ?? null,
-            gender: p.gender ?? null,
-            group: groupNum,
-          });
-        }
-        groupNum++;
-      }
-
-      await generateTeeSheetPdf({
+      const payload = {
         societyName: society?.name || "Golf Society",
         logoUrl,
         manCo,
         eventName: selectedEvent.name || "Event",
         eventDate: selectedEvent.date || null,
         courseName: selectedEvent.courseName || null,
-        teeName: selectedEvent.teeName || null,
-        ladiesTeeName: selectedEvent.ladiesTeeName || null,
-        format: selectedEvent.format || null,
-        teeSettings: menTee,
-        ladiesTeeSettings: ladiesTee,
-        handicapAllowance: selectedEvent.handicapAllowance ?? null,
-        nearestPinHoles: ntpHoles.length > 0 ? ntpHoles : null,
-        longestDriveHoles: ldHoles.length > 0 ? ldHoles : null,
-        players: allPlayers,
         startTime: startTime || null,
         teeTimeInterval: interval,
-        preGrouped: true,
+        nearestPinHoles: ntpHoles.length > 0 ? ntpHoles : null,
+        longestDriveHoles: ldHoles.length > 0 ? ldHoles : null,
+        teeName: selectedEvent.teeName || null,
+        ladiesTeeName: selectedEvent.ladiesTeeName || null,
+        teeSettings: selectedEvent.par != null && selectedEvent.courseRating != null && selectedEvent.slopeRating != null
+          ? { par: selectedEvent.par, courseRating: selectedEvent.courseRating, slopeRating: selectedEvent.slopeRating }
+          : null,
+        ladiesTeeSettings: selectedEvent.ladiesPar != null && selectedEvent.ladiesCourseRating != null && selectedEvent.ladiesSlopeRating != null
+          ? { par: selectedEvent.ladiesPar, courseRating: selectedEvent.ladiesCourseRating, slopeRating: selectedEvent.ladiesSlopeRating }
+          : null,
+        handicapAllowance: selectedEvent.handicapAllowance ?? null,
+        groups: cleanedGroups.map((group) => ({
+          groupNumber: group.groupNumber,
+          players: group.players.map((p) => ({
+            name: p.name,
+            handicapIndex: p.handicapIndex ?? null,
+            playingHandicap: p.playingHandicap ?? null,
+          })),
+        })),
+      };
+
+      router.push({
+        pathname: "/(app)/tee-sheet-print",
+        params: { payload: encodeURIComponent(JSON.stringify(payload)) },
       });
     } catch (err: any) {
       console.error("[TeeSheet] share tee sheet error:", err);
       Alert.alert("Error", err?.message || "Failed to share tee sheet.");
-    } finally {
       setGenerating(false);
     }
   };
