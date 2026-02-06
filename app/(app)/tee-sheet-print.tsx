@@ -1,18 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Alert, Image, Platform, ScrollView, StyleSheet, View } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import * as Sharing from "expo-sharing";
 
 import { Screen } from "@/components/ui/Screen";
 import { AppText } from "@/components/ui/AppText";
 import { AppCard } from "@/components/ui/AppCard";
 import { LoadingState } from "@/components/ui/LoadingState";
-import { SocietyLogo } from "@/components/ui/SocietyLogo";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
 import { formatHandicap } from "@/lib/whs";
-
-const captureRef =
-  Platform.OS !== "web" ? require("react-native-view-shot").captureRef : null;
+import { captureAndShare } from "@/lib/share/captureAndShare";
 
 type TeeSheetPrintPlayer = {
   name: string;
@@ -25,14 +21,30 @@ type TeeSheetPrintGroup = {
   players: TeeSheetPrintPlayer[];
 };
 
+type TeeBlock = {
+  par: number;
+  courseRating: number;
+  slopeRating: number;
+};
+
 type TeeSheetPrintPayload = {
   societyName: string;
   logoUrl: string | null;
   eventName: string;
   eventDate: string | null;
+  courseName: string | null;
   startTime: string | null;
   teeTimeInterval: number;
   groups: TeeSheetPrintGroup[];
+  // Extra context
+  manCo?: { captain: string | null; secretary: string | null; treasurer: string | null; handicapper: string | null } | null;
+  nearestPinHoles?: number[] | null;
+  longestDriveHoles?: number[] | null;
+  teeName?: string | null;
+  ladiesTeeName?: string | null;
+  teeSettings?: TeeBlock | null;
+  ladiesTeeSettings?: TeeBlock | null;
+  handicapAllowance?: number | null;
 };
 
 export default function TeeSheetPrintScreen() {
@@ -62,62 +74,30 @@ export default function TeeSheetPrintScreen() {
       setLogoReady(true);
       return;
     }
-    // Prefetch the logo so it's available before capture
     Image.prefetch(payload.logoUrl)
       .then(() => setLogoReady(true))
-      .catch(() => setLogoReady(true)); // proceed even if prefetch fails
+      .catch(() => setLogoReady(true));
   }, [payload?.logoUrl]);
 
   useEffect(() => {
     if (!payload || !layoutReady || !logoReady || hasCaptured.current) return;
     hasCaptured.current = true;
 
-    const run = async () => {
+    (async () => {
       try {
-        if (Platform.OS === "web") {
-          if (typeof window !== "undefined" && typeof window.print === "function") {
-            const handleAfterPrint = () => {
-              window.removeEventListener("afterprint", handleAfterPrint);
-              router.back();
-            };
-            window.addEventListener("afterprint", handleAfterPrint);
-            window.print();
-            return;
-          }
-          router.back();
-          return;
-        }
-
-        if (!scrollRef.current || !captureRef) {
-          throw new Error("Share view not ready.");
-        }
-
         // Small delay to ensure the logo image has rendered after prefetch
-        await new Promise((r) => setTimeout(r, 200));
+        await new Promise((r) => setTimeout(r, 400));
 
-        const uri = await captureRef(scrollRef, {
-          format: "png",
-          quality: 1,
-          result: "tmpfile",
-          snapshotContentContainer: true,
+        await captureAndShare(scrollRef, {
+          dialogTitle: "Share Tee Sheet",
         });
-
-        const canShare = await Sharing.isAvailableAsync();
-        if (canShare) {
-          await Sharing.shareAsync(uri, {
-            mimeType: "image/png",
-            dialogTitle: "Share Tee Sheet",
-          });
-        }
       } catch (err: any) {
         console.error("[tee-sheet-print] share error:", err);
         Alert.alert("Error", err?.message || "Failed to share tee sheet.");
       } finally {
         router.back();
       }
-    };
-
-    run();
+    })();
   }, [layoutReady, logoReady, payload, router]);
 
   if (!payload) {
@@ -138,6 +118,13 @@ export default function TeeSheetPrintScreen() {
   }
 
   const formattedDate = formatEventDate(payload.eventDate);
+  const manCo = payload.manCo;
+  const hasNtp = payload.nearestPinHoles && payload.nearestPinHoles.length > 0;
+  const hasLd = payload.longestDriveHoles && payload.longestDriveHoles.length > 0;
+  const hasTeeInfo = payload.teeSettings || payload.ladiesTeeSettings;
+  const allowancePct = payload.handicapAllowance != null
+    ? Math.round(payload.handicapAllowance * 100)
+    : null;
 
   return (
     <Screen scrollable={false}>
@@ -146,20 +133,85 @@ export default function TeeSheetPrintScreen() {
         onLayout={() => setLayoutReady(true)}
         contentContainerStyle={[
           styles.container,
-          { backgroundColor: colors.background },
+          { backgroundColor: "#FFFFFF" },
         ]}
+        testID="share-target"
       >
-        <View style={styles.header}>
-          <SocietyLogo logoUrl={payload.logoUrl} size={56} />
-          <View style={styles.headerText}>
-            <AppText variant="h1">{payload.eventName}</AppText>
-            <AppText variant="body" color="secondary">
-              {payload.societyName}
-              {formattedDate ? ` • ${formattedDate}` : ""}
-            </AppText>
-          </View>
+        {/* Header with logo */}
+        <View style={styles.headerCenter}>
+          {payload.logoUrl ? (
+            <Image
+              source={{ uri: payload.logoUrl }}
+              style={styles.logo}
+              resizeMode="contain"
+            />
+          ) : null}
+          <AppText variant="h1" style={styles.eventTitle}>{payload.eventName}</AppText>
+          <AppText variant="body" color="secondary">
+            {formattedDate || ""}
+            {payload.courseName ? ` | ${payload.courseName}` : ""}
+          </AppText>
         </View>
 
+        {/* ManCo roles */}
+        {manCo && (manCo.captain || manCo.secretary || manCo.treasurer || manCo.handicapper) && (
+          <View style={styles.manCoSection}>
+            {manCo.captain ? <AppText variant="caption" color="secondary">Captain: {manCo.captain}</AppText> : null}
+            {manCo.secretary ? <AppText variant="caption" color="secondary">Secretary: {manCo.secretary}</AppText> : null}
+            {manCo.treasurer ? <AppText variant="caption" color="secondary">Treasurer: {manCo.treasurer}</AppText> : null}
+            {manCo.handicapper ? <AppText variant="caption" color="secondary">Handicapper: {manCo.handicapper}</AppText> : null}
+          </View>
+        )}
+
+        {/* Produced by branding */}
+        <AppText variant="small" style={styles.producedBy}>
+          Produced by The Golf Society Hub
+        </AppText>
+
+        {/* Tee Information */}
+        {hasTeeInfo && (
+          <AppCard style={styles.infoCard}>
+            <AppText variant="bodyBold" style={{ marginBottom: 4 }}>Tee Information</AppText>
+            {payload.teeSettings && (
+              <AppText variant="caption" color="secondary">
+                <AppText variant="caption" style={{ fontWeight: "700" }}>Male: </AppText>
+                {payload.teeName || "Men's"}{"\n"}
+                Par: {payload.teeSettings.par} | CR: {payload.teeSettings.courseRating} | SR: {payload.teeSettings.slopeRating}
+              </AppText>
+            )}
+            {payload.ladiesTeeSettings && (
+              <AppText variant="caption" color="secondary" style={{ marginTop: 2 }}>
+                <AppText variant="caption" style={{ fontWeight: "700" }}>Female: </AppText>
+                {payload.ladiesTeeName || "Ladies'"}{"\n"}
+                Par: {payload.ladiesTeeSettings.par} | CR: {payload.ladiesTeeSettings.courseRating} | SR: {payload.ladiesTeeSettings.slopeRating}
+              </AppText>
+            )}
+            {allowancePct != null && (
+              <AppText variant="caption" color="secondary" style={{ marginTop: 2 }}>
+                Allowance: {allowancePct}%
+              </AppText>
+            )}
+          </AppCard>
+        )}
+
+        {/* NTP / LD */}
+        {(hasNtp || hasLd) && (
+          <AppCard style={styles.infoCard}>
+            <AppText variant="bodyBold" style={{ marginBottom: 4 }}>Competitions</AppText>
+            {hasNtp && (
+              <AppText variant="caption" color="secondary">
+                Nearest the Pin: Hole{payload.nearestPinHoles!.length > 1 ? "s" : ""} {payload.nearestPinHoles!.join(", ")}
+              </AppText>
+            )}
+            {hasLd && (
+              <AppText variant="caption" color="secondary">
+                Longest Drive: Hole{payload.longestDriveHoles!.length > 1 ? "s" : ""} {payload.longestDriveHoles!.join(", ")}
+              </AppText>
+            )}
+          </AppCard>
+        )}
+
+        {/* Player Groups */}
         <View style={styles.groups}>
           {payload.groups.map((group, index) => {
             const teeTime = buildTeeTime(
@@ -259,14 +311,34 @@ const styles = StyleSheet.create({
   container: {
     padding: spacing.lg,
   },
-  header: {
-    flexDirection: "row",
+  headerCenter: {
     alignItems: "center",
-    marginBottom: spacing.lg,
-    gap: spacing.base,
+    marginBottom: spacing.sm,
   },
-  headerText: {
-    flex: 1,
+  logo: {
+    width: 56,
+    height: 56,
+    borderRadius: 12,
+    marginBottom: spacing.sm,
+  },
+  eventTitle: {
+    textAlign: "center",
+    marginBottom: 2,
+  },
+  manCoSection: {
+    alignItems: "center",
+    marginBottom: spacing.xs,
+  },
+  producedBy: {
+    textAlign: "right",
+    color: "#9CA3AF",
+    fontStyle: "italic",
+    marginBottom: spacing.sm,
+    fontSize: 10,
+  },
+  infoCard: {
+    marginBottom: spacing.sm,
+    padding: spacing.sm,
   },
   groups: {
     gap: spacing.base,

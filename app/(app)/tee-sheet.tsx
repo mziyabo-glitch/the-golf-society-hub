@@ -24,7 +24,7 @@ import { LoadingState } from "@/components/ui/LoadingState";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { useBootstrap } from "@/lib/useBootstrap";
 import { getEventsBySocietyId, getEvent, updateEvent, type EventDoc } from "@/lib/db_supabase/eventRepo";
-import { getMembersBySocietyId, type MemberDoc, type Gender } from "@/lib/db_supabase/memberRepo";
+import { getMembersBySocietyId, getManCoRoleHolders, type MemberDoc, type Gender, type ManCoDetails } from "@/lib/db_supabase/memberRepo";
 import { getPermissionsForMember } from "@/lib/rbac";
 import {
   type TeeBlock,
@@ -73,6 +73,7 @@ export default function TeeSheetScreen() {
   // Editable groups state
   const [groups, setGroups] = useState<PlayerGroup[]>([]);
   const [showGroupEditor, setShowGroupEditor] = useState(false);
+  const [manCo, setManCo] = useState<ManCoDetails>({ captain: null, secretary: null, treasurer: null, handicapper: null });
 
   const permissions = getPermissionsForMember(member as any);
   const canGenerateTeeSheet = permissions.canGenerateTeeSheet;
@@ -86,15 +87,17 @@ export default function TeeSheetScreen() {
 
     setLoading(true);
     try {
-      const [eventsData, membersData] = await Promise.all([
+      const [eventsData, membersData, manCoData] = await Promise.all([
         getEventsBySocietyId(societyId),
         getMembersBySocietyId(societyId),
+        getManCoRoleHolders(societyId),
       ]);
 
       // Filter to upcoming or recent events (not completed)
       const upcomingEvents = eventsData.filter((e) => !e.isCompleted);
       setEvents(upcomingEvents);
       setMembers(membersData);
+      setManCo(manCoData);
 
       // Auto-select first event if none selected
       if (upcomingEvents.length > 0 && !selectedEventId) {
@@ -306,14 +309,29 @@ export default function TeeSheetScreen() {
     setGenerating(true);
     try {
       const interval = parseInt(teeInterval, 10) || 10;
+      const ntpHoles = parseHoleNumbers(ntpHolesInput === "-" ? "" : ntpHolesInput);
+      const ldHoles = parseHoleNumbers(ldHolesInput === "-" ? "" : ldHolesInput);
 
       const payload = {
         societyName: society?.name || "Golf Society",
         logoUrl,
+        manCo,
         eventName: selectedEvent.name || "Event",
         eventDate: selectedEvent.date || null,
+        courseName: selectedEvent.courseName || null,
         startTime: startTime || null,
         teeTimeInterval: interval,
+        nearestPinHoles: ntpHoles.length > 0 ? ntpHoles : null,
+        longestDriveHoles: ldHoles.length > 0 ? ldHoles : null,
+        teeName: selectedEvent.teeName || null,
+        ladiesTeeName: selectedEvent.ladiesTeeName || null,
+        teeSettings: selectedEvent.par != null && selectedEvent.courseRating != null && selectedEvent.slopeRating != null
+          ? { par: selectedEvent.par, courseRating: selectedEvent.courseRating, slopeRating: selectedEvent.slopeRating }
+          : null,
+        ladiesTeeSettings: selectedEvent.ladiesPar != null && selectedEvent.ladiesCourseRating != null && selectedEvent.ladiesSlopeRating != null
+          ? { par: selectedEvent.ladiesPar, courseRating: selectedEvent.ladiesCourseRating, slopeRating: selectedEvent.ladiesSlopeRating }
+          : null,
+        handicapAllowance: selectedEvent.handicapAllowance ?? null,
         groups: cleanedGroups.map((group) => ({
           groupNumber: group.groupNumber,
           players: group.players.map((p) => ({

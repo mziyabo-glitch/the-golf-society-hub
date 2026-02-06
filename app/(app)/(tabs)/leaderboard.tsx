@@ -12,7 +12,7 @@ import {
   ScrollView,
   Image,
 } from "react-native";
-import { useLocalSearchParams } from "expo-router";
+import { useLocalSearchParams, useRouter } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
 import { Feather } from "@expo/vector-icons";
 
@@ -28,7 +28,7 @@ import {
   type ResultsLogEntry,
 } from "@/lib/db_supabase/resultsRepo";
 import { getColors } from "@/lib/ui/theme";
-import { exportOomPdf } from "@/lib/pdf/oomPdf";
+
 
 // ============================================================================
 // HELPERS
@@ -97,6 +97,7 @@ type TabType = "leaderboard" | "resultsLog";
 
 export default function LeaderboardScreen() {
   const { society, societyId, loading: bootstrapLoading } = useBootstrap();
+  const router = useRouter();
   const colors = getColors();
 
   const params = useLocalSearchParams<{ view?: string }>();
@@ -107,8 +108,6 @@ export default function LeaderboardScreen() {
   const [resultsLog, setResultsLog] = useState<ResultsLogEntry[]>([]);
   const [events, setEvents] = useState<EventDoc[]>([]);
   const [loading, setLoading] = useState(true);
-  const [sharingLeaderboard, setSharingLeaderboard] = useState(false);
-  const [sharingLog, setSharingLog] = useState(false);
   const [fetchError, setFetchError] = useState<string | null>(null);
 
   // Track which events are expanded in the accordion
@@ -195,8 +194,6 @@ export default function LeaderboardScreen() {
   useFocusEffect(
     useCallback(() => {
       if (societyId) loadData();
-      setSharingLeaderboard(false);
-      setSharingLog(false);
     }, [societyId, loadData])
   );
 
@@ -233,38 +230,34 @@ export default function LeaderboardScreen() {
   };
 
   // Share handlers
-  const handleShareLeaderboard = async () => {
+  const handleShareLeaderboard = () => {
     if (standings.length === 0) {
       Alert.alert("No Data", "No standings to share.");
       return;
     }
-
-    try {
-      setSharingLeaderboard(true);
-      if (!societyId) throw new Error("Missing society ID.");
-      await exportOomPdf(societyId);
-    } catch (err: any) {
-      Alert.alert("Error", err?.message || "Failed to share");
-    } finally {
-      setSharingLeaderboard(false);
+    if (!societyId) {
+      Alert.alert("Error", "Missing society ID.");
+      return;
     }
+    router.push({
+      pathname: "/(app)/oom-share",
+      params: { societyId },
+    });
   };
 
-  const handleShareResultsLog = async () => {
+  const handleShareResultsLog = () => {
     if (resultsLog.length === 0) {
       Alert.alert("No Data", "No results to share.");
       return;
     }
-
-    try {
-      setSharingLog(true);
-      if (!societyId) throw new Error("Missing society ID.");
-      await exportOomPdf(societyId);
-    } catch (err: any) {
-      Alert.alert("Error", err?.message || "Failed to share");
-    } finally {
-      setSharingLog(false);
+    if (!societyId) {
+      Alert.alert("Error", "Missing society ID.");
+      return;
     }
+    router.push({
+      pathname: "/(app)/oom-share",
+      params: { societyId },
+    });
   };
 
   // ============================================================================
@@ -345,7 +338,7 @@ export default function LeaderboardScreen() {
             <Pressable
               style={styles.shareButton}
               onPress={activeTab === "leaderboard" ? handleShareLeaderboard : handleShareResultsLog}
-              disabled={sharingLeaderboard || sharingLog}
+              disabled={false}
             >
               <Feather name="share" size={18} color="#0B6E4F" />
             </Pressable>
