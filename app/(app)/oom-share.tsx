@@ -207,7 +207,7 @@ export default function OomShareScreen() {
         onLayout={() => setLayoutReady(true)}
         contentContainerStyle={styles.pageContainer}
       >
-        <View style={styles.page} collapsable={false}>
+        <View style={styles.page} collapsable={false} testID="share-target">
           {/* Logo */}
           {logoUrl ? (
             <Image

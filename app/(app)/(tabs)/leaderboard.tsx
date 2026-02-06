@@ -194,8 +194,6 @@ export default function LeaderboardScreen() {
   useFocusEffect(
     useCallback(() => {
       if (societyId) loadData();
-      setSharingLeaderboard(false);
-      setSharingLog(false);
     }, [societyId, loadData])
   );
 

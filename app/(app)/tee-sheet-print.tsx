@@ -1,18 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Alert, Image, Platform, ScrollView, StyleSheet, View } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import * as Sharing from "expo-sharing";
 
 import { Screen } from "@/components/ui/Screen";
 import { AppText } from "@/components/ui/AppText";
 import { AppCard } from "@/components/ui/AppCard";
 import { LoadingState } from "@/components/ui/LoadingState";
-import { SocietyLogo } from "@/components/ui/SocietyLogo";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
 import { formatHandicap } from "@/lib/whs";
-
-const captureRef =
-  Platform.OS !== "web" ? require("react-native-view-shot").captureRef : null;
+import { captureAndShare } from "@/lib/share/captureAndShare";
 
 type TeeSheetPrintPlayer = {
   name: string;
@@ -87,52 +83,21 @@ export default function TeeSheetPrintScreen() {
     if (!payload || !layoutReady || !logoReady || hasCaptured.current) return;
     hasCaptured.current = true;
 
-    const run = async () => {
+    (async () => {
       try {
-        if (Platform.OS === "web") {
-          if (typeof window !== "undefined" && typeof window.print === "function") {
-            const handleAfterPrint = () => {
-              window.removeEventListener("afterprint", handleAfterPrint);
-              router.back();
-            };
-            window.addEventListener("afterprint", handleAfterPrint);
-            window.print();
-            return;
-          }
-          router.back();
-          return;
-        }
-
-        if (!scrollRef.current || !captureRef) {
-          throw new Error("Share view not ready.");
-        }
-
         // Small delay to ensure the logo image has rendered after prefetch
-        await new Promise((r) => setTimeout(r, 300));
+        await new Promise((r) => setTimeout(r, 400));
 
-        const uri = await captureRef(scrollRef, {
-          format: "png",
-          quality: 1,
-          result: "tmpfile",
-          snapshotContentContainer: true,
+        await captureAndShare(scrollRef, {
+          dialogTitle: "Share Tee Sheet",
         });
-
-        const canShare = await Sharing.isAvailableAsync();
-        if (canShare) {
-          await Sharing.shareAsync(uri, {
-            mimeType: "image/png",
-            dialogTitle: "Share Tee Sheet",
-          });
-        }
       } catch (err: any) {
         console.error("[tee-sheet-print] share error:", err);
         Alert.alert("Error", err?.message || "Failed to share tee sheet.");
       } finally {
         router.back();
       }
-    };
-
-    run();
+    })();
   }, [layoutReady, logoReady, payload, router]);
 
   if (!payload) {
@@ -170,6 +135,7 @@ export default function TeeSheetPrintScreen() {
           styles.container,
           { backgroundColor: "#FFFFFF" },
         ]}
+        testID="share-target"
       >
         {/* Header with logo */}
         <View style={styles.headerCenter}>
