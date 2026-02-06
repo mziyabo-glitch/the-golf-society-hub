@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useState } from "react";
-import { StyleSheet, View, Pressable, Alert, ScrollView } from "react-native";
-import { useRouter } from "expo-router";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { StyleSheet, View, Pressable, ScrollView } from "react-native";
+import { useLocalSearchParams, useRouter } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
 import { Feather } from "@expo/vector-icons";
 
@@ -11,7 +11,10 @@ import { AppInput } from "@/components/ui/AppInput";
 import { PrimaryButton, SecondaryButton } from "@/components/ui/Button";
 import { LoadingState } from "@/components/ui/LoadingState";
 import { EmptyState } from "@/components/ui/EmptyState";
+import { InlineNotice } from "@/components/ui/InlineNotice";
+import { Toast } from "@/components/ui/Toast";
 import { useBootstrap } from "@/lib/useBootstrap";
+import { useAsyncAction } from "@/lib/hooks/useAsyncAction";
 import {
   getEventsBySocietyId,
   createEvent,
@@ -23,6 +26,7 @@ import {
 } from "@/lib/db_supabase/eventRepo";
 import { getPermissionsForMember } from "@/lib/rbac";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
+import { formatError, type FormattedError } from "@/lib/ui/formatError";
 
 // Simple picker option component
 function PickerOption({
@@ -69,6 +73,7 @@ function TeeBlockForm({
   onParChange,
   onCourseRatingChange,
   onSlopeRatingChange,
+  errorMessage,
 }: {
   title: string;
   color: string;
@@ -80,6 +85,7 @@ function TeeBlockForm({
   onParChange: (v: string) => void;
   onCourseRatingChange: (v: string) => void;
   onSlopeRatingChange: (v: string) => void;
+  errorMessage?: string;
 }) {
   const colors = getColors();
 
@@ -131,23 +137,44 @@ function TeeBlockForm({
           />
         </View>
       </View>
+      {errorMessage ? (
+        <AppText variant="small" style={[styles.fieldError, { color: colors.error }]}>
+          {errorMessage}
+        </AppText>
+      ) : null}
     </View>
   );
 }
 
+type FormErrors = {
+  name?: string;
+  date?: string;
+  format?: string;
+  classification?: string;
+  menTees?: string;
+  womenTees?: string;
+  handicapAllowance?: string;
+};
+
 export default function EventsScreen() {
   const router = useRouter();
+  const params = useLocalSearchParams<{ create?: string; classification?: string }>();
   const { societyId, member, user, loading: bootstrapLoading } = useBootstrap();
   const colors = getColors();
+  const createAction = useAsyncAction();
+  const paramsHandledRef = useRef(false);
 
   const [events, setEvents] = useState<EventDoc[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<FormattedError | null>(null);
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [formName, setFormName] = useState("");
   const [formDate, setFormDate] = useState("");
   const [formFormat, setFormFormat] = useState<EventFormat>("stableford");
   const [formClassification, setFormClassification] = useState<EventClassification>("general");
-  const [submitting, setSubmitting] = useState(false);
+  const [formErrors, setFormErrors] = useState<FormErrors>({});
+  const [validationNotice, setValidationNotice] = useState<string | null>(null);
+  const [toast, setToast] = useState({ visible: false, message: "", type: "success" as const });
 
   // Tee Settings form state
   const [showTeeSettings, setShowTeeSettings] = useState(false);
@@ -170,17 +197,38 @@ export default function EventsScreen() {
 
   const permissions = getPermissionsForMember(member as any);
 
+  useEffect(() => {
+    if (paramsHandledRef.current) return;
+    const wantsCreate = params.create === "1";
+    const wantsOom = params.classification === "oom";
+
+    if (wantsCreate && permissions.canCreateEvents) {
+      setShowCreateForm(true);
+    }
+    if (wantsOom) {
+      setFormClassification("oom");
+    }
+
+    if (wantsCreate || wantsOom) {
+      paramsHandledRef.current = true;
+    }
+  }, [params.create, params.classification, permissions.canCreateEvents]);
+
   const loadEvents = async () => {
     if (!societyId) {
       setLoading(false);
       return;
     }
     setLoading(true);
+    setLoadError(null);
     try {
       const data = await getEventsBySocietyId(societyId);
       setEvents(data);
     } catch (err) {
       console.error("Failed to load events:", err);
+      const formatted = formatError(err);
+      setLoadError(formatted);
+      setEvents([]);
     } finally {
       setLoading(false);
     }
@@ -205,29 +253,63 @@ export default function EventsScreen() {
     courseRating: string,
     slopeRating: string,
     label: string
-  ): boolean => {
+  ): string | null => {
     if (par.trim()) {
       const parNum = parseInt(par.trim(), 10);
       if (isNaN(parNum) || parNum < 27 || parNum > 90) {
-        Alert.alert("Invalid Par", `${label} Par must be between 27 and 90.`);
-        return false;
+        return `${label} Par must be between 27 and 90.`;
       }
     }
     if (courseRating.trim()) {
       const crNum = parseFloat(courseRating.trim());
       if (isNaN(crNum) || crNum < 50 || crNum > 90) {
-        Alert.alert("Invalid Course Rating", `${label} Course Rating must be between 50 and 90.`);
-        return false;
+        return `${label} Course Rating must be between 50 and 90.`;
       }
     }
     if (slopeRating.trim()) {
       const srNum = parseInt(slopeRating.trim(), 10);
       if (isNaN(srNum) || srNum < 55 || srNum > 155) {
-        Alert.alert("Invalid Slope Rating", `${label} Slope Rating must be between 55 and 155.`);
-        return false;
+        return `${label} Slope Rating must be between 55 and 155.`;
       }
     }
-    return true;
+    return null;
+  };
+
+  const validateForm = (): FormErrors => {
+    const errors: FormErrors = {};
+
+    if (!formName.trim()) {
+      errors.name = "Event name is required.";
+    }
+
+    if (!formDate.trim()) {
+      errors.date = "Date is required.";
+    } else if (!/^\d{4}-\d{2}-\d{2}$/.test(formDate.trim())) {
+      errors.date = "Use format YYYY-MM-DD.";
+    }
+
+    if (!formFormat) {
+      errors.format = "Select a format.";
+    }
+
+    if (!formClassification) {
+      errors.classification = "Select a classification.";
+    }
+
+    const menError = validateTeeInput(formMenPar, formMenCourseRating, formMenSlopeRating, "Men's");
+    if (menError) errors.menTees = menError;
+
+    const womenError = validateTeeInput(formWomenPar, formWomenCourseRating, formWomenSlopeRating, "Women's");
+    if (womenError) errors.womenTees = womenError;
+
+    if (formHandicapAllowance.trim()) {
+      const allowanceValue = Number(formHandicapAllowance.trim());
+      if (Number.isNaN(allowanceValue) || allowanceValue <= 0 || allowanceValue > 100) {
+        errors.handicapAllowance = "Handicap allowance must be between 1 and 100.";
+      }
+    }
+
+    return errors;
   };
 
   const handleCreateEvent = async () => {
@@ -238,37 +320,27 @@ export default function EventsScreen() {
       formClassification,
       societyId,
       userId: user?.uid,
-      submitting,
+      submitting: createAction.loading,
     });
 
-    if (!formName.trim()) {
-      Alert.alert("Missing Name", "Please enter an event name.");
+    if (createAction.loading) return;
+
+    createAction.reset();
+    setValidationNotice(null);
+
+    const errors = validateForm();
+    setFormErrors(errors);
+    if (Object.keys(errors).length > 0) {
+      setValidationNotice("Please fix the highlighted fields.");
+      if (errors.menTees || errors.womenTees || errors.handicapAllowance) {
+        setShowTeeSettings(true);
+      }
       return;
     }
-    if (!formDate.trim()) {
-      Alert.alert("Missing Date", "Please enter a date (YYYY-MM-DD).");
-      return;
-    }
+
     if (!societyId || !user?.uid) {
       console.error("[createEvent] Missing societyId or userId:", { societyId, userId: user?.uid });
-      Alert.alert("Error", "Not signed in or no society selected.");
-      return;
-    }
-
-    // Validate date format
-    const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
-    if (!dateRegex.test(formDate.trim())) {
-      Alert.alert("Invalid Date", "Please enter date in YYYY-MM-DD format.");
-      return;
-    }
-
-    // Validate Men's tee settings
-    if (!validateTeeInput(formMenPar, formMenCourseRating, formMenSlopeRating, "Men's")) {
-      return;
-    }
-
-    // Validate Women's tee settings
-    if (!validateTeeInput(formWomenPar, formWomenCourseRating, formWomenSlopeRating, "Women's")) {
+      setValidationNotice("Not signed in or no society selected.");
       return;
     }
 
@@ -294,10 +366,9 @@ export default function EventsScreen() {
       console.log("[createEvent] Warning: No tee settings configured");
     }
 
-    setSubmitting(true);
-    try {
-      console.log("[createEvent] Calling createEvent...");
-      await createEvent(societyId, {
+    console.log("[createEvent] Calling createEvent...");
+    const created = await createAction.run(async () =>
+      createEvent(societyId, {
         name: formName.trim(),
         date: formDate.trim(),
         format: formFormat,
@@ -317,17 +388,18 @@ export default function EventsScreen() {
         ladiesSlopeRating: womenSlopeRating,
         // Shared allowance
         handicapAllowance,
-      });
-      console.log("[createEvent] SUCCESS");
-      // Reset form
-      resetForm();
-      loadEvents();
-    } catch (e: any) {
-      console.error("[createEvent] FAILED:", e);
-      Alert.alert("Error", e?.message || "Failed to create event.");
-    } finally {
-      setSubmitting(false);
+      })
+    );
+
+    if (!created) {
+      console.error("[createEvent] FAILED");
+      return;
     }
+
+    console.log("[createEvent] SUCCESS");
+    resetForm();
+    setToast({ visible: true, message: "Event created", type: "success" });
+    loadEvents();
   };
 
   const resetForm = () => {
@@ -347,6 +419,9 @@ export default function EventsScreen() {
     setFormHandicapAllowance("95");
     setShowTeeSettings(false);
     setShowCreateForm(false);
+    setFormErrors({});
+    setValidationNotice(null);
+    createAction.reset();
   };
 
   const handleOpenEvent = (event: EventDoc) => {
@@ -372,8 +447,18 @@ export default function EventsScreen() {
   if (showCreateForm) {
     return (
       <Screen>
+        <Toast
+          visible={toast.visible}
+          message={toast.message}
+          type={toast.type}
+          onHide={() => setToast((t) => ({ ...t, visible: false }))}
+        />
         <View style={styles.formHeader}>
-          <SecondaryButton onPress={() => { resetForm(); setShowCreateForm(false); }} size="sm">
+          <SecondaryButton
+            onPress={() => { resetForm(); setShowCreateForm(false); }}
+            size="sm"
+            disabled={createAction.loading}
+          >
             Cancel
           </SecondaryButton>
           <AppText variant="h2">Create Event</AppText>
@@ -382,14 +467,34 @@ export default function EventsScreen() {
 
         <ScrollView showsVerticalScrollIndicator={false}>
           <AppCard>
+            {validationNotice ? (
+              <InlineNotice variant="error" message={validationNotice} style={{ marginBottom: spacing.sm }} />
+            ) : null}
+            {createAction.error ? (
+              <InlineNotice
+                variant="error"
+                message={createAction.error.message}
+                detail={createAction.error.detail}
+                style={{ marginBottom: spacing.sm }}
+              />
+            ) : null}
             <View style={styles.formField}>
               <AppText variant="captionBold" style={styles.label}>Event Name</AppText>
               <AppInput
                 placeholder="e.g. Monthly Medal"
                 value={formName}
-                onChangeText={setFormName}
+                onChangeText={(value) => {
+                  setFormName(value);
+                  setValidationNotice(null);
+                  setFormErrors((prev) => ({ ...prev, name: undefined }));
+                }}
                 autoCapitalize="words"
               />
+              {formErrors.name ? (
+                <AppText variant="small" style={[styles.fieldError, { color: colors.error }]}>
+                  {formErrors.name}
+                </AppText>
+              ) : null}
             </View>
 
             <View style={styles.formField}>
@@ -397,10 +502,19 @@ export default function EventsScreen() {
               <AppInput
                 placeholder="e.g. 2025-02-15"
                 value={formDate}
-                onChangeText={setFormDate}
+                onChangeText={(value) => {
+                  setFormDate(value);
+                  setValidationNotice(null);
+                  setFormErrors((prev) => ({ ...prev, date: undefined }));
+                }}
                 keyboardType="numbers-and-punctuation"
                 autoCapitalize="none"
               />
+              {formErrors.date ? (
+                <AppText variant="small" style={[styles.fieldError, { color: colors.error }]}>
+                  {formErrors.date}
+                </AppText>
+              ) : null}
             </View>
 
             <View style={styles.formField}>
@@ -411,11 +525,20 @@ export default function EventsScreen() {
                     key={f.value}
                     label={f.label}
                     selected={formFormat === f.value}
-                    onPress={() => setFormFormat(f.value)}
+                    onPress={() => {
+                      setFormFormat(f.value);
+                      setValidationNotice(null);
+                      setFormErrors((prev) => ({ ...prev, format: undefined }));
+                    }}
                     colors={colors}
                   />
                 ))}
               </View>
+              {formErrors.format ? (
+                <AppText variant="small" style={[styles.fieldError, { color: colors.error }]}>
+                  {formErrors.format}
+                </AppText>
+              ) : null}
             </View>
 
             <View style={styles.formField}>
@@ -426,11 +549,20 @@ export default function EventsScreen() {
                     key={c.value}
                     label={c.label}
                     selected={formClassification === c.value}
-                    onPress={() => setFormClassification(c.value)}
+                    onPress={() => {
+                      setFormClassification(c.value);
+                      setValidationNotice(null);
+                      setFormErrors((prev) => ({ ...prev, classification: undefined }));
+                    }}
                     colors={colors}
                   />
                 ))}
               </View>
+              {formErrors.classification ? (
+                <AppText variant="small" style={[styles.fieldError, { color: colors.error }]}>
+                  {formErrors.classification}
+                </AppText>
+              ) : null}
             </View>
 
             {/* Course / Tee Setup Toggle */}
@@ -459,7 +591,10 @@ export default function EventsScreen() {
                   <AppInput
                     placeholder="e.g. Royal Liverpool"
                     value={formCourseName}
-                    onChangeText={setFormCourseName}
+                    onChangeText={(value) => {
+                      setFormCourseName(value);
+                      setValidationNotice(null);
+                    }}
                     autoCapitalize="words"
                   />
                 </View>
@@ -472,10 +607,26 @@ export default function EventsScreen() {
                   par={formMenPar}
                   courseRating={formMenCourseRating}
                   slopeRating={formMenSlopeRating}
-                  onTeeNameChange={setFormMenTeeName}
-                  onParChange={setFormMenPar}
-                  onCourseRatingChange={setFormMenCourseRating}
-                  onSlopeRatingChange={setFormMenSlopeRating}
+                  onTeeNameChange={(value) => {
+                    setFormMenTeeName(value);
+                    setValidationNotice(null);
+                  }}
+                  onParChange={(value) => {
+                    setFormMenPar(value);
+                    setValidationNotice(null);
+                    setFormErrors((prev) => ({ ...prev, menTees: undefined }));
+                  }}
+                  onCourseRatingChange={(value) => {
+                    setFormMenCourseRating(value);
+                    setValidationNotice(null);
+                    setFormErrors((prev) => ({ ...prev, menTees: undefined }));
+                  }}
+                  onSlopeRatingChange={(value) => {
+                    setFormMenSlopeRating(value);
+                    setValidationNotice(null);
+                    setFormErrors((prev) => ({ ...prev, menTees: undefined }));
+                  }}
+                  errorMessage={formErrors.menTees}
                 />
 
                 {/* Women's Tee Block */}
@@ -486,10 +637,26 @@ export default function EventsScreen() {
                   par={formWomenPar}
                   courseRating={formWomenCourseRating}
                   slopeRating={formWomenSlopeRating}
-                  onTeeNameChange={setFormWomenTeeName}
-                  onParChange={setFormWomenPar}
-                  onCourseRatingChange={setFormWomenCourseRating}
-                  onSlopeRatingChange={setFormWomenSlopeRating}
+                  onTeeNameChange={(value) => {
+                    setFormWomenTeeName(value);
+                    setValidationNotice(null);
+                  }}
+                  onParChange={(value) => {
+                    setFormWomenPar(value);
+                    setValidationNotice(null);
+                    setFormErrors((prev) => ({ ...prev, womenTees: undefined }));
+                  }}
+                  onCourseRatingChange={(value) => {
+                    setFormWomenCourseRating(value);
+                    setValidationNotice(null);
+                    setFormErrors((prev) => ({ ...prev, womenTees: undefined }));
+                  }}
+                  onSlopeRatingChange={(value) => {
+                    setFormWomenSlopeRating(value);
+                    setValidationNotice(null);
+                    setFormErrors((prev) => ({ ...prev, womenTees: undefined }));
+                  }}
+                  errorMessage={formErrors.womenTees}
                 />
 
                 {/* Handicap Allowance */}
@@ -500,9 +667,18 @@ export default function EventsScreen() {
                   <AppInput
                     placeholder="95"
                     value={formHandicapAllowance}
-                    onChangeText={setFormHandicapAllowance}
+                    onChangeText={(value) => {
+                      setFormHandicapAllowance(value);
+                      setValidationNotice(null);
+                      setFormErrors((prev) => ({ ...prev, handicapAllowance: undefined }));
+                    }}
                     keyboardType="number-pad"
                   />
+                  {formErrors.handicapAllowance ? (
+                    <AppText variant="small" style={[styles.fieldError, { color: colors.error }]}>
+                      {formErrors.handicapAllowance}
+                    </AppText>
+                  ) : null}
                   <AppText variant="small" color="tertiary" style={{ marginTop: 4 }}>
                     Default 95% for individual stroke play
                   </AppText>
@@ -512,7 +688,7 @@ export default function EventsScreen() {
 
             <PrimaryButton
               onPress={handleCreateEvent}
-              loading={submitting}
+              loading={createAction.loading}
               style={{ marginTop: spacing.sm }}
             >
               Create Event
@@ -602,6 +778,12 @@ export default function EventsScreen() {
 
   return (
     <Screen>
+      <Toast
+        visible={toast.visible}
+        message={toast.message}
+        type={toast.type}
+        onHide={() => setToast((t) => ({ ...t, visible: false }))}
+      />
       <View style={styles.header}>
         <View>
           <AppText variant="title">Events</AppText>
@@ -616,13 +798,22 @@ export default function EventsScreen() {
         )}
       </View>
 
+      {loadError ? (
+        <InlineNotice
+          variant="error"
+          message={loadError.message}
+          detail={loadError.detail}
+          style={{ marginBottom: spacing.sm }}
+        />
+      ) : null}
+
       {events.length === 0 ? (
         <EmptyState
           icon={<Feather name="calendar" size={24} color={colors.textTertiary} />}
-          title="No Events Yet"
+          title="No events yet"
           message="Create your first event to start tracking results and scores."
           action={permissions.canCreateEvents ? {
-            label: "Create Event",
+            label: "Create event",
             onPress: () => setShowCreateForm(true),
           } : undefined}
         />
@@ -717,6 +908,9 @@ const styles = StyleSheet.create({
   },
   label: {
     marginBottom: spacing.xs,
+  },
+  fieldError: {
+    marginTop: 4,
   },
   pickerRow: {
     flexDirection: "row",

@@ -10,7 +10,7 @@
  */
 
 import { useCallback, useEffect, useState } from "react";
-import { StyleSheet, View, Alert, Pressable, ScrollView, Platform } from "react-native";
+import { StyleSheet, View, Pressable, ScrollView, Platform } from "react-native";
 import { useRouter } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
 import { Feather } from "@expo/vector-icons";
@@ -22,6 +22,8 @@ import { AppInput } from "@/components/ui/AppInput";
 import { PrimaryButton, SecondaryButton } from "@/components/ui/Button";
 import { LoadingState } from "@/components/ui/LoadingState";
 import { EmptyState } from "@/components/ui/EmptyState";
+import { InlineNotice } from "@/components/ui/InlineNotice";
+import { Toast } from "@/components/ui/Toast";
 import { useBootstrap } from "@/lib/useBootstrap";
 import { getEventsBySocietyId, getEvent, updateEvent, type EventDoc } from "@/lib/db_supabase/eventRepo";
 import { getMembersBySocietyId, getManCoRoleHolders, type MemberDoc, type Gender, type ManCoDetails } from "@/lib/db_supabase/memberRepo";
@@ -36,6 +38,7 @@ import {
 } from "@/lib/whs";
 import { parseHoleNumbers, formatHoleNumbers, calculateGroupSizes } from "@/lib/teeSheetGrouping";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
+import { formatError, type FormattedError } from "@/lib/ui/formatError";
 
 type EditablePlayer = {
   id: string;
@@ -61,8 +64,11 @@ export default function TeeSheetScreen() {
   const [selectedEvent, setSelectedEvent] = useState<EventDoc | null>(null);
   const [members, setMembers] = useState<MemberDoc[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<FormattedError | null>(null);
   const [generating, setGenerating] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [notice, setNotice] = useState<{ type: "success" | "error" | "info"; message: string; detail?: string } | null>(null);
+  const [toast, setToast] = useState({ visible: false, message: "", type: "success" as const });
 
   // Form state
   const [ntpHolesInput, setNtpHolesInput] = useState("");
@@ -86,6 +92,7 @@ export default function TeeSheetScreen() {
     if (!societyId) return;
 
     setLoading(true);
+    setLoadError(null);
     try {
       const [eventsData, membersData, manCoData] = await Promise.all([
         getEventsBySocietyId(societyId),
@@ -105,6 +112,7 @@ export default function TeeSheetScreen() {
       }
     } catch (err) {
       console.error("[TeeSheet] loadData error:", err);
+      setLoadError(formatError(err));
     } finally {
       setLoading(false);
     }
@@ -123,6 +131,7 @@ export default function TeeSheetScreen() {
         return;
       }
 
+      setNotice(null);
       try {
         const event = await getEvent(selectedEventId);
         setSelectedEvent(event);
@@ -137,6 +146,7 @@ export default function TeeSheetScreen() {
         }
       } catch (err) {
         console.error("[TeeSheet] loadEventDetails error:", err);
+        setNotice({ type: "error", ...formatError(err) });
       }
     };
 
@@ -232,15 +242,17 @@ export default function TeeSheetScreen() {
     const ntpHoles = parseHoleNumbers(ntpHolesInput === "-" ? "" : ntpHolesInput);
     const ldHoles = parseHoleNumbers(ldHolesInput === "-" ? "" : ldHolesInput);
 
+    setNotice(null);
     setSaving(true);
     try {
       await updateEvent(selectedEventId, {
         nearestPinHoles: ntpHoles,
         longestDriveHoles: ldHoles,
       });
-      Alert.alert("Saved", "Competition holes updated successfully.");
+      setToast({ visible: true, message: "Settings saved", type: "success" });
     } catch (err: any) {
-      Alert.alert("Error", err?.message || "Failed to save settings.");
+      const formatted = formatError(err);
+      setNotice({ type: "error", message: formatted.message, detail: formatted.detail });
     } finally {
       setSaving(false);
     }
@@ -302,10 +314,11 @@ export default function TeeSheetScreen() {
     // Clean up empty groups first
     const cleanedGroups = groups.filter((g) => g.players.length > 0);
     if (cleanedGroups.length === 0) {
-      Alert.alert("No Players", "Please add players to the event first.");
+      setNotice({ type: "error", message: "No players added", detail: "Add players to the event before generating the tee sheet." });
       return;
     }
 
+    setNotice(null);
     setGenerating(true);
     try {
       const interval = parseInt(teeInterval, 10) || 10;
@@ -348,7 +361,8 @@ export default function TeeSheetScreen() {
       });
     } catch (err: any) {
       console.error("[TeeSheet] share tee sheet error:", err);
-      Alert.alert("Error", err?.message || "Failed to share tee sheet.");
+      const formatted = formatError(err);
+      setNotice({ type: "error", message: formatted.message, detail: formatted.detail });
       setGenerating(false);
     }
   };
@@ -388,6 +402,12 @@ export default function TeeSheetScreen() {
 
   return (
     <Screen>
+      <Toast
+        visible={toast.visible}
+        message={toast.message}
+        type={toast.type}
+        onHide={() => setToast((t) => ({ ...t, visible: false }))}
+      />
       {/* Header */}
       <View style={styles.header}>
         <SecondaryButton onPress={() => router.back()} size="sm">
@@ -402,6 +422,24 @@ export default function TeeSheetScreen() {
       <AppText variant="body" color="secondary" style={{ marginBottom: spacing.lg }}>
         Generate grouped tee sheets with WHS handicaps for Men and Ladies.
       </AppText>
+
+      {loadError ? (
+        <InlineNotice
+          variant="error"
+          message={loadError.message}
+          detail={loadError.detail}
+          style={{ marginBottom: spacing.sm }}
+        />
+      ) : null}
+
+      {notice ? (
+        <InlineNotice
+          variant={notice.type}
+          message={notice.message}
+          detail={notice.detail}
+          style={{ marginBottom: spacing.sm }}
+        />
+      ) : null}
 
       {events.length === 0 ? (
         <EmptyState
@@ -462,6 +500,21 @@ export default function TeeSheetScreen() {
           </View>
 
           {selectedEvent && (
+            selectedPlayerCount === 0 ? (
+              <EmptyState
+                icon={<Feather name="users" size={32} color={colors.textTertiary} />}
+                title="No players added"
+                message="Add players to this event before generating the tee sheet."
+                action={{
+                  label: "Add players",
+                  onPress: () =>
+                    router.push({
+                      pathname: "/(app)/event/[id]/players",
+                      params: { id: selectedEvent.id },
+                    }),
+                }}
+              />
+            ) : (
             <>
               {/* Tee Time Settings */}
               <AppText variant="h2" style={styles.sectionTitle}>Tee Times</AppText>
@@ -701,12 +754,8 @@ export default function TeeSheetScreen() {
                 {" Share Tee Sheet"}
               </PrimaryButton>
 
-              {selectedPlayerCount === 0 && (
-                <AppText variant="caption" color="error" style={{ textAlign: "center", marginBottom: spacing.lg }}>
-                  Add players to the event before generating the tee sheet.
-                </AppText>
-              )}
             </>
+            )
           )}
         </ScrollView>
       )}

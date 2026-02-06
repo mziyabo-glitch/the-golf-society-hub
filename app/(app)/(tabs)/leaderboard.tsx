@@ -109,6 +109,7 @@ export default function LeaderboardScreen() {
   const [events, setEvents] = useState<EventDoc[]>([]);
   const [loading, setLoading] = useState(true);
   const [fetchError, setFetchError] = useState<string | null>(null);
+  const [sharePending, setSharePending] = useState(false);
 
   // Track which events are expanded in the accordion
   const [expandedEvents, setExpandedEvents] = useState<Set<string>>(new Set());
@@ -194,6 +195,7 @@ export default function LeaderboardScreen() {
   useFocusEffect(
     useCallback(() => {
       if (societyId) loadData();
+      setSharePending(false);
     }, [societyId, loadData])
   );
 
@@ -239,6 +241,8 @@ export default function LeaderboardScreen() {
       Alert.alert("Error", "Missing society ID.");
       return;
     }
+    if (sharePending) return;
+    setSharePending(true);
     router.push({
       pathname: "/(app)/oom-share",
       params: { societyId },
@@ -254,6 +258,8 @@ export default function LeaderboardScreen() {
       Alert.alert("Error", "Missing society ID.");
       return;
     }
+    if (sharePending) return;
+    setSharePending(true);
     router.push({
       pathname: "/(app)/oom-share",
       params: { societyId },
@@ -336,9 +342,12 @@ export default function LeaderboardScreen() {
           {/* Share Button */}
           {canShare && (
             <Pressable
-              style={styles.shareButton}
+              style={({ pressed }) => [
+                styles.shareButton,
+                { opacity: sharePending ? 0.5 : pressed ? 0.7 : 1 },
+              ]}
               onPress={activeTab === "leaderboard" ? handleShareLeaderboard : handleShareResultsLog}
-              disabled={false}
+              disabled={sharePending}
             >
               <Feather name="share" size={18} color="#0B6E4F" />
             </Pressable>
@@ -396,13 +405,20 @@ export default function LeaderboardScreen() {
         {activeTab === "leaderboard" && (
           <>
             {standings.length === 0 ? (
-              <GlassCard style={styles.emptyCard}>
-                <Feather name="award" size={32} color="#D1D5DB" />
-                <AppText style={styles.emptyTitle}>No standings yet</AppText>
-                <AppText style={styles.emptyText}>
-                  Create an OOM event, add players, and enter scores to start.
-                </AppText>
-              </GlassCard>
+              <EmptyState
+                icon={<Feather name="award" size={24} color={colors.textTertiary} />}
+                title="No Order of Merit events yet"
+                message="Create an OOM event to start tracking points."
+                action={{
+                  label: "Create OOM event",
+                  onPress: () =>
+                    router.push({
+                      pathname: "/(app)/(tabs)/events",
+                      params: { create: "1", classification: "oom" },
+                    }),
+                }}
+                style={styles.emptyCard}
+              />
             ) : (
               <>
                 {/* ========== PODIUM (TOP 3) ========== */}
@@ -544,13 +560,20 @@ export default function LeaderboardScreen() {
         {activeTab === "resultsLog" && (
           <>
             {groupedResultsLog.length === 0 ? (
-              <GlassCard style={styles.emptyCard}>
-                <Feather name="calendar" size={32} color="#D1D5DB" />
-                <AppText style={styles.emptyTitle}>No results yet</AppText>
-                <AppText style={styles.emptyText}>
-                  Create an OOM event and enter scores to see the results log.
-                </AppText>
-              </GlassCard>
+              <EmptyState
+                icon={<Feather name="calendar" size={24} color={colors.textTertiary} />}
+                title="No Order of Merit events yet"
+                message="Create an OOM event to see the results log."
+                action={{
+                  label: "Create OOM event",
+                  onPress: () =>
+                    router.push({
+                      pathname: "/(app)/(tabs)/events",
+                      params: { create: "1", classification: "oom" },
+                    }),
+                }}
+                style={styles.emptyCard}
+              />
             ) : (
               <View style={styles.accordionContainer}>
                 {groupedResultsLog.map((event, eventIdx) => {
@@ -775,21 +798,7 @@ const styles = StyleSheet.create({
 
   // Empty state
   emptyCard: {
-    padding: 40,
-    alignItems: "center",
-  },
-  emptyTitle: {
-    fontSize: 18,
-    fontWeight: "600",
-    color: "#374151",
-    marginTop: 16,
-    marginBottom: 8,
-  },
-  emptyText: {
-    fontSize: 14,
-    color: "#6B7280",
-    textAlign: "center",
-    lineHeight: 20,
+    marginTop: 0,
   },
 
   // Podium
