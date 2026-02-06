@@ -12,7 +12,7 @@ import {
   ScrollView,
   Image,
 } from "react-native";
-import { useLocalSearchParams } from "expo-router";
+import { useLocalSearchParams, useRouter } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
 import { Feather } from "@expo/vector-icons";
 
@@ -97,6 +97,7 @@ type TabType = "leaderboard" | "resultsLog";
 
 export default function LeaderboardScreen() {
   const { society, societyId, loading: bootstrapLoading } = useBootstrap();
+  const router = useRouter();
   const colors = getColors();
 
   const params = useLocalSearchParams<{ view?: string }>();
@@ -233,21 +234,19 @@ export default function LeaderboardScreen() {
   };
 
   // Share handlers
-  const handleShareLeaderboard = async () => {
+  const handleShareLeaderboard = () => {
     if (standings.length === 0) {
       Alert.alert("No Data", "No standings to share.");
       return;
     }
-
-    try {
-      setSharingLeaderboard(true);
-      if (!societyId) throw new Error("Missing society ID.");
-      await exportOomPdf(societyId);
-    } catch (err: any) {
-      Alert.alert("Error", err?.message || "Failed to share");
-    } finally {
-      setSharingLeaderboard(false);
+    if (!societyId) {
+      Alert.alert("Error", "Missing society ID.");
+      return;
     }
+    router.push({
+      pathname: "/(app)/oom-share",
+      params: { societyId },
+    });
   };
 
   const handleShareResultsLog = async () => {

@@ -203,7 +203,7 @@ export async function exportOomPdf(societyId: string): Promise<void> {
  * Build a map of memberId -> number of wins.
  * A "win" is when a player finished position 1 or had the highest points in an event.
  */
-function buildWinsMap(log: Array<{
+export function buildWinsMap(log: Array<{
   eventId: string;
   memberId: string;
   points: number;
@@ -241,7 +241,7 @@ function buildWinsMap(log: Array<{
  * Build a map of memberId -> number of events played.
  * Only counts events where the player has OOM points > 0.
  */
-function buildPlayedMap(log: Array<{
+export function buildPlayedMap(log: Array<{
   eventId: string;
   memberId: string;
   points: number;
