@@ -7,23 +7,20 @@
  * Route: /(app)/oom-share?societyId=...
  */
 
-import { useEffect, useRef, useState } from "react";
-import {
-  Alert,
-  Image,
-  Platform,
-  ScrollView,
-  StyleSheet,
-  Text,
-  View,
-} from "react-native";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Image, Platform, ScrollView, StyleSheet, Text, View } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 
+import { AppCard } from "@/components/ui/AppCard";
+import { InlineNotice } from "@/components/ui/InlineNotice";
+import { LoadingState } from "@/components/ui/LoadingState";
+import { PrimaryButton, SecondaryButton } from "@/components/ui/Button";
 import { getOrderOfMeritTotals, getOrderOfMeritLog } from "@/lib/db_supabase/resultsRepo";
 import { getSociety } from "@/lib/db_supabase/societyRepo";
 import { getMembersBySocietyId } from "@/lib/db_supabase/memberRepo";
 import { buildWinsMap, buildPlayedMap } from "@/lib/pdf/oomPdf";
 import { captureAndShare } from "@/lib/share/captureAndShare";
+import { formatError, type FormattedError } from "@/lib/ui/formatError";
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -74,20 +71,28 @@ export default function OomShareScreen() {
 
   const scrollRef = useRef<ScrollView>(null);
   const [data, setData] = useState<ShareData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<FormattedError | null>(null);
+  const [shareError, setShareError] = useState<FormattedError | null>(null);
+  const [shareSuccess, setShareSuccess] = useState(false);
+  const [generating, setGenerating] = useState(false);
   const [layoutReady, setLayoutReady] = useState(false);
   const [logoReady, setLogoReady] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
   const hasCaptured = useRef(false);
 
   // ── Fetch data ─────────────────────────────────────────────────────────────
 
   useEffect(() => {
     if (!societyId) {
-      Alert.alert("Error", "Missing society.");
-      router.back();
+      setLoadError({ message: "Missing society." });
+      setLoading(false);
       return;
     }
 
     (async () => {
+      setLoading(true);
+      setLoadError(null);
       try {
         const [society, totals, log, members] = await Promise.all([
           getSociety(societyId),
@@ -157,36 +162,90 @@ export default function OomShareScreen() {
         }
       } catch (err: any) {
         console.error("[oom-share] load error:", err);
-        Alert.alert("Error", "Failed to load leaderboard data.");
-        router.back();
+        setLoadError(formatError(err));
+      } finally {
+        setLoading(false);
       }
     })();
-  }, [societyId]);
+  }, [societyId, reloadKey]);
 
   // ── Capture + share when ready ─────────────────────────────────────────────
 
-  useEffect(() => {
-    if (!data || !layoutReady || !logoReady || hasCaptured.current) return;
+  const runShare = useCallback(async () => {
+    if (!data) return;
+    setGenerating(true);
+    setShareError(null);
+    setShareSuccess(false);
     hasCaptured.current = true;
 
-    (async () => {
-      try {
-        // Wait for paint
-        await new Promise((r) => setTimeout(r, 400));
+    try {
+      // Wait for paint
+      await new Promise((r) => setTimeout(r, 400));
 
-        await captureAndShare(scrollRef, {
-          dialogTitle: "Order of Merit",
-        });
-      } catch (err: any) {
-        console.error("[oom-share] capture error:", err);
-        Alert.alert("Error", err?.message || "Failed to share.");
-      } finally {
+      await captureAndShare(scrollRef, {
+        dialogTitle: "Order of Merit",
+      });
+      setShareSuccess(true);
+      setTimeout(() => {
         router.back();
-      }
-    })();
-  }, [data, layoutReady, logoReady]);
+      }, 500);
+    } catch (err: any) {
+      console.error("[oom-share] capture error:", err);
+      setShareError(formatError(err));
+      setShareSuccess(false);
+      hasCaptured.current = false;
+    } finally {
+      setGenerating(false);
+    }
+  }, [data, router]);
+
+  useEffect(() => {
+    if (!data || !layoutReady || !logoReady || shareError || generating || hasCaptured.current) return;
+    runShare();
+  }, [data, layoutReady, logoReady, shareError, generating, runShare]);
 
   // ── Loading state ──────────────────────────────────────────────────────────
+
+  if (loading) {
+    return (
+      <View style={styles.loadingContainer}>
+        <LoadingState message="Loading leaderboard..." />
+      </View>
+    );
+  }
+
+  if (loadError) {
+    return (
+      <View style={styles.loadingContainer}>
+        <AppCard style={styles.noticeCard}>
+          <InlineNotice
+            variant="error"
+            message={loadError.message}
+            detail={loadError.detail}
+            style={{ marginBottom: 12 }}
+          />
+          <View style={styles.noticeActions}>
+            <SecondaryButton onPress={() => router.back()} style={{ flex: 1 }}>
+              Go Back
+            </SecondaryButton>
+            <PrimaryButton
+              onPress={() => {
+                setLoadError(null);
+                setLoading(true);
+                setLayoutReady(false);
+                setLogoReady(false);
+                hasCaptured.current = false;
+                setReloadKey((key) => key + 1);
+              }}
+              style={{ flex: 1 }}
+            >
+              Try Again
+            </PrimaryButton>
+          </View>
+        </AppCard>
+      </View>
+    );
+  }
 
   if (!data) {
     return (
@@ -298,6 +357,49 @@ export default function OomShareScreen() {
           </View>
         </View>
       </ScrollView>
+
+      {generating ? (
+        <View style={styles.overlay} pointerEvents="auto">
+          <AppCard style={styles.overlayCard}>
+            <LoadingState message="Generating share..." />
+          </AppCard>
+        </View>
+      ) : null}
+
+      {shareError ? (
+        <View style={styles.overlay} pointerEvents="auto">
+          <AppCard style={styles.overlayCard}>
+            <InlineNotice
+              variant="error"
+              message={shareError.message}
+              detail={shareError.detail}
+              style={{ marginBottom: 12 }}
+            />
+            <View style={styles.noticeActions}>
+              <SecondaryButton onPress={() => router.back()} style={{ flex: 1 }}>
+                Close
+              </SecondaryButton>
+              <PrimaryButton
+                onPress={() => {
+                  setShareError(null);
+                  runShare();
+                }}
+                style={{ flex: 1 }}
+              >
+                Try Again
+              </PrimaryButton>
+            </View>
+          </AppCard>
+        </View>
+      ) : null}
+
+      {shareSuccess ? (
+        <View style={styles.overlay} pointerEvents="auto">
+          <AppCard style={styles.overlayCard}>
+            <InlineNotice variant="success" message="Shared" />
+          </AppCard>
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -314,11 +416,31 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
     backgroundColor: "#F3F4F6",
+    padding: 24,
   },
   loadingText: {
     fontSize: 16,
     color: "#6B7280",
     fontWeight: "500",
+  },
+  noticeCard: {
+    width: "100%",
+    maxWidth: 420,
+  },
+  noticeActions: {
+    flexDirection: "row",
+    gap: 12,
+  },
+  overlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(0, 0, 0, 0.35)",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 24,
+  },
+  overlayCard: {
+    width: "100%",
+    maxWidth: 420,
   },
   pageContainer: {
     alignItems: "center",

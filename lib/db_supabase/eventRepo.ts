@@ -129,7 +129,7 @@ export async function getEventsBySocietyId(societyId: string): Promise<EventDoc[
       hint: error.hint,
       code: error.code,
     });
-    return [];
+    throw new Error(error.message || "Failed to load events");
   }
 
   return (data ?? []).map(mapEvent);
