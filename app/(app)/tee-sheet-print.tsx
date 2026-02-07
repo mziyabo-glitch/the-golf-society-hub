@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createRef, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Image, Platform, ScrollView, StyleSheet, View } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 
@@ -10,7 +10,7 @@ import { InlineNotice } from "@/components/ui/InlineNotice";
 import { PrimaryButton, SecondaryButton } from "@/components/ui/Button";
 import { spacing, radius } from "@/lib/ui/theme";
 import { formatHandicap } from "@/lib/whs";
-import { captureAndShare } from "@/lib/share/captureAndShare";
+import { captureAndShareMultiple } from "@/lib/share/captureAndShare";
 import { formatError, type FormattedError } from "@/lib/ui/formatError";
 
 type TeeSheetPrintPlayer = {
@@ -50,15 +50,73 @@ type TeeSheetPrintPayload = {
   handicapAllowance?: number | null;
 };
 
+const PAGE_WIDTH = 1100;
+const PAGE_HEIGHT = Math.round(PAGE_WIDTH / 1.414);
+const GROUPS_PER_PAGE = 12;
+const GROUPS_PER_COLUMN = 6;
+const DEFAULT_START_TIME = "08:00";
+const DEFAULT_INTERVAL = 8;
+
+function getInitials(name: string): string {
+  if (!name) return "GS";
+  const words = name.trim().split(/\s+/);
+  if (words.length === 1) return words[0].slice(0, 2).toUpperCase();
+  return words.slice(0, 2).map((w) => w[0]).join("").toUpperCase();
+}
+
+function chunkGroups(groups: TeeSheetPrintGroup[], size: number): TeeSheetPrintGroup[][] {
+  const chunks: TeeSheetPrintGroup[][] = [];
+  for (let i = 0; i < groups.length; i += size) {
+    chunks.push(groups.slice(i, i + size));
+  }
+  return chunks;
+}
+
+function parseTime(value: string | null | undefined): { hours: number; minutes: number } | null {
+  if (!value) return null;
+  const [hoursStr, minutesStr] = value.split(":");
+  const hours = Number(hoursStr);
+  const minutes = Number(minutesStr);
+  if (Number.isNaN(hours) || Number.isNaN(minutes)) return null;
+  return { hours, minutes };
+}
+
+function buildTeeTime(startTime: string | null, intervalMinutes: number, index: number): string {
+  const parsedStart = parseTime(startTime);
+  const base = parsedStart ?? parseTime(DEFAULT_START_TIME);
+  const interval = parsedStart
+    ? (Number.isFinite(intervalMinutes) && intervalMinutes > 0 ? intervalMinutes : DEFAULT_INTERVAL)
+    : DEFAULT_INTERVAL;
+
+  if (!base) return "";
+
+  const baseMinutes = base.hours * 60 + base.minutes + interval * index;
+  const teeHours = Math.floor(baseMinutes / 60) % 24;
+  const teeMins = baseMinutes % 60;
+  return `${String(teeHours).padStart(2, "0")}:${String(teeMins).padStart(2, "0")}`;
+}
+
+function formatEventDate(dateStr: string | null): string {
+  if (!dateStr) return "";
+  try {
+    return new Date(dateStr).toLocaleDateString("en-GB", {
+      day: "numeric",
+      month: "short",
+      year: "numeric",
+    });
+  } catch {
+    return dateStr;
+  }
+}
+
 export default function TeeSheetPrintScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ payload?: string }>();
-  const [layoutReady, setLayoutReady] = useState(false);
+  const [pageLayouts, setPageLayouts] = useState<Record<number, boolean>>({});
   const [shareError, setShareError] = useState<FormattedError | null>(null);
   const [shareSuccess, setShareSuccess] = useState(false);
   const [generating, setGenerating] = useState(false);
   const hasCaptured = useRef(false);
-  const scrollRef = useRef<ScrollView | null>(null);
 
   const payload: TeeSheetPrintPayload | null = useMemo(() => {
     const raw = Array.isArray(params.payload) ? params.payload[0] : params.payload;
@@ -71,8 +129,29 @@ export default function TeeSheetPrintScreen() {
     }
   }, [params.payload]);
 
+  const pages = useMemo(() => {
+    if (!payload) return [];
+    return chunkGroups(payload.groups || [], GROUPS_PER_PAGE);
+  }, [payload]);
+
+  const pageRefs = useMemo(
+    () => pages.map(() => createRef<View>()),
+    [pages.length]
+  );
+
+  useEffect(() => {
+    setPageLayouts({});
+  }, [pages.length]);
+
+  const allPagesReady =
+    pages.length > 0 && pages.every((_, index) => pageLayouts[index]);
+
   // Track whether the logo has loaded (or there is no logo)
   const [logoReady, setLogoReady] = useState(!payload?.logoUrl);
+
+  useEffect(() => {
+    setLogoReady(!payload?.logoUrl);
+  }, [payload?.logoUrl]);
 
   useEffect(() => {
     if (!payload?.logoUrl) {
@@ -85,7 +164,7 @@ export default function TeeSheetPrintScreen() {
   }, [payload?.logoUrl]);
 
   const runShare = useCallback(async () => {
-    if (!payload) return;
+    if (!payload || pages.length === 0) return;
     setGenerating(true);
     setShareError(null);
     setShareSuccess(false);
@@ -95,7 +174,13 @@ export default function TeeSheetPrintScreen() {
       // Small delay to ensure the logo image has rendered after prefetch
       await new Promise((r) => setTimeout(r, 400));
 
-      await captureAndShare(scrollRef, {
+      const targets = pageRefs.map((ref, index) => ({
+        ref,
+        title: pages.length > 1 ? `Tee Sheet - Page ${index + 1}` : "Share Tee Sheet",
+        fallbackSelector: `[data-testid='tee-sheet-page-${index + 1}']`,
+      }));
+
+      await captureAndShareMultiple(targets, {
         dialogTitle: "Share Tee Sheet",
       });
       setShareSuccess(true);
@@ -110,12 +195,12 @@ export default function TeeSheetPrintScreen() {
     } finally {
       setGenerating(false);
     }
-  }, [payload, router]);
+  }, [payload, pages.length, pageRefs, router]);
 
   useEffect(() => {
-    if (!payload || !layoutReady || !logoReady || shareError || generating || hasCaptured.current) return;
+    if (!payload || !allPagesReady || !logoReady || shareError || generating || hasCaptured.current) return;
     runShare();
-  }, [layoutReady, logoReady, payload, shareError, generating, runShare]);
+  }, [allPagesReady, logoReady, payload, shareError, generating, runShare]);
 
   if (!payload) {
     return (
@@ -136,154 +221,248 @@ export default function TeeSheetPrintScreen() {
   }
 
   const formattedDate = formatEventDate(payload.eventDate);
-  const manCo = payload.manCo;
+  const allowancePct =
+    payload.handicapAllowance != null
+      ? Math.round(payload.handicapAllowance * 100)
+      : null;
+
   const hasNtp = payload.nearestPinHoles && payload.nearestPinHoles.length > 0;
   const hasLd = payload.longestDriveHoles && payload.longestDriveHoles.length > 0;
-  const hasTeeInfo = payload.teeSettings || payload.ladiesTeeSettings;
-  const allowancePct = payload.handicapAllowance != null
-    ? Math.round(payload.handicapAllowance * 100)
-    : null;
+  const competitionLine = [
+    hasNtp ? `NTP: ${payload.nearestPinHoles!.join(", ")}` : null,
+    hasLd ? `LD: ${payload.longestDriveHoles!.join(", ")}` : null,
+  ]
+    .filter(Boolean)
+    .join("   •   ");
+
+  const teeInfoLines: string[] = [];
+  if (payload.teeSettings) {
+    teeInfoLines.push(
+      `${payload.teeName || "Men's"} — Par ${payload.teeSettings.par} • CR ${payload.teeSettings.courseRating} • Slope ${payload.teeSettings.slopeRating}`
+    );
+  }
+  if (payload.ladiesTeeSettings) {
+    teeInfoLines.push(
+      `${payload.ladiesTeeName || "Ladies'"} — Par ${payload.ladiesTeeSettings.par} • CR ${payload.ladiesTeeSettings.courseRating} • Slope ${payload.ladiesTeeSettings.slopeRating}`
+    );
+  }
+  if (allowancePct != null) {
+    teeInfoLines.push(`Allowance ${allowancePct}%`);
+  }
+  if (teeInfoLines.length === 0) {
+    teeInfoLines.push("Tee details not set");
+  }
+
+  const instructions = "Please report to the starter 10 minutes before your tee time.";
 
   return (
     <Screen scrollable={false}>
       <ScrollView
-        ref={scrollRef}
-        onLayout={() => setLayoutReady(true)}
-        contentContainerStyle={[
-          styles.container,
-          { backgroundColor: "#FFFFFF" },
-        ]}
-        testID="share-target"
+        contentContainerStyle={styles.previewContainer}
+        showsVerticalScrollIndicator={false}
       >
-        {/* Header with logo */}
-        <View style={styles.headerCenter}>
-          {payload.logoUrl ? (
-            <Image
-              source={{ uri: payload.logoUrl }}
-              style={styles.logo}
-              resizeMode="contain"
-            />
-          ) : null}
-          <AppText variant="h1" style={styles.eventTitle}>{payload.eventName}</AppText>
-          <AppText variant="body" color="secondary">
-            {formattedDate || ""}
-            {payload.courseName ? ` | ${payload.courseName}` : ""}
-          </AppText>
-        </View>
+        {pages.map((pageGroups, pageIndex) => {
+          const leftGroups = pageGroups.slice(0, GROUPS_PER_COLUMN);
+          const rightGroups = pageGroups.slice(GROUPS_PER_COLUMN, GROUPS_PER_PAGE);
 
-        {/* ManCo roles */}
-        {manCo && (manCo.captain || manCo.secretary || manCo.treasurer || manCo.handicapper) && (
-          <View style={styles.manCoSection}>
-            {manCo.captain ? <AppText variant="caption" color="secondary">Captain: {manCo.captain}</AppText> : null}
-            {manCo.secretary ? <AppText variant="caption" color="secondary">Secretary: {manCo.secretary}</AppText> : null}
-            {manCo.treasurer ? <AppText variant="caption" color="secondary">Treasurer: {manCo.treasurer}</AppText> : null}
-            {manCo.handicapper ? <AppText variant="caption" color="secondary">Handicapper: {manCo.handicapper}</AppText> : null}
-          </View>
-        )}
-
-        {/* Produced by branding */}
-        <AppText variant="small" style={styles.producedBy}>
-          Produced by The Golf Society Hub
-        </AppText>
-
-        {/* Tee Information */}
-        {hasTeeInfo && (
-          <AppCard style={styles.infoCard}>
-            <AppText variant="bodyBold" style={{ marginBottom: 4 }}>Tee Information</AppText>
-            {payload.teeSettings && (
-              <AppText variant="caption" color="secondary">
-                <AppText variant="caption" style={{ fontWeight: "700" }}>Male: </AppText>
-                {payload.teeName || "Men's"}{"\n"}
-                Par: {payload.teeSettings.par} | CR: {payload.teeSettings.courseRating} | SR: {payload.teeSettings.slopeRating}
-              </AppText>
-            )}
-            {payload.ladiesTeeSettings && (
-              <AppText variant="caption" color="secondary" style={{ marginTop: 2 }}>
-                <AppText variant="caption" style={{ fontWeight: "700" }}>Female: </AppText>
-                {payload.ladiesTeeName || "Ladies'"}{"\n"}
-                Par: {payload.ladiesTeeSettings.par} | CR: {payload.ladiesTeeSettings.courseRating} | SR: {payload.ladiesTeeSettings.slopeRating}
-              </AppText>
-            )}
-            {allowancePct != null && (
-              <AppText variant="caption" color="secondary" style={{ marginTop: 2 }}>
-                Allowance: {allowancePct}%
-              </AppText>
-            )}
-          </AppCard>
-        )}
-
-        {/* NTP / LD */}
-        {(hasNtp || hasLd) && (
-          <AppCard style={styles.infoCard}>
-            <AppText variant="bodyBold" style={{ marginBottom: 4 }}>Competitions</AppText>
-            {hasNtp && (
-              <AppText variant="caption" color="secondary">
-                Nearest the Pin: Hole{payload.nearestPinHoles!.length > 1 ? "s" : ""} {payload.nearestPinHoles!.join(", ")}
-              </AppText>
-            )}
-            {hasLd && (
-              <AppText variant="caption" color="secondary">
-                Longest Drive: Hole{payload.longestDriveHoles!.length > 1 ? "s" : ""} {payload.longestDriveHoles!.join(", ")}
-              </AppText>
-            )}
-          </AppCard>
-        )}
-
-        {/* Player Groups */}
-        <View style={styles.groups}>
-          {payload.groups.map((group, index) => {
-            const teeTime = buildTeeTime(
-              payload.startTime,
-              payload.teeTimeInterval,
-              index
-            );
-            return (
-              <AppCard key={group.groupNumber} style={styles.groupCard}>
-                <View style={styles.groupHeader}>
-                  <AppText variant="bodyBold">Group {group.groupNumber}</AppText>
-                  {teeTime && (
-                    <AppText variant="caption" color="secondary">
-                      {teeTime}
-                    </AppText>
+          return (
+            <View
+              key={`page-${pageIndex}`}
+              ref={pageRefs[pageIndex]}
+              onLayout={() =>
+                setPageLayouts((prev) =>
+                  prev[pageIndex] ? prev : { ...prev, [pageIndex]: true }
+                )
+              }
+              collapsable={false}
+              testID={`tee-sheet-page-${pageIndex + 1}`}
+              style={styles.page}
+            >
+              <View style={styles.headerRow}>
+                <View style={styles.headerLeft}>
+                  {payload.logoUrl ? (
+                    <Image
+                      source={{ uri: payload.logoUrl }}
+                      style={styles.logo}
+                      resizeMode="contain"
+                    />
+                  ) : (
+                    <View style={styles.logoPlaceholder}>
+                      <AppText variant="captionBold" style={styles.logoInitials}>
+                        {getInitials(payload.societyName)}
+                      </AppText>
+                    </View>
                   )}
-                </View>
-                <View style={styles.tableHeader}>
-                  <AppText variant="caption" color="secondary" style={styles.nameCol}>
-                    Name
-                  </AppText>
-                  <AppText variant="caption" color="secondary" style={styles.hiCol}>
-                    HI
-                  </AppText>
-                  <AppText variant="caption" color="secondary" style={styles.phCol}>
-                    PH
-                  </AppText>
-                </View>
-                {group.players.map((player, playerIndex) => (
-                  <View
-                    key={`${group.groupNumber}-${playerIndex}`}
-                    style={[
-                      styles.tableRow,
-                      playerIndex === group.players.length - 1 && styles.tableRowLast,
-                    ]}
-                  >
-                    <AppText variant="body" numberOfLines={1} style={styles.nameCol}>
-                      {player.name}
+                  <View>
+                    <AppText variant="bodyBold" style={styles.societyName}>
+                      {payload.societyName}
                     </AppText>
-                    <AppText variant="body" color="secondary" style={styles.hiCol}>
-                      {formatHandicap(player.handicapIndex, 1)}
-                    </AppText>
-                    <AppText variant="bodyBold" color="primary" style={styles.phCol}>
-                      {formatHandicap(player.playingHandicap)}
+                    <AppText variant="small" color="tertiary">
+                      Tee Sheet
                     </AppText>
                   </View>
-                ))}
-              </AppCard>
-            );
-          })}
-        </View>
+                </View>
 
-        <View style={{ height: spacing.xl }} />
-        {Platform.OS !== "web" && !layoutReady && (
+                <View style={styles.headerCenter}>
+                  <AppText variant="h2" style={styles.eventName}>
+                    {payload.eventName}
+                  </AppText>
+                  <AppText variant="caption" color="secondary">
+                    {formattedDate}
+                    {payload.courseName ? ` • ${payload.courseName}` : ""}
+                  </AppText>
+                </View>
+
+                <View style={styles.headerRight}>
+                  <View style={styles.teeInfoBox}>
+                    <AppText variant="captionBold" style={styles.teeInfoTitle}>
+                      Course / Tee Info
+                    </AppText>
+                    {teeInfoLines.map((line, idx) => (
+                      <AppText key={idx} variant="small" color="secondary" style={styles.teeInfoLine}>
+                        {line}
+                      </AppText>
+                    ))}
+                  </View>
+                </View>
+              </View>
+
+              <View style={styles.grid}>
+                <View style={styles.gridColumn}>
+                  {leftGroups.map((group, index) => {
+                    const globalIndex = pageIndex * GROUPS_PER_PAGE + index;
+                    const teeTime = buildTeeTime(
+                      payload.startTime,
+                      payload.teeTimeInterval,
+                      globalIndex
+                    );
+                    const players = group.players ?? [];
+                    return (
+                      <View key={`group-left-${group.groupNumber}`} style={styles.timeBlock}>
+                        <View style={styles.timeHeader}>
+                          <AppText variant="captionBold" style={styles.timeText}>
+                            {teeTime}
+                          </AppText>
+                          <AppText variant="small" color="tertiary">
+                            Group {globalIndex + 1}
+                          </AppText>
+                        </View>
+                        <View style={styles.tableHeader}>
+                          <AppText variant="small" color="tertiary" style={styles.nameCol}>
+                            Name
+                          </AppText>
+                          <AppText variant="small" color="tertiary" style={styles.hiCol}>
+                            HI
+                          </AppText>
+                          <AppText variant="small" color="tertiary" style={styles.phCol}>
+                            PH
+                          </AppText>
+                        </View>
+                        {Array.from({ length: 4 }).map((_, rowIndex) => {
+                          const player = players[rowIndex];
+                          return (
+                            <View key={`left-${group.groupNumber}-${rowIndex}`} style={styles.tableRow}>
+                              <AppText variant="small" numberOfLines={1} style={styles.nameCol}>
+                                {player?.name ?? ""}
+                              </AppText>
+                              <AppText variant="small" color="secondary" style={styles.hiCol}>
+                                {player ? formatHandicap(player.handicapIndex, 1) : ""}
+                              </AppText>
+                              <AppText variant="captionBold" color="primary" style={styles.phCol}>
+                                {player ? formatHandicap(player.playingHandicap) : ""}
+                              </AppText>
+                            </View>
+                          );
+                        })}
+                      </View>
+                    );
+                  })}
+                </View>
+
+                <View style={styles.gridColumn}>
+                  {rightGroups.map((group, index) => {
+                    const globalIndex = pageIndex * GROUPS_PER_PAGE + GROUPS_PER_COLUMN + index;
+                    const teeTime = buildTeeTime(
+                      payload.startTime,
+                      payload.teeTimeInterval,
+                      globalIndex
+                    );
+                    const players = group.players ?? [];
+                    return (
+                      <View key={`group-right-${group.groupNumber}`} style={styles.timeBlock}>
+                        <View style={styles.timeHeader}>
+                          <AppText variant="captionBold" style={styles.timeText}>
+                            {teeTime}
+                          </AppText>
+                          <AppText variant="small" color="tertiary">
+                            Group {globalIndex + 1}
+                          </AppText>
+                        </View>
+                        <View style={styles.tableHeader}>
+                          <AppText variant="small" color="tertiary" style={styles.nameCol}>
+                            Name
+                          </AppText>
+                          <AppText variant="small" color="tertiary" style={styles.hiCol}>
+                            HI
+                          </AppText>
+                          <AppText variant="small" color="tertiary" style={styles.phCol}>
+                            PH
+                          </AppText>
+                        </View>
+                        {Array.from({ length: 4 }).map((_, rowIndex) => {
+                          const player = players[rowIndex];
+                          return (
+                            <View key={`right-${group.groupNumber}-${rowIndex}`} style={styles.tableRow}>
+                              <AppText variant="small" numberOfLines={1} style={styles.nameCol}>
+                                {player?.name ?? ""}
+                              </AppText>
+                              <AppText variant="small" color="secondary" style={styles.hiCol}>
+                                {player ? formatHandicap(player.handicapIndex, 1) : ""}
+                              </AppText>
+                              <AppText variant="captionBold" color="primary" style={styles.phCol}>
+                                {player ? formatHandicap(player.playingHandicap) : ""}
+                              </AppText>
+                            </View>
+                          );
+                        })}
+                      </View>
+                    );
+                  })}
+                </View>
+              </View>
+
+              <View style={styles.extraSection}>
+                <View style={styles.extraLeft}>
+                  <AppText variant="captionBold" style={styles.extraTitle}>
+                    Competitions
+                  </AppText>
+                  <AppText variant="small" color="secondary">
+                    {competitionLine || "No competition holes set"}
+                  </AppText>
+                </View>
+                <View style={styles.extraRight}>
+                  <AppText variant="captionBold" style={styles.extraTitle}>
+                    Playing Instructions
+                  </AppText>
+                  <AppText variant="small" color="secondary">
+                    {instructions}
+                  </AppText>
+                </View>
+              </View>
+
+              <View style={styles.footer}>
+                <AppText variant="small" color="tertiary" style={styles.footerText}>
+                  Produced by The Golf Society Hub
+                </AppText>
+                <AppText variant="small" color="tertiary">
+                  Page {pageIndex + 1} of {pages.length}
+                </AppText>
+              </View>
+            </View>
+          );
+        })}
+
+        {Platform.OS !== "web" && !allPagesReady && (
           <View style={styles.centered}>
             <LoadingState message="Preparing tee sheet..." />
           </View>
@@ -330,33 +509,6 @@ export default function TeeSheetPrintScreen() {
   );
 }
 
-function formatEventDate(dateStr: string | null): string {
-  if (!dateStr) return "";
-  try {
-    return new Date(dateStr).toLocaleDateString("en-GB", {
-      day: "numeric",
-      month: "short",
-      year: "numeric",
-    });
-  } catch {
-    return dateStr;
-  }
-}
-
-function buildTeeTime(
-  startTime: string | null,
-  intervalMinutes: number,
-  index: number
-): string | null {
-  if (!startTime) return null;
-  const [hours, minutes] = startTime.split(":").map(Number);
-  if (Number.isNaN(hours) || Number.isNaN(minutes)) return null;
-  const baseMinutes = hours * 60 + minutes + intervalMinutes * index;
-  const teeHours = Math.floor(baseMinutes / 60) % 24;
-  const teeMins = baseMinutes % 60;
-  return `${String(teeHours).padStart(2, "0")}:${String(teeMins).padStart(2, "0")}`;
-}
-
 const styles = StyleSheet.create({
   centered: {
     flex: 1,
@@ -382,74 +534,158 @@ const styles = StyleSheet.create({
     width: "100%",
     maxWidth: 420,
   },
-  container: {
+  previewContainer: {
     padding: spacing.lg,
-  },
-  headerCenter: {
     alignItems: "center",
-    marginBottom: spacing.sm,
+    gap: spacing.lg,
+    backgroundColor: "#F3F4F6",
   },
-  logo: {
-    width: 56,
-    height: 56,
+  page: {
+    width: PAGE_WIDTH,
+    height: PAGE_HEIGHT,
+    backgroundColor: "#FFFFFF",
     borderRadius: 12,
-    marginBottom: spacing.sm,
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
+    padding: spacing.lg,
+    justifyContent: "space-between",
+    overflow: "hidden",
   },
-  eventTitle: {
-    textAlign: "center",
-    marginBottom: 2,
-  },
-  manCoSection: {
-    alignItems: "center",
-    marginBottom: spacing.xs,
-  },
-  producedBy: {
-    textAlign: "right",
-    color: "#9CA3AF",
-    fontStyle: "italic",
-    marginBottom: spacing.sm,
-    fontSize: 10,
-  },
-  infoCard: {
-    marginBottom: spacing.sm,
-    padding: spacing.sm,
-  },
-  groups: {
+  headerRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
     gap: spacing.base,
   },
-  groupCard: {
-    marginBottom: 0,
-  },
-  groupHeader: {
+  headerLeft: {
     flexDirection: "row",
-    justifyContent: "space-between",
     alignItems: "center",
-    marginBottom: spacing.xs,
+    gap: spacing.sm,
+    width: 240,
+  },
+  headerCenter: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: spacing.sm,
+  },
+  headerRight: {
+    width: 320,
+  },
+  logo: {
+    width: 42,
+    height: 42,
+    borderRadius: 8,
+  },
+  logoPlaceholder: {
+    width: 42,
+    height: 42,
+    borderRadius: 8,
+    backgroundColor: "#F3F4F6",
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
+  },
+  logoInitials: {
+    color: "#0B6E4F",
+  },
+  societyName: {
+    fontSize: 12,
+    textTransform: "uppercase",
+    letterSpacing: 0.8,
+  },
+  eventName: {
+    textAlign: "center",
+  },
+  teeInfoBox: {
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
+    borderRadius: radius.md,
+    padding: spacing.sm,
+  },
+  teeInfoTitle: {
+    marginBottom: 4,
+  },
+  teeInfoLine: {
+    marginBottom: 2,
+  },
+  grid: {
+    flexDirection: "row",
+    gap: spacing.base,
+    marginTop: spacing.sm,
+    flex: 1,
+  },
+  gridColumn: {
+    flex: 1,
+    gap: spacing.sm,
+  },
+  timeBlock: {
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
+    borderRadius: radius.md,
+    padding: spacing.sm,
+  },
+  timeHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 4,
+  },
+  timeText: {
+    fontSize: 12,
   },
   tableHeader: {
     flexDirection: "row",
-    paddingVertical: spacing.xs,
+    paddingBottom: 4,
     borderBottomWidth: 1,
     borderBottomColor: "#F3F4F6",
+    marginBottom: 2,
   },
   tableRow: {
     flexDirection: "row",
-    paddingVertical: spacing.sm,
+    paddingVertical: 2,
     borderBottomWidth: 1,
     borderBottomColor: "#F3F4F6",
-  },
-  tableRowLast: {
-    borderBottomWidth: 0,
+    minHeight: 18,
   },
   nameCol: {
     flex: 1,
+    paddingRight: spacing.xs,
   },
   hiCol: {
-    width: 50,
+    width: 38,
     textAlign: "right",
   },
   phCol: {
-    width: 50,
+    width: 38,
     textAlign: "right",
+  },
+  extraSection: {
+    flexDirection: "row",
+    gap: spacing.base,
+    borderTopWidth: 1,
+    borderTopColor: "#E5E7EB",
+    paddingTop: spacing.sm,
+  },
+  extraLeft: {
+    flex: 1,
+  },
+  extraRight: {
+    flex: 1,
+  },
+  extraTitle: {
+    marginBottom: 4,
+  },
+  footer: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    borderTopWidth: 1,
+    borderTopColor: "#E5E7EB",
+    paddingTop: spacing.xs,
+  },
+  footerText: {
+    fontStyle: "italic",
   },
 });

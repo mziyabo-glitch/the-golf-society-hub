@@ -15,32 +15,44 @@ const captureRef =
  * On web, capture the ScrollView's inner DOM node with html2canvas,
  * then share via Web Share API or trigger a PNG download as fallback.
  */
-async function captureAndShareWeb(
+type WebCaptureOptions = {
+  dialogTitle?: string;
+  fallbackSelector?: string;
+};
+
+async function resolveWebElement(
   ref: React.RefObject<any>,
-  options?: { dialogTitle?: string }
-): Promise<void> {
-  if (typeof window === "undefined") return;
-
-  // html2canvas is a web-only dependency; dynamic import keeps the native bundle clean
-  const html2canvas = (await import("html2canvas")).default;
-
-  // ref.current is the RN ScrollView instance – get the underlying DOM node
-  const node: HTMLElement | null =
+  fallbackSelector?: string
+): Promise<HTMLElement> {
+  const candidate: HTMLElement | null =
     ref.current?.getScrollableNode?.() ??
     ref.current?.getInnerViewNode?.() ??
     (ref.current as any)?._nativeRef?.current ??
     (ref.current as any)?.getNativeScrollRef?.() ??
     ref.current;
 
-  if (!node || !(node instanceof HTMLElement)) {
-    // Last resort: find the first child of the ScrollView DOM wrapper
-    const wrapper = document.querySelector("[data-testid='share-target']") as HTMLElement | null;
-    if (!wrapper) {
-      throw new Error("Cannot find the view to capture on web.");
-    }
-    return captureElement(wrapper, html2canvas, options);
+  if (candidate && candidate instanceof HTMLElement) {
+    return candidate;
   }
 
+  const selector = fallbackSelector || "[data-testid='share-target']";
+  const fallback = document.querySelector(selector) as HTMLElement | null;
+  if (!fallback) {
+    throw new Error("Cannot find the view to capture on web.");
+  }
+  return fallback;
+}
+
+async function captureAndShareWeb(
+  ref: React.RefObject<any>,
+  options?: WebCaptureOptions
+): Promise<void> {
+  if (typeof window === "undefined") return;
+
+  // html2canvas is a web-only dependency; dynamic import keeps the native bundle clean
+  const html2canvas = (await import("html2canvas")).default;
+
+  const node = await resolveWebElement(ref, options?.fallbackSelector);
   return captureElement(node, html2canvas, options);
 }
 
@@ -117,4 +129,54 @@ export async function captureAndShare(
     mimeType: "image/png",
     dialogTitle: options?.dialogTitle || "Share",
   });
+}
+
+export type ShareTarget = {
+  ref: React.RefObject<any>;
+  title?: string;
+  fallbackSelector?: string;
+};
+
+export async function captureAndShareMultiple(
+  targets: ShareTarget[],
+  options?: { dialogTitle?: string }
+): Promise<void> {
+  if (targets.length === 0) {
+    throw new Error("No views to capture.");
+  }
+
+  if (Platform.OS === "web") {
+    for (let i = 0; i < targets.length; i += 1) {
+      const target = targets[i];
+      await captureAndShareWeb(target.ref, {
+        dialogTitle: target.title || options?.dialogTitle || `Share ${i + 1}`,
+        fallbackSelector: target.fallbackSelector,
+      });
+    }
+    return;
+  }
+
+  const canShare = await Sharing.isAvailableAsync();
+  if (!canShare) {
+    throw new Error("Sharing is not available on this device.");
+  }
+
+  for (let i = 0; i < targets.length; i += 1) {
+    const target = targets[i];
+    if (!target.ref.current || !captureRef) {
+      throw new Error("View not ready for capture.");
+    }
+
+    const uri = await captureRef(target.ref, {
+      format: "png",
+      quality: 1,
+      result: "tmpfile",
+      snapshotContentContainer: true,
+    });
+
+    await Sharing.shareAsync(uri, {
+      mimeType: "image/png",
+      dialogTitle: target.title || options?.dialogTitle || `Share ${i + 1}`,
+    });
+  }
 }
