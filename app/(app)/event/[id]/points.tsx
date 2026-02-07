@@ -12,7 +12,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Alert, ScrollView, StyleSheet, View } from "react-native";
+import { ScrollView, StyleSheet, View } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { Feather } from "@expo/vector-icons";
 
@@ -23,9 +23,12 @@ import { AppInput } from "@/components/ui/AppInput";
 import { PrimaryButton, SecondaryButton } from "@/components/ui/Button";
 import { LoadingState } from "@/components/ui/LoadingState";
 import { EmptyState } from "@/components/ui/EmptyState";
+import { InlineNotice } from "@/components/ui/InlineNotice";
+import { Toast } from "@/components/ui/Toast";
 import { useBootstrap } from "@/lib/useBootstrap";
+import { useAsyncAction } from "@/lib/hooks/useAsyncAction";
 import { getEvent, getFormatSortOrder, type EventDoc } from "@/lib/db_supabase/eventRepo";
-import { getMembersBySocietyId, type MemberDoc } from "@/lib/db_supabase/memberRepo";
+import { getMembersBySocietyId } from "@/lib/db_supabase/memberRepo";
 import {
   upsertEventResults,
   getEventResults,
@@ -94,8 +97,10 @@ export default function EventPointsScreen() {
   const [event, setEvent] = useState<EventDoc | null>(null);
   const [players, setPlayers] = useState<PlayerEntry[]>([]);
   const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [saveNotice, setSaveNotice] = useState<{ type: "error" | "success" | "info"; message: string; detail?: string } | null>(null);
+  const [toast, setToast] = useState({ visible: false, message: "", type: "success" as const });
+  const saveAction = useAsyncAction();
 
   const permissions = getPermissionsForMember(currentMember as any);
   const canEnterPoints = permissions.canManageHandicaps;
@@ -167,6 +172,8 @@ export default function EventPointsScreen() {
 
   // Update day points for a player and recalculate positions/OOM
   const updateDayPoints = (memberId: string, value: string) => {
+    setSaveNotice(null);
+    saveAction.reset();
     setPlayers((prev) => {
       // Update the day points value
       const updated = prev.map((p) =>
@@ -262,10 +269,10 @@ export default function EventPointsScreen() {
     if (!societyId) return { canSave: false, reason: "Missing society ID" };
     if (!event) return { canSave: false, reason: "Event not loaded" };
     if (players.length === 0) return { canSave: false, reason: "No players in event" };
-    if (playersWithDayPoints.length === 0) return { canSave: false, reason: "Enter day points for at least one player" };
-    if (saving) return { canSave: false, reason: "Save in progress..." };
+    if (playersWithDayPoints.length === 0) return { canSave: false, reason: "Enter at least one score" };
+    if (saveAction.loading) return { canSave: false, reason: "Save in progress..." };
     return { canSave: true, reason: null };
-  }, [eventId, societyId, event, players.length, playersWithDayPoints.length, saving]);
+  }, [eventId, societyId, event, players.length, playersWithDayPoints.length, saveAction.loading]);
 
   // Save OOM points to database - wrapped in useCallback with all dependencies
   const handleSave = useCallback(async () => {
@@ -276,41 +283,43 @@ export default function EventPointsScreen() {
       eventLoaded: !!event,
       playerCount: players.length,
       playersWithDayPoints: playersWithDayPoints.length,
-      saving,
+      saving: saveAction.loading,
     });
 
     // Gate checks with logging
     if (!eventId) {
       console.warn("[points] Save blocked: missing eventId");
-      Alert.alert("Cannot Save", "Event ID is missing. Please go back and try again.");
+      setSaveNotice({ type: "error", message: "Event ID is missing. Please go back and try again." });
       return;
     }
 
     if (!societyId) {
       console.warn("[points] Save blocked: missing societyId");
-      Alert.alert("Cannot Save", "Society ID is missing. Please go back and try again.");
+      setSaveNotice({ type: "error", message: "Society ID is missing. Please go back and try again." });
       return;
     }
 
     if (!event) {
       console.warn("[points] Save blocked: event not loaded");
-      Alert.alert("Cannot Save", "Event data not loaded. Please wait or refresh.");
+      setSaveNotice({ type: "error", message: "Event data not loaded. Please wait or refresh." });
       return;
     }
 
     if (playersWithDayPoints.length === 0) {
       console.warn("[points] Save blocked: no day points entered");
-      Alert.alert("No Points Entered", "Please enter day points for at least one player.");
+      setSaveNotice({ type: "error", message: "Enter at least one score." });
       return;
     }
 
-    if (saving) {
+    if (saveAction.loading) {
       console.warn("[points] Save blocked: already saving");
       return;
     }
 
-    setSaving(true);
-    try {
+    saveAction.reset();
+    setSaveNotice(null);
+
+    const saved = await saveAction.run(async () => {
       // Build results array with OOM points for all players with day points
       // Use Array.from() to ensure we have a proper array (not a stale memoized value)
       const playersToSave = Array.from(playersWithDayPoints);
@@ -344,26 +353,21 @@ export default function EventPointsScreen() {
       }
 
       await upsertEventResults(event.id, societyId, results);
+    });
 
-      console.log("[points] Save SUCCESS");
-      console.log("[points] save complete → routing to OOM log");
-
-      Alert.alert("Saved", "OOM points saved successfully.", [
-        {
-          text: "OK",
-          onPress: () => {
-            // Navigate to leaderboard with Results Log view
-            router.replace("/(app)/(tabs)/leaderboard?view=log");
-          },
-        },
-      ]);
-    } catch (e: any) {
-      console.error("[points] Save FAILED", e);
-      Alert.alert("Save Failed", e?.message ?? "Failed to save points. Check console for details.");
-    } finally {
-      setSaving(false);
+    if (!saved) {
+      console.error("[points] Save FAILED");
+      return;
     }
-  }, [eventId, societyId, event, playersWithDayPoints, saving, router]);
+
+    console.log("[points] Save SUCCESS");
+    console.log("[points] save complete → routing to OOM log");
+
+    setToast({ visible: true, message: "Saved", type: "success" });
+    setTimeout(() => {
+      router.replace("/(app)/(tabs)/leaderboard?view=log");
+    }, 500);
+  }, [eventId, societyId, event, playersWithDayPoints, saveAction, router]);
 
   // Loading state
   if (bootstrapLoading || loading) {
@@ -456,6 +460,12 @@ export default function EventPointsScreen() {
 
   return (
     <Screen>
+      <Toast
+        visible={toast.visible}
+        message={toast.message}
+        type={toast.type}
+        onHide={() => setToast((t) => ({ ...t, visible: false }))}
+      />
       {/* Header */}
       <View style={styles.header}>
         <SecondaryButton onPress={() => router.back()} size="sm">
@@ -466,9 +476,10 @@ export default function EventPointsScreen() {
         <PrimaryButton
           onPress={handleSave}
           disabled={!saveReadiness.canSave}
+          loading={saveAction.loading}
           size="sm"
         >
-          {saving ? "Saving..." : "Save"}
+          Save
         </PrimaryButton>
       </View>
 
@@ -509,6 +520,23 @@ export default function EventPointsScreen() {
           </AppText>
         </View>
       )}
+
+      {saveNotice ? (
+        <InlineNotice
+          variant={saveNotice.type}
+          message={saveNotice.message}
+          detail={saveNotice.detail}
+          style={{ marginBottom: spacing.md }}
+        />
+      ) : null}
+      {saveAction.error ? (
+        <InlineNotice
+          variant="error"
+          message={saveAction.error.message}
+          detail={saveAction.error.detail}
+          style={{ marginBottom: spacing.md }}
+        />
+      ) : null}
 
       {/* Column Headers */}
       <View style={styles.columnHeaders}>

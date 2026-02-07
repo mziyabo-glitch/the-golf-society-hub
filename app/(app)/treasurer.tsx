@@ -11,6 +11,7 @@
 
 import { useCallback, useState, useMemo } from "react";
 import {
+  ActivityIndicator,
   StyleSheet,
   View,
   Alert,
@@ -32,12 +33,15 @@ import { AppCard } from "@/components/ui/AppCard";
 import { AppInput } from "@/components/ui/AppInput";
 import { StatCard } from "@/components/ui/StatCard";
 import { Toast } from "@/components/ui/Toast";
+import { InlineNotice } from "@/components/ui/InlineNotice";
 import { PrimaryButton, SecondaryButton } from "@/components/ui/Button";
 import { LoadingState } from "@/components/ui/LoadingState";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { useBootstrap } from "@/lib/useBootstrap";
+import { useAsyncAction } from "@/lib/hooks/useAsyncAction";
 import { getPermissionsForMember } from "@/lib/rbac";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
+import { formatError } from "@/lib/ui/formatError";
 
 import { guard } from "@/lib/guards";
 import {
@@ -71,6 +75,7 @@ type FormErrors = {
   amount?: string;
   description?: string;
   date?: string;
+  entryType?: string;
 };
 
 const getToday = () => new Date().toISOString().split("T")[0];
@@ -107,6 +112,9 @@ export default function TreasurerScreen() {
   const [entryForm, setEntryForm] = useState<EntryFormData>(initialFormData);
   const [formErrors, setFormErrors] = useState<FormErrors>({});
   const [saving, setSaving] = useState(false);
+  const [entryNotice, setEntryNotice] = useState<{ type: "success" | "error" | "info"; message: string; detail?: string } | null>(null);
+  const [openingNotice, setOpeningNotice] = useState<{ type: "success" | "error" | "info"; message: string; detail?: string } | null>(null);
+  const exportAction = useAsyncAction();
 
   // Toast state
   const [toast, setToast] = useState({ visible: false, message: "", type: "success" as const });
@@ -153,6 +161,11 @@ export default function TreasurerScreen() {
   const validateForm = (): boolean => {
     const errors: FormErrors = {};
 
+    // Type validation
+    if (!entryForm.entryType || !["income", "cost"].includes(entryForm.entryType)) {
+      errors.entryType = "Select income or expense";
+    }
+
     // Amount validation
     const pence = parseCurrencyToPence(entryForm.amountInput);
     if (!entryForm.amountInput.trim()) {
@@ -183,15 +196,17 @@ export default function TreasurerScreen() {
 
   const handleOpenOpeningBalanceModal = () => {
     setOpeningBalanceInput(formatPenceToPoundsInput(summary?.openingBalancePence ?? 0));
+    setOpeningNotice(null);
     setShowOpeningBalanceModal(true);
   };
 
   const handleSaveOpeningBalance = async () => {
     if (!guard(permissions.canAccessFinance, "Only the Captain or Treasurer can update the opening balance.")) return;
 
+    setOpeningNotice(null);
     const pence = parseCurrencyToPence(openingBalanceInput);
     if (pence === null) {
-      Alert.alert("Invalid Amount", "Please enter a valid amount.");
+      setOpeningNotice({ type: "error", message: "Enter a valid amount." });
       return;
     }
 
@@ -203,7 +218,8 @@ export default function TreasurerScreen() {
       await loadData();
     } catch (err: any) {
       console.error("[Treasurer] handleSaveOpeningBalance error:", err);
-      Alert.alert("Error", err?.message || "Failed to save opening balance.");
+      const formatted = formatError(err);
+      setOpeningNotice({ type: "error", message: formatted.message, detail: formatted.detail });
     } finally {
       setSaving(false);
     }
@@ -215,6 +231,7 @@ export default function TreasurerScreen() {
     setEditingEntry(null);
     setEntryForm({ ...initialFormData, entryDate: getToday() });
     setFormErrors({});
+    setEntryNotice(null);
     setShowEntryModal(true);
   };
 
@@ -227,13 +244,18 @@ export default function TreasurerScreen() {
       description: entry.description,
     });
     setFormErrors({});
+    setEntryNotice(null);
     setShowEntryModal(true);
   };
 
   const handleSaveEntry = async () => {
     if (!guard(permissions.canAccessFinance, "Only the Captain or Treasurer can add or edit finance entries.")) return;
 
-    if (!validateForm()) return;
+    setEntryNotice(null);
+    if (!validateForm()) {
+      setEntryNotice({ type: "error", message: "Please fix the highlighted fields." });
+      return;
+    }
 
     const amountPence = parseCurrencyToPence(entryForm.amountInput)!;
 
@@ -258,11 +280,13 @@ export default function TreasurerScreen() {
         await createFinanceEntry(newEntry);
         setToast({ visible: true, message: "Entry added", type: "success" });
       }
+      setEntryNotice(null);
       setShowEntryModal(false);
       await loadData();
     } catch (err: any) {
       console.error("[Treasurer] handleSaveEntry error:", err);
-      Alert.alert("Error", err?.message || "Failed to save entry.");
+      const formatted = formatError(err);
+      setEntryNotice({ type: "error", message: formatted.message, detail: formatted.detail });
     } finally {
       setSaving(false);
     }
@@ -286,7 +310,8 @@ export default function TreasurerScreen() {
               await loadData();
             } catch (err: any) {
               console.error("[Treasurer] handleDeleteEntry error:", err);
-              Alert.alert("Error", err?.message || "Failed to delete entry.");
+              const formatted = formatError(err);
+              setToast({ visible: true, message: formatted.message, type: "error" });
             }
           },
         },
@@ -299,7 +324,8 @@ export default function TreasurerScreen() {
   const handleExportPdf = async () => {
     if (!summary || !society) return;
 
-    try {
+    exportAction.reset();
+    const exported = await exportAction.run(async () => {
       const html = generateLedgerPdfHtml({
         societyName: society.name || "Golf Society",
         logoUrl: (society as any)?.logo_url || (society as any)?.logoUrl || null,
@@ -312,7 +338,7 @@ export default function TreasurerScreen() {
 
       if (Platform.OS === "web") {
         await Print.printAsync({ html });
-        return;
+        return true;
       }
 
       const { uri } = await Print.printToFileAsync({ html, base64: false });
@@ -323,13 +349,21 @@ export default function TreasurerScreen() {
           dialogTitle: "Society Financial Ledger",
           UTI: "com.adobe.pdf",
         });
-      } else {
-        await Print.printAsync({ html });
+        return true;
       }
-    } catch (err: any) {
-      console.error("[Treasurer] handleExportPdf error:", err);
-      Alert.alert("Error", err?.message || "Failed to export PDF.");
+
+      await Print.printAsync({ html });
+      return true;
+    });
+
+    if (!exported) {
+      if (exportAction.error) {
+        setToast({ visible: true, message: exportAction.error.message, type: "error" });
+      }
+      return;
     }
+
+    setToast({ visible: true, message: "Exported", type: "success" });
   };
 
   // ========== RENDER ==========
@@ -385,15 +419,33 @@ export default function TreasurerScreen() {
         </Pressable>
         <AppText variant="h1" style={styles.title}>Treasurer</AppText>
         <Pressable
-          style={({ pressed }) => [styles.exportButton, { opacity: pressed ? 0.7 : 1 }]}
+          style={({ pressed }) => [
+            styles.exportButton,
+            { opacity: exportAction.loading ? 0.5 : pressed ? 0.7 : 1 },
+          ]}
           onPress={handleExportPdf}
+          disabled={exportAction.loading}
         >
-          <Feather name="download" size={18} color={colors.primary} />
-          <AppText variant="small" style={{ color: colors.primary, marginLeft: 4 }}>PDF</AppText>
+          {exportAction.loading ? (
+            <ActivityIndicator size="small" color={colors.primary} />
+          ) : (
+            <Feather name="download" size={18} color={colors.primary} />
+          )}
+          <AppText variant="small" style={{ color: colors.primary, marginLeft: 4 }}>
+            {exportAction.loading ? "Exporting..." : "PDF"}
+          </AppText>
         </Pressable>
       </View>
 
       <ScrollView showsVerticalScrollIndicator={false}>
+        {exportAction.error ? (
+          <InlineNotice
+            variant="error"
+            message={exportAction.error.message}
+            detail={exportAction.error.detail}
+            style={{ marginBottom: spacing.sm }}
+          />
+        ) : null}
         {/* 2x2 Stat Cards Grid */}
         <View style={styles.statsGrid}>
           <StatCard
@@ -426,7 +478,7 @@ export default function TreasurerScreen() {
         {/* Add Entry Button */}
         <View style={styles.sectionHeader}>
           <AppText variant="h2">Transactions</AppText>
-          <PrimaryButton onPress={handleOpenAddEntry} size="sm">
+          <PrimaryButton onPress={handleOpenAddEntry} size="sm" disabled={saving}>
             <Feather name="plus" size={16} color="#fff" /> Add
           </PrimaryButton>
         </View>
@@ -439,13 +491,13 @@ export default function TreasurerScreen() {
                 <Feather name="inbox" size={32} color={colors.textTertiary} />
               </View>
               <AppText variant="body" color="secondary" style={styles.emptyText}>
-                No transactions yet
+                No entries yet
               </AppText>
               <AppText variant="small" color="tertiary" style={styles.emptyHint}>
-                Add your first income or expense to get started
+                Add your first income or cost to get started
               </AppText>
               <PrimaryButton onPress={handleOpenAddEntry} size="sm" style={{ marginTop: spacing.base }}>
-                <Feather name="plus" size={16} color="#fff" /> Add First Entry
+                <Feather name="plus" size={16} color="#fff" /> Add income/cost
               </PrimaryButton>
             </View>
           </AppCard>
@@ -541,12 +593,24 @@ export default function TreasurerScreen() {
               Set the starting balance for your ledger
             </AppText>
 
+            {openingNotice ? (
+              <InlineNotice
+                variant={openingNotice.type}
+                message={openingNotice.message}
+                detail={openingNotice.detail}
+                style={{ marginBottom: spacing.sm }}
+              />
+            ) : null}
+
             <View style={styles.amountInputRow}>
               <AppText variant="h1" style={{ color: colors.textTertiary }}>£</AppText>
               <AppInput
                 placeholder="0.00"
                 value={openingBalanceInput}
-                onChangeText={setOpeningBalanceInput}
+                onChangeText={(text) => {
+                  setOpeningBalanceInput(text);
+                  setOpeningNotice(null);
+                }}
                 keyboardType="decimal-pad"
                 style={styles.amountInput}
                 autoFocus
@@ -579,6 +643,15 @@ export default function TreasurerScreen() {
               {editingEntry ? "Edit Entry" : "Add Entry"}
             </AppText>
 
+            {entryNotice ? (
+              <InlineNotice
+                variant={entryNotice.type}
+                message={entryNotice.message}
+                detail={entryNotice.detail}
+                style={{ marginBottom: spacing.sm }}
+              />
+            ) : null}
+
             {/* Type Selector */}
             <View style={styles.formGroup}>
               <AppText variant="caption" color="secondary" style={styles.formLabel}>Type</AppText>
@@ -588,7 +661,11 @@ export default function TreasurerScreen() {
                     styles.segmentButton,
                     entryForm.entryType === "income" && { backgroundColor: colors.success },
                   ]}
-                  onPress={() => setEntryForm({ ...entryForm, entryType: "income" })}
+                  onPress={() => {
+                    setEntryForm({ ...entryForm, entryType: "income" });
+                    setEntryNotice(null);
+                    setFormErrors((prev) => ({ ...prev, entryType: undefined }));
+                  }}
                 >
                   <Feather
                     name="trending-up"
@@ -608,7 +685,11 @@ export default function TreasurerScreen() {
                     styles.segmentButton,
                     entryForm.entryType === "cost" && { backgroundColor: colors.error },
                   ]}
-                  onPress={() => setEntryForm({ ...entryForm, entryType: "cost" })}
+                  onPress={() => {
+                    setEntryForm({ ...entryForm, entryType: "cost" });
+                    setEntryNotice(null);
+                    setFormErrors((prev) => ({ ...prev, entryType: undefined }));
+                  }}
                 >
                   <Feather
                     name="trending-down"
@@ -624,6 +705,11 @@ export default function TreasurerScreen() {
                   </AppText>
                 </Pressable>
               </View>
+              {formErrors.entryType && (
+                <AppText variant="small" style={{ color: colors.error, marginTop: 4 }}>
+                  {formErrors.entryType}
+                </AppText>
+              )}
             </View>
 
             {/* Date with Quick Chips */}
@@ -668,6 +754,7 @@ export default function TreasurerScreen() {
                 value={entryForm.entryDate}
                 onChangeText={(text) => {
                   setEntryForm({ ...entryForm, entryDate: text });
+                  setEntryNotice(null);
                   if (formErrors.date) setFormErrors({ ...formErrors, date: undefined });
                 }}
                 style={[styles.input, formErrors.date && { borderColor: colors.error }]}
@@ -689,6 +776,7 @@ export default function TreasurerScreen() {
                   value={entryForm.amountInput}
                   onChangeText={(text) => {
                     setEntryForm({ ...entryForm, amountInput: text });
+                    setEntryNotice(null);
                     if (formErrors.amount) setFormErrors({ ...formErrors, amount: undefined });
                   }}
                   keyboardType="numeric"
@@ -710,6 +798,7 @@ export default function TreasurerScreen() {
                 value={entryForm.description}
                 onChangeText={(text) => {
                   setEntryForm({ ...entryForm, description: text });
+                  setEntryNotice(null);
                   if (formErrors.description) setFormErrors({ ...formErrors, description: undefined });
                 }}
                 style={[styles.input, formErrors.description && { borderColor: colors.error }]}

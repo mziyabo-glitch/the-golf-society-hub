@@ -1,14 +1,17 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { Alert, Image, Platform, ScrollView, StyleSheet, View } from "react-native";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Image, Platform, ScrollView, StyleSheet, View } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 
 import { Screen } from "@/components/ui/Screen";
 import { AppText } from "@/components/ui/AppText";
 import { AppCard } from "@/components/ui/AppCard";
 import { LoadingState } from "@/components/ui/LoadingState";
-import { getColors, spacing, radius } from "@/lib/ui/theme";
+import { InlineNotice } from "@/components/ui/InlineNotice";
+import { PrimaryButton, SecondaryButton } from "@/components/ui/Button";
+import { spacing, radius } from "@/lib/ui/theme";
 import { formatHandicap } from "@/lib/whs";
 import { captureAndShare } from "@/lib/share/captureAndShare";
+import { formatError, type FormattedError } from "@/lib/ui/formatError";
 
 type TeeSheetPrintPlayer = {
   name: string;
@@ -49,9 +52,11 @@ type TeeSheetPrintPayload = {
 
 export default function TeeSheetPrintScreen() {
   const router = useRouter();
-  const colors = getColors();
   const params = useLocalSearchParams<{ payload?: string }>();
   const [layoutReady, setLayoutReady] = useState(false);
+  const [shareError, setShareError] = useState<FormattedError | null>(null);
+  const [shareSuccess, setShareSuccess] = useState(false);
+  const [generating, setGenerating] = useState(false);
   const hasCaptured = useRef(false);
   const scrollRef = useRef<ScrollView | null>(null);
 
@@ -79,38 +84,51 @@ export default function TeeSheetPrintScreen() {
       .catch(() => setLogoReady(true));
   }, [payload?.logoUrl]);
 
-  useEffect(() => {
-    if (!payload || !layoutReady || !logoReady || hasCaptured.current) return;
+  const runShare = useCallback(async () => {
+    if (!payload) return;
+    setGenerating(true);
+    setShareError(null);
+    setShareSuccess(false);
     hasCaptured.current = true;
 
-    (async () => {
-      try {
-        // Small delay to ensure the logo image has rendered after prefetch
-        await new Promise((r) => setTimeout(r, 400));
+    try {
+      // Small delay to ensure the logo image has rendered after prefetch
+      await new Promise((r) => setTimeout(r, 400));
 
-        await captureAndShare(scrollRef, {
-          dialogTitle: "Share Tee Sheet",
-        });
-      } catch (err: any) {
-        console.error("[tee-sheet-print] share error:", err);
-        Alert.alert("Error", err?.message || "Failed to share tee sheet.");
-      } finally {
+      await captureAndShare(scrollRef, {
+        dialogTitle: "Share Tee Sheet",
+      });
+      setShareSuccess(true);
+      setTimeout(() => {
         router.back();
-      }
-    })();
-  }, [layoutReady, logoReady, payload, router]);
+      }, 500);
+    } catch (err: any) {
+      console.error("[tee-sheet-print] share error:", err);
+      setShareError(formatError(err));
+      setShareSuccess(false);
+      hasCaptured.current = false;
+    } finally {
+      setGenerating(false);
+    }
+  }, [payload, router]);
+
+  useEffect(() => {
+    if (!payload || !layoutReady || !logoReady || shareError || generating || hasCaptured.current) return;
+    runShare();
+  }, [layoutReady, logoReady, payload, shareError, generating, runShare]);
 
   if (!payload) {
     return (
       <Screen scrollable={false}>
         <View style={styles.centered}>
-          <AppCard>
-            <AppText variant="h2" style={{ marginBottom: spacing.sm }}>
-              Tee sheet unavailable
-            </AppText>
-            <AppText variant="body" color="secondary">
-              Unable to load the tee sheet for sharing.
-            </AppText>
+          <AppCard style={styles.noticeCard}>
+            <InlineNotice
+              variant="error"
+              message="Tee sheet unavailable"
+              detail="Unable to load the tee sheet for sharing."
+              style={{ marginBottom: spacing.sm }}
+            />
+            <PrimaryButton onPress={() => router.back()}>Go Back</PrimaryButton>
           </AppCard>
         </View>
       </Screen>
@@ -271,6 +289,43 @@ export default function TeeSheetPrintScreen() {
           </View>
         )}
       </ScrollView>
+
+      {generating ? (
+        <View style={styles.overlay} pointerEvents="auto">
+          <AppCard style={styles.overlayCard}>
+            <LoadingState message="Generating share..." />
+          </AppCard>
+        </View>
+      ) : null}
+
+      {shareError ? (
+        <View style={styles.overlay} pointerEvents="auto">
+          <AppCard style={styles.overlayCard}>
+            <InlineNotice
+              variant="error"
+              message={shareError.message}
+              detail={shareError.detail}
+              style={{ marginBottom: spacing.sm }}
+            />
+            <View style={styles.noticeActions}>
+              <SecondaryButton onPress={() => router.back()} style={{ flex: 1 }}>
+                Close
+              </SecondaryButton>
+              <PrimaryButton onPress={runShare} style={{ flex: 1 }}>
+                Try Again
+              </PrimaryButton>
+            </View>
+          </AppCard>
+        </View>
+      ) : null}
+
+      {shareSuccess ? (
+        <View style={styles.overlay} pointerEvents="auto">
+          <AppCard style={styles.overlayCard}>
+            <InlineNotice variant="success" message="Shared" />
+          </AppCard>
+        </View>
+      ) : null}
     </Screen>
   );
 }
@@ -307,6 +362,25 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: "center",
     alignItems: "center",
+  },
+  noticeCard: {
+    width: "100%",
+    maxWidth: 420,
+  },
+  noticeActions: {
+    flexDirection: "row",
+    gap: spacing.sm,
+  },
+  overlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(0, 0, 0, 0.35)",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: spacing.lg,
+  },
+  overlayCard: {
+    width: "100%",
+    maxWidth: 420,
   },
   container: {
     padding: spacing.lg,

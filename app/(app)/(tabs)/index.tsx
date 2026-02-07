@@ -9,10 +9,12 @@ import { AppText } from "@/components/ui/AppText";
 import { AppCard } from "@/components/ui/AppCard";
 import { LoadingState } from "@/components/ui/LoadingState";
 import { SocietyHeader } from "@/components/ui/SocietyHeader";
+import { InlineNotice } from "@/components/ui/InlineNotice";
 import { useBootstrap } from "@/lib/useBootstrap";
 import { getMembersBySocietyId, type MemberDoc } from "@/lib/db_supabase/memberRepo";
 import { getEventsBySocietyId, type EventDoc } from "@/lib/db_supabase/eventRepo";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
+import { formatError, type FormattedError } from "@/lib/ui/formatError";
 
 export default function HomeScreen() {
   const router = useRouter();
@@ -22,6 +24,7 @@ export default function HomeScreen() {
   const [members, setMembers] = useState<MemberDoc[]>([]);
   const [events, setEvents] = useState<EventDoc[]>([]);
   const [dataLoading, setDataLoading] = useState(true);
+  const [loadError, setLoadError] = useState<FormattedError | null>(null);
 
   const loadData = useCallback(async () => {
     if (!societyId) {
@@ -30,6 +33,7 @@ export default function HomeScreen() {
     }
 
     setDataLoading(true);
+    setLoadError(null);
     try {
       const [membersData, eventsData] = await Promise.all([
         getMembersBySocietyId(societyId),
@@ -39,6 +43,7 @@ export default function HomeScreen() {
       setEvents(eventsData);
     } catch (err) {
       console.error("Failed to load home data:", err);
+      setLoadError(formatError(err));
     } finally {
       setDataLoading(false);
     }
@@ -86,6 +91,15 @@ export default function HomeScreen() {
         logoUrl={logoUrl}
         subtitle={member?.displayName ? `Welcome back, ${member.displayName}` : undefined}
       />
+
+      {loadError ? (
+        <InlineNotice
+          variant="error"
+          message={loadError.message}
+          detail={loadError.detail}
+          style={{ marginBottom: spacing.lg }}
+        />
+      ) : null}
 
       {/* Join Code Card */}
       {society?.joinCode && (
