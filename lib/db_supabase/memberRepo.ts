@@ -228,9 +228,17 @@ export async function getMembersBySocietyId(
       hint: error.hint,
       code: error.code,
     });
-    return [];
+    throw new Error(error.message || "Failed to load members");
   }
-  return (data ?? []).map(mapMember);
+
+  const members = (data ?? []).map(mapMember);
+  console.log(
+    "[memberRepo] getMembersBySocietyId returned",
+    members.length,
+    "members. Handicap values:",
+    members.map((m) => ({ name: m.name, handicapIndex: m.handicapIndex, raw: m.handicap_index }))
+  );
+  return members;
 }
 
 /**
