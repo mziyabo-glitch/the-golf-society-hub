@@ -159,7 +159,7 @@ type FormErrors = {
 export default function EventsScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ create?: string; classification?: string }>();
-  const { societyId, member, user, loading: bootstrapLoading } = useBootstrap();
+  const { societyId, activeSocietyId, member, user, loading: bootstrapLoading } = useBootstrap();
   const colors = getColors();
   const createAction = useAsyncAction();
   const paramsHandledRef = useRef(false);
@@ -215,16 +215,17 @@ export default function EventsScreen() {
   }, [params.create, params.classification, permissions.canCreateEvents]);
 
   const loadEvents = useCallback(async () => {
-    if (!societyId) {
-      console.log("[events] No societyId, skipping load");
+    const sid = societyId || activeSocietyId;
+    if (!sid) {
+      console.log("[events] No societyId/activeSocietyId, skipping load");
       setLoading(false);
       return;
     }
-    console.log("[events] Loading events for society:", societyId);
+    console.log("[events] Loading events for society:", sid);
     setLoading(true);
     setLoadError(null);
     try {
-      const data = await getEventsBySocietyId(societyId);
+      const data = await getEventsBySocietyId(sid);
       console.log("[events] Loaded", data.length, "events. Upcoming:", data.filter((e) => !e.isCompleted).length, "Completed:", data.filter((e) => e.isCompleted).length);
       setEvents(data);
     } catch (err: any) {
@@ -235,7 +236,7 @@ export default function EventsScreen() {
     } finally {
       setLoading(false);
     }
-  }, [societyId]);
+  }, [societyId, activeSocietyId]);
 
   useEffect(() => {
     loadEvents();
@@ -442,6 +443,22 @@ export default function EventsScreen() {
         <View style={styles.centered}>
           <LoadingState message="Loading events..." />
         </View>
+      </Screen>
+    );
+  }
+
+  // Guard: no active society yet
+  if (!societyId && !activeSocietyId) {
+    return (
+      <Screen>
+        <View style={styles.header}>
+          <AppText variant="title">Events</AppText>
+        </View>
+        <EmptyState
+          icon={<Feather name="calendar" size={24} color={colors.textTertiary} />}
+          title="No Society Selected"
+          message="Join or create a society to see events."
+        />
       </Screen>
     );
   }
@@ -814,7 +831,9 @@ export default function EventsScreen() {
         <EmptyState
           icon={<Feather name="calendar" size={24} color={colors.textTertiary} />}
           title="No events yet"
-          message="Create your first event to start tracking results and scores."
+          message={permissions.canCreateEvents
+            ? "Create your first event to start tracking results and scores."
+            : "No events yet. Ask the Captain to create one."}
           action={permissions.canCreateEvents ? {
             label: "Create event",
             onPress: () => setShowCreateForm(true),
