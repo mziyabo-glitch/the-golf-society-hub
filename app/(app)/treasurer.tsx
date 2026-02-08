@@ -42,6 +42,7 @@ import { useAsyncAction } from "@/lib/hooks/useAsyncAction";
 import { getPermissionsForMember } from "@/lib/rbac";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
 import { formatError } from "@/lib/ui/formatError";
+import { assertNoPrintAsync, wrapExportErrors } from "@/lib/pdf/exportContract";
 
 import { guard } from "@/lib/guards";
 import {
@@ -326,6 +327,7 @@ export default function TreasurerScreen() {
 
     exportAction.reset();
     const exported = await exportAction.run(async () => {
+      assertNoPrintAsync();
       const html = generateLedgerPdfHtml({
         societyName: society.name || "Golf Society",
         logoUrl: (society as any)?.logo_url || (society as any)?.logoUrl || null,
@@ -335,11 +337,6 @@ export default function TreasurerScreen() {
         totalCostsPence: summary.totalCostsPence,
         currentBalancePence: summary.currentBalancePence,
       });
-
-      if (Platform.OS === "web") {
-        await Print.printAsync({ html });
-        return true;
-      }
 
       const { uri } = await Print.printToFileAsync({ html, base64: false });
       const canShare = await Sharing.isAvailableAsync();
@@ -352,14 +349,13 @@ export default function TreasurerScreen() {
         return true;
       }
 
-      await Print.printAsync({ html });
-      return true;
+      throw new Error("Sharing is not available on this device.");
     });
 
     if (!exported) {
-      if (exportAction.error) {
-        setToast({ visible: true, message: exportAction.error.message, type: "error" });
-      }
+      const failure = wrapExportErrors(exportAction.error ?? new Error("Export failed"), "PDF");
+      const message = failure.detail ? `${failure.message} ${failure.detail}` : failure.message;
+      setToast({ visible: true, message, type: "error" });
       return;
     }
 

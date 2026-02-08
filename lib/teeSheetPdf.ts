@@ -26,6 +26,7 @@ import {
   type PlayerGroup,
 } from "./teeSheetGrouping";
 import { imageUrlToBase64DataUri } from "./pdf/imageUtils";
+import { assertNoPrintAsync } from "./pdf/exportContract";
 
 export type TeeSheetPlayer = {
   id?: string;
@@ -466,6 +467,7 @@ function generateTeeSheetHTML(data: TeeSheetData, logoDataUri?: string | null): 
  */
 export async function generateTeeSheetPdf(data: TeeSheetData): Promise<boolean> {
   try {
+    assertNoPrintAsync();
     // Convert remote logo URL to base64 so expo-print can embed it
     const logoDataUri = data.logoUrl
       ? await imageUrlToBase64DataUri(data.logoUrl)
