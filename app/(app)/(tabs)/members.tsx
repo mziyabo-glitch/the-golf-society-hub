@@ -11,6 +11,7 @@ import { AppInput } from "@/components/ui/AppInput";
 import { PrimaryButton, SecondaryButton, DestructiveButton } from "@/components/ui/Button";
 import { LoadingState } from "@/components/ui/LoadingState";
 import { EmptyState } from "@/components/ui/EmptyState";
+import { InlineNotice } from "@/components/ui/InlineNotice";
 import { useBootstrap } from "@/lib/useBootstrap";
 import {
   getMembersBySocietyId,
@@ -98,6 +99,7 @@ export default function MembersScreen() {
   const [oomStandings, setOomStandings] = useState<Map<string, OrderOfMeritEntry>>(new Map());
   const [loading, setLoading] = useState(true);
   const [permissionError, setPermissionError] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [modalMode, setModalMode] = useState<ModalMode>("none");
   const [editingMember, setEditingMember] = useState<MemberDoc | null>(null);
 
@@ -138,6 +140,7 @@ export default function MembersScreen() {
 
     setLoading(true);
     setPermissionError(null);
+    setLoadError(null);
 
     try {
       console.log("[members] Fetching members for society:", societyId);
@@ -181,8 +184,8 @@ export default function MembersScreen() {
           "You don't have permission to view members for this society. Please contact the Captain."
         );
       } else {
-        // Generic error - show alert
-        Alert.alert("Error", "Failed to load members. Please try again.");
+        // Surface error in the UI so it's always visible
+        setLoadError(errorMessage || "Failed to load members. Please try again.");
       }
     } finally {
       setLoading(false);
@@ -506,8 +509,17 @@ export default function MembersScreen() {
         )}
       </View>
 
+      {/* Load error */}
+      {loadError && (
+        <InlineNotice
+          variant="error"
+          message={loadError}
+          style={{ marginBottom: spacing.sm }}
+        />
+      )}
+
       {/* Members List */}
-      {members.length === 0 ? (
+      {members.length === 0 && !loadError ? (
         <EmptyState
           icon={<Feather name="users" size={24} color={colors.textTertiary} />}
           title="No Members Yet"
@@ -562,14 +574,23 @@ export default function MembersScreen() {
                         <AppText variant="caption" color="tertiary">{member.email}</AppText>
                       )}
 
-                      {/* Show handicap if available */}
-                      {(member.handicapIndex != null || member.handicap_index != null) && (
-                        <View style={[styles.badge, { backgroundColor: colors.info + "20", marginTop: 2 }]}>
-                          <AppText variant="small" style={{ color: colors.info }}>
-                            HI: {member.handicapIndex ?? member.handicap_index}
-                          </AppText>
-                        </View>
-                      )}
+                      {/* Always show handicap status */}
+                      <View style={[styles.badge, {
+                        backgroundColor: (member.handicapIndex != null || member.handicap_index != null)
+                          ? colors.info + "20"
+                          : colors.backgroundTertiary,
+                        marginTop: 2,
+                      }]}>
+                        <AppText variant="small" style={{
+                          color: (member.handicapIndex != null || member.handicap_index != null)
+                            ? colors.info
+                            : colors.textTertiary,
+                        }}>
+                          {(member.handicapIndex != null || member.handicap_index != null)
+                            ? `HI: ${member.handicapIndex ?? member.handicap_index}`
+                            : "Awaiting assignment"}
+                        </AppText>
+                      </View>
 
                       {/* OOM Position + Points - only show if member has OOM points */}
                       {oomEntry && oomEntry.totalPoints > 0 && (

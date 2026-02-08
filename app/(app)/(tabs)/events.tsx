@@ -214,29 +214,32 @@ export default function EventsScreen() {
     }
   }, [params.create, params.classification, permissions.canCreateEvents]);
 
-  const loadEvents = async () => {
+  const loadEvents = useCallback(async () => {
     if (!societyId) {
+      console.log("[events] No societyId, skipping load");
       setLoading(false);
       return;
     }
+    console.log("[events] Loading events for society:", societyId);
     setLoading(true);
     setLoadError(null);
     try {
       const data = await getEventsBySocietyId(societyId);
+      console.log("[events] Loaded", data.length, "events. Upcoming:", data.filter((e) => !e.isCompleted).length, "Completed:", data.filter((e) => e.isCompleted).length);
       setEvents(data);
-    } catch (err) {
-      console.error("Failed to load events:", err);
+    } catch (err: any) {
+      console.error("[events] Failed to load events:", err?.message || err);
       const formatted = formatError(err);
       setLoadError(formatted);
       setEvents([]);
     } finally {
       setLoading(false);
     }
-  };
+  }, [societyId]);
 
   useEffect(() => {
     loadEvents();
-  }, [societyId]);
+  }, [loadEvents]);
 
   // Refetch on focus to pick up changes from other screens
   useFocusEffect(
@@ -244,7 +247,7 @@ export default function EventsScreen() {
       if (societyId) {
         loadEvents();
       }
-    }, [societyId])
+    }, [societyId, loadEvents])
   );
 
   // Validate numeric tee input
@@ -807,7 +810,7 @@ export default function EventsScreen() {
         />
       ) : null}
 
-      {events.length === 0 ? (
+      {events.length === 0 && !loadError ? (
         <EmptyState
           icon={<Feather name="calendar" size={24} color={colors.textTertiary} />}
           title="No events yet"
@@ -817,7 +820,7 @@ export default function EventsScreen() {
             onPress: () => setShowCreateForm(true),
           } : undefined}
         />
-      ) : (
+      ) : events.length > 0 ? (
         <>
           {upcomingEvents.length > 0 && (
             <View style={styles.section}>
@@ -837,7 +840,7 @@ export default function EventsScreen() {
             </View>
           )}
         </>
-      )}
+      ) : null}
     </Screen>
   );
 }
