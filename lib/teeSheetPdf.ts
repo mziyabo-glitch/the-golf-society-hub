@@ -10,7 +10,6 @@
 
 import * as Print from "expo-print";
 import * as Sharing from "expo-sharing";
-import { Platform } from "react-native";
 import { type ManCoDetails } from "./db_supabase/memberRepo";
 import {
   calcCourseHandicap,
@@ -27,6 +26,7 @@ import {
   type PlayerGroup,
 } from "./teeSheetGrouping";
 import { imageUrlToBase64DataUri } from "./pdf/imageUtils";
+import { assertNoPrintAsync } from "./pdf/exportContract";
 
 export type TeeSheetPlayer = {
   id?: string;
@@ -78,6 +78,34 @@ type PlayerWithCalcs = GroupedPlayer & {
   playingHandicap: number | null;
 };
 
+type GroupWithTime = PlayerGroup & { teeTime: string };
+
+function isValidTime(value: string | null | undefined): value is string {
+  if (!value) return false;
+  const [hoursStr, minutesStr] = value.split(":");
+  const hours = Number(hoursStr);
+  const minutes = Number(minutesStr);
+  return Number.isFinite(hours) && Number.isFinite(minutes);
+}
+
+function buildTeeTime(startTime: string, intervalMinutes: number, index: number): string {
+  const [hoursStr, minutesStr] = startTime.split(":");
+  const hours = Number(hoursStr);
+  const minutes = Number(minutesStr);
+  const baseMinutes = hours * 60 + minutes + intervalMinutes * index;
+  const teeHours = Math.floor(baseMinutes / 60) % 24;
+  const teeMins = baseMinutes % 60;
+  return `${String(teeHours).padStart(2, "0")}:${String(teeMins).padStart(2, "0")}`;
+}
+
+function chunkArray<T>(items: T[], size: number): T[][] {
+  const chunks: T[][] = [];
+  for (let i = 0; i < items.length; i += size) {
+    chunks.push(items.slice(i, i + size));
+  }
+  return chunks;
+}
+
 /**
  * Generate HTML for the tee sheet PDF
  */
@@ -99,7 +127,6 @@ function generateTeeSheetHTML(data: TeeSheetData, logoDataUri?: string | null): 
     startTime,
     teeTimeInterval = 10,
     preGrouped = false,
-    manCo,
   } = data;
 
   const allowance = handicapAllowance ?? DEFAULT_ALLOWANCE;
@@ -119,18 +146,19 @@ function generateTeeSheetHTML(data: TeeSheetData, logoDataUri?: string | null): 
     ? format.charAt(0).toUpperCase() + format.slice(1).replace(/_/g, " ")
     : "";
 
-  // NTP/LD info box
-  const hasCompetitions = (nearestPinHoles && nearestPinHoles.length > 0) ||
-                          (longestDriveHoles && longestDriveHoles.length > 0);
-  const competitionsHTML = hasCompetitions
-    ? `<div style="background: #EDE9FE; padding: 10px 16px; border-radius: 8px; margin-bottom: 16px; border-left: 4px solid #8B5CF6;">
-         <div style="font-size: 10px; text-transform: uppercase; letter-spacing: 1px; color: #5B21B6; margin-bottom: 4px;">Competitions</div>
-         <div style="font-size: 12px; color: #4C1D95; display: flex; gap: 24px;">
-           ${nearestPinHoles && nearestPinHoles.length > 0 ? `<div><strong>Nearest the Pin:</strong> Hole${nearestPinHoles.length > 1 ? 's' : ''} ${formatHoleNumbers(nearestPinHoles)}</div>` : ''}
-           ${longestDriveHoles && longestDriveHoles.length > 0 ? `<div><strong>Longest Drive:</strong> Hole${longestDriveHoles.length > 1 ? 's' : ''} ${formatHoleNumbers(longestDriveHoles)}</div>` : ''}
-         </div>
-       </div>`
-    : "";
+  const hasCompetitions =
+    (nearestPinHoles && nearestPinHoles.length > 0) ||
+    (longestDriveHoles && longestDriveHoles.length > 0);
+  const competitionsText = [
+    nearestPinHoles && nearestPinHoles.length > 0
+      ? `Nearest the Pin: Hole${nearestPinHoles.length > 1 ? "s" : ""} ${formatHoleNumbers(nearestPinHoles)}`
+      : null,
+    longestDriveHoles && longestDriveHoles.length > 0
+      ? `Longest Drive: Hole${longestDriveHoles.length > 1 ? "s" : ""} ${formatHoleNumbers(longestDriveHoles)}`
+      : null,
+  ]
+    .filter(Boolean)
+    .join(" • ");
 
   // Calculate handicaps for each player based on their gender
   const playersWithHandicaps: PlayerWithCalcs[] = players.map((player, idx) => {
@@ -179,88 +207,104 @@ function generateTeeSheetHTML(data: TeeSheetData, logoDataUri?: string | null): 
     groups = groupPlayers(playersWithHandicaps, true);
   }
 
-  // Assign tee times if start time provided
-  let groupsWithTimes = groups;
-  if (startTime) {
-    const [hours, minutes] = startTime.split(":").map(Number);
-    if (!isNaN(hours) && !isNaN(minutes)) {
-      let currentMinutes = hours * 60 + minutes;
-      groupsWithTimes = groups.map((group) => {
-        const teeHours = Math.floor(currentMinutes / 60);
-        const teeMins = currentMinutes % 60;
-        const teeTime = `${String(teeHours).padStart(2, "0")}:${String(teeMins).padStart(2, "0")}`;
-        currentMinutes += teeTimeInterval;
-        return { ...group, teeTime };
-      });
-    }
-  }
+  const baseStartTime = isValidTime(startTime) ? startTime : "08:00";
+  const intervalMinutes =
+    Number.isFinite(teeTimeInterval) && teeTimeInterval > 0 ? teeTimeInterval : 8;
 
-  // Generate group blocks with columns: Full Name | HI | PH
-  const groupsHTML = groupsWithTimes.map((group) => {
-    const playerRows = group.players.map((player: PlayerWithCalcs) => {
-      // HI: from members.handicap_index (nullable) - display "-" if null
-      const hiDisplay = formatHandicap(player.handicapIndex, 1);
-      // PH: calculated using WHS formula, display "-" if cannot calculate
-      const phDisplay = formatHandicap(player.playingHandicap);
+  const groupsWithTimes: GroupWithTime[] = groups.map((group, index) => ({
+    ...group,
+    teeTime: buildTeeTime(baseStartTime, intervalMinutes, index),
+  }));
+
+  const pages = chunkArray(groupsWithTimes, 12);
+
+  const teeInfoLines = [
+    teeSettings
+      ? `Male (${teeName || "Men's"}): Par ${teeSettings.par} • SR ${teeSettings.slopeRating} • CR ${teeSettings.courseRating}`
+      : "Male: tee info not set",
+    ladiesTeeSettings
+      ? `Female (${ladiesTeeName || "Ladies'"}): Par ${ladiesTeeSettings.par} • SR ${ladiesTeeSettings.slopeRating} • CR ${ladiesTeeSettings.courseRating}`
+      : "Female: tee info not set",
+    `Allowance: ${Math.round(allowance * 100)}%`,
+  ];
+
+  const renderGroupTable = (group: GroupWithTime) => {
+    const rows = Array.from({ length: 4 }).map((_, idx) => {
+      const player = group.players[idx];
+      const name = player?.name ?? "&nbsp;";
+      const hiDisplay = player ? formatHandicap(player.handicapIndex, 1) : "&nbsp;";
+      const phDisplay = player ? formatHandicap(player.playingHandicap) : "&nbsp;";
 
       return `
         <tr>
-          <td style="padding: 10px 12px; border-bottom: 1px solid #F3F4F6; font-weight: 500;">
-            ${player.name}
-          </td>
-          <td style="padding: 10px 12px; border-bottom: 1px solid #F3F4F6; text-align: center; color: #6B7280; font-family: 'SF Mono', Consolas, monospace; font-size: 13px;">${hiDisplay}</td>
-          <td style="padding: 10px 12px; border-bottom: 1px solid #F3F4F6; text-align: center; font-weight: 600; color: #0B6E4F; font-family: 'SF Mono', Consolas, monospace; font-size: 13px;">${phDisplay}</td>
+          <td>${name}</td>
+          <td class="col-hi">${hiDisplay}</td>
+          <td class="col-ph">${phDisplay}</td>
         </tr>
       `;
-    }).join("");
+    });
 
     return `
-      <div style="margin-bottom: 16px; background: white; border: 1px solid #E5E7EB; border-radius: 8px; overflow: hidden; break-inside: avoid;">
-        <div style="background: #0B6E4F; color: white; padding: 10px 14px; font-weight: 600; font-size: 14px; display: flex; justify-content: space-between; align-items: center;">
-          <span>Group ${group.groupNumber}</span>
-          ${group.teeTime ? `<span style="font-weight: 400; font-size: 13px;">${group.teeTime}</span>` : ''}
-        </div>
-        <table style="width: 100%; border-collapse: collapse; font-size: 14px;">
-          <thead>
-            <tr style="background: #F9FAFB;">
-              <th style="padding: 10px 12px; text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: #6B7280; font-weight: 600;">Full Name</th>
-              <th style="padding: 10px 12px; text-align: center; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: #6B7280; font-weight: 600; width: 60px;" title="Handicap Index">HI</th>
-              <th style="padding: 10px 12px; text-align: center; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: #6B7280; font-weight: 600; width: 60px;" title="Playing Handicap">PH</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${playerRows}
-          </tbody>
-        </table>
-      </div>
+      <table class="group-table">
+        <tr>
+          <td class="time-cell" rowspan="5">${group.teeTime}</td>
+          <th class="col-name">Name</th>
+          <th class="col-hi">HI</th>
+          <th class="col-ph">PH</th>
+        </tr>
+        ${rows.join("")}
+      </table>
     `;
-  }).join("");
+  };
 
-  // Logo HTML
-  const logoHtml = logoDataUri
-    ? `<img class="logo" src="${logoDataUri}" />`
-    : "";
+  const pagesHTML = pages
+    .map((pageGroups, pageIndex) => {
+      const leftGroups = pageGroups.slice(0, 6);
+      const rightGroups = pageGroups.slice(6, 12);
 
-  // ManCo roles
-  const manCoLines: string[] = [];
-  if (manCo?.captain) manCoLines.push(`Captain: ${manCo.captain}`);
-  if (manCo?.secretary) manCoLines.push(`Secretary: ${manCo.secretary}`);
-  if (manCo?.treasurer) manCoLines.push(`Treasurer: ${manCo.treasurer}`);
-  if (manCo?.handicapper) manCoLines.push(`Handicapper: ${manCo.handicapper}`);
-  const manCoHtml = manCoLines.length > 0
-    ? `<div class="manco">${manCoLines.join("<br/>")}</div>`
-    : "";
+      const leftHtml = leftGroups.map(renderGroupTable).join("");
+      const rightHtml = rightGroups.map(renderGroupTable).join("");
 
-  // Tee information box
-  const hasTeeInfo = teeSettings || ladiesTeeSettings;
-  const teeInfoHtml = hasTeeInfo
-    ? `<div class="tee-info">
-         <div class="tee-info-title">Tee Information</div>
-         ${teeSettings ? `<div><strong>Male:</strong> ${teeName || "Men's"}<br/>Par: ${teeSettings.par} | CR: ${teeSettings.courseRating} | SR: ${teeSettings.slopeRating}</div>` : ""}
-         ${ladiesTeeSettings ? `<div><strong>Female:</strong> ${ladiesTeeName || "Ladies'"}<br/>Par: ${ladiesTeeSettings.par} | CR: ${ladiesTeeSettings.courseRating} | SR: ${ladiesTeeSettings.slopeRating}</div>` : ""}
-         <div><strong>Allowance:</strong> ${Math.round((handicapAllowance ?? DEFAULT_ALLOWANCE) * 100)}%</div>
-       </div>`
-    : "";
+      return `
+        <div class="page">
+          <div class="header-row">
+            <div class="header-left">
+              ${logoDataUri ? `<img class="logo" src="${logoDataUri}" />` : `<div class="logo-placeholder">${societyName.slice(0, 2).toUpperCase()}</div>`}
+              <div>
+                <div class="society-name">${societyName}</div>
+                <div class="header-subtitle">Tee Sheet</div>
+              </div>
+            </div>
+            <div class="header-center">
+              <div class="event-title">${eventName}</div>
+              <div class="event-meta">${dateStr}${courseName ? ` • ${courseName}` : ""}${formatLabel ? ` • ${formatLabel}` : ""}</div>
+            </div>
+            <div class="header-right">
+              <div class="tee-box">
+                <div class="tee-title">Tee Information</div>
+                ${teeInfoLines.map((line) => `<div class="tee-line">${line}</div>`).join("")}
+              </div>
+            </div>
+          </div>
+
+          <div class="grid">
+            <div class="column">${leftHtml || "<div class='empty-column'>No groups</div>"}</div>
+            <div class="column">${rightHtml || "<div class='empty-column'> </div>"}</div>
+          </div>
+
+          <div class="special-info">
+            <div class="special-title">Special Information</div>
+            <div class="special-body">${hasCompetitions ? competitionsText : "No competition holes set."}</div>
+          </div>
+
+          <div class="footer">
+            <div>Produced by The Golf Society Hub</div>
+            <div>Page ${pageIndex + 1} of ${pages.length}</div>
+          </div>
+        </div>
+      `;
+    })
+    .join("");
 
   return `
     <!DOCTYPE html>
@@ -270,113 +314,146 @@ function generateTeeSheetHTML(data: TeeSheetData, logoDataUri?: string | null): 
         <title>Tee Sheet - ${eventName}</title>
         <style>
           * { box-sizing: border-box; margin: 0; padding: 0; }
+          @page {
+            size: A4 landscape;
+            margin: 12mm;
+          }
           body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            padding: 24px;
+            padding: 0;
             color: #111827;
             background: #fff;
-            font-size: 14px;
-            line-height: 1.4;
+            font-size: 11px;
+            line-height: 1.25;
           }
-          .container { max-width: 700px; margin: 0 auto; }
-
-          /* Logo */
-          .logo { width: 56px; height: 56px; object-fit: contain; display: block; margin: 0 auto 8px; }
-
-          /* Header */
-          .header {
-            margin-bottom: 20px;
-            padding-bottom: 12px;
-            border-bottom: 2px solid #0B6E4F;
-            text-align: center;
+          .page {
+            page-break-after: always;
+            border: 1px solid #E5E7EB;
+            padding: 12px;
+            min-height: 100%;
           }
-          .event-name {
-            font-size: 22px;
-            font-weight: 700;
-            color: #111827;
-            margin-bottom: 4px;
+          .page:last-child { page-break-after: auto; }
+          .header-row {
+            display: flex;
+            gap: 12px;
+            align-items: flex-start;
+            margin-bottom: 10px;
           }
-          .event-meta {
-            font-size: 14px;
-            color: #6B7280;
-            margin-bottom: 6px;
+          .header-left {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            width: 240px;
           }
-          .manco {
+          .logo { width: 40px; height: 40px; object-fit: contain; }
+          .logo-placeholder {
+            width: 40px;
+            height: 40px;
+            border-radius: 8px;
+            border: 1px solid #E5E7EB;
+            display: flex;
+            align-items: center;
+            justify-content: center;
             font-size: 12px;
+            font-weight: 700;
+            color: #0B6E4F;
+            background: #F3F4F6;
+          }
+          .society-name {
+            font-size: 10px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
             color: #6B7280;
-            line-height: 1.6;
+            font-weight: 700;
+          }
+          .header-subtitle {
+            font-size: 10px;
+            color: #9CA3AF;
+          }
+          .header-center { flex: 1; text-align: center; }
+          .event-title { font-size: 18px; font-weight: 700; margin-bottom: 2px; }
+          .event-meta { font-size: 11px; color: #6B7280; }
+          .header-right { width: 300px; }
+          .tee-box {
+            border: 1px solid #E5E7EB;
+            padding: 8px;
+            border-radius: 6px;
+          }
+          .tee-title { font-size: 10px; text-transform: uppercase; letter-spacing: 0.6px; color: #6B7280; margin-bottom: 4px; font-weight: 700; }
+          .tee-line { font-size: 10px; color: #374151; margin-bottom: 2px; }
+
+          .grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            margin-bottom: 10px;
+          }
+          .column {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+          }
+          .group-table {
+            width: 100%;
+            border-collapse: collapse;
+            border: 1px solid #E5E7EB;
+          }
+          .group-table th,
+          .group-table td {
+            border-bottom: 1px solid #F3F4F6;
+            padding: 3px 4px;
+            font-size: 10px;
+          }
+          .group-table th {
+            background: #F9FAFB;
+            text-transform: uppercase;
+            letter-spacing: 0.4px;
+            font-size: 9px;
+            color: #6B7280;
+            text-align: left;
+          }
+          .time-cell {
+            width: 52px;
+            text-align: center;
+            font-weight: 700;
+            font-size: 11px;
+            color: #0B6E4F;
+            background: #F3F4F6;
+            border-right: 1px solid #E5E7EB;
+          }
+          .col-name { width: auto; }
+          .col-hi, .col-ph { width: 40px; text-align: right; font-family: 'SF Mono', Consolas, monospace; }
+          .col-ph { color: #0B6E4F; font-weight: 700; }
+
+          .special-info {
+            border-top: 1px solid #E5E7EB;
+            padding-top: 6px;
             margin-top: 6px;
           }
+          .special-title {
+            font-size: 10px;
+            text-transform: uppercase;
+            letter-spacing: 0.6px;
+            color: #6B7280;
+            font-weight: 700;
+            margin-bottom: 2px;
+          }
+          .special-body { font-size: 10px; color: #374151; }
 
-          /* Produced by branding */
-          .produced-by {
-            text-align: right;
+          .footer {
+            display: flex;
+            justify-content: space-between;
+            border-top: 1px solid #E5E7EB;
+            padding-top: 6px;
+            margin-top: 8px;
             font-size: 10px;
             color: #9CA3AF;
             font-style: italic;
-            margin-bottom: 12px;
-          }
-
-          /* Tee Info */
-          .tee-info {
-            border: 1px solid #E5E7EB;
-            border-radius: 6px;
-            padding: 10px 14px;
-            margin-bottom: 16px;
-            font-size: 12px;
-            color: #374151;
-            line-height: 1.6;
-          }
-          .tee-info-title {
-            font-weight: 700;
-            margin-bottom: 4px;
-          }
-
-          /* Footer */
-          .footer {
-            margin-top: 24px;
-            padding-top: 12px;
-            border-top: 1px solid #E5E7EB;
-            text-align: center;
-            font-size: 11px;
-            color: #9CA3AF;
-            font-style: italic;
-          }
-
-          @media print {
-            body { padding: 16px; }
-            .container { max-width: 100%; }
           }
         </style>
       </head>
       <body>
-        <div class="container">
-          <!-- Header -->
-          <div class="header">
-            ${logoHtml}
-            <div class="event-name">${eventName}</div>
-            <div class="event-meta">
-              ${dateStr}${courseName ? ` | ${courseName}` : ""}${formatLabel ? ` | ${formatLabel}` : ""}
-            </div>
-            ${manCoHtml}
-          </div>
-
-          <div class="produced-by">Produced by The Golf Society Hub</div>
-
-          <!-- Tee Info -->
-          ${teeInfoHtml}
-
-          <!-- Competition Holes -->
-          ${competitionsHTML}
-
-          <!-- Player Groups -->
-          ${players.length > 0 ? groupsHTML : `<p style="color: #6B7280; text-align: center; padding: 24px;">No players registered yet.</p>`}
-
-          <!-- Footer -->
-          <div class="footer">
-            ${players.length} player${players.length !== 1 ? "s" : ""} &bull; ${groupsWithTimes.length} group${groupsWithTimes.length !== 1 ? "s" : ""}
-          </div>
-        </div>
+        ${pagesHTML || `<div class="page"><p style="text-align:center; color:#6B7280;">No players registered yet.</p></div>`}
       </body>
     </html>
   `;
@@ -390,6 +467,7 @@ function generateTeeSheetHTML(data: TeeSheetData, logoDataUri?: string | null): 
  */
 export async function generateTeeSheetPdf(data: TeeSheetData): Promise<boolean> {
   try {
+    assertNoPrintAsync();
     // Convert remote logo URL to base64 so expo-print can embed it
     const logoDataUri = data.logoUrl
       ? await imageUrlToBase64DataUri(data.logoUrl)
@@ -397,13 +475,6 @@ export async function generateTeeSheetPdf(data: TeeSheetData): Promise<boolean> 
 
     const html = generateTeeSheetHTML(data, logoDataUri);
 
-    // On web, use printAsync which opens print dialog
-    if (Platform.OS === "web") {
-      await Print.printAsync({ html });
-      return true;
-    }
-
-    // On native, generate PDF file and share
     const { uri } = await Print.printToFileAsync({
       html,
       base64: false,
@@ -412,16 +483,15 @@ export async function generateTeeSheetPdf(data: TeeSheetData): Promise<boolean> 
     console.log("[teeSheetPdf] PDF file created at:", uri);
 
     const canShare = await Sharing.isAvailableAsync();
-    if (canShare) {
-      await Sharing.shareAsync(uri, {
-        mimeType: "application/pdf",
-        dialogTitle: `Tee Sheet - ${data.eventName}`,
-        UTI: "com.adobe.pdf",
-      });
-    } else {
-      // Fallback to print if sharing not available
-      await Print.printAsync({ html });
+    if (!canShare) {
+      throw new Error("Sharing is not available on this device.");
     }
+
+    await Sharing.shareAsync(uri, {
+      mimeType: "application/pdf",
+      dialogTitle: `Tee Sheet - ${data.eventName}`,
+      UTI: "com.adobe.pdf",
+    });
 
     return true;
   } catch (error: any) {

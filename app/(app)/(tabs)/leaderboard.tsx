@@ -19,6 +19,7 @@ import { Feather } from "@expo/vector-icons";
 import { AppText } from "@/components/ui/AppText";
 import { LoadingState } from "@/components/ui/LoadingState";
 import { EmptyState } from "@/components/ui/EmptyState";
+import { Toast } from "@/components/ui/Toast";
 import { useBootstrap } from "@/lib/useBootstrap";
 import { getEventsBySocietyId, type EventDoc } from "@/lib/db_supabase/eventRepo";
 import {
@@ -28,6 +29,8 @@ import {
   type ResultsLogEntry,
 } from "@/lib/db_supabase/resultsRepo";
 import { getColors } from "@/lib/ui/theme";
+import { exportOomPdf, exportOomResultsLogPdf } from "@/lib/pdf/oomPdf";
+import { wrapExportErrors } from "@/lib/pdf/exportContract";
 
 
 // ============================================================================
@@ -109,7 +112,8 @@ export default function LeaderboardScreen() {
   const [events, setEvents] = useState<EventDoc[]>([]);
   const [loading, setLoading] = useState(true);
   const [fetchError, setFetchError] = useState<string | null>(null);
-  const [sharePending, setSharePending] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const [toast, setToast] = useState({ visible: false, message: "", type: "success" as const });
 
   // Track which events are expanded in the accordion
   const [expandedEvents, setExpandedEvents] = useState<Set<string>>(new Set());
@@ -195,7 +199,6 @@ export default function LeaderboardScreen() {
   useFocusEffect(
     useCallback(() => {
       if (societyId) loadData();
-      setSharePending(false);
     }, [societyId, loadData])
   );
 
@@ -232,7 +235,7 @@ export default function LeaderboardScreen() {
   };
 
   // Share handlers
-  const handleShareLeaderboard = () => {
+  const handleShareLeaderboard = async () => {
     if (standings.length === 0) {
       Alert.alert("No Data", "No standings to share.");
       return;
@@ -241,15 +244,24 @@ export default function LeaderboardScreen() {
       Alert.alert("Error", "Missing society ID.");
       return;
     }
-    if (sharePending) return;
-    setSharePending(true);
-    router.push({
-      pathname: "/(app)/oom-share",
-      params: { societyId },
-    });
+
+    if (exporting) return;
+    setExporting(true);
+    try {
+      console.log("[leaderboard] Export OOM leaderboard");
+      await exportOomPdf(societyId);
+      setToast({ visible: true, message: "Exported leaderboard PDF", type: "success" });
+    } catch (err: any) {
+      console.error("[leaderboard] Export failed", err);
+      const failure = wrapExportErrors(err, "leaderboard PDF");
+      const message = failure.detail ? `${failure.message} ${failure.detail}` : failure.message;
+      setToast({ visible: true, message, type: "error" });
+    } finally {
+      setExporting(false);
+    }
   };
 
-  const handleShareResultsLog = () => {
+  const handleShareResultsLog = async () => {
     if (resultsLog.length === 0) {
       Alert.alert("No Data", "No results to share.");
       return;
@@ -258,12 +270,20 @@ export default function LeaderboardScreen() {
       Alert.alert("Error", "Missing society ID.");
       return;
     }
-    if (sharePending) return;
-    setSharePending(true);
-    router.push({
-      pathname: "/(app)/oom-share",
-      params: { societyId },
-    });
+    if (exporting) return;
+    setExporting(true);
+    try {
+      console.log("[leaderboard] Export OOM results log");
+      await exportOomResultsLogPdf(societyId);
+      setToast({ visible: true, message: "Exported results log PDF", type: "success" });
+    } catch (err: any) {
+      console.error("[leaderboard] Export failed", err);
+      const failure = wrapExportErrors(err, "results log PDF");
+      const message = failure.detail ? `${failure.message} ${failure.detail}` : failure.message;
+      setToast({ visible: true, message, type: "error" });
+    } finally {
+      setExporting(false);
+    }
   };
 
   // ============================================================================
@@ -319,6 +339,12 @@ export default function LeaderboardScreen() {
 
   return (
     <>
+      <Toast
+        visible={toast.visible}
+        message={toast.message}
+        type={toast.type}
+        onHide={() => setToast((t) => ({ ...t, visible: false }))}
+      />
       <ScrollView
         style={styles.container}
         contentContainerStyle={styles.scrollContent}
@@ -344,10 +370,10 @@ export default function LeaderboardScreen() {
             <Pressable
               style={({ pressed }) => [
                 styles.shareButton,
-                { opacity: sharePending ? 0.5 : pressed ? 0.7 : 1 },
+                { opacity: exporting ? 0.5 : pressed ? 0.7 : 1 },
               ]}
               onPress={activeTab === "leaderboard" ? handleShareLeaderboard : handleShareResultsLog}
-              disabled={sharePending}
+              disabled={exporting}
             >
               <Feather name="share" size={18} color="#0B6E4F" />
             </Pressable>

@@ -5,6 +5,7 @@ import { getOrderOfMeritTotals, getOrderOfMeritLog } from "@/lib/db_supabase/res
 import { getSociety } from "@/lib/db_supabase/societyRepo";
 import { getMembersBySocietyId } from "@/lib/db_supabase/memberRepo";
 import { imageUrlToBase64DataUri } from "./imageUtils";
+import { assertNoPrintAsync, validateInputs } from "./exportContract";
 
 type OomPdfRow = {
   position: number;
@@ -20,6 +21,19 @@ type OomPdfOptions = {
   logoUrl: string | null;
   seasonYear: number;
   rows: OomPdfRow[];
+};
+
+type OomLogEvent = {
+  eventId: string;
+  eventName: string;
+  eventDate: string | null;
+  format: string | null;
+  results: Array<{
+    memberName: string;
+    points: number;
+    dayValue: number | null;
+    position: number | null;
+  }>;
 };
 
 /**
@@ -119,9 +133,8 @@ export function buildOomPdfHtml(options: OomPdfOptions): string {
  * PDF contains only the document (no tabs, no app chrome).
  */
 export async function exportOomPdf(societyId: string): Promise<void> {
-  if (!societyId) {
-    throw new Error("Missing society ID.");
-  }
+  assertNoPrintAsync();
+  validateInputs({ societyId });
 
   const [society, totals, log, members] = await Promise.all([
     getSociety(societyId),
@@ -196,6 +209,165 @@ export async function exportOomPdf(societyId: string): Promise<void> {
   await Sharing.shareAsync(uri, {
     mimeType: "application/pdf",
     dialogTitle: "Order of Merit",
+  });
+}
+
+/**
+ * Build HTML for the OOM Results Log PDF export.
+ */
+export function buildOomResultsLogHtml(options: {
+  societyName: string;
+  logoUrl: string | null;
+  seasonYear: number;
+  events: OomLogEvent[];
+}): string {
+  const { societyName, logoUrl, seasonYear, events } = options;
+
+  const logoHtml = logoUrl
+    ? `<img class="logo" src="${escapeAttribute(logoUrl)}" />`
+    : "";
+
+  const eventBlocks = events
+    .map((event) => {
+      const rows = event.results
+        .map((row) => {
+          const posDisplay = row.position ?? "–";
+          const scoreDisplay = row.dayValue ?? "–";
+          return `
+            <tr>
+              <td class="num">${posDisplay}</td>
+              <td>${escapeHtml(row.memberName)}</td>
+              <td class="num">${scoreDisplay}</td>
+              <td class="num bold">${formatPoints(row.points)}</td>
+            </tr>
+          `;
+        })
+        .join("");
+
+      const dateLabel = event.eventDate
+        ? new Date(event.eventDate).toLocaleDateString("en-GB", {
+            day: "numeric",
+            month: "short",
+            year: "numeric",
+          })
+        : "Date TBC";
+
+      const formatLabel = event.format
+        ? event.format.charAt(0).toUpperCase() + event.format.slice(1).replace(/_/g, " ")
+        : "";
+
+      return `
+        <div class="event-block">
+          <div class="event-header">
+            <div class="event-title">${escapeHtml(event.eventName)}</div>
+            <div class="event-meta">${dateLabel}${formatLabel ? ` • ${escapeHtml(formatLabel)}` : ""}</div>
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th class="num">Pos</th>
+                <th>Player</th>
+                <th class="num">Score</th>
+                <th class="num">OOM</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${rows}
+            </tbody>
+          </table>
+        </div>
+      `;
+    })
+    .join("");
+
+  return `<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<style>
+  body { font-family: Arial, sans-serif; padding: 24px; color:#111; }
+  .wrap { max-width: 720px; margin: 0 auto; }
+  .logo { width: 56px; height: 56px; object-fit: contain; display:block; margin: 0 auto 8px; }
+  h1 { text-align:center; margin: 6px 0 2px; font-size: 20px; }
+  .sub { text-align:center; color:#444; margin: 0 0 16px; font-size: 12px; }
+  .event-block { margin-bottom: 18px; border:1px solid #e5e7eb; border-radius: 8px; overflow: hidden; }
+  .event-header { padding: 10px 12px; background:#f9fafb; border-bottom:1px solid #e5e7eb; }
+  .event-title { font-weight: 700; font-size: 13px; }
+  .event-meta { font-size: 11px; color:#6b7280; margin-top: 2px; }
+  table { width:100%; border-collapse: collapse; font-size: 12px; }
+  th { background:#0f6b4a; color:#fff; text-align:left; padding:8px; border:1px solid #0b4f37; }
+  th.num { text-align:center; width:64px; }
+  td { padding:8px; border:1px solid #e5e7eb; }
+  td.num { text-align:center; width:64px; }
+  .bold { font-weight:700; }
+  .footer { text-align:center; margin-top: 24px; padding-top: 12px; border-top:1px solid #e5e7eb; font-size: 11px; color:#9ca3af; font-style:italic; }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    ${logoHtml}
+    <h1>Order of Merit — Results Log</h1>
+    <div class="sub">${escapeHtml(societyName)} – ${seasonYear}</div>
+    ${eventBlocks || `<div style="text-align:center; color:#6b7280; padding: 24px;">No results yet.</div>`}
+    <div class="footer">Produced by The Golf Society Hub</div>
+  </div>
+</body>
+</html>`;
+}
+
+/**
+ * Export OOM results log as a clean PDF.
+ */
+export async function exportOomResultsLogPdf(societyId: string): Promise<void> {
+  assertNoPrintAsync();
+  validateInputs({ societyId });
+
+  const [society, log] = await Promise.all([
+    getSociety(societyId),
+    getOrderOfMeritLog(societyId),
+  ]);
+
+  const grouped: OomLogEvent[] = [];
+  let currentEventId: string | null = null;
+
+  for (const entry of log) {
+    if (entry.eventId !== currentEventId) {
+      grouped.push({
+        eventId: entry.eventId,
+        eventName: entry.eventName,
+        eventDate: entry.eventDate,
+        format: entry.format,
+        results: [],
+      });
+      currentEventId = entry.eventId;
+    }
+    grouped[grouped.length - 1].results.push({
+      memberName: entry.memberName,
+      points: entry.points,
+      dayValue: entry.dayValue,
+      position: entry.position,
+    });
+  }
+
+  const rawLogoUrl = (society as any)?.logo_url || (society as any)?.logoUrl || null;
+  const logoDataUri = rawLogoUrl ? await imageUrlToBase64DataUri(rawLogoUrl) : null;
+
+  const html = buildOomResultsLogHtml({
+    societyName: society?.name || "Golf Society",
+    logoUrl: logoDataUri,
+    seasonYear: new Date().getFullYear(),
+    events: grouped,
+  });
+
+  const { uri } = await Print.printToFileAsync({ html });
+  const canShare = await Sharing.isAvailableAsync();
+  if (!canShare) {
+    throw new Error("Sharing is not available on this device.");
+  }
+
+  await Sharing.shareAsync(uri, {
+    mimeType: "application/pdf",
+    dialogTitle: "Order of Merit Results Log",
   });
 }
 

@@ -39,6 +39,8 @@ import {
 import { parseHoleNumbers, formatHoleNumbers, calculateGroupSizes } from "@/lib/teeSheetGrouping";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
 import { formatError, type FormattedError } from "@/lib/ui/formatError";
+import { generateTeeSheetPdf, type TeeSheetData } from "@/lib/teeSheetPdf";
+import { wrapExportErrors } from "@/lib/pdf/exportContract";
 
 type EditablePlayer = {
   id: string;
@@ -325,7 +327,17 @@ export default function TeeSheetScreen() {
       const ntpHoles = parseHoleNumbers(ntpHolesInput === "-" ? "" : ntpHolesInput);
       const ldHoles = parseHoleNumbers(ldHolesInput === "-" ? "" : ldHolesInput);
 
-      const payload = {
+      const players: TeeSheetData["players"] = cleanedGroups.flatMap((group) =>
+        group.players.map((player) => ({
+          id: player.id,
+          name: player.name,
+          handicapIndex: player.handicapIndex ?? null,
+          gender: player.gender ?? null,
+          group: group.groupNumber,
+        }))
+      );
+
+      const exportData: TeeSheetData = {
         societyName: society?.name || "Golf Society",
         logoUrl,
         manCo,
@@ -345,26 +357,19 @@ export default function TeeSheetScreen() {
           ? { par: selectedEvent.ladiesPar, courseRating: selectedEvent.ladiesCourseRating, slopeRating: selectedEvent.ladiesSlopeRating }
           : null,
         handicapAllowance: selectedEvent.handicapAllowance ?? null,
-        groups: cleanedGroups.map((group) => ({
-          groupNumber: group.groupNumber,
-          players: group.players.map((p) => ({
-            name: p.name,
-            handicapIndex: p.handicapIndex ?? null,
-            playingHandicap: p.playingHandicap ?? null,
-          })),
-        })),
+        format: selectedEvent.format ?? null,
+        players,
+        preGrouped: true,
       };
-
-      router.push({
-        pathname: "/(app)/tee-sheet-print",
-        params: { payload: encodeURIComponent(JSON.stringify(payload)) },
-      });
+      console.log("[TeeSheet] Export tee sheet PDF");
+      await generateTeeSheetPdf(exportData);
+      setToast({ visible: true, message: "Tee sheet exported", type: "success" });
     } catch (err: any) {
       console.error("[TeeSheet] share tee sheet error:", err);
-      const formatted = formatError(err);
-      setNotice({ type: "error", message: formatted.message, detail: formatted.detail });
-      setGenerating(false);
+      const failure = wrapExportErrors(err, "tee sheet PDF");
+      setNotice({ type: "error", message: failure.message, detail: failure.detail });
     }
+    setGenerating(false);
   };
 
   if (bootstrapLoading || loading) {
