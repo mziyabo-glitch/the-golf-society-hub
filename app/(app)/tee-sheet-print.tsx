@@ -10,12 +10,14 @@ import { PrimaryButton, SecondaryButton } from "@/components/ui/Button";
 import { spacing } from "@/lib/ui/theme";
 import { generateTeeSheetPdf, type TeeSheetData } from "@/lib/teeSheetPdf";
 import { wrapExportErrors } from "@/lib/pdf/exportContract";
+import { useBootstrap } from "@/lib/useBootstrap";
 
 type ExportStatus = "loading" | "error" | "success";
 
 export default function TeeSheetPrintScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ payload?: string }>();
+  const { societyId } = useBootstrap();
   const [status, setStatus] = useState<ExportStatus>("loading");
   const [error, setError] = useState<{ message: string; detail?: string } | null>(null);
   const [retryKey, setRetryKey] = useState(0);
@@ -27,13 +29,14 @@ export default function TeeSheetPrintScreen() {
       const parsed = JSON.parse(decodeURIComponent(raw)) as Partial<TeeSheetData>;
       return {
         ...parsed,
+        societyId: parsed.societyId ?? societyId ?? undefined,
         manCo: parsed.manCo ?? { captain: null, secretary: null, treasurer: null, handicapper: null },
       } as TeeSheetData;
     } catch (err) {
       console.warn("[tee-sheet-print] Failed to parse payload", err);
       return null;
     }
-  }, [params.payload]);
+  }, [params.payload, societyId]);
 
   useEffect(() => {
     if (!payload) {

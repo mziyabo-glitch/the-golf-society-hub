@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { StyleSheet, View, Alert, Pressable, Image, Platform } from "react-native";
 import { useRouter } from "expo-router";
 import { Feather } from "@expo/vector-icons";
@@ -9,10 +9,18 @@ import { AppText } from "@/components/ui/AppText";
 import { AppCard } from "@/components/ui/AppCard";
 import { DestructiveButton, SecondaryButton, PrimaryButton } from "@/components/ui/Button";
 import { LoadingState } from "@/components/ui/LoadingState";
+import { InlineNotice } from "@/components/ui/InlineNotice";
 import { useBootstrap } from "@/lib/useBootstrap";
 import { clearActiveSociety } from "@/lib/db_supabase/profileRepo";
 import { regenerateJoinCode, uploadSocietyLogo, removeSocietyLogo } from "@/lib/db_supabase/societyRepo";
-import { isCaptain, isSecretary, getPermissionsForMember } from "@/lib/rbac";
+import { isCaptain, getPermissionsForMember } from "@/lib/rbac";
+import {
+  getSocietyLogoUrl,
+  getSocietyLogoDataUri,
+  getSocietyLogoDiagnostics,
+  logSocietyLogoDiagnostics,
+  type LogoDiagnostics,
+} from "@/lib/societyLogo";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
 
 export default function SettingsScreen() {
@@ -24,10 +32,18 @@ export default function SettingsScreen() {
   const [regenerating, setRegenerating] = useState(false);
   const [uploadingLogo, setUploadingLogo] = useState(false);
   const [removingLogo, setRemovingLogo] = useState(false);
+  const [logoDiagnostics, setLogoDiagnostics] = useState<LogoDiagnostics | null>(null);
+  const [logoDiagnosticsLoading, setLogoDiagnosticsLoading] = useState(false);
+  const [logoDiagnosticsError, setLogoDiagnosticsError] = useState<string | null>(null);
 
   const permissions = getPermissionsForMember(member as any);
   const canRegenCode = isCaptain(member as any);
   const canManageLogo = permissions.canManageSocietyLogo;
+
+  useEffect(() => {
+    if (!society?.id) return;
+    setLogoDiagnostics(getSocietyLogoDiagnostics(society.id));
+  }, [society?.id]);
 
   const handleLeaveSociety = () => {
     Alert.alert(
@@ -129,6 +145,8 @@ export default function SettingsScreen() {
       }
 
       Alert.alert("Success", "Society logo updated successfully.");
+      setLogoDiagnostics(null);
+      setLogoDiagnosticsError(null);
       refresh();
 
     } catch (e: any) {
@@ -159,6 +177,8 @@ export default function SettingsScreen() {
                 return;
               }
               Alert.alert("Success", "Logo removed.");
+              setLogoDiagnostics(null);
+              setLogoDiagnosticsError(null);
               refresh();
             } catch (e: any) {
               Alert.alert("Error", e?.message || "Failed to remove logo.");
@@ -169,6 +189,23 @@ export default function SettingsScreen() {
         },
       ]
     );
+  };
+
+  const handleRunLogoDiagnostics = async () => {
+    if (!society?.id) return;
+    setLogoDiagnosticsLoading(true);
+    setLogoDiagnosticsError(null);
+    try {
+      const logoUrl = getSocietyLogoUrl(society);
+      await getSocietyLogoDataUri(society.id, { logoUrl, forceRefresh: true });
+      const diagnostics = getSocietyLogoDiagnostics(society.id);
+      setLogoDiagnostics(diagnostics);
+      logSocietyLogoDiagnostics(society.id);
+    } catch (e: any) {
+      setLogoDiagnosticsError(e?.message || "Failed to run logo diagnostics.");
+    } finally {
+      setLogoDiagnosticsLoading(false);
+    }
   };
 
   const getRoleBadges = () => {
@@ -194,8 +231,8 @@ export default function SettingsScreen() {
     );
   }
 
-  // Get logo URL from society (handle both snake_case and camelCase)
-  const logoUrl = (society as any)?.logo_url || (society as any)?.logoUrl || null;
+  // Get logo URL from society (single source of truth)
+  const logoUrl = getSocietyLogoUrl(society);
 
   return (
     <Screen>
@@ -311,6 +348,63 @@ export default function SettingsScreen() {
               <AppText variant="small" color="tertiary" style={{ marginTop: spacing.sm }}>
                 Recommended: Square image, max 2MB (JPEG, PNG, GIF, WebP)
               </AppText>
+
+              <View style={styles.logoDiagnostics}>
+                <View style={styles.logoDiagnosticsHeader}>
+                  <AppText variant="caption" color="secondary">Logo diagnostics</AppText>
+                  <SecondaryButton
+                    size="sm"
+                    onPress={handleRunLogoDiagnostics}
+                    loading={logoDiagnosticsLoading}
+                    disabled={logoDiagnosticsLoading}
+                  >
+                    Run check
+                  </SecondaryButton>
+                </View>
+
+                {logoDiagnosticsError ? (
+                  <InlineNotice
+                    variant="error"
+                    message={logoDiagnosticsError}
+                    style={{ marginTop: spacing.xs }}
+                  />
+                ) : null}
+
+                {logoDiagnostics ? (
+                  <View style={styles.logoDiagnosticsBody}>
+                    <AppText variant="small" color="secondary">
+                      Status: {logoDiagnostics.status} ({logoDiagnostics.source})
+                    </AppText>
+                    <AppText variant="small" color="secondary">
+                      Logo URL: {truncateText(logoDiagnostics.logoUrl || "None", 48)}
+                    </AppText>
+                    {logoDiagnostics.dataUriBytes ? (
+                      <AppText variant="small" color="secondary">
+                        Data URI: {formatBytes(logoDiagnostics.dataUriBytes)}
+                      </AppText>
+                    ) : null}
+                    {logoDiagnostics.bucket ? (
+                      <AppText variant="small" color="secondary">
+                        Bucket: {logoDiagnostics.bucket}
+                      </AppText>
+                    ) : null}
+                    {logoDiagnostics.path ? (
+                      <AppText variant="small" color="secondary">
+                        Path: {truncateText(logoDiagnostics.path, 48)}
+                      </AppText>
+                    ) : null}
+                    {logoDiagnostics.error ? (
+                      <AppText variant="small" style={{ color: colors.error }}>
+                        Error: {logoDiagnostics.error}
+                      </AppText>
+                    ) : null}
+                  </View>
+                ) : (
+                  <AppText variant="small" color="tertiary" style={{ marginTop: spacing.xs }}>
+                    No diagnostics yet.
+                  </AppText>
+                )}
+              </View>
             </View>
           </AppCard>
         </>
@@ -446,6 +540,19 @@ export default function SettingsScreen() {
   );
 }
 
+function truncateText(value: string, maxLength: number): string {
+  if (value.length <= maxLength) return value;
+  return `${value.slice(0, maxLength - 3)}...`;
+}
+
+function formatBytes(bytes: number): string {
+  if (!bytes || bytes <= 0) return "0 B";
+  const kb = bytes / 1024;
+  if (kb < 1024) return `${kb.toFixed(1)} KB`;
+  const mb = kb / 1024;
+  return `${mb.toFixed(1)} MB`;
+}
+
 const styles = StyleSheet.create({
   centered: {
     flex: 1,
@@ -521,6 +628,19 @@ const styles = StyleSheet.create({
   logoActions: {
     flexDirection: "row",
     gap: spacing.sm,
+  },
+  logoDiagnostics: {
+    marginTop: spacing.base,
+    width: "100%",
+  },
+  logoDiagnosticsHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  logoDiagnosticsBody: {
+    marginTop: spacing.xs,
+    gap: 2,
   },
   linkRow: {
     flexDirection: "row",

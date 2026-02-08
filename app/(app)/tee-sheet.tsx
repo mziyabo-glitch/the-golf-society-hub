@@ -10,7 +10,7 @@
  */
 
 import { useCallback, useEffect, useState } from "react";
-import { StyleSheet, View, Pressable, ScrollView, Platform } from "react-native";
+import { StyleSheet, View, Pressable, ScrollView } from "react-native";
 import { useRouter } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
 import { Feather } from "@expo/vector-icons";
@@ -41,6 +41,7 @@ import { getColors, spacing, radius } from "@/lib/ui/theme";
 import { formatError, type FormattedError } from "@/lib/ui/formatError";
 import { generateTeeSheetPdf, type TeeSheetData } from "@/lib/teeSheetPdf";
 import { wrapExportErrors } from "@/lib/pdf/exportContract";
+import { getSocietyLogoUrl } from "@/lib/societyLogo";
 
 type EditablePlayer = {
   id: string;
@@ -87,7 +88,7 @@ export default function TeeSheetScreen() {
   const canGenerateTeeSheet = permissions.canGenerateTeeSheet;
 
   // Get logo URL from society
-  const logoUrl = (society as any)?.logo_url || (society as any)?.logoUrl || null;
+  const logoUrl = getSocietyLogoUrl(society);
 
   // Load events and members
   const loadData = useCallback(async () => {
@@ -338,6 +339,7 @@ export default function TeeSheetScreen() {
       );
 
       const exportData: TeeSheetData = {
+        societyId,
         societyName: society?.name || "Golf Society",
         logoUrl,
         manCo,

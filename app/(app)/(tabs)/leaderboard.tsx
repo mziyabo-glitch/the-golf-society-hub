@@ -31,6 +31,7 @@ import {
 import { getColors } from "@/lib/ui/theme";
 import { exportOomPdf, exportOomResultsLogPdf } from "@/lib/pdf/oomPdf";
 import { wrapExportErrors } from "@/lib/pdf/exportContract";
+import { getSocietyLogoUrl } from "@/lib/societyLogo";
 
 
 // ============================================================================
@@ -119,7 +120,7 @@ export default function LeaderboardScreen() {
   const [expandedEvents, setExpandedEvents] = useState<Set<string>>(new Set());
 
   // Get logo URL
-  const logoUrl = (society as any)?.logo_url || (society as any)?.logoUrl || null;
+  const logoUrl = getSocietyLogoUrl(society);
 
   const loadData = useCallback(async () => {
     if (!societyId) {
