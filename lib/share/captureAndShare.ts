@@ -1,6 +1,8 @@
 /**
  * Capture a React Native view as PNG and open the native share sheet.
  *
+ * PNG is canonical for OOM/Tee Sheet exports. Do not replace with PDF.
+ *
  * - Native (iOS/Android): react-native-view-shot + expo-sharing
  * - Web: html2canvas → Web Share API (or fallback download)
  */

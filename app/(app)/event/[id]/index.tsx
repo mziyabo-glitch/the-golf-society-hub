@@ -1,4 +1,4 @@
-﻿import { useCallback, useState } from "react";
+import { useCallback, useState } from "react";
 import { StyleSheet, View, Pressable, Alert, ScrollView } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
@@ -25,6 +25,7 @@ import {
 } from "@/lib/db_supabase/eventRepo";
 import { getPermissionsForMember } from "@/lib/rbac";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
+import { getSocietyLogoUrl } from "@/lib/societyLogo";
 
 // Picker option component
 function PickerOption({
@@ -142,7 +143,7 @@ export default function EventDetailScreen() {
   const colors = getColors();
 
   // Get logo URL from society
-  const logoUrl = (society as any)?.logo_url || (society as any)?.logoUrl || null;
+  const logoUrl = getSocietyLogoUrl(society);
 
   // Permissions
   const permissions = getPermissionsForMember(currentMember as any);

@@ -15,6 +15,7 @@ import { getMembersBySocietyId, type MemberDoc } from "@/lib/db_supabase/memberR
 import { getEventsBySocietyId, type EventDoc } from "@/lib/db_supabase/eventRepo";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
 import { formatError, type FormattedError } from "@/lib/ui/formatError";
+import { getSocietyLogoUrl } from "@/lib/societyLogo";
 
 export default function HomeScreen() {
   const router = useRouter();
@@ -81,7 +82,7 @@ export default function HomeScreen() {
     .slice(0, 2);
 
   // Get logo URL from society
-  const logoUrl = (society as any)?.logo_url || (society as any)?.logoUrl || null;
+  const logoUrl = getSocietyLogoUrl(society);
 
   return (
     <Screen>

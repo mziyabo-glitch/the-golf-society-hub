@@ -100,7 +100,7 @@ export const getPermissionsForMember = (
   return {
     // Society-level
     canResetSociety: captain || treasurer,
-    canManageSocietyLogo: captain || secretary,
+    canManageSocietyLogo: captain,
 
     // Members
     canCreateMembers: captain || treasurer,
