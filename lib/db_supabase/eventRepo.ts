@@ -116,11 +116,12 @@ function mapEvent(row: any): EventDoc {
  * Get events for a society (one-time fetch)
  */
 export async function getEventsBySocietyId(societyId: string): Promise<EventDoc[]> {
+  console.log("[eventRepo] getEventsBySocietyId called with:", societyId);
   const { data, error } = await supabase
     .from("events")
-    .select("*")
+    .select("id,society_id,name,date,course_name,format,classification,is_oom,status,is_completed,winner_name,player_ids,created_at,created_by,tee_name,par,course_rating,slope_rating,handicap_allowance,ladies_tee_name,ladies_par,ladies_course_rating,ladies_slope_rating,nearest_pin_holes,longest_drive_holes,income_pence,costs_pence")
     .eq("society_id", societyId)
-    .order("date", { ascending: false });
+    .order("date", { ascending: true });
 
   if (error) {
     console.error("[eventRepo] getEventsBySocietyId failed:", {
@@ -132,6 +133,7 @@ export async function getEventsBySocietyId(societyId: string): Promise<EventDoc[
     throw new Error(error.message || "Failed to load events");
   }
 
+  console.log("[eventRepo] getEventsBySocietyId returned", (data ?? []).length, "events for society:", societyId);
   return (data ?? []).map(mapEvent);
 }
 
