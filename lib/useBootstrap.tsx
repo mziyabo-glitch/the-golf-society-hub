@@ -262,6 +262,8 @@ function useBootstrapInternal(): BootstrapState {
               ...memberData,
               displayName: memberData.name,
               roles: memberData.role ? [memberData.role] : ["member"],
+              handicapIndex: memberData.handicap_index ?? null,
+              whsNumber: memberData.whs_number ?? null,
             });
           }
         }

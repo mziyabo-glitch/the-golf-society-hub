@@ -223,23 +223,16 @@ export default function HomeScreen() {
   const mySnapshot = useMemo(() => {
     if (!memberId) return null;
 
-    // Events played this year
-    const eventsThisYear = events.filter(
-      (e) => e.isCompleted && e.date && new Date(e.date).getFullYear() === currentYear
-    );
-
     // Find current user in OOM standings
     const myOomEntry = oomStandings.find((s) => s.memberId === memberId);
     const membersWithPoints = oomStandings.filter((s) => s.totalPoints > 0);
 
     return {
-      eventsPlayed: eventsThisYear.length,
       totalPoints: myOomEntry?.totalPoints ?? 0,
       rank: myOomEntry?.rank ?? 0,
       totalWithPoints: membersWithPoints.length,
-      eventsPlayedOom: myOomEntry?.eventsPlayed ?? 0,
     };
-  }, [memberId, events, oomStandings, currentYear]);
+  }, [memberId, oomStandings]);
 
   // OOM teaser: top 5 + current user pinned
   const oomTeaser = useMemo(() => {
@@ -346,13 +339,18 @@ export default function HomeScreen() {
           </View>
 
           {/* Handicap */}
-          <View style={[styles.badge, { backgroundColor: colors.backgroundTertiary }]}>
-            <AppText variant="small" color="secondary" style={{ fontWeight: "600" }}>
-              {member?.handicapIndex != null
-                ? `HI ${typeof member.handicapIndex === "number" ? member.handicapIndex.toFixed(1) : member.handicapIndex}`
-                : "Awaiting assignment"}
-            </AppText>
-          </View>
+          {(() => {
+            const raw = member?.handicapIndex ?? (member as any)?.handicap_index ?? null;
+            const hi = raw != null ? Number(raw) : null;
+            const show = hi != null && Number.isFinite(hi);
+            return show ? (
+              <View style={[styles.badge, { backgroundColor: colors.info + "15" }]}>
+                <AppText variant="small" style={{ fontWeight: "600", color: colors.info }}>
+                  HI {hi!.toFixed(1)}
+                </AppText>
+              </View>
+            ) : null;
+          })()}
         </View>
       </AppCard>
 
@@ -459,11 +457,6 @@ export default function HomeScreen() {
             </View>
 
             <View style={styles.snapshotGrid}>
-              <View style={styles.snapshotItem}>
-                <AppText variant="h1">{mySnapshot.eventsPlayed}</AppText>
-                <AppText variant="small" color="secondary">Events Played</AppText>
-              </View>
-              <View style={[styles.snapshotDivider, { backgroundColor: colors.borderLight }]} />
               <View style={styles.snapshotItem}>
                 <AppText variant="h1">
                   {mySnapshot.totalPoints > 0 ? formatPoints(mySnapshot.totalPoints) : "—"}
