@@ -1,5 +1,6 @@
 // lib/db_supabase/societyRepo.ts
 import { supabase } from "@/lib/supabase";
+import { SOCIETY_LOGO_BUCKET, clearSocietyLogoCache } from "@/lib/societyLogo";
 
 export type SocietyDoc = {
   id: string;
@@ -287,7 +288,7 @@ export async function regenerateJoinCode(societyId: string): Promise<string> {
 // LOGO MANAGEMENT
 // =====================================================
 
-const LOGO_BUCKET = "society-logos";
+const LOGO_BUCKET = SOCIETY_LOGO_BUCKET;
 const MAX_LOGO_SIZE_BYTES = 2 * 1024 * 1024; // 2MB
 const ALLOWED_LOGO_TYPES = ["image/jpeg", "image/png", "image/gif", "image/webp"];
 
@@ -311,6 +312,32 @@ function validateLogoFile(
   // Check file type if available
   if (file.type && !ALLOWED_LOGO_TYPES.includes(file.type)) {
     return "Logo must be a JPEG, PNG, GIF, or WebP image";
+  }
+
+  return null;
+}
+
+function mapLogoStorageError(error: any): string | null {
+  const message = (error?.message ?? "").toString().toLowerCase();
+  const status = error?.statusCode ?? error?.status;
+
+  if ((message.includes("bucket") && message.includes("not found")) || status === 404) {
+    return `Storage isn't configured - create bucket '${LOGO_BUCKET}' in Supabase.`;
+  }
+
+  if (
+    status === 400 ||
+    status === "400" ||
+    status === 401 ||
+    status === 403 ||
+    message.length === 0 ||
+    message.includes("permission") ||
+    message.includes("policy") ||
+    message.includes("not allowed") ||
+    message.includes("row-level security") ||
+    message.includes("violates")
+  ) {
+    return "You don't have permission to upload the logo. Captain only.";
   }
 
   return null;
@@ -402,34 +429,12 @@ export async function uploadSocietyLogo(
         fullError: JSON.stringify(error),
       });
 
-      const errMsg = error.message?.toLowerCase() || "";
-
-      // Check for bucket not found error
-      if (errMsg.includes("bucket") && errMsg.includes("not found")) {
-        return {
-          success: false,
-          error: `Storage bucket "${LOGO_BUCKET}" not found. Please create it in Supabase Dashboard > Storage.`,
-        };
+      const friendly = mapLogoStorageError(error);
+      if (friendly) {
+        return { success: false, error: friendly };
       }
 
-      // Check for 400/policy/permission errors (common when bucket has no INSERT policy)
-      if (
-        (error as any).statusCode === 400 ||
-        (error as any).statusCode === "400" ||
-        errMsg.includes("policy") ||
-        errMsg.includes("permission") ||
-        errMsg.includes("not allowed") ||
-        errMsg.includes("violates") ||
-        errMsg.includes("row-level security") ||
-        !error.message // Empty message often means policy block
-      ) {
-        return {
-          success: false,
-          error: `Upload blocked. Please add storage policies for bucket "${LOGO_BUCKET}" in Supabase Dashboard > Storage > Policies. Required: Allow authenticated users to INSERT.`,
-        };
-      }
-
-      return { success: false, error: error.message || "Failed to upload logo" };
+      return { success: false, error: error.message || "Failed to upload logo." };
     }
 
     // Get public URL
@@ -447,6 +452,7 @@ export async function uploadSocietyLogo(
 
     // Update society record with new logo URL
     await updateSocietyDoc(societyId, { logo_url: logoUrlWithCache });
+    clearSocietyLogoCache(societyId);
 
     console.log("[societyRepo] uploadSocietyLogo success:", logoUrlWithCache);
     return { success: true, logoUrl: logoUrlWithCache };
@@ -457,18 +463,12 @@ export async function uploadSocietyLogo(
       bucket: LOGO_BUCKET,
     });
 
-    // Check for bucket not found in catch block too
-    if (
-      e?.message?.toLowerCase().includes("bucket") &&
-      e?.message?.toLowerCase().includes("not found")
-    ) {
-      return {
-        success: false,
-        error: `Storage bucket "${LOGO_BUCKET}" not found. Please ask your administrator to create the bucket in Supabase Storage.`,
-      };
+    const friendly = mapLogoStorageError(e);
+    if (friendly) {
+      return { success: false, error: friendly };
     }
 
-    return { success: false, error: e?.message || "Failed to upload logo" };
+    return { success: false, error: e?.message || "Failed to upload logo." };
   }
 }
 
@@ -497,11 +497,16 @@ export async function removeSocietyLogo(societyId: string): Promise<LogoUploadRe
         message: error.message,
         bucket: LOGO_BUCKET,
       });
+      const friendly = mapLogoStorageError(error);
+      if (friendly) {
+        return { success: false, error: friendly };
+      }
       // Continue anyway - file might not exist, bucket might not exist yet
     }
 
     // Clear logo_url in database
     await updateSocietyDoc(societyId, { logo_url: null });
+    clearSocietyLogoCache(societyId);
 
     console.log("[societyRepo] removeSocietyLogo success");
     return { success: true };
@@ -511,7 +516,12 @@ export async function removeSocietyLogo(societyId: string): Promise<LogoUploadRe
       message: e?.message,
       bucket: LOGO_BUCKET,
     });
-    return { success: false, error: e?.message || "Failed to remove logo" };
+    const friendly = mapLogoStorageError(e);
+    if (friendly) {
+      return { success: false, error: friendly };
+    }
+
+    return { success: false, error: e?.message || "Failed to remove logo." };
   }
 }
 

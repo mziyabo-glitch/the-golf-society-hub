@@ -43,6 +43,7 @@ import { getPermissionsForMember } from "@/lib/rbac";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
 import { formatError } from "@/lib/ui/formatError";
 import { assertNoPrintAsync, wrapExportErrors } from "@/lib/pdf/exportContract";
+import { getSocietyLogoDataUri, getSocietyLogoUrl } from "@/lib/societyLogo";
 
 import { guard } from "@/lib/guards";
 import {
@@ -328,9 +329,14 @@ export default function TreasurerScreen() {
     exportAction.reset();
     const exported = await exportAction.run(async () => {
       assertNoPrintAsync();
+      const rawLogoUrl = getSocietyLogoUrl(society);
+      const logoDataUri = societyId
+        ? await getSocietyLogoDataUri(societyId, { logoUrl: rawLogoUrl })
+        : null;
+      const logoSrc = logoDataUri ?? rawLogoUrl;
       const html = generateLedgerPdfHtml({
         societyName: society.name || "Golf Society",
-        logoUrl: (society as any)?.logo_url || (society as any)?.logoUrl || null,
+        logoSrc,
         openingBalancePence: summary.openingBalancePence,
         entries: entriesWithBalance,
         totalIncomePence: summary.totalIncomePence,
@@ -837,7 +843,7 @@ function formatShortDate(dateStr: string): string {
 
 type LedgerPdfData = {
   societyName: string;
-  logoUrl: string | null;
+  logoSrc: string | null;
   openingBalancePence: number;
   entries: EntryWithBalance[];
   totalIncomePence: number;
@@ -848,7 +854,7 @@ type LedgerPdfData = {
 function generateLedgerPdfHtml(data: LedgerPdfData): string {
   const {
     societyName,
-    logoUrl,
+    logoSrc,
     openingBalancePence,
     entries,
     totalIncomePence,
@@ -862,8 +868,8 @@ function generateLedgerPdfHtml(data: LedgerPdfData): string {
     year: "numeric",
   });
 
-  const logoHtml = logoUrl
-    ? `<img src="${logoUrl}" style="height: 50px; width: auto; margin-right: 16px;" />`
+  const logoHtml = logoSrc
+    ? `<img src="${escapeAttribute(logoSrc)}" style="height: 50px; width: auto; margin-right: 16px;" />`
     : "";
 
   const entriesHtml = entries.length === 0
@@ -1012,6 +1018,19 @@ function generateLedgerPdfHtml(data: LedgerPdfData): string {
       </body>
     </html>
   `;
+}
+
+function escapeHtml(input: string): string {
+  return input
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function escapeAttribute(input: string): string {
+  return escapeHtml(input).replace(/"/g, "&quot;");
 }
 
 // ========== STYLES ==========

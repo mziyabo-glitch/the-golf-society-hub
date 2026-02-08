@@ -25,8 +25,8 @@ import {
   type GroupedPlayer,
   type PlayerGroup,
 } from "./teeSheetGrouping";
-import { imageUrlToBase64DataUri } from "./pdf/imageUtils";
 import { assertNoPrintAsync } from "./pdf/exportContract";
+import { getSocietyLogoDataUri, getSocietyLogoUrl } from "./societyLogo";
 
 export type TeeSheetPlayer = {
   id?: string;
@@ -39,6 +39,7 @@ export type TeeSheetPlayer = {
 
 export type TeeSheetData = {
   // Society branding
+  societyId?: string;
   societyName: string;
   logoUrl?: string | null;
   manCo: ManCoDetails;
@@ -109,7 +110,7 @@ function chunkArray<T>(items: T[], size: number): T[][] {
 /**
  * Generate HTML for the tee sheet PDF
  */
-function generateTeeSheetHTML(data: TeeSheetData, logoDataUri?: string | null): string {
+function generateTeeSheetHTML(data: TeeSheetData, logoSrc?: string | null): string {
   const {
     societyName,
     eventName,
@@ -269,7 +270,11 @@ function generateTeeSheetHTML(data: TeeSheetData, logoDataUri?: string | null): 
         <div class="page">
           <div class="header-row">
             <div class="header-left">
-              ${logoDataUri ? `<img class="logo" src="${logoDataUri}" />` : `<div class="logo-placeholder">${societyName.slice(0, 2).toUpperCase()}</div>`}
+              ${
+                logoSrc
+                  ? `<img class="logo" src="${escapeAttribute(logoSrc)}" />`
+                  : `<div class="logo-placeholder">${societyName.slice(0, 2).toUpperCase()}</div>`
+              }
               <div>
                 <div class="society-name">${societyName}</div>
                 <div class="header-subtitle">Tee Sheet</div>
@@ -468,12 +473,13 @@ function generateTeeSheetHTML(data: TeeSheetData, logoDataUri?: string | null): 
 export async function generateTeeSheetPdf(data: TeeSheetData): Promise<boolean> {
   try {
     assertNoPrintAsync();
-    // Convert remote logo URL to base64 so expo-print can embed it
-    const logoDataUri = data.logoUrl
-      ? await imageUrlToBase64DataUri(data.logoUrl)
+    const rawLogoUrl = getSocietyLogoUrl({ logo_url: data.logoUrl, logoUrl: data.logoUrl });
+    const logoDataUri = data.societyId
+      ? await getSocietyLogoDataUri(data.societyId, { logoUrl: rawLogoUrl })
       : null;
+    const logoSrc = logoDataUri ?? rawLogoUrl;
 
-    const html = generateTeeSheetHTML(data, logoDataUri);
+    const html = generateTeeSheetHTML(data, logoSrc);
 
     const { uri } = await Print.printToFileAsync({
       html,
@@ -498,4 +504,17 @@ export async function generateTeeSheetPdf(data: TeeSheetData): Promise<boolean> 
     console.error("[teeSheetPdf] generateTeeSheetPdf error:", error);
     throw error;
   }
+}
+
+function escapeHtml(input: string): string {
+  return input
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function escapeAttribute(input: string): string {
+  return escapeHtml(input).replace(/"/g, "&quot;");
 }

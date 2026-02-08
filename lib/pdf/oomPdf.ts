@@ -4,8 +4,8 @@ import * as Sharing from "expo-sharing";
 import { getOrderOfMeritTotals, getOrderOfMeritLog } from "@/lib/db_supabase/resultsRepo";
 import { getSociety } from "@/lib/db_supabase/societyRepo";
 import { getMembersBySocietyId } from "@/lib/db_supabase/memberRepo";
-import { imageUrlToBase64DataUri } from "./imageUtils";
 import { assertNoPrintAsync, validateInputs } from "./exportContract";
+import { getSocietyLogoDataUri, getSocietyLogoUrl } from "@/lib/societyLogo";
 
 type OomPdfRow = {
   position: number;
@@ -190,12 +190,15 @@ export async function exportOomPdf(societyId: string): Promise<void> {
   });
 
   // Convert remote logo URL to base64 data URI so expo-print can embed it
-  const rawLogoUrl = (society as any)?.logo_url || (society as any)?.logoUrl || null;
-  const logoDataUri = rawLogoUrl ? await imageUrlToBase64DataUri(rawLogoUrl) : null;
+  const rawLogoUrl = getSocietyLogoUrl(society);
+  const logoDataUri = rawLogoUrl
+    ? await getSocietyLogoDataUri(societyId, { logoUrl: rawLogoUrl })
+    : null;
+  const logoSrc = logoDataUri ?? rawLogoUrl;
 
   const html = buildOomPdfHtml({
     societyName: society?.name || "Golf Society",
-    logoUrl: logoDataUri,
+    logoUrl: logoSrc,
     seasonYear: new Date().getFullYear(),
     rows,
   });
@@ -349,12 +352,15 @@ export async function exportOomResultsLogPdf(societyId: string): Promise<void> {
     });
   }
 
-  const rawLogoUrl = (society as any)?.logo_url || (society as any)?.logoUrl || null;
-  const logoDataUri = rawLogoUrl ? await imageUrlToBase64DataUri(rawLogoUrl) : null;
+  const rawLogoUrl = getSocietyLogoUrl(society);
+  const logoDataUri = rawLogoUrl
+    ? await getSocietyLogoDataUri(societyId, { logoUrl: rawLogoUrl })
+    : null;
+  const logoSrc = logoDataUri ?? rawLogoUrl;
 
   const html = buildOomResultsLogHtml({
     societyName: society?.name || "Golf Society",
-    logoUrl: logoDataUri,
+    logoUrl: logoSrc,
     seasonYear: new Date().getFullYear(),
     events: grouped,
   });
