@@ -6,7 +6,7 @@
  */
 
 import React, { forwardRef } from "react";
-import { View, Text, StyleSheet } from "react-native";
+import { View, Text, StyleSheet, Image } from "react-native";
 
 export type ResultRow = {
   memberName: string;
@@ -26,6 +26,7 @@ type OOMResultsLogShareCardProps = {
   societyName: string;
   event: EventLogData;
   isLatestOnly?: boolean;
+  logoUrl?: string | null;
 };
 
 /**
@@ -62,14 +63,28 @@ function formatLabel(format: string | null): string {
   return format.charAt(0).toUpperCase() + format.slice(1);
 }
 
+function getInitials(name: string): string {
+  if (!name) return "GS";
+  const words = name.trim().split(/\s+/);
+  if (words.length === 1) return name.substring(0, 2).toUpperCase();
+  return words.slice(0, 2).map((w) => w[0]).join("").toUpperCase();
+}
+
 const OOMResultsLogShareCard = forwardRef<View, OOMResultsLogShareCardProps>(
-  ({ societyName, event, isLatestOnly = true }, ref) => {
+  ({ societyName, event, isLatestOnly = true, logoUrl }, ref) => {
     const isStrokeplay = event.format?.includes("strokeplay") || event.format === "medal";
 
     return (
       <View ref={ref} style={styles.container} collapsable={false}>
         {/* Header */}
         <View style={styles.header}>
+          {logoUrl ? (
+            <Image source={{ uri: logoUrl }} style={styles.logo} resizeMode="contain" />
+          ) : (
+            <View style={styles.logoPlaceholder}>
+              <Text style={styles.logoInitials}>{getInitials(societyName)}</Text>
+            </View>
+          )}
           <Text style={styles.societyName}>{societyName}</Text>
           <Text style={styles.title}>Order of Merit</Text>
           <Text style={styles.subtitle}>
@@ -178,6 +193,26 @@ const styles = StyleSheet.create({
   header: {
     alignItems: "center",
     marginBottom: 20,
+  },
+  logo: {
+    width: 48,
+    height: 48,
+    borderRadius: 10,
+    marginBottom: 8,
+  },
+  logoPlaceholder: {
+    width: 48,
+    height: 48,
+    borderRadius: 10,
+    marginBottom: 8,
+    backgroundColor: "rgba(11, 110, 79, 0.1)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  logoInitials: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: BRAND_GREEN,
   },
   societyName: {
     fontSize: 14,

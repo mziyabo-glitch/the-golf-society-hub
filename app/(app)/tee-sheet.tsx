@@ -38,9 +38,9 @@ import {
 } from "@/lib/whs";
 import { parseHoleNumbers, formatHoleNumbers, calculateGroupSizes } from "@/lib/teeSheetGrouping";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
+import { assertPngExportOnly } from "@/lib/share/pngExportGuard";
 import { formatError, type FormattedError } from "@/lib/ui/formatError";
-import { generateTeeSheetPdf, type TeeSheetData } from "@/lib/teeSheetPdf";
-import { wrapExportErrors } from "@/lib/pdf/exportContract";
+import type { TeeSheetData } from "@/lib/teeSheetPdf";
 import { getSocietyLogoUrl } from "@/lib/societyLogo";
 
 type EditablePlayer = {
@@ -363,15 +363,19 @@ export default function TeeSheetScreen() {
         players,
         preGrouped: true,
       };
-      console.log("[TeeSheet] Export tee sheet PDF");
-      await generateTeeSheetPdf(exportData);
-      setToast({ visible: true, message: "Tee sheet exported", type: "success" });
+      assertPngExportOnly("Tee Sheet export");
+      console.log("[TeeSheet] Export tee sheet PNG");
+      const payload = encodeURIComponent(JSON.stringify(exportData));
+      router.push({
+        pathname: "/(share)/tee-sheet",
+        params: { payload },
+      });
     } catch (err: any) {
       console.error("[TeeSheet] share tee sheet error:", err);
-      const failure = wrapExportErrors(err, "tee sheet PDF");
-      setNotice({ type: "error", message: failure.message, detail: failure.detail });
+      const formatted = formatError(err);
+      setNotice({ type: "error", message: formatted.message, detail: formatted.detail });
+      setGenerating(false);
     }
-    setGenerating(false);
   };
 
   if (bootstrapLoading || loading) {

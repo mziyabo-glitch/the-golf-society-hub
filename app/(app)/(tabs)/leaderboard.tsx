@@ -29,8 +29,7 @@ import {
   type ResultsLogEntry,
 } from "@/lib/db_supabase/resultsRepo";
 import { getColors } from "@/lib/ui/theme";
-import { exportOomPdf, exportOomResultsLogPdf } from "@/lib/pdf/oomPdf";
-import { wrapExportErrors } from "@/lib/pdf/exportContract";
+import { assertPngExportOnly } from "@/lib/share/pngExportGuard";
 import { getSocietyLogoUrl } from "@/lib/societyLogo";
 
 
@@ -200,6 +199,7 @@ export default function LeaderboardScreen() {
   useFocusEffect(
     useCallback(() => {
       if (societyId) loadData();
+      setExporting(false);
     }, [societyId, loadData])
   );
 
@@ -248,18 +248,12 @@ export default function LeaderboardScreen() {
 
     if (exporting) return;
     setExporting(true);
-    try {
-      console.log("[leaderboard] Export OOM leaderboard");
-      await exportOomPdf(societyId);
-      setToast({ visible: true, message: "Exported leaderboard PDF", type: "success" });
-    } catch (err: any) {
-      console.error("[leaderboard] Export failed", err);
-      const failure = wrapExportErrors(err, "leaderboard PDF");
-      const message = failure.detail ? `${failure.message} ${failure.detail}` : failure.message;
-      setToast({ visible: true, message, type: "error" });
-    } finally {
-      setExporting(false);
-    }
+    assertPngExportOnly("OOM leaderboard");
+    console.log("[leaderboard] Export OOM leaderboard PNG");
+    router.push({
+      pathname: "/(share)/oom-share",
+      params: { societyId, view: "leaderboard" },
+    });
   };
 
   const handleShareResultsLog = async () => {
@@ -273,18 +267,12 @@ export default function LeaderboardScreen() {
     }
     if (exporting) return;
     setExporting(true);
-    try {
-      console.log("[leaderboard] Export OOM results log");
-      await exportOomResultsLogPdf(societyId);
-      setToast({ visible: true, message: "Exported results log PDF", type: "success" });
-    } catch (err: any) {
-      console.error("[leaderboard] Export failed", err);
-      const failure = wrapExportErrors(err, "results log PDF");
-      const message = failure.detail ? `${failure.message} ${failure.detail}` : failure.message;
-      setToast({ visible: true, message, type: "error" });
-    } finally {
-      setExporting(false);
-    }
+    assertPngExportOnly("OOM results log");
+    console.log("[leaderboard] Export OOM results log PNG");
+    router.push({
+      pathname: "/(share)/oom-share",
+      params: { societyId, view: "log" },
+    });
   };
 
   // ============================================================================
