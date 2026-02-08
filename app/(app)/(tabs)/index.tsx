@@ -223,23 +223,16 @@ export default function HomeScreen() {
   const mySnapshot = useMemo(() => {
     if (!memberId) return null;
 
-    // Events played this year
-    const eventsThisYear = events.filter(
-      (e) => e.isCompleted && e.date && new Date(e.date).getFullYear() === currentYear
-    );
-
     // Find current user in OOM standings
     const myOomEntry = oomStandings.find((s) => s.memberId === memberId);
     const membersWithPoints = oomStandings.filter((s) => s.totalPoints > 0);
 
     return {
-      eventsPlayed: eventsThisYear.length,
       totalPoints: myOomEntry?.totalPoints ?? 0,
       rank: myOomEntry?.rank ?? 0,
       totalWithPoints: membersWithPoints.length,
-      eventsPlayedOom: myOomEntry?.eventsPlayed ?? 0,
     };
-  }, [memberId, events, oomStandings, currentYear]);
+  }, [memberId, oomStandings]);
 
   // OOM teaser: top 5 + current user pinned
   const oomTeaser = useMemo(() => {
@@ -347,16 +340,16 @@ export default function HomeScreen() {
 
           {/* Handicap */}
           {(() => {
-            const hiRaw = (member as any)?.handicap_index ?? (member as any)?.handicap ?? null;
-            const hi = hiRaw != null ? Number(hiRaw) : null;
-            const hasHi = hi != null && Number.isFinite(hi);
-            return (
-              <View style={[styles.badge, { backgroundColor: hasHi ? colors.info + "15" : colors.backgroundTertiary }]}>
-                <AppText variant="small" style={{ fontWeight: "600", color: hasHi ? colors.info : colors.textSecondary }}>
-                  {hasHi ? `HI ${hi!.toFixed(1)}` : "Awaiting assignment"}
+            const raw = member?.handicapIndex ?? (member as any)?.handicap_index ?? null;
+            const hi = raw != null ? Number(raw) : null;
+            const show = hi != null && Number.isFinite(hi);
+            return show ? (
+              <View style={[styles.badge, { backgroundColor: colors.info + "15" }]}>
+                <AppText variant="small" style={{ fontWeight: "600", color: colors.info }}>
+                  HI {hi!.toFixed(1)}
                 </AppText>
               </View>
-            );
+            ) : null;
           })()}
         </View>
       </AppCard>
@@ -473,13 +466,6 @@ export default function HomeScreen() {
               <View style={[styles.snapshotDivider, { backgroundColor: colors.borderLight }]} />
               <View style={styles.snapshotItem}>
                 <AppText variant="h1">
-                  {mySnapshot.eventsPlayedOom > 0 ? mySnapshot.eventsPlayedOom : "—"}
-                </AppText>
-                <AppText variant="small" color="secondary">OOM Events</AppText>
-              </View>
-              <View style={[styles.snapshotDivider, { backgroundColor: colors.borderLight }]} />
-              <View style={styles.snapshotItem}>
-                <AppText variant="h1">
                   {mySnapshot.rank > 0 ? `${mySnapshot.rank}` : "—"}
                 </AppText>
                 <AppText variant="small" color="secondary">
@@ -488,7 +474,7 @@ export default function HomeScreen() {
               </View>
             </View>
 
-            {mySnapshot.totalPoints === 0 && mySnapshot.eventsPlayedOom === 0 && (
+            {mySnapshot.totalPoints === 0 && (
               <AppText
                 variant="small"
                 color="tertiary"
