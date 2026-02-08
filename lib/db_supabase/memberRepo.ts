@@ -236,7 +236,12 @@ export async function getMembersBySocietyId(
     "[memberRepo] getMembersBySocietyId returned",
     members.length,
     "members. Handicap values:",
-    members.map((m) => ({ name: m.name, handicapIndex: m.handicapIndex, raw: m.handicap_index }))
+    members.map((m) => ({
+      name: m.name,
+      handicapIndex: m.handicapIndex,
+      handicap_index: m.handicap_index,
+      raw_handicap: (m as any).handicap,
+    }))
   );
   return members;
 }

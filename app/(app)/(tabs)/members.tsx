@@ -575,22 +575,25 @@ export default function MembersScreen() {
                       )}
 
                       {/* Always show handicap status */}
-                      <View style={[styles.badge, {
-                        backgroundColor: (member.handicapIndex != null || member.handicap_index != null)
-                          ? colors.info + "20"
-                          : colors.backgroundTertiary,
-                        marginTop: 2,
-                      }]}>
-                        <AppText variant="small" style={{
-                          color: (member.handicapIndex != null || member.handicap_index != null)
-                            ? colors.info
-                            : colors.textTertiary,
-                        }}>
-                          {(member.handicapIndex != null || member.handicap_index != null)
-                            ? `HI: ${member.handicapIndex ?? member.handicap_index}`
-                            : "Awaiting assignment"}
-                        </AppText>
-                      </View>
+                      {(() => {
+                        const hiRaw = member.handicap_index ?? (member as any).handicap ?? null;
+                        const hi = hiRaw != null ? Number(hiRaw) : null;
+                        const hasHi = hi != null && Number.isFinite(hi);
+                        return (
+                          <View style={[styles.badge, {
+                            backgroundColor: hasHi
+                              ? colors.info + "20"
+                              : colors.backgroundTertiary,
+                            marginTop: 2,
+                          }]}>
+                            <AppText variant="small" style={{
+                              color: hasHi ? colors.info : colors.textTertiary,
+                            }}>
+                              {hasHi ? `HI ${hi!.toFixed(1)}` : "Awaiting assignment"}
+                            </AppText>
+                          </View>
+                        );
+                      })()}
 
                       {/* OOM Position + Points - only show if member has OOM points */}
                       {oomEntry && oomEntry.totalPoints > 0 && (
