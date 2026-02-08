@@ -346,13 +346,18 @@ export default function HomeScreen() {
           </View>
 
           {/* Handicap */}
-          <View style={[styles.badge, { backgroundColor: colors.backgroundTertiary }]}>
-            <AppText variant="small" color="secondary" style={{ fontWeight: "600" }}>
-              {member?.handicapIndex != null
-                ? `HI ${typeof member.handicapIndex === "number" ? member.handicapIndex.toFixed(1) : member.handicapIndex}`
-                : "Awaiting assignment"}
-            </AppText>
-          </View>
+          {(() => {
+            const hiRaw = (member as any)?.handicap_index ?? (member as any)?.handicap ?? null;
+            const hi = hiRaw != null ? Number(hiRaw) : null;
+            const hasHi = hi != null && Number.isFinite(hi);
+            return (
+              <View style={[styles.badge, { backgroundColor: hasHi ? colors.info + "15" : colors.backgroundTertiary }]}>
+                <AppText variant="small" style={{ fontWeight: "600", color: hasHi ? colors.info : colors.textSecondary }}>
+                  {hasHi ? `HI ${hi!.toFixed(1)}` : "Awaiting assignment"}
+                </AppText>
+              </View>
+            );
+          })()}
         </View>
       </AppCard>
 
@@ -460,15 +465,17 @@ export default function HomeScreen() {
 
             <View style={styles.snapshotGrid}>
               <View style={styles.snapshotItem}>
-                <AppText variant="h1">{mySnapshot.eventsPlayed}</AppText>
-                <AppText variant="small" color="secondary">Events Played</AppText>
-              </View>
-              <View style={[styles.snapshotDivider, { backgroundColor: colors.borderLight }]} />
-              <View style={styles.snapshotItem}>
                 <AppText variant="h1">
                   {mySnapshot.totalPoints > 0 ? formatPoints(mySnapshot.totalPoints) : "—"}
                 </AppText>
                 <AppText variant="small" color="secondary">Order of Merit Pts</AppText>
+              </View>
+              <View style={[styles.snapshotDivider, { backgroundColor: colors.borderLight }]} />
+              <View style={styles.snapshotItem}>
+                <AppText variant="h1">
+                  {mySnapshot.eventsPlayedOom > 0 ? mySnapshot.eventsPlayedOom : "—"}
+                </AppText>
+                <AppText variant="small" color="secondary">OOM Events</AppText>
               </View>
               <View style={[styles.snapshotDivider, { backgroundColor: colors.borderLight }]} />
               <View style={styles.snapshotItem}>
@@ -481,7 +488,7 @@ export default function HomeScreen() {
               </View>
             </View>
 
-            {mySnapshot.totalPoints === 0 && (
+            {mySnapshot.totalPoints === 0 && mySnapshot.eventsPlayedOom === 0 && (
               <AppText
                 variant="small"
                 color="tertiary"
