@@ -35,6 +35,7 @@ import {
 import { getColors, spacing, radius } from "@/lib/ui/theme";
 import { formatError, type FormattedError } from "@/lib/ui/formatError";
 import { getSocietyLogoUrl } from "@/lib/societyLogo";
+import { getMySinbooks, type SinbookWithParticipants } from "@/lib/db_supabase/sinbookRepo";
 
 // ============================================================================
 // Helpers
@@ -128,6 +129,7 @@ export default function HomeScreen() {
   const [recentResultsMap, setRecentResultsMap] = useState<Record<string, EventResultDoc[]>>({});
   const [dataLoading, setDataLoading] = useState(true);
   const [loadError, setLoadError] = useState<FormattedError | null>(null);
+  const [activeSinbook, setActiveSinbook] = useState<SinbookWithParticipants | null>(null);
 
   // ============================================================================
   // Data Loading
@@ -170,6 +172,17 @@ export default function HomeScreen() {
         resultsMap[eventId] = results;
       }
       setRecentResultsMap(resultsMap);
+
+      // Load first active sinbook for teaser card (non-blocking)
+      try {
+        const sbs = await getMySinbooks();
+        const active = sbs.find((s) =>
+          s.participants.some((p) => p.status === "accepted")
+        );
+        setActiveSinbook(active ?? null);
+      } catch {
+        // Non-critical — silently ignore
+      }
     } catch (err) {
       console.error("[Home] Failed to load data:", err);
       setLoadError(formatError(err));
@@ -631,6 +644,36 @@ export default function HomeScreen() {
           </View>
         </AppCard>
       )}
+
+      {/* ================================================================== */}
+      {/* F) SINBOOK TEASER CARD                                             */}
+      {/* ================================================================== */}
+      <Pressable onPress={() => router.push("/(app)/(tabs)/sinbook")}>
+        <AppCard>
+          <View style={styles.cardTitleRow}>
+            <Feather name="zap" size={16} color={colors.primary} />
+            <AppText variant="captionBold" color="primary">Sinbook</AppText>
+          </View>
+          {activeSinbook ? (
+            <View style={{ marginTop: spacing.xs }}>
+              <AppText variant="bodyBold" numberOfLines={1}>{activeSinbook.title}</AppText>
+              <AppText variant="caption" color="secondary">
+                vs {activeSinbook.participants.find((p) => p.user_id !== memberId && p.status === "accepted")?.display_name || "rival"}
+              </AppText>
+            </View>
+          ) : (
+            <AppText variant="body" color="secondary" style={{ marginTop: spacing.xs }}>
+              Start a rivalry with a mate. Track side bets all season.
+            </AppText>
+          )}
+          <View style={styles.chevronHint}>
+            <AppText variant="small" color="tertiary">
+              {activeSinbook ? "View rivalry" : "Get started"}
+            </AppText>
+            <Feather name="chevron-right" size={16} color={colors.textTertiary} />
+          </View>
+        </AppCard>
+      </Pressable>
 
       {/* Bottom spacing */}
       <View style={{ height: spacing["2xl"] }} />
