@@ -162,7 +162,7 @@ export default function RivalryDetailScreen() {
   };
 
   const handleShare = async () => {
-    const link = `golfsocietypro://sinbook/invite/${sinbookId}`;
+    const link = `https://the-golf-society-2bke2g5yp-brian-dubes-projects.vercel.app/sinbook/invite/${sinbookId}`;
     try {
       await Share.share({
         message: `Join my rivalry "${sinbook?.title}" on The Golf Society Hub!\n\n${link}`,
