@@ -299,6 +299,12 @@ export default function HomeScreen() {
   // Render
   // ============================================================================
 
+  // Handicap for header badge — computed once, no IIFE
+  const _hiRaw = (member as any)?.handicap_index ?? member?.handicapIndex ?? null;
+  const _hiNum = _hiRaw != null ? Number(_hiRaw) : null;
+  const memberHiText = (_hiNum != null && Number.isFinite(_hiNum)) ? `HI ${_hiNum.toFixed(1)}` : null;
+  console.log("[Home] handicap render:", { handicap_index: (member as any)?.handicap_index, handicapIndex: member?.handicapIndex, memberHiText });
+
   return (
     <Screen>
       {loadError && (
@@ -339,18 +345,13 @@ export default function HomeScreen() {
           </View>
 
           {/* Handicap */}
-          {(() => {
-            const raw = member?.handicapIndex ?? (member as any)?.handicap_index ?? null;
-            const hi = raw != null ? Number(raw) : null;
-            const show = hi != null && Number.isFinite(hi);
-            return show ? (
-              <View style={[styles.badge, { backgroundColor: colors.info + "15" }]}>
-                <AppText variant="small" style={{ fontWeight: "600", color: colors.info }}>
-                  HI {hi!.toFixed(1)}
-                </AppText>
-              </View>
-            ) : null;
-          })()}
+          {memberHiText ? (
+            <View style={[styles.badge, { backgroundColor: colors.info + "15" }]}>
+              <AppText variant="small" style={{ fontWeight: "600", color: colors.info }}>
+                {memberHiText}
+              </AppText>
+            </View>
+          ) : null}
         </View>
       </AppCard>
 

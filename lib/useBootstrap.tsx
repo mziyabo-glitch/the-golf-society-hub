@@ -258,6 +258,7 @@ function useBootstrapInternal(): BootstrapState {
 
           if (!mounted.current) return;
           if (memberData) {
+            console.log("[useBootstrap] RAW member handicap_index:", memberData.handicap_index, "keys:", Object.keys(memberData));
             setMember({
               ...memberData,
               displayName: memberData.name,

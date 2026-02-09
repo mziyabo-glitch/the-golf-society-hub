@@ -232,17 +232,7 @@ export async function getMembersBySocietyId(
   }
 
   const members = (data ?? []).map(mapMember);
-  console.log(
-    "[memberRepo] getMembersBySocietyId returned",
-    members.length,
-    "members. Handicap values:",
-    members.map((m) => ({
-      name: m.name,
-      handicapIndex: m.handicapIndex,
-      handicap_index: m.handicap_index,
-      raw_handicap: (m as any).handicap,
-    }))
-  );
+  console.log("[memberRepo] getMembersBySocietyId:", members.length, "members, first handicapIndex:", members[0]?.handicapIndex);
   return members;
 }
 
