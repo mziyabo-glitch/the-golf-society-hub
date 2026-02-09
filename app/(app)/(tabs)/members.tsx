@@ -532,6 +532,9 @@ export default function MembersScreen() {
             const roleBadges = getRoleBadges(member);
             const isCurrentUser = member.id === currentMember?.id;
             const oomEntry = oomStandings.get(member.id);
+            const hiVal = member.handicapIndex ?? member.handicap_index ?? null;
+            const hiNum = hiVal != null ? Number(hiVal) : null;
+            const hiText = (hiNum != null && Number.isFinite(hiNum)) ? `HI ${hiNum.toFixed(1)}` : null;
 
             return (
               <Pressable
@@ -574,26 +577,10 @@ export default function MembersScreen() {
                         <AppText variant="caption" color="tertiary">{member.email}</AppText>
                       )}
 
-                      {/* Always show handicap status */}
-                      {(() => {
-                        const hiRaw = member.handicap_index ?? (member as any).handicap ?? null;
-                        const hi = hiRaw != null ? Number(hiRaw) : null;
-                        const hasHi = hi != null && Number.isFinite(hi);
-                        return (
-                          <View style={[styles.badge, {
-                            backgroundColor: hasHi
-                              ? colors.info + "20"
-                              : colors.backgroundTertiary,
-                            marginTop: 2,
-                          }]}>
-                            <AppText variant="small" style={{
-                              color: hasHi ? colors.info : colors.textTertiary,
-                            }}>
-                              {hasHi ? `HI ${hi!.toFixed(1)}` : "Awaiting assignment"}
-                            </AppText>
-                          </View>
-                        );
-                      })()}
+                      {/* Handicap index */}
+                      <AppText variant="caption" color={hiText ? "secondary" : "tertiary"} style={{ marginTop: 2 }}>
+                        {hiText || "Awaiting assignment"}
+                      </AppText>
 
                       {/* OOM Position + Points - only show if member has OOM points */}
                       {oomEntry && oomEntry.totalPoints > 0 && (
