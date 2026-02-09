@@ -402,6 +402,39 @@ export async function acceptInviteByLink(
   }
 }
 
+/**
+ * Get win counts per participant for a set of sinbooks.
+ * Returns Map<sinbook_id, Map<user_id, wins>>
+ */
+export async function getWinCountsForSinbooks(
+  sinbookIds: string[]
+): Promise<Map<string, Map<string, number>>> {
+  if (sinbookIds.length === 0) return new Map();
+
+  const { data, error } = await supabase
+    .from("sinbook_entries")
+    .select("sinbook_id, winner_id")
+    .in("sinbook_id", sinbookIds)
+    .not("winner_id", "is", null);
+
+  if (error) {
+    console.error("[sinbookRepo] getWinCountsForSinbooks failed:", error.message);
+    return new Map();
+  }
+
+  const result = new Map<string, Map<string, number>>();
+  for (const row of data ?? []) {
+    if (!row.winner_id) continue;
+    let sbMap = result.get(row.sinbook_id);
+    if (!sbMap) {
+      sbMap = new Map();
+      result.set(row.sinbook_id, sbMap);
+    }
+    sbMap.set(row.winner_id, (sbMap.get(row.winner_id) ?? 0) + 1);
+  }
+  return result;
+}
+
 // ============================================================================
 // Entries
 // ============================================================================
