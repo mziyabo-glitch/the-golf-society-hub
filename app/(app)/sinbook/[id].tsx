@@ -5,7 +5,7 @@
  */
 
 import { useCallback, useState } from "react";
-import { Alert, Pressable, Share, StyleSheet, View } from "react-native";
+import { Pressable, Share, StyleSheet, View } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
 import { Feather } from "@expo/vector-icons";
@@ -33,6 +33,7 @@ import {
 } from "@/lib/db_supabase/sinbookRepo";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
 import { formatError, type FormattedError } from "@/lib/ui/formatError";
+import { confirmDestructive, showAlert } from "@/lib/ui/alert";
 
 export default function RivalryDetailScreen() {
   const router = useRouter();
@@ -91,7 +92,7 @@ export default function RivalryDetailScreen() {
 
   const handleAddEntry = async () => {
     if (!entryDesc.trim()) {
-      Alert.alert("Required", "Describe what happened.");
+      showAlert("Required", "Describe what happened.");
       return;
     }
     setSubmitting(true);
@@ -105,7 +106,7 @@ export default function RivalryDetailScreen() {
       setShowAddEntry(false);
       loadData();
     } catch (err: any) {
-      Alert.alert("Error", err?.message || "Failed to add entry.");
+      showAlert("Error", err?.message || "Failed to add entry.");
     } finally {
       setSubmitting(false);
     }
@@ -124,28 +125,21 @@ export default function RivalryDetailScreen() {
       setEntryWinner(null);
       loadData();
     } catch (err: any) {
-      Alert.alert("Error", err?.message || "Failed to update entry.");
+      showAlert("Error", err?.message || "Failed to update entry.");
     } finally {
       setSubmitting(false);
     }
   };
 
   const handleDeleteEntry = (entry: SinbookEntry) => {
-    Alert.alert("Delete Entry", "Remove this entry?", [
-      { text: "Cancel", style: "cancel" },
-      {
-        text: "Delete",
-        style: "destructive",
-        onPress: async () => {
-          try {
-            await deleteEntry(entry.id, sinbookId, sinbook?.title ?? "");
-            loadData();
-          } catch (err: any) {
-            Alert.alert("Error", err?.message || "Failed to delete.");
-          }
-        },
-      },
-    ]);
+    confirmDestructive("Delete Entry", "Remove this entry?", "Delete", async () => {
+      try {
+        await deleteEntry(entry.id, sinbookId, sinbook?.title ?? "");
+        loadData();
+      } catch (err: any) {
+        showAlert("Error", err?.message || "Failed to delete.");
+      }
+    });
   };
 
   const startEdit = (entry: SinbookEntry) => {
@@ -176,48 +170,34 @@ export default function RivalryDetailScreen() {
   const handleDeleteSinbook = () => {
     if (actionBusy) return;
     if (sinbook?.created_by !== userId) {
-      Alert.alert("Not Allowed", "Only the creator can delete this rivalry.");
+      showAlert("Not Allowed", "Only the creator can delete this rivalry.");
       return;
     }
-    Alert.alert("Delete Sinbook?", "This will permanently delete the rivalry, all entries, and participants.", [
-      { text: "Cancel", style: "cancel" },
-      {
-        text: "Delete",
-        style: "destructive",
-        onPress: async () => {
-          setActionBusy(true);
-          try {
-            await deleteSinbook(sinbookId);
-            router.replace("/(app)/(tabs)/sinbook");
-          } catch (err: any) {
-            setActionBusy(false);
-            Alert.alert("Error", err?.message || "Failed to delete rivalry.");
-          }
-        },
-      },
-    ]);
+    confirmDestructive("Delete Sinbook?", "This will permanently delete the rivalry, all entries, and participants.", "Delete", async () => {
+      setActionBusy(true);
+      try {
+        await deleteSinbook(sinbookId);
+        router.replace("/(app)/(tabs)/sinbook");
+      } catch (err: any) {
+        setActionBusy(false);
+        showAlert("Error", err?.message || "Failed to delete rivalry.");
+      }
+    });
   };
 
   const handleResetSinbook = () => {
     if (actionBusy) return;
-    Alert.alert("Reset all results?", "This will clear all entries and standings. Participants and settings are kept.", [
-      { text: "Cancel", style: "cancel" },
-      {
-        text: "Reset",
-        style: "destructive",
-        onPress: async () => {
-          setActionBusy(true);
-          try {
-            await resetSinbook(sinbookId);
-            await loadData();
-          } catch (err: any) {
-            Alert.alert("Error", err?.message || "Failed to reset rivalry.");
-          } finally {
-            setActionBusy(false);
-          }
-        },
-      },
-    ]);
+    confirmDestructive("Reset all results?", "This will clear all entries and standings. Participants and settings are kept.", "Reset", async () => {
+      setActionBusy(true);
+      try {
+        await resetSinbook(sinbookId);
+        await loadData();
+      } catch (err: any) {
+        showAlert("Error", err?.message || "Failed to reset rivalry.");
+      } finally {
+        setActionBusy(false);
+      }
+    });
   };
 
   const getName = (uid: string | null) => {

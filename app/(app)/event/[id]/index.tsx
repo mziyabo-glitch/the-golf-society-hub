@@ -1,5 +1,5 @@
 import { useCallback, useState } from "react";
-import { StyleSheet, View, Pressable, Alert, ScrollView } from "react-native";
+import { StyleSheet, View, Pressable, ScrollView } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
 import { Feather } from "@expo/vector-icons";
@@ -25,6 +25,7 @@ import {
 } from "@/lib/db_supabase/eventRepo";
 import { getPermissionsForMember } from "@/lib/rbac";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
+import { confirmDestructive, showAlert } from "@/lib/ui/alert";
 import { getSocietyLogoUrl } from "@/lib/societyLogo";
 
 // Picker option component
@@ -266,21 +267,21 @@ export default function EventDetailScreen() {
     if (par.trim()) {
       const parNum = parseInt(par.trim(), 10);
       if (isNaN(parNum) || parNum < 27 || parNum > 90) {
-        Alert.alert("Invalid Par", `${label} Par must be between 27 and 90.`);
+        showAlert("Invalid Par", `${label} Par must be between 27 and 90.`);
         return false;
       }
     }
     if (courseRating.trim()) {
       const crNum = parseFloat(courseRating.trim());
       if (isNaN(crNum) || crNum < 50 || crNum > 90) {
-        Alert.alert("Invalid Course Rating", `${label} Course Rating must be between 50 and 90.`);
+        showAlert("Invalid Course Rating", `${label} Course Rating must be between 50 and 90.`);
         return false;
       }
     }
     if (slopeRating.trim()) {
       const srNum = parseInt(slopeRating.trim(), 10);
       if (isNaN(srNum) || srNum < 55 || srNum > 155) {
-        Alert.alert("Invalid Slope Rating", `${label} Slope Rating must be between 55 and 155.`);
+        showAlert("Invalid Slope Rating", `${label} Slope Rating must be between 55 and 155.`);
         return false;
       }
     }
@@ -291,7 +292,7 @@ export default function EventDetailScreen() {
     if (!eventId) return;
 
     if (!formName.trim()) {
-      Alert.alert("Missing Name", "Please enter an event name.");
+      showAlert("Missing Name", "Please enter an event name.");
       return;
     }
 
@@ -299,7 +300,7 @@ export default function EventDetailScreen() {
     if (formDate.trim()) {
       const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
       if (!dateRegex.test(formDate.trim())) {
-        Alert.alert("Invalid Date", "Please enter date in YYYY-MM-DD format.");
+        showAlert("Invalid Date", "Please enter date in YYYY-MM-DD format.");
         return;
       }
     }
@@ -351,9 +352,9 @@ export default function EventDetailScreen() {
 
       setIsEditing(false);
       loadEvent(); // Reload to get updated data
-      Alert.alert("Saved", "Event updated successfully.");
+      showAlert("Saved", "Event updated successfully.");
     } catch (e: any) {
-      Alert.alert("Error", e?.message || "Failed to update event.");
+      showAlert("Error", e?.message || "Failed to update event.");
     } finally {
       setSaving(false);
     }
@@ -361,27 +362,21 @@ export default function EventDetailScreen() {
 
   const handleDeleteEvent = () => {
     if (saving) return;
-    Alert.alert(
+    confirmDestructive(
       "Delete Event",
       `Are you sure you want to delete "${event?.name}"? This cannot be undone.`,
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Delete",
-          style: "destructive",
-          onPress: async () => {
-            if (!eventId) return;
-            setSaving(true);
-            try {
-              await deleteEvent(eventId);
-              router.replace("/(app)/(tabs)/events");
-            } catch (e: any) {
-              setSaving(false);
-              Alert.alert("Error", e?.message || "Failed to delete event.");
-            }
-          },
-        },
-      ]
+      "Delete",
+      async () => {
+        if (!eventId) return;
+        setSaving(true);
+        try {
+          await deleteEvent(eventId);
+          router.replace("/(app)/(tabs)/events");
+        } catch (e: any) {
+          setSaving(false);
+          showAlert("Error", e?.message || "Failed to delete event.");
+        }
+      },
     );
   };
 

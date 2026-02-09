@@ -9,7 +9,7 @@
  */
 
 import { useCallback, useState } from "react";
-import { Alert, Pressable, StyleSheet, View } from "react-native";
+import { Pressable, StyleSheet, View } from "react-native";
 import { useRouter } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
 import { Feather } from "@expo/vector-icons";
@@ -36,6 +36,7 @@ import {
 } from "@/lib/db_supabase/sinbookRepo";
 import { canCreateSinbook } from "@/lib/sinbookEntitlement";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
+import { showAlert } from "@/lib/ui/alert";
 import { formatError, type FormattedError } from "@/lib/ui/formatError";
 
 // ============================================================================
@@ -136,14 +137,14 @@ export default function SinbookHomeScreen() {
 
   const handleCreate = async () => {
     if (!formTitle.trim()) {
-      Alert.alert("Missing Title", "Give your rivalry a name.");
+      showAlert("Missing Title", "Give your rivalry a name.");
       return;
     }
     setCreating(true);
     try {
       const gate = await canCreateSinbook();
       if (!gate.allowed) {
-        Alert.alert("Upgrade to Pro", gate.reason || "Limit reached.");
+        showAlert("Upgrade to Pro", gate.reason || "Limit reached.");
         return;
       }
       await createSinbook({
@@ -156,7 +157,7 @@ export default function SinbookHomeScreen() {
       setShowCreate(false);
       loadData();
     } catch (err: any) {
-      Alert.alert("Error", err?.message || "Failed to create rivalry.");
+      showAlert("Error", err?.message || "Failed to create rivalry.");
     } finally {
       setCreating(false);
     }
@@ -165,7 +166,7 @@ export default function SinbookHomeScreen() {
   const handleJoin = async () => {
     const code = joinCode.trim();
     if (!code) {
-      Alert.alert("Missing Code", "Paste the invite code you received.");
+      showAlert("Missing Code", "Paste the invite code you received.");
       return;
     }
     setJoining(true);
@@ -173,10 +174,10 @@ export default function SinbookHomeScreen() {
       await acceptInviteByLink(code, member?.displayName || member?.name || "Player");
       setJoinCode("");
       setShowJoin(false);
-      Alert.alert("Joined!", "You're now part of the rivalry.");
+      showAlert("Joined!", "You're now part of the rivalry.");
       loadData();
     } catch (err: any) {
-      Alert.alert("Error", err?.message || "Invalid code or failed to join.");
+      showAlert("Error", err?.message || "Invalid code or failed to join.");
     } finally {
       setJoining(false);
     }
@@ -187,7 +188,7 @@ export default function SinbookHomeScreen() {
       await acceptInvite(sinbookId);
       loadData();
     } catch (err: any) {
-      Alert.alert("Error", err?.message || "Failed to accept invite.");
+      showAlert("Error", err?.message || "Failed to accept invite.");
     }
   };
 
@@ -196,7 +197,7 @@ export default function SinbookHomeScreen() {
       await declineInvite(sinbookId);
       loadData();
     } catch (err: any) {
-      Alert.alert("Error", err?.message || "Failed to decline invite.");
+      showAlert("Error", err?.message || "Failed to decline invite.");
     }
   };
 
@@ -211,7 +212,7 @@ export default function SinbookHomeScreen() {
   const triggerCreate = async () => {
     const gate = await canCreateSinbook();
     if (!gate.allowed) {
-      Alert.alert("Upgrade to Pro", gate.reason || "Limit reached.");
+      showAlert("Upgrade to Pro", gate.reason || "Limit reached.");
       return;
     }
     setShowCreate(true);
