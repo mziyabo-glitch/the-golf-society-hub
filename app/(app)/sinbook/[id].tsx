@@ -26,6 +26,7 @@ import {
   updateEntry,
   deleteEntry,
   deleteSinbook,
+  resetSinbook,
   type SinbookWithParticipants,
   type SinbookEntry,
   type SinbookParticipant,
@@ -170,22 +171,49 @@ export default function RivalryDetailScreen() {
     } catch { /* cancelled */ }
   };
 
+  const [actionBusy, setActionBusy] = useState(false);
+
   const handleDeleteSinbook = () => {
+    if (actionBusy) return;
     if (sinbook?.created_by !== userId) {
       Alert.alert("Not Allowed", "Only the creator can delete this rivalry.");
       return;
     }
-    Alert.alert("Delete Rivalry", "This will permanently delete the rivalry and all entries.", [
+    Alert.alert("Delete Sinbook?", "This will permanently delete the rivalry, all entries, and participants.", [
       { text: "Cancel", style: "cancel" },
       {
         text: "Delete",
         style: "destructive",
         onPress: async () => {
+          setActionBusy(true);
           try {
             await deleteSinbook(sinbookId);
-            router.back();
+            router.replace("/(app)/(tabs)/sinbook");
           } catch (err: any) {
-            Alert.alert("Error", err?.message || "Failed to delete.");
+            setActionBusy(false);
+            Alert.alert("Error", err?.message || "Failed to delete rivalry.");
+          }
+        },
+      },
+    ]);
+  };
+
+  const handleResetSinbook = () => {
+    if (actionBusy) return;
+    Alert.alert("Reset all results?", "This will clear all entries and standings. Participants and settings are kept.", [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Reset",
+        style: "destructive",
+        onPress: async () => {
+          setActionBusy(true);
+          try {
+            await resetSinbook(sinbookId);
+            await loadData();
+          } catch (err: any) {
+            Alert.alert("Error", err?.message || "Failed to reset rivalry.");
+          } finally {
+            setActionBusy(false);
           }
         },
       },
@@ -313,9 +341,14 @@ export default function RivalryDetailScreen() {
             <Feather name="share-2" size={20} color={colors.primary} />
           </Pressable>
           {sinbook.created_by === userId && (
-            <Pressable onPress={handleDeleteSinbook} style={styles.iconBtn}>
-              <Feather name="trash-2" size={20} color={colors.error} />
-            </Pressable>
+            <>
+              <Pressable onPress={handleResetSinbook} style={styles.iconBtn} disabled={actionBusy}>
+                <Feather name="rotate-ccw" size={20} color={actionBusy ? colors.textTertiary : colors.text} />
+              </Pressable>
+              <Pressable onPress={handleDeleteSinbook} style={styles.iconBtn} disabled={actionBusy}>
+                <Feather name="trash-2" size={20} color={actionBusy ? colors.textTertiary : colors.error} />
+              </Pressable>
+            </>
           )}
         </View>
       </View>
