@@ -217,7 +217,7 @@ export async function getMembersBySocietyId(
 ): Promise<MemberDoc[]> {
   const { data, error } = await supabase
     .from("members")
-    .select("id,society_id,user_id,name,display_name,email,role,paid,amount_paid_pence,paid_at,created_at,whs_number,handicap_index,gender,annual_fee_paid,annual_fee_paid_at,annual_fee_note")
+    .select("*")
     .eq("society_id", societyId)
     .order("created_at", { ascending: false });
 
@@ -231,19 +231,8 @@ export async function getMembersBySocietyId(
     throw new Error(error.message || "Failed to load members");
   }
 
-  // Log RAW Supabase response for first member to debug handicap_index
-  if (data && data.length > 0) {
-    console.log("[memberRepo] RAW first row keys:", Object.keys(data[0]));
-    console.log("[memberRepo] RAW first row handicap_index:", data[0].handicap_index);
-  }
-
   const members = (data ?? []).map(mapMember);
-  console.log(
-    "[memberRepo] getMembersBySocietyId returned",
-    members.length,
-    "members. Handicap values:",
-    members.map((m) => ({ name: m.name, handicapIndex: m.handicapIndex }))
-  );
+  console.log("[memberRepo] getMembersBySocietyId:", members.length, "members, first handicapIndex:", members[0]?.handicapIndex);
   return members;
 }
 
