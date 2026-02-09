@@ -12,7 +12,7 @@ import { LoadingState } from "@/components/ui/LoadingState";
 import { InlineNotice } from "@/components/ui/InlineNotice";
 import { useBootstrap } from "@/lib/useBootstrap";
 import { clearActiveSociety } from "@/lib/db_supabase/profileRepo";
-import { regenerateJoinCode, uploadSocietyLogo, removeSocietyLogo } from "@/lib/db_supabase/societyRepo";
+import { regenerateJoinCode, uploadSocietyLogo, removeSocietyLogo, resetSocietyData } from "@/lib/db_supabase/societyRepo";
 import { isCaptain, getPermissionsForMember } from "@/lib/rbac";
 import {
   getSocietyLogoUrl,
@@ -29,6 +29,7 @@ export default function SettingsScreen() {
   const colors = getColors();
 
   const [leaving, setLeaving] = useState(false);
+  const [resetting, setResetting] = useState(false);
   const [regenerating, setRegenerating] = useState(false);
   const [uploadingLogo, setUploadingLogo] = useState(false);
   const [removingLogo, setRemovingLogo] = useState(false);
@@ -63,6 +64,33 @@ export default function SettingsScreen() {
             } catch (e: any) {
               Alert.alert("Error", e?.message || "Failed to leave society.");
               setLeaving(false);
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  const handleResetSociety = () => {
+    if (resetting || !society?.id) return;
+    Alert.alert(
+      "Reset Society?",
+      "This will permanently delete all members, events, results, and finance entries. The society itself and your account will remain. This cannot be undone.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Reset",
+          style: "destructive",
+          onPress: async () => {
+            setResetting(true);
+            try {
+              await resetSocietyData(society.id);
+              Alert.alert("Done", "Society data has been reset.");
+              refresh();
+            } catch (e: any) {
+              Alert.alert("Error", e?.message || "Failed to reset society.");
+            } finally {
+              setResetting(false);
             }
           },
         },
@@ -522,6 +550,16 @@ export default function SettingsScreen() {
       {/* Danger Zone */}
       <AppText variant="h2" style={styles.sectionTitle}>Danger Zone</AppText>
       <AppCard>
+        {canRegenCode && (
+          <>
+            <AppText variant="body" color="secondary" style={{ marginBottom: spacing.base }}>
+              Reset all society data (members, events, results, finances). The society itself is kept.
+            </AppText>
+            <DestructiveButton onPress={handleResetSociety} loading={resetting} style={{ marginBottom: spacing.base }}>
+              Reset Society
+            </DestructiveButton>
+          </>
+        )}
         <AppText variant="body" color="secondary" style={{ marginBottom: spacing.base }}>
           Leave this society to join a different one or create a new society. You can rejoin later with the join code.
         </AppText>

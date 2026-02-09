@@ -360,6 +360,7 @@ export default function EventDetailScreen() {
   };
 
   const handleDeleteEvent = () => {
+    if (saving) return;
     Alert.alert(
       "Delete Event",
       `Are you sure you want to delete "${event?.name}"? This cannot be undone.`,
@@ -370,10 +371,12 @@ export default function EventDetailScreen() {
           style: "destructive",
           onPress: async () => {
             if (!eventId) return;
+            setSaving(true);
             try {
               await deleteEvent(eventId);
-              router.back();
+              router.replace("/(app)/(tabs)/events");
             } catch (e: any) {
+              setSaving(false);
               Alert.alert("Error", e?.message || "Failed to delete event.");
             }
           },
@@ -578,6 +581,7 @@ export default function EventDetailScreen() {
 
             <SecondaryButton
               onPress={handleDeleteEvent}
+              loading={saving}
               style={{ marginTop: spacing.sm }}
             >
               <Feather name="trash-2" size={16} color={colors.error} />
