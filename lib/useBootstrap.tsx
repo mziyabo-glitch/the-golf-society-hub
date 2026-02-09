@@ -248,7 +248,7 @@ function useBootstrapInternal(): BootstrapState {
 
           const { data: memberData, error: memberError } = await supabase
             .from("members")
-            .select("*")
+            .select("id,society_id,user_id,name,display_name,email,role,paid,amount_paid_pence,paid_at,created_at,whs_number,handicap_index,gender,annual_fee_paid,annual_fee_paid_at,annual_fee_note")
             .eq("id", finalProfile.active_member_id)
             .maybeSingle();
 
@@ -258,6 +258,7 @@ function useBootstrapInternal(): BootstrapState {
 
           if (!mounted.current) return;
           if (memberData) {
+            console.log("[useBootstrap] RAW member handicap_index:", memberData.handicap_index, "keys:", Object.keys(memberData));
             setMember({
               ...memberData,
               displayName: memberData.name,

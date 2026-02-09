@@ -535,6 +535,7 @@ export default function MembersScreen() {
             const hiVal = member.handicapIndex ?? member.handicap_index ?? null;
             const hiNum = hiVal != null ? Number(hiVal) : null;
             const hiText = (hiNum != null && Number.isFinite(hiNum)) ? `HI ${hiNum.toFixed(1)}` : null;
+            console.log("[members:render]", member.name, "handicapIndex=", member.handicapIndex, "handicap_index=", member.handicap_index, "hiText=", hiText);
 
             return (
               <Pressable
