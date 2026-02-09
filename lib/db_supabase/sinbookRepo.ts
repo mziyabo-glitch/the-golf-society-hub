@@ -240,13 +240,48 @@ export async function updateSinbook(
 }
 
 /**
- * Delete a sinbook (creator only)
+ * Delete a sinbook and all related data (creator only).
+ * Explicitly removes children before deleting the parent row.
  */
 export async function deleteSinbook(sinbookId: string): Promise<void> {
+  // 1) Delete notifications (RLS: only current user's rows; CASCADE handles the rest)
+  const { error: nErr } = await supabase
+    .from("sinbook_notifications")
+    .delete()
+    .eq("sinbook_id", sinbookId);
+  if (nErr) console.error("[sinbookRepo] notification cleanup:", nErr.message);
+
+  // 2) Delete entries
+  const { error: eErr } = await supabase
+    .from("sinbook_entries")
+    .delete()
+    .eq("sinbook_id", sinbookId);
+  if (eErr) throw new Error(eErr.message);
+
+  // 3) Delete participants
+  const { error: pErr } = await supabase
+    .from("sinbook_participants")
+    .delete()
+    .eq("sinbook_id", sinbookId);
+  if (pErr) throw new Error(pErr.message);
+
+  // 4) Delete sinbook itself
   const { error } = await supabase
     .from("sinbooks")
     .delete()
     .eq("id", sinbookId);
+  if (error) throw new Error(error.message);
+}
+
+/**
+ * Reset a sinbook — clears all entries but keeps the sinbook,
+ * participants, stake, and settings intact.
+ */
+export async function resetSinbook(sinbookId: string): Promise<void> {
+  const { error } = await supabase
+    .from("sinbook_entries")
+    .delete()
+    .eq("sinbook_id", sinbookId);
 
   if (error) throw new Error(error.message);
 }
