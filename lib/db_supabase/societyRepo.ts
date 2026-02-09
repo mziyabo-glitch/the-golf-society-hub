@@ -284,6 +284,47 @@ export async function regenerateJoinCode(societyId: string): Promise<string> {
   return newCode;
 }
 
+/**
+ * Reset all society data — clears members, events, results, and finance entries.
+ * Keeps the society itself (name, join code, settings) intact.
+ */
+export async function resetSocietyData(societyId: string): Promise<void> {
+  // 1) Delete event_results (references events, so delete first)
+  const { error: rErr } = await supabase
+    .from("event_results")
+    .delete()
+    .eq("society_id", societyId);
+  if (rErr) throw new Error(rErr.message);
+
+  // 2) Delete finance entries
+  const { error: fErr } = await supabase
+    .from("finance_entries")
+    .delete()
+    .eq("society_id", societyId);
+  if (fErr) throw new Error(fErr.message);
+
+  // 3) Delete events
+  const { error: eErr } = await supabase
+    .from("events")
+    .delete()
+    .eq("society_id", societyId);
+  if (eErr) throw new Error(eErr.message);
+
+  // 4) Delete members
+  const { error: mErr } = await supabase
+    .from("members")
+    .delete()
+    .eq("society_id", societyId);
+  if (mErr) throw new Error(mErr.message);
+
+  // 5) Reset opening balance to 0
+  const { error: sErr } = await supabase
+    .from("societies")
+    .update({ opening_balance_pence: 0 })
+    .eq("id", societyId);
+  if (sErr) throw new Error(sErr.message);
+}
+
 // =====================================================
 // LOGO MANAGEMENT
 // =====================================================

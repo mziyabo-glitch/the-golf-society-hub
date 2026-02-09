@@ -334,6 +334,7 @@ export default function MembersScreen() {
   };
 
   const handleDeleteMember = (member: MemberDoc) => {
+    if (submitting) return;
     if (member.id === currentMember?.id) {
       Alert.alert("Cannot Delete", "You cannot delete your own account. Use 'Leave Society' in Settings instead.");
       return;
@@ -348,11 +349,15 @@ export default function MembersScreen() {
           text: "Delete",
           style: "destructive",
           onPress: async () => {
+            setSubmitting(true);
             try {
               await deleteMember(member.id);
-              loadMembers();
+              closeModal();
+              await loadMembers();
             } catch (e: any) {
               Alert.alert("Error", e?.message || "Failed to delete member.");
+            } finally {
+              setSubmitting(false);
             }
           },
         },
@@ -484,6 +489,7 @@ export default function MembersScreen() {
           {modalMode === "edit" && editingMember && permissions.canDeleteMembers && (
             <DestructiveButton
               onPress={() => handleDeleteMember(editingMember)}
+              loading={submitting}
               style={{ marginTop: spacing.sm }}
             >
               Delete Member
