@@ -162,10 +162,10 @@ export default function RivalryDetailScreen() {
   };
 
   const handleShare = async () => {
-    const link = `https://the-golf-society-2bke2g5yp-brian-dubes-projects.vercel.app/sinbook/invite/${sinbookId}`;
+    const code = sinbookId;
     try {
       await Share.share({
-        message: `Join my rivalry "${sinbook?.title}" on The Golf Society Hub!\n\n${link}`,
+        message: `Join my rivalry "${sinbook?.title}" on The Golf Society Hub!\n\nInvite code: ${code}`,
       });
     } catch { /* cancelled */ }
   };

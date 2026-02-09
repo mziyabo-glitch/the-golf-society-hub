@@ -24,6 +24,7 @@ import {
   createSinbook,
   acceptInvite,
   declineInvite,
+  acceptInviteByLink,
   getUnreadNotificationCount,
   type SinbookWithParticipants,
 } from "@/lib/db_supabase/sinbookRepo";
@@ -47,6 +48,11 @@ export default function SinbookHomeScreen() {
   const [formTitle, setFormTitle] = useState("");
   const [formStake, setFormStake] = useState("");
   const [creating, setCreating] = useState(false);
+
+  // Join form
+  const [showJoin, setShowJoin] = useState(false);
+  const [joinCode, setJoinCode] = useState("");
+  const [joining, setJoining] = useState(false);
 
   const loadData = useCallback(async () => {
     if (!userId) {
@@ -111,6 +117,28 @@ export default function SinbookHomeScreen() {
       Alert.alert("Error", err?.message || "Failed to create rivalry.");
     } finally {
       setCreating(false);
+    }
+  };
+
+  const handleJoin = async () => {
+    const code = joinCode.trim();
+    if (!code) {
+      Alert.alert("Missing Code", "Paste the invite code you received.");
+      return;
+    }
+
+    setJoining(true);
+    try {
+      const displayName = member?.displayName || member?.name || "Player";
+      await acceptInviteByLink(code, displayName);
+      setJoinCode("");
+      setShowJoin(false);
+      Alert.alert("Joined!", "You're now part of the rivalry.");
+      loadData();
+    } catch (err: any) {
+      Alert.alert("Error", err?.message || "Invalid code or failed to join.");
+    } finally {
+      setJoining(false);
     }
   };
 
@@ -197,6 +225,40 @@ export default function SinbookHomeScreen() {
     );
   }
 
+  if (showJoin) {
+    return (
+      <Screen>
+        <View style={styles.header}>
+          <SecondaryButton onPress={() => { setShowJoin(false); setJoinCode(""); }} size="sm">
+            Cancel
+          </SecondaryButton>
+          <AppText variant="h2">Join Rivalry</AppText>
+          <View style={{ width: 60 }} />
+        </View>
+
+        <AppCard>
+          <View style={styles.formField}>
+            <AppText variant="captionBold" style={styles.label}>Invite Code</AppText>
+            <AppInput
+              placeholder="Paste the code your rival sent you"
+              value={joinCode}
+              onChangeText={setJoinCode}
+              autoCapitalize="none"
+              autoCorrect={false}
+            />
+            <AppText variant="small" color="tertiary" style={{ marginTop: 4 }}>
+              Your rival can share the code from the rivalry screen.
+            </AppText>
+          </View>
+
+          <PrimaryButton onPress={handleJoin} loading={joining} style={{ marginTop: spacing.sm }}>
+            Join Rivalry
+          </PrimaryButton>
+        </AppCard>
+      </Screen>
+    );
+  }
+
   const rival = (sb: SinbookWithParticipants) => {
     const other = sb.participants.find((p) => p.user_id !== userId && p.status === "accepted");
     return other?.display_name || "Awaiting rival";
@@ -210,7 +272,7 @@ export default function SinbookHomeScreen() {
           <AppText variant="title">Sinbook</AppText>
           <AppText variant="caption" color="secondary">Rivalry tracker</AppText>
         </View>
-        <View style={{ flexDirection: "row", gap: spacing.sm }}>
+        <View style={{ flexDirection: "row", gap: spacing.xs, alignItems: "center" }}>
           <Pressable onPress={openNotifications} style={styles.iconBtn}>
             <Feather name="bell" size={20} color={colors.text} />
             {unreadCount > 0 && (
@@ -221,6 +283,9 @@ export default function SinbookHomeScreen() {
               </View>
             )}
           </Pressable>
+          <SecondaryButton onPress={() => setShowJoin(true)} size="sm">
+            Join
+          </SecondaryButton>
           <PrimaryButton onPress={() => setShowCreate(true)} size="sm">
             New
           </PrimaryButton>
