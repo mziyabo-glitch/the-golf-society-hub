@@ -171,8 +171,9 @@ export async function updateSocietyDoc(
 
 /**
  * Find a society by its join code.
- * Uses the lookup_society_by_join_code RPC (SECURITY DEFINER) so that
- * the caller doesn't need broad SELECT access to the societies table.
+ * Tries the lookup_society_by_join_code RPC first (SECURITY DEFINER,
+ * no broad SELECT needed). Falls back to a direct table query if the
+ * RPC doesn't exist yet (migration 029 not applied).
  *
  * Returns structured result to distinguish between:
  * - NOT_FOUND: no society with that code
@@ -197,22 +198,37 @@ export async function lookupSocietyByJoinCode(
     return { ok: false, reason: "NOT_FOUND", message: "Join code must be at least 4 characters" };
   }
 
-  const { data, error } = await supabase.rpc("lookup_society_by_join_code", {
-    p_code: normalized,
-  });
+  // --- Try RPC first (available after migration 029) ---
+  const { data: rpcData, error: rpcError } = await supabase.rpc(
+    "lookup_society_by_join_code",
+    { p_code: normalized },
+  );
 
-  if (error) {
+  if (rpcError) {
+    // If the RPC doesn't exist yet, fall back to direct query
+    const msg = rpcError.message ?? "";
+    const isRpcMissing =
+      rpcError.code === "PGRST202" ||
+      msg.includes("schema cache") ||
+      msg.includes("Could not find") ||
+      msg.includes("404");
+
+    if (isRpcMissing) {
+      console.warn("[join] RPC not found, falling back to direct query");
+      return lookupSocietyByJoinCodeDirect(normalized);
+    }
+
     console.error("[join] society lookup RPC error:", {
-      message: error.message,
-      details: error.details,
-      hint: error.hint,
-      code: error.code,
+      message: rpcError.message,
+      details: rpcError.details,
+      hint: rpcError.hint,
+      code: rpcError.code,
     });
 
     if (
-      error.code === "42501" ||
-      error.message?.includes("Not authenticated") ||
-      error.message?.includes("permission denied")
+      rpcError.code === "42501" ||
+      msg.includes("Not authenticated") ||
+      msg.includes("permission denied")
     ) {
       return {
         ok: false,
@@ -224,25 +240,77 @@ export async function lookupSocietyByJoinCode(
     return {
       ok: false,
       reason: "ERROR",
-      message: error.message || "Database error during lookup",
+      message: rpcError.message || "Database error during lookup",
     };
   }
 
   // RPC returns an array; take the first row
-  const row = Array.isArray(data) ? data[0] : data;
+  const row = Array.isArray(rpcData) ? rpcData[0] : rpcData;
 
   if (!row) {
     console.warn("[join] No society found for code:", normalized);
     return { ok: false, reason: "NOT_FOUND" };
   }
 
-  console.log("[join] Society found:", {
+  console.log("[join] Society found via RPC:", {
     id: row.id,
     name: row.name,
     join_code: row.join_code,
   });
 
   return { ok: true, society: row as SocietyDoc };
+}
+
+/**
+ * Fallback direct-query lookup used when the RPC hasn't been deployed yet.
+ * Relies on the societies_select_joinable RLS policy (pre-migration 029).
+ */
+async function lookupSocietyByJoinCodeDirect(
+  normalized: string
+): Promise<JoinCodeLookupResult> {
+  const { data, error } = await supabase
+    .from("societies")
+    .select("id, join_code, name, country, created_by")
+    .eq("join_code", normalized)
+    .limit(1)
+    .maybeSingle();
+
+  if (error) {
+    console.error("[join] direct lookup error:", {
+      message: error.message,
+      code: error.code,
+    });
+
+    if (
+      error.code === "42501" ||
+      error.message?.includes("row-level security") ||
+      error.message?.includes("permission denied")
+    ) {
+      return {
+        ok: false,
+        reason: "FORBIDDEN",
+        message: "Permission denied. RLS policy may be blocking society lookup.",
+      };
+    }
+
+    return {
+      ok: false,
+      reason: "ERROR",
+      message: error.message || "Database error during lookup",
+    };
+  }
+
+  if (!data) {
+    console.warn("[join] No society found (direct) for code:", normalized);
+    return { ok: false, reason: "NOT_FOUND" };
+  }
+
+  console.log("[join] Society found via direct query:", {
+    id: data.id,
+    name: data.name,
+  });
+
+  return { ok: true, society: data as SocietyDoc };
 }
 
 /**
