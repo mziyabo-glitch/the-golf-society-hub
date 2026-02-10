@@ -8,7 +8,7 @@
  */
 
 import { useCallback, useEffect, useState } from "react";
-import { Alert, Pressable, StyleSheet, View } from "react-native";
+import { Pressable, StyleSheet, View } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
 import { Feather } from "@expo/vector-icons";
@@ -17,7 +17,7 @@ import { Screen } from "@/components/ui/Screen";
 import { AppText } from "@/components/ui/AppText";
 import { AppCard } from "@/components/ui/AppCard";
 import { AppInput } from "@/components/ui/AppInput";
-import { PrimaryButton, SecondaryButton } from "@/components/ui/Button";
+import { PrimaryButton, SecondaryButton, DestructiveButton } from "@/components/ui/Button";
 import { LoadingState } from "@/components/ui/LoadingState";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { useBootstrap } from "@/lib/useBootstrap";
@@ -25,12 +25,14 @@ import {
   getMember,
   updateMember,
   updateMemberRole,
+  deleteMember,
   type MemberDoc,
   type Gender,
 } from "@/lib/db_supabase/memberRepo";
 import { getPermissionsForMember } from "@/lib/rbac";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
 import { guard } from "@/lib/guards";
+import { confirmDestructive, showAlert } from "@/lib/ui/alert";
 
 type RoleValue = "member" | "treasurer" | "secretary" | "handicapper" | "captain";
 
@@ -225,7 +227,7 @@ export default function MemberDetailScreen() {
 
     // Validate name
     if (!formName.trim()) {
-      Alert.alert("Missing Name", "Please enter the member's name.");
+      showAlert("Missing Name", "Please enter the member's name.");
       return;
     }
 
@@ -233,7 +235,7 @@ export default function MemberDetailScreen() {
     if (formHandicapIndex.trim()) {
       const hcap = parseFloat(formHandicapIndex.trim());
       if (isNaN(hcap) || hcap < -10 || hcap > 54) {
-        Alert.alert("Invalid Handicap", "Handicap index must be between -10 and 54.");
+        showAlert("Invalid Handicap", "Handicap index must be between -10 and 54.");
         return;
       }
     }
@@ -265,10 +267,10 @@ export default function MemberDetailScreen() {
       console.log("[MemberDetail] Save success");
       setMember(updated);
       setIsEditing(false);
-      Alert.alert("Saved", "Member updated successfully.");
+      showAlert("Saved", "Member updated successfully.");
     } catch (err: any) {
       console.error("[MemberDetail] Save error:", err);
-      Alert.alert("Error", err?.message || "Failed to save member.");
+      showAlert("Error", err?.message || "Failed to save member.");
     } finally {
       setSaving(false);
     }
@@ -296,11 +298,11 @@ export default function MemberDetailScreen() {
     if (!guard(canManageRoles, "Only the Captain can change roles.")) return;
     if (!member) return;
     if (roleLocked) {
-      Alert.alert("Not allowed", "Captain role cannot be changed here.");
+      showAlert("Not allowed", "Captain role cannot be changed here.");
       return;
     }
     if (!roleChanged) {
-      Alert.alert("No changes", "Select a different role to update.");
+      showAlert("No changes", "Select a different role to update.");
       return;
     }
 
@@ -309,13 +311,38 @@ export default function MemberDetailScreen() {
       const updated = await updateMemberRole(member.id, selectedRole);
       setMember(updated);
       setSelectedRole(normalizeRole(updated.role));
-      Alert.alert("Updated", "Role updated.");
+      showAlert("Updated", "Role updated.");
     } catch (err: any) {
       console.error("[members/[id]] update role error:", err);
-      Alert.alert("Error", err?.message || "Failed to update role.");
+      showAlert("Error", err?.message || "Failed to update role.");
     } finally {
       setRoleSaving(false);
     }
+  };
+
+  const handleDeleteMember = () => {
+    if (saving) return;
+    if (!member) return;
+    if (isOwnProfile) {
+      showAlert("Cannot Delete", "You cannot delete your own account. Use 'Leave Society' in Settings instead.");
+      return;
+    }
+
+    confirmDestructive(
+      "Delete Member",
+      `Are you sure you want to remove ${member.displayName || member.name || "this member"} from the society? This cannot be undone.`,
+      "Delete",
+      async () => {
+        setSaving(true);
+        try {
+          await deleteMember(member.id);
+          router.replace("/(app)/(tabs)/members");
+        } catch (e: any) {
+          setSaving(false);
+          showAlert("Error", e?.message || "Failed to delete member.");
+        }
+      },
+    );
   };
 
   if (bootstrapLoading || loading) {
@@ -635,6 +662,17 @@ export default function MemberDetailScreen() {
             </AppCard>
           )}
         </AppCard>
+      )}
+
+      {/* Delete Member - Captain/Secretary/Treasurer */}
+      {permissions.canDeleteMembers && !isOwnProfile && (
+        <DestructiveButton
+          onPress={handleDeleteMember}
+          loading={saving}
+          style={{ marginTop: spacing.base }}
+        >
+          Delete Member
+        </DestructiveButton>
       )}
 
       {canManageRoles && (
