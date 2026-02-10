@@ -20,6 +20,9 @@ export type SocietyDoc = {
   annual_fee?: number;
   annual_fee_pence?: number | null; // Annual membership fee in pence
   annualFeePence?: number | null; // camelCase alias
+  seats_total?: number;
+  seats_used?: number;
+  licence_expires_at?: string | null;
 };
 
 type SocietyInput = {
