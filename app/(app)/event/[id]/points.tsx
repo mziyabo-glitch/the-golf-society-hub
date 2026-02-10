@@ -124,7 +124,7 @@ export default function EventPointsScreen() {
     setError(null);
 
     try {
-      const [evt, members, existingResults] = await Promise.all([
+      const [evt, members] = await Promise.all([
         getEvent(eventId),
         getMembersBySocietyId(societyId),
         getEventResults(eventId),
