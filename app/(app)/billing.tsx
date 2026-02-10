@@ -48,7 +48,7 @@ const PRIVACY_URL = "https://thegolfsocietyhub.com/privacy";
 
 export default function BillingScreen() {
   const router = useRouter();
-  const { society, member, loading: bootstrapLoading, refresh } = useBootstrap();
+  const { society, member, loading: bootstrapLoading } = useBootstrap();
   const colors = getColors();
 
   // Seat data
@@ -143,9 +143,9 @@ export default function BillingScreen() {
         return;
       }
 
-      // 3. Refresh seat data
+      // 3. Optimistic local update, then confirm from DB
+      setSeatInfo((prev) => prev ? { ...prev, seats_total: prev.seats_total + quantity } : prev);
       await fetchSeatInfo();
-      refresh();
 
       showToast(`${quantity} licence${quantity > 1 ? "s" : ""} purchased successfully!`, "success");
       setQuantity(1);
