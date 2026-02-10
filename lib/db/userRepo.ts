@@ -19,6 +19,8 @@ export type UserDoc = {
   activeMemberId: string | null;
   createdAt?: unknown;
   updatedAt?: unknown;
+  /** Set by AsyncStorage→Firestore migration to prevent re-running */
+  migratedFromAsyncStorageV1?: boolean;
 };
 
 /**

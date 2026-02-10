@@ -138,10 +138,12 @@ export default function RolesScreen() {
       return;
     }
 
+    const societyId = user?.activeSocietyId;
+    if (!societyId) return;
     try {
       const updates = members.map((m) => {
         const roles = normalizeRolesArray(m.roles); // ✅ force lowercase canonical
-        return updateMemberDoc(m.id, { roles });
+        return updateMemberDoc(societyId, m.id, { roles });
       });
 
       await Promise.all(updates);

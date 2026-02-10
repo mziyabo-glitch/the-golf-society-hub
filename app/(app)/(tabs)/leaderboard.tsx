@@ -109,7 +109,7 @@ export default function LeaderboardScreen() {
   const [activeTab, setActiveTab] = useState<TabType>(initialTab);
   const [standings, setStandings] = useState<OrderOfMeritEntry[]>([]);
   const [resultsLog, setResultsLog] = useState<ResultsLogEntry[]>([]);
-  const [events, setEvents] = useState<EventDoc[]>([]);
+  const [_events, setEvents] = useState<EventDoc[]>([]);
   const [loading, setLoading] = useState(true);
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
@@ -149,19 +149,19 @@ export default function LeaderboardScreen() {
 
   // Group results by event
   const groupedResultsLog = useMemo(() => {
-    const groups: Array<{
+    const groups: {
       eventId: string;
       eventName: string;
       eventDate: string | null;
       format: string | null;
-      results: Array<{
+      results: {
         memberId: string;
         memberName: string;
         points: number;
         dayValue: number | null;
         position: number | null;
-      }>;
-    }> = [];
+      }[];
+    }[] = [];
 
     let currentEventId: string | null = null;
 

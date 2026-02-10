@@ -78,10 +78,12 @@ export default function HandicapsScreen() {
         };
       });
 
+      const societyId = user?.activeSocietyId;
+      if (!societyId) return;
       const updates = updatedMembers.map((member) => {
         const original = members.find((m) => m.id === member.id);
         if (!original || original.handicap === member.handicap) return null;
-        return updateMemberDoc(member.id, { handicap: member.handicap });
+        return updateMemberDoc(societyId, member.id, { handicap: member.handicap });
       });
       await Promise.all(updates.filter((u): u is Promise<void> => u !== null));
       setIsBulkEdit(false);
@@ -93,7 +95,7 @@ export default function HandicapsScreen() {
   };
 
   const filteredMembers = members.filter((member) =>
-    member.name.toLowerCase().includes(searchQuery.toLowerCase())
+    (member.name ?? "").toLowerCase().includes(searchQuery.toLowerCase())
   );
 
   if (!hasAccess) {

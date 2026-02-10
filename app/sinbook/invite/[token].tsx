@@ -56,6 +56,7 @@ export default function SinbookInviteScreen() {
 
     // Signed in → load sinbook preview
     loadPreview();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bootstrapLoading, isSignedIn, activeSocietyId, token]);
 
   const loadPreview = async () => {
@@ -69,7 +70,7 @@ export default function SinbookInviteScreen() {
       }
       setSinbook(sb);
       setStatus("preview");
-    } catch (err: any) {
+    } catch {
       // If RLS blocks (user not a participant yet), show generic accept
       setSinbook(null);
       setStatus("preview");
@@ -176,7 +177,7 @@ export default function SinbookInviteScreen() {
             </>
           ) : (
             <AppText variant="body" color="secondary">
-              You've been invited to join a rivalry on The Golf Society Hub.
+              You&apos;ve been invited to join a rivalry on The Golf Society Hub.
             </AppText>
           )}
 
