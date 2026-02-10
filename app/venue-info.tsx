@@ -278,7 +278,7 @@ export default function VenueInfoScreen() {
     setIsEditingTeeSet(true);
   };
 
-  const openGoogleMaps = (course: Course) => {
+  const openGoogleMaps = (course: CourseDoc) => {
     const query = encodeURIComponent(
       `${course.name}${course.address ? ` ${course.address}` : ""}${course.postcode ? ` ${course.postcode}` : ""}`
     );
@@ -288,7 +288,7 @@ export default function VenueInfoScreen() {
     });
   };
 
-  const openDirections = (course: Course) => {
+  const openDirections = (course: CourseDoc) => {
     if (course.mapsUrl) {
       Linking.openURL(course.mapsUrl).catch(() => {
         Alert.alert("Error", "Could not open directions");

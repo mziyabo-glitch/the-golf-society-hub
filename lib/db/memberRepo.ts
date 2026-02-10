@@ -1,5 +1,5 @@
 // lib/db/memberRepo.ts
-import { db } from "@/lib/firebase";
+import { getDb } from "@/lib/firebase";
 import {
   addDoc,
   collection,
@@ -48,7 +48,7 @@ function stripUndefined<T extends Record<string, any>>(obj: T) {
 }
 
 export function memberRef(memberId: string) {
-  return doc(db, "members", memberId);
+  return doc(getDb(), "members", memberId);
 }
 
 /**
@@ -94,7 +94,7 @@ export async function createMember(
     updatedAt: serverTimestamp(),
   });
 
-  const ref = await addDoc(collection(db, "members"), payload);
+  const ref = await addDoc(collection(getDb(), "members"), payload);
   return ref.id;
 }
 
@@ -133,7 +133,7 @@ export function subscribeMembersBySociety(
   onError?: (err: any) => void
 ): Unsubscribe {
   const q = query(
-    collection(db, "members"),
+    collection(getDb(), "members"),
     where("societyId", "==", societyId),
     orderBy("createdAt", "desc")
   );
@@ -159,7 +159,7 @@ export function subscribeMembersBySociety(
  */
 export async function getMembersBySocietyId(societyId: string): Promise<MemberDoc[]> {
   const q = query(
-    collection(db, "members"),
+    collection(getDb(), "members"),
     where("societyId", "==", societyId),
     orderBy("createdAt", "desc")
   );

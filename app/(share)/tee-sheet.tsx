@@ -49,7 +49,7 @@ export default function TeeSheetShareScreen() {
   const [logoSrc, setLogoSrc] = useState<string | null>(null);
   const [pages, setPages] = useState<GroupWithTime[][]>([]);
 
-  const pageRefs = useRef<Array<React.RefObject<View>>>([]);
+  const pageRefs = useRef<React.RefObject<View>[]>([]);
 
   const payload = useMemo(() => {
     const raw = Array.isArray(params.payload) ? params.payload[0] : params.payload;

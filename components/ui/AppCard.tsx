@@ -3,13 +3,13 @@
  * Consistent card styling with subtle shadows and rounded corners
  */
 
-import { StyleSheet, View, ViewStyle } from "react-native";
+import { StyleSheet, View, ViewStyle, StyleProp } from "react-native";
 import { ReactNode } from "react";
 import { getColors, radius, shadows, spacing } from "@/lib/ui/theme";
 
 type AppCardProps = {
   children: ReactNode;
-  style?: ViewStyle;
+  style?: StyleProp<ViewStyle>;
   elevated?: boolean;
   padding?: keyof typeof spacing;
 };

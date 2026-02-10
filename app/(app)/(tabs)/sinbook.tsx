@@ -30,6 +30,7 @@ import {
   acceptInvite,
   declineInvite,
   acceptInviteByLink,
+  joinByCode,
   getUnreadNotificationCount,
   getWinCountsForSinbooks,
   type SinbookWithParticipants,
@@ -166,18 +167,29 @@ export default function SinbookHomeScreen() {
   const handleJoin = async () => {
     const code = joinCode.trim();
     if (!code) {
-      showAlert("Missing Code", "Paste the invite code you received.");
+      showAlert("Missing Code", "Enter the 6-character join code your rival sent you.");
       return;
     }
     setJoining(true);
+    const displayName = member?.displayName || member?.name || "Player";
     try {
-      await acceptInviteByLink(code, member?.displayName || member?.name || "Player");
+      // Try short join code first (6-char alphanumeric)
+      const result = await joinByCode(code, displayName);
       setJoinCode("");
       setShowJoin(false);
-      showAlert("Joined!", "You're now part of the rivalry.");
+      showAlert("Joined!", `You're now part of "${result.title}".`);
       loadData();
-    } catch (err: any) {
-      showAlert("Error", err?.message || "Invalid code or failed to join.");
+    } catch {
+      // Fall back to legacy UUID-based join
+      try {
+        await acceptInviteByLink(code, displayName);
+        setJoinCode("");
+        setShowJoin(false);
+        showAlert("Joined!", "You're now part of the rivalry.");
+        loadData();
+      } catch (err: any) {
+        showAlert("Error", err?.message || "Invalid code or failed to join.");
+      }
     } finally {
       setJoining(false);
     }
@@ -301,16 +313,17 @@ export default function SinbookHomeScreen() {
         </View>
         <AppCard>
           <View style={styles.field}>
-            <AppText variant="captionBold" style={styles.label}>Invite Code</AppText>
+            <AppText variant="captionBold" style={styles.label}>Join Code</AppText>
             <AppInput
-              placeholder="Paste the code your rival sent you"
+              placeholder="e.g. ABC123"
               value={joinCode}
-              onChangeText={setJoinCode}
-              autoCapitalize="none"
+              onChangeText={(text) => setJoinCode(text.toUpperCase())}
+              autoCapitalize="characters"
               autoCorrect={false}
+              maxLength={36}
             />
             <AppText variant="small" color="tertiary" style={{ marginTop: 4 }}>
-              Your rival shares the code from inside their rivalry.
+              Enter the 6-character code your rival shared with you.
             </AppText>
           </View>
           <PrimaryButton onPress={handleJoin} loading={joining} style={{ marginTop: spacing.sm }}>

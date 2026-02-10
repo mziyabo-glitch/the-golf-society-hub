@@ -30,7 +30,7 @@ function getSupabaseClient(): SupabaseClient {
     return supabaseInstance;
   }
 
-  supabaseInstance = createClient(supabaseUrl, supabaseAnonKey, {
+  supabaseInstance = createClient(supabaseUrl!, supabaseAnonKey!, {
     auth: {
       // Use cross-platform storage adapter (localStorage on web, SecureStore on native)
       storage: supabaseStorage,

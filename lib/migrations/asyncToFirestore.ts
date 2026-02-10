@@ -1,6 +1,6 @@
 import { Platform } from "react-native";
 import { ensureSignedIn } from "@/lib/firebase";
-import { ensureUserDoc, getUserDoc, updateUserDoc } from "@/lib/firebase/firestore";
+import { ensureUserDoc, getUserDoc, updateUserDoc } from "@/lib/db/userRepo";
 
 // Legacy AsyncStorage keys from older versions
 const LEGACY_KEYS = {

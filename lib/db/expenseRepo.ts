@@ -1,5 +1,5 @@
 // lib/db/expenseRepo.ts
-import { db } from "@/lib/firebase";
+import { getDb } from "@/lib/firebase";
 import {
   addDoc,
   collection,
@@ -20,7 +20,7 @@ export type EventExpense = {
 };
 
 function expensesCol(societyId: string, eventId: string) {
-  return collection(db, "societies", societyId, "events", eventId, "expenses");
+  return collection(getDb(), "societies", societyId, "events", eventId, "expenses");
 }
 
 /**
@@ -74,6 +74,6 @@ export async function deleteEventExpense(
   if (!expenseId) throw new Error("Missing expenseId");
 
   await deleteDoc(
-    doc(db, "societies", societyId, "events", eventId, "expenses", expenseId)
+    doc(getDb(), "societies", societyId, "events", eventId, "expenses", expenseId)
   );
 }

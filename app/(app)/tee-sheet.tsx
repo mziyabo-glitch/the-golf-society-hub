@@ -154,6 +154,7 @@ export default function TeeSheetScreen() {
     };
 
     loadEventDetails();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedEventId, members]);
 
   // Initialize groups from event players
@@ -746,7 +747,7 @@ export default function TeeSheetScreen() {
                       </AppText>
                     )}
                     <AppText variant="small" color="tertiary" style={{ marginTop: spacing.xs }}>
-                      WHS handicaps (HI, CH, PH) calculated per player's gender
+                      WHS handicaps (HI, CH, PH) calculated per player&apos;s gender
                     </AppText>
                   </AppCard>
                 </>
@@ -757,7 +758,7 @@ export default function TeeSheetScreen() {
                 <View style={[styles.warningBox, { backgroundColor: colors.warning + "20" }]}>
                   <Feather name="alert-triangle" size={16} color={colors.warning} />
                   <AppText variant="small" style={{ flex: 1, marginLeft: spacing.xs, color: colors.warning }}>
-                    {womenCount} female player{womenCount !== 1 ? "s" : ""} but no Ladies' tee configured. They will use Men's tee settings.
+                    {womenCount} female player{womenCount !== 1 ? "s" : ""} but no Ladies&apos; tee configured. They will use Men&apos;s tee settings.
                   </AppText>
                 </View>
               )}

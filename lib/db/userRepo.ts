@@ -1,5 +1,5 @@
 // lib/db/userRepo.ts
-import { db } from "@/lib/firebase";
+import { getDb } from "@/lib/firebase";
 import {
   doc,
   getDoc,
@@ -19,6 +19,8 @@ export type UserDoc = {
   activeMemberId: string | null;
   createdAt?: unknown;
   updatedAt?: unknown;
+  /** Set by AsyncStorage→Firestore migration to prevent re-running */
+  migratedFromAsyncStorageV1?: boolean;
 };
 
 /**
@@ -26,7 +28,7 @@ export type UserDoc = {
  * Called during bootstrap
  */
 export async function ensureUserDoc(uid: string): Promise<void> {
-  const ref = doc(db, "users", uid);
+  const ref = doc(getDb(), "users", uid);
   const snap = await getDoc(ref);
 
   if (!snap.exists()) {
@@ -41,6 +43,16 @@ export async function ensureUserDoc(uid: string): Promise<void> {
 }
 
 /**
+ * One-shot fetch of a user document.
+ */
+export async function getUserDoc(uid: string): Promise<(UserDoc & Record<string, unknown>) | null> {
+  const ref = doc(getDb(), "users", uid);
+  const snap = await getDoc(ref);
+  if (!snap.exists()) return null;
+  return snap.data() as UserDoc & Record<string, unknown>;
+}
+
+/**
  * ✅ REQUIRED for app load:
  * Subscribe to users/{uid}
  */
@@ -49,7 +61,7 @@ export function subscribeUserDoc(
   onNext: (user: UserDoc | null) => void,
   onError?: (err: unknown) => void
 ): Unsubscribe {
-  const ref = doc(db, "users", uid);
+  const ref = doc(getDb(), "users", uid);
 
   return onSnapshot(
     ref,
@@ -77,7 +89,7 @@ export async function updateUserDoc(
   uid: string,
   updates: Partial<UserDoc>
 ): Promise<void> {
-  const ref = doc(db, "users", uid);
+  const ref = doc(getDb(), "users", uid);
 
   const payload: Record<string, unknown> = {
     ...updates,
