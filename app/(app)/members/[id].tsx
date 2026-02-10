@@ -33,6 +33,8 @@ import { getPermissionsForMember } from "@/lib/rbac";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
 import { guard } from "@/lib/guards";
 import { confirmDestructive, showAlert } from "@/lib/ui/alert";
+import { LicenceRequiredModal } from "@/components/LicenceRequiredModal";
+import { usePaidAccess } from "@/lib/access/usePaidAccess";
 
 type RoleValue = "member" | "treasurer" | "secretary" | "handicapper" | "captain";
 
@@ -133,6 +135,7 @@ export default function MemberDetailScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ id: string }>();
   const { member: currentMember, loading: bootstrapLoading } = useBootstrap();
+  const { guardPaidAction, modalVisible, setModalVisible, societyId: guardSocietyId } = usePaidAccess();
   const colors = getColors();
 
   const memberId = Array.isArray(params.id) ? params.id[0] : params.id;
@@ -223,6 +226,7 @@ export default function MemberDetailScreen() {
   );
 
   const handleSave = async () => {
+    if (!guardPaidAction()) return;
     if (!member) return;
 
     // Validate name
@@ -295,6 +299,7 @@ export default function MemberDetailScreen() {
   };
 
   const handleUpdateRole = async () => {
+    if (!guardPaidAction()) return;
     if (!guard(canManageRoles, "Only the Captain can change roles.")) return;
     if (!member) return;
     if (roleLocked) {
@@ -726,6 +731,7 @@ export default function MemberDetailScreen() {
           )}
         </AppCard>
       )}
+      <LicenceRequiredModal visible={modalVisible} onClose={() => setModalVisible(false)} societyId={guardSocietyId} />
     </Screen>
   );
 }

@@ -24,7 +24,9 @@ import { LoadingState } from "@/components/ui/LoadingState";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { InlineNotice } from "@/components/ui/InlineNotice";
 import { Toast } from "@/components/ui/Toast";
+import { LicenceRequiredModal } from "@/components/LicenceRequiredModal";
 import { useBootstrap } from "@/lib/useBootstrap";
+import { usePaidAccess } from "@/lib/access/usePaidAccess";
 import { getEventsBySocietyId, getEvent, updateEvent, publishTeeTime, type EventDoc } from "@/lib/db_supabase/eventRepo";
 import { getMembersBySocietyId, getManCoRoleHolders, type MemberDoc, type Gender, type ManCoDetails } from "@/lib/db_supabase/memberRepo";
 import { getPermissionsForMember } from "@/lib/rbac";
@@ -60,6 +62,7 @@ type PlayerGroup = {
 export default function TeeSheetScreen() {
   const router = useRouter();
   const { societyId, society, member, loading: bootstrapLoading } = useBootstrap();
+  const { guardPaidAction, modalVisible, setModalVisible, societyId: guardSocietyId } = usePaidAccess();
   const colors = getColors();
 
   const [events, setEvents] = useState<EventDoc[]>([]);
@@ -313,6 +316,7 @@ export default function TeeSheetScreen() {
 
   // Share/export tee sheet
   const handleGenerateTeeSheet = async () => {
+    if (!guardPaidAction()) return;
     if (!selectedEvent || !societyId) return;
 
     // Clean up empty groups first
@@ -779,6 +783,7 @@ export default function TeeSheetScreen() {
           )}
         </ScrollView>
       )}
+      <LicenceRequiredModal visible={modalVisible} onClose={() => setModalVisible(false)} societyId={guardSocietyId} />
     </Screen>
   );
 }

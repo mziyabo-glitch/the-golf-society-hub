@@ -25,8 +25,10 @@ import { LoadingState } from "@/components/ui/LoadingState";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { InlineNotice } from "@/components/ui/InlineNotice";
 import { Toast } from "@/components/ui/Toast";
+import { LicenceRequiredModal } from "@/components/LicenceRequiredModal";
 import { useBootstrap } from "@/lib/useBootstrap";
 import { useAsyncAction } from "@/lib/hooks/useAsyncAction";
+import { usePaidAccess } from "@/lib/access/usePaidAccess";
 import { getEvent, getFormatSortOrder, type EventDoc } from "@/lib/db_supabase/eventRepo";
 import { getMembersBySocietyId } from "@/lib/db_supabase/memberRepo";
 import {
@@ -86,6 +88,7 @@ export default function EventPointsScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ id: string }>();
   const { societyId, member: currentMember, loading: bootstrapLoading } = useBootstrap();
+  const { guardPaidAction, modalVisible, setModalVisible, societyId: guardSocietyId } = usePaidAccess();
   const colors = getColors();
 
   const eventId = useMemo(() => {
@@ -274,6 +277,8 @@ export default function EventPointsScreen() {
 
   // Save OOM points to database - wrapped in useCallback with all dependencies
   const handleSave = useCallback(async () => {
+    if (!guardPaidAction()) return;
+
     // Log what we're working with
     console.log("[points] Save pressed", {
       eventId,
@@ -366,7 +371,7 @@ export default function EventPointsScreen() {
       router.replace("/(app)/(tabs)/leaderboard?view=log");
     }, 500);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [eventId, societyId, event, playersWithDayPoints, saveAction, router]);
+  }, [eventId, societyId, event, playersWithDayPoints, saveAction, router, guardPaidAction]);
 
   // Loading state
   if (bootstrapLoading || loading) {
@@ -600,6 +605,7 @@ export default function EventPointsScreen() {
           ))}
         </View>
       </ScrollView>
+      <LicenceRequiredModal visible={modalVisible} onClose={() => setModalVisible(false)} societyId={guardSocietyId} />
     </Screen>
   );
 }

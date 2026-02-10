@@ -12,7 +12,9 @@ import { PrimaryButton, SecondaryButton } from "@/components/ui/Button";
 import { LoadingState } from "@/components/ui/LoadingState";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { SocietyBadge } from "@/components/ui/SocietyHeader";
+import { LicenceRequiredModal } from "@/components/LicenceRequiredModal";
 import { useBootstrap } from "@/lib/useBootstrap";
+import { usePaidAccess } from "@/lib/access/usePaidAccess";
 import {
   getEvent,
   updateEvent,
@@ -141,6 +143,7 @@ export default function EventDetailScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ id: string }>();
   const { societyId, society, member: currentMember, loading: bootstrapLoading } = useBootstrap();
+  const { guardPaidAction, modalVisible, setModalVisible, societyId: guardSocietyId } = usePaidAccess();
   const colors = getColors();
 
   // Get logo URL from society
@@ -289,6 +292,7 @@ export default function EventDetailScreen() {
   };
 
   const handleSaveEvent = async () => {
+    if (!guardPaidAction()) return;
     if (!eventId) return;
 
     if (!formName.trim()) {
@@ -708,6 +712,7 @@ export default function EventDetailScreen() {
           Created {new Date(event.created_at).toLocaleDateString("en-GB")}
         </AppText>
       )}
+      <LicenceRequiredModal visible={modalVisible} onClose={() => setModalVisible(false)} societyId={guardSocietyId} />
     </Screen>
   );
 }
