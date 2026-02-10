@@ -411,6 +411,28 @@ export default function SettingsScreen() {
         </>
       )}
 
+      {/* Billing & Licences - Captain only */}
+      {canRegenCode && (
+        <>
+          <AppText variant="h2" style={styles.sectionTitle}>Billing</AppText>
+          <AppCard padding="sm">
+            <Pressable
+              style={({ pressed }) => [styles.linkRow, { opacity: pressed ? 0.7 : 1 }]}
+              onPress={() => router.push("/(app)/billing")}
+            >
+              <View style={[styles.linkIcon, { backgroundColor: colors.primary + "14" }]}>
+                <Feather name="credit-card" size={16} color={colors.primary} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <AppText variant="body">Billing & Licences</AppText>
+                <AppText variant="small" color="secondary">Purchase member licences for your society</AppText>
+              </View>
+              <Feather name="chevron-right" size={18} color={colors.textTertiary} />
+            </Pressable>
+          </AppCard>
+        </>
+      )}
+
       {/* ManCo Tools - Only visible to ManCo members */}
       {permissions.canGenerateTeeSheet && (
         <>
