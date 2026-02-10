@@ -171,9 +171,12 @@ export async function updateSocietyDoc(
 
 /**
  * Find a society by its join code.
+ * Uses the lookup_society_by_join_code RPC (SECURITY DEFINER) so that
+ * the caller doesn't need broad SELECT access to the societies table.
+ *
  * Returns structured result to distinguish between:
  * - NOT_FOUND: no society with that code
- * - FORBIDDEN: RLS policy blocked the query
+ * - FORBIDDEN: RLS / auth error
  * - ERROR: other database error
  */
 export async function lookupSocietyByJoinCode(
@@ -194,42 +197,27 @@ export async function lookupSocietyByJoinCode(
     return { ok: false, reason: "NOT_FOUND", message: "Join code must be at least 4 characters" };
   }
 
-  // Check auth state before query (for debugging RLS issues)
-  const { data: authData } = await supabase.auth.getUser();
-  const authUid = authData?.user?.id;
-  console.log("[join] Auth state before lookup:", {
-    authenticated: !!authUid,
-    uid: authUid ? authUid.substring(0, 8) + "..." : "none",
+  const { data, error } = await supabase.rpc("lookup_society_by_join_code", {
+    p_code: normalized,
   });
 
-  // Query with explicit column selection for debugging
-  const { data, error } = await supabase
-    .from("societies")
-    .select("id, join_code, name, country, created_by")
-    .eq("join_code", normalized)
-    .limit(1)
-    .maybeSingle();
-
-  // Handle errors first
   if (error) {
-    console.error("[join] society lookup error:", {
+    console.error("[join] society lookup RPC error:", {
       message: error.message,
       details: error.details,
       hint: error.hint,
       code: error.code,
     });
 
-    // Check for RLS/permission errors
     if (
       error.code === "42501" ||
-      error.code === "PGRST301" ||
-      error.message?.includes("row-level security") ||
+      error.message?.includes("Not authenticated") ||
       error.message?.includes("permission denied")
     ) {
       return {
         ok: false,
         reason: "FORBIDDEN",
-        message: "Permission denied. RLS policy may be blocking society lookup.",
+        message: "Permission denied. Please sign in and try again.",
       };
     }
 
@@ -240,24 +228,21 @@ export async function lookupSocietyByJoinCode(
     };
   }
 
-  // Handle not found - could be RLS hiding rows OR genuinely not found
-  if (!data) {
-    console.warn("[join] RLS_OR_NOT_FOUND: No society returned for code:", {
-      joinCode: normalized,
-      authenticated: !!authUid,
-      hint: "If society exists but RLS returns 0 rows, check that societies_select policy allows authenticated users to see rows with join_code IS NOT NULL",
-    });
+  // RPC returns an array; take the first row
+  const row = Array.isArray(data) ? data[0] : data;
+
+  if (!row) {
+    console.warn("[join] No society found for code:", normalized);
     return { ok: false, reason: "NOT_FOUND" };
   }
 
-  // Success!
   console.log("[join] Society found:", {
-    id: data.id,
-    name: data.name,
-    join_code: data.join_code,
+    id: row.id,
+    name: row.name,
+    join_code: row.join_code,
   });
 
-  return { ok: true, society: data as SocietyDoc };
+  return { ok: true, society: row as SocietyDoc };
 }
 
 /**
