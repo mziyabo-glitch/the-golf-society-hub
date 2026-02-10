@@ -21,7 +21,7 @@ import * as WebBrowser from "expo-web-browser";
 import { Screen } from "@/components/ui/Screen";
 import { AppText } from "@/components/ui/AppText";
 import { AppCard } from "@/components/ui/AppCard";
-import { PrimaryButton, SecondaryButton } from "@/components/ui/Button";
+import { PrimaryButton } from "@/components/ui/Button";
 import { InlineNotice } from "@/components/ui/InlineNotice";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { Toast } from "@/components/ui/Toast";
@@ -135,7 +135,6 @@ export default function HomeScreen() {
   const [activeSinbook, setActiveSinbook] = useState<SinbookWithParticipants | null>(null);
 
   // Licence banner state
-  const [bannerDismissed, setBannerDismissed] = useState(false);
   const [requestSending, setRequestSending] = useState(false);
   const [requestAlreadySent, setRequestAlreadySent] = useState(false);
   const [licenceToast, setLicenceToast] = useState<{ visible: boolean; message: string; type: "success" | "error" | "info" }>({
@@ -144,7 +143,7 @@ export default function HomeScreen() {
 
   const memberHasSeat = (member as any)?.has_seat === true;
   const memberIsCaptain = isCaptain(member as any);
-  const showLicenceBanner = !!societyId && !!member && !memberHasSeat && !memberIsCaptain && !bannerDismissed;
+  const showLicenceBanner = !!societyId && !!member && !memberHasSeat && !memberIsCaptain;
 
   // Check for existing pending request on mount
   useEffect(() => {
@@ -190,7 +189,7 @@ export default function HomeScreen() {
   // ============================================================================
 
   const loadData = useCallback(async () => {
-    if (!societyId) {
+    if (!societyId || (!memberHasSeat && !memberIsCaptain)) {
       setDataLoading(false);
       return;
     }
@@ -243,7 +242,7 @@ export default function HomeScreen() {
     } finally {
       setDataLoading(false);
     }
-  }, [societyId]);
+  }, [societyId, memberHasSeat, memberIsCaptain]);
 
   useEffect(() => {
     loadData();
@@ -251,10 +250,10 @@ export default function HomeScreen() {
 
   useFocusEffect(
     useCallback(() => {
-      if (societyId) {
+      if (societyId && (memberHasSeat || memberIsCaptain)) {
         loadData();
       }
-    }, [societyId, loadData])
+    }, [societyId, memberHasSeat, memberIsCaptain, loadData])
   );
 
   // ============================================================================
@@ -458,9 +457,6 @@ export default function HomeScreen() {
                 </AppText>
               </View>
             )}
-            <SecondaryButton onPress={() => setBannerDismissed(true)} size="sm">
-              Not now
-            </SecondaryButton>
           </View>
         </AppCard>
       )}
@@ -472,6 +468,11 @@ export default function HomeScreen() {
         type={licenceToast.type}
         onHide={() => setLicenceToast((t) => ({ ...t, visible: false }))}
       />
+
+      {/* ================================================================== */}
+      {/* GATED CONTENT — only for licensed members / captains               */}
+      {/* ================================================================== */}
+      {(memberHasSeat || memberIsCaptain) && (<>
 
       {/* ================================================================== */}
       {/* NOTIFICATION: Tee times published                                  */}
@@ -811,6 +812,8 @@ export default function HomeScreen() {
           </View>
         </AppCard>
       </Pressable>
+
+      </>)}
 
       {/* Bottom spacing */}
       <View style={{ height: spacing["2xl"] }} />
