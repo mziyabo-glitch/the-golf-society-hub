@@ -160,7 +160,7 @@ export default function RivalryDetailScreen() {
     const code = sinbookId;
     try {
       await Share.share({
-        message: `Join my rivalry "${sinbook?.title}" on The Golf Society Hub!\n\nInvite code: ${code}`,
+        message: `Join my rivalry "${sinbook?.title}" on The Golf Society Hub!\n\nInvite code: ${code}\n\nDownload the app:\nAndroid: https://play.google.com/store/apps/details?id=com.thegolfsocietyhub.app\niOS: https://apps.apple.com/app/the-golf-society-hub/id6740041032`,
       });
     } catch { /* cancelled */ }
   };
