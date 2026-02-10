@@ -25,7 +25,7 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { InlineNotice } from "@/components/ui/InlineNotice";
 import { Toast } from "@/components/ui/Toast";
 import { useBootstrap } from "@/lib/useBootstrap";
-import { getEventsBySocietyId, getEvent, updateEvent, type EventDoc } from "@/lib/db_supabase/eventRepo";
+import { getEventsBySocietyId, getEvent, updateEvent, publishTeeTime, type EventDoc } from "@/lib/db_supabase/eventRepo";
 import { getMembersBySocietyId, getManCoRoleHolders, type MemberDoc, type Gender, type ManCoDetails } from "@/lib/db_supabase/memberRepo";
 import { getPermissionsForMember } from "@/lib/rbac";
 import {
@@ -364,6 +364,14 @@ export default function TeeSheetScreen() {
         preGrouped: true,
       };
       assertPngExportOnly("Tee Sheet export");
+
+      // Publish tee time data to the event so the home page can display it
+      try {
+        await publishTeeTime(selectedEvent.id, startTime || "08:00", interval);
+      } catch (err) {
+        console.warn("[TeeSheet] publishTeeTime failed (non-blocking):", err);
+      }
+
       console.log("[TeeSheet] Export tee sheet PNG");
       const payload = encodeURIComponent(JSON.stringify(exportData));
       router.push({

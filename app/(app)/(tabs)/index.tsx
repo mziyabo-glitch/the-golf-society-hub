@@ -369,6 +369,31 @@ export default function HomeScreen() {
       </AppCard>
 
       {/* ================================================================== */}
+      {/* NOTIFICATION: Tee times published                                  */}
+      {/* ================================================================== */}
+      {nextEvent?.teeTimePublishedAt && (() => {
+        const publishedAt = new Date(nextEvent.teeTimePublishedAt!);
+        const daysSince = (Date.now() - publishedAt.getTime()) / (1000 * 60 * 60 * 24);
+        if (daysSince > 7) return null;
+        return (
+          <Pressable onPress={() => openEvent(nextEvent.id)}>
+            <View style={[styles.notificationBanner, { backgroundColor: colors.success + "15", borderColor: colors.success + "30" }]}>
+              <Feather name="bell" size={16} color={colors.success} />
+              <View style={{ flex: 1 }}>
+                <AppText variant="bodyBold" style={{ color: colors.success }}>
+                  Tee times now available!
+                </AppText>
+                <AppText variant="small" color="secondary">
+                  {nextEvent.name} — First tee: {nextEvent.teeTimeStart || "TBC"}
+                </AppText>
+              </View>
+              <Feather name="chevron-right" size={16} color={colors.success} />
+            </View>
+          </Pressable>
+        );
+      })()}
+
+      {/* ================================================================== */}
       {/* B) NEXT EVENT CARD                                                 */}
       {/* ================================================================== */}
       {nextEvent ? (
@@ -418,10 +443,17 @@ export default function HomeScreen() {
               </View>
             )}
 
-            {/* Tee time placeholder */}
+            {/* Tee time info */}
             <View style={[styles.teeTimeRow, { borderTopColor: colors.borderLight }]}>
-              <Feather name="flag" size={14} color={colors.textTertiary} />
-              <AppText variant="small" color="tertiary">Tee time to be published</AppText>
+              <Feather name="flag" size={14} color={nextEvent.teeTimePublishedAt ? colors.success : colors.textTertiary} />
+              {nextEvent.teeTimePublishedAt ? (
+                <AppText variant="small" style={{ color: colors.success, fontWeight: "600" }}>
+                  Tee times available — First tee: {nextEvent.teeTimeStart || "TBC"}
+                  {nextEvent.teeTimeInterval ? `, ${nextEvent.teeTimeInterval} min intervals` : ""}
+                </AppText>
+              ) : (
+                <AppText variant="small" color="tertiary">Tee times to be published</AppText>
+              )}
             </View>
 
             {/* FairwayWeather mini-card */}
@@ -769,6 +801,17 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.sm,
     paddingVertical: 4,
     borderRadius: radius.full,
+  },
+
+  // Notification banner
+  notificationBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+    padding: spacing.md,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    marginBottom: spacing.base,
   },
 
   // Card title row

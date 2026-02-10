@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { StyleSheet, View, Pressable, Alert } from "react-native";
+import { StyleSheet, View, Pressable } from "react-native";
 import { useRouter } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
 import { Feather } from "@expo/vector-icons";
@@ -25,6 +25,7 @@ import { updateMemberRole } from "@/lib/db_supabase/memberRepo";
 import { getOrderOfMeritTotals, type OrderOfMeritEntry } from "@/lib/db_supabase/resultsRepo";
 import { getPermissionsForMember } from "@/lib/rbac";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
+import { confirmDestructive, showAlert } from "@/lib/ui/alert";
 import { guard } from "@/lib/guards";
 /**
  * Format OOM points for display (handles decimals from tie averaging)
@@ -123,7 +124,7 @@ export default function MembersScreen() {
       await loadMembers(); // existing loader
     } catch (err: any) {
       console.error("[members] update role error:", err);
-      Alert.alert("Error", err?.message || "Failed to update role.");
+      showAlert("Error", err?.message || "Failed to update role.");
     }
   };
 // Debug: log activeSocietyId and permissions
@@ -249,7 +250,7 @@ export default function MembersScreen() {
   const handleAddMember = async () => {
     if (!guard(permissions.canCreateMembers, "Only authorized ManCo roles can add members.")) return;
     if (!formName.trim()) {
-      Alert.alert("Missing Name", "Please enter the member's name.");
+      showAlert("Missing Name", "Please enter the member's name.");
       return;
     }
     if (!societyId) return;
@@ -273,9 +274,9 @@ export default function MembersScreen() {
       // Show user-friendly error
       const errorMsg = e?.message || "Failed to add member.";
       if (errorMsg.includes("Only Captains")) {
-        Alert.alert("Permission Denied", "Only Captains can add members to the society.");
+        showAlert("Permission Denied", "Only Captains can add members to the society.");
       } else {
-        Alert.alert("Error", errorMsg);
+        showAlert("Error", errorMsg);
       }
     } finally {
       setSubmitting(false);
@@ -285,7 +286,7 @@ export default function MembersScreen() {
   const handleUpdateMember = async () => {
     if (!guard(permissions.canEditMembers || permissions.canManageHandicaps, "You don't have permission to edit this member.")) return;
     if (!formName.trim()) {
-      Alert.alert("Missing Name", "Please enter the member's name.");
+      showAlert("Missing Name", "Please enter the member's name.");
       return;
     }
     if (!societyId || !editingMember) return;
@@ -294,7 +295,7 @@ export default function MembersScreen() {
     if (formHandicapIndex.trim()) {
       const hcap = parseFloat(formHandicapIndex.trim());
       if (isNaN(hcap) || hcap < -10 || hcap > 54) {
-        Alert.alert("Invalid Handicap", "Handicap index must be between -10 and 54.");
+        showAlert("Invalid Handicap", "Handicap index must be between -10 and 54.");
         return;
       }
     }
@@ -327,7 +328,7 @@ export default function MembersScreen() {
       closeModal();
       loadMembers();
     } catch (e: any) {
-      Alert.alert("Error", e?.message || "Failed to update member.");
+      showAlert("Error", e?.message || "Failed to update member.");
     } finally {
       setSubmitting(false);
     }
@@ -336,32 +337,26 @@ export default function MembersScreen() {
   const handleDeleteMember = (member: MemberDoc) => {
     if (submitting) return;
     if (member.id === currentMember?.id) {
-      Alert.alert("Cannot Delete", "You cannot delete your own account. Use 'Leave Society' in Settings instead.");
+      showAlert("Cannot Delete", "You cannot delete your own account. Use 'Leave Society' in Settings instead.");
       return;
     }
 
-    Alert.alert(
+    confirmDestructive(
       "Delete Member",
       `Are you sure you want to remove ${member.displayName || member.name || "this member"} from the society?`,
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Delete",
-          style: "destructive",
-          onPress: async () => {
-            setSubmitting(true);
-            try {
-              await deleteMember(member.id);
-              closeModal();
-              await loadMembers();
-            } catch (e: any) {
-              Alert.alert("Error", e?.message || "Failed to delete member.");
-            } finally {
-              setSubmitting(false);
-            }
-          },
-        },
-      ]
+      "Delete",
+      async () => {
+        setSubmitting(true);
+        try {
+          await deleteMember(member.id);
+          closeModal();
+          await loadMembers();
+        } catch (e: any) {
+          showAlert("Error", e?.message || "Failed to delete member.");
+        } finally {
+          setSubmitting(false);
+        }
+      },
     );
   };
 
@@ -374,7 +369,7 @@ export default function MembersScreen() {
       });
       loadMembers();
     } catch (e: any) {
-      Alert.alert("Error", e?.message || "Failed to update payment status.");
+      showAlert("Error", e?.message || "Failed to update payment status.");
     }
   };
 

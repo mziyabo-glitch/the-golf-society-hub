@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { StyleSheet, View, Alert, Pressable, Image, Platform } from "react-native";
+import { StyleSheet, View, Pressable, Image, Platform } from "react-native";
 import { useRouter } from "expo-router";
 import { Feather } from "@expo/vector-icons";
 import * as ImagePicker from "expo-image-picker";
@@ -22,6 +22,7 @@ import {
   type LogoDiagnostics,
 } from "@/lib/societyLogo";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
+import { confirmDestructive, showAlert } from "@/lib/ui/alert";
 
 export default function SettingsScreen() {
   const router = useRouter();
@@ -47,80 +48,63 @@ export default function SettingsScreen() {
   }, [society?.id]);
 
   const handleLeaveSociety = () => {
-    Alert.alert(
+    confirmDestructive(
       "Leave Society",
       "Are you sure you want to leave this society? You will need to rejoin with a code or create a new society.",
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Leave",
-          style: "destructive",
-          onPress: async () => {
-            if (!user?.uid) return;
-            setLeaving(true);
-            try {
-              await clearActiveSociety(user.uid);
-              router.replace("/onboarding");
-            } catch (e: any) {
-              Alert.alert("Error", e?.message || "Failed to leave society.");
-              setLeaving(false);
-            }
-          },
-        },
-      ]
+      "Leave",
+      async () => {
+        if (!user?.uid) return;
+        setLeaving(true);
+        try {
+          await clearActiveSociety(user.uid);
+          router.replace("/onboarding");
+        } catch (e: any) {
+          showAlert("Error", e?.message || "Failed to leave society.");
+          setLeaving(false);
+        }
+      },
     );
   };
 
   const handleResetSociety = () => {
     if (resetting || !society?.id) return;
-    Alert.alert(
+    confirmDestructive(
       "Reset Society?",
       "This will permanently delete all members, events, results, and finance entries. The society itself and your account will remain. This cannot be undone.",
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Reset",
-          style: "destructive",
-          onPress: async () => {
-            setResetting(true);
-            try {
-              await resetSocietyData(society.id);
-              Alert.alert("Done", "Society data has been reset.");
-              refresh();
-            } catch (e: any) {
-              Alert.alert("Error", e?.message || "Failed to reset society.");
-            } finally {
-              setResetting(false);
-            }
-          },
-        },
-      ]
+      "Reset",
+      async () => {
+        setResetting(true);
+        try {
+          await resetSocietyData(society.id);
+          showAlert("Done", "Society data has been reset.");
+          refresh();
+        } catch (e: any) {
+          showAlert("Error", e?.message || "Failed to reset society.");
+        } finally {
+          setResetting(false);
+        }
+      },
     );
   };
 
   const handleRegenerateCode = () => {
-    Alert.alert(
+    confirmDestructive(
       "Regenerate Join Code",
       "This will create a new join code. The old code will no longer work. Continue?",
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Regenerate",
-          onPress: async () => {
-            if (!society?.id) return;
-            setRegenerating(true);
-            try {
-              const newCode = await regenerateJoinCode(society.id);
-              Alert.alert("Success", `New join code: ${newCode}`);
-              refresh();
-            } catch (e: any) {
-              Alert.alert("Error", e?.message || "Failed to regenerate code.");
-            } finally {
-              setRegenerating(false);
-            }
-          },
-        },
-      ]
+      "Regenerate",
+      async () => {
+        if (!society?.id) return;
+        setRegenerating(true);
+        try {
+          const newCode = await regenerateJoinCode(society.id);
+          showAlert("Success", `New join code: ${newCode}`);
+          refresh();
+        } catch (e: any) {
+          showAlert("Error", e?.message || "Failed to regenerate code.");
+        } finally {
+          setRegenerating(false);
+        }
+      },
     );
   };
 
@@ -132,7 +116,7 @@ export default function SettingsScreen() {
       if (Platform.OS !== "web") {
         const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
         if (status !== "granted") {
-          Alert.alert("Permission Required", "Please allow access to your photo library to upload a logo.");
+          showAlert("Permission Required", "Please allow access to your photo library to upload a logo.");
           return;
         }
       }
@@ -154,7 +138,7 @@ export default function SettingsScreen() {
 
       // Validate file size (2MB max)
       if (asset.fileSize && asset.fileSize > 2 * 1024 * 1024) {
-        Alert.alert("File Too Large", "Logo must be smaller than 2MB. Please choose a smaller image.");
+        showAlert("File Too Large", "Logo must be smaller than 2MB. Please choose a smaller image.");
         return;
       }
 
@@ -168,18 +152,18 @@ export default function SettingsScreen() {
       });
 
       if (!uploadResult.success) {
-        Alert.alert("Upload Failed", uploadResult.error || "Failed to upload logo.");
+        showAlert("Upload Failed", uploadResult.error || "Failed to upload logo.");
         return;
       }
 
-      Alert.alert("Success", "Society logo updated successfully.");
+      showAlert("Success", "Society logo updated successfully.");
       setLogoDiagnostics(null);
       setLogoDiagnosticsError(null);
       refresh();
 
     } catch (e: any) {
       console.error("[Settings] handleUploadLogo error:", e);
-      Alert.alert("Error", e?.message || "Failed to upload logo.");
+      showAlert("Error", e?.message || "Failed to upload logo.");
     } finally {
       setUploadingLogo(false);
     }
@@ -188,35 +172,24 @@ export default function SettingsScreen() {
   const handleRemoveLogo = () => {
     if (!society?.id) return;
 
-    Alert.alert(
-      "Remove Logo",
-      "Are you sure you want to remove the society logo?",
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Remove",
-          style: "destructive",
-          onPress: async () => {
-            setRemovingLogo(true);
-            try {
-              const result = await removeSocietyLogo(society.id);
-              if (!result.success) {
-                Alert.alert("Error", result.error || "Failed to remove logo.");
-                return;
-              }
-              Alert.alert("Success", "Logo removed.");
-              setLogoDiagnostics(null);
-              setLogoDiagnosticsError(null);
-              refresh();
-            } catch (e: any) {
-              Alert.alert("Error", e?.message || "Failed to remove logo.");
-            } finally {
-              setRemovingLogo(false);
-            }
-          },
-        },
-      ]
-    );
+    confirmDestructive("Remove Logo", "Are you sure you want to remove the society logo?", "Remove", async () => {
+      setRemovingLogo(true);
+      try {
+        const result = await removeSocietyLogo(society.id);
+        if (!result.success) {
+          showAlert("Error", result.error || "Failed to remove logo.");
+          return;
+        }
+        showAlert("Success", "Logo removed.");
+        setLogoDiagnostics(null);
+        setLogoDiagnosticsError(null);
+        refresh();
+      } catch (e: any) {
+        showAlert("Error", e?.message || "Failed to remove logo.");
+      } finally {
+        setRemovingLogo(false);
+      }
+    });
   };
 
   const handleRunLogoDiagnostics = async () => {
@@ -550,7 +523,7 @@ export default function SettingsScreen() {
       {/* Danger Zone */}
       <AppText variant="h2" style={styles.sectionTitle}>Danger Zone</AppText>
       <AppCard>
-        {canRegenCode && (
+        {permissions.canResetSociety && (
           <>
             <AppText variant="body" color="secondary" style={{ marginBottom: spacing.base }}>
               Reset all society data (members, events, results, finances). The society itself is kept.

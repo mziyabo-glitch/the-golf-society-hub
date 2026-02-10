@@ -69,6 +69,10 @@ export type EventDoc = {
   costs_pence?: number | null;
   incomePence?: number | null;  // camelCase alias
   costsPence?: number | null;   // camelCase alias
+  // Tee time publish fields
+  teeTimeStart?: string | null;
+  teeTimeInterval?: number | null;
+  teeTimePublishedAt?: string | null;
   [key: string]: unknown;
 };
 
@@ -109,6 +113,10 @@ function mapEvent(row: any): EventDoc {
     // Map finance fields
     incomePence: row.income_pence ?? null,
     costsPence: row.costs_pence ?? null,
+    // Map tee time publish fields
+    teeTimeStart: row.tee_time_start ?? null,
+    teeTimeInterval: row.tee_time_interval ?? null,
+    teeTimePublishedAt: row.tee_time_published_at ?? null,
   };
 }
 
@@ -119,7 +127,7 @@ export async function getEventsBySocietyId(societyId: string): Promise<EventDoc[
   console.log("[eventRepo] getEventsBySocietyId called with:", societyId);
   const { data, error } = await supabase
     .from("events")
-    .select("id,society_id,name,date,course_name,format,classification,is_oom,status,is_completed,winner_name,player_ids,created_at,created_by,tee_name,par,course_rating,slope_rating,handicap_allowance,ladies_tee_name,ladies_par,ladies_course_rating,ladies_slope_rating,nearest_pin_holes,longest_drive_holes,income_pence,costs_pence")
+    .select("id,society_id,name,date,course_name,format,classification,is_oom,status,is_completed,winner_name,player_ids,created_at,created_by,tee_name,par,course_rating,slope_rating,handicap_allowance,ladies_tee_name,ladies_par,ladies_course_rating,ladies_slope_rating,nearest_pin_holes,longest_drive_holes,income_pence,costs_pence,tee_time_start,tee_time_interval,tee_time_published_at")
     .eq("society_id", societyId)
     .order("date", { ascending: true });
 
@@ -145,7 +153,7 @@ export async function getEvent(eventId: string): Promise<EventDoc | null> {
 
   const { data, error } = await supabase
     .from("events")
-    .select("id,name,date,format,classification,course_name,status,is_completed,winner_name,player_ids,created_at,created_by,society_id,tee_name,par,course_rating,slope_rating,handicap_allowance,ladies_tee_name,ladies_par,ladies_course_rating,ladies_slope_rating,nearest_pin_holes,longest_drive_holes,income_pence,costs_pence")
+    .select("id,name,date,format,classification,course_name,status,is_completed,winner_name,player_ids,created_at,created_by,society_id,tee_name,par,course_rating,slope_rating,handicap_allowance,ladies_tee_name,ladies_par,ladies_course_rating,ladies_slope_rating,nearest_pin_holes,longest_drive_holes,income_pence,costs_pence,tee_time_start,tee_time_interval,tee_time_published_at")
     .eq("id", eventId)
     .maybeSingle();
 
@@ -343,6 +351,36 @@ export async function deleteEvent(eventId: string): Promise<void> {
       code: error.code,
     });
     throw new Error(error.message || "Failed to delete event");
+  }
+}
+
+// =====================================================
+// TEE TIME PUBLISH
+// =====================================================
+
+/**
+ * Publish tee times for an event.
+ * Called when ManCo shares the tee sheet — persists the start time + interval
+ * and timestamps the publish so the home page can display it.
+ */
+export async function publishTeeTime(
+  eventId: string,
+  startTime: string,
+  intervalMinutes: number,
+): Promise<void> {
+  const { error } = await supabase
+    .from("events")
+    .update({
+      tee_time_start: startTime,
+      tee_time_interval: intervalMinutes,
+      tee_time_published_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", eventId);
+
+  if (error) {
+    console.error("[eventRepo] publishTeeTime failed:", error.message);
+    throw new Error(error.message || "Failed to publish tee times");
   }
 }
 
