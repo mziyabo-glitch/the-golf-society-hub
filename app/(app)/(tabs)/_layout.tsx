@@ -37,7 +37,6 @@ export default function TabsLayout() {
         options={{
           title: "Sinbook",
           tabBarIcon: ({ color, size }) => <Feather name="zap" color={color} size={size} />,
-          href: hasFullAccess ? undefined : null,
         }}
       />
       <Tabs.Screen
