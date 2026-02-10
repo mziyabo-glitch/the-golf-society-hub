@@ -21,9 +21,13 @@ import * as WebBrowser from "expo-web-browser";
 import { Screen } from "@/components/ui/Screen";
 import { AppText } from "@/components/ui/AppText";
 import { AppCard } from "@/components/ui/AppCard";
+import { PrimaryButton, SecondaryButton } from "@/components/ui/Button";
 import { InlineNotice } from "@/components/ui/InlineNotice";
 import { EmptyState } from "@/components/ui/EmptyState";
+import { Toast } from "@/components/ui/Toast";
 import { useBootstrap } from "@/lib/useBootstrap";
+import { isCaptain } from "@/lib/rbac";
+import { supabase } from "@/lib/supabase";
 import { getEventsBySocietyId, type EventDoc } from "@/lib/db_supabase/eventRepo";
 import {
   getOrderOfMeritTotals,
@@ -129,6 +133,57 @@ export default function HomeScreen() {
   const [dataLoading, setDataLoading] = useState(true);
   const [loadError, setLoadError] = useState<FormattedError | null>(null);
   const [activeSinbook, setActiveSinbook] = useState<SinbookWithParticipants | null>(null);
+
+  // Licence banner state
+  const [bannerDismissed, setBannerDismissed] = useState(false);
+  const [requestSending, setRequestSending] = useState(false);
+  const [requestAlreadySent, setRequestAlreadySent] = useState(false);
+  const [licenceToast, setLicenceToast] = useState<{ visible: boolean; message: string; type: "success" | "error" | "info" }>({
+    visible: false, message: "", type: "success",
+  });
+
+  const memberHasSeat = (member as any)?.has_seat === true;
+  const memberIsCaptain = isCaptain(member as any);
+  const showLicenceBanner = !!societyId && !!member && !memberHasSeat && !memberIsCaptain && !bannerDismissed;
+
+  // Check for existing pending request on mount
+  useEffect(() => {
+    if (!societyId || !member || memberHasSeat || memberIsCaptain) return;
+    supabase
+      .from("licence_requests")
+      .select("id")
+      .eq("society_id", societyId)
+      .eq("requester_user_id", (member as any)?.user_id)
+      .eq("status", "pending")
+      .maybeSingle()
+      .then(({ data }) => {
+        if (data) setRequestAlreadySent(true);
+      });
+  }, [societyId, member, memberHasSeat, memberIsCaptain]);
+
+  const handleRequestAccess = async () => {
+    if (!societyId || requestSending) return;
+    setRequestSending(true);
+    try {
+      const { error } = await supabase.rpc("create_licence_request", {
+        p_society_id: societyId,
+      });
+      if (error) {
+        if (error.message?.includes("already have a licence")) {
+          setLicenceToast({ visible: true, message: "You already have a licence!", type: "info" });
+        } else {
+          setLicenceToast({ visible: true, message: error.message || "Failed to send request.", type: "error" });
+        }
+        return;
+      }
+      setRequestAlreadySent(true);
+      setLicenceToast({ visible: true, message: "Request sent to your Captain.", type: "success" });
+    } catch (e: any) {
+      setLicenceToast({ visible: true, message: e?.message || "Something went wrong.", type: "error" });
+    } finally {
+      setRequestSending(false);
+    }
+  };
 
   // ============================================================================
   // Data Loading
@@ -366,6 +421,57 @@ export default function HomeScreen() {
           ) : null}
         </View>
       </AppCard>
+
+      {/* ================================================================== */}
+      {/* LICENCE BANNER — non-captain members without a seat                */}
+      {/* ================================================================== */}
+      {showLicenceBanner && (
+        <AppCard style={[styles.licenceBanner, { borderColor: colors.warning + "40" }]}>
+          <View style={styles.licenceBannerHeader}>
+            <View style={[styles.licenceBannerIcon, { backgroundColor: colors.warning + "18" }]}>
+              <Feather name="alert-circle" size={20} color={colors.warning} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <AppText variant="bodyBold">Licence required</AppText>
+              <AppText variant="small" color="secondary" style={{ marginTop: 2 }}>
+                {requestAlreadySent
+                  ? "Your request has been sent. Waiting for your Captain to assign a licence."
+                  : "Your Captain hasn\u2019t assigned you a licence yet."}
+              </AppText>
+            </View>
+          </View>
+          <View style={styles.licenceBannerActions}>
+            {!requestAlreadySent ? (
+              <PrimaryButton
+                onPress={handleRequestAccess}
+                loading={requestSending}
+                disabled={requestSending}
+                size="sm"
+              >
+                Request access
+              </PrimaryButton>
+            ) : (
+              <View style={[styles.requestSentBadge, { backgroundColor: colors.success + "14" }]}>
+                <Feather name="check-circle" size={14} color={colors.success} />
+                <AppText variant="small" style={{ color: colors.success, marginLeft: 4 }}>
+                  Request sent
+                </AppText>
+              </View>
+            )}
+            <SecondaryButton onPress={() => setBannerDismissed(true)} size="sm">
+              Not now
+            </SecondaryButton>
+          </View>
+        </AppCard>
+      )}
+
+      {/* Licence Toast */}
+      <Toast
+        visible={licenceToast.visible}
+        message={licenceToast.message}
+        type={licenceToast.type}
+        onHide={() => setLicenceToast((t) => ({ ...t, visible: false }))}
+      />
 
       {/* ================================================================== */}
       {/* NOTIFICATION: Tee times published                                  */}
@@ -800,6 +906,36 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.sm,
     paddingVertical: 4,
     borderRadius: radius.full,
+  },
+
+  // Licence banner
+  licenceBanner: {
+    borderWidth: 1,
+    marginBottom: spacing.base,
+  },
+  licenceBannerHeader: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: spacing.sm,
+  },
+  licenceBannerIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  licenceBannerActions: {
+    flexDirection: "row",
+    gap: spacing.sm,
+    marginTop: spacing.sm,
+  },
+  requestSentBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+    borderRadius: radius.sm,
   },
 
   // Notification banner

@@ -335,6 +335,26 @@ export default function BillingScreen() {
         </Pressable>
       )}
 
+      {/* Licence Requests Button */}
+      {!loadingSeats && (
+        <Pressable
+          style={({ pressed }) => [
+            styles.manageLicencesRow,
+            { backgroundColor: colors.surface, borderColor: colors.border, opacity: pressed ? 0.8 : 1 },
+          ]}
+          onPress={() => router.push("/(app)/licence-requests")}
+        >
+          <View style={[styles.manageLicencesIcon, { backgroundColor: colors.warning + "18" }]}>
+            <Feather name="inbox" size={18} color={colors.warning} />
+          </View>
+          <View style={{ flex: 1 }}>
+            <AppText variant="bodyBold">Licence Requests</AppText>
+            <AppText variant="small" color="secondary">Review access requests from members</AppText>
+          </View>
+          <Feather name="chevron-right" size={18} color={colors.textTertiary} />
+        </Pressable>
+      )}
+
       {/* Purchase Section */}
       <AppText variant="h2" style={styles.sectionTitle}>Buy More Licences</AppText>
       <AppCard>
