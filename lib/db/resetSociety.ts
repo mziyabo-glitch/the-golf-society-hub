@@ -9,7 +9,7 @@ import {
   writeBatch,
 } from "firebase/firestore";
 
-import { db } from "@/lib/firebase";
+import { getDb } from "@/lib/firebase";
 
 /**
  * Best-effort client-side reset.
@@ -23,6 +23,7 @@ import { db } from "@/lib/firebase";
  */
 
 async function deleteInBatches(refs: Array<ReturnType<typeof doc>>, batchSize = 400) {
+  const db = getDb();
   for (let i = 0; i < refs.length; i += batchSize) {
     const batch = writeBatch(db);
     const chunk = refs.slice(i, i + batchSize);
@@ -32,6 +33,8 @@ async function deleteInBatches(refs: Array<ReturnType<typeof doc>>, batchSize = 
 }
 
 export async function resetSocietyData(societyId: string): Promise<void> {
+  const db = getDb();
+
   // 1) Load all events for this society (we need their ids for subcollection deletes).
   const eventsSnap = await getDocs(
     query(collection(db, "events"), where("societyId", "==", societyId), limit(2000))

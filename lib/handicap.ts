@@ -3,7 +3,7 @@
  */
 
 import type { MemberData, Course, TeeSet, EventData } from "./models";
-import { calculatePlayingHandicapFromIndex } from "./whs";
+import { calcCourseHandicap, calcPlayingHandicap } from "./whs";
 
 export function isValidHandicap(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value);
@@ -41,13 +41,10 @@ export function getPlayingHandicap(
     ? event.handicapAllowancePct / 100
     : event.handicapAllowance ?? 1.0;
 
-  // Calculate playing handicap
-  const playingHandicap = calculatePlayingHandicapFromIndex(
-    member.handicap,
-    teeSet,
-    allowance as 0.9 | 1.0
-  );
-  return Number.isFinite(playingHandicap) ? Math.round(playingHandicap) : null;
+  // Calculate course handicap then playing handicap
+  const courseHandicap = calcCourseHandicap(member.handicap, teeSet);
+  const playingHandicap = calcPlayingHandicap(courseHandicap, allowance);
+  return playingHandicap;
 }
 
 /**
@@ -67,7 +64,6 @@ export function getCourseHandicap(
     return null;
   }
 
-  const { calculateCourseHandicap } = require("./whs");
-  return calculateCourseHandicap(member.handicap, teeSet);
+  return calcCourseHandicap(member.handicap, teeSet);
 }
 
