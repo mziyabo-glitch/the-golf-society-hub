@@ -127,7 +127,7 @@ export async function getEventsBySocietyId(societyId: string): Promise<EventDoc[
   console.log("[eventRepo] getEventsBySocietyId called with:", societyId);
   const { data, error } = await supabase
     .from("events")
-    .select("id,society_id,name,date,course_name,format,classification,is_oom,status,is_completed,winner_name,player_ids,created_at,created_by,tee_name,par,course_rating,slope_rating,handicap_allowance,ladies_tee_name,ladies_par,ladies_course_rating,ladies_slope_rating,nearest_pin_holes,longest_drive_holes,income_pence,costs_pence,tee_time_start,tee_time_interval,tee_time_published_at")
+    .select("*")
     .eq("society_id", societyId)
     .order("date", { ascending: true });
 
@@ -153,7 +153,7 @@ export async function getEvent(eventId: string): Promise<EventDoc | null> {
 
   const { data, error } = await supabase
     .from("events")
-    .select("id,name,date,format,classification,course_name,status,is_completed,winner_name,player_ids,created_at,created_by,society_id,tee_name,par,course_rating,slope_rating,handicap_allowance,ladies_tee_name,ladies_par,ladies_course_rating,ladies_slope_rating,nearest_pin_holes,longest_drive_holes,income_pence,costs_pence,tee_time_start,tee_time_interval,tee_time_published_at")
+    .select("*")
     .eq("id", eventId)
     .maybeSingle();
 
