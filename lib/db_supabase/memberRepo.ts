@@ -2,7 +2,7 @@
 // Member management - uses singleton supabase client
 // IMPORTANT: Only send columns that exist in the members table:
 // id, society_id, user_id, name, email, role, paid, amount_paid_pence, paid_at, created_at, display_name, whs_number, handicap_index, gender
-// annual_fee_paid, annual_fee_paid_at, annual_fee_note
+// annual_fee_paid, annual_fee_paid_at, annual_fee_note, has_seat
 
 import { supabase } from "@/lib/supabase";
 
@@ -37,6 +37,9 @@ export type MemberDoc = {
   annualFeePaid?: boolean;
   annualFeePaidAt?: string | null;
   annualFeeNote?: string | null;
+  // Licence seat assignment
+  has_seat?: boolean;
+  hasSeat?: boolean; // camelCase alias
 };
 
 function mapMember(row: any): MemberDoc {
@@ -51,6 +54,8 @@ function mapMember(row: any): MemberDoc {
     annualFeePaid: row.annual_fee_paid ?? false,
     annualFeePaidAt: row.annual_fee_paid_at ?? null,
     annualFeeNote: row.annual_fee_note ?? null,
+    // Licence seat
+    hasSeat: row.has_seat ?? false,
   };
 }
 

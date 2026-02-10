@@ -315,6 +315,26 @@ export default function BillingScreen() {
         </AppCard>
       )}
 
+      {/* Manage Licences Button */}
+      {!loadingSeats && (
+        <Pressable
+          style={({ pressed }) => [
+            styles.manageLicencesRow,
+            { backgroundColor: colors.surface, borderColor: colors.border, opacity: pressed ? 0.8 : 1 },
+          ]}
+          onPress={() => router.push("/(app)/licences")}
+        >
+          <View style={[styles.manageLicencesIcon, { backgroundColor: colors.info + "14" }]}>
+            <Feather name="users" size={18} color={colors.info} />
+          </View>
+          <View style={{ flex: 1 }}>
+            <AppText variant="bodyBold">Manage Licences</AppText>
+            <AppText variant="small" color="secondary">Assign or remove seats for members</AppText>
+          </View>
+          <Feather name="chevron-right" size={18} color={colors.textTertiary} />
+        </Pressable>
+      )}
+
       {/* Purchase Section */}
       <AppText variant="h2" style={styles.sectionTitle}>Buy More Licences</AppText>
       <AppCard>
@@ -563,5 +583,21 @@ const styles = StyleSheet.create({
   },
   legalLink: {
     textDecorationLine: "underline",
+  },
+  manageLicencesRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+    padding: spacing.base,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    marginBottom: spacing.base,
+  },
+  manageLicencesIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: "center",
+    justifyContent: "center",
   },
 });
