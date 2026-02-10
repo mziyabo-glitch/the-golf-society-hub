@@ -574,14 +574,16 @@ export default function EventDetailScreen() {
               Save Changes
             </PrimaryButton>
 
-            <SecondaryButton
-              onPress={handleDeleteEvent}
-              loading={saving}
-              style={{ marginTop: spacing.sm }}
-            >
-              <Feather name="trash-2" size={16} color={colors.error} />
-              <AppText style={{ color: colors.error, marginLeft: spacing.xs }}>Delete Event</AppText>
-            </SecondaryButton>
+            {permissions.canDeleteEvents && (
+              <SecondaryButton
+                onPress={handleDeleteEvent}
+                loading={saving}
+                style={{ marginTop: spacing.sm }}
+              >
+                <Feather name="trash-2" size={16} color={colors.error} />
+                <AppText style={{ color: colors.error, marginLeft: spacing.xs }}>Delete Event</AppText>
+              </SecondaryButton>
+            )}
           </AppCard>
         </ScrollView>
       </Screen>

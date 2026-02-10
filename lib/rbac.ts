@@ -105,7 +105,7 @@ export const getPermissionsForMember = (
     // Members
     canCreateMembers: captain || treasurer,
     canEditMembers: captain || treasurer,
-    canDeleteMembers: captain || treasurer,
+    canDeleteMembers: captain || secretary || treasurer,
     canEditOwnProfile: true,
 
     // Roles
@@ -114,7 +114,7 @@ export const getPermissionsForMember = (
     // Events / tee sheets
     canCreateEvents: captain || secretary || handicapper,
     canEditEvents: captain || secretary || handicapper,
-    canDeleteEvents: captain,
+    canDeleteEvents: captain || secretary || treasurer,
     canUploadTeeSheet: captain || handicapper,
     canGenerateTeeSheet: captain || secretary || handicapper,
 
