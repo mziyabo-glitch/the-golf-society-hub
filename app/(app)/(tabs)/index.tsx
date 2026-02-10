@@ -21,7 +21,6 @@ import * as WebBrowser from "expo-web-browser";
 import { Screen } from "@/components/ui/Screen";
 import { AppText } from "@/components/ui/AppText";
 import { AppCard } from "@/components/ui/AppCard";
-import { LoadingState } from "@/components/ui/LoadingState";
 import { InlineNotice } from "@/components/ui/InlineNotice";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { useBootstrap } from "@/lib/useBootstrap";
@@ -629,7 +628,7 @@ export default function HomeScreen() {
 
             // Determine status text
             let statusText = "Results pending";
-            let statusColor = colors.textTertiary;
+            let statusColor: string = colors.textTertiary;
             if (hasResults && event.isOOM && myResult) {
               statusText = `${formatPoints(myResult.points)} Order of Merit pts`;
               statusColor = colors.primary;

@@ -11,7 +11,7 @@ import {
   where,
 } from "firebase/firestore";
 
-import { db } from "@/lib/firebase";
+import { getDb } from "@/lib/firebase";
 
 export type TeeSetDoc = {
   id: string;
@@ -41,7 +41,7 @@ export async function createTeeSet(input: TeeSetInput): Promise<TeeSetDoc> {
     updatedAt: serverTimestamp(),
   };
 
-  const ref = await addDoc(collection(db, "teesets"), payload);
+  const ref = await addDoc(collection(getDb(), "teesets"), payload);
   return { id: ref.id, ...payload };
 }
 
@@ -50,7 +50,7 @@ export function subscribeTeesetsBySociety(
   onChange: (teesets: TeeSetDoc[]) => void,
   onError?: (error: Error) => void
 ): () => void {
-  const q = query(collection(db, "teesets"), where("societyId", "==", societyId));
+  const q = query(collection(getDb(), "teesets"), where("societyId", "==", societyId));
   return onSnapshot(
     q,
     (snap) => {
@@ -64,19 +64,19 @@ export function subscribeTeesetsBySociety(
 }
 
 export async function listTeesetsBySociety(societyId: string): Promise<TeeSetDoc[]> {
-  const q = query(collection(db, "teesets"), where("societyId", "==", societyId));
+  const q = query(collection(getDb(), "teesets"), where("societyId", "==", societyId));
   const snap = await getDocs(q);
   return snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<TeeSetDoc, "id">) }));
 }
 
 export async function listTeesetsByCourse(courseId: string): Promise<TeeSetDoc[]> {
-  const q = query(collection(db, "teesets"), where("courseId", "==", courseId));
+  const q = query(collection(getDb(), "teesets"), where("courseId", "==", courseId));
   const snap = await getDocs(q);
   return snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<TeeSetDoc, "id">) }));
 }
 
 export async function updateTeeSetDoc(id: string, updates: Partial<TeeSetDoc>): Promise<void> {
-  const ref = doc(db, "teesets", id);
+  const ref = doc(getDb(), "teesets", id);
   const payload: Record<string, unknown> = { ...updates, updatedAt: serverTimestamp() };
   delete payload.id;
   for (const k of Object.keys(payload)) {
@@ -86,5 +86,5 @@ export async function updateTeeSetDoc(id: string, updates: Partial<TeeSetDoc>): 
 }
 
 export async function deleteTeeSetDoc(id: string): Promise<void> {
-  await deleteDoc(doc(db, "teesets", id));
+  await deleteDoc(doc(getDb(), "teesets", id));
 }

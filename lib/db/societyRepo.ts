@@ -11,7 +11,7 @@ import {
   where,
 } from "firebase/firestore";
 
-import { db } from "@/lib/firebase";
+import { getDb } from "@/lib/firebase";
 import { stripUndefined } from "@/lib/db/sanitize";
 
 export type SocietyDoc = {
@@ -72,12 +72,12 @@ export async function createSociety(input: SocietyInput): Promise<SocietyDoc> {
     logoUrl: input.logoUrl ?? null,
   });
 
-  const ref = await addDoc(collection(db, "societies"), payload);
+  const ref = await addDoc(collection(getDb(), "societies"), payload);
   return { id: ref.id, ...payload, joinCode };
 }
 
 export async function getSocietyDoc(id: string): Promise<SocietyDoc | null> {
-  const ref = doc(db, "societies", id);
+  const ref = doc(getDb(), "societies", id);
   const snap = await getDoc(ref);
   if (!snap.exists()) {
     return null;
@@ -90,7 +90,7 @@ export function subscribeSocietyDoc(
   onChange: (society: SocietyDoc | null) => void,
   onError?: (error: Error) => void
 ): () => void {
-  const ref = doc(db, "societies", id);
+  const ref = doc(getDb(), "societies", id);
   return onSnapshot(
     ref,
     (snap) => {
@@ -107,7 +107,7 @@ export function subscribeSocietyDoc(
 }
 
 export async function updateSocietyDoc(id: string, updates: Partial<SocietyDoc>): Promise<void> {
-  const ref = doc(db, "societies", id);
+  const ref = doc(getDb(), "societies", id);
   const payload: Record<string, unknown> = { ...updates, updatedAt: serverTimestamp() };
   delete payload.id;
   for (const k of Object.keys(payload)) {
@@ -127,7 +127,7 @@ export async function findSocietyByJoinCode(joinCode: string): Promise<SocietyDo
   }
 
   const q = query(
-    collection(db, "societies"),
+    collection(getDb(), "societies"),
     where("joinCode", "==", normalizedCode)
   );
 

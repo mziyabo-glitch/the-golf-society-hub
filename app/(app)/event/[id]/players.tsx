@@ -25,7 +25,7 @@ import { getColors, spacing, radius } from "@/lib/ui/theme";
 export default function EventPlayersScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ id: string }>();
-  const { societyId, society, member, loading: bootstrapLoading } = useBootstrap();
+  const { societyId, member, loading: bootstrapLoading } = useBootstrap();
   const colors = getColors();
 
   const eventId = useMemo(() => {
@@ -104,7 +104,7 @@ export default function EventPlayersScreen() {
   function togglePlayer(id: string) {
     setSelectedPlayerIds((prev) => {
       const next = new Set(prev);
-      next.has(id) ? next.delete(id) : next.add(id);
+      if (next.has(id)) { next.delete(id); } else { next.add(id); }
       return next;
     });
   }

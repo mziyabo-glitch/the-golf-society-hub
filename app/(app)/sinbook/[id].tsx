@@ -14,10 +14,9 @@ import { Screen } from "@/components/ui/Screen";
 import { AppText } from "@/components/ui/AppText";
 import { AppCard } from "@/components/ui/AppCard";
 import { AppInput } from "@/components/ui/AppInput";
-import { PrimaryButton, SecondaryButton, DestructiveButton } from "@/components/ui/Button";
+import { PrimaryButton, SecondaryButton } from "@/components/ui/Button";
 import { LoadingState } from "@/components/ui/LoadingState";
 import { EmptyState } from "@/components/ui/EmptyState";
-import { InlineNotice } from "@/components/ui/InlineNotice";
 import { useBootstrap } from "@/lib/useBootstrap";
 import {
   getSinbook,
@@ -157,10 +156,10 @@ export default function RivalryDetailScreen() {
   };
 
   const handleShare = async () => {
-    const code = sinbookId;
+    const code = sinbook?.join_code ?? sinbookId;
     try {
       await Share.share({
-        message: `Join my rivalry "${sinbook?.title}" on The Golf Society Hub!\n\nInvite code: ${code}\n\nDownload the app:\nAndroid: https://play.google.com/store/apps/details?id=com.thegolfsocietyhub.app\niOS: https://apps.apple.com/app/the-golf-society-hub/id6740041032`,
+        message: `Join my rivalry "${sinbook?.title}" on The Golf Society Hub!\n\nJoin code: ${code}\n\nDownload the app:\nAndroid: https://play.google.com/store/apps/details?id=com.thegolfsocietyhub.app\niOS: https://apps.apple.com/app/the-golf-society-hub/id6740041032`,
       });
     } catch { /* cancelled */ }
   };
@@ -341,6 +340,34 @@ export default function RivalryDetailScreen() {
         </AppText>
       )}
 
+      {/* Join Code Card */}
+      {sinbook.join_code && (
+        <AppCard style={{ marginTop: spacing.sm }}>
+          <AppText variant="captionBold" color="primary" style={{ marginBottom: spacing.xs }}>
+            JOIN CODE
+          </AppText>
+          <View style={styles.joinCodeRow}>
+            <View style={[styles.joinCodeBadge, { backgroundColor: colors.backgroundTertiary, borderColor: colors.border }]}>
+              <AppText variant="h1" style={styles.joinCodeText}>
+                {sinbook.join_code}
+              </AppText>
+            </View>
+            <View style={styles.joinCodeActions}>
+              <Pressable
+                onPress={handleShare}
+                style={[styles.joinCodeBtn, { backgroundColor: colors.primary + "12" }]}
+              >
+                <Feather name="share-2" size={16} color={colors.primary} />
+                <AppText variant="caption" style={{ color: colors.primary, marginLeft: 4 }}>Share</AppText>
+              </Pressable>
+            </View>
+          </View>
+          <AppText variant="small" color="tertiary" style={{ marginTop: spacing.xs }}>
+            Share this code so others can join the rivalry.
+          </AppText>
+        </AppCard>
+      )}
+
       {/* Standings Card */}
       <AppCard style={{ marginTop: spacing.sm }}>
         <AppText variant="captionBold" color="primary" style={{ marginBottom: spacing.sm }}>
@@ -462,6 +489,33 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.xs,
     borderRadius: radius.sm,
     borderWidth: 1,
+  },
+  joinCodeRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+  },
+  joinCodeBadge: {
+    paddingHorizontal: spacing.base,
+    paddingVertical: spacing.sm,
+    borderRadius: radius.sm,
+    borderWidth: 1,
+    borderStyle: "dashed" as const,
+  },
+  joinCodeText: {
+    letterSpacing: 4,
+    fontVariant: ["tabular-nums"],
+  },
+  joinCodeActions: {
+    flexDirection: "column",
+    gap: spacing.xs,
+  },
+  joinCodeBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+    borderRadius: radius.sm,
   },
   entryCard: { marginBottom: spacing.xs },
   entryRow: { flexDirection: "row", alignItems: "center", gap: spacing.sm },

@@ -144,7 +144,6 @@ export default OOMShareCard;
 
 // Brand colors
 const BRAND_GREEN = "#0B6E4F";
-const GOLD = "#D4AF37";
 
 const styles = StyleSheet.create({
   container: {

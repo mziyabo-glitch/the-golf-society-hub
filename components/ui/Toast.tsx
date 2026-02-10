@@ -6,7 +6,7 @@
  */
 
 import { useEffect, useRef } from "react";
-import { StyleSheet, Animated, View, Platform } from "react-native";
+import { StyleSheet, Animated, Platform } from "react-native";
 import { Feather } from "@expo/vector-icons";
 import { AppText } from "./AppText";
 import { getColors, spacing, radius } from "@/lib/ui/theme";

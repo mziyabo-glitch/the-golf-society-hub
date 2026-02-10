@@ -21,7 +21,7 @@ import { LoadingState } from "@/components/ui/LoadingState";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { Toast } from "@/components/ui/Toast";
 import { useBootstrap } from "@/lib/useBootstrap";
-import { getEventsBySocietyId, type EventDoc } from "@/lib/db_supabase/eventRepo";
+import { getEventsBySocietyId } from "@/lib/db_supabase/eventRepo";
 import {
   getOrderOfMeritTotals,
   getOrderOfMeritLog,
@@ -109,7 +109,7 @@ export default function LeaderboardScreen() {
   const [activeTab, setActiveTab] = useState<TabType>(initialTab);
   const [standings, setStandings] = useState<OrderOfMeritEntry[]>([]);
   const [resultsLog, setResultsLog] = useState<ResultsLogEntry[]>([]);
-  const [events, setEvents] = useState<EventDoc[]>([]);
+  // Events are fetched in loadData but only used implicitly via standings/log
   const [loading, setLoading] = useState(true);
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
@@ -131,13 +131,12 @@ export default function LeaderboardScreen() {
     setFetchError(null);
 
     try {
-      const [totals, eventsData, logData] = await Promise.all([
+      const [totals, , logData] = await Promise.all([
         getOrderOfMeritTotals(societyId),
         getEventsBySocietyId(societyId),
         getOrderOfMeritLog(societyId),
       ]);
       setStandings(totals);
-      setEvents(eventsData);
       setResultsLog(logData);
     } catch (err: any) {
       console.error("[leaderboard] Failed to load data:", err);
@@ -149,19 +148,19 @@ export default function LeaderboardScreen() {
 
   // Group results by event
   const groupedResultsLog = useMemo(() => {
-    const groups: Array<{
+    const groups: {
       eventId: string;
       eventName: string;
       eventDate: string | null;
       format: string | null;
-      results: Array<{
+      results: {
         memberId: string;
         memberName: string;
         points: number;
         dayValue: number | null;
         position: number | null;
-      }>;
-    }> = [];
+      }[];
+    }[] = [];
 
     let currentEventId: string | null = null;
 

@@ -27,7 +27,7 @@ import {
   type EventFinanceSummary,
 } from "@/lib/db_supabase/eventRepo";
 import { getPermissionsForMember } from "@/lib/rbac";
-import { getColors, spacing, radius } from "@/lib/ui/theme";
+import { getColors, spacing } from "@/lib/ui/theme";
 import { guard } from "@/lib/guards";
 
 // Format pence to pounds string (e.g., 5000 -> "£50.00")

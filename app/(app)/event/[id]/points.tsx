@@ -32,7 +32,6 @@ import { getMembersBySocietyId } from "@/lib/db_supabase/memberRepo";
 import {
   upsertEventResults,
   getEventResults,
-  type EventResultDoc,
 } from "@/lib/db_supabase/resultsRepo";
 import { getPermissionsForMember } from "@/lib/rbac";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
@@ -125,7 +124,7 @@ export default function EventPointsScreen() {
     setError(null);
 
     try {
-      const [evt, members, existingResults] = await Promise.all([
+      const [evt, members] = await Promise.all([
         getEvent(eventId),
         getMembersBySocietyId(societyId),
         getEventResults(eventId),
@@ -142,7 +141,6 @@ export default function EventPointsScreen() {
       // Build player list from event's playerIds
       const playerIds = evt.playerIds ?? [];
       const memberMap = new Map(members.map((m) => [m.id, m]));
-      const resultMap = new Map(existingResults.map((r) => [r.member_id, r]));
 
       // Initialize players with empty day points
       // If existing OOM points exist, we can't reverse-engineer day points, so leave blank
@@ -331,7 +329,7 @@ export default function EventPointsScreen() {
       });
 
       // Include day_value and position for audit trail
-      const results: Array<{ member_id: string; points: number; day_value?: number; position?: number }> = [];
+      const results: { member_id: string; points: number; day_value?: number; position?: number }[] = [];
       for (const p of playersToSave) {
         const dayValue = parseInt(p.dayPoints.trim(), 10);
         results.push({
@@ -367,13 +365,14 @@ export default function EventPointsScreen() {
     setTimeout(() => {
       router.replace("/(app)/(tabs)/leaderboard?view=log");
     }, 500);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [eventId, societyId, event, playersWithDayPoints, saveAction, router]);
 
   // Loading state
   if (bootstrapLoading || loading) {
     return (
       <Screen>
-        <LoadingState label="Loading..." />
+        <LoadingState message="Loading..." />
       </Screen>
     );
   }

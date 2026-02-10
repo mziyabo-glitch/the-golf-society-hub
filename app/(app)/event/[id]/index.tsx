@@ -140,7 +140,7 @@ function TeeBlockForm({
 export default function EventDetailScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ id: string }>();
-  const { societyId, society, userId, member: currentMember, loading: bootstrapLoading } = useBootstrap();
+  const { societyId, society, member: currentMember, loading: bootstrapLoading } = useBootstrap();
   const colors = getColors();
 
   // Get logo URL from society

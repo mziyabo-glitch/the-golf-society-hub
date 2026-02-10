@@ -12,7 +12,7 @@ import {
   where,
 } from "firebase/firestore";
 
-import { db } from "@/lib/firebase";
+import { getDb } from "@/lib/firebase";
 import { stripUndefined } from "@/lib/db/sanitize";
 
 export type CourseDoc = {
@@ -43,12 +43,12 @@ export async function createCourse(input: CourseInput): Promise<CourseDoc> {
     updatedAt: serverTimestamp(),
   });
 
-  const ref = await addDoc(collection(db, "courses"), payload);
+  const ref = await addDoc(collection(getDb(), "courses"), payload);
   return { id: ref.id, ...payload };
 }
 
 export async function getCourseDoc(id: string): Promise<CourseDoc | null> {
-  const ref = doc(db, "courses", id);
+  const ref = doc(getDb(), "courses", id);
   const snap = await getDoc(ref);
   if (!snap.exists()) {
     return null;
@@ -61,7 +61,7 @@ export function subscribeCoursesBySociety(
   onChange: (courses: CourseDoc[]) => void,
   onError?: (error: Error) => void
 ): () => void {
-  const q = query(collection(db, "courses"), where("societyId", "==", societyId));
+  const q = query(collection(getDb(), "courses"), where("societyId", "==", societyId));
   return onSnapshot(
     q,
     (snap) => {
@@ -75,14 +75,14 @@ export function subscribeCoursesBySociety(
 }
 
 export async function listCoursesBySociety(societyId: string): Promise<CourseDoc[]> {
-  const q = query(collection(db, "courses"), where("societyId", "==", societyId));
+  const q = query(collection(getDb(), "courses"), where("societyId", "==", societyId));
   const snap = await getDocs(q);
   const items = snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<CourseDoc, "id">) }));
   return items.sort((a, b) => a.name.localeCompare(b.name));
 }
 
 export async function updateCourseDoc(id: string, updates: Partial<CourseDoc>): Promise<void> {
-  const ref = doc(db, "courses", id);
+  const ref = doc(getDb(), "courses", id);
   const payload: Record<string, unknown> = { ...updates, updatedAt: serverTimestamp() };
   delete payload.id;
   for (const k of Object.keys(payload)) {
@@ -92,5 +92,5 @@ export async function updateCourseDoc(id: string, updates: Partial<CourseDoc>): 
 }
 
 export async function deleteCourseDoc(id: string): Promise<void> {
-  await deleteDoc(doc(db, "courses", id));
+  await deleteDoc(doc(getDb(), "courses", id));
 }

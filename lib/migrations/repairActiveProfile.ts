@@ -1,4 +1,4 @@
-import { getMemberDoc, listMembersBySociety, type MemberDoc } from "@/lib/db/memberRepo";
+import { getMember, getMembersBySocietyId, type MemberDoc } from "@/lib/db/memberRepo";
 import { getUserDoc, setActiveSocietyAndMember } from "@/lib/db/userRepo";
 
 function isCaptainLike(member: MemberDoc): boolean {
@@ -41,14 +41,16 @@ export async function repairActiveProfile(uid: string): Promise<void> {
 
   // If activeMemberId exists but doesn't resolve to a member in this society, it's invalid.
   if (currentId) {
-    const member = await getMemberDoc(currentId);
+    const member = await getMember(currentId);
     if (member && member.societyId === societyId) {
       return; // already valid
     }
   }
 
   // Pick a safe default: Captain/Admin -> Treasurer -> first member.
-  const members = await listMembersBySociety(societyId);
+  const members = await getMembersBySocietyId(societyId);
   const picked = chooseBestDefaultMember(members);
-  await setActiveSocietyAndMember(uid, societyId, picked?.id ?? null);
+  if (picked) {
+    await setActiveSocietyAndMember(uid, societyId, picked.id);
+  }
 }

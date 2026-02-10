@@ -21,7 +21,7 @@ import {
   deleteMember,
   type MemberDoc,
 } from "@/lib/db_supabase/memberRepo";
-import { updateMemberRole } from "@/lib/db_supabase/memberRepo";
+// updateMemberRole removed: role updates handled via roles screen
 import { getOrderOfMeritTotals, type OrderOfMeritEntry } from "@/lib/db_supabase/resultsRepo";
 import { getPermissionsForMember } from "@/lib/rbac";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
@@ -75,24 +75,8 @@ function sortMembersByRoleThenName(members: MemberDoc[]): MemberDoc[] {
   });
 }
 
-/**
- * Format role string to human-friendly display
- */
-function formatRole(role: string | undefined): string {
-  if (!role) return "Member";
-  const lower = role.toLowerCase();
-  const roleNames: Record<string, string> = {
-    captain: "Captain",
-    treasurer: "Treasurer",
-    secretary: "Secretary",
-    handicapper: "Handicapper",
-    member: "Member",
-  };
-  return roleNames[lower] || role.charAt(0).toUpperCase() + role.slice(1);
-}
-
 export default function MembersScreen() {
-  const { societyId, activeSocietyId, member: currentMember, loading: bootstrapLoading, refresh } = useBootstrap();
+  const { societyId, activeSocietyId, member: currentMember, loading: bootstrapLoading } = useBootstrap();
   const router = useRouter();
   const colors = getColors();
 
@@ -116,17 +100,6 @@ export default function MembersScreen() {
 
   
 
-  const handleUpdateRole = async (memberId: string, role: string) => {
-    if (!guard(permissions.canManageRoles, "Only the Captain can change roles.")) return;
-
-    try {
-      await updateMemberRole(memberId, role);
-      await loadMembers(); // existing loader
-    } catch (err: any) {
-      console.error("[members] update role error:", err);
-      showAlert("Error", err?.message || "Failed to update role.");
-    }
-  };
 // Debug: log activeSocietyId and permissions
   console.log("[members] activeSocietyId:", activeSocietyId || societyId);
   console.log("[members] currentMember:", currentMember?.id, "roles:", currentMember?.roles);
@@ -203,6 +176,7 @@ export default function MembersScreen() {
 
   useEffect(() => {
     loadMembers();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [societyId]);
 
   // Refetch on focus to pick up changes from detail screen
@@ -211,6 +185,7 @@ export default function MembersScreen() {
       if (societyId) {
         loadMembers();
       }
+      // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [societyId])
   );
 
@@ -221,21 +196,6 @@ export default function MembersScreen() {
     setFormHandicapIndex("");
     setEditingMember(null);
     setModalMode("add");
-  };
-
-  const openEditModal = (member: MemberDoc) => {
-    setFormName(member.displayName || member.name || "");
-    setFormEmail(member.email || "");
-    setFormWhsNumber(member.whsNumber || member.whs_number || "");
-    setFormHandicapIndex(
-      member.handicapIndex != null
-        ? String(member.handicapIndex)
-        : member.handicap_index != null
-        ? String(member.handicap_index)
-        : ""
-    );
-    setEditingMember(member);
-    setModalMode("edit");
   };
 
   const closeModal = () => {

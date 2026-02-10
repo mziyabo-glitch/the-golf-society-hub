@@ -54,7 +54,7 @@ function parsePounds(str: string): number | null {
 
 export default function MembershipFeesScreen() {
   const router = useRouter();
-  const { societyId, society, member, loading: bootstrapLoading, refresh } = useBootstrap();
+  const { societyId, member, loading: bootstrapLoading } = useBootstrap();
   const colors = getColors();
 
   const [members, setMembers] = useState<MemberDoc[]>([]);

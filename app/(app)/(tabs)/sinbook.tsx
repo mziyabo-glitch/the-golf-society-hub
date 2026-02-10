@@ -30,6 +30,7 @@ import {
   acceptInvite,
   declineInvite,
   acceptInviteByLink,
+  joinByCode,
   getUnreadNotificationCount,
   getWinCountsForSinbooks,
   type SinbookWithParticipants,
@@ -166,18 +167,29 @@ export default function SinbookHomeScreen() {
   const handleJoin = async () => {
     const code = joinCode.trim();
     if (!code) {
-      showAlert("Missing Code", "Paste the invite code you received.");
+      showAlert("Missing Code", "Enter the 6-character join code your rival sent you.");
       return;
     }
     setJoining(true);
+    const displayName = member?.displayName || member?.name || "Player";
     try {
-      await acceptInviteByLink(code, member?.displayName || member?.name || "Player");
+      // Try short join code first (6-char alphanumeric)
+      const result = await joinByCode(code, displayName);
       setJoinCode("");
       setShowJoin(false);
-      showAlert("Joined!", "You're now part of the rivalry.");
+      showAlert("Joined!", `You're now part of "${result.title}".`);
       loadData();
-    } catch (err: any) {
-      showAlert("Error", err?.message || "Invalid code or failed to join.");
+    } catch {
+      // Fall back to legacy UUID-based join
+      try {
+        await acceptInviteByLink(code, displayName);
+        setJoinCode("");
+        setShowJoin(false);
+        showAlert("Joined!", "You're now part of the rivalry.");
+        loadData();
+      } catch (err: any) {
+        showAlert("Error", err?.message || "Invalid code or failed to join.");
+      }
     } finally {
       setJoining(false);
     }
@@ -301,16 +313,17 @@ export default function SinbookHomeScreen() {
         </View>
         <AppCard>
           <View style={styles.field}>
-            <AppText variant="captionBold" style={styles.label}>Invite Code</AppText>
+            <AppText variant="captionBold" style={styles.label}>Join Code</AppText>
             <AppInput
-              placeholder="Paste the code your rival sent you"
+              placeholder="e.g. ABC123"
               value={joinCode}
-              onChangeText={setJoinCode}
-              autoCapitalize="none"
+              onChangeText={(text) => setJoinCode(text.toUpperCase())}
+              autoCapitalize="characters"
               autoCorrect={false}
+              maxLength={36}
             />
             <AppText variant="small" color="tertiary" style={{ marginTop: 4 }}>
-              Your rival shares the code from inside their rivalry.
+              Enter the 6-character code your rival shared with you.
             </AppText>
           </View>
           <PrimaryButton onPress={handleJoin} loading={joining} style={{ marginTop: spacing.sm }}>
@@ -340,6 +353,24 @@ export default function SinbookHomeScreen() {
             </View>
           )}
         </Pressable>
+      </View>
+
+      {/* ── Always-visible action buttons ── */}
+      <View style={styles.topActions}>
+        <PrimaryButton
+          onPress={triggerCreate}
+          icon={<Feather name="plus" size={16} color={colors.textInverse} />}
+          style={{ flex: 1 }}
+        >
+          New Rivalry
+        </PrimaryButton>
+        <SecondaryButton
+          onPress={() => setShowJoin(true)}
+          icon={<Feather name="log-in" size={16} color={colors.primary} />}
+          style={{ flex: 1 }}
+        >
+          Join with Code
+        </SecondaryButton>
       </View>
 
       {loadError && (
@@ -441,25 +472,8 @@ export default function SinbookHomeScreen() {
         <EmptyState
           icon={<Feather name="zap" size={24} color={colors.textTertiary} />}
           title="No Rivalries Yet"
-          message="Start a rivalry with a mate and track who owes who all season."
-          action={{ label: "+ New Sinbook", onPress: triggerCreate }}
+          message="Start a rivalry with a mate, or join one using a code."
         />
-      )}
-
-      {/* ── SECTION 3: Create / Join buttons ── */}
-      {(sinbooks.length > 0 || pendingInvites.length > 0) && (
-        <View style={styles.bottomActions}>
-          <PrimaryButton
-            onPress={triggerCreate}
-            icon={<Feather name="plus" size={16} color={colors.textInverse} />}
-            style={{ flex: 1 }}
-          >
-            New Sinbook
-          </PrimaryButton>
-          <SecondaryButton onPress={() => setShowJoin(true)} style={{ flex: 1 }}>
-            Join with Code
-          </SecondaryButton>
-        </View>
       )}
 
       <View style={{ height: spacing["2xl"] }} />
@@ -520,6 +534,13 @@ const styles = StyleSheet.create({
     marginTop: spacing.sm,
   },
 
+  // Top action buttons (always visible)
+  topActions: {
+    flexDirection: "row",
+    gap: spacing.sm,
+    marginBottom: spacing.lg,
+  },
+
   // Rivalry card
   cardRow: {
     flexDirection: "row",
@@ -530,11 +551,5 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.sm,
     paddingVertical: spacing.xs,
     borderRadius: radius.sm,
-  },
-
-  // Bottom actions
-  bottomActions: {
-    flexDirection: "row",
-    gap: spacing.sm,
   },
 });

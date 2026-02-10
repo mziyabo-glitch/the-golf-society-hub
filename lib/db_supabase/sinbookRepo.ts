@@ -20,6 +20,7 @@ export type Sinbook = {
   created_by: string;
   created_at: string;
   updated_at: string;
+  join_code: string | null;
 };
 
 export type SinbookParticipant = {
@@ -435,6 +436,67 @@ export async function acceptInviteByLink(
       );
     }
   }
+}
+
+// ============================================================================
+// Join Code
+// ============================================================================
+
+/**
+ * Preview info returned when looking up a sinbook by its short join code.
+ */
+export type JoinCodePreview = {
+  id: string;
+  title: string;
+  stake: string | null;
+  created_by: string;
+};
+
+/**
+ * Look up a sinbook by its 6-character join code.
+ * Uses a SECURITY DEFINER function so RLS doesn't block the lookup.
+ * Returns null if no match found.
+ */
+export async function getSinbookByJoinCode(code: string): Promise<JoinCodePreview | null> {
+  const normalized = code.trim().toUpperCase();
+  if (!normalized || normalized.length < 4) return null;
+
+  const { data, error } = await supabase
+    .rpc("lookup_sinbook_by_join_code", { _code: normalized });
+
+  if (error) {
+    console.error("[sinbookRepo] lookup_sinbook_by_join_code error:", error.message);
+    return null;
+  }
+
+  if (!data || (Array.isArray(data) && data.length === 0)) return null;
+
+  const row = Array.isArray(data) ? data[0] : data;
+  return {
+    id: row.id,
+    title: row.title,
+    stake: row.stake ?? null,
+    created_by: row.created_by,
+  };
+}
+
+/**
+ * Join a rivalry using the short 6-character join code.
+ * Looks up the sinbook, then adds the current user as a participant.
+ */
+export async function joinByCode(
+  code: string,
+  displayName: string,
+): Promise<{ sinbookId: string; title: string }> {
+  const preview = await getSinbookByJoinCode(code);
+  if (!preview) {
+    throw new Error("No rivalry found with that code. Check and try again.");
+  }
+
+  // Delegate to the existing link-accept logic (handles dupe checks, notifications)
+  await acceptInviteByLink(preview.id, displayName);
+
+  return { sinbookId: preview.id, title: preview.title };
 }
 
 /**

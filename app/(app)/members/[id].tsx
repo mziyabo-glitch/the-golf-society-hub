@@ -36,7 +36,7 @@ import { confirmDestructive, showAlert } from "@/lib/ui/alert";
 
 type RoleValue = "member" | "treasurer" | "secretary" | "handicapper" | "captain";
 
-const ROLE_OPTIONS: Array<{ value: RoleValue; label: string }> = [
+const ROLE_OPTIONS: { value: RoleValue; label: string }[] = [
   { value: "member", label: "Member" },
   { value: "treasurer", label: "Treasurer" },
   { value: "secretary", label: "Secretary" },

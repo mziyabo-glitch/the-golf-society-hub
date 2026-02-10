@@ -119,7 +119,7 @@ export default function TreasurerScreen() {
   const exportAction = useAsyncAction();
 
   // Toast state
-  const [toast, setToast] = useState({ visible: false, message: "", type: "success" as const });
+  const [toast, setToast] = useState<{ visible: boolean; message: string; type: "success" | "error" | "info" }>({ visible: false, message: "", type: "success" });
 
   const permissions = getPermissionsForMember(member as any);
   const canManageFinance = permissions.canAccessFinance;

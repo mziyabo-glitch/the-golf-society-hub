@@ -11,7 +11,7 @@ import {
   where,
 } from "firebase/firestore";
 
-import { db } from "@/lib/firebase";
+import { getDb } from "@/lib/firebase";
 import { stripUndefined } from "@/lib/db/sanitize";
 
 export type EventDoc = {
@@ -103,12 +103,12 @@ export async function createEvent(
     isCompleted: false,
   });
 
-  const ref = await addDoc(collection(db, "events"), data);
+  const ref = await addDoc(collection(getDb(), "events"), data);
   return { id: ref.id, ...data } as EventDoc;
 }
 
 export async function getEventDoc(id: string): Promise<EventDoc | null> {
-  const ref = doc(db, "events", id);
+  const ref = doc(getDb(), "events", id);
   const snap = await getDoc(ref);
   if (!snap.exists()) {
     return null;
@@ -121,7 +121,7 @@ export function subscribeEventDoc(
   onChange: (event: EventDoc | null) => void,
   onError?: (error: Error) => void
 ): () => void {
-  const ref = doc(db, "events", id);
+  const ref = doc(getDb(), "events", id);
   return onSnapshot(
     ref,
     (snap) => {
@@ -138,7 +138,7 @@ export function subscribeEventDoc(
 }
 
 export async function updateEventDoc(id: string, updates: Partial<EventDoc>): Promise<void> {
-  const ref = doc(db, "events", id);
+  const ref = doc(getDb(), "events", id);
   const payload: Record<string, unknown> = { ...updates };
   delete payload.id;
   for (const k of Object.keys(payload)) {
@@ -148,7 +148,7 @@ export async function updateEventDoc(id: string, updates: Partial<EventDoc>): Pr
 }
 
 export async function listEventsBySociety(societyId: string): Promise<EventDoc[]> {
-  const q = query(collection(db, "events"), where("societyId", "==", societyId));
+  const q = query(collection(getDb(), "events"), where("societyId", "==", societyId));
   const snap = await getDocs(q);
   const items = snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<EventDoc, "id">) }));
   return items.sort((a, b) => {
@@ -163,7 +163,7 @@ export function subscribeEventsBySociety(
   onChange: (events: EventDoc[]) => void,
   onError?: (error: Error) => void
 ): () => void {
-  const q = query(collection(db, "events"), where("societyId", "==", societyId));
+  const q = query(collection(getDb(), "events"), where("societyId", "==", societyId));
   return onSnapshot(
     q,
     (snap) => {
@@ -180,4 +180,46 @@ export function subscribeEventsBySociety(
       if (onError) onError(error);
     }
   );
+}
+
+/**
+ * Convenience alias used by finance screens.
+ * Fetches a single event doc by societyId + eventId.
+ * (societyId is accepted for API symmetry but not needed for the lookup.)
+ */
+export async function getEvent(
+  _societyId: string,
+  eventId: string
+): Promise<EventDoc | null> {
+  return getEventDoc(eventId);
+}
+
+/**
+ * Set the event fee amount.
+ */
+export async function setEventFee(
+  _societyId: string,
+  eventId: string,
+  fee: number
+): Promise<void> {
+  await updateEventDoc(eventId, { eventFee: fee });
+}
+
+/**
+ * Toggle a member's payment status on an event.
+ */
+export async function setEventPaymentStatus(
+  _societyId: string,
+  eventId: string,
+  memberId: string,
+  paid: boolean
+): Promise<void> {
+  const event = await getEventDoc(eventId);
+  const payments = event?.payments ?? {};
+  payments[memberId] = {
+    ...payments[memberId],
+    paid,
+    ...(paid ? { paidAtISO: new Date().toISOString() } : {}),
+  };
+  await updateEventDoc(eventId, { payments });
 }
