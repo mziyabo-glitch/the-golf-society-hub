@@ -355,6 +355,24 @@ export default function SinbookHomeScreen() {
         </Pressable>
       </View>
 
+      {/* ── Always-visible action buttons ── */}
+      <View style={styles.topActions}>
+        <PrimaryButton
+          onPress={triggerCreate}
+          icon={<Feather name="plus" size={16} color={colors.textInverse} />}
+          style={{ flex: 1 }}
+        >
+          New Rivalry
+        </PrimaryButton>
+        <SecondaryButton
+          onPress={() => setShowJoin(true)}
+          icon={<Feather name="log-in" size={16} color={colors.primary} />}
+          style={{ flex: 1 }}
+        >
+          Join with Code
+        </SecondaryButton>
+      </View>
+
       {loadError && (
         <InlineNotice variant="error" message={loadError.message} detail={loadError.detail} style={{ marginBottom: spacing.base }} />
       )}
@@ -454,25 +472,8 @@ export default function SinbookHomeScreen() {
         <EmptyState
           icon={<Feather name="zap" size={24} color={colors.textTertiary} />}
           title="No Rivalries Yet"
-          message="Start a rivalry with a mate and track who owes who all season."
-          action={{ label: "+ New Sinbook", onPress: triggerCreate }}
+          message="Start a rivalry with a mate, or join one using a code."
         />
-      )}
-
-      {/* ── SECTION 3: Create / Join buttons ── */}
-      {(sinbooks.length > 0 || pendingInvites.length > 0) && (
-        <View style={styles.bottomActions}>
-          <PrimaryButton
-            onPress={triggerCreate}
-            icon={<Feather name="plus" size={16} color={colors.textInverse} />}
-            style={{ flex: 1 }}
-          >
-            New Sinbook
-          </PrimaryButton>
-          <SecondaryButton onPress={() => setShowJoin(true)} style={{ flex: 1 }}>
-            Join with Code
-          </SecondaryButton>
-        </View>
       )}
 
       <View style={{ height: spacing["2xl"] }} />
@@ -533,6 +534,13 @@ const styles = StyleSheet.create({
     marginTop: spacing.sm,
   },
 
+  // Top action buttons (always visible)
+  topActions: {
+    flexDirection: "row",
+    gap: spacing.sm,
+    marginBottom: spacing.lg,
+  },
+
   // Rivalry card
   cardRow: {
     flexDirection: "row",
@@ -543,11 +551,5 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.sm,
     paddingVertical: spacing.xs,
     borderRadius: radius.sm,
-  },
-
-  // Bottom actions
-  bottomActions: {
-    flexDirection: "row",
-    gap: spacing.sm,
   },
 });
