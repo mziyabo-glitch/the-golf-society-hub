@@ -129,16 +129,21 @@ export async function signUpWithEmail(email: string, password: string): Promise<
 /**
  * Send a password reset email.
  * Supabase will send a link to the user's email.
+ * Uses the stable production URL so the redirect always matches the
+ * Supabase allowlist (preview URLs change per Vercel deployment).
  */
+const RESET_REDIRECT_URL = "https://the-golf-society-hub.vercel.app/reset-password";
+
 export async function resetPassword(email: string): Promise<void> {
   const cleanEmail = email.trim().toLowerCase();
 
-  // Use the current origin so the reset link works on any deployment
-  const origin = typeof window !== "undefined" ? window.location.origin : undefined;
-  console.log("[auth] resetPassword", { email: cleanEmail, redirectTo: origin });
+  console.log("[auth] resetPassword", {
+    email: cleanEmail,
+    redirectTo: RESET_REDIRECT_URL,           // beta: verify correct URL
+  });
 
   const { error } = await supabase.auth.resetPasswordForEmail(cleanEmail, {
-    redirectTo: origin ? `${origin}/reset-password` : undefined,
+    redirectTo: RESET_REDIRECT_URL,
   });
 
   if (error) {
