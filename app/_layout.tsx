@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 import { Stack, useRouter, useSegments } from "expo-router";
-import { View } from "react-native";
+import { StyleSheet, View } from "react-native";
 import { BootstrapProvider, useBootstrap } from "@/lib/useBootstrap";
 import { LoadingState } from "@/components/ui/LoadingState";
 import { AuthScreen } from "@/components/AuthScreen";
@@ -81,35 +81,44 @@ function RootNavigator() {
     }
   }, [loading]);
 
-  if (loading) {
-    return (
-      <View style={{ flex: 1, justifyContent: "center", alignItems: "center", backgroundColor: colors.background }}>
-        <LoadingState message="Loading..." />
-      </View>
-    );
-  }
+  // Determine which overlay to show (if any).
+  // The Stack ALWAYS renders so expo-router can match child routes like /reset-password.
+  const isPublicRoute = segments[0] === "reset-password";
+  const showLoading = loading;
+  const showAuth = !loading && !isSignedIn && !isPublicRoute;
+  const showError = !loading && !showAuth && !!error;
 
-  // Not signed in — show auth screen (but let /reset-password through)
-  if (!isSignedIn) {
-    const isResetPassword = segments[0] === "reset-password";
-    if (!isResetPassword) {
-      return <AuthScreen />;
-    }
-  }
+  return (
+    <View style={{ flex: 1, backgroundColor: colors.background }}>
+      {/* Always render the navigator so expo-router can resolve all routes */}
+      <Stack screenOptions={{ headerShown: false }} />
 
-  if (error) {
-    return (
-      <View style={{ flex: 1, justifyContent: "center", alignItems: "center", backgroundColor: colors.background, padding: spacing.lg }}>
-        <AppCard>
-          <AppText variant="h2" style={{ marginBottom: spacing.sm }}>Something went wrong</AppText>
-          <AppText variant="body" color="secondary" style={{ marginBottom: spacing.lg }}>{error}</AppText>
-          <PrimaryButton onPress={refresh}>Try Again</PrimaryButton>
-        </AppCard>
-      </View>
-    );
-  }
+      {/* Overlay: loading spinner */}
+      {showLoading && (
+        <View style={[StyleSheet.absoluteFill, { justifyContent: "center", alignItems: "center", backgroundColor: colors.background }]}>
+          <LoadingState message="Loading..." />
+        </View>
+      )}
 
-  return <Stack screenOptions={{ headerShown: false }} />;
+      {/* Overlay: auth gate (except for public routes like /reset-password) */}
+      {showAuth && (
+        <View style={[StyleSheet.absoluteFill, { backgroundColor: colors.background }]}>
+          <AuthScreen />
+        </View>
+      )}
+
+      {/* Overlay: error state */}
+      {showError && (
+        <View style={[StyleSheet.absoluteFill, { justifyContent: "center", alignItems: "center", backgroundColor: colors.background, padding: spacing.lg }]}>
+          <AppCard>
+            <AppText variant="h2" style={{ marginBottom: spacing.sm }}>Something went wrong</AppText>
+            <AppText variant="body" color="secondary" style={{ marginBottom: spacing.lg }}>{error}</AppText>
+            <PrimaryButton onPress={refresh}>Try Again</PrimaryButton>
+          </AppCard>
+        </View>
+      )}
+    </View>
+  );
 }
 
 export default function RootLayout() {
