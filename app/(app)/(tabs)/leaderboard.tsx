@@ -17,10 +17,13 @@ import { useFocusEffect } from "@react-navigation/native";
 import { Feather } from "@expo/vector-icons";
 
 import { AppText } from "@/components/ui/AppText";
+import { PrimaryButton } from "@/components/ui/Button";
 import { LoadingState } from "@/components/ui/LoadingState";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { Toast } from "@/components/ui/Toast";
+import { LicenceRequiredModal } from "@/components/LicenceRequiredModal";
 import { useBootstrap } from "@/lib/useBootstrap";
+import { usePaidAccess } from "@/lib/access/usePaidAccess";
 import { getEventsBySocietyId } from "@/lib/db_supabase/eventRepo";
 import {
   getOrderOfMeritTotals,
@@ -100,6 +103,7 @@ type TabType = "leaderboard" | "resultsLog";
 
 export default function LeaderboardScreen() {
   const { society, societyId, loading: bootstrapLoading } = useBootstrap();
+  const { needsLicence, guardPaidAction, modalVisible, setModalVisible, societyId: guardSocietyId } = usePaidAccess();
   const router = useRouter();
   const colors = getColors();
 
@@ -236,6 +240,7 @@ export default function LeaderboardScreen() {
 
   // Share handlers
   const handleShareLeaderboard = async () => {
+    if (!guardPaidAction()) return;
     if (standings.length === 0) {
       Alert.alert("No Data", "No standings to share.");
       return;
@@ -256,6 +261,7 @@ export default function LeaderboardScreen() {
   };
 
   const handleShareResultsLog = async () => {
+    if (!guardPaidAction()) return;
     if (resultsLog.length === 0) {
       Alert.alert("No Data", "No results to share.");
       return;
@@ -317,7 +323,7 @@ export default function LeaderboardScreen() {
     );
   }
 
-  const canShare = standings.length > 0;
+  const canShare = standings.length > 0 && !needsLicence;
   const top3 = standings.slice(0, 3);
   const theField = standings.slice(3);
 
@@ -375,45 +381,47 @@ export default function LeaderboardScreen() {
           <AppText style={styles.seasonText}>{seasonLabel}</AppText>
         </View>
 
-        {/* ========== TAB TOGGLE ========== */}
-        <View style={styles.tabContainer}>
-          <Pressable
-            style={[styles.tab, activeTab === "leaderboard" && styles.tabActive]}
-            onPress={() => setActiveTab("leaderboard")}
-          >
-            <Feather
-              name="award"
-              size={16}
-              color={activeTab === "leaderboard" ? "#0B6E4F" : "#9CA3AF"}
-            />
-            <AppText
-              style={[
-                styles.tabText,
-                activeTab === "leaderboard" && styles.tabTextActive,
-              ]}
+        {/* ========== TAB TOGGLE (hidden for unlicensed) ========== */}
+        {!needsLicence && (
+          <View style={styles.tabContainer}>
+            <Pressable
+              style={[styles.tab, activeTab === "leaderboard" && styles.tabActive]}
+              onPress={() => setActiveTab("leaderboard")}
             >
-              Leaderboard
-            </AppText>
-          </Pressable>
-          <Pressable
-            style={[styles.tab, activeTab === "resultsLog" && styles.tabActive]}
-            onPress={() => setActiveTab("resultsLog")}
-          >
-            <Feather
-              name="grid"
-              size={16}
-              color={activeTab === "resultsLog" ? "#0B6E4F" : "#9CA3AF"}
-            />
-            <AppText
-              style={[
-                styles.tabText,
-                activeTab === "resultsLog" && styles.tabTextActive,
-              ]}
+              <Feather
+                name="award"
+                size={16}
+                color={activeTab === "leaderboard" ? "#0B6E4F" : "#9CA3AF"}
+              />
+              <AppText
+                style={[
+                  styles.tabText,
+                  activeTab === "leaderboard" && styles.tabTextActive,
+                ]}
+              >
+                Leaderboard
+              </AppText>
+            </Pressable>
+            <Pressable
+              style={[styles.tab, activeTab === "resultsLog" && styles.tabActive]}
+              onPress={() => setActiveTab("resultsLog")}
             >
-              Results Matrix
-            </AppText>
-          </Pressable>
-        </View>
+              <Feather
+                name="grid"
+                size={16}
+                color={activeTab === "resultsLog" ? "#0B6E4F" : "#9CA3AF"}
+              />
+              <AppText
+                style={[
+                  styles.tabText,
+                  activeTab === "resultsLog" && styles.tabTextActive,
+                ]}
+              >
+                Results Matrix
+              </AppText>
+            </Pressable>
+          </View>
+        )}
 
         {/* ========== LEADERBOARD TAB ========== */}
         {activeTab === "leaderboard" && (
@@ -491,8 +499,24 @@ export default function LeaderboardScreen() {
                   </View>
                 )}
 
+                {/* ========== LICENCE CTA (unlicensed) ========== */}
+                {needsLicence && standings.length > 0 && (
+                  <GlassCard style={[styles.fieldCard, { alignItems: "center", paddingVertical: 24 }]}>
+                    <Feather name="lock" size={24} color="#9CA3AF" style={{ marginBottom: 8 }} />
+                    <AppText style={[styles.fieldTitle, { textAlign: "center", marginBottom: 4 }]}>
+                      Full leaderboard
+                    </AppText>
+                    <AppText style={{ fontSize: 13, color: "#6B7280", textAlign: "center", marginBottom: 16 }}>
+                      Get a licence to see the full standings and results matrix.
+                    </AppText>
+                    <PrimaryButton onPress={() => setModalVisible(true)} size="sm">
+                      Unlock full leaderboard
+                    </PrimaryButton>
+                  </GlassCard>
+                )}
+
                 {/* ========== THE FIELD ========== */}
-                {theField.length > 0 && (
+                {!needsLicence && theField.length > 0 && (
                   <GlassCard style={styles.fieldCard}>
                     <AppText style={styles.fieldTitle}>The Field</AppText>
                     {theField.map((entry, idx) => {
@@ -540,7 +564,7 @@ export default function LeaderboardScreen() {
                 )}
 
                 {/* Only top 3 - show full list */}
-                {theField.length === 0 && top3.length < 3 && (
+                {!needsLicence && theField.length === 0 && top3.length < 3 && (
                   <GlassCard style={styles.fieldCard}>
                     {standings.map((entry, idx) => (
                       <View
@@ -570,8 +594,8 @@ export default function LeaderboardScreen() {
           </>
         )}
 
-        {/* ========== RESULTS LOG TAB (Accordion) ========== */}
-        {activeTab === "resultsLog" && (
+        {/* ========== RESULTS LOG TAB (Accordion — licensed only) ========== */}
+        {!needsLicence && activeTab === "resultsLog" && (
           <>
             {groupedResultsLog.length === 0 ? (
               <EmptyState
@@ -684,6 +708,7 @@ export default function LeaderboardScreen() {
         </View>
       </ScrollView>
 
+      <LicenceRequiredModal visible={modalVisible} onClose={() => setModalVisible(false)} societyId={guardSocietyId} />
     </>
   );
 }

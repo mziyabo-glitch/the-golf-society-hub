@@ -13,8 +13,10 @@ import { LoadingState } from "@/components/ui/LoadingState";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { InlineNotice } from "@/components/ui/InlineNotice";
 import { Toast } from "@/components/ui/Toast";
+import { LicenceRequiredModal } from "@/components/LicenceRequiredModal";
 import { useBootstrap } from "@/lib/useBootstrap";
 import { useAsyncAction } from "@/lib/hooks/useAsyncAction";
+import { usePaidAccess } from "@/lib/access/usePaidAccess";
 import {
   getEventsBySocietyId,
   createEvent,
@@ -160,6 +162,7 @@ export default function EventsScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ create?: string; classification?: string }>();
   const { societyId, activeSocietyId, member, user, loading: bootstrapLoading } = useBootstrap();
+  const { guardPaidAction, modalVisible, setModalVisible, societyId: guardSocietyId } = usePaidAccess();
   const colors = getColors();
   const createAction = useAsyncAction();
   const paramsHandledRef = useRef(false);
@@ -317,6 +320,8 @@ export default function EventsScreen() {
   };
 
   const handleCreateEvent = async () => {
+    if (!guardPaidAction()) return;
+
     console.log("[createEvent] CLICKED", {
       formName: formName.trim(),
       formDate: formDate.trim(),
@@ -715,6 +720,7 @@ export default function EventsScreen() {
             </PrimaryButton>
           </AppCard>
         </ScrollView>
+        <LicenceRequiredModal visible={modalVisible} onClose={() => setModalVisible(false)} societyId={guardSocietyId} />
       </Screen>
     );
   }

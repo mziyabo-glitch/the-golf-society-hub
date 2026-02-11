@@ -757,6 +757,64 @@ export async function resetAllMemberFees(societyId: string): Promise<void> {
   console.log("[memberRepo] resetAllMemberFees success");
 }
 
+/**
+ * Claim a captain-added member (user_id IS NULL) by matching name.
+ * Uses the claim_captain_added_member RPC which sets user_id = auth.uid().
+ * Returns the claimed member, or null if no match / RPC not available.
+ */
+export async function claimCaptainAddedMember(
+  societyId: string,
+  name: string
+): Promise<MemberDoc | null> {
+  console.log("[memberRepo] claimCaptainAddedMember:", { societyId, name });
+
+  const { data, error } = await supabase.rpc("claim_captain_added_member", {
+    p_society_id: societyId,
+    p_name: name.trim(),
+  });
+
+  if (error) {
+    const msg = error.message ?? "";
+
+    // "no_match" means no unlinked member with that name — not an error, just no match
+    if (msg.includes("no_match")) {
+      console.log("[memberRepo] claimCaptainAddedMember: no matching unlinked member");
+      return null;
+    }
+
+    // "already_linked" means user already has a membership (handled elsewhere)
+    if (msg.includes("already_linked")) {
+      console.log("[memberRepo] claimCaptainAddedMember: user already has a membership");
+      return null;
+    }
+
+    // RPC not deployed yet — fall through gracefully
+    const isRpcMissing =
+      error.code === "PGRST202" ||
+      msg.includes("schema cache") ||
+      msg.includes("Could not find");
+    if (isRpcMissing) {
+      console.log("[memberRepo] claimCaptainAddedMember: RPC not available yet");
+      return null;
+    }
+
+    console.error("[memberRepo] claimCaptainAddedMember error:", {
+      message: error.message,
+      code: error.code,
+    });
+    return null;
+  }
+
+  const row = Array.isArray(data) ? data[0] : data;
+  if (!row || !row.id) {
+    console.log("[memberRepo] claimCaptainAddedMember: no data returned");
+    return null;
+  }
+
+  console.log("[memberRepo] claimCaptainAddedMember success — claimed member:", row.id);
+  return mapMember(row);
+}
+
 export async function updateMemberRole(
   memberId: string,
   role: string

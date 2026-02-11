@@ -12,7 +12,7 @@ import { LoadingState } from "@/components/ui/LoadingState";
 import { useBootstrap } from "@/lib/useBootstrap";
 import { ensureSignedIn } from "@/lib/auth_supabase";
 import { createSociety, lookupSocietyByJoinCode, normalizeJoinCode } from "@/lib/db_supabase/societyRepo";
-import { createMember, findMemberByUserAndSociety } from "@/lib/db_supabase/memberRepo";
+import { createMember, findMemberByUserAndSociety, claimCaptainAddedMember } from "@/lib/db_supabase/memberRepo";
 import { setActiveSocietyAndMember } from "@/lib/db_supabase/profileRepo";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
 
@@ -146,15 +146,24 @@ export default function OnboardingScreen() {
         console.log("[join] Existing membership found:", existingMember.id);
         memberId = existingMember.id;
       } else {
-        // Step 4: Create new member row with schema-correct payload
-        console.log("[join] createMember start");
-        memberId = await createMember(society.id, {
-          displayName: displayName.trim(),
-          name: displayName.trim(),
-          roles: ["member"],
-          userId: uid,
-        });
-        console.log("[join] createMember success:", memberId);
+        // Step 4a: Try to claim a captain-added member with matching name
+        console.log("[join] Trying to claim captain-added member by name...");
+        const claimed = await claimCaptainAddedMember(society.id, displayName.trim());
+
+        if (claimed) {
+          console.log("[join] Claimed existing member:", claimed.id);
+          memberId = claimed.id;
+        } else {
+          // Step 4b: No match — create a new member row
+          console.log("[join] No unlinked match, createMember start");
+          memberId = await createMember(society.id, {
+            displayName: displayName.trim(),
+            name: displayName.trim(),
+            roles: ["member"],
+            userId: uid,
+          });
+          console.log("[join] createMember success:", memberId);
+        }
       }
 
       // Step 5: Update profile with active society/member
