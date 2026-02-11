@@ -132,9 +132,14 @@ export async function signUpWithEmail(email: string, password: string): Promise<
  */
 export async function resetPassword(email: string): Promise<void> {
   const cleanEmail = email.trim().toLowerCase();
-  console.log("[auth] resetPassword", { email: cleanEmail });
 
-  const { error } = await supabase.auth.resetPasswordForEmail(cleanEmail);
+  // Use the current origin so the reset link works on any deployment
+  const origin = typeof window !== "undefined" ? window.location.origin : undefined;
+  console.log("[auth] resetPassword", { email: cleanEmail, redirectTo: origin });
+
+  const { error } = await supabase.auth.resetPasswordForEmail(cleanEmail, {
+    redirectTo: origin ? `${origin}/reset-password` : undefined,
+  });
 
   if (error) {
     console.error("[auth] resetPassword error:", {
