@@ -26,9 +26,10 @@ import { confirmDestructive, showAlert } from "@/lib/ui/alert";
 
 export default function SettingsScreen() {
   const router = useRouter();
-  const { user, society, member, loading, refresh } = useBootstrap();
+  const { user, society, member, loading, refresh, signOut } = useBootstrap();
   const colors = getColors();
 
+  const [signingOut, setSigningOut] = useState(false);
   const [leaving, setLeaving] = useState(false);
   const [resetting, setResetting] = useState(false);
   const [regenerating, setRegenerating] = useState(false);
@@ -57,10 +58,27 @@ export default function SettingsScreen() {
         setLeaving(true);
         try {
           await clearActiveSociety(user.uid);
-          router.replace("/onboarding");
+          refresh();
         } catch (e: any) {
           showAlert("Error", e?.message || "Failed to leave society.");
           setLeaving(false);
+        }
+      },
+    );
+  };
+
+  const handleSignOut = () => {
+    confirmDestructive(
+      "Sign Out",
+      "Are you sure you want to sign out?",
+      "Sign Out",
+      async () => {
+        setSigningOut(true);
+        try {
+          await signOut();
+        } catch (e: any) {
+          showAlert("Error", e?.message || "Failed to sign out.");
+          setSigningOut(false);
         }
       },
     );
@@ -280,6 +298,16 @@ export default function SettingsScreen() {
             </View>
             <Feather name="chevron-right" size={18} color={colors.textTertiary} />
           </Pressable>
+        </AppCard>
+
+        <AppText variant="h2" style={styles.sectionTitle}>Account</AppText>
+        <AppCard>
+          <AppText variant="body" color="secondary" style={{ marginBottom: spacing.base }}>
+            Sign out of your account on this device.
+          </AppText>
+          <DestructiveButton onPress={handleSignOut} loading={signingOut}>
+            Sign Out
+          </DestructiveButton>
         </AppCard>
 
         <View style={styles.footer}>
@@ -617,8 +645,14 @@ export default function SettingsScreen() {
         <AppText variant="body" color="secondary" style={{ marginBottom: spacing.base }}>
           Leave this society to join a different one or create a new society. You can rejoin later with the join code.
         </AppText>
-        <DestructiveButton onPress={handleLeaveSociety} loading={leaving}>
+        <DestructiveButton onPress={handleLeaveSociety} loading={leaving} style={{ marginBottom: spacing.base }}>
           Leave Society
+        </DestructiveButton>
+        <AppText variant="body" color="secondary" style={{ marginBottom: spacing.base }}>
+          Sign out of your account on this device.
+        </AppText>
+        <DestructiveButton onPress={handleSignOut} loading={signingOut}>
+          Sign Out
         </DestructiveButton>
       </AppCard>
 

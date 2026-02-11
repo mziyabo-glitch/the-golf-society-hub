@@ -93,7 +93,6 @@ function useBootstrapInternal(): BootstrapState {
   const mounted = useRef(true);
   const bootstrapRunRef = useRef(false);
   const bootstrapInFlight = useRef(false);
-  const anonSignInAttempted = useRef(false);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -118,11 +117,10 @@ function useBootstrapInternal(): BootstrapState {
         setError(null);
 
         // ----------------------------------------------------------------
-        // Step 1: Get existing session or sign in anonymously
+        // Step 1: Get existing session (persisted from previous sign-in)
         // Session persistence: localStorage on web, SecureStore on native
         // ----------------------------------------------------------------
-        console.log("[useBootstrap] === SESSION PERSISTENCE CHECK ===");
-        console.log("[useBootstrap] Checking for existing session from storage...");
+        console.log("[useBootstrap] === SESSION CHECK ===");
 
         const { data: { session: existingSession }, error: sessionError } =
           await supabase.auth.getSession();
@@ -131,45 +129,20 @@ function useBootstrapInternal(): BootstrapState {
           console.error("[useBootstrap] getSession error:", sessionError.message);
         }
 
-        // Log session state BEFORE any sign-in
         console.log("[useBootstrap] Session from storage:", existingSession ? "FOUND" : "NOT FOUND");
-        if (existingSession) {
-          console.log("[useBootstrap] Persisted user ID:", existingSession.user?.id);
-          console.log("[useBootstrap] Token expires at:", existingSession.expires_at
-            ? new Date(existingSession.expires_at * 1000).toISOString()
-            : "unknown");
-        }
 
         let currentSession = existingSession ?? null;
         let currentUser: User | null = existingSession?.user ?? null;
 
         if (!currentSession || !currentUser) {
-          if (anonSignInAttempted.current) {
-            console.warn("[useBootstrap] Anonymous sign-in already attempted.");
-            if (!mounted.current) return;
-            setSession(null);
-            setProfile(null);
-            setSociety(null);
-            setMember(null);
-            return;
-          }
-
-          anonSignInAttempted.current = true;
-          console.log("[useBootstrap] No session found. Signing in anonymously...");
-
-          const { data: signInData, error: signInError } =
-            await supabase.auth.signInAnonymously();
-
-          if (signInError) {
-            throw new Error(`Anonymous sign-in failed: ${signInError.message}`);
-          }
-
-          currentSession = signInData.session ?? null;
-          currentUser = signInData.user ?? null;
-
-          if (!currentSession || !currentUser) {
-            throw new Error("Failed to establish auth session");
-          }
+          // No session — user needs to sign in via the auth screen.
+          console.log("[useBootstrap] No session — awaiting sign-in.");
+          if (!mounted.current) return;
+          setSession(null);
+          setProfile(null);
+          setSociety(null);
+          setMember(null);
+          return;
         }
 
         console.log("[useBootstrap] Existing session found:", currentUser.id);

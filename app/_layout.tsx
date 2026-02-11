@@ -3,6 +3,7 @@ import { Stack, useRouter, useSegments } from "expo-router";
 import { View } from "react-native";
 import { BootstrapProvider, useBootstrap } from "@/lib/useBootstrap";
 import { LoadingState } from "@/components/ui/LoadingState";
+import { AuthScreen } from "@/components/AuthScreen";
 import { AppCard } from "@/components/ui/AppCard";
 import { AppText } from "@/components/ui/AppText";
 import { PrimaryButton } from "@/components/ui/Button";
@@ -10,7 +11,7 @@ import { getColors, spacing } from "@/lib/ui/theme";
 import { consumePendingInviteToken } from "@/lib/sinbookInviteToken";
 
 function RootNavigator() {
-  const { loading, error, activeSocietyId, refresh } = useBootstrap();
+  const { loading, error, isSignedIn, activeSocietyId, refresh } = useBootstrap();
   const segments = useSegments();
   const router = useRouter();
   const colors = getColors();
@@ -21,8 +22,8 @@ function RootNavigator() {
   const lastState = useRef<string>("");
 
   useEffect(() => {
-    // Don't route while loading
-    if (loading) {
+    // Don't route while loading or not signed in
+    if (loading || !isSignedIn) {
       return;
     }
 
@@ -70,8 +71,7 @@ function RootNavigator() {
       });
     }
     // No society + not on onboarding = Personal Mode — let (app) handle it
-    // Note: Removed "no redirect needed" log to reduce console spam
-  }, [loading, activeSocietyId, segments, router]);
+  }, [loading, isSignedIn, activeSocietyId, segments, router]);
 
   // Reset hasRouted when loading changes (new bootstrap cycle)
   useEffect(() => {
@@ -87,6 +87,11 @@ function RootNavigator() {
         <LoadingState message="Loading..." />
       </View>
     );
+  }
+
+  // Not signed in — show auth screen
+  if (!isSignedIn) {
+    return <AuthScreen />;
   }
 
   if (error) {

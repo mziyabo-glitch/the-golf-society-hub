@@ -43,6 +43,79 @@ export async function getCurrentUser(): Promise<User | null> {
 // ============================================================================
 
 /**
+ * Sign in with email and password.
+ * Returns the user on success, throws on error.
+ */
+export async function signInWithEmail(email: string, password: string): Promise<User> {
+  const { data, error } = await supabase.auth.signInWithPassword({
+    email: email.trim().toLowerCase(),
+    password,
+  });
+
+  if (error) {
+    console.error("[auth] signInWithEmail error:", error.message);
+
+    if (error.message?.includes("Invalid login credentials")) {
+      throw new Error("Incorrect email or password.");
+    }
+    if (error.message?.includes("Email not confirmed")) {
+      throw new Error("Please check your email and confirm your account first.");
+    }
+    throw new Error(error.message || "Sign in failed.");
+  }
+
+  if (!data.user) {
+    throw new Error("Sign in failed — no user returned.");
+  }
+
+  console.log("[auth] signInWithEmail success:", data.user.id);
+  return data.user;
+}
+
+/**
+ * Sign up with email and password.
+ * Returns the user on success, throws on error.
+ *
+ * Note: If email confirmation is enabled in Supabase, the user will need
+ * to verify their email before they can sign in. We detect this and
+ * provide a helpful message.
+ */
+export async function signUpWithEmail(email: string, password: string): Promise<{ user: User; needsConfirmation: boolean }> {
+  const { data, error } = await supabase.auth.signUp({
+    email: email.trim().toLowerCase(),
+    password,
+  });
+
+  if (error) {
+    console.error("[auth] signUpWithEmail error:", error.message);
+
+    if (error.message?.includes("already registered")) {
+      throw new Error("An account with this email already exists. Try signing in instead.");
+    }
+    if (error.message?.includes("Password should be")) {
+      throw new Error("Password must be at least 6 characters.");
+    }
+    throw new Error(error.message || "Sign up failed.");
+  }
+
+  if (!data.user) {
+    throw new Error("Sign up failed — no user returned.");
+  }
+
+  // If identities array is empty, the user already exists (Supabase returns
+  // a fake user with no identities instead of an error in some configs)
+  if (data.user.identities && data.user.identities.length === 0) {
+    throw new Error("An account with this email already exists. Try signing in instead.");
+  }
+
+  // Check if email confirmation is required
+  const needsConfirmation = !data.session;
+
+  console.log("[auth] signUpWithEmail success:", data.user.id, "needsConfirmation:", needsConfirmation);
+  return { user: data.user, needsConfirmation };
+}
+
+/**
  * Ensure user is signed in. If no session exists, throw.
  * Returns the user object.
  */
