@@ -1,8 +1,9 @@
 import { useEffect, useRef } from "react";
 import { Stack, useRouter, useSegments } from "expo-router";
-import { View } from "react-native";
+import { StyleSheet, View } from "react-native";
 import { BootstrapProvider, useBootstrap } from "@/lib/useBootstrap";
 import { LoadingState } from "@/components/ui/LoadingState";
+import { AuthScreen } from "@/components/AuthScreen";
 import { AppCard } from "@/components/ui/AppCard";
 import { AppText } from "@/components/ui/AppText";
 import { PrimaryButton } from "@/components/ui/Button";
@@ -10,7 +11,7 @@ import { getColors, spacing } from "@/lib/ui/theme";
 import { consumePendingInviteToken } from "@/lib/sinbookInviteToken";
 
 function RootNavigator() {
-  const { loading, error, activeSocietyId, refresh } = useBootstrap();
+  const { loading, error, isSignedIn, activeSocietyId, refresh } = useBootstrap();
   const segments = useSegments();
   const router = useRouter();
   const colors = getColors();
@@ -21,8 +22,8 @@ function RootNavigator() {
   const lastState = useRef<string>("");
 
   useEffect(() => {
-    // Don't route while loading
-    if (loading) {
+    // Don't route while loading or not signed in
+    if (loading || !isSignedIn) {
       return;
     }
 
@@ -55,12 +56,7 @@ function RootNavigator() {
       return;
     }
 
-    if (!hasSociety && !inOnboarding) {
-      // No society and not on onboarding -> go to onboarding
-      console.log("[_layout] No society, redirecting to /onboarding");
-      hasRouted.current = true;
-      router.replace("/onboarding");
-    } else if (hasSociety && inOnboarding) {
+    if (hasSociety && inOnboarding) {
       // Has society but on onboarding -> go to app home
       // Check for pending sinbook invite token first
       console.log("[_layout] Has society, checking pending invite token...");
@@ -74,8 +70,8 @@ function RootNavigator() {
         }
       });
     }
-    // Note: Removed "no redirect needed" log to reduce console spam
-  }, [loading, activeSocietyId, segments, router]);
+    // No society + not on onboarding = Personal Mode — let (app) handle it
+  }, [loading, isSignedIn, activeSocietyId, segments, router]);
 
   // Reset hasRouted when loading changes (new bootstrap cycle)
   useEffect(() => {
@@ -85,27 +81,44 @@ function RootNavigator() {
     }
   }, [loading]);
 
-  if (loading) {
-    return (
-      <View style={{ flex: 1, justifyContent: "center", alignItems: "center", backgroundColor: colors.background }}>
-        <LoadingState message="Loading your golf society..." />
-      </View>
-    );
-  }
+  // Determine which overlay to show (if any).
+  // The Stack ALWAYS renders so expo-router can match child routes like /reset-password.
+  const isPublicRoute = segments[0] === "reset-password";
+  const showLoading = loading;
+  const showAuth = !loading && !isSignedIn && !isPublicRoute;
+  const showError = !loading && !showAuth && !!error;
 
-  if (error) {
-    return (
-      <View style={{ flex: 1, justifyContent: "center", alignItems: "center", backgroundColor: colors.background, padding: spacing.lg }}>
-        <AppCard>
-          <AppText variant="h2" style={{ marginBottom: spacing.sm }}>Something went wrong</AppText>
-          <AppText variant="body" color="secondary" style={{ marginBottom: spacing.lg }}>{error}</AppText>
-          <PrimaryButton onPress={refresh}>Try Again</PrimaryButton>
-        </AppCard>
-      </View>
-    );
-  }
+  return (
+    <View style={{ flex: 1, backgroundColor: colors.background }}>
+      {/* Always render the navigator so expo-router can resolve all routes */}
+      <Stack screenOptions={{ headerShown: false }} />
 
-  return <Stack screenOptions={{ headerShown: false }} />;
+      {/* Overlay: loading spinner */}
+      {showLoading && (
+        <View style={[StyleSheet.absoluteFill, { justifyContent: "center", alignItems: "center", backgroundColor: colors.background }]}>
+          <LoadingState message="Loading..." />
+        </View>
+      )}
+
+      {/* Overlay: auth gate (except for public routes like /reset-password) */}
+      {showAuth && (
+        <View style={[StyleSheet.absoluteFill, { backgroundColor: colors.background }]}>
+          <AuthScreen />
+        </View>
+      )}
+
+      {/* Overlay: error state */}
+      {showError && (
+        <View style={[StyleSheet.absoluteFill, { justifyContent: "center", alignItems: "center", backgroundColor: colors.background, padding: spacing.lg }]}>
+          <AppCard>
+            <AppText variant="h2" style={{ marginBottom: spacing.sm }}>Something went wrong</AppText>
+            <AppText variant="body" color="secondary" style={{ marginBottom: spacing.lg }}>{error}</AppText>
+            <PrimaryButton onPress={refresh}>Try Again</PrimaryButton>
+          </AppCard>
+        </View>
+      )}
+    </View>
+  );
 }
 
 export default function RootLayout() {

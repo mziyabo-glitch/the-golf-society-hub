@@ -4,11 +4,16 @@ import { useBootstrap } from "@/lib/useBootstrap";
 import { isCaptain } from "@/lib/rbac";
 
 export default function TabsLayout() {
-  const { member } = useBootstrap();
+  const { member, activeSocietyId } = useBootstrap();
+
+  const hasSociety = !!activeSocietyId && !!member;
 
   // Captains always have full access; regular members need a licence (seat)
   const hasFullAccess =
-    isCaptain(member as any) || (member as any)?.has_seat === true;
+    hasSociety && (isCaptain(member as any) || (member as any)?.has_seat === true);
+
+  // Society-only tabs are hidden in Personal Mode or when unlicensed
+  const societyTabHref = hasFullAccess ? undefined : null;
 
   return (
     <Tabs screenOptions={{ headerShown: false }}>
@@ -21,7 +26,7 @@ export default function TabsLayout() {
         options={{
           title: "Events",
           tabBarIcon: ({ color, size }) => <Feather name="calendar" color={color} size={size} />,
-          href: hasFullAccess ? undefined : null,
+          href: societyTabHref,
         }}
       />
       <Tabs.Screen
@@ -29,7 +34,7 @@ export default function TabsLayout() {
         options={{
           title: "OOM",
           tabBarIcon: ({ color, size }) => <Feather name="award" color={color} size={size} />,
-          href: hasFullAccess ? undefined : null,
+          href: societyTabHref,
         }}
       />
       <Tabs.Screen
@@ -37,6 +42,7 @@ export default function TabsLayout() {
         options={{
           title: "Sinbook",
           tabBarIcon: ({ color, size }) => <Feather name="zap" color={color} size={size} />,
+          // Sinbook is always visible — has its own paywall
         }}
       />
       <Tabs.Screen
@@ -44,7 +50,7 @@ export default function TabsLayout() {
         options={{
           title: "Members",
           tabBarIcon: ({ color, size }) => <Feather name="users" color={color} size={size} />,
-          href: hasFullAccess ? undefined : null,
+          href: societyTabHref,
         }}
       />
       <Tabs.Screen
@@ -54,4 +60,3 @@ export default function TabsLayout() {
     </Tabs>
   );
 }
-

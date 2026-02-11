@@ -26,9 +26,10 @@ import { confirmDestructive, showAlert } from "@/lib/ui/alert";
 
 export default function SettingsScreen() {
   const router = useRouter();
-  const { user, society, member, loading, refresh } = useBootstrap();
+  const { user, society, member, loading, refresh, signOut } = useBootstrap();
   const colors = getColors();
 
+  const [signingOut, setSigningOut] = useState(false);
   const [leaving, setLeaving] = useState(false);
   const [resetting, setResetting] = useState(false);
   const [regenerating, setRegenerating] = useState(false);
@@ -57,10 +58,27 @@ export default function SettingsScreen() {
         setLeaving(true);
         try {
           await clearActiveSociety(user.uid);
-          router.replace("/onboarding");
+          refresh();
         } catch (e: any) {
           showAlert("Error", e?.message || "Failed to leave society.");
           setLeaving(false);
+        }
+      },
+    );
+  };
+
+  const handleSignOut = () => {
+    confirmDestructive(
+      "Sign Out",
+      "Are you sure you want to sign out?",
+      "Sign Out",
+      async () => {
+        setSigningOut(true);
+        try {
+          await signOut();
+        } catch (e: any) {
+          showAlert("Error", e?.message || "Failed to sign out.");
+          setSigningOut(false);
         }
       },
     );
@@ -227,6 +245,75 @@ export default function SettingsScreen() {
       <Screen scrollable={false}>
         <View style={styles.centered}>
           <LoadingState message="Loading settings..." />
+        </View>
+      </Screen>
+    );
+  }
+
+  // Personal Mode — no society
+  if (!society) {
+    return (
+      <Screen>
+        <AppText variant="title" style={styles.title}>Settings</AppText>
+
+        <AppText variant="h2" style={styles.sectionTitle}>Account</AppText>
+        <AppCard>
+          <View style={styles.profileRow}>
+            <View style={[styles.avatar, { backgroundColor: colors.backgroundTertiary }]}>
+              <Feather name="user" size={24} color={colors.primary} />
+            </View>
+            <View style={styles.profileInfo}>
+              <AppText variant="bodyBold">Individual</AppText>
+              <AppText variant="caption" color="secondary">Personal Mode</AppText>
+            </View>
+          </View>
+        </AppCard>
+
+        <AppText variant="h2" style={styles.sectionTitle}>Society</AppText>
+        <AppCard padding="sm">
+          <Pressable
+            style={({ pressed }) => [styles.linkRow, { opacity: pressed ? 0.7 : 1 }]}
+            onPress={() => router.push("/onboarding")}
+          >
+            <View style={[styles.linkIcon, { backgroundColor: colors.primary + "14" }]}>
+              <Feather name="users" size={16} color={colors.primary} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <AppText variant="body">Join a Society</AppText>
+              <AppText variant="small" color="secondary">Enter a join code from your Captain</AppText>
+            </View>
+            <Feather name="chevron-right" size={18} color={colors.textTertiary} />
+          </Pressable>
+
+          <Pressable
+            style={({ pressed }) => [styles.linkRow, { opacity: pressed ? 0.7 : 1 }]}
+            onPress={() => router.push("/onboarding")}
+          >
+            <View style={[styles.linkIcon, { backgroundColor: colors.backgroundTertiary }]}>
+              <Feather name="plus-circle" size={16} color={colors.primary} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <AppText variant="body">Create a Society</AppText>
+              <AppText variant="small" color="secondary">Start a new society and invite friends</AppText>
+            </View>
+            <Feather name="chevron-right" size={18} color={colors.textTertiary} />
+          </Pressable>
+        </AppCard>
+
+        <AppText variant="h2" style={styles.sectionTitle}>Account</AppText>
+        <AppCard>
+          <AppText variant="body" color="secondary" style={{ marginBottom: spacing.base }}>
+            Sign out of your account on this device.
+          </AppText>
+          <DestructiveButton onPress={handleSignOut} loading={signingOut}>
+            Sign Out
+          </DestructiveButton>
+        </AppCard>
+
+        <View style={styles.footer}>
+          <AppText variant="caption" color="tertiary" style={{ textAlign: "center" }}>
+            Golf Society Hub v1.0.0
+          </AppText>
         </View>
       </Screen>
     );
@@ -558,8 +645,14 @@ export default function SettingsScreen() {
         <AppText variant="body" color="secondary" style={{ marginBottom: spacing.base }}>
           Leave this society to join a different one or create a new society. You can rejoin later with the join code.
         </AppText>
-        <DestructiveButton onPress={handleLeaveSociety} loading={leaving}>
+        <DestructiveButton onPress={handleLeaveSociety} loading={leaving} style={{ marginBottom: spacing.base }}>
           Leave Society
+        </DestructiveButton>
+        <AppText variant="body" color="secondary" style={{ marginBottom: spacing.base }}>
+          Sign out of your account on this device.
+        </AppText>
+        <DestructiveButton onPress={handleSignOut} loading={signingOut}>
+          Sign Out
         </DestructiveButton>
       </AppCard>
 

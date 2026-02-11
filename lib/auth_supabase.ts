@@ -39,8 +39,124 @@ export async function getCurrentUser(): Promise<User | null> {
 }
 
 // ============================================================================
-// Sign In / Sign Out
+// Sign In / Sign Up / Sign Out
 // ============================================================================
+
+/**
+ * Sign in with email and password.
+ * Returns the user on success, throws on error.
+ * Surfaces the real Supabase error message for debugging.
+ */
+export async function signInWithEmail(email: string, password: string): Promise<User> {
+  const cleanEmail = email.trim().toLowerCase();
+  console.log("[auth] signInWithEmail", { step: "signIn", email: cleanEmail });
+
+  const { data, error } = await supabase.auth.signInWithPassword({
+    email: cleanEmail,
+    password,
+  });
+
+  if (error) {
+    console.error("[auth] signInWithEmail error:", {
+      step: "signIn",
+      email: cleanEmail,
+      code: error.status,
+      message: error.message,
+      name: error.name,
+    });
+    throw new Error(error.message || "Sign in failed.");
+  }
+
+  if (!data.user) {
+    throw new Error("Sign in failed — no user returned.");
+  }
+
+  console.log("[auth] signInWithEmail success:", data.user.id);
+  return data.user;
+}
+
+/**
+ * Sign up with email and password.
+ * Returns the user on success, throws on error.
+ * Surfaces the real Supabase error message for debugging.
+ */
+export async function signUpWithEmail(email: string, password: string): Promise<{ user: User; needsConfirmation: boolean }> {
+  const cleanEmail = email.trim().toLowerCase();
+  console.log("[auth] signUpWithEmail", { step: "signUp", email: cleanEmail });
+
+  const { data, error } = await supabase.auth.signUp({
+    email: cleanEmail,
+    password,
+  });
+
+  if (error) {
+    console.error("[auth] signUpWithEmail error:", {
+      step: "signUp",
+      email: cleanEmail,
+      code: error.status,
+      message: error.message,
+      name: error.name,
+    });
+    throw new Error(error.message || "Sign up failed.");
+  }
+
+  if (!data.user) {
+    throw new Error("Sign up failed — no user returned.");
+  }
+
+  console.log("[auth] signUpWithEmail response:", {
+    step: "signUp",
+    email: cleanEmail,
+    userId: data.user.id,
+    identitiesCount: data.user.identities?.length ?? "N/A",
+    hasSession: !!data.session,
+    confirmedAt: data.user.confirmed_at ?? "not confirmed",
+  });
+
+  // Supabase quirk: when email confirmations are ON and the email already
+  // exists, signUp returns a user object with an empty identities array
+  // instead of an error.
+  if (data.user.identities && data.user.identities.length === 0) {
+    throw new Error("An account with this email already exists. Try signing in instead.");
+  }
+
+  // If no session came back, the user needs to confirm their email first.
+  const needsConfirmation = !data.session;
+
+  return { user: data.user, needsConfirmation };
+}
+
+/**
+ * Send a password reset email.
+ * Supabase will send a link to the user's email.
+ * Uses the stable production URL so the redirect always matches the
+ * Supabase allowlist (preview URLs change per Vercel deployment).
+ */
+const RESET_REDIRECT_URL = "https://the-golf-society-hub.vercel.app/reset-password";
+
+export async function resetPassword(email: string): Promise<void> {
+  const cleanEmail = email.trim().toLowerCase();
+
+  console.log("[auth] resetPassword", {
+    email: cleanEmail,
+    redirectTo: RESET_REDIRECT_URL,           // beta: verify correct URL
+  });
+
+  const { error } = await supabase.auth.resetPasswordForEmail(cleanEmail, {
+    redirectTo: RESET_REDIRECT_URL,
+  });
+
+  if (error) {
+    console.error("[auth] resetPassword error:", {
+      email: cleanEmail,
+      code: error.status,
+      message: error.message,
+    });
+    throw new Error(error.message || "Failed to send reset email.");
+  }
+
+  console.log("[auth] resetPassword email sent to:", cleanEmail);
+}
 
 /**
  * Ensure user is signed in. If no session exists, throw.
