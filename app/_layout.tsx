@@ -89,9 +89,12 @@ function RootNavigator() {
     );
   }
 
-  // Not signed in — show auth screen
+  // Not signed in — show auth screen (but let /reset-password through)
   if (!isSignedIn) {
-    return <AuthScreen />;
+    const isResetPassword = segments[0] === "reset-password";
+    if (!isResetPassword) {
+      return <AuthScreen />;
+    }
   }
 
   if (error) {

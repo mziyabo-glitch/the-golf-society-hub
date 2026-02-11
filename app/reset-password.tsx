@@ -1,16 +1,15 @@
 /**
- * Reset Password screen — handles the recovery link from Supabase.
+ * Reset Password screen — PUBLIC route (no auth required).
  *
  * Flow:
- * 1. User clicks "Forgot password" → receives email with reset link
- * 2. Link opens: /reset-password#access_token=...&type=recovery
- * 3. Supabase client (detectSessionInUrl: true) processes the token
- * 4. onAuthStateChange fires PASSWORD_RECOVERY → user has a valid session
- * 5. This screen renders a "set new password" form
- * 6. Calls supabase.auth.updateUser({ password }) to apply the change
+ * 1. User clicks password-reset link in email
+ * 2. Supabase redirects to /reset-password#access_token=...&refresh_token=...&type=recovery
+ * 3. This screen parses the hash tokens and calls setSession()
+ * 4. User enters a new password
+ * 5. Calls supabase.auth.updateUser({ password })
  */
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
   StyleSheet,
   View,
@@ -26,6 +25,7 @@ import { AppCard } from "@/components/ui/AppCard";
 import { AppInput } from "@/components/ui/AppInput";
 import { PrimaryButton } from "@/components/ui/Button";
 import { InlineNotice } from "@/components/ui/InlineNotice";
+import { LoadingState } from "@/components/ui/LoadingState";
 import { supabase } from "@/lib/supabase";
 import { getColors, spacing } from "@/lib/ui/theme";
 
@@ -33,11 +33,88 @@ export default function ResetPasswordScreen() {
   const router = useRouter();
   const colors = getColors();
 
+  // Token exchange state
+  const [ready, setReady] = useState(false);
+  const [tokenError, setTokenError] = useState<string | null>(null);
+
+  // Form state
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
+
+  // --- Step 1: Parse tokens from URL hash and establish session ---
+  useEffect(() => {
+    async function exchangeToken() {
+      try {
+        // Hash fragment: #access_token=xxx&refresh_token=xxx&type=recovery&...
+        const hash =
+          typeof window !== "undefined"
+            ? window.location.hash.substring(1)
+            : "";
+        const params = new URLSearchParams(hash);
+
+        const accessToken = params.get("access_token");
+        const refreshToken = params.get("refresh_token");
+        const type = params.get("type");
+
+        console.log("[ResetPassword] token exchange", {
+          hasAccessToken: !!accessToken,
+          hasRefreshToken: !!refreshToken,
+          type,
+        });
+
+        if (!accessToken || !refreshToken) {
+          // No tokens in URL — check if Supabase already has a recovery session
+          const {
+            data: { session },
+          } = await supabase.auth.getSession();
+          if (session) {
+            console.log("[ResetPassword] existing session found, proceeding");
+            setReady(true);
+            return;
+          }
+
+          setTokenError(
+            "Invalid or expired reset link. Please request a new one."
+          );
+          return;
+        }
+
+        if (type !== "recovery") {
+          setTokenError("This link is not a password reset link.");
+          return;
+        }
+
+        // Exchange tokens for a session
+        const { error: sessionError } = await supabase.auth.setSession({
+          access_token: accessToken,
+          refresh_token: refreshToken,
+        });
+
+        if (sessionError) {
+          console.error("[ResetPassword] setSession error:", sessionError);
+          setTokenError(sessionError.message);
+          return;
+        }
+
+        console.log("[ResetPassword] session established from recovery token");
+
+        // Clean the hash from the URL (cosmetic)
+        if (typeof window !== "undefined") {
+          window.history.replaceState(null, "", window.location.pathname);
+        }
+
+        setReady(true);
+      } catch (e: any) {
+        console.error("[ResetPassword] token exchange failed:", e);
+        setTokenError(e?.message || "Failed to process reset link.");
+      }
+    }
+
+    exchangeToken();
+  }, []);
 
   const canSubmit = password.length >= 6 && password === confirmPassword;
 
@@ -51,6 +128,7 @@ export default function ResetPasswordScreen() {
     setError(null);
   };
 
+  // --- Step 2: Update password ---
   const handleSubmit = async () => {
     if (loading || !canSubmit) return;
 
@@ -81,7 +159,55 @@ export default function ResetPasswordScreen() {
     }
   };
 
-  // --- Success state ---
+  // --- Render: loading while exchanging token ---
+  if (!ready && !tokenError) {
+    return (
+      <Screen>
+        <View style={styles.container}>
+          <LoadingState message="Verifying reset link..." />
+        </View>
+      </Screen>
+    );
+  }
+
+  // --- Render: token error ---
+  if (tokenError) {
+    return (
+      <Screen>
+        <View style={styles.container}>
+          <View style={styles.brandSection}>
+            <View
+              style={[
+                styles.brandIcon,
+                { backgroundColor: colors.error + "14" },
+              ]}
+            >
+              <Feather name="alert-circle" size={32} color={colors.error} />
+            </View>
+            <AppText variant="title" style={styles.brandTitle}>
+              Reset Link Invalid
+            </AppText>
+            <AppText
+              variant="body"
+              color="secondary"
+              style={styles.brandSubtitle}
+            >
+              {tokenError}
+            </AppText>
+          </View>
+
+          <PrimaryButton
+            onPress={() => router.replace("/")}
+            style={styles.submitButton}
+          >
+            Back to Sign In
+          </PrimaryButton>
+        </View>
+      </Screen>
+    );
+  }
+
+  // --- Render: success ---
   if (success) {
     return (
       <Screen>
@@ -108,15 +234,18 @@ export default function ResetPasswordScreen() {
             </AppText>
           </View>
 
-          <PrimaryButton onPress={() => router.replace("/")} style={styles.submitButton}>
-            Continue
+          <PrimaryButton
+            onPress={() => router.replace("/")}
+            style={styles.submitButton}
+          >
+            Continue to Sign In
           </PrimaryButton>
         </View>
       </Screen>
     );
   }
 
-  // --- Password form ---
+  // --- Render: password form ---
   return (
     <Screen>
       <KeyboardAvoidingView
@@ -146,7 +275,11 @@ export default function ResetPasswordScreen() {
 
         <AppCard style={styles.formCard}>
           {error && (
-            <InlineNotice variant="error" message={error} style={styles.notice} />
+            <InlineNotice
+              variant="error"
+              message={error}
+              style={styles.notice}
+            />
           )}
 
           <View style={styles.field}>
