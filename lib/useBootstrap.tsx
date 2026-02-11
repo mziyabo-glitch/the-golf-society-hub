@@ -288,8 +288,8 @@ function useBootstrapInternal(): BootstrapState {
         if (mounted.current) {
           setSession(newSession);
 
-          // Refresh bootstrap on sign in/out
-          if (event === "SIGNED_IN" || event === "SIGNED_OUT") {
+          // Refresh bootstrap on sign in/out/recovery
+          if (event === "SIGNED_IN" || event === "SIGNED_OUT" || event === "PASSWORD_RECOVERY") {
             setRefreshKey((k) => k + 1);
           }
         }
