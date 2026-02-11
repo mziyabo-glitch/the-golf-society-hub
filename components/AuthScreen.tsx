@@ -1,10 +1,10 @@
 /**
- * AuthScreen — email / password sign-in and sign-up.
+ * AuthScreen — email / password sign-in, sign-up, and forgot password.
  * Rendered by the root layout when no session exists.
  * One-time sign-in: session is persisted by Supabase.
  */
 
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import {
   StyleSheet,
   View,
@@ -18,12 +18,16 @@ import { Screen } from "@/components/ui/Screen";
 import { AppText } from "@/components/ui/AppText";
 import { AppCard } from "@/components/ui/AppCard";
 import { AppInput } from "@/components/ui/AppInput";
-import { PrimaryButton } from "@/components/ui/Button";
+import { PrimaryButton, SecondaryButton } from "@/components/ui/Button";
 import { InlineNotice } from "@/components/ui/InlineNotice";
-import { signInWithEmail, signUpWithEmail } from "@/lib/auth_supabase";
+import {
+  signInWithEmail,
+  signUpWithEmail,
+  resetPassword,
+} from "@/lib/auth_supabase";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
 
-type Mode = "signIn" | "signUp";
+type Mode = "signIn" | "signUp" | "forgotPassword";
 
 export function AuthScreen() {
   const colors = getColors();
@@ -36,39 +40,150 @@ export function AuthScreen() {
   const [success, setSuccess] = useState<string | null>(null);
 
   const isSignIn = mode === "signIn";
-  const canSubmit = email.trim().length > 0 && password.length >= 6;
+  const isSignUp = mode === "signUp";
+  const isForgot = mode === "forgotPassword";
+
+  const canSubmitAuth = email.trim().length > 0 && password.length >= 6;
+  const canSubmitReset = email.trim().length > 0;
+
+  // Clear error/success when user edits fields
+  const handleEmailChange = useCallback((text: string) => {
+    setEmail(text);
+    setError(null);
+  }, []);
+
+  const handlePasswordChange = useCallback((text: string) => {
+    setPassword(text);
+    setError(null);
+  }, []);
 
   const handleSubmit = async () => {
-    if (!canSubmit || loading) return;
+    if (loading) return;
+
+    // Snapshot current field values
+    const submitEmail = email.trim().toLowerCase();
+    const submitPassword = password;
+
+    if (isForgot) {
+      if (!canSubmitReset) return;
+      setLoading(true);
+      setError(null);
+      setSuccess(null);
+      console.log("[AuthScreen] resetPassword submit:", { email: submitEmail });
+
+      try {
+        await resetPassword(submitEmail);
+        setSuccess("If an account exists with that email, you'll receive a password reset link.");
+      } catch (e: any) {
+        console.error("[AuthScreen] resetPassword error:", e);
+        setError(e?.message || "Something went wrong.");
+      } finally {
+        setLoading(false);
+      }
+      return;
+    }
+
+    if (!canSubmitAuth) return;
     setLoading(true);
     setError(null);
     setSuccess(null);
 
+    console.log("[AuthScreen] submit:", {
+      mode,
+      email: submitEmail,
+      passwordLength: submitPassword.length,
+    });
+
     try {
       if (isSignIn) {
-        await signInWithEmail(email, password);
+        await signInWithEmail(submitEmail, submitPassword);
         // Session is set — onAuthStateChange in useBootstrap will re-bootstrap.
       } else {
-        const { needsConfirmation } = await signUpWithEmail(email, password);
+        const { needsConfirmation } = await signUpWithEmail(submitEmail, submitPassword);
         if (needsConfirmation) {
           setSuccess("Check your email to confirm your account, then sign in.");
           setMode("signIn");
+          setPassword("");
         }
         // If no confirmation needed, session is set and bootstrap re-runs.
       }
     } catch (e: any) {
+      console.error("[AuthScreen] auth error:", { mode, email: submitEmail, error: e?.message });
       setError(e?.message || "Something went wrong. Please try again.");
     } finally {
       setLoading(false);
     }
   };
 
-  const toggleMode = () => {
-    setMode(isSignIn ? "signUp" : "signIn");
+  const switchMode = (newMode: Mode) => {
+    setMode(newMode);
     setError(null);
     setSuccess(null);
   };
 
+  // --- Forgot Password UI ---
+  if (isForgot) {
+    return (
+      <Screen>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === "ios" ? "padding" : undefined}
+          style={styles.container}
+        >
+          <View style={styles.brandSection}>
+            <View style={[styles.brandIcon, { backgroundColor: colors.primary + "14" }]}>
+              <Feather name="lock" size={32} color={colors.primary} />
+            </View>
+            <AppText variant="title" style={styles.brandTitle}>
+              Reset Password
+            </AppText>
+            <AppText variant="body" color="secondary" style={styles.brandSubtitle}>
+              Enter your email and we'll send you a reset link.
+            </AppText>
+          </View>
+
+          <AppCard style={styles.formCard}>
+            {error && (
+              <InlineNotice variant="error" message={error} style={styles.notice} />
+            )}
+            {success && (
+              <InlineNotice variant="success" message={success} style={styles.notice} />
+            )}
+
+            <View style={styles.field}>
+              <AppText variant="captionBold" style={styles.label}>Email</AppText>
+              <AppInput
+                placeholder="you@example.com"
+                value={email}
+                onChangeText={handleEmailChange}
+                autoCapitalize="none"
+                autoCorrect={false}
+                keyboardType="email-address"
+                textContentType="emailAddress"
+                autoComplete="email"
+              />
+            </View>
+
+            <PrimaryButton
+              onPress={handleSubmit}
+              loading={loading}
+              disabled={!canSubmitReset || loading}
+              style={styles.submitButton}
+            >
+              Send Reset Link
+            </PrimaryButton>
+          </AppCard>
+
+          <Pressable onPress={() => switchMode("signIn")} style={styles.toggleRow} hitSlop={8}>
+            <AppText variant="bodyBold" color="primary">
+              Back to Sign In
+            </AppText>
+          </Pressable>
+        </KeyboardAvoidingView>
+      </Screen>
+    );
+  }
+
+  // --- Sign In / Sign Up UI ---
   return (
     <Screen>
       <KeyboardAvoidingView
@@ -84,28 +199,17 @@ export function AuthScreen() {
             Golf Society Hub
           </AppText>
           <AppText variant="body" color="secondary" style={styles.brandSubtitle}>
-            {isSignIn
-              ? "Sign in to continue"
-              : "Create your account"}
+            {isSignIn ? "Sign in to continue" : "Create your account"}
           </AppText>
         </View>
 
         {/* Form */}
         <AppCard style={styles.formCard}>
           {error && (
-            <InlineNotice
-              variant="error"
-              message={error}
-              style={styles.notice}
-            />
+            <InlineNotice variant="error" message={error} style={styles.notice} />
           )}
-
           {success && (
-            <InlineNotice
-              variant="success"
-              message={success}
-              style={styles.notice}
-            />
+            <InlineNotice variant="success" message={success} style={styles.notice} />
           )}
 
           <View style={styles.field}>
@@ -113,7 +217,7 @@ export function AuthScreen() {
             <AppInput
               placeholder="you@example.com"
               value={email}
-              onChangeText={setEmail}
+              onChangeText={handleEmailChange}
               autoCapitalize="none"
               autoCorrect={false}
               keyboardType="email-address"
@@ -127,7 +231,7 @@ export function AuthScreen() {
             <AppInput
               placeholder={isSignIn ? "Your password" : "Min 6 characters"}
               value={password}
-              onChangeText={setPassword}
+              onChangeText={handlePasswordChange}
               secureTextEntry
               autoCapitalize="none"
               autoCorrect={false}
@@ -136,10 +240,21 @@ export function AuthScreen() {
             />
           </View>
 
+          {/* Forgot password link — sign in mode only */}
+          {isSignIn && (
+            <Pressable
+              onPress={() => switchMode("forgotPassword")}
+              style={styles.forgotRow}
+              hitSlop={8}
+            >
+              <AppText variant="small" color="primary">Forgot password?</AppText>
+            </Pressable>
+          )}
+
           <PrimaryButton
             onPress={handleSubmit}
             loading={loading}
-            disabled={!canSubmit || loading}
+            disabled={!canSubmitAuth || loading}
             style={styles.submitButton}
           >
             {isSignIn ? "Sign In" : "Create Account"}
@@ -147,7 +262,7 @@ export function AuthScreen() {
         </AppCard>
 
         {/* Toggle sign-in / sign-up */}
-        <Pressable onPress={toggleMode} style={styles.toggleRow} hitSlop={8}>
+        <Pressable onPress={() => switchMode(isSignIn ? "signUp" : "signIn")} style={styles.toggleRow} hitSlop={8}>
           <AppText variant="body" color="secondary">
             {isSignIn ? "Don't have an account? " : "Already have an account? "}
           </AppText>
@@ -195,6 +310,11 @@ const styles = StyleSheet.create({
   },
   label: {
     marginBottom: spacing.xs,
+  },
+  forgotRow: {
+    alignSelf: "flex-end",
+    marginBottom: spacing.sm,
+    marginTop: -spacing.xs,
   },
   submitButton: {
     marginTop: spacing.sm,

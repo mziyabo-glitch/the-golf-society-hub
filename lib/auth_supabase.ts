@@ -39,28 +39,31 @@ export async function getCurrentUser(): Promise<User | null> {
 }
 
 // ============================================================================
-// Sign In / Sign Out
+// Sign In / Sign Up / Sign Out
 // ============================================================================
 
 /**
  * Sign in with email and password.
  * Returns the user on success, throws on error.
+ * Surfaces the real Supabase error message for debugging.
  */
 export async function signInWithEmail(email: string, password: string): Promise<User> {
+  const cleanEmail = email.trim().toLowerCase();
+  console.log("[auth] signInWithEmail", { step: "signIn", email: cleanEmail });
+
   const { data, error } = await supabase.auth.signInWithPassword({
-    email: email.trim().toLowerCase(),
+    email: cleanEmail,
     password,
   });
 
   if (error) {
-    console.error("[auth] signInWithEmail error:", error.message);
-
-    if (error.message?.includes("Invalid login credentials")) {
-      throw new Error("Incorrect email or password.");
-    }
-    if (error.message?.includes("Email not confirmed")) {
-      throw new Error("Please check your email and confirm your account first.");
-    }
+    console.error("[auth] signInWithEmail error:", {
+      step: "signIn",
+      email: cleanEmail,
+      code: error.status,
+      message: error.message,
+      name: error.name,
+    });
     throw new Error(error.message || "Sign in failed.");
   }
 
@@ -75,26 +78,25 @@ export async function signInWithEmail(email: string, password: string): Promise<
 /**
  * Sign up with email and password.
  * Returns the user on success, throws on error.
- *
- * Note: If email confirmation is enabled in Supabase, the user will need
- * to verify their email before they can sign in. We detect this and
- * provide a helpful message.
+ * Surfaces the real Supabase error message for debugging.
  */
 export async function signUpWithEmail(email: string, password: string): Promise<{ user: User; needsConfirmation: boolean }> {
+  const cleanEmail = email.trim().toLowerCase();
+  console.log("[auth] signUpWithEmail", { step: "signUp", email: cleanEmail });
+
   const { data, error } = await supabase.auth.signUp({
-    email: email.trim().toLowerCase(),
+    email: cleanEmail,
     password,
   });
 
   if (error) {
-    console.error("[auth] signUpWithEmail error:", error.message);
-
-    if (error.message?.includes("already registered")) {
-      throw new Error("An account with this email already exists. Try signing in instead.");
-    }
-    if (error.message?.includes("Password should be")) {
-      throw new Error("Password must be at least 6 characters.");
-    }
+    console.error("[auth] signUpWithEmail error:", {
+      step: "signUp",
+      email: cleanEmail,
+      code: error.status,
+      message: error.message,
+      name: error.name,
+    });
     throw new Error(error.message || "Sign up failed.");
   }
 
@@ -102,17 +104,48 @@ export async function signUpWithEmail(email: string, password: string): Promise<
     throw new Error("Sign up failed — no user returned.");
   }
 
-  // If identities array is empty, the user already exists (Supabase returns
-  // a fake user with no identities instead of an error in some configs)
+  console.log("[auth] signUpWithEmail response:", {
+    step: "signUp",
+    email: cleanEmail,
+    userId: data.user.id,
+    identitiesCount: data.user.identities?.length ?? "N/A",
+    hasSession: !!data.session,
+    confirmedAt: data.user.confirmed_at ?? "not confirmed",
+  });
+
+  // Supabase quirk: when email confirmations are ON and the email already
+  // exists, signUp returns a user object with an empty identities array
+  // instead of an error.
   if (data.user.identities && data.user.identities.length === 0) {
     throw new Error("An account with this email already exists. Try signing in instead.");
   }
 
-  // Check if email confirmation is required
+  // If no session came back, the user needs to confirm their email first.
   const needsConfirmation = !data.session;
 
-  console.log("[auth] signUpWithEmail success:", data.user.id, "needsConfirmation:", needsConfirmation);
   return { user: data.user, needsConfirmation };
+}
+
+/**
+ * Send a password reset email.
+ * Supabase will send a link to the user's email.
+ */
+export async function resetPassword(email: string): Promise<void> {
+  const cleanEmail = email.trim().toLowerCase();
+  console.log("[auth] resetPassword", { email: cleanEmail });
+
+  const { error } = await supabase.auth.resetPasswordForEmail(cleanEmail);
+
+  if (error) {
+    console.error("[auth] resetPassword error:", {
+      email: cleanEmail,
+      code: error.status,
+      message: error.message,
+    });
+    throw new Error(error.message || "Failed to send reset email.");
+  }
+
+  console.log("[auth] resetPassword email sent to:", cleanEmail);
 }
 
 /**
