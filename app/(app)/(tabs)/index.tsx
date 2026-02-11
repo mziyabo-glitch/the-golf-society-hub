@@ -23,7 +23,6 @@ import { AppText } from "@/components/ui/AppText";
 import { AppCard } from "@/components/ui/AppCard";
 import { PrimaryButton } from "@/components/ui/Button";
 import { InlineNotice } from "@/components/ui/InlineNotice";
-import { EmptyState } from "@/components/ui/EmptyState";
 import { Toast } from "@/components/ui/Toast";
 import { useBootstrap } from "@/lib/useBootstrap";
 import { isCaptain } from "@/lib/rbac";
@@ -346,19 +345,7 @@ export default function HomeScreen() {
   }
 
   if (!societyId || !society) {
-    return (
-      <Screen>
-        <EmptyState
-          icon={<Feather name="users" size={24} color={colors.textTertiary} />}
-          title="Welcome to The Golf Society Hub"
-          message="Join an existing society with a code, or create your own."
-          action={{
-            label: "Join or Create a Society",
-            onPress: () => router.replace("/onboarding"),
-          }}
-        />
-      </Screen>
-    );
+    return <PersonalModeHome colors={colors} router={router} />;
   }
 
   // ============================================================================
@@ -820,6 +807,212 @@ export default function HomeScreen() {
     </Screen>
   );
 }
+
+// ============================================================================
+// Skeleton Loading Placeholders
+// ============================================================================
+
+function PersonalModeHome({
+  colors,
+  router,
+}: {
+  colors: ReturnType<typeof getColors>;
+  router: ReturnType<typeof useRouter>;
+}) {
+  const [nudgeDismissed, setNudgeDismissed] = useState(false);
+
+  return (
+    <Screen>
+      {/* Welcome header */}
+      <View style={personalStyles.welcomeSection}>
+        <View style={[personalStyles.welcomeIcon, { backgroundColor: colors.primary + "14" }]}>
+          <Feather name="flag" size={32} color={colors.primary} />
+        </View>
+        <AppText variant="title" style={personalStyles.welcomeTitle}>
+          Welcome
+        </AppText>
+        <AppText variant="body" color="secondary" style={personalStyles.welcomeSubtitle}>
+          Use the app as an individual, or join a society when you're ready.
+        </AppText>
+      </View>
+
+      {/* Feature cards */}
+      <Pressable onPress={() => router.push("/(app)/(tabs)/sinbook")}>
+        <AppCard>
+          <View style={personalStyles.featureRow}>
+            <View style={[personalStyles.featureIcon, { backgroundColor: colors.primary + "14" }]}>
+              <Feather name="zap" size={20} color={colors.primary} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <AppText variant="bodyBold">Sinbook Rivalries</AppText>
+              <AppText variant="small" color="secondary">
+                Challenge a mate to a side bet and track it all season
+              </AppText>
+            </View>
+            <Feather name="chevron-right" size={18} color={colors.textTertiary} />
+          </View>
+        </AppCard>
+      </Pressable>
+
+      <AppCard>
+        <View style={personalStyles.featureRow}>
+          <View style={[personalStyles.featureIcon, { backgroundColor: colors.info + "14" }]}>
+            <Feather name="cloud" size={20} color={colors.info} />
+          </View>
+          <View style={{ flex: 1 }}>
+            <AppText variant="bodyBold">Weather</AppText>
+            <AppText variant="small" color="secondary">
+              Course-specific forecasts for your round
+            </AppText>
+          </View>
+          <View style={[personalStyles.comingSoonBadge, { backgroundColor: colors.backgroundTertiary }]}>
+            <AppText variant="small" color="tertiary">Soon</AppText>
+          </View>
+        </View>
+      </AppCard>
+
+      <Pressable onPress={() => router.push("/(app)/(tabs)/settings")}>
+        <AppCard>
+          <View style={personalStyles.featureRow}>
+            <View style={[personalStyles.featureIcon, { backgroundColor: colors.backgroundTertiary }]}>
+              <Feather name="user" size={20} color={colors.textSecondary} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <AppText variant="bodyBold">Profile</AppText>
+              <AppText variant="small" color="secondary">
+                Your account and preferences
+              </AppText>
+            </View>
+            <Feather name="chevron-right" size={18} color={colors.textTertiary} />
+          </View>
+        </AppCard>
+      </Pressable>
+
+      {/* Society join nudge — subtle card */}
+      {!nudgeDismissed && (
+        <AppCard style={[personalStyles.nudgeCard, { borderColor: colors.primary + "25" }]}>
+          <View style={personalStyles.nudgeHeader}>
+            <View style={[personalStyles.nudgeIcon, { backgroundColor: colors.primary + "14" }]}>
+              <Feather name="users" size={18} color={colors.primary} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <AppText variant="bodyBold">Join a Society</AppText>
+              <AppText variant="small" color="secondary" style={{ marginTop: 2 }}>
+                Get events, tee sheets, and leaderboards when you join your society.
+              </AppText>
+            </View>
+          </View>
+
+          <View style={personalStyles.nudgeActions}>
+            <PrimaryButton
+              onPress={() => router.push("/onboarding")}
+              size="sm"
+              style={{ flex: 1 }}
+            >
+              Enter join code
+            </PrimaryButton>
+            <Pressable
+              onPress={() => router.push("/onboarding")}
+              style={({ pressed }) => [
+                personalStyles.nudgeSecondary,
+                { borderColor: colors.border, opacity: pressed ? 0.7 : 1 },
+              ]}
+            >
+              <AppText variant="small" color="primary" style={{ fontWeight: "600" }}>
+                Create a society
+              </AppText>
+            </Pressable>
+          </View>
+
+          <Pressable
+            onPress={() => setNudgeDismissed(true)}
+            style={personalStyles.nudgeDismiss}
+            hitSlop={8}
+          >
+            <AppText variant="small" color="tertiary">Not now</AppText>
+          </Pressable>
+        </AppCard>
+      )}
+
+      <View style={{ height: spacing["2xl"] }} />
+    </Screen>
+  );
+}
+
+const personalStyles = StyleSheet.create({
+  welcomeSection: {
+    alignItems: "center",
+    paddingTop: spacing.lg,
+    paddingBottom: spacing.xl,
+  },
+  welcomeIcon: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: spacing.md,
+  },
+  welcomeTitle: {
+    textAlign: "center",
+    marginBottom: spacing.xs,
+  },
+  welcomeSubtitle: {
+    textAlign: "center",
+    paddingHorizontal: spacing.lg,
+  },
+  featureRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+  },
+  featureIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  comingSoonBadge: {
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 3,
+    borderRadius: radius.full,
+  },
+  nudgeCard: {
+    borderWidth: 1,
+    marginTop: spacing.md,
+  },
+  nudgeHeader: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: spacing.sm,
+  },
+  nudgeIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  nudgeActions: {
+    flexDirection: "row",
+    gap: spacing.sm,
+    marginTop: spacing.md,
+  },
+  nudgeSecondary: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    borderRadius: radius.sm,
+    paddingVertical: spacing.sm,
+  },
+  nudgeDismiss: {
+    alignSelf: "center",
+    marginTop: spacing.sm,
+    paddingVertical: spacing.xs,
+  },
+});
 
 // ============================================================================
 // Skeleton Loading Placeholders

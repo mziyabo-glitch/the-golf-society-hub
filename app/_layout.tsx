@@ -55,12 +55,7 @@ function RootNavigator() {
       return;
     }
 
-    if (!hasSociety && !inOnboarding) {
-      // No society and not on onboarding -> go to onboarding
-      console.log("[_layout] No society, redirecting to /onboarding");
-      hasRouted.current = true;
-      router.replace("/onboarding");
-    } else if (hasSociety && inOnboarding) {
+    if (hasSociety && inOnboarding) {
       // Has society but on onboarding -> go to app home
       // Check for pending sinbook invite token first
       console.log("[_layout] Has society, checking pending invite token...");
@@ -74,6 +69,7 @@ function RootNavigator() {
         }
       });
     }
+    // No society + not on onboarding = Personal Mode — let (app) handle it
     // Note: Removed "no redirect needed" log to reduce console spam
   }, [loading, activeSocietyId, segments, router]);
 
@@ -88,7 +84,7 @@ function RootNavigator() {
   if (loading) {
     return (
       <View style={{ flex: 1, justifyContent: "center", alignItems: "center", backgroundColor: colors.background }}>
-        <LoadingState message="Loading your golf society..." />
+        <LoadingState message="Loading..." />
       </View>
     );
   }

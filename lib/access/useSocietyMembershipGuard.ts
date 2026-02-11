@@ -51,31 +51,20 @@ export function useSocietyMembershipGuard(): GuardResult {
     }
     if (redirected.current) return;
 
-    // Already on onboarding — nothing to do
-    if (segments[0] === "onboarding") return;
-
-    if (!hasSociety) {
-      // No society at all → redirect (root layout normally handles this,
-      // but belt-and-suspenders).
-      redirected.current = true;
-      router.replace("/onboarding");
-      return;
-    }
+    // No society → Personal Mode, no redirect needed.
+    if (!hasSociety) return;
 
     if (hasSociety && !hasMember) {
       // The user's profile points to a society they are no longer a member of.
-      // Clear the stale pointer so the root layout guard kicks in.
+      // Clear the stale pointer — the UI will naturally enter Personal Mode.
       console.warn(
         "[MembershipGuard] activeSocietyId is set but member is null — clearing stale pointer"
       );
       redirected.current = true;
       setActiveSociety(null, null)
-        .catch((e) => console.error("[MembershipGuard] clear error:", e))
-        .finally(() => {
-          router.replace("/onboarding");
-        });
+        .catch((e) => console.error("[MembershipGuard] clear error:", e));
     }
-  }, [loading, hasSociety, hasMember, segments, router, setActiveSociety]);
+  }, [loading, hasSociety, hasMember, setActiveSociety]);
 
   return {
     loading,

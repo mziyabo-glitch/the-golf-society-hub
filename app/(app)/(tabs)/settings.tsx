@@ -232,6 +232,65 @@ export default function SettingsScreen() {
     );
   }
 
+  // Personal Mode — no society
+  if (!society) {
+    return (
+      <Screen>
+        <AppText variant="title" style={styles.title}>Settings</AppText>
+
+        <AppText variant="h2" style={styles.sectionTitle}>Account</AppText>
+        <AppCard>
+          <View style={styles.profileRow}>
+            <View style={[styles.avatar, { backgroundColor: colors.backgroundTertiary }]}>
+              <Feather name="user" size={24} color={colors.primary} />
+            </View>
+            <View style={styles.profileInfo}>
+              <AppText variant="bodyBold">Individual</AppText>
+              <AppText variant="caption" color="secondary">Personal Mode</AppText>
+            </View>
+          </View>
+        </AppCard>
+
+        <AppText variant="h2" style={styles.sectionTitle}>Society</AppText>
+        <AppCard padding="sm">
+          <Pressable
+            style={({ pressed }) => [styles.linkRow, { opacity: pressed ? 0.7 : 1 }]}
+            onPress={() => router.push("/onboarding")}
+          >
+            <View style={[styles.linkIcon, { backgroundColor: colors.primary + "14" }]}>
+              <Feather name="users" size={16} color={colors.primary} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <AppText variant="body">Join a Society</AppText>
+              <AppText variant="small" color="secondary">Enter a join code from your Captain</AppText>
+            </View>
+            <Feather name="chevron-right" size={18} color={colors.textTertiary} />
+          </Pressable>
+
+          <Pressable
+            style={({ pressed }) => [styles.linkRow, { opacity: pressed ? 0.7 : 1 }]}
+            onPress={() => router.push("/onboarding")}
+          >
+            <View style={[styles.linkIcon, { backgroundColor: colors.backgroundTertiary }]}>
+              <Feather name="plus-circle" size={16} color={colors.primary} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <AppText variant="body">Create a Society</AppText>
+              <AppText variant="small" color="secondary">Start a new society and invite friends</AppText>
+            </View>
+            <Feather name="chevron-right" size={18} color={colors.textTertiary} />
+          </Pressable>
+        </AppCard>
+
+        <View style={styles.footer}>
+          <AppText variant="caption" color="tertiary" style={{ textAlign: "center" }}>
+            Golf Society Hub v1.0.0
+          </AppText>
+        </View>
+      </Screen>
+    );
+  }
+
   // Get logo URL from society (single source of truth)
   const logoUrl = getSocietyLogoUrl(society);
 
