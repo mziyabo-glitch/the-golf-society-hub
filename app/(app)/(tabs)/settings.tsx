@@ -257,16 +257,20 @@ export default function SettingsScreen() {
         <AppText variant="title" style={styles.title}>Settings</AppText>
 
         <AppText variant="h2" style={styles.sectionTitle}>Account</AppText>
-        <AppCard>
-          <View style={styles.profileRow}>
+        <AppCard padding="sm">
+          <Pressable
+            style={({ pressed }) => [styles.linkRow, { opacity: pressed ? 0.7 : 1 }]}
+            onPress={() => router.push("/(app)/my-profile")}
+          >
             <View style={[styles.avatar, { backgroundColor: colors.backgroundTertiary }]}>
               <Feather name="user" size={24} color={colors.primary} />
             </View>
             <View style={styles.profileInfo}>
-              <AppText variant="bodyBold">Individual</AppText>
+              <AppText variant="bodyBold">My Profile</AppText>
               <AppText variant="caption" color="secondary">Personal Mode</AppText>
             </View>
-          </View>
+            <Feather name="chevron-right" size={18} color={colors.textTertiary} />
+          </Pressable>
         </AppCard>
 
         <AppText variant="h2" style={styles.sectionTitle}>Society</AppText>
@@ -328,8 +332,11 @@ export default function SettingsScreen() {
 
       {/* Your Profile */}
       <AppText variant="h2" style={styles.sectionTitle}>Your Profile</AppText>
-      <AppCard>
-        <View style={styles.profileRow}>
+      <AppCard padding="sm">
+        <Pressable
+          style={({ pressed }) => [styles.linkRow, { opacity: pressed ? 0.7 : 1 }]}
+          onPress={() => router.push("/(app)/my-profile")}
+        >
           <View style={[styles.avatar, { backgroundColor: colors.backgroundTertiary }]}>
             <AppText variant="h1" color="primary">
               {(member?.displayName || member?.name || "?").charAt(0).toUpperCase()}
@@ -345,7 +352,8 @@ export default function SettingsScreen() {
               ))}
             </View>
           </View>
-        </View>
+          <Feather name="chevron-right" size={18} color={colors.textTertiary} />
+        </Pressable>
       </AppCard>
 
       {/* Society Info */}

@@ -6,6 +6,11 @@ import { supabase } from "@/lib/supabase";
 
 export type ProfileDoc = {
   id: string;
+  full_name: string | null;
+  sex: string | null;
+  email: string | null;
+  whs_index: number | null;
+  profile_complete: boolean;
   active_society_id: string | null;
   active_member_id: string | null;
   created_at?: string;
@@ -108,6 +113,33 @@ export async function updateProfile(
       hint: error.hint,
       code: error.code,
     });
+    throw new Error(error.message || "Failed to update profile");
+  }
+}
+
+/**
+ * Update user-facing profile fields (full_name, sex, whs_index).
+ * Automatically sets profile_complete = true when full_name and sex are present.
+ */
+export async function updateUserProfile(
+  userId: string,
+  fields: { full_name: string; sex: string; whs_index: number | null }
+): Promise<void> {
+  const profileComplete = !!(fields.full_name?.trim() && fields.sex?.trim());
+
+  const { error } = await supabase
+    .from("profiles")
+    .update({
+      full_name: fields.full_name.trim(),
+      sex: fields.sex,
+      whs_index: fields.whs_index,
+      profile_complete: profileComplete,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", userId);
+
+  if (error) {
+    console.error("[profileRepo] updateUserProfile failed:", error.message);
     throw new Error(error.message || "Failed to update profile");
   }
 }

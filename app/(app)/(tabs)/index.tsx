@@ -122,7 +122,7 @@ function getInitials(name: string): string {
 
 export default function HomeScreen() {
   const router = useRouter();
-  const { society, member, societyId, loading: bootstrapLoading } = useBootstrap();
+  const { society, member, societyId, profile, loading: bootstrapLoading } = useBootstrap();
   const colors = getColors();
 
   // Data state
@@ -139,6 +139,8 @@ export default function HomeScreen() {
   const [licenceToast, setLicenceToast] = useState<{ visible: boolean; message: string; type: "success" | "error" | "info" }>({
     visible: false, message: "", type: "success",
   });
+
+  const profileComplete = profile?.profile_complete === true;
 
   const memberHasSeat = (member as any)?.has_seat === true;
   const memberIsCaptain = isCaptain(member as any);
@@ -407,6 +409,28 @@ export default function HomeScreen() {
           ) : null}
         </View>
       </AppCard>
+
+      {/* ================================================================== */}
+      {/* COMPLETE PROFILE BANNER                                            */}
+      {/* ================================================================== */}
+      {!profileComplete && (
+        <Pressable onPress={() => router.push("/(app)/my-profile")}>
+          <AppCard style={[styles.profileBanner, { borderColor: colors.info + "40" }]}>
+            <View style={styles.profileBannerRow}>
+              <View style={[styles.profileBannerIcon, { backgroundColor: colors.info + "18" }]}>
+                <Feather name="user" size={20} color={colors.info} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <AppText variant="bodyBold">Complete your profile</AppText>
+                <AppText variant="small" color="secondary" style={{ marginTop: 2 }}>
+                  Add your name and details to get the most out of the app.
+                </AppText>
+              </View>
+              <Feather name="chevron-right" size={18} color={colors.info} />
+            </View>
+          </AppCard>
+        </Pressable>
+      )}
 
       {/* ================================================================== */}
       {/* LICENCE BANNER — non-captain members without a seat                */}
@@ -820,6 +844,8 @@ function PersonalModeHome({
   router: ReturnType<typeof useRouter>;
 }) {
   const [nudgeDismissed, setNudgeDismissed] = useState(false);
+  const { profile: pmProfile } = useBootstrap();
+  const pmProfileComplete = pmProfile?.profile_complete === true;
 
   return (
     <Screen>
@@ -835,6 +861,26 @@ function PersonalModeHome({
           Use the app as an individual, or join a society when you're ready.
         </AppText>
       </View>
+
+      {/* Complete profile banner */}
+      {!pmProfileComplete && (
+        <Pressable onPress={() => router.push("/(app)/my-profile")}>
+          <AppCard style={[styles.profileBanner, { borderColor: colors.info + "40" }]}>
+            <View style={styles.profileBannerRow}>
+              <View style={[styles.profileBannerIcon, { backgroundColor: colors.info + "18" }]}>
+                <Feather name="user" size={20} color={colors.info} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <AppText variant="bodyBold">Complete your profile</AppText>
+                <AppText variant="small" color="secondary" style={{ marginTop: 2 }}>
+                  Add your name and details to get started.
+                </AppText>
+              </View>
+              <Feather name="chevron-right" size={18} color={colors.info} />
+            </View>
+          </AppCard>
+        </Pressable>
+      )}
 
       {/* Feature cards */}
       <Pressable onPress={() => router.push("/(app)/(tabs)/sinbook")}>
@@ -1102,6 +1148,24 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.sm,
     paddingVertical: 4,
     borderRadius: radius.full,
+  },
+
+  // Profile banner
+  profileBanner: {
+    borderWidth: 1,
+    marginBottom: spacing.base,
+  },
+  profileBannerRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+  },
+  profileBannerIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: "center",
+    justifyContent: "center",
   },
 
   // Licence banner

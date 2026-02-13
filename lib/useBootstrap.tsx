@@ -158,11 +158,12 @@ function useBootstrapInternal(): BootstrapState {
         console.log("[useBootstrap] Ensuring profile for user:", currentUser.id);
 
         // Step 2a: Upsert without .select().single()
+        // Seed the email from the auth user so the profile row always has it.
         const { error: upsertError } = await supabase
           .from("profiles")
           .upsert(
-            { id: currentUser.id },
-            { onConflict: "id" }
+            { id: currentUser.id, email: currentUser.email ?? null },
+            { onConflict: "id", ignoreDuplicates: false }
           );
 
         if (upsertError) {
