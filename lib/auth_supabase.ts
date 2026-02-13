@@ -147,8 +147,11 @@ export async function signUpWithEmail(email: string, password: string): Promise<
  */
 export async function signInWithGoogle(): Promise<void> {
   if (Platform.OS === "web") {
-    // Web: let Supabase redirect the browser
-    const redirectTo = `${WEB_BASE_URL}/auth/callback`;
+    // Web: let Supabase redirect the browser back to the current origin
+    const redirectTo =
+      typeof window !== "undefined"
+        ? `${window.location.origin}/auth/callback`
+        : `${WEB_BASE_URL}/auth/callback`;
     console.log("[auth] signInWithGoogle (web)", { redirectTo });
 
     const { error } = await supabase.auth.signInWithOAuth({
