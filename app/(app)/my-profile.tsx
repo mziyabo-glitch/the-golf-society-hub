@@ -20,7 +20,8 @@ const SEX_OPTIONS = ["Male", "Female"] as const;
 
 export default function MyProfileScreen() {
   const router = useRouter();
-  const { userId, refresh } = useBootstrap();
+  const { userId, profile, refresh } = useBootstrap();
+  const isFirstTime = !profile?.profile_complete;
   const colors = getColors();
 
   const [profileLoading, setProfileLoading] = useState(true);
@@ -79,6 +80,12 @@ export default function MyProfileScreen() {
       });
 
       refresh();
+
+      // First-time completion: go to app home. Otherwise stay and show toast.
+      if (isFirstTime) {
+        router.replace("/(app)/(tabs)");
+        return;
+      }
       setToast({ visible: true, message: "Profile saved.", type: "success" });
     } catch (e: any) {
       setError(e?.message || "Failed to save profile.");
@@ -101,12 +108,24 @@ export default function MyProfileScreen() {
     <Screen>
       {/* Header */}
       <View style={styles.header}>
-        <Pressable onPress={() => router.back()} hitSlop={8}>
-          <Feather name="arrow-left" size={24} color={colors.text} />
-        </Pressable>
+        {isFirstTime ? (
+          <View style={{ width: 24 }} />
+        ) : (
+          <Pressable onPress={() => router.back()} hitSlop={8}>
+            <Feather name="arrow-left" size={24} color={colors.text} />
+          </Pressable>
+        )}
         <AppText variant="title" style={styles.headerTitle}>My Profile</AppText>
         <View style={{ width: 24 }} />
       </View>
+
+      {isFirstTime && (
+        <InlineNotice
+          variant="info"
+          message="Please complete your profile to continue."
+          style={{ marginBottom: spacing.base }}
+        />
+      )}
 
       {error && (
         <InlineNotice variant="error" message={error} style={{ marginBottom: spacing.base }} />

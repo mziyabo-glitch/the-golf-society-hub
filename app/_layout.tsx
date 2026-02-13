@@ -11,7 +11,7 @@ import { getColors, spacing } from "@/lib/ui/theme";
 import { consumePendingInviteToken } from "@/lib/sinbookInviteToken";
 
 function RootNavigator() {
-  const { loading, error, isSignedIn, activeSocietyId, refresh } = useBootstrap();
+  const { loading, error, isSignedIn, activeSocietyId, profile, refresh } = useBootstrap();
   const segments = useSegments();
   const router = useRouter();
   const colors = getColors();
@@ -34,10 +34,13 @@ function RootNavigator() {
 
     const inOnboarding = segments[0] === "onboarding";
     const inSinbookInvite = segments[0] === "sinbook";
+    const inPublicRoute = segments[0] === "reset-password" || segments[0] === "auth";
+    const inMyProfile = segments[0] === "(app)" && segments[1] === "my-profile";
     const hasSociety = !!activeSocietyId;
+    const needsProfileCompletion = !!profile && !profile.profile_complete;
 
     // Create a state key to detect actual changes
-    const stateKey = `${hasSociety}-${inOnboarding}-${inSinbookInvite}-${segments.join("/")}`;
+    const stateKey = `${hasSociety}-${inOnboarding}-${inSinbookInvite}-${needsProfileCompletion}-${segments.join("/")}`;
 
     // Only log if state actually changed
     if (stateKey !== lastState.current) {
@@ -47,12 +50,21 @@ function RootNavigator() {
         activeSocietyId,
         inOnboarding,
         inSinbookInvite,
+        needsProfileCompletion,
         segments: segments.join("/"),
       });
     }
 
-    // Exempt: sinbook invite routes handle their own auth flow
-    if (inSinbookInvite) {
+    // Exempt routes that handle their own flow
+    if (inSinbookInvite || inPublicRoute) {
+      return;
+    }
+
+    // Force profile completion before anything else
+    if (needsProfileCompletion && !inMyProfile) {
+      console.log("[_layout] Profile incomplete, redirecting to /my-profile");
+      hasRouted.current = true;
+      router.replace("/(app)/my-profile");
       return;
     }
 
@@ -71,7 +83,7 @@ function RootNavigator() {
       });
     }
     // No society + not on onboarding = Personal Mode — let (app) handle it
-  }, [loading, isSignedIn, activeSocietyId, segments, router]);
+  }, [loading, isSignedIn, activeSocietyId, profile, segments, router]);
 
   // Reset hasRouted when loading changes (new bootstrap cycle)
   useEffect(() => {
