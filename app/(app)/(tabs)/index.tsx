@@ -12,11 +12,14 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { StyleSheet, View, Pressable, Image, Linking } from "react-native";
+import { StyleSheet, View, Pressable, Image, Linking, useWindowDimensions } from "react-native";
 import { useRouter } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
 import { Feather } from "@expo/vector-icons";
 import * as WebBrowser from "expo-web-browser";
+
+const horizontalLogo = require("@/assets/images/horizontal-logo.png");
+const appIcon = require("@/assets/images/app-icon.png");
 
 import { Screen } from "@/components/ui/Screen";
 import { AppText } from "@/components/ui/AppText";
@@ -360,8 +363,20 @@ export default function HomeScreen() {
   const memberHiText = (_hiNum != null && Number.isFinite(_hiNum)) ? `HI ${_hiNum.toFixed(1)}` : null;
   console.log("[Home] handicap render:", { handicap_index: (member as any)?.handicap_index, handicapIndex: member?.handicapIndex, memberHiText });
 
+  const { width: screenWidth } = useWindowDimensions();
+  const useCompactLogo = screenWidth < 380;
+
   return (
     <Screen>
+      {/* Brand header */}
+      <View style={styles.brandHeader}>
+        <Image
+          source={useCompactLogo ? appIcon : horizontalLogo}
+          style={useCompactLogo ? styles.brandHeaderIconCompact : styles.brandHeaderIcon}
+          resizeMode="contain"
+        />
+      </View>
+
       {loadError && (
         <InlineNotice
           variant="error"
@@ -851,9 +866,11 @@ function PersonalModeHome({
     <Screen>
       {/* Welcome header */}
       <View style={personalStyles.welcomeSection}>
-        <View style={[personalStyles.welcomeIcon, { backgroundColor: colors.primary + "14" }]}>
-          <Feather name="flag" size={32} color={colors.primary} />
-        </View>
+        <Image
+          source={require("@/assets/images/master-logo.png")}
+          style={personalStyles.welcomeLogo}
+          resizeMode="contain"
+        />
         <AppText variant="title" style={personalStyles.welcomeTitle}>
           Welcome
         </AppText>
@@ -991,12 +1008,9 @@ const personalStyles = StyleSheet.create({
     paddingTop: spacing.lg,
     paddingBottom: spacing.xl,
   },
-  welcomeIcon: {
-    width: 72,
-    height: 72,
-    borderRadius: 36,
-    alignItems: "center",
-    justifyContent: "center",
+  welcomeLogo: {
+    width: 180,
+    height: 130,
     marginBottom: spacing.md,
   },
   welcomeTitle: {
@@ -1113,6 +1127,19 @@ function SkeletonCards({ colors }: { colors: ReturnType<typeof getColors> }) {
 // ============================================================================
 
 const styles = StyleSheet.create({
+  // Brand header
+  brandHeader: {
+    marginBottom: spacing.sm,
+  },
+  brandHeaderIcon: {
+    height: 36,
+    width: 160,
+  },
+  brandHeaderIconCompact: {
+    height: 36,
+    width: 36,
+  },
+
   // Header Card
   headerCard: {
     marginBottom: spacing.base,

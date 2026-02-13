@@ -8,6 +8,8 @@
 import React, { forwardRef } from "react";
 import { View, Text, StyleSheet, Image } from "react-native";
 
+const horizontalLogo = require("@/assets/images/horizontal-logo.png");
+
 export type ResultRow = {
   memberName: string;
   dayValue: number | null;
@@ -76,7 +78,12 @@ const OOMResultsLogShareCard = forwardRef<View, OOMResultsLogShareCardProps>(
 
     return (
       <View ref={ref} style={styles.container} collapsable={false}>
-        {/* Header */}
+        {/* App brand header */}
+        <View style={styles.brandHeader}>
+          <Image source={horizontalLogo} style={styles.brandLogo} resizeMode="contain" />
+        </View>
+
+        {/* Society header */}
         <View style={styles.header}>
           {logoUrl ? (
             <Image source={{ uri: logoUrl }} style={styles.logo} resizeMode="contain" />
@@ -189,6 +196,14 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.1,
     shadowRadius: 8,
     elevation: 4,
+  },
+  brandHeader: {
+    alignItems: "center",
+    marginBottom: 16,
+  },
+  brandLogo: {
+    width: 200,
+    height: 40,
   },
   header: {
     alignItems: "center",
