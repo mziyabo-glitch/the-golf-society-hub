@@ -158,17 +158,28 @@ function useBootstrapInternal(): BootstrapState {
         console.log("[useBootstrap] Ensuring profile for user:", currentUser.id);
 
         // Step 2a: Upsert without .select().single()
-        // Seed the email from the auth user so the profile row always has it.
+        // Only upsert the id — always safe regardless of migration state.
         const { error: upsertError } = await supabase
           .from("profiles")
           .upsert(
-            { id: currentUser.id, email: currentUser.email ?? null },
-            { onConflict: "id", ignoreDuplicates: false }
+            { id: currentUser.id },
+            { onConflict: "id" }
           );
 
         if (upsertError) {
           console.warn("[useBootstrap] Profile upsert warning:", upsertError.message);
           // Don't throw - profile might already exist
+        }
+
+        // Seed email from auth user (non-blocking — may fail if 031 not yet run)
+        if (currentUser.email) {
+          supabase
+            .from("profiles")
+            .update({ email: currentUser.email })
+            .eq("id", currentUser.id)
+            .then(({ error: emailErr }) => {
+              if (emailErr) console.warn("[useBootstrap] Email seed skipped:", emailErr.message);
+            });
         }
 
         // Step 2b: Fetch profile with .maybeSingle()

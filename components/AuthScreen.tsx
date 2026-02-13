@@ -8,11 +8,14 @@ import { useCallback, useState } from "react";
 import {
   StyleSheet,
   View,
+  Image,
   KeyboardAvoidingView,
   Platform,
   Pressable,
 } from "react-native";
 import { Feather } from "@expo/vector-icons";
+
+const masterLogo = require("@/assets/images/master-logo.png");
 
 import { Screen } from "@/components/ui/Screen";
 import { AppText } from "@/components/ui/AppText";
@@ -132,9 +135,11 @@ export function AuthScreen() {
           style={styles.container}
         >
           <View style={styles.brandSection}>
-            <View style={[styles.brandIcon, { backgroundColor: colors.primary + "14" }]}>
-              <Feather name="lock" size={32} color={colors.primary} />
-            </View>
+            <Image
+              source={masterLogo}
+              style={styles.brandLogoSmall}
+              resizeMode="contain"
+            />
             <AppText variant="title" style={styles.brandTitle}>
               Reset Password
             </AppText>
@@ -194,12 +199,11 @@ export function AuthScreen() {
       >
         {/* Branding */}
         <View style={styles.brandSection}>
-          <View style={[styles.brandIcon, { backgroundColor: colors.primary + "14" }]}>
-            <Feather name="flag" size={36} color={colors.primary} />
-          </View>
-          <AppText variant="title" style={styles.brandTitle}>
-            Golf Society Hub
-          </AppText>
+          <Image
+            source={masterLogo}
+            style={styles.brandLogo}
+            resizeMode="contain"
+          />
           <AppText variant="body" color="secondary" style={styles.brandSubtitle}>
             {isSignIn ? "Sign in to continue" : "Create your account"}
           </AppText>
@@ -314,12 +318,14 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginBottom: spacing.xl,
   },
-  brandIcon: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
-    alignItems: "center",
-    justifyContent: "center",
+  brandLogo: {
+    width: 220,
+    height: 160,
+    marginBottom: 24,
+  },
+  brandLogoSmall: {
+    width: 120,
+    height: 90,
     marginBottom: spacing.md,
   },
   brandTitle: {
