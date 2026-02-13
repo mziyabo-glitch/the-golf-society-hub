@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 980" role="img" aria-label="The Golf Society Hub master logo">
+  <title>The Golf Society Hub Master Logo</title>
+  <defs>
+    <style>
+      .wordmark { fill: #FFFFFF; font-family: "Montserrat", "Avenir Next", "Segoe UI", Arial, sans-serif; text-anchor: middle; }
+    </style>
+  </defs>
+
+  <g transform="translate(270 40)">
+    <path fill="#FFFFFF" d="M180 28C128 28 86 43 52 56V236C52 336 113 406 180 440C247 406 308 336 308 236V56C274 43 232 28 180 28Z" />
+    <path fill="#0E1A2B" d="M180 46C136 46 101 58 71 69V231C71 320 125 382 180 412C235 382 289 320 289 231V69C259 58 224 46 180 46Z" />
+    <path fill="none" stroke="#FFFFFF" stroke-width="6" d="M180 46C136 46 101 58 71 69V231C71 320 125 382 180 412C235 382 289 320 289 231V69C259 58 224 46 180 46Z" />
+    <rect x="177" y="2" width="6" height="44" fill="#FFFFFF" />
+    <path fill="#1DB954" d="M183 7L228 19L183 31Z" />
+    <path fill="#1DB954" d="M104 274C98 307 109 337 132 360V329C119 314 111 294 112 274Z" />
+    <path fill="#1DB954" d="M180 392C146 373 119 345 108 313V342C122 369 148 392 180 409C212 392 238 369 252 342V313C241 345 214 373 180 392Z" />
+    <text x="110" y="266" fill="#FFFFFF" font-family="Montserrat, 'Avenir Next', 'Segoe UI', Arial, sans-serif" font-weight="700" font-size="114" letter-spacing="-5">G</text>
+    <text x="176" y="304" fill="#FFFFFF" font-family="Montserrat, 'Avenir Next', 'Segoe UI', Arial, sans-serif" font-weight="700" font-size="114" letter-spacing="-5">S</text>
+  </g>
+
+  <text class="wordmark" x="450" y="574" font-size="44" font-weight="600" letter-spacing="3">THE</text>
+  <text class="wordmark" x="450" y="646" font-size="66" font-weight="600" letter-spacing="2">GOLF SOCIETY</text>
+  <text class="wordmark" x="450" y="718" font-size="78" font-weight="800" letter-spacing="6">HUB</text>
+  <rect x="382" y="744" width="136" height="6" fill="#1DB954" />
+</svg>
