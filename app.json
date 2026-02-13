@@ -6,7 +6,7 @@
     "description": "Everything Golf Society",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "golfsocietypro",
+    "scheme": "thegolfsocietyhub",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {

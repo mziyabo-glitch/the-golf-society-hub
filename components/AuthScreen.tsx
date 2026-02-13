@@ -23,6 +23,7 @@ import { InlineNotice } from "@/components/ui/InlineNotice";
 import {
   signInWithEmail,
   signUpWithEmail,
+  signInWithGoogle,
   resetPassword,
 } from "@/lib/auth_supabase";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
@@ -36,6 +37,7 @@ export function AuthScreen() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
+  const [googleLoading, setGoogleLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
@@ -259,6 +261,34 @@ export function AuthScreen() {
           >
             {isSignIn ? "Sign In" : "Create Account"}
           </PrimaryButton>
+
+          {/* Divider */}
+          <View style={styles.dividerRow}>
+            <View style={[styles.dividerLine, { backgroundColor: colors.border }]} />
+            <AppText variant="small" color="tertiary" style={styles.dividerText}>or</AppText>
+            <View style={[styles.dividerLine, { backgroundColor: colors.border }]} />
+          </View>
+
+          {/* Google OAuth */}
+          <SecondaryButton
+            onPress={async () => {
+              if (googleLoading || loading) return;
+              setGoogleLoading(true);
+              setError(null);
+              try {
+                await signInWithGoogle();
+              } catch (e: any) {
+                setError(e?.message || "Google sign-in failed.");
+              } finally {
+                setGoogleLoading(false);
+              }
+            }}
+            loading={googleLoading}
+            disabled={googleLoading || loading}
+            icon={<Feather name="globe" size={18} color={colors.primary} />}
+          >
+            Continue with Google
+          </SecondaryButton>
         </AppCard>
 
         {/* Toggle sign-in / sign-up */}
@@ -318,6 +348,18 @@ const styles = StyleSheet.create({
   },
   submitButton: {
     marginTop: spacing.sm,
+  },
+  dividerRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginVertical: spacing.base,
+  },
+  dividerLine: {
+    flex: 1,
+    height: StyleSheet.hairlineWidth,
+  },
+  dividerText: {
+    marginHorizontal: spacing.sm,
   },
   toggleRow: {
     flexDirection: "row",

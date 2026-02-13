@@ -30,6 +30,11 @@ export default function NotFoundScreen() {
     return <ResetPasswordFallback />;
   }
 
+  // If the URL is /auth/callback, render the OAuth callback handler
+  if (pathname === "/auth/callback") {
+    return <AuthCallbackFallback />;
+  }
+
   // Generic 404
   const colors = getColors();
   return (
@@ -51,6 +56,109 @@ export default function NotFoundScreen() {
           <PrimaryButton onPress={() => router.replace("/")}>
             Go Home
           </PrimaryButton>
+        </View>
+      </Screen>
+    </>
+  );
+}
+
+// ─── Inline OAuth callback flow (fallback) ──────────────────────────
+
+function AuthCallbackFallback() {
+  const router = useRouter();
+  const colors = getColors();
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    async function handleCallback() {
+      try {
+        // Check if Supabase already picked up the session (detectSessionInUrl)
+        const {
+          data: { session },
+        } = await supabase.auth.getSession();
+
+        if (session) {
+          console.log("[auth/callback +not-found] Session found, redirecting");
+          router.replace("/");
+          return;
+        }
+
+        // Manual fallback: parse tokens from URL hash
+        if (typeof window !== "undefined" && window.location.hash) {
+          const hash = window.location.hash.substring(1);
+          const params = new URLSearchParams(hash);
+          const accessToken = params.get("access_token");
+          const refreshToken = params.get("refresh_token");
+
+          if (accessToken && refreshToken) {
+            const { error: sessionError } = await supabase.auth.setSession({
+              access_token: accessToken,
+              refresh_token: refreshToken,
+            });
+
+            if (sessionError) {
+              console.error("[auth/callback +not-found] setSession error:", sessionError);
+              setError(sessionError.message);
+              return;
+            }
+
+            console.log("[auth/callback +not-found] Session set from hash, redirecting");
+            router.replace("/");
+            return;
+          }
+        }
+
+        // Give detectSessionInUrl a moment to process
+        await new Promise((r) => setTimeout(r, 1500));
+
+        const { data: retryData } = await supabase.auth.getSession();
+        if (retryData.session) {
+          router.replace("/");
+          return;
+        }
+
+        setError("Could not complete sign-in. Please try again.");
+      } catch (e: any) {
+        console.error("[auth/callback +not-found] error:", e);
+        setError(e?.message || "Something went wrong.");
+      }
+    }
+
+    handleCallback();
+  }, [router]);
+
+  if (error) {
+    return (
+      <>
+        <Stack.Screen options={{ headerShown: false }} />
+        <Screen>
+          <View style={styles.container}>
+            <View style={styles.brandSection}>
+              <View style={[styles.brandIcon, { backgroundColor: colors.error + "14" }]}>
+                <Feather name="alert-circle" size={32} color={colors.error} />
+              </View>
+              <AppText variant="title" style={styles.brandTitle}>
+                Sign-In Failed
+              </AppText>
+              <AppText variant="body" color="secondary" style={styles.brandSubtitle}>
+                {error}
+              </AppText>
+            </View>
+            <PrimaryButton onPress={() => router.replace("/")}>
+              Back to Sign In
+            </PrimaryButton>
+          </View>
+        </Screen>
+      </>
+    );
+  }
+
+  return (
+    <>
+      <Stack.Screen options={{ headerShown: false }} />
+      <Screen>
+        <View style={styles.container}>
+          <LoadingState message="Completing sign-in..." />
         </View>
       </Screen>
     </>

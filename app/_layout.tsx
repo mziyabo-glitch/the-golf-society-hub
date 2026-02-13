@@ -82,8 +82,9 @@ function RootNavigator() {
   }, [loading]);
 
   // Determine which overlay to show (if any).
-  // The Stack ALWAYS renders so expo-router can match child routes like /reset-password.
-  const isPublicRoute = segments[0] === "reset-password";
+  // The Stack ALWAYS renders so expo-router can match child routes.
+  // Public routes are accessible without sign-in (OAuth callback, password reset).
+  const isPublicRoute = segments[0] === "reset-password" || segments[0] === "auth";
   const showLoading = loading;
   const showAuth = !loading && !isSignedIn && !isPublicRoute;
   const showError = !loading && !showAuth && !!error;
