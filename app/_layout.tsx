@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import { Stack, usePathname, useRouter, useSegments } from "expo-router";
 import { StyleSheet, View } from "react-native";
 import { BootstrapProvider, useBootstrap } from "@/lib/useBootstrap";
+import { AppErrorBoundary } from "@/components/AppErrorBoundary";
 import { LoadingState } from "@/components/ui/LoadingState";
 import { AuthScreen } from "@/components/AuthScreen";
 import { AppCard } from "@/components/ui/AppCard";
@@ -140,7 +141,9 @@ function RootNavigator() {
 export default function RootLayout() {
   return (
     <BootstrapProvider>
-      <RootNavigator />
+      <AppErrorBoundary>
+        <RootNavigator />
+      </AppErrorBoundary>
     </BootstrapProvider>
   );
 }
