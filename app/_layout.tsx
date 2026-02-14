@@ -128,7 +128,7 @@ function RootNavigator() {
         <View style={[StyleSheet.absoluteFill, { justifyContent: "center", alignItems: "center", backgroundColor: colors.background, padding: spacing.lg }]}>
           <AppCard>
             <AppText variant="h2" style={{ marginBottom: spacing.sm }}>Something went wrong</AppText>
-            <AppText variant="body" color="secondary" style={{ marginBottom: spacing.lg }}>{error}</AppText>
+            <AppText variant="body" color="secondary" style={{ marginBottom: spacing.lg }}>{typeof error === "string" ? error : "An unexpected error occurred."}</AppText>
             <PrimaryButton onPress={refresh}>Try Again</PrimaryButton>
           </AppCard>
         </View>
