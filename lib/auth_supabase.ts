@@ -10,6 +10,15 @@ import type { User, Session } from "@supabase/supabase-js";
 
 const WEB_BASE_URL = "https://the-golf-society-hub.vercel.app";
 
+function isRedirectMismatchError(message: string): boolean {
+  const lower = message.toLowerCase();
+  return (
+    lower.includes("redirect_uri") ||
+    (lower.includes("redirect") && lower.includes("mismatch")) ||
+    (lower.includes("redirect") && lower.includes("not allowed"))
+  );
+}
+
 // ============================================================================
 // Session Management
 // ============================================================================
@@ -151,17 +160,37 @@ export async function signUpWithEmail(email: string, password: string): Promise<
  */
 export async function signInWithGoogle(): Promise<void> {
   if (Platform.OS === "web") {
-    // Web: let Supabase redirect the browser back to the current origin
-    const redirectTo =
+    // Web: prefer the current origin for local/staging, but gracefully fall
+    // back to the stable production callback when the origin isn't allowlisted.
+    const preferredRedirectTo =
       typeof window !== "undefined"
         ? `${window.location.origin}/auth/callback`
         : `${WEB_BASE_URL}/auth/callback`;
-    console.log("[auth] signInWithGoogle (web)", { redirectTo });
-
-    const { error } = await supabase.auth.signInWithOAuth({
-      provider: "google",
-      options: { redirectTo },
+    const fallbackRedirectTo = `${WEB_BASE_URL}/auth/callback`;
+    console.log("[auth] signInWithGoogle (web)", {
+      preferredRedirectTo,
+      fallbackRedirectTo,
     });
+
+    let { error } = await supabase.auth.signInWithOAuth({
+      provider: "google",
+      options: { redirectTo: preferredRedirectTo },
+    });
+
+    if (
+      error &&
+      preferredRedirectTo !== fallbackRedirectTo &&
+      isRedirectMismatchError(error.message)
+    ) {
+      console.warn(
+        "[auth] signInWithGoogle (web): preferred redirect rejected, retrying fallback",
+        { error: error.message, fallbackRedirectTo }
+      );
+      ({ error } = await supabase.auth.signInWithOAuth({
+        provider: "google",
+        options: { redirectTo: fallbackRedirectTo },
+      }));
+    }
 
     if (error) {
       console.error("[auth] signInWithGoogle error:", error.message);
@@ -200,6 +229,7 @@ export async function signInWithGoogle(): Promise<void> {
   // and implicit flow (tokens in hash fragment).
   // Supabase JS v2.39+ defaults to PKCE, so the code path is tried first.
   const callbackUrl = result.url;
+  let codeExchangeError: string | null = null;
 
   // --- PKCE flow: extract code from query string ---
   const codeMatch = callbackUrl.match(/[?&]code=([^&#]+)/);
@@ -209,12 +239,14 @@ export async function signInWithGoogle(): Promise<void> {
 
     const { error: exchangeError } = await supabase.auth.exchangeCodeForSession(code);
     if (exchangeError) {
-      console.error("[auth] signInWithGoogle exchangeCode error:", exchangeError.message);
-      throw new Error(exchangeError.message);
+      // Don't fail immediately; some providers return hash tokens even when code
+      // exchange isn't usable on this client. Try implicit fallback next.
+      codeExchangeError = exchangeError.message;
+      console.warn("[auth] signInWithGoogle exchangeCode warning:", exchangeError.message);
+    } else {
+      console.log("[auth] signInWithGoogle native: PKCE session established");
+      return;
     }
-
-    console.log("[auth] signInWithGoogle native: PKCE session established");
-    return;
   }
 
   // --- Implicit flow fallback: extract tokens from hash ---
@@ -242,6 +274,9 @@ export async function signInWithGoogle(): Promise<void> {
 
   // Neither flow produced tokens — something went wrong
   console.error("[auth] signInWithGoogle native: no code or tokens in callback URL:", callbackUrl);
+  if (codeExchangeError) {
+    throw new Error(codeExchangeError);
+  }
   throw new Error("No authentication credentials found in callback URL.");
 }
 

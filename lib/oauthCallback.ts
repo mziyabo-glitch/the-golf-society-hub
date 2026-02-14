@@ -6,6 +6,36 @@ export type OAuthCallbackResult = {
   source?: "existing" | "code" | "hash" | "delayed";
 };
 
+function getUrlErrorMessage(): string | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const queryParams = new URLSearchParams(window.location.search);
+    const hash = window.location.hash.startsWith("#")
+      ? window.location.hash.substring(1)
+      : window.location.hash;
+    const hashParams = new URLSearchParams(hash);
+
+    const error =
+      queryParams.get("error") ??
+      hashParams.get("error") ??
+      queryParams.get("error_code") ??
+      hashParams.get("error_code");
+    const description =
+      queryParams.get("error_description") ??
+      hashParams.get("error_description") ??
+      queryParams.get("message") ??
+      hashParams.get("message");
+
+    const raw = description ?? error;
+    if (!raw) return null;
+
+    // Providers often encode spaces as '+'; normalize for readable UI.
+    return raw.replace(/\+/g, " ");
+  } catch {
+    return null;
+  }
+}
+
 function getQueryCode(): string | null {
   if (typeof window === "undefined") return null;
   try {
@@ -46,6 +76,9 @@ export function clearOAuthCallbackUrl(): void {
 
 export async function establishOAuthSessionFromCurrentUrl(): Promise<OAuthCallbackResult> {
   try {
+    let codeExchangeError: string | null = null;
+    let hashSessionError: string | null = null;
+
     const { data: currentData, error: currentErr } = await supabase.auth.getSession();
     if (currentErr) {
       return { success: false, error: currentErr.message };
@@ -54,15 +87,22 @@ export async function establishOAuthSessionFromCurrentUrl(): Promise<OAuthCallba
       return { success: true, source: "existing" };
     }
 
+    const urlErrorMessage = getUrlErrorMessage();
+    if (urlErrorMessage) {
+      return { success: false, error: urlErrorMessage };
+    }
+
     const code = getQueryCode();
     if (code) {
       const { error: exchangeError } = await supabase.auth.exchangeCodeForSession(code);
       if (exchangeError) {
-        return { success: false, error: exchangeError.message };
+        codeExchangeError = exchangeError.message;
       }
-      const { data: exchangedData } = await supabase.auth.getSession();
-      if (exchangedData.session) {
-        return { success: true, source: "code" };
+      else {
+        const { data: exchangedData } = await supabase.auth.getSession();
+        if (exchangedData.session) {
+          return { success: true, source: "code" };
+        }
       }
     }
 
@@ -73,11 +113,13 @@ export async function establishOAuthSessionFromCurrentUrl(): Promise<OAuthCallba
         refresh_token: tokens.refreshToken,
       });
       if (setSessionError) {
-        return { success: false, error: setSessionError.message };
+        hashSessionError = setSessionError.message;
       }
-      const { data: hashData } = await supabase.auth.getSession();
-      if (hashData.session) {
-        return { success: true, source: "hash" };
+      else {
+        const { data: hashData } = await supabase.auth.getSession();
+        if (hashData.session) {
+          return { success: true, source: "hash" };
+        }
       }
     }
 
@@ -89,6 +131,13 @@ export async function establishOAuthSessionFromCurrentUrl(): Promise<OAuthCallba
     }
     if (delayedData.session) {
       return { success: true, source: "delayed" };
+    }
+
+    if (codeExchangeError) {
+      return { success: false, error: codeExchangeError };
+    }
+    if (hashSessionError) {
+      return { success: false, error: hashSessionError };
     }
 
     return { success: false, error: "Could not complete OAuth sign-in." };
