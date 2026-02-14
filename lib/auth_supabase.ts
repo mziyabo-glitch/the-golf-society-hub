@@ -138,12 +138,16 @@ export async function signUpWithEmail(email: string, password: string): Promise<
  * Sign in with Google OAuth.
  *
  * Web:    Uses supabase.auth.signInWithOAuth — Supabase handles the redirect.
- *         The browser navigates away and returns to /auth/callback with tokens in the hash.
- *         detectSessionInUrl: true in the Supabase client picks them up.
+ *         The browser navigates away and returns to /auth/callback with a PKCE
+ *         code (default) or tokens in the hash.  The oauthCallback module
+ *         handles session establishment on the callback page.
  *
  * Native: Uses expo-web-browser to open the OAuth URL in an in-app browser.
  *         skipBrowserRedirect: true prevents Supabase from redirecting the main page.
- *         We extract the URL from the browser result and parse the tokens ourselves.
+ *         We extract the PKCE code (or implicit hash tokens) from the browser
+ *         result and exchange them for a session.
+ *         Supabase JS v2.39+ defaults to PKCE (response_type=code), so we
+ *         prioritize code exchange and fall back to implicit hash tokens.
  */
 export async function signInWithGoogle(): Promise<void> {
   if (Platform.OS === "web") {
@@ -192,31 +196,53 @@ export async function signInWithGoogle(): Promise<void> {
     return; // user cancelled — not an error
   }
 
-  // Parse tokens from the callback URL hash
-  const hashPart = result.url.split("#")[1];
-  if (!hashPart) {
-    throw new Error("No tokens in callback URL.");
+  // Parse the callback URL — handle both PKCE flow (code in query string)
+  // and implicit flow (tokens in hash fragment).
+  // Supabase JS v2.39+ defaults to PKCE, so the code path is tried first.
+  const callbackUrl = result.url;
+
+  // --- PKCE flow: extract code from query string ---
+  const codeMatch = callbackUrl.match(/[?&]code=([^&#]+)/);
+  if (codeMatch) {
+    const code = decodeURIComponent(codeMatch[1]);
+    console.log("[auth] signInWithGoogle native: PKCE code found, exchanging...");
+
+    const { error: exchangeError } = await supabase.auth.exchangeCodeForSession(code);
+    if (exchangeError) {
+      console.error("[auth] signInWithGoogle exchangeCode error:", exchangeError.message);
+      throw new Error(exchangeError.message);
+    }
+
+    console.log("[auth] signInWithGoogle native: PKCE session established");
+    return;
   }
 
-  const params = new URLSearchParams(hashPart);
-  const accessToken = params.get("access_token");
-  const refreshToken = params.get("refresh_token");
+  // --- Implicit flow fallback: extract tokens from hash ---
+  const hashPart = callbackUrl.split("#")[1];
+  if (hashPart) {
+    const params = new URLSearchParams(hashPart);
+    const accessToken = params.get("access_token");
+    const refreshToken = params.get("refresh_token");
 
-  if (!accessToken || !refreshToken) {
-    throw new Error("Missing tokens in callback URL.");
+    if (accessToken && refreshToken) {
+      const { error: sessionError } = await supabase.auth.setSession({
+        access_token: accessToken,
+        refresh_token: refreshToken,
+      });
+
+      if (sessionError) {
+        console.error("[auth] signInWithGoogle setSession error:", sessionError.message);
+        throw new Error(sessionError.message);
+      }
+
+      console.log("[auth] signInWithGoogle native: implicit session established");
+      return;
+    }
   }
 
-  const { error: sessionError } = await supabase.auth.setSession({
-    access_token: accessToken,
-    refresh_token: refreshToken,
-  });
-
-  if (sessionError) {
-    console.error("[auth] signInWithGoogle setSession error:", sessionError.message);
-    throw new Error(sessionError.message);
-  }
-
-  console.log("[auth] signInWithGoogle native: session established");
+  // Neither flow produced tokens — something went wrong
+  console.error("[auth] signInWithGoogle native: no code or tokens in callback URL:", callbackUrl);
+  throw new Error("No authentication credentials found in callback URL.");
 }
 
 // ============================================================================
