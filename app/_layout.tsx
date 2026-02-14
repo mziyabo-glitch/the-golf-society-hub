@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { Stack, useRouter, useSegments } from "expo-router";
+import { Stack, usePathname, useRouter, useSegments } from "expo-router";
 import { StyleSheet, View } from "react-native";
 import { BootstrapProvider, useBootstrap } from "@/lib/useBootstrap";
 import { LoadingState } from "@/components/ui/LoadingState";
@@ -13,8 +13,11 @@ import { consumePendingInviteToken } from "@/lib/sinbookInviteToken";
 function RootNavigator() {
   const { loading, error, isSignedIn, activeSocietyId, profile, refresh } = useBootstrap();
   const segments = useSegments();
+  const pathname = usePathname();
   const router = useRouter();
   const colors = getColors();
+
+  const isPublicPath = pathname === "/reset-password" || pathname.startsWith("/auth/");
 
   // Track if we've already routed to prevent loops
   const hasRouted = useRef(false);
@@ -34,7 +37,7 @@ function RootNavigator() {
 
     const inOnboarding = segments[0] === "onboarding";
     const inSinbookInvite = segments[0] === "sinbook";
-    const inPublicRoute = segments[0] === "reset-password" || segments[0] === "auth";
+    const inPublicRoute = isPublicPath || segments[0] === "reset-password" || segments[0] === "auth";
     const inMyProfile = segments[0] === "(app)" && segments[1] === "my-profile";
     const hasSociety = !!activeSocietyId;
     const needsProfileCompletion = !!profile && !profile.profile_complete;
@@ -83,7 +86,7 @@ function RootNavigator() {
       });
     }
     // No society + not on onboarding = Personal Mode — let (app) handle it
-  }, [loading, isSignedIn, activeSocietyId, profile, segments, router]);
+  }, [loading, isSignedIn, activeSocietyId, profile, segments, pathname, router, isPublicPath]);
 
   // Reset hasRouted when loading changes (new bootstrap cycle)
   useEffect(() => {
@@ -96,7 +99,7 @@ function RootNavigator() {
   // Determine which overlay to show (if any).
   // The Stack ALWAYS renders so expo-router can match child routes.
   // Public routes are accessible without sign-in (OAuth callback, password reset).
-  const isPublicRoute = segments[0] === "reset-password" || segments[0] === "auth";
+  const isPublicRoute = isPublicPath || segments[0] === "reset-password" || segments[0] === "auth";
   const showLoading = loading;
   const showAuth = !loading && !isSignedIn && !isPublicRoute;
   const showError = !loading && !showAuth && !!error;
