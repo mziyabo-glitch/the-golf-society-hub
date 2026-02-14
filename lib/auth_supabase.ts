@@ -3,7 +3,8 @@
 // All auth uses supabase-js, no manual fetch calls
 // NO .select().single() after upsert to avoid 406 errors
 
-import { Platform, Linking } from "react-native";
+import { Platform } from "react-native";
+import * as Linking from "expo-linking";
 import * as WebBrowser from "expo-web-browser";
 import { supabase } from "@/lib/supabase";
 import type { User, Session } from "@supabase/supabase-js";
