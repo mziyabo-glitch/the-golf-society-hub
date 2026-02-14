@@ -319,13 +319,13 @@ const styles = StyleSheet.create({
     marginBottom: spacing.xl,
   },
   brandLogo: {
-    width: 220,
-    height: 160,
-    marginBottom: 24,
+    width: 280,
+    height: 220,
+    marginBottom: spacing.md,
   },
   brandLogoSmall: {
-    width: 120,
-    height: 90,
+    width: 170,
+    height: 130,
     marginBottom: spacing.md,
   },
   brandTitle: {
