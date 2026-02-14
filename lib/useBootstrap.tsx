@@ -117,8 +117,7 @@ function useBootstrapInternal(): BootstrapState {
   const [refreshKey, setRefreshKey] = useState(0);
 
   const mounted = useRef(true);
-  const bootstrapRunRef = useRef(false);
-  const bootstrapInFlight = useRef(false);
+  const bootstrapIdRef = useRef(0);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -132,12 +131,13 @@ function useBootstrapInternal(): BootstrapState {
   useEffect(() => {
     let profilePollTimer: ReturnType<typeof setInterval> | null = null;
 
-    const bootstrap = async () => {
-      if (bootstrapInFlight.current) return;
-      if (bootstrapRunRef.current && refreshKey === 0) return;
-      bootstrapInFlight.current = true;
-      bootstrapRunRef.current = true;
+    // Each effect run gets a unique ID. If a newer run starts (e.g.
+    // SIGNED_IN fires while an older bootstrap is in-flight), the
+    // stale bootstrap's state updates are skipped.
+    const thisRunId = ++bootstrapIdRef.current;
+    const isCurrent = () => bootstrapIdRef.current === thisRunId && mounted.current;
 
+    const bootstrap = async () => {
       try {
         setLoading(true);
         setError(null);
@@ -163,7 +163,7 @@ function useBootstrapInternal(): BootstrapState {
         if (!currentSession || !currentUser) {
           // No session — user needs to sign in via the auth screen.
           console.log("[useBootstrap] No session — awaiting sign-in.");
-          if (!mounted.current) return;
+          if (!isCurrent()) return;
           setSession(null);
           setProfile(null);
           setSociety(null);
@@ -173,7 +173,7 @@ function useBootstrapInternal(): BootstrapState {
 
         console.log("[useBootstrap] Existing session found:", currentUser.id);
 
-        if (!mounted.current) return;
+        if (!isCurrent()) return;
         setSession(currentSession);
 
         // ----------------------------------------------------------------
@@ -220,7 +220,7 @@ function useBootstrapInternal(): BootstrapState {
           throw new Error("Failed to load profile");
         }
 
-        if (!mounted.current) return;
+        if (!isCurrent()) return;
 
         const finalProfile = profileData;
         setProfile(finalProfile);
@@ -242,7 +242,7 @@ function useBootstrapInternal(): BootstrapState {
             console.warn("[useBootstrap] Society load error:", societyError.message);
           }
 
-          if (!mounted.current) return;
+          if (!isCurrent()) return;
           if (societyData) {
             // Ensure name is always a plain string (guard against unexpected types)
             const safeSocietyName =
@@ -274,7 +274,7 @@ function useBootstrapInternal(): BootstrapState {
             console.warn("[useBootstrap] Member load error:", memberError.message);
           }
 
-          if (!mounted.current) return;
+          if (!isCurrent()) return;
           if (memberData) {
             // Ensure display-critical fields are always primitives (guard against
             // unexpected JSONB or structured values from the database).
@@ -328,7 +328,7 @@ function useBootstrapInternal(): BootstrapState {
 
       } catch (e: any) {
         console.error("[useBootstrap] Bootstrap error:", e);
-        if (mounted.current) {
+        if (isCurrent()) {
           // Ensure error is always a plain string (guard against structured error objects)
           const rawMsg = e?.message;
           const errStr =
@@ -338,8 +338,7 @@ function useBootstrapInternal(): BootstrapState {
           setError(errStr);
         }
       } finally {
-        bootstrapInFlight.current = false;
-        if (mounted.current) {
+        if (isCurrent()) {
           setLoading(false);
         }
       }
@@ -355,8 +354,15 @@ function useBootstrapInternal(): BootstrapState {
         if (mounted.current) {
           setSession(newSession);
 
-          // Refresh bootstrap on sign in/out/recovery
+          // Refresh bootstrap on sign in/out/recovery.
+          // Increment bootstrapIdRef so any in-flight bootstrap aborts its
+          // state updates (its isCurrent() will return false).
+          // Set loading=true immediately so the UI shows a loading state
+          // until the fresh re-bootstrap completes — this prevents a render
+          // frame where isSignedIn=true but profile/society/member are null.
           if (event === "SIGNED_IN" || event === "SIGNED_OUT" || event === "PASSWORD_RECOVERY") {
+            bootstrapIdRef.current++;
+            setLoading(true);
             setRefreshKey((k) => k + 1);
           }
         }
