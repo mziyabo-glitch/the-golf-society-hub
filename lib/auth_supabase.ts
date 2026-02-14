@@ -10,6 +10,43 @@ import { supabase } from "@/lib/supabase";
 import type { User, Session } from "@supabase/supabase-js";
 
 const WEB_BASE_URL = "https://the-golf-society-hub.vercel.app";
+const OAUTH_CALLBACK_PATH = "/auth/callback";
+
+function trimTrailingSlash(value: string): string {
+  return value.endsWith("/") ? value.slice(0, -1) : value;
+}
+
+function getWebOAuthRedirectTo(): string {
+  const configuredOrigin =
+    process.env.EXPO_PUBLIC_WEB_OAUTH_REDIRECT_ORIGIN ||
+    process.env.NEXT_PUBLIC_WEB_OAUTH_REDIRECT_ORIGIN;
+
+  if (configuredOrigin) {
+    return `${trimTrailingSlash(configuredOrigin)}${OAUTH_CALLBACK_PATH}`;
+  }
+
+  const canonicalOrigin = trimTrailingSlash(WEB_BASE_URL);
+  if (typeof window === "undefined") {
+    return `${canonicalOrigin}${OAUTH_CALLBACK_PATH}`;
+  }
+
+  const currentOrigin = trimTrailingSlash(window.location.origin);
+  const isLocalhost = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(currentOrigin);
+  const isCanonical = currentOrigin === canonicalOrigin;
+  const isVercelPreview =
+    currentOrigin.endsWith(".vercel.app") && !isCanonical;
+
+  if (isVercelPreview) {
+    // Preview hosts are often not allowlisted in Supabase/Auth provider settings.
+    return `${canonicalOrigin}${OAUTH_CALLBACK_PATH}`;
+  }
+
+  if (isCanonical || isLocalhost) {
+    return `${currentOrigin}${OAUTH_CALLBACK_PATH}`;
+  }
+
+  return `${currentOrigin}${OAUTH_CALLBACK_PATH}`;
+}
 
 function isRedirectMismatchError(message: string): boolean {
   const lower = message.toLowerCase();
@@ -161,13 +198,10 @@ export async function signUpWithEmail(email: string, password: string): Promise<
  */
 export async function signInWithGoogle(): Promise<void> {
   if (Platform.OS === "web") {
-    // Web: prefer the current origin for local/staging, but gracefully fall
-    // back to the stable production callback when the origin isn't allowlisted.
-    const preferredRedirectTo =
-      typeof window !== "undefined"
-        ? `${window.location.origin}/auth/callback`
-        : `${WEB_BASE_URL}/auth/callback`;
-    const fallbackRedirectTo = `${WEB_BASE_URL}/auth/callback`;
+    // Web: use a deterministic redirect strategy. Preview domains often fail
+    // OAuth allowlist checks, so they fallback to the canonical production URL.
+    const preferredRedirectTo = getWebOAuthRedirectTo();
+    const fallbackRedirectTo = `${trimTrailingSlash(WEB_BASE_URL)}${OAUTH_CALLBACK_PATH}`;
     console.log("[auth] signInWithGoogle (web)", {
       preferredRedirectTo,
       fallbackRedirectTo,
@@ -178,14 +212,12 @@ export async function signInWithGoogle(): Promise<void> {
       options: { redirectTo: preferredRedirectTo },
     });
 
-    if (
-      error &&
-      preferredRedirectTo !== fallbackRedirectTo &&
-      isRedirectMismatchError(error.message)
-    ) {
+    if (error && preferredRedirectTo !== fallbackRedirectTo) {
+      const retryReason =
+        isRedirectMismatchError(error.message) ? "redirect-mismatch" : "initial-oauth-error";
       console.warn(
         "[auth] signInWithGoogle (web): preferred redirect rejected, retrying fallback",
-        { error: error.message, fallbackRedirectTo }
+        { reason: retryReason, error: error.message, fallbackRedirectTo }
       );
       ({ error } = await supabase.auth.signInWithOAuth({
         provider: "google",
