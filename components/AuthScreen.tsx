@@ -144,7 +144,7 @@ export function AuthScreen() {
               width={BRAND_LOGO_SMALL_WIDTH}
               height={BRAND_LOGO_SMALL_HEIGHT}
               style={styles.brandLogoSmall}
-              fallbackText="Golf Society Hub"
+              fallbackTitle="Golf Society Hub"
             />
             <AppText variant="title" style={styles.brandTitle}>
               Reset Password
@@ -210,7 +210,7 @@ export function AuthScreen() {
             width={BRAND_LOGO_WIDTH}
             height={BRAND_LOGO_HEIGHT}
             style={styles.brandLogo}
-            fallbackText="Golf Society Hub"
+            fallbackTitle="Golf Society Hub"
           />
           <AppText variant="body" color="secondary" style={styles.brandSubtitle}>
             {isSignIn ? "Sign in to continue" : "Create your account"}
