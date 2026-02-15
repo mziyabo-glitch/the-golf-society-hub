@@ -26,7 +26,6 @@ import { InlineNotice } from "@/components/ui/InlineNotice";
 import {
   signInWithEmail,
   signUpWithEmail,
-  signInWithGoogle,
   signInWithMagicLink,
   resetPassword,
 } from "@/lib/auth_supabase";
@@ -41,7 +40,6 @@ export function AuthScreen() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
-  const [googleLoading, setGoogleLoading] = useState(false);
   const [magicLinkLoading, setMagicLinkLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
@@ -275,27 +273,6 @@ export function AuthScreen() {
             <View style={[styles.dividerLine, { backgroundColor: colors.border }]} />
           </View>
 
-          {/* Google OAuth */}
-          <SecondaryButton
-            onPress={async () => {
-              if (googleLoading || loading) return;
-              setGoogleLoading(true);
-              setError(null);
-              try {
-                await signInWithGoogle();
-              } catch (e: any) {
-                setError(e?.message || "Google sign-in failed.");
-              } finally {
-                setGoogleLoading(false);
-              }
-            }}
-            loading={googleLoading}
-            disabled={googleLoading || loading || magicLinkLoading}
-            icon={<Feather name="globe" size={18} color={colors.primary} />}
-          >
-            Continue with Google
-          </SecondaryButton>
-
           {/* Magic Link — passwordless email sign-in */}
           {isSignIn && (
             <SecondaryButton
@@ -315,9 +292,8 @@ export function AuthScreen() {
                 }
               }}
               loading={magicLinkLoading}
-              disabled={!email.trim() || magicLinkLoading || loading || googleLoading}
+              disabled={!email.trim() || magicLinkLoading || loading}
               icon={<Feather name="mail" size={18} color={colors.primary} />}
-              style={{ marginTop: spacing.sm }}
             >
               Sign in with Email Link
             </SecondaryButton>
