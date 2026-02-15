@@ -1,25 +1,30 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1400 420" role="img" aria-label="The Golf Society Hub horizontal logo">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1500 460" role="img" aria-label="The Golf Society Hub horizontal logo">
   <title>The Golf Society Hub Horizontal Logo</title>
   <defs>
     <style>
-      .wordmark { fill: #FFFFFF; font-family: "Montserrat", "Avenir Next", "Segoe UI", Arial, sans-serif; text-anchor: start; }
+      .wordmark { fill: #0E1A2B; font-family: "Montserrat", "Avenir Next", "Segoe UI", Arial, sans-serif; text-anchor: start; }
     </style>
   </defs>
 
-  <g transform="translate(32 14) scale(0.9)">
-    <path fill="#FFFFFF" d="M180 28C128 28 86 43 52 56V236C52 336 113 406 180 440C247 406 308 336 308 236V56C274 43 232 28 180 28Z" />
-    <path fill="#0E1A2B" d="M180 46C136 46 101 58 71 69V231C71 320 125 382 180 412C235 382 289 320 289 231V69C259 58 224 46 180 46Z" />
-    <path fill="none" stroke="#FFFFFF" stroke-width="6" d="M180 46C136 46 101 58 71 69V231C71 320 125 382 180 412C235 382 289 320 289 231V69C259 58 224 46 180 46Z" />
-    <rect x="177" y="2" width="6" height="44" fill="#FFFFFF" />
-    <path fill="#1DB954" d="M183 7L228 19L183 31Z" />
-    <path fill="#1DB954" d="M104 274C98 307 109 337 132 360V329C119 314 111 294 112 274Z" />
-    <path fill="#1DB954" d="M180 392C146 373 119 345 108 313V342C122 369 148 392 180 409C212 392 238 369 252 342V313C241 345 214 373 180 392Z" />
-    <text x="110" y="266" fill="#FFFFFF" font-family="Montserrat, 'Avenir Next', 'Segoe UI', Arial, sans-serif" font-weight="700" font-size="114" letter-spacing="-5">G</text>
-    <text x="176" y="304" fill="#FFFFFF" font-family="Montserrat, 'Avenir Next', 'Segoe UI', Arial, sans-serif" font-weight="700" font-size="114" letter-spacing="-5">S</text>
+  <g transform="translate(36 20) scale(0.9)">
+    <path fill="#FFFFFF" d="M180 24C131 24 87 36 48 52V222C48 323 109 397 180 434C251 397 312 323 312 222V52C273 36 229 24 180 24Z" />
+    <path fill="#0E1A2B" fill-opacity="0.35" d="M180 24C131 24 87 36 48 52V222C48 323 109 397 180 434C251 397 312 323 312 222V52C273 36 229 24 180 24Z" />
+    <path fill="#0E1A2B" d="M180 42C141 42 104 53 66 68V218C66 307 117 370 180 403C243 370 294 307 294 218V68C256 53 219 42 180 42Z" />
+    <path fill="none" stroke="#1DB954" stroke-width="7" stroke-linejoin="round" d="M180 58C147 58 114 67 82 79V212C82 287 126 343 180 373C234 343 278 287 278 212V79C246 67 213 58 180 58Z" />
+
+    <rect x="176" y="-4" width="8" height="52" fill="#FFFFFF" />
+    <path fill="#1DB954" d="M184 2L236 15L184 28Z" />
+    <path fill="#1DB954" d="M106 292C95 299 92 312 96 327V339C114 342 130 334 130 316V303C130 289 117 285 106 292Z" />
+
+    <circle cx="157" cy="203" r="56" fill="none" stroke="#FFFFFF" stroke-width="16" />
+    <rect x="191" y="133" width="62" height="140" fill="#0E1A2B" />
+    <path d="M157 203H230" fill="none" stroke="#FFFFFF" stroke-width="16" stroke-linecap="round" />
+    <path d="M280 151C241 151 222 168 222 190C222 211 241 224 273 230C307 237 323 250 323 273C323 305 295 324 255 324C215 324 190 303 187 270" fill="none" stroke="#FFFFFF" stroke-width="16" stroke-linecap="round" stroke-linejoin="round" />
+    <rect x="262" y="214" width="16" height="10" rx="2" fill="#1DB954" />
   </g>
 
-  <text class="wordmark" x="340" y="142" font-size="56" font-weight="600" letter-spacing="3">THE</text>
-  <text class="wordmark" x="340" y="226" font-size="82" font-weight="600" letter-spacing="2">GOLF SOCIETY</text>
-  <text class="wordmark" x="340" y="310" font-size="88" font-weight="800" letter-spacing="5">HUB</text>
-  <rect x="340" y="334" width="150" height="6" fill="#1DB954" />
+  <text class="wordmark" x="402" y="144" font-size="46" font-weight="600" letter-spacing="5" fill-opacity="0.45">THE</text>
+  <text class="wordmark" x="402" y="220" font-size="74" font-weight="600" letter-spacing="2">GOLF SOCIETY</text>
+  <text class="wordmark" x="402" y="308" font-size="86" font-weight="800" letter-spacing="8">HUB</text>
+  <rect x="402" y="334" width="176" height="6" fill="#1DB954" />
 </svg>

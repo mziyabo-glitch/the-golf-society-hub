@@ -64,6 +64,27 @@ type BootstrapState = {
 // ============================================================================
 
 const BootstrapContext = createContext<BootstrapState | null>(null);
+let warnedMissingBootstrapProvider = false;
+
+const BOOTSTRAP_FALLBACK: BootstrapState = {
+  loading: false,
+  error: "BootstrapProvider is missing",
+  userId: null,
+  session: null,
+  profile: null,
+  activeSocietyId: null,
+  activeMemberId: null,
+  societyId: null,
+  society: null,
+  member: null,
+  setActiveSociety: async () => {},
+  refresh: () => {},
+  signOut: async () => {},
+  ready: true,
+  bootstrapped: true,
+  isSignedIn: false,
+  user: null,
+};
 
 export function BootstrapProvider({ children }: { children: ReactNode }) {
   const value = useBootstrapInternal();
@@ -73,8 +94,13 @@ export function BootstrapProvider({ children }: { children: ReactNode }) {
 export function useBootstrap(): BootstrapState {
   const ctx = useContext(BootstrapContext);
   if (ctx) return ctx;
-  // Fallback for components outside provider (shouldn't happen in prod)
-  return useBootstrapInternal();
+  // Safe fallback for components outside provider.
+  // Avoid calling hooks conditionally (which can crash React at runtime).
+  if (!warnedMissingBootstrapProvider) {
+    warnedMissingBootstrapProvider = true;
+    console.warn("[useBootstrap] BootstrapProvider missing; returning fallback state.");
+  }
+  return BOOTSTRAP_FALLBACK;
 }
 
 // ============================================================================
@@ -218,8 +244,15 @@ function useBootstrapInternal(): BootstrapState {
 
           if (!mounted.current) return;
           if (societyData) {
+            // Ensure name is always a plain string (guard against unexpected types)
+            const safeSocietyName =
+              typeof societyData.name === "string"
+                ? societyData.name
+                : String(societyData.name ?? "Society");
+
             setSociety({
               ...societyData,
+              name: safeSocietyName,
               joinCode: societyData.join_code,
             });
           }
@@ -243,13 +276,29 @@ function useBootstrapInternal(): BootstrapState {
 
           if (!mounted.current) return;
           if (memberData) {
-            console.log("[useBootstrap] RAW member handicap_index:", memberData.handicap_index, "keys:", Object.keys(memberData));
+            // Ensure display-critical fields are always primitives (guard against
+            // unexpected JSONB or structured values from the database).
+            const safeName =
+              typeof memberData.name === "string" ? memberData.name : String(memberData.name ?? "");
+            const safeRole =
+              typeof memberData.role === "string" ? memberData.role : undefined;
+            const rawHi = memberData.handicap_index;
+            const safeHi =
+              rawHi != null && typeof rawHi !== "object" ? rawHi : null;
+
             setMember({
               ...memberData,
-              displayName: memberData.name,
-              roles: memberData.role ? [memberData.role] : ["member"],
-              handicapIndex: memberData.handicap_index ?? null,
-              whsNumber: memberData.whs_number ?? null,
+              name: safeName,
+              displayName: safeName,
+              role: safeRole,
+              roles: safeRole ? [safeRole] : ["member"],
+              handicapIndex: safeHi,
+              whsNumber:
+                typeof memberData.whs_number === "string"
+                  ? memberData.whs_number
+                  : memberData.whs_number != null
+                  ? String(memberData.whs_number)
+                  : null,
             });
           }
         }
@@ -280,7 +329,13 @@ function useBootstrapInternal(): BootstrapState {
       } catch (e: any) {
         console.error("[useBootstrap] Bootstrap error:", e);
         if (mounted.current) {
-          setError(e?.message || "Bootstrap failed");
+          // Ensure error is always a plain string (guard against structured error objects)
+          const rawMsg = e?.message;
+          const errStr =
+            typeof rawMsg === "string" && rawMsg.length > 0
+              ? rawMsg
+              : "Bootstrap failed";
+          setError(errStr);
         }
       } finally {
         bootstrapInFlight.current = false;
