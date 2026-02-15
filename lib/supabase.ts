@@ -39,9 +39,8 @@ function getSupabaseClient(): SupabaseClient {
       persistSession: true,
       // Automatically refresh token before expiry
       autoRefreshToken: true,
-      // Keep automatic URL callback detection enabled for web OAuth resilience.
-      // /auth/callback still performs explicit fallback handling when needed.
-      detectSessionInUrl: true,
+      // No OAuth callback flow is used; sessions are established explicitly.
+      detectSessionInUrl: false,
       // Storage key for session (will be prefixed by supabaseStorage with "gsh:")
       storageKey: "supabase-auth",
     },

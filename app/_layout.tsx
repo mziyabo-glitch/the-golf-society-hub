@@ -19,7 +19,7 @@ function RootNavigator() {
   const router = useRouter();
   const colors = getColors();
 
-  const isPublicPath = pathname === "/reset-password" || pathname.startsWith("/auth/");
+  const isPublicPath = pathname === "/reset-password";
 
   // Track if we've already routed to prevent loops
   const hasRouted = useRef(false);
@@ -100,7 +100,7 @@ function RootNavigator() {
 
   // Determine which overlay to show (if any).
   // The Stack ALWAYS renders so expo-router can match child routes.
-  // Public routes are accessible without sign-in (OAuth callback, password reset).
+  // Public routes are accessible without sign-in (password reset).
   const isPublicRoute = isPublicPath || segmentParts[0] === "reset-password" || segmentParts[0] === "auth";
   const showLoading = loading;
   const showAuth = !loading && !isSignedIn && !isPublicRoute;

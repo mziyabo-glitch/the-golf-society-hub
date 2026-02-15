@@ -12,20 +12,17 @@ import {
   Platform,
   Pressable,
 } from "react-native";
-import { Feather } from "@expo/vector-icons";
 
 import { SafeLogo } from "@/components/SafeLogo";
 import { Screen } from "@/components/ui/Screen";
 import { AppText } from "@/components/ui/AppText";
 import { AppCard } from "@/components/ui/AppCard";
 import { AppInput } from "@/components/ui/AppInput";
-import { PrimaryButton, SecondaryButton } from "@/components/ui/Button";
+import { PrimaryButton } from "@/components/ui/Button";
 import { InlineNotice } from "@/components/ui/InlineNotice";
 import {
   signInWithEmail,
-  signInWithOtp,
   signUpWithEmail,
-  signInWithGoogle,
   resetPassword,
 } from "@/lib/auth_supabase";
 import { getColors, spacing } from "@/lib/ui/theme";
@@ -43,8 +40,6 @@ export function AuthScreen() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
-  const [googleLoading, setGoogleLoading] = useState(false);
-  const [otpLoading, setOtpLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
@@ -53,7 +48,6 @@ export function AuthScreen() {
 
   const canSubmitAuth = email.trim().length > 0 && password.length >= 6;
   const canSubmitReset = email.trim().length > 0;
-  const canSendMagicLink = email.trim().length > 0;
 
   // Clear error/success when user edits fields
   const handleEmailChange = useCallback((text: string) => {
@@ -273,59 +267,6 @@ export function AuthScreen() {
           >
             {isSignIn ? "Sign In" : "Create Account"}
           </PrimaryButton>
-
-          {/* Divider */}
-          <View style={styles.dividerRow}>
-            <View style={[styles.dividerLine, { backgroundColor: colors.border }]} />
-            <AppText variant="small" color="tertiary" style={styles.dividerText}>or</AppText>
-            <View style={[styles.dividerLine, { backgroundColor: colors.border }]} />
-          </View>
-
-          {/* Google OAuth */}
-          <SecondaryButton
-            onPress={async () => {
-              if (googleLoading || loading || otpLoading) return;
-              setGoogleLoading(true);
-              setError(null);
-              try {
-                await signInWithGoogle();
-              } catch (e: any) {
-                setError(e?.message || "Google sign-in failed.");
-              } finally {
-                setGoogleLoading(false);
-              }
-            }}
-            loading={googleLoading}
-            disabled={googleLoading || loading || otpLoading}
-            icon={<Feather name="globe" size={18} color={colors.primary} />}
-          >
-            Continue with Google
-          </SecondaryButton>
-
-          {isSignIn && (
-            <SecondaryButton
-              onPress={async () => {
-                if (otpLoading || loading || googleLoading || !canSendMagicLink) return;
-                setOtpLoading(true);
-                setError(null);
-                setSuccess(null);
-                try {
-                  await signInWithOtp(email);
-                  setSuccess("Magic link sent. Check your inbox and open it on this device.");
-                } catch (e: any) {
-                  setError(e?.message || "Could not send magic link.");
-                } finally {
-                  setOtpLoading(false);
-                }
-              }}
-              loading={otpLoading}
-              disabled={!canSendMagicLink || otpLoading || loading || googleLoading}
-              icon={<Feather name="mail" size={18} color={colors.primary} />}
-              style={{ marginTop: spacing.sm }}
-            >
-              Send Magic Link
-            </SecondaryButton>
-          )}
         </AppCard>
 
         {/* Toggle sign-in / sign-up */}
@@ -387,18 +328,6 @@ const styles = StyleSheet.create({
   },
   submitButton: {
     marginTop: spacing.sm,
-  },
-  dividerRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginVertical: spacing.base,
-  },
-  dividerLine: {
-    flex: 1,
-    height: StyleSheet.hairlineWidth,
-  },
-  dividerText: {
-    marginHorizontal: spacing.sm,
   },
   toggleRow: {
     flexDirection: "row",
