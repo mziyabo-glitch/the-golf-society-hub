@@ -8,8 +8,9 @@
     "ios": "expo start --ios",
     "web": "expo start --web",
     "lint": "expo lint",
+    "verify:assets": "node scripts/verify-logo-assets.mjs",
     "build": "expo export -p web",
-    "vercel-build": "npm run build"
+    "vercel-build": "expo export -p web"
   },
   "engines": {
     "node": ">=18.x"
