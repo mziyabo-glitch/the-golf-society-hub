@@ -137,6 +137,9 @@ export default function HomeScreen() {
   const [loadError, setLoadError] = useState<FormattedError | null>(null);
   const [activeSinbook, setActiveSinbook] = useState<SinbookWithParticipants | null>(null);
 
+  // Personal-mode state (always declared — never behind a conditional)
+  const [nudgeDismissed, setNudgeDismissed] = useState(false);
+
   // Licence banner state
   const [requestSending, setRequestSending] = useState(false);
   const [requestAlreadySent, setRequestAlreadySent] = useState(false);
@@ -351,7 +354,15 @@ export default function HomeScreen() {
   }
 
   if (!societyId || !society) {
-    return <PersonalModeHome colors={colors} router={router} />;
+    return (
+      <PersonalModeHome
+        colors={colors}
+        router={router}
+        nudgeDismissed={nudgeDismissed}
+        setNudgeDismissed={setNudgeDismissed}
+        profile={profile}
+      />
+    );
   }
 
   // ============================================================================
@@ -371,6 +382,12 @@ export default function HomeScreen() {
       : null;
 
   const useCompactLogo = screenWidth < 380;
+
+  // Tee-time notification: show only for 7 days after publication
+  const showTeeTimeNotification = !!(
+    nextEvent?.teeTimePublishedAt &&
+    (Date.now() - new Date(nextEvent.teeTimePublishedAt).getTime()) / (1000 * 60 * 60 * 24) <= 7
+  );
 
   return (
     <Screen>
@@ -509,11 +526,7 @@ export default function HomeScreen() {
       {/* ================================================================== */}
       {/* NOTIFICATION: Tee times published                                  */}
       {/* ================================================================== */}
-      {nextEvent?.teeTimePublishedAt && (() => {
-        const publishedAt = new Date(nextEvent.teeTimePublishedAt!);
-        const daysSince = (Date.now() - publishedAt.getTime()) / (1000 * 60 * 60 * 24);
-        if (daysSince > 7) return null;
-        return (
+      {showTeeTimeNotification && nextEvent && (
           <Pressable onPress={() => openEvent(nextEvent.id)}>
             <View style={[styles.notificationBanner, { backgroundColor: colors.success + "15", borderColor: colors.success + "30" }]}>
               <Feather name="bell" size={16} color={colors.success} />
@@ -528,8 +541,7 @@ export default function HomeScreen() {
               <Feather name="chevron-right" size={16} color={colors.success} />
             </View>
           </Pressable>
-        );
-      })()}
+      )}
 
       {/* ================================================================== */}
       {/* B) NEXT EVENT CARD                                                 */}
@@ -861,13 +873,18 @@ export default function HomeScreen() {
 function PersonalModeHome({
   colors,
   router,
+  nudgeDismissed,
+  setNudgeDismissed,
+  profile,
 }: {
   colors: ReturnType<typeof getColors>;
   router: ReturnType<typeof useRouter>;
+  nudgeDismissed: boolean;
+  setNudgeDismissed: (v: boolean) => void;
+  profile: any | null;
 }) {
-  const [nudgeDismissed, setNudgeDismissed] = useState(false);
-  const { profile: pmProfile } = useBootstrap();
-  const pmProfileComplete = pmProfile?.profile_complete === true;
+  // No hooks — all state is owned by HomeScreen to keep hook count stable.
+  const pmProfileComplete = profile?.profile_complete === true;
 
   return (
     <Screen>
