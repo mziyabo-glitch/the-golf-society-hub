@@ -260,11 +260,8 @@ export async function getOrderOfMeritTotals(
 
     const memberId = row.member_id;
     const member = membersMap.get(memberId);
-    // Ensure memberName is always a plain string (guard against unexpected DB types)
-    const rawName = member?.name;
-    const memberName =
-      typeof rawName === "string" && rawName.length > 0 ? rawName : "Unknown";
-    const points = Number(row.points) || 0;
+    const memberName = member?.name || "Unknown";
+    const points = row.points || 0;
 
     if (!memberTotals[memberId]) {
       memberTotals[memberId] = {

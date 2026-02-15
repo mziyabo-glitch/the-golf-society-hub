@@ -19,10 +19,6 @@ import { PrimaryButton, SecondaryButton } from "@/components/ui/Button";
 import { InlineNotice } from "@/components/ui/InlineNotice";
 import { LoadingState } from "@/components/ui/LoadingState";
 import { supabase } from "@/lib/supabase";
-import {
-  clearOAuthCallbackUrl,
-  establishOAuthSessionFromCurrentUrl,
-} from "@/lib/oauthCallback";
 import { getColors, spacing } from "@/lib/ui/theme";
 
 export default function NotFoundScreen() {
@@ -74,27 +70,61 @@ function AuthCallbackFallback() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    let cancelled = false;
-
     async function handleCallback() {
-      const result = await establishOAuthSessionFromCurrentUrl();
-      if (cancelled) return;
+      try {
+        // Check if Supabase already picked up the session (detectSessionInUrl)
+        const {
+          data: { session },
+        } = await supabase.auth.getSession();
 
-      if (result.success) {
-        console.log("[auth/callback +not-found] OAuth session established via:", result.source);
-        clearOAuthCallbackUrl();
-        router.replace("/");
-        return;
+        if (session) {
+          console.log("[auth/callback +not-found] Session found, redirecting");
+          router.replace("/");
+          return;
+        }
+
+        // Manual fallback: parse tokens from URL hash
+        if (typeof window !== "undefined" && window.location.hash) {
+          const hash = window.location.hash.substring(1);
+          const params = new URLSearchParams(hash);
+          const accessToken = params.get("access_token");
+          const refreshToken = params.get("refresh_token");
+
+          if (accessToken && refreshToken) {
+            const { error: sessionError } = await supabase.auth.setSession({
+              access_token: accessToken,
+              refresh_token: refreshToken,
+            });
+
+            if (sessionError) {
+              console.error("[auth/callback +not-found] setSession error:", sessionError);
+              setError(sessionError.message);
+              return;
+            }
+
+            console.log("[auth/callback +not-found] Session set from hash, redirecting");
+            router.replace("/");
+            return;
+          }
+        }
+
+        // Give detectSessionInUrl a moment to process
+        await new Promise((r) => setTimeout(r, 1500));
+
+        const { data: retryData } = await supabase.auth.getSession();
+        if (retryData.session) {
+          router.replace("/");
+          return;
+        }
+
+        setError("Could not complete sign-in. Please try again.");
+      } catch (e: any) {
+        console.error("[auth/callback +not-found] error:", e);
+        setError(e?.message || "Something went wrong.");
       }
-
-      console.error("[auth/callback +not-found] Failed:", result.error);
-      setError(result.error || "Could not complete sign-in. Please try again.");
     }
 
     handleCallback();
-    return () => {
-      cancelled = true;
-    };
   }, [router]);
 
   if (error) {

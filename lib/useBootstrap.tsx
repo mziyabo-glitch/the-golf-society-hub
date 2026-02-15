@@ -64,27 +64,6 @@ type BootstrapState = {
 // ============================================================================
 
 const BootstrapContext = createContext<BootstrapState | null>(null);
-let warnedMissingBootstrapProvider = false;
-
-const BOOTSTRAP_FALLBACK: BootstrapState = {
-  loading: false,
-  error: "BootstrapProvider is missing",
-  userId: null,
-  session: null,
-  profile: null,
-  activeSocietyId: null,
-  activeMemberId: null,
-  societyId: null,
-  society: null,
-  member: null,
-  setActiveSociety: async () => {},
-  refresh: () => {},
-  signOut: async () => {},
-  ready: true,
-  bootstrapped: true,
-  isSignedIn: false,
-  user: null,
-};
 
 export function BootstrapProvider({ children }: { children: ReactNode }) {
   const value = useBootstrapInternal();
@@ -94,13 +73,8 @@ export function BootstrapProvider({ children }: { children: ReactNode }) {
 export function useBootstrap(): BootstrapState {
   const ctx = useContext(BootstrapContext);
   if (ctx) return ctx;
-  // Safe fallback for components outside provider.
-  // Avoid calling hooks conditionally (which can crash React at runtime).
-  if (!warnedMissingBootstrapProvider) {
-    warnedMissingBootstrapProvider = true;
-    console.warn("[useBootstrap] BootstrapProvider missing; returning fallback state.");
-  }
-  return BOOTSTRAP_FALLBACK;
+  // Fallback for components outside provider (shouldn't happen in prod)
+  return useBootstrapInternal();
 }
 
 // ============================================================================
