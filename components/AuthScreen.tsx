@@ -25,7 +25,7 @@ import {
   signUpWithEmail,
   resetPassword,
 } from "@/lib/auth_supabase";
-import { getColors, spacing } from "@/lib/ui/theme";
+import { spacing } from "@/lib/ui/theme";
 
 type Mode = "signIn" | "signUp" | "forgotPassword";
 const BRAND_LOGO_WIDTH = 280;
@@ -34,8 +34,6 @@ const BRAND_LOGO_SMALL_WIDTH = 170;
 const BRAND_LOGO_SMALL_HEIGHT = 130;
 
 export function AuthScreen() {
-  const colors = getColors();
-
   const [mode, setMode] = useState<Mode>("signIn");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
