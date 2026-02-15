@@ -7,8 +7,7 @@
 
 import React, { forwardRef } from "react";
 import { View, Text, StyleSheet, Image } from "react-native";
-
-const horizontalLogo = require("@/assets/images/horizontal-logo.png");
+import { BrandingFooter } from "@/components/ui/BrandingFooter";
 
 export type ResultRow = {
   memberName: string;
@@ -78,12 +77,7 @@ const OOMResultsLogShareCard = forwardRef<View, OOMResultsLogShareCardProps>(
 
     return (
       <View ref={ref} style={styles.container} collapsable={false}>
-        {/* App brand header */}
-        <View style={styles.brandHeader}>
-          <Image source={horizontalLogo} style={styles.brandLogo} resizeMode="contain" />
-        </View>
-
-        {/* Society header */}
+        {/* Society header — society branding is primary */}
         <View style={styles.header}>
           {logoUrl ? (
             <Image source={{ uri: logoUrl }} style={styles.logo} resizeMode="contain" />
@@ -164,11 +158,8 @@ const OOMResultsLogShareCard = forwardRef<View, OOMResultsLogShareCardProps>(
           </View>
         </View>
 
-        {/* Footer */}
-        <View style={styles.footer}>
-          <View style={styles.footerDivider} />
-          <Text style={styles.footerText}>Produced by The Golf Society Hub</Text>
-        </View>
+        {/* App branding footer — subtle, bottom */}
+        <BrandingFooter />
       </View>
     );
   }
@@ -196,14 +187,6 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.1,
     shadowRadius: 8,
     elevation: 4,
-  },
-  brandHeader: {
-    alignItems: "center",
-    marginBottom: 16,
-  },
-  brandLogo: {
-    height: 44,
-    aspectRatio: 1500 / 460,
   },
   header: {
     alignItems: "center",
@@ -373,21 +356,5 @@ const styles = StyleSheet.create({
   oomTextTop3: {
     fontWeight: "700",
     fontSize: 15,
-  },
-  footer: {
-    marginTop: 20,
-    alignItems: "center",
-  },
-  footerDivider: {
-    width: 60,
-    height: 2,
-    backgroundColor: "#E5E7EB",
-    marginBottom: 12,
-    borderRadius: 1,
-  },
-  footerText: {
-    fontSize: 11,
-    color: "#9CA3AF",
-    fontStyle: "italic",
   },
 });
