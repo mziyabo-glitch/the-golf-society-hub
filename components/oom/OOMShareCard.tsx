@@ -173,8 +173,8 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   brandLogo: {
-    width: 200,
-    height: 40,
+    height: 44,
+    aspectRatio: 1500 / 460,
   },
   header: {
     alignItems: "center",

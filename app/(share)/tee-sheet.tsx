@@ -465,8 +465,8 @@ const styles = StyleSheet.create({
     paddingTop: 24,
   },
   brandLogo: {
-    width: 350,
-    height: 60,
+    height: 56,
+    aspectRatio: 1500 / 460,
   },
   brandTagline: {
     fontSize: 9,
