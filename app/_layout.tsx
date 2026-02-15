@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import React, { Component, useEffect, useRef } from "react";
 import { Stack, usePathname, useRouter, useSegments } from "expo-router";
 import { StyleSheet, View } from "react-native";
 import { BootstrapProvider, useBootstrap } from "@/lib/useBootstrap";
@@ -9,6 +9,43 @@ import { AppText } from "@/components/ui/AppText";
 import { PrimaryButton } from "@/components/ui/Button";
 import { getColors, spacing } from "@/lib/ui/theme";
 import { consumePendingInviteToken } from "@/lib/sinbookInviteToken";
+
+// Error boundary so a crash in a child screen does not blank the entire app.
+class ScreenErrorBoundary extends Component<
+  { children: React.ReactNode },
+  { hasError: boolean; error: string }
+> {
+  constructor(props: { children: React.ReactNode }) {
+    super(props);
+    this.state = { hasError: false, error: "" };
+  }
+
+  static getDerivedStateFromError(err: Error) {
+    return { hasError: true, error: err?.message || "An unexpected error occurred." };
+  }
+
+  componentDidCatch(err: Error, info: React.ErrorInfo) {
+    console.error("[ScreenErrorBoundary]", err, info.componentStack);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      const colors = getColors();
+      return (
+        <View style={{ flex: 1, justifyContent: "center", alignItems: "center", backgroundColor: colors.background, padding: spacing.lg }}>
+          <AppCard>
+            <AppText variant="h2" style={{ marginBottom: spacing.sm }}>Something went wrong</AppText>
+            <AppText variant="body" color="secondary" style={{ marginBottom: spacing.lg }}>{this.state.error}</AppText>
+            <PrimaryButton onPress={() => this.setState({ hasError: false, error: "" })}>
+              Try Again
+            </PrimaryButton>
+          </AppCard>
+        </View>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 function RootNavigator() {
   const { loading, error, isSignedIn, activeSocietyId, profile, refresh } = useBootstrap();
@@ -107,7 +144,9 @@ function RootNavigator() {
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>
       {/* Always render the navigator so expo-router can resolve all routes */}
-      <Stack screenOptions={{ headerShown: false }} />
+      <ScreenErrorBoundary>
+        <Stack screenOptions={{ headerShown: false }} />
+      </ScreenErrorBoundary>
 
       {/* Overlay: loading spinner */}
       {showLoading && (
