@@ -13,7 +13,7 @@ import {
   Pressable,
 } from "react-native";
 import { Feather } from "@expo/vector-icons";
-const masterLogo = require("@/assets/images/master-logo.png");
+import masterLogo from "@/assets/images/master-logo.png";
 
 import { SafeAuthLogo } from "@/components/auth/SafeAuthLogo";
 import { Screen } from "@/components/ui/Screen";
