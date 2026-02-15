@@ -8,15 +8,15 @@ import { useCallback, useState } from "react";
 import {
   StyleSheet,
   View,
-  Image,
   KeyboardAvoidingView,
   Platform,
   Pressable,
 } from "react-native";
 import { Feather } from "@expo/vector-icons";
 
-const masterLogo = require("@/assets/images/master-logo.png");
+import masterLogo from "@/assets/images/master-logo.png";
 
+import { SafeAuthLogo } from "@/components/auth/SafeAuthLogo";
 import { Screen } from "@/components/ui/Screen";
 import { AppText } from "@/components/ui/AppText";
 import { AppCard } from "@/components/ui/AppCard";
@@ -25,13 +25,18 @@ import { PrimaryButton, SecondaryButton } from "@/components/ui/Button";
 import { InlineNotice } from "@/components/ui/InlineNotice";
 import {
   signInWithEmail,
+  signInWithOtp,
   signUpWithEmail,
   signInWithGoogle,
   resetPassword,
 } from "@/lib/auth_supabase";
-import { getColors, spacing, radius } from "@/lib/ui/theme";
+import { getColors, spacing } from "@/lib/ui/theme";
 
 type Mode = "signIn" | "signUp" | "forgotPassword";
+const BRAND_LOGO_WIDTH = 280;
+const BRAND_LOGO_HEIGHT = 220;
+const BRAND_LOGO_SMALL_WIDTH = 170;
+const BRAND_LOGO_SMALL_HEIGHT = 130;
 
 export function AuthScreen() {
   const colors = getColors();
@@ -41,15 +46,16 @@ export function AuthScreen() {
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
+  const [otpLoading, setOtpLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
   const isSignIn = mode === "signIn";
-  const isSignUp = mode === "signUp";
   const isForgot = mode === "forgotPassword";
 
   const canSubmitAuth = email.trim().length > 0 && password.length >= 6;
   const canSubmitReset = email.trim().length > 0;
+  const canSendMagicLink = email.trim().length > 0;
 
   // Clear error/success when user edits fields
   const handleEmailChange = useCallback((text: string) => {
@@ -135,10 +141,12 @@ export function AuthScreen() {
           style={styles.container}
         >
           <View style={styles.brandSection}>
-            <Image
+            <SafeAuthLogo
               source={masterLogo}
+              width={BRAND_LOGO_SMALL_WIDTH}
+              height={BRAND_LOGO_SMALL_HEIGHT}
               style={styles.brandLogoSmall}
-              resizeMode="contain"
+              fallbackText="Golf Society Hub"
             />
             <AppText variant="title" style={styles.brandTitle}>
               Reset Password
@@ -199,10 +207,12 @@ export function AuthScreen() {
       >
         {/* Branding */}
         <View style={styles.brandSection}>
-          <Image
+          <SafeAuthLogo
             source={masterLogo}
+            width={BRAND_LOGO_WIDTH}
+            height={BRAND_LOGO_HEIGHT}
             style={styles.brandLogo}
-            resizeMode="contain"
+            fallbackText="Golf Society Hub"
           />
           <AppText variant="body" color="secondary" style={styles.brandSubtitle}>
             {isSignIn ? "Sign in to continue" : "Create your account"}
@@ -276,7 +286,7 @@ export function AuthScreen() {
           {/* Google OAuth */}
           <SecondaryButton
             onPress={async () => {
-              if (googleLoading || loading) return;
+              if (googleLoading || loading || otpLoading) return;
               setGoogleLoading(true);
               setError(null);
               try {
@@ -288,11 +298,36 @@ export function AuthScreen() {
               }
             }}
             loading={googleLoading}
-            disabled={googleLoading || loading}
+            disabled={googleLoading || loading || otpLoading}
             icon={<Feather name="globe" size={18} color={colors.primary} />}
           >
             Continue with Google
           </SecondaryButton>
+
+          {isSignIn && (
+            <SecondaryButton
+              onPress={async () => {
+                if (otpLoading || loading || googleLoading || !canSendMagicLink) return;
+                setOtpLoading(true);
+                setError(null);
+                setSuccess(null);
+                try {
+                  await signInWithOtp(email);
+                  setSuccess("Magic link sent. Check your inbox and open it on this device.");
+                } catch (e: any) {
+                  setError(e?.message || "Could not send magic link.");
+                } finally {
+                  setOtpLoading(false);
+                }
+              }}
+              loading={otpLoading}
+              disabled={!canSendMagicLink || otpLoading || loading || googleLoading}
+              icon={<Feather name="mail" size={18} color={colors.primary} />}
+              style={{ marginTop: spacing.sm }}
+            >
+              Send Magic Link
+            </SecondaryButton>
+          )}
         </AppCard>
 
         {/* Toggle sign-in / sign-up */}
@@ -319,13 +354,13 @@ const styles = StyleSheet.create({
     marginBottom: spacing.xl,
   },
   brandLogo: {
-    width: 280,
-    height: 220,
+    width: BRAND_LOGO_WIDTH,
+    height: BRAND_LOGO_HEIGHT,
     marginBottom: spacing.md,
   },
   brandLogoSmall: {
-    width: 170,
-    height: 130,
+    width: BRAND_LOGO_SMALL_WIDTH,
+    height: BRAND_LOGO_SMALL_HEIGHT,
     marginBottom: spacing.md,
   },
   brandTitle: {

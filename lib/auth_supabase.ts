@@ -4,13 +4,13 @@
 // NO .select().single() after upsert to avoid 406 errors
 
 import { Platform } from "react-native";
-import * as Linking from "expo-linking";
 import * as WebBrowser from "expo-web-browser";
 import { supabase } from "@/lib/supabase";
 import type { User, Session } from "@supabase/supabase-js";
 
 const WEB_BASE_URL = "https://the-golf-society-hub.vercel.app";
 const OAUTH_CALLBACK_PATH = "/auth/callback";
+const NATIVE_REDIRECT_URI = "golfsocietypro://auth/callback";
 
 function trimTrailingSlash(value: string): string {
   return value.endsWith("/") ? value.slice(0, -1) : value;
@@ -46,6 +46,13 @@ function getWebOAuthRedirectTo(): string {
   }
 
   return `${currentOrigin}${OAUTH_CALLBACK_PATH}`;
+}
+
+export function getRedirectUri(): string {
+  if (Platform.OS === "web") {
+    return getWebOAuthRedirectTo();
+  }
+  return NATIVE_REDIRECT_URI;
 }
 
 function isRedirectMismatchError(message: string): boolean {
@@ -177,6 +184,32 @@ export async function signUpWithEmail(email: string, password: string): Promise<
   return { user: data.user, needsConfirmation };
 }
 
+/**
+ * Send a passwordless magic link (email OTP flow).
+ * The callback route processes the session and routes into the app.
+ */
+export async function signInWithOtp(email: string): Promise<void> {
+  const cleanEmail = email.trim().toLowerCase();
+  if (!cleanEmail) {
+    throw new Error("Please enter your email first.");
+  }
+
+  const redirectTo = getRedirectUri();
+  console.log("[auth] signInWithOtp", { email: cleanEmail, redirectTo });
+
+  const { error } = await supabase.auth.signInWithOtp({
+    email: cleanEmail,
+    options: {
+      emailRedirectTo: redirectTo,
+    },
+  });
+
+  if (error) {
+    console.error("[auth] signInWithOtp error:", error.message);
+    throw new Error(error.message || "Failed to send magic link.");
+  }
+}
+
 // ============================================================================
 // Google OAuth
 // ============================================================================
@@ -197,10 +230,12 @@ export async function signUpWithEmail(email: string, password: string): Promise<
  *         prioritize code exchange and fall back to implicit hash tokens.
  */
 export async function signInWithGoogle(): Promise<void> {
+  const redirectTo = getRedirectUri();
+
   if (Platform.OS === "web") {
     // Web: use a deterministic redirect strategy. Preview domains often fail
     // OAuth allowlist checks, so they fallback to the canonical production URL.
-    const preferredRedirectTo = getWebOAuthRedirectTo();
+    const preferredRedirectTo = redirectTo;
     const fallbackRedirectTo = `${trimTrailingSlash(WEB_BASE_URL)}${OAUTH_CALLBACK_PATH}`;
     console.log("[auth] signInWithGoogle (web)", {
       preferredRedirectTo,
@@ -234,7 +269,6 @@ export async function signInWithGoogle(): Promise<void> {
   }
 
   // Native: open in-app browser, parse tokens from callback URL
-  const redirectTo = Linking.createURL("auth/callback");
   console.log("[auth] signInWithGoogle (native)", { redirectTo });
 
   const { data, error } = await supabase.auth.signInWithOAuth({
