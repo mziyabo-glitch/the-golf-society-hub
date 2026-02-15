@@ -268,10 +268,6 @@ export default function HomeScreen() {
   // Derived Data
   // ============================================================================
 
-  const logoUrl = getSocietyLogoUrl(society);
-  const memberId = member?.id;
-  const currentYear = new Date().getFullYear();
-
   // Today's date at midnight for comparison
   const today = useMemo(() => {
     const d = new Date();
@@ -342,6 +338,34 @@ export default function HomeScreen() {
   };
 
   // ============================================================================
+  // Pre-computed values (MUST live above early returns so React Compiler
+  // generated hooks run on every render — avoids error #310)
+  // ============================================================================
+
+  const logoUrl = getSocietyLogoUrl(society);
+  const memberId = member?.id;
+  const currentYear = new Date().getFullYear();
+
+  // Handicap for header badge
+  const _hiRaw = (member as any)?.handicap_index ?? member?.handicapIndex ?? null;
+  const _hiNum =
+    _hiRaw != null && typeof _hiRaw !== "object"
+      ? Number(_hiRaw)
+      : null;
+  const memberHiText =
+    _hiNum != null && Number.isFinite(_hiNum)
+      ? `HI ${_hiNum.toFixed(1)}`
+      : null;
+
+  const useCompactLogo = screenWidth < 380;
+
+  // Tee-time notification: show only for 7 days after publication
+  const showTeeTimeNotification = !!(
+    nextEvent?.teeTimePublishedAt &&
+    (Date.now() - new Date(nextEvent.teeTimePublishedAt).getTime()) / (1000 * 60 * 60 * 24) <= 7
+  );
+
+  // ============================================================================
   // Loading / No Society States
   // ============================================================================
 
@@ -368,26 +392,6 @@ export default function HomeScreen() {
   // ============================================================================
   // Render
   // ============================================================================
-
-  // Handicap for header badge — computed once, no IIFE
-  // Guard: ensure the raw value is a primitive before converting to Number
-  const _hiRaw = (member as any)?.handicap_index ?? member?.handicapIndex ?? null;
-  const _hiNum =
-    _hiRaw != null && typeof _hiRaw !== "object"
-      ? Number(_hiRaw)
-      : null;
-  const memberHiText =
-    _hiNum != null && Number.isFinite(_hiNum)
-      ? `HI ${_hiNum.toFixed(1)}`
-      : null;
-
-  const useCompactLogo = screenWidth < 380;
-
-  // Tee-time notification: show only for 7 days after publication
-  const showTeeTimeNotification = !!(
-    nextEvent?.teeTimePublishedAt &&
-    (Date.now() - new Date(nextEvent.teeTimePublishedAt).getTime()) / (1000 * 60 * 60 * 24) <= 7
-  );
 
   return (
     <Screen>
