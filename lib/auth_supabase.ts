@@ -131,6 +131,38 @@ export async function signUpWithEmail(email: string, password: string): Promise<
 }
 
 // ============================================================================
+// Magic Link (passwordless email sign-in)
+// ============================================================================
+
+/**
+ * Send a magic link to the user's email for passwordless sign-in.
+ * The user clicks the link in their email and is signed in automatically.
+ * No password or third-party OAuth required.
+ */
+export async function signInWithMagicLink(email: string): Promise<void> {
+  const cleanEmail = email.trim().toLowerCase();
+
+  const redirectTo =
+    typeof window !== "undefined"
+      ? `${window.location.origin}/auth/callback`
+      : `${WEB_BASE_URL}/auth/callback`;
+
+  console.log("[auth] signInWithMagicLink", { email: cleanEmail, redirectTo });
+
+  const { error } = await supabase.auth.signInWithOtp({
+    email: cleanEmail,
+    options: { emailRedirectTo: redirectTo },
+  });
+
+  if (error) {
+    console.error("[auth] signInWithMagicLink error:", error.message);
+    throw new Error(error.message || "Failed to send magic link.");
+  }
+
+  console.log("[auth] magic link sent to:", cleanEmail);
+}
+
+// ============================================================================
 // Google OAuth
 // ============================================================================
 

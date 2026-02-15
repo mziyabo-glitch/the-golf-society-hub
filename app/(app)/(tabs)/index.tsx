@@ -124,7 +124,6 @@ function getInitials(name: string): string {
 // ============================================================================
 
 export default function HomeScreen() {
-  "use no memo"; // Opt out of React Compiler — complex early-return paths cause hook-count mismatch (#310)
   const router = useRouter();
   const { society, member, societyId, profile, loading: bootstrapLoading } = useBootstrap();
   const colors = getColors();

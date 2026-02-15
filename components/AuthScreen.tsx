@@ -27,6 +27,7 @@ import {
   signInWithEmail,
   signUpWithEmail,
   signInWithGoogle,
+  signInWithMagicLink,
   resetPassword,
 } from "@/lib/auth_supabase";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
@@ -41,6 +42,7 @@ export function AuthScreen() {
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
+  const [magicLinkLoading, setMagicLinkLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
@@ -288,11 +290,38 @@ export function AuthScreen() {
               }
             }}
             loading={googleLoading}
-            disabled={googleLoading || loading}
+            disabled={googleLoading || loading || magicLinkLoading}
             icon={<Feather name="globe" size={18} color={colors.primary} />}
           >
             Continue with Google
           </SecondaryButton>
+
+          {/* Magic Link — passwordless email sign-in */}
+          {isSignIn && (
+            <SecondaryButton
+              onPress={async () => {
+                const trimmed = email.trim();
+                if (!trimmed || magicLinkLoading || loading) return;
+                setMagicLinkLoading(true);
+                setError(null);
+                setSuccess(null);
+                try {
+                  await signInWithMagicLink(trimmed);
+                  setSuccess("Magic link sent! Check your email and click the link to sign in.");
+                } catch (e: any) {
+                  setError(e?.message || "Failed to send magic link.");
+                } finally {
+                  setMagicLinkLoading(false);
+                }
+              }}
+              loading={magicLinkLoading}
+              disabled={!email.trim() || magicLinkLoading || loading || googleLoading}
+              icon={<Feather name="mail" size={18} color={colors.primary} />}
+              style={{ marginTop: spacing.sm }}
+            >
+              Sign in with Email Link
+            </SecondaryButton>
+          )}
         </AppCard>
 
         {/* Toggle sign-in / sign-up */}
