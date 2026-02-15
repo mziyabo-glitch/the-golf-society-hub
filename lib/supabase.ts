@@ -38,16 +38,7 @@ function getSupabaseClient(): SupabaseClient {
       persistSession: true,
       // Automatically refresh token before expiry
       autoRefreshToken: true,
-      // Use PKCE flow (required for secure OAuth). The library defaults to
-      // 'implicit' which does NOT store a code verifier, causing
-      // exchangeCodeForSession to fail when the server returns a ?code= param.
-      flowType: "pkce",
-      // Let the Supabase client detect and exchange OAuth tokens/codes in
-      // the URL on page load.  On web this handles the /auth/callback
-      // redirect automatically; on native window.location doesn't contain
-      // OAuth params so it's a no-op.  The manual callback handler in
-      // oauthCallback.ts acts as a fallback if auto-detection already
-      // established the session.
+      // Detect OAuth callback in URL (for social logins)
       detectSessionInUrl: true,
       // Storage key for session (will be prefixed by supabaseStorage with "gsh:")
       storageKey: "supabase-auth",

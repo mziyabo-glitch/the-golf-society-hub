@@ -137,9 +137,6 @@ export default function HomeScreen() {
   const [loadError, setLoadError] = useState<FormattedError | null>(null);
   const [activeSinbook, setActiveSinbook] = useState<SinbookWithParticipants | null>(null);
 
-  // Personal-mode state (always declared — never behind a conditional)
-  const [nudgeDismissed, setNudgeDismissed] = useState(false);
-
   // Licence banner state
   const [requestSending, setRequestSending] = useState(false);
   const [requestAlreadySent, setRequestAlreadySent] = useState(false);
@@ -268,6 +265,10 @@ export default function HomeScreen() {
   // Derived Data
   // ============================================================================
 
+  const logoUrl = getSocietyLogoUrl(society);
+  const memberId = member?.id;
+  const currentYear = new Date().getFullYear();
+
   // Today's date at midnight for comparison
   const today = useMemo(() => {
     const d = new Date();
@@ -338,34 +339,6 @@ export default function HomeScreen() {
   };
 
   // ============================================================================
-  // Pre-computed values (MUST live above early returns so React Compiler
-  // generated hooks run on every render — avoids error #310)
-  // ============================================================================
-
-  const logoUrl = getSocietyLogoUrl(society);
-  const memberId = member?.id;
-  const currentYear = new Date().getFullYear();
-
-  // Handicap for header badge
-  const _hiRaw = (member as any)?.handicap_index ?? member?.handicapIndex ?? null;
-  const _hiNum =
-    _hiRaw != null && typeof _hiRaw !== "object"
-      ? Number(_hiRaw)
-      : null;
-  const memberHiText =
-    _hiNum != null && Number.isFinite(_hiNum)
-      ? `HI ${_hiNum.toFixed(1)}`
-      : null;
-
-  const useCompactLogo = screenWidth < 380;
-
-  // Tee-time notification: show only for 7 days after publication
-  const showTeeTimeNotification = !!(
-    nextEvent?.teeTimePublishedAt &&
-    (Date.now() - new Date(nextEvent.teeTimePublishedAt).getTime()) / (1000 * 60 * 60 * 24) <= 7
-  );
-
-  // ============================================================================
   // Loading / No Society States
   // ============================================================================
 
@@ -378,20 +351,20 @@ export default function HomeScreen() {
   }
 
   if (!societyId || !society) {
-    return (
-      <PersonalModeHome
-        colors={colors}
-        router={router}
-        nudgeDismissed={nudgeDismissed}
-        setNudgeDismissed={setNudgeDismissed}
-        profile={profile}
-      />
-    );
+    return <PersonalModeHome colors={colors} router={router} />;
   }
 
   // ============================================================================
   // Render
   // ============================================================================
+
+  // Handicap for header badge — computed once, no IIFE
+  const _hiRaw = (member as any)?.handicap_index ?? member?.handicapIndex ?? null;
+  const _hiNum = _hiRaw != null ? Number(_hiRaw) : null;
+  const memberHiText = (_hiNum != null && Number.isFinite(_hiNum)) ? `HI ${_hiNum.toFixed(1)}` : null;
+  console.log("[Home] handicap render:", { handicap_index: (member as any)?.handicap_index, handicapIndex: member?.handicapIndex, memberHiText });
+
+  const useCompactLogo = screenWidth < 380;
 
   return (
     <Screen>
@@ -426,9 +399,9 @@ export default function HomeScreen() {
             </View>
           )}
           <View style={styles.headerTextBlock}>
-            <AppText variant="h2" numberOfLines={1}>{String(society.name ?? "Society")}</AppText>
+            <AppText variant="h2" numberOfLines={1}>{society.name}</AppText>
             <AppText variant="body" color="secondary" numberOfLines={1}>
-              {String(member?.displayName || member?.name || "Member")}
+              {member?.displayName || member?.name || "Member"}
             </AppText>
           </View>
         </View>
@@ -530,7 +503,11 @@ export default function HomeScreen() {
       {/* ================================================================== */}
       {/* NOTIFICATION: Tee times published                                  */}
       {/* ================================================================== */}
-      {showTeeTimeNotification && nextEvent && (
+      {nextEvent?.teeTimePublishedAt && (() => {
+        const publishedAt = new Date(nextEvent.teeTimePublishedAt!);
+        const daysSince = (Date.now() - publishedAt.getTime()) / (1000 * 60 * 60 * 24);
+        if (daysSince > 7) return null;
+        return (
           <Pressable onPress={() => openEvent(nextEvent.id)}>
             <View style={[styles.notificationBanner, { backgroundColor: colors.success + "15", borderColor: colors.success + "30" }]}>
               <Feather name="bell" size={16} color={colors.success} />
@@ -539,13 +516,14 @@ export default function HomeScreen() {
                   Tee times now available!
                 </AppText>
                 <AppText variant="small" color="secondary">
-                  {String(nextEvent.name ?? "Event")} — First tee: {String(nextEvent.teeTimeStart || "TBC")}
+                  {nextEvent.name} — First tee: {nextEvent.teeTimeStart || "TBC"}
                 </AppText>
               </View>
               <Feather name="chevron-right" size={16} color={colors.success} />
             </View>
           </Pressable>
-      )}
+        );
+      })()}
 
       {/* ================================================================== */}
       {/* B) NEXT EVENT CARD                                                 */}
@@ -559,12 +537,12 @@ export default function HomeScreen() {
             </View>
 
             <AppText variant="h2" style={{ marginTop: spacing.xs }}>
-              {String(nextEvent.name ?? "Event")}
+              {nextEvent.name}
             </AppText>
 
             {nextEvent.courseName && (
               <AppText variant="body" color="secondary" style={{ marginTop: 2 }}>
-                {String(nextEvent.courseName)}
+                {nextEvent.courseName}
               </AppText>
             )}
 
@@ -602,8 +580,8 @@ export default function HomeScreen() {
               <Feather name="flag" size={14} color={nextEvent.teeTimePublishedAt ? colors.success : colors.textTertiary} />
               {nextEvent.teeTimePublishedAt ? (
                 <AppText variant="small" style={{ color: colors.success, fontWeight: "600" }}>
-                  Tee times available — First tee: {String(nextEvent.teeTimeStart || "TBC")}
-                  {nextEvent.teeTimeInterval ? `, ${String(nextEvent.teeTimeInterval)} min intervals` : ""}
+                  Tee times available — First tee: {nextEvent.teeTimeStart || "TBC"}
+                  {nextEvent.teeTimeInterval ? `, ${nextEvent.teeTimeInterval} min intervals` : ""}
                 </AppText>
               ) : (
                 <AppText variant="small" color="tertiary">Tee times to be published</AppText>
@@ -659,17 +637,17 @@ export default function HomeScreen() {
             <View style={styles.snapshotGrid}>
               <View style={styles.snapshotItem}>
                 <AppText variant="h1">
-                  {(mySnapshot.totalPoints ?? 0) > 0 ? formatPoints(Number(mySnapshot.totalPoints) || 0) : "—"}
+                  {mySnapshot.totalPoints > 0 ? formatPoints(mySnapshot.totalPoints) : "—"}
                 </AppText>
                 <AppText variant="small" color="secondary">Order of Merit Pts</AppText>
               </View>
               <View style={[styles.snapshotDivider, { backgroundColor: colors.borderLight }]} />
               <View style={styles.snapshotItem}>
                 <AppText variant="h1">
-                  {(mySnapshot.rank ?? 0) > 0 ? String(mySnapshot.rank) : "—"}
+                  {mySnapshot.rank > 0 ? `${mySnapshot.rank}` : "—"}
                 </AppText>
                 <AppText variant="small" color="secondary">
-                  {(mySnapshot.rank ?? 0) > 0 ? `of ${String(mySnapshot.totalWithPoints)}` : "Rank"}
+                  {mySnapshot.rank > 0 ? `of ${mySnapshot.totalWithPoints}` : "Rank"}
                 </AppText>
               </View>
             </View>
@@ -717,17 +695,17 @@ export default function HomeScreen() {
                     variant="captionBold"
                     style={[styles.oomRank, { color: colors.textSecondary }]}
                   >
-                    {String(entry.rank)}
+                    {entry.rank}
                   </AppText>
                   <AppText
                     variant={isMe ? "bodyBold" : "body"}
                     style={{ flex: 1 }}
                     numberOfLines={1}
                   >
-                    {String(entry.memberName ?? "Unknown")}{isMe ? " (You)" : ""}
+                    {entry.memberName}{isMe ? " (You)" : ""}
                   </AppText>
                   <AppText variant="captionBold" color="primary">
-                    {formatPoints(Number(entry.totalPoints) || 0)} pts
+                    {formatPoints(entry.totalPoints)} pts
                   </AppText>
                 </View>
               );
@@ -747,13 +725,13 @@ export default function HomeScreen() {
                     variant="captionBold"
                     style={[styles.oomRank, { color: colors.textSecondary }]}
                   >
-                    {String(oomTeaser.myEntry.rank)}
+                    {oomTeaser.myEntry.rank}
                   </AppText>
                   <AppText variant="bodyBold" style={{ flex: 1 }} numberOfLines={1}>
                     You
                   </AppText>
                   <AppText variant="captionBold" color="primary">
-                    {formatPoints(Number(oomTeaser.myEntry.totalPoints) || 0)} pts
+                    {formatPoints(oomTeaser.myEntry.totalPoints)} pts
                   </AppText>
                 </View>
               </>
@@ -781,12 +759,11 @@ export default function HomeScreen() {
               ? results.find((r) => r.member_id === memberId)
               : null;
 
-            // Determine status text — guard against non-primitive points values
+            // Determine status text
             let statusText = "Results pending";
             let statusColor: string = colors.textTertiary;
             if (hasResults && event.isOOM && myResult) {
-              const pts = Number(myResult.points) || 0;
-              statusText = `${formatPoints(pts)} Order of Merit pts`;
+              statusText = `${formatPoints(myResult.points)} Order of Merit pts`;
               statusColor = colors.primary;
             } else if (hasResults && event.isOOM && !myResult) {
               statusText = "No Order of Merit points";
@@ -802,11 +779,11 @@ export default function HomeScreen() {
                   <View style={styles.recentRow}>
                     <View style={[styles.recentDateBadge, { backgroundColor: colors.backgroundTertiary }]}>
                       <AppText variant="captionBold" color="primary">
-                        {formatShortDate(typeof event.date === "string" ? event.date : undefined)}
+                        {formatShortDate(event.date)}
                       </AppText>
                     </View>
                     <View style={{ flex: 1 }}>
-                      <AppText variant="bodyBold" numberOfLines={1}>{String(event.name ?? "Event")}</AppText>
+                      <AppText variant="bodyBold" numberOfLines={1}>{event.name}</AppText>
                       <AppText variant="small" style={{ color: statusColor }}>{statusText}</AppText>
                     </View>
                     <Feather name="chevron-right" size={18} color={colors.textTertiary} />
@@ -843,9 +820,9 @@ export default function HomeScreen() {
           </View>
           {activeSinbook ? (
             <View style={{ marginTop: spacing.xs }}>
-              <AppText variant="bodyBold" numberOfLines={1}>{String(activeSinbook.title ?? "Rivalry")}</AppText>
+              <AppText variant="bodyBold" numberOfLines={1}>{activeSinbook.title}</AppText>
               <AppText variant="caption" color="secondary">
-                vs {String(activeSinbook.participants.find((p) => p.user_id !== memberId && p.status === "accepted")?.display_name || "rival")}
+                vs {activeSinbook.participants.find((p) => p.user_id !== memberId && p.status === "accepted")?.display_name || "rival"}
               </AppText>
             </View>
           ) : (
@@ -877,18 +854,13 @@ export default function HomeScreen() {
 function PersonalModeHome({
   colors,
   router,
-  nudgeDismissed,
-  setNudgeDismissed,
-  profile,
 }: {
   colors: ReturnType<typeof getColors>;
   router: ReturnType<typeof useRouter>;
-  nudgeDismissed: boolean;
-  setNudgeDismissed: (v: boolean) => void;
-  profile: any | null;
 }) {
-  // No hooks — all state is owned by HomeScreen to keep hook count stable.
-  const pmProfileComplete = profile?.profile_complete === true;
+  const [nudgeDismissed, setNudgeDismissed] = useState(false);
+  const { profile: pmProfile } = useBootstrap();
+  const pmProfileComplete = pmProfile?.profile_complete === true;
 
   return (
     <Screen>

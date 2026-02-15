@@ -1,5 +1,5 @@
 import React, { Component, useEffect, useRef } from "react";
-import { Stack, usePathname, useRouter, useSegments } from "expo-router";
+import { Stack, useRouter, useSegments } from "expo-router";
 import { StyleSheet, View } from "react-native";
 import { BootstrapProvider, useBootstrap } from "@/lib/useBootstrap";
 import { LoadingState } from "@/components/ui/LoadingState";
@@ -15,10 +15,7 @@ class ScreenErrorBoundary extends Component<
   { children: React.ReactNode },
   { hasError: boolean; error: string }
 > {
-  constructor(props: { children: React.ReactNode }) {
-    super(props);
-    this.state = { hasError: false, error: "" };
-  }
+  state = { hasError: false, error: "" };
 
   static getDerivedStateFromError(err: Error) {
     return { hasError: true, error: err?.message || "An unexpected error occurred." };
@@ -50,11 +47,8 @@ class ScreenErrorBoundary extends Component<
 function RootNavigator() {
   const { loading, error, isSignedIn, activeSocietyId, profile, refresh } = useBootstrap();
   const segments = useSegments();
-  const pathname = usePathname();
   const router = useRouter();
   const colors = getColors();
-
-  const isPublicPath = pathname === "/reset-password" || pathname.startsWith("/auth/");
 
   // Track if we've already routed to prevent loops
   const hasRouted = useRef(false);
@@ -74,7 +68,7 @@ function RootNavigator() {
 
     const inOnboarding = segments[0] === "onboarding";
     const inSinbookInvite = segments[0] === "sinbook";
-    const inPublicRoute = isPublicPath || segments[0] === "reset-password" || segments[0] === "auth";
+    const inPublicRoute = segments[0] === "reset-password" || segments[0] === "auth";
     const inMyProfile = segments[0] === "(app)" && segments[1] === "my-profile";
     const hasSociety = !!activeSocietyId;
     const needsProfileCompletion = !!profile && !profile.profile_complete;
@@ -123,7 +117,7 @@ function RootNavigator() {
       });
     }
     // No society + not on onboarding = Personal Mode — let (app) handle it
-  }, [loading, isSignedIn, activeSocietyId, profile, segments, pathname, router, isPublicPath]);
+  }, [loading, isSignedIn, activeSocietyId, profile, segments, router]);
 
   // Reset hasRouted when loading changes (new bootstrap cycle)
   useEffect(() => {
@@ -136,7 +130,7 @@ function RootNavigator() {
   // Determine which overlay to show (if any).
   // The Stack ALWAYS renders so expo-router can match child routes.
   // Public routes are accessible without sign-in (OAuth callback, password reset).
-  const isPublicRoute = isPublicPath || segments[0] === "reset-password" || segments[0] === "auth";
+  const isPublicRoute = segments[0] === "reset-password" || segments[0] === "auth";
   const showLoading = loading;
   const showAuth = !loading && !isSignedIn && !isPublicRoute;
   const showError = !loading && !showAuth && !!error;
@@ -167,7 +161,7 @@ function RootNavigator() {
         <View style={[StyleSheet.absoluteFill, { justifyContent: "center", alignItems: "center", backgroundColor: colors.background, padding: spacing.lg }]}>
           <AppCard>
             <AppText variant="h2" style={{ marginBottom: spacing.sm }}>Something went wrong</AppText>
-            <AppText variant="body" color="secondary" style={{ marginBottom: spacing.lg }}>{typeof error === "string" ? error : "An unexpected error occurred."}</AppText>
+            <AppText variant="body" color="secondary" style={{ marginBottom: spacing.lg }}>{error}</AppText>
             <PrimaryButton onPress={refresh}>Try Again</PrimaryButton>
           </AppCard>
         </View>
