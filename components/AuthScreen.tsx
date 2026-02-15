@@ -13,9 +13,8 @@ import {
   Pressable,
 } from "react-native";
 import { Feather } from "@expo/vector-icons";
-import masterLogo from "@/assets/images/master-logo.png";
 
-import { SafeAuthLogo } from "@/components/auth/SafeAuthLogo";
+import { SafeLogo } from "@/components/SafeLogo";
 import { Screen } from "@/components/ui/Screen";
 import { AppText } from "@/components/ui/AppText";
 import { AppCard } from "@/components/ui/AppCard";
@@ -140,8 +139,8 @@ export function AuthScreen() {
           style={styles.container}
         >
           <View style={styles.brandSection}>
-            <SafeAuthLogo
-              source={masterLogo}
+            <SafeLogo
+              variant="master"
               width={BRAND_LOGO_SMALL_WIDTH}
               height={BRAND_LOGO_SMALL_HEIGHT}
               style={styles.brandLogoSmall}
@@ -206,8 +205,8 @@ export function AuthScreen() {
       >
         {/* Branding */}
         <View style={styles.brandSection}>
-          <SafeAuthLogo
-            source={masterLogo}
+          <SafeLogo
+            variant="master"
             width={BRAND_LOGO_WIDTH}
             height={BRAND_LOGO_HEIGHT}
             style={styles.brandLogo}

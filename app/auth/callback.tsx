@@ -1,16 +1,17 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import * as Linking from "expo-linking";
-import { StyleSheet, View } from "react-native";
+import {
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from "react-native";
 import { useRouter } from "expo-router";
 
 import { Screen } from "@/components/ui/Screen";
-import { LoadingState } from "@/components/ui/LoadingState";
-import { InlineNotice } from "@/components/ui/InlineNotice";
-import { PrimaryButton } from "@/components/ui/Button";
 import { supabase } from "@/lib/supabase";
-import { spacing } from "@/lib/ui/theme";
 
-type ParsedAuthCallback = {
+type CallbackParams = {
   accessToken: string | null;
   refreshToken: string | null;
   code: string | null;
@@ -18,111 +19,96 @@ type ParsedAuthCallback = {
   errorDescription: string | null;
 };
 
-function decodeUrlParam(value: string | null): string | null {
-  if (!value) return null;
-  try {
-    return decodeURIComponent(value.replace(/\+/g, " "));
-  } catch {
-    return value;
-  }
-}
+type ErrorState = {
+  message: string;
+  stack: string;
+} | null;
 
-function parseCallbackUrl(url: string): ParsedAuthCallback {
-  const queryPart = url.includes("?") ? url.split("?")[1].split("#")[0] : "";
-  const hashPart = url.includes("#") ? url.split("#")[1] : "";
-
-  const queryParams = new URLSearchParams(queryPart);
-  const hashParams = new URLSearchParams(hashPart);
-
-  const getParam = (key: string): string | null =>
-    hashParams.get(key) ?? queryParams.get(key);
+function parseAuthCallback(url: string): CallbackParams {
+  const queryString = url.includes("?") ? url.split("?")[1].split("#")[0] : "";
+  const hashString = url.includes("#") ? url.split("#")[1] : "";
+  const queryParams = new URLSearchParams(queryString);
+  const hashParams = new URLSearchParams(hashString);
+  const getParam = (key: string) => hashParams.get(key) ?? queryParams.get(key);
 
   return {
     accessToken: getParam("access_token"),
     refreshToken: getParam("refresh_token"),
     code: getParam("code"),
     error: getParam("error"),
-    errorDescription: decodeUrlParam(getParam("error_description")),
+    errorDescription: getParam("error_description"),
   };
 }
 
-function clearCallbackUrlForWeb(): void {
-  if (typeof window === "undefined") return;
-  window.history.replaceState(null, "", window.location.pathname);
+function toErrorState(error: any): ErrorState {
+  return {
+    message: error?.message || "Authentication callback failed.",
+    stack: error?.stack || "No stack trace available.",
+  };
 }
 
 export default function AuthCallbackScreen() {
   const router = useRouter();
-  const handledUrlsRef = useRef<Set<string>>(new Set());
+  const [errorState, setErrorState] = useState<ErrorState>(null);
   const completedRef = useRef(false);
-  const [error, setError] = useState<string | null>(null);
+  const seenUrlsRef = useRef<Set<string>>(new Set());
 
-  const completeSuccess = useCallback(
+  const handleSuccess = useCallback(
     (source: string) => {
       if (completedRef.current) return;
       completedRef.current = true;
-      console.log("[auth/callback] Session established via:", source);
-      clearCallbackUrlForWeb();
-      router.replace("/");
+      console.log("[auth/callback] Session established:", source);
+      router.replace("/(app)");
     },
     [router]
   );
 
-  const handleCallbackUrl = useCallback(
+  const processUrl = useCallback(
     async (url: string, source: string) => {
       if (!url || completedRef.current) return;
-      if (handledUrlsRef.current.has(url)) return;
-      handledUrlsRef.current.add(url);
+      if (seenUrlsRef.current.has(url)) return;
+      seenUrlsRef.current.add(url);
 
       console.log("[auth/callback] URL received:", { source, url });
 
-      const parsed = parseCallbackUrl(url);
-      if (parsed.error) {
-        const message = parsed.errorDescription || parsed.error;
-        console.error("[auth/callback] Provider returned error:", message);
-        setError(message);
-        return;
-      }
-
       try {
+        const parsed = parseAuthCallback(url);
+
+        if (parsed.error) {
+          throw new Error(parsed.errorDescription || parsed.error);
+        }
+
         if (parsed.accessToken && parsed.refreshToken) {
-          const { error: sessionError } = await supabase.auth.setSession({
+          const { error } = await supabase.auth.setSession({
             access_token: parsed.accessToken,
             refresh_token: parsed.refreshToken,
           });
-
-          if (sessionError) {
-            throw sessionError;
-          }
-
-          completeSuccess("implicit-tokens");
+          if (error) throw error;
+          handleSuccess("token-session");
           return;
         }
 
         if (parsed.code) {
-          const { error: codeError } = await supabase.auth.exchangeCodeForSession(parsed.code);
-          if (codeError) {
-            throw codeError;
-          }
-          completeSuccess("pkce-code");
+          const { error } = await supabase.auth.exchangeCodeForSession(parsed.code);
+          if (error) throw error;
+          handleSuccess("pkce-code");
           return;
         }
 
-        // If callback URL has no auth params, session may already be set by Supabase.
-        const { data, error: getSessionError } = await supabase.auth.getSession();
-        if (getSessionError) {
-          throw getSessionError;
-        }
+        const { data, error } = await supabase.auth.getSession();
+        if (error) throw error;
         if (data.session) {
-          completeSuccess("existing-session");
+          handleSuccess("existing-session");
           return;
         }
-      } catch (err: any) {
-        console.error("[auth/callback] Failed to establish session:", err);
-        setError(err?.message || "Could not complete sign-in.");
+
+        throw new Error("No callback auth parameters found in URL.");
+      } catch (error: any) {
+        console.error("[auth/callback] processing error:", error);
+        setErrorState(toErrorState(error));
       }
     },
-    [completeSuccess]
+    [handleSuccess]
   );
 
   useEffect(() => {
@@ -131,67 +117,67 @@ export default function AuthCallbackScreen() {
     const {
       data: { subscription: authSubscription },
     } = supabase.auth.onAuthStateChange((event, session) => {
-      console.log("[auth/callback] onAuthStateChange:", event, {
-        hasSession: !!session,
-      });
-      if (cancelled || !session) return;
-      if (event === "SIGNED_IN" || event === "TOKEN_REFRESHED") {
-        completeSuccess(`auth-event:${event}`);
+      console.log("[auth/callback] onAuthStateChange:", event);
+      if (cancelled) return;
+      if (session && (event === "SIGNED_IN" || event === "TOKEN_REFRESHED")) {
+        handleSuccess(`auth-event:${event}`);
       }
     });
 
-    const urlSubscription = Linking.addEventListener("url", ({ url }) => {
-      void handleCallbackUrl(url, "linking-event");
+    const linkSubscription = Linking.addEventListener("url", ({ url }) => {
+      void processUrl(url, "link-event");
     });
 
-    async function bootstrapCallbackHandling() {
+    async function bootstrap() {
       try {
         const initialUrl = await Linking.getInitialURL();
-        console.log("[auth/callback] initialURL:", initialUrl);
+        console.log("[auth/callback] initial URL:", initialUrl);
         if (initialUrl) {
-          await handleCallbackUrl(initialUrl, "initial-url");
-        }
-
-        // Web fallback: ensure full location is processed even if initialURL is null.
-        if (!initialUrl && typeof window !== "undefined") {
-          await handleCallbackUrl(window.location.href, "window-location");
-        }
-
-        if (cancelled || completedRef.current) return;
-
-        const { data, error: getSessionError } = await supabase.auth.getSession();
-        if (getSessionError) {
-          throw getSessionError;
-        }
-
-        if (data.session) {
-          completeSuccess("post-check-session");
+          await processUrl(initialUrl, "initial-url");
           return;
         }
 
-        setError("No authentication data found in callback URL.");
-      } catch (err: any) {
-        console.error("[auth/callback] bootstrap callback handling failed:", err);
-        setError(err?.message || "Could not complete sign-in. Please try again.");
+        if (typeof window !== "undefined") {
+          await processUrl(window.location.href, "window-location");
+          return;
+        }
+
+        const { data, error } = await supabase.auth.getSession();
+        if (error) throw error;
+        if (data.session) {
+          handleSuccess("session-check");
+          return;
+        }
+
+        throw new Error("No callback URL found.");
+      } catch (error: any) {
+        console.error("[auth/callback] bootstrap error:", error);
+        setErrorState(toErrorState(error));
       }
     }
 
-    void bootstrapCallbackHandling();
+    void bootstrap();
+
     return () => {
       cancelled = true;
       authSubscription.unsubscribe();
-      urlSubscription.remove();
+      linkSubscription.remove();
     };
-  }, [completeSuccess, handleCallbackUrl]);
+  }, [handleSuccess, processUrl]);
 
-  if (error) {
+  if (errorState) {
     return (
       <Screen>
-        <View style={styles.container}>
-          <InlineNotice variant="error" message={error} style={{ marginBottom: spacing.lg }} />
-          <PrimaryButton onPress={() => router.replace("/")}>
-            Back to Sign In
-          </PrimaryButton>
+        <View style={styles.root}>
+          <Text style={styles.errorTitle}>Sign-in callback failed</Text>
+          <Text selectable style={styles.errorMessage}>
+            {errorState.message}
+          </Text>
+          <ScrollView style={styles.stackContainer} contentContainerStyle={styles.stackContent}>
+            <Text selectable style={styles.stackText}>
+              {errorState.stack}
+            </Text>
+          </ScrollView>
         </View>
       </Screen>
     );
@@ -199,17 +185,53 @@ export default function AuthCallbackScreen() {
 
   return (
     <Screen>
-      <View style={styles.container}>
-        <LoadingState message="Completing sign-in..." />
+      <View style={styles.root}>
+        <Text style={styles.loadingText}>Signing you in…</Text>
       </View>
     </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
+  root: {
     flex: 1,
     justifyContent: "center",
     alignItems: "center",
+    paddingHorizontal: 16,
+    paddingVertical: 20,
+    gap: 12,
+  },
+  loadingText: {
+    fontSize: 16,
+    color: "#0f172a",
+    fontWeight: "600",
+  },
+  errorTitle: {
+    width: "100%",
+    fontSize: 20,
+    fontWeight: "700",
+    color: "#991b1b",
+  },
+  errorMessage: {
+    width: "100%",
+    color: "#7f1d1d",
+    fontSize: 14,
+  },
+  stackContainer: {
+    width: "100%",
+    maxHeight: 300,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "#fecaca",
+    borderRadius: 8,
+    backgroundColor: "#fff1f2",
+  },
+  stackContent: {
+    padding: 10,
+  },
+  stackText: {
+    fontFamily: "monospace",
+    fontSize: 12,
+    lineHeight: 18,
+    color: "#7f1d1d",
   },
 });

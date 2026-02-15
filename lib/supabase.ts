@@ -24,6 +24,7 @@ if (!supabaseUrl || !supabaseAnonKey) {
 
 // Singleton instance
 let supabaseInstance: SupabaseClient | null = null;
+let authLoggingAttached = false;
 
 function getSupabaseClient(): SupabaseClient {
   if (supabaseInstance) {
@@ -49,8 +50,21 @@ function getSupabaseClient(): SupabaseClient {
   return supabaseInstance;
 }
 
+function attachAuthStateLogging(client: SupabaseClient): void {
+  if (authLoggingAttached) return;
+  try {
+    client.auth.onAuthStateChange((event) => {
+      console.log("[supabase] onAuthStateChange:", event);
+    });
+    authLoggingAttached = true;
+  } catch (error) {
+    console.error("[supabase] failed to attach auth logging:", error);
+  }
+}
+
 // Export the singleton client
 export const supabase = getSupabaseClient();
+attachAuthStateLogging(supabase);
 
 // Type export for consumers that need it
 export type { SupabaseClient };
