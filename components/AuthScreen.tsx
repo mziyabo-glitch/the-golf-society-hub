@@ -8,44 +8,40 @@ import { useCallback, useState } from "react";
 import {
   StyleSheet,
   View,
-  Image,
   KeyboardAvoidingView,
   Platform,
   Pressable,
 } from "react-native";
-import { Feather } from "@expo/vector-icons";
 
-const masterLogo = require("@/assets/images/master-logo.png");
-
+import { SafeLogo } from "@/components/SafeLogo";
 import { Screen } from "@/components/ui/Screen";
 import { AppText } from "@/components/ui/AppText";
 import { AppCard } from "@/components/ui/AppCard";
 import { AppInput } from "@/components/ui/AppInput";
-import { PrimaryButton, SecondaryButton } from "@/components/ui/Button";
+import { PrimaryButton } from "@/components/ui/Button";
 import { InlineNotice } from "@/components/ui/InlineNotice";
 import {
   signInWithEmail,
   signUpWithEmail,
-  signInWithGoogle,
   resetPassword,
 } from "@/lib/auth_supabase";
-import { getColors, spacing, radius } from "@/lib/ui/theme";
+import { spacing } from "@/lib/ui/theme";
 
 type Mode = "signIn" | "signUp" | "forgotPassword";
+const BRAND_LOGO_WIDTH = 280;
+const BRAND_LOGO_HEIGHT = 220;
+const BRAND_LOGO_SMALL_WIDTH = 170;
+const BRAND_LOGO_SMALL_HEIGHT = 130;
 
 export function AuthScreen() {
-  const colors = getColors();
-
   const [mode, setMode] = useState<Mode>("signIn");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
-  const [googleLoading, setGoogleLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
   const isSignIn = mode === "signIn";
-  const isSignUp = mode === "signUp";
   const isForgot = mode === "forgotPassword";
 
   const canSubmitAuth = email.trim().length > 0 && password.length >= 6;
@@ -135,16 +131,18 @@ export function AuthScreen() {
           style={styles.container}
         >
           <View style={styles.brandSection}>
-            <Image
-              source={masterLogo}
+            <SafeLogo
+              variant="master"
+              width={BRAND_LOGO_SMALL_WIDTH}
+              height={BRAND_LOGO_SMALL_HEIGHT}
               style={styles.brandLogoSmall}
-              resizeMode="contain"
+              fallbackTitle="Golf Society Hub"
             />
             <AppText variant="title" style={styles.brandTitle}>
               Reset Password
             </AppText>
             <AppText variant="body" color="secondary" style={styles.brandSubtitle}>
-              Enter your email and we'll send you a reset link.
+              Enter your email and we&apos;ll send you a reset link.
             </AppText>
           </View>
 
@@ -199,10 +197,12 @@ export function AuthScreen() {
       >
         {/* Branding */}
         <View style={styles.brandSection}>
-          <Image
-            source={masterLogo}
+          <SafeLogo
+            variant="master"
+            width={BRAND_LOGO_WIDTH}
+            height={BRAND_LOGO_HEIGHT}
             style={styles.brandLogo}
-            resizeMode="contain"
+            fallbackTitle="Golf Society Hub"
           />
           <AppText variant="body" color="secondary" style={styles.brandSubtitle}>
             {isSignIn ? "Sign in to continue" : "Create your account"}
@@ -265,34 +265,6 @@ export function AuthScreen() {
           >
             {isSignIn ? "Sign In" : "Create Account"}
           </PrimaryButton>
-
-          {/* Divider */}
-          <View style={styles.dividerRow}>
-            <View style={[styles.dividerLine, { backgroundColor: colors.border }]} />
-            <AppText variant="small" color="tertiary" style={styles.dividerText}>or</AppText>
-            <View style={[styles.dividerLine, { backgroundColor: colors.border }]} />
-          </View>
-
-          {/* Google OAuth */}
-          <SecondaryButton
-            onPress={async () => {
-              if (googleLoading || loading) return;
-              setGoogleLoading(true);
-              setError(null);
-              try {
-                await signInWithGoogle();
-              } catch (e: any) {
-                setError(e?.message || "Google sign-in failed.");
-              } finally {
-                setGoogleLoading(false);
-              }
-            }}
-            loading={googleLoading}
-            disabled={googleLoading || loading}
-            icon={<Feather name="globe" size={18} color={colors.primary} />}
-          >
-            Continue with Google
-          </SecondaryButton>
         </AppCard>
 
         {/* Toggle sign-in / sign-up */}
@@ -319,13 +291,13 @@ const styles = StyleSheet.create({
     marginBottom: spacing.xl,
   },
   brandLogo: {
-    width: 280,
-    height: 220,
+    width: BRAND_LOGO_WIDTH,
+    height: BRAND_LOGO_HEIGHT,
     marginBottom: spacing.md,
   },
   brandLogoSmall: {
-    width: 170,
-    height: 130,
+    width: BRAND_LOGO_SMALL_WIDTH,
+    height: BRAND_LOGO_SMALL_HEIGHT,
     marginBottom: spacing.md,
   },
   brandTitle: {
@@ -354,18 +326,6 @@ const styles = StyleSheet.create({
   },
   submitButton: {
     marginTop: spacing.sm,
-  },
-  dividerRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginVertical: spacing.base,
-  },
-  dividerLine: {
-    flex: 1,
-    height: StyleSheet.hairlineWidth,
-  },
-  dividerText: {
-    marginHorizontal: spacing.sm,
   },
   toggleRow: {
     flexDirection: "row",

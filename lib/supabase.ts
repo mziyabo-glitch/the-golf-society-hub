@@ -24,6 +24,7 @@ if (!supabaseUrl || !supabaseAnonKey) {
 
 // Singleton instance
 let supabaseInstance: SupabaseClient | null = null;
+let authLoggingAttached = false;
 
 function getSupabaseClient(): SupabaseClient {
   if (supabaseInstance) {
@@ -38,8 +39,7 @@ function getSupabaseClient(): SupabaseClient {
       persistSession: true,
       // Automatically refresh token before expiry
       autoRefreshToken: true,
-      // OAuth callback handling is done explicitly in /auth/callback route
-      // to avoid platform-specific callback race conditions.
+      // No OAuth callback flow is used; sessions are established explicitly.
       detectSessionInUrl: false,
       // Storage key for session (will be prefixed by supabaseStorage with "gsh:")
       storageKey: "supabase-auth",
@@ -49,8 +49,21 @@ function getSupabaseClient(): SupabaseClient {
   return supabaseInstance;
 }
 
+function attachAuthStateLogging(client: SupabaseClient): void {
+  if (authLoggingAttached) return;
+  try {
+    client.auth.onAuthStateChange((event) => {
+      console.log("[supabase] onAuthStateChange:", event);
+    });
+    authLoggingAttached = true;
+  } catch (error) {
+    console.error("[supabase] failed to attach auth logging:", error);
+  }
+}
+
 // Export the singleton client
 export const supabase = getSupabaseClient();
+attachAuthStateLogging(supabase);
 
 // Type export for consumers that need it
 export type { SupabaseClient };

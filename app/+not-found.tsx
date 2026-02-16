@@ -15,14 +15,10 @@ import { Screen } from "@/components/ui/Screen";
 import { AppText } from "@/components/ui/AppText";
 import { AppCard } from "@/components/ui/AppCard";
 import { AppInput } from "@/components/ui/AppInput";
-import { PrimaryButton, SecondaryButton } from "@/components/ui/Button";
+import { PrimaryButton } from "@/components/ui/Button";
 import { InlineNotice } from "@/components/ui/InlineNotice";
 import { LoadingState } from "@/components/ui/LoadingState";
 import { supabase } from "@/lib/supabase";
-import {
-  clearOAuthCallbackUrl,
-  establishOAuthSessionFromCurrentUrl,
-} from "@/lib/oauthCallback";
 import { getColors, spacing } from "@/lib/ui/theme";
 
 export default function NotFoundScreen() {
@@ -32,11 +28,6 @@ export default function NotFoundScreen() {
   // If the URL is /reset-password, render the reset password flow
   if (pathname === "/reset-password") {
     return <ResetPasswordFallback />;
-  }
-
-  // If the URL is /auth/callback, render the OAuth callback handler
-  if (pathname === "/auth/callback") {
-    return <AuthCallbackFallback />;
   }
 
   // Generic 404
@@ -54,81 +45,12 @@ export default function NotFoundScreen() {
               Page Not Found
             </AppText>
             <AppText variant="body" color="secondary" style={styles.brandSubtitle}>
-              The page you're looking for doesn't exist.
+              The page you&apos;re looking for doesn&apos;t exist.
             </AppText>
           </View>
           <PrimaryButton onPress={() => router.replace("/")}>
             Go Home
           </PrimaryButton>
-        </View>
-      </Screen>
-    </>
-  );
-}
-
-// ─── Inline OAuth callback flow (fallback) ──────────────────────────
-
-function AuthCallbackFallback() {
-  const router = useRouter();
-  const colors = getColors();
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    async function handleCallback() {
-      const result = await establishOAuthSessionFromCurrentUrl();
-      if (cancelled) return;
-
-      if (result.success) {
-        console.log("[auth/callback +not-found] OAuth session established via:", result.source);
-        clearOAuthCallbackUrl();
-        router.replace("/");
-        return;
-      }
-
-      console.error("[auth/callback +not-found] Failed:", result.error);
-      setError(result.error || "Could not complete sign-in. Please try again.");
-    }
-
-    handleCallback();
-    return () => {
-      cancelled = true;
-    };
-  }, [router]);
-
-  if (error) {
-    return (
-      <>
-        <Stack.Screen options={{ headerShown: false }} />
-        <Screen>
-          <View style={styles.container}>
-            <View style={styles.brandSection}>
-              <View style={[styles.brandIcon, { backgroundColor: colors.error + "14" }]}>
-                <Feather name="alert-circle" size={32} color={colors.error} />
-              </View>
-              <AppText variant="title" style={styles.brandTitle}>
-                Sign-In Failed
-              </AppText>
-              <AppText variant="body" color="secondary" style={styles.brandSubtitle}>
-                {error}
-              </AppText>
-            </View>
-            <PrimaryButton onPress={() => router.replace("/")}>
-              Back to Sign In
-            </PrimaryButton>
-          </View>
-        </Screen>
-      </>
-    );
-  }
-
-  return (
-    <>
-      <Stack.Screen options={{ headerShown: false }} />
-      <Screen>
-        <View style={styles.container}>
-          <LoadingState message="Completing sign-in..." />
         </View>
       </Screen>
     </>
