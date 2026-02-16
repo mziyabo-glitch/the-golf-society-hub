@@ -1,10 +1,10 @@
 /**
  * /auth/callback — OAuth redirect landing page.
  *
- * Web:    After Google OAuth, Supabase redirects here with tokens in the URL
- *         hash (#access_token=...&refresh_token=...). The Supabase client's
- *         detectSessionInUrl: true picks them up automatically. We just wait
- *         for the session then redirect to the app root.
+ * Web:    After Google OAuth, Supabase redirects here with a PKCE code in the
+ *         query string (?code=...). detectSessionInUrl is false, so this page
+ *         explicitly exchanges the code for a session via oauthCallback, then
+ *         redirects to the app root.
  *
  * Native: The in-app browser intercepts the redirect URL before this route
  *         renders, so this file is primarily for web.

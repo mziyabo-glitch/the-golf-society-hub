@@ -355,8 +355,14 @@ function useBootstrapInternal(): BootstrapState {
         if (mounted.current) {
           setSession(newSession);
 
-          // Refresh bootstrap on sign in/out/recovery
+          // Refresh bootstrap on sign in/out/recovery.
+          // IMPORTANT: set loading=true in the SAME synchronous batch as
+          // setRefreshKey so the loading overlay stays up. Without this,
+          // there is a render frame where isSignedIn=true but profile/
+          // society/member are still null, causing the Home screen to
+          // flash PersonalModeHome ("old state") before bootstrap reloads.
           if (event === "SIGNED_IN" || event === "SIGNED_OUT" || event === "PASSWORD_RECOVERY") {
+            setLoading(true);
             setRefreshKey((k) => k + 1);
           }
         }
