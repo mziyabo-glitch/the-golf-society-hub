@@ -2,6 +2,7 @@
 // Sinbook — Rivalry / Side-Bet Tracker
 // Uses singleton supabase client. Per-user (auth.uid()), not per-society.
 
+import { resolveSinbookDisplayName } from "@/lib/sinbookDisplayName";
 import { supabase } from "@/lib/supabase";
 
 // ============================================================================
@@ -193,6 +194,11 @@ export async function createSinbook(input: {
 }): Promise<Sinbook> {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) throw new Error("Not authenticated");
+  const creatorDisplayName = resolveSinbookDisplayName({
+    explicitName: input.creatorDisplayName,
+    user,
+    fallback: "Player",
+  });
 
   const { data, error } = await supabase
     .from("sinbooks")
@@ -215,7 +221,7 @@ export async function createSinbook(input: {
     .insert({
       sinbook_id: data.id,
       user_id: user.id,
-      display_name: input.creatorDisplayName,
+      display_name: creatorDisplayName,
       status: "accepted",
       joined_at: new Date().toISOString(),
     });
@@ -302,13 +308,17 @@ export async function inviteParticipant(
 ): Promise<void> {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) throw new Error("Not authenticated");
+  const safeTargetName = resolveSinbookDisplayName({
+    explicitName: targetDisplayName,
+    fallback: "Rival",
+  });
 
   const { error } = await supabase
     .from("sinbook_participants")
     .insert({
       sinbook_id: sinbookId,
       user_id: targetUserId,
-      display_name: targetDisplayName,
+      display_name: safeTargetName,
       status: "pending",
       invited_by: user.id,
     });
@@ -385,6 +395,11 @@ export async function acceptInviteByLink(
 ): Promise<void> {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) throw new Error("Not authenticated");
+  const safeDisplayName = resolveSinbookDisplayName({
+    explicitName: displayName,
+    user,
+    fallback: "Player",
+  });
 
   // Check if already a participant
   const { data: existing } = await supabase
@@ -408,7 +423,7 @@ export async function acceptInviteByLink(
     .insert({
       sinbook_id: sinbookId,
       user_id: user.id,
-      display_name: displayName,
+      display_name: safeDisplayName,
       status: "accepted",
       joined_at: new Date().toISOString(),
     });
