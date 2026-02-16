@@ -17,7 +17,7 @@ function RootNavigator() {
   const router = useRouter();
   const colors = getColors();
 
-  const isPublicPath = pathname === "/reset-password" || pathname.startsWith("/auth/");
+  const isPublicPath = pathname === "/reset-password";
 
   // Track if we've already routed to prevent loops
   const hasRouted = useRef(false);
@@ -37,7 +37,7 @@ function RootNavigator() {
 
     const inOnboarding = segments[0] === "onboarding";
     const inSinbookInvite = segments[0] === "sinbook";
-    const inPublicRoute = isPublicPath || segments[0] === "reset-password" || segments[0] === "auth";
+    const inPublicRoute = isPublicPath || segments[0] === "reset-password";
     const inMyProfile = segments[0] === "(app)" && segments[1] === "my-profile";
     const hasSociety = !!activeSocietyId;
     const needsProfileCompletion = !!profile && !profile.profile_complete;
@@ -99,7 +99,7 @@ function RootNavigator() {
   // Determine which overlay to show (if any).
   // The Stack ALWAYS renders so expo-router can match child routes.
   // Public routes are accessible without sign-in (OAuth callback, password reset).
-  const isPublicRoute = isPublicPath || segments[0] === "reset-password" || segments[0] === "auth";
+  const isPublicRoute = isPublicPath || segments[0] === "reset-password";
   const showLoading = loading;
   const showAuth = !loading && !isSignedIn && !isPublicRoute;
   const showError = !loading && !showAuth && !!error;
