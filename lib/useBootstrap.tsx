@@ -6,6 +6,7 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState, ReactNode } from "react";
 import { supabase } from "@/lib/supabase";
 import type { User, Session } from "@supabase/supabase-js";
+import { clearAuthStorage } from "@/lib/supabaseStorage";
 
 // ============================================================================
 // Types
@@ -432,7 +433,12 @@ function useBootstrapInternal(): BootstrapState {
 
   const signOut = async () => {
     console.log("[useBootstrap] Signing out...");
-    await supabase.auth.signOut();
+    try {
+      await supabase.auth.signOut();
+    } finally {
+      // Always clear persisted tokens even if network signOut fails.
+      await clearAuthStorage();
+    }
     setSession(null);
     setProfile(null);
     setSociety(null);

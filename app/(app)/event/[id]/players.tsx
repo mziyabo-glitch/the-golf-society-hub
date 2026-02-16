@@ -42,6 +42,17 @@ export default function EventPlayersScreen() {
 
   const permissions = getPermissionsForMember(member as any);
 
+  const goBackToEvent = () => {
+    if (eventId) {
+      router.replace({
+        pathname: "/(app)/event/[id]",
+        params: { id: eventId, refresh: Date.now().toString() },
+      });
+      return;
+    }
+    router.replace("/(app)/(tabs)/events");
+  };
+
   useEffect(() => {
     let cancelled = false;
 
@@ -155,7 +166,7 @@ export default function EventPlayersScreen() {
         <EmptyState
           title="Error"
           message={error}
-          action={{ label: "Go Back", onPress: () => router.replace({ pathname: "/event/[id]", params: { id: eventId, refresh: Date.now().toString() } }) }}
+          action={{ label: "Go Back", onPress: goBackToEvent }}
         />
       </Screen>
     );
@@ -167,7 +178,7 @@ export default function EventPlayersScreen() {
         <EmptyState
           title="Not found"
           message="Event not found."
-          action={{ label: "Go Back", onPress: () => router.replace({ pathname: "/event/[id]", params: { id: eventId, refresh: Date.now().toString() } }) }}
+          action={{ label: "Go Back", onPress: goBackToEvent }}
         />
       </Screen>
     );
@@ -208,7 +219,7 @@ export default function EventPlayersScreen() {
           <EmptyState
             title="No members"
             message="Add members first, then you can select players."
-            action={{ label: "Go Back", onPress: () => router.replace({ pathname: "/event/[id]", params: { id: eventId, refresh: Date.now().toString() } }) }}
+            action={{ label: "Go Back", onPress: goBackToEvent }}
           />
         ) : (
           <View style={{ gap: spacing.md }}>

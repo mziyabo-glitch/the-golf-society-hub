@@ -10,6 +10,46 @@ import { PrimaryButton } from "@/components/ui/Button";
 import { getColors, spacing } from "@/lib/ui/theme";
 import { consumePendingInviteToken } from "@/lib/sinbookInviteToken";
 
+type RouterErrorBoundaryProps = {
+  error: Error;
+  retry: () => void;
+};
+
+export function ErrorBoundary({ error, retry }: RouterErrorBoundaryProps) {
+  const colors = getColors();
+
+  useEffect(() => {
+    console.error("[RootErrorBoundary] Unhandled route error:", error);
+  }, [error]);
+
+  return (
+    <View
+      style={{
+        flex: 1,
+        justifyContent: "center",
+        alignItems: "center",
+        backgroundColor: colors.background,
+        padding: spacing.lg,
+      }}
+    >
+      <AppCard>
+        <AppText variant="h2" style={{ marginBottom: spacing.sm }}>
+          App error
+        </AppText>
+        <AppText variant="body" color="secondary" style={{ marginBottom: spacing.base }}>
+          Something unexpected happened. Please retry.
+        </AppText>
+        {__DEV__ ? (
+          <AppText variant="small" color="tertiary" style={{ marginBottom: spacing.base }}>
+            {error?.message || "Unknown error"}
+          </AppText>
+        ) : null}
+        <PrimaryButton onPress={retry}>Retry</PrimaryButton>
+      </AppCard>
+    </View>
+  );
+}
+
 function RootNavigator() {
   const { loading, error, isSignedIn, activeSocietyId, profile, refresh } = useBootstrap();
   const segments = useSegments();
@@ -112,7 +152,7 @@ function RootNavigator() {
       {/* Overlay: loading spinner */}
       {showLoading && (
         <View style={[StyleSheet.absoluteFill, { justifyContent: "center", alignItems: "center", backgroundColor: colors.background }]}>
-          <LoadingState message="Loading..." />
+          <LoadingState message="Session restoring..." />
         </View>
       )}
 
@@ -130,6 +170,25 @@ function RootNavigator() {
             <AppText variant="h2" style={{ marginBottom: spacing.sm }}>Something went wrong</AppText>
             <AppText variant="body" color="secondary" style={{ marginBottom: spacing.lg }}>{typeof error === "string" ? error : "An unexpected error occurred."}</AppText>
             <PrimaryButton onPress={refresh}>Try Again</PrimaryButton>
+          </AppCard>
+        </View>
+      )}
+
+      {__DEV__ && (
+        <View
+          pointerEvents="none"
+          style={{
+            position: "absolute",
+            bottom: spacing.sm,
+            left: spacing.sm,
+            right: spacing.sm,
+            opacity: 0.92,
+          }}
+        >
+          <AppCard>
+            <AppText variant="small" color="tertiary">
+              route={pathname || "unknown"} | loading={String(loading)} | signedIn={String(isSignedIn)} | segments={segments.join("/") || "-"}
+            </AppText>
           </AppCard>
         </View>
       )}

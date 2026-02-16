@@ -374,7 +374,12 @@ export default function SinbookHomeScreen() {
       </View>
 
       {loadError && (
-        <InlineNotice variant="error" message={loadError.message} detail={loadError.detail} style={{ marginBottom: spacing.base }} />
+        <View style={{ marginBottom: spacing.base, gap: spacing.xs }}>
+          <InlineNotice variant="error" message={loadError.message} detail={loadError.detail} />
+          <SecondaryButton onPress={loadData} size="sm">
+            Retry
+          </SecondaryButton>
+        </View>
       )}
 
       {/* ── SECTION 1: Pending Invites ── */}

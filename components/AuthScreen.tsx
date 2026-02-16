@@ -1,9 +1,6 @@
 /**
  * AuthScreen — email / password sign-in, sign-up, and forgot password.
  * Rendered by the root layout when no session exists.
- *
- * "Remember me" controls whether the session is persisted in storage.
- * When unchecked the session lives only in memory and is lost on reload.
  */
 
 import { useCallback, useState } from "react";
@@ -15,7 +12,6 @@ import {
   Platform,
   Pressable,
 } from "react-native";
-import { Feather } from "@expo/vector-icons";
 
 const masterLogo = require("@/assets/images/master-logo.png");
 
@@ -30,8 +26,7 @@ import {
   signUpWithEmail,
   resetPassword,
 } from "@/lib/auth_supabase";
-import { setRememberMe } from "@/lib/supabaseStorage";
-import { getColors, spacing, radius } from "@/lib/ui/theme";
+import { getColors, spacing } from "@/lib/ui/theme";
 
 type Mode = "signIn" | "signUp" | "forgotPassword";
 
@@ -41,7 +36,6 @@ export function AuthScreen() {
   const [mode, setMode] = useState<Mode>("signIn");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [rememberMe, setRememberMeLocal] = useState(true);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
@@ -89,10 +83,6 @@ export function AuthScreen() {
     setLoading(true);
     setError(null);
     setSuccess(null);
-
-    // Persist the remember-me preference BEFORE signing in so the
-    // storage adapter knows whether to actually write the session.
-    setRememberMe(rememberMe);
 
     try {
       if (isSignIn) {
@@ -238,32 +228,9 @@ export function AuthScreen() {
             />
           </View>
 
-          {/* Remember me + Forgot password row */}
+          {/* Forgot password row */}
           {isSignIn && (
             <View style={styles.optionsRow}>
-              <Pressable
-                style={styles.rememberRow}
-                onPress={() => setRememberMeLocal((v) => !v)}
-                hitSlop={6}
-              >
-                <View
-                  style={[
-                    styles.checkbox,
-                    {
-                      borderColor: rememberMe ? colors.primary : colors.border,
-                      backgroundColor: rememberMe ? colors.primary : "transparent",
-                    },
-                  ]}
-                >
-                  {rememberMe && (
-                    <Feather name="check" size={12} color="#fff" />
-                  )}
-                </View>
-                <AppText variant="small" color="secondary">
-                  Remember me
-                </AppText>
-              </Pressable>
-
               <Pressable
                 onPress={() => switchMode("forgotPassword")}
                 hitSlop={8}
@@ -337,23 +304,9 @@ const styles = StyleSheet.create({
   },
   optionsRow: {
     flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
+    justifyContent: "flex-end",
     marginBottom: spacing.sm,
     marginTop: -spacing.xs,
-  },
-  rememberRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-  },
-  checkbox: {
-    width: 20,
-    height: 20,
-    borderRadius: radius.sm,
-    borderWidth: 2,
-    alignItems: "center",
-    justifyContent: "center",
   },
   submitButton: {
     marginTop: spacing.sm,

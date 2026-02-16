@@ -2,36 +2,25 @@
 // Cross-platform storage adapter for Supabase auth
 // - Web: uses localStorage with "gsh:" prefix
 // - Native (iOS/Android): uses expo-secure-store with AFTER_FIRST_UNLOCK
-//
-// "Remember me" toggle:
-//   When rememberMe is false the adapter silently no-ops writes.
-//   The session lives only in Supabase's in-memory state and is lost on
-//   page reload / app restart.
 
 import { Platform } from "react-native";
 import * as SecureStore from "expo-secure-store";
 
 const STORAGE_PREFIX = "gsh:";
 
-// In-memory flag — defaults to true (persist).
-// The AuthScreen flips this BEFORE calling signIn so the adapter
-// knows whether to actually write the token to disk.
-let _rememberMe = true;
-
-/** Call before signIn to control session persistence. */
+/**
+ * Compatibility shim.
+ * Session persistence is now always enabled to prevent reload/restart sign-out.
+ */
 export function setRememberMe(value: boolean): void {
-  _rememberMe = value;
-
-  // If the user unchecks "remember me", clear any previously stored
-  // session so a stale token doesn't auto-sign them in next time.
   if (!value) {
-    supabaseStorage.removeItem("supabase-auth").catch(() => {});
+    console.warn("[supabaseStorage] rememberMe=false ignored; persistence is enforced.");
   }
 }
 
-/** Read the current remember-me preference. */
+/** Session persistence is always on. */
 export function getRememberMe(): boolean {
-  return _rememberMe;
+  return true;
 }
 
 /**
@@ -60,9 +49,6 @@ export const supabaseStorage = {
   },
 
   async setItem(key: string, value: string): Promise<void> {
-    // When "remember me" is off, skip persisting the session token.
-    if (!_rememberMe) return;
-
     const prefixedKey = STORAGE_PREFIX + key;
 
     if (Platform.OS === "web") {
@@ -100,3 +86,8 @@ export const supabaseStorage = {
     }
   },
 };
+
+/** Explicitly clear the persisted Supabase auth payload. */
+export async function clearAuthStorage(): Promise<void> {
+  await supabaseStorage.removeItem("supabase-auth");
+}

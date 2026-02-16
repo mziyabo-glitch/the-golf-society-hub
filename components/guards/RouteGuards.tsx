@@ -1,11 +1,23 @@
 import React, { useCallback, useEffect, useRef } from "react";
+import { StyleSheet, View } from "react-native";
 import { usePathname, useRouter } from "expo-router";
 
 import { useBootstrap } from "@/lib/useBootstrap";
+import { LoadingState } from "@/components/ui/LoadingState";
+import { getColors } from "@/lib/ui/theme";
 
 type GuardProps = {
   children: React.ReactNode;
 };
+
+function GuardFallback({ message }: { message: string }) {
+  const colors = getColors();
+  return (
+    <View style={[styles.fallback, { backgroundColor: colors.background }]}>
+      <LoadingState message={message} />
+    </View>
+  );
+}
 
 function useRedirectOnce(resetKey?: string) {
   const redirectedRef = useRef(false);
@@ -39,8 +51,8 @@ export function RequireAuth({ children }: GuardProps) {
     }
   }, [bootstrapped, isSignedIn, pathname, router, canRedirect, markRedirected]);
 
-  if (!bootstrapped) return null;
-  if (!isSignedIn) return null;
+  if (!bootstrapped) return <GuardFallback message="Restoring session..." />;
+  if (!isSignedIn) return <GuardFallback message="Redirecting to sign in..." />;
 
   return <>{children}</>;
 }
@@ -74,9 +86,9 @@ export function RequireSociety({ children }: GuardProps) {
     markRedirected,
   ]);
 
-  if (!bootstrapped) return null;
-  if (!isSignedIn) return null;
-  if (!activeSocietyId) return null;
+  if (!bootstrapped) return <GuardFallback message="Restoring session..." />;
+  if (!isSignedIn) return <GuardFallback message="Redirecting to sign in..." />;
+  if (!activeSocietyId) return <GuardFallback message="Redirecting to onboarding..." />;
 
   return <>{children}</>;
 }
@@ -110,9 +122,17 @@ export function RequireNoSociety({ children }: GuardProps) {
     markRedirected,
   ]);
 
-  if (!bootstrapped) return null;
-  if (!isSignedIn) return null;
-  if (activeSocietyId) return null;
+  if (!bootstrapped) return <GuardFallback message="Restoring session..." />;
+  if (!isSignedIn) return <GuardFallback message="Redirecting to sign in..." />;
+  if (activeSocietyId) return <GuardFallback message="Redirecting to your society..." />;
 
   return <>{children}</>;
 }
+
+const styles = StyleSheet.create({
+  fallback: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+});

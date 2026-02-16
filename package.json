@@ -8,7 +8,8 @@
     "ios": "expo start --ios",
     "web": "expo start --web",
     "lint": "expo lint",
-    "build": "expo export -p web",
+    "verify-env": "node ./scripts/verify-env.mjs",
+    "build": "npm run verify-env && expo export -p web",
     "vercel-build": "npm run build"
   },
   "engines": {

@@ -48,14 +48,15 @@ You can start developing by editing the files inside the **app** directory. This
 This app uses Expo web static export. Vercel should run the build and publish the `dist` folder.
 
 1. Configure environment variables in Vercel (build-time):
-   - `EXPO_PUBLIC_FIREBASE_API_KEY`
-   - `EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN`
-   - `EXPO_PUBLIC_FIREBASE_PROJECT_ID`
-   - `EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET`
-   - `EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID`
-   - `EXPO_PUBLIC_FIREBASE_APP_ID`
-2. Build command: `npm run build`
+   - `EXPO_PUBLIC_SUPABASE_URL` (or `NEXT_PUBLIC_SUPABASE_URL`)
+   - `EXPO_PUBLIC_SUPABASE_ANON_KEY` (or `NEXT_PUBLIC_SUPABASE_ANON_KEY`)
+2. Build command: `npm run build` (includes `npm run verify-env`)
 3. Output directory: `dist`
+
+### Web icon cache notes
+
+- Web icons are versioned (`favicon-v2.ico`, `icon-192-v2.png`, `icon-512-v2.png`, etc.) and linked from `app/+html.tsx` + `public/manifest-v2.json`.
+- If a device still shows an old icon after deployment, clear site storage once (or open in incognito) to flush old OS-level favicon cache.
 
 ## Firestore rules
 

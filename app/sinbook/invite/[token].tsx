@@ -44,7 +44,13 @@ export default function SinbookInviteScreen() {
 
   // Step 1: Wait for bootstrap, then decide flow
   useEffect(() => {
-    if (bootstrapLoading || !token) return;
+    if (bootstrapLoading) return;
+
+    if (!token) {
+      setErrorMsg("Invite link is invalid or missing a token.");
+      setStatus("error");
+      return;
+    }
 
     if (!isSignedIn || !activeSocietyId) {
       // No session → store token, send to onboarding

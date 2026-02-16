@@ -5,7 +5,7 @@
     "version": "1.0.0",
     "description": "Everything Golf Society",
     "orientation": "portrait",
-    "icon": "./assets/images/app-icon.png",
+    "icon": "./assets/images/app-icon-v2.png",
     "scheme": "thegolfsocietyhub",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
@@ -14,22 +14,23 @@
     },
     "android": {
       "adaptiveIcon": {
-        "foregroundImage": "./assets/images/app-icon.png",
-        "backgroundColor": "#FFFFFF"
+        "foregroundImage": "./assets/images/adaptive-icon-foreground-v2.png",
+        "backgroundColor": "#FFFFFF",
+        "monochromeImage": "./assets/images/adaptive-icon-mono-v2.png"
       },
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false
     },
     "web": {
       "output": "single",
-      "favicon": "./assets/images/app-icon.png"
+      "favicon": "./assets/images/app-icon-v2.png"
     },
     "plugins": [
       "expo-router",
       [
         "expo-splash-screen",
         {
-          "image": "./assets/images/app-icon.png",
+          "image": "./assets/images/splash-icon-v2.png",
           "imageWidth": 200,
           "resizeMode": "contain",
           "backgroundColor": "#0E1A2B",

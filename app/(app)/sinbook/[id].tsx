@@ -56,7 +56,11 @@ export default function RivalryDetailScreen() {
   const [editingEntry, setEditingEntry] = useState<SinbookEntry | null>(null);
 
   const loadData = useCallback(async () => {
-    if (!sinbookId) return;
+    if (!sinbookId) {
+      setLoadError({ message: "Missing rivalry ID in route parameters." });
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     setLoadError(null);
     try {
@@ -231,7 +235,7 @@ export default function RivalryDetailScreen() {
           icon={<Feather name="alert-circle" size={24} color={colors.error} />}
           title="Error"
           message={loadError?.message || "Rivalry not found."}
-          action={{ label: "Go Back", onPress: () => router.back() }}
+          action={{ label: "Retry", onPress: loadData }}
         />
       </Screen>
     );

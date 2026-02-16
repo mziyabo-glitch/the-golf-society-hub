@@ -19,7 +19,7 @@ import { Feather } from "@expo/vector-icons";
 import * as WebBrowser from "expo-web-browser";
 
 const horizontalLogo = require("@/assets/images/horizontal-logo.png");
-const appIcon = require("@/assets/images/app-icon.png");
+const appIcon = require("@/assets/images/app-icon-v2.png");
 
 import { Screen } from "@/components/ui/Screen";
 import { AppText } from "@/components/ui/AppText";

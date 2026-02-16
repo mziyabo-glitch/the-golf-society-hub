@@ -398,7 +398,7 @@ export default function EventDetailScreen() {
         <SecondaryButton onPress={() => router.back()} size="sm">
           <Feather name="arrow-left" size={16} color={colors.text} /> Back
         </SecondaryButton>
-        <EmptyState title="Error" message={error} />
+        <EmptyState title="Error" message={error} action={{ label: "Retry", onPress: loadEvent }} />
       </Screen>
     );
   }
