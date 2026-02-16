@@ -1,19 +1,14 @@
 import { Tabs } from "expo-router";
 import { Feather } from "@expo/vector-icons";
 import { useBootstrap } from "@/lib/useBootstrap";
-import { isCaptain } from "@/lib/rbac";
 
 export default function TabsLayout() {
-  const { member, activeSocietyId } = useBootstrap();
+  const { activeSocietyId } = useBootstrap();
 
-  const hasSociety = !!activeSocietyId && !!member;
-
-  // Captains always have full access; regular members need a licence (seat)
-  const hasFullAccess =
-    hasSociety && (isCaptain(member as any) || (member as any)?.has_seat === true);
-
-  // Society-only tabs are hidden in Personal Mode or when unlicensed
-  const societyTabHref = hasFullAccess ? undefined : null;
+  const hasSociety = !!activeSocietyId;
+  // Keep tab tree stable during auth/member hydration to avoid route-tree churn.
+  // Feature-level access is still enforced inside each screen.
+  const societyTabHref = hasSociety ? undefined : null;
 
   return (
     <Tabs screenOptions={{ headerShown: false }}>

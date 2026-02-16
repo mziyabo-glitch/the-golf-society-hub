@@ -127,6 +127,7 @@ export default function HomeScreen() {
   const router = useRouter();
   const { society, member, societyId, profile, loading: bootstrapLoading } = useBootstrap();
   const colors = getColors();
+  const { width: screenWidth } = useWindowDimensions();
 
   // Data state
   const [events, setEvents] = useState<EventDoc[]>([]);
@@ -363,7 +364,6 @@ export default function HomeScreen() {
   const memberHiText = (_hiNum != null && Number.isFinite(_hiNum)) ? `HI ${_hiNum.toFixed(1)}` : null;
   console.log("[Home] handicap render:", { handicap_index: (member as any)?.handicap_index, handicapIndex: member?.handicapIndex, memberHiText });
 
-  const { width: screenWidth } = useWindowDimensions();
   const useCompactLogo = screenWidth < 380;
 
   return (
@@ -1009,8 +1009,8 @@ const personalStyles = StyleSheet.create({
     paddingBottom: spacing.xl,
   },
   welcomeLogo: {
-    width: 180,
-    height: 130,
+    width: 240,
+    height: 190,
     marginBottom: spacing.md,
   },
   welcomeTitle: {
@@ -1132,12 +1132,12 @@ const styles = StyleSheet.create({
     marginBottom: spacing.sm,
   },
   brandHeaderIcon: {
-    height: 36,
-    width: 160,
+    height: 44,
+    width: 220,
   },
   brandHeaderIconCompact: {
-    height: 36,
-    width: 36,
+    height: 44,
+    width: 44,
   },
 
   // Header Card
