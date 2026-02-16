@@ -126,7 +126,7 @@ export function AuthScreen() {
               Reset Password
             </AppText>
             <AppText variant="body" color="secondary" style={styles.brandSubtitle}>
-              Enter your email and we'll send you a reset link.
+              Enter your email and we&apos;ll send you a reset link.
             </AppText>
           </View>
 

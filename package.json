@@ -9,7 +9,8 @@
     "web": "expo start --web",
     "lint": "expo lint",
     "verify-env": "node ./scripts/verify-env.mjs",
-    "build": "npm run verify-env && expo export -p web",
+    "postbuild:web": "node ./scripts/postbuild-web.mjs",
+    "build": "npm run verify-env && expo export -p web && npm run postbuild:web",
     "vercel-build": "npm run build"
   },
   "engines": {

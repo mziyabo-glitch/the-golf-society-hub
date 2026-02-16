@@ -882,7 +882,7 @@ function PersonalModeHome({
           Welcome
         </AppText>
         <AppText variant="body" color="secondary" style={personalStyles.welcomeSubtitle}>
-          Use the app as an individual, or join a society when you're ready.
+          Use the app as an individual, or join a society when you&apos;re ready.
         </AppText>
       </View>
 

@@ -55,7 +55,7 @@ This app uses Expo web static export. Vercel should run the build and publish th
 
 ### Web icon cache notes
 
-- Web icons are versioned (`favicon-v2.ico`, `icon-192-v2.png`, `icon-512-v2.png`, etc.) and linked from `app/+html.tsx` + `public/manifest-v2.json`.
+- Web icons are versioned (`favicon-v2.ico`, `icon-192-v2.png`, `icon-512-v2.png`, etc.) and linked into `dist/index.html` by `scripts/postbuild-web.mjs` + `public/manifest-v2.json`.
 - If a device still shows an old icon after deployment, clear site storage once (or open in incognito) to flush old OS-level favicon cache.
 
 ## Firestore rules

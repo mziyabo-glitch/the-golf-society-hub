@@ -45,7 +45,7 @@ export default function NotFoundScreen() {
               Page Not Found
             </AppText>
             <AppText variant="body" color="secondary" style={styles.brandSubtitle}>
-              The page you're looking for doesn't exist.
+              The page you&apos;re looking for doesn&apos;t exist.
             </AppText>
           </View>
           <PrimaryButton onPress={() => router.replace("/")}>
