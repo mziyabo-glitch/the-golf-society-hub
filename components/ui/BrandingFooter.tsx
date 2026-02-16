@@ -72,7 +72,7 @@ const styles = StyleSheet.create({
   },
   logo: {
     height: 20,
-    aspectRatio: 1500 / 460,
+    aspectRatio: 760 / 212,
     opacity: 0.7,
     marginBottom: 4,
   },

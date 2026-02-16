@@ -1143,7 +1143,7 @@ const styles = StyleSheet.create({
   },
   brandHeaderIcon: {
     height: 48,
-    aspectRatio: 1500 / 460,
+    aspectRatio: 760 / 212,
     flexShrink: 0,
   },
   brandHeaderIconCompact: {
