@@ -12,9 +12,6 @@ import {
   Platform,
   Pressable,
 } from "react-native";
-
-const masterLogo = require("@/assets/images/master-logo.png");
-
 import { Screen } from "@/components/ui/Screen";
 import { AppText } from "@/components/ui/AppText";
 import { AppCard } from "@/components/ui/AppCard";
@@ -26,13 +23,13 @@ import {
   signUpWithEmail,
   resetPassword,
 } from "@/lib/auth_supabase";
-import { getColors, spacing } from "@/lib/ui/theme";
+import { spacing } from "@/lib/ui/theme";
+
+const masterLogo = require("@/assets/images/master-logo.png");
 
 type Mode = "signIn" | "signUp" | "forgotPassword";
 
 export function AuthScreen() {
-  const colors = getColors();
-
   const [mode, setMode] = useState<Mode>("signIn");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");

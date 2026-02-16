@@ -13,7 +13,6 @@ import { LoadingState } from "@/components/ui/LoadingState";
 import { Toast } from "@/components/ui/Toast";
 import { useBootstrap } from "@/lib/useBootstrap";
 import { getProfile, updateUserProfile } from "@/lib/db_supabase/profileRepo";
-import type { ProfileDoc } from "@/lib/db_supabase/profileRepo";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
 
 const SEX_OPTIONS = ["Male", "Female"] as const;

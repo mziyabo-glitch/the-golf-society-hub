@@ -63,6 +63,8 @@ function RootNavigator() {
   const hasRouted = useRef(false);
   // Track last known state to prevent redundant logs
   const lastState = useRef<string>("");
+  const topSegment = segments[0] ?? "";
+  const segmentPath = segments.join("/");
 
   useEffect(() => {
     // Don't route while loading or not signed in
@@ -75,15 +77,15 @@ function RootNavigator() {
       return;
     }
 
-    const inOnboarding = segments[0] === "onboarding";
-    const inSinbookInvite = segments[0] === "sinbook";
-    const inPublicRoute = isPublicPath || segments[0] === "reset-password";
-    const inMyProfile = segments[0] === "(app)" && segments[1] === "my-profile";
+    const inOnboarding = topSegment === "onboarding";
+    const inSinbookInvite = topSegment === "sinbook";
+    const inPublicRoute = isPublicPath || topSegment === "reset-password";
+    const inMyProfile = segmentPath === "(app)/my-profile";
     const hasSociety = !!activeSocietyId;
     const needsProfileCompletion = !!profile && !profile.profile_complete;
 
     // Create a state key to detect actual changes
-    const stateKey = `${hasSociety}-${inOnboarding}-${inSinbookInvite}-${needsProfileCompletion}-${segments.join("/")}`;
+    const stateKey = `${hasSociety}-${inOnboarding}-${inSinbookInvite}-${needsProfileCompletion}-${segmentPath}`;
 
     // Only log if state actually changed
     if (stateKey !== lastState.current) {
@@ -94,7 +96,7 @@ function RootNavigator() {
         inOnboarding,
         inSinbookInvite,
         needsProfileCompletion,
-        segments: segments.join("/"),
+        segments: segmentPath,
       });
     }
 
@@ -126,7 +128,7 @@ function RootNavigator() {
       });
     }
     // No society + not on onboarding = Personal Mode — let (app) handle it
-  }, [loading, isSignedIn, activeSocietyId, profile, segments, pathname, router, isPublicPath]);
+  }, [loading, isSignedIn, activeSocietyId, profile, segmentPath, topSegment, pathname, router, isPublicPath]);
 
   // Reset hasRouted when loading changes (new bootstrap cycle)
   useEffect(() => {
@@ -139,7 +141,7 @@ function RootNavigator() {
   // Determine which overlay to show (if any).
   // The Stack ALWAYS renders so expo-router can match child routes.
   // Public routes are accessible without sign-in (OAuth callback, password reset).
-  const isPublicRoute = isPublicPath || segments[0] === "reset-password";
+  const isPublicRoute = isPublicPath || topSegment === "reset-password";
   const showLoading = loading;
   const showAuth = !loading && !isSignedIn && !isPublicRoute;
   const showError = !loading && !showAuth && !!error;
@@ -187,7 +189,7 @@ function RootNavigator() {
         >
           <AppCard>
             <AppText variant="small" color="tertiary">
-              route={pathname || "unknown"} | loading={String(loading)} | signedIn={String(isSignedIn)} | segments={segments.join("/") || "-"}
+              route={pathname || "unknown"} | loading={String(loading)} | signedIn={String(isSignedIn)} | segments={segmentPath || "-"}
             </AppText>
           </AppCard>
         </View>

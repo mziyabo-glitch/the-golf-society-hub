@@ -19,7 +19,7 @@ import { useBootstrap } from "@/lib/useBootstrap";
 import { isCaptain } from "@/lib/rbac";
 import { supabase } from "@/lib/supabase";
 import { purchaseService } from "@/lib/billing/purchaseService";
-import { getColors, spacing, radius, typography, shadows } from "@/lib/ui/theme";
+import { getColors, spacing, radius } from "@/lib/ui/theme";
 import { showAlert } from "@/lib/ui/alert";
 
 // ---------------------------------------------------------------------------
