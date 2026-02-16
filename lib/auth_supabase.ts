@@ -188,7 +188,12 @@ export async function ensureSignedIn(): Promise<User> {
  * Sign out the current user
  */
 export async function signOut(): Promise<void> {
-  const { error } = await supabase.auth.signOut();
+  let { error } = await supabase.auth.signOut();
+  if (error) {
+    console.warn("[auth] Global signOut failed, forcing local signOut:", error.message);
+    const localResult = await supabase.auth.signOut({ scope: "local" });
+    error = localResult.error ?? null;
+  }
   await clearAuthStorage();
 
   if (error) {

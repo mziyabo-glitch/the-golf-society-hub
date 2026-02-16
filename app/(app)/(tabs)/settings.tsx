@@ -76,8 +76,10 @@ export default function SettingsScreen() {
         setSigningOut(true);
         try {
           await signOut();
+          router.replace("/");
         } catch (e: any) {
           showAlert("Error", e?.message || "Failed to sign out.");
+        } finally {
           setSigningOut(false);
         }
       },

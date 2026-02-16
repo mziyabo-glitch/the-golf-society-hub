@@ -5,7 +5,7 @@
  *
  * Cards (top to bottom):
  *  A) Header Card — identity, role badge, handicap
- *  B) Next Event Card — upcoming event + FairwayWeather link
+ *  B) Next Event Card — upcoming event details
  *  C) My Season Snapshot Card — events played, OOM points, rank
  *  D) Order of Merit Teaser Card — top 5 + pinned current user
  *  E) Recent Activity Card — last 3 past events with result status
@@ -351,7 +351,7 @@ export default function HomeScreen() {
   }
 
   if (!societyId || !society) {
-    return <PersonalModeHome colors={colors} router={router} />;
+    return <PersonalModeHome colors={colors} router={router} onOpenWeather={openFairwayWeather} />;
   }
 
   // ============================================================================
@@ -502,6 +502,32 @@ export default function HomeScreen() {
       />
 
       {/* ================================================================== */}
+      {/* ALWAYS-FREE WEATHER LINK                                           */}
+      {/* ================================================================== */}
+      <Pressable
+        onPress={openFairwayWeather}
+        style={({ pressed }) => ({ opacity: pressed ? 0.85 : 1, marginBottom: spacing.base })}
+      >
+        <AppCard>
+          <View style={styles.cardTitleRow}>
+            <Feather name="cloud" size={16} color={colors.info} />
+            <AppText variant="captionBold" style={{ color: colors.info }}>
+              Weather
+            </AppText>
+          </View>
+          <AppText variant="body" color="secondary" style={{ marginTop: spacing.xs }}>
+            Open FairwayWeather for detailed course conditions and forecast.
+          </AppText>
+          <View style={styles.chevronHint}>
+            <AppText variant="small" color="tertiary">
+              Powered by FairwayWeather.com
+            </AppText>
+            <Feather name="external-link" size={14} color={colors.textTertiary} />
+          </View>
+        </AppCard>
+      </Pressable>
+
+      {/* ================================================================== */}
       {/* GATED CONTENT — only for licensed members / captains               */}
       {/* ================================================================== */}
       {(memberHasSeat || memberIsCaptain) && (<>
@@ -593,24 +619,6 @@ export default function HomeScreen() {
                 <AppText variant="small" color="tertiary">Tee times to be published</AppText>
               )}
             </View>
-
-            {/* FairwayWeather mini-card */}
-            <Pressable
-              onPress={openFairwayWeather}
-              style={({ pressed }) => [
-                styles.weatherRow,
-                { backgroundColor: colors.backgroundTertiary, opacity: pressed ? 0.8 : 1 },
-              ]}
-            >
-              <Feather name="cloud" size={14} color={colors.primary} />
-              <AppText variant="small" color="primary" style={{ flex: 1, fontWeight: "500" }}>
-                View detailed forecast
-              </AppText>
-              <AppText variant="small" color="tertiary" style={{ fontSize: 10 }}>
-                Powered by FairwayWeather.com
-              </AppText>
-              <Feather name="external-link" size={12} color={colors.textTertiary} style={{ marginLeft: 4 }} />
-            </Pressable>
 
             <View style={styles.chevronHint}>
               <Feather name="chevron-right" size={18} color={colors.textTertiary} />
@@ -861,9 +869,11 @@ export default function HomeScreen() {
 function PersonalModeHome({
   colors,
   router,
+  onOpenWeather,
 }: {
   colors: ReturnType<typeof getColors>;
   router: ReturnType<typeof useRouter>;
+  onOpenWeather: () => void;
 }) {
   const [nudgeDismissed, setNudgeDismissed] = useState(false);
   const { profile: pmProfile } = useBootstrap();
@@ -924,22 +934,22 @@ function PersonalModeHome({
         </AppCard>
       </Pressable>
 
-      <AppCard>
-        <View style={personalStyles.featureRow}>
-          <View style={[personalStyles.featureIcon, { backgroundColor: colors.info + "14" }]}>
-            <Feather name="cloud" size={20} color={colors.info} />
+      <Pressable onPress={onOpenWeather}>
+        <AppCard>
+          <View style={personalStyles.featureRow}>
+            <View style={[personalStyles.featureIcon, { backgroundColor: colors.info + "14" }]}>
+              <Feather name="cloud" size={20} color={colors.info} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <AppText variant="bodyBold">Weather</AppText>
+              <AppText variant="small" color="secondary">
+                Course-specific forecasts for your round
+              </AppText>
+            </View>
+            <Feather name="external-link" size={16} color={colors.textTertiary} />
           </View>
-          <View style={{ flex: 1 }}>
-            <AppText variant="bodyBold">Weather</AppText>
-            <AppText variant="small" color="secondary">
-              Course-specific forecasts for your round
-            </AppText>
-          </View>
-          <View style={[personalStyles.comingSoonBadge, { backgroundColor: colors.backgroundTertiary }]}>
-            <AppText variant="small" color="tertiary">Soon</AppText>
-          </View>
-        </View>
-      </AppCard>
+        </AppCard>
+      </Pressable>
 
       <Pressable onPress={() => router.push("/(app)/(tabs)/settings")}>
         <AppCard>
@@ -1039,11 +1049,6 @@ const personalStyles = StyleSheet.create({
     borderRadius: 20,
     alignItems: "center",
     justifyContent: "center",
-  },
-  comingSoonBadge: {
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 3,
-    borderRadius: radius.full,
   },
   nudgeCard: {
     borderWidth: 1,
@@ -1286,17 +1291,6 @@ const styles = StyleSheet.create({
     marginTop: spacing.sm,
     paddingTop: spacing.sm,
     borderTopWidth: 1,
-  },
-
-  // FairwayWeather
-  weatherRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing.xs,
-    marginTop: spacing.sm,
-    paddingVertical: spacing.sm,
-    paddingHorizontal: spacing.sm,
-    borderRadius: radius.sm,
   },
 
   // Chevron hint
