@@ -1136,15 +1136,20 @@ function SkeletonCards({ colors }: { colors: ReturnType<typeof getColors> }) {
 const styles = StyleSheet.create({
   // Brand header
   brandHeader: {
+    height: 56,
+    flexDirection: "row",
+    alignItems: "center",
     marginBottom: spacing.sm,
   },
   brandHeaderIcon: {
-    height: 44,
-    width: 220,
+    height: 48,
+    aspectRatio: 760 / 212,
+    flexShrink: 0,
   },
   brandHeaderIconCompact: {
-    height: 44,
-    width: 44,
+    height: 48,
+    width: 48,
+    flexShrink: 0,
   },
 
   // Header Card

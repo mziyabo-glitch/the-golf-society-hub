@@ -2,8 +2,6 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { StyleSheet, View, Text, Image } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 
-const horizontalLogo = require("@/assets/images/horizontal-logo.png");
-
 import { Screen } from "@/components/ui/Screen";
 import { AppCard } from "@/components/ui/AppCard";
 import { InlineNotice } from "@/components/ui/InlineNotice";
@@ -236,12 +234,6 @@ const TeeSheetPage = React.forwardRef<View, {
 
   return (
     <View ref={ref} style={styles.page} collapsable={false}>
-      {/* App brand header */}
-      <View style={styles.brandHeader}>
-        <Image source={horizontalLogo} style={styles.brandLogo} resizeMode="contain" />
-        <Text style={styles.brandTagline}>Produced by The Golf Society Hub</Text>
-      </View>
-
       <View style={styles.headerRow}>
         <View style={styles.headerLeft}>
           {logoSrc ? (
@@ -458,21 +450,6 @@ const styles = StyleSheet.create({
     borderColor: "#E5E7EB",
     padding: 16,
     marginBottom: 24,
-  },
-  brandHeader: {
-    alignItems: "center",
-    marginBottom: 10,
-    paddingTop: 24,
-  },
-  brandLogo: {
-    width: 350,
-    height: 60,
-  },
-  brandTagline: {
-    fontSize: 9,
-    color: "#9CA3AF",
-    marginTop: 4,
-    letterSpacing: 0.5,
   },
   headerRow: {
     flexDirection: "row",
