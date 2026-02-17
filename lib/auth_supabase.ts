@@ -5,6 +5,7 @@
 
 import { supabase } from "@/lib/supabase";
 import type { User, Session } from "@supabase/supabase-js";
+import { clearAuthStorage } from "@/lib/supabaseStorage";
 
 const WEB_BASE_URL = "https://the-golf-society-hub.vercel.app";
 
@@ -187,7 +188,13 @@ export async function ensureSignedIn(): Promise<User> {
  * Sign out the current user
  */
 export async function signOut(): Promise<void> {
-  const { error } = await supabase.auth.signOut();
+  let { error } = await supabase.auth.signOut();
+  if (error) {
+    console.warn("[auth] Global signOut failed, forcing local signOut:", error.message);
+    const localResult = await supabase.auth.signOut({ scope: "local" });
+    error = localResult.error ?? null;
+  }
+  await clearAuthStorage();
 
   if (error) {
     console.error("[auth] signOut error:", error.message);

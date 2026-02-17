@@ -29,13 +29,14 @@ import {
 import {
   storePendingInviteToken,
 } from "@/lib/sinbookInviteToken";
+import { resolveSinbookDisplayName } from "@/lib/sinbookDisplayName";
 import { getColors, spacing } from "@/lib/ui/theme";
 
 export default function SinbookInviteScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ token: string }>();
   const token = Array.isArray(params.token) ? params.token[0] : params.token;
-  const { loading: bootstrapLoading, isSignedIn, activeSocietyId, member } = useBootstrap();
+  const { loading: bootstrapLoading, isSignedIn, activeSocietyId, member, profile } = useBootstrap();
   const colors = getColors();
 
   const [status, setStatus] = useState<"loading" | "preview" | "accepting" | "done" | "error">("loading");
@@ -44,7 +45,13 @@ export default function SinbookInviteScreen() {
 
   // Step 1: Wait for bootstrap, then decide flow
   useEffect(() => {
-    if (bootstrapLoading || !token) return;
+    if (bootstrapLoading) return;
+
+    if (!token) {
+      setErrorMsg("Invite link is invalid or missing a token.");
+      setStatus("error");
+      return;
+    }
 
     if (!isSignedIn || !activeSocietyId) {
       // No session → store token, send to onboarding
@@ -80,7 +87,16 @@ export default function SinbookInviteScreen() {
   const handleAccept = async () => {
     setStatus("accepting");
     try {
-      const displayName = member?.displayName || member?.name || "Player";
+      const displayName = resolveSinbookDisplayName({
+        explicitName: member?.displayName || member?.name,
+        user: {
+          email: typeof profile?.email === "string" ? profile.email : null,
+          user_metadata: {
+            full_name: typeof profile?.full_name === "string" ? profile.full_name : null,
+          },
+        },
+        fallback: "Player",
+      });
       await acceptInviteByLink(token, displayName);
       setStatus("done");
       setTimeout(() => {
@@ -148,6 +164,10 @@ export default function SinbookInviteScreen() {
 
   // Preview / Accept prompt
   const creator = sinbook?.participants.find((p) => p.user_id === sinbook?.created_by);
+  const creatorName = resolveSinbookDisplayName({
+    explicitName: creator?.display_name,
+    fallback: "a rival",
+  });
 
   return (
     <Screen>
@@ -166,7 +186,7 @@ export default function SinbookInviteScreen() {
               <AppText variant="h2">{sinbook.title}</AppText>
               {creator && (
                 <AppText variant="caption" color="secondary" style={{ marginTop: 2 }}>
-                  Created by {creator.display_name}
+                  Created by {creatorName}
                 </AppText>
               )}
               {sinbook.stake && (

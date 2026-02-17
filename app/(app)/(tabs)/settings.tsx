@@ -76,8 +76,10 @@ export default function SettingsScreen() {
         setSigningOut(true);
         try {
           await signOut();
+          router.replace("/");
         } catch (e: any) {
           showAlert("Error", e?.message || "Failed to sign out.");
+        } finally {
           setSigningOut(false);
         }
       },
@@ -616,7 +618,7 @@ export default function SettingsScreen() {
 
         <Pressable
           style={({ pressed }) => [styles.linkRow, { opacity: pressed ? 0.7 : 1 }]}
-          onPress={() => router.push("/events")}
+          onPress={() => router.push("/(app)/(tabs)/events")}
         >
           <View style={[styles.linkIcon, { backgroundColor: colors.backgroundTertiary }]}>
             <Feather name="calendar" size={16} color={colors.primary} />

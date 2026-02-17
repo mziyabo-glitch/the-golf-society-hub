@@ -6,6 +6,7 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState, ReactNode } from "react";
 import { supabase } from "@/lib/supabase";
 import type { User, Session } from "@supabase/supabase-js";
+import { clearAuthStorage } from "@/lib/supabaseStorage";
 
 // ============================================================================
 // Types
@@ -119,6 +120,7 @@ function useBootstrapInternal(): BootstrapState {
   const mounted = useRef(true);
   const bootstrapRunRef = useRef(false);
   const bootstrapInFlight = useRef(false);
+  const signOutInFlight = useRef(false);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -431,12 +433,29 @@ function useBootstrapInternal(): BootstrapState {
   };
 
   const signOut = async () => {
+    if (signOutInFlight.current) return;
+    signOutInFlight.current = true;
     console.log("[useBootstrap] Signing out...");
-    await supabase.auth.signOut();
-    setSession(null);
-    setProfile(null);
-    setSociety(null);
-    setMember(null);
+    try {
+      setLoading(true);
+      const { error: signOutError } = await supabase.auth.signOut();
+      if (signOutError) {
+        console.warn("[useBootstrap] Global signOut failed, forcing local signOut:", signOutError.message);
+        const { error: localError } = await supabase.auth.signOut({ scope: "local" });
+        if (localError) {
+          console.error("[useBootstrap] Local signOut fallback failed:", localError.message);
+        }
+      }
+    } finally {
+      // Always clear persisted tokens even if network signOut fails.
+      await clearAuthStorage();
+      setSession(null);
+      setProfile(null);
+      setSociety(null);
+      setMember(null);
+      setRefreshKey((k) => k + 1);
+      signOutInFlight.current = false;
+    }
   };
 
   // ============================================================================

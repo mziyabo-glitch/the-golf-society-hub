@@ -367,7 +367,7 @@ export default function MemberDetailScreen() {
           icon={<Feather name="alert-circle" size={24} color={colors.error} />}
           title="Error"
           message={error || "Member not found"}
-          action={{ label: "Go Back", onPress: () => router.back() }}
+          action={{ label: "Retry", onPress: loadMember }}
         />
       </Screen>
     );

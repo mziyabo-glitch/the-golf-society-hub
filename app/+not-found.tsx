@@ -15,7 +15,7 @@ import { Screen } from "@/components/ui/Screen";
 import { AppText } from "@/components/ui/AppText";
 import { AppCard } from "@/components/ui/AppCard";
 import { AppInput } from "@/components/ui/AppInput";
-import { PrimaryButton, SecondaryButton } from "@/components/ui/Button";
+import { PrimaryButton } from "@/components/ui/Button";
 import { InlineNotice } from "@/components/ui/InlineNotice";
 import { LoadingState } from "@/components/ui/LoadingState";
 import { supabase } from "@/lib/supabase";
@@ -45,7 +45,7 @@ export default function NotFoundScreen() {
               Page Not Found
             </AppText>
             <AppText variant="body" color="secondary" style={styles.brandSubtitle}>
-              The page you're looking for doesn't exist.
+              The page you&apos;re looking for doesn&apos;t exist.
             </AppText>
           </View>
           <PrimaryButton onPress={() => router.replace("/")}>

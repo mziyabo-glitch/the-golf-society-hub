@@ -35,6 +35,7 @@ import {
   getWinCountsForSinbooks,
   type SinbookWithParticipants,
 } from "@/lib/db_supabase/sinbookRepo";
+import { resolveSinbookDisplayName } from "@/lib/sinbookDisplayName";
 import { canCreateSinbook } from "@/lib/sinbookEntitlement";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
 import { showAlert } from "@/lib/ui/alert";
@@ -72,8 +73,18 @@ function buildLedgerLine(stake: string | null, season: string | null): string | 
 
 export default function SinbookHomeScreen() {
   const router = useRouter();
-  const { member, userId, loading: bootstrapLoading } = useBootstrap();
+  const { member, profile, userId, loading: bootstrapLoading } = useBootstrap();
   const colors = getColors();
+  const preferredDisplayName = resolveSinbookDisplayName({
+    explicitName: member?.displayName || member?.name,
+    user: {
+      email: typeof profile?.email === "string" ? profile.email : null,
+      user_metadata: {
+        full_name: typeof profile?.full_name === "string" ? profile.full_name : null,
+      },
+    },
+    fallback: "Player",
+  });
 
   // Data
   const [sinbooks, setSinbooks] = useState<SinbookWithParticipants[]>([]);
@@ -151,7 +162,7 @@ export default function SinbookHomeScreen() {
       await createSinbook({
         title: formTitle.trim(),
         stake: formStake.trim() || undefined,
-        creatorDisplayName: member?.displayName || member?.name || "Player",
+        creatorDisplayName: preferredDisplayName,
       });
       setFormTitle("");
       setFormStake("");
@@ -171,7 +182,7 @@ export default function SinbookHomeScreen() {
       return;
     }
     setJoining(true);
-    const displayName = member?.displayName || member?.name || "Player";
+    const displayName = preferredDisplayName;
     try {
       // Try short join code first (6-char alphanumeric)
       const result = await joinByCode(code, displayName);
@@ -237,7 +248,11 @@ export default function SinbookHomeScreen() {
   /** Get rival info for a sinbook */
   const getRival = (sb: SinbookWithParticipants) => {
     const other = sb.participants.find((p) => p.user_id !== userId && p.status === "accepted");
-    return { name: other?.display_name || "Rival", id: other?.user_id ?? null, hasRival: !!other };
+    const rivalName = resolveSinbookDisplayName({
+      explicitName: other?.display_name,
+      fallback: "Rival",
+    });
+    return { name: rivalName, id: other?.user_id ?? null, hasRival: !!other };
   };
 
   /** Get my wins / rival wins for a sinbook */
@@ -374,7 +389,12 @@ export default function SinbookHomeScreen() {
       </View>
 
       {loadError && (
-        <InlineNotice variant="error" message={loadError.message} detail={loadError.detail} style={{ marginBottom: spacing.base }} />
+        <View style={{ marginBottom: spacing.base, gap: spacing.xs }}>
+          <InlineNotice variant="error" message={loadError.message} detail={loadError.detail} />
+          <SecondaryButton onPress={loadData} size="sm">
+            Retry
+          </SecondaryButton>
+        </View>
       )}
 
       {/* ── SECTION 1: Pending Invites ── */}
@@ -386,11 +406,15 @@ export default function SinbookHomeScreen() {
           {pendingInvites.map((invite) => {
             const creator = invite.participants.find((p) => p.user_id === invite.created_by);
             const ledger = buildLedgerLine(invite.stake, invite.season);
+            const creatorName = resolveSinbookDisplayName({
+              explicitName: creator?.display_name,
+              fallback: "a rival",
+            });
             return (
               <AppCard key={invite.id} style={{ marginBottom: spacing.xs }}>
                 <AppText variant="bodyBold" numberOfLines={1}>{invite.title}</AppText>
                 <AppText variant="caption" color="secondary" style={{ marginTop: 2 }}>
-                  From {creator?.display_name || "a rival"}
+                  From {creatorName}
                 </AppText>
                 {ledger && (
                   <AppText variant="small" color="tertiary" numberOfLines={1} style={{ marginTop: 2 }}>

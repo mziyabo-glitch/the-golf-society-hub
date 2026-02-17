@@ -30,6 +30,7 @@ import {
   type SinbookEntry,
   type SinbookParticipant,
 } from "@/lib/db_supabase/sinbookRepo";
+import { extractVsNames, resolveSinbookDisplayName } from "@/lib/sinbookDisplayName";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
 import { formatError, type FormattedError } from "@/lib/ui/formatError";
 import { confirmDestructive, showAlert } from "@/lib/ui/alert";
@@ -56,7 +57,11 @@ export default function RivalryDetailScreen() {
   const [editingEntry, setEditingEntry] = useState<SinbookEntry | null>(null);
 
   const loadData = useCallback(async () => {
-    if (!sinbookId) return;
+    if (!sinbookId) {
+      setLoadError({ message: "Missing rivalry ID in route parameters." });
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     setLoadError(null);
     try {
@@ -77,12 +82,39 @@ export default function RivalryDetailScreen() {
 
   // Derived data
   const acceptedParticipants = sinbook?.participants.filter((p) => p.status === "accepted") ?? [];
+  const titleFallbackNames = extractVsNames(sinbook?.title);
+  const fallbackNameByUserId = new Map<string, string>();
+  if (titleFallbackNames && acceptedParticipants.length === 2) {
+    const [firstName, secondName] = titleFallbackNames;
+    const creatorParticipant = acceptedParticipants.find((p) => p.user_id === sinbook?.created_by);
+    const rivalParticipant = acceptedParticipants.find((p) => p.user_id !== sinbook?.created_by);
+
+    if (creatorParticipant && rivalParticipant) {
+      fallbackNameByUserId.set(creatorParticipant.user_id, firstName);
+      fallbackNameByUserId.set(rivalParticipant.user_id, secondName);
+    } else {
+      const ordered = [...acceptedParticipants].sort(
+        (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+      );
+      if (ordered[0]) fallbackNameByUserId.set(ordered[0].user_id, firstName);
+      if (ordered[1]) fallbackNameByUserId.set(ordered[1].user_id, secondName);
+    }
+  }
+
+  const displayParticipants = acceptedParticipants.map((p, index) => ({
+    ...p,
+    display_name: resolveSinbookDisplayName({
+      explicitName: p.display_name,
+      fallback: fallbackNameByUserId.get(p.user_id) ?? `Player ${index + 1}`,
+    }),
+  }));
+
   const participantMap = new Map<string, SinbookParticipant>();
-  for (const p of acceptedParticipants) participantMap.set(p.user_id, p);
+  for (const p of displayParticipants) participantMap.set(p.user_id, p);
 
   // Standings: count wins per participant
   const standings = new Map<string, number>();
-  for (const p of acceptedParticipants) standings.set(p.user_id, 0);
+  for (const p of displayParticipants) standings.set(p.user_id, 0);
   for (const e of entries) {
     if (e.winner_id && standings.has(e.winner_id)) {
       standings.set(e.winner_id, (standings.get(e.winner_id) ?? 0) + 1);
@@ -231,7 +263,7 @@ export default function RivalryDetailScreen() {
           icon={<Feather name="alert-circle" size={24} color={colors.error} />}
           title="Error"
           message={loadError?.message || "Rivalry not found."}
-          action={{ label: "Go Back", onPress: () => router.back() }}
+          action={{ label: "Retry", onPress: loadData }}
         />
       </Screen>
     );
@@ -276,7 +308,7 @@ export default function RivalryDetailScreen() {
                   No winner
                 </AppText>
               </Pressable>
-              {acceptedParticipants.map((p) => (
+              {displayParticipants.map((p) => (
                 <Pressable
                   key={p.user_id}
                   onPress={() => setEntryWinner(p.user_id)}
@@ -382,7 +414,7 @@ export default function RivalryDetailScreen() {
           </View>
         ) : (
           <View style={styles.standingsRow}>
-            {acceptedParticipants.map((p) => {
+            {displayParticipants.map((p) => {
               const wins = standings.get(p.user_id) ?? 0;
               const isLeading = wins > 0 && wins === Math.max(...standings.values());
               return (
