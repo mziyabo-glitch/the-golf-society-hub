@@ -244,8 +244,15 @@ function useBootstrapInternal(): BootstrapState {
 
           if (!mounted.current) return;
           if (societyData) {
+            // Ensure name is always a plain string (guard against unexpected types)
+            const safeSocietyName =
+              typeof societyData.name === "string"
+                ? societyData.name
+                : String(societyData.name ?? "Society");
+
             setSociety({
               ...societyData,
+              name: safeSocietyName,
               joinCode: societyData.join_code,
             });
           }
@@ -269,13 +276,29 @@ function useBootstrapInternal(): BootstrapState {
 
           if (!mounted.current) return;
           if (memberData) {
-            console.log("[useBootstrap] RAW member handicap_index:", memberData.handicap_index, "keys:", Object.keys(memberData));
+            // Ensure display-critical fields are always primitives (guard against
+            // unexpected JSONB or structured values from the database).
+            const safeName =
+              typeof memberData.name === "string" ? memberData.name : String(memberData.name ?? "");
+            const safeRole =
+              typeof memberData.role === "string" ? memberData.role : undefined;
+            const rawHi = memberData.handicap_index;
+            const safeHi =
+              rawHi != null && typeof rawHi !== "object" ? rawHi : null;
+
             setMember({
               ...memberData,
-              displayName: memberData.name,
-              roles: memberData.role ? [memberData.role] : ["member"],
-              handicapIndex: memberData.handicap_index ?? null,
-              whsNumber: memberData.whs_number ?? null,
+              name: safeName,
+              displayName: safeName,
+              role: safeRole,
+              roles: safeRole ? [safeRole] : ["member"],
+              handicapIndex: safeHi,
+              whsNumber:
+                typeof memberData.whs_number === "string"
+                  ? memberData.whs_number
+                  : memberData.whs_number != null
+                  ? String(memberData.whs_number)
+                  : null,
             });
           }
         }
@@ -306,7 +329,13 @@ function useBootstrapInternal(): BootstrapState {
       } catch (e: any) {
         console.error("[useBootstrap] Bootstrap error:", e);
         if (mounted.current) {
-          setError(e?.message || "Bootstrap failed");
+          // Ensure error is always a plain string (guard against structured error objects)
+          const rawMsg = e?.message;
+          const errStr =
+            typeof rawMsg === "string" && rawMsg.length > 0
+              ? rawMsg
+              : "Bootstrap failed";
+          setError(errStr);
         }
       } finally {
         bootstrapInFlight.current = false;
@@ -326,8 +355,14 @@ function useBootstrapInternal(): BootstrapState {
         if (mounted.current) {
           setSession(newSession);
 
-          // Refresh bootstrap on sign in/out/recovery
+          // Refresh bootstrap on sign in/out/recovery.
+          // IMPORTANT: set loading=true in the SAME synchronous batch as
+          // setRefreshKey so the loading overlay stays up. Without this,
+          // there is a render frame where isSignedIn=true but profile/
+          // society/member are still null, causing the Home screen to
+          // flash PersonalModeHome ("old state") before bootstrap reloads.
           if (event === "SIGNED_IN" || event === "SIGNED_OUT" || event === "PASSWORD_RECOVERY") {
+            setLoading(true);
             setRefreshKey((k) => k + 1);
           }
         }

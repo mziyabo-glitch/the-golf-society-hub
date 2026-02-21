@@ -359,10 +359,16 @@ export default function HomeScreen() {
   // ============================================================================
 
   // Handicap for header badge — computed once, no IIFE
+  // Guard: ensure the raw value is a primitive before converting to Number
   const _hiRaw = (member as any)?.handicap_index ?? member?.handicapIndex ?? null;
-  const _hiNum = _hiRaw != null ? Number(_hiRaw) : null;
-  const memberHiText = (_hiNum != null && Number.isFinite(_hiNum)) ? `HI ${_hiNum.toFixed(1)}` : null;
-  console.log("[Home] handicap render:", { handicap_index: (member as any)?.handicap_index, handicapIndex: member?.handicapIndex, memberHiText });
+  const _hiNum =
+    _hiRaw != null && typeof _hiRaw !== "object"
+      ? Number(_hiRaw)
+      : null;
+  const memberHiText =
+    _hiNum != null && Number.isFinite(_hiNum)
+      ? `HI ${_hiNum.toFixed(1)}`
+      : null;
 
   const useCompactLogo = screenWidth < 380;
 
@@ -399,9 +405,9 @@ export default function HomeScreen() {
             </View>
           )}
           <View style={styles.headerTextBlock}>
-            <AppText variant="h2" numberOfLines={1}>{society.name}</AppText>
+            <AppText variant="h2" numberOfLines={1}>{String(society.name ?? "Society")}</AppText>
             <AppText variant="body" color="secondary" numberOfLines={1}>
-              {member?.displayName || member?.name || "Member"}
+              {String(member?.displayName || member?.name || "Member")}
             </AppText>
           </View>
         </View>
@@ -516,7 +522,7 @@ export default function HomeScreen() {
                   Tee times now available!
                 </AppText>
                 <AppText variant="small" color="secondary">
-                  {nextEvent.name} — First tee: {nextEvent.teeTimeStart || "TBC"}
+                  {String(nextEvent.name ?? "Event")} — First tee: {String(nextEvent.teeTimeStart || "TBC")}
                 </AppText>
               </View>
               <Feather name="chevron-right" size={16} color={colors.success} />
@@ -537,12 +543,12 @@ export default function HomeScreen() {
             </View>
 
             <AppText variant="h2" style={{ marginTop: spacing.xs }}>
-              {nextEvent.name}
+              {String(nextEvent.name ?? "Event")}
             </AppText>
 
             {nextEvent.courseName && (
               <AppText variant="body" color="secondary" style={{ marginTop: 2 }}>
-                {nextEvent.courseName}
+                {String(nextEvent.courseName)}
               </AppText>
             )}
 
@@ -580,8 +586,8 @@ export default function HomeScreen() {
               <Feather name="flag" size={14} color={nextEvent.teeTimePublishedAt ? colors.success : colors.textTertiary} />
               {nextEvent.teeTimePublishedAt ? (
                 <AppText variant="small" style={{ color: colors.success, fontWeight: "600" }}>
-                  Tee times available — First tee: {nextEvent.teeTimeStart || "TBC"}
-                  {nextEvent.teeTimeInterval ? `, ${nextEvent.teeTimeInterval} min intervals` : ""}
+                  Tee times available — First tee: {String(nextEvent.teeTimeStart || "TBC")}
+                  {nextEvent.teeTimeInterval ? `, ${String(nextEvent.teeTimeInterval)} min intervals` : ""}
                 </AppText>
               ) : (
                 <AppText variant="small" color="tertiary">Tee times to be published</AppText>
@@ -637,17 +643,17 @@ export default function HomeScreen() {
             <View style={styles.snapshotGrid}>
               <View style={styles.snapshotItem}>
                 <AppText variant="h1">
-                  {mySnapshot.totalPoints > 0 ? formatPoints(mySnapshot.totalPoints) : "—"}
+                  {(mySnapshot.totalPoints ?? 0) > 0 ? formatPoints(Number(mySnapshot.totalPoints) || 0) : "—"}
                 </AppText>
                 <AppText variant="small" color="secondary">Order of Merit Pts</AppText>
               </View>
               <View style={[styles.snapshotDivider, { backgroundColor: colors.borderLight }]} />
               <View style={styles.snapshotItem}>
                 <AppText variant="h1">
-                  {mySnapshot.rank > 0 ? `${mySnapshot.rank}` : "—"}
+                  {(mySnapshot.rank ?? 0) > 0 ? String(mySnapshot.rank) : "—"}
                 </AppText>
                 <AppText variant="small" color="secondary">
-                  {mySnapshot.rank > 0 ? `of ${mySnapshot.totalWithPoints}` : "Rank"}
+                  {(mySnapshot.rank ?? 0) > 0 ? `of ${String(mySnapshot.totalWithPoints)}` : "Rank"}
                 </AppText>
               </View>
             </View>
@@ -695,17 +701,17 @@ export default function HomeScreen() {
                     variant="captionBold"
                     style={[styles.oomRank, { color: colors.textSecondary }]}
                   >
-                    {entry.rank}
+                    {String(entry.rank)}
                   </AppText>
                   <AppText
                     variant={isMe ? "bodyBold" : "body"}
                     style={{ flex: 1 }}
                     numberOfLines={1}
                   >
-                    {entry.memberName}{isMe ? " (You)" : ""}
+                    {String(entry.memberName ?? "Unknown")}{isMe ? " (You)" : ""}
                   </AppText>
                   <AppText variant="captionBold" color="primary">
-                    {formatPoints(entry.totalPoints)} pts
+                    {formatPoints(Number(entry.totalPoints) || 0)} pts
                   </AppText>
                 </View>
               );
@@ -725,13 +731,13 @@ export default function HomeScreen() {
                     variant="captionBold"
                     style={[styles.oomRank, { color: colors.textSecondary }]}
                   >
-                    {oomTeaser.myEntry.rank}
+                    {String(oomTeaser.myEntry.rank)}
                   </AppText>
                   <AppText variant="bodyBold" style={{ flex: 1 }} numberOfLines={1}>
                     You
                   </AppText>
                   <AppText variant="captionBold" color="primary">
-                    {formatPoints(oomTeaser.myEntry.totalPoints)} pts
+                    {formatPoints(Number(oomTeaser.myEntry.totalPoints) || 0)} pts
                   </AppText>
                 </View>
               </>
@@ -759,11 +765,12 @@ export default function HomeScreen() {
               ? results.find((r) => r.member_id === memberId)
               : null;
 
-            // Determine status text
+            // Determine status text — guard against non-primitive points values
             let statusText = "Results pending";
             let statusColor: string = colors.textTertiary;
             if (hasResults && event.isOOM && myResult) {
-              statusText = `${formatPoints(myResult.points)} Order of Merit pts`;
+              const pts = Number(myResult.points) || 0;
+              statusText = `${formatPoints(pts)} Order of Merit pts`;
               statusColor = colors.primary;
             } else if (hasResults && event.isOOM && !myResult) {
               statusText = "No Order of Merit points";
@@ -779,11 +786,11 @@ export default function HomeScreen() {
                   <View style={styles.recentRow}>
                     <View style={[styles.recentDateBadge, { backgroundColor: colors.backgroundTertiary }]}>
                       <AppText variant="captionBold" color="primary">
-                        {formatShortDate(event.date)}
+                        {formatShortDate(typeof event.date === "string" ? event.date : undefined)}
                       </AppText>
                     </View>
                     <View style={{ flex: 1 }}>
-                      <AppText variant="bodyBold" numberOfLines={1}>{event.name}</AppText>
+                      <AppText variant="bodyBold" numberOfLines={1}>{String(event.name ?? "Event")}</AppText>
                       <AppText variant="small" style={{ color: statusColor }}>{statusText}</AppText>
                     </View>
                     <Feather name="chevron-right" size={18} color={colors.textTertiary} />
@@ -820,9 +827,9 @@ export default function HomeScreen() {
           </View>
           {activeSinbook ? (
             <View style={{ marginTop: spacing.xs }}>
-              <AppText variant="bodyBold" numberOfLines={1}>{activeSinbook.title}</AppText>
+              <AppText variant="bodyBold" numberOfLines={1}>{String(activeSinbook.title ?? "Rivalry")}</AppText>
               <AppText variant="caption" color="secondary">
-                vs {activeSinbook.participants.find((p) => p.user_id !== memberId && p.status === "accepted")?.display_name || "rival"}
+                vs {String(activeSinbook.participants.find((p) => p.user_id !== memberId && p.status === "accepted")?.display_name || "rival")}
               </AppText>
             </View>
           ) : (
@@ -1129,15 +1136,20 @@ function SkeletonCards({ colors }: { colors: ReturnType<typeof getColors> }) {
 const styles = StyleSheet.create({
   // Brand header
   brandHeader: {
+    height: 56,
+    flexDirection: "row",
+    alignItems: "center",
     marginBottom: spacing.sm,
   },
   brandHeaderIcon: {
-    height: 44,
-    width: 220,
+    height: 48,
+    aspectRatio: 760 / 212,
+    flexShrink: 0,
   },
   brandHeaderIconCompact: {
-    height: 44,
-    width: 44,
+    height: 48,
+    width: 48,
+    flexShrink: 0,
   },
 
   // Header Card

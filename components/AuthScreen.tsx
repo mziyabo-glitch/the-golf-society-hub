@@ -1,7 +1,9 @@
 /**
  * AuthScreen — email / password sign-in, sign-up, and forgot password.
  * Rendered by the root layout when no session exists.
- * One-time sign-in: session is persisted by Supabase.
+ *
+ * "Remember me" controls whether the session is persisted in storage.
+ * When unchecked the session lives only in memory and is lost on reload.
  */
 
 import { useCallback, useState } from "react";
@@ -21,14 +23,14 @@ import { Screen } from "@/components/ui/Screen";
 import { AppText } from "@/components/ui/AppText";
 import { AppCard } from "@/components/ui/AppCard";
 import { AppInput } from "@/components/ui/AppInput";
-import { PrimaryButton, SecondaryButton } from "@/components/ui/Button";
+import { PrimaryButton } from "@/components/ui/Button";
 import { InlineNotice } from "@/components/ui/InlineNotice";
 import {
   signInWithEmail,
   signUpWithEmail,
-  signInWithGoogle,
   resetPassword,
 } from "@/lib/auth_supabase";
+import { setRememberMe } from "@/lib/supabaseStorage";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
 
 type Mode = "signIn" | "signUp" | "forgotPassword";
@@ -39,19 +41,17 @@ export function AuthScreen() {
   const [mode, setMode] = useState<Mode>("signIn");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [rememberMe, setRememberMeLocal] = useState(true);
   const [loading, setLoading] = useState(false);
-  const [googleLoading, setGoogleLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
   const isSignIn = mode === "signIn";
-  const isSignUp = mode === "signUp";
   const isForgot = mode === "forgotPassword";
 
   const canSubmitAuth = email.trim().length > 0 && password.length >= 6;
   const canSubmitReset = email.trim().length > 0;
 
-  // Clear error/success when user edits fields
   const handleEmailChange = useCallback((text: string) => {
     setEmail(text);
     setError(null);
@@ -65,7 +65,6 @@ export function AuthScreen() {
   const handleSubmit = async () => {
     if (loading) return;
 
-    // Snapshot current field values
     const submitEmail = email.trim().toLowerCase();
     const submitPassword = password;
 
@@ -74,13 +73,11 @@ export function AuthScreen() {
       setLoading(true);
       setError(null);
       setSuccess(null);
-      console.log("[AuthScreen] resetPassword submit:", { email: submitEmail });
 
       try {
         await resetPassword(submitEmail);
         setSuccess("If an account exists with that email, you'll receive a password reset link.");
       } catch (e: any) {
-        console.error("[AuthScreen] resetPassword error:", e);
         setError(e?.message || "Something went wrong.");
       } finally {
         setLoading(false);
@@ -93,16 +90,13 @@ export function AuthScreen() {
     setError(null);
     setSuccess(null);
 
-    console.log("[AuthScreen] submit:", {
-      mode,
-      email: submitEmail,
-      passwordLength: submitPassword.length,
-    });
+    // Persist the remember-me preference BEFORE signing in so the
+    // storage adapter knows whether to actually write the session.
+    setRememberMe(rememberMe);
 
     try {
       if (isSignIn) {
         await signInWithEmail(submitEmail, submitPassword);
-        // Session is set — onAuthStateChange in useBootstrap will re-bootstrap.
       } else {
         const { needsConfirmation } = await signUpWithEmail(submitEmail, submitPassword);
         if (needsConfirmation) {
@@ -110,10 +104,8 @@ export function AuthScreen() {
           setMode("signIn");
           setPassword("");
         }
-        // If no confirmation needed, session is set and bootstrap re-runs.
       }
     } catch (e: any) {
-      console.error("[AuthScreen] auth error:", { mode, email: submitEmail, error: e?.message });
       setError(e?.message || "Something went wrong. Please try again.");
     } finally {
       setLoading(false);
@@ -246,15 +238,39 @@ export function AuthScreen() {
             />
           </View>
 
-          {/* Forgot password link — sign in mode only */}
+          {/* Remember me + Forgot password row */}
           {isSignIn && (
-            <Pressable
-              onPress={() => switchMode("forgotPassword")}
-              style={styles.forgotRow}
-              hitSlop={8}
-            >
-              <AppText variant="small" color="primary">Forgot password?</AppText>
-            </Pressable>
+            <View style={styles.optionsRow}>
+              <Pressable
+                style={styles.rememberRow}
+                onPress={() => setRememberMeLocal((v) => !v)}
+                hitSlop={6}
+              >
+                <View
+                  style={[
+                    styles.checkbox,
+                    {
+                      borderColor: rememberMe ? colors.primary : colors.border,
+                      backgroundColor: rememberMe ? colors.primary : "transparent",
+                    },
+                  ]}
+                >
+                  {rememberMe && (
+                    <Feather name="check" size={12} color="#fff" />
+                  )}
+                </View>
+                <AppText variant="small" color="secondary">
+                  Remember me
+                </AppText>
+              </Pressable>
+
+              <Pressable
+                onPress={() => switchMode("forgotPassword")}
+                hitSlop={8}
+              >
+                <AppText variant="small" color="primary">Forgot password?</AppText>
+              </Pressable>
+            </View>
           )}
 
           <PrimaryButton
@@ -265,34 +281,6 @@ export function AuthScreen() {
           >
             {isSignIn ? "Sign In" : "Create Account"}
           </PrimaryButton>
-
-          {/* Divider */}
-          <View style={styles.dividerRow}>
-            <View style={[styles.dividerLine, { backgroundColor: colors.border }]} />
-            <AppText variant="small" color="tertiary" style={styles.dividerText}>or</AppText>
-            <View style={[styles.dividerLine, { backgroundColor: colors.border }]} />
-          </View>
-
-          {/* Google OAuth */}
-          <SecondaryButton
-            onPress={async () => {
-              if (googleLoading || loading) return;
-              setGoogleLoading(true);
-              setError(null);
-              try {
-                await signInWithGoogle();
-              } catch (e: any) {
-                setError(e?.message || "Google sign-in failed.");
-              } finally {
-                setGoogleLoading(false);
-              }
-            }}
-            loading={googleLoading}
-            disabled={googleLoading || loading}
-            icon={<Feather name="globe" size={18} color={colors.primary} />}
-          >
-            Continue with Google
-          </SecondaryButton>
         </AppCard>
 
         {/* Toggle sign-in / sign-up */}
@@ -347,25 +335,28 @@ const styles = StyleSheet.create({
   label: {
     marginBottom: spacing.xs,
   },
-  forgotRow: {
-    alignSelf: "flex-end",
+  optionsRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
     marginBottom: spacing.sm,
     marginTop: -spacing.xs,
   },
-  submitButton: {
-    marginTop: spacing.sm,
-  },
-  dividerRow: {
+  rememberRow: {
     flexDirection: "row",
     alignItems: "center",
-    marginVertical: spacing.base,
+    gap: 8,
   },
-  dividerLine: {
-    flex: 1,
-    height: StyleSheet.hairlineWidth,
+  checkbox: {
+    width: 20,
+    height: 20,
+    borderRadius: radius.sm,
+    borderWidth: 2,
+    alignItems: "center",
+    justifyContent: "center",
   },
-  dividerText: {
-    marginHorizontal: spacing.sm,
+  submitButton: {
+    marginTop: spacing.sm,
   },
   toggleRow: {
     flexDirection: "row",
