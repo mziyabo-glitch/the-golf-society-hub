@@ -33,7 +33,7 @@ export default function TabsLayout() {
             <Text
               numberOfLines={1}
               adjustsFontSizeToFit={Platform.OS === "ios"}
-              minimumFontScale={0.65}
+              minimumFontScale={0.5}
               style={[styles.tabBarLabel, { color }]}
             >
               {children}
@@ -56,13 +56,13 @@ export default function TabsLayout() {
     >
       <Tabs.Screen
         name="index"
-        options={{ title: "Home", tabBarIcon: ({ color }) => <Feather name="home" color={color} size={20} /> }}
+        options={{ title: "Home", tabBarIcon: ({ color }) => <Feather name="home" color={color} size={18} /> }}
       />
       <Tabs.Screen
         name="events"
         options={{
-          title: "Events",
-          tabBarIcon: ({ color }) => <Feather name="calendar" color={color} size={20} />,
+          title: "Evts",
+          tabBarIcon: ({ color }) => <Feather name="calendar" color={color} size={18} />,
           href: societyTabHref,
         }}
       />
@@ -70,29 +70,29 @@ export default function TabsLayout() {
         name="leaderboard"
         options={{
           title: "OOM",
-          tabBarIcon: ({ color }) => <Feather name="award" color={color} size={20} />,
+          tabBarIcon: ({ color }) => <Feather name="award" color={color} size={18} />,
           href: societyTabHref,
         }}
       />
       <Tabs.Screen
         name="sinbook"
         options={{
-          title: "Sinbook",
-          tabBarIcon: ({ color }) => <Feather name="zap" color={color} size={20} />,
+          title: "Sin",
+          tabBarIcon: ({ color }) => <Feather name="zap" color={color} size={18} />,
           // Sinbook is always visible — has its own paywall
         }}
       />
       <Tabs.Screen
         name="members"
         options={{
-          title: "Members",
-          tabBarIcon: ({ color }) => <Feather name="users" color={color} size={20} />,
+          title: "Mems",
+          tabBarIcon: ({ color }) => <Feather name="users" color={color} size={18} />,
           href: societyTabHref,
         }}
       />
       <Tabs.Screen
         name="settings"
-        options={{ title: "Settings", tabBarIcon: ({ color }) => <Feather name="settings" color={color} size={20} /> }}
+        options={{ title: "Prefs", tabBarIcon: ({ color }) => <Feather name="settings" color={color} size={18} /> }}
       />
     </Tabs>
   );
@@ -108,12 +108,12 @@ const styles = StyleSheet.create({
     minWidth: 0,
     justifyContent: "center",
     alignItems: "center",
-    paddingHorizontal: 2,
+    paddingHorizontal: 0,
   },
   tabBarLabel: {
-    fontSize: 10,
+    fontSize: 9,
     fontWeight: "600",
-    lineHeight: 12,
+    lineHeight: 11,
     textAlign: "center",
     marginTop: 2,
   },
@@ -124,6 +124,6 @@ const styles = StyleSheet.create({
     height: 46,
     justifyContent: "center",
     alignItems: "center",
-    paddingHorizontal: 2,
+    paddingHorizontal: 0,
   },
 });
