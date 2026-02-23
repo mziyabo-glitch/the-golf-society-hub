@@ -127,14 +127,7 @@ function HomeAppBar({
 }) {
   return (
     <View style={[styles.appBarTier, { borderBottomColor: colors.borderLight }]}>
-      <View style={styles.appBarLeft}>
-        <View style={[styles.appBarLogoFrame, { backgroundColor: colors.backgroundTertiary }]}>
-          <Image source={appIcon} style={styles.appBarLogo} resizeMode="contain" />
-        </View>
-        <AppText variant="small" color="tertiary" numberOfLines={1} style={styles.appBarLabel}>
-          Golf Society Hub
-        </AppText>
-      </View>
+      <View style={styles.appBarSpacer} />
 
       <Pressable
         onPress={onOpenSettings}
@@ -149,6 +142,21 @@ function HomeAppBar({
       >
         <Feather name="settings" size={16} color={colors.textSecondary} />
       </Pressable>
+    </View>
+  );
+}
+
+function PoweredByFooter({
+  colors,
+}: {
+  colors: ReturnType<typeof getColors>;
+}) {
+  return (
+    <View style={styles.poweredByWrap}>
+      <Image source={appIcon} style={styles.poweredByIcon} resizeMode="contain" />
+      <AppText style={[styles.poweredByText, { color: colors.textTertiary }]}>
+        Powered by Golf Society Hub
+      </AppText>
     </View>
   );
 }
@@ -899,8 +907,7 @@ export default function HomeScreen() {
 
       </>)}
 
-      {/* Bottom spacing */}
-      <View style={{ height: spacing["2xl"] }} />
+      <PoweredByFooter colors={colors} />
     </Screen>
   );
 }
@@ -1065,7 +1072,7 @@ function PersonalModeHome({
         </AppCard>
       )}
 
-      <View style={{ height: spacing["2xl"] }} />
+      <PoweredByFooter colors={colors} />
     </Screen>
   );
 }
@@ -1160,9 +1167,8 @@ function SkeletonCards({ colors }: { colors: ReturnType<typeof getColors> }) {
     <>
       {/* Two-tier header skeleton */}
       <View style={[styles.appBarTier, { borderBottomColor: colors.borderLight }]}>
-        <View style={[styles.appBarLogoFrame, { backgroundColor: shimmer }]}>
-          <View style={[styles.skeletonCircle, { width: 20, height: 20, borderRadius: 10, backgroundColor: colors.backgroundSecondary }]} />
-        </View>
+        <View style={styles.appBarSpacer} />
+        <View style={[styles.appBarAction, { backgroundColor: shimmer, borderColor: colors.borderLight }]} />
       </View>
       <AppCard style={[styles.societyHeroCard, styles.premiumCard]}>
         <View style={[styles.heroLogoFrame, { backgroundColor: shimmer, borderColor: colors.borderLight }]}>
@@ -1220,7 +1226,6 @@ const styles = StyleSheet.create({
   screenContent: {
     backgroundColor: "transparent",
     paddingTop: spacing.md,
-    paddingBottom: spacing["2xl"],
     gap: spacing.base,
   },
   premiumCard: {
@@ -1250,26 +1255,9 @@ const styles = StyleSheet.create({
     borderBottomWidth: StyleSheet.hairlineWidth,
     marginBottom: spacing.xs,
   },
-  appBarLeft: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing.xs,
-  },
-  appBarLogoFrame: {
-    width: 24,
-    height: 24,
-    borderRadius: 7,
-    alignItems: "center",
-    justifyContent: "center",
-    opacity: 0.9,
-  },
-  appBarLogo: {
-    width: 17,
-    height: 17,
-  },
-  appBarLabel: {
-    fontSize: 11,
-    letterSpacing: 0.1,
+  appBarSpacer: {
+    width: 30,
+    height: 30,
   },
   appBarAction: {
     width: 30,
@@ -1281,6 +1269,24 @@ const styles = StyleSheet.create({
   },
   appBarActionPressed: {
     opacity: 0.75,
+  },
+  poweredByWrap: {
+    marginTop: spacing.xs,
+    marginBottom: spacing.sm,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 4,
+  },
+  poweredByIcon: {
+    width: 14,
+    height: 14,
+    opacity: 0.55,
+  },
+  poweredByText: {
+    fontSize: 11,
+    lineHeight: 14,
+    opacity: 0.8,
   },
   societyHeroCard: {
     alignItems: "center",

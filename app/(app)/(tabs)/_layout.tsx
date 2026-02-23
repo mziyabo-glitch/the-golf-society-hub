@@ -1,15 +1,18 @@
 import { Tabs } from "expo-router";
 import { Feather } from "@expo/vector-icons";
-import { StyleSheet } from "react-native";
+import { Platform, StyleSheet } from "react-native";
 import { useBootstrap } from "@/lib/useBootstrap";
 import { isCaptain } from "@/lib/rbac";
-import { getColors, radius } from "@/lib/ui/theme";
+import { getColors } from "@/lib/ui/theme";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 export default function TabsLayout() {
   const { member, activeSocietyId } = useBootstrap();
   const colors = getColors();
+  const insets = useSafeAreaInsets();
 
   const hasSociety = !!activeSocietyId && !!member;
+  const tabBarHeight = (Platform.OS === "ios" ? 58 : 56) + Math.max(insets.bottom, 8);
 
   // Captains always have full access; regular members need a licence (seat)
   const hasFullAccess =
@@ -24,12 +27,18 @@ export default function TabsLayout() {
         headerShown: false,
         tabBarActiveTintColor: colors.primary,
         tabBarInactiveTintColor: colors.textTertiary,
+        tabBarHideOnKeyboard: true,
         tabBarLabelStyle: styles.tabBarLabel,
         tabBarIconStyle: styles.tabBarIcon,
         tabBarItemStyle: styles.tabBarItem,
         tabBarStyle: [
           styles.tabBar,
-          { backgroundColor: "rgba(255,255,255,0.94)", borderTopColor: colors.borderLight },
+          {
+            height: tabBarHeight,
+            paddingBottom: Math.max(insets.bottom, 8),
+            backgroundColor: "rgba(255,255,255,0.96)",
+            borderTopColor: colors.borderLight,
+          },
         ],
       }}
     >
@@ -79,13 +88,8 @@ export default function TabsLayout() {
 
 const styles = StyleSheet.create({
   tabBar: {
-    position: "absolute",
-    height: 66,
     paddingTop: 8,
-    paddingBottom: 8,
     borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopLeftRadius: radius.lg,
-    borderTopRightRadius: radius.lg,
     shadowColor: "#000",
     shadowOffset: { width: 0, height: -1 },
     shadowOpacity: 0.04,
@@ -95,12 +99,13 @@ const styles = StyleSheet.create({
   tabBarLabel: {
     fontSize: 11,
     fontWeight: "600",
-    marginBottom: 1,
+    lineHeight: 13,
+    marginBottom: 0,
   },
   tabBarIcon: {
-    marginBottom: 1,
+    marginBottom: 0,
   },
   tabBarItem: {
-    paddingTop: 2,
+    paddingTop: 3,
   },
 });

@@ -3,9 +3,10 @@
  * Provides safe area handling and consistent padding
  */
 
-import { ReactNode } from "react";
+import { ReactNode, useContext } from "react";
 import { ScrollView, StyleSheet, View, ViewStyle } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { BottomTabBarHeightContext } from "@react-navigation/bottom-tabs";
 import { getColors, spacing } from "@/lib/ui/theme";
 
 type ScreenProps = {
@@ -17,9 +18,18 @@ type ScreenProps = {
 
 export function Screen({ children, scrollable = true, style, contentStyle }: ScreenProps) {
   const colors = getColors();
+  const tabBarHeight = useContext(BottomTabBarHeightContext) ?? 0;
+  const bottomContentPadding = tabBarHeight > 0 ? tabBarHeight + spacing.base : spacing.lg;
 
   const content = (
-    <View style={[styles.content, { padding: spacing.lg }, contentStyle]}>
+    <View
+      style={[
+        styles.content,
+        { padding: spacing.lg },
+        contentStyle,
+        { paddingBottom: bottomContentPadding },
+      ]}
+    >
       {children}
     </View>
   );
