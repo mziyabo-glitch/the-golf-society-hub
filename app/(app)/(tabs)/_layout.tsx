@@ -1,6 +1,6 @@
 import { Tabs } from "expo-router";
 import { Feather } from "@expo/vector-icons";
-import { StyleSheet } from "react-native";
+import { Platform, StyleSheet, Text, View } from "react-native";
 import { useBootstrap } from "@/lib/useBootstrap";
 import { isCaptain } from "@/lib/rbac";
 import { getColors } from "@/lib/ui/theme";
@@ -28,7 +28,18 @@ export default function TabsLayout() {
         tabBarActiveTintColor: colors.primary,
         tabBarInactiveTintColor: colors.textTertiary,
         tabBarHideOnKeyboard: true,
-        tabBarLabelStyle: styles.tabBarLabel,
+        tabBarLabel: ({ children, color }) => (
+          <View style={styles.tabBarLabelWrapper}>
+            <Text
+              numberOfLines={1}
+              adjustsFontSizeToFit={Platform.OS === "ios"}
+              minimumFontScale={0.65}
+              style={[styles.tabBarLabel, { color }]}
+            >
+              {children}
+            </Text>
+          </View>
+        ),
         tabBarIconStyle: styles.tabBarIcon,
         tabBarItemStyle: styles.tabBarItem,
         tabBarStyle: [
@@ -92,10 +103,17 @@ const styles = StyleSheet.create({
     position: "relative",
     borderTopWidth: 1,
   },
+  tabBarLabelWrapper: {
+    flex: 1,
+    minWidth: 0,
+    justifyContent: "center",
+    alignItems: "center",
+    paddingHorizontal: 2,
+  },
   tabBarLabel: {
-    fontSize: 11,
+    fontSize: 10,
     fontWeight: "600",
-    lineHeight: 14,
+    lineHeight: 12,
     textAlign: "center",
     marginTop: 2,
   },
@@ -106,5 +124,6 @@ const styles = StyleSheet.create({
     height: 46,
     justifyContent: "center",
     alignItems: "center",
+    paddingHorizontal: 2,
   },
 });
