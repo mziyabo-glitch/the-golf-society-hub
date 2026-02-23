@@ -43,6 +43,9 @@ export type Permissions = {
 
   // Handicaps
   canManageHandicaps: boolean;
+
+  // OOM Roll of Honour
+  canManageOomChampions: boolean;
 };
 
 export type MemberLike = {
@@ -126,6 +129,9 @@ export const getPermissionsForMember = (
 
     // Handicaps
     canManageHandicaps: captain || handicapper,
+
+    // OOM Roll of Honour (Captain/Secretary)
+    canManageOomChampions: captain || secretary,
   };
 };
 
@@ -154,4 +160,7 @@ export const can = {
 
   manageHandicaps: (currentMember: MemberLike | null | undefined) =>
     getPermissionsForMember(currentMember).canManageHandicaps,
+
+  manageOomChampions: (currentMember: MemberLike | null | undefined) =>
+    getPermissionsForMember(currentMember).canManageOomChampions,
 };

@@ -200,6 +200,7 @@ export default function LeaderboardScreen() {
 
   useEffect(() => {
     if (params.view === "log") setActiveTab("resultsLog");
+    if (params.view === "honour") router.push("/(app)/roll-of-honour");
   }, [params.view]);
 
   useFocusEffect(
@@ -425,6 +426,15 @@ export default function LeaderboardScreen() {
               >
                 Results Matrix
               </AppText>
+            </Pressable>
+            <Pressable
+              style={styles.tab}
+              onPress={() =>
+                router.push("/(app)/roll-of-honour")
+              }
+            >
+              <Feather name="trophy" size={16} color="#9CA3AF" />
+              <AppText style={styles.tabText}>Roll of Honour</AppText>
             </Pressable>
           </View>
         )}
