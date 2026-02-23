@@ -1,6 +1,6 @@
 import { Tabs } from "expo-router";
 import { Feather } from "@expo/vector-icons";
-import { Platform, StyleSheet, Text, View } from "react-native";
+import { StyleSheet } from "react-native";
 import { useBootstrap } from "@/lib/useBootstrap";
 import { isCaptain } from "@/lib/rbac";
 import { getColors } from "@/lib/ui/theme";
@@ -12,7 +12,7 @@ export default function TabsLayout() {
   const insets = useSafeAreaInsets();
 
   const hasSociety = !!activeSocietyId && !!member;
-  const tabBarHeight = 64 + insets.bottom;
+  const tabBarHeight = 56 + insets.bottom;
 
   // Captains always have full access; regular members need a licence (seat)
   const hasFullAccess =
@@ -28,25 +28,14 @@ export default function TabsLayout() {
         tabBarActiveTintColor: colors.primary,
         tabBarInactiveTintColor: colors.textTertiary,
         tabBarHideOnKeyboard: true,
-        tabBarLabel: ({ children, color }) => (
-          <View style={styles.tabBarLabelWrapper}>
-            <Text
-              numberOfLines={1}
-              adjustsFontSizeToFit={Platform.OS === "ios"}
-              minimumFontScale={0.5}
-              style={[styles.tabBarLabel, { color }]}
-            >
-              {children}
-            </Text>
-          </View>
-        ),
+        tabBarShowLabel: false,
         tabBarIconStyle: styles.tabBarIcon,
         tabBarItemStyle: styles.tabBarItem,
         tabBarStyle: [
           styles.tabBar,
           {
             height: tabBarHeight,
-            paddingBottom: Math.max(insets.bottom, 10),
+            paddingBottom: Math.max(insets.bottom, 8),
             paddingTop: 8,
             backgroundColor: "#FFFFFF",
             borderTopColor: colors.border,
@@ -56,13 +45,13 @@ export default function TabsLayout() {
     >
       <Tabs.Screen
         name="index"
-        options={{ title: "Home", tabBarIcon: ({ color }) => <Feather name="home" color={color} size={18} /> }}
+        options={{ title: "Home", tabBarIcon: ({ color }) => <Feather name="home" color={color} size={22} /> }}
       />
       <Tabs.Screen
         name="events"
         options={{
-          title: "Evts",
-          tabBarIcon: ({ color }) => <Feather name="calendar" color={color} size={18} />,
+          title: "Events",
+          tabBarIcon: ({ color }) => <Feather name="calendar" color={color} size={22} />,
           href: societyTabHref,
         }}
       />
@@ -70,29 +59,29 @@ export default function TabsLayout() {
         name="leaderboard"
         options={{
           title: "OOM",
-          tabBarIcon: ({ color }) => <Feather name="award" color={color} size={18} />,
+          tabBarIcon: ({ color }) => <Feather name="award" color={color} size={22} />,
           href: societyTabHref,
         }}
       />
       <Tabs.Screen
         name="sinbook"
         options={{
-          title: "Sin",
-          tabBarIcon: ({ color }) => <Feather name="zap" color={color} size={18} />,
+          title: "Sinbook",
+          tabBarIcon: ({ color }) => <Feather name="zap" color={color} size={22} />,
           // Sinbook is always visible — has its own paywall
         }}
       />
       <Tabs.Screen
         name="members"
         options={{
-          title: "Mems",
-          tabBarIcon: ({ color }) => <Feather name="users" color={color} size={18} />,
+          title: "Members",
+          tabBarIcon: ({ color }) => <Feather name="users" color={color} size={22} />,
           href: societyTabHref,
         }}
       />
       <Tabs.Screen
         name="settings"
-        options={{ title: "Prefs", tabBarIcon: ({ color }) => <Feather name="settings" color={color} size={18} /> }}
+        options={{ title: "Settings", tabBarIcon: ({ color }) => <Feather name="settings" color={color} size={22} /> }}
       />
     </Tabs>
   );
@@ -103,27 +92,12 @@ const styles = StyleSheet.create({
     position: "relative",
     borderTopWidth: 1,
   },
-  tabBarLabelWrapper: {
-    flex: 1,
-    minWidth: 0,
-    justifyContent: "center",
-    alignItems: "center",
-    paddingHorizontal: 0,
-  },
-  tabBarLabel: {
-    fontSize: 9,
-    fontWeight: "600",
-    lineHeight: 11,
-    textAlign: "center",
-    marginTop: 2,
-  },
   tabBarIcon: {
-    marginTop: 1,
+    marginBottom: 0,
   },
   tabBarItem: {
     height: 46,
     justifyContent: "center",
     alignItems: "center",
-    paddingHorizontal: 0,
   },
 });
