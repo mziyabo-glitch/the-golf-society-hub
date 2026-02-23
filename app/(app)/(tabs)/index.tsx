@@ -1142,6 +1142,7 @@ const styles = StyleSheet.create({
   appBarTier: {
     height: 44,
     justifyContent: "center",
+    alignItems: "flex-start",
     borderBottomWidth: StyleSheet.hairlineWidth,
     marginBottom: spacing.md,
   },
