@@ -4,7 +4,7 @@
  * Read-only, member-first experience with society context.
  *
  * Cards (top to bottom):
- *  A) Header Card — identity, role badge, handicap
+ *  A) Premium Header — app bar + society identity hero
  *  B) Next Event Card — upcoming event + FairwayWeather link
  *  C) My Season Snapshot Card — events played, OOM points, rank
  *  D) Order of Merit Teaser Card — top 5 + pinned current user
@@ -12,14 +12,12 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { StyleSheet, View, Pressable, Image, Linking, useWindowDimensions } from "react-native";
+import { StyleSheet, View, Pressable, Image, Linking, type PressableStateCallbackType } from "react-native";
 import { useRouter } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
 import { Feather } from "@expo/vector-icons";
 import * as WebBrowser from "expo-web-browser";
-
-const horizontalLogo = require("@/assets/images/horizontal-logo.png");
-const appIcon = require("@/assets/images/app-icon.png");
+import { useBottomTabBarHeight } from "@react-navigation/bottom-tabs";
 
 import { Screen } from "@/components/ui/Screen";
 import { AppText } from "@/components/ui/AppText";
@@ -41,6 +39,8 @@ import { getColors, spacing, radius } from "@/lib/ui/theme";
 import { formatError, type FormattedError } from "@/lib/ui/formatError";
 import { getSocietyLogoUrl } from "@/lib/societyLogo";
 import { getMySinbooks, type SinbookWithParticipants } from "@/lib/db_supabase/sinbookRepo";
+
+const appIcon = require("@/assets/images/app-icon.png");
 
 // ============================================================================
 // Helpers
@@ -119,6 +119,94 @@ function getInitials(name: string): string {
   return words.slice(0, 2).map((w) => w[0]).join("").toUpperCase();
 }
 
+function HomeAppBar({
+  colors,
+  onOpenSettings,
+}: {
+  colors: ReturnType<typeof getColors>;
+  onOpenSettings: () => void;
+}) {
+  return (
+    <View style={[styles.appBarTier, { borderBottomColor: colors.borderLight }]}>
+      <View style={styles.appBarSpacer} />
+
+      <Pressable
+        onPress={onOpenSettings}
+        hitSlop={8}
+        accessibilityRole="button"
+        accessibilityLabel="Open settings"
+        style={({ pressed }) => [
+          styles.appBarAction,
+          { backgroundColor: colors.backgroundTertiary, borderColor: colors.borderLight },
+          pressed && styles.appBarActionPressed,
+        ]}
+      >
+        <Feather name="settings" size={16} color={colors.textSecondary} />
+      </Pressable>
+    </View>
+  );
+}
+
+function PoweredByFooter({
+  colors,
+}: {
+  colors: ReturnType<typeof getColors>;
+}) {
+  return (
+    <View style={styles.poweredByWrap}>
+      <Image source={appIcon} style={styles.poweredByIcon} resizeMode="contain" />
+      <AppText style={[styles.poweredByText, { color: colors.textTertiary }]}>
+        Powered by Golf Society Hub
+      </AppText>
+    </View>
+  );
+}
+
+function StatTile({
+  colors,
+  icon,
+  label,
+  value,
+  detail,
+  onPress,
+}: {
+  colors: ReturnType<typeof getColors>;
+  icon: keyof typeof Feather.glyphMap;
+  label: string;
+  value: string;
+  detail: string;
+  onPress?: () => void;
+}) {
+  const isDisabled = !onPress;
+  return (
+    <Pressable
+      onPress={onPress}
+      disabled={isDisabled}
+      style={({ pressed }) => [
+        styles.statTilePressable,
+        !isDisabled && pressed && styles.cardPressablePressed,
+      ]}
+    >
+      <AppCard style={[styles.premiumCard, styles.statTileCard]}>
+        <View style={[styles.statTileIconCircle, { backgroundColor: colors.primary + "14" }]}>
+          <Feather name={icon} size={15} color={colors.primary} />
+        </View>
+        <View style={styles.statTileTextWrap}>
+          <AppText variant="small" color="secondary">
+            {label}
+          </AppText>
+          <AppText variant="title" style={styles.statTileValue}>
+            {value}
+          </AppText>
+          <AppText variant="small" color="tertiary" numberOfLines={1}>
+            {detail}
+          </AppText>
+        </View>
+      </AppCard>
+    </Pressable>
+  );
+}
+
 // ============================================================================
 // Main Component
 // ============================================================================
@@ -127,7 +215,11 @@ export default function HomeScreen() {
   const router = useRouter();
   const { society, member, societyId, profile, loading: bootstrapLoading } = useBootstrap();
   const colors = getColors();
-  const { width: screenWidth } = useWindowDimensions();
+  const tabBarHeight = useBottomTabBarHeight();
+  const tabContentStyle = {
+    paddingTop: 16,
+    paddingBottom: tabBarHeight + 24,
+  };
 
   // Data state
   const [events, setEvents] = useState<EventDoc[]>([]);
@@ -267,7 +359,6 @@ export default function HomeScreen() {
 
   const logoUrl = getSocietyLogoUrl(society);
   const memberId = member?.id;
-  const currentYear = new Date().getFullYear();
 
   // Today's date at midnight for comparison
   const today = useMemo(() => {
@@ -344,7 +435,11 @@ export default function HomeScreen() {
 
   if (bootstrapLoading || dataLoading) {
     return (
-      <Screen scrollable>
+      <Screen
+        scrollable
+        style={{ backgroundColor: colors.backgroundSecondary }}
+        contentStyle={[styles.screenContent, tabContentStyle]}
+      >
         <SkeletonCards colors={colors} />
       </Screen>
     );
@@ -358,7 +453,7 @@ export default function HomeScreen() {
   // Render
   // ============================================================================
 
-  // Handicap for header badge — computed once, no IIFE
+  // Handicap and identity meta for hero text
   // Guard: ensure the raw value is a primitive before converting to Number
   const _hiRaw = (member as any)?.handicap_index ?? member?.handicapIndex ?? null;
   const _hiNum =
@@ -369,17 +464,75 @@ export default function HomeScreen() {
     _hiNum != null && Number.isFinite(_hiNum)
       ? `HI ${_hiNum.toFixed(1)}`
       : null;
-
-  const useCompactLogo = screenWidth < 380;
+  const memberDisplayName = String(member?.displayName || member?.name || "Member");
+  const roleLabel = formatRole(member?.role);
+  const heroSecondaryText = memberHiText
+    ? `${memberDisplayName} • ${roleLabel} • ${memberHiText}`
+    : `${memberDisplayName} • ${roleLabel}`;
+  const canOpenLeaderboard = memberHasSeat || memberIsCaptain;
+  const atGlanceRank =
+    mySnapshot && (mySnapshot.rank ?? 0) > 0 ? String(mySnapshot.rank) : "—";
+  const atGlancePoints =
+    mySnapshot && (mySnapshot.totalPoints ?? 0) > 0
+      ? formatPoints(Number(mySnapshot.totalPoints) || 0)
+      : "—";
+  const cardPressStyle = ({ pressed }: PressableStateCallbackType) => [
+    styles.cardPressable,
+    pressed && styles.cardPressablePressed,
+  ];
 
   return (
-    <Screen>
-      {/* Brand header */}
-      <View style={styles.brandHeader}>
-        <Image
-          source={useCompactLogo ? appIcon : horizontalLogo}
-          style={useCompactLogo ? styles.brandHeaderIconCompact : styles.brandHeaderIcon}
-          resizeMode="contain"
+    <Screen
+      style={{ backgroundColor: colors.backgroundSecondary }}
+      contentStyle={[styles.screenContent, tabContentStyle]}
+    >
+      <HomeAppBar
+        colors={colors}
+        onOpenSettings={() => router.push("/(app)/(tabs)/settings")}
+      />
+
+      <AppCard style={[styles.societyHeroCard, styles.premiumCard]}>
+        <View
+          style={[
+            styles.heroLogoFrame,
+            { borderColor: colors.borderLight, backgroundColor: colors.backgroundSecondary },
+          ]}
+        >
+          {logoUrl ? (
+            <Image source={{ uri: logoUrl }} style={styles.heroLogoImage} resizeMode="contain" />
+          ) : (
+            <AppText variant="h1" color="primary">
+              {getInitials(society.name)}
+            </AppText>
+          )}
+        </View>
+        <AppText variant="h1" numberOfLines={1} style={styles.heroSocietyName}>
+          {String(society.name ?? "Society")}
+        </AppText>
+        <AppText variant="caption" color="secondary" numberOfLines={1} style={styles.heroSecondaryText}>
+          {heroSecondaryText}
+        </AppText>
+      </AppCard>
+
+      <View style={[styles.headerDivider, { backgroundColor: colors.divider }]} />
+
+      {/* Smart-caddie style at-a-glance tiles */}
+      <View style={styles.atGlanceRow}>
+        <StatTile
+          colors={colors}
+          icon="award"
+          label="OOM Rank"
+          value={atGlanceRank}
+          detail={mySnapshot && mySnapshot.rank > 0 ? `of ${String(mySnapshot.totalWithPoints)}` : "No rank yet"}
+          onPress={canOpenLeaderboard ? openLeaderboard : undefined}
+        />
+        <StatTile
+          colors={colors}
+          icon="bar-chart-2"
+          label="Points"
+          value={atGlancePoints}
+          detail="Order of Merit"
+          onPress={canOpenLeaderboard ? openLeaderboard : undefined}
         />
       </View>
 
@@ -393,50 +546,11 @@ export default function HomeScreen() {
       )}
 
       {/* ================================================================== */}
-      {/* A) HEADER CARD — Identity                                          */}
-      {/* ================================================================== */}
-      <AppCard style={styles.headerCard}>
-        <View style={styles.headerRow}>
-          {logoUrl ? (
-            <Image source={{ uri: logoUrl }} style={styles.headerLogo} resizeMode="contain" />
-          ) : (
-            <View style={[styles.headerLogoPlaceholder, { backgroundColor: colors.primary + "15" }]}>
-              <AppText variant="h1" color="primary">{getInitials(society.name)}</AppText>
-            </View>
-          )}
-          <View style={styles.headerTextBlock}>
-            <AppText variant="h2" numberOfLines={1}>{String(society.name ?? "Society")}</AppText>
-            <AppText variant="body" color="secondary" numberOfLines={1}>
-              {String(member?.displayName || member?.name || "Member")}
-            </AppText>
-          </View>
-        </View>
-
-        <View style={styles.headerMeta}>
-          {/* Role badge */}
-          <View style={[styles.badge, { backgroundColor: colors.primary + "15" }]}>
-            <AppText variant="small" color="primary" style={{ fontWeight: "600" }}>
-              {formatRole(member?.role)}
-            </AppText>
-          </View>
-
-          {/* Handicap */}
-          {memberHiText ? (
-            <View style={[styles.badge, { backgroundColor: colors.info + "15" }]}>
-              <AppText variant="small" style={{ fontWeight: "600", color: colors.info }}>
-                {memberHiText}
-              </AppText>
-            </View>
-          ) : null}
-        </View>
-      </AppCard>
-
-      {/* ================================================================== */}
       {/* COMPLETE PROFILE BANNER                                            */}
       {/* ================================================================== */}
       {!profileComplete && (
-        <Pressable onPress={() => router.push("/(app)/my-profile")}>
-          <AppCard style={[styles.profileBanner, { borderColor: colors.info + "40" }]}>
+        <Pressable onPress={() => router.push("/(app)/my-profile")} style={cardPressStyle}>
+          <AppCard style={[styles.premiumCard, styles.profileBanner, { borderColor: colors.info + "40" }]}>
             <View style={styles.profileBannerRow}>
               <View style={[styles.profileBannerIcon, { backgroundColor: colors.info + "18" }]}>
                 <Feather name="user" size={20} color={colors.info} />
@@ -457,7 +571,7 @@ export default function HomeScreen() {
       {/* LICENCE BANNER — non-captain members without a seat                */}
       {/* ================================================================== */}
       {showLicenceBanner && (
-        <AppCard style={[styles.licenceBanner, { borderColor: colors.warning + "40" }]}>
+        <AppCard style={[styles.premiumCard, styles.licenceBanner, { borderColor: colors.warning + "40" }]}>
           <View style={styles.licenceBannerHeader}>
             <View style={[styles.licenceBannerIcon, { backgroundColor: colors.warning + "18" }]}>
               <Feather name="alert-circle" size={20} color={colors.warning} />
@@ -514,7 +628,7 @@ export default function HomeScreen() {
         const daysSince = (Date.now() - publishedAt.getTime()) / (1000 * 60 * 60 * 24);
         if (daysSince > 7) return null;
         return (
-          <Pressable onPress={() => openEvent(nextEvent.id)}>
+          <Pressable onPress={() => openEvent(nextEvent.id)} style={cardPressStyle}>
             <View style={[styles.notificationBanner, { backgroundColor: colors.success + "15", borderColor: colors.success + "30" }]}>
               <Feather name="bell" size={16} color={colors.success} />
               <View style={{ flex: 1 }}>
@@ -532,40 +646,59 @@ export default function HomeScreen() {
       })()}
 
       {/* ================================================================== */}
+      {/* WEATHER CARD                                                       */}
+      {/* ================================================================== */}
+      <Pressable onPress={openFairwayWeather} style={cardPressStyle}>
+        <AppCard
+          style={[
+            styles.premiumCard,
+            styles.weatherCard,
+            { backgroundColor: colors.primary + "12", borderColor: colors.primary + "1F" },
+          ]}
+        >
+          <View style={styles.weatherHeader}>
+            <View style={[styles.weatherIconCircle, { backgroundColor: colors.background + "CC" }]}>
+              <Feather name="cloud" size={16} color={colors.primary} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <AppText variant="bodyBold">Course Weather</AppText>
+              <AppText variant="small" color="secondary">
+                Powered by FairwayWeather
+              </AppText>
+            </View>
+            <Feather name="chevron-right" size={16} color={colors.textSecondary} />
+          </View>
+        </AppCard>
+      </Pressable>
+
+      {/* ================================================================== */}
       {/* B) NEXT EVENT CARD                                                 */}
       {/* ================================================================== */}
       {nextEvent ? (
-        <Pressable onPress={() => openEvent(nextEvent.id)}>
-          <AppCard style={styles.nextEventCard} elevated>
+        <Pressable onPress={() => openEvent(nextEvent.id)} style={cardPressStyle}>
+          <AppCard style={[styles.nextEventCard, styles.premiumCard]} elevated>
             <View style={styles.cardTitleRow}>
               <Feather name="calendar" size={16} color={colors.primary} />
               <AppText variant="captionBold" color="primary">Next Event</AppText>
             </View>
 
-            <AppText variant="h2" style={{ marginTop: spacing.xs }}>
+            <AppText variant="title" style={styles.nextEventTitle}>
               {String(nextEvent.name ?? "Event")}
             </AppText>
 
-            {nextEvent.courseName && (
-              <AppText variant="body" color="secondary" style={{ marginTop: 2 }}>
-                {String(nextEvent.courseName)}
-              </AppText>
-            )}
+            <AppText variant="caption" color="secondary" style={styles.nextEventMeta}>
+              {formatEventDate(nextEvent.date)}
+              {nextEvent.courseName ? ` • ${String(nextEvent.courseName)}` : ""}
+            </AppText>
 
             <View style={styles.nextEventDetails}>
-              <View style={styles.nextEventChip}>
-                <Feather name="clock" size={13} color={colors.textSecondary} />
-                <AppText variant="small" color="secondary">{formatEventDate(nextEvent.date)}</AppText>
-              </View>
               {nextEvent.format && (
-                <View style={styles.nextEventChip}>
-                  <Feather name="target" size={13} color={colors.textSecondary} />
+                <View style={[styles.nextEventPill, { backgroundColor: colors.backgroundTertiary, borderColor: colors.borderLight }]}>
                   <AppText variant="small" color="secondary">{formatFormatLabel(nextEvent.format)}</AppText>
                 </View>
               )}
               {nextEvent.classification && (
-                <View style={styles.nextEventChip}>
-                  <Feather name="tag" size={13} color={colors.textSecondary} />
+                <View style={[styles.nextEventPill, { backgroundColor: colors.backgroundTertiary, borderColor: colors.borderLight }]}>
                   <AppText variant="small" color="secondary">{formatClassification(nextEvent.classification)}</AppText>
                 </View>
               )}
@@ -573,52 +706,33 @@ export default function HomeScreen() {
 
             {/* OOM badge */}
             {nextEvent.isOOM && (
-              <View style={[styles.oomBadge, { backgroundColor: colors.warning + "20" }]}>
-                <Feather name="award" size={12} color={colors.warning} />
-                <AppText variant="small" style={{ color: colors.warning, fontWeight: "600", marginLeft: 4 }}>
+              <View style={styles.oomPremiumPill}>
+                <Feather name="award" size={12} color="#9A6700" />
+                <AppText variant="small" style={styles.oomPremiumPillText}>
                   Counts toward Order of Merit
                 </AppText>
               </View>
             )}
 
             {/* Tee time info */}
-            <View style={[styles.teeTimeRow, { borderTopColor: colors.borderLight }]}>
-              <Feather name="flag" size={14} color={nextEvent.teeTimePublishedAt ? colors.success : colors.textTertiary} />
+            <View style={[styles.teeTimeRow, { borderTopColor: colors.borderLight, marginTop: spacing.md }]}>
+              <Feather name="flag" size={14} color={nextEvent.teeTimePublishedAt ? colors.success : colors.textSecondary} />
               {nextEvent.teeTimePublishedAt ? (
-                <AppText variant="small" style={{ color: colors.success, fontWeight: "600" }}>
+                <AppText variant="small" style={{ color: colors.success, fontWeight: "600", flex: 1 }}>
                   Tee times available — First tee: {String(nextEvent.teeTimeStart || "TBC")}
                   {nextEvent.teeTimeInterval ? `, ${String(nextEvent.teeTimeInterval)} min intervals` : ""}
                 </AppText>
               ) : (
-                <AppText variant="small" color="tertiary">Tee times to be published</AppText>
+                <AppText variant="small" color="secondary" style={{ flex: 1 }}>
+                  Tee times to be published
+                </AppText>
               )}
-            </View>
-
-            {/* FairwayWeather mini-card */}
-            <Pressable
-              onPress={openFairwayWeather}
-              style={({ pressed }) => [
-                styles.weatherRow,
-                { backgroundColor: colors.backgroundTertiary, opacity: pressed ? 0.8 : 1 },
-              ]}
-            >
-              <Feather name="cloud" size={14} color={colors.primary} />
-              <AppText variant="small" color="primary" style={{ flex: 1, fontWeight: "500" }}>
-                View detailed forecast
-              </AppText>
-              <AppText variant="small" color="tertiary" style={{ fontSize: 10 }}>
-                Powered by FairwayWeather.com
-              </AppText>
-              <Feather name="external-link" size={12} color={colors.textTertiary} style={{ marginLeft: 4 }} />
-            </Pressable>
-
-            <View style={styles.chevronHint}>
-              <Feather name="chevron-right" size={18} color={colors.textTertiary} />
+              <Feather name="chevron-right" size={16} color={colors.textTertiary} />
             </View>
           </AppCard>
         </Pressable>
       ) : (
-        <AppCard>
+        <AppCard style={[styles.premiumCard, styles.nextEventCard]}>
           <View style={styles.cardTitleRow}>
             <Feather name="calendar" size={16} color={colors.textTertiary} />
             <AppText variant="captionBold" color="tertiary">Next Event</AppText>
@@ -630,57 +744,11 @@ export default function HomeScreen() {
       )}
 
       {/* ================================================================== */}
-      {/* C) MY SEASON SNAPSHOT                                              */}
-      {/* ================================================================== */}
-      {mySnapshot && (
-        <Pressable onPress={openLeaderboard}>
-          <AppCard>
-            <View style={styles.cardTitleRow}>
-              <Feather name="bar-chart-2" size={16} color={colors.primary} />
-              <AppText variant="captionBold" color="primary">My {currentYear} Season</AppText>
-            </View>
-
-            <View style={styles.snapshotGrid}>
-              <View style={styles.snapshotItem}>
-                <AppText variant="h1">
-                  {(mySnapshot.totalPoints ?? 0) > 0 ? formatPoints(Number(mySnapshot.totalPoints) || 0) : "—"}
-                </AppText>
-                <AppText variant="small" color="secondary">Order of Merit Pts</AppText>
-              </View>
-              <View style={[styles.snapshotDivider, { backgroundColor: colors.borderLight }]} />
-              <View style={styles.snapshotItem}>
-                <AppText variant="h1">
-                  {(mySnapshot.rank ?? 0) > 0 ? String(mySnapshot.rank) : "—"}
-                </AppText>
-                <AppText variant="small" color="secondary">
-                  {(mySnapshot.rank ?? 0) > 0 ? `of ${String(mySnapshot.totalWithPoints)}` : "Rank"}
-                </AppText>
-              </View>
-            </View>
-
-            {mySnapshot.totalPoints === 0 && (
-              <AppText
-                variant="small"
-                color="tertiary"
-                style={{ textAlign: "center", marginTop: spacing.sm }}
-              >
-                Play an Order of Merit event to enter the standings
-              </AppText>
-            )}
-
-            <View style={styles.chevronHint}>
-              <Feather name="chevron-right" size={18} color={colors.textTertiary} />
-            </View>
-          </AppCard>
-        </Pressable>
-      )}
-
-      {/* ================================================================== */}
       {/* D) ORDER OF MERIT TEASER                                           */}
       {/* ================================================================== */}
       {oomStandings.length > 0 && (
-        <Pressable onPress={openLeaderboard}>
-          <AppCard>
+        <Pressable onPress={openLeaderboard} style={cardPressStyle}>
+          <AppCard style={styles.premiumCard}>
             <View style={styles.cardTitleRow}>
               <Feather name="award" size={16} color={colors.primary} />
               <AppText variant="captionBold" color="primary">Order of Merit</AppText>
@@ -781,8 +849,8 @@ export default function HomeScreen() {
             }
 
             return (
-              <Pressable key={event.id} onPress={() => openEvent(event.id)}>
-                <AppCard style={styles.recentCard}>
+              <Pressable key={event.id} onPress={() => openEvent(event.id)} style={cardPressStyle}>
+                <AppCard style={[styles.recentCard, styles.premiumCard]}>
                   <View style={styles.recentRow}>
                     <View style={[styles.recentDateBadge, { backgroundColor: colors.backgroundTertiary }]}>
                       <AppText variant="captionBold" color="primary">
@@ -804,7 +872,7 @@ export default function HomeScreen() {
 
       {/* Empty state if absolutely no events */}
       {events.length === 0 && !nextEvent && recentEvents.length === 0 && (
-        <AppCard style={{ marginTop: spacing.sm }}>
+        <AppCard style={[styles.premiumCard, { marginTop: spacing.sm }]}>
           <View style={styles.emptyState}>
             <View style={[styles.emptyIcon, { backgroundColor: colors.backgroundTertiary }]}>
               <Feather name="calendar" size={24} color={colors.textTertiary} />
@@ -819,8 +887,8 @@ export default function HomeScreen() {
       {/* ================================================================== */}
       {/* F) SINBOOK TEASER CARD                                             */}
       {/* ================================================================== */}
-      <Pressable onPress={() => router.push("/(app)/(tabs)/sinbook")}>
-        <AppCard>
+      <Pressable onPress={() => router.push("/(app)/(tabs)/sinbook")} style={cardPressStyle}>
+        <AppCard style={styles.premiumCard}>
           <View style={styles.cardTitleRow}>
             <Feather name="zap" size={16} color={colors.primary} />
             <AppText variant="captionBold" color="primary">Sinbook</AppText>
@@ -848,8 +916,7 @@ export default function HomeScreen() {
 
       </>)}
 
-      {/* Bottom spacing */}
-      <View style={{ height: spacing["2xl"] }} />
+      <PoweredByFooter colors={colors} />
     </Screen>
   );
 }
@@ -865,31 +932,46 @@ function PersonalModeHome({
   colors: ReturnType<typeof getColors>;
   router: ReturnType<typeof useRouter>;
 }) {
+  const tabBarHeight = useBottomTabBarHeight();
+  const tabContentStyle = {
+    paddingTop: 16,
+    paddingBottom: tabBarHeight + 24,
+  };
   const [nudgeDismissed, setNudgeDismissed] = useState(false);
   const { profile: pmProfile } = useBootstrap();
   const pmProfileComplete = pmProfile?.profile_complete === true;
+  const cardPressStyle = ({ pressed }: PressableStateCallbackType) => [
+    styles.cardPressable,
+    pressed && styles.cardPressablePressed,
+  ];
 
   return (
-    <Screen>
+    <Screen
+      style={{ backgroundColor: colors.backgroundSecondary }}
+      contentStyle={[styles.screenContent, tabContentStyle]}
+    >
+      <HomeAppBar
+        colors={colors}
+        onOpenSettings={() => router.push("/(app)/(tabs)/settings")}
+      />
+
       {/* Welcome header */}
-      <View style={personalStyles.welcomeSection}>
-        <Image
-          source={require("@/assets/images/master-logo.png")}
-          style={personalStyles.welcomeLogo}
-          resizeMode="contain"
-        />
+      <AppCard style={[styles.premiumCard, personalStyles.welcomeSection, { borderColor: colors.borderLight }]}>
+        <View style={[personalStyles.welcomeShield, { backgroundColor: colors.primary + "12" }]}>
+          <Image source={appIcon} style={personalStyles.welcomeShieldIcon} resizeMode="contain" />
+        </View>
         <AppText variant="title" style={personalStyles.welcomeTitle}>
           Welcome
         </AppText>
         <AppText variant="body" color="secondary" style={personalStyles.welcomeSubtitle}>
-          Use the app as an individual, or join a society when you're ready.
+          Use the app as an individual, or join a society when you are ready.
         </AppText>
-      </View>
+      </AppCard>
 
       {/* Complete profile banner */}
       {!pmProfileComplete && (
-        <Pressable onPress={() => router.push("/(app)/my-profile")}>
-          <AppCard style={[styles.profileBanner, { borderColor: colors.info + "40" }]}>
+        <Pressable onPress={() => router.push("/(app)/my-profile")} style={cardPressStyle}>
+          <AppCard style={[styles.premiumCard, styles.profileBanner, { borderColor: colors.info + "40" }]}>
             <View style={styles.profileBannerRow}>
               <View style={[styles.profileBannerIcon, { backgroundColor: colors.info + "18" }]}>
                 <Feather name="user" size={20} color={colors.info} />
@@ -907,8 +989,8 @@ function PersonalModeHome({
       )}
 
       {/* Feature cards */}
-      <Pressable onPress={() => router.push("/(app)/(tabs)/sinbook")}>
-        <AppCard>
+      <Pressable onPress={() => router.push("/(app)/(tabs)/sinbook")} style={cardPressStyle}>
+        <AppCard style={styles.premiumCard}>
           <View style={personalStyles.featureRow}>
             <View style={[personalStyles.featureIcon, { backgroundColor: colors.primary + "14" }]}>
               <Feather name="zap" size={20} color={colors.primary} />
@@ -924,7 +1006,7 @@ function PersonalModeHome({
         </AppCard>
       </Pressable>
 
-      <AppCard>
+      <AppCard style={styles.premiumCard}>
         <View style={personalStyles.featureRow}>
           <View style={[personalStyles.featureIcon, { backgroundColor: colors.info + "14" }]}>
             <Feather name="cloud" size={20} color={colors.info} />
@@ -941,8 +1023,8 @@ function PersonalModeHome({
         </View>
       </AppCard>
 
-      <Pressable onPress={() => router.push("/(app)/(tabs)/settings")}>
-        <AppCard>
+      <Pressable onPress={() => router.push("/(app)/(tabs)/settings")} style={cardPressStyle}>
+        <AppCard style={styles.premiumCard}>
           <View style={personalStyles.featureRow}>
             <View style={[personalStyles.featureIcon, { backgroundColor: colors.backgroundTertiary }]}>
               <Feather name="user" size={20} color={colors.textSecondary} />
@@ -960,7 +1042,7 @@ function PersonalModeHome({
 
       {/* Society join nudge — subtle card */}
       {!nudgeDismissed && (
-        <AppCard style={[personalStyles.nudgeCard, { borderColor: colors.primary + "25" }]}>
+        <AppCard style={[styles.premiumCard, personalStyles.nudgeCard, { borderColor: colors.primary + "25" }]}>
           <View style={personalStyles.nudgeHeader}>
             <View style={[personalStyles.nudgeIcon, { backgroundColor: colors.primary + "14" }]}>
               <Feather name="users" size={18} color={colors.primary} />
@@ -1004,7 +1086,7 @@ function PersonalModeHome({
         </AppCard>
       )}
 
-      <View style={{ height: spacing["2xl"] }} />
+      <PoweredByFooter colors={colors} />
     </Screen>
   );
 }
@@ -1012,13 +1094,20 @@ function PersonalModeHome({
 const personalStyles = StyleSheet.create({
   welcomeSection: {
     alignItems: "center",
-    paddingTop: spacing.lg,
-    paddingBottom: spacing.xl,
+    paddingVertical: spacing.xl,
+    marginBottom: spacing.xs,
   },
-  welcomeLogo: {
-    width: 240,
-    height: 190,
+  welcomeShield: {
+    width: 50,
+    height: 50,
+    borderRadius: 14,
+    alignItems: "center",
+    justifyContent: "center",
     marginBottom: spacing.md,
+  },
+  welcomeShieldIcon: {
+    width: 32,
+    height: 32,
   },
   welcomeTitle: {
     textAlign: "center",
@@ -1090,23 +1179,37 @@ function SkeletonCards({ colors }: { colors: ReturnType<typeof getColors> }) {
 
   return (
     <>
-      {/* Header skeleton */}
-      <AppCard>
-        <View style={styles.headerRow}>
-          <View style={[styles.headerLogoPlaceholder, { backgroundColor: shimmer }]} />
-          <View style={styles.headerTextBlock}>
-            <View style={[styles.skeletonLine, { width: "60%", backgroundColor: shimmer }]} />
-            <View style={[styles.skeletonLine, { width: "40%", backgroundColor: shimmer, marginTop: 6 }]} />
-          </View>
+      {/* Two-tier header skeleton */}
+      <View style={[styles.appBarTier, { borderBottomColor: colors.borderLight }]}>
+        <View style={styles.appBarSpacer} />
+        <View style={[styles.appBarAction, { backgroundColor: shimmer, borderColor: colors.borderLight }]} />
+      </View>
+      <AppCard style={[styles.societyHeroCard, styles.premiumCard]}>
+        <View style={[styles.heroLogoFrame, { backgroundColor: shimmer, borderColor: colors.borderLight }]}>
+          <View style={[styles.skeletonCircle, { width: 36, height: 36, borderRadius: 18, backgroundColor: colors.backgroundSecondary }]} />
         </View>
-        <View style={[styles.headerMeta, { marginTop: spacing.sm }]}>
-          <View style={[styles.skeletonBadge, { backgroundColor: shimmer }]} />
-          <View style={[styles.skeletonBadge, { backgroundColor: shimmer }]} />
-        </View>
+        <View style={[styles.skeletonLine, { width: "56%", backgroundColor: shimmer, marginTop: spacing.sm }]} />
+        <View style={[styles.skeletonLine, { width: "70%", backgroundColor: shimmer, marginTop: 6 }]} />
       </AppCard>
+      <View style={[styles.headerDivider, { backgroundColor: colors.borderLight }]} />
+
+      <View style={styles.atGlanceRow}>
+        <AppCard style={[styles.premiumCard, styles.statTileCard]}>
+          <View style={[styles.statTileIconCircle, { backgroundColor: shimmer }]} />
+          <View style={[styles.skeletonLine, { width: "48%", backgroundColor: shimmer, marginBottom: 8 }]} />
+          <View style={[styles.skeletonLine, { width: "34%", backgroundColor: shimmer, marginBottom: 6, height: 20 }]} />
+          <View style={[styles.skeletonLine, { width: "64%", backgroundColor: shimmer }]} />
+        </AppCard>
+        <AppCard style={[styles.premiumCard, styles.statTileCard]}>
+          <View style={[styles.statTileIconCircle, { backgroundColor: shimmer }]} />
+          <View style={[styles.skeletonLine, { width: "48%", backgroundColor: shimmer, marginBottom: 8 }]} />
+          <View style={[styles.skeletonLine, { width: "34%", backgroundColor: shimmer, marginBottom: 6, height: 20 }]} />
+          <View style={[styles.skeletonLine, { width: "64%", backgroundColor: shimmer }]} />
+        </AppCard>
+      </View>
 
       {/* Next event skeleton */}
-      <AppCard>
+      <AppCard style={styles.premiumCard}>
         <View style={[styles.skeletonLine, { width: "30%", backgroundColor: shimmer }]} />
         <View style={[styles.skeletonLine, { width: "80%", backgroundColor: shimmer, marginTop: 10 }]} />
         <View style={[styles.skeletonLine, { width: "50%", backgroundColor: shimmer, marginTop: 6 }]} />
@@ -1117,7 +1220,7 @@ function SkeletonCards({ colors }: { colors: ReturnType<typeof getColors> }) {
       </AppCard>
 
       {/* Snapshot skeleton */}
-      <AppCard>
+      <AppCard style={styles.premiumCard}>
         <View style={[styles.skeletonLine, { width: "40%", backgroundColor: shimmer }]} />
         <View style={{ flexDirection: "row", justifyContent: "space-around", marginTop: 16 }}>
           <View style={[styles.skeletonCircle, { backgroundColor: shimmer }]} />
@@ -1134,59 +1237,131 @@ function SkeletonCards({ colors }: { colors: ReturnType<typeof getColors> }) {
 // ============================================================================
 
 const styles = StyleSheet.create({
-  // Brand header
-  brandHeader: {
-    height: 56,
-    flexDirection: "row",
-    alignItems: "center",
-    marginBottom: spacing.sm,
+  screenContent: {
+    backgroundColor: "transparent",
+    paddingTop: spacing.md,
+    gap: spacing.base,
   },
-  brandHeaderIcon: {
-    height: 48,
-    aspectRatio: 760 / 212,
-    flexShrink: 0,
+  premiumCard: {
+    borderRadius: 22,
+    borderWidth: 1,
+    borderColor: "#F3F4F6",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.06,
+    shadowRadius: 12,
+    elevation: 3,
   },
-  brandHeaderIconCompact: {
-    height: 48,
-    width: 48,
-    flexShrink: 0,
+  cardPressable: {
+    borderRadius: 22,
+  },
+  cardPressablePressed: {
+    opacity: 0.94,
+    transform: [{ scale: 0.995 }],
   },
 
-  // Header Card
-  headerCard: {
-    marginBottom: spacing.base,
-  },
-  headerRow: {
+  // Premium two-tier header
+  appBarTier: {
+    height: 44,
     flexDirection: "row",
+    justifyContent: "space-between",
     alignItems: "center",
-    gap: spacing.md,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    marginBottom: spacing.xs,
   },
-  headerLogo: {
-    width: 56,
-    height: 56,
-    borderRadius: radius.sm,
+  appBarSpacer: {
+    width: 30,
+    height: 30,
   },
-  headerLogoPlaceholder: {
-    width: 56,
-    height: 56,
-    borderRadius: radius.sm,
+  appBarAction: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    borderWidth: 1,
     alignItems: "center",
     justifyContent: "center",
   },
-  headerTextBlock: {
-    flex: 1,
-    minWidth: 0,
+  appBarActionPressed: {
+    opacity: 0.75,
   },
-  headerMeta: {
+  poweredByWrap: {
+    marginTop: spacing.xs,
+    marginBottom: spacing.sm,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 4,
+  },
+  poweredByIcon: {
+    width: 14,
+    height: 14,
+    opacity: 0.55,
+  },
+  poweredByText: {
+    fontSize: 11,
+    lineHeight: 14,
+    opacity: 0.8,
+  },
+  societyHeroCard: {
+    alignItems: "center",
+    paddingVertical: spacing.xl,
+    paddingHorizontal: spacing.base,
+  },
+  heroLogoFrame: {
+    width: 64,
+    height: 64,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    overflow: "hidden",
+  },
+  heroLogoImage: {
+    width: 52,
+    height: 52,
+  },
+  heroSocietyName: {
+    marginTop: spacing.sm,
+    textAlign: "center",
+    fontWeight: "700",
+  },
+  heroSecondaryText: {
+    marginTop: 4,
+    textAlign: "center",
+  },
+  headerDivider: {
+    height: 1,
+    opacity: 0.7,
+    marginTop: spacing.xs,
+  },
+  atGlanceRow: {
     flexDirection: "row",
     gap: spacing.sm,
-    marginTop: spacing.sm,
-    flexWrap: "wrap",
   },
-  badge: {
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 4,
-    borderRadius: radius.full,
+  statTilePressable: {
+    flex: 1,
+  },
+  statTileCard: {
+    marginBottom: 0,
+    minHeight: 118,
+    paddingVertical: spacing.md,
+    paddingHorizontal: spacing.md,
+  },
+  statTileIconCircle: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: spacing.sm,
+  },
+  statTileTextWrap: {
+    minHeight: 62,
+    justifyContent: "space-between",
+  },
+  statTileValue: {
+    marginTop: 2,
+    marginBottom: 1,
   },
 
   // Profile banner
@@ -1248,27 +1423,69 @@ const styles = StyleSheet.create({
     marginBottom: spacing.base,
   },
 
+  // Weather card
+  weatherCard: {
+    marginBottom: spacing.xs,
+  },
+  weatherHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+  },
+  weatherIconCircle: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
   // Card title row
   cardTitleRow: {
     flexDirection: "row",
     alignItems: "center",
-    gap: spacing.xs,
+    gap: spacing.sm,
+    marginBottom: 2,
   },
 
   // Next Event Card
   nextEventCard: {
-    marginBottom: spacing.base,
+    marginBottom: spacing.md,
+  },
+  nextEventTitle: {
+    marginTop: spacing.xs,
+  },
+  nextEventMeta: {
+    marginTop: 4,
   },
   nextEventDetails: {
     flexDirection: "row",
     flexWrap: "wrap",
-    gap: spacing.sm,
+    gap: spacing.xs,
     marginTop: spacing.sm,
   },
-  nextEventChip: {
+  nextEventPill: {
+    borderWidth: 1,
+    borderRadius: radius.full,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 5,
+  },
+  oomPremiumPill: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 4,
+    alignSelf: "flex-start",
+    borderRadius: radius.full,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 5,
+    backgroundColor: "#FFFBEB",
+    borderWidth: 1,
+    borderColor: "#FDE68A",
+    marginTop: spacing.sm,
+  },
+  oomPremiumPillText: {
+    color: "#9A6700",
+    fontWeight: "600",
+    marginLeft: 4,
   },
   oomBadge: {
     flexDirection: "row",
@@ -1283,20 +1500,8 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: spacing.xs,
-    marginTop: spacing.sm,
     paddingTop: spacing.sm,
     borderTopWidth: 1,
-  },
-
-  // FairwayWeather
-  weatherRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing.xs,
-    marginTop: spacing.sm,
-    paddingVertical: spacing.sm,
-    paddingHorizontal: spacing.sm,
-    borderRadius: radius.sm,
   },
 
   // Chevron hint
@@ -1305,7 +1510,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "flex-end",
     gap: 4,
-    marginTop: spacing.sm,
+    marginTop: spacing.md,
   },
 
   // Season Snapshot
@@ -1345,9 +1550,10 @@ const styles = StyleSheet.create({
   // Recent Activity
   sectionTitle: {
     marginBottom: spacing.sm,
+    marginTop: spacing.xs,
   },
   recentCard: {
-    marginBottom: spacing.xs,
+    marginBottom: spacing.sm,
   },
   recentRow: {
     flexDirection: "row",
@@ -1365,7 +1571,7 @@ const styles = StyleSheet.create({
   // Empty state
   emptyState: {
     alignItems: "center",
-    paddingVertical: spacing.lg,
+    paddingVertical: spacing.xl,
   },
   emptyIcon: {
     width: 48,
