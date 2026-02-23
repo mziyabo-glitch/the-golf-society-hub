@@ -4,7 +4,7 @@
  * Read-only, member-first experience with society context.
  *
  * Cards (top to bottom):
- *  A) Header Card — identity, role badge, handicap
+ *  A) Premium Header — app bar + society identity hero
  *  B) Next Event Card — upcoming event + FairwayWeather link
  *  C) My Season Snapshot Card — events played, OOM points, rank
  *  D) Order of Merit Teaser Card — top 5 + pinned current user
@@ -12,13 +12,12 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { StyleSheet, View, Pressable, Image, Linking, useWindowDimensions } from "react-native";
+import { StyleSheet, View, Pressable, Image, Linking } from "react-native";
 import { useRouter } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
 import { Feather } from "@expo/vector-icons";
 import * as WebBrowser from "expo-web-browser";
 
-const horizontalLogo = require("@/assets/images/horizontal-logo.png");
 const appIcon = require("@/assets/images/app-icon.png");
 
 import { Screen } from "@/components/ui/Screen";
@@ -127,7 +126,6 @@ export default function HomeScreen() {
   const router = useRouter();
   const { society, member, societyId, profile, loading: bootstrapLoading } = useBootstrap();
   const colors = getColors();
-  const { width: screenWidth } = useWindowDimensions();
 
   // Data state
   const [events, setEvents] = useState<EventDoc[]>([]);
@@ -358,7 +356,7 @@ export default function HomeScreen() {
   // Render
   // ============================================================================
 
-  // Handicap for header badge — computed once, no IIFE
+  // Handicap and identity meta for hero text
   // Guard: ensure the raw value is a primitive before converting to Number
   const _hiRaw = (member as any)?.handicap_index ?? member?.handicapIndex ?? null;
   const _hiNum =
@@ -369,18 +367,50 @@ export default function HomeScreen() {
     _hiNum != null && Number.isFinite(_hiNum)
       ? `HI ${_hiNum.toFixed(1)}`
       : null;
-
-  const useCompactLogo = screenWidth < 380;
+  const memberDisplayName = String(member?.displayName || member?.name || "Member");
+  const roleLabel = formatRole(member?.role);
+  const heroSecondaryText = memberHiText
+    ? `${memberDisplayName} • ${roleLabel} • ${memberHiText}`
+    : `${memberDisplayName} • ${roleLabel}`;
 
   return (
     <Screen>
-      {/* Brand header */}
-      <View style={styles.brandHeader}>
-        <Image
-          source={useCompactLogo ? appIcon : horizontalLogo}
-          style={useCompactLogo ? styles.brandHeaderIconCompact : styles.brandHeaderIcon}
-          resizeMode="contain"
-        />
+      {/* Premium two-tier header */}
+      <View style={styles.headerTierWrap}>
+        <View style={[styles.appBarTier, { borderBottomColor: colors.borderLight }]}>
+          <View style={[styles.appBarLogoFrame, { backgroundColor: colors.backgroundSecondary }]}>
+            <Image
+              source={appIcon}
+              style={styles.appBarLogo}
+              resizeMode="contain"
+            />
+          </View>
+        </View>
+
+        <AppCard style={[styles.societyHeroCard, styles.premiumCard]}>
+          <View
+            style={[
+              styles.heroLogoFrame,
+              { borderColor: colors.borderLight, backgroundColor: colors.backgroundSecondary },
+            ]}
+          >
+            {logoUrl ? (
+              <Image source={{ uri: logoUrl }} style={styles.heroLogoImage} resizeMode="contain" />
+            ) : (
+              <AppText variant="h1" color="primary">
+                {getInitials(society.name)}
+              </AppText>
+            )}
+          </View>
+          <AppText variant="h1" numberOfLines={1} style={styles.heroSocietyName}>
+            {String(society.name ?? "Society")}
+          </AppText>
+          <AppText variant="caption" color="secondary" numberOfLines={1} style={styles.heroSecondaryText}>
+            {heroSecondaryText}
+          </AppText>
+        </AppCard>
+
+        <View style={[styles.headerDivider, { backgroundColor: colors.divider }]} />
       </View>
 
       {loadError && (
@@ -393,50 +423,11 @@ export default function HomeScreen() {
       )}
 
       {/* ================================================================== */}
-      {/* A) HEADER CARD — Identity                                          */}
-      {/* ================================================================== */}
-      <AppCard style={styles.headerCard}>
-        <View style={styles.headerRow}>
-          {logoUrl ? (
-            <Image source={{ uri: logoUrl }} style={styles.headerLogo} resizeMode="contain" />
-          ) : (
-            <View style={[styles.headerLogoPlaceholder, { backgroundColor: colors.primary + "15" }]}>
-              <AppText variant="h1" color="primary">{getInitials(society.name)}</AppText>
-            </View>
-          )}
-          <View style={styles.headerTextBlock}>
-            <AppText variant="h2" numberOfLines={1}>{String(society.name ?? "Society")}</AppText>
-            <AppText variant="body" color="secondary" numberOfLines={1}>
-              {String(member?.displayName || member?.name || "Member")}
-            </AppText>
-          </View>
-        </View>
-
-        <View style={styles.headerMeta}>
-          {/* Role badge */}
-          <View style={[styles.badge, { backgroundColor: colors.primary + "15" }]}>
-            <AppText variant="small" color="primary" style={{ fontWeight: "600" }}>
-              {formatRole(member?.role)}
-            </AppText>
-          </View>
-
-          {/* Handicap */}
-          {memberHiText ? (
-            <View style={[styles.badge, { backgroundColor: colors.info + "15" }]}>
-              <AppText variant="small" style={{ fontWeight: "600", color: colors.info }}>
-                {memberHiText}
-              </AppText>
-            </View>
-          ) : null}
-        </View>
-      </AppCard>
-
-      {/* ================================================================== */}
       {/* COMPLETE PROFILE BANNER                                            */}
       {/* ================================================================== */}
       {!profileComplete && (
         <Pressable onPress={() => router.push("/(app)/my-profile")}>
-          <AppCard style={[styles.profileBanner, { borderColor: colors.info + "40" }]}>
+          <AppCard style={[styles.premiumCard, styles.profileBanner, { borderColor: colors.info + "40" }]}>
             <View style={styles.profileBannerRow}>
               <View style={[styles.profileBannerIcon, { backgroundColor: colors.info + "18" }]}>
                 <Feather name="user" size={20} color={colors.info} />
@@ -457,7 +448,7 @@ export default function HomeScreen() {
       {/* LICENCE BANNER — non-captain members without a seat                */}
       {/* ================================================================== */}
       {showLicenceBanner && (
-        <AppCard style={[styles.licenceBanner, { borderColor: colors.warning + "40" }]}>
+        <AppCard style={[styles.premiumCard, styles.licenceBanner, { borderColor: colors.warning + "40" }]}>
           <View style={styles.licenceBannerHeader}>
             <View style={[styles.licenceBannerIcon, { backgroundColor: colors.warning + "18" }]}>
               <Feather name="alert-circle" size={20} color={colors.warning} />
@@ -536,7 +527,7 @@ export default function HomeScreen() {
       {/* ================================================================== */}
       {nextEvent ? (
         <Pressable onPress={() => openEvent(nextEvent.id)}>
-          <AppCard style={styles.nextEventCard} elevated>
+          <AppCard style={[styles.nextEventCard, styles.premiumCard]} elevated>
             <View style={styles.cardTitleRow}>
               <Feather name="calendar" size={16} color={colors.primary} />
               <AppText variant="captionBold" color="primary">Next Event</AppText>
@@ -618,7 +609,7 @@ export default function HomeScreen() {
           </AppCard>
         </Pressable>
       ) : (
-        <AppCard>
+        <AppCard style={styles.premiumCard}>
           <View style={styles.cardTitleRow}>
             <Feather name="calendar" size={16} color={colors.textTertiary} />
             <AppText variant="captionBold" color="tertiary">Next Event</AppText>
@@ -634,7 +625,7 @@ export default function HomeScreen() {
       {/* ================================================================== */}
       {mySnapshot && (
         <Pressable onPress={openLeaderboard}>
-          <AppCard>
+          <AppCard style={styles.premiumCard}>
             <View style={styles.cardTitleRow}>
               <Feather name="bar-chart-2" size={16} color={colors.primary} />
               <AppText variant="captionBold" color="primary">My {currentYear} Season</AppText>
@@ -680,7 +671,7 @@ export default function HomeScreen() {
       {/* ================================================================== */}
       {oomStandings.length > 0 && (
         <Pressable onPress={openLeaderboard}>
-          <AppCard>
+          <AppCard style={styles.premiumCard}>
             <View style={styles.cardTitleRow}>
               <Feather name="award" size={16} color={colors.primary} />
               <AppText variant="captionBold" color="primary">Order of Merit</AppText>
@@ -782,7 +773,7 @@ export default function HomeScreen() {
 
             return (
               <Pressable key={event.id} onPress={() => openEvent(event.id)}>
-                <AppCard style={styles.recentCard}>
+                <AppCard style={[styles.recentCard, styles.premiumCard]}>
                   <View style={styles.recentRow}>
                     <View style={[styles.recentDateBadge, { backgroundColor: colors.backgroundTertiary }]}>
                       <AppText variant="captionBold" color="primary">
@@ -804,7 +795,7 @@ export default function HomeScreen() {
 
       {/* Empty state if absolutely no events */}
       {events.length === 0 && !nextEvent && recentEvents.length === 0 && (
-        <AppCard style={{ marginTop: spacing.sm }}>
+        <AppCard style={[styles.premiumCard, { marginTop: spacing.sm }]}>
           <View style={styles.emptyState}>
             <View style={[styles.emptyIcon, { backgroundColor: colors.backgroundTertiary }]}>
               <Feather name="calendar" size={24} color={colors.textTertiary} />
@@ -820,7 +811,7 @@ export default function HomeScreen() {
       {/* F) SINBOOK TEASER CARD                                             */}
       {/* ================================================================== */}
       <Pressable onPress={() => router.push("/(app)/(tabs)/sinbook")}>
-        <AppCard>
+        <AppCard style={styles.premiumCard}>
           <View style={styles.cardTitleRow}>
             <Feather name="zap" size={16} color={colors.primary} />
             <AppText variant="captionBold" color="primary">Sinbook</AppText>
@@ -1090,23 +1081,23 @@ function SkeletonCards({ colors }: { colors: ReturnType<typeof getColors> }) {
 
   return (
     <>
-      {/* Header skeleton */}
-      <AppCard>
-        <View style={styles.headerRow}>
-          <View style={[styles.headerLogoPlaceholder, { backgroundColor: shimmer }]} />
-          <View style={styles.headerTextBlock}>
-            <View style={[styles.skeletonLine, { width: "60%", backgroundColor: shimmer }]} />
-            <View style={[styles.skeletonLine, { width: "40%", backgroundColor: shimmer, marginTop: 6 }]} />
-          </View>
+      {/* Two-tier header skeleton */}
+      <View style={[styles.appBarTier, { borderBottomColor: colors.borderLight }]}>
+        <View style={[styles.appBarLogoFrame, { backgroundColor: shimmer }]}>
+          <View style={[styles.skeletonCircle, { width: 20, height: 20, borderRadius: 10, backgroundColor: colors.backgroundSecondary }]} />
         </View>
-        <View style={[styles.headerMeta, { marginTop: spacing.sm }]}>
-          <View style={[styles.skeletonBadge, { backgroundColor: shimmer }]} />
-          <View style={[styles.skeletonBadge, { backgroundColor: shimmer }]} />
+      </View>
+      <AppCard style={[styles.societyHeroCard, styles.premiumCard]}>
+        <View style={[styles.heroLogoFrame, { backgroundColor: shimmer, borderColor: colors.borderLight }]}>
+          <View style={[styles.skeletonCircle, { width: 36, height: 36, borderRadius: 18, backgroundColor: colors.backgroundSecondary }]} />
         </View>
+        <View style={[styles.skeletonLine, { width: "56%", backgroundColor: shimmer, marginTop: spacing.sm }]} />
+        <View style={[styles.skeletonLine, { width: "70%", backgroundColor: shimmer, marginTop: 6 }]} />
       </AppCard>
+      <View style={[styles.headerDivider, { backgroundColor: colors.borderLight }]} />
 
       {/* Next event skeleton */}
-      <AppCard>
+      <AppCard style={styles.premiumCard}>
         <View style={[styles.skeletonLine, { width: "30%", backgroundColor: shimmer }]} />
         <View style={[styles.skeletonLine, { width: "80%", backgroundColor: shimmer, marginTop: 10 }]} />
         <View style={[styles.skeletonLine, { width: "50%", backgroundColor: shimmer, marginTop: 6 }]} />
@@ -1117,7 +1108,7 @@ function SkeletonCards({ colors }: { colors: ReturnType<typeof getColors> }) {
       </AppCard>
 
       {/* Snapshot skeleton */}
-      <AppCard>
+      <AppCard style={styles.premiumCard}>
         <View style={[styles.skeletonLine, { width: "40%", backgroundColor: shimmer }]} />
         <View style={{ flexDirection: "row", justifyContent: "space-around", marginTop: 16 }}>
           <View style={[styles.skeletonCircle, { backgroundColor: shimmer }]} />
@@ -1134,59 +1125,67 @@ function SkeletonCards({ colors }: { colors: ReturnType<typeof getColors> }) {
 // ============================================================================
 
 const styles = StyleSheet.create({
-  // Brand header
-  brandHeader: {
-    height: 56,
-    flexDirection: "row",
-    alignItems: "center",
-    marginBottom: spacing.sm,
-  },
-  brandHeaderIcon: {
-    height: 48,
-    aspectRatio: 760 / 212,
-    flexShrink: 0,
-  },
-  brandHeaderIconCompact: {
-    height: 48,
-    width: 48,
-    flexShrink: 0,
+  premiumCard: {
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.08,
+    shadowRadius: 10,
+    elevation: 4,
   },
 
-  // Header Card
-  headerCard: {
+  // Premium two-tier header
+  headerTierWrap: {
     marginBottom: spacing.base,
   },
-  headerRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing.md,
+  appBarTier: {
+    height: 44,
+    justifyContent: "center",
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    marginBottom: spacing.md,
   },
-  headerLogo: {
-    width: 56,
-    height: 56,
-    borderRadius: radius.sm,
-  },
-  headerLogoPlaceholder: {
-    width: 56,
-    height: 56,
-    borderRadius: radius.sm,
+  appBarLogoFrame: {
+    width: 26,
+    height: 26,
+    borderRadius: 8,
     alignItems: "center",
     justifyContent: "center",
+    opacity: 0.86,
   },
-  headerTextBlock: {
-    flex: 1,
-    minWidth: 0,
+  appBarLogo: {
+    width: 18,
+    height: 18,
   },
-  headerMeta: {
-    flexDirection: "row",
-    gap: spacing.sm,
+  societyHeroCard: {
+    alignItems: "center",
+    paddingVertical: spacing.lg,
+    marginBottom: spacing.sm,
+  },
+  heroLogoFrame: {
+    width: 64,
+    height: 64,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    overflow: "hidden",
+  },
+  heroLogoImage: {
+    width: 52,
+    height: 52,
+  },
+  heroSocietyName: {
     marginTop: spacing.sm,
-    flexWrap: "wrap",
+    textAlign: "center",
   },
-  badge: {
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 4,
-    borderRadius: radius.full,
+  heroSecondaryText: {
+    marginTop: 4,
+    textAlign: "center",
+  },
+  headerDivider: {
+    height: 1,
+    opacity: 0.75,
   },
 
   // Profile banner
@@ -1252,18 +1251,19 @@ const styles = StyleSheet.create({
   cardTitleRow: {
     flexDirection: "row",
     alignItems: "center",
-    gap: spacing.xs,
+    gap: spacing.sm,
+    marginBottom: 2,
   },
 
   // Next Event Card
   nextEventCard: {
-    marginBottom: spacing.base,
+    marginBottom: spacing.md,
   },
   nextEventDetails: {
     flexDirection: "row",
     flexWrap: "wrap",
     gap: spacing.sm,
-    marginTop: spacing.sm,
+    marginTop: spacing.md,
   },
   nextEventChip: {
     flexDirection: "row",
@@ -1305,7 +1305,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "flex-end",
     gap: 4,
-    marginTop: spacing.sm,
+    marginTop: spacing.md,
   },
 
   // Season Snapshot
@@ -1345,9 +1345,10 @@ const styles = StyleSheet.create({
   // Recent Activity
   sectionTitle: {
     marginBottom: spacing.sm,
+    marginTop: spacing.xs,
   },
   recentCard: {
-    marginBottom: spacing.xs,
+    marginBottom: spacing.sm,
   },
   recentRow: {
     flexDirection: "row",
@@ -1365,7 +1366,7 @@ const styles = StyleSheet.create({
   // Empty state
   emptyState: {
     alignItems: "center",
-    paddingVertical: spacing.lg,
+    paddingVertical: spacing.xl,
   },
   emptyIcon: {
     width: 48,
