@@ -12,6 +12,7 @@ import {
   RefreshControl,
 } from "react-native";
 import { useRouter } from "expo-router";
+import { useFocusEffect } from "@react-navigation/native";
 import { Feather } from "@expo/vector-icons";
 import { BottomTabBarHeightContext } from "@react-navigation/bottom-tabs";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -60,6 +61,12 @@ export default function RollOfHonourScreen() {
   useEffect(() => {
     loadData();
   }, [loadData]);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (societyId) loadData();
+    }, [societyId, loadData])
+  );
 
   const onRefresh = useCallback(() => {
     setRefreshing(true);

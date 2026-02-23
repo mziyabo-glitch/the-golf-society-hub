@@ -65,19 +65,21 @@ export default function ChampionDetailScreen() {
     ? champion.member_display_name || champion.member_name || "Champion"
     : "";
 
-  const handleDelete = async () => {
+  const handleDelete = () => {
     if (!champion || !canManage) return;
-    const ok = await confirmDestructive(
+    confirmDestructive(
       "Delete Champion",
-      `Remove ${championName} (${champion.season_year}) from the Roll of Honour?`
+      `Remove ${championName} (${champion.season_year}) from the Roll of Honour?`,
+      "Delete",
+      async () => {
+        try {
+          await deleteOomChampion(champion.id);
+          router.back();
+        } catch (err: any) {
+          setError(err?.message || "Failed to delete");
+        }
+      }
     );
-    if (!ok) return;
-    try {
-      await deleteOomChampion(champion.id);
-      router.back();
-    } catch (err: any) {
-      setError(err?.message || "Failed to delete");
-    }
   };
 
   if (!id) {

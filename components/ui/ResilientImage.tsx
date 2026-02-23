@@ -2,7 +2,7 @@
  * Resilient Image - never blank, shows placeholder on load error
  */
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Image, View, StyleSheet, ImageStyle } from "react-native";
 import { Feather } from "@expo/vector-icons";
 import { getColors } from "@/lib/ui/theme";
@@ -22,6 +22,10 @@ export function ResilientImage({
 }: ResilientImageProps) {
   const [error, setError] = useState(false);
   const colors = getColors();
+
+  useEffect(() => {
+    setError(false);
+  }, [uri]);
 
   if (!uri || uri.trim() === "" || error) {
     return (
