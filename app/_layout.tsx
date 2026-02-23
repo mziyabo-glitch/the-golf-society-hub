@@ -38,7 +38,7 @@ function RootNavigator() {
     const inOnboarding = segments[0] === "onboarding";
     const inSinbookInvite = segments[0] === "sinbook";
     const inPublicRoute = isPublicPath || segments[0] === "reset-password";
-    const inMyProfile = segments[0] === "(app)" && segments[1] === "my-profile";
+    const inMyProfile = pathname === "/(app)/my-profile";
     const hasSociety = !!activeSocietyId;
     const needsProfileCompletion = !!profile && !profile.profile_complete;
 

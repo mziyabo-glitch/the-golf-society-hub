@@ -12,7 +12,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { StyleSheet, View, Pressable, Image, Linking } from "react-native";
+import { StyleSheet, View, Pressable, Image, Linking, type PressableStateCallbackType } from "react-native";
 import { useRouter } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
 import { Feather } from "@expo/vector-icons";
@@ -116,6 +116,86 @@ function getInitials(name: string): string {
   const words = name.trim().split(/\s+/);
   if (words.length === 1) return name.substring(0, 2).toUpperCase();
   return words.slice(0, 2).map((w) => w[0]).join("").toUpperCase();
+}
+
+function HomeAppBar({
+  colors,
+  onOpenSettings,
+}: {
+  colors: ReturnType<typeof getColors>;
+  onOpenSettings: () => void;
+}) {
+  return (
+    <View style={[styles.appBarTier, { borderBottomColor: colors.borderLight }]}>
+      <View style={styles.appBarLeft}>
+        <View style={[styles.appBarLogoFrame, { backgroundColor: colors.backgroundTertiary }]}>
+          <Image source={appIcon} style={styles.appBarLogo} resizeMode="contain" />
+        </View>
+        <AppText variant="small" color="tertiary" numberOfLines={1} style={styles.appBarLabel}>
+          Golf Society Hub
+        </AppText>
+      </View>
+
+      <Pressable
+        onPress={onOpenSettings}
+        hitSlop={8}
+        accessibilityRole="button"
+        accessibilityLabel="Open settings"
+        style={({ pressed }) => [
+          styles.appBarAction,
+          { backgroundColor: colors.backgroundTertiary, borderColor: colors.borderLight },
+          pressed && styles.appBarActionPressed,
+        ]}
+      >
+        <Feather name="settings" size={16} color={colors.textSecondary} />
+      </Pressable>
+    </View>
+  );
+}
+
+function StatTile({
+  colors,
+  icon,
+  label,
+  value,
+  detail,
+  onPress,
+}: {
+  colors: ReturnType<typeof getColors>;
+  icon: keyof typeof Feather.glyphMap;
+  label: string;
+  value: string;
+  detail: string;
+  onPress?: () => void;
+}) {
+  const isDisabled = !onPress;
+  return (
+    <Pressable
+      onPress={onPress}
+      disabled={isDisabled}
+      style={({ pressed }) => [
+        styles.statTilePressable,
+        !isDisabled && pressed && styles.cardPressablePressed,
+      ]}
+    >
+      <AppCard style={[styles.premiumCard, styles.statTileCard]}>
+        <View style={[styles.statTileIconCircle, { backgroundColor: colors.primary + "14" }]}>
+          <Feather name={icon} size={15} color={colors.primary} />
+        </View>
+        <View style={styles.statTileTextWrap}>
+          <AppText variant="small" color="secondary">
+            {label}
+          </AppText>
+          <AppText variant="title" style={styles.statTileValue}>
+            {value}
+          </AppText>
+          <AppText variant="small" color="tertiary" numberOfLines={1}>
+            {detail}
+          </AppText>
+        </View>
+      </AppCard>
+    </Pressable>
+  );
 }
 
 // ============================================================================
@@ -265,7 +345,6 @@ export default function HomeScreen() {
 
   const logoUrl = getSocietyLogoUrl(society);
   const memberId = member?.id;
-  const currentYear = new Date().getFullYear();
 
   // Today's date at midnight for comparison
   const today = useMemo(() => {
@@ -342,7 +421,11 @@ export default function HomeScreen() {
 
   if (bootstrapLoading || dataLoading) {
     return (
-      <Screen scrollable>
+      <Screen
+        scrollable
+        style={{ backgroundColor: colors.backgroundSecondary }}
+        contentStyle={styles.screenContent}
+      >
         <SkeletonCards colors={colors} />
       </Screen>
     );
@@ -372,45 +455,68 @@ export default function HomeScreen() {
   const heroSecondaryText = memberHiText
     ? `${memberDisplayName} • ${roleLabel} • ${memberHiText}`
     : `${memberDisplayName} • ${roleLabel}`;
+  const canOpenLeaderboard = memberHasSeat || memberIsCaptain;
+  const atGlanceRank =
+    mySnapshot && (mySnapshot.rank ?? 0) > 0 ? String(mySnapshot.rank) : "—";
+  const atGlancePoints =
+    mySnapshot && (mySnapshot.totalPoints ?? 0) > 0
+      ? formatPoints(Number(mySnapshot.totalPoints) || 0)
+      : "—";
+  const cardPressStyle = ({ pressed }: PressableStateCallbackType) => [
+    styles.cardPressable,
+    pressed && styles.cardPressablePressed,
+  ];
 
   return (
-    <Screen>
-      {/* Premium two-tier header */}
-      <View style={styles.headerTierWrap}>
-        <View style={[styles.appBarTier, { borderBottomColor: colors.borderLight }]}>
-          <View style={[styles.appBarLogoFrame, { backgroundColor: colors.backgroundSecondary }]}>
-            <Image
-              source={appIcon}
-              style={styles.appBarLogo}
-              resizeMode="contain"
-            />
-          </View>
+    <Screen style={{ backgroundColor: colors.backgroundSecondary }} contentStyle={styles.screenContent}>
+      <HomeAppBar
+        colors={colors}
+        onOpenSettings={() => router.push("/(app)/(tabs)/settings")}
+      />
+
+      <AppCard style={[styles.societyHeroCard, styles.premiumCard]}>
+        <View
+          style={[
+            styles.heroLogoFrame,
+            { borderColor: colors.borderLight, backgroundColor: colors.backgroundSecondary },
+          ]}
+        >
+          {logoUrl ? (
+            <Image source={{ uri: logoUrl }} style={styles.heroLogoImage} resizeMode="contain" />
+          ) : (
+            <AppText variant="h1" color="primary">
+              {getInitials(society.name)}
+            </AppText>
+          )}
         </View>
+        <AppText variant="h1" numberOfLines={1} style={styles.heroSocietyName}>
+          {String(society.name ?? "Society")}
+        </AppText>
+        <AppText variant="caption" color="secondary" numberOfLines={1} style={styles.heroSecondaryText}>
+          {heroSecondaryText}
+        </AppText>
+      </AppCard>
 
-        <AppCard style={[styles.societyHeroCard, styles.premiumCard]}>
-          <View
-            style={[
-              styles.heroLogoFrame,
-              { borderColor: colors.borderLight, backgroundColor: colors.backgroundSecondary },
-            ]}
-          >
-            {logoUrl ? (
-              <Image source={{ uri: logoUrl }} style={styles.heroLogoImage} resizeMode="contain" />
-            ) : (
-              <AppText variant="h1" color="primary">
-                {getInitials(society.name)}
-              </AppText>
-            )}
-          </View>
-          <AppText variant="h1" numberOfLines={1} style={styles.heroSocietyName}>
-            {String(society.name ?? "Society")}
-          </AppText>
-          <AppText variant="caption" color="secondary" numberOfLines={1} style={styles.heroSecondaryText}>
-            {heroSecondaryText}
-          </AppText>
-        </AppCard>
+      <View style={[styles.headerDivider, { backgroundColor: colors.divider }]} />
 
-        <View style={[styles.headerDivider, { backgroundColor: colors.divider }]} />
+      {/* Smart-caddie style at-a-glance tiles */}
+      <View style={styles.atGlanceRow}>
+        <StatTile
+          colors={colors}
+          icon="award"
+          label="OOM Rank"
+          value={atGlanceRank}
+          detail={mySnapshot && mySnapshot.rank > 0 ? `of ${String(mySnapshot.totalWithPoints)}` : "No rank yet"}
+          onPress={canOpenLeaderboard ? openLeaderboard : undefined}
+        />
+        <StatTile
+          colors={colors}
+          icon="bar-chart-2"
+          label="Points"
+          value={atGlancePoints}
+          detail="Order of Merit"
+          onPress={canOpenLeaderboard ? openLeaderboard : undefined}
+        />
       </View>
 
       {loadError && (
@@ -426,7 +532,7 @@ export default function HomeScreen() {
       {/* COMPLETE PROFILE BANNER                                            */}
       {/* ================================================================== */}
       {!profileComplete && (
-        <Pressable onPress={() => router.push("/(app)/my-profile")}>
+        <Pressable onPress={() => router.push("/(app)/my-profile")} style={cardPressStyle}>
           <AppCard style={[styles.premiumCard, styles.profileBanner, { borderColor: colors.info + "40" }]}>
             <View style={styles.profileBannerRow}>
               <View style={[styles.profileBannerIcon, { backgroundColor: colors.info + "18" }]}>
@@ -505,7 +611,7 @@ export default function HomeScreen() {
         const daysSince = (Date.now() - publishedAt.getTime()) / (1000 * 60 * 60 * 24);
         if (daysSince > 7) return null;
         return (
-          <Pressable onPress={() => openEvent(nextEvent.id)}>
+          <Pressable onPress={() => openEvent(nextEvent.id)} style={cardPressStyle}>
             <View style={[styles.notificationBanner, { backgroundColor: colors.success + "15", borderColor: colors.success + "30" }]}>
               <Feather name="bell" size={16} color={colors.success} />
               <View style={{ flex: 1 }}>
@@ -523,40 +629,59 @@ export default function HomeScreen() {
       })()}
 
       {/* ================================================================== */}
+      {/* WEATHER CARD                                                       */}
+      {/* ================================================================== */}
+      <Pressable onPress={openFairwayWeather} style={cardPressStyle}>
+        <AppCard
+          style={[
+            styles.premiumCard,
+            styles.weatherCard,
+            { backgroundColor: colors.primary + "12", borderColor: colors.primary + "1F" },
+          ]}
+        >
+          <View style={styles.weatherHeader}>
+            <View style={[styles.weatherIconCircle, { backgroundColor: colors.background + "CC" }]}>
+              <Feather name="cloud" size={16} color={colors.primary} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <AppText variant="bodyBold">Course Weather</AppText>
+              <AppText variant="small" color="secondary">
+                Powered by FairwayWeather
+              </AppText>
+            </View>
+            <Feather name="chevron-right" size={16} color={colors.textSecondary} />
+          </View>
+        </AppCard>
+      </Pressable>
+
+      {/* ================================================================== */}
       {/* B) NEXT EVENT CARD                                                 */}
       {/* ================================================================== */}
       {nextEvent ? (
-        <Pressable onPress={() => openEvent(nextEvent.id)}>
+        <Pressable onPress={() => openEvent(nextEvent.id)} style={cardPressStyle}>
           <AppCard style={[styles.nextEventCard, styles.premiumCard]} elevated>
             <View style={styles.cardTitleRow}>
               <Feather name="calendar" size={16} color={colors.primary} />
               <AppText variant="captionBold" color="primary">Next Event</AppText>
             </View>
 
-            <AppText variant="h2" style={{ marginTop: spacing.xs }}>
+            <AppText variant="title" style={styles.nextEventTitle}>
               {String(nextEvent.name ?? "Event")}
             </AppText>
 
-            {nextEvent.courseName && (
-              <AppText variant="body" color="secondary" style={{ marginTop: 2 }}>
-                {String(nextEvent.courseName)}
-              </AppText>
-            )}
+            <AppText variant="caption" color="secondary" style={styles.nextEventMeta}>
+              {formatEventDate(nextEvent.date)}
+              {nextEvent.courseName ? ` • ${String(nextEvent.courseName)}` : ""}
+            </AppText>
 
             <View style={styles.nextEventDetails}>
-              <View style={styles.nextEventChip}>
-                <Feather name="clock" size={13} color={colors.textSecondary} />
-                <AppText variant="small" color="secondary">{formatEventDate(nextEvent.date)}</AppText>
-              </View>
               {nextEvent.format && (
-                <View style={styles.nextEventChip}>
-                  <Feather name="target" size={13} color={colors.textSecondary} />
+                <View style={[styles.nextEventPill, { backgroundColor: colors.backgroundTertiary, borderColor: colors.borderLight }]}>
                   <AppText variant="small" color="secondary">{formatFormatLabel(nextEvent.format)}</AppText>
                 </View>
               )}
               {nextEvent.classification && (
-                <View style={styles.nextEventChip}>
-                  <Feather name="tag" size={13} color={colors.textSecondary} />
+                <View style={[styles.nextEventPill, { backgroundColor: colors.backgroundTertiary, borderColor: colors.borderLight }]}>
                   <AppText variant="small" color="secondary">{formatClassification(nextEvent.classification)}</AppText>
                 </View>
               )}
@@ -564,52 +689,33 @@ export default function HomeScreen() {
 
             {/* OOM badge */}
             {nextEvent.isOOM && (
-              <View style={[styles.oomBadge, { backgroundColor: colors.warning + "20" }]}>
-                <Feather name="award" size={12} color={colors.warning} />
-                <AppText variant="small" style={{ color: colors.warning, fontWeight: "600", marginLeft: 4 }}>
+              <View style={styles.oomPremiumPill}>
+                <Feather name="award" size={12} color="#9A6700" />
+                <AppText variant="small" style={styles.oomPremiumPillText}>
                   Counts toward Order of Merit
                 </AppText>
               </View>
             )}
 
             {/* Tee time info */}
-            <View style={[styles.teeTimeRow, { borderTopColor: colors.borderLight }]}>
-              <Feather name="flag" size={14} color={nextEvent.teeTimePublishedAt ? colors.success : colors.textTertiary} />
+            <View style={[styles.teeTimeRow, { borderTopColor: colors.borderLight, marginTop: spacing.md }]}>
+              <Feather name="flag" size={14} color={nextEvent.teeTimePublishedAt ? colors.success : colors.textSecondary} />
               {nextEvent.teeTimePublishedAt ? (
-                <AppText variant="small" style={{ color: colors.success, fontWeight: "600" }}>
+                <AppText variant="small" style={{ color: colors.success, fontWeight: "600", flex: 1 }}>
                   Tee times available — First tee: {String(nextEvent.teeTimeStart || "TBC")}
                   {nextEvent.teeTimeInterval ? `, ${String(nextEvent.teeTimeInterval)} min intervals` : ""}
                 </AppText>
               ) : (
-                <AppText variant="small" color="tertiary">Tee times to be published</AppText>
+                <AppText variant="small" color="secondary" style={{ flex: 1 }}>
+                  Tee times to be published
+                </AppText>
               )}
-            </View>
-
-            {/* FairwayWeather mini-card */}
-            <Pressable
-              onPress={openFairwayWeather}
-              style={({ pressed }) => [
-                styles.weatherRow,
-                { backgroundColor: colors.backgroundTertiary, opacity: pressed ? 0.8 : 1 },
-              ]}
-            >
-              <Feather name="cloud" size={14} color={colors.primary} />
-              <AppText variant="small" color="primary" style={{ flex: 1, fontWeight: "500" }}>
-                View detailed forecast
-              </AppText>
-              <AppText variant="small" color="tertiary" style={{ fontSize: 10 }}>
-                Powered by FairwayWeather.com
-              </AppText>
-              <Feather name="external-link" size={12} color={colors.textTertiary} style={{ marginLeft: 4 }} />
-            </Pressable>
-
-            <View style={styles.chevronHint}>
-              <Feather name="chevron-right" size={18} color={colors.textTertiary} />
+              <Feather name="chevron-right" size={16} color={colors.textTertiary} />
             </View>
           </AppCard>
         </Pressable>
       ) : (
-        <AppCard style={styles.premiumCard}>
+        <AppCard style={[styles.premiumCard, styles.nextEventCard]}>
           <View style={styles.cardTitleRow}>
             <Feather name="calendar" size={16} color={colors.textTertiary} />
             <AppText variant="captionBold" color="tertiary">Next Event</AppText>
@@ -621,56 +727,10 @@ export default function HomeScreen() {
       )}
 
       {/* ================================================================== */}
-      {/* C) MY SEASON SNAPSHOT                                              */}
-      {/* ================================================================== */}
-      {mySnapshot && (
-        <Pressable onPress={openLeaderboard}>
-          <AppCard style={styles.premiumCard}>
-            <View style={styles.cardTitleRow}>
-              <Feather name="bar-chart-2" size={16} color={colors.primary} />
-              <AppText variant="captionBold" color="primary">My {currentYear} Season</AppText>
-            </View>
-
-            <View style={styles.snapshotGrid}>
-              <View style={styles.snapshotItem}>
-                <AppText variant="h1">
-                  {(mySnapshot.totalPoints ?? 0) > 0 ? formatPoints(Number(mySnapshot.totalPoints) || 0) : "—"}
-                </AppText>
-                <AppText variant="small" color="secondary">Order of Merit Pts</AppText>
-              </View>
-              <View style={[styles.snapshotDivider, { backgroundColor: colors.borderLight }]} />
-              <View style={styles.snapshotItem}>
-                <AppText variant="h1">
-                  {(mySnapshot.rank ?? 0) > 0 ? String(mySnapshot.rank) : "—"}
-                </AppText>
-                <AppText variant="small" color="secondary">
-                  {(mySnapshot.rank ?? 0) > 0 ? `of ${String(mySnapshot.totalWithPoints)}` : "Rank"}
-                </AppText>
-              </View>
-            </View>
-
-            {mySnapshot.totalPoints === 0 && (
-              <AppText
-                variant="small"
-                color="tertiary"
-                style={{ textAlign: "center", marginTop: spacing.sm }}
-              >
-                Play an Order of Merit event to enter the standings
-              </AppText>
-            )}
-
-            <View style={styles.chevronHint}>
-              <Feather name="chevron-right" size={18} color={colors.textTertiary} />
-            </View>
-          </AppCard>
-        </Pressable>
-      )}
-
-      {/* ================================================================== */}
       {/* D) ORDER OF MERIT TEASER                                           */}
       {/* ================================================================== */}
       {oomStandings.length > 0 && (
-        <Pressable onPress={openLeaderboard}>
+        <Pressable onPress={openLeaderboard} style={cardPressStyle}>
           <AppCard style={styles.premiumCard}>
             <View style={styles.cardTitleRow}>
               <Feather name="award" size={16} color={colors.primary} />
@@ -772,7 +832,7 @@ export default function HomeScreen() {
             }
 
             return (
-              <Pressable key={event.id} onPress={() => openEvent(event.id)}>
+              <Pressable key={event.id} onPress={() => openEvent(event.id)} style={cardPressStyle}>
                 <AppCard style={[styles.recentCard, styles.premiumCard]}>
                   <View style={styles.recentRow}>
                     <View style={[styles.recentDateBadge, { backgroundColor: colors.backgroundTertiary }]}>
@@ -810,7 +870,7 @@ export default function HomeScreen() {
       {/* ================================================================== */}
       {/* F) SINBOOK TEASER CARD                                             */}
       {/* ================================================================== */}
-      <Pressable onPress={() => router.push("/(app)/(tabs)/sinbook")}>
+      <Pressable onPress={() => router.push("/(app)/(tabs)/sinbook")} style={cardPressStyle}>
         <AppCard style={styles.premiumCard}>
           <View style={styles.cardTitleRow}>
             <Feather name="zap" size={16} color={colors.primary} />
@@ -859,28 +919,38 @@ function PersonalModeHome({
   const [nudgeDismissed, setNudgeDismissed] = useState(false);
   const { profile: pmProfile } = useBootstrap();
   const pmProfileComplete = pmProfile?.profile_complete === true;
+  const cardPressStyle = ({ pressed }: PressableStateCallbackType) => [
+    styles.cardPressable,
+    pressed && styles.cardPressablePressed,
+  ];
 
   return (
-    <Screen>
+    <Screen
+      style={{ backgroundColor: colors.backgroundSecondary }}
+      contentStyle={styles.screenContent}
+    >
+      <HomeAppBar
+        colors={colors}
+        onOpenSettings={() => router.push("/(app)/(tabs)/settings")}
+      />
+
       {/* Welcome header */}
-      <View style={personalStyles.welcomeSection}>
-        <Image
-          source={require("@/assets/images/master-logo.png")}
-          style={personalStyles.welcomeLogo}
-          resizeMode="contain"
-        />
+      <AppCard style={[styles.premiumCard, personalStyles.welcomeSection, { borderColor: colors.borderLight }]}>
+        <View style={[personalStyles.welcomeShield, { backgroundColor: colors.primary + "12" }]}>
+          <Image source={appIcon} style={personalStyles.welcomeShieldIcon} resizeMode="contain" />
+        </View>
         <AppText variant="title" style={personalStyles.welcomeTitle}>
           Welcome
         </AppText>
         <AppText variant="body" color="secondary" style={personalStyles.welcomeSubtitle}>
           Use the app as an individual, or join a society when you are ready.
         </AppText>
-      </View>
+      </AppCard>
 
       {/* Complete profile banner */}
       {!pmProfileComplete && (
-        <Pressable onPress={() => router.push("/(app)/my-profile")}>
-          <AppCard style={[styles.profileBanner, { borderColor: colors.info + "40" }]}>
+        <Pressable onPress={() => router.push("/(app)/my-profile")} style={cardPressStyle}>
+          <AppCard style={[styles.premiumCard, styles.profileBanner, { borderColor: colors.info + "40" }]}>
             <View style={styles.profileBannerRow}>
               <View style={[styles.profileBannerIcon, { backgroundColor: colors.info + "18" }]}>
                 <Feather name="user" size={20} color={colors.info} />
@@ -898,8 +968,8 @@ function PersonalModeHome({
       )}
 
       {/* Feature cards */}
-      <Pressable onPress={() => router.push("/(app)/(tabs)/sinbook")}>
-        <AppCard>
+      <Pressable onPress={() => router.push("/(app)/(tabs)/sinbook")} style={cardPressStyle}>
+        <AppCard style={styles.premiumCard}>
           <View style={personalStyles.featureRow}>
             <View style={[personalStyles.featureIcon, { backgroundColor: colors.primary + "14" }]}>
               <Feather name="zap" size={20} color={colors.primary} />
@@ -915,7 +985,7 @@ function PersonalModeHome({
         </AppCard>
       </Pressable>
 
-      <AppCard>
+      <AppCard style={styles.premiumCard}>
         <View style={personalStyles.featureRow}>
           <View style={[personalStyles.featureIcon, { backgroundColor: colors.info + "14" }]}>
             <Feather name="cloud" size={20} color={colors.info} />
@@ -932,8 +1002,8 @@ function PersonalModeHome({
         </View>
       </AppCard>
 
-      <Pressable onPress={() => router.push("/(app)/(tabs)/settings")}>
-        <AppCard>
+      <Pressable onPress={() => router.push("/(app)/(tabs)/settings")} style={cardPressStyle}>
+        <AppCard style={styles.premiumCard}>
           <View style={personalStyles.featureRow}>
             <View style={[personalStyles.featureIcon, { backgroundColor: colors.backgroundTertiary }]}>
               <Feather name="user" size={20} color={colors.textSecondary} />
@@ -951,7 +1021,7 @@ function PersonalModeHome({
 
       {/* Society join nudge — subtle card */}
       {!nudgeDismissed && (
-        <AppCard style={[personalStyles.nudgeCard, { borderColor: colors.primary + "25" }]}>
+        <AppCard style={[styles.premiumCard, personalStyles.nudgeCard, { borderColor: colors.primary + "25" }]}>
           <View style={personalStyles.nudgeHeader}>
             <View style={[personalStyles.nudgeIcon, { backgroundColor: colors.primary + "14" }]}>
               <Feather name="users" size={18} color={colors.primary} />
@@ -1003,13 +1073,20 @@ function PersonalModeHome({
 const personalStyles = StyleSheet.create({
   welcomeSection: {
     alignItems: "center",
-    paddingTop: spacing.lg,
-    paddingBottom: spacing.xl,
+    paddingVertical: spacing.xl,
+    marginBottom: spacing.xs,
   },
-  welcomeLogo: {
-    width: 240,
-    height: 190,
+  welcomeShield: {
+    width: 50,
+    height: 50,
+    borderRadius: 14,
+    alignItems: "center",
+    justifyContent: "center",
     marginBottom: spacing.md,
+  },
+  welcomeShieldIcon: {
+    width: 32,
+    height: 32,
   },
   welcomeTitle: {
     textAlign: "center",
@@ -1096,6 +1173,21 @@ function SkeletonCards({ colors }: { colors: ReturnType<typeof getColors> }) {
       </AppCard>
       <View style={[styles.headerDivider, { backgroundColor: colors.borderLight }]} />
 
+      <View style={styles.atGlanceRow}>
+        <AppCard style={[styles.premiumCard, styles.statTileCard]}>
+          <View style={[styles.statTileIconCircle, { backgroundColor: shimmer }]} />
+          <View style={[styles.skeletonLine, { width: "48%", backgroundColor: shimmer, marginBottom: 8 }]} />
+          <View style={[styles.skeletonLine, { width: "34%", backgroundColor: shimmer, marginBottom: 6, height: 20 }]} />
+          <View style={[styles.skeletonLine, { width: "64%", backgroundColor: shimmer }]} />
+        </AppCard>
+        <AppCard style={[styles.premiumCard, styles.statTileCard]}>
+          <View style={[styles.statTileIconCircle, { backgroundColor: shimmer }]} />
+          <View style={[styles.skeletonLine, { width: "48%", backgroundColor: shimmer, marginBottom: 8 }]} />
+          <View style={[styles.skeletonLine, { width: "34%", backgroundColor: shimmer, marginBottom: 6, height: 20 }]} />
+          <View style={[styles.skeletonLine, { width: "64%", backgroundColor: shimmer }]} />
+        </AppCard>
+      </View>
+
       {/* Next event skeleton */}
       <AppCard style={styles.premiumCard}>
         <View style={[styles.skeletonLine, { width: "30%", backgroundColor: shimmer }]} />
@@ -1125,43 +1217,75 @@ function SkeletonCards({ colors }: { colors: ReturnType<typeof getColors> }) {
 // ============================================================================
 
 const styles = StyleSheet.create({
+  screenContent: {
+    backgroundColor: "transparent",
+    paddingTop: spacing.md,
+    paddingBottom: spacing["2xl"],
+    gap: spacing.base,
+  },
   premiumCard: {
-    borderRadius: radius.lg,
+    borderRadius: 22,
     borderWidth: 1,
+    borderColor: "#F3F4F6",
     shadowColor: "#000",
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.08,
-    shadowRadius: 10,
-    elevation: 4,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.06,
+    shadowRadius: 12,
+    elevation: 3,
+  },
+  cardPressable: {
+    borderRadius: 22,
+  },
+  cardPressablePressed: {
+    opacity: 0.94,
+    transform: [{ scale: 0.995 }],
   },
 
   // Premium two-tier header
-  headerTierWrap: {
-    marginBottom: spacing.base,
-  },
   appBarTier: {
     height: 44,
-    justifyContent: "center",
-    alignItems: "flex-start",
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
     borderBottomWidth: StyleSheet.hairlineWidth,
-    marginBottom: spacing.md,
+    marginBottom: spacing.xs,
+  },
+  appBarLeft: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.xs,
   },
   appBarLogoFrame: {
-    width: 26,
-    height: 26,
-    borderRadius: 8,
+    width: 24,
+    height: 24,
+    borderRadius: 7,
     alignItems: "center",
     justifyContent: "center",
-    opacity: 0.86,
+    opacity: 0.9,
   },
   appBarLogo: {
-    width: 18,
-    height: 18,
+    width: 17,
+    height: 17,
+  },
+  appBarLabel: {
+    fontSize: 11,
+    letterSpacing: 0.1,
+  },
+  appBarAction: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    borderWidth: 1,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  appBarActionPressed: {
+    opacity: 0.75,
   },
   societyHeroCard: {
     alignItems: "center",
-    paddingVertical: spacing.lg,
-    marginBottom: spacing.sm,
+    paddingVertical: spacing.xl,
+    paddingHorizontal: spacing.base,
   },
   heroLogoFrame: {
     width: 64,
@@ -1179,6 +1303,7 @@ const styles = StyleSheet.create({
   heroSocietyName: {
     marginTop: spacing.sm,
     textAlign: "center",
+    fontWeight: "700",
   },
   heroSecondaryText: {
     marginTop: 4,
@@ -1186,7 +1311,37 @@ const styles = StyleSheet.create({
   },
   headerDivider: {
     height: 1,
-    opacity: 0.75,
+    opacity: 0.7,
+    marginTop: spacing.xs,
+  },
+  atGlanceRow: {
+    flexDirection: "row",
+    gap: spacing.sm,
+  },
+  statTilePressable: {
+    flex: 1,
+  },
+  statTileCard: {
+    marginBottom: 0,
+    minHeight: 118,
+    paddingVertical: spacing.md,
+    paddingHorizontal: spacing.md,
+  },
+  statTileIconCircle: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: spacing.sm,
+  },
+  statTileTextWrap: {
+    minHeight: 62,
+    justifyContent: "space-between",
+  },
+  statTileValue: {
+    marginTop: 2,
+    marginBottom: 1,
   },
 
   // Profile banner
@@ -1248,6 +1403,23 @@ const styles = StyleSheet.create({
     marginBottom: spacing.base,
   },
 
+  // Weather card
+  weatherCard: {
+    marginBottom: spacing.xs,
+  },
+  weatherHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+  },
+  weatherIconCircle: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
   // Card title row
   cardTitleRow: {
     flexDirection: "row",
@@ -1260,16 +1432,40 @@ const styles = StyleSheet.create({
   nextEventCard: {
     marginBottom: spacing.md,
   },
+  nextEventTitle: {
+    marginTop: spacing.xs,
+  },
+  nextEventMeta: {
+    marginTop: 4,
+  },
   nextEventDetails: {
     flexDirection: "row",
     flexWrap: "wrap",
-    gap: spacing.sm,
-    marginTop: spacing.md,
+    gap: spacing.xs,
+    marginTop: spacing.sm,
   },
-  nextEventChip: {
+  nextEventPill: {
+    borderWidth: 1,
+    borderRadius: radius.full,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 5,
+  },
+  oomPremiumPill: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 4,
+    alignSelf: "flex-start",
+    borderRadius: radius.full,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 5,
+    backgroundColor: "#FFFBEB",
+    borderWidth: 1,
+    borderColor: "#FDE68A",
+    marginTop: spacing.sm,
+  },
+  oomPremiumPillText: {
+    color: "#9A6700",
+    fontWeight: "600",
+    marginLeft: 4,
   },
   oomBadge: {
     flexDirection: "row",
@@ -1284,20 +1480,8 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: spacing.xs,
-    marginTop: spacing.sm,
     paddingTop: spacing.sm,
     borderTopWidth: 1,
-  },
-
-  // FairwayWeather
-  weatherRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing.xs,
-    marginTop: spacing.sm,
-    paddingVertical: spacing.sm,
-    paddingHorizontal: spacing.sm,
-    borderRadius: radius.sm,
   },
 
   // Chevron hint
