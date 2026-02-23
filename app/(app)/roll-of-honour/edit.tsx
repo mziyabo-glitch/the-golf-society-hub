@@ -3,11 +3,11 @@
  * Captain/Secretary only. Photo upload to Supabase Storage.
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useContext, useEffect, useState } from "react";
 import { StyleSheet, View, ScrollView, Pressable } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { Feather } from "@expo/vector-icons";
-import { useBottomTabBarHeight } from "@react-navigation/bottom-tabs";
+import { BottomTabBarHeightContext } from "@react-navigation/bottom-tabs";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { AppText } from "@/components/ui/AppText";
@@ -36,7 +36,7 @@ export default function ChampionEditScreen() {
   const { societyId, member } = useBootstrap();
   const router = useRouter();
   const colors = getColors();
-  const tabBarHeight = useBottomTabBarHeight();
+  const tabBarHeight = useContext(BottomTabBarHeightContext) ?? 0;
   const canManage = getPermissionsForMember(member as any).canManageOomChampions;
 
   const [existing, setExisting] = useState<OomChampionDoc | null>(null);

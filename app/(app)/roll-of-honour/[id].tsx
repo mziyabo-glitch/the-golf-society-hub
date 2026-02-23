@@ -3,12 +3,12 @@
  * Resilient image loading, never blank
  */
 
-import { useCallback, useState } from "react";
 import { StyleSheet, View, ScrollView, Pressable } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
 import { Feather } from "@expo/vector-icons";
-import { useBottomTabBarHeight } from "@react-navigation/bottom-tabs";
+import { BottomTabBarHeightContext } from "@react-navigation/bottom-tabs";
+import { useCallback, useContext, useState } from "react";
 
 import { Screen } from "@/components/ui/Screen";
 import { AppText } from "@/components/ui/AppText";
@@ -31,7 +31,7 @@ export default function ChampionDetailScreen() {
   const { member } = useBootstrap();
   const router = useRouter();
   const colors = getColors();
-  const tabBarHeight = useBottomTabBarHeight();
+  const tabBarHeight = useContext(BottomTabBarHeightContext) ?? 0;
   const canManage = getPermissionsForMember(member as any).canManageOomChampions;
 
   const [champion, setChampion] = useState<OomChampionDoc | null>(null);

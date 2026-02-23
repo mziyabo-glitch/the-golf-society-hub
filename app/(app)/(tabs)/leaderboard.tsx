@@ -3,7 +3,7 @@
  * Glassmorphism design with podium, trend indicators, and accordion results log
  */
 
-import { useCallback, useEffect, useState, useMemo } from "react";
+import { useCallback, useContext, useEffect, useState, useMemo } from "react";
 import {
   StyleSheet,
   View,
@@ -15,7 +15,7 @@ import {
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
 import { Feather } from "@expo/vector-icons";
-import { useBottomTabBarHeight } from "@react-navigation/bottom-tabs";
+import { BottomTabBarHeightContext } from "@react-navigation/bottom-tabs";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { AppText } from "@/components/ui/AppText";
@@ -108,7 +108,7 @@ export default function LeaderboardScreen() {
   const { needsLicence, guardPaidAction, modalVisible, setModalVisible, societyId: guardSocietyId } = usePaidAccess();
   const router = useRouter();
   const colors = getColors();
-  const tabBarHeight = useBottomTabBarHeight();
+  const tabBarHeight = useContext(BottomTabBarHeightContext) ?? 0;
 
   const params = useLocalSearchParams<{ view?: string }>();
   const initialTab: TabType = params.view === "log" ? "resultsLog" : "leaderboard";
