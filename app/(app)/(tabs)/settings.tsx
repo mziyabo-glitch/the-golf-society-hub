@@ -3,6 +3,7 @@ import { StyleSheet, View, Pressable, Image, Platform } from "react-native";
 import { useRouter } from "expo-router";
 import { Feather } from "@expo/vector-icons";
 import * as ImagePicker from "expo-image-picker";
+import { useBottomTabBarHeight } from "@react-navigation/bottom-tabs";
 
 import { Screen } from "@/components/ui/Screen";
 import { AppText } from "@/components/ui/AppText";
@@ -28,6 +29,8 @@ export default function SettingsScreen() {
   const router = useRouter();
   const { user, society, member, loading, refresh, signOut } = useBootstrap();
   const colors = getColors();
+  const tabBarHeight = useBottomTabBarHeight();
+  const tabContentStyle = { paddingTop: 16, paddingBottom: tabBarHeight + 24 };
 
   const [signingOut, setSigningOut] = useState(false);
   const [leaving, setLeaving] = useState(false);
@@ -253,7 +256,7 @@ export default function SettingsScreen() {
   // Personal Mode — no society
   if (!society) {
     return (
-      <Screen>
+      <Screen contentStyle={tabContentStyle}>
         <AppText variant="title" style={styles.title}>Settings</AppText>
 
         <AppText variant="h2" style={styles.sectionTitle}>Account</AppText>
@@ -327,7 +330,7 @@ export default function SettingsScreen() {
   const logoUrl = getSocietyLogoUrl(society);
 
   return (
-    <Screen>
+    <Screen contentStyle={tabContentStyle}>
       <AppText variant="title" style={styles.title}>Settings</AppText>
 
       {/* Your Profile */}

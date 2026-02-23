@@ -3,6 +3,7 @@ import { StyleSheet, View, Pressable, ScrollView } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
 import { Feather } from "@expo/vector-icons";
+import { useBottomTabBarHeight } from "@react-navigation/bottom-tabs";
 
 import { Screen } from "@/components/ui/Screen";
 import { AppText } from "@/components/ui/AppText";
@@ -164,6 +165,8 @@ export default function EventsScreen() {
   const { societyId, activeSocietyId, member, user, loading: bootstrapLoading } = useBootstrap();
   const { guardPaidAction, modalVisible, setModalVisible, societyId: guardSocietyId } = usePaidAccess();
   const colors = getColors();
+  const tabBarHeight = useBottomTabBarHeight();
+  const tabContentStyle = { paddingTop: 16, paddingBottom: tabBarHeight + 24 };
   const createAction = useAsyncAction();
   const paramsHandledRef = useRef(false);
 
@@ -444,7 +447,7 @@ export default function EventsScreen() {
 
   if (bootstrapLoading || loading) {
     return (
-      <Screen scrollable={false}>
+      <Screen scrollable={false} contentStyle={tabContentStyle}>
         <View style={styles.centered}>
           <LoadingState message="Loading events..." />
         </View>
@@ -455,7 +458,7 @@ export default function EventsScreen() {
   // Guard: no active society yet
   if (!societyId && !activeSocietyId) {
     return (
-      <Screen>
+      <Screen contentStyle={tabContentStyle}>
         <View style={styles.header}>
           <AppText variant="title">Events</AppText>
         </View>
@@ -471,7 +474,7 @@ export default function EventsScreen() {
   // Create form view
   if (showCreateForm) {
     return (
-      <Screen>
+      <Screen contentStyle={tabContentStyle}>
         <Toast
           visible={toast.visible}
           message={toast.message}
@@ -490,7 +493,10 @@ export default function EventsScreen() {
           <View style={{ width: 60 }} />
         </View>
 
-        <ScrollView showsVerticalScrollIndicator={false}>
+        <ScrollView
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={{ paddingBottom: tabBarHeight + 24 }}
+        >
           <AppCard>
             {validationNotice ? (
               <InlineNotice variant="error" message={validationNotice} style={{ marginBottom: spacing.sm }} />
@@ -803,7 +809,7 @@ export default function EventsScreen() {
   );
 
   return (
-    <Screen>
+    <Screen contentStyle={tabContentStyle}>
       <Toast
         visible={toast.visible}
         message={toast.message}

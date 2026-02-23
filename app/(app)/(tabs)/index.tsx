@@ -17,6 +17,7 @@ import { useRouter } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
 import { Feather } from "@expo/vector-icons";
 import * as WebBrowser from "expo-web-browser";
+import { useBottomTabBarHeight } from "@react-navigation/bottom-tabs";
 
 import { Screen } from "@/components/ui/Screen";
 import { AppText } from "@/components/ui/AppText";
@@ -214,6 +215,11 @@ export default function HomeScreen() {
   const router = useRouter();
   const { society, member, societyId, profile, loading: bootstrapLoading } = useBootstrap();
   const colors = getColors();
+  const tabBarHeight = useBottomTabBarHeight();
+  const tabContentStyle = {
+    paddingTop: 16,
+    paddingBottom: tabBarHeight + 24,
+  };
 
   // Data state
   const [events, setEvents] = useState<EventDoc[]>([]);
@@ -432,7 +438,7 @@ export default function HomeScreen() {
       <Screen
         scrollable
         style={{ backgroundColor: colors.backgroundSecondary }}
-        contentStyle={styles.screenContent}
+        contentStyle={[styles.screenContent, tabContentStyle]}
       >
         <SkeletonCards colors={colors} />
       </Screen>
@@ -476,7 +482,10 @@ export default function HomeScreen() {
   ];
 
   return (
-    <Screen style={{ backgroundColor: colors.backgroundSecondary }} contentStyle={styles.screenContent}>
+    <Screen
+      style={{ backgroundColor: colors.backgroundSecondary }}
+      contentStyle={[styles.screenContent, tabContentStyle]}
+    >
       <HomeAppBar
         colors={colors}
         onOpenSettings={() => router.push("/(app)/(tabs)/settings")}
@@ -923,6 +932,11 @@ function PersonalModeHome({
   colors: ReturnType<typeof getColors>;
   router: ReturnType<typeof useRouter>;
 }) {
+  const tabBarHeight = useBottomTabBarHeight();
+  const tabContentStyle = {
+    paddingTop: 16,
+    paddingBottom: tabBarHeight + 24,
+  };
   const [nudgeDismissed, setNudgeDismissed] = useState(false);
   const { profile: pmProfile } = useBootstrap();
   const pmProfileComplete = pmProfile?.profile_complete === true;
@@ -934,7 +948,7 @@ function PersonalModeHome({
   return (
     <Screen
       style={{ backgroundColor: colors.backgroundSecondary }}
-      contentStyle={styles.screenContent}
+      contentStyle={[styles.screenContent, tabContentStyle]}
     >
       <HomeAppBar
         colors={colors}

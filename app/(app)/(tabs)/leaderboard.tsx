@@ -15,6 +15,8 @@ import {
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
 import { Feather } from "@expo/vector-icons";
+import { useBottomTabBarHeight } from "@react-navigation/bottom-tabs";
+import { SafeAreaView } from "react-native-safe-area-context";
 
 import { AppText } from "@/components/ui/AppText";
 import { PrimaryButton } from "@/components/ui/Button";
@@ -106,6 +108,7 @@ export default function LeaderboardScreen() {
   const { needsLicence, guardPaidAction, modalVisible, setModalVisible, societyId: guardSocietyId } = usePaidAccess();
   const router = useRouter();
   const colors = getColors();
+  const tabBarHeight = useBottomTabBarHeight();
 
   const params = useLocalSearchParams<{ view?: string }>();
   const initialTab: TabType = params.view === "log" ? "resultsLog" : "leaderboard";
@@ -286,17 +289,17 @@ export default function LeaderboardScreen() {
 
   if (bootstrapLoading || loading) {
     return (
-      <View style={[styles.container, { backgroundColor: "#F9FAFB" }]}>
+      <SafeAreaView style={[styles.container, { backgroundColor: "#F9FAFB" }]} edges={["top", "bottom"]}>
         <View style={styles.centered}>
           <LoadingState message="Loading Order of Merit..." />
         </View>
-      </View>
+      </SafeAreaView>
     );
   }
 
   if (fetchError) {
     return (
-      <View style={[styles.container, { backgroundColor: "#F9FAFB" }]}>
+      <SafeAreaView style={[styles.container, { backgroundColor: "#F9FAFB" }]} edges={["top", "bottom"]}>
         <View style={styles.centered}>
           <EmptyState
             icon={<Feather name="alert-circle" size={24} color={colors.error} />}
@@ -305,13 +308,13 @@ export default function LeaderboardScreen() {
             action={{ label: "Try Again", onPress: loadData }}
           />
         </View>
-      </View>
+      </SafeAreaView>
     );
   }
 
   if (!societyId) {
     return (
-      <View style={[styles.container, { backgroundColor: "#F9FAFB" }]}>
+      <SafeAreaView style={[styles.container, { backgroundColor: "#F9FAFB" }]} edges={["top", "bottom"]}>
         <View style={styles.centered}>
           <EmptyState
             icon={<Feather name="users" size={24} color={colors.textTertiary} />}
@@ -319,7 +322,7 @@ export default function LeaderboardScreen() {
             message="Please select or join a golf society."
           />
         </View>
-      </View>
+      </SafeAreaView>
     );
   }
 
@@ -332,7 +335,7 @@ export default function LeaderboardScreen() {
   // ============================================================================
 
   return (
-    <>
+    <SafeAreaView style={styles.container} edges={["top", "bottom"]}>
       <Toast
         visible={toast.visible}
         message={toast.message}
@@ -341,7 +344,10 @@ export default function LeaderboardScreen() {
       />
       <ScrollView
         style={styles.container}
-        contentContainerStyle={styles.scrollContent}
+        contentContainerStyle={[
+          styles.scrollContent,
+          { paddingTop: 16, paddingBottom: tabBarHeight + 24 },
+        ]}
         showsVerticalScrollIndicator={false}
       >
         {/* ========== HEADER WITH LOGO ========== */}
@@ -709,7 +715,7 @@ export default function LeaderboardScreen() {
       </ScrollView>
 
       <LicenceRequiredModal visible={modalVisible} onClose={() => setModalVisible(false)} societyId={guardSocietyId} />
-    </>
+    </SafeAreaView>
   );
 }
 
@@ -724,7 +730,6 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     padding: 20,
-    paddingBottom: 100,
   },
   centered: {
     flex: 1,

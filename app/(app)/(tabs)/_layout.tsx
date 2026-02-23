@@ -1,6 +1,6 @@
 import { Tabs } from "expo-router";
 import { Feather } from "@expo/vector-icons";
-import { Platform, StyleSheet } from "react-native";
+import { StyleSheet } from "react-native";
 import { useBootstrap } from "@/lib/useBootstrap";
 import { isCaptain } from "@/lib/rbac";
 import { getColors } from "@/lib/ui/theme";
@@ -12,7 +12,7 @@ export default function TabsLayout() {
   const insets = useSafeAreaInsets();
 
   const hasSociety = !!activeSocietyId && !!member;
-  const tabBarHeight = (Platform.OS === "ios" ? 58 : 56) + Math.max(insets.bottom, 8);
+  const tabBarHeight = 64 + insets.bottom;
 
   // Captains always have full access; regular members need a licence (seat)
   const hasFullAccess =
@@ -35,9 +35,10 @@ export default function TabsLayout() {
           styles.tabBar,
           {
             height: tabBarHeight,
-            paddingBottom: Math.max(insets.bottom, 8),
-            backgroundColor: "rgba(255,255,255,0.96)",
-            borderTopColor: colors.borderLight,
+            paddingBottom: Math.max(insets.bottom, 10),
+            paddingTop: 8,
+            backgroundColor: "#FFFFFF",
+            borderTopColor: colors.border,
           },
         ],
       }}
@@ -88,24 +89,22 @@ export default function TabsLayout() {
 
 const styles = StyleSheet.create({
   tabBar: {
-    paddingTop: 8,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: -1 },
-    shadowOpacity: 0.04,
-    shadowRadius: 8,
-    elevation: 6,
+    position: "relative",
+    borderTopWidth: 1,
   },
   tabBarLabel: {
     fontSize: 11,
     fontWeight: "600",
-    lineHeight: 13,
-    marginBottom: 0,
+    lineHeight: 14,
+    textAlign: "center",
+    marginTop: 2,
   },
   tabBarIcon: {
-    marginBottom: 0,
+    marginTop: 1,
   },
   tabBarItem: {
-    paddingTop: 3,
+    height: 46,
+    justifyContent: "center",
+    alignItems: "center",
   },
 });

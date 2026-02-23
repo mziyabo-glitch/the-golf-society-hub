@@ -13,6 +13,7 @@ import { Pressable, StyleSheet, View } from "react-native";
 import { useRouter } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
 import { Feather } from "@expo/vector-icons";
+import { useBottomTabBarHeight } from "@react-navigation/bottom-tabs";
 
 import { Screen } from "@/components/ui/Screen";
 import { AppText } from "@/components/ui/AppText";
@@ -74,6 +75,8 @@ export default function SinbookHomeScreen() {
   const router = useRouter();
   const { member, userId, loading: bootstrapLoading } = useBootstrap();
   const colors = getColors();
+  const tabBarHeight = useBottomTabBarHeight();
+  const tabContentStyle = { paddingTop: 16, paddingBottom: tabBarHeight + 24 };
 
   // Data
   const [sinbooks, setSinbooks] = useState<SinbookWithParticipants[]>([]);
@@ -266,7 +269,7 @@ export default function SinbookHomeScreen() {
   // ── Create Form ──
   if (showCreate) {
     return (
-      <Screen>
+      <Screen contentStyle={tabContentStyle}>
         <View style={styles.formHeader}>
           <SecondaryButton onPress={() => setShowCreate(false)} size="sm">Cancel</SecondaryButton>
           <AppText variant="h2">New Sinbook</AppText>
@@ -305,7 +308,7 @@ export default function SinbookHomeScreen() {
   // ── Join Form ──
   if (showJoin) {
     return (
-      <Screen>
+      <Screen contentStyle={tabContentStyle}>
         <View style={styles.formHeader}>
           <SecondaryButton onPress={() => { setShowJoin(false); setJoinCode(""); }} size="sm">Cancel</SecondaryButton>
           <AppText variant="h2">Join Rivalry</AppText>
@@ -336,7 +339,7 @@ export default function SinbookHomeScreen() {
 
   // ── Main Screen ──
   return (
-    <Screen>
+    <Screen contentStyle={tabContentStyle}>
       {/* ── Header ── */}
       <View style={styles.header}>
         <View>
@@ -476,7 +479,6 @@ export default function SinbookHomeScreen() {
         />
       )}
 
-      <View style={{ height: spacing["2xl"] }} />
     </Screen>
   );
 }

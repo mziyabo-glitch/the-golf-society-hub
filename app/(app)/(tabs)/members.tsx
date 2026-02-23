@@ -3,6 +3,7 @@ import { StyleSheet, View, Pressable } from "react-native";
 import { useRouter } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
 import { Feather } from "@expo/vector-icons";
+import { useBottomTabBarHeight } from "@react-navigation/bottom-tabs";
 
 import { Screen } from "@/components/ui/Screen";
 import { AppText } from "@/components/ui/AppText";
@@ -79,6 +80,8 @@ export default function MembersScreen() {
   const { societyId, activeSocietyId, member: currentMember, loading: bootstrapLoading } = useBootstrap();
   const router = useRouter();
   const colors = getColors();
+  const tabBarHeight = useBottomTabBarHeight();
+  const tabContentStyle = { paddingTop: 16, paddingBottom: tabBarHeight + 24 };
 
   const [members, setMembers] = useState<MemberDoc[]>([]);
   const [oomStandings, setOomStandings] = useState<Map<string, OrderOfMeritEntry>>(new Map());
@@ -358,7 +361,7 @@ export default function MembersScreen() {
   // Show permission error (403)
   if (permissionError) {
     return (
-      <Screen>
+      <Screen contentStyle={tabContentStyle}>
         <View style={styles.header}>
           <AppText variant="title">Members</AppText>
         </View>
@@ -374,7 +377,7 @@ export default function MembersScreen() {
   // Modal for add/edit
   if (modalMode !== "none") {
     return (
-      <Screen>
+      <Screen contentStyle={tabContentStyle}>
         <View style={styles.modalHeader}>
           <SecondaryButton onPress={closeModal} size="sm">
             Cancel
@@ -456,7 +459,7 @@ export default function MembersScreen() {
   }
 
   return (
-    <Screen>
+    <Screen contentStyle={tabContentStyle}>
       {/* Header */}
       <View style={styles.header}>
         <View>
