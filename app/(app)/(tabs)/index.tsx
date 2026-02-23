@@ -18,8 +18,6 @@ import { useFocusEffect } from "@react-navigation/native";
 import { Feather } from "@expo/vector-icons";
 import * as WebBrowser from "expo-web-browser";
 
-const appIcon = require("@/assets/images/app-icon.png");
-
 import { Screen } from "@/components/ui/Screen";
 import { AppText } from "@/components/ui/AppText";
 import { AppCard } from "@/components/ui/AppCard";
@@ -40,6 +38,8 @@ import { getColors, spacing, radius } from "@/lib/ui/theme";
 import { formatError, type FormattedError } from "@/lib/ui/formatError";
 import { getSocietyLogoUrl } from "@/lib/societyLogo";
 import { getMySinbooks, type SinbookWithParticipants } from "@/lib/db_supabase/sinbookRepo";
+
+const appIcon = require("@/assets/images/app-icon.png");
 
 // ============================================================================
 // Helpers
@@ -873,7 +873,7 @@ function PersonalModeHome({
           Welcome
         </AppText>
         <AppText variant="body" color="secondary" style={personalStyles.welcomeSubtitle}>
-          Use the app as an individual, or join a society when you're ready.
+          Use the app as an individual, or join a society when you are ready.
         </AppText>
       </View>
 
