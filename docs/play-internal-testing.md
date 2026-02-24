@@ -5,9 +5,27 @@
 1. **EAS CLI** installed: `npm install -g eas-cli`
 2. **Expo account** linked: `eas login`
 3. **Project configured**: `eas build:configure` (if not already done)
-4. **EAS Secrets** set in [expo.dev](https://expo.dev) → Project → Secrets:
-   - `EXPO_PUBLIC_SUPABASE_URL`
-   - `EXPO_PUBLIC_SUPABASE_ANON_KEY`
+4. **EAS Secrets** set in [expo.dev](https://expo.dev) → Project → Secrets (see Environment Separation below)
+
+## Environment Separation (Supabase)
+
+| Profile      | Backend | EXPO_PUBLIC_SUPABASE_ENV |
+|--------------|---------|---------------------------|
+| development  | TEST    | `test`                    |
+| preview      | TEST    | `test`                    |
+| play         | TEST    | `test`                    |
+| production   | PROD    | `prod`                    |
+
+**Play Internal Testing uses the TEST Supabase backend.** Set EAS Secrets to your TEST project:
+
+- `EXPO_PUBLIC_SUPABASE_URL` → your TEST Supabase project URL
+- `EXPO_PUBLIC_SUPABASE_ANON_KEY` → your TEST Supabase anon key
+
+For production builds (future), switch these secrets to your PROD project.
+
+**Local development:** Copy `.env.example` to `.env` and fill with TEST credentials. Never commit `.env`.
+
+The app shows **Environment: TEST** or **Environment: PROD** in Settings (footer) so you can confirm which backend you're connected to.
 
 ## Build Android App Bundle (AAB)
 
@@ -68,3 +86,4 @@ eas build:download --platform android --latest
 - **Build fails**: Check EAS build logs; ensure secrets are set
 - **versionCode conflict**: Increment `versionCode` in `app.json` and rebuild
 - **Missing package**: Ensure `app.json` has `expo.android.package` (e.g. `com.godskid.golfsocietyhub`)
+- **Wrong backend**: Verify EAS Secrets point to TEST for play profile; check Settings footer for "Environment: TEST"
