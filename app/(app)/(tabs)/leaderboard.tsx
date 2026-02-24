@@ -3,7 +3,7 @@
  * Glassmorphism design with podium, trend indicators, and accordion results log
  */
 
-import { useCallback, useEffect, useState, useMemo } from "react";
+import { useCallback, useContext, useEffect, useState, useMemo } from "react";
 import {
   StyleSheet,
   View,
@@ -11,11 +11,12 @@ import {
   Pressable,
   ScrollView,
   Image,
+  useWindowDimensions,
 } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
 import { Feather } from "@expo/vector-icons";
-import { useBottomTabBarHeight } from "@react-navigation/bottom-tabs";
+import { BottomTabBarHeightContext } from "@react-navigation/bottom-tabs";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { AppText } from "@/components/ui/AppText";
@@ -108,7 +109,9 @@ export default function LeaderboardScreen() {
   const { needsLicence, guardPaidAction, modalVisible, setModalVisible, societyId: guardSocietyId } = usePaidAccess();
   const router = useRouter();
   const colors = getColors();
-  const tabBarHeight = useBottomTabBarHeight();
+  const tabBarHeight = useContext(BottomTabBarHeightContext) ?? 0;
+  const { width: screenWidth } = useWindowDimensions();
+  const logoSize = screenWidth < 600 ? 40 : 32;
 
   const params = useLocalSearchParams<{ view?: string }>();
   const initialTab: TabType = params.view === "log" ? "resultsLog" : "leaderboard";
@@ -200,6 +203,7 @@ export default function LeaderboardScreen() {
 
   useEffect(() => {
     if (params.view === "log") setActiveTab("resultsLog");
+    if (params.view === "honour") router.push("/(app)/roll-of-honour");
   }, [params.view]);
 
   useFocusEffect(
@@ -352,12 +356,16 @@ export default function LeaderboardScreen() {
       >
         {/* ========== HEADER WITH LOGO ========== */}
         <View style={styles.headerRow}>
-          {/* Society Logo */}
-          <View style={styles.logoContainer}>
+          {/* Society Logo - larger on mobile (36px) vs desktop (30px) */}
+          <View style={[styles.logoContainer, { width: logoSize, height: logoSize }]}>
             {logoUrl ? (
-              <Image source={{ uri: logoUrl }} style={styles.logo} resizeMode="contain" />
+              <Image
+                source={{ uri: logoUrl }}
+                style={[styles.logo, { width: logoSize, height: logoSize }]}
+                resizeMode="contain"
+              />
             ) : (
-              <View style={styles.logoPlaceholder}>
+              <View style={[styles.logoPlaceholder, { width: logoSize, height: logoSize }]}>
                 <AppText style={styles.logoInitials}>{getInitials(society?.name || "GS")}</AppText>
               </View>
             )}
@@ -425,6 +433,15 @@ export default function LeaderboardScreen() {
               >
                 Results Matrix
               </AppText>
+            </Pressable>
+            <Pressable
+              style={styles.tab}
+              onPress={() =>
+                router.push("/(app)/roll-of-honour")
+              }
+            >
+              <Feather name="trophy" size={16} color="#9CA3AF" />
+              <AppText style={styles.tabText}>Roll of Honour</AppText>
             </Pressable>
           </View>
         )}

@@ -168,11 +168,7 @@ export default function RivalryDetailScreen() {
 
   const handleDeleteSinbook = () => {
     if (actionBusy) return;
-    if (sinbook?.created_by !== userId) {
-      showAlert("Not Allowed", "Only the creator can delete this rivalry.");
-      return;
-    }
-    confirmDestructive("Delete Sinbook?", "This will permanently delete the rivalry, all entries, and participants.", "Delete", async () => {
+    confirmDestructive("Delete Rivalry?", "This will permanently delete the rivalry, all entries, and participants.", "Delete", async () => {
       setActionBusy(true);
       try {
         await deleteSinbook(sinbookId);
@@ -320,15 +316,13 @@ export default function RivalryDetailScreen() {
             <Feather name="share-2" size={20} color={colors.primary} />
           </Pressable>
           {sinbook.created_by === userId && (
-            <>
-              <Pressable onPress={handleResetSinbook} style={styles.iconBtn} disabled={actionBusy}>
-                <Feather name="rotate-ccw" size={20} color={actionBusy ? colors.textTertiary : colors.text} />
-              </Pressable>
-              <Pressable onPress={handleDeleteSinbook} style={styles.iconBtn} disabled={actionBusy}>
-                <Feather name="trash-2" size={20} color={actionBusy ? colors.textTertiary : colors.error} />
-              </Pressable>
-            </>
+            <Pressable onPress={handleResetSinbook} style={styles.iconBtn} disabled={actionBusy}>
+              <Feather name="rotate-ccw" size={20} color={actionBusy ? colors.textTertiary : colors.text} />
+            </Pressable>
           )}
+          <Pressable onPress={handleDeleteSinbook} style={styles.iconBtn} disabled={actionBusy}>
+            <Feather name="trash-2" size={20} color={actionBusy ? colors.textTertiary : colors.error} />
+          </Pressable>
         </View>
       </View>
 
