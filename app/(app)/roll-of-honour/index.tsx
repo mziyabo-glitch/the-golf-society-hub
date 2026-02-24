@@ -12,7 +12,7 @@ import {
   RefreshControl,
 } from "react-native";
 import { useRouter } from "expo-router";
-import { useFocusEffect } from "@react-navigation/native";
+import { useFocusEffect, useNavigation } from "@react-navigation/native";
 import { Feather } from "@expo/vector-icons";
 import { BottomTabBarHeightContext } from "@react-navigation/bottom-tabs";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -31,7 +31,16 @@ import { getColors, spacing, radius } from "@/lib/ui/theme";
 export default function RollOfHonourScreen() {
   const { society, societyId, member } = useBootstrap();
   const router = useRouter();
+  const navigation = useNavigation();
   const colors = getColors();
+
+  const handleBack = () => {
+    if (navigation.canGoBack()) {
+      router.back();
+    } else {
+      router.replace("/(app)/(tabs)");
+    }
+  };
   const tabBarHeight = useContext(BottomTabBarHeightContext) ?? 0;
   const canManage = getPermissionsForMember(member as any).canManageOomChampions;
 
@@ -126,7 +135,20 @@ export default function RollOfHonourScreen() {
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} />
         }
       >
-        {/* Header */}
+        {/* Header with Back */}
+        <View style={styles.headerRow}>
+          <Pressable
+            onPress={handleBack}
+            style={({ pressed }) => [
+              styles.backButton,
+              { backgroundColor: colors.backgroundTertiary, opacity: pressed ? 0.7 : 1 },
+            ]}
+          >
+            <Feather name="arrow-left" size={17} color={colors.text} />
+            <AppText variant="caption" style={styles.backLabel}>Back</AppText>
+          </Pressable>
+          <View style={{ flex: 1 }} />
+        </View>
         <View style={styles.header}>
           <AppText variant="h1" style={styles.title}>
             Roll of Honour
@@ -158,6 +180,7 @@ export default function RollOfHonourScreen() {
                 <PrimaryButton
                   size="sm"
                   onPress={() => router.push("/(app)/roll-of-honour/edit")}
+                  style={styles.addButton}
                 >
                   Add Champion
                 </PrimaryButton>
@@ -184,7 +207,7 @@ export default function RollOfHonourScreen() {
                           {champ.season_year}
                         </AppText>
                       </View>
-                      <AppText variant="h2" numberOfLines={1}>
+                      <AppText variant="h2" numberOfLines={2}>
                         {championName(champ)}
                       </AppText>
                       {champ.points_total != null && (
@@ -193,7 +216,9 @@ export default function RollOfHonourScreen() {
                         </AppText>
                       )}
                     </View>
-                    <Feather name="chevron-right" size={20} color={colors.textTertiary} />
+                    <View style={styles.chevronWrap}>
+                      <Feather name="chevron-right" size={20} color={colors.textTertiary} />
+                    </View>
                   </View>
                 </AppCard>
               </Pressable>
@@ -220,7 +245,24 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     padding: spacing.base,
-    paddingTop: 16,
+    paddingTop: 8,
+  },
+  headerRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 8,
+  },
+  backButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    height: 38,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: radius.full,
+    gap: 6,
+  },
+  backLabel: {
+    fontWeight: "600",
   },
   header: {
     marginBottom: spacing.lg,
@@ -233,17 +275,26 @@ const styles = StyleSheet.create({
   },
   addRow: {
     marginBottom: spacing.base,
+    width: "100%",
+  },
+  addButton: {
+    alignSelf: "stretch",
   },
   emptyCard: {
     marginTop: spacing.lg,
   },
   championCard: {
     marginBottom: spacing.sm,
+    minHeight: 56,
   },
   cardRow: {
     flexDirection: "row",
     alignItems: "center",
     gap: spacing.base,
+    minHeight: 56,
+  },
+  chevronWrap: {
+    alignSelf: "center",
   },
   thumb: {
     width: 64,
