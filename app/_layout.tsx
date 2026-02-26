@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import { Stack, usePathname, useRouter, useSegments } from "expo-router";
 import { StyleSheet, View } from "react-native";
+import { supabase } from "@/lib/supabase";
 import { BootstrapProvider, useBootstrap } from "@/lib/useBootstrap";
 import { LoadingState } from "@/components/ui/LoadingState";
 import { AuthScreen } from "@/components/AuthScreen";
@@ -9,6 +10,8 @@ import { AppText } from "@/components/ui/AppText";
 import { PrimaryButton } from "@/components/ui/Button";
 import { getColors, spacing } from "@/lib/ui/theme";
 import { consumePendingInviteToken } from "@/lib/sinbookInviteToken";
+
+const APP_TABS = "/(app)/(tabs)";
 
 function RootNavigator() {
   const { loading, error, isSignedIn, activeSocietyId, profile, refresh } = useBootstrap();
@@ -23,6 +26,45 @@ function RootNavigator() {
   const hasRouted = useRef(false);
   // Track last known state to prevent redundant logs
   const lastState = useRef<string>("");
+
+  // Global auth gate: getSession on mount + onAuthStateChange
+  // Redirects immediately when session appears (avoids staying on sign-in)
+  const pathnameRef = useRef(pathname);
+  const segmentsRef = useRef(segments);
+  pathnameRef.current = pathname;
+  segmentsRef.current = segments;
+
+  useEffect(() => {
+    let mounted = true;
+
+    const applyAuthRedirect = (session: { user: { id: string } } | null) => {
+      if (!mounted) return;
+      const seg0 = segmentsRef.current[0];
+      const p = pathnameRef.current;
+      const inApp = seg0 === "(app)" || seg0 === "app" || (typeof p === "string" && p?.startsWith("/(app)"));
+      const inPublic = p === "/reset-password" || seg0 === "reset-password";
+      if (inPublic) return;
+
+      if (session && !inApp) {
+        console.log("[_layout] Auth gate: session present, redirecting to", APP_TABS);
+        router.replace(APP_TABS);
+      }
+    };
+
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      applyAuthRedirect(session);
+    });
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      console.log("[_layout] Auth state change:", event, session ? "has session" : "no session");
+      applyAuthRedirect(session);
+    });
+
+    return () => {
+      mounted = false;
+      subscription.unsubscribe();
+    };
+  }, [router]);
 
   useEffect(() => {
     // Don't route while loading or not signed in
