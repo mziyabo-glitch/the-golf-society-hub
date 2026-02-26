@@ -2,9 +2,10 @@
  * SocietyHeaderCard — logo 48x48 left, society name right, subtitle
  */
 
-import { StyleSheet, View, Image } from "react-native";
+import { StyleSheet, View } from "react-native";
 import { AppText } from "./AppText";
 import { Card } from "./Card";
+import { SocietyLogoImage } from "./SocietyLogoImage";
 import { getColors, spacing } from "@/lib/ui/theme";
 
 type SocietyHeaderCardProps = {
@@ -24,15 +25,11 @@ export function SocietyHeaderCard({
 
   return (
     <Card style={styles.card} padding={spacing.md}>
-      <View style={[styles.logoFrame, { borderColor: colors.border, backgroundColor: colors.backgroundSecondary }]}>
-        {logoUrl ? (
-          <Image source={{ uri: logoUrl }} style={styles.logoImage} resizeMode="contain" />
-        ) : (
-          <AppText variant="h2" color="primary">
-            {getInitials(societyName)}
-          </AppText>
-        )}
-      </View>
+      <SocietyLogoImage
+        logoUrl={logoUrl}
+        size={48}
+        placeholderText={getInitials(societyName)}
+      />
       <View style={styles.textWrap}>
         <AppText variant="h2" style={styles.societyName} numberOfLines={1}>
           {societyName}
@@ -50,19 +47,6 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     marginBottom: spacing.sm,
-  },
-  logoFrame: {
-    width: 48,
-    height: 48,
-    borderRadius: 14,
-    borderWidth: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    overflow: "hidden",
-  },
-  logoImage: {
-    width: 48,
-    height: 48,
   },
   textWrap: {
     flex: 1,

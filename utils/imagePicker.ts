@@ -45,7 +45,6 @@ export async function pickImage(): Promise<ImagePickerResult | null> {
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ["images"],
       allowsEditing: true,
-      aspect: [1, 1], // Square logo
       quality: 0.8,
     });
 

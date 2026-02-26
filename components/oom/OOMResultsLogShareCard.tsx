@@ -6,7 +6,8 @@
  */
 
 import React, { forwardRef } from "react";
-import { View, Text, StyleSheet, Image } from "react-native";
+import { View, Text, StyleSheet } from "react-native";
+import { SocietyLogoImage } from "@/components/ui/SocietyLogoImage";
 import { BrandingFooter } from "@/components/ui/BrandingFooter";
 
 export type ResultRow = {
@@ -79,13 +80,12 @@ const OOMResultsLogShareCard = forwardRef<View, OOMResultsLogShareCardProps>(
       <View ref={ref} style={styles.container} collapsable={false}>
         {/* Society header — society branding is primary */}
         <View style={styles.header}>
-          {logoUrl ? (
-            <Image source={{ uri: logoUrl }} style={styles.logo} resizeMode="contain" />
-          ) : (
-            <View style={styles.logoPlaceholder}>
-              <Text style={styles.logoInitials}>{getInitials(societyName)}</Text>
-            </View>
-          )}
+          <SocietyLogoImage
+            logoUrl={logoUrl ?? null}
+            size={48}
+            placeholderText={getInitials(societyName)}
+            style={{ marginBottom: 8 }}
+          />
           <Text style={styles.societyName}>{societyName}</Text>
           <Text style={styles.title}>Order of Merit</Text>
           <Text style={styles.subtitle}>
@@ -191,26 +191,6 @@ const styles = StyleSheet.create({
   header: {
     alignItems: "center",
     marginBottom: 20,
-  },
-  logo: {
-    width: 48,
-    height: 48,
-    borderRadius: 10,
-    marginBottom: 8,
-  },
-  logoPlaceholder: {
-    width: 48,
-    height: 48,
-    borderRadius: 10,
-    marginBottom: 8,
-    backgroundColor: "rgba(11, 110, 79, 0.1)",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  logoInitials: {
-    fontSize: 14,
-    fontWeight: "700",
-    color: BRAND_GREEN,
   },
   societyName: {
     fontSize: 14,

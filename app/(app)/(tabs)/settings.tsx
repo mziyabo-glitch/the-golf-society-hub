@@ -7,6 +7,7 @@ import { useBottomTabBarHeight } from "@react-navigation/bottom-tabs";
 
 import { Screen } from "@/components/ui/Screen";
 import { AppText } from "@/components/ui/AppText";
+import { SocietyLogoImage } from "@/components/ui/SocietyLogoImage";
 import { AppCard } from "@/components/ui/AppCard";
 import { DestructiveButton, SecondaryButton, PrimaryButton } from "@/components/ui/Button";
 import { LoadingState } from "@/components/ui/LoadingState";
@@ -147,7 +148,6 @@ export default function SettingsScreen() {
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ["images"],
         allowsEditing: true,
-        aspect: [1, 1],
         quality: 0.8,
         base64: false,
       });
@@ -404,11 +404,7 @@ export default function SettingsScreen() {
               {/* Logo Preview */}
               <View style={styles.logoPreviewContainer}>
                 {logoUrl ? (
-                  <Image
-                    source={{ uri: logoUrl }}
-                    style={styles.logoPreview}
-                    resizeMode="contain"
-                  />
+                  <SocietyLogoImage logoUrl={logoUrl} size={120} placeholderText="" />
                 ) : (
                   <View style={[styles.logoPlaceholder, { backgroundColor: colors.backgroundTertiary }]}>
                     <Feather name="image" size={32} color={colors.textTertiary} />

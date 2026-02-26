@@ -7,9 +7,10 @@
  * - SocietyBadge: Compact inline version (for headers)
  */
 
-import { Image, StyleSheet, View, ViewStyle } from "react-native";
+import { StyleSheet, View, ViewStyle } from "react-native";
 import { AppText } from "./AppText";
 import { AppCard } from "./AppCard";
+import { SocietyLogoImage } from "./SocietyLogoImage";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
 
 // ============================================================================
@@ -30,19 +31,11 @@ export function SocietyHeader({ societyName, logoUrl, subtitle, style }: Society
   return (
     <AppCard style={style || styles.container}>
       <View style={styles.content}>
-        {logoUrl ? (
-          <Image
-            source={{ uri: logoUrl }}
-            style={styles.logo}
-            resizeMode="contain"
-          />
-        ) : (
-          <View style={[styles.initialsContainer, { backgroundColor: colors.primary + "15" }]}>
-            <AppText variant="h1" color="primary">
-              {initials}
-            </AppText>
-          </View>
-        )}
+        <SocietyLogoImage
+          logoUrl={logoUrl ?? null}
+          size={60}
+          placeholderText={initials}
+        />
         <View style={styles.textContainer}>
           <AppText variant="h2" numberOfLines={1} ellipsizeMode="tail">
             {societyName}
@@ -96,35 +89,11 @@ export function SocietyBadge({
 
   return (
     <View style={[styles.badgeContainer, style]}>
-      {logoUrl ? (
-        <Image
-          source={{ uri: logoUrl }}
-          style={[
-            styles.badgeLogo,
-            { width: badgeSize, height: badgeSize, borderRadius: radius.sm },
-          ]}
-          resizeMode="contain"
-        />
-      ) : (
-        <View
-          style={[
-            styles.badgeInitials,
-            {
-              width: badgeSize,
-              height: badgeSize,
-              backgroundColor: colors.primary + "15",
-              borderRadius: radius.sm,
-            },
-          ]}
-        >
-          <AppText
-            style={{ fontSize, fontWeight: "600" }}
-            color="primary"
-          >
-            {initials}
-          </AppText>
-        </View>
-      )}
+      <SocietyLogoImage
+        logoUrl={logoUrl ?? null}
+        size={badgeSize}
+        placeholderText={initials}
+      />
       {showName && (
         <AppText variant={size === "lg" ? "h2" : "bodyBold"} numberOfLines={1} style={{ flex: 1 }}>
           {societyName}
@@ -176,18 +145,6 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: spacing.md,
   },
-  logo: {
-    width: 60,
-    height: 60,
-    borderRadius: radius.sm,
-  },
-  initialsContainer: {
-    width: 60,
-    height: 60,
-    borderRadius: radius.sm,
-    alignItems: "center",
-    justifyContent: "center",
-  },
   textContainer: {
     flex: 1,
     minWidth: 0,
@@ -198,12 +155,5 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: spacing.sm,
-  },
-  badgeLogo: {
-    backgroundColor: "transparent",
-  },
-  badgeInitials: {
-    alignItems: "center",
-    justifyContent: "center",
   },
 });

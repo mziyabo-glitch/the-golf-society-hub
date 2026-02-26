@@ -10,7 +10,6 @@ import {
   Alert,
   Pressable,
   ScrollView,
-  Image,
   useWindowDimensions,
 } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
@@ -20,6 +19,7 @@ import { BottomTabBarHeightContext } from "@react-navigation/bottom-tabs";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { AppText } from "@/components/ui/AppText";
+import { SocietyLogoImage } from "@/components/ui/SocietyLogoImage";
 import { PrimaryButton } from "@/components/ui/Button";
 import { LoadingState } from "@/components/ui/LoadingState";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -358,20 +358,11 @@ export default function LeaderboardScreen() {
       >
         {/* ========== HEADER WITH LOGO ========== */}
         <View style={styles.headerRow}>
-          {/* Society Logo - larger on mobile (36px) vs desktop (30px) */}
-          <View style={[styles.logoContainer, { width: logoSize, height: logoSize }]}>
-            {logoUrl ? (
-              <Image
-                source={{ uri: logoUrl }}
-                style={[styles.logo, { width: logoSize, height: logoSize }]}
-                resizeMode="contain"
-              />
-            ) : (
-              <View style={[styles.logoPlaceholder, { width: logoSize, height: logoSize }]}>
-                <AppText style={styles.logoInitials}>{getInitials(society?.name || "GS")}</AppText>
-              </View>
-            )}
-          </View>
+          <SocietyLogoImage
+            logoUrl={logoUrl}
+            size={logoSize}
+            placeholderText={getInitials(society?.name || "GS")}
+          />
 
           <View style={{ flex: 1 }} />
 
@@ -727,28 +718,6 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     marginBottom: 16,
-  },
-  logoContainer: {
-    width: 48,
-    height: 48,
-  },
-  logo: {
-    width: 48,
-    height: 48,
-    borderRadius: 12,
-  },
-  logoPlaceholder: {
-    width: 48,
-    height: 48,
-    borderRadius: 12,
-    backgroundColor: "rgba(11, 110, 79, 0.1)",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  logoInitials: {
-    fontSize: 16,
-    fontWeight: "700",
-    color: "#0B6E4F",
   },
   shareButton: {
     width: 44,
