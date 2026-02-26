@@ -44,18 +44,30 @@ export async function getCurrentUser(): Promise<User | null> {
 // Sign In / Sign Up / Sign Out
 // ============================================================================
 
+export type SignInResult = { data: { user: User; session: Session } | null; error: Error | null };
+
 /**
  * Sign in with email and password.
- * Returns the user on success, throws on error.
- * Surfaces the real Supabase error message for debugging.
+ * Returns { data, error } so the caller can react to success (data.session) or show error.message.
  */
-export async function signInWithEmail(email: string, password: string): Promise<User> {
+export async function signInWithEmail(
+  email: string,
+  password: string
+): Promise<SignInResult> {
   const cleanEmail = email.trim().toLowerCase();
   console.log("[auth] signInWithEmail", { step: "signIn", email: cleanEmail });
 
   const { data, error } = await supabase.auth.signInWithPassword({
     email: cleanEmail,
     password,
+  });
+
+  // Temporary debug log for sign-in response
+  console.log("[auth] signInWithPassword returned:", {
+    hasData: !!data,
+    hasSession: !!data?.session,
+    hasUser: !!data?.user,
+    error: error ? { message: error.message, code: error.status } : null,
   });
 
   if (error) {
@@ -66,15 +78,16 @@ export async function signInWithEmail(email: string, password: string): Promise<
       message: error.message,
       name: error.name,
     });
-    throw new Error(error.message || "Sign in failed.");
+    return { data: null, error };
   }
 
-  if (!data.user) {
-    throw new Error("Sign in failed — no user returned.");
+  if (!data?.user) {
+    const err = new Error("Sign in failed — no user returned.") as Error & { status?: number };
+    return { data: null, error: err };
   }
 
   console.log("[auth] signInWithEmail success:", data.user.id);
-  return data.user;
+  return { data: data as { user: User; session: Session }, error: null };
 }
 
 /**

@@ -350,7 +350,12 @@ function useBootstrapInternal(): BootstrapState {
     // Listen for auth state changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (event, newSession) => {
-        console.log("[useBootstrap] Auth state changed:", event);
+        // Temporary debug log for auth state change events
+        console.log("[useBootstrap] Auth state change:", {
+          event,
+          hasSession: !!newSession,
+          userId: newSession?.user?.id ?? null,
+        });
 
         if (mounted.current) {
           setSession(newSession);
