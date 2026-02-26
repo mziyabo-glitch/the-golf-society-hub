@@ -1,8 +1,9 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { StyleSheet, View, Text, Image } from "react-native";
+import { StyleSheet, View, Text } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 
 import { Screen } from "@/components/ui/Screen";
+import { SocietyLogoImage } from "@/components/ui/SocietyLogoImage";
 import { AppCard } from "@/components/ui/AppCard";
 import { InlineNotice } from "@/components/ui/InlineNotice";
 import { LoadingState } from "@/components/ui/LoadingState";
@@ -236,13 +237,11 @@ const TeeSheetPage = React.forwardRef<View, {
     <View ref={ref} style={styles.page} collapsable={false}>
       <View style={styles.headerRow}>
         <View style={styles.headerLeft}>
-          {logoSrc ? (
-            <Image source={{ uri: logoSrc }} style={styles.logo} resizeMode="contain" />
-          ) : (
-            <View style={styles.logoPlaceholder}>
-              <Text style={styles.logoInitials}>{getInitials(data.societyName)}</Text>
-            </View>
-          )}
+          <SocietyLogoImage
+            logoUrl={logoSrc}
+            size={40}
+            placeholderText={getInitials(data.societyName)}
+          />
           <View>
             <Text style={styles.societyName}>{data.societyName}</Text>
             <Text style={styles.headerSubtitle}>Tee Sheet</Text>
@@ -462,26 +461,6 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 8,
     width: 260,
-  },
-  logo: {
-    width: 40,
-    height: 40,
-    borderRadius: 8,
-  },
-  logoPlaceholder: {
-    width: 40,
-    height: 40,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: "#E5E7EB",
-    backgroundColor: "#F3F4F6",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  logoInitials: {
-    fontSize: 12,
-    fontWeight: "700",
-    color: "#0B6E4F",
   },
   societyName: {
     fontSize: 10,

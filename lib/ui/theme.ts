@@ -20,7 +20,7 @@ export const colors = {
     
     // Backgrounds
     background: "#FFFFFF",
-    backgroundSecondary: "#F9FAFB",
+    backgroundSecondary: "#F7F8FA",
     backgroundTertiary: "#F3F4F6",
     
     // Surfaces (cards, inputs)
@@ -35,8 +35,8 @@ export const colors = {
     textInverse: "#FFFFFF",
     
     // Borders
-    border: "#E5E7EB",
-    borderLight: "#F3F4F6",
+    border: "#E6E8EC",
+    borderLight: "#E6E8EC",
     divider: "#E5E7EB",
     
     // Interactive
@@ -82,25 +82,40 @@ export const colors = {
   },
 } as const;
 
-// Spacing scale (premium UI requirements)
+// Spacing scale — premium: 8/12/16/24
 export const spacing = {
-  xs: 6,
-  sm: 10,
-  md: 14,
+  xs: 8,
+  sm: 12,
+  md: 16,
   base: 16,
-  lg: 18,
+  lg: 24,
   xl: 24,
   "2xl": 32,
   "3xl": 48,
 } as const;
 
-// Border radius (premium UI requirements)
+// Border radius — premium: 14
 export const radius = {
   sm: 10,
   md: 14,
-  lg: 18,
-  xl: 20,
+  lg: 14,
+  xl: 18,
   full: 9999,
+} as const;
+
+// Premium design tokens
+export const premiumTokens = {
+  background: "#F7F8FA",
+  cardBorder: "#E6E8EC",
+  textPrimary: "#111827",
+  textSecondary: "#6B7280",
+  cardShadow: {
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.04,
+    shadowRadius: 4,
+    elevation: 2,
+  },
 } as const;
 
 // Typography (premium UI requirements)

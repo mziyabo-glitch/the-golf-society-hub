@@ -22,6 +22,11 @@ import { useBottomTabBarHeight } from "@react-navigation/bottom-tabs";
 import { Screen } from "@/components/ui/Screen";
 import { AppText } from "@/components/ui/AppText";
 import { AppCard } from "@/components/ui/AppCard";
+import { Card } from "@/components/ui/Card";
+import { StatCard } from "@/components/ui/StatCard";
+import { LinkRowCard } from "@/components/ui/LinkRowCard";
+import { SocietyHeaderCard } from "@/components/ui/SocietyHeaderCard";
+import { Chip } from "@/components/ui/Chip";
 import { PrimaryButton } from "@/components/ui/Button";
 import { InlineNotice } from "@/components/ui/InlineNotice";
 import { Toast } from "@/components/ui/Toast";
@@ -159,51 +164,6 @@ function PoweredByFooter({
         Powered by Golf Society Hub
       </AppText>
     </View>
-  );
-}
-
-function StatTile({
-  colors,
-  icon,
-  label,
-  value,
-  detail,
-  onPress,
-}: {
-  colors: ReturnType<typeof getColors>;
-  icon: keyof typeof Feather.glyphMap;
-  label: string;
-  value: string;
-  detail: string;
-  onPress?: () => void;
-}) {
-  const isDisabled = !onPress;
-  return (
-    <Pressable
-      onPress={onPress}
-      disabled={isDisabled}
-      style={({ pressed }) => [
-        styles.statTilePressable,
-        !isDisabled && pressed && styles.cardPressablePressed,
-      ]}
-    >
-      <AppCard style={[styles.premiumCard, styles.statTileCard]}>
-        <View style={[styles.statTileIconCircle, { backgroundColor: colors.primary + "14" }]}>
-          <Feather name={icon} size={15} color={colors.primary} />
-        </View>
-        <View style={styles.statTileTextWrap}>
-          <AppText variant="small" color="secondary">
-            {label}
-          </AppText>
-          <AppText variant="title" style={styles.statTileValue}>
-            {value}
-          </AppText>
-          <AppText variant="small" color="tertiary" numberOfLines={1}>
-            {detail}
-          </AppText>
-        </View>
-      </AppCard>
-    </Pressable>
   );
 }
 
@@ -491,43 +451,23 @@ export default function HomeScreen() {
         onOpenSettings={() => router.push("/(app)/(tabs)/settings")}
       />
 
-      <AppCard style={[styles.societyHeroCard, styles.premiumCard]}>
-        <View
-          style={[
-            styles.heroLogoFrame,
-            { borderColor: colors.borderLight, backgroundColor: colors.backgroundSecondary },
-          ]}
-        >
-          {logoUrl ? (
-            <Image source={{ uri: logoUrl }} style={styles.heroLogoImage} resizeMode="contain" />
-          ) : (
-            <AppText variant="h1" color="primary">
-              {getInitials(society.name)}
-            </AppText>
-          )}
-        </View>
-        <AppText variant="h1" numberOfLines={1} style={styles.heroSocietyName}>
-          {String(society.name ?? "Society")}
-        </AppText>
-        <AppText variant="caption" color="secondary" numberOfLines={1} style={styles.heroSecondaryText}>
-          {heroSecondaryText}
-        </AppText>
-      </AppCard>
+      <SocietyHeaderCard
+        logoUrl={logoUrl}
+        societyName={String(society.name ?? "Society")}
+        subtitle={heroSecondaryText}
+        getInitials={getInitials}
+      />
 
-      <View style={[styles.headerDivider, { backgroundColor: colors.divider }]} />
-
-      {/* Smart-caddie style at-a-glance tiles */}
+      {/* OOM Rank + Points compact StatCards */}
       <View style={styles.atGlanceRow}>
-        <StatTile
-          colors={colors}
+        <StatCard
           icon="award"
           label="OOM Rank"
           value={atGlanceRank}
           detail={mySnapshot && mySnapshot.rank > 0 ? `of ${String(mySnapshot.totalWithPoints)}` : "No rank yet"}
           onPress={canOpenLeaderboard ? openLeaderboard : undefined}
         />
-        <StatTile
-          colors={colors}
+        <StatCard
           icon="bar-chart-2"
           label="Points"
           value={atGlancePoints}
@@ -645,66 +585,33 @@ export default function HomeScreen() {
         );
       })()}
 
-      {/* ================================================================== */}
-      {/* WEATHER CARD                                                       */}
-      {/* ================================================================== */}
-      <Pressable onPress={openFairwayWeather} style={cardPressStyle}>
-        <AppCard
-          style={[
-            styles.premiumCard,
-            styles.weatherCard,
-            { backgroundColor: colors.primary + "12", borderColor: colors.primary + "1F" },
-          ]}
-        >
-          <View style={styles.weatherHeader}>
-            <View style={[styles.weatherIconCircle, { backgroundColor: colors.background + "CC" }]}>
-              <Feather name="cloud" size={16} color={colors.primary} />
-            </View>
-            <View style={{ flex: 1 }}>
-              <AppText variant="bodyBold">Course Weather</AppText>
-              <AppText variant="small" color="secondary">
-                Powered by FairwayWeather
-              </AppText>
-            </View>
-            <Feather name="chevron-right" size={16} color={colors.textSecondary} />
-          </View>
-        </AppCard>
-      </Pressable>
+      {/* Course Weather — compact LinkRowCard */}
+      <LinkRowCard
+        icon="cloud"
+        title="Course Weather"
+        subtitle="Powered by FairwayWeather"
+        onPress={openFairwayWeather}
+      />
 
-      {/* ================================================================== */}
-      {/* B) NEXT EVENT CARD                                                 */}
-      {/* ================================================================== */}
+      {/* Next Event — tightened card */}
       {nextEvent ? (
         <Pressable onPress={() => openEvent(nextEvent.id)} style={cardPressStyle}>
-          <AppCard style={[styles.nextEventCard, styles.premiumCard]} elevated>
+          <Card style={styles.nextEventCard}>
             <View style={styles.cardTitleRow}>
               <Feather name="calendar" size={16} color={colors.primary} />
               <AppText variant="captionBold" color="primary">Next Event</AppText>
             </View>
-
-            <AppText variant="title" style={styles.nextEventTitle}>
+            <AppText variant="h2" style={styles.nextEventTitle}>
               {String(nextEvent.name ?? "Event")}
             </AppText>
-
-            <AppText variant="caption" color="secondary" style={styles.nextEventMeta}>
+            <AppText variant="small" color="secondary" style={styles.nextEventMeta}>
               {formatEventDate(nextEvent.date)}
               {nextEvent.courseName ? ` • ${String(nextEvent.courseName)}` : ""}
             </AppText>
-
             <View style={styles.nextEventDetails}>
-              {nextEvent.format && (
-                <View style={[styles.nextEventPill, { backgroundColor: colors.backgroundTertiary, borderColor: colors.borderLight }]}>
-                  <AppText variant="small" color="secondary">{formatFormatLabel(nextEvent.format)}</AppText>
-                </View>
-              )}
-              {nextEvent.classification && (
-                <View style={[styles.nextEventPill, { backgroundColor: colors.backgroundTertiary, borderColor: colors.borderLight }]}>
-                  <AppText variant="small" color="secondary">{formatClassification(nextEvent.classification)}</AppText>
-                </View>
-              )}
+              {nextEvent.format && <Chip>{formatFormatLabel(nextEvent.format)}</Chip>}
+              {nextEvent.classification && <Chip>{formatClassification(nextEvent.classification)}</Chip>}
             </View>
-
-            {/* OOM badge */}
             {nextEvent.isOOM && (
               <View style={styles.oomPremiumPill}>
                 <Feather name="award" size={12} color="#9A6700" />
@@ -713,9 +620,7 @@ export default function HomeScreen() {
                 </AppText>
               </View>
             )}
-
-            {/* Tee time info */}
-            <View style={[styles.teeTimeRow, { borderTopColor: colors.borderLight, marginTop: spacing.md }]}>
+            <View style={[styles.teeTimeRow, { borderTopColor: colors.borderLight, marginTop: spacing.sm }]}>
               <Feather name="flag" size={14} color={nextEvent.teeTimePublishedAt ? colors.success : colors.textSecondary} />
               {nextEvent.teeTimePublishedAt ? (
                 <AppText variant="small" style={{ color: colors.success, fontWeight: "600", flex: 1 }}>
@@ -729,10 +634,10 @@ export default function HomeScreen() {
               )}
               <Feather name="chevron-right" size={16} color={colors.textTertiary} />
             </View>
-          </AppCard>
+          </Card>
         </Pressable>
       ) : (
-        <AppCard style={[styles.premiumCard, styles.nextEventCard]}>
+        <Card style={styles.nextEventCard}>
           <View style={styles.cardTitleRow}>
             <Feather name="calendar" size={16} color={colors.textTertiary} />
             <AppText variant="captionBold" color="tertiary">Next Event</AppText>
@@ -740,7 +645,7 @@ export default function HomeScreen() {
           <AppText variant="body" color="secondary" style={{ marginTop: spacing.sm }}>
             No upcoming events scheduled. Check back soon!
           </AppText>
-        </AppCard>
+        </Card>
       )}
 
       {/* ================================================================== */}
@@ -1184,27 +1089,24 @@ function SkeletonCards({ colors }: { colors: ReturnType<typeof getColors> }) {
         <View style={styles.appBarSpacer} />
         <View style={[styles.appBarAction, { backgroundColor: shimmer, borderColor: colors.borderLight }]} />
       </View>
-      <AppCard style={[styles.societyHeroCard, styles.premiumCard]}>
-        <View style={[styles.heroLogoFrame, { backgroundColor: shimmer, borderColor: colors.borderLight }]}>
-          <View style={[styles.skeletonCircle, { width: 36, height: 36, borderRadius: 18, backgroundColor: colors.backgroundSecondary }]} />
+      <AppCard style={[styles.skeletonHeaderCard, styles.premiumCard]}>
+        <View style={[styles.skeletonLogoFrame, { backgroundColor: shimmer }]} />
+        <View style={{ flex: 1, marginLeft: spacing.md }}>
+          <View style={[styles.skeletonLine, { width: "70%", backgroundColor: shimmer }]} />
+          <View style={[styles.skeletonLine, { width: "50%", backgroundColor: shimmer, marginTop: 6 }]} />
         </View>
-        <View style={[styles.skeletonLine, { width: "56%", backgroundColor: shimmer, marginTop: spacing.sm }]} />
-        <View style={[styles.skeletonLine, { width: "70%", backgroundColor: shimmer, marginTop: 6 }]} />
       </AppCard>
-      <View style={[styles.headerDivider, { backgroundColor: colors.borderLight }]} />
 
       <View style={styles.atGlanceRow}>
-        <AppCard style={[styles.premiumCard, styles.statTileCard]}>
-          <View style={[styles.statTileIconCircle, { backgroundColor: shimmer }]} />
+        <AppCard style={[styles.premiumCard, styles.skeletonStatCard]}>
+          <View style={[styles.skeletonIconCircle, { backgroundColor: shimmer }]} />
           <View style={[styles.skeletonLine, { width: "48%", backgroundColor: shimmer, marginBottom: 8 }]} />
-          <View style={[styles.skeletonLine, { width: "34%", backgroundColor: shimmer, marginBottom: 6, height: 20 }]} />
-          <View style={[styles.skeletonLine, { width: "64%", backgroundColor: shimmer }]} />
+          <View style={[styles.skeletonLine, { width: "34%", backgroundColor: shimmer, height: 20 }]} />
         </AppCard>
-        <AppCard style={[styles.premiumCard, styles.statTileCard]}>
-          <View style={[styles.statTileIconCircle, { backgroundColor: shimmer }]} />
+        <AppCard style={[styles.premiumCard, styles.skeletonStatCard]}>
+          <View style={[styles.skeletonIconCircle, { backgroundColor: shimmer }]} />
           <View style={[styles.skeletonLine, { width: "48%", backgroundColor: shimmer, marginBottom: 8 }]} />
-          <View style={[styles.skeletonLine, { width: "34%", backgroundColor: shimmer, marginBottom: 6, height: 20 }]} />
-          <View style={[styles.skeletonLine, { width: "64%", backgroundColor: shimmer }]} />
+          <View style={[styles.skeletonLine, { width: "34%", backgroundColor: shimmer, height: 20 }]} />
         </AppCard>
       </View>
 
@@ -1464,12 +1366,6 @@ const styles = StyleSheet.create({
     gap: spacing.xs,
     marginTop: spacing.sm,
   },
-  nextEventPill: {
-    borderWidth: 1,
-    borderRadius: radius.full,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 5,
-  },
   oomPremiumPill: {
     flexDirection: "row",
     alignItems: "center",
@@ -1596,5 +1492,26 @@ const styles = StyleSheet.create({
     width: 48,
     height: 48,
     borderRadius: 24,
+  },
+  skeletonHeaderCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    padding: spacing.md,
+  },
+  skeletonLogoFrame: {
+    width: 48,
+    height: 48,
+    borderRadius: 14,
+  },
+  skeletonStatCard: {
+    flex: 1,
+    padding: spacing.md,
+    minHeight: 88,
+  },
+  skeletonIconCircle: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    marginBottom: spacing.sm,
   },
 });
