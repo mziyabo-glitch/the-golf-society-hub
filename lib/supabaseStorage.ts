@@ -1,7 +1,7 @@
 // lib/supabaseStorage.ts
 // Cross-platform storage adapter for Supabase auth
 // - Web: uses localStorage with "gsh:" prefix
-// - Native (iOS/Android): uses expo-secure-store with AFTER_FIRST_UNLOCK
+// - Native (iOS/Android): uses AsyncStorage for reliable session persistence
 //
 // "Remember me" toggle:
 //   When rememberMe is false the adapter silently no-ops writes.
@@ -9,7 +9,7 @@
 //   page reload / app restart.
 
 import { Platform } from "react-native";
-import * as SecureStore from "expo-secure-store";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 
 const STORAGE_PREFIX = "gsh:";
 
@@ -35,8 +35,9 @@ export function getRememberMe(): boolean {
 }
 
 /**
- * Storage adapter for Supabase auth that works on both web and native.
- * Implements the required interface: getItem, setItem, removeItem (all async).
+ * Storage adapter for Supabase auth.
+ * Uses AsyncStorage on native for reliable session persistence (Supabase recommends this).
+ * Uses localStorage on web.
  */
 export const supabaseStorage = {
   async getItem(key: string): Promise<string | null> {
@@ -50,9 +51,7 @@ export const supabaseStorage = {
     }
 
     try {
-      return await SecureStore.getItemAsync(prefixedKey, {
-        keychainAccessible: SecureStore.AFTER_FIRST_UNLOCK,
-      });
+      return await AsyncStorage.getItem(prefixedKey);
     } catch (error) {
       console.warn("[supabaseStorage] getItem error:", error);
       return null;
@@ -73,9 +72,7 @@ export const supabaseStorage = {
     }
 
     try {
-      await SecureStore.setItemAsync(prefixedKey, value, {
-        keychainAccessible: SecureStore.AFTER_FIRST_UNLOCK,
-      });
+      await AsyncStorage.setItem(prefixedKey, value);
     } catch (error) {
       console.warn("[supabaseStorage] setItem error:", error);
     }
@@ -92,9 +89,7 @@ export const supabaseStorage = {
     }
 
     try {
-      await SecureStore.deleteItemAsync(prefixedKey, {
-        keychainAccessible: SecureStore.AFTER_FIRST_UNLOCK,
-      });
+      await AsyncStorage.removeItem(prefixedKey);
     } catch (error) {
       console.warn("[supabaseStorage] removeItem error:", error);
     }
