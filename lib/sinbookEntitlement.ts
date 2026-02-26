@@ -1,11 +1,12 @@
 // lib/sinbookEntitlement.ts
 // Simple entitlement gate for Sinbook.
-// Free: 1 rivalry. Pro (£10): unlimited + season-long + private.
+// Trial: unlimited rivalries. Pro (£10): season-long + private.
 // Payments stubbed — flip isPro() when IAP is wired.
 
 import { countMySinbooks } from "@/lib/db_supabase/sinbookRepo";
 
-const FREE_LIMIT = 1;
+/** Trial allows unlimited sinbooks. Set to a number to enforce a limit later. */
+const TRIAL_SINBOOK_LIMIT = 999;
 
 /**
  * Stub: returns true if user has Pro entitlement.
@@ -23,10 +24,10 @@ export async function canCreateSinbook(): Promise<{ allowed: boolean; reason?: s
   if (isPro()) return { allowed: true };
 
   const count = await countMySinbooks();
-  if (count >= FREE_LIMIT) {
+  if (count >= TRIAL_SINBOOK_LIMIT) {
     return {
       allowed: false,
-      reason: `Free accounts are limited to ${FREE_LIMIT} rivalry. Upgrade to Pro for unlimited rivalries, season-long tracking, and private rivalries.`,
+      reason: `Limit of ${TRIAL_SINBOOK_LIMIT} rivalries reached. Upgrade to Pro for more.`,
     };
   }
 
