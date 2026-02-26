@@ -1,128 +1,70 @@
 /**
- * StatCard Component
- *
- * A polished stat card for displaying key metrics.
- * Supports emphasis mode for highlighting important values.
+ * StatCard — number + label + icon (compact)
  */
 
-import { StyleSheet, View, Pressable } from "react-native";
+import { StyleSheet, View, Pressable, type PressableStateCallbackType } from "react-native";
+import { Feather } from "@expo/vector-icons";
 import { AppText } from "./AppText";
-import { getColors, spacing, radius } from "@/lib/ui/theme";
+import { Card } from "./Card";
+import { getColors, spacing } from "@/lib/ui/theme";
 
 type StatCardProps = {
+  icon: keyof typeof Feather.glyphMap;
   label: string;
   value: string;
-  /** Optional hint text below the value */
-  hint?: string;
-  /** Visual emphasis - makes the card stand out */
-  emphasis?: boolean;
-  /** Color variant for the value */
-  variant?: "default" | "success" | "error" | "muted";
-  /** Optional icon to show before label */
-  icon?: React.ReactNode;
-  /** Make card tappable */
+  detail?: string;
   onPress?: () => void;
 };
 
-export function StatCard({
-  label,
-  value,
-  hint,
-  emphasis = false,
-  variant = "default",
-  icon,
-  onPress,
-}: StatCardProps) {
+export function StatCard({ icon, label, value, detail, onPress }: StatCardProps) {
   const colors = getColors();
-
-  const getValueColor = () => {
-    switch (variant) {
-      case "success":
-        return colors.success;
-      case "error":
-        return colors.error;
-      case "muted":
-        return colors.textTertiary;
-      default:
-        return emphasis ? colors.primary : colors.text;
-    }
-  };
+  const pressStyle = ({ pressed }: PressableStateCallbackType) => [
+    styles.pressable,
+    onPress && pressed && { opacity: 0.9 },
+  ];
 
   const content = (
-    <View
-      style={[
-        styles.card,
-        {
-          backgroundColor: emphasis ? colors.primary + "10" : colors.surface,
-          borderColor: emphasis ? colors.primary : colors.border,
-          borderWidth: emphasis ? 2 : 1,
-        },
-      ]}
-    >
-      <View style={styles.labelRow}>
-        {icon && <View style={styles.icon}>{icon}</View>}
-        <AppText variant="caption" color="secondary" style={styles.label}>
-          {label}
-        </AppText>
+    <Card style={styles.card} padding={spacing.md}>
+      <View style={[styles.iconCircle, { backgroundColor: colors.primary + "14" }]}>
+        <Feather name={icon} size={16} color={colors.primary} />
       </View>
-      <AppText
-        variant={emphasis ? "title" : "h1"}
-        style={[styles.value, { color: getValueColor() }]}
-        numberOfLines={1}
-        adjustsFontSizeToFit
-      >
+      <AppText variant="small" color="secondary" numberOfLines={1}>
+        {label}
+      </AppText>
+      <AppText variant="h2" style={styles.value}>
         {value}
       </AppText>
-      {hint && (
-        <AppText variant="small" color="tertiary" style={styles.hint}>
-          {hint}
+      {detail && (
+        <AppText variant="small" color="tertiary" numberOfLines={1}>
+          {detail}
         </AppText>
       )}
-    </View>
+    </Card>
   );
 
   if (onPress) {
-    return (
-      <Pressable
-        style={({ pressed }) => [styles.wrapper, { opacity: pressed ? 0.8 : 1 }]}
-        onPress={onPress}
-      >
-        {content}
-      </Pressable>
-    );
+    return <Pressable onPress={onPress} style={pressStyle}>{content}</Pressable>;
   }
-
-  return <View style={styles.wrapper}>{content}</View>;
+  return content;
 }
 
 const styles = StyleSheet.create({
-  wrapper: {
+  pressable: {
     flex: 1,
-    minWidth: "45%",
   },
   card: {
-    borderRadius: radius.lg,
-    padding: spacing.base,
-    minHeight: 90,
-    justifyContent: "center",
+    marginBottom: 0,
+    minHeight: 88,
   },
-  labelRow: {
-    flexDirection: "row",
+  iconCircle: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
     alignItems: "center",
-    marginBottom: spacing.xs,
-  },
-  icon: {
-    marginRight: spacing.xs,
-  },
-  label: {
-    textTransform: "uppercase",
-    letterSpacing: 0.5,
-    fontSize: 11,
+    justifyContent: "center",
+    marginBottom: spacing.sm,
   },
   value: {
-    fontVariant: ["tabular-nums"],
-  },
-  hint: {
     marginTop: 2,
   },
 });

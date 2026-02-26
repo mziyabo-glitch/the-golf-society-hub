@@ -23,6 +23,7 @@ import { AppText } from "@/components/ui/AppText";
 import { PrimaryButton } from "@/components/ui/Button";
 import { LoadingState } from "@/components/ui/LoadingState";
 import { EmptyState } from "@/components/ui/EmptyState";
+import { SegmentedTabs } from "@/components/ui/SegmentedTabs";
 import { Toast } from "@/components/ui/Toast";
 import { LicenceRequiredModal } from "@/components/LicenceRequiredModal";
 import { useBootstrap } from "@/lib/useBootstrap";
@@ -34,7 +35,7 @@ import {
   type OrderOfMeritEntry,
   type ResultsLogEntry,
 } from "@/lib/db_supabase/resultsRepo";
-import { getColors } from "@/lib/ui/theme";
+import { getColors, spacing } from "@/lib/ui/theme";
 import { assertPngExportOnly } from "@/lib/share/pngExportGuard";
 import { getSocietyLogoUrl } from "@/lib/societyLogo";
 
@@ -102,7 +103,7 @@ const glassStyles = StyleSheet.create({
 // MAIN COMPONENT
 // ============================================================================
 
-type TabType = "leaderboard" | "resultsLog";
+type TabType = "leaderboard" | "resultsLog" | "honour";
 
 export default function LeaderboardScreen() {
   const { society, societyId, loading: bootstrapLoading } = useBootstrap();
@@ -114,7 +115,8 @@ export default function LeaderboardScreen() {
   const logoSize = screenWidth < 600 ? 40 : 32;
 
   const params = useLocalSearchParams<{ view?: string }>();
-  const initialTab: TabType = params.view === "log" ? "resultsLog" : "leaderboard";
+  const initialTab: TabType =
+    params.view === "log" ? "resultsLog" : params.view === "honour" ? "honour" : "leaderboard";
 
   const [activeTab, setActiveTab] = useState<TabType>(initialTab);
   const [standings, setStandings] = useState<OrderOfMeritEntry[]>([]);
@@ -203,8 +205,8 @@ export default function LeaderboardScreen() {
 
   useEffect(() => {
     if (params.view === "log") setActiveTab("resultsLog");
-    if (params.view === "honour") router.push("/(app)/roll-of-honour");
-  }, [params.view]);
+    if (params.view === "honour") router.replace("/(app)/roll-of-honour");
+  }, [params.view, router]);
 
   useFocusEffect(
     useCallback(() => {
@@ -293,7 +295,7 @@ export default function LeaderboardScreen() {
 
   if (bootstrapLoading || loading) {
     return (
-      <SafeAreaView style={[styles.container, { backgroundColor: "#F9FAFB" }]} edges={["top", "bottom"]}>
+      <SafeAreaView style={[styles.container, { backgroundColor: "#F7F8FA" }]} edges={["top", "bottom"]}>
         <View style={styles.centered}>
           <LoadingState message="Loading Order of Merit..." />
         </View>
@@ -303,7 +305,7 @@ export default function LeaderboardScreen() {
 
   if (fetchError) {
     return (
-      <SafeAreaView style={[styles.container, { backgroundColor: "#F9FAFB" }]} edges={["top", "bottom"]}>
+      <SafeAreaView style={[styles.container, { backgroundColor: "#F7F8FA" }]} edges={["top", "bottom"]}>
         <View style={styles.centered}>
           <EmptyState
             icon={<Feather name="alert-circle" size={24} color={colors.error} />}
@@ -318,7 +320,7 @@ export default function LeaderboardScreen() {
 
   if (!societyId) {
     return (
-      <SafeAreaView style={[styles.container, { backgroundColor: "#F9FAFB" }]} edges={["top", "bottom"]}>
+      <SafeAreaView style={[styles.container, { backgroundColor: "#F7F8FA" }]} edges={["top", "bottom"]}>
         <View style={styles.centered}>
           <EmptyState
             icon={<Feather name="users" size={24} color={colors.textTertiary} />}
@@ -388,62 +390,29 @@ export default function LeaderboardScreen() {
           )}
         </View>
 
-        {/* ========== TITLE ========== */}
+        {/* Header: Order of Merit 26 bold, meta 12 secondary */}
         <View style={styles.titleSection}>
-          <AppText style={styles.societyName}>{society?.name || "Golf Society"}</AppText>
           <AppText style={styles.mainTitle}>Order of Merit</AppText>
           <AppText style={styles.seasonText}>{seasonLabel}</AppText>
         </View>
 
-        {/* ========== TAB TOGGLE (hidden for unlicensed) ========== */}
+        {/* SegmentedTabs: Leaderboard / Results Matrix / Roll of Honour */}
         {!needsLicence && (
-          <View style={styles.tabContainer}>
-            <Pressable
-              style={[styles.tab, activeTab === "leaderboard" && styles.tabActive]}
-              onPress={() => setActiveTab("leaderboard")}
-            >
-              <Feather
-                name="award"
-                size={16}
-                color={activeTab === "leaderboard" ? "#0B6E4F" : "#9CA3AF"}
-              />
-              <AppText
-                style={[
-                  styles.tabText,
-                  activeTab === "leaderboard" && styles.tabTextActive,
-                ]}
-              >
-                Leaderboard
-              </AppText>
-            </Pressable>
-            <Pressable
-              style={[styles.tab, activeTab === "resultsLog" && styles.tabActive]}
-              onPress={() => setActiveTab("resultsLog")}
-            >
-              <Feather
-                name="grid"
-                size={16}
-                color={activeTab === "resultsLog" ? "#0B6E4F" : "#9CA3AF"}
-              />
-              <AppText
-                style={[
-                  styles.tabText,
-                  activeTab === "resultsLog" && styles.tabTextActive,
-                ]}
-              >
-                Results Matrix
-              </AppText>
-            </Pressable>
-            <Pressable
-              style={styles.tab}
-              onPress={() =>
-                router.push("/(app)/roll-of-honour")
+          <SegmentedTabs
+            items={[
+              { id: "leaderboard" as TabType, label: "Leaderboard", icon: <Feather name="award" size={16} color={activeTab === "leaderboard" ? "#0B6E4F" : "#9CA3AF"} /> },
+              { id: "resultsLog" as TabType, label: "Results Matrix", icon: <Feather name="grid" size={16} color={activeTab === "resultsLog" ? "#0B6E4F" : "#9CA3AF"} /> },
+              { id: "honour" as TabType, label: "Roll of Honour", icon: <Feather name="trophy" size={16} color="#9CA3AF" /> },
+            ]}
+            selectedId={activeTab}
+            onSelect={(id) => {
+              if (id === "honour") {
+                router.push("/(app)/roll-of-honour");
+              } else {
+                setActiveTab(id);
               }
-            >
-              <Feather name="trophy" size={16} color="#9CA3AF" />
-              <AppText style={styles.tabText}>Roll of Honour</AppText>
-            </Pressable>
-          </View>
+            }}
+          />
         )}
 
         {/* ========== LEADERBOARD TAB ========== */}
@@ -451,7 +420,7 @@ export default function LeaderboardScreen() {
           <>
             {standings.length === 0 ? (
               <EmptyState
-                icon={<Feather name="award" size={24} color={colors.textTertiary} />}
+                icon={<Feather name="award" size={32} color={colors.textTertiary} />}
                 title="No Order of Merit events yet"
                 message="Create an OOM event to start tracking points."
                 action={{
@@ -622,9 +591,9 @@ export default function LeaderboardScreen() {
           <>
             {groupedResultsLog.length === 0 ? (
               <EmptyState
-                icon={<Feather name="calendar" size={24} color={colors.textTertiary} />}
-                title="No Order of Merit events yet"
-                message="Create an OOM event to see the results log."
+                icon={<Feather name="calendar" size={32} color={colors.textTertiary} />}
+                title="No results yet"
+                message="Create an OOM event to see the results matrix."
                 action={{
                   label: "Create OOM event",
                   onPress: () =>
@@ -724,10 +693,9 @@ export default function LeaderboardScreen() {
           </>
         )}
 
-        {/* ========== FOOTER BRANDING ========== */}
+        {/* Subtle footer */}
         <View style={styles.footer}>
-          <AppText style={styles.footerText}>Produced by</AppText>
-          <AppText style={styles.footerBrand}>The Golf Society Hub</AppText>
+          <AppText style={styles.footerText}>The Golf Society Hub</AppText>
         </View>
       </ScrollView>
 
@@ -743,10 +711,10 @@ export default function LeaderboardScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#F9FAFB",
+    backgroundColor: "#F7F8FA",
   },
   scrollContent: {
-    padding: 20,
+    padding: spacing.md,
   },
   centered: {
     flex: 1,
@@ -799,24 +767,16 @@ const styles = StyleSheet.create({
 
   // Title
   titleSection: {
-    marginBottom: 24,
-  },
-  societyName: {
-    fontSize: 12,
-    fontWeight: "600",
-    color: "#9CA3AF",
-    textTransform: "uppercase",
-    letterSpacing: 1,
-    marginBottom: 4,
+    marginBottom: spacing.lg,
   },
   mainTitle: {
-    fontSize: 32,
-    fontWeight: "800",
+    fontSize: 26,
+    fontWeight: "700",
     color: "#111827",
     letterSpacing: -0.5,
   },
   seasonText: {
-    fontSize: 14,
+    fontSize: 12,
     color: "#6B7280",
     marginTop: 4,
   },
@@ -1124,21 +1084,12 @@ const styles = StyleSheet.create({
   // Footer
   footer: {
     alignItems: "center",
-    marginTop: 32,
-    paddingTop: 24,
-    borderTopWidth: 1,
-    borderTopColor: "rgba(0, 0, 0, 0.06)",
+    marginTop: 24,
+    paddingTop: 16,
   },
   footerText: {
     fontSize: 11,
     color: "#9CA3AF",
-    marginBottom: 2,
-  },
-  footerBrand: {
-    fontSize: 13,
-    fontWeight: "600",
-    color: "#6B7280",
-    fontStyle: "italic",
   },
 
 });
