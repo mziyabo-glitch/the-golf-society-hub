@@ -31,12 +31,16 @@ import {
   resetPassword,
 } from "@/lib/auth_supabase";
 import { setRememberMe } from "@/lib/supabaseStorage";
+import { useBootstrap } from "@/lib/useBootstrap";
+import { useRouter } from "expo-router";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
 
 type Mode = "signIn" | "signUp" | "forgotPassword";
 
 export function AuthScreen() {
   const colors = getColors();
+  const { refresh } = useBootstrap();
+  const router = useRouter();
 
   const [mode, setMode] = useState<Mode>("signIn");
   const [email, setEmail] = useState("");
@@ -94,9 +98,22 @@ export function AuthScreen() {
     // storage adapter knows whether to actually write the session.
     setRememberMe(rememberMe);
 
+    let skipLoadingReset = false;
+
     try {
       if (isSignIn) {
-        await signInWithEmail(submitEmail, submitPassword);
+        const { data, error } = await signInWithEmail(submitEmail, submitPassword);
+        if (error) {
+          setError(error.message || "Sign in failed.");
+          return;
+        }
+        if (data?.session) {
+          refresh();
+          router.replace("/(app)/(tabs)");
+          skipLoadingReset = true;
+          return;
+        }
+        setError("Sign in failed — no session returned.");
       } else {
         const { needsConfirmation } = await signUpWithEmail(submitEmail, submitPassword);
         if (needsConfirmation) {
@@ -108,7 +125,7 @@ export function AuthScreen() {
     } catch (e: any) {
       setError(e?.message || "Something went wrong. Please try again.");
     } finally {
-      setLoading(false);
+      if (!skipLoadingReset) setLoading(false);
     }
   };
 

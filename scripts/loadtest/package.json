@@ -1,0 +1,15 @@
+{
+  "name": "loadtest",
+  "version": "1.0.0",
+  "description": "Simple Node scripts that sign up and log in N test users concurrently against\r your Supabase project to verify auth throughput and rate limits.",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "dotenv": "^17.3.1"
+  }
+}

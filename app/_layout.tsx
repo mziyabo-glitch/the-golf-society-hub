@@ -96,6 +96,17 @@ function RootNavigator() {
     }
   }, [loading]);
 
+  // Auth-aware redirect: when session appears, ensure we're in the app (avoids staying on sign-in)
+  useEffect(() => {
+    if (loading || !isSignedIn || isPublicPath) return;
+    const seg0 = segments[0];
+    const inApp = seg0 === "(app)" || seg0 === "app" || (typeof pathname === "string" && pathname.startsWith("/(app)"));
+    if (!inApp) {
+      console.log("[_layout] Session present, redirecting to app");
+      router.replace("/(app)/(tabs)");
+    }
+  }, [loading, isSignedIn, isPublicPath, segments, pathname, router]);
+
   // Determine which overlay to show (if any).
   // The Stack ALWAYS renders so expo-router can match child routes.
   // Public routes are accessible without sign-in (OAuth callback, password reset).
