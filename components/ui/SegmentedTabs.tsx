@@ -1,11 +1,11 @@
 /**
- * SegmentedTabs — equal width, premium selected state (light tint + semibold), height ~36
+ * SegmentedTabs — equal width, never overlaps on small screens.
+ * Short labels recommended for narrow devices (e.g. Leaders, Matrix, Honour).
  */
 
-import { StyleSheet, View, Pressable } from "react-native";
+import { StyleSheet, View, Pressable, Text } from "react-native";
 import { ReactNode } from "react";
-import { AppText } from "./AppText";
-import { getColors, radius, spacing } from "@/lib/ui/theme";
+import { getColors, spacing } from "@/lib/ui/theme";
 
 export type SegmentedTabItem<T extends string> = {
   id: T;
@@ -19,6 +19,12 @@ type SegmentedTabsProps<T extends string> = {
   onSelect: (id: T) => void;
 };
 
+const CONTAINER_BG = "#EEF1F4";
+const TAB_HEIGHT = 40;
+const TAB_PADDING_H = 10;
+const TAB_RADIUS = 14;
+const CONTAINER_RADIUS = 16;
+
 export function SegmentedTabs<T extends string>({
   items,
   selectedId,
@@ -27,7 +33,7 @@ export function SegmentedTabs<T extends string>({
   const colors = getColors();
 
   return (
-    <View style={[styles.container, { backgroundColor: colors.backgroundTertiary }]}>
+    <View style={styles.container}>
       {items.map((item) => {
         const isSelected = item.id === selectedId;
         return (
@@ -44,16 +50,19 @@ export function SegmentedTabs<T extends string>({
             ]}
           >
             {item.icon}
-            <AppText
-              variant="captionBold"
+            <Text
               style={[
                 styles.label,
-                { color: isSelected ? colors.text : colors.textSecondary },
+                {
+                  color: isSelected ? colors.text : colors.textSecondary,
+                  fontWeight: isSelected ? "600" : "500",
+                },
               ]}
               numberOfLines={1}
+              ellipsizeMode="tail"
             >
               {item.label}
-            </AppText>
+            </Text>
           </Pressable>
         );
       })}
@@ -64,28 +73,34 @@ export function SegmentedTabs<T extends string>({
 const styles = StyleSheet.create({
   container: {
     flexDirection: "row",
-    borderRadius: radius.md,
+    backgroundColor: CONTAINER_BG,
+    borderRadius: CONTAINER_RADIUS,
     padding: 4,
     marginBottom: spacing.lg,
   },
   tab: {
     flex: 1,
+    minWidth: 0,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
     gap: 6,
-    paddingVertical: 10,
-    borderRadius: 10,
-    minHeight: 36,
+    paddingHorizontal: TAB_PADDING_H,
+    paddingVertical: 0,
+    minHeight: TAB_HEIGHT,
+    height: TAB_HEIGHT,
+    borderRadius: TAB_RADIUS,
   },
   tabSelected: {
+    backgroundColor: "#FFFFFF",
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.04,
+    shadowOpacity: 0.06,
     shadowRadius: 4,
     elevation: 2,
   },
   label: {
+    fontSize: 14,
     textAlign: "center",
   },
 });

@@ -391,9 +391,9 @@ export default function LeaderboardScreen() {
         {!needsLicence && (
           <SegmentedTabs
             items={[
-              { id: "leaderboard" as TabType, label: "Leaderboard", icon: <Feather name="award" size={16} color={activeTab === "leaderboard" ? "#0B6E4F" : "#9CA3AF"} /> },
-              { id: "resultsLog" as TabType, label: "Results Matrix", icon: <Feather name="grid" size={16} color={activeTab === "resultsLog" ? "#0B6E4F" : "#9CA3AF"} /> },
-              { id: "honour" as TabType, label: "Roll of Honour", icon: <Feather name="trophy" size={16} color="#9CA3AF" /> },
+              { id: "leaderboard" as TabType, label: "Leaders", icon: <Feather name="award" size={16} color={activeTab === "leaderboard" ? "#0B6E4F" : "#9CA3AF"} /> },
+              { id: "resultsLog" as TabType, label: "Matrix", icon: <Feather name="grid" size={16} color={activeTab === "resultsLog" ? "#0B6E4F" : "#9CA3AF"} /> },
+              { id: "honour" as TabType, label: "Honour", icon: <Feather name="trophy" size={16} color="#9CA3AF" /> },
             ]}
             selectedId={activeTab}
             onSelect={(id) => {
