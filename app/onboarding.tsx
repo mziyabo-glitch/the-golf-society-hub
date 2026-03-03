@@ -44,7 +44,7 @@ export default function OnboardingScreen() {
   const router = useRouter();
   const pathname = usePathname();
   const params = useLocalSearchParams<{ mode?: string | string[] }>();
-  const { user, ready, refresh } = useBootstrap();
+  const { user, ready, setActiveSocietyId, setMember, refresh } = useBootstrap();
   const colors = getColors();
 
   const routeModeParam = Array.isArray(params.mode) ? params.mode[0] : params.mode;
@@ -136,7 +136,7 @@ export default function OnboardingScreen() {
         hasEmail: !!authUser.email,
       });
 
-      const { data: societyId, error } = await supabase.rpc("join_society", {
+      const { data: rpcMember, error } = await supabase.rpc("join_society", {
         p_join_code: code,
         p_name: nameInput,
         p_email: authUser.email ?? null,
@@ -148,15 +148,29 @@ export default function OnboardingScreen() {
         return;
       }
 
-      if (!societyId || typeof societyId !== "string") {
+      const joinedMember = Array.isArray(rpcMember) ? rpcMember[0] : rpcMember;
+      if (!joinedMember || typeof joinedMember !== "object") {
         showJoinFailure("Failed to join society. Please try again.");
         return;
       }
-      // Avoid setting only activeSocietyId locally: MembershipGuard treats
-      // society-without-member as stale and clears it. Let bootstrap refresh
-      // load both active_society_id and active_member_id from profile together.
+
+      const joinedSocietyId =
+        typeof (joinedMember as any).society_id === "string"
+          ? (joinedMember as any).society_id
+          : null;
+
+      if (!joinedSocietyId) {
+        showJoinFailure("Failed to join society. Please try again.");
+        return;
+      }
+
+      setActiveSocietyId(joinedSocietyId);
+      setMember(joinedMember as any);
       refresh();
-      console.log("[join] JOIN_COMPLETE");
+      console.log("[join] JOIN_COMPLETE", {
+        memberId: (joinedMember as any).id ?? null,
+        societyId: joinedSocietyId,
+      });
       setToast({ visible: true, message: "Joined society ✅", type: "success" });
       blurWebActiveElement();
       router.replace("/(app)/(tabs)");

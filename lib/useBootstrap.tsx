@@ -50,6 +50,7 @@ type BootstrapState = {
   // Actions
   setActiveSociety: (societyId: string | null, memberId: string | null) => Promise<void>;
   setActiveSocietyId: (societyId: string | null) => void;
+  setMember: (member: MemberData | null) => void;
   refresh: () => void;
   signOut: () => Promise<void>;
 
@@ -80,6 +81,7 @@ const BOOTSTRAP_FALLBACK: BootstrapState = {
   member: null,
   setActiveSociety: async () => {},
   setActiveSocietyId: () => {},
+  setMember: () => {},
   refresh: () => {},
   signOut: async () => {},
   ready: true,
@@ -105,6 +107,35 @@ export function useBootstrap(): BootstrapState {
   return BOOTSTRAP_FALLBACK;
 }
 
+function normalizeMemberData(memberData: any): MemberData {
+  const safeName =
+    typeof memberData?.name === "string"
+      ? memberData.name
+      : typeof memberData?.display_name === "string"
+        ? memberData.display_name
+        : String(memberData?.name ?? memberData?.display_name ?? "");
+  const safeRole = typeof memberData?.role === "string" ? memberData.role : undefined;
+  const rawHi = memberData?.handicap_index;
+  const safeHi = rawHi != null && typeof rawHi !== "object" ? rawHi : null;
+
+  return {
+    ...memberData,
+    id: String(memberData?.id ?? ""),
+    name: safeName,
+    displayName: safeName,
+    role: safeRole,
+    roles: safeRole ? [safeRole] : ["member"],
+    handicapIndex: safeHi,
+    whsNumber:
+      typeof memberData?.whs_number === "string"
+        ? memberData.whs_number
+        : memberData?.whs_number != null
+          ? String(memberData.whs_number)
+          : null,
+    hasSeat: memberData?.has_seat ?? false,
+  };
+}
+
 // ============================================================================
 // Internal Hook
 // ============================================================================
@@ -115,7 +146,7 @@ function useBootstrapInternal(): BootstrapState {
   const [session, setSession] = useState<Session | null>(null);
   const [profile, setProfile] = useState<any | null>(null);
   const [society, setSociety] = useState<SocietyData | null>(null);
-  const [member, setMember] = useState<MemberData | null>(null);
+  const [member, setMemberState] = useState<MemberData | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
 
   const mounted = useRef(true);
@@ -169,7 +200,7 @@ function useBootstrapInternal(): BootstrapState {
           setSession(null);
           setProfile(null);
           setSociety(null);
-          setMember(null);
+          setMemberState(null);
           return;
         }
 
@@ -261,15 +292,19 @@ function useBootstrapInternal(): BootstrapState {
         }
 
         // ----------------------------------------------------------------
-        // Step 4: Load member if active_member_id exists
+        // Step 4: Load membership by active society + current auth user
         // ----------------------------------------------------------------
-        if (finalProfile?.active_member_id) {
-          console.log("[useBootstrap] Loading member:", finalProfile.active_member_id);
+        if (finalProfile?.active_society_id) {
+          console.log("[useBootstrap] Loading member by society + auth user:", {
+            societyId: finalProfile.active_society_id,
+            userId: currentUser.id,
+          });
 
           const { data: memberData, error: memberError } = await supabase
             .from("members")
             .select("*")
-            .eq("id", finalProfile.active_member_id)
+            .eq("society_id", finalProfile.active_society_id)
+            .eq("user_id", currentUser.id)
             .maybeSingle();
 
           if (memberError) {
@@ -278,31 +313,22 @@ function useBootstrapInternal(): BootstrapState {
 
           if (!mounted.current) return;
           if (memberData) {
-            // Ensure display-critical fields are always primitives (guard against
-            // unexpected JSONB or structured values from the database).
-            const safeName =
-              typeof memberData.name === "string" ? memberData.name : String(memberData.name ?? "");
-            const safeRole =
-              typeof memberData.role === "string" ? memberData.role : undefined;
-            const rawHi = memberData.handicap_index;
-            const safeHi =
-              rawHi != null && typeof rawHi !== "object" ? rawHi : null;
+            setMemberState(normalizeMemberData(memberData));
 
-            setMember({
-              ...memberData,
-              name: safeName,
-              displayName: safeName,
-              role: safeRole,
-              roles: safeRole ? [safeRole] : ["member"],
-              handicapIndex: safeHi,
-              whsNumber:
-                typeof memberData.whs_number === "string"
-                  ? memberData.whs_number
-                  : memberData.whs_number != null
-                  ? String(memberData.whs_number)
-                  : null,
-            });
+            // Keep profile pointer aligned to the actual member row found
+            if (finalProfile.active_member_id !== memberData.id) {
+              setProfile((prev: any) => ({
+                ...(prev ?? {}),
+                id: currentUser.id,
+                active_society_id: finalProfile.active_society_id,
+                active_member_id: memberData.id,
+              }));
+            }
+          } else {
+            setMemberState(null);
           }
+        } else {
+          setMemberState(null);
         }
 
         // ----------------------------------------------------------------
@@ -430,6 +456,12 @@ function useBootstrapInternal(): BootstrapState {
       active_society_id: societyId,
       active_member_id: memberId,
     }));
+    if (memberId === null) {
+      setMemberState(null);
+    }
+    if (societyId === null) {
+      setSociety(null);
+    }
   };
 
   const setActiveSocietyId = (societyId: string | null) => {
@@ -438,6 +470,21 @@ function useBootstrapInternal(): BootstrapState {
       ...(prev ?? {}),
       id: userId,
       active_society_id: societyId,
+    }));
+  };
+
+  const setMember = (memberData: MemberData | null) => {
+    if (!memberData) {
+      setMemberState(null);
+      return;
+    }
+    const normalized = normalizeMemberData(memberData);
+    setMemberState(normalized);
+    setProfile((prev: any) => ({
+      ...(prev ?? {}),
+      id: userId ?? prev?.id ?? normalized.user_id ?? null,
+      active_society_id: normalized.society_id ?? prev?.active_society_id ?? null,
+      active_member_id: normalized.id ?? prev?.active_member_id ?? null,
     }));
   };
 
@@ -452,7 +499,7 @@ function useBootstrapInternal(): BootstrapState {
     setSession(null);
     setProfile(null);
     setSociety(null);
-    setMember(null);
+    setMemberState(null);
   };
 
   // ============================================================================
@@ -475,6 +522,7 @@ function useBootstrapInternal(): BootstrapState {
     // Actions
     setActiveSociety,
     setActiveSocietyId,
+    setMember,
     refresh,
     signOut,
 
