@@ -259,12 +259,57 @@ function useBootstrapInternal(): BootstrapState {
 
         if (!mounted.current) return;
 
-        const finalProfile = profileData;
+        let finalProfile = profileData;
         setProfile(finalProfile);
         console.log("[useBootstrap] Profile loaded:", finalProfile?.id);
 
         // ----------------------------------------------------------------
-        // Step 3: Load society if active_society_id exists
+        // Step 3: Self-heal — if profile has no active_society_id but
+        // the user has a membership, recover the pointers.
+        // ----------------------------------------------------------------
+        if (!finalProfile?.active_society_id && currentUser) {
+          console.log("[useBootstrap] active_society_id is null — checking for existing membership to self-heal");
+          const { data: anyMember } = await supabase
+            .from("members")
+            .select("id, society_id")
+            .eq("user_id", currentUser.id)
+            .order("created_at", { ascending: false })
+            .limit(1);
+
+          if (!mounted.current) return;
+
+          const healRow = Array.isArray(anyMember) ? anyMember[0] : null;
+          if (healRow?.society_id && healRow?.id) {
+            console.log("[useBootstrap] Self-heal: recovering pointers", {
+              society_id: healRow.society_id,
+              member_id: healRow.id,
+            });
+            const { error: healErr } = await supabase
+              .from("profiles")
+              .update({
+                active_society_id: healRow.society_id,
+                active_member_id: healRow.id,
+              })
+              .eq("id", currentUser.id);
+
+            if (!mounted.current) return;
+
+            if (!healErr) {
+              finalProfile = {
+                ...(finalProfile ?? {}),
+                id: currentUser.id,
+                active_society_id: healRow.society_id,
+                active_member_id: healRow.id,
+              };
+              setProfile(finalProfile);
+            } else {
+              console.warn("[useBootstrap] Self-heal DB update failed:", healErr.message);
+            }
+          }
+        }
+
+        // ----------------------------------------------------------------
+        // Step 4: Load society if active_society_id exists
         // ----------------------------------------------------------------
         if (finalProfile?.active_society_id) {
           console.log("[useBootstrap] Loading society:", finalProfile.active_society_id);
@@ -281,7 +326,6 @@ function useBootstrapInternal(): BootstrapState {
 
           if (!mounted.current) return;
           if (societyData) {
-            // Ensure name is always a plain string (guard against unexpected types)
             const safeSocietyName =
               typeof societyData.name === "string"
                 ? societyData.name
@@ -296,7 +340,7 @@ function useBootstrapInternal(): BootstrapState {
         }
 
         // ----------------------------------------------------------------
-        // Step 4: Load membership by active society + current auth user
+        // Step 5: Load membership by active society + current auth user
         // ----------------------------------------------------------------
         if (finalProfile?.active_society_id) {
           const targetSocietyId = finalProfile.active_society_id as string;
@@ -322,14 +366,8 @@ function useBootstrapInternal(): BootstrapState {
             society_id: targetSocietyId,
             user_id: targetUserId,
             memberId: firstMember?.id ?? null,
-            error: memberError
-              ? {
-                  message: memberError.message,
-                  code: memberError.code,
-                  details: memberError.details,
-                  hint: memberError.hint,
-                }
-              : null,
+            found: !!firstMember,
+            error: memberError?.message ?? null,
           });
 
           if (memberError) {
@@ -338,7 +376,6 @@ function useBootstrapInternal(): BootstrapState {
           } else if (firstMember) {
             setMemberState(normalizeMemberData(firstMember));
 
-            // Keep profile pointer aligned to the actual member row found
             if (finalProfile.active_member_id !== firstMember.id) {
               setProfile((prev: any) => ({
                 ...(prev ?? {}),
@@ -349,8 +386,8 @@ function useBootstrapInternal(): BootstrapState {
             }
             setMembershipLoading(false);
           } else {
-            // No matching member found for this user/society pair.
-            setMemberState(null);
+            // No matching member — preserve existing member if one was set
+            // locally (e.g. from join flow) to avoid triggering the guard.
             setMembershipLoading(false);
           }
         } else {

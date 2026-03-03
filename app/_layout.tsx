@@ -39,6 +39,13 @@ function RootNavigator() {
   const hasRouted = useRef(false);
   // Track last known state to prevent redundant logs
   const lastState = useRef<string>("");
+  // Timestamp of last time activeSocietyId was truthy — used to debounce
+  // transient null→true→null flickers during post-join bootstrap.
+  const lastHadSocietyAt = useRef<number>(0);
+
+  if (activeSocietyId) {
+    lastHadSocietyAt.current = Date.now();
+  }
 
   // Global auth gate: getSession on mount + onAuthStateChange
   // Redirects immediately when session appears (avoids staying on sign-in)
@@ -100,30 +107,42 @@ function RootNavigator() {
     const hasSociety = !!activeSocietyId;
     const needsProfileCompletion = !!profile && !profile.profile_complete;
 
+    // Debounce: if the user recently had a society (within 10s), treat a
+    // transient hasSociety=false as still-resolving. This prevents the
+    // route guard from bouncing the user back to personal mode during the
+    // brief window after join where bootstrap is re-reading from DB.
+    const recentlyHadSociety =
+      !hasSociety && lastHadSocietyAt.current > 0 && Date.now() - lastHadSocietyAt.current < 10_000;
+
     // Create a state key to detect actual changes
     const stateKey = `${hasSociety}-${inOnboarding}-${inJoinFlow}-${inSinbookInvite}-${needsProfileCompletion}-${segments.join("/")}`;
 
-    // Only log if state actually changed
     if (stateKey !== lastState.current) {
       lastState.current = stateKey;
-      console.log("[_layout] Route guard check:", {
+      console.log("[_layout] Route guard:", {
         hasSociety,
         activeSocietyId,
-        inOnboarding,
         inJoinFlow,
-        inSinbookInvite,
-        needsProfileCompletion,
+        recentlyHadSociety,
         segments: segments.join("/"),
       });
     }
 
     // Exempt routes that handle their own flow
-    if (inSinbookInvite || inPublicRoute || (!hasSociety && inJoinFlow)) {
+    if (inSinbookInvite || inPublicRoute) {
+      return;
+    }
+
+    // If society state is still resolving after a recent join, wait.
+    if (!hasSociety && inJoinFlow && !recentlyHadSociety) {
+      return;
+    }
+    if (recentlyHadSociety && !inJoinFlow) {
       return;
     }
 
     // Force profile completion before anything else
-    if (needsProfileCompletion && !inMyProfile) {
+    if (needsProfileCompletion && !inMyProfile && hasSociety) {
       console.log("[_layout] Profile incomplete, redirecting to /my-profile");
       hasRouted.current = true;
       blurWebActiveElement();
@@ -137,9 +156,7 @@ function RootNavigator() {
     }
 
     if (hasSociety && inJoinFlow) {
-      // Has society but on onboarding -> go to app home
-      // Check for pending sinbook invite token first
-      console.log("[_layout] Has society, checking pending invite token...");
+      console.log("[_layout] Has society + in join flow, redirecting to dashboard");
       hasRouted.current = true;
       consumePendingInviteToken().then((token) => {
         if (token) {
@@ -148,20 +165,21 @@ function RootNavigator() {
           router.replace({ pathname: "/sinbook/invite/[token]", params: { token } });
         } else {
           blurWebActiveElement();
-          router.replace("/(app)/(tabs)");
+          router.replace(APP_TABS);
         }
       });
     }
     // No society + not on onboarding = Personal Mode — let (app) handle it
   }, [loading, isSignedIn, activeSocietyId, profile, segments, pathname, router, isPublicPath]);
 
-  // Reset hasRouted when loading changes (new bootstrap cycle)
+  // Reset hasRouted only on sign-out, not on every bootstrap refresh.
+  // This prevents the guard from re-routing after each refresh cycle.
   useEffect(() => {
-    if (loading) {
+    if (loading && !isSignedIn) {
       hasRouted.current = false;
       lastState.current = "";
     }
-  }, [loading]);
+  }, [loading, isSignedIn]);
 
   // Auth-aware redirect: when session appears, ensure we're in the app (avoids staying on sign-in)
   useEffect(() => {
@@ -170,14 +188,11 @@ function RootNavigator() {
     const inJoinFlow = isJoinFlowRoute(pathname, seg0);
     if (inJoinFlow) return;
     const inApp = seg0 === "(app)" || seg0 === "app" || (typeof pathname === "string" && pathname.startsWith("/(app)"));
-    const hasSociety = !!activeSocietyId;
-    if (hasSociety && inApp) return;
-    if (!inApp) {
-      console.log("[_layout] Session present, redirecting to app");
-      blurWebActiveElement();
-      router.replace("/(app)/(tabs)");
-    }
-  }, [loading, isSignedIn, isPublicPath, segments, pathname, router, activeSocietyId]);
+    if (inApp) return;
+    console.log("[_layout] Session present but not in app, redirecting");
+    blurWebActiveElement();
+    router.replace(APP_TABS);
+  }, [loading, isSignedIn, isPublicPath, segments, pathname, router]);
 
   // Determine which overlay to show (if any).
   // The Stack ALWAYS renders so expo-router can match child routes.
