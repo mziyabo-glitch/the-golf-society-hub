@@ -29,6 +29,7 @@ export type GuardResult = {
 export function useSocietyMembershipGuard(): GuardResult {
   const {
     loading,
+    membershipLoading,
     activeSocietyId,
     member,
     setActiveSociety,
@@ -55,7 +56,7 @@ export function useSocietyMembershipGuard(): GuardResult {
       redirected.current = false;
     }
 
-    if (loading) return;
+    if (loading || membershipLoading) return;
     if (redirected.current) return;
 
     // No society → Personal Mode, no redirect needed.
@@ -105,10 +106,10 @@ export function useSocietyMembershipGuard(): GuardResult {
       setActiveSociety(null, null)
         .catch((e) => console.error("[MembershipGuard] clear error:", e));
     }
-  }, [loading, hasSociety, hasMember, setActiveSociety, activeSocietyId, refresh]);
+  }, [loading, membershipLoading, hasSociety, hasMember, setActiveSociety, activeSocietyId, refresh]);
 
   return {
-    loading,
+    loading: loading || membershipLoading,
     isMember,
     redirecting: redirected.current && !isMember,
   };
