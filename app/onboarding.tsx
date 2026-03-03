@@ -44,7 +44,7 @@ export default function OnboardingScreen() {
   const router = useRouter();
   const pathname = usePathname();
   const params = useLocalSearchParams<{ mode?: string | string[] }>();
-  const { user, ready, setActiveSocietyId, refresh } = useBootstrap();
+  const { user, ready, refresh } = useBootstrap();
   const colors = getColors();
 
   const routeModeParam = Array.isArray(params.mode) ? params.mode[0] : params.mode;
@@ -152,7 +152,9 @@ export default function OnboardingScreen() {
         showJoinFailure("Failed to join society. Please try again.");
         return;
       }
-      setActiveSocietyId(societyId);
+      // Avoid setting only activeSocietyId locally: MembershipGuard treats
+      // society-without-member as stale and clears it. Let bootstrap refresh
+      // load both active_society_id and active_member_id from profile together.
       refresh();
       console.log("[join] JOIN_COMPLETE");
       setToast({ visible: true, message: "Joined society ✅", type: "success" });
