@@ -4,7 +4,6 @@
 // redirects to onboarding so the user can join/create a society.
 
 import { useEffect, useRef } from "react";
-import { useRouter, useSegments } from "expo-router";
 import { useBootstrap } from "@/lib/useBootstrap";
 
 export type GuardResult = {
@@ -33,11 +32,15 @@ export function useSocietyMembershipGuard(): GuardResult {
     activeSocietyId,
     member,
     setActiveSociety,
+    refresh,
   } = useBootstrap();
 
-  const router = useRouter();
-  const segments = useSegments();
   const redirected = useRef(false);
+  const trackedSocietyId = useRef<string | null>(null);
+  const missingSinceMs = useRef<number | null>(null);
+  const retriedOnce = useRef(false);
+
+  const RETRY_GRACE_MS = 2500;
 
   // Determine actual membership
   const hasSociety = !!activeSocietyId;
@@ -45,26 +48,64 @@ export function useSocietyMembershipGuard(): GuardResult {
   const isMember = hasSociety && hasMember;
 
   useEffect(() => {
-    if (loading) {
+    if (activeSocietyId !== trackedSocietyId.current) {
+      trackedSocietyId.current = activeSocietyId ?? null;
+      missingSinceMs.current = null;
+      retriedOnce.current = false;
       redirected.current = false;
-      return;
     }
+
+    if (loading) return;
     if (redirected.current) return;
 
     // No society → Personal Mode, no redirect needed.
-    if (!hasSociety) return;
+    if (!hasSociety) {
+      missingSinceMs.current = null;
+      retriedOnce.current = false;
+      redirected.current = false;
+      return;
+    }
+
+    if (hasMember) {
+      missingSinceMs.current = null;
+      retriedOnce.current = false;
+      redirected.current = false;
+      return;
+    }
 
     if (hasSociety && !hasMember) {
+      if (missingSinceMs.current === null) {
+        missingSinceMs.current = Date.now();
+      }
+
+      if (!retriedOnce.current) {
+        retriedOnce.current = true;
+        console.warn(
+          "[MembershipGuard] member missing for active society — retrying bootstrap before clearing pointer"
+        );
+        refresh();
+        return;
+      }
+
+      const elapsedMs = Date.now() - missingSinceMs.current;
+      if (elapsedMs < RETRY_GRACE_MS) {
+        const remainingMs = RETRY_GRACE_MS - elapsedMs;
+        const timer = setTimeout(() => {
+          refresh();
+        }, remainingMs);
+        return () => clearTimeout(timer);
+      }
+
       // The user's profile points to a society they are no longer a member of.
       // Clear the stale pointer — the UI will naturally enter Personal Mode.
       console.warn(
-        "[MembershipGuard] activeSocietyId is set but member is null — clearing stale pointer"
+        "[MembershipGuard] activeSocietyId is set but member is still null after retry/grace — clearing stale pointer"
       );
       redirected.current = true;
       setActiveSociety(null, null)
         .catch((e) => console.error("[MembershipGuard] clear error:", e));
     }
-  }, [loading, hasSociety, hasMember, setActiveSociety]);
+  }, [loading, hasSociety, hasMember, setActiveSociety, activeSocietyId, refresh]);
 
   return {
     loading,
