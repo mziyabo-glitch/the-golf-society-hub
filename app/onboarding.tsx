@@ -82,6 +82,7 @@ export default function OnboardingScreen() {
   };
 
   const handleJoinSociety = async () => {
+    console.log("JOIN CLICKED");
     if (joinLoading) return;
     console.log("[join] JOIN_TAP");
     setJoinError(null);
@@ -115,6 +116,10 @@ export default function OnboardingScreen() {
             ? profile.name.trim()
             : null;
       const requestedDisplayName = displayName.trim().length > 0 ? displayName.trim() : fallbackProfileName;
+      console.log("[join] Calling join_society RPC", {
+        code,
+        hasDisplayName: !!requestedDisplayName,
+      });
 
       const { data: societyId, error } = await supabase.rpc("join_society", {
         p_join_code: code,
@@ -282,12 +287,15 @@ export default function OnboardingScreen() {
               </View>
 
               <PrimaryButton
-                onPress={handleJoinSociety}
+                onPress={() => {
+                  console.log("[join] Join button onPress fired");
+                  void handleJoinSociety();
+                }}
                 loading={joinLoading}
-                disabled={!isAuthReady || joinLoading}
+                disabled={joinLoading}
                 style={styles.submitButton}
               >
-                {isAuthReady ? "Join Society" : "Signing in..."}
+                Join Society
               </PrimaryButton>
             </AppCard>
           </View>
@@ -396,14 +404,14 @@ export default function OnboardingScreen() {
             </AppText>
             <TouchableOpacity
               onPress={() => setMode("join")}
-              disabled={loading || !isAuthReady}
+              disabled={loading}
               activeOpacity={0.8}
               hitSlop={{ top: 16, bottom: 16, left: 16, right: 16 }}
               style={[
                 styles.optionButtonTouch,
                 {
-                  backgroundColor: loading || !isAuthReady ? colors.surfaceDisabled : colors.primary,
-                  opacity: loading || !isAuthReady ? 0.7 : 1,
+                  backgroundColor: loading ? colors.surfaceDisabled : colors.primary,
+                  opacity: loading ? 0.7 : 1,
                 },
               ]}
             >
@@ -424,7 +432,7 @@ export default function OnboardingScreen() {
             <SecondaryButton
               onPress={() => setMode("create")}
               style={styles.optionButton}
-              disabled={loading || !isAuthReady}
+              disabled={loading}
             >
               {isAuthReady ? "Create New" : "Signing in…"}
             </SecondaryButton>
