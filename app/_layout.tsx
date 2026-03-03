@@ -131,6 +131,11 @@ function RootNavigator() {
       return;
     }
 
+    // Once society context exists, avoid non-essential redirect churn.
+    if (hasSociety && !inJoinFlow) {
+      return;
+    }
+
     if (hasSociety && inJoinFlow) {
       // Has society but on onboarding -> go to app home
       // Check for pending sinbook invite token first
@@ -165,12 +170,14 @@ function RootNavigator() {
     const inJoinFlow = isJoinFlowRoute(pathname, seg0);
     if (inJoinFlow) return;
     const inApp = seg0 === "(app)" || seg0 === "app" || (typeof pathname === "string" && pathname.startsWith("/(app)"));
+    const hasSociety = !!activeSocietyId;
+    if (hasSociety && inApp) return;
     if (!inApp) {
       console.log("[_layout] Session present, redirecting to app");
       blurWebActiveElement();
       router.replace("/(app)/(tabs)");
     }
-  }, [loading, isSignedIn, isPublicPath, segments, pathname, router]);
+  }, [loading, isSignedIn, isPublicPath, segments, pathname, router, activeSocietyId]);
 
   // Determine which overlay to show (if any).
   // The Stack ALWAYS renders so expo-router can match child routes.
