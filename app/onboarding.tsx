@@ -21,6 +21,7 @@ import { getColors, spacing, radius } from "@/lib/ui/theme";
 import { blurWebActiveElement } from "@/lib/ui/focus";
 
 type Mode = "choose" | "join" | "create";
+const SOCIETY_HOME_ROUTE = "/(app)/(tabs)";
 
 /**
  * Helper to show user-friendly error for RLS/permission issues
@@ -44,7 +45,16 @@ export default function OnboardingScreen() {
   const router = useRouter();
   const pathname = usePathname();
   const params = useLocalSearchParams<{ mode?: string | string[] }>();
-  const { user, ready, setActiveSocietyId, setMember, refresh } = useBootstrap();
+  const {
+    user,
+    ready,
+    activeSocietyId,
+    member,
+    membershipLoading,
+    setActiveSocietyId,
+    setMember,
+    refresh,
+  } = useBootstrap();
   const colors = getColors();
 
   const routeModeParam = Array.isArray(params.mode) ? params.mode[0] : params.mode;
@@ -60,6 +70,10 @@ export default function OnboardingScreen() {
   const [joinCode, setJoinCode] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [joinError, setJoinError] = useState<string | null>(null);
+  const [pendingJoinNavigation, setPendingJoinNavigation] = useState<{
+    societyId: string;
+    memberId: string;
+  } | null>(null);
   const [toast, setToast] = useState<{
     visible: boolean;
     message: string;
@@ -85,6 +99,40 @@ export default function OnboardingScreen() {
       setMode("join");
     }
   }, [routeMode, isJoinAliasRoute]);
+
+  useEffect(() => {
+    if (!pendingJoinNavigation) return;
+
+    const readyForNavigation =
+      !membershipLoading &&
+      activeSocietyId === pendingJoinNavigation.societyId &&
+      !!member;
+
+    if (readyForNavigation) {
+      console.log("[join] Navigation after bootstrap refresh:", {
+        target: SOCIETY_HOME_ROUTE,
+        societyId: pendingJoinNavigation.societyId,
+        memberId: pendingJoinNavigation.memberId,
+      });
+      blurWebActiveElement();
+      router.replace(SOCIETY_HOME_ROUTE);
+      setPendingJoinNavigation(null);
+      return;
+    }
+
+    const fallbackTimer = setTimeout(() => {
+      console.log("[join] Navigation fallback after join:", {
+        target: SOCIETY_HOME_ROUTE,
+        societyId: pendingJoinNavigation.societyId,
+        memberId: pendingJoinNavigation.memberId,
+      });
+      blurWebActiveElement();
+      router.replace(SOCIETY_HOME_ROUTE);
+      setPendingJoinNavigation(null);
+    }, 1800);
+
+    return () => clearTimeout(fallbackTimer);
+  }, [pendingJoinNavigation, membershipLoading, activeSocietyId, member, router]);
 
   /**
    * Join Society Flow:
@@ -148,32 +196,73 @@ export default function OnboardingScreen() {
         return;
       }
 
-      const joinedMember = Array.isArray(rpcMember) ? rpcMember[0] : rpcMember;
-      if (!joinedMember || typeof joinedMember !== "object") {
+      const joinedPayload = Array.isArray(rpcMember) ? rpcMember[0] : rpcMember;
+      if (!joinedPayload || typeof joinedPayload !== "object") {
         showJoinFailure("Failed to join society. Please try again.");
         return;
       }
 
-      const joinedSocietyId =
-        typeof (joinedMember as any).society_id === "string"
-          ? (joinedMember as any).society_id
-          : null;
+      const joinedMemberId =
+        typeof (joinedPayload as any).id === "string"
+          ? (joinedPayload as any).id
+          : typeof (joinedPayload as any).member_id === "string"
+            ? (joinedPayload as any).member_id
+            : typeof (joinedPayload as any).memberId === "string"
+              ? (joinedPayload as any).memberId
+              : null;
 
-      if (!joinedSocietyId) {
+      const joinedSocietyId =
+        typeof (joinedPayload as any).society_id === "string"
+          ? (joinedPayload as any).society_id
+          : typeof (joinedPayload as any).societyId === "string"
+            ? (joinedPayload as any).societyId
+            : null;
+
+      if (!joinedMemberId || !joinedSocietyId) {
         showJoinFailure("Failed to join society. Please try again.");
         return;
+      }
+
+      let joinedMemberRecord: any = joinedPayload;
+      if (
+        typeof (joinedPayload as any).user_id !== "string" ||
+        typeof (joinedPayload as any).society_id !== "string"
+      ) {
+        const { data: fetchedMember, error: memberFetchError } = await supabase
+          .from("members")
+          .select("*")
+          .eq("id", joinedMemberId)
+          .maybeSingle();
+
+        console.log("[join] Member fetch by memberId:", {
+          memberId: joinedMemberId,
+          found: !!fetchedMember,
+          error: memberFetchError
+            ? {
+                message: memberFetchError.message,
+                code: memberFetchError.code,
+                details: memberFetchError.details,
+              }
+            : null,
+        });
+
+        if (fetchedMember) {
+          joinedMemberRecord = fetchedMember;
+        }
       }
 
       setActiveSocietyId(joinedSocietyId);
-      setMember(joinedMember as any);
+      setMember(joinedMemberRecord as any);
       refresh();
       console.log("[join] JOIN_COMPLETE", {
-        memberId: (joinedMember as any).id ?? null,
+        memberId: joinedMemberId,
         societyId: joinedSocietyId,
       });
       setToast({ visible: true, message: "Joined society ✅", type: "success" });
-      blurWebActiveElement();
-      router.replace("/(app)/(tabs)");
+      setPendingJoinNavigation({
+        societyId: joinedSocietyId,
+        memberId: joinedMemberId,
+      });
     } catch (e: any) {
       console.error("[join] JOIN_FAILED", e);
       const msg = e?.message || "Something went wrong. Please try again.";
