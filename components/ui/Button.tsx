@@ -39,7 +39,11 @@ function resolveContent(label?: string, children?: ReactNode): ReactNode {
 }
 
 function handlePress(onPress: () => void): void {
-  blurWebActiveElement();
+  try {
+    blurWebActiveElement();
+  } catch (error) {
+    console.warn("[Button] blurWebActiveElement failed:", error);
+  }
   onPress();
 }
 

@@ -859,6 +859,15 @@ function PersonalModeHome({
     blurWebActiveElement();
     router.push(href);
   };
+  const openJoinByCode = () => {
+    console.log("ENTER JOIN CODE CLICK");
+    blurWebActiveElement();
+    router.push({ pathname: "/onboarding", params: { mode: "join" } });
+  };
+  const openCreateSociety = () => {
+    blurWebActiveElement();
+    router.push({ pathname: "/onboarding", params: { mode: "create" } });
+  };
 
   return (
     <Screen
@@ -972,14 +981,14 @@ function PersonalModeHome({
 
           <View style={personalStyles.nudgeActions}>
             <PrimaryButton
-              onPress={() => pushWithBlur("/onboarding")}
+              onPress={openJoinByCode}
               size="sm"
               style={{ flex: 1 }}
             >
               Enter join code
             </PrimaryButton>
             <Pressable
-              onPress={() => pushWithBlur("/onboarding")}
+              onPress={openCreateSociety}
               style={({ pressed }) => [
                 personalStyles.nudgeSecondary,
                 { borderColor: colors.border, opacity: pressed ? 0.7 : 1 },
