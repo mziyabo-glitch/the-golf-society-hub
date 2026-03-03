@@ -1,15 +1,16 @@
 /**
- * SegmentedTabs - Prevents text wrapping in navigation tabs
- * Uses equal-width tabs with numberOfLines={1} and ellipsizeMode
+ * SegmentedTabs — equal width, never overlaps on small screens.
+ * Short labels recommended for narrow devices (e.g. Leaders, Matrix, Honour).
  */
 
-import { StyleSheet, View, Pressable } from "react-native";
-import { getColors, radius, spacing } from "@/lib/ui/theme";
-import { AppText } from "./AppText";
+import { StyleSheet, View, Pressable, Text } from "react-native";
+import { ReactNode } from "react";
+import { getColors, spacing } from "@/lib/ui/theme";
 
 export type SegmentedTabItem<T extends string> = {
   id: T;
   label: string;
+  icon?: ReactNode;
 };
 
 type SegmentedTabsProps<T extends string> = {
@@ -18,13 +19,19 @@ type SegmentedTabsProps<T extends string> = {
   onSelect: (id: T) => void;
 };
 
+const CONTAINER_BG = "#EEF1F4";
+const TAB_HEIGHT = 40;
+const TAB_PADDING_H = 10;
+const TAB_RADIUS = 14;
+const CONTAINER_RADIUS = 16;
+
 export function SegmentedTabs<T extends string>({
   items,
   selectedId,
   onSelect,
 }: SegmentedTabsProps<T>) {
   const colors = getColors();
-  
+
   return (
     <View style={styles.container}>
       {items.map((item) => {
@@ -36,22 +43,26 @@ export function SegmentedTabs<T extends string>({
             style={({ pressed }) => [
               styles.tab,
               {
-                backgroundColor: isSelected ? colors.primary : colors.surface,
-                borderColor: colors.border,
-                opacity: pressed ? 0.8 : 1,
-                flex: 1, // Equal width tabs
+                backgroundColor: isSelected ? colors.surface : "transparent",
+                opacity: pressed ? 0.85 : 1,
               },
+              isSelected && styles.tabSelected,
             ]}
           >
-            <AppText
-              variant="captionBold"
-              color={isSelected ? "inverse" : "default"}
+            {item.icon}
+            <Text
+              style={[
+                styles.label,
+                {
+                  color: isSelected ? colors.text : colors.textSecondary,
+                  fontWeight: isSelected ? "600" : "500",
+                },
+              ]}
               numberOfLines={1}
               ellipsizeMode="tail"
-              style={styles.tabLabel}
             >
               {item.label}
-            </AppText>
+            </Text>
           </Pressable>
         );
       })}
@@ -62,21 +73,34 @@ export function SegmentedTabs<T extends string>({
 const styles = StyleSheet.create({
   container: {
     flexDirection: "row",
-    gap: spacing.xs,
-    marginBottom: spacing.base,
+    backgroundColor: CONTAINER_BG,
+    borderRadius: CONTAINER_RADIUS,
+    padding: 4,
+    marginBottom: spacing.lg,
   },
   tab: {
-    borderRadius: radius.md,
-    paddingVertical: spacing.sm,
-    paddingHorizontal: spacing.xs,
-    borderWidth: 1,
+    flex: 1,
+    minWidth: 0,
+    flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    minHeight: 40,
+    gap: 6,
+    paddingHorizontal: TAB_PADDING_H,
+    paddingVertical: 0,
+    minHeight: TAB_HEIGHT,
+    height: TAB_HEIGHT,
+    borderRadius: TAB_RADIUS,
   },
-  tabLabel: {
+  tabSelected: {
+    backgroundColor: "#FFFFFF",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.06,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  label: {
+    fontSize: 14,
     textAlign: "center",
-    width: "100%",
   },
 });
-

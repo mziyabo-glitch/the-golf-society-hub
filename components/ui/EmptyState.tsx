@@ -38,7 +38,7 @@ export function EmptyState({ icon, title, message, action, style }: EmptyStatePr
         )}
         {action && (
           <View style={styles.action}>
-            <PrimaryButton onPress={action.onPress}>{action.label}</PrimaryButton>
+            <PrimaryButton onPress={action.onPress} size="md">{action.label}</PrimaryButton>
           </View>
         )}
       </View>

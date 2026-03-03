@@ -7,7 +7,7 @@ import { ReactNode, useContext } from "react";
 import { ScrollView, StyleSheet, View, ViewStyle, StyleProp } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { BottomTabBarHeightContext } from "@react-navigation/bottom-tabs";
-import { getColors, spacing } from "@/lib/ui/theme";
+import { getColors, spacing, premiumTokens } from "@/lib/ui/theme";
 
 type ScreenProps = {
   children: ReactNode;
@@ -29,7 +29,7 @@ export function Screen({ children, scrollable = true, style, contentStyle }: Scr
     <View
       style={[
         styles.content,
-        { padding: spacing.lg },
+        { padding: spacing.md },
         contentStyle,
         { paddingBottom: resolvedPaddingBottom },
       ]}
@@ -41,7 +41,7 @@ export function Screen({ children, scrollable = true, style, contentStyle }: Scr
   if (scrollable) {
     return (
       <SafeAreaView
-        style={[styles.container, { backgroundColor: colors.background }, style]}
+        style={[styles.container, { backgroundColor: premiumTokens.background }, style]}
         edges={["top", "bottom"]}
       >
         <ScrollView

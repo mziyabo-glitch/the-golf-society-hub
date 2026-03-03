@@ -27,15 +27,11 @@ function getSupabaseClient(): SupabaseClient {
 
   supabaseInstance = createClient(supabaseUrl!, supabaseAnonKey!, {
     auth: {
-      // Use cross-platform storage adapter (localStorage on web, SecureStore on native)
+      // AsyncStorage on native, localStorage on web (via supabaseStorage)
       storage: supabaseStorage,
-      // Persist session across app restarts
       persistSession: true,
-      // Automatically refresh token before expiry
       autoRefreshToken: true,
-      // No OAuth flows — email/password only. No URL detection needed.
       detectSessionInUrl: false,
-      // Storage key for session (will be prefixed by supabaseStorage with "gsh:")
       storageKey: "supabase-auth",
     },
   });
