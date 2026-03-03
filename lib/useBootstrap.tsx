@@ -487,6 +487,8 @@ function useBootstrapInternal(): BootstrapState {
     if (memberId === null) {
       setMemberState(null);
       setMembershipLoading(false);
+    } else {
+      setMembershipLoading(false);
     }
     if (societyId === null) {
       setSociety(null);
@@ -495,6 +497,7 @@ function useBootstrapInternal(): BootstrapState {
 
   const setActiveSocietyId = (societyId: string | null) => {
     if (!userId) return;
+    setMembershipLoading(societyId !== null);
     setProfile((prev: any) => ({
       ...(prev ?? {}),
       id: userId,

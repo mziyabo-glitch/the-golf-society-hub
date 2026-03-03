@@ -53,12 +53,21 @@ BEGIN
     AND m.user_id = v_user_id
   LIMIT 1;
 
+  -- Beta frictionless access: auto-assign a seat when joining.
+  IF v_member_id IS NOT NULL THEN
+    UPDATE public.members m
+    SET has_seat = TRUE,
+        email = COALESCE(NULLIF(TRIM(p_email), ''), m.email)
+    WHERE m.id = v_member_id;
+  END IF;
+
   -- Claim captain-added unlinked member by name.
   IF v_member_id IS NULL THEN
     UPDATE public.members m
     SET user_id = v_user_id,
         name = v_name,
-        email = COALESCE(NULLIF(TRIM(p_email), ''), m.email)
+        email = COALESCE(NULLIF(TRIM(p_email), ''), m.email),
+        has_seat = TRUE
     WHERE m.id = (
       SELECT m2.id
       FROM public.members m2
@@ -79,6 +88,7 @@ BEGIN
       name,
       email,
       role,
+      has_seat,
       paid,
       amount_paid_pence
     )
@@ -88,6 +98,7 @@ BEGIN
       v_name,
       NULLIF(TRIM(COALESCE(p_email, '')), ''),
       'member',
+      TRUE,
       false,
       0
     )
