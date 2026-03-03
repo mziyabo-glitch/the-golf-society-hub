@@ -6,6 +6,9 @@
 import { useEffect, useRef } from "react";
 import { useBootstrap } from "@/lib/useBootstrap";
 
+const RETRY_BACKOFF_MS = [200, 600, 1400] as const;
+const CLEAR_AFTER_MS = 4000;
+
 export type GuardResult = {
   /** Still loading bootstrap data — show a spinner. */
   loading: boolean;
@@ -39,9 +42,7 @@ export function useSocietyMembershipGuard(): GuardResult {
   const redirected = useRef(false);
   const trackedSocietyId = useRef<string | null>(null);
   const missingSinceMs = useRef<number | null>(null);
-  const retriedOnce = useRef(false);
-
-  const RETRY_GRACE_MS = 2500;
+  const retryCount = useRef(0);
 
   // Determine actual membership
   const hasSociety = !!activeSocietyId;
@@ -52,7 +53,7 @@ export function useSocietyMembershipGuard(): GuardResult {
     if (activeSocietyId !== trackedSocietyId.current) {
       trackedSocietyId.current = activeSocietyId ?? null;
       missingSinceMs.current = null;
-      retriedOnce.current = false;
+      retryCount.current = 0;
       redirected.current = false;
     }
 
@@ -62,14 +63,14 @@ export function useSocietyMembershipGuard(): GuardResult {
     // No society → Personal Mode, no redirect needed.
     if (!hasSociety) {
       missingSinceMs.current = null;
-      retriedOnce.current = false;
+      retryCount.current = 0;
       redirected.current = false;
       return;
     }
 
     if (hasMember) {
       missingSinceMs.current = null;
-      retriedOnce.current = false;
+      retryCount.current = 0;
       redirected.current = false;
       return;
     }
@@ -79,18 +80,18 @@ export function useSocietyMembershipGuard(): GuardResult {
         missingSinceMs.current = Date.now();
       }
 
-      if (!retriedOnce.current) {
-        retriedOnce.current = true;
-        console.warn(
-          "[MembershipGuard] member missing for active society — retrying bootstrap before clearing pointer"
-        );
-        refresh();
-        return;
+      if (retryCount.current < RETRY_BACKOFF_MS.length) {
+        const delayMs = RETRY_BACKOFF_MS[retryCount.current];
+        retryCount.current += 1;
+        const timer = setTimeout(() => {
+          refresh();
+        }, delayMs);
+        return () => clearTimeout(timer);
       }
 
       const elapsedMs = Date.now() - missingSinceMs.current;
-      if (elapsedMs < RETRY_GRACE_MS) {
-        const remainingMs = RETRY_GRACE_MS - elapsedMs;
+      if (elapsedMs < CLEAR_AFTER_MS) {
+        const remainingMs = CLEAR_AFTER_MS - elapsedMs;
         const timer = setTimeout(() => {
           refresh();
         }, remainingMs);
