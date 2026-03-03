@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { StyleSheet, View, Alert, KeyboardAvoidingView, Platform, TouchableOpacity } from "react-native";
 import { useLocalSearchParams, usePathname, useRouter } from "expo-router";
 import { Feather } from "@expo/vector-icons";
@@ -22,6 +22,7 @@ import { blurWebActiveElement } from "@/lib/ui/focus";
 
 type Mode = "choose" | "join" | "create";
 const SOCIETY_HOME_ROUTE = "/(app)/(tabs)";
+const JOIN_NAV_BACKOFF_MS = [250, 700, 1500] as const;
 
 /**
  * Helper to show user-friendly error for RLS/permission issues
@@ -74,6 +75,7 @@ export default function OnboardingScreen() {
     societyId: string;
     memberId: string;
   } | null>(null);
+  const joinNavRetryCount = useRef(0);
   const [toast, setToast] = useState<{
     visible: boolean;
     message: string;
@@ -104,6 +106,7 @@ export default function OnboardingScreen() {
     if (!pendingJoinNavigation) return;
 
     const readyForNavigation =
+      ready &&
       !membershipLoading &&
       activeSocietyId === pendingJoinNavigation.societyId &&
       !!member;
@@ -114,25 +117,114 @@ export default function OnboardingScreen() {
         societyId: pendingJoinNavigation.societyId,
         memberId: pendingJoinNavigation.memberId,
       });
+      console.log("[join] before nav pathname", pathname);
       blurWebActiveElement();
       router.replace(SOCIETY_HOME_ROUTE);
+      setTimeout(() => {
+        const afterPath =
+          typeof window !== "undefined" ? window.location.pathname : pathname;
+        console.log("[join] after nav pathname", afterPath);
+      }, 0);
       setPendingJoinNavigation(null);
+      joinNavRetryCount.current = 0;
       return;
     }
 
-    const fallbackTimer = setTimeout(() => {
-      console.log("[join] Navigation fallback after join:", {
-        target: SOCIETY_HOME_ROUTE,
+    if (joinNavRetryCount.current < JOIN_NAV_BACKOFF_MS.length) {
+      const delayMs = JOIN_NAV_BACKOFF_MS[joinNavRetryCount.current];
+      const retryIndex = joinNavRetryCount.current + 1;
+      const fallbackTimer = setTimeout(() => {
+        console.log("[join] awaiting dashboard state, retrying refresh:", {
+          retry: retryIndex,
+          delayMs,
+          pathname,
+          activeSocietyId,
+          hasMember: !!member,
+        });
+        joinNavRetryCount.current += 1;
+        refresh();
+      }, delayMs);
+      return () => clearTimeout(fallbackTimer);
+    }
+
+    // Final fallback: force route replace after retries.
+    console.log("[join] forcing dashboard navigation after retries:", {
+      target: SOCIETY_HOME_ROUTE,
+      pathname,
+      activeSocietyId,
+      hasMember: !!member,
+      hasMembershipLoading: membershipLoading,
+    });
+    console.log("[join] before nav pathname", pathname);
+    blurWebActiveElement();
+    router.replace(SOCIETY_HOME_ROUTE);
+    setTimeout(() => {
+      const afterPath =
+        typeof window !== "undefined" ? window.location.pathname : pathname;
+      console.log("[join] after nav pathname", afterPath);
+    }, 0);
+    setPendingJoinNavigation(null);
+    joinNavRetryCount.current = 0;
+  }, [
+    pendingJoinNavigation,
+    ready,
+    membershipLoading,
+    activeSocietyId,
+    member,
+    pathname,
+    refresh,
+    router,
+  ]);
+
+  useEffect(() => {
+    if (!pendingJoinNavigation) {
+      joinNavRetryCount.current = 0;
+    }
+  }, [pendingJoinNavigation]);
+
+  useEffect(() => {
+    if (!pendingJoinNavigation) return;
+    if (!activeSocietyId) return;
+    // keep this log separate from navigation logs to diagnose bounce/redirect
+    console.log("[join] nav pending state:", {
+      pathname,
+      activeSocietyId,
+      hasMember: !!member,
+      membershipLoading,
+      target: SOCIETY_HOME_ROUTE,
+    });
+  }, [pendingJoinNavigation, pathname, activeSocietyId, member, membershipLoading]);
+
+  useEffect(() => {
+    if (!pendingJoinNavigation) return;
+    if (pathname === SOCIETY_HOME_ROUTE) return;
+    if (!activeSocietyId) return;
+    console.log("[join] route guard likely moved route:", {
+      pathname,
+      target: SOCIETY_HOME_ROUTE,
+      activeSocietyId,
+    });
+  }, [pendingJoinNavigation, pathname, activeSocietyId]);
+
+  useEffect(() => {
+    if (!pendingJoinNavigation) return;
+    return () => {
+      joinNavRetryCount.current = 0;
+    };
+  }, [pendingJoinNavigation]);
+
+  useEffect(() => {
+    if (!pendingJoinNavigation) return;
+    const safetyTimer = setTimeout(() => {
+      console.log("[join] safety refresh while nav pending", {
+        pathname,
         societyId: pendingJoinNavigation.societyId,
         memberId: pendingJoinNavigation.memberId,
       });
-      blurWebActiveElement();
-      router.replace(SOCIETY_HOME_ROUTE);
-      setPendingJoinNavigation(null);
-    }, 1800);
-
-    return () => clearTimeout(fallbackTimer);
-  }, [pendingJoinNavigation, membershipLoading, activeSocietyId, member, router]);
+      refresh();
+    }, 3000);
+    return () => clearTimeout(safetyTimer);
+  }, [pendingJoinNavigation, pathname, refresh]);
 
   /**
    * Join Society Flow:
