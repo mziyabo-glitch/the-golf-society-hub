@@ -860,9 +860,10 @@ function PersonalModeHome({
     router.push(href);
   };
   const openJoinByCode = () => {
-    console.log("ENTER JOIN CODE CLICK");
+    const targetPath = "/join?mode=join";
+    console.log("ENTER JOIN CODE CLICK", targetPath);
     blurWebActiveElement();
-    router.push({ pathname: "/onboarding", params: { mode: "join" } });
+    router.push({ pathname: "/join", params: { mode: "join" } });
   };
   const openCreateSociety = () => {
     blurWebActiveElement();

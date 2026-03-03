@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { StyleSheet, View, Alert, KeyboardAvoidingView, Platform, TouchableOpacity } from "react-native";
-import { useLocalSearchParams, useRouter } from "expo-router";
+import { useLocalSearchParams, usePathname, useRouter } from "expo-router";
 import { Feather } from "@expo/vector-icons";
 
 import { Screen } from "@/components/ui/Screen";
@@ -42,13 +42,16 @@ function showRlsError(error: any): void {
 
 export default function OnboardingScreen() {
   const router = useRouter();
+  const pathname = usePathname();
   const params = useLocalSearchParams<{ mode?: string | string[] }>();
   const { user, ready, profile, setActiveSocietyId, refresh } = useBootstrap();
   const colors = getColors();
 
-  const routeMode = Array.isArray(params.mode) ? params.mode[0] : params.mode;
+  const routeModeParam = Array.isArray(params.mode) ? params.mode[0] : params.mode;
+  const routeMode = routeModeParam === "join" || routeModeParam === "create" ? routeModeParam : null;
+  const isJoinAliasRoute = pathname === "/join" || pathname === "/join-society" || pathname === "/onboarding/join";
   const [mode, setMode] = useState<Mode>(
-    routeMode === "join" || routeMode === "create" ? routeMode : "choose"
+    routeMode ?? (isJoinAliasRoute ? "join" : "choose")
   );
   const [joinLoading, setJoinLoading] = useState(false);
   const [createLoading, setCreateLoading] = useState(false);
@@ -74,10 +77,14 @@ export default function OnboardingScreen() {
   const isAuthReady = ready && !!user?.uid;
 
   useEffect(() => {
-    if (routeMode === "join" || routeMode === "create") {
+    if (routeMode) {
       setMode(routeMode);
+      return;
     }
-  }, [routeMode]);
+    if (isJoinAliasRoute) {
+      setMode("join");
+    }
+  }, [routeMode, isJoinAliasRoute]);
 
   /**
    * Join Society Flow:
