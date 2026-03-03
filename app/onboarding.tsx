@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { StyleSheet, View, Alert, KeyboardAvoidingView, Platform } from "react-native";
+import { StyleSheet, View, Alert, KeyboardAvoidingView, Platform, TouchableOpacity } from "react-native";
 import { useRouter } from "expo-router";
 import { Feather } from "@expo/vector-icons";
 
@@ -295,14 +295,23 @@ export default function OnboardingScreen() {
                 />
               </View>
 
-              <PrimaryButton
+              <TouchableOpacity
                 onPress={handleJoinSociety}
-                style={styles.submitButton}
                 disabled={loading}
-                loading={loading}
+                activeOpacity={0.8}
+                hitSlop={{ top: 16, bottom: 16, left: 16, right: 16 }}
+                style={[
+                  styles.joinButton,
+                  {
+                    backgroundColor: loading ? colors.surfaceDisabled : colors.primary,
+                    opacity: loading ? 0.8 : 1,
+                  },
+                ]}
               >
-                {loading ? "Joining…" : "Join Society"}
-              </PrimaryButton>
+                <AppText variant="button" color="inverse">
+                  {loading ? "Joining…" : "Join Society"}
+                </AppText>
+              </TouchableOpacity>
             </AppCard>
           </View>
         </KeyboardAvoidingView>
@@ -395,13 +404,23 @@ export default function OnboardingScreen() {
             <AppText variant="caption" color="secondary" style={styles.optionDescription}>
               Have a join code? Enter it to join your society.
             </AppText>
-            <PrimaryButton
+            <TouchableOpacity
               onPress={() => setMode("join")}
-              style={styles.optionButton}
               disabled={loading}
+              activeOpacity={0.8}
+              hitSlop={{ top: 16, bottom: 16, left: 16, right: 16 }}
+              style={[
+                styles.optionButtonTouch,
+                {
+                  backgroundColor: loading ? colors.surfaceDisabled : colors.primary,
+                  opacity: loading ? 0.7 : 1,
+                },
+              ]}
             >
-              {isAuthReady ? "Join with Code" : "Signing in…"}
-            </PrimaryButton>
+              <AppText variant="button" color="inverse">
+                {isAuthReady ? "Join with Code" : "Signing in…"}
+              </AppText>
+            </TouchableOpacity>
           </AppCard>
 
           <AppCard style={styles.optionCard}>
@@ -484,6 +503,15 @@ const styles = StyleSheet.create({
   optionButton: {
     width: "100%",
   },
+  optionButtonTouch: {
+    width: "100%",
+    minHeight: 44,
+    borderRadius: radius.md,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.lg,
+    alignItems: "center",
+    justifyContent: "center",
+  },
   formCard: {
     width: "100%",
   },
@@ -498,5 +526,14 @@ const styles = StyleSheet.create({
   },
   submitButton: {
     marginTop: spacing.sm,
+  },
+  joinButton: {
+    marginTop: spacing.sm,
+    minHeight: 44,
+    borderRadius: radius.md,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.lg,
+    alignItems: "center",
+    justifyContent: "center",
   },
 });
