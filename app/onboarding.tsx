@@ -44,7 +44,7 @@ export default function OnboardingScreen() {
   const router = useRouter();
   const pathname = usePathname();
   const params = useLocalSearchParams<{ mode?: string | string[] }>();
-  const { user, ready, profile, setActiveSocietyId, refresh } = useBootstrap();
+  const { user, ready, setActiveSocietyId, refresh } = useBootstrap();
   const colors = getColors();
 
   const routeModeParam = Array.isArray(params.mode) ? params.mode[0] : params.mode;
@@ -105,6 +105,7 @@ export default function OnboardingScreen() {
     setJoinError(null);
 
     const code = joinCode.trim().toUpperCase();
+    const nameInput = displayName.trim();
 
     if (!code) {
       showJoinFailure("Please enter the society join code.");
@@ -112,6 +113,10 @@ export default function OnboardingScreen() {
     }
     if (code.length < 4 || code.length > 10) {
       showJoinFailure("Join code must be 4–10 characters.");
+      return;
+    }
+    if (!nameInput) {
+      showJoinFailure("Please enter your name.");
       return;
     }
 
@@ -125,22 +130,16 @@ export default function OnboardingScreen() {
         showJoinFailure("Authentication failed. Please try again.");
         return;
       }
-
-      const fallbackProfileName =
-        typeof profile?.display_name === "string" && profile.display_name.trim().length > 0
-          ? profile.display_name.trim()
-          : typeof profile?.name === "string" && profile.name.trim().length > 0
-            ? profile.name.trim()
-            : null;
-      const requestedDisplayName = displayName.trim().length > 0 ? displayName.trim() : fallbackProfileName;
       console.log("[join] Calling join_society RPC", {
         code,
-        hasDisplayName: !!requestedDisplayName,
+        p_name: nameInput,
+        hasEmail: !!authUser.email,
       });
 
       const { data: societyId, error } = await supabase.rpc("join_society", {
         p_join_code: code,
-        p_display_name: requestedDisplayName,
+        p_name: nameInput,
+        p_email: authUser.email ?? null,
       });
 
       if (error) {
