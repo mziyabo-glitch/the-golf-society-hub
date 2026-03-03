@@ -13,6 +13,18 @@ import { consumePendingInviteToken } from "@/lib/sinbookInviteToken";
 import { blurWebActiveElement } from "@/lib/ui/focus";
 
 const APP_TABS = "/(app)/(tabs)";
+const JOIN_FLOW_SEGMENTS = new Set(["onboarding", "join", "join-society"]);
+
+function isJoinFlowRoute(pathname?: string, seg0?: string): boolean {
+  if (typeof seg0 === "string" && JOIN_FLOW_SEGMENTS.has(seg0)) return true;
+  if (typeof pathname !== "string") return false;
+  return (
+    pathname === "/join" ||
+    pathname === "/join-society" ||
+    pathname === "/onboarding" ||
+    pathname.startsWith("/onboarding/")
+  );
+}
 
 function RootNavigator() {
   const { loading, error, isSignedIn, activeSocietyId, profile, refresh } = useBootstrap();
@@ -44,7 +56,8 @@ function RootNavigator() {
       const p = pathnameRef.current;
       const inApp = seg0 === "(app)" || seg0 === "app" || (typeof p === "string" && p?.startsWith("/(app)"));
       const inPublic = p === "/reset-password" || seg0 === "reset-password";
-      if (inPublic) return;
+      const inJoinFlow = isJoinFlowRoute(p, seg0);
+      if (inPublic || inJoinFlow) return;
 
       if (session && !inApp) {
         console.log("[_layout] Auth gate: session present, redirecting to", APP_TABS);
@@ -79,15 +92,16 @@ function RootNavigator() {
       return;
     }
 
-    const inOnboarding = segments[0] === "onboarding";
+    const inOnboarding = segments[0] === "onboarding" || segments[0] === "join" || segments[0] === "join-society";
     const inSinbookInvite = segments[0] === "sinbook";
     const inPublicRoute = isPublicPath || segments[0] === "reset-password";
+    const inJoinFlow = isJoinFlowRoute(pathname, segments[0]);
     const inMyProfile = pathname === "/(app)/my-profile";
     const hasSociety = !!activeSocietyId;
     const needsProfileCompletion = !!profile && !profile.profile_complete;
 
     // Create a state key to detect actual changes
-    const stateKey = `${hasSociety}-${inOnboarding}-${inSinbookInvite}-${needsProfileCompletion}-${segments.join("/")}`;
+    const stateKey = `${hasSociety}-${inOnboarding}-${inJoinFlow}-${inSinbookInvite}-${needsProfileCompletion}-${segments.join("/")}`;
 
     // Only log if state actually changed
     if (stateKey !== lastState.current) {
@@ -96,6 +110,7 @@ function RootNavigator() {
         hasSociety,
         activeSocietyId,
         inOnboarding,
+        inJoinFlow,
         inSinbookInvite,
         needsProfileCompletion,
         segments: segments.join("/"),
@@ -103,7 +118,7 @@ function RootNavigator() {
     }
 
     // Exempt routes that handle their own flow
-    if (inSinbookInvite || inPublicRoute) {
+    if (inSinbookInvite || inPublicRoute || (!hasSociety && inJoinFlow)) {
       return;
     }
 
@@ -116,7 +131,7 @@ function RootNavigator() {
       return;
     }
 
-    if (hasSociety && inOnboarding) {
+    if (hasSociety && inJoinFlow) {
       // Has society but on onboarding -> go to app home
       // Check for pending sinbook invite token first
       console.log("[_layout] Has society, checking pending invite token...");
@@ -147,6 +162,8 @@ function RootNavigator() {
   useEffect(() => {
     if (loading || !isSignedIn || isPublicPath) return;
     const seg0 = segments[0];
+    const inJoinFlow = isJoinFlowRoute(pathname, seg0);
+    if (inJoinFlow) return;
     const inApp = seg0 === "(app)" || seg0 === "app" || (typeof pathname === "string" && pathname.startsWith("/(app)"));
     if (!inApp) {
       console.log("[_layout] Session present, redirecting to app");
