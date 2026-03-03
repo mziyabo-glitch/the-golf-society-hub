@@ -49,6 +49,7 @@ type BootstrapState = {
 
   // Actions
   setActiveSociety: (societyId: string | null, memberId: string | null) => Promise<void>;
+  setActiveSocietyId: (societyId: string | null) => void;
   refresh: () => void;
   signOut: () => Promise<void>;
 
@@ -78,6 +79,7 @@ const BOOTSTRAP_FALLBACK: BootstrapState = {
   society: null,
   member: null,
   setActiveSociety: async () => {},
+  setActiveSocietyId: () => {},
   refresh: () => {},
   signOut: async () => {},
   ready: true,
@@ -430,6 +432,15 @@ function useBootstrapInternal(): BootstrapState {
     }));
   };
 
+  const setActiveSocietyId = (societyId: string | null) => {
+    if (!userId) return;
+    setProfile((prev: any) => ({
+      ...(prev ?? {}),
+      id: userId,
+      active_society_id: societyId,
+    }));
+  };
+
   const refresh = () => {
     console.log("[useBootstrap] Manual refresh triggered");
     setRefreshKey((k) => k + 1);
@@ -463,6 +474,7 @@ function useBootstrapInternal(): BootstrapState {
 
     // Actions
     setActiveSociety,
+    setActiveSocietyId,
     refresh,
     signOut,
 
