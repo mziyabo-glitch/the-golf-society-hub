@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { StyleSheet, View, Alert, KeyboardAvoidingView, Platform, TouchableOpacity } from "react-native";
-import { useRouter } from "expo-router";
+import { useLocalSearchParams, useRouter } from "expo-router";
 import { Feather } from "@expo/vector-icons";
 
 import { Screen } from "@/components/ui/Screen";
@@ -42,10 +42,14 @@ function showRlsError(error: any): void {
 
 export default function OnboardingScreen() {
   const router = useRouter();
+  const params = useLocalSearchParams<{ mode?: string | string[] }>();
   const { user, ready, profile, setActiveSocietyId, refresh } = useBootstrap();
   const colors = getColors();
 
-  const [mode, setMode] = useState<Mode>("choose");
+  const routeMode = Array.isArray(params.mode) ? params.mode[0] : params.mode;
+  const [mode, setMode] = useState<Mode>(
+    routeMode === "join" || routeMode === "create" ? routeMode : "choose"
+  );
   const [joinLoading, setJoinLoading] = useState(false);
   const [createLoading, setCreateLoading] = useState(false);
 
@@ -68,6 +72,12 @@ export default function OnboardingScreen() {
 
   // Buttons are disabled until auth is ready
   const isAuthReady = ready && !!user?.uid;
+
+  useEffect(() => {
+    if (routeMode === "join" || routeMode === "create") {
+      setMode(routeMode);
+    }
+  }, [routeMode]);
 
   /**
    * Join Society Flow:
