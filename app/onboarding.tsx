@@ -16,6 +16,7 @@ import { createSociety, lookupSocietyByJoinCode, normalizeJoinCode } from "@/lib
 import { createMember, findMemberByUserAndSociety, claimCaptainAddedMember } from "@/lib/db_supabase/memberRepo";
 import { setActiveSocietyAndMember } from "@/lib/db_supabase/profileRepo";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
+import { blurWebActiveElement } from "@/lib/ui/focus";
 
 type Mode = "choose" | "join" | "create";
 
@@ -138,6 +139,7 @@ export default function OnboardingScreen() {
       await setActiveSocietyAndMember(uid, society.id, memberId);
       refresh();
       console.log("[join] JOIN_COMPLETE");
+      blurWebActiveElement();
       router.replace("/(app)/(tabs)");
     } catch (e: any) {
       console.error("[join] JOIN_FAILED", e);
@@ -217,6 +219,7 @@ export default function OnboardingScreen() {
 
       // Step 5: Navigate to app home
       console.log("[onboarding] === CREATE SOCIETY COMPLETE ===");
+      blurWebActiveElement();
       router.replace("/(app)/(tabs)");
     } catch (e: any) {
       console.error("[onboarding] Create society error:", e);

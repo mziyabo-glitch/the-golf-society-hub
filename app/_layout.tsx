@@ -10,6 +10,7 @@ import { AppText } from "@/components/ui/AppText";
 import { PrimaryButton } from "@/components/ui/Button";
 import { getColors, spacing } from "@/lib/ui/theme";
 import { consumePendingInviteToken } from "@/lib/sinbookInviteToken";
+import { blurWebActiveElement } from "@/lib/ui/focus";
 
 const APP_TABS = "/(app)/(tabs)";
 
@@ -47,6 +48,7 @@ function RootNavigator() {
 
       if (session && !inApp) {
         console.log("[_layout] Auth gate: session present, redirecting to", APP_TABS);
+        blurWebActiveElement();
         router.replace(APP_TABS);
       }
     };
@@ -109,6 +111,7 @@ function RootNavigator() {
     if (needsProfileCompletion && !inMyProfile) {
       console.log("[_layout] Profile incomplete, redirecting to /my-profile");
       hasRouted.current = true;
+      blurWebActiveElement();
       router.replace("/(app)/my-profile");
       return;
     }
@@ -121,8 +124,10 @@ function RootNavigator() {
       consumePendingInviteToken().then((token) => {
         if (token) {
           console.log("[_layout] Resuming sinbook invite:", token);
+          blurWebActiveElement();
           router.replace({ pathname: "/sinbook/invite/[token]", params: { token } });
         } else {
+          blurWebActiveElement();
           router.replace("/(app)/(tabs)");
         }
       });
@@ -145,6 +150,7 @@ function RootNavigator() {
     const inApp = seg0 === "(app)" || seg0 === "app" || (typeof pathname === "string" && pathname.startsWith("/(app)"));
     if (!inApp) {
       console.log("[_layout] Session present, redirecting to app");
+      blurWebActiveElement();
       router.replace("/(app)/(tabs)");
     }
   }, [loading, isSignedIn, isPublicPath, segments, pathname, router]);
