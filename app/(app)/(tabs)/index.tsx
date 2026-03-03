@@ -44,6 +44,7 @@ import { getColors, spacing, radius } from "@/lib/ui/theme";
 import { formatError, type FormattedError } from "@/lib/ui/formatError";
 import { getSocietyLogoUrl } from "@/lib/societyLogo";
 import { getMySinbooks, type SinbookWithParticipants } from "@/lib/db_supabase/sinbookRepo";
+import { blurWebActiveElement } from "@/lib/ui/focus";
 
 const appIcon = require("@/assets/images/app-icon.png");
 
@@ -370,13 +371,18 @@ export default function HomeScreen() {
   // Navigation Helpers
   // ============================================================================
 
+  const pushWithBlur = (href: Parameters<typeof router.push>[0]) => {
+    blurWebActiveElement();
+    router.push(href);
+  };
+
   const openEvent = (eventId: string) => {
     if (!eventId) return;
-    router.push({ pathname: "/(app)/event/[id]", params: { id: eventId } });
+    pushWithBlur({ pathname: "/(app)/event/[id]", params: { id: eventId } });
   };
 
   const openLeaderboard = () => {
-    router.push("/(app)/(tabs)/leaderboard");
+    pushWithBlur("/(app)/(tabs)/leaderboard");
   };
 
   const openFairwayWeather = async () => {
@@ -448,7 +454,7 @@ export default function HomeScreen() {
     >
       <HomeAppBar
         colors={colors}
-        onOpenSettings={() => router.push("/(app)/(tabs)/settings")}
+        onOpenSettings={() => pushWithBlur("/(app)/(tabs)/settings")}
       />
 
       <SocietyHeaderCard
@@ -489,7 +495,7 @@ export default function HomeScreen() {
       {/* COMPLETE PROFILE BANNER                                            */}
       {/* ================================================================== */}
       {!profileComplete && (
-        <Pressable onPress={() => router.push("/(app)/my-profile")} style={cardPressStyle}>
+        <Pressable onPress={() => pushWithBlur("/(app)/my-profile")} style={cardPressStyle}>
           <AppCard style={[styles.premiumCard, styles.profileBanner, { borderColor: colors.info + "40" }]}>
             <View style={styles.profileBannerRow}>
               <View style={[styles.profileBannerIcon, { backgroundColor: colors.info + "18" }]}>
@@ -792,7 +798,7 @@ export default function HomeScreen() {
       {/* ================================================================== */}
       {/* F) SINBOOK TEASER CARD                                             */}
       {/* ================================================================== */}
-      <Pressable onPress={() => router.push("/(app)/(tabs)/sinbook")} style={cardPressStyle}>
+      <Pressable onPress={() => pushWithBlur("/(app)/(tabs)/sinbook")} style={cardPressStyle}>
         <AppCard style={styles.premiumCard}>
           <View style={styles.cardTitleRow}>
             <Feather name="zap" size={16} color={colors.primary} />
@@ -849,6 +855,10 @@ function PersonalModeHome({
     styles.cardPressable,
     pressed && styles.cardPressablePressed,
   ];
+  const pushWithBlur = (href: Parameters<typeof router.push>[0]) => {
+    blurWebActiveElement();
+    router.push(href);
+  };
 
   return (
     <Screen
@@ -857,7 +867,7 @@ function PersonalModeHome({
     >
       <HomeAppBar
         colors={colors}
-        onOpenSettings={() => router.push("/(app)/(tabs)/settings")}
+        onOpenSettings={() => pushWithBlur("/(app)/(tabs)/settings")}
       />
 
       {/* Welcome header */}
@@ -875,7 +885,7 @@ function PersonalModeHome({
 
       {/* Complete profile banner */}
       {!pmProfileComplete && (
-        <Pressable onPress={() => router.push("/(app)/my-profile")} style={cardPressStyle}>
+        <Pressable onPress={() => pushWithBlur("/(app)/my-profile")} style={cardPressStyle}>
           <AppCard style={[styles.premiumCard, styles.profileBanner, { borderColor: colors.info + "40" }]}>
             <View style={styles.profileBannerRow}>
               <View style={[styles.profileBannerIcon, { backgroundColor: colors.info + "18" }]}>
@@ -894,7 +904,7 @@ function PersonalModeHome({
       )}
 
       {/* Feature cards */}
-      <Pressable onPress={() => router.push("/(app)/(tabs)/sinbook")} style={cardPressStyle}>
+      <Pressable onPress={() => pushWithBlur("/(app)/(tabs)/sinbook")} style={cardPressStyle}>
         <AppCard style={styles.premiumCard}>
           <View style={personalStyles.featureRow}>
             <View style={[personalStyles.featureIcon, { backgroundColor: colors.primary + "14" }]}>
@@ -928,7 +938,7 @@ function PersonalModeHome({
         </View>
       </AppCard>
 
-      <Pressable onPress={() => router.push("/(app)/(tabs)/settings")} style={cardPressStyle}>
+      <Pressable onPress={() => pushWithBlur("/(app)/(tabs)/settings")} style={cardPressStyle}>
         <AppCard style={styles.premiumCard}>
           <View style={personalStyles.featureRow}>
             <View style={[personalStyles.featureIcon, { backgroundColor: colors.backgroundTertiary }]}>
@@ -962,14 +972,14 @@ function PersonalModeHome({
 
           <View style={personalStyles.nudgeActions}>
             <PrimaryButton
-              onPress={() => router.push("/onboarding")}
+              onPress={() => pushWithBlur("/onboarding")}
               size="sm"
               style={{ flex: 1 }}
             >
               Enter join code
             </PrimaryButton>
             <Pressable
-              onPress={() => router.push("/onboarding")}
+              onPress={() => pushWithBlur("/onboarding")}
               style={({ pressed }) => [
                 personalStyles.nudgeSecondary,
                 { borderColor: colors.border, opacity: pressed ? 0.7 : 1 },

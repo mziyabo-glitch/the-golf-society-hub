@@ -25,7 +25,7 @@ import {
 } from "@/lib/societyLogo";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
 import { confirmDestructive, showAlert } from "@/lib/ui/alert";
-import { getSupabaseEnv } from "@/lib/supabaseEnv";
+import { getSupabaseEnv, getSupabaseProjectRefSuffix } from "@/lib/supabaseEnv";
 
 export default function SettingsScreen() {
   const router = useRouter();
@@ -670,7 +670,7 @@ export default function SettingsScreen() {
           Golf Society Hub v1.0.0
         </AppText>
         <AppText variant="small" color="tertiary" style={{ textAlign: "center", marginTop: 4 }}>
-          Environment: {getSupabaseEnv().toUpperCase()}
+          Environment: {getSupabaseEnv().toUpperCase()} · Backend: …{getSupabaseProjectRefSuffix()}
         </AppText>
       </View>
     </Screen>

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { StyleSheet, View, Alert, KeyboardAvoidingView, Platform } from "react-native";
+import { StyleSheet, View, Alert, KeyboardAvoidingView, Platform, TouchableOpacity } from "react-native";
 import { useRouter } from "expo-router";
 import { Feather } from "@expo/vector-icons";
 
@@ -7,6 +7,7 @@ import { Screen } from "@/components/ui/Screen";
 import { AppText } from "@/components/ui/AppText";
 import { AppCard } from "@/components/ui/AppCard";
 import { AppInput } from "@/components/ui/AppInput";
+import { InlineNotice } from "@/components/ui/InlineNotice";
 import { PrimaryButton, SecondaryButton } from "@/components/ui/Button";
 import { LoadingState } from "@/components/ui/LoadingState";
 import { useBootstrap } from "@/lib/useBootstrap";
@@ -15,6 +16,7 @@ import { createSociety, lookupSocietyByJoinCode, normalizeJoinCode } from "@/lib
 import { createMember, findMemberByUserAndSociety, claimCaptainAddedMember } from "@/lib/db_supabase/memberRepo";
 import { setActiveSocietyAndMember } from "@/lib/db_supabase/profileRepo";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
+import { blurWebActiveElement } from "@/lib/ui/focus";
 
 type Mode = "choose" | "join" | "create";
 
@@ -47,6 +49,7 @@ export default function OnboardingScreen() {
   // Join form state
   const [joinCode, setJoinCode] = useState("");
   const [displayName, setDisplayName] = useState("");
+  const [joinError, setJoinError] = useState<string | null>(null);
 
   // Create form state
   const [societyName, setSocietyName] = useState("");
@@ -58,127 +61,93 @@ export default function OnboardingScreen() {
 
   /**
    * Join Society Flow:
-   * 1. Lookup society by join code
-   * 2. Check if membership already exists
-   * 3. If exists: just set profile active IDs
-   * 4. If not: create member row, then set profile active IDs
-   * 5. Redirect to app home
+   * 1. Normalize & validate join code
+   * 2. Lookup society by join code
+   * 3. Check if membership already exists
+   * 4. If not: create member row (or claim captain-added)
+   * 5. Update profile, refresh, navigate to app home
    */
   const handleJoinSociety = async () => {
+    console.log("[join] JOIN_TAP");
+    setJoinError(null);
+
     const normalizedCode = normalizeJoinCode(joinCode);
 
     if (!normalizedCode) {
-      Alert.alert("Missing Code", "Please enter the society join code.");
+      setJoinError("Please enter the society join code.");
       return;
     }
-    if (normalizedCode.length < 4) {
-      Alert.alert("Invalid Code", "Join code must be at least 4 characters.");
+    if (normalizedCode.length < 4 || normalizedCode.length > 10) {
+      setJoinError("Join code must be 4–10 characters.");
       return;
     }
     if (!displayName.trim()) {
-      Alert.alert("Missing Name", "Please enter your name.");
+      setJoinError("Please enter your name.");
       return;
     }
 
     setLoading(true);
-    console.log("[join] === JOIN SOCIETY START ===");
-    console.log("[join] Raw input:", JSON.stringify(joinCode));
-    console.log("[join] Normalized code:", normalizedCode);
+    console.log("[join] JOIN_START", { normalized: normalizedCode });
 
     try {
-      // Step 1: Ensure signed in
-      console.log("[join] Ensuring signed in...");
       const authUser = await ensureSignedIn();
       const uid = authUser?.id;
       if (!uid) {
-        Alert.alert("Error", "Authentication failed. Please try again.");
+        setJoinError("Authentication failed. Please try again.");
         setLoading(false);
         return;
       }
-      console.log("[join] Authenticated as:", uid);
 
-      // Step 2: Lookup society by join code using new structured result
-      console.log("[join] code lookup start:", normalizedCode);
       const lookupResult = await lookupSocietyByJoinCode(joinCode);
 
       if (!lookupResult.ok) {
-        console.log("[join] Lookup failed:", lookupResult.reason, lookupResult.message);
-
-        switch (lookupResult.reason) {
-          case "NOT_FOUND":
-            Alert.alert(
-              "Society Not Found",
-              `No society found with code "${normalizedCode}". Please check the code and try again.`
-            );
-            break;
-          case "FORBIDDEN":
-            Alert.alert(
-              "Access Denied",
-              "Unable to look up societies. This may be a server configuration issue. Please try again or contact support."
-            );
-            break;
-          case "ERROR":
-            Alert.alert(
-              "Lookup Failed",
-              lookupResult.message || "Failed to look up society. Please try again."
-            );
-            break;
-        }
+        console.log("[join] JOIN_FAILED lookup:", lookupResult.reason, lookupResult.message);
+        const msg =
+          lookupResult.reason === "NOT_FOUND"
+            ? `Join code not found. Please check the code and try again.`
+            : lookupResult.reason === "FORBIDDEN"
+              ? "Access denied. Please sign in and try again."
+              : lookupResult.message || "Failed to look up society.";
+        setJoinError(msg);
         setLoading(false);
         return;
       }
 
       const society = lookupResult.society;
-      console.log("[join] code lookup success:", {
-        id: society.id,
-        name: society.name,
-        join_code: society.join_code,
-      });
+      console.log("[join] JOIN_LOOKUP_OK", { id: society.id, name: society.name });
 
-      // Step 3: Check if membership already exists
-      console.log("[join] Checking for existing membership...");
       const existingMember = await findMemberByUserAndSociety(society.id, uid);
-
       let memberId: string;
 
       if (existingMember) {
-        // Already a member - just use existing membership
-        console.log("[join] Existing membership found:", existingMember.id);
         memberId = existingMember.id;
       } else {
-        // Step 4a: Try to claim a captain-added member with matching name
-        console.log("[join] Trying to claim captain-added member by name...");
         const claimed = await claimCaptainAddedMember(society.id, displayName.trim());
-
         if (claimed) {
-          console.log("[join] Claimed existing member:", claimed.id);
           memberId = claimed.id;
         } else {
-          // Step 4b: No match — create a new member row
-          console.log("[join] No unlinked match, createMember start");
           memberId = await createMember(society.id, {
             displayName: displayName.trim(),
             name: displayName.trim(),
             roles: ["member"],
             userId: uid,
           });
-          console.log("[join] createMember success:", memberId);
         }
       }
+      console.log("[join] JOIN_INSERT_OK", { memberId });
 
-      // Step 5: Update profile with active society/member
-      console.log("[join] updateProfile start");
       await setActiveSocietyAndMember(uid, society.id, memberId);
-      console.log("[join] updateProfile success");
-
-      // Refresh bootstrap state to pick up the new active society
       refresh();
-
-      // Step 6: Navigate to app home
-      console.log("[join] === JOIN SOCIETY COMPLETE ===");
+      console.log("[join] JOIN_COMPLETE");
+      blurWebActiveElement();
       router.replace("/(app)/(tabs)");
     } catch (e: any) {
-      console.error("[join] Join society error:", e);
+      console.error("[join] JOIN_FAILED", e);
+      const msg =
+        e?.code === "42501" || e?.message?.includes("row-level security") || e?.message?.includes("Permission denied")
+          ? "Permission denied. Please ensure you're signed in and try again."
+          : e?.message || "Something went wrong. Please try again.";
+      setJoinError(msg);
       showRlsError(e);
     } finally {
       setLoading(false);
@@ -250,6 +219,7 @@ export default function OnboardingScreen() {
 
       // Step 5: Navigate to app home
       console.log("[onboarding] === CREATE SOCIETY COMPLETE ===");
+      blurWebActiveElement();
       router.replace("/(app)/(tabs)");
     } catch (e: any) {
       console.error("[onboarding] Create society error:", e);
@@ -300,15 +270,21 @@ export default function OnboardingScreen() {
             </AppText>
 
             <AppCard style={styles.formCard}>
+              {joinError && (
+                <InlineNotice variant="error" message={joinError} style={styles.errorNotice} />
+              )}
               <View style={styles.formField}>
                 <AppText variant="captionBold" style={styles.label}>Join Code</AppText>
                 <AppInput
                   placeholder="e.g. ABC123"
                   value={joinCode}
-                  onChangeText={(text) => setJoinCode(text.toUpperCase().replace(/\s/g, ""))}
+                  onChangeText={(text) => {
+                    setJoinCode(text.toUpperCase().replace(/\s/g, ""));
+                    setJoinError(null);
+                  }}
                   autoCapitalize="characters"
                   autoCorrect={false}
-                  maxLength={8}
+                  maxLength={10}
                 />
               </View>
 
@@ -317,18 +293,28 @@ export default function OnboardingScreen() {
                 <AppInput
                   placeholder="e.g. John Smith"
                   value={displayName}
-                  onChangeText={setDisplayName}
+                  onChangeText={(t) => { setDisplayName(t); setJoinError(null); }}
                   autoCapitalize="words"
                 />
               </View>
 
-              <PrimaryButton
+              <TouchableOpacity
                 onPress={handleJoinSociety}
-                style={styles.submitButton}
-                disabled={!isAuthReady}
+                disabled={loading}
+                activeOpacity={0.8}
+                hitSlop={{ top: 16, bottom: 16, left: 16, right: 16 }}
+                style={[
+                  styles.joinButton,
+                  {
+                    backgroundColor: loading ? colors.surfaceDisabled : colors.primary,
+                    opacity: loading ? 0.8 : 1,
+                  },
+                ]}
               >
-                {isAuthReady ? "Join Society" : "Signing in..."}
-              </PrimaryButton>
+                <AppText variant="button" color="inverse">
+                  {loading ? "Joining…" : "Join Society"}
+                </AppText>
+              </TouchableOpacity>
             </AppCard>
           </View>
         </KeyboardAvoidingView>
@@ -421,13 +407,23 @@ export default function OnboardingScreen() {
             <AppText variant="caption" color="secondary" style={styles.optionDescription}>
               Have a join code? Enter it to join your society.
             </AppText>
-            <PrimaryButton
+            <TouchableOpacity
               onPress={() => setMode("join")}
-              style={styles.optionButton}
-              disabled={!isAuthReady}
+              disabled={loading}
+              activeOpacity={0.8}
+              hitSlop={{ top: 16, bottom: 16, left: 16, right: 16 }}
+              style={[
+                styles.optionButtonTouch,
+                {
+                  backgroundColor: loading ? colors.surfaceDisabled : colors.primary,
+                  opacity: loading ? 0.7 : 1,
+                },
+              ]}
             >
-              {isAuthReady ? "Join with Code" : "Signing in..."}
-            </PrimaryButton>
+              <AppText variant="button" color="inverse">
+                {isAuthReady ? "Join with Code" : "Signing in…"}
+              </AppText>
+            </TouchableOpacity>
           </AppCard>
 
           <AppCard style={styles.optionCard}>
@@ -441,9 +437,9 @@ export default function OnboardingScreen() {
             <SecondaryButton
               onPress={() => setMode("create")}
               style={styles.optionButton}
-              disabled={!isAuthReady}
+              disabled={loading}
             >
-              {isAuthReady ? "Create New" : "Signing in..."}
+              {isAuthReady ? "Create New" : "Signing in…"}
             </SecondaryButton>
           </AppCard>
         </View>
@@ -510,10 +506,22 @@ const styles = StyleSheet.create({
   optionButton: {
     width: "100%",
   },
+  optionButtonTouch: {
+    width: "100%",
+    minHeight: 44,
+    borderRadius: radius.md,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.lg,
+    alignItems: "center",
+    justifyContent: "center",
+  },
   formCard: {
     width: "100%",
   },
   formField: {
+    marginBottom: spacing.base,
+  },
+  errorNotice: {
     marginBottom: spacing.base,
   },
   label: {
@@ -521,5 +529,14 @@ const styles = StyleSheet.create({
   },
   submitButton: {
     marginTop: spacing.sm,
+  },
+  joinButton: {
+    marginTop: spacing.sm,
+    minHeight: 44,
+    borderRadius: radius.md,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.lg,
+    alignItems: "center",
+    justifyContent: "center",
   },
 });
