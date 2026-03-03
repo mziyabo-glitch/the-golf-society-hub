@@ -31,6 +31,7 @@ type MemberData = {
 type BootstrapState = {
   // Loading & error
   loading: boolean;
+  membershipLoading: boolean;
   error: string | null;
 
   // Auth state
@@ -70,6 +71,7 @@ let warnedMissingBootstrapProvider = false;
 
 const BOOTSTRAP_FALLBACK: BootstrapState = {
   loading: false,
+  membershipLoading: false,
   error: "BootstrapProvider is missing",
   userId: null,
   session: null,
@@ -142,6 +144,7 @@ function normalizeMemberData(memberData: any): MemberData {
 
 function useBootstrapInternal(): BootstrapState {
   const [loading, setLoading] = useState(true);
+  const [membershipLoading, setMembershipLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [session, setSession] = useState<Session | null>(null);
   const [profile, setProfile] = useState<any | null>(null);
@@ -201,6 +204,7 @@ function useBootstrapInternal(): BootstrapState {
           setProfile(null);
           setSociety(null);
           setMemberState(null);
+          setMembershipLoading(false);
           return;
         }
 
@@ -295,40 +299,63 @@ function useBootstrapInternal(): BootstrapState {
         // Step 4: Load membership by active society + current auth user
         // ----------------------------------------------------------------
         if (finalProfile?.active_society_id) {
-          console.log("[useBootstrap] Loading member by society + auth user:", {
-            societyId: finalProfile.active_society_id,
-            userId: currentUser.id,
+          const targetSocietyId = finalProfile.active_society_id as string;
+          const targetUserId = currentUser.id;
+          setMembershipLoading(true);
+          console.log("[useBootstrap] Membership lookup filters:", {
+            society_id: targetSocietyId,
+            user_id: targetUserId,
           });
 
           const { data: memberData, error: memberError } = await supabase
             .from("members")
             .select("*")
-            .eq("society_id", finalProfile.active_society_id)
-            .eq("user_id", currentUser.id)
-            .maybeSingle();
-
-          if (memberError) {
-            console.warn("[useBootstrap] Member load error:", memberError.message);
-          }
+            .eq("society_id", targetSocietyId)
+            .eq("user_id", targetUserId)
+            .order("created_at", { ascending: false })
+            .limit(1);
 
           if (!mounted.current) return;
-          if (memberData) {
-            setMemberState(normalizeMemberData(memberData));
+
+          const firstMember = Array.isArray(memberData) ? memberData[0] : null;
+          console.log("[useBootstrap] Membership lookup result:", {
+            society_id: targetSocietyId,
+            user_id: targetUserId,
+            memberId: firstMember?.id ?? null,
+            error: memberError
+              ? {
+                  message: memberError.message,
+                  code: memberError.code,
+                  details: memberError.details,
+                  hint: memberError.hint,
+                }
+              : null,
+          });
+
+          if (memberError) {
+            // Keep current member state during transient query issues.
+            setMembershipLoading(false);
+          } else if (firstMember) {
+            setMemberState(normalizeMemberData(firstMember));
 
             // Keep profile pointer aligned to the actual member row found
-            if (finalProfile.active_member_id !== memberData.id) {
+            if (finalProfile.active_member_id !== firstMember.id) {
               setProfile((prev: any) => ({
                 ...(prev ?? {}),
                 id: currentUser.id,
-                active_society_id: finalProfile.active_society_id,
-                active_member_id: memberData.id,
+                active_society_id: targetSocietyId,
+                active_member_id: firstMember.id,
               }));
             }
+            setMembershipLoading(false);
           } else {
+            // No matching member found for this user/society pair.
             setMemberState(null);
+            setMembershipLoading(false);
           }
         } else {
           setMemberState(null);
+          setMembershipLoading(false);
         }
 
         // ----------------------------------------------------------------
@@ -367,6 +394,7 @@ function useBootstrapInternal(): BootstrapState {
         }
       } finally {
         bootstrapInFlight.current = false;
+        if (mounted.current) setMembershipLoading(false);
         if (mounted.current) {
           setLoading(false);
         }
@@ -458,6 +486,7 @@ function useBootstrapInternal(): BootstrapState {
     }));
     if (memberId === null) {
       setMemberState(null);
+      setMembershipLoading(false);
     }
     if (societyId === null) {
       setSociety(null);
@@ -476,10 +505,12 @@ function useBootstrapInternal(): BootstrapState {
   const setMember = (memberData: MemberData | null) => {
     if (!memberData) {
       setMemberState(null);
+      setMembershipLoading(false);
       return;
     }
     const normalized = normalizeMemberData(memberData);
     setMemberState(normalized);
+    setMembershipLoading(false);
     setProfile((prev: any) => ({
       ...(prev ?? {}),
       id: userId ?? prev?.id ?? normalized.user_id ?? null,
@@ -500,6 +531,7 @@ function useBootstrapInternal(): BootstrapState {
     setProfile(null);
     setSociety(null);
     setMemberState(null);
+    setMembershipLoading(false);
   };
 
   // ============================================================================
@@ -509,6 +541,7 @@ function useBootstrapInternal(): BootstrapState {
   return {
     // Core state
     loading,
+    membershipLoading,
     error,
     userId,
     session,
