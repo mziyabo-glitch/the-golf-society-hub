@@ -74,7 +74,7 @@ export default function TeeSheetScreen() {
   const [generating, setGenerating] = useState(false);
   const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState<{ type: "success" | "error" | "info"; message: string; detail?: string } | null>(null);
-  const [toast, setToast] = useState({ visible: false, message: "", type: "success" as const });
+  const [toast, setToast] = useState<{ visible: boolean; message: string; type: "success" | "error" | "info" }>({ visible: false, message: "", type: "success" });
 
   // Form state
   const [ntpHolesInput, setNtpHolesInput] = useState("");
@@ -315,16 +315,23 @@ export default function TeeSheetScreen() {
   };
 
   // Share/export tee sheet
+  const MAX_TEE_TIMES = 12;
+
   const handleGenerateTeeSheet = async () => {
     if (!guardPaidAction()) return;
     if (!selectedEvent || !societyId) return;
 
-    // Clean up empty groups first
-    const cleanedGroups = groups.filter((g) => g.players.length > 0);
-    if (cleanedGroups.length === 0) {
+    const nonEmptyGroups = groups.filter((g) => g.players.length > 0);
+    if (nonEmptyGroups.length === 0) {
       setNotice({ type: "error", message: "No players added", detail: "Add players to the event before generating the tee sheet." });
       return;
     }
+
+    if (nonEmptyGroups.length > MAX_TEE_TIMES) {
+      setToast({ visible: true, message: `Max ${MAX_TEE_TIMES} tee times — split into 2 exports.`, type: "error" });
+    }
+
+    const groupsForExport = nonEmptyGroups.slice(0, MAX_TEE_TIMES);
 
     setNotice(null);
     setGenerating(true);
@@ -333,7 +340,7 @@ export default function TeeSheetScreen() {
       const ntpHoles = parseHoleNumbers(ntpHolesInput === "-" ? "" : ntpHolesInput);
       const ldHoles = parseHoleNumbers(ldHolesInput === "-" ? "" : ldHolesInput);
 
-      const players: TeeSheetData["players"] = cleanedGroups.flatMap((group) =>
+      const players: TeeSheetData["players"] = groupsForExport.flatMap((group) =>
         group.players.map((player) => ({
           id: player.id,
           name: player.name,
@@ -343,39 +350,41 @@ export default function TeeSheetScreen() {
         }))
       );
 
+      // Publish tee time data via RPC and refetch the event
+      try {
+        const refreshed = await publishTeeTime(selectedEvent.id, startTime || "08:00", interval);
+        if (refreshed) setSelectedEvent(refreshed);
+      } catch (err) {
+        console.warn("[TeeSheet] publishTeeTime failed (non-blocking):", err);
+      }
+
+      const ev = selectedEvent;
       const exportData: TeeSheetData = {
         societyId,
         societyName: society?.name || "Golf Society",
         logoUrl,
         manCo,
-        eventName: selectedEvent.name || "Event",
-        eventDate: selectedEvent.date || null,
-        courseName: selectedEvent.courseName || null,
+        eventName: ev.name || "Event",
+        eventDate: ev.date || null,
+        courseName: ev.courseName || null,
         startTime: startTime || null,
         teeTimeInterval: interval,
         nearestPinHoles: ntpHoles.length > 0 ? ntpHoles : null,
         longestDriveHoles: ldHoles.length > 0 ? ldHoles : null,
-        teeName: selectedEvent.teeName || null,
-        ladiesTeeName: selectedEvent.ladiesTeeName || null,
-        teeSettings: selectedEvent.par != null && selectedEvent.courseRating != null && selectedEvent.slopeRating != null
-          ? { par: selectedEvent.par, courseRating: selectedEvent.courseRating, slopeRating: selectedEvent.slopeRating }
+        teeName: ev.teeName || null,
+        ladiesTeeName: ev.ladiesTeeName || null,
+        teeSettings: ev.par != null && ev.courseRating != null && ev.slopeRating != null
+          ? { par: ev.par, courseRating: ev.courseRating, slopeRating: ev.slopeRating }
           : null,
-        ladiesTeeSettings: selectedEvent.ladiesPar != null && selectedEvent.ladiesCourseRating != null && selectedEvent.ladiesSlopeRating != null
-          ? { par: selectedEvent.ladiesPar, courseRating: selectedEvent.ladiesCourseRating, slopeRating: selectedEvent.ladiesSlopeRating }
+        ladiesTeeSettings: ev.ladiesPar != null && ev.ladiesCourseRating != null && ev.ladiesSlopeRating != null
+          ? { par: ev.ladiesPar, courseRating: ev.ladiesCourseRating, slopeRating: ev.ladiesSlopeRating }
           : null,
-        handicapAllowance: selectedEvent.handicapAllowance ?? null,
-        format: selectedEvent.format ?? null,
+        handicapAllowance: ev.handicapAllowance ?? null,
+        format: ev.format ?? null,
         players,
         preGrouped: true,
       };
       assertPngExportOnly("Tee Sheet export");
-
-      // Publish tee time data to the event so the home page can display it
-      try {
-        await publishTeeTime(selectedEvent.id, startTime || "08:00", interval);
-      } catch (err) {
-        console.warn("[TeeSheet] publishTeeTime failed (non-blocking):", err);
-      }
 
       console.log("[TeeSheet] Export tee sheet PNG");
       const payload = encodeURIComponent(JSON.stringify(exportData));

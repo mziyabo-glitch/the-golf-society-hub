@@ -26,6 +26,17 @@ function isJoinFlowRoute(pathname?: string, seg0?: string): boolean {
   );
 }
 
+/** Routes that must never be redirected away from by any guard. */
+function isToolRoute(pathname?: string, seg0?: string): boolean {
+  if (seg0 === "(share)") return true;
+  if (typeof pathname !== "string") return false;
+  return (
+    pathname.startsWith("/(share)") ||
+    pathname.startsWith("/tee-sheet") ||
+    pathname.startsWith("/(app)/tee-sheet")
+  );
+}
+
 function RootNavigator() {
   const { loading, error, isSignedIn, activeSocietyId, profile, refresh } = useBootstrap();
   const segments = useSegments();
@@ -64,7 +75,7 @@ function RootNavigator() {
       const inApp = seg0 === "(app)" || seg0 === "app" || (typeof p === "string" && p?.startsWith("/(app)"));
       const inPublic = p === "/reset-password" || seg0 === "reset-password";
       const inJoinFlow = isJoinFlowRoute(p, seg0);
-      if (inPublic || inJoinFlow) return;
+      if (inPublic || inJoinFlow || isToolRoute(p, seg0)) return;
 
       if (session && !inApp) {
         console.log("[_layout] Auth gate: session present, redirecting to", APP_TABS);
@@ -129,7 +140,7 @@ function RootNavigator() {
     }
 
     // Exempt routes that handle their own flow
-    if (inSinbookInvite || inPublicRoute) {
+    if (inSinbookInvite || inPublicRoute || isToolRoute(pathname, segments[0])) {
       return;
     }
 
@@ -186,7 +197,7 @@ function RootNavigator() {
     if (loading || !isSignedIn || isPublicPath) return;
     const seg0 = segments[0];
     const inJoinFlow = isJoinFlowRoute(pathname, seg0);
-    if (inJoinFlow) return;
+    if (inJoinFlow || isToolRoute(pathname, seg0)) return;
     const inApp = seg0 === "(app)" || seg0 === "app" || (typeof pathname === "string" && pathname.startsWith("/(app)"));
     if (inApp) return;
     console.log("[_layout] Session present but not in app, redirecting");
