@@ -44,6 +44,11 @@ import { getColors, spacing, radius } from "@/lib/ui/theme";
 import { formatError, type FormattedError } from "@/lib/ui/formatError";
 import { getSocietyLogoUrl } from "@/lib/societyLogo";
 import { getMySinbooks, type SinbookWithParticipants } from "@/lib/db_supabase/sinbookRepo";
+import {
+  getMyEventRegistration,
+  upsertMyRegistration,
+  type EventRegistration,
+} from "@/lib/db_supabase/eventRegistrationRepo";
 import { blurWebActiveElement } from "@/lib/ui/focus";
 
 const appIcon = require("@/assets/images/app-icon.png");
@@ -190,6 +195,10 @@ export default function HomeScreen() {
   const [loadError, setLoadError] = useState<FormattedError | null>(null);
   const [activeSinbook, setActiveSinbook] = useState<SinbookWithParticipants | null>(null);
 
+  // Event registration state
+  const [myReg, setMyReg] = useState<EventRegistration | null>(null);
+  const [regBusy, setRegBusy] = useState(false);
+
   // Licence banner state
   const [requestSending, setRequestSending] = useState(false);
   const [requestAlreadySent, setRequestAlreadySent] = useState(false);
@@ -335,6 +344,21 @@ export default function HomeScreen() {
       .sort((a, b) => new Date(a.date!).getTime() - new Date(b.date!).getTime())[0] ?? null;
   }, [events, today]);
 
+  const nextEventId = nextEvent?.id ?? null;
+
+  // Load registration for the next event whenever it changes
+  useEffect(() => {
+    if (!nextEventId || !memberId) {
+      setMyReg(null);
+      return;
+    }
+    let cancelled = false;
+    getMyEventRegistration(nextEventId, memberId).then((reg) => {
+      if (!cancelled) setMyReg(reg);
+    });
+    return () => { cancelled = true; };
+  }, [nextEventId, memberId]);
+
   // Past events (completed, sorted desc) — last 3
   const recentEvents = useMemo(() => {
     return events
@@ -366,6 +390,23 @@ export default function HomeScreen() {
       : null;
     return { top5, isInTop5, myEntry };
   }, [oomStandings, memberId]);
+
+  // ============================================================================
+  // Registration Helpers
+  // ============================================================================
+
+  const toggleRegistration = async (newStatus: "in" | "out") => {
+    if (!nextEvent || !societyId || !memberId || regBusy) return;
+    setRegBusy(true);
+    try {
+      const updated = await upsertMyRegistration(nextEvent.id, societyId, memberId, newStatus);
+      setMyReg(updated);
+    } catch {
+      // silently degrade — user can retry
+    } finally {
+      setRegBusy(false);
+    }
+  };
 
   // ============================================================================
   // Navigation Helpers
@@ -626,6 +667,67 @@ export default function HomeScreen() {
                 </AppText>
               </View>
             )}
+
+            {/* Registration + Payment row */}
+            <View style={[styles.regRow, { borderTopColor: colors.borderLight }]}>
+              {myReg?.status === "in" ? (
+                <View style={styles.regStatusWrap}>
+                  <Feather name="check-circle" size={14} color={colors.success} />
+                  <AppText variant="small" style={{ color: colors.success, fontWeight: "600" }}>
+                    You&apos;re IN
+                  </AppText>
+                  <Pressable
+                    hitSlop={8}
+                    disabled={regBusy}
+                    onPress={(e) => { e.stopPropagation(); toggleRegistration("out"); }}
+                  >
+                    <AppText variant="small" color="tertiary" style={{ textDecorationLine: "underline" }}>
+                      Cancel
+                    </AppText>
+                  </Pressable>
+                </View>
+              ) : myReg?.status === "out" ? (
+                <View style={styles.regStatusWrap}>
+                  <Feather name="x-circle" size={14} color={colors.error} />
+                  <AppText variant="small" style={{ color: colors.error, fontWeight: "600" }}>
+                    You&apos;re OUT
+                  </AppText>
+                  <Pressable
+                    hitSlop={8}
+                    disabled={regBusy}
+                    onPress={(e) => { e.stopPropagation(); toggleRegistration("in"); }}
+                  >
+                    <AppText variant="small" color="primary" style={{ fontWeight: "600" }}>
+                      I&apos;m playing
+                    </AppText>
+                  </Pressable>
+                </View>
+              ) : (
+                <Pressable
+                  hitSlop={8}
+                  disabled={regBusy}
+                  onPress={(e) => { e.stopPropagation(); toggleRegistration("in"); }}
+                  style={styles.regStatusWrap}
+                >
+                  <Feather name="user-plus" size={14} color={colors.primary} />
+                  <AppText variant="small" color="primary" style={{ fontWeight: "600" }}>
+                    Register — I&apos;m playing
+                  </AppText>
+                </Pressable>
+              )}
+
+              {myReg ? (
+                <View style={[
+                  styles.paidPill,
+                  { backgroundColor: myReg.paid ? colors.success : colors.error },
+                ]}>
+                  <AppText variant="small" style={styles.paidPillText}>
+                    {myReg.paid ? "PAID" : "UNPAID"}
+                  </AppText>
+                </View>
+              ) : null}
+            </View>
+
             <View style={[styles.teeTimeRow, { borderTopColor: colors.borderLight, marginTop: spacing.sm }]}>
               <Feather name="flag" size={14} color={nextEvent.teeTimePublishedAt ? colors.success : colors.textSecondary} />
               {nextEvent.teeTimePublishedAt ? (
@@ -1379,6 +1481,29 @@ const styles = StyleSheet.create({
   },
   nextEventMeta: {
     marginTop: 4,
+  },
+  regRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingTop: spacing.sm,
+    marginTop: spacing.sm,
+    borderTopWidth: 1,
+  },
+  regStatusWrap: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.xs,
+  },
+  paidPill: {
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 3,
+    borderRadius: radius.full,
+  },
+  paidPillText: {
+    color: "#FFFFFF",
+    fontWeight: "700",
+    fontSize: 11,
   },
   nextEventDetails: {
     flexDirection: "row",
