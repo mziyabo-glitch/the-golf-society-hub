@@ -360,15 +360,16 @@ export async function deleteEvent(eventId: string): Promise<void> {
  * Publish tee times for an event via server-side RPC.
  * The RPC sets tee_time_start, tee_time_interval, and
  * tee_time_published_at atomically; updated_at is handled by a DB trigger.
+ * Returns the refreshed event row so the caller has up-to-date data.
  */
 export async function publishTeeTime(
   eventId: string,
   startTime: string,
   intervalMinutes: number,
-): Promise<void> {
+): Promise<EventDoc | null> {
   const { error } = await supabase.rpc("publish_tee_times", {
     p_event_id: eventId,
-    p_start_time: startTime,
+    p_start: startTime,
     p_interval: intervalMinutes,
   });
 
@@ -376,6 +377,8 @@ export async function publishTeeTime(
     console.error("[eventRepo] publishTeeTime RPC failed:", error.message);
     throw new Error(error.message || "Failed to publish tee times");
   }
+
+  return getEvent(eventId);
 }
 
 // =====================================================
