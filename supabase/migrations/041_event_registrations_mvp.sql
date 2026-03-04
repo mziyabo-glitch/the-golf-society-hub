@@ -20,8 +20,15 @@ CREATE TABLE IF NOT EXISTS public.event_registrations (
   updated_at           timestamptz NOT NULL DEFAULT now()
 );
 
-ALTER TABLE public.event_registrations
-  ADD CONSTRAINT event_registrations_event_member_uq UNIQUE (event_id, member_id);
+DO $do$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'event_registrations_event_member_uq'
+  ) THEN
+    ALTER TABLE public.event_registrations
+      ADD CONSTRAINT event_registrations_event_member_uq UNIQUE (event_id, member_id);
+  END IF;
+END $do$;
 
 -- ============================================================================
 -- 2. Indexes
@@ -34,15 +41,16 @@ CREATE INDEX IF NOT EXISTS idx_event_reg_soc_evt  ON public.event_registrations 
 -- ============================================================================
 -- 3. Auto-update updated_at trigger
 -- ============================================================================
--- Reuse set_updated_at() if it exists (created in 038); otherwise create it.
 
 CREATE OR REPLACE FUNCTION public.set_updated_at()
-RETURNS trigger LANGUAGE plpgsql AS $$
+RETURNS trigger
+LANGUAGE plpgsql
+AS $trigger$
 BEGIN
   NEW.updated_at := now();
   RETURN NEW;
 END;
-$$;
+$trigger$;
 
 DROP TRIGGER IF EXISTS trg_event_registrations_updated_at ON public.event_registrations;
 
@@ -57,56 +65,56 @@ CREATE TRIGGER trg_event_registrations_updated_at
 
 ALTER TABLE public.event_registrations ENABLE ROW LEVEL SECURITY;
 
--- SELECT: any authenticated member of the same society
+DROP POLICY IF EXISTS event_reg_select       ON public.event_registrations;
+DROP POLICY IF EXISTS event_reg_insert_self  ON public.event_registrations;
+DROP POLICY IF EXISTS event_reg_update_self  ON public.event_registrations;
+DROP POLICY IF EXISTS event_reg_delete_self  ON public.event_registrations;
+
 CREATE POLICY event_reg_select
-  ON public.event_registrations
-  FOR SELECT
-  TO authenticated
+  ON public.event_registrations FOR SELECT TO authenticated
   USING (
-    society_id IN (SELECT public.my_society_ids())
+    EXISTS (
+      SELECT 1 FROM public.members m
+      WHERE m.user_id = auth.uid() AND m.society_id = event_registrations.society_id
+    )
   );
 
--- INSERT: members can insert their own row only
 CREATE POLICY event_reg_insert_self
-  ON public.event_registrations
-  FOR INSERT
-  TO authenticated
+  ON public.event_registrations FOR INSERT TO authenticated
   WITH CHECK (
-    member_id IN (
-      SELECT m.id FROM public.members m
-      WHERE m.user_id = auth.uid() AND m.society_id = society_id
+    EXISTS (
+      SELECT 1 FROM public.members m
+      WHERE m.user_id = auth.uid()
+        AND m.id = event_registrations.member_id
+        AND m.society_id = event_registrations.society_id
     )
   );
 
--- UPDATE: members can update status on their own row
 CREATE POLICY event_reg_update_self
-  ON public.event_registrations
-  FOR UPDATE
-  TO authenticated
+  ON public.event_registrations FOR UPDATE TO authenticated
   USING (
-    member_id IN (
-      SELECT m.id FROM public.members m
-      WHERE m.user_id = auth.uid() AND m.society_id = society_id
+    EXISTS (
+      SELECT 1 FROM public.members m
+      WHERE m.user_id = auth.uid()
+        AND m.id = event_registrations.member_id
+        AND m.society_id = event_registrations.society_id
     )
   );
 
--- DELETE: members can delete their own row
 CREATE POLICY event_reg_delete_self
-  ON public.event_registrations
-  FOR DELETE
-  TO authenticated
+  ON public.event_registrations FOR DELETE TO authenticated
   USING (
-    member_id IN (
-      SELECT m.id FROM public.members m
-      WHERE m.user_id = auth.uid() AND m.society_id = society_id
+    EXISTS (
+      SELECT 1 FROM public.members m
+      WHERE m.user_id = auth.uid()
+        AND m.id = event_registrations.member_id
+        AND m.society_id = event_registrations.society_id
     )
   );
 
 -- ============================================================================
--- 5. RPC: mark_event_paid (Captain/Treasurer only)
+-- 5. RPC: mark_event_paid (Captain / Treasurer only)
 -- ============================================================================
--- Payment fields are updated via this SECURITY DEFINER RPC so we don't need
--- a separate broad UPDATE policy for captain/treasurer.
 
 DROP FUNCTION IF EXISTS public.mark_event_paid(uuid, uuid, boolean, integer);
 
@@ -120,7 +128,7 @@ RETURNS void
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = public
-AS $$
+AS $fn$
 DECLARE
   v_user_id      uuid;
   v_society_id   uuid;
@@ -132,18 +140,16 @@ BEGIN
     RAISE EXCEPTION 'Not authenticated';
   END IF;
 
-  -- Resolve society from the event
   SELECT e.society_id INTO v_society_id
-  FROM public.events e WHERE e.id = p_event_id;
+    FROM public.events e WHERE e.id = p_event_id;
   IF v_society_id IS NULL THEN
     RAISE EXCEPTION 'Event not found';
   END IF;
 
-  -- Resolve caller's member row + role in that society
   SELECT m.id, m.role INTO v_caller_id, v_caller_role
-  FROM public.members m
-  WHERE m.society_id = v_society_id AND m.user_id = v_user_id
-  LIMIT 1;
+    FROM public.members m
+   WHERE m.society_id = v_society_id AND m.user_id = v_user_id
+   LIMIT 1;
 
   IF v_caller_id IS NULL THEN
     RAISE EXCEPTION 'You are not a member of this society';
@@ -152,13 +158,14 @@ BEGIN
     RAISE EXCEPTION 'Only Captain or Treasurer can mark payments';
   END IF;
 
-  -- Ensure target member exists in same society
-  IF NOT EXISTS (SELECT 1 FROM public.members WHERE id = p_target_member_id AND society_id = v_society_id) THEN
+  IF NOT EXISTS (
+    SELECT 1 FROM public.members WHERE id = p_target_member_id AND society_id = v_society_id
+  ) THEN
     RAISE EXCEPTION 'Target member not found in this society';
   END IF;
 
-  -- Upsert the registration row
-  INSERT INTO public.event_registrations (society_id, event_id, member_id, status, paid, amount_paid_pence, paid_at, marked_by_member_id)
+  INSERT INTO public.event_registrations
+    (society_id, event_id, member_id, status, paid, amount_paid_pence, paid_at, marked_by_member_id)
   VALUES (
     v_society_id,
     p_event_id,
@@ -176,12 +183,12 @@ BEGIN
     paid_at             = EXCLUDED.paid_at,
     marked_by_member_id = EXCLUDED.marked_by_member_id;
 END;
-$$;
+$fn$;
 
 GRANT EXECUTE ON FUNCTION public.mark_event_paid(uuid, uuid, boolean, integer)
   TO authenticated;
 
 COMMENT ON FUNCTION public.mark_event_paid(uuid, uuid, boolean, integer) IS
-  'Captain/Treasurer marks a member paid/unpaid for an event. Upserts the registration row.';
+  'Captain/Treasurer marks a member paid/unpaid for an event.';
 
 NOTIFY pgrst, 'reload schema';
