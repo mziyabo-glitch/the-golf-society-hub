@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useState } from "react";
 import { StyleSheet, View, Pressable, ScrollView } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
@@ -26,12 +26,6 @@ import {
   EVENT_CLASSIFICATIONS,
 } from "@/lib/db_supabase/eventRepo";
 import { getPermissionsForMember } from "@/lib/rbac";
-import {
-  getEventRegistrations,
-  markPaid,
-  type EventRegistration,
-} from "@/lib/db_supabase/eventRegistrationRepo";
-import { getMembersBySocietyId, type MemberDoc } from "@/lib/db_supabase/memberRepo";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
 import { confirmDestructive, showAlert } from "@/lib/ui/alert";
 import { getSocietyLogoUrl } from "@/lib/societyLogo";
@@ -224,52 +218,6 @@ export default function EventDetailScreen() {
       loadEvent();
     }, [loadEvent])
   );
-
-  // ---- Payments section (Captain / Treasurer only) ----
-  const canManagePayments = permissions.canManageEventPayments;
-  const [registrations, setRegistrations] = useState<EventRegistration[]>([]);
-  const [regMembers, setRegMembers] = useState<MemberDoc[]>([]);
-  const [payBusy, setPayBusy] = useState<string | null>(null);
-  const [showPayments, setShowPayments] = useState(false);
-
-  const loadRegistrations = useCallback(async () => {
-    if (!eventId || !societyId || !canManagePayments) return;
-    try {
-      const [regs, mems] = await Promise.all([
-        getEventRegistrations(eventId),
-        getMembersBySocietyId(societyId),
-      ]);
-      setRegistrations(regs);
-      setRegMembers(mems);
-    } catch {
-      // non-critical
-    }
-  }, [eventId, societyId, canManagePayments]);
-
-  useEffect(() => {
-    if (showPayments) loadRegistrations();
-  }, [showPayments, loadRegistrations]);
-
-  const handleTogglePaid = async (reg: EventRegistration) => {
-    if (payBusy) return;
-    setPayBusy(reg.member_id);
-    try {
-      await markPaid(reg.event_id, reg.member_id, !reg.paid, 0);
-      await loadRegistrations();
-    } catch (e: any) {
-      showAlert("Error", e?.message || "Failed to update payment");
-    } finally {
-      setPayBusy(null);
-    }
-  };
-
-  const memberNameMap = useMemo(() => {
-    const map: Record<string, string> = {};
-    for (const m of regMembers) {
-      map[m.id] = m.name || m.display_name || m.displayName || "Member";
-    }
-    return map;
-  }, [regMembers]);
 
   // Populate form when entering edit mode
   const startEditing = () => {
@@ -746,59 +694,6 @@ export default function EventDetailScreen() {
         </Pressable>
       )}
 
-      {/* Payments - Captain / Treasurer only */}
-      {canManagePayments && (
-        <>
-          <Pressable onPress={() => setShowPayments((v) => !v)}>
-            <AppCard style={styles.actionCard}>
-              <View style={styles.actionRow}>
-                <View style={[styles.iconContainer, { backgroundColor: colors.success + "20" }]}>
-                  <Feather name="dollar-sign" size={18} color={colors.success} />
-                </View>
-                <View style={styles.actionContent}>
-                  <AppText variant="bodyBold">Event Payments</AppText>
-                  <AppText variant="caption" color="secondary">
-                    {registrations.filter((r) => r.paid).length} of {registrations.length} paid
-                  </AppText>
-                </View>
-                <Feather name={showPayments ? "chevron-up" : "chevron-down"} size={20} color={colors.textTertiary} />
-              </View>
-            </AppCard>
-          </Pressable>
-
-          {showPayments && (
-            <AppCard style={styles.card}>
-              {registrations.length === 0 ? (
-                <AppText variant="body" color="secondary">No registrations yet.</AppText>
-              ) : (
-                registrations.map((reg) => (
-                  <View key={reg.id} style={styles.payRow}>
-                    <AppText variant="body" numberOfLines={1} style={{ flex: 1 }}>
-                      {memberNameMap[reg.member_id] ?? "Member"}
-                    </AppText>
-                    <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.xs }}>
-                      <View style={[styles.payPill, { backgroundColor: reg.paid ? colors.success : colors.error }]}>
-                        <AppText style={styles.payPillText}>{reg.paid ? "PAID" : "UNPAID"}</AppText>
-                      </View>
-                      <Pressable
-                        disabled={payBusy === reg.member_id}
-                        onPress={() => handleTogglePaid(reg)}
-                        hitSlop={8}
-                        style={({ pressed }) => [styles.payToggle, { borderColor: colors.border, opacity: pressed ? 0.6 : 1 }]}
-                      >
-                        <AppText variant="small" color="primary" style={{ fontWeight: "600" }}>
-                          {reg.paid ? "Mark Unpaid" : "Mark Paid"}
-                        </AppText>
-                      </Pressable>
-                    </View>
-                  </View>
-                ))
-              )}
-            </AppCard>
-          )}
-        </>
-      )}
-
       {/* Delete Event - Captain/Secretary/Treasurer */}
       {permissions.canDeleteEvents && (
         <SecondaryButton
@@ -906,29 +801,6 @@ const styles = StyleSheet.create({
   },
   actionContent: {
     flex: 1,
-  },
-  payRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingVertical: spacing.sm,
-    borderBottomWidth: 1,
-    borderBottomColor: "#F3F4F6",
-  },
-  payPill: {
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 3,
-    borderRadius: radius.full,
-  },
-  payPillText: {
-    color: "#FFFFFF",
-    fontWeight: "700",
-    fontSize: 11,
-  },
-  payToggle: {
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 4,
-    borderWidth: 1,
-    borderRadius: radius.sm,
   },
   createdText: {
     marginTop: spacing.lg,

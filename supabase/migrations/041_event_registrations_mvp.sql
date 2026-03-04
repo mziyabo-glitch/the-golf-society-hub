@@ -1,5 +1,5 @@
--- 040_event_registrations.sql
--- Track per-member attendance ("in"/"out") and payment status per event.
+-- 041_event_registrations_mvp.sql
+-- MVP: per-member attendance ("in"/"out") and payment status per event.
 
 -- ============================================================================
 -- 1. Table
@@ -32,8 +32,17 @@ CREATE INDEX IF NOT EXISTS idx_event_reg_member   ON public.event_registrations 
 CREATE INDEX IF NOT EXISTS idx_event_reg_soc_evt  ON public.event_registrations (society_id, event_id);
 
 -- ============================================================================
--- 3. Auto-update updated_at trigger (reuse set_updated_at from 038)
+-- 3. Auto-update updated_at trigger
 -- ============================================================================
+-- Reuse set_updated_at() if it exists (created in 038); otherwise create it.
+
+CREATE OR REPLACE FUNCTION public.set_updated_at()
+RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  NEW.updated_at := now();
+  RETURN NEW;
+END;
+$$;
 
 DROP TRIGGER IF EXISTS trg_event_registrations_updated_at ON public.event_registrations;
 
@@ -102,10 +111,10 @@ CREATE POLICY event_reg_delete_self
 DROP FUNCTION IF EXISTS public.mark_event_paid(uuid, uuid, boolean, integer);
 
 CREATE FUNCTION public.mark_event_paid(
-  p_event_id     uuid,
-  p_member_id    uuid,
-  p_paid         boolean,
-  p_amount_pence integer DEFAULT 0
+  p_event_id          uuid,
+  p_target_member_id  uuid,
+  p_paid              boolean,
+  p_amount_pence      integer DEFAULT 0
 )
 RETURNS void
 LANGUAGE plpgsql
@@ -143,12 +152,17 @@ BEGIN
     RAISE EXCEPTION 'Only Captain or Treasurer can mark payments';
   END IF;
 
+  -- Ensure target member exists in same society
+  IF NOT EXISTS (SELECT 1 FROM public.members WHERE id = p_target_member_id AND society_id = v_society_id) THEN
+    RAISE EXCEPTION 'Target member not found in this society';
+  END IF;
+
   -- Upsert the registration row
   INSERT INTO public.event_registrations (society_id, event_id, member_id, status, paid, amount_paid_pence, paid_at, marked_by_member_id)
   VALUES (
     v_society_id,
     p_event_id,
-    p_member_id,
+    p_target_member_id,
     'in',
     p_paid,
     CASE WHEN p_paid THEN COALESCE(p_amount_pence, 0) ELSE 0 END,

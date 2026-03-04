@@ -31,7 +31,7 @@ import { PrimaryButton } from "@/components/ui/Button";
 import { InlineNotice } from "@/components/ui/InlineNotice";
 import { Toast } from "@/components/ui/Toast";
 import { useBootstrap } from "@/lib/useBootstrap";
-import { isCaptain } from "@/lib/rbac";
+import { isCaptain, isTreasurer } from "@/lib/rbac";
 import { supabase } from "@/lib/supabase";
 import { getEventsBySocietyId, type EventDoc } from "@/lib/db_supabase/eventRepo";
 import {
@@ -45,8 +45,9 @@ import { formatError, type FormattedError } from "@/lib/ui/formatError";
 import { getSocietyLogoUrl } from "@/lib/societyLogo";
 import { getMySinbooks, type SinbookWithParticipants } from "@/lib/db_supabase/sinbookRepo";
 import {
-  getMyEventRegistration,
-  upsertMyRegistration,
+  getMyRegistration,
+  setMyStatus,
+  markMePaid,
   type EventRegistration,
 } from "@/lib/db_supabase/eventRegistrationRepo";
 import { blurWebActiveElement } from "@/lib/ui/focus";
@@ -353,7 +354,7 @@ export default function HomeScreen() {
       return;
     }
     let cancelled = false;
-    getMyEventRegistration(nextEventId, memberId).then((reg) => {
+    getMyRegistration(nextEventId, memberId).then((reg) => {
       if (!cancelled) setMyReg(reg);
     });
     return () => { cancelled = true; };
@@ -395,14 +396,31 @@ export default function HomeScreen() {
   // Registration Helpers
   // ============================================================================
 
+  const canAdmin = isCaptain(member as any) || isTreasurer(member as any);
+  const [showAdmin, setShowAdmin] = useState(false);
+
   const toggleRegistration = async (newStatus: "in" | "out") => {
     if (!nextEvent || !societyId || !memberId || regBusy) return;
     setRegBusy(true);
     try {
-      const updated = await upsertMyRegistration(nextEvent.id, societyId, memberId, newStatus);
+      const updated = await setMyStatus({ eventId: nextEvent.id, societyId, memberId, status: newStatus });
       setMyReg(updated);
     } catch {
       // silently degrade — user can retry
+    } finally {
+      setRegBusy(false);
+    }
+  };
+
+  const handleMarkPaid = async (paid: boolean) => {
+    if (!nextEvent || !memberId || regBusy) return;
+    setRegBusy(true);
+    try {
+      await markMePaid(nextEvent.id, memberId, paid);
+      const refreshed = await getMyRegistration(nextEvent.id, memberId);
+      setMyReg(refreshed);
+    } catch {
+      // silently degrade
     } finally {
       setRegBusy(false);
     }
@@ -668,64 +686,95 @@ export default function HomeScreen() {
               </View>
             )}
 
-            {/* Registration + Payment row */}
+            {/* Registration + Payment */}
             <View style={[styles.regRow, { borderTopColor: colors.borderLight }]}>
-              {myReg?.status === "in" ? (
+              <View style={{ flex: 1, gap: spacing.xs }}>
+                {/* Status line */}
                 <View style={styles.regStatusWrap}>
-                  <Feather name="check-circle" size={14} color={colors.success} />
-                  <AppText variant="small" style={{ color: colors.success, fontWeight: "600" }}>
-                    You&apos;re IN
-                  </AppText>
-                  <Pressable
-                    hitSlop={8}
-                    disabled={regBusy}
-                    onPress={(e) => { e.stopPropagation(); toggleRegistration("out"); }}
-                  >
-                    <AppText variant="small" color="tertiary" style={{ textDecorationLine: "underline" }}>
-                      Cancel
-                    </AppText>
-                  </Pressable>
+                  <AppText variant="small" color="secondary" style={{ fontWeight: "600" }}>You:</AppText>
+                  {myReg?.status === "in" ? (
+                    <>
+                      <View style={[styles.regBadge, { backgroundColor: colors.success + "18" }]}>
+                        <Feather name="check-circle" size={12} color={colors.success} />
+                        <AppText variant="small" style={{ color: colors.success, fontWeight: "700" }}>IN</AppText>
+                      </View>
+                      {myReg.paid ? (
+                        <View style={[styles.paidPill, { backgroundColor: colors.success }]}>
+                          <AppText style={styles.paidPillText}>PAID</AppText>
+                        </View>
+                      ) : (
+                        <View style={[styles.paidPill, { backgroundColor: colors.error }]}>
+                          <AppText style={styles.paidPillText}>UNPAID</AppText>
+                        </View>
+                      )}
+                    </>
+                  ) : myReg?.status === "out" ? (
+                    <View style={[styles.regBadge, { backgroundColor: colors.textTertiary + "18" }]}>
+                      <Feather name="x-circle" size={12} color={colors.textTertiary} />
+                      <AppText variant="small" style={{ color: colors.textTertiary, fontWeight: "700" }}>OUT</AppText>
+                    </View>
+                  ) : (
+                    <AppText variant="small" color="tertiary">Not registered</AppText>
+                  )}
                 </View>
-              ) : myReg?.status === "out" ? (
-                <View style={styles.regStatusWrap}>
-                  <Feather name="x-circle" size={14} color={colors.error} />
-                  <AppText variant="small" style={{ color: colors.error, fontWeight: "600" }}>
-                    You&apos;re OUT
-                  </AppText>
-                  <Pressable
-                    hitSlop={8}
-                    disabled={regBusy}
-                    onPress={(e) => { e.stopPropagation(); toggleRegistration("in"); }}
-                  >
-                    <AppText variant="small" color="primary" style={{ fontWeight: "600" }}>
-                      I&apos;m playing
-                    </AppText>
-                  </Pressable>
-                </View>
-              ) : (
-                <Pressable
-                  hitSlop={8}
-                  disabled={regBusy}
-                  onPress={(e) => { e.stopPropagation(); toggleRegistration("in"); }}
-                  style={styles.regStatusWrap}
-                >
-                  <Feather name="user-plus" size={14} color={colors.primary} />
-                  <AppText variant="small" color="primary" style={{ fontWeight: "600" }}>
-                    Register — I&apos;m playing
-                  </AppText>
-                </Pressable>
-              )}
 
-              {myReg ? (
-                <View style={[
-                  styles.paidPill,
-                  { backgroundColor: myReg.paid ? colors.success : colors.error },
-                ]}>
-                  <AppText variant="small" style={styles.paidPillText}>
-                    {myReg.paid ? "PAID" : "UNPAID"}
-                  </AppText>
+                {/* Action buttons */}
+                <View style={styles.regActions}>
+                  {myReg?.status === "in" ? (
+                    <Pressable
+                      hitSlop={8}
+                      disabled={regBusy}
+                      onPress={(e) => { e.stopPropagation(); toggleRegistration("out"); }}
+                      style={[styles.regBtn, { borderColor: colors.border }]}
+                    >
+                      <AppText variant="small" color="secondary">Can&apos;t make it</AppText>
+                    </Pressable>
+                  ) : (
+                    <Pressable
+                      hitSlop={8}
+                      disabled={regBusy}
+                      onPress={(e) => { e.stopPropagation(); toggleRegistration("in"); }}
+                      style={[styles.regBtn, { backgroundColor: colors.primary, borderColor: colors.primary }]}
+                    >
+                      <AppText variant="small" style={{ color: "#fff", fontWeight: "600" }}>I&apos;m playing</AppText>
+                    </Pressable>
+                  )}
+
+                  {/* Captain / Treasurer micro-admin */}
+                  {canAdmin && (
+                    <Pressable
+                      hitSlop={8}
+                      onPress={(e) => { e.stopPropagation(); setShowAdmin((v) => !v); }}
+                      style={[styles.regBtn, { borderColor: colors.border }]}
+                    >
+                      <Feather name="shield" size={12} color={colors.textSecondary} />
+                      <AppText variant="small" color="secondary">Admin</AppText>
+                    </Pressable>
+                  )}
                 </View>
-              ) : null}
+
+                {/* Admin panel (collapsed) */}
+                {canAdmin && showAdmin && (
+                  <View style={[styles.regActions, { marginTop: 2 }]}>
+                    <Pressable
+                      hitSlop={8}
+                      disabled={regBusy}
+                      onPress={(e) => { e.stopPropagation(); handleMarkPaid(true); }}
+                      style={[styles.regBtn, { backgroundColor: colors.success, borderColor: colors.success }]}
+                    >
+                      <AppText variant="small" style={{ color: "#fff", fontWeight: "600" }}>Mark ME Paid</AppText>
+                    </Pressable>
+                    <Pressable
+                      hitSlop={8}
+                      disabled={regBusy}
+                      onPress={(e) => { e.stopPropagation(); handleMarkPaid(false); }}
+                      style={[styles.regBtn, { backgroundColor: colors.error, borderColor: colors.error }]}
+                    >
+                      <AppText variant="small" style={{ color: "#fff", fontWeight: "600" }}>Mark ME Unpaid</AppText>
+                    </Pressable>
+                  </View>
+                )}
+              </View>
             </View>
 
             <View style={[styles.teeTimeRow, { borderTopColor: colors.borderLight, marginTop: spacing.sm }]}>
@@ -1483,9 +1532,6 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
   regRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
     paddingTop: spacing.sm,
     marginTop: spacing.sm,
     borderTopWidth: 1,
@@ -1495,15 +1541,36 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: spacing.xs,
   },
+  regBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 3,
+    paddingHorizontal: spacing.xs,
+    paddingVertical: 2,
+    borderRadius: radius.full,
+  },
+  regActions: {
+    flexDirection: "row",
+    gap: spacing.xs,
+  },
+  regBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 5,
+    borderRadius: radius.sm,
+    borderWidth: 1,
+  },
   paidPill: {
     paddingHorizontal: spacing.sm,
-    paddingVertical: 3,
+    paddingVertical: 2,
     borderRadius: radius.full,
   },
   paidPillText: {
     color: "#FFFFFF",
     fontWeight: "700",
-    fontSize: 11,
+    fontSize: 10,
   },
   nextEventDetails: {
     flexDirection: "row",
