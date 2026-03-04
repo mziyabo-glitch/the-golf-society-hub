@@ -8,6 +8,7 @@
 // period and multiple retries before clearing profile pointers.
 
 import { useEffect, useRef } from "react";
+import { usePathname } from "expo-router";
 import { useBootstrap } from "@/lib/useBootstrap";
 
 const RETRY_BACKOFF_MS = [300, 800, 1600, 2500, 3500] as const;
@@ -32,6 +33,15 @@ export type GuardResult = {
  * cleared and the UI naturally enters Personal Mode. The grace period
  * prevents premature clearing during post-join bootstrap resolution.
  */
+function isGuardExemptRoute(pathname: string | undefined): boolean {
+  if (!pathname) return false;
+  return (
+    pathname.startsWith("/(share)") ||
+    pathname.startsWith("/tee-sheet") ||
+    pathname.startsWith("/(app)/tee-sheet")
+  );
+}
+
 export function useSocietyMembershipGuard(): GuardResult {
   const {
     loading,
@@ -41,6 +51,7 @@ export function useSocietyMembershipGuard(): GuardResult {
     setActiveSociety,
     refresh,
   } = useBootstrap();
+  const pathname = usePathname();
 
   const redirected = useRef(false);
   const trackedSocietyId = useRef<string | null>(null);
@@ -50,8 +61,11 @@ export function useSocietyMembershipGuard(): GuardResult {
   const hasSociety = !!activeSocietyId;
   const hasMember = !!member;
   const isMember = hasSociety && hasMember;
+  const onToolRoute = isGuardExemptRoute(pathname);
 
   useEffect(() => {
+    if (onToolRoute) return;
+
     // Reset tracking when the active society changes.
     if (activeSocietyId !== trackedSocietyId.current) {
       trackedSocietyId.current = activeSocietyId ?? null;
@@ -124,7 +138,7 @@ export function useSocietyMembershipGuard(): GuardResult {
     redirected.current = true;
     setActiveSociety(null, null)
       .catch((e) => console.error("[MembershipGuard] clear error:", e));
-  }, [loading, membershipLoading, hasSociety, hasMember, setActiveSociety, activeSocietyId, refresh]);
+  }, [loading, membershipLoading, hasSociety, hasMember, setActiveSociety, activeSocietyId, refresh, onToolRoute]);
 
   return {
     loading: loading || membershipLoading,
