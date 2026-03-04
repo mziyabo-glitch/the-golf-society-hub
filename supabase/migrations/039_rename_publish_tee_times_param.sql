@@ -1,9 +1,24 @@
 -- 039_rename_publish_tee_times_param.sql
--- Rename p_start_time → p_start for client consistency.
+-- Recreate publish_tee_times with p_start (not p_start_time).
+-- Drop every possible overload first to avoid "function name is not unique".
 
-DROP FUNCTION IF EXISTS public.publish_tee_times(uuid, text, integer);
+DO $$
+BEGIN
+  -- Drop all known signatures unconditionally.
+  DROP FUNCTION IF EXISTS public.publish_tee_times(uuid, text, integer);
+  -- In case a stale overload lingers under a different OID, drop by name.
+  -- (loop handles the edge-case where multiple overloads exist)
+  LOOP
+    BEGIN
+      EXECUTE 'DROP FUNCTION public.publish_tee_times';
+    EXCEPTION WHEN undefined_function OR ambiguous_function THEN
+      EXIT;
+    END;
+  END LOOP;
+END;
+$$;
 
-CREATE OR REPLACE FUNCTION public.publish_tee_times(
+CREATE FUNCTION public.publish_tee_times(
   p_event_id uuid,
   p_start    text,
   p_interval integer
@@ -33,7 +48,7 @@ $$;
 GRANT EXECUTE ON FUNCTION public.publish_tee_times(uuid, text, integer)
   TO authenticated;
 
-COMMENT ON FUNCTION public.publish_tee_times IS
+COMMENT ON FUNCTION public.publish_tee_times(uuid, text, integer) IS
   'Publish tee times for an event. Sets start, interval, and published_at server-side.';
 
 NOTIFY pgrst, 'reload schema';

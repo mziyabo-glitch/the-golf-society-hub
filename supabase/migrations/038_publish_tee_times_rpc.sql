@@ -73,7 +73,7 @@ $$;
 GRANT EXECUTE ON FUNCTION public.publish_tee_times(uuid, text, integer)
   TO authenticated;
 
-COMMENT ON FUNCTION public.publish_tee_times IS
+COMMENT ON FUNCTION public.publish_tee_times(uuid, text, integer) IS
   'Publish tee times for an event. Sets start, interval, and published_at server-side.';
 
 -- ============================================================================
