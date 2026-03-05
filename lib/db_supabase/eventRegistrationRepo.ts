@@ -40,6 +40,25 @@ export async function getMyRegistration(
 }
 
 /**
+ * Fetch all registrations for a given event (visible to all society members via RLS).
+ */
+export async function getEventRegistrations(
+  eventId: string,
+): Promise<EventRegistration[]> {
+  const { data, error } = await supabase
+    .from("event_registrations")
+    .select("*")
+    .eq("event_id", eventId)
+    .order("created_at", { ascending: true });
+
+  if (error) {
+    console.error("[eventRegRepo] getEventRegistrations:", error.message);
+    return [];
+  }
+  return (data ?? []) as EventRegistration[];
+}
+
+/**
  * Upsert the current member's attendance status ('in' or 'out').
  * Uses the (event_id, member_id) unique constraint for idempotency.
  * Only sends {status} — payment columns are untouched (RLS safe).
