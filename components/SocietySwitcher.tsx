@@ -1,5 +1,5 @@
 // components/SocietySwitcher.tsx
-// Pill button + modal for switching between societies.
+// Pill button + modal for switching between societies and joining new ones.
 
 import { useState } from "react";
 import { Modal, Pressable, StyleSheet, View } from "react-native";
@@ -24,13 +24,21 @@ function formatRole(role: string): string {
   return map[r] || "Member";
 }
 
+/**
+ * Always-visible pill in the Home app bar.
+ * - 1 society: shows name + tap to open modal with "Join another" CTA.
+ * - 2+ societies: shows name + chevron, modal lists all + "Join another".
+ * - 0 societies (personal mode): returns null.
+ */
 export function SocietySwitcherPill() {
   const { society, memberships, activeSocietyId, switchSociety } = useBootstrap();
   const router = useRouter();
   const colors = getColors();
   const [open, setOpen] = useState(false);
 
-  if (memberships.length < 2) return null;
+  if (!society && memberships.length === 0) return null;
+
+  const multi = memberships.length > 1;
 
   const handleSelect = async (m: MySocietyMembership) => {
     setOpen(false);
@@ -39,21 +47,36 @@ export function SocietySwitcherPill() {
     router.replace("/(app)/(tabs)");
   };
 
+  const handleJoinAnother = () => {
+    setOpen(false);
+    router.push({ pathname: "/join", params: { mode: "join" } });
+  };
+
   return (
     <>
       <Pressable
         onPress={() => setOpen(true)}
         hitSlop={6}
+        accessibilityRole="button"
+        accessibilityLabel={multi ? "Switch society" : "Society options"}
         style={({ pressed }) => [
           styles.pill,
-          { backgroundColor: colors.backgroundTertiary, borderColor: colors.borderLight },
+          {
+            backgroundColor: colors.primary + "10",
+            borderColor: colors.primary + "30",
+          },
           pressed && { opacity: 0.7 },
         ]}
       >
-        <AppText variant="small" numberOfLines={1} style={[styles.pillText, { color: colors.text }]}>
+        <Feather name={multi ? "repeat" : "flag"} size={13} color={colors.primary} />
+        <AppText
+          variant="small"
+          numberOfLines={1}
+          style={[styles.pillText, { color: colors.primary }]}
+        >
           {society?.name ?? "Society"}
         </AppText>
-        <Feather name="chevron-down" size={14} color={colors.textSecondary} />
+        <Feather name="chevron-down" size={13} color={colors.primary} />
       </Pressable>
 
       <Modal
@@ -63,9 +86,11 @@ export function SocietySwitcherPill() {
         onRequestClose={() => setOpen(false)}
       >
         <Pressable style={styles.backdrop} onPress={() => setOpen(false)}>
-          <View style={styles.modalWrap}>
+          <View style={styles.modalWrap} onStartShouldSetResponder={() => true}>
             <AppCard style={[styles.modalCard, { backgroundColor: colors.background }]}>
-              <AppText variant="h2" style={styles.modalTitle}>Switch Society</AppText>
+              <AppText variant="h2" style={styles.modalTitle}>
+                {multi ? "Switch Society" : "Your Society"}
+              </AppText>
 
               {memberships.map((m) => {
                 const active = m.societyId === activeSocietyId;
@@ -92,6 +117,25 @@ export function SocietySwitcherPill() {
                 );
               })}
 
+              {/* Join another society CTA */}
+              <Pressable
+                onPress={handleJoinAnother}
+                style={({ pressed }) => [
+                  styles.joinRow,
+                  { borderColor: colors.primary + "30" },
+                  pressed && { opacity: 0.7 },
+                ]}
+              >
+                <View style={[styles.joinIcon, { backgroundColor: colors.primary + "14" }]}>
+                  <Feather name="plus-circle" size={16} color={colors.primary} />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <AppText variant="bodyBold" color="primary">Join another society</AppText>
+                  <AppText variant="small" color="secondary">Enter a join code</AppText>
+                </View>
+                <Feather name="chevron-right" size={16} color={colors.primary} />
+              </Pressable>
+
               <Pressable onPress={() => setOpen(false)} style={styles.closeBtn}>
                 <AppText variant="small" color="secondary">Close</AppText>
               </Pressable>
@@ -109,14 +153,15 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 4,
     paddingHorizontal: spacing.sm,
-    paddingVertical: 4,
+    paddingVertical: 5,
     borderRadius: radius.full,
     borderWidth: 1,
-    maxWidth: 180,
+    maxWidth: 200,
   },
   pillText: {
-    fontWeight: "600",
+    fontWeight: "700",
     flexShrink: 1,
+    fontSize: 12,
   },
   backdrop: {
     flex: 1,
@@ -142,6 +187,24 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderRadius: radius.sm,
     marginBottom: 2,
+  },
+  joinRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.sm,
+    borderWidth: 1,
+    borderStyle: "dashed",
+    borderRadius: radius.sm,
+    marginTop: spacing.sm,
+  },
+  joinIcon: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: "center",
+    justifyContent: "center",
   },
   closeBtn: {
     alignSelf: "center",
