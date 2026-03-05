@@ -719,7 +719,7 @@ export default function EventDetailScreen() {
           <ActionRow
             icon="users"
             title="Players"
-            subtitle={`${(event as any).player_ids?.length ?? event.playerIds?.length ?? 0} in squad`}
+            subtitle={`${paidCount} paid · ${inCount} confirmed`}
           />
         </AppCard>
       </Pressable>
