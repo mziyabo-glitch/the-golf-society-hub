@@ -18,6 +18,7 @@ import { LoadingState } from "@/components/ui/LoadingState";
 import { useBootstrap } from "@/lib/useBootstrap";
 import { getEvent, type EventDoc } from "@/lib/db_supabase/eventRepo";
 import { getMembersBySocietyId, type MemberDoc } from "@/lib/db_supabase/memberRepo";
+import { getEventRegistrations } from "@/lib/db_supabase/eventRegistrationRepo";
 import { findMemberGroup } from "@/lib/findMemberGroup";
 import { groupPlayers, assignTeeTimes, type PlayerGroup } from "@/lib/teeSheetGrouping";
 import { formatHandicap } from "@/lib/whs";
@@ -29,8 +30,15 @@ const DEFAULT_INTERVAL = 10;
 
 type GroupWithTime = PlayerGroup & { teeTime: string };
 
-function buildGroupsWithTimes(event: EventDoc, members: MemberDoc[]): GroupWithTime[] {
-  const playerIds = event.playerIds ?? [];
+function buildGroupsWithTimes(
+  event: EventDoc,
+  members: MemberDoc[],
+  registrationMemberIds: string[] = [],
+): GroupWithTime[] {
+  const playerIds =
+    event.playerIds?.length
+      ? event.playerIds
+      : registrationMemberIds;
   if (playerIds.length === 0) return [];
 
   const eventMembers = members
@@ -61,6 +69,7 @@ export default function EventTeeSheetScreen() {
 
   const [event, setEvent] = useState<EventDoc | null>(null);
   const [members, setMembers] = useState<MemberDoc[]>([]);
+  const [registrationMemberIds, setRegistrationMemberIds] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<FormattedError | null>(null);
 
@@ -70,12 +79,16 @@ export default function EventTeeSheetScreen() {
     setLoading(true);
     setError(null);
     try {
-      const [eventData, membersData] = await Promise.all([
+      const [eventData, membersData, registrations] = await Promise.all([
         getEvent(eventId),
         getMembersBySocietyId(societyId),
+        getEventRegistrations(eventId),
       ]);
       setEvent(eventData ?? null);
       setMembers(membersData);
+      setRegistrationMemberIds(
+        registrations.filter((r) => r.status === "in").map((r) => r.member_id),
+      );
     } catch (err) {
       setError(formatError(err));
     } finally {
@@ -111,8 +124,15 @@ export default function EventTeeSheetScreen() {
   }
 
   const memberId = member?.id;
-  const myGroup = memberId ? findMemberGroup(memberId, event, members) : null;
-  const groupsWithTimes = buildGroupsWithTimes(event, members);
+  const eventWithPlayers = {
+    ...event,
+    playerIds:
+      event.playerIds?.length
+        ? event.playerIds
+        : registrationMemberIds,
+  };
+  const myGroup = memberId ? findMemberGroup(memberId, eventWithPlayers, members) : null;
+  const groupsWithTimes = buildGroupsWithTimes(event, members, registrationMemberIds);
 
   const hasTeeTimes = !!event.teeTimePublishedAt;
 
