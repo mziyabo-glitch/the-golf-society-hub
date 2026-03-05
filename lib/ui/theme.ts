@@ -28,10 +28,10 @@ export const colors = {
     surfaceElevated: "#FFFFFF",
     surfaceDisabled: "#F3F4F6",
     
-    // Text
-    text: "#111827",
-    textSecondary: "#6B7280",
-    textTertiary: "#9CA3AF",
+    // Text (slate palette: 900 / 600 / 500)
+    text: "#0F172A",
+    textSecondary: "#475569",
+    textTertiary: "#64748B",
     textInverse: "#FFFFFF",
     
     // Borders
@@ -107,8 +107,8 @@ export const radius = {
 export const premiumTokens = {
   background: "#F7F8FA",
   cardBorder: "#E6E8EC",
-  textPrimary: "#111827",
-  textSecondary: "#6B7280",
+  textPrimary: "#0F172A",
+  textSecondary: "#475569",
   cardShadow: {
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 1 },
@@ -118,66 +118,75 @@ export const premiumTokens = {
   },
 } as const;
 
-// Typography (premium UI requirements)
+// Typography — bold/clear, mobile-first premium scale
 export const typography = {
+  // pageTitle: hero headings, event names
   title: {
-    fontSize: 22,
-    fontWeight: "700" as const,
-    lineHeight: 28,
-    letterSpacing: -0.2,
-  },
-  h1: {
     fontSize: 20,
     fontWeight: "700" as const,
-    lineHeight: 26,
-    letterSpacing: -0.1,
+    lineHeight: 24,
+    letterSpacing: -0.2,
   },
-  h2: {
+  // h1: large section headings
+  h1: {
     fontSize: 18,
-    fontWeight: "600" as const,
-    lineHeight: 24,
-    letterSpacing: 0,
-  },
-  body: {
-    fontSize: 15,
-    fontWeight: "400" as const,
+    fontWeight: "700" as const,
     lineHeight: 22,
-    letterSpacing: 0,
+    letterSpacing: -0.15,
   },
-  bodyBold: {
-    fontSize: 16,
-    fontWeight: "600" as const,
-    lineHeight: 24,
-    letterSpacing: 0,
+  // h2 / sectionTitle: card headers, section labels
+  h2: {
+    fontSize: 15,
+    fontWeight: "700" as const,
+    lineHeight: 19,
+    letterSpacing: -0.08,
   },
-  caption: {
-    fontSize: 14,
-    fontWeight: "400" as const,
-    lineHeight: 20,
-    letterSpacing: 0,
-  },
-  captionBold: {
-    fontSize: 14,
-    fontWeight: "600" as const,
-    lineHeight: 20,
-    letterSpacing: 0,
-  },
-  small: {
+  // body: primary readable text
+  body: {
     fontSize: 13,
-    fontWeight: "400" as const,
+    fontWeight: "500" as const,
+    lineHeight: 19,
+    letterSpacing: 0,
+  },
+  // bodyBold: emphasized body (names, values)
+  bodyBold: {
+    fontSize: 14,
+    fontWeight: "700" as const,
     lineHeight: 18,
     letterSpacing: 0,
   },
+  // caption: secondary info lines
+  caption: {
+    fontSize: 12.5,
+    fontWeight: "500" as const,
+    lineHeight: 17,
+    letterSpacing: 0,
+  },
+  // captionBold: labels, card sub-headers
+  captionBold: {
+    fontSize: 12.5,
+    fontWeight: "700" as const,
+    lineHeight: 17,
+    letterSpacing: 0,
+  },
+  // small / meta: helper text, timestamps, badges
+  small: {
+    fontSize: 12,
+    fontWeight: "500" as const,
+    lineHeight: 16,
+    letterSpacing: 0,
+  },
+  // button
   button: {
-    fontSize: 16,
+    fontSize: 14,
     fontWeight: "600" as const,
-    lineHeight: 24,
+    lineHeight: 20,
     letterSpacing: 0,
   },
   buttonLarge: {
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: "700" as const,
-    lineHeight: 24,
+    lineHeight: 22,
     letterSpacing: 0,
   },
 } as const;
