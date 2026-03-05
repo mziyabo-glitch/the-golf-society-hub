@@ -1,7 +1,16 @@
 // lib/db_supabase/adminRepo.ts
-// Platform admin operations (re-appoint captain, etc.).
+// Platform admin operations.
 
 import { supabase } from "@/lib/supabase";
+
+export type AdminSocietyRow = {
+  id: string;
+  name: string;
+  country: string | null;
+  join_code: string | null;
+  member_count: number;
+  captain_name: string | null;
+};
 
 /**
  * Check whether the current auth user is a platform admin.
@@ -10,6 +19,21 @@ export async function isPlatformAdmin(): Promise<boolean> {
   const { data, error } = await supabase.rpc("is_platform_admin");
   if (error) return false;
   return data === true;
+}
+
+/**
+ * Search / list all societies (platform admin only).
+ */
+export async function listSocieties(search: string = ""): Promise<AdminSocietyRow[]> {
+  const { data, error } = await supabase.rpc("admin_list_societies", {
+    p_search: search,
+  });
+
+  if (error) {
+    console.error("[adminRepo] listSocieties:", error.message);
+    throw new Error(error.message || "Failed to list societies");
+  }
+  return (data ?? []) as AdminSocietyRow[];
 }
 
 /**
