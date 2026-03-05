@@ -48,6 +48,7 @@ import { getSocietyLogoUrl } from "@/lib/societyLogo";
 import { getMySinbooks, type SinbookWithParticipants } from "@/lib/db_supabase/sinbookRepo";
 import {
   getMyRegistration,
+  getEventRegistrations,
   setMyStatus,
   markMePaid,
   type EventRegistration,
@@ -202,6 +203,7 @@ export default function HomeScreen() {
 
   // Event registration state
   const [myReg, setMyReg] = useState<EventRegistration | null>(null);
+  const [nextEventRegistrations, setNextEventRegistrations] = useState<EventRegistration[]>([]);
   const [regBusy, setRegBusy] = useState(false);
 
   // Licence banner state
@@ -366,6 +368,19 @@ export default function HomeScreen() {
     return () => { cancelled = true; };
   }, [nextEventId, memberId]);
 
+  // Load all registrations for next event when tee times published (for societies using In/Out)
+  useEffect(() => {
+    if (!nextEventId || !nextEvent?.teeTimePublishedAt) {
+      setNextEventRegistrations([]);
+      return;
+    }
+    let cancelled = false;
+    getEventRegistrations(nextEventId).then((regs) => {
+      if (!cancelled) setNextEventRegistrations(regs);
+    });
+    return () => { cancelled = true; };
+  }, [nextEventId, nextEvent?.teeTimePublishedAt]);
+
   // Past events (completed, sorted desc) — last 3
   const recentEvents = useMemo(() => {
     return events
@@ -389,10 +404,15 @@ export default function HomeScreen() {
   }, [memberId, oomStandings]);
 
   // My tee time for next event (when published)
+  // Use player_ids if set; else fall back to event_registrations (status=in) for societies using In/Out
   const myTeeTimeInfo = useMemo(() => {
     if (!memberId || !nextEvent?.teeTimePublishedAt || !nextEvent) return null;
-    return findMemberGroup(memberId, nextEvent, members);
-  }, [memberId, nextEvent, members]);
+    const playerIds = nextEvent.playerIds?.length
+      ? nextEvent.playerIds
+      : nextEventRegistrations.filter((r) => r.status === "in").map((r) => r.member_id);
+    const eventWithPlayers = { ...nextEvent, playerIds };
+    return findMemberGroup(memberId, eventWithPlayers, members);
+  }, [memberId, nextEvent, members, nextEventRegistrations]);
 
   // OOM teaser: top 5 + current user pinned
   const oomTeaser = useMemo(() => {
