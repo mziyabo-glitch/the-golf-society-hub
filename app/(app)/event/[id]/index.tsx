@@ -749,6 +749,8 @@ export default function EventDetailScreen() {
             </View>
           </AppCard>
         </Pressable>
+      )}
+
       {/* Paid Players dashboard */}
       {registrations.length > 0 && (
         <AppCard style={styles.card}>
