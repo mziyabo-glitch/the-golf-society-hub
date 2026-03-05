@@ -34,6 +34,8 @@ import { useBootstrap } from "@/lib/useBootstrap";
 import { isCaptain, isTreasurer } from "@/lib/rbac";
 import { supabase } from "@/lib/supabase";
 import { getEventsBySocietyId, type EventDoc } from "@/lib/db_supabase/eventRepo";
+import { getMembersBySocietyId, type MemberDoc } from "@/lib/db_supabase/memberRepo";
+import { findMemberGroup } from "@/lib/findMemberGroup";
 import {
   getOrderOfMeritTotals,
   getEventResults,
@@ -191,6 +193,7 @@ export default function HomeScreen() {
 
   // Data state
   const [events, setEvents] = useState<EventDoc[]>([]);
+  const [members, setMembers] = useState<MemberDoc[]>([]);
   const [oomStandings, setOomStandings] = useState<OrderOfMeritEntry[]>([]);
   const [recentResultsMap, setRecentResultsMap] = useState<Record<string, EventResultDoc[]>>({});
   const [dataLoading, setDataLoading] = useState(true);
@@ -266,12 +269,14 @@ export default function HomeScreen() {
     setDataLoading(true);
     setLoadError(null);
     try {
-      const [eventsData, standingsData] = await Promise.all([
+      const [eventsData, standingsData, membersData] = await Promise.all([
         getEventsBySocietyId(societyId),
         getOrderOfMeritTotals(societyId),
+        getMembersBySocietyId(societyId),
       ]);
       setEvents(eventsData);
       setOomStandings(standingsData);
+      setMembers(membersData);
 
       // Fetch results for the last 3 completed events (for Recent Activity card)
       const pastEvents = eventsData
@@ -382,6 +387,12 @@ export default function HomeScreen() {
       totalWithPoints: membersWithPoints.length,
     };
   }, [memberId, oomStandings]);
+
+  // My tee time for next event (when published)
+  const myTeeTimeInfo = useMemo(() => {
+    if (!memberId || !nextEvent?.teeTimePublishedAt || !nextEvent) return null;
+    return findMemberGroup(memberId, nextEvent, members);
+  }, [memberId, nextEvent, members]);
 
   // OOM teaser: top 5 + current user pinned
   const oomTeaser = useMemo(() => {
@@ -627,22 +638,24 @@ export default function HomeScreen() {
       {(memberHasSeat || memberIsCaptain) && (<>
 
       {/* ================================================================== */}
-      {/* NOTIFICATION: Tee times published                                  */}
-      {/* ================================================================== */}
+      {/* NOTIFICATION: Tee times published — green badge "Tee times now available" */}
       {nextEvent?.teeTimePublishedAt && (() => {
         const publishedAt = new Date(nextEvent.teeTimePublishedAt!);
         const daysSince = (Date.now() - publishedAt.getTime()) / (1000 * 60 * 60 * 24);
         if (daysSince > 7) return null;
         return (
-          <Pressable onPress={() => openEvent(nextEvent.id)} style={cardPressStyle}>
+          <Pressable
+            onPress={() => router.push({ pathname: "/(app)/event/[id]/tee-sheet", params: { id: nextEvent.id } })}
+            style={cardPressStyle}
+          >
             <View style={[styles.notificationBanner, { backgroundColor: colors.success + "15", borderColor: colors.success + "30" }]}>
               <Feather name="bell" size={16} color={colors.success} />
               <View style={{ flex: 1 }}>
                 <AppText variant="bodyBold" style={{ color: colors.success }}>
-                  Tee times now available!
+                  Tee times now available for this event
                 </AppText>
                 <AppText variant="small" color="secondary">
-                  {String(nextEvent.name ?? "Event")} — First tee: {String(nextEvent.teeTimeStart || "TBC")}
+                  Tap to view your tee time and full tee sheet
                 </AppText>
               </View>
               <Feather name="chevron-right" size={16} color={colors.success} />
@@ -684,6 +697,45 @@ export default function HomeScreen() {
                 <AppText variant="small" style={styles.oomPremiumPillText}>
                   Counts toward Order of Merit
                 </AppText>
+              </View>
+            )}
+            {/* Your Tee Time — premium section when published */}
+            {nextEvent.teeTimePublishedAt && (
+              <View style={[styles.yourTeeTimeCard, { borderTopColor: colors.borderLight, backgroundColor: colors.primary + "08" }]}>
+                <AppText variant="captionBold" color="primary" style={styles.yourTeeTimeLabel}>
+                  Your Tee Time
+                </AppText>
+                {myTeeTimeInfo ? (
+                  <>
+                    <View style={styles.yourTeeTimeRow}>
+                      <AppText variant="h2" style={[styles.yourTeeTimeValue, { color: colors.text }]}>
+                        {myTeeTimeInfo.teeTime}
+                      </AppText>
+                      <View style={[styles.groupPill, { backgroundColor: colors.primary + "20" }]}>
+                        <AppText variant="captionBold" color="primary">Group {myTeeTimeInfo.groupNumber}</AppText>
+                      </View>
+                    </View>
+                    {myTeeTimeInfo.groupMates.length > 0 && (
+                      <View style={styles.playingWithRow}>
+                        <AppText variant="small" color="secondary">Playing with</AppText>
+                        <AppText variant="body" style={{ color: colors.text, marginTop: 2 }}>
+                          {myTeeTimeInfo.groupMates.join(" • ")}
+                        </AppText>
+                      </View>
+                    )}
+                    <Pressable
+                      onPress={() => router.push({ pathname: "/(app)/event/[id]/tee-sheet", params: { id: nextEvent.id } })}
+                      style={({ pressed }) => [styles.viewTeeSheetBtn, pressed && { opacity: 0.8 }]}
+                    >
+                      <AppText variant="captionBold" color="primary">View Tee Sheet</AppText>
+                      <Feather name="chevron-right" size={14} color={colors.primary} />
+                    </Pressable>
+                  </>
+                ) : (
+                  <AppText variant="small" color="secondary" style={{ marginTop: 4 }}>
+                    Tee times published — you are not assigned yet.
+                  </AppText>
+                )}
               </View>
             )}
 
@@ -1603,6 +1655,40 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.sm,
     paddingVertical: 4,
     borderRadius: radius.full,
+    marginTop: spacing.sm,
+  },
+  yourTeeTimeCard: {
+    marginTop: spacing.sm,
+    paddingTop: spacing.sm,
+    borderTopWidth: 1,
+    borderRadius: radius.sm,
+    padding: spacing.sm,
+  },
+  yourTeeTimeLabel: {
+    marginBottom: 4,
+  },
+  yourTeeTimeRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+    flexWrap: "wrap",
+  },
+  yourTeeTimeValue: {
+    fontWeight: "700",
+    fontSize: 22,
+  },
+  groupPill: {
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 4,
+    borderRadius: radius.full,
+  },
+  playingWithRow: {
+    marginTop: spacing.xs,
+  },
+  viewTeeSheetBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
     marginTop: spacing.sm,
   },
   teeTimeRow: {

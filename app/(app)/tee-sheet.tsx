@@ -386,6 +386,19 @@ export default function TeeSheetScreen() {
       };
       assertPngExportOnly("Tee Sheet export");
 
+      // Publish tee time data to the event so the home page can display it
+      try {
+        await publishTeeTime(selectedEvent.id, startTime || "08:00", interval);
+        setToast({
+          visible: true,
+          message: "Tee times published — members can now see their slot.",
+          type: "success",
+        });
+        await new Promise((r) => setTimeout(r, 1500));
+      } catch (err) {
+        console.warn("[TeeSheet] publishTeeTime failed (non-blocking):", err);
+      }
+
       console.log("[TeeSheet] Export tee sheet PNG");
       const payload = encodeURIComponent(JSON.stringify(exportData));
       router.push({
