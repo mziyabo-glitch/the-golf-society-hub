@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { StyleSheet, View, Pressable, Image, Platform } from "react-native";
 import { useRouter } from "expo-router";
 import { Feather } from "@expo/vector-icons";
@@ -10,6 +10,7 @@ import { AppText } from "@/components/ui/AppText";
 import { SocietyLogoImage } from "@/components/ui/SocietyLogoImage";
 import { AppCard } from "@/components/ui/AppCard";
 import { DestructiveButton, SecondaryButton, PrimaryButton } from "@/components/ui/Button";
+import { AppInput } from "@/components/ui/AppInput";
 import { LoadingState } from "@/components/ui/LoadingState";
 import { InlineNotice } from "@/components/ui/InlineNotice";
 import { useBootstrap } from "@/lib/useBootstrap";
@@ -26,6 +27,9 @@ import {
 import { getColors, spacing, radius } from "@/lib/ui/theme";
 import { confirmDestructive, showAlert } from "@/lib/ui/alert";
 import { getSupabaseEnv, getSupabaseProjectRefSuffix } from "@/lib/supabaseEnv";
+import { isPlatformAdmin, reappointCaptain } from "@/lib/db_supabase/adminRepo";
+import { getMembersBySocietyId, type MemberDoc } from "@/lib/db_supabase/memberRepo";
+import { Toast } from "@/components/ui/Toast";
 
 export default function SettingsScreen() {
   const router = useRouter();
@@ -47,6 +51,52 @@ export default function SettingsScreen() {
   const permissions = getPermissionsForMember(member as any);
   const canRegenCode = isCaptain(member as any);
   const canManageLogo = permissions.canManageSocietyLogo;
+
+  // Platform admin state
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [adminMembers, setAdminMembers] = useState<MemberDoc[]>([]);
+  const [selectedNewCaptain, setSelectedNewCaptain] = useState<string | null>(null);
+  const [reappointReason, setReappointReason] = useState("");
+  const [reappointing, setReappointing] = useState(false);
+  const [showAdminPanel, setShowAdminPanel] = useState(false);
+  const [adminToast, setAdminToast] = useState<{ visible: boolean; message: string; type: "success" | "error" }>({ visible: false, message: "", type: "success" });
+
+  useEffect(() => {
+    isPlatformAdmin().then(setIsAdmin);
+  }, []);
+
+  const loadAdminMembers = useCallback(async () => {
+    if (!society?.id) return;
+    try {
+      const mems = await getMembersBySocietyId(society.id);
+      setAdminMembers(mems);
+    } catch { /* non-critical */ }
+  }, [society?.id]);
+
+  useEffect(() => {
+    if (showAdminPanel && isAdmin) loadAdminMembers();
+  }, [showAdminPanel, isAdmin, loadAdminMembers]);
+
+  const currentCaptain = adminMembers.find(
+    (m) => m.role?.toLowerCase() === "captain"
+  );
+
+  const handleReappoint = async () => {
+    if (!society?.id || !selectedNewCaptain || reappointing) return;
+    setReappointing(true);
+    try {
+      await reappointCaptain(society.id, selectedNewCaptain, reappointReason);
+      setAdminToast({ visible: true, message: "Captain re-appointed successfully.", type: "success" });
+      setSelectedNewCaptain(null);
+      setReappointReason("");
+      await loadAdminMembers();
+      refresh();
+    } catch (e: any) {
+      setAdminToast({ visible: true, message: e?.message || "Failed to re-appoint captain.", type: "error" });
+    } finally {
+      setReappointing(false);
+    }
+  };
 
   useEffect(() => {
     if (!society?.id) return;
@@ -600,6 +650,89 @@ export default function SettingsScreen() {
         </>
       )}
 
+      {/* Platform Admin - only visible to platform admins */}
+      {isAdmin && society && (
+        <>
+          <AppText variant="h2" style={styles.sectionTitle}>Platform Admin</AppText>
+          <AppCard>
+            <Pressable
+              onPress={() => setShowAdminPanel((v) => !v)}
+              style={styles.settingRow}
+            >
+              <View style={[styles.settingIcon, { backgroundColor: colors.error + "14" }]}>
+                <Feather name="shield" size={18} color={colors.error} />
+              </View>
+              <View style={styles.settingInfo}>
+                <AppText variant="bodyBold">Re-appoint Captain</AppText>
+                <AppText variant="small" color="secondary">
+                  Current: {currentCaptain?.name || currentCaptain?.displayName || "None"}
+                </AppText>
+              </View>
+              <Feather name={showAdminPanel ? "chevron-up" : "chevron-down"} size={18} color={colors.textTertiary} />
+            </Pressable>
+
+            {showAdminPanel && (
+              <View style={{ marginTop: spacing.base }}>
+                <AppText variant="captionBold" style={{ marginBottom: spacing.xs }}>Select new Captain</AppText>
+                {adminMembers.map((m) => {
+                  const isCurrent = m.role?.toLowerCase() === "captain";
+                  const isSelected = selectedNewCaptain === m.id;
+                  return (
+                    <Pressable
+                      key={m.id}
+                      onPress={() => !isCurrent && setSelectedNewCaptain(m.id)}
+                      style={[
+                        styles.adminMemberRow,
+                        { borderColor: colors.borderLight },
+                        isSelected && { backgroundColor: colors.primary + "10", borderColor: colors.primary },
+                      ]}
+                    >
+                      <View style={{ flex: 1 }}>
+                        <AppText variant="body">{m.name || m.displayName || "Member"}</AppText>
+                        <AppText variant="small" color="secondary">{m.role || "member"}</AppText>
+                      </View>
+                      {isCurrent && (
+                        <View style={[styles.adminBadge, { backgroundColor: colors.primary + "18" }]}>
+                          <AppText variant="small" color="primary" style={{ fontWeight: "700" }}>Captain</AppText>
+                        </View>
+                      )}
+                      {isSelected && !isCurrent && (
+                        <Feather name="check-circle" size={18} color={colors.primary} />
+                      )}
+                    </Pressable>
+                  );
+                })}
+
+                {selectedNewCaptain && (
+                  <View style={{ marginTop: spacing.sm }}>
+                    <AppText variant="captionBold" style={{ marginBottom: spacing.xs }}>Reason (optional)</AppText>
+                    <AppInput
+                      placeholder="e.g. Captain stepped down"
+                      value={reappointReason}
+                      onChangeText={setReappointReason}
+                    />
+                    <PrimaryButton
+                      onPress={handleReappoint}
+                      loading={reappointing}
+                      disabled={reappointing}
+                      style={{ marginTop: spacing.sm }}
+                    >
+                      Re-appoint Captain
+                    </PrimaryButton>
+                  </View>
+                )}
+              </View>
+            )}
+          </AppCard>
+          <Toast
+            visible={adminToast.visible}
+            message={adminToast.message}
+            type={adminToast.type}
+            onHide={() => setAdminToast((t) => ({ ...t, visible: false }))}
+          />
+        </>
+      )}
+
       {/* Quick Links */}
       <AppText variant="h2" style={styles.sectionTitle}>Quick Actions</AppText>
       <AppCard padding="sm">
@@ -791,6 +924,20 @@ const styles = StyleSheet.create({
     borderRadius: radius.sm,
     alignItems: "center",
     justifyContent: "center",
+  },
+  adminMemberRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.sm,
+    borderWidth: 1,
+    borderRadius: radius.sm,
+    marginBottom: spacing.xs,
+  },
+  adminBadge: {
+    paddingHorizontal: spacing.xs,
+    paddingVertical: 2,
+    borderRadius: radius.sm,
   },
   footer: {
     marginTop: spacing.xl,
