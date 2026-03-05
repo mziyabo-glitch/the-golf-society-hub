@@ -48,6 +48,7 @@ export function useSocietyMembershipGuard(): GuardResult {
     membershipLoading,
     activeSocietyId,
     member,
+    memberships,
     setActiveSociety,
     refresh,
   } = useBootstrap();
@@ -62,11 +63,14 @@ export function useSocietyMembershipGuard(): GuardResult {
   const hasMember = !!member;
   const isMember = hasSociety && hasMember;
   const onToolRoute = isGuardExemptRoute(pathname);
+  // If we have a memberships list and the active society is in it,
+  // treat it as structurally valid even while the member row loads.
+  const inMembershipsList =
+    hasSociety && memberships.length > 0 && memberships.some((m) => m.societyId === activeSocietyId);
 
   useEffect(() => {
     if (onToolRoute) return;
 
-    // Reset tracking when the active society changes.
     if (activeSocietyId !== trackedSocietyId.current) {
       trackedSocietyId.current = activeSocietyId ?? null;
       missingSinceMs.current = null;
@@ -74,19 +78,15 @@ export function useSocietyMembershipGuard(): GuardResult {
       redirected.current = false;
     }
 
-    // While bootstrap/membership is in-flight, don't act.
     if (loading || membershipLoading) return;
     if (redirected.current) return;
 
-    // No society → Personal Mode, nothing to guard.
     if (!hasSociety) {
       missingSinceMs.current = null;
       retryCount.current = 0;
-      redirected.current = false;
       return;
     }
 
-    // Society + member are both present → healthy state.
     if (hasMember) {
       missingSinceMs.current = null;
       retryCount.current = 0;
@@ -94,51 +94,43 @@ export function useSocietyMembershipGuard(): GuardResult {
       return;
     }
 
-    // --- hasSociety && !hasMember ---
-    // Member is missing. This can happen transiently after a join while
-    // bootstrap re-reads from DB. Use retries + a generous grace window
-    // before concluding the pointer is truly stale.
-
-    if (missingSinceMs.current === null) {
-      missingSinceMs.current = Date.now();
-      console.log("[MembershipGuard] member missing — starting grace window", {
-        activeSocietyId,
-      });
+    // If the society is confirmed in the memberships list, the member
+    // row will resolve shortly — keep waiting without starting the
+    // clear timer.
+    if (inMembershipsList) {
+      if (retryCount.current < RETRY_BACKOFF_MS.length) {
+        const delayMs = RETRY_BACKOFF_MS[retryCount.current];
+        retryCount.current += 1;
+        const timer = setTimeout(() => refresh(), delayMs);
+        return () => clearTimeout(timer);
+      }
+      return;
     }
 
-    // Retry with backoff.
+    // --- hasSociety && !hasMember && NOT in memberships list ---
+    if (missingSinceMs.current === null) {
+      missingSinceMs.current = Date.now();
+    }
+
     if (retryCount.current < RETRY_BACKOFF_MS.length) {
       const delayMs = RETRY_BACKOFF_MS[retryCount.current];
-      const attempt = retryCount.current + 1;
       retryCount.current += 1;
-      const timer = setTimeout(() => {
-        console.log("[MembershipGuard] retry refresh", { attempt, delayMs, activeSocietyId });
-        refresh();
-      }, delayMs);
+      const timer = setTimeout(() => refresh(), delayMs);
       return () => clearTimeout(timer);
     }
 
-    // After retries, wait for the full grace period.
     const elapsedMs = Date.now() - missingSinceMs.current;
     if (elapsedMs < CLEAR_AFTER_MS) {
       const remainingMs = CLEAR_AFTER_MS - elapsedMs;
-      const timer = setTimeout(() => {
-        console.log("[MembershipGuard] grace-window refresh", { elapsedMs, remainingMs, activeSocietyId });
-        refresh();
-      }, remainingMs);
+      const timer = setTimeout(() => refresh(), remainingMs);
       return () => clearTimeout(timer);
     }
 
-    // Grace period exhausted — the profile points to a society the user
-    // is no longer a member of. Clear the stale pointer.
-    console.warn(
-      "[MembershipGuard] clearing stale pointer after grace period",
-      { activeSocietyId, elapsedMs }
-    );
+    console.warn("[MembershipGuard] clearing stale pointer", { activeSocietyId, elapsedMs });
     redirected.current = true;
     setActiveSociety(null, null)
       .catch((e) => console.error("[MembershipGuard] clear error:", e));
-  }, [loading, membershipLoading, hasSociety, hasMember, setActiveSociety, activeSocietyId, refresh, onToolRoute]);
+  }, [loading, membershipLoading, hasSociety, hasMember, inMembershipsList, setActiveSociety, activeSocietyId, refresh, onToolRoute]);
 
   return {
     loading: loading || membershipLoading,

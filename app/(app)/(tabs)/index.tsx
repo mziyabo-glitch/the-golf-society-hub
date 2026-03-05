@@ -51,6 +51,7 @@ import {
   type EventRegistration,
 } from "@/lib/db_supabase/eventRegistrationRepo";
 import { blurWebActiveElement } from "@/lib/ui/focus";
+import { SocietySwitcherPill } from "@/components/SocietySwitcher";
 
 const appIcon = require("@/assets/images/app-icon.png");
 
@@ -140,7 +141,7 @@ function HomeAppBar({
 }) {
   return (
     <View style={[styles.appBarTier, { borderBottomColor: colors.borderLight }]}>
-      <View style={styles.appBarSpacer} />
+      <SocietySwitcherPill />
 
       <Pressable
         onPress={onOpenSettings}
