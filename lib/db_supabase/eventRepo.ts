@@ -357,9 +357,8 @@ export async function deleteEvent(eventId: string): Promise<void> {
 // =====================================================
 
 /**
- * Publish tee times for an event via server-side RPC.
- * The RPC sets tee_time_start, tee_time_interval, and
- * tee_time_published_at atomically; updated_at is handled by a DB trigger.
+ * Publish tee times for an event.
+ * Tries RPC first; falls back to direct UPDATE if RPC is missing (e.g. migrations not run).
  * Returns the refreshed event row so the caller has up-to-date data.
  */
 export async function publishTeeTime(
@@ -367,15 +366,35 @@ export async function publishTeeTime(
   startTime: string,
   intervalMinutes: number,
 ): Promise<EventDoc | null> {
-  const { error } = await supabase.rpc("publish_tee_times", {
+  const start = (startTime || "08:00").trim() || "08:00";
+  const interval = Number.isFinite(intervalMinutes) && intervalMinutes > 0 ? intervalMinutes : 10;
+
+  // Try RPC first (migrations 038/039)
+  const { error: rpcError } = await supabase.rpc("publish_tee_times", {
     p_event_id: eventId,
-    p_start: startTime,
-    p_interval: intervalMinutes,
+    p_start: start,
+    p_interval: interval,
   });
 
-  if (error) {
-    console.error("[eventRepo] publishTeeTime RPC failed:", error.message);
-    throw new Error(error.message || "Failed to publish tee times");
+  if (!rpcError) {
+    return getEvent(eventId);
+  }
+
+  // Fallback: direct UPDATE (works when RPC doesn't exist)
+  console.warn("[eventRepo] publishTeeTime RPC failed, trying direct update:", rpcError.message);
+  const { error: updateError } = await supabase
+    .from("events")
+    .update({
+      tee_time_start: start,
+      tee_time_interval: interval,
+      tee_time_published_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", eventId);
+
+  if (updateError) {
+    console.error("[eventRepo] publishTeeTime direct update failed:", updateError.message);
+    throw new Error(updateError.message || "Failed to publish tee times");
   }
 
   return getEvent(eventId);
