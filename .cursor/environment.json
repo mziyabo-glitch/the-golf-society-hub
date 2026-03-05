@@ -1,0 +1,14 @@
+{
+  "baseImage": "ghcr.io/cursor-images/node-20:latest",
+  "install": "npm ci --no-audit --fund=false",
+  "start": "mkdir -p .cache/eslint .cache/ts",
+  "persistedDirectories": [
+    ".cache",
+    ".expo",
+    "node_modules/.cache"
+  ],
+  "env": {
+    "NPM_CONFIG_AUDIT": "false",
+    "NPM_CONFIG_FUND": "false"
+  }
+}

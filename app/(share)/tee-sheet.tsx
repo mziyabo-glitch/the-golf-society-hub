@@ -318,13 +318,13 @@ function GroupTable({ group }: { group: GroupWithTime }) {
           return (
             <View key={`${group.groupNumber}-${idx}`} style={styles.groupRow}>
               <Text style={[styles.groupCell, styles.nameCol]} numberOfLines={1}>
-                {player?.name ?? ""}
+                {player?.name || "\u00A0"}
               </Text>
               <Text style={[styles.groupCell, styles.hiCol]}>
-                {formatHandicap(player?.handicapIndex ?? null, 1)}
+                {player ? formatHandicap(player.handicapIndex, 1) : "\u00A0"}
               </Text>
               <Text style={[styles.groupCell, styles.phCol]}>
-                {formatHandicap(player?.playingHandicap ?? null)}
+                {player ? formatHandicap(player.playingHandicap) : "\u00A0"}
               </Text>
             </View>
           );
@@ -380,12 +380,23 @@ function buildTeeSheetPages(data: TeeSheetData): GroupWithTime[][] {
       ? data.teeTimeInterval!
       : 8;
 
-  const groupsWithTimes: GroupWithTime[] = groups.map((group, index) => ({
+  // Cap to 12 groups per page; pad to exactly 12 for consistent PNG dimensions.
+  const capped = groups.slice(0, 12);
+  const groupsWithTimes: GroupWithTime[] = capped.map((group, index) => ({
     ...group,
     teeTime: buildTeeTime(baseStartTime, intervalMinutes, index),
   }));
 
-  return chunkArray(groupsWithTimes, 12);
+  while (groupsWithTimes.length < 12) {
+    const idx = groupsWithTimes.length;
+    groupsWithTimes.push({
+      groupNumber: idx + 1,
+      players: [],
+      teeTime: buildTeeTime(baseStartTime, intervalMinutes, idx),
+    });
+  }
+
+  return [groupsWithTimes];
 }
 
 function isValidTime(value: string | null | undefined): value is string {
@@ -404,14 +415,6 @@ function buildTeeTime(startTime: string, intervalMinutes: number, index: number)
   const teeHours = Math.floor(baseMinutes / 60) % 24;
   const teeMins = baseMinutes % 60;
   return `${String(teeHours).padStart(2, "0")}:${String(teeMins).padStart(2, "0")}`;
-}
-
-function chunkArray<T>(items: T[], size: number): T[][] {
-  const chunks: T[][] = [];
-  for (let i = 0; i < items.length; i += size) {
-    chunks.push(items.slice(i, i + size));
-  }
-  return chunks;
 }
 
 function getInitials(name: string): string {

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { StyleSheet, View, Pressable, Image, Platform } from "react-native";
 import { useRouter } from "expo-router";
 import { Feather } from "@expo/vector-icons";
@@ -10,9 +10,11 @@ import { AppText } from "@/components/ui/AppText";
 import { SocietyLogoImage } from "@/components/ui/SocietyLogoImage";
 import { AppCard } from "@/components/ui/AppCard";
 import { DestructiveButton, SecondaryButton, PrimaryButton } from "@/components/ui/Button";
+import { AppInput } from "@/components/ui/AppInput";
 import { LoadingState } from "@/components/ui/LoadingState";
 import { InlineNotice } from "@/components/ui/InlineNotice";
 import { useBootstrap } from "@/lib/useBootstrap";
+import { supabase } from "@/lib/supabase";
 import { clearActiveSociety } from "@/lib/db_supabase/profileRepo";
 import { regenerateJoinCode, uploadSocietyLogo, removeSocietyLogo, resetSocietyData } from "@/lib/db_supabase/societyRepo";
 import { isCaptain, getPermissionsForMember } from "@/lib/rbac";
@@ -26,6 +28,9 @@ import {
 import { getColors, spacing, radius } from "@/lib/ui/theme";
 import { confirmDestructive, showAlert } from "@/lib/ui/alert";
 import { getSupabaseEnv, getSupabaseProjectRefSuffix } from "@/lib/supabaseEnv";
+import { isPlatformAdmin, listSocieties, reappointCaptain, type AdminSocietyRow } from "@/lib/db_supabase/adminRepo";
+import { getMembersBySocietyId, type MemberDoc } from "@/lib/db_supabase/memberRepo";
+import { Toast } from "@/components/ui/Toast";
 
 export default function SettingsScreen() {
   const router = useRouter();
@@ -47,6 +52,95 @@ export default function SettingsScreen() {
   const permissions = getPermissionsForMember(member as any);
   const canRegenCode = isCaptain(member as any);
   const canManageLogo = permissions.canManageSocietyLogo;
+
+  // Platform admin state
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [adminSearch, setAdminSearch] = useState("");
+  const [adminSocieties, setAdminSocieties] = useState<AdminSocietyRow[]>([]);
+  const [adminSearching, setAdminSearching] = useState(false);
+  const [adminMembers, setAdminMembers] = useState<MemberDoc[]>([]);
+  const [selectedNewCaptain, setSelectedNewCaptain] = useState<string | null>(null);
+  const [reappointReason, setReappointReason] = useState("");
+  const [reappointing, setReappointing] = useState(false);
+  const [showReappoint, setShowReappoint] = useState(false);
+  const [adminToast, setAdminToast] = useState<{ visible: boolean; message: string; type: "success" | "error" | "info" }>({ visible: false, message: "", type: "success" });
+
+  useEffect(() => {
+    isPlatformAdmin().then(setIsAdmin);
+  }, []);
+
+  const handleAdminSearch = useCallback(async (term: string) => {
+    setAdminSearch(term);
+    if (!isAdmin) return;
+    setAdminSearching(true);
+    try {
+      const results = await listSocieties(term);
+      setAdminSocieties(results);
+    } catch { /* non-critical */ }
+    setAdminSearching(false);
+  }, [isAdmin]);
+
+  useEffect(() => {
+    if (isAdmin) handleAdminSearch("");
+  }, [isAdmin, handleAdminSearch]);
+
+  const handleAdminSwitch = async (row: AdminSocietyRow) => {
+    try {
+      // Find if platform admin has a member row in target society
+      const { data: memberRow } = await supabase
+        .from("members")
+        .select("id")
+        .eq("society_id", row.id)
+        .eq("user_id", user?.uid)
+        .limit(1)
+        .maybeSingle();
+
+      await supabase
+        .from("profiles")
+        .update({ active_society_id: row.id, active_member_id: memberRow?.id ?? null })
+        .eq("id", user?.uid);
+
+      setAdminToast({ visible: true, message: `Switched to ${row.name}`, type: "success" });
+      refresh();
+    } catch (e: any) {
+      setAdminToast({ visible: true, message: e?.message || "Failed to switch", type: "error" });
+    }
+  };
+
+  const loadAdminMembers = useCallback(async () => {
+    if (!society?.id) return;
+    try {
+      const mems = await getMembersBySocietyId(society.id);
+      setAdminMembers(mems);
+    } catch { /* non-critical */ }
+  }, [society?.id]);
+
+  useEffect(() => {
+    if (showReappoint && isAdmin) loadAdminMembers();
+  }, [showReappoint, isAdmin, loadAdminMembers]);
+
+  const currentCaptain = adminMembers.find(
+    (m) => m.role?.toLowerCase() === "captain"
+  );
+
+  const handleReappoint = async () => {
+    if (!society?.id || !selectedNewCaptain || reappointing) return;
+    setReappointing(true);
+    try {
+      await reappointCaptain(society.id, selectedNewCaptain, reappointReason);
+      setAdminToast({ visible: true, message: "Captain re-appointed.", type: "success" });
+      setSelectedNewCaptain(null);
+      setReappointReason("");
+      setShowReappoint(false);
+      await loadAdminMembers();
+      await handleAdminSearch(adminSearch);
+      refresh();
+    } catch (e: any) {
+      setAdminToast({ visible: true, message: e?.message || "Failed to re-appoint.", type: "error" });
+    } finally {
+      setReappointing(false);
+    }
+  };
 
   useEffect(() => {
     if (!society?.id) return;
@@ -600,6 +694,144 @@ export default function SettingsScreen() {
         </>
       )}
 
+      {/* Platform Admin */}
+      {isAdmin && (
+        <>
+          <AppText variant="h2" style={styles.sectionTitle}>
+            <Feather name="shield" size={16} color={colors.error} /> Platform Admin
+          </AppText>
+
+          {/* Search societies */}
+          <AppCard>
+            <AppInput
+              placeholder="Search society name or join code\u2026"
+              value={adminSearch}
+              onChangeText={handleAdminSearch}
+              autoCapitalize="none"
+            />
+            {adminSearching && <AppText variant="small" color="tertiary" style={{ marginTop: spacing.xs }}>Searching\u2026</AppText>}
+            {adminSocieties.map((row) => {
+              const isActive = row.id === society?.id;
+              return (
+                <Pressable
+                  key={row.id}
+                  onPress={() => !isActive && handleAdminSwitch(row)}
+                  style={[
+                    styles.adminSocRow,
+                    { borderColor: colors.borderLight },
+                    isActive && { backgroundColor: colors.primary + "08" },
+                  ]}
+                >
+                  <View style={{ flex: 1 }}>
+                    <AppText variant="bodyBold">{row.name}</AppText>
+                    <AppText variant="small" color="secondary">
+                      {row.country ?? ""}
+                      {row.captain_name ? ` · Capt: ${row.captain_name}` : ""}
+                      {` · ${row.member_count} members`}
+                    </AppText>
+                  </View>
+                  {row.join_code && (
+                    <View style={[styles.adminCodeBadge, { backgroundColor: colors.backgroundTertiary }]}>
+                      <AppText style={styles.adminCodeText}>{row.join_code}</AppText>
+                    </View>
+                  )}
+                  {isActive ? (
+                    <Feather name="check" size={16} color={colors.primary} style={{ marginLeft: spacing.xs }} />
+                  ) : (
+                    <AppText variant="small" color="primary" style={{ fontWeight: "600", marginLeft: spacing.xs }}>Switch</AppText>
+                  )}
+                </Pressable>
+              );
+            })}
+          </AppCard>
+
+          {/* Active society sub-panel */}
+          {society && (
+            <AppCard style={{ marginTop: spacing.sm }}>
+              <View style={styles.settingRow}>
+                <View style={[styles.settingIcon, { backgroundColor: colors.primary + "14" }]}>
+                  <Feather name="flag" size={18} color={colors.primary} />
+                </View>
+                <View style={styles.settingInfo}>
+                  <AppText variant="bodyBold">{society.name}</AppText>
+                  <AppText variant="small" color="secondary">
+                    {society.joinCode ? `Code: ${society.joinCode}` : ""}
+                    {currentCaptain ? ` · Captain: ${currentCaptain.name || currentCaptain.displayName}` : ""}
+                  </AppText>
+                </View>
+              </View>
+
+              {/* Quick links */}
+              <View style={styles.adminQuickLinks}>
+                <Pressable style={[styles.adminQuickBtn, { borderColor: colors.border }]} onPress={() => router.push("/(app)/(tabs)/members")}>
+                  <Feather name="users" size={14} color={colors.primary} />
+                  <AppText variant="small" color="primary">Members</AppText>
+                </Pressable>
+                <Pressable style={[styles.adminQuickBtn, { borderColor: colors.border }]} onPress={() => router.push("/(app)/(tabs)/events")}>
+                  <Feather name="calendar" size={14} color={colors.primary} />
+                  <AppText variant="small" color="primary">Events</AppText>
+                </Pressable>
+                <Pressable style={[styles.adminQuickBtn, { borderColor: colors.border }]} onPress={() => router.push("/(app)/tee-sheet")}>
+                  <Feather name="file-text" size={14} color={colors.primary} />
+                  <AppText variant="small" color="primary">Tee Sheet</AppText>
+                </Pressable>
+              </View>
+
+              {/* Re-appoint captain toggle */}
+              <Pressable
+                onPress={() => setShowReappoint((v) => !v)}
+                style={[styles.adminReappointToggle, { borderColor: colors.borderLight }]}
+              >
+                <Feather name="shield" size={14} color={colors.error} />
+                <AppText variant="bodyBold" style={{ flex: 1 }}>Re-appoint Captain</AppText>
+                <Feather name={showReappoint ? "chevron-up" : "chevron-down"} size={16} color={colors.textTertiary} />
+              </Pressable>
+
+              {showReappoint && (
+                <View style={{ marginTop: spacing.sm }}>
+                  {adminMembers.map((m) => {
+                    const isCurrent = m.role?.toLowerCase() === "captain";
+                    const isSelected = selectedNewCaptain === m.id;
+                    return (
+                      <Pressable
+                        key={m.id}
+                        onPress={() => !isCurrent && setSelectedNewCaptain(m.id)}
+                        style={[
+                          styles.adminMemberRow,
+                          { borderColor: colors.borderLight },
+                          isSelected && { backgroundColor: colors.primary + "10", borderColor: colors.primary },
+                        ]}
+                      >
+                        <View style={{ flex: 1 }}>
+                          <AppText variant="body">{m.name || m.displayName || "Member"}</AppText>
+                          <AppText variant="small" color="secondary">{m.role || "member"}</AppText>
+                        </View>
+                        {isCurrent && (
+                          <View style={[styles.adminBadge, { backgroundColor: colors.primary + "18" }]}>
+                            <AppText variant="small" color="primary" style={{ fontWeight: "700" }}>Captain</AppText>
+                          </View>
+                        )}
+                        {isSelected && !isCurrent && <Feather name="check-circle" size={18} color={colors.primary} />}
+                      </Pressable>
+                    );
+                  })}
+                  {selectedNewCaptain && (
+                    <View style={{ marginTop: spacing.sm }}>
+                      <AppInput placeholder="Reason (optional)" value={reappointReason} onChangeText={setReappointReason} />
+                      <PrimaryButton onPress={handleReappoint} loading={reappointing} disabled={reappointing} style={{ marginTop: spacing.sm }}>
+                        Re-appoint Captain
+                      </PrimaryButton>
+                    </View>
+                  )}
+                </View>
+              )}
+            </AppCard>
+          )}
+
+          <Toast visible={adminToast.visible} message={adminToast.message} type={adminToast.type} onHide={() => setAdminToast((t) => ({ ...t, visible: false }))} />
+        </>
+      )}
+
       {/* Quick Links */}
       <AppText variant="h2" style={styles.sectionTitle}>Quick Actions</AppText>
       <AppCard padding="sm">
@@ -791,6 +1023,63 @@ const styles = StyleSheet.create({
     borderRadius: radius.sm,
     alignItems: "center",
     justifyContent: "center",
+  },
+  adminSocRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.sm,
+    borderBottomWidth: 1,
+  },
+  adminCodeBadge: {
+    paddingHorizontal: spacing.xs,
+    paddingVertical: 2,
+    borderRadius: radius.sm,
+    marginLeft: spacing.xs,
+  },
+  adminCodeText: {
+    fontFamily: "monospace",
+    fontSize: 11,
+    fontWeight: "700",
+    letterSpacing: 1,
+  },
+  adminQuickLinks: {
+    flexDirection: "row",
+    gap: spacing.xs,
+    marginTop: spacing.sm,
+    marginBottom: spacing.sm,
+    flexWrap: "wrap",
+  },
+  adminQuickBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 5,
+    borderWidth: 1,
+    borderRadius: radius.sm,
+  },
+  adminReappointToggle: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.xs,
+    paddingVertical: spacing.sm,
+    borderTopWidth: 1,
+    marginTop: spacing.xs,
+  },
+  adminMemberRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.sm,
+    borderWidth: 1,
+    borderRadius: radius.sm,
+    marginBottom: spacing.xs,
+  },
+  adminBadge: {
+    paddingHorizontal: spacing.xs,
+    paddingVertical: 2,
+    borderRadius: radius.sm,
   },
   footer: {
     marginTop: spacing.xl,

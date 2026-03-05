@@ -19,6 +19,7 @@ import {
   addMemberAsCaptain,
   updateMemberDoc,
   updateMemberHandicap,
+  updateHandicap,
   deleteMember,
   type MemberDoc,
 } from "@/lib/db_supabase/memberRepo";
@@ -96,6 +97,7 @@ export default function MembersScreen() {
   const [formEmail, setFormEmail] = useState("");
   const [formWhsNumber, setFormWhsNumber] = useState("");
   const [formHandicapIndex, setFormHandicapIndex] = useState("");
+  const [formLockHI, setFormLockHI] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
   // Get permissions for current member
@@ -276,15 +278,19 @@ export default function MembersScreen() {
       if (permissions.canManageHandicaps) {
         const oldWhs = editingMember.whsNumber || editingMember.whs_number || "";
         const oldHcap = editingMember.handicapIndex ?? editingMember.handicap_index ?? null;
+        const oldLock = editingMember.handicapLock ?? editingMember.handicap_lock ?? false;
         const newWhs = formWhsNumber.trim() || null;
         const newHcap = formHandicapIndex.trim() ? parseFloat(formHandicapIndex.trim()) : null;
 
         const whsChanged = (newWhs || "") !== oldWhs;
         const hcapChanged = newHcap !== oldHcap;
+        const lockChanged = formLockHI !== oldLock;
 
-        if (whsChanged || hcapChanged) {
-          console.log("[members] Updating handicap info:", { newWhs, newHcap });
-          await updateMemberHandicap(editingMember.id, newWhs, newHcap);
+        if (hcapChanged || lockChanged) {
+          await updateHandicap(editingMember.id, newHcap, lockChanged ? formLockHI : undefined);
+        }
+        if (whsChanged) {
+          await updateMemberHandicap(editingMember.id, newWhs, null);
         }
       }
 
@@ -433,6 +439,25 @@ export default function MembersScreen() {
                   Valid range: -10 to 54
                 </AppText>
               </View>
+
+              {/* Lock toggle */}
+              <Pressable
+                onPress={() => setFormLockHI((v) => !v)}
+                style={[styles.lockToggle, { borderColor: colors.borderLight }]}
+              >
+                <Feather name={formLockHI ? "lock" : "unlock"} size={16} color={formLockHI ? colors.error : colors.success} />
+                <View style={{ flex: 1 }}>
+                  <AppText variant="body">{formLockHI ? "Self-edit locked" : "Self-edit allowed"}</AppText>
+                  <AppText variant="small" color="secondary">
+                    {formLockHI ? "Member cannot change their own HI" : "Member can change their own HI"}
+                  </AppText>
+                </View>
+                <View style={[styles.lockPill, { backgroundColor: formLockHI ? colors.error + "14" : colors.success + "14" }]}>
+                  <AppText variant="small" style={{ color: formLockHI ? colors.error : colors.success, fontWeight: "700" }}>
+                    {formLockHI ? "Locked" : "Open"}
+                  </AppText>
+                </View>
+              </Pressable>
             </>
           )}
 
@@ -691,5 +716,20 @@ const styles = StyleSheet.create({
   },
   label: {
     marginBottom: spacing.xs,
+  },
+  lockToggle: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.sm,
+    borderWidth: 1,
+    borderRadius: radius.sm,
+    marginBottom: spacing.base,
+  },
+  lockPill: {
+    paddingHorizontal: spacing.xs,
+    paddingVertical: 2,
+    borderRadius: radius.full,
   },
 });

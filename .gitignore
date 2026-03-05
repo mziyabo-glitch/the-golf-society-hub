@@ -49,3 +49,4 @@ expo-env.d.ts
 .env.local
 reports/
 step2-rbac.ps1
+.cache/

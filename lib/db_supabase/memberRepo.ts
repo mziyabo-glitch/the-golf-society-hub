@@ -40,6 +40,12 @@ export type MemberDoc = {
   // Licence seat assignment
   has_seat?: boolean;
   hasSeat?: boolean; // camelCase alias
+  // Handicap lock
+  handicap_lock?: boolean;
+  handicapLock?: boolean;
+  handicap_updated_at?: string | null;
+  handicapUpdatedAt?: string | null;
+  handicap_updated_by?: string | null;
 };
 
 function mapMember(row: any): MemberDoc {
@@ -56,6 +62,9 @@ function mapMember(row: any): MemberDoc {
     annualFeeNote: row.annual_fee_note ?? null,
     // Licence seat
     hasSeat: row.has_seat ?? false,
+    // Handicap lock
+    handicapLock: row.handicap_lock ?? false,
+    handicapUpdatedAt: row.handicap_updated_at ?? null,
   };
 }
 
@@ -851,4 +860,25 @@ export async function updateMemberRole(
   }
 
   return mapMember(data);
+}
+
+/**
+ * Update a member's handicap index (and optionally lock/unlock).
+ * Uses the hardened RPC that enforces lock rules server-side.
+ */
+export async function updateHandicap(
+  memberId: string,
+  handicapIndex: number | null,
+  lock?: boolean,
+): Promise<void> {
+  const { error } = await supabase.rpc("update_handicap", {
+    p_member_id: memberId,
+    p_handicap_index: handicapIndex,
+    p_lock: lock ?? null,
+  });
+
+  if (error) {
+    console.error("[memberRepo] updateHandicap RPC:", error.message);
+    throw new Error(error.message || "Failed to update handicap");
+  }
 }

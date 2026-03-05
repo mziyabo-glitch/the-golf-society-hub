@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { StyleSheet, View, Pressable, ScrollView } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
@@ -26,6 +26,13 @@ import {
   EVENT_CLASSIFICATIONS,
 } from "@/lib/db_supabase/eventRepo";
 import { getPermissionsForMember } from "@/lib/rbac";
+import {
+  getEventRegistrations,
+  markMePaid,
+  type EventRegistration,
+} from "@/lib/db_supabase/eventRegistrationRepo";
+import { getMembersBySocietyId, type MemberDoc } from "@/lib/db_supabase/memberRepo";
+import { Toast } from "@/components/ui/Toast";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
 import { confirmDestructive, showAlert } from "@/lib/ui/alert";
 import { getSocietyLogoUrl } from "@/lib/societyLogo";
@@ -218,6 +225,52 @@ export default function EventDetailScreen() {
       loadEvent();
     }, [loadEvent])
   );
+
+  // ---- Paid Players dashboard ----
+  const canManagePayments = permissions.canManageEventPayments;
+  const [registrations, setRegistrations] = useState<EventRegistration[]>([]);
+  const [regMembers, setRegMembers] = useState<MemberDoc[]>([]);
+  const [payBusy, setPayBusy] = useState<string | null>(null);
+  const [payToast, setPayToast] = useState<{ visible: boolean; message: string; type: "success" | "error" }>({ visible: false, message: "", type: "success" });
+
+  const loadRegistrations = useCallback(async () => {
+    if (!eventId || !societyId) return;
+    try {
+      const [regs, mems] = await Promise.all([
+        getEventRegistrations(eventId),
+        getMembersBySocietyId(societyId),
+      ]);
+      setRegistrations(regs);
+      setRegMembers(mems);
+    } catch { /* non-critical */ }
+  }, [eventId, societyId]);
+
+  useEffect(() => {
+    if (eventId && societyId) loadRegistrations();
+  }, [eventId, societyId, loadRegistrations]);
+
+  const memberNameMap = useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const m of regMembers) map[m.id] = m.name || m.display_name || m.displayName || "Member";
+    return map;
+  }, [regMembers]);
+
+  const paidCount = registrations.filter((r) => r.paid).length;
+  const inCount = registrations.filter((r) => r.status === "in").length;
+
+  const handleTogglePaid = async (reg: EventRegistration) => {
+    if (payBusy) return;
+    setPayBusy(reg.member_id);
+    try {
+      await markMePaid(reg.event_id, reg.member_id, !reg.paid);
+      setPayToast({ visible: true, message: reg.paid ? "Marked unpaid" : "Marked paid", type: "success" });
+      await loadRegistrations();
+    } catch (e: any) {
+      setPayToast({ visible: true, message: e?.message || "Failed", type: "error" });
+    } finally {
+      setPayBusy(null);
+    }
+  };
 
   // Populate form when entering edit mode
   const startEditing = () => {
@@ -653,7 +706,7 @@ export default function EventDetailScreen() {
         </AppCard>
       )}
 
-      {/* Players */}
+      {/* Players link */}
       <Pressable
         onPress={() =>
           router.push({
@@ -666,7 +719,7 @@ export default function EventDetailScreen() {
           <ActionRow
             icon="users"
             title="Players"
-            subtitle={`${(event as any).player_ids?.length ?? event.playerIds?.length ?? 0} registered`}
+            subtitle={`${paidCount} paid · ${inCount} confirmed`}
           />
         </AppCard>
       </Pressable>
@@ -696,6 +749,64 @@ export default function EventDetailScreen() {
             </View>
           </AppCard>
         </Pressable>
+      {/* Paid Players dashboard */}
+      {registrations.length > 0 && (
+        <AppCard style={styles.card}>
+          <View style={styles.paidHeader}>
+            <View style={{ flex: 1 }}>
+              <AppText variant="h2">Paid Players</AppText>
+              <AppText variant="small" color="secondary">
+                {paidCount} of {inCount} paid
+              </AppText>
+            </View>
+            <View style={[styles.paidSummaryPill, { backgroundColor: paidCount === inCount && inCount > 0 ? colors.success + "14" : colors.warning + "14" }]}>
+              <Feather
+                name={paidCount === inCount && inCount > 0 ? "check-circle" : "alert-circle"}
+                size={14}
+                color={paidCount === inCount && inCount > 0 ? colors.success : colors.warning}
+              />
+              <AppText variant="small" style={{ color: paidCount === inCount && inCount > 0 ? colors.success : colors.warning, fontWeight: "700" }}>
+                {paidCount === inCount && inCount > 0 ? "All paid" : `${inCount - paidCount} unpaid`}
+              </AppText>
+            </View>
+          </View>
+
+          {registrations
+            .filter((r) => r.status === "in")
+            .map((reg) => (
+            <View key={reg.id} style={styles.paidRow}>
+              <AppText variant="body" numberOfLines={1} style={{ flex: 1 }}>
+                {memberNameMap[reg.member_id] ?? "Member"}
+              </AppText>
+              <View style={[styles.paidPill, { backgroundColor: reg.paid ? colors.success : colors.error }]}>
+                <AppText style={styles.paidPillText}>{reg.paid ? "PAID" : "UNPAID"}</AppText>
+              </View>
+              {canManagePayments && (
+                <Pressable
+                  disabled={payBusy === reg.member_id}
+                  onPress={() => handleTogglePaid(reg)}
+                  hitSlop={8}
+                  style={({ pressed }) => [styles.paidToggleBtn, { borderColor: colors.border, opacity: pressed ? 0.6 : payBusy === reg.member_id ? 0.4 : 1 }]}
+                >
+                  <AppText variant="small" color="primary" style={{ fontWeight: "600" }}>
+                    {reg.paid ? "Undo" : "Confirm"}
+                  </AppText>
+                </Pressable>
+              )}
+            </View>
+          ))}
+
+          {registrations.filter((r) => r.status === "out").length > 0 && (
+            <View style={{ marginTop: spacing.sm, paddingTop: spacing.sm, borderTopWidth: 1, borderTopColor: "#F3F4F6" }}>
+              <AppText variant="captionBold" color="tertiary" style={{ marginBottom: spacing.xs }}>Not playing</AppText>
+              {registrations.filter((r) => r.status === "out").map((reg) => (
+                <AppText key={reg.id} variant="small" color="tertiary" style={{ paddingVertical: 2 }}>
+                  {memberNameMap[reg.member_id] ?? "Member"}
+                </AppText>
+              ))}
+            </View>
+          )}
+        </AppCard>
       )}
 
       {/* Enter Points Section - Captain/Handicapper only */}
@@ -740,6 +851,7 @@ export default function EventDetailScreen() {
         </AppText>
       )}
       <LicenceRequiredModal visible={modalVisible} onClose={() => setModalVisible(false)} societyId={guardSocietyId} />
+      <Toast visible={payToast.visible} message={payToast.message} type={payToast.type} onHide={() => setPayToast((t) => ({ ...t, visible: false }))} />
     </Screen>
   );
 }
@@ -828,6 +940,44 @@ const styles = StyleSheet.create({
   },
   actionContent: {
     flex: 1,
+  },
+  paidHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: spacing.sm,
+  },
+  paidSummaryPill: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 4,
+    borderRadius: radius.full,
+  },
+  paidRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.xs,
+    paddingVertical: spacing.sm,
+    borderBottomWidth: 1,
+    borderBottomColor: "#F3F4F6",
+  },
+  paidPill: {
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 2,
+    borderRadius: radius.full,
+  },
+  paidPillText: {
+    color: "#FFFFFF",
+    fontWeight: "700",
+    fontSize: 10,
+  },
+  paidToggleBtn: {
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 4,
+    borderWidth: 1,
+    borderRadius: radius.sm,
+    marginLeft: spacing.xs,
   },
   createdText: {
     marginTop: spacing.lg,
