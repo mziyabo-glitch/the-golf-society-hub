@@ -671,6 +671,33 @@ export default function EventDetailScreen() {
         </AppCard>
       </Pressable>
 
+      {/* View Tee Sheet — when tee times published */}
+      {event.teeTimePublishedAt && (
+        <Pressable
+          onPress={() =>
+            router.push({
+              pathname: "/(app)/event/[id]/tee-sheet",
+              params: { id: eventId },
+            })
+          }
+        >
+          <AppCard style={styles.actionCard}>
+            <View style={styles.actionRow}>
+              <View style={[styles.iconContainer, { backgroundColor: colors.success + "20" }]}>
+                <Feather name="flag" size={18} color={colors.success} />
+              </View>
+              <View style={styles.actionContent}>
+                <AppText variant="bodyBold">View Tee Sheet</AppText>
+                <AppText variant="caption" color="secondary">
+                  Your tee time and full tee sheet
+                </AppText>
+              </View>
+              <Feather name="chevron-right" size={20} color={colors.textTertiary} />
+            </View>
+          </AppCard>
+        </Pressable>
+      )}
+
       {/* Enter Points Section - Captain/Handicapper only */}
       {canEnterPoints && (
         <Pressable
