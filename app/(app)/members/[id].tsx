@@ -25,6 +25,7 @@ import {
   getMember,
   updateMember,
   updateMemberRole,
+  updateHandicap,
   deleteMember,
   type MemberDoc,
   type Gender,
@@ -154,6 +155,7 @@ export default function MemberDetailScreen() {
   const [formWhsNumber, setFormWhsNumber] = useState("");
   const [formHandicapIndex, setFormHandicapIndex] = useState("");
   const [formGender, setFormGender] = useState<Gender>(null);
+  const [formLockHI, setFormLockHI] = useState(false);
 
   // Permissions
   const permissions = getPermissionsForMember(currentMember as any);
@@ -197,6 +199,7 @@ export default function MemberDetailScreen() {
             : ""
         );
         setFormGender(data.gender ?? null);
+        setFormLockHI((data as any).handicapLock ?? (data as any).handicap_lock ?? false);
       } else {
         setError("Member not found");
       }
@@ -268,7 +271,14 @@ export default function MemberDetailScreen() {
 
       const updated = await updateMember(member.id, patch);
 
-      console.log("[MemberDetail] Save success");
+      // Update handicap + lock via hardened RPC (captain/handicapper)
+      if (canEditHandicap) {
+        const newHI = formHandicapIndex.trim() ? parseFloat(formHandicapIndex.trim()) : null;
+        const oldLock = (member as any).handicapLock ?? (member as any).handicap_lock ?? false;
+        const lockChanged = formLockHI !== oldLock;
+        await updateHandicap(member.id, newHI, lockChanged ? formLockHI : undefined);
+      }
+
       setMember(updated);
       setIsEditing(false);
       showAlert("Saved", "Member updated successfully.");
@@ -546,6 +556,25 @@ export default function MemberDetailScreen() {
                   Valid range: -10 to 54
                 </AppText>
               </View>
+
+              {/* Lock toggle */}
+              <Pressable
+                onPress={() => setFormLockHI((v) => !v)}
+                style={[styles.lockToggle, { borderColor: colors.borderLight }]}
+              >
+                <Feather name={formLockHI ? "lock" : "unlock"} size={16} color={formLockHI ? colors.error : colors.success} />
+                <View style={{ flex: 1 }}>
+                  <AppText variant="body">{formLockHI ? "Self-edit locked" : "Self-edit allowed"}</AppText>
+                  <AppText variant="small" color="secondary">
+                    {formLockHI ? "Member cannot change their own HI" : "Member can change their own HI"}
+                  </AppText>
+                </View>
+                <View style={[styles.lockPill, { backgroundColor: formLockHI ? colors.error + "14" : colors.success + "14" }]}>
+                  <AppText variant="small" style={{ color: formLockHI ? colors.error : colors.success, fontWeight: "700" }}>
+                    {formLockHI ? "Locked" : "Open"}
+                  </AppText>
+                </View>
+              </Pressable>
             </>
           ) : (
             <AppCard style={{ backgroundColor: colors.backgroundTertiary, marginTop: spacing.sm }}>
@@ -628,6 +657,12 @@ export default function MemberDetailScreen() {
                   : "Not set"}
               </AppText>
             </View>
+            {((member as any).handicapLock || (member as any).handicap_lock) ? (
+              <View style={[styles.lockPill, { backgroundColor: colors.error + "14" }]}>
+                <Feather name="lock" size={10} color={colors.error} />
+                <AppText variant="small" style={{ color: colors.error, fontWeight: "700" }}>Locked</AppText>
+              </View>
+            ) : null}
           </View>
 
           {/* Payment Status */}
@@ -830,5 +865,23 @@ const styles = StyleSheet.create({
     borderRadius: radius.sm,
     alignItems: "center",
     justifyContent: "center",
+  },
+  lockToggle: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.sm,
+    borderWidth: 1,
+    borderRadius: radius.sm,
+    marginBottom: spacing.base,
+  },
+  lockPill: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 3,
+    paddingHorizontal: spacing.xs,
+    paddingVertical: 2,
+    borderRadius: radius.full,
   },
 });

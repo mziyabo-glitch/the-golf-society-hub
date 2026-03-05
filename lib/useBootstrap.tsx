@@ -142,6 +142,8 @@ function normalizeMemberData(memberData: any): MemberData {
           ? String(memberData.whs_number)
           : null,
     hasSeat: memberData?.has_seat ?? false,
+    handicapLock: memberData?.handicap_lock ?? false,
+    handicapUpdatedAt: memberData?.handicap_updated_at ?? null,
   };
 }
 
