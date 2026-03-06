@@ -22,6 +22,7 @@ import { useBootstrap } from "@/lib/useBootstrap";
 import { joinByCode } from "@/lib/db_supabase/sinbookRepo";
 import { storePendingRivalryJoinCode } from "@/lib/pendingRivalryJoinCode";
 import { getColors, spacing } from "@/lib/ui/theme";
+import { Toast } from "@/components/ui/Toast";
 import { showAlert } from "@/lib/ui/alert";
 
 const VALID_CODE_REGEX = /^[A-Z0-9]{6}$/;
@@ -46,6 +47,7 @@ export default function JoinRivalryScreen() {
   const [inviteLoaded, setInviteLoaded] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
   const [urlCodeInvalid, setUrlCodeInvalid] = useState(false);
+  const [toast, setToast] = useState({ visible: false, message: "", type: "info" as const });
 
   // Prefill from URL and store if not signed in
   useEffect(() => {
@@ -82,9 +84,8 @@ export default function JoinRivalryScreen() {
       setJoinCode("");
       showAlert("Joined!", `You're now part of "${result.title}".`);
       router.replace({ pathname: "/(app)/sinbook/[id]", params: { id: result.sinbookId } });
-    } catch (err: unknown) {
-      const msg = (err as Error)?.message ?? "Invalid rivalry code.";
-      setErrorMsg(msg);
+    } catch {
+      setToast({ visible: true, message: "Invite code not ready yet. Please try again in a moment.", type: "info" });
     } finally {
       setJoining(false);
     }
@@ -169,6 +170,13 @@ export default function JoinRivalryScreen() {
           Join Rivalry
         </PrimaryButton>
       </AppCard>
+
+      <Toast
+        visible={toast.visible}
+        message={toast.message}
+        type={toast.type}
+        onHide={() => setToast((t) => ({ ...t, visible: false }))}
+      />
     </Screen>
   );
 }

@@ -4,7 +4,7 @@
  * Both participants have full edit rights.
  */
 
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Pressable, Share, StyleSheet, View } from "react-native";
 import * as Clipboard from "expo-clipboard";
 import { useLocalSearchParams, useRouter } from "expo-router";
@@ -36,7 +36,7 @@ import { getColors, spacing, radius } from "@/lib/ui/theme";
 import { formatError, type FormattedError } from "@/lib/ui/formatError";
 import { confirmDestructive, showAlert } from "@/lib/ui/alert";
 import { Toast } from "@/components/ui/Toast";
-import { getRivalryShareLinkText } from "@/lib/appConfig";
+import { getRivalryInviteMessage } from "@/lib/appConfig";
 
 export default function RivalryDetailScreen() {
   const router = useRouter();
@@ -78,6 +78,14 @@ export default function RivalryDetailScreen() {
   }, [sinbookId]);
 
   useFocusEffect(useCallback(() => { loadData(); }, [loadData]));
+
+  // Ensure join_code exists for display (legacy rows may lack it)
+  useEffect(() => {
+    if (!sinbook || sinbook.join_code) return;
+    ensureSinbookJoinCode(sinbookId)
+      .then((code) => setSinbook((prev) => (prev ? { ...prev, join_code: code } : null)))
+      .catch(() => { /* friendly toast on share */ });
+  }, [sinbook?.id, sinbook?.join_code, sinbookId]);
 
   // Derived data
   const acceptedParticipants = sinbook?.participants.filter((p) => p.status === "accepted") ?? [];
@@ -165,22 +173,19 @@ export default function RivalryDetailScreen() {
       try {
         code = await ensureSinbookJoinCode(sinbookId);
         setSinbook((prev) => (prev ? { ...prev, join_code: code } : null));
-      } catch (err: unknown) {
-        showAlert("Join code unavailable", (err as Error)?.message ?? "Could not get join code. Try again.");
+      } catch {
+        setToast({ visible: true, message: "Invite code not ready yet. Please try again in a moment.", type: "info" });
         return;
       }
     }
-    const codeUpper = code.toUpperCase();
-    const linkText = getRivalryShareLinkText(codeUpper);
+    const message = getRivalryInviteMessage(sinbook?.title ?? "Rivalry", code.toUpperCase());
     try {
-      await Share.share({
-        message: `Join my rivalry "${sinbook?.title}" on The Golf Society Hub!\n\n${linkText}`,
-      });
+      await Share.share({ message });
     } catch { /* cancelled */ }
   };
 
   const [actionBusy, setActionBusy] = useState(false);
-  const [toast, setToast] = useState({ visible: false, message: "", type: "success" as const });
+  const [toast, setToast] = useState({ visible: false, message: "", type: "success" as "success" | "error" | "info" });
 
   const handleCopyCode = async () => {
     const code = sinbook?.join_code?.trim();

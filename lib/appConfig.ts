@@ -25,8 +25,8 @@ export function getRivalryInviteUrl(joinCode: string): string {
 }
 
 /**
- * Returns the app link text for rivalry share messages.
- * Beta: Vercel URL with /join-rivalry?code= + "Or use join code: X"
+ * Returns the app link text for Sinbook rivalry share messages.
+ * Beta: Vercel URL only (no App Store / Play Store).
  * Production: App Store and Play Store download links.
  */
 export function getRivalryShareLinkText(joinCode: string): string {
@@ -35,4 +35,10 @@ export function getRivalryShareLinkText(joinCode: string): string {
     return `Open here:\n${getRivalryInviteUrl(code)}\n\nOr use join code: ${code}`;
   }
   return `Download the app:\nAndroid: ${PLAY_STORE_URL}\niOS: ${APP_STORE_URL}\n\nOr use join code: ${code}`;
+}
+
+/** Beta invite message format — always uses Vercel link, never store links. */
+export function getRivalryInviteMessage(title: string, joinCode: string): string {
+  const code = String(joinCode).trim().toUpperCase();
+  return `Join my rivalry "${title}" on The Golf Society Hub!\n\nOpen here:\n${getRivalryInviteUrl(code)}\n\nOr use join code: ${code}`;
 }
