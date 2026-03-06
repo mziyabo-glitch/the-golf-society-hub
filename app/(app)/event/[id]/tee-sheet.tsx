@@ -172,7 +172,7 @@ export default function EventTeeSheetScreen() {
               <AppText variant="captionBold" color="primary" style={styles.stickyLabel}>
                 You&apos;re in Group {myGroup.groupNumber}
               </AppText>
-              <AppText variant="h2" style={[styles.stickyTime, { color: colors.text }]}>
+              <AppText variant="display" style={{ color: colors.text }}>
                 Tee Time: {myGroup.teeTime}
               </AppText>
               {myGroup.groupMates.length > 0 && (
@@ -254,10 +254,6 @@ const styles = StyleSheet.create({
   },
   stickyLabel: {
     marginBottom: 4,
-  },
-  stickyTime: {
-    fontWeight: "700",
-    fontSize: 22,
   },
   playingWith: {
     marginTop: spacing.sm,
