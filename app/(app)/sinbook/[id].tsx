@@ -33,6 +33,7 @@ import {
 import { getColors, spacing, radius } from "@/lib/ui/theme";
 import { formatError, type FormattedError } from "@/lib/ui/formatError";
 import { confirmDestructive, showAlert } from "@/lib/ui/alert";
+import { getRivalryShareLinkText } from "@/lib/appConfig";
 
 export default function RivalryDetailScreen() {
   const router = useRouter();
@@ -156,10 +157,11 @@ export default function RivalryDetailScreen() {
   };
 
   const handleShare = async () => {
-    const code = sinbook?.join_code ?? sinbookId;
+    const code = sinbook?.join_code ?? "";
+    const linkText = getRivalryShareLinkText();
     try {
       await Share.share({
-        message: `Join my rivalry "${sinbook?.title}" on The Golf Society Hub!\n\nJoin code: ${code}\n\nDownload the app:\nAndroid: https://play.google.com/store/apps/details?id=com.thegolfsocietyhub.app\niOS: https://apps.apple.com/app/the-golf-society-hub/id6740041032`,
+        message: `Join my rivalry "${sinbook?.title}" on The Golf Society Hub!\n\nJoin code: ${code}\n\n${linkText}`,
       });
     } catch { /* cancelled */ }
   };
