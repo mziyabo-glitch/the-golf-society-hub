@@ -10,19 +10,23 @@ import { AppText } from "@/components/ui/AppText";
 import { PrimaryButton } from "@/components/ui/Button";
 import { getColors, spacing } from "@/lib/ui/theme";
 import { consumePendingInviteToken } from "@/lib/sinbookInviteToken";
+import { consumePendingRivalryJoinCode } from "@/lib/pendingRivalryJoinCode";
 import { blurWebActiveElement } from "@/lib/ui/focus";
 
 const APP_TABS = "/(app)/(tabs)";
 const JOIN_FLOW_SEGMENTS = new Set(["onboarding", "join", "join-society"]);
+const JOIN_RIVALRY_SEGMENT = "join-rivalry";
 
 function isJoinFlowRoute(pathname?: string, seg0?: string): boolean {
-  if (typeof seg0 === "string" && JOIN_FLOW_SEGMENTS.has(seg0)) return true;
+  if (typeof seg0 === "string" && (JOIN_FLOW_SEGMENTS.has(seg0) || seg0 === JOIN_RIVALRY_SEGMENT)) return true;
   if (typeof pathname !== "string") return false;
   return (
     pathname === "/join" ||
     pathname === "/join-society" ||
     pathname === "/onboarding" ||
-    pathname.startsWith("/onboarding/")
+    pathname.startsWith("/onboarding/") ||
+    pathname === "/join-rivalry" ||
+    pathname.startsWith("/join-rivalry")
   );
 }
 
@@ -68,7 +72,7 @@ function RootNavigator() {
   useEffect(() => {
     let mounted = true;
 
-    const applyAuthRedirect = (session: { user: { id: string } } | null) => {
+    const applyAuthRedirect = async (session: { user: { id: string } } | null) => {
       if (!mounted) return;
       const seg0 = segmentsRef.current[0];
       const p = pathnameRef.current;
@@ -78,19 +82,27 @@ function RootNavigator() {
       if (inPublic || inJoinFlow || isToolRoute(p, seg0)) return;
 
       if (session && !inApp) {
-        console.log("[_layout] Auth gate: session present, redirecting to", APP_TABS);
-        blurWebActiveElement();
-        router.replace(APP_TABS);
+        const pendingRivalryCode = await consumePendingRivalryJoinCode();
+        if (!mounted) return;
+        if (pendingRivalryCode) {
+          console.log("[_layout] Auth gate: resuming rivalry join with code");
+          blurWebActiveElement();
+          router.replace({ pathname: "/join-rivalry", params: { code: pendingRivalryCode } });
+        } else {
+          console.log("[_layout] Auth gate: session present, redirecting to", APP_TABS);
+          blurWebActiveElement();
+          router.replace(APP_TABS);
+        }
       }
     };
 
     supabase.auth.getSession().then(({ data: { session } }) => {
-      applyAuthRedirect(session);
+      void applyAuthRedirect(session);
     });
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       console.log("[_layout] Auth state change:", event, session ? "has session" : "no session");
-      applyAuthRedirect(session);
+      void applyAuthRedirect(session);
     });
 
     return () => {
@@ -143,6 +155,9 @@ function RootNavigator() {
     if (inSinbookInvite || inPublicRoute || isToolRoute(pathname, segments[0])) {
       return;
     }
+    if (pathname === "/join-rivalry" || (typeof pathname === "string" && pathname.startsWith("/join-rivalry"))) {
+      return;
+    }
 
     // If society state is still resolving after a recent join, wait.
     if (!hasSociety && inJoinFlow && !recentlyHadSociety) {
@@ -169,15 +184,23 @@ function RootNavigator() {
     if (hasSociety && inJoinFlow) {
       console.log("[_layout] Has society + in join flow, redirecting to dashboard");
       hasRouted.current = true;
-      consumePendingInviteToken().then((token) => {
-        if (token) {
-          console.log("[_layout] Resuming sinbook invite:", token);
+      consumePendingRivalryJoinCode().then((code) => {
+        if (code) {
+          console.log("[_layout] Resuming rivalry join with code");
           blurWebActiveElement();
-          router.replace({ pathname: "/sinbook/invite/[token]", params: { token } });
-        } else {
-          blurWebActiveElement();
-          router.replace(APP_TABS);
+          router.replace({ pathname: "/join-rivalry", params: { code } });
+          return;
         }
+        consumePendingInviteToken().then((token) => {
+          if (token) {
+            console.log("[_layout] Resuming sinbook invite:", token);
+            blurWebActiveElement();
+            router.replace({ pathname: "/sinbook/invite/[token]", params: { token } });
+          } else {
+            blurWebActiveElement();
+            router.replace(APP_TABS);
+          }
+        });
       });
     }
     // No society + not on onboarding = Personal Mode — let (app) handle it

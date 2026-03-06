@@ -34,6 +34,8 @@ import {
 import { getColors, spacing, radius } from "@/lib/ui/theme";
 import { formatError, type FormattedError } from "@/lib/ui/formatError";
 import { confirmDestructive, showAlert } from "@/lib/ui/alert";
+import { Toast } from "@/components/ui/Toast";
+import { getRivalryInviteMessage } from "@/lib/appConfig";
 
 export default function RivalryDetailScreen() {
   const router = useRouter();
@@ -166,15 +168,37 @@ export default function RivalryDetailScreen() {
   };
 
   const handleShare = async () => {
-    const code = sinbook?.join_code ?? sinbookId;
+    const code = sinbook?.join_code?.trim() ?? "";
+    if (!code) {
+      setToast({ visible: true, message: "Invite code not ready yet. Please try again in a moment.", type: "info" });
+      return;
+    }
+    const message = getRivalryInviteMessage(sinbook?.title ?? "Rivalry", code.toUpperCase());
     try {
-      await Share.share({
-        message: `Join my rivalry "${sinbook?.title}" on The Golf Society Hub!\n\nJoin code: ${code}\n\nDownload the app:\nAndroid: https://play.google.com/store/apps/details?id=com.thegolfsocietyhub.app\niOS: https://apps.apple.com/app/the-golf-society-hub/id6740041032`,
-      });
+      await Share.share({ message });
     } catch { /* cancelled */ }
   };
 
   const [actionBusy, setActionBusy] = useState(false);
+  const [toast, setToast] = useState({ visible: false, message: "", type: "success" as "success" | "error" | "info" });
+
+  const handleCopyCode = async () => {
+    const code = sinbook?.join_code?.trim();
+    if (!code) {
+      setToast({ visible: true, message: "Invite code not ready yet. Please try again in a moment.", type: "info" });
+      return;
+    }
+    try {
+      await Clipboard.setStringAsync(code.toUpperCase());
+      setToast({ visible: true, message: "Join code copied", type: "success" });
+    } catch {
+      showAlert("Copy failed", "Could not copy to clipboard.");
+    }
+  };
+
+  const handleShareInvite = async () => {
+    await handleShare();
+  };
 
   const handleDeleteSinbook = () => {
     if (actionBusy) return;
@@ -347,7 +371,7 @@ export default function RivalryDetailScreen() {
       {/* Join Code Card — always show when rivalry is inviteable or user is owner */}
       {(acceptedParticipants.length < 2 || sinbook.created_by === userId) && (
         <AppCard style={{ marginTop: spacing.sm }}>
-          <AppText variant="captionBold" color="primary" style={{ marginBottom: spacing.xs }}>
+          <AppText variant="captionBold" color="primary" style={{ marginBottom: spacing.sm }}>
             JOIN CODE
           </AppText>
           {sinbook.join_code ? (
@@ -429,6 +453,13 @@ export default function RivalryDetailScreen() {
           Add Entry
         </PrimaryButton>
       )}
+
+      <Toast
+        visible={toast.visible}
+        message={toast.message}
+        type={toast.type}
+        onHide={() => setToast((t) => ({ ...t, visible: false }))}
+      />
 
       {/* Timeline */}
       {entries.length === 0 ? (
@@ -515,19 +546,23 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
   },
   joinCodeBadge: {
-    paddingHorizontal: spacing.base,
-    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
     borderRadius: radius.sm,
     borderWidth: 1,
     borderStyle: "dashed" as const,
+    alignItems: "center",
+    justifyContent: "center",
   },
   joinCodeText: {
     letterSpacing: 4,
     fontVariant: ["tabular-nums"],
   },
   joinCodeActions: {
-    flexDirection: "column",
-    gap: spacing.xs,
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: spacing.sm,
+    marginTop: spacing.sm,
   },
   joinCodeBtn: {
     flexDirection: "row",

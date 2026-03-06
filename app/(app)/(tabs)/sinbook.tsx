@@ -30,7 +30,6 @@ import {
   createSinbook,
   acceptInvite,
   declineInvite,
-  acceptInviteByLink,
   joinByCode,
   getUnreadNotificationCount,
   getWinCountsForSinbooks,
@@ -168,31 +167,21 @@ export default function SinbookHomeScreen() {
   };
 
   const handleJoin = async () => {
-    const code = joinCode.trim();
-    if (!code) {
-      showAlert("Missing Code", "Enter the 6-character join code your rival sent you.");
+    const code = joinCode.trim().toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6);
+    if (!code || code.length !== 6) {
+      showAlert("Invalid Code", "Enter the 6-character rivalry code shared with you.");
       return;
     }
     setJoining(true);
     const displayName = member?.displayName || member?.name || "Player";
     try {
-      // Try short join code first (6-char alphanumeric)
       const result = await joinByCode(code, displayName);
       setJoinCode("");
       setShowJoin(false);
       showAlert("Joined!", `You're now part of "${result.title}".`);
       loadData();
     } catch {
-      // Fall back to legacy UUID-based join
-      try {
-        await acceptInviteByLink(code, displayName);
-        setJoinCode("");
-        setShowJoin(false);
-        showAlert("Joined!", "You're now part of the rivalry.");
-        loadData();
-      } catch (err: any) {
-        showAlert("Error", err?.message || "Invalid code or failed to join.");
-      }
+      showAlert("Invite code not ready", "Invite code not ready yet. Please try again in a moment.");
     } finally {
       setJoining(false);
     }
@@ -320,13 +309,13 @@ export default function SinbookHomeScreen() {
             <AppInput
               placeholder="e.g. ABC123"
               value={joinCode}
-              onChangeText={(text) => setJoinCode(text.toUpperCase())}
+              onChangeText={(text) => setJoinCode(text.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6))}
               autoCapitalize="characters"
               autoCorrect={false}
-              maxLength={36}
+              maxLength={6}
             />
             <AppText variant="small" color="tertiary" style={{ marginTop: 4 }}>
-              Enter the 6-character code your rival shared with you.
+              Enter the 6-character rivalry code shared with you.
             </AppText>
           </View>
           <PrimaryButton onPress={handleJoin} loading={joining} style={{ marginTop: spacing.sm }}>
@@ -350,7 +339,7 @@ export default function SinbookHomeScreen() {
           <Feather name="bell" size={20} color={colors.text} />
           {unreadCount > 0 && (
             <View style={[styles.unreadDot, { backgroundColor: colors.error }]}>
-              <AppText variant="small" color="inverse" style={{ fontSize: 9, fontWeight: "700" }}>
+              <AppText variant="small" color="inverse" style={{ fontWeight: "700" }}>
                 {unreadCount > 9 ? "9+" : unreadCount}
               </AppText>
             </View>

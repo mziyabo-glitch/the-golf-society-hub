@@ -9,6 +9,7 @@ import React, { forwardRef } from "react";
 import { View, Text, StyleSheet } from "react-native";
 import { SocietyLogoImage } from "@/components/ui/SocietyLogoImage";
 import { BrandingFooter } from "@/components/ui/BrandingFooter";
+import { typography } from "@/lib/ui/theme";
 
 export type ResultRow = {
   memberName: string;
@@ -82,7 +83,7 @@ const OOMResultsLogShareCard = forwardRef<View, OOMResultsLogShareCardProps>(
         <View style={styles.header}>
           <SocietyLogoImage
             logoUrl={logoUrl ?? null}
-            size={48}
+            size={56}
             placeholderText={getInitials(societyName)}
             style={{ marginBottom: 8 }}
           />
@@ -193,7 +194,7 @@ const styles = StyleSheet.create({
     marginBottom: 20,
   },
   societyName: {
-    fontSize: 14,
+    fontSize: typography.caption.fontSize,
     fontWeight: "500",
     color: "#6B7280",
     textTransform: "uppercase",
@@ -201,13 +202,13 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   title: {
-    fontSize: 28,
+    fontSize: typography.display.fontSize,
     fontWeight: "700",
     color: BRAND_GREEN,
     marginBottom: 2,
   },
   subtitle: {
-    fontSize: 16,
+    fontSize: typography.body.fontSize,
     fontWeight: "500",
     color: "#374151",
   },
@@ -230,7 +231,7 @@ const styles = StyleSheet.create({
     borderBottomColor: "#E5E7EB",
   },
   eventName: {
-    fontSize: 16,
+    fontSize: typography.body.fontSize,
     fontWeight: "600",
     color: "#111827",
     marginBottom: 4,
@@ -240,15 +241,15 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   eventDate: {
-    fontSize: 13,
+    fontSize: typography.body.fontSize,
     color: "#6B7280",
   },
   eventDateDot: {
-    fontSize: 13,
+    fontSize: typography.body.fontSize,
     color: "#9CA3AF",
   },
   eventFormat: {
-    fontSize: 13,
+    fontSize: typography.body.fontSize,
     color: "#6B7280",
   },
   table: {
@@ -261,7 +262,7 @@ const styles = StyleSheet.create({
     backgroundColor: BRAND_GREEN,
   },
   headerCell: {
-    fontSize: 11,
+    fontSize: typography.small.fontSize,
     fontWeight: "600",
     color: "#FFFFFF",
     textTransform: "uppercase",
@@ -302,7 +303,7 @@ const styles = StyleSheet.create({
   },
   nameText: {
     flex: 1,
-    fontSize: 14,
+    fontSize: typography.body.fontSize,
     fontWeight: "500",
     color: "#111827",
   },
@@ -311,13 +312,13 @@ const styles = StyleSheet.create({
   },
   valueText: {
     width: 50,
-    fontSize: 14,
+    fontSize: typography.body.fontSize,
     color: "#6B7280",
     textAlign: "center",
   },
   posText: {
     width: 40,
-    fontSize: 14,
+    fontSize: typography.body.fontSize,
     fontWeight: "500",
     color: "#6B7280",
     textAlign: "center",
@@ -328,13 +329,13 @@ const styles = StyleSheet.create({
   },
   oomText: {
     width: 50,
-    fontSize: 14,
+    fontSize: typography.body.fontSize,
     fontWeight: "600",
     color: BRAND_GREEN,
     textAlign: "right",
   },
   oomTextTop3: {
     fontWeight: "700",
-    fontSize: 15,
+    fontSize: typography.caption.fontSize,
   },
 });

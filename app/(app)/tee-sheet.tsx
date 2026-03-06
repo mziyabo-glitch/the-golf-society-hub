@@ -28,6 +28,7 @@ import { LicenceRequiredModal } from "@/components/LicenceRequiredModal";
 import { useBootstrap } from "@/lib/useBootstrap";
 import { usePaidAccess } from "@/lib/access/usePaidAccess";
 import { getEventsBySocietyId, getEvent, updateEvent, publishTeeTime, type EventDoc } from "@/lib/db_supabase/eventRepo";
+import { getEventRegistrations, type EventRegistration } from "@/lib/db_supabase/eventRegistrationRepo";
 import { getMembersBySocietyId, getManCoRoleHolders, type MemberDoc, type Gender, type ManCoDetails } from "@/lib/db_supabase/memberRepo";
 import { getPermissionsForMember } from "@/lib/rbac";
 import {
@@ -84,6 +85,7 @@ export default function TeeSheetScreen() {
 
   // Editable groups state
   const [groups, setGroups] = useState<PlayerGroup[]>([]);
+  const [selectedEventRegistrations, setSelectedEventRegistrations] = useState<EventRegistration[]>([]);
   const [showGroupEditor, setShowGroupEditor] = useState(false);
   const [manCo, setManCo] = useState<ManCoDetails>({ captain: null, secretary: null, treasurer: null, handicapper: null });
 
@@ -133,22 +135,31 @@ export default function TeeSheetScreen() {
     const loadEventDetails = async () => {
       if (!selectedEventId) {
         setSelectedEvent(null);
+        setSelectedEventRegistrations([]);
         setGroups([]);
         return;
       }
 
       setNotice(null);
       try {
-        const event = await getEvent(selectedEventId);
+        const [event, registrations] = await Promise.all([
+          getEvent(selectedEventId),
+          getEventRegistrations(selectedEventId),
+        ]);
         setSelectedEvent(event);
+        setSelectedEventRegistrations(registrations);
 
         // Populate form with existing values
         if (event) {
           setNtpHolesInput(formatHoleNumbers(event.nearestPinHoles));
           setLdHolesInput(formatHoleNumbers(event.longestDriveHoles));
 
-          // Initialize groups from event players
-          initializeGroups(event);
+          // Use player_ids if set; else event_registrations (status=in) for societies using In/Out
+          const playerIds =
+            event.playerIds?.length
+              ? event.playerIds
+              : registrations.filter((r) => r.status === "in").map((r) => r.member_id);
+          initializeGroups({ ...event, playerIds }, members);
         }
       } catch (err) {
         console.error("[TeeSheet] loadEventDetails error:", err);
@@ -160,10 +171,10 @@ export default function TeeSheetScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedEventId, members]);
 
-  // Initialize groups from event players
-  const initializeGroups = (event: EventDoc) => {
+  // Initialize groups from event players (playerIds from event or registrations)
+  const initializeGroups = (event: EventDoc & { playerIds?: string[] }, membersList: MemberDoc[]) => {
     const playerIds = event.playerIds || [];
-    const eventMembers = members.filter((m) => playerIds.includes(m.id));
+    const eventMembers = membersList.filter((m) => playerIds.includes(m.id));
 
     if (eventMembers.length === 0) {
       setGroups([]);
@@ -350,15 +361,11 @@ export default function TeeSheetScreen() {
         }))
       );
 
-      // Publish tee time data via RPC and refetch the event
-      try {
-        const refreshed = await publishTeeTime(selectedEvent.id, startTime || "08:00", interval);
-        if (refreshed) setSelectedEvent(refreshed);
-      } catch (err) {
-        console.warn("[TeeSheet] publishTeeTime failed (non-blocking):", err);
-      }
+      // Publish tee times to DB so Home/event detail show "Your Tee Time"
+      const refreshed = await publishTeeTime(selectedEvent.id, startTime || "08:00", interval);
+      if (refreshed) setSelectedEvent(refreshed);
 
-      const ev = selectedEvent;
+      const ev = refreshed ?? selectedEvent;
       const exportData: TeeSheetData = {
         societyId,
         societyName: society?.name || "Golf Society",
@@ -385,6 +392,13 @@ export default function TeeSheetScreen() {
         preGrouped: true,
       };
       assertPngExportOnly("Tee Sheet export");
+
+      setToast({
+        visible: true,
+        message: "Tee times published — members can now see their slot.",
+        type: "success",
+      });
+      await new Promise((r) => setTimeout(r, 1200));
 
       console.log("[TeeSheet] Export tee sheet PNG");
       const payload = encodeURIComponent(JSON.stringify(exportData));
@@ -651,7 +665,17 @@ export default function TeeSheetScreen() {
                     <SecondaryButton size="sm" onPress={cleanupGroups}>
                       <Feather name="trash-2" size={14} color={colors.text} /> Remove Empty
                     </SecondaryButton>
-                    <SecondaryButton size="sm" onPress={() => selectedEvent && initializeGroups(selectedEvent)}>
+                    <SecondaryButton
+                      size="sm"
+                      onPress={() => {
+                        if (!selectedEvent) return;
+                        const playerIds =
+                          selectedEvent.playerIds?.length
+                            ? selectedEvent.playerIds
+                            : selectedEventRegistrations.filter((r) => r.status === "in").map((r) => r.member_id);
+                        initializeGroups({ ...selectedEvent, playerIds }, members);
+                      }}
+                    >
                       <Feather name="refresh-cw" size={14} color={colors.text} /> Reset
                     </SecondaryButton>
                   </View>

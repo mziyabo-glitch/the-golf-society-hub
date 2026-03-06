@@ -67,7 +67,7 @@ async function captureElement(
     useCORS: true,
     allowTaint: false,
     backgroundColor: "#FFFFFF",
-    scale: 2,
+    scale: 3,
   });
 
   const blob = await new Promise<Blob>((resolve, reject) => {
@@ -137,6 +137,10 @@ export type ShareTarget = {
   ref: React.RefObject<any>;
   title?: string;
   fallbackSelector?: string;
+  /** Native only: capture at this pixel width for higher resolution export */
+  width?: number;
+  /** Native only: capture at this pixel height for higher resolution export */
+  height?: number;
 };
 
 export async function captureAndShareMultiple(
@@ -169,12 +173,15 @@ export async function captureAndShareMultiple(
       throw new Error("View not ready for capture.");
     }
 
-    const uri = await captureRef(target.ref, {
+    const captureOptions: Record<string, unknown> = {
       format: "png",
       quality: 1,
       result: "tmpfile",
       snapshotContentContainer: true,
-    });
+    };
+    if (target.width != null) captureOptions.width = target.width;
+    if (target.height != null) captureOptions.height = target.height;
+    const uri = await captureRef(target.ref, captureOptions);
 
     await Sharing.shareAsync(uri, {
       mimeType: "image/png",

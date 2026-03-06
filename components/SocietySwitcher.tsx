@@ -9,7 +9,7 @@ import { useRouter } from "expo-router";
 import { AppText } from "@/components/ui/AppText";
 import { AppCard } from "@/components/ui/AppCard";
 import { useBootstrap } from "@/lib/useBootstrap";
-import { getColors, spacing, radius } from "@/lib/ui/theme";
+import { getColors, spacing, radius, typography } from "@/lib/ui/theme";
 import type { MySocietyMembership } from "@/lib/db_supabase/mySocietiesRepo";
 
 function formatRole(role: string): string {
@@ -161,7 +161,7 @@ const styles = StyleSheet.create({
   pillText: {
     fontWeight: "700",
     flexShrink: 1,
-    fontSize: 12,
+    fontSize: typography.small.fontSize,
   },
   backdrop: {
     flex: 1,

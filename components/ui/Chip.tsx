@@ -26,7 +26,7 @@ export function Chip({ children, style }: ChipProps) {
 
 const styles = StyleSheet.create({
   chip: {
-    height: 28,
+    height: 32,
     paddingHorizontal: spacing.sm,
     borderRadius: radius.md,
     alignItems: "center",
