@@ -350,7 +350,7 @@ export default function SinbookHomeScreen() {
           <Feather name="bell" size={20} color={colors.text} />
           {unreadCount > 0 && (
             <View style={[styles.unreadDot, { backgroundColor: colors.error }]}>
-              <AppText variant="small" color="inverse" style={{ fontSize: 9, fontWeight: "700" }}>
+              <AppText variant="small" color="inverse" style={{ fontWeight: "700" }}>
                 {unreadCount > 9 ? "9+" : unreadCount}
               </AppText>
             </View>

@@ -20,7 +20,7 @@ import { useBootstrap } from "@/lib/useBootstrap";
 import { getEvent, updateEvent, type EventDoc } from "@/lib/db_supabase/eventRepo";
 import { getMembersBySocietyId, type MemberDoc } from "@/lib/db_supabase/memberRepo";
 import { getPermissionsForMember } from "@/lib/rbac";
-import { getColors, spacing, radius } from "@/lib/ui/theme";
+import { getColors, spacing, radius, typography } from "@/lib/ui/theme";
 
 export default function EventPlayersScreen() {
   const router = useRouter();
@@ -272,12 +272,12 @@ const styles = StyleSheet.create({
     borderColor: "#0A7C4A",
   },
   name: {
-    fontSize: 16,
+    fontSize: typography.body.fontSize,
     fontWeight: "600",
   },
   subtle: {
     marginTop: 4,
     opacity: 0.7,
-    fontSize: 13,
+    fontSize: typography.body.fontSize,
   },
 });

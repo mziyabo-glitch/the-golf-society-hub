@@ -25,7 +25,7 @@ import {
   logSocietyLogoDiagnostics,
   type LogoDiagnostics,
 } from "@/lib/societyLogo";
-import { getColors, spacing, radius } from "@/lib/ui/theme";
+import { getColors, spacing, radius, typography } from "@/lib/ui/theme";
 import { confirmDestructive, showAlert } from "@/lib/ui/alert";
 import { getSupabaseEnv, getSupabaseProjectRefSuffix } from "@/lib/supabaseEnv";
 import { isPlatformAdmin, listSocieties, reappointCaptain, type AdminSocietyRow } from "@/lib/db_supabase/adminRepo";
@@ -1039,7 +1039,7 @@ const styles = StyleSheet.create({
   },
   adminCodeText: {
     fontFamily: "monospace",
-    fontSize: 11,
+    fontSize: typography.small.fontSize,
     fontWeight: "700",
     letterSpacing: 1,
   },

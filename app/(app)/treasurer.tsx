@@ -40,7 +40,7 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { useBootstrap } from "@/lib/useBootstrap";
 import { useAsyncAction } from "@/lib/hooks/useAsyncAction";
 import { getPermissionsForMember } from "@/lib/rbac";
-import { getColors, spacing, radius } from "@/lib/ui/theme";
+import { getColors, spacing, radius, typography } from "@/lib/ui/theme";
 import { formatError } from "@/lib/ui/formatError";
 import { assertNoPrintAsync, wrapExportErrors } from "@/lib/pdf/exportContract";
 import { getSocietyLogoDataUri, getSocietyLogoUrl } from "@/lib/societyLogo";
@@ -1155,7 +1155,7 @@ const styles = StyleSheet.create({
   formLabel: {
     textTransform: "uppercase",
     letterSpacing: 0.5,
-    fontSize: 11,
+    fontSize: typography.small.fontSize,
     marginBottom: spacing.xs,
   },
   input: {

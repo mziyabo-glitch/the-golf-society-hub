@@ -8,6 +8,7 @@
 
 import React from "react";
 import { View, Text, Image, StyleSheet } from "react-native";
+import { typography } from "@/lib/ui/theme";
 
 const horizontalLogo = require("@/assets/images/horizontal-logo.png");
 
@@ -77,7 +78,7 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   text: {
-    fontSize: 11,
+    fontSize: typography.small.fontSize,
     color: "#9CA3AF",
     fontStyle: "italic",
     opacity: 0.85,

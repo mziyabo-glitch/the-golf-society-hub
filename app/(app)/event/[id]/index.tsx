@@ -33,7 +33,7 @@ import {
 } from "@/lib/db_supabase/eventRegistrationRepo";
 import { getMembersBySocietyId, type MemberDoc } from "@/lib/db_supabase/memberRepo";
 import { Toast } from "@/components/ui/Toast";
-import { getColors, spacing, radius } from "@/lib/ui/theme";
+import { getColors, spacing, radius, typography } from "@/lib/ui/theme";
 import { confirmDestructive, showAlert } from "@/lib/ui/alert";
 import { getSocietyLogoUrl } from "@/lib/societyLogo";
 
@@ -972,7 +972,7 @@ const styles = StyleSheet.create({
   paidPillText: {
     color: "#FFFFFF",
     fontWeight: "700",
-    fontSize: 10,
+    fontSize: typography.small.fontSize,
   },
   paidToggleBtn: {
     paddingHorizontal: spacing.sm,
