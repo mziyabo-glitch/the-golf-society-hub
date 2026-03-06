@@ -4,7 +4,7 @@
  * Both participants have full edit rights.
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useState } from "react";
 import { Pressable, Share, StyleSheet, View } from "react-native";
 import * as Clipboard from "expo-clipboard";
 import { useLocalSearchParams, useRouter } from "expo-router";
@@ -27,7 +27,6 @@ import {
   deleteEntry,
   deleteSinbook,
   resetSinbook,
-  ensureSinbookJoinCode,
   type SinbookWithParticipants,
   type SinbookEntry,
   type SinbookParticipant,
@@ -78,14 +77,6 @@ export default function RivalryDetailScreen() {
   }, [sinbookId]);
 
   useFocusEffect(useCallback(() => { loadData(); }, [loadData]));
-
-  // Ensure join_code exists for display (legacy rows may lack it)
-  useEffect(() => {
-    if (!sinbook || sinbook.join_code) return;
-    ensureSinbookJoinCode(sinbookId)
-      .then((code) => setSinbook((prev) => (prev ? { ...prev, join_code: code } : null)))
-      .catch(() => { /* friendly toast on share */ });
-  }, [sinbook?.id, sinbook?.join_code, sinbookId]);
 
   // Derived data
   const acceptedParticipants = sinbook?.participants.filter((p) => p.status === "accepted") ?? [];
@@ -168,15 +159,10 @@ export default function RivalryDetailScreen() {
   };
 
   const handleShare = async () => {
-    let code = sinbook?.join_code?.trim() ?? "";
+    const code = sinbook?.join_code?.trim() ?? "";
     if (!code) {
-      try {
-        code = await ensureSinbookJoinCode(sinbookId);
-        setSinbook((prev) => (prev ? { ...prev, join_code: code } : null));
-      } catch {
-        setToast({ visible: true, message: "Invite code not ready yet. Please try again in a moment.", type: "info" });
-        return;
-      }
+      setToast({ visible: true, message: "Invite code not ready yet. Please try again in a moment.", type: "info" });
+      return;
     }
     const message = getRivalryInviteMessage(sinbook?.title ?? "Rivalry", code.toUpperCase());
     try {
@@ -189,7 +175,10 @@ export default function RivalryDetailScreen() {
 
   const handleCopyCode = async () => {
     const code = sinbook?.join_code?.trim();
-    if (!code) return;
+    if (!code) {
+      setToast({ visible: true, message: "Invite code not ready yet. Please try again in a moment.", type: "info" });
+      return;
+    }
     try {
       await Clipboard.setStringAsync(code.toUpperCase());
       setToast({ visible: true, message: "Join code copied", type: "success" });
