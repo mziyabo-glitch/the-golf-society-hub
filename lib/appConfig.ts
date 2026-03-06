@@ -1,26 +1,38 @@
 /**
  * App configuration for share links and distribution mode.
- * Switch APP_MODE to control rivalry invite links during beta vs production.
+ * Switch APP_STAGE to control rivalry invite links during beta vs production.
  */
 
-export type AppMode = "beta" | "production";
+export type AppStage = "beta" | "production";
 
 /** Set to "beta" during Vercel testing; "production" when apps are live. */
-export const APP_MODE: AppMode =
-  (process.env.EXPO_PUBLIC_APP_MODE?.toLowerCase().trim() as AppMode) || "beta";
+export const APP_STAGE: AppStage =
+  (process.env.EXPO_PUBLIC_APP_STAGE?.toLowerCase().trim() as AppStage) || "beta";
+
+/** Legacy alias for backward compatibility. */
+export const APP_MODE = APP_STAGE;
 
 const VERCEL_WEB_URL = "https://the-golf-society-hub.vercel.app";
 const PLAY_STORE_URL = "https://play.google.com/store/apps/details?id=com.thegolfsocietyhub.app";
 const APP_STORE_URL = "https://apps.apple.com/app/the-golf-society-hub/id6740041032";
 
 /**
+ * Returns the full rivalry invite URL for beta (Vercel + join-rivalry route).
+ */
+export function getRivalryInviteUrl(joinCode: string): string {
+  const code = String(joinCode).trim().toUpperCase();
+  return `${VERCEL_WEB_URL}/join-rivalry?code=${encodeURIComponent(code)}`;
+}
+
+/**
  * Returns the app link text for rivalry share messages.
- * Beta: single Vercel web link.
+ * Beta: Vercel URL with /join-rivalry?code= + "Or use join code: X"
  * Production: App Store and Play Store download links.
  */
-export function getRivalryShareLinkText(): string {
-  if (APP_MODE === "beta") {
-    return `Open the app:\n${VERCEL_WEB_URL}`;
+export function getRivalryShareLinkText(joinCode: string): string {
+  const code = String(joinCode).trim().toUpperCase();
+  if (APP_STAGE === "beta") {
+    return `Open here:\n${getRivalryInviteUrl(code)}\n\nOr use join code: ${code}`;
   }
-  return `Download the app:\nAndroid: ${PLAY_STORE_URL}\niOS: ${APP_STORE_URL}`;
+  return `Download the app:\nAndroid: ${PLAY_STORE_URL}\niOS: ${APP_STORE_URL}\n\nOr use join code: ${code}`;
 }

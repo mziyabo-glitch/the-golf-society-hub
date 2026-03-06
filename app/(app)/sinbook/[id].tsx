@@ -6,6 +6,7 @@
 
 import { useCallback, useState } from "react";
 import { Pressable, Share, StyleSheet, View } from "react-native";
+import * as Clipboard from "expo-clipboard";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
 import { Feather } from "@expo/vector-icons";
@@ -34,6 +35,7 @@ import {
 import { getColors, spacing, radius } from "@/lib/ui/theme";
 import { formatError, type FormattedError } from "@/lib/ui/formatError";
 import { confirmDestructive, showAlert } from "@/lib/ui/alert";
+import { Toast } from "@/components/ui/Toast";
 import { getRivalryShareLinkText } from "@/lib/appConfig";
 
 export default function RivalryDetailScreen() {
@@ -168,15 +170,32 @@ export default function RivalryDetailScreen() {
         return;
       }
     }
-    const linkText = getRivalryShareLinkText();
+    const codeUpper = code.toUpperCase();
+    const linkText = getRivalryShareLinkText(codeUpper);
     try {
       await Share.share({
-        message: `Join my rivalry "${sinbook?.title}" on The Golf Society Hub!\n\nJoin code: ${code}\n\n${linkText}`,
+        message: `Join my rivalry "${sinbook?.title}" on The Golf Society Hub!\n\n${linkText}`,
       });
     } catch { /* cancelled */ }
   };
 
   const [actionBusy, setActionBusy] = useState(false);
+  const [toast, setToast] = useState({ visible: false, message: "", type: "success" as const });
+
+  const handleCopyCode = async () => {
+    const code = sinbook?.join_code?.trim();
+    if (!code) return;
+    try {
+      await Clipboard.setStringAsync(code.toUpperCase());
+      setToast({ visible: true, message: "Join code copied", type: "success" });
+    } catch {
+      showAlert("Copy failed", "Could not copy to clipboard.");
+    }
+  };
+
+  const handleShareInvite = async () => {
+    await handleShare();
+  };
 
   const handleDeleteSinbook = () => {
     if (actionBusy) return;
@@ -349,27 +368,32 @@ export default function RivalryDetailScreen() {
       {/* Join Code Card */}
       {sinbook.join_code && (
         <AppCard style={{ marginTop: spacing.sm }}>
-          <AppText variant="captionBold" color="primary" style={{ marginBottom: spacing.xs }}>
+          <AppText variant="captionBold" color="primary" style={{ marginBottom: spacing.sm }}>
             JOIN CODE
           </AppText>
-          <View style={styles.joinCodeRow}>
-            <View style={[styles.joinCodeBadge, { backgroundColor: colors.backgroundTertiary, borderColor: colors.border }]}>
-              <AppText variant="h1" style={styles.joinCodeText}>
-                {sinbook.join_code}
-              </AppText>
-            </View>
-            <View style={styles.joinCodeActions}>
-              <Pressable
-                onPress={handleShare}
-                style={[styles.joinCodeBtn, { backgroundColor: colors.primary + "12" }]}
-              >
-                <Feather name="share-2" size={16} color={colors.primary} />
-                <AppText variant="caption" style={{ color: colors.primary, marginLeft: 4 }}>Share</AppText>
-              </Pressable>
-            </View>
+          <View style={[styles.joinCodeBadge, { backgroundColor: colors.backgroundTertiary, borderColor: colors.border }]}>
+            <AppText variant="display" style={styles.joinCodeText}>
+              {sinbook.join_code}
+            </AppText>
+          </View>
+          <View style={styles.joinCodeActions}>
+            <Pressable
+              onPress={handleCopyCode}
+              style={[styles.joinCodeBtn, { backgroundColor: colors.primary + "12" }]}
+            >
+              <Feather name="copy" size={16} color={colors.primary} />
+              <AppText variant="caption" style={{ color: colors.primary, marginLeft: 4 }}>Copy Code</AppText>
+            </Pressable>
+            <Pressable
+              onPress={handleShareInvite}
+              style={[styles.joinCodeBtn, { backgroundColor: colors.primary + "12" }]}
+            >
+              <Feather name="share-2" size={16} color={colors.primary} />
+              <AppText variant="caption" style={{ color: colors.primary, marginLeft: 4 }}>Share Invite</AppText>
+            </Pressable>
           </View>
           <AppText variant="small" color="tertiary" style={{ marginTop: spacing.xs }}>
-            Share this code so others can join the rivalry.
+            Share this code or the invite link so others can join the rivalry.
           </AppText>
         </AppCard>
       )}
@@ -416,6 +440,13 @@ export default function RivalryDetailScreen() {
           Add Entry
         </PrimaryButton>
       )}
+
+      <Toast
+        visible={toast.visible}
+        message={toast.message}
+        type={toast.type}
+        onHide={() => setToast((t) => ({ ...t, visible: false }))}
+      />
 
       {/* Timeline */}
       {entries.length === 0 ? (
@@ -502,19 +533,23 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
   },
   joinCodeBadge: {
-    paddingHorizontal: spacing.base,
-    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
     borderRadius: radius.sm,
     borderWidth: 1,
     borderStyle: "dashed" as const,
+    alignItems: "center",
+    justifyContent: "center",
   },
   joinCodeText: {
     letterSpacing: 4,
     fontVariant: ["tabular-nums"],
   },
   joinCodeActions: {
-    flexDirection: "column",
-    gap: spacing.xs,
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: spacing.sm,
+    marginTop: spacing.sm,
   },
   joinCodeBtn: {
     flexDirection: "row",
