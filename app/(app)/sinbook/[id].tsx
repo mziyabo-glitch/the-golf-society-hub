@@ -6,6 +6,7 @@
 
 import { useCallback, useState } from "react";
 import { Pressable, Share, StyleSheet, View } from "react-native";
+import * as Clipboard from "expo-clipboard";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
 import { Feather } from "@expo/vector-icons";
@@ -153,6 +154,15 @@ export default function RivalryDetailScreen() {
     setEditingEntry(null);
     setEntryDesc("");
     setEntryWinner(null);
+  };
+
+  const handleCopyCode = async () => {
+    const code = sinbook?.join_code;
+    if (!code) return;
+    try {
+      await Clipboard.setStringAsync(code);
+      showAlert("Copied", `Join code ${code} copied to clipboard.`);
+    } catch { /* ignore */ }
   };
 
   const handleShare = async () => {
@@ -334,31 +344,46 @@ export default function RivalryDetailScreen() {
         </AppText>
       )}
 
-      {/* Join Code Card */}
-      {sinbook.join_code && (
+      {/* Join Code Card — always show when rivalry is inviteable or user is owner */}
+      {(acceptedParticipants.length < 2 || sinbook.created_by === userId) && (
         <AppCard style={{ marginTop: spacing.sm }}>
           <AppText variant="captionBold" color="primary" style={{ marginBottom: spacing.xs }}>
             JOIN CODE
           </AppText>
-          <View style={styles.joinCodeRow}>
-            <View style={[styles.joinCodeBadge, { backgroundColor: colors.backgroundTertiary, borderColor: colors.border }]}>
-              <AppText variant="h1" style={styles.joinCodeText}>
-                {sinbook.join_code}
+          {sinbook.join_code ? (
+            <>
+              <View style={styles.joinCodeRow}>
+                <View style={[styles.joinCodeBadge, { backgroundColor: colors.backgroundTertiary, borderColor: colors.border }]}>
+                  <AppText variant="h1" style={styles.joinCodeText}>
+                    {sinbook.join_code}
+                  </AppText>
+                </View>
+                <View style={styles.joinCodeActions}>
+                  <Pressable
+                    onPress={handleCopyCode}
+                    style={[styles.joinCodeBtn, { backgroundColor: colors.backgroundTertiary }]}
+                  >
+                    <Feather name="copy" size={14} color={colors.text} />
+                    <AppText variant="caption" style={{ marginLeft: 4 }}>Copy Code</AppText>
+                  </Pressable>
+                  <Pressable
+                    onPress={handleShare}
+                    style={[styles.joinCodeBtn, { backgroundColor: colors.primary + "12" }]}
+                  >
+                    <Feather name="share-2" size={14} color={colors.primary} />
+                    <AppText variant="caption" style={{ color: colors.primary, marginLeft: 4 }}>Share Invite</AppText>
+                  </Pressable>
+                </View>
+              </View>
+              <AppText variant="small" color="tertiary" style={{ marginTop: spacing.xs }}>
+                Share this code or the invite link so others can join the rivalry.
               </AppText>
-            </View>
-            <View style={styles.joinCodeActions}>
-              <Pressable
-                onPress={handleShare}
-                style={[styles.joinCodeBtn, { backgroundColor: colors.primary + "12" }]}
-              >
-                <Feather name="share-2" size={16} color={colors.primary} />
-                <AppText variant="caption" style={{ color: colors.primary, marginLeft: 4 }}>Share</AppText>
-              </Pressable>
-            </View>
-          </View>
-          <AppText variant="small" color="tertiary" style={{ marginTop: spacing.xs }}>
-            Share this code so others can join the rivalry.
-          </AppText>
+            </>
+          ) : (
+            <AppText variant="body" color="secondary">
+              Invite code not ready yet. Please try again in a moment.
+            </AppText>
+          )}
         </AppCard>
       )}
 
