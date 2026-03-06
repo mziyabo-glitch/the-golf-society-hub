@@ -12,7 +12,7 @@ type SocietyLogoProps = {
   placeholderText?: string;
 };
 
-export function SocietyLogo({ logoUrl, size = 40, style, placeholderText = "GS" }: SocietyLogoProps) {
+export function SocietyLogo({ logoUrl, size = 48, style, placeholderText = "GS" }: SocietyLogoProps) {
   return (
     <SocietyLogoImage
       logoUrl={logoUrl ?? null}

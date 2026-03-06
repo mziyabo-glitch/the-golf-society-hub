@@ -112,7 +112,7 @@ export default function LeaderboardScreen() {
   const colors = getColors();
   const tabBarHeight = useContext(BottomTabBarHeightContext) ?? 0;
   const { width: screenWidth } = useWindowDimensions();
-  const logoSize = screenWidth < 600 ? 40 : 32;
+  const logoSize = screenWidth < 600 ? 52 : 44;
 
   const params = useLocalSearchParams<{ view?: string }>();
   const initialTab: TabType =
