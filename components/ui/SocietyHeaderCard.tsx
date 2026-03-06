@@ -53,11 +53,10 @@ const styles = StyleSheet.create({
     marginLeft: spacing.md,
   },
   societyName: {
-    fontSize: 18,
-    fontWeight: "700",
+    // Uses variant="h2" (18px)
   },
   subtitle: {
     marginTop: 2,
-    fontSize: 12,
+    // Uses variant="small" (14px)
   },
 });

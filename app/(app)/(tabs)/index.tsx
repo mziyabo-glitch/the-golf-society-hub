@@ -42,7 +42,7 @@ import {
   type OrderOfMeritEntry,
   type EventResultDoc,
 } from "@/lib/db_supabase/resultsRepo";
-import { getColors, spacing, radius } from "@/lib/ui/theme";
+import { getColors, spacing, radius, typography } from "@/lib/ui/theme";
 import { formatError, type FormattedError } from "@/lib/ui/formatError";
 import { getSocietyLogoUrl } from "@/lib/societyLogo";
 import { getMySinbooks, type SinbookWithParticipants } from "@/lib/db_supabase/sinbookRepo";
@@ -728,7 +728,7 @@ export default function HomeScreen() {
                 {myTeeTimeInfo ? (
                   <>
                     <View style={styles.yourTeeTimeRow}>
-                      <AppText variant="h2" style={[styles.yourTeeTimeValue, { color: colors.text }]}>
+                      <AppText variant="display" style={{ color: colors.text }}>
                         {myTeeTimeInfo.teeTime}
                       </AppText>
                       <View style={[styles.groupPill, { backgroundColor: colors.primary + "20" }]}>
@@ -1444,8 +1444,8 @@ const styles = StyleSheet.create({
     opacity: 0.55,
   },
   poweredByText: {
-    fontSize: 11,
-    lineHeight: 14,
+    fontSize: typography.small.fontSize,
+    lineHeight: typography.small.lineHeight,
     opacity: 0.8,
   },
   societyHeroCard: {
@@ -1643,7 +1643,7 @@ const styles = StyleSheet.create({
   paidPillText: {
     color: "#FFFFFF",
     fontWeight: "700",
-    fontSize: 10,
+    fontSize: typography.small.fontSize,
   },
   nextEventDetails: {
     flexDirection: "row",
@@ -1692,10 +1692,6 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: spacing.sm,
     flexWrap: "wrap",
-  },
-  yourTeeTimeValue: {
-    fontWeight: "700",
-    fontSize: 22,
   },
   groupPill: {
     paddingHorizontal: spacing.sm,

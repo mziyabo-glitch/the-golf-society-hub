@@ -6,15 +6,16 @@
 import { Text, TextProps, TextStyle, StyleProp } from "react-native";
 import { getColors, typography } from "@/lib/ui/theme";
 
-export type TextVariant = 
-  | "title" 
-  | "h1" 
-  | "h2" 
-  | "body" 
-  | "bodyBold" 
-  | "caption" 
-  | "captionBold" 
+export type TextVariant =
+  | "title"
+  | "h1"
+  | "h2"
+  | "body"
+  | "bodyBold"
+  | "caption"
+  | "captionBold"
   | "small"
+  | "display"
   | "button"
   | "buttonLarge";
 

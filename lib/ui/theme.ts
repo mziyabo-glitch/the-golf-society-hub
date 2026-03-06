@@ -118,75 +118,83 @@ export const premiumTokens = {
   },
 } as const;
 
-// Typography — bold/clear, mobile-first premium scale
+// Typography — increased for 40+ readability, mobile-first premium scale
+// ~12–15% larger than previous; line heights ~1.4x for comfortable reading
 export const typography = {
-  // pageTitle: hero headings, event names
+  // pageTitle: hero headings, event names (was 20 → 24)
   title: {
-    fontSize: 20,
+    fontSize: 24,
     fontWeight: "700" as const,
-    lineHeight: 24,
+    lineHeight: 30,
     letterSpacing: -0.2,
   },
-  // h1: large section headings
+  // h1: large section headings (was 18 → 22)
   h1: {
-    fontSize: 18,
+    fontSize: 22,
     fontWeight: "700" as const,
-    lineHeight: 22,
+    lineHeight: 28,
     letterSpacing: -0.15,
   },
-  // h2 / sectionTitle: card headers, section labels
+  // h2 / sectionTitle: card headers, section labels (was 15 → 18)
   h2: {
-    fontSize: 15,
+    fontSize: 18,
     fontWeight: "700" as const,
-    lineHeight: 19,
+    lineHeight: 24,
     letterSpacing: -0.08,
   },
-  // body: primary readable text
+  // body: primary readable text (was 13 → 16)
   body: {
-    fontSize: 13,
+    fontSize: 16,
     fontWeight: "500" as const,
-    lineHeight: 19,
+    lineHeight: 24,
     letterSpacing: 0,
   },
-  // bodyBold: emphasized body (names, values)
+  // bodyBold: emphasized body, member names (was 14 → 17)
   bodyBold: {
-    fontSize: 14,
+    fontSize: 17,
     fontWeight: "700" as const,
-    lineHeight: 18,
+    lineHeight: 24,
     letterSpacing: 0,
   },
-  // caption: secondary info lines
+  // caption: secondary info lines (was 12.5 → 15)
   caption: {
-    fontSize: 12.5,
+    fontSize: 15,
     fontWeight: "500" as const,
-    lineHeight: 17,
+    lineHeight: 21,
     letterSpacing: 0,
   },
-  // captionBold: labels, card sub-headers
+  // captionBold: labels, card sub-headers (was 12.5 → 15)
   captionBold: {
-    fontSize: 12.5,
+    fontSize: 15,
     fontWeight: "700" as const,
-    lineHeight: 17,
+    lineHeight: 21,
     letterSpacing: 0,
   },
-  // small / meta: helper text, timestamps, badges
+  // small / meta: helper text, timestamps, badges (was 12 → 14)
   small: {
-    fontSize: 12,
-    fontWeight: "500" as const,
-    lineHeight: 16,
-    letterSpacing: 0,
-  },
-  // button
-  button: {
     fontSize: 14,
-    fontWeight: "600" as const,
+    fontWeight: "500" as const,
     lineHeight: 20,
     letterSpacing: 0,
   },
-  buttonLarge: {
+  // display: key numbers (tee times, OOM points) — 800 weight
+  display: {
+    fontSize: 26,
+    fontWeight: "800" as const,
+    lineHeight: 32,
+    letterSpacing: -0.2,
+  },
+  // button (was 14 → 16)
+  button: {
     fontSize: 16,
-    fontWeight: "700" as const,
+    fontWeight: "600" as const,
     lineHeight: 22,
+    letterSpacing: 0,
+  },
+  buttonLarge: {
+    fontSize: 18,
+    fontWeight: "700" as const,
+    lineHeight: 24,
     letterSpacing: 0,
   },
 } as const;
@@ -216,9 +224,9 @@ export const shadows = {
   },
 } as const;
 
-// Button heights
+// Button heights — min 44px for primary/accessibility
 export const buttonHeights = {
-  sm: 36,
+  sm: 40,
   md: 44,
   lg: 52,
 } as const;
