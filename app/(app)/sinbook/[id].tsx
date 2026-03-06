@@ -359,36 +359,46 @@ export default function RivalryDetailScreen() {
         </AppText>
       )}
 
-      {/* Join Code Card */}
-      {sinbook.join_code && (
+      {/* Join Code Card — always show when rivalry is inviteable or user is owner */}
+      {(acceptedParticipants.length < 2 || sinbook.created_by === userId) && (
         <AppCard style={{ marginTop: spacing.sm }}>
           <AppText variant="captionBold" color="primary" style={{ marginBottom: spacing.sm }}>
             JOIN CODE
           </AppText>
-          <View style={[styles.joinCodeBadge, { backgroundColor: colors.backgroundTertiary, borderColor: colors.border }]}>
-            <AppText variant="display" style={styles.joinCodeText}>
-              {sinbook.join_code}
+          {sinbook.join_code ? (
+            <>
+              <View style={styles.joinCodeRow}>
+                <View style={[styles.joinCodeBadge, { backgroundColor: colors.backgroundTertiary, borderColor: colors.border }]}>
+                  <AppText variant="h1" style={styles.joinCodeText}>
+                    {sinbook.join_code}
+                  </AppText>
+                </View>
+                <View style={styles.joinCodeActions}>
+                  <Pressable
+                    onPress={handleCopyCode}
+                    style={[styles.joinCodeBtn, { backgroundColor: colors.backgroundTertiary }]}
+                  >
+                    <Feather name="copy" size={14} color={colors.text} />
+                    <AppText variant="caption" style={{ marginLeft: 4 }}>Copy Code</AppText>
+                  </Pressable>
+                  <Pressable
+                    onPress={handleShare}
+                    style={[styles.joinCodeBtn, { backgroundColor: colors.primary + "12" }]}
+                  >
+                    <Feather name="share-2" size={14} color={colors.primary} />
+                    <AppText variant="caption" style={{ color: colors.primary, marginLeft: 4 }}>Share Invite</AppText>
+                  </Pressable>
+                </View>
+              </View>
+              <AppText variant="small" color="tertiary" style={{ marginTop: spacing.xs }}>
+                Share this code or the invite link so others can join the rivalry.
+              </AppText>
+            </>
+          ) : (
+            <AppText variant="body" color="secondary">
+              Invite code not ready yet. Please try again in a moment.
             </AppText>
-          </View>
-          <View style={styles.joinCodeActions}>
-            <Pressable
-              onPress={handleCopyCode}
-              style={[styles.joinCodeBtn, { backgroundColor: colors.primary + "12" }]}
-            >
-              <Feather name="copy" size={16} color={colors.primary} />
-              <AppText variant="caption" style={{ color: colors.primary, marginLeft: 4 }}>Copy Code</AppText>
-            </Pressable>
-            <Pressable
-              onPress={handleShareInvite}
-              style={[styles.joinCodeBtn, { backgroundColor: colors.primary + "12" }]}
-            >
-              <Feather name="share-2" size={16} color={colors.primary} />
-              <AppText variant="caption" style={{ color: colors.primary, marginLeft: 4 }}>Share Invite</AppText>
-            </Pressable>
-          </View>
-          <AppText variant="small" color="tertiary" style={{ marginTop: spacing.xs }}>
-            Share this code or the invite link so others can join the rivalry.
-          </AppText>
+          )}
         </AppCard>
       )}
 
