@@ -26,6 +26,7 @@ import {
   deleteEntry,
   deleteSinbook,
   resetSinbook,
+  ensureSinbookJoinCode,
   type SinbookWithParticipants,
   type SinbookEntry,
   type SinbookParticipant,
@@ -157,7 +158,16 @@ export default function RivalryDetailScreen() {
   };
 
   const handleShare = async () => {
-    const code = sinbook?.join_code ?? "";
+    let code = sinbook?.join_code?.trim() ?? "";
+    if (!code) {
+      try {
+        code = await ensureSinbookJoinCode(sinbookId);
+        setSinbook((prev) => (prev ? { ...prev, join_code: code } : null));
+      } catch (err: unknown) {
+        showAlert("Join code unavailable", (err as Error)?.message ?? "Could not get join code. Try again.");
+        return;
+      }
+    }
     const linkText = getRivalryShareLinkText();
     try {
       await Share.share({
