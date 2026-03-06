@@ -180,8 +180,8 @@ export default function SinbookHomeScreen() {
       setShowJoin(false);
       showAlert("Joined!", `You're now part of "${result.title}".`);
       loadData();
-    } catch (err: any) {
-      showAlert("Error", err?.message || "Invalid rivalry code.");
+    } catch {
+      showAlert("Invite code not ready", "Invite code not ready yet. Please try again in a moment.");
     } finally {
       setJoining(false);
     }
