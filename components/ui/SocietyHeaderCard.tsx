@@ -53,10 +53,10 @@ const styles = StyleSheet.create({
     marginLeft: spacing.md,
   },
   societyName: {
-    // Uses variant="h2" (18px)
+    // Uses variant="h2" from AppText
   },
   subtitle: {
     marginTop: 2,
-    // Uses variant="small" (14px)
+    // Uses variant="small" from AppText
   },
 });

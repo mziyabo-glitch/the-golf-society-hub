@@ -8,7 +8,7 @@ import { AppCard } from "@/components/ui/AppCard";
 import { InlineNotice } from "@/components/ui/InlineNotice";
 import { LoadingState } from "@/components/ui/LoadingState";
 import { PrimaryButton, SecondaryButton } from "@/components/ui/Button";
-import { spacing } from "@/lib/ui/theme";
+import { spacing, typography } from "@/lib/ui/theme";
 import { captureAndShareMultiple, type ShareTarget } from "@/lib/share/captureAndShare";
 import { assertPngExportOnly } from "@/lib/share/pngExportGuard";
 import { getSocietyLogoDataUri } from "@/lib/societyLogo";
@@ -468,14 +468,14 @@ const styles = StyleSheet.create({
     width: 260,
   },
   societyName: {
-    fontSize: 14,
+    fontSize: typography.captionBold.fontSize,
     textTransform: "uppercase",
     letterSpacing: 1,
     color: "#0f172a",
     fontWeight: "700",
   },
   headerSubtitle: {
-    fontSize: 12,
+    fontSize: typography.small.fontSize,
     color: "#0f172a",
   },
   headerCenter: {
@@ -483,13 +483,13 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   eventTitle: {
-    fontSize: 28,
+    fontSize: typography.display.fontSize,
     fontWeight: "800",
     color: "#0f172a",
     marginBottom: 2,
   },
   eventMeta: {
-    fontSize: 14,
+    fontSize: typography.body.fontSize,
     color: "#0f172a",
   },
   headerRight: {
@@ -502,7 +502,7 @@ const styles = StyleSheet.create({
     borderRadius: 6,
   },
   teeTitle: {
-    fontSize: 11,
+    fontSize: typography.small.fontSize,
     textTransform: "uppercase",
     letterSpacing: 0.6,
     color: "#0f172a",
@@ -510,7 +510,7 @@ const styles = StyleSheet.create({
     fontWeight: "700",
   },
   teeLine: {
-    fontSize: 11,
+    fontSize: typography.small.fontSize,
     color: "#0f172a",
     marginBottom: 2,
   },
@@ -524,7 +524,7 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   emptyColumn: {
-    fontSize: 12,
+    fontSize: typography.small.fontSize,
     color: "#0f172a",
   },
   groupTable: {
@@ -541,7 +541,7 @@ const styles = StyleSheet.create({
     borderRightColor: "#E5E7EB",
   },
   timeText: {
-    fontSize: 20,
+    fontSize: typography.h1.fontSize,
     fontWeight: "700",
     color: "#0B6E4F",
   },
@@ -556,7 +556,7 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
   },
   groupHeaderCell: {
-    fontSize: 12,
+    fontSize: typography.small.fontSize,
     textTransform: "uppercase",
     letterSpacing: 0.4,
     color: "#0f172a",
@@ -570,20 +570,20 @@ const styles = StyleSheet.create({
     borderBottomColor: "#F3F4F6",
   },
   groupCell: {
-    fontSize: 16,
+    fontSize: typography.body.fontSize,
     color: "#0f172a",
     paddingHorizontal: 4,
   },
   nameCol: {
     flex: 1,
-    fontSize: 18,
+    fontSize: typography.h2.fontSize,
     fontWeight: "700",
   },
   hiCol: {
     width: 48,
     textAlign: "right",
     fontFamily: "monospace",
-    fontSize: 16,
+    fontSize: typography.body.fontSize,
     fontWeight: "600",
   },
   phCol: {
@@ -591,7 +591,7 @@ const styles = StyleSheet.create({
     textAlign: "right",
     fontFamily: "monospace",
     fontWeight: "700",
-    fontSize: 16,
+    fontSize: typography.body.fontSize,
     color: "#0B6E4F",
   },
   specialInfo: {
@@ -601,7 +601,7 @@ const styles = StyleSheet.create({
     marginTop: 6,
   },
   specialTitle: {
-    fontSize: 11,
+    fontSize: typography.small.fontSize,
     textTransform: "uppercase",
     letterSpacing: 0.6,
     color: "#0f172a",
@@ -609,7 +609,7 @@ const styles = StyleSheet.create({
     marginBottom: 2,
   },
   specialBody: {
-    fontSize: 12,
+    fontSize: typography.small.fontSize,
     color: "#0f172a",
   },
   footer: {
@@ -621,7 +621,7 @@ const styles = StyleSheet.create({
     marginTop: 8,
   },
   footerText: {
-    fontSize: 11,
+    fontSize: typography.small.fontSize,
     color: "#0f172a",
   },
 });
