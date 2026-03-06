@@ -181,19 +181,6 @@ export async function getSinbook(sinbookId: string): Promise<SinbookWithParticip
 }
 
 /**
- * Ensure a sinbook has a join_code. If missing, generates and assigns one.
- * Returns the 6-character code. Call before sharing.
- */
-export async function ensureSinbookJoinCode(sinbookId: string): Promise<string> {
-  const { data, error } = await supabase
-    .rpc("ensure_sinbook_join_code", { p_sinbook_id: sinbookId });
-
-  if (error) throw new Error(error.message);
-  if (typeof data !== "string" || !data) throw new Error("Failed to get join code");
-  return data;
-}
-
-/**
  * Create a new sinbook and add creator as accepted participant
  */
 export async function createSinbook(input: {
