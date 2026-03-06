@@ -158,15 +158,6 @@ export default function RivalryDetailScreen() {
     setEntryWinner(null);
   };
 
-  const handleCopyCode = async () => {
-    const code = sinbook?.join_code;
-    if (!code) return;
-    try {
-      await Clipboard.setStringAsync(code);
-      showAlert("Copied", `Join code ${code} copied to clipboard.`);
-    } catch { /* ignore */ }
-  };
-
   const handleShare = async () => {
     const code = sinbook?.join_code?.trim() ?? "";
     if (!code) {
