@@ -69,16 +69,16 @@ export async function searchCourses(
   const normalizedQuery = normalizeCourseName(trimmed);
   if (!normalizedQuery) return [];
 
-  const countryCode = (options?.countryCode ?? "gb").toLowerCase();
   const limit = Math.min(Math.max(options?.limit ?? 20, 1), 100);
-  const searchPattern =
-    normalizedQuery.length < 3 ? `${normalizedQuery}%` : `%${normalizedQuery}%`;
+  const normalizedPattern = `%${normalizedQuery}%`;
+  const namePattern = `%${trimmed}%`;
 
   const { data, error } = await supabase
     .from("courses")
     .select("id, name, area, lat, lng, normalized_name, source_country_code, updated_at")
-    .eq("source_country_code", countryCode)
-    .ilike("normalized_name", searchPattern)
+    // Search from shared library table without enrichment-status gating.
+    // Include both normalized_name and raw name to handle legacy/null normalized rows.
+    .or(`normalized_name.ilike.${normalizedPattern},name.ilike.${namePattern}`)
     .order("normalized_name", { ascending: true })
     .limit(limit);
 
