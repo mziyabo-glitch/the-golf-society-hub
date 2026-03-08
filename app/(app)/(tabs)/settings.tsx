@@ -634,8 +634,8 @@ export default function SettingsScreen() {
               <Feather name="map-pin" size={16} color={colors.info} />
             </View>
             <View style={{ flex: 1 }}>
-              <AppText variant="body">Course Library (Admin)</AppText>
-              <AppText variant="small" color="secondary">Review imported UK courses</AppText>
+              <AppText variant="body">Course Enrichment (Admin)</AppText>
+              <AppText variant="small" color="secondary">Review matches and tee metadata</AppText>
             </View>
             <Feather name="chevron-right" size={18} color={colors.textTertiary} />
           </Pressable>

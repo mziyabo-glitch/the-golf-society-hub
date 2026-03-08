@@ -10,7 +10,8 @@
     "lint": "expo lint -- --cache --cache-location .cache/eslint/.eslintcache",
     "build": "expo export -p web",
     "vercel-build": "npm run build",
-    "import:courses:gb": "tsx scripts/importCoursesGb.ts"
+    "import:courses:gb": "tsx scripts/importCoursesGb.ts",
+    "enrich:courses": "tsx scripts/course-import/enrich-courses.ts"
   },
   "engines": {
     "node": ">=18.x"

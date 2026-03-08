@@ -1,4 +1,6 @@
 import { supabase } from "@/lib/supabase";
+import { normalizeCourseText } from "@/lib/course-normalize";
+import type { CandidateTee } from "@/lib/course-enrichment";
 
 export type CourseLibraryDoc = {
   id: string;
@@ -8,6 +10,12 @@ export type CourseLibraryDoc = {
   lng: number;
   normalized_name: string;
   source_country_code: string;
+  enrichment_status?: string;
+  matched_source?: string | null;
+  matched_name?: string | null;
+  match_confidence?: number | null;
+  reviewed_at?: string | null;
+  reviewed_by?: string | null;
   updated_at?: string;
 };
 
@@ -17,13 +25,34 @@ export type CourseLibrarySummary = {
   lastImportAt: string | null;
 };
 
+export type CourseTeeDoc = {
+  id: string;
+  course_id: string;
+  tee_name: string;
+  tee_color: string | null;
+  gender: string | null;
+  par: number | null;
+  course_rating: number | null;
+  slope_rating: number | null;
+  source: string | null;
+  source_ref: string | null;
+  is_verified: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
+export type CourseEnrichmentRunDoc = {
+  id: string;
+  course_id: string;
+  status: string;
+  source: string | null;
+  notes: string | null;
+  payload: Record<string, unknown> | null;
+  created_at: string;
+};
+
 export function normalizeCourseName(input: string): string {
-  return input
-    .toLowerCase()
-    .trim()
-    .replace(/[^a-z0-9]+/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
+  return normalizeCourseText(input);
 }
 
 export function formatCourseLabel(course: Pick<CourseLibraryDoc, "name" | "area">): string {
@@ -63,6 +92,7 @@ export async function searchCourses(
 export async function listCoursesForAdmin(options?: {
   query?: string;
   countryCode?: string;
+  enrichmentStatus?: string;
   limit?: number;
   offset?: number;
 }): Promise<CourseLibraryDoc[]> {
@@ -73,14 +103,20 @@ export async function listCoursesForAdmin(options?: {
 
   let query = supabase
     .from("courses")
-    .select("id, name, area, lat, lng, normalized_name, source_country_code, updated_at")
+    .select(
+      "id, name, area, lat, lng, normalized_name, source_country_code, enrichment_status, matched_source, matched_name, match_confidence, reviewed_at, reviewed_by, updated_at"
+    )
     .eq("source_country_code", countryCode);
 
   if (normalizedQuery) {
     query = query.ilike("normalized_name", `%${normalizedQuery}%`);
   }
+  if (options?.enrichmentStatus) {
+    query = query.eq("enrichment_status", options.enrichmentStatus);
+  }
 
   const { data, error } = await query
+    .order("match_confidence", { ascending: false, nullsFirst: false })
     .order("area", { ascending: true })
     .order("normalized_name", { ascending: true })
     .range(offset, offset + limit - 1);
@@ -92,10 +128,212 @@ export async function listCoursesForAdmin(options?: {
   return (data ?? []) as CourseLibraryDoc[];
 }
 
+export async function getCourseById(courseId: string): Promise<CourseLibraryDoc | null> {
+  const { data, error } = await supabase
+    .from("courses")
+    .select(
+      "id, name, area, lat, lng, normalized_name, source_country_code, enrichment_status, matched_source, matched_name, match_confidence, reviewed_at, reviewed_by, updated_at"
+    )
+    .eq("id", courseId)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(error.message || "Failed to load course");
+  }
+  return (data as CourseLibraryDoc | null) ?? null;
+}
+
+export async function listCourseTees(courseId: string): Promise<CourseTeeDoc[]> {
+  if (!courseId) return [];
+  const { data, error } = await supabase
+    .from("tees")
+    .select("*")
+    .eq("course_id", courseId)
+    .order("is_verified", { ascending: false })
+    .order("gender", { ascending: true })
+    .order("tee_name", { ascending: true });
+
+  if (error) {
+    throw new Error(error.message || "Failed to load tee sets");
+  }
+  return (data ?? []) as CourseTeeDoc[];
+}
+
+export async function getLatestEnrichmentRun(
+  courseId: string
+): Promise<CourseEnrichmentRunDoc | null> {
+  if (!courseId) return null;
+  const { data, error } = await supabase
+    .from("course_enrichment_runs")
+    .select("*")
+    .eq("course_id", courseId)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(error.message || "Failed to load enrichment run");
+  }
+  return (data as CourseEnrichmentRunDoc | null) ?? null;
+}
+
+export async function createManualTeeRow(
+  courseId: string,
+  tee: {
+    tee_name: string;
+    tee_color?: string | null;
+    gender?: string | null;
+    par?: number | null;
+    course_rating?: number | null;
+    slope_rating?: number | null;
+    source?: string | null;
+    source_ref?: string | null;
+    is_verified?: boolean;
+  }
+): Promise<CourseTeeDoc> {
+  const payload = {
+    course_id: courseId,
+    tee_name: tee.tee_name.trim(),
+    tee_color: tee.tee_color?.trim() || null,
+    gender: tee.gender?.trim() || "mixed",
+    par: tee.par ?? null,
+    course_rating: tee.course_rating ?? null,
+    slope_rating: tee.slope_rating ?? null,
+    source: tee.source ?? "manual_admin",
+    source_ref: tee.source_ref ?? null,
+    is_verified: tee.is_verified ?? true,
+  };
+
+  const { data, error } = await supabase
+    .from("tees")
+    .insert(payload)
+    .select()
+    .single();
+
+  if (error) {
+    throw new Error(error.message || "Failed to add tee row");
+  }
+
+  return data as CourseTeeDoc;
+}
+
+export async function applyMatchAcceptance(
+  courseId: string,
+  options: {
+    reviewedBy: string;
+    matchedName?: string | null;
+    matchedSource?: string | null;
+    matchConfidence?: number | null;
+    tees?: CandidateTee[];
+  }
+): Promise<void> {
+  const nowIso = new Date().toISOString();
+  const { error: updateError } = await supabase
+    .from("courses")
+    .update({
+      enrichment_status: "matched",
+      matched_name: options.matchedName ?? null,
+      matched_source: options.matchedSource ?? null,
+      match_confidence: options.matchConfidence ?? null,
+      reviewed_at: nowIso,
+      reviewed_by: options.reviewedBy,
+      updated_at: nowIso,
+    })
+    .eq("id", courseId);
+
+  if (updateError) {
+    throw new Error(updateError.message || "Failed to accept match");
+  }
+
+  const teeRows = (options.tees ?? [])
+    .filter((tee) => tee.tee_name && tee.tee_name.trim().length > 0)
+    .map((tee, index) => ({
+      course_id: courseId,
+      tee_name: tee.tee_name.trim(),
+      tee_color: tee.tee_color ?? null,
+      gender: tee.gender ?? "mixed",
+      par: tee.par ?? null,
+      course_rating: tee.course_rating ?? null,
+      slope_rating: tee.slope_rating ?? null,
+      source: tee.source ?? options.matchedSource ?? "enrichment_match",
+      source_ref: tee.source_ref ?? `${courseId}:tee:${index + 1}`,
+      is_verified: true,
+    }));
+
+  if (teeRows.length > 0) {
+    const { error: teeError } = await supabase
+      .from("tees")
+      .upsert(teeRows, { onConflict: "course_id,source,source_ref" });
+
+    if (teeError) {
+      throw new Error(teeError.message || "Failed to save tee rows");
+    }
+  }
+}
+
+export async function rejectCourseMatch(courseId: string, reviewedBy: string): Promise<void> {
+  const nowIso = new Date().toISOString();
+  const { error } = await supabase
+    .from("courses")
+    .update({
+      enrichment_status: "needs_review",
+      reviewed_at: nowIso,
+      reviewed_by: reviewedBy,
+      updated_at: nowIso,
+    })
+    .eq("id", courseId);
+  if (error) {
+    throw new Error(error.message || "Failed to reject match");
+  }
+}
+
+export async function markCourseEnrichmentComplete(
+  courseId: string,
+  reviewedBy: string
+): Promise<void> {
+  const nowIso = new Date().toISOString();
+  const { error } = await supabase
+    .from("courses")
+    .update({
+      enrichment_status: "complete",
+      reviewed_at: nowIso,
+      reviewed_by: reviewedBy,
+      updated_at: nowIso,
+    })
+    .eq("id", courseId);
+  if (error) {
+    throw new Error(error.message || "Failed to mark course complete");
+  }
+}
+
+export async function updateCourseMatchedName(
+  courseId: string,
+  matchedName: string,
+  reviewedBy: string
+): Promise<void> {
+  const nowIso = new Date().toISOString();
+  const { error } = await supabase
+    .from("courses")
+    .update({
+      matched_name: matchedName.trim(),
+      reviewed_by: reviewedBy,
+      reviewed_at: nowIso,
+      updated_at: nowIso,
+    })
+    .eq("id", courseId);
+  if (error) {
+    throw new Error(error.message || "Failed to update matched name");
+  }
+}
+
 export async function getCourseLibrarySummary(countryCode = "gb"): Promise<CourseLibrarySummary> {
   const normalizedCountry = countryCode.toLowerCase();
 
-  const [{ count: coursesCount, error: coursesError }, { count: seedRowsCount, error: seedError }, { data: latestSeed, error: latestError }] =
+  const [
+    { count: coursesCount, error: coursesError },
+    { count: seedRowsCount, error: seedError },
+    { data: latestSeed, error: latestError },
+  ] =
     await Promise.all([
       supabase
         .from("courses")

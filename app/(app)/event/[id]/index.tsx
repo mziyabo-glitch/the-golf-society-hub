@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { StyleSheet, View, Pressable, ScrollView } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
@@ -25,6 +25,14 @@ import {
   EVENT_FORMATS,
   EVENT_CLASSIFICATIONS,
 } from "@/lib/db_supabase/eventRepo";
+import {
+  searchCourses,
+  formatCourseLabel,
+  getCourseById,
+  listCourseTees,
+  type CourseLibraryDoc,
+  type CourseTeeDoc,
+} from "@/lib/db_supabase/courseRepo";
 import { getPermissionsForMember } from "@/lib/rbac";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
 import { confirmDestructive, showAlert } from "@/lib/ui/alert";
@@ -170,7 +178,16 @@ export default function EventDetailScreen() {
   const [formDate, setFormDate] = useState("");
   const [formFormat, setFormFormat] = useState<EventFormat>("stableford");
   const [formClassification, setFormClassification] = useState<EventClassification>("general");
-  const [formCourseName, setFormCourseName] = useState("");
+  const [formCourseQuery, setFormCourseQuery] = useState("");
+  const [selectedCourse, setSelectedCourse] = useState<CourseLibraryDoc | null>(null);
+  const [courseResults, setCourseResults] = useState<CourseLibraryDoc[]>([]);
+  const [coursesLoading, setCoursesLoading] = useState(false);
+  const [courseSearchError, setCourseSearchError] = useState<string | null>(null);
+  const [availableTees, setAvailableTees] = useState<CourseTeeDoc[]>([]);
+  const [teesLoading, setTeesLoading] = useState(false);
+  const [teeLoadError, setTeeLoadError] = useState<string | null>(null);
+  const [selectedTeeId, setSelectedTeeId] = useState<string | null>(null);
+  const courseSearchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Men's tee settings
   const [formMenTeeName, setFormMenTeeName] = useState("");
@@ -219,14 +236,105 @@ export default function EventDetailScreen() {
     }, [loadEvent])
   );
 
+  useEffect(() => {
+    if (!isEditing) {
+      setCourseResults([]);
+      setCoursesLoading(false);
+      setCourseSearchError(null);
+      return;
+    }
+
+    const query = formCourseQuery.trim();
+    const selectedLabel = selectedCourse ? formatCourseLabel(selectedCourse) : "";
+    if (!query || query === selectedLabel || query.length < 2) {
+      setCourseResults([]);
+      setCoursesLoading(false);
+      setCourseSearchError(null);
+      return;
+    }
+
+    if (courseSearchTimerRef.current) {
+      clearTimeout(courseSearchTimerRef.current);
+    }
+
+    let cancelled = false;
+    courseSearchTimerRef.current = setTimeout(async () => {
+      setCoursesLoading(true);
+      setCourseSearchError(null);
+      try {
+        const rows = await searchCourses(query, { countryCode: "gb", limit: 20 });
+        if (!cancelled) setCourseResults(rows);
+      } catch (err: any) {
+        if (!cancelled) {
+          setCourseResults([]);
+          setCourseSearchError(err?.message || "Failed to search courses.");
+        }
+      } finally {
+        if (!cancelled) setCoursesLoading(false);
+      }
+    }, 220);
+
+    return () => {
+      cancelled = true;
+      if (courseSearchTimerRef.current) {
+        clearTimeout(courseSearchTimerRef.current);
+      }
+    };
+  }, [isEditing, formCourseQuery, selectedCourse]);
+
+  useEffect(() => {
+    if (!isEditing) {
+      setAvailableTees([]);
+      setTeesLoading(false);
+      setTeeLoadError(null);
+      return;
+    }
+    if (!selectedCourse?.id) {
+      setAvailableTees([]);
+      setSelectedTeeId(null);
+      setTeesLoading(false);
+      setTeeLoadError(null);
+      return;
+    }
+
+    let cancelled = false;
+    setTeesLoading(true);
+    setTeeLoadError(null);
+
+    listCourseTees(selectedCourse.id)
+      .then((rows) => {
+        if (cancelled) return;
+        setAvailableTees(rows);
+      })
+      .catch((err: any) => {
+        if (cancelled) return;
+        setAvailableTees([]);
+        setTeeLoadError(err?.message || "Failed to load tee sets.");
+      })
+      .finally(() => {
+        if (cancelled) return;
+        setTeesLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isEditing, selectedCourse?.id]);
+
   // Populate form when entering edit mode
-  const startEditing = () => {
+  const startEditing = async () => {
     if (!event) return;
     setFormName(event.name || "");
     setFormDate(event.date || "");
     setFormFormat(event.format || "stableford");
     setFormClassification(event.classification || "general");
-    setFormCourseName(event.courseName || "");
+    setFormCourseQuery(event.courseName || "");
+    setSelectedCourse(null);
+    setCourseResults([]);
+    setCourseSearchError(null);
+    setSelectedTeeId(typeof event.teeId === "string" ? event.teeId : null);
+    setAvailableTees([]);
+    setTeeLoadError(null);
 
     // Men's tee settings
     setFormMenTeeName(event.teeName || "");
@@ -252,6 +360,19 @@ export default function EventDetailScreen() {
       event.teeName || event.par != null || event.slopeRating != null ||
       event.ladiesTeeName || event.ladiesPar != null || event.ladiesSlopeRating != null;
     setShowTeeSettings(!!hasTeeSettings);
+
+    if (event.course_id) {
+      try {
+        const [courseDoc, teeRows] = await Promise.all([
+          getCourseById(event.course_id),
+          listCourseTees(event.course_id),
+        ]);
+        setSelectedCourse(courseDoc);
+        setAvailableTees(teeRows);
+      } catch (err: any) {
+        setTeeLoadError(err?.message || "Failed to load course tee sets.");
+      }
+    }
 
     setIsEditing(true);
   };
@@ -308,6 +429,14 @@ export default function EventDetailScreen() {
         return;
       }
     }
+    if (formCourseQuery.trim() && !selectedCourse) {
+      showAlert("Select Course", "Please choose a course from the suggestions.");
+      return;
+    }
+    if (selectedCourse && availableTees.length > 0 && !selectedTeeId) {
+      showAlert("Select Tee", "This course has tee metadata. Please pick a tee set.");
+      return;
+    }
 
     // Validate Men's tee settings
     if (!validateTeeInput(formMenPar, formMenCourseRating, formMenSlopeRating, "Men's")) {
@@ -327,6 +456,7 @@ export default function EventDetailScreen() {
     const womenPar = formWomenPar.trim() ? parseInt(formWomenPar.trim(), 10) : undefined;
     const womenCourseRating = formWomenCourseRating.trim() ? parseFloat(formWomenCourseRating.trim()) : undefined;
     const womenSlopeRating = formWomenSlopeRating.trim() ? parseInt(formWomenSlopeRating.trim(), 10) : undefined;
+    const selectedTee = availableTees.find((tee) => tee.id === selectedTeeId) ?? null;
 
     const handicapAllowance = formHandicapAllowance.trim()
       ? parseFloat(formHandicapAllowance.trim()) / 100
@@ -339,12 +469,14 @@ export default function EventDetailScreen() {
         date: formDate.trim() || undefined,
         format: formFormat,
         classification: formClassification,
-        courseName: formCourseName.trim() || undefined,
+        courseId: selectedCourse ? selectedCourse.id : null,
+        teeId: selectedTee?.id ?? null,
+        courseName: selectedCourse ? formatCourseLabel(selectedCourse) : null,
         // Men's tee settings
-        teeName: formMenTeeName.trim() || undefined,
-        par: menPar,
-        courseRating: menCourseRating,
-        slopeRating: menSlopeRating,
+        teeName: selectedTee?.tee_name || formMenTeeName.trim() || undefined,
+        par: selectedTee?.par ?? menPar,
+        courseRating: selectedTee?.course_rating ?? menCourseRating,
+        slopeRating: selectedTee?.slope_rating ?? menSlopeRating,
         // Women's tee settings
         ladiesTeeName: formWomenTeeName.trim() || undefined,
         ladiesPar: womenPar,
@@ -515,13 +647,146 @@ export default function EventDetailScreen() {
             {showTeeSettings && (
               <View style={styles.teeSettingsContainer}>
                 <View style={styles.formField}>
-                  <AppText variant="caption" style={styles.label}>Course Name</AppText>
+                  <AppText variant="caption" style={styles.label}>Course</AppText>
                   <AppInput
-                    placeholder="e.g. Royal Liverpool"
-                    value={formCourseName}
-                    onChangeText={setFormCourseName}
+                    placeholder="Search imported UK courses..."
+                    value={formCourseQuery}
+                    onChangeText={(value) => {
+                      setFormCourseQuery(value);
+                      if (selectedCourse && value.trim() !== formatCourseLabel(selectedCourse)) {
+                        setSelectedCourse(null);
+                        setAvailableTees([]);
+                        setSelectedTeeId(null);
+                      }
+                    }}
+                    autoCorrect={false}
                     autoCapitalize="words"
                   />
+                  {selectedCourse ? (
+                    <View style={[styles.selectedCourseRow, { backgroundColor: colors.backgroundSecondary }]}>
+                      <View style={{ flex: 1 }}>
+                        <AppText variant="small" color="secondary">Selected course</AppText>
+                        <AppText variant="captionBold">{formatCourseLabel(selectedCourse)}</AppText>
+                      </View>
+                      <SecondaryButton
+                        size="sm"
+                        onPress={() => {
+                          setSelectedCourse(null);
+                          setFormCourseQuery("");
+                          setCourseResults([]);
+                          setAvailableTees([]);
+                          setSelectedTeeId(null);
+                        }}
+                      >
+                        Clear
+                      </SecondaryButton>
+                    </View>
+                  ) : null}
+                  {selectedCourse ? (
+                    <View style={[styles.courseTeeContainer, { borderColor: colors.border }]}>
+                      <AppText variant="small" color="secondary" style={{ marginBottom: 6 }}>
+                        Tee sets
+                      </AppText>
+                      {teesLoading ? (
+                        <AppText variant="small" color="secondary">Loading tee sets...</AppText>
+                      ) : teeLoadError ? (
+                        <AppText variant="small" style={{ color: colors.error }}>{teeLoadError}</AppText>
+                      ) : availableTees.length === 0 ? (
+                        <AppText variant="small" color="tertiary">
+                          No tee metadata found. You can edit tee values manually below.
+                        </AppText>
+                      ) : (
+                        <View style={styles.teeChipWrap}>
+                          {availableTees.map((tee) => {
+                            const selected = tee.id === selectedTeeId;
+                            return (
+                              <Pressable
+                                key={tee.id}
+                                onPress={() => {
+                                  setSelectedTeeId(tee.id);
+                                  setFormMenTeeName(tee.tee_name || "");
+                                  setFormMenPar(tee.par != null ? String(tee.par) : "");
+                                  setFormMenCourseRating(
+                                    tee.course_rating != null ? String(tee.course_rating) : ""
+                                  );
+                                  setFormMenSlopeRating(
+                                    tee.slope_rating != null ? String(tee.slope_rating) : ""
+                                  );
+                                }}
+                                style={[
+                                  styles.teeChip,
+                                  {
+                                    backgroundColor: selected
+                                      ? colors.primary
+                                      : colors.backgroundSecondary,
+                                    borderColor: selected ? colors.primary : colors.border,
+                                  },
+                                ]}
+                              >
+                                <AppText
+                                  variant="small"
+                                  style={{ color: selected ? "#fff" : colors.text }}
+                                >
+                                  {tee.tee_name}
+                                  {tee.gender ? ` · ${tee.gender}` : ""}
+                                  {tee.slope_rating != null ? ` · S${tee.slope_rating}` : ""}
+                                </AppText>
+                              </Pressable>
+                            );
+                          })}
+                        </View>
+                      )}
+                    </View>
+                  ) : null}
+                  {coursesLoading ? (
+                    <AppText variant="small" color="secondary" style={{ marginTop: 6 }}>
+                      Searching course library...
+                    </AppText>
+                  ) : null}
+                  {courseSearchError ? (
+                    <AppText variant="small" style={{ color: colors.error, marginTop: 6 }}>
+                      {courseSearchError}
+                    </AppText>
+                  ) : null}
+                  {!coursesLoading && formCourseQuery.trim().length >= 2 && courseResults.length > 0 ? (
+                    <View style={[styles.courseResultsList, { borderColor: colors.border }]}>
+                      {courseResults.map((course) => (
+                        <Pressable
+                          key={course.id}
+                          onPress={() => {
+                            setSelectedCourse(course);
+                            setFormCourseQuery(formatCourseLabel(course));
+                            setCourseResults([]);
+                            setCourseSearchError(null);
+                            setSelectedTeeId(null);
+                          }}
+                          style={({ pressed }) => [
+                            styles.courseResultItem,
+                            {
+                              backgroundColor: pressed
+                                ? colors.backgroundSecondary
+                                : colors.surface,
+                              borderBottomColor: colors.border,
+                            },
+                          ]}
+                        >
+                          <AppText variant="body">{course.name}</AppText>
+                          <AppText variant="small" color="secondary">
+                            {course.area || "Area unknown"}
+                          </AppText>
+                        </Pressable>
+                      ))}
+                    </View>
+                  ) : null}
+                  {!coursesLoading &&
+                  formCourseQuery.trim().length >= 2 &&
+                  courseResults.length === 0 &&
+                  !courseSearchError &&
+                  !selectedCourse ? (
+                    <AppText variant="small" color="secondary" style={{ marginTop: 6 }}>
+                      No matching courses found.
+                    </AppText>
+                  ) : null}
                 </View>
 
                 {/* Men's Tee Block */}
@@ -842,6 +1107,42 @@ const styles = StyleSheet.create({
     paddingTop: spacing.sm,
     borderTopWidth: 1,
     borderTopColor: "rgba(0,0,0,0.04)",
+  },
+  selectedCourseRow: {
+    marginTop: spacing.xs,
+    borderRadius: radius.sm,
+    padding: spacing.sm,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+  },
+  courseResultsList: {
+    marginTop: spacing.xs,
+    borderWidth: 1,
+    borderRadius: radius.sm,
+    overflow: "hidden",
+  },
+  courseResultItem: {
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  courseTeeContainer: {
+    marginTop: spacing.xs,
+    borderWidth: 1,
+    borderRadius: radius.sm,
+    padding: spacing.sm,
+  },
+  teeChipWrap: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: spacing.xs,
+  },
+  teeChip: {
+    borderWidth: 1,
+    borderRadius: radius.sm,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 6,
   },
   teeSettingsRow: {
     flexDirection: "row",

@@ -38,6 +38,7 @@ export type EventDoc = {
   name: string;
   date?: string;
   course_id?: string;
+  tee_id?: string | null;
   courseName?: string;
   format: EventFormat;
   classification: EventClassification;
@@ -89,6 +90,7 @@ function mapEvent(row: any): EventDoc {
   return {
     ...row,
     courseName: row.course_name,
+    teeId: row.tee_id ?? null,
     format: row.format ?? 'stableford',
     classification: row.classification ?? 'general',
     isCompleted: row.is_completed ?? false,
@@ -179,6 +181,7 @@ export async function createEvent(
     name: string;
     date?: string;
     courseId?: string;
+    teeId?: string;
     courseName?: string;
     format: EventFormat;
     classification?: EventClassification;
@@ -203,6 +206,7 @@ export async function createEvent(
     name: data.name,
     date: data.date ?? null,
     course_id: data.courseId ?? null,
+    tee_id: data.teeId ?? null,
     course_name: data.courseName ?? null,
     format: data.format,
     classification: classification,
@@ -257,8 +261,9 @@ export async function updateEvent(
   updates: Partial<{
     name: string;
     date: string;
-    courseId: string;
-    courseName: string;
+    courseId: string | null;
+    teeId: string | null;
+    courseName: string | null;
     format: EventFormat;
     classification: EventClassification;
     status: string;
@@ -288,6 +293,7 @@ export async function updateEvent(
   if (updates.name !== undefined) payload.name = updates.name;
   if (updates.date !== undefined) payload.date = updates.date;
   if (updates.courseId !== undefined) payload.course_id = updates.courseId;
+  if (updates.teeId !== undefined) payload.tee_id = updates.teeId;
   if (updates.courseName !== undefined) payload.course_name = updates.courseName;
   if (updates.format !== undefined) payload.format = updates.format;
   if (updates.classification !== undefined) {

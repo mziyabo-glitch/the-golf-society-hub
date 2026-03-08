@@ -31,6 +31,8 @@ import {
   searchCourses,
   formatCourseLabel,
   type CourseLibraryDoc,
+  listCourseTees,
+  type CourseTeeDoc,
 } from "@/lib/db_supabase/courseRepo";
 import { getPermissionsForMember } from "@/lib/rbac";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
@@ -160,6 +162,7 @@ type FormErrors = {
   format?: string;
   classification?: string;
   course?: string;
+  teeSelection?: string;
   menTees?: string;
   womenTees?: string;
   handicapAllowance?: string;
@@ -196,6 +199,10 @@ export default function EventsScreen() {
   const [courseResults, setCourseResults] = useState<CourseLibraryDoc[]>([]);
   const [coursesLoading, setCoursesLoading] = useState(false);
   const [courseSearchError, setCourseSearchError] = useState<string | null>(null);
+  const [availableTees, setAvailableTees] = useState<CourseTeeDoc[]>([]);
+  const [teesLoading, setTeesLoading] = useState(false);
+  const [teeLoadError, setTeeLoadError] = useState<string | null>(null);
+  const [selectedTeeId, setSelectedTeeId] = useState<string | null>(null);
 
   // Men's tee settings
   const [formMenTeeName, setFormMenTeeName] = useState("");
@@ -273,6 +280,10 @@ export default function EventsScreen() {
       setCourseResults([]);
       setCoursesLoading(false);
       setCourseSearchError(null);
+      setAvailableTees([]);
+      setSelectedTeeId(null);
+      setTeesLoading(false);
+      setTeeLoadError(null);
       return;
     }
 
@@ -326,6 +337,40 @@ export default function EventsScreen() {
     };
   }, [showCreateForm, formCourseQuery, selectedCourse]);
 
+  useEffect(() => {
+    if (!showCreateForm || !selectedCourse?.id) {
+      setAvailableTees([]);
+      setSelectedTeeId(null);
+      setTeesLoading(false);
+      setTeeLoadError(null);
+      return;
+    }
+
+    let cancelled = false;
+    setTeesLoading(true);
+    setTeeLoadError(null);
+    setSelectedTeeId(null);
+
+    listCourseTees(selectedCourse.id)
+      .then((rows) => {
+        if (cancelled) return;
+        setAvailableTees(rows);
+      })
+      .catch((err: any) => {
+        if (cancelled) return;
+        setAvailableTees([]);
+        setTeeLoadError(err?.message || "Failed to load tee sets.");
+      })
+      .finally(() => {
+        if (cancelled) return;
+        setTeesLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [showCreateForm, selectedCourse?.id]);
+
   // Validate numeric tee input
   const validateTeeInput = (
     par: string,
@@ -378,6 +423,9 @@ export default function EventsScreen() {
     if (formCourseQuery.trim() && !selectedCourse) {
       errors.course = "Select a course from the library suggestions.";
     }
+    if (selectedCourse && availableTees.length > 0 && !selectedTeeId) {
+      errors.teeSelection = "Select a tee set for this course.";
+    }
 
     const menError = validateTeeInput(formMenPar, formMenCourseRating, formMenSlopeRating, "Men's");
     if (menError) errors.menTees = menError;
@@ -405,6 +453,7 @@ export default function EventsScreen() {
       formClassification,
       courseQuery: formCourseQuery.trim(),
       selectedCourseId: selectedCourse?.id ?? null,
+      selectedTeeId,
       societyId,
       userId: user?.uid,
       submitting: createAction.loading,
@@ -419,7 +468,7 @@ export default function EventsScreen() {
     setFormErrors(errors);
     if (Object.keys(errors).length > 0) {
       setValidationNotice("Please fix the highlighted fields.");
-      if (errors.menTees || errors.womenTees || errors.handicapAllowance) {
+      if (errors.menTees || errors.womenTees || errors.handicapAllowance || errors.teeSelection || errors.course) {
         setShowTeeSettings(true);
       }
       return;
@@ -439,6 +488,7 @@ export default function EventsScreen() {
     const womenPar = formWomenPar.trim() ? parseInt(formWomenPar.trim(), 10) : undefined;
     const womenCourseRating = formWomenCourseRating.trim() ? parseFloat(formWomenCourseRating.trim()) : undefined;
     const womenSlopeRating = formWomenSlopeRating.trim() ? parseInt(formWomenSlopeRating.trim(), 10) : undefined;
+    const selectedTee = availableTees.find((tee) => tee.id === selectedTeeId) ?? null;
 
     const handicapAllowance = formHandicapAllowance.trim()
       ? parseFloat(formHandicapAllowance.trim()) / 100
@@ -463,12 +513,16 @@ export default function EventsScreen() {
         createdBy: user.uid,
         // Course library selection
         courseId: selectedCourse?.id,
+        teeId: selectedTee?.id ?? undefined,
         courseName: selectedCourse ? formatCourseLabel(selectedCourse) : undefined,
         // Men's tee settings
-        teeName: formMenTeeName.trim() || undefined,
-        par: menPar,
-        courseRating: menCourseRating,
-        slopeRating: menSlopeRating,
+        teeName:
+          selectedTee?.tee_name ||
+          formMenTeeName.trim() ||
+          undefined,
+        par: selectedTee?.par ?? menPar,
+        courseRating: selectedTee?.course_rating ?? menCourseRating,
+        slopeRating: selectedTee?.slope_rating ?? menSlopeRating,
         // Women's tee settings
         ladiesTeeName: formWomenTeeName.trim() || undefined,
         ladiesPar: womenPar,
@@ -500,6 +554,10 @@ export default function EventsScreen() {
     setCourseResults([]);
     setCourseSearchError(null);
     setCoursesLoading(false);
+    setAvailableTees([]);
+    setSelectedTeeId(null);
+    setTeesLoading(false);
+    setTeeLoadError(null);
     setFormMenTeeName("");
     setFormMenPar("");
     setFormMenCourseRating("");
@@ -706,6 +764,9 @@ export default function EventsScreen() {
                       setFormCourseQuery(value);
                       if (selectedCourse && value.trim() !== formatCourseLabel(selectedCourse)) {
                         setSelectedCourse(null);
+                        setAvailableTees([]);
+                        setSelectedTeeId(null);
+                        setTeeLoadError(null);
                       }
                       setValidationNotice(null);
                       setFormErrors((prev) => ({ ...prev, course: undefined }));
@@ -725,10 +786,70 @@ export default function EventsScreen() {
                           setSelectedCourse(null);
                           setFormCourseQuery("");
                           setCourseResults([]);
+                          setAvailableTees([]);
+                          setSelectedTeeId(null);
+                          setTeeLoadError(null);
                         }}
                       >
                         Clear
                       </SecondaryButton>
+                    </View>
+                  ) : null}
+                  {selectedCourse ? (
+                    <View style={[styles.courseTeeContainer, { borderColor: colors.border }]}>
+                      <AppText variant="small" color="secondary" style={{ marginBottom: 6 }}>
+                        Tee sets
+                      </AppText>
+                      {teesLoading ? (
+                        <AppText variant="small" color="secondary">Loading tee sets...</AppText>
+                      ) : teeLoadError ? (
+                        <AppText variant="small" style={{ color: colors.error }}>{teeLoadError}</AppText>
+                      ) : availableTees.length === 0 ? (
+                        <AppText variant="small" color="tertiary">
+                          No tee metadata yet. You can still configure tee values manually below.
+                        </AppText>
+                      ) : (
+                        <View style={styles.teeChipWrap}>
+                          {availableTees.map((tee) => {
+                            const selected = selectedTeeId === tee.id;
+                            return (
+                              <Pressable
+                                key={tee.id}
+                                onPress={() => {
+                                  setSelectedTeeId(tee.id);
+                                  setFormMenTeeName(tee.tee_name || "");
+                                  setFormMenPar(tee.par != null ? String(tee.par) : "");
+                                  setFormMenCourseRating(
+                                    tee.course_rating != null ? String(tee.course_rating) : ""
+                                  );
+                                  setFormMenSlopeRating(
+                                    tee.slope_rating != null ? String(tee.slope_rating) : ""
+                                  );
+                                  setFormErrors((prev) => ({ ...prev, teeSelection: undefined }));
+                                }}
+                                style={[
+                                  styles.teeChip,
+                                  {
+                                    backgroundColor: selected
+                                      ? colors.primary
+                                      : colors.backgroundSecondary,
+                                    borderColor: selected ? colors.primary : colors.border,
+                                  },
+                                ]}
+                              >
+                                <AppText
+                                  variant="small"
+                                  style={{ color: selected ? "#fff" : colors.text }}
+                                >
+                                  {tee.tee_name}
+                                  {tee.gender ? ` · ${tee.gender}` : ""}
+                                  {tee.slope_rating != null ? ` · S${tee.slope_rating}` : ""}
+                                </AppText>
+                              </Pressable>
+                            );
+                          })}
+                        </View>
+                      )}
                     </View>
                   ) : null}
                   {coursesLoading ? (
@@ -785,6 +906,11 @@ export default function EventsScreen() {
                   {formErrors.course ? (
                     <AppText variant="small" style={[styles.fieldError, { color: colors.error }]}>
                       {formErrors.course}
+                    </AppText>
+                  ) : null}
+                  {formErrors.teeSelection ? (
+                    <AppText variant="small" style={[styles.fieldError, { color: colors.error }]}>
+                      {formErrors.teeSelection}
                     </AppText>
                   ) : null}
                   <AppText variant="small" color="tertiary" style={{ marginTop: 4 }}>
@@ -1150,6 +1276,23 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.sm,
     paddingVertical: spacing.xs,
     borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  courseTeeContainer: {
+    marginTop: spacing.xs,
+    borderWidth: 1,
+    borderRadius: radius.sm,
+    padding: spacing.sm,
+  },
+  teeChipWrap: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: spacing.xs,
+  },
+  teeChip: {
+    borderWidth: 1,
+    borderRadius: radius.sm,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 6,
   },
   teeSettingsRow: {
     flexDirection: "row",
