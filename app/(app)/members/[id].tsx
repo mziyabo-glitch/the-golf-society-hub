@@ -12,6 +12,7 @@ import { Pressable, StyleSheet, View } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
 import { Feather } from "@expo/vector-icons";
+import { goBack } from "@/lib/navigation";
 
 import { Screen } from "@/components/ui/Screen";
 import { AppText } from "@/components/ui/AppText";
@@ -377,7 +378,7 @@ export default function MemberDetailScreen() {
           icon={<Feather name="alert-circle" size={24} color={colors.error} />}
           title="Error"
           message={error || "Member not found"}
-          action={{ label: "Go Back", onPress: () => router.back() }}
+          action={{ label: "Go Back", onPress: () => goBack(router, "/(app)/(tabs)/members") }}
         />
       </Screen>
     );
@@ -408,7 +409,7 @@ export default function MemberDetailScreen() {
     <Screen>
       {/* Header */}
       <View style={styles.header}>
-        <SecondaryButton onPress={() => router.back()} size="sm">
+        <SecondaryButton onPress={() => goBack(router, "/(app)/(tabs)/members")} size="sm">
           <Feather name="arrow-left" size={16} color={colors.text} />
           {" Back"}
         </SecondaryButton>

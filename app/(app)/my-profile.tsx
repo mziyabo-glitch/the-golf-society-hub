@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { StyleSheet, View, Pressable } from "react-native";
 import { useRouter } from "expo-router";
 import { Feather } from "@expo/vector-icons";
+import { goBack } from "@/lib/navigation";
 
 import { Screen } from "@/components/ui/Screen";
 import { AppText } from "@/components/ui/AppText";
@@ -144,7 +145,7 @@ export default function MyProfileScreen() {
         {isFirstTime ? (
           <View style={{ width: 24 }} />
         ) : (
-          <Pressable onPress={() => router.back()} hitSlop={8}>
+          <Pressable onPress={() => goBack(router, "/(app)/(tabs)/settings")} hitSlop={8}>
             <Feather name="arrow-left" size={24} color={colors.text} />
           </Pressable>
         )}

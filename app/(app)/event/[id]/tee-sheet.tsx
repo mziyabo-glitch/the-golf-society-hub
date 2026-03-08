@@ -9,6 +9,7 @@ import { useCallback, useEffect, useState } from "react";
 import { StyleSheet, View, ScrollView } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { Feather } from "@expo/vector-icons";
+import { goBack } from "@/lib/navigation";
 
 import { Screen } from "@/components/ui/Screen";
 import { AppText } from "@/components/ui/AppText";
@@ -112,7 +113,7 @@ export default function EventTeeSheetScreen() {
     return (
       <Screen>
         <View style={styles.header}>
-          <SecondaryButton onPress={() => router.back()} size="sm">
+          <SecondaryButton onPress={() => goBack(router, "/(app)/(tabs)/events")} size="sm">
             <Feather name="arrow-left" size={16} color={colors.text} /> Back
           </SecondaryButton>
         </View>
@@ -139,7 +140,7 @@ export default function EventTeeSheetScreen() {
   return (
     <Screen>
       <View style={styles.header}>
-        <SecondaryButton onPress={() => router.back()} size="sm">
+        <SecondaryButton onPress={() => goBack(router, "/(app)/(tabs)/events")} size="sm">
           <Feather name="arrow-left" size={16} color={colors.text} /> Back
         </SecondaryButton>
       </View>
