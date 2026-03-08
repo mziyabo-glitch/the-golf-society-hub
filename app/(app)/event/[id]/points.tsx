@@ -15,6 +15,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { ScrollView, StyleSheet, View } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { Feather } from "@expo/vector-icons";
+import { goBack } from "@/lib/navigation";
 
 import { Screen } from "@/components/ui/Screen";
 import { AppText } from "@/components/ui/AppText";
@@ -387,7 +388,7 @@ export default function EventPointsScreen() {
     return (
       <Screen>
         <View style={styles.header}>
-          <SecondaryButton onPress={() => router.back()} size="sm">
+          <SecondaryButton onPress={() => goBack(router, "/(app)/(tabs)/events")} size="sm">
             <Feather name="arrow-left" size={16} color={colors.text} />
             {" Back"}
           </SecondaryButton>
@@ -396,7 +397,7 @@ export default function EventPointsScreen() {
           icon={<Feather name="lock" size={24} color={colors.error} />}
           title="No Access"
           message="Only Captain or Handicapper can enter points."
-          action={{ label: "Go Back", onPress: () => router.back() }}
+          action={{ label: "Go Back", onPress: () => goBack(router, "/(app)/(tabs)/events") }}
         />
       </Screen>
     );
@@ -407,7 +408,7 @@ export default function EventPointsScreen() {
     return (
       <Screen>
         <View style={styles.header}>
-          <SecondaryButton onPress={() => router.back()} size="sm">
+          <SecondaryButton onPress={() => goBack(router, "/(app)/(tabs)/events")} size="sm">
             <Feather name="arrow-left" size={16} color={colors.text} />
             {" Back"}
           </SecondaryButton>
@@ -416,7 +417,7 @@ export default function EventPointsScreen() {
           icon={<Feather name="alert-circle" size={24} color={colors.error} />}
           title="Error"
           message={error}
-          action={{ label: "Go Back", onPress: () => router.back() }}
+          action={{ label: "Go Back", onPress: () => goBack(router, "/(app)/(tabs)/events") }}
         />
       </Screen>
     );
@@ -429,7 +430,7 @@ export default function EventPointsScreen() {
         <EmptyState
           title="Not Found"
           message="Event not found."
-          action={{ label: "Go Back", onPress: () => router.back() }}
+          action={{ label: "Go Back", onPress: () => goBack(router, "/(app)/(tabs)/events") }}
         />
       </Screen>
     );
@@ -440,7 +441,7 @@ export default function EventPointsScreen() {
     return (
       <Screen>
         <View style={styles.header}>
-          <SecondaryButton onPress={() => router.back()} size="sm">
+          <SecondaryButton onPress={() => goBack(router, "/(app)/(tabs)/events")} size="sm">
             <Feather name="arrow-left" size={16} color={colors.text} />
             {" Back"}
           </SecondaryButton>
@@ -472,7 +473,7 @@ export default function EventPointsScreen() {
       />
       {/* Header */}
       <View style={styles.header}>
-        <SecondaryButton onPress={() => router.back()} size="sm">
+        <SecondaryButton onPress={() => goBack(router, "/(app)/(tabs)/events")} size="sm">
           <Feather name="arrow-left" size={16} color={colors.text} />
           {" Back"}
         </SecondaryButton>

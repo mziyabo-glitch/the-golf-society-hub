@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { StyleSheet, View, Text } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
+import { goBack } from "@/lib/navigation";
 
 import { Screen } from "@/components/ui/Screen";
 import { SocietyLogoImage } from "@/components/ui/SocietyLogoImage";
@@ -118,7 +119,7 @@ export default function TeeSheetShareScreen() {
 
         if (!mounted) return;
         setStatus("success");
-        setTimeout(() => router.back(), 400);
+        setTimeout(() => goBack(router, "/(app)/(tabs)"), 400);
       } catch (err) {
         if (!mounted) return;
         setError(formatError(err, "Couldn't generate tee sheet."));
@@ -155,7 +156,7 @@ export default function TeeSheetShareScreen() {
               style={{ marginBottom: spacing.sm }}
             />
             <View style={styles.noticeActions}>
-              <SecondaryButton onPress={() => router.back()} style={{ flex: 1 }}>
+              <SecondaryButton onPress={() => goBack(router, "/(app)/(tabs)")} style={{ flex: 1 }}>
                 Close
               </SecondaryButton>
               {payload ? (

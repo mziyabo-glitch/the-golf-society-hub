@@ -1,14 +1,15 @@
 /**
- * Sinbook Home Screen
+ * Sinbook Home Screen — Rivalry Hub
  *
- * SECTION 1: Pending Invites (if any) — accept / decline
- * SECTION 2: Active Sinbooks — card per rivalry with standings + stake line
- * SECTION 3: Create New — "+ New Sinbook" + join code
- *
- * No editing on this screen. Read-only cards with [View] action.
+ * Sections:
+ *   1) Summary strip (live / waiting / leading counts)
+ *   2) Pending invites
+ *   3) Waiting for rival
+ *   4) Live rivalries
+ *   5) Action buttons (New / Join)
  */
 
-import { useCallback, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { Pressable, StyleSheet, View } from "react-native";
 import { useRouter } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
@@ -44,26 +45,26 @@ import { formatError, type FormattedError } from "@/lib/ui/formatError";
 // Helpers
 // ============================================================================
 
-/** Build a status line like "You're leading 4–2" */
-function buildStatusLine(
-  myWins: number,
-  rivalWins: number,
-  rivalName: string,
-  hasRival: boolean,
-): string {
-  if (!hasRival) return "Waiting for rival to join";
-  if (myWins === 0 && rivalWins === 0) return "No entries yet";
-  if (myWins > rivalWins) return `You're leading ${myWins}–${rivalWins}`;
-  if (rivalWins > myWins) return `Trailing ${myWins}–${rivalWins}`;
-  return `Level ${myWins}–${rivalWins}`;
+function getInitials(name: string): string {
+  if (!name) return "?";
+  const words = name.trim().split(/\s+/);
+  return words.length === 1
+    ? name.substring(0, 2).toUpperCase()
+    : words.slice(0, 2).map((w) => w[0]).join("").toUpperCase();
 }
 
-/** Build muted ledger line from stake + season */
-function buildLedgerLine(stake: string | null, season: string | null): string | null {
-  const parts: string[] = [];
-  if (stake) parts.push(stake);
-  if (season) parts.push(`Season ${season}`);
-  return parts.length > 0 ? parts.join(" · ") : null;
+type StatusKind = "waiting" | "leading" | "trailing" | "level" | "fresh";
+
+function getStatusInfo(
+  myWins: number,
+  rivalWins: number,
+  hasRival: boolean,
+): { kind: StatusKind; label: string } {
+  if (!hasRival) return { kind: "waiting", label: "Waiting for rival" };
+  if (myWins === 0 && rivalWins === 0) return { kind: "fresh", label: "No entries yet" };
+  if (myWins > rivalWins) return { kind: "leading", label: `Leading ${myWins}–${rivalWins}` };
+  if (rivalWins > myWins) return { kind: "trailing", label: `Trailing ${myWins}–${rivalWins}` };
+  return { kind: "level", label: `Level ${myWins}–${rivalWins}` };
 }
 
 // ============================================================================
@@ -77,7 +78,6 @@ export default function SinbookHomeScreen() {
   const tabBarHeight = useBottomTabBarHeight();
   const tabContentStyle = { paddingTop: 16, paddingBottom: tabBarHeight + 24 };
 
-  // Data
   const [sinbooks, setSinbooks] = useState<SinbookWithParticipants[]>([]);
   const [pendingInvites, setPendingInvites] = useState<SinbookWithParticipants[]>([]);
   const [winCounts, setWinCounts] = useState<Map<string, Map<string, number>>>(new Map());
@@ -85,24 +85,21 @@ export default function SinbookHomeScreen() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<FormattedError | null>(null);
 
-  // Create form
   const [showCreate, setShowCreate] = useState(false);
   const [formTitle, setFormTitle] = useState("");
   const [formStake, setFormStake] = useState("");
   const [creating, setCreating] = useState(false);
 
-  // Join form
   const [showJoin, setShowJoin] = useState(false);
   const [joinCode, setJoinCode] = useState("");
   const [joining, setJoining] = useState(false);
 
   // ============================================================================
-  // Data Loading
+  // Data
   // ============================================================================
 
   const loadData = useCallback(async () => {
     if (!userId) { setLoading(false); return; }
-
     setLoading(true);
     setLoadError(null);
     try {
@@ -111,21 +108,16 @@ export default function SinbookHomeScreen() {
         getMyPendingInvites(),
         getUnreadNotificationCount(),
       ]);
-
       const active = allSb.filter((s) =>
         s.participants.some((p) => p.user_id === userId && p.status === "accepted")
       );
-
-      // Fetch win counts for active sinbooks
       const ids = active.map((s) => s.id);
       const wins = await getWinCountsForSinbooks(ids);
-
       setSinbooks(active);
       setPendingInvites(invites);
       setWinCounts(wins);
       setUnreadCount(unread);
     } catch (err) {
-      console.error("[sinbook] load error:", err);
       setLoadError(formatError(err));
     } finally {
       setLoading(false);
@@ -135,112 +127,117 @@ export default function SinbookHomeScreen() {
   useFocusEffect(useCallback(() => { loadData(); }, [loadData]));
 
   // ============================================================================
+  // Derived
+  // ============================================================================
+
+  const getRival = useCallback((sb: SinbookWithParticipants) => {
+    const other = sb.participants.find((p) => p.user_id !== userId && p.status === "accepted");
+    const rawName = other?.display_name?.trim();
+    const name = rawName && rawName !== "Player" ? rawName : null;
+    return { name, id: other?.user_id ?? null, hasRival: !!other };
+  }, [userId]);
+
+  const getMyName = useCallback((sb: SinbookWithParticipants) => {
+    const me = sb.participants.find((p) => p.user_id === userId);
+    const raw = me?.display_name?.trim();
+    return raw && raw !== "Player" ? raw : "You";
+  }, [userId]);
+
+  const getStandings = useCallback((sb: SinbookWithParticipants) => {
+    const sbWins = winCounts.get(sb.id);
+    const myWins = sbWins?.get(userId!) ?? 0;
+    const rival = getRival(sb);
+    const rivalWins = rival.id ? (sbWins?.get(rival.id) ?? 0) : 0;
+    return { myWins, rivalWins, rival };
+  }, [winCounts, userId, getRival]);
+
+  const { waitingList, liveList, summaryStats } = useMemo(() => {
+    const waiting: SinbookWithParticipants[] = [];
+    const live: SinbookWithParticipants[] = [];
+    let leadingCount = 0;
+
+    for (const sb of sinbooks) {
+      const { myWins, rivalWins, rival } = getStandings(sb);
+      if (!rival.hasRival) {
+        waiting.push(sb);
+      } else {
+        live.push(sb);
+        if (myWins > rivalWins) leadingCount++;
+      }
+    }
+
+    return {
+      waitingList: waiting,
+      liveList: live,
+      summaryStats: { live: live.length, waiting: waiting.length, leading: leadingCount },
+    };
+  }, [sinbooks, getStandings]);
+
+  // ============================================================================
   // Actions
   // ============================================================================
 
   const handleCreate = async () => {
-    if (!formTitle.trim()) {
-      showAlert("Missing Title", "Give your rivalry a name.");
-      return;
-    }
+    if (!formTitle.trim()) { showAlert("Missing Title", "Give your rivalry a name."); return; }
     setCreating(true);
     try {
       const gate = await canCreateSinbook();
-      if (!gate.allowed) {
-        showAlert("Upgrade to Pro", gate.reason || "Limit reached.");
-        return;
-      }
+      if (!gate.allowed) { showAlert("Upgrade to Pro", gate.reason || "Limit reached."); return; }
       await createSinbook({
         title: formTitle.trim(),
         stake: formStake.trim() || undefined,
         creatorDisplayName: member?.displayName || member?.name || "You",
       });
-      setFormTitle("");
-      setFormStake("");
-      setShowCreate(false);
+      setFormTitle(""); setFormStake(""); setShowCreate(false);
       loadData();
     } catch (err: any) {
       showAlert("Error", err?.message || "Failed to create rivalry.");
-    } finally {
-      setCreating(false);
-    }
+    } finally { setCreating(false); }
   };
 
   const handleJoin = async () => {
     const code = joinCode.trim().toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6);
-    if (!code || code.length !== 6) {
-      showAlert("Invalid Code", "Enter the 6-character rivalry code shared with you.");
-      return;
-    }
+    if (!code || code.length !== 6) { showAlert("Invalid Code", "Enter the 6-character rivalry code."); return; }
     setJoining(true);
-    const displayName = member?.displayName || member?.name || "You";
     try {
+      const displayName = member?.displayName || member?.name || "You";
       const result = await joinByCode(code, displayName);
-      setJoinCode("");
-      setShowJoin(false);
+      setJoinCode(""); setShowJoin(false);
       showAlert("Joined!", `You're now part of "${result.title}".`);
       loadData();
-    } catch {
-      showAlert("Invite code not ready", "Invite code not ready yet. Please try again in a moment.");
-    } finally {
-      setJoining(false);
-    }
+    } catch { showAlert("Join failed", "Invite code not ready yet. Please try again."); }
+    finally { setJoining(false); }
   };
 
-  const handleAcceptInvite = async (sinbookId: string) => {
-    try {
-      await acceptInvite(sinbookId);
-      loadData();
-    } catch (err: any) {
-      showAlert("Error", err?.message || "Failed to accept invite.");
-    }
+  const handleAcceptInvite = async (id: string) => {
+    try { await acceptInvite(id); loadData(); }
+    catch (err: any) { showAlert("Error", err?.message || "Failed."); }
   };
 
-  const handleDeclineInvite = async (sinbookId: string) => {
-    try {
-      await declineInvite(sinbookId);
-      loadData();
-    } catch (err: any) {
-      showAlert("Error", err?.message || "Failed to decline invite.");
-    }
+  const handleDeclineInvite = async (id: string) => {
+    try { await declineInvite(id); loadData(); }
+    catch (err: any) { showAlert("Error", err?.message || "Failed."); }
   };
 
-  const openRivalry = (id: string) => {
-    router.push({ pathname: "/(app)/sinbook/[id]", params: { id } });
-  };
-
-  const openNotifications = () => {
-    router.push("/(app)/sinbook/notifications");
-  };
+  const openRivalry = (id: string) => router.push({ pathname: "/(app)/sinbook/[id]", params: { id } });
+  const openNotifications = () => router.push("/(app)/sinbook/notifications");
 
   const triggerCreate = async () => {
     const gate = await canCreateSinbook();
-    if (!gate.allowed) {
-      showAlert("Upgrade to Pro", gate.reason || "Limit reached.");
-      return;
-    }
+    if (!gate.allowed) { showAlert("Upgrade to Pro", gate.reason || "Limit reached."); return; }
     setShowCreate(true);
   };
 
   // ============================================================================
-  // Render helpers
+  // Status chip color map
   // ============================================================================
 
-  /** Get rival info for a sinbook */
-  const getRival = (sb: SinbookWithParticipants) => {
-    const other = sb.participants.find((p) => p.user_id !== userId && p.status === "accepted");
-    const rawName = other?.display_name?.trim();
-    const name = rawName && rawName !== "Player" ? rawName : "Rival";
-    return { name, id: other?.user_id ?? null, hasRival: !!other };
-  };
-
-  /** Get my wins / rival wins for a sinbook */
-  const getStandings = (sb: SinbookWithParticipants) => {
-    const sbWins = winCounts.get(sb.id);
-    const myWins = sbWins?.get(userId!) ?? 0;
-    const rival = getRival(sb);
-    const rivalWins = rival.id ? (sbWins?.get(rival.id) ?? 0) : 0;
-    return { myWins, rivalWins };
+  const statusColor: Record<StatusKind, string> = {
+    waiting: colors.warning,
+    leading: colors.success,
+    trailing: colors.error,
+    level: colors.textSecondary,
+    fresh: colors.textTertiary,
   };
 
   // ============================================================================
@@ -257,46 +254,32 @@ export default function SinbookHomeScreen() {
     );
   }
 
-  // ── Create Form ──
   if (showCreate) {
     return (
       <Screen contentStyle={tabContentStyle}>
         <View style={styles.formHeader}>
           <SecondaryButton onPress={() => setShowCreate(false)} size="sm">Cancel</SecondaryButton>
-          <AppText variant="h2">New Sinbook</AppText>
+          <AppText variant="h2">New Rivalry</AppText>
           <View style={{ width: 60 }} />
         </View>
         <AppCard>
           <View style={styles.field}>
             <AppText variant="captionBold" style={styles.label}>Rivalry Name</AppText>
-            <AppInput
-              placeholder="e.g. Brian vs Dave — 2026"
-              value={formTitle}
-              onChangeText={setFormTitle}
-              autoCapitalize="words"
-            />
+            <AppInput placeholder="e.g. Brian vs Dave" value={formTitle} onChangeText={setFormTitle} autoCapitalize="words" />
           </View>
           <View style={styles.field}>
             <AppText variant="captionBold" style={styles.label}>Stake (optional)</AppText>
-            <AppInput
-              placeholder="e.g. Loser buys dinner"
-              value={formStake}
-              onChangeText={setFormStake}
-              autoCapitalize="sentences"
-            />
-            <AppText variant="small" color="tertiary" style={{ marginTop: 4 }}>
-              Tracking only — no payments through the app.
-            </AppText>
+            <AppInput placeholder="e.g. Loser buys dinner" value={formStake} onChangeText={setFormStake} autoCapitalize="sentences" />
+            <AppText variant="small" color="tertiary" style={{ marginTop: 4 }}>Tracking only — no payments.</AppText>
           </View>
           <PrimaryButton onPress={handleCreate} loading={creating} style={{ marginTop: spacing.sm }}>
-            Create Sinbook
+            Create Rivalry
           </PrimaryButton>
         </AppCard>
       </Screen>
     );
   }
 
-  // ── Join Form ──
   if (showJoin) {
     return (
       <Screen contentStyle={tabContentStyle}>
@@ -311,14 +294,12 @@ export default function SinbookHomeScreen() {
             <AppInput
               placeholder="e.g. ABC123"
               value={joinCode}
-              onChangeText={(text) => setJoinCode(text.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6))}
+              onChangeText={(t) => setJoinCode(t.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6))}
               autoCapitalize="characters"
               autoCorrect={false}
               maxLength={6}
             />
-            <AppText variant="small" color="tertiary" style={{ marginTop: 4 }}>
-              Enter the 6-character rivalry code shared with you.
-            </AppText>
+            <AppText variant="small" color="tertiary" style={{ marginTop: 4 }}>6-character code from your rival.</AppText>
           </View>
           <PrimaryButton onPress={handleJoin} loading={joining} style={{ marginTop: spacing.sm }}>
             Join Rivalry
@@ -331,11 +312,11 @@ export default function SinbookHomeScreen() {
   // ── Main Screen ──
   return (
     <Screen contentStyle={tabContentStyle}>
-      {/* ── Header ── */}
+      {/* Header */}
       <View style={styles.header}>
         <View>
           <AppText variant="title">Sinbook</AppText>
-          <AppText variant="caption" color="secondary">Track rivalries and side bets</AppText>
+          <AppText variant="caption" color="secondary">Head-to-head rivalry hub</AppText>
         </View>
         <Pressable onPress={openNotifications} style={styles.bellBtn}>
           <Feather name="bell" size={20} color={colors.text} />
@@ -349,55 +330,52 @@ export default function SinbookHomeScreen() {
         </Pressable>
       </View>
 
-      {/* ── Always-visible action buttons ── */}
+      {/* Summary strip */}
+      {sinbooks.length > 0 && (
+        <View style={styles.summaryStrip}>
+          <View style={[styles.summaryPill, { backgroundColor: colors.primary + "10" }]}>
+            <AppText variant="bodyBold" style={{ color: colors.primary }}>{summaryStats.live}</AppText>
+            <AppText variant="small" color="secondary">Live</AppText>
+          </View>
+          <View style={[styles.summaryPill, { backgroundColor: colors.warning + "10" }]}>
+            <AppText variant="bodyBold" style={{ color: colors.warning }}>{summaryStats.waiting}</AppText>
+            <AppText variant="small" color="secondary">Waiting</AppText>
+          </View>
+          <View style={[styles.summaryPill, { backgroundColor: colors.success + "10" }]}>
+            <AppText variant="bodyBold" style={{ color: colors.success }}>{summaryStats.leading}</AppText>
+            <AppText variant="small" color="secondary">Leading</AppText>
+          </View>
+        </View>
+      )}
+
+      {/* Action buttons */}
       <View style={styles.topActions}>
-        <PrimaryButton
-          onPress={triggerCreate}
-          icon={<Feather name="plus" size={16} color={colors.textInverse} />}
-          style={{ flex: 1 }}
-        >
+        <PrimaryButton onPress={triggerCreate} icon={<Feather name="plus" size={16} color={colors.textInverse} />} style={{ flex: 1 }}>
           New Rivalry
         </PrimaryButton>
-        <SecondaryButton
-          onPress={() => setShowJoin(true)}
-          icon={<Feather name="log-in" size={16} color={colors.primary} />}
-          style={{ flex: 1 }}
-        >
+        <SecondaryButton onPress={() => setShowJoin(true)} icon={<Feather name="log-in" size={16} color={colors.primary} />} style={{ flex: 1 }}>
           Join with Code
         </SecondaryButton>
       </View>
 
-      {loadError && (
-        <InlineNotice variant="error" message={loadError.message} detail={loadError.detail} style={{ marginBottom: spacing.base }} />
-      )}
+      {loadError && <InlineNotice variant="error" message={loadError.message} detail={loadError.detail} style={{ marginBottom: spacing.base }} />}
 
-      {/* ── SECTION 1: Pending Invites ── */}
+      {/* Pending invites */}
       {pendingInvites.length > 0 && (
-        <View style={{ marginBottom: spacing.lg }}>
-          <AppText variant="captionBold" color="secondary" style={styles.sectionLabel}>
-            PENDING INVITES
-          </AppText>
-          {pendingInvites.map((invite) => {
-            const creator = invite.participants.find((p) => p.user_id === invite.created_by);
-            const ledger = buildLedgerLine(invite.stake, invite.season);
+        <View style={{ marginBottom: spacing.base }}>
+          <AppText variant="captionBold" color="secondary" style={styles.sectionLabel}>INVITES</AppText>
+          {pendingInvites.map((inv) => {
+            const creator = inv.participants.find((p) => p.user_id === inv.created_by);
             return (
-              <AppCard key={invite.id} style={{ marginBottom: spacing.xs }}>
-                <AppText variant="bodyBold" numberOfLines={1}>{invite.title}</AppText>
-                <AppText variant="caption" color="secondary" style={{ marginTop: 2 }}>
-                  From {creator?.display_name || "a rival"}
+              <AppCard key={inv.id} style={{ marginBottom: spacing.xs }}>
+                <AppText variant="bodyBold" numberOfLines={1}>{inv.title}</AppText>
+                <AppText variant="small" color="secondary" style={{ marginTop: 2 }}>
+                  From {creator?.display_name?.trim() || "a rival"}
+                  {inv.stake ? ` · ${inv.stake}` : ""}
                 </AppText>
-                {ledger && (
-                  <AppText variant="small" color="tertiary" numberOfLines={1} style={{ marginTop: 2 }}>
-                    {ledger}
-                  </AppText>
-                )}
                 <View style={styles.inviteActions}>
-                  <PrimaryButton onPress={() => handleAcceptInvite(invite.id)} size="sm" style={{ flex: 1 }}>
-                    Accept
-                  </PrimaryButton>
-                  <SecondaryButton onPress={() => handleDeclineInvite(invite.id)} size="sm" style={{ flex: 1 }}>
-                    Decline
-                  </SecondaryButton>
+                  <PrimaryButton onPress={() => handleAcceptInvite(inv.id)} size="sm" style={{ flex: 1 }}>Accept</PrimaryButton>
+                  <SecondaryButton onPress={() => handleDeclineInvite(inv.id)} size="sm" style={{ flex: 1 }}>Decline</SecondaryButton>
                 </View>
               </AppCard>
             );
@@ -405,53 +383,31 @@ export default function SinbookHomeScreen() {
         </View>
       )}
 
-      {/* ── SECTION 2: Active Sinbooks ── */}
-      {sinbooks.length > 0 && (
-        <View style={{ marginBottom: spacing.lg }}>
-          {(sinbooks.length > 0 || pendingInvites.length > 0) && (
-            <AppText variant="captionBold" color="secondary" style={styles.sectionLabel}>
-              MY RIVALRIES
-            </AppText>
-          )}
-          {sinbooks.map((sb) => {
-            const rival = getRival(sb);
-            const { myWins, rivalWins } = getStandings(sb);
-            const statusLine = buildStatusLine(myWins, rivalWins, rival.name, rival.hasRival);
-            const ledger = buildLedgerLine(sb.stake, sb.season);
-            const isLeading = myWins > rivalWins && rival.hasRival;
-            const isTrailing = rivalWins > myWins && rival.hasRival;
-
+      {/* Waiting for rival */}
+      {waitingList.length > 0 && (
+        <View style={{ marginBottom: spacing.base }}>
+          <AppText variant="captionBold" color="secondary" style={styles.sectionLabel}>WAITING FOR RIVAL</AppText>
+          {waitingList.map((sb) => {
+            const myName = getMyName(sb);
             return (
               <Pressable key={sb.id} onPress={() => openRivalry(sb.id)}>
-                <AppCard style={{ marginBottom: spacing.xs }}>
-                  <View style={styles.cardRow}>
-                    <View style={{ flex: 1 }}>
-                      {/* Line 1: Rivalry name */}
-                      <AppText variant="bodyBold" numberOfLines={1}>{sb.title}</AppText>
-
-                      {/* Line 2: Status */}
-                      <AppText
-                        variant="caption"
-                        numberOfLines={1}
-                        style={{
-                          marginTop: 2,
-                          color: isLeading ? colors.success : isTrailing ? colors.error : colors.textSecondary,
-                          fontWeight: "600",
-                        }}
-                      >
-                        {statusLine}
-                      </AppText>
-
-                      {/* Line 3: Ledger / stake */}
-                      {ledger && (
-                        <AppText variant="small" color="tertiary" numberOfLines={1} style={{ marginTop: 2 }}>
-                          {ledger}
-                        </AppText>
-                      )}
+                <AppCard style={styles.rivalryCard}>
+                  <View style={styles.cardBody}>
+                    <View style={styles.initialsRow}>
+                      <View style={[styles.initialCircle, { backgroundColor: colors.primary + "14" }]}>
+                        <AppText variant="captionBold" style={{ color: colors.primary }}>{getInitials(myName)}</AppText>
+                      </View>
+                      <AppText variant="small" color="tertiary">vs</AppText>
+                      <View style={[styles.initialCircle, { backgroundColor: colors.backgroundTertiary }]}>
+                        <Feather name="user-plus" size={12} color={colors.textTertiary} />
+                      </View>
                     </View>
-
-                    <View style={[styles.viewBtn, { backgroundColor: colors.primary + "12" }]}>
-                      <AppText variant="captionBold" style={{ color: colors.primary }}>View</AppText>
+                    <View style={{ flex: 1 }}>
+                      <AppText variant="bodyBold" numberOfLines={1}>{sb.title}</AppText>
+                      {sb.stake && <AppText variant="small" color="tertiary" numberOfLines={1}>{sb.stake}</AppText>}
+                    </View>
+                    <View style={[styles.statusChip, { backgroundColor: colors.warning + "14" }]}>
+                      <AppText variant="small" style={{ color: colors.warning, fontWeight: "700" }}>Waiting</AppText>
                     </View>
                   </View>
                 </AppCard>
@@ -461,7 +417,49 @@ export default function SinbookHomeScreen() {
         </View>
       )}
 
-      {/* ── Empty state (no sinbooks, no invites) ── */}
+      {/* Live rivalries */}
+      {liveList.length > 0 && (
+        <View style={{ marginBottom: spacing.base }}>
+          <AppText variant="captionBold" color="secondary" style={styles.sectionLabel}>LIVE RIVALRIES</AppText>
+          {liveList.map((sb) => {
+            const { myWins, rivalWins, rival } = getStandings(sb);
+            const myName = getMyName(sb);
+            const rivalName = rival.name || "Rival";
+            const status = getStatusInfo(myWins, rivalWins, rival.hasRival);
+            const chipColor = statusColor[status.kind];
+
+            return (
+              <Pressable key={sb.id} onPress={() => openRivalry(sb.id)}>
+                <AppCard style={styles.rivalryCard}>
+                  <View style={styles.cardBody}>
+                    <View style={styles.initialsRow}>
+                      <View style={[styles.initialCircle, { backgroundColor: colors.primary + "14" }]}>
+                        <AppText variant="captionBold" style={{ color: colors.primary }}>{getInitials(myName)}</AppText>
+                      </View>
+                      <AppText variant="small" color="tertiary">vs</AppText>
+                      <View style={[styles.initialCircle, { backgroundColor: colors.error + "10" }]}>
+                        <AppText variant="captionBold" style={{ color: colors.error }}>{getInitials(rivalName)}</AppText>
+                      </View>
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <AppText variant="bodyBold" numberOfLines={1}>
+                        {myName} vs {rivalName}
+                      </AppText>
+                      <AppText variant="small" style={{ color: chipColor, fontWeight: "700", marginTop: 1 }}>
+                        {status.label}
+                      </AppText>
+                      {sb.stake && <AppText variant="small" color="tertiary" numberOfLines={1} style={{ marginTop: 1 }}>{sb.stake}</AppText>}
+                    </View>
+                    <Feather name="chevron-right" size={18} color={colors.textTertiary} />
+                  </View>
+                </AppCard>
+              </Pressable>
+            );
+          })}
+        </View>
+      )}
+
+      {/* Empty state */}
       {sinbooks.length === 0 && pendingInvites.length === 0 && !loadError && (
         <EmptyState
           icon={<Feather name="zap" size={24} color={colors.textTertiary} />}
@@ -469,7 +467,6 @@ export default function SinbookHomeScreen() {
           message="Start a rivalry with a mate, or join one using a code."
         />
       )}
-
     </Screen>
   );
 }
@@ -480,37 +477,41 @@ export default function SinbookHomeScreen() {
 
 const styles = StyleSheet.create({
   centered: { flex: 1, justifyContent: "center", alignItems: "center" },
-
-  // Header
   header: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    marginBottom: spacing.lg,
-  },
-  bellBtn: {
-    padding: spacing.xs,
-    position: "relative",
-  },
-  unreadDot: {
-    position: "absolute",
-    top: 0,
-    right: 0,
-    minWidth: 16,
-    height: 16,
-    borderRadius: 8,
-    alignItems: "center",
-    justifyContent: "center",
-    paddingHorizontal: 3,
-  },
-
-  // Section label
-  sectionLabel: {
-    letterSpacing: 0.8,
     marginBottom: spacing.sm,
   },
-
-  // Forms
+  bellBtn: { padding: spacing.xs, position: "relative" },
+  unreadDot: {
+    position: "absolute",
+    top: 0, right: 0,
+    minWidth: 16, height: 16, borderRadius: 8,
+    alignItems: "center", justifyContent: "center",
+    paddingHorizontal: 3,
+  },
+  summaryStrip: {
+    flexDirection: "row",
+    gap: spacing.xs,
+    marginBottom: spacing.sm,
+  },
+  summaryPill: {
+    flex: 1,
+    alignItems: "center",
+    paddingVertical: spacing.xs,
+    borderRadius: radius.sm,
+  },
+  topActions: {
+    flexDirection: "row",
+    gap: spacing.sm,
+    marginBottom: spacing.base,
+  },
+  sectionLabel: {
+    letterSpacing: 0.8,
+    marginBottom: spacing.xs,
+    marginTop: spacing.xs,
+  },
   formHeader: {
     flexDirection: "row",
     justifyContent: "space-between",
@@ -519,30 +520,34 @@ const styles = StyleSheet.create({
   },
   field: { marginBottom: spacing.base },
   label: { marginBottom: spacing.xs },
-
-  // Invite actions
   inviteActions: {
     flexDirection: "row",
     gap: spacing.sm,
     marginTop: spacing.sm,
   },
-
-  // Top action buttons (always visible)
-  topActions: {
-    flexDirection: "row",
-    gap: spacing.sm,
-    marginBottom: spacing.lg,
+  rivalryCard: {
+    marginBottom: spacing.xs,
   },
-
-  // Rivalry card
-  cardRow: {
+  cardBody: {
     flexDirection: "row",
     alignItems: "center",
     gap: spacing.sm,
   },
-  viewBtn: {
-    paddingHorizontal: spacing.sm,
-    paddingVertical: spacing.xs,
-    borderRadius: radius.sm,
+  initialsRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+  },
+  initialCircle: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  statusChip: {
+    paddingHorizontal: spacing.xs,
+    paddingVertical: 3,
+    borderRadius: radius.full,
   },
 });

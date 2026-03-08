@@ -9,6 +9,7 @@ import { useFocusEffect } from "@react-navigation/native";
 import { Feather } from "@expo/vector-icons";
 import { BottomTabBarHeightContext } from "@react-navigation/bottom-tabs";
 import { useCallback, useContext, useState } from "react";
+import { goBack } from "@/lib/navigation";
 
 import { Screen } from "@/components/ui/Screen";
 import { AppText } from "@/components/ui/AppText";
@@ -74,7 +75,7 @@ export default function ChampionDetailScreen() {
       async () => {
         try {
           await deleteOomChampion(champion.id);
-          router.back();
+          goBack(router, "/(app)/(tabs)/leaderboard");
         } catch (err: any) {
           setError(err?.message || "Failed to delete");
         }
@@ -124,7 +125,7 @@ export default function ChampionDetailScreen() {
           icon={<Feather name="user-x" size={24} color={colors.textTertiary} />}
           title="Champion Not Found"
           message="This champion may have been removed."
-          action={{ label: "Back", onPress: () => router.back() }}
+          action={{ label: "Back", onPress: () => goBack(router, "/(app)/(tabs)/leaderboard") }}
         />
       </Screen>
     );
@@ -139,7 +140,7 @@ export default function ChampionDetailScreen() {
       >
         {/* Header */}
         <View style={styles.header}>
-          <Pressable onPress={() => router.back()} style={({ pressed }) => ({ opacity: pressed ? 0.7 : 1 })}>
+          <Pressable onPress={() => goBack(router, "/(app)/(tabs)/leaderboard")} style={({ pressed }) => ({ opacity: pressed ? 0.7 : 1 })}>
             <Feather name="arrow-left" size={20} color={colors.text} />
           </Pressable>
           <View style={{ flex: 1 }} />

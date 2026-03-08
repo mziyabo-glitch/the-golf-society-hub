@@ -9,6 +9,7 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { Feather } from "@expo/vector-icons";
 import { BottomTabBarHeightContext } from "@react-navigation/bottom-tabs";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { goBack } from "@/lib/navigation";
 
 import { AppText } from "@/components/ui/AppText";
 import { AppCard } from "@/components/ui/AppCard";
@@ -153,7 +154,7 @@ export default function ChampionEditScreen() {
 
         showAlert("Added", "Champion added to Roll of Honour.");
       }
-      router.back();
+      goBack(router, "/(app)/(tabs)/leaderboard");
     } catch (err: any) {
       showAlert("Error", err?.message || "Failed to save.");
     } finally {
@@ -171,7 +172,7 @@ export default function ChampionEditScreen() {
             icon={<Feather name="lock" size={24} color={colors.textTertiary} />}
             title="Access Denied"
             message="Only Captains and Secretaries can manage the Roll of Honour."
-            action={{ label: "Back", onPress: () => router.back() }}
+            action={{ label: "Back", onPress: () => goBack(router, "/(app)/(tabs)/leaderboard") }}
           />
         </View>
       </SafeAreaView>
@@ -210,7 +211,7 @@ export default function ChampionEditScreen() {
             icon={<Feather name="alert-circle" size={24} color={colors.error} />}
             title="Failed to Load"
             message={error}
-            action={{ label: "Back", onPress: () => router.back() }}
+            action={{ label: "Back", onPress: () => goBack(router, "/(app)/(tabs)/leaderboard") }}
           />
         </View>
       </SafeAreaView>
@@ -225,7 +226,7 @@ export default function ChampionEditScreen() {
         showsVerticalScrollIndicator={false}
       >
         <View style={styles.header}>
-          <Pressable onPress={() => router.back()} style={({ pressed }) => ({ opacity: pressed ? 0.7 : 1 })}>
+          <Pressable onPress={() => goBack(router, "/(app)/(tabs)/leaderboard")} style={({ pressed }) => ({ opacity: pressed ? 0.7 : 1 })}>
             <Feather name="arrow-left" size={20} color={colors.text} />
           </Pressable>
           <AppText variant="h2">{isEdit ? "Edit Champion" : "Add Champion"}</AppText>

@@ -10,6 +10,7 @@ import * as Clipboard from "expo-clipboard";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
 import { Feather } from "@expo/vector-icons";
+import { goBack } from "@/lib/navigation";
 
 import { Screen } from "@/components/ui/Screen";
 import { AppText } from "@/components/ui/AppText";
@@ -253,7 +254,7 @@ export default function RivalryDetailScreen() {
           icon={<Feather name="alert-circle" size={24} color={colors.error} />}
           title="Error"
           message={loadError?.message || "Rivalry not found."}
-          action={{ label: "Go Back", onPress: () => router.back() }}
+          action={{ label: "Go Back", onPress: () => goBack(router, "/(app)/(tabs)/sinbook") }}
         />
       </Screen>
     );
@@ -334,7 +335,7 @@ export default function RivalryDetailScreen() {
     <Screen>
       {/* Header */}
       <View style={styles.header}>
-        <SecondaryButton onPress={() => router.back()} size="sm">
+        <SecondaryButton onPress={() => goBack(router, "/(app)/(tabs)/sinbook")} size="sm">
           <Feather name="arrow-left" size={16} color={colors.text} /> Back
         </SecondaryButton>
         <View style={{ flexDirection: "row", gap: spacing.xs }}>

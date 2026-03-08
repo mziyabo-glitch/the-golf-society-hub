@@ -11,6 +11,7 @@ import { useEffect, useState } from "react";
 import { StyleSheet, View } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { Feather } from "@expo/vector-icons";
+import { goBack } from "@/lib/navigation";
 
 import { Screen } from "@/components/ui/Screen";
 import { AppText } from "@/components/ui/AppText";
@@ -124,7 +125,7 @@ export default function JoinRivalryScreen() {
   return (
     <Screen>
       <View style={styles.header}>
-        <SecondaryButton onPress={() => router.back()} size="sm">
+        <SecondaryButton onPress={() => goBack(router, "/(app)/(tabs)/sinbook")} size="sm">
           Cancel
         </SecondaryButton>
         <AppText variant="h2">Join Rivalry</AppText>
