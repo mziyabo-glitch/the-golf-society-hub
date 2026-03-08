@@ -77,6 +77,59 @@ for production as needed).
 - [React Native](https://reactnative.dev) - Mobile app framework
 - [AsyncStorage](https://react-native-async-storage.github.io/async-storage/) - Local data persistence
 
+## Shared Course Library (Phase 1)
+
+Golf Society Hub uses UK course discovery data from the Fairway Forecast repository
+as the shared course library for event creation.
+
+### What Phase 1 includes
+
+- Supabase tables:
+  - `public.courses_seed` (raw imported source rows)
+  - `public.courses` (normalized/deduped course library)
+- Import script: `scripts/importCoursesGb.ts`
+- Admin review screen: `/(app)/courses-admin`
+- Event Create uses course search/select from imported data (no free-text course input)
+
+### Run the import
+
+1. Apply latest Supabase migrations (includes `038_courses_library_phase1.sql`).
+2. Make sure you have:
+   - a local checkout of Fairway Forecast, or direct access to `data/courses/gb.json`
+   - Supabase URL + service role key
+3. Set env vars in your shell:
+
+```bash
+export SUPABASE_URL="https://<project-ref>.supabase.co"
+export SUPABASE_SERVICE_ROLE_KEY="<service-role-key>"
+```
+
+4. Run import (from repo root):
+
+```bash
+npm run import:courses:gb -- --file ../fairway-forecast/data/courses/gb.json
+```
+
+Optional:
+
+- `--dry-run` to validate/parse without writing
+- `--country gb` (defaults to `gb`)
+- `--source fairway_forecast` (defaults to `fairway_forecast`)
+
+Examples:
+
+```bash
+npm run import:courses:gb -- --file /absolute/path/to/fairway-forecast/data/courses/gb.json --dry-run
+npm run import:courses:gb -- --file ../fairway-forecast/data/courses/gb.json
+```
+
+### Notes
+
+- Phase 1 does **not** include scraping, tee/rating derivation, or advanced matching logic.
+- Import expects Fairway Forecast UK schema rows like:
+  `["Abbey Hill Golf Centre", 52.04426, -0.81176, "Milton Keynes"]`
+- `normalized_name` is persisted for dedupe + search.
+
 ## Learn more
 
 - [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
