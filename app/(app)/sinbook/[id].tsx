@@ -78,10 +78,11 @@ export default function RivalryDetailScreen() {
 
   useFocusEffect(useCallback(() => { loadData(); }, [loadData]));
 
-  // Derived data
-  const acceptedParticipants = sinbook?.participants.filter((p) => p.status === "accepted") ?? [];
+  // Derived data — map ALL participants by user_id for name resolution
+  const allParticipants = sinbook?.participants ?? [];
+  const acceptedParticipants = allParticipants.filter((p) => p.status === "accepted");
   const participantMap = new Map<string, SinbookParticipant>();
-  for (const p of acceptedParticipants) participantMap.set(p.user_id, p);
+  for (const p of allParticipants) participantMap.set(p.user_id, p);
 
   // Standings: count wins per participant
   const standings = new Map<string, number>();
@@ -187,9 +188,6 @@ export default function RivalryDetailScreen() {
     }
   };
 
-  const handleShareInvite = async () => {
-    await handleShare();
-  };
 
   const handleDeleteSinbook = () => {
     if (actionBusy) return;
@@ -220,9 +218,12 @@ export default function RivalryDetailScreen() {
     });
   };
 
-  const getName = (uid: string | null) => {
+  const getName = (uid: string | null): string => {
     if (!uid) return "No winner";
-    return participantMap.get(uid)?.display_name ?? "Unknown";
+    const p = participantMap.get(uid);
+    const name = p?.display_name?.trim();
+    if (name && name !== "Player") return name;
+    return uid === userId ? "You" : "Rival";
   };
 
   const formatDate = (dateStr: string) => {
@@ -310,7 +311,7 @@ export default function RivalryDetailScreen() {
                   ]}
                 >
                   <AppText variant="caption" style={{ color: entryWinner === p.user_id ? colors.primary : colors.text }}>
-                    {p.display_name}
+                    {getName(p.user_id)}
                   </AppText>
                 </Pressable>
               ))}
@@ -424,8 +425,8 @@ export default function RivalryDetailScreen() {
                   <AppText variant="h1" style={{ color: isLeading ? colors.primary : colors.text }}>
                     {wins}
                   </AppText>
-                  <AppText variant="caption" color="secondary" numberOfLines={1}>
-                    {p.display_name}
+                  <AppText variant="bodyBold" numberOfLines={1}>
+                    {getName(p.user_id)}
                   </AppText>
                 </View>
               );

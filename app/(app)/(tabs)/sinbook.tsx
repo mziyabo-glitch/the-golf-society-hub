@@ -153,7 +153,7 @@ export default function SinbookHomeScreen() {
       await createSinbook({
         title: formTitle.trim(),
         stake: formStake.trim() || undefined,
-        creatorDisplayName: member?.displayName || member?.name || "Player",
+        creatorDisplayName: member?.displayName || member?.name || "You",
       });
       setFormTitle("");
       setFormStake("");
@@ -173,7 +173,7 @@ export default function SinbookHomeScreen() {
       return;
     }
     setJoining(true);
-    const displayName = member?.displayName || member?.name || "Player";
+    const displayName = member?.displayName || member?.name || "You";
     try {
       const result = await joinByCode(code, displayName);
       setJoinCode("");
@@ -229,7 +229,9 @@ export default function SinbookHomeScreen() {
   /** Get rival info for a sinbook */
   const getRival = (sb: SinbookWithParticipants) => {
     const other = sb.participants.find((p) => p.user_id !== userId && p.status === "accepted");
-    return { name: other?.display_name || "Rival", id: other?.user_id ?? null, hasRival: !!other };
+    const rawName = other?.display_name?.trim();
+    const name = rawName && rawName !== "Player" ? rawName : "Rival";
+    return { name, id: other?.user_id ?? null, hasRival: !!other };
   };
 
   /** Get my wins / rival wins for a sinbook */
