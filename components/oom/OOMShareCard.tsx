@@ -12,6 +12,7 @@ import React, { forwardRef } from "react";
 import { View, Text, StyleSheet } from "react-native";
 import { SocietyLogoImage } from "@/components/ui/SocietyLogoImage";
 import { BrandingFooter } from "@/components/ui/BrandingFooter";
+import { typography } from "@/lib/ui/theme";
 
 export type OOMShareRow = {
   position: number;
@@ -62,7 +63,7 @@ const OOMShareCard = forwardRef<View, OOMShareCardProps>(
         <View style={styles.header}>
           <SocietyLogoImage
             logoUrl={logoUrl ?? null}
-            size={48}
+            size={56}
             placeholderText={getInitials(societyName)}
             style={{ marginBottom: 8 }}
           />
@@ -164,7 +165,7 @@ const styles = StyleSheet.create({
     marginBottom: 20,
   },
   societyName: {
-    fontSize: 14,
+    fontSize: typography.caption.fontSize,
     fontWeight: "500",
     color: "#6B7280",
     textTransform: "uppercase",
@@ -172,19 +173,19 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   title: {
-    fontSize: 28,
+    fontSize: typography.display.fontSize,
     fontWeight: "700",
     color: BRAND_GREEN,
     marginBottom: 2,
   },
   subtitle: {
-    fontSize: 16,
+    fontSize: typography.body.fontSize,
     fontWeight: "500",
     color: "#374151",
     marginBottom: 4,
   },
   seasonLabel: {
-    fontSize: 13,
+    fontSize: typography.body.fontSize,
     color: "#9CA3AF",
   },
   divider: {
@@ -207,7 +208,7 @@ const styles = StyleSheet.create({
     backgroundColor: BRAND_GREEN,
   },
   headerCell: {
-    fontSize: 12,
+    fontSize: typography.small.fontSize,
     fontWeight: "600",
     color: "#FFFFFF",
     textTransform: "uppercase",
@@ -246,15 +247,15 @@ const styles = StyleSheet.create({
     borderBottomWidth: 0,
   },
   medal: {
-    fontSize: 20,
+    fontSize: typography.h1.fontSize,
   },
   posText: {
-    fontSize: 15,
+    fontSize: typography.caption.fontSize,
     fontWeight: "600",
     color: "#6B7280",
   },
   nameText: {
-    fontSize: 15,
+    fontSize: typography.caption.fontSize,
     fontWeight: "500",
     color: "#111827",
   },
@@ -262,17 +263,17 @@ const styles = StyleSheet.create({
     fontWeight: "600",
   },
   eventsText: {
-    fontSize: 11,
+    fontSize: typography.small.fontSize,
     color: "#9CA3AF",
     marginTop: 1,
   },
   pointsText: {
-    fontSize: 16,
+    fontSize: typography.body.fontSize,
     fontWeight: "600",
     color: BRAND_GREEN,
   },
   pointsTextTop3: {
     fontWeight: "700",
-    fontSize: 17,
+    fontSize: typography.bodyBold.fontSize,
   },
 });

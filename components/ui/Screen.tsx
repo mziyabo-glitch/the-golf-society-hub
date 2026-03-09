@@ -48,6 +48,7 @@ export function Screen({ children, scrollable = true, style, contentStyle }: Scr
           style={styles.scroll}
           contentContainerStyle={styles.scrollContent}
           showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
         >
           {content}
         </ScrollView>

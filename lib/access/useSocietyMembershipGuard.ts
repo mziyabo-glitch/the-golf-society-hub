@@ -1,11 +1,18 @@
 // lib/access/useSocietyMembershipGuard.ts
 // Centralised guard hook: ensures the current user has an active society
 // AND an actual membership row. If not, clears the stale pointer and
-// redirects to onboarding so the user can join/create a society.
+// lets the UI fall back to personal mode / onboarding.
+//
+// IMPORTANT: This guard must be tolerant of transient null-member windows
+// that occur during post-join bootstrap refresh. It uses a generous grace
+// period and multiple retries before clearing profile pointers.
 
 import { useEffect, useRef } from "react";
-import { useRouter, useSegments } from "expo-router";
+import { usePathname } from "expo-router";
 import { useBootstrap } from "@/lib/useBootstrap";
+
+const RETRY_BACKOFF_MS = [300, 800, 1600, 2500, 3500] as const;
+const CLEAR_AFTER_MS = 10_000;
 
 export type GuardResult = {
   /** Still loading bootstrap data — show a spinner. */
@@ -22,52 +29,111 @@ export type GuardResult = {
  *  2) the user has an active society
  *  3) the user has a matching member row for that society
  *
- * If (2) or (3) fail the profile is cleared and the user is sent to
- * `/onboarding`. This covers the edge-case where a user was removed
- * from a society (member row deleted) while their profile still points
- * to `active_society_id`.
+ * If (2) or (3) fail after a generous grace period the profile pointer is
+ * cleared and the UI naturally enters Personal Mode. The grace period
+ * prevents premature clearing during post-join bootstrap resolution.
  */
+function isGuardExemptRoute(pathname: string | undefined): boolean {
+  if (!pathname) return false;
+  return (
+    pathname.startsWith("/(share)") ||
+    pathname.startsWith("/tee-sheet") ||
+    pathname.startsWith("/(app)/tee-sheet")
+  );
+}
+
 export function useSocietyMembershipGuard(): GuardResult {
   const {
     loading,
+    membershipLoading,
     activeSocietyId,
     member,
+    memberships,
     setActiveSociety,
+    refresh,
   } = useBootstrap();
+  const pathname = usePathname();
 
-  const router = useRouter();
-  const segments = useSegments();
   const redirected = useRef(false);
+  const trackedSocietyId = useRef<string | null>(null);
+  const missingSinceMs = useRef<number | null>(null);
+  const retryCount = useRef(0);
 
-  // Determine actual membership
   const hasSociety = !!activeSocietyId;
   const hasMember = !!member;
   const isMember = hasSociety && hasMember;
+  const onToolRoute = isGuardExemptRoute(pathname);
+  // If we have a memberships list and the active society is in it,
+  // treat it as structurally valid even while the member row loads.
+  const inMembershipsList =
+    hasSociety && memberships.length > 0 && memberships.some((m) => m.societyId === activeSocietyId);
 
   useEffect(() => {
-    if (loading) {
+    if (onToolRoute) return;
+
+    if (activeSocietyId !== trackedSocietyId.current) {
+      trackedSocietyId.current = activeSocietyId ?? null;
+      missingSinceMs.current = null;
+      retryCount.current = 0;
+      redirected.current = false;
+    }
+
+    if (loading || membershipLoading) return;
+    if (redirected.current) return;
+
+    if (!hasSociety) {
+      missingSinceMs.current = null;
+      retryCount.current = 0;
+      return;
+    }
+
+    if (hasMember) {
+      missingSinceMs.current = null;
+      retryCount.current = 0;
       redirected.current = false;
       return;
     }
-    if (redirected.current) return;
 
-    // No society → Personal Mode, no redirect needed.
-    if (!hasSociety) return;
-
-    if (hasSociety && !hasMember) {
-      // The user's profile points to a society they are no longer a member of.
-      // Clear the stale pointer — the UI will naturally enter Personal Mode.
-      console.warn(
-        "[MembershipGuard] activeSocietyId is set but member is null — clearing stale pointer"
-      );
-      redirected.current = true;
-      setActiveSociety(null, null)
-        .catch((e) => console.error("[MembershipGuard] clear error:", e));
+    // If the society is confirmed in the memberships list, the member
+    // row will resolve shortly — keep waiting without starting the
+    // clear timer.
+    if (inMembershipsList) {
+      if (retryCount.current < RETRY_BACKOFF_MS.length) {
+        const delayMs = RETRY_BACKOFF_MS[retryCount.current];
+        retryCount.current += 1;
+        const timer = setTimeout(() => refresh(), delayMs);
+        return () => clearTimeout(timer);
+      }
+      return;
     }
-  }, [loading, hasSociety, hasMember, setActiveSociety]);
+
+    // --- hasSociety && !hasMember && NOT in memberships list ---
+    if (missingSinceMs.current === null) {
+      missingSinceMs.current = Date.now();
+    }
+
+    if (retryCount.current < RETRY_BACKOFF_MS.length) {
+      const delayMs = RETRY_BACKOFF_MS[retryCount.current];
+      retryCount.current += 1;
+      const timer = setTimeout(() => refresh(), delayMs);
+      return () => clearTimeout(timer);
+    }
+
+    const elapsedMs = Date.now() - missingSinceMs.current;
+    if (elapsedMs < CLEAR_AFTER_MS) {
+      const remainingMs = CLEAR_AFTER_MS - elapsedMs;
+      const timer = setTimeout(() => refresh(), remainingMs);
+      return () => clearTimeout(timer);
+    }
+
+    console.warn("[MembershipGuard] clearing stale pointer", { activeSocietyId, elapsedMs });
+    redirected.current = true;
+    setActiveSociety(null, null)
+      .catch((e) => console.error("[MembershipGuard] clear error:", e));
+  }, [loading, membershipLoading, hasSociety, hasMember, inMembershipsList, setActiveSociety, activeSocietyId, refresh, onToolRoute]);
 
   return {
-    loading,
+    loading: loading || membershipLoading,
     isMember,
     redirecting: redirected.current && !isMember,
   };

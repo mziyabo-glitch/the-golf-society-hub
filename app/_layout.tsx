@@ -10,8 +10,36 @@ import { AppText } from "@/components/ui/AppText";
 import { PrimaryButton } from "@/components/ui/Button";
 import { getColors, spacing } from "@/lib/ui/theme";
 import { consumePendingInviteToken } from "@/lib/sinbookInviteToken";
+import { consumePendingRivalryJoinCode } from "@/lib/pendingRivalryJoinCode";
+import { blurWebActiveElement } from "@/lib/ui/focus";
 
 const APP_TABS = "/(app)/(tabs)";
+const JOIN_FLOW_SEGMENTS = new Set(["onboarding", "join", "join-society"]);
+const JOIN_RIVALRY_SEGMENT = "join-rivalry";
+
+function isJoinFlowRoute(pathname?: string, seg0?: string): boolean {
+  if (typeof seg0 === "string" && (JOIN_FLOW_SEGMENTS.has(seg0) || seg0 === JOIN_RIVALRY_SEGMENT)) return true;
+  if (typeof pathname !== "string") return false;
+  return (
+    pathname === "/join" ||
+    pathname === "/join-society" ||
+    pathname === "/onboarding" ||
+    pathname.startsWith("/onboarding/") ||
+    pathname === "/join-rivalry" ||
+    pathname.startsWith("/join-rivalry")
+  );
+}
+
+/** Routes that must never be redirected away from by any guard. */
+function isToolRoute(pathname?: string, seg0?: string): boolean {
+  if (seg0 === "(share)") return true;
+  if (typeof pathname !== "string") return false;
+  return (
+    pathname.startsWith("/(share)") ||
+    pathname.startsWith("/tee-sheet") ||
+    pathname.startsWith("/(app)/tee-sheet")
+  );
+}
 
 function RootNavigator() {
   const { loading, error, isSignedIn, activeSocietyId, profile, refresh } = useBootstrap();
@@ -26,6 +54,13 @@ function RootNavigator() {
   const hasRouted = useRef(false);
   // Track last known state to prevent redundant logs
   const lastState = useRef<string>("");
+  // Timestamp of last time activeSocietyId was truthy — used to debounce
+  // transient null→true→null flickers during post-join bootstrap.
+  const lastHadSocietyAt = useRef<number>(0);
+
+  if (activeSocietyId) {
+    lastHadSocietyAt.current = Date.now();
+  }
 
   // Global auth gate: getSession on mount + onAuthStateChange
   // Redirects immediately when session appears (avoids staying on sign-in)
@@ -37,27 +72,37 @@ function RootNavigator() {
   useEffect(() => {
     let mounted = true;
 
-    const applyAuthRedirect = (session: { user: { id: string } } | null) => {
+    const applyAuthRedirect = async (session: { user: { id: string } } | null) => {
       if (!mounted) return;
       const seg0 = segmentsRef.current[0];
       const p = pathnameRef.current;
       const inApp = seg0 === "(app)" || seg0 === "app" || (typeof p === "string" && p?.startsWith("/(app)"));
       const inPublic = p === "/reset-password" || seg0 === "reset-password";
-      if (inPublic) return;
+      const inJoinFlow = isJoinFlowRoute(p, seg0);
+      if (inPublic || inJoinFlow || isToolRoute(p, seg0)) return;
 
       if (session && !inApp) {
-        console.log("[_layout] Auth gate: session present, redirecting to", APP_TABS);
-        router.replace(APP_TABS);
+        const pendingRivalryCode = await consumePendingRivalryJoinCode();
+        if (!mounted) return;
+        if (pendingRivalryCode) {
+          console.log("[_layout] Auth gate: resuming rivalry join with code");
+          blurWebActiveElement();
+          router.replace({ pathname: "/join-rivalry", params: { code: pendingRivalryCode } });
+        } else {
+          console.log("[_layout] Auth gate: session present, redirecting to", APP_TABS);
+          blurWebActiveElement();
+          router.replace(APP_TABS);
+        }
       }
     };
 
     supabase.auth.getSession().then(({ data: { session } }) => {
-      applyAuthRedirect(session);
+      void applyAuthRedirect(session);
     });
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       console.log("[_layout] Auth state change:", event, session ? "has session" : "no session");
-      applyAuthRedirect(session);
+      void applyAuthRedirect(session);
     });
 
     return () => {
@@ -77,76 +122,110 @@ function RootNavigator() {
       return;
     }
 
-    const inOnboarding = segments[0] === "onboarding";
+    const inOnboarding = segments[0] === "onboarding" || segments[0] === "join" || segments[0] === "join-society";
     const inSinbookInvite = segments[0] === "sinbook";
     const inPublicRoute = isPublicPath || segments[0] === "reset-password";
+    const inJoinFlow = isJoinFlowRoute(pathname, segments[0]);
     const inMyProfile = pathname === "/(app)/my-profile";
     const hasSociety = !!activeSocietyId;
     const needsProfileCompletion = !!profile && !profile.profile_complete;
 
-    // Create a state key to detect actual changes
-    const stateKey = `${hasSociety}-${inOnboarding}-${inSinbookInvite}-${needsProfileCompletion}-${segments.join("/")}`;
+    // Debounce: if the user recently had a society (within 10s), treat a
+    // transient hasSociety=false as still-resolving. This prevents the
+    // route guard from bouncing the user back to personal mode during the
+    // brief window after join where bootstrap is re-reading from DB.
+    const recentlyHadSociety =
+      !hasSociety && lastHadSocietyAt.current > 0 && Date.now() - lastHadSocietyAt.current < 10_000;
 
-    // Only log if state actually changed
+    // Create a state key to detect actual changes
+    const stateKey = `${hasSociety}-${inOnboarding}-${inJoinFlow}-${inSinbookInvite}-${needsProfileCompletion}-${segments.join("/")}`;
+
     if (stateKey !== lastState.current) {
       lastState.current = stateKey;
-      console.log("[_layout] Route guard check:", {
+      console.log("[_layout] Route guard:", {
         hasSociety,
         activeSocietyId,
-        inOnboarding,
-        inSinbookInvite,
-        needsProfileCompletion,
+        inJoinFlow,
+        recentlyHadSociety,
         segments: segments.join("/"),
       });
     }
 
     // Exempt routes that handle their own flow
-    if (inSinbookInvite || inPublicRoute) {
+    if (inSinbookInvite || inPublicRoute || isToolRoute(pathname, segments[0])) {
+      return;
+    }
+    if (pathname === "/join-rivalry" || (typeof pathname === "string" && pathname.startsWith("/join-rivalry"))) {
+      return;
+    }
+
+    // If society state is still resolving after a recent join, wait.
+    if (!hasSociety && inJoinFlow && !recentlyHadSociety) {
+      return;
+    }
+    if (recentlyHadSociety && !inJoinFlow) {
       return;
     }
 
     // Force profile completion before anything else
-    if (needsProfileCompletion && !inMyProfile) {
+    if (needsProfileCompletion && !inMyProfile && hasSociety) {
       console.log("[_layout] Profile incomplete, redirecting to /my-profile");
       hasRouted.current = true;
+      blurWebActiveElement();
       router.replace("/(app)/my-profile");
       return;
     }
 
-    if (hasSociety && inOnboarding) {
-      // Has society but on onboarding -> go to app home
-      // Check for pending sinbook invite token first
-      console.log("[_layout] Has society, checking pending invite token...");
+    // Once society context exists, avoid non-essential redirect churn.
+    if (hasSociety && !inJoinFlow) {
+      return;
+    }
+
+    if (hasSociety && inJoinFlow) {
+      console.log("[_layout] Has society + in join flow, redirecting to dashboard");
       hasRouted.current = true;
-      consumePendingInviteToken().then((token) => {
-        if (token) {
-          console.log("[_layout] Resuming sinbook invite:", token);
-          router.replace({ pathname: "/sinbook/invite/[token]", params: { token } });
-        } else {
-          router.replace("/(app)/(tabs)");
+      consumePendingRivalryJoinCode().then((code) => {
+        if (code) {
+          console.log("[_layout] Resuming rivalry join with code");
+          blurWebActiveElement();
+          router.replace({ pathname: "/join-rivalry", params: { code } });
+          return;
         }
+        consumePendingInviteToken().then((token) => {
+          if (token) {
+            console.log("[_layout] Resuming sinbook invite:", token);
+            blurWebActiveElement();
+            router.replace({ pathname: "/sinbook/invite/[token]", params: { token } });
+          } else {
+            blurWebActiveElement();
+            router.replace(APP_TABS);
+          }
+        });
       });
     }
     // No society + not on onboarding = Personal Mode — let (app) handle it
   }, [loading, isSignedIn, activeSocietyId, profile, segments, pathname, router, isPublicPath]);
 
-  // Reset hasRouted when loading changes (new bootstrap cycle)
+  // Reset hasRouted only on sign-out, not on every bootstrap refresh.
+  // This prevents the guard from re-routing after each refresh cycle.
   useEffect(() => {
-    if (loading) {
+    if (loading && !isSignedIn) {
       hasRouted.current = false;
       lastState.current = "";
     }
-  }, [loading]);
+  }, [loading, isSignedIn]);
 
   // Auth-aware redirect: when session appears, ensure we're in the app (avoids staying on sign-in)
   useEffect(() => {
     if (loading || !isSignedIn || isPublicPath) return;
     const seg0 = segments[0];
+    const inJoinFlow = isJoinFlowRoute(pathname, seg0);
+    if (inJoinFlow || isToolRoute(pathname, seg0)) return;
     const inApp = seg0 === "(app)" || seg0 === "app" || (typeof pathname === "string" && pathname.startsWith("/(app)"));
-    if (!inApp) {
-      console.log("[_layout] Session present, redirecting to app");
-      router.replace("/(app)/(tabs)");
-    }
+    if (inApp) return;
+    console.log("[_layout] Session present but not in app, redirecting");
+    blurWebActiveElement();
+    router.replace(APP_TABS);
   }, [loading, isSignedIn, isPublicPath, segments, pathname, router]);
 
   // Determine which overlay to show (if any).

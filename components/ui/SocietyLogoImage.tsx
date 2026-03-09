@@ -19,7 +19,7 @@ const IMAGE_SCALE = 0.85; // 85% of container
 
 export function SocietyLogoImage({
   logoUrl,
-  size = 48,
+  size = 56,
   placeholderText = "GS",
   style,
 }: SocietyLogoImageProps) {

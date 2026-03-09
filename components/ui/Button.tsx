@@ -14,6 +14,7 @@ import { ReactNode } from "react";
 import { Pressable, StyleSheet, View, ViewStyle, ActivityIndicator } from "react-native";
 import { AppText } from "./AppText";
 import { getColors, radius, spacing, buttonHeights, typography } from "@/lib/ui/theme";
+import { blurWebActiveElement } from "@/lib/ui/focus";
 
 type ButtonProps = {
   // ✅ Back-compat support:
@@ -37,6 +38,15 @@ function resolveContent(label?: string, children?: ReactNode): ReactNode {
   return children ?? null;
 }
 
+function handlePress(onPress: () => void): void {
+  try {
+    blurWebActiveElement();
+  } catch (error) {
+    console.warn("[Button] blurWebActiveElement failed:", error);
+  }
+  onPress();
+}
+
 export function PrimaryButton({
   label,
   children,
@@ -54,7 +64,7 @@ export function PrimaryButton({
 
   return (
     <Pressable
-      onPress={onPress}
+      onPress={() => handlePress(onPress)}
       disabled={disabled || loading}
       style={({ pressed }) => [
         styles.button,
@@ -101,7 +111,7 @@ export function SecondaryButton({
 
   return (
     <Pressable
-      onPress={onPress}
+      onPress={() => handlePress(onPress)}
       disabled={disabled || loading}
       style={({ pressed }) => [
         styles.button,
@@ -150,7 +160,7 @@ export function DestructiveButton({
 
   return (
     <Pressable
-      onPress={onPress}
+      onPress={() => handlePress(onPress)}
       disabled={disabled || loading}
       style={({ pressed }) => [
         styles.button,

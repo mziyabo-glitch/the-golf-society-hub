@@ -34,6 +34,7 @@ import { setRememberMe } from "@/lib/supabaseStorage";
 import { useBootstrap } from "@/lib/useBootstrap";
 import { useRouter } from "expo-router";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
+import { blurWebActiveElement } from "@/lib/ui/focus";
 
 type Mode = "signIn" | "signUp" | "forgotPassword";
 
@@ -109,6 +110,7 @@ export function AuthScreen() {
         }
         if (data?.session) {
           refresh();
+          blurWebActiveElement();
           router.replace("/(app)/(tabs)");
           skipLoadingReset = true;
           return;

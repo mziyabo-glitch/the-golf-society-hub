@@ -27,6 +27,7 @@ import { useBootstrap } from "@/lib/useBootstrap";
 import { getOomChampionsBySociety, type OomChampionDoc } from "@/lib/db_supabase/oomChampionsRepo";
 import { getPermissionsForMember } from "@/lib/rbac";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
+import { goBack } from "@/lib/navigation";
 
 export default function RollOfHonourScreen() {
   const { society, societyId, member } = useBootstrap();
@@ -36,7 +37,7 @@ export default function RollOfHonourScreen() {
 
   const handleBack = () => {
     if (navigation.canGoBack()) {
-      router.back();
+      goBack(router, "/(app)/(tabs)/leaderboard");
     } else {
       router.replace("/(app)/(tabs)");
     }

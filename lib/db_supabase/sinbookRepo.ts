@@ -488,15 +488,20 @@ export async function joinByCode(
   code: string,
   displayName: string,
 ): Promise<{ sinbookId: string; title: string }> {
-  const preview = await getSinbookByJoinCode(code);
-  if (!preview) {
-    throw new Error("No rivalry found with that code. Check and try again.");
+  const FRIENDLY_ERROR = "Invite code not ready yet. Please try again in a moment.";
+  try {
+    const preview = await getSinbookByJoinCode(code);
+    if (!preview) {
+      throw new Error(FRIENDLY_ERROR);
+    }
+    await acceptInviteByLink(preview.id, displayName);
+    return { sinbookId: preview.id, title: preview.title };
+  } catch (err) {
+    if (err instanceof Error && err.message !== FRIENDLY_ERROR) {
+      throw new Error(FRIENDLY_ERROR);
+    }
+    throw err;
   }
-
-  // Delegate to the existing link-accept logic (handles dupe checks, notifications)
-  await acceptInviteByLink(preview.id, displayName);
-
-  return { sinbookId: preview.id, title: preview.title };
 }
 
 /**

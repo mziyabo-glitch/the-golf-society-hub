@@ -1,4 +1,5 @@
 import { Pressable, StyleSheet, Text, View, ViewStyle } from "react-native";
+import { typography } from "@/lib/ui/theme";
 
 type InfoCardProps = {
   title: string;
@@ -67,19 +68,19 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   title: {
-    fontSize: 18,
+    fontSize: typography.h2.fontSize,
     fontWeight: "700",
     color: "#111827",
     marginBottom: 4,
   },
   subtitle: {
-    fontSize: 14,
+    fontSize: typography.body.fontSize,
     fontWeight: "500",
     color: "#6b7280",
     marginBottom: 2,
   },
   detail: {
-    fontSize: 13,
+    fontSize: typography.body.fontSize,
     color: "#9ca3af",
     marginTop: 4,
   },
@@ -91,7 +92,7 @@ const styles = StyleSheet.create({
     backgroundColor: "#f3f4f6",
   },
   ctaText: {
-    fontSize: 13,
+    fontSize: typography.body.fontSize,
     fontWeight: "600",
     color: "#0B6E4F",
   },
@@ -100,13 +101,13 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
   },
   emptyTitle: {
-    fontSize: 15,
+    fontSize: typography.caption.fontSize,
     fontWeight: "600",
     color: "#9ca3af",
     marginBottom: 6,
   },
   emptySubtitle: {
-    fontSize: 13,
+    fontSize: typography.body.fontSize,
     color: "#9ca3af",
     opacity: 0.8,
     textAlign: "center",

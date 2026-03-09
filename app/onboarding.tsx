@@ -1,22 +1,28 @@
-import { useState } from "react";
-import { StyleSheet, View, Alert, KeyboardAvoidingView, Platform } from "react-native";
-import { useRouter } from "expo-router";
+import { useEffect, useRef, useState } from "react";
+import { StyleSheet, View, Alert, KeyboardAvoidingView, Platform, TouchableOpacity } from "react-native";
+import { useLocalSearchParams, usePathname, useRouter } from "expo-router";
 import { Feather } from "@expo/vector-icons";
 
 import { Screen } from "@/components/ui/Screen";
 import { AppText } from "@/components/ui/AppText";
 import { AppCard } from "@/components/ui/AppCard";
 import { AppInput } from "@/components/ui/AppInput";
+import { InlineNotice } from "@/components/ui/InlineNotice";
+import { Toast } from "@/components/ui/Toast";
 import { PrimaryButton, SecondaryButton } from "@/components/ui/Button";
 import { LoadingState } from "@/components/ui/LoadingState";
 import { useBootstrap } from "@/lib/useBootstrap";
 import { ensureSignedIn } from "@/lib/auth_supabase";
-import { createSociety, lookupSocietyByJoinCode, normalizeJoinCode } from "@/lib/db_supabase/societyRepo";
-import { createMember, findMemberByUserAndSociety, claimCaptainAddedMember } from "@/lib/db_supabase/memberRepo";
+import { createSociety } from "@/lib/db_supabase/societyRepo";
+import { createMember } from "@/lib/db_supabase/memberRepo";
 import { setActiveSocietyAndMember } from "@/lib/db_supabase/profileRepo";
+import { supabase } from "@/lib/supabase";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
+import { blurWebActiveElement } from "@/lib/ui/focus";
 
 type Mode = "choose" | "join" | "create";
+const SOCIETY_HOME_ROUTE = "/(app)/(tabs)";
+const JOIN_NAV_BACKOFF_MS = [250, 700, 1500] as const;
 
 /**
  * Helper to show user-friendly error for RLS/permission issues
@@ -38,15 +44,45 @@ function showRlsError(error: any): void {
 
 export default function OnboardingScreen() {
   const router = useRouter();
-  const { user, ready, refresh } = useBootstrap();
+  const pathname = usePathname();
+  const params = useLocalSearchParams<{ mode?: string | string[] }>();
+  const {
+    user,
+    ready,
+    activeSocietyId,
+    member,
+    membershipLoading,
+    setActiveSocietyId,
+    setMember,
+    refresh,
+  } = useBootstrap();
   const colors = getColors();
 
-  const [mode, setMode] = useState<Mode>("choose");
-  const [loading, setLoading] = useState(false);
+  const routeModeParam = Array.isArray(params.mode) ? params.mode[0] : params.mode;
+  const routeMode = routeModeParam === "join" || routeModeParam === "create" ? routeModeParam : null;
+  const isJoinAliasRoute = pathname === "/join" || pathname === "/join-society" || pathname === "/onboarding/join";
+  const [mode, setMode] = useState<Mode>(
+    routeMode ?? (isJoinAliasRoute ? "join" : "choose")
+  );
+  const [joinLoading, setJoinLoading] = useState(false);
+  const [createLoading, setCreateLoading] = useState(false);
 
   // Join form state
   const [joinCode, setJoinCode] = useState("");
   const [displayName, setDisplayName] = useState("");
+  const [joinError, setJoinError] = useState<string | null>(null);
+  const [pendingJoinNavigation, setPendingJoinNavigation] = useState<{
+    societyId: string;
+    memberId: string;
+  } | null>(null);
+  const joinNavRetryCount = useRef(0);
+  const [toast, setToast] = useState<{
+    visible: boolean;
+    message: string;
+    type: "success" | "error" | "info";
+  }>({ visible: false, message: "", type: "success" });
+
+  const loading = joinLoading || createLoading;
 
   // Create form state
   const [societyName, setSocietyName] = useState("");
@@ -56,132 +92,286 @@ export default function OnboardingScreen() {
   // Buttons are disabled until auth is ready
   const isAuthReady = ready && !!user?.uid;
 
+  useEffect(() => {
+    if (routeMode) {
+      setMode(routeMode);
+      return;
+    }
+    if (isJoinAliasRoute) {
+      setMode("join");
+    }
+  }, [routeMode, isJoinAliasRoute]);
+
+  useEffect(() => {
+    if (!pendingJoinNavigation) return;
+
+    const readyForNavigation =
+      ready &&
+      !membershipLoading &&
+      activeSocietyId === pendingJoinNavigation.societyId &&
+      !!member;
+
+    if (readyForNavigation) {
+      console.log("[join] Navigation after bootstrap refresh:", {
+        target: SOCIETY_HOME_ROUTE,
+        societyId: pendingJoinNavigation.societyId,
+        memberId: pendingJoinNavigation.memberId,
+      });
+      console.log("[join] before nav pathname", pathname);
+      blurWebActiveElement();
+      router.replace(SOCIETY_HOME_ROUTE);
+      setTimeout(() => {
+        const afterPath =
+          typeof window !== "undefined" ? window.location.pathname : pathname;
+        console.log("[join] after nav pathname", afterPath);
+      }, 0);
+      setPendingJoinNavigation(null);
+      joinNavRetryCount.current = 0;
+      return;
+    }
+
+    if (joinNavRetryCount.current < JOIN_NAV_BACKOFF_MS.length) {
+      const delayMs = JOIN_NAV_BACKOFF_MS[joinNavRetryCount.current];
+      const retryIndex = joinNavRetryCount.current + 1;
+      const fallbackTimer = setTimeout(() => {
+        console.log("[join] awaiting dashboard state, retrying refresh:", {
+          retry: retryIndex,
+          delayMs,
+          pathname,
+          activeSocietyId,
+          hasMember: !!member,
+        });
+        joinNavRetryCount.current += 1;
+        refresh();
+      }, delayMs);
+      return () => clearTimeout(fallbackTimer);
+    }
+
+    // Final fallback: force route replace after retries.
+    console.log("[join] forcing dashboard navigation after retries:", {
+      target: SOCIETY_HOME_ROUTE,
+      pathname,
+      activeSocietyId,
+      hasMember: !!member,
+      hasMembershipLoading: membershipLoading,
+    });
+    console.log("[join] before nav pathname", pathname);
+    blurWebActiveElement();
+    router.replace(SOCIETY_HOME_ROUTE);
+    setTimeout(() => {
+      const afterPath =
+        typeof window !== "undefined" ? window.location.pathname : pathname;
+      console.log("[join] after nav pathname", afterPath);
+    }, 0);
+    setPendingJoinNavigation(null);
+    joinNavRetryCount.current = 0;
+  }, [
+    pendingJoinNavigation,
+    ready,
+    membershipLoading,
+    activeSocietyId,
+    member,
+    pathname,
+    refresh,
+    router,
+  ]);
+
+  useEffect(() => {
+    if (!pendingJoinNavigation) {
+      joinNavRetryCount.current = 0;
+    }
+  }, [pendingJoinNavigation]);
+
+  useEffect(() => {
+    if (!pendingJoinNavigation) return;
+    if (!activeSocietyId) return;
+    // keep this log separate from navigation logs to diagnose bounce/redirect
+    console.log("[join] nav pending state:", {
+      pathname,
+      activeSocietyId,
+      hasMember: !!member,
+      membershipLoading,
+      target: SOCIETY_HOME_ROUTE,
+    });
+  }, [pendingJoinNavigation, pathname, activeSocietyId, member, membershipLoading]);
+
+  useEffect(() => {
+    if (!pendingJoinNavigation) return;
+    if (pathname === SOCIETY_HOME_ROUTE) return;
+    if (!activeSocietyId) return;
+    console.log("[join] route guard likely moved route:", {
+      pathname,
+      target: SOCIETY_HOME_ROUTE,
+      activeSocietyId,
+    });
+  }, [pendingJoinNavigation, pathname, activeSocietyId]);
+
+  useEffect(() => {
+    if (!pendingJoinNavigation) return;
+    return () => {
+      joinNavRetryCount.current = 0;
+    };
+  }, [pendingJoinNavigation]);
+
+  useEffect(() => {
+    if (!pendingJoinNavigation) return;
+    const safetyTimer = setTimeout(() => {
+      console.log("[join] safety refresh while nav pending", {
+        pathname,
+        societyId: pendingJoinNavigation.societyId,
+        memberId: pendingJoinNavigation.memberId,
+      });
+      refresh();
+    }, 3000);
+    return () => clearTimeout(safetyTimer);
+  }, [pendingJoinNavigation, pathname, refresh]);
+
   /**
    * Join Society Flow:
-   * 1. Lookup society by join code
-   * 2. Check if membership already exists
-   * 3. If exists: just set profile active IDs
-   * 4. If not: create member row, then set profile active IDs
-   * 5. Redirect to app home
+   * 1. Normalize & validate join code
+   * 2. Call join_society RPC
+   * 3. Set active society state
+   * 4. Refresh + navigate to app home
    */
+  const showJoinFailure = (message: string) => {
+    setJoinError(message);
+    setToast({ visible: true, message, type: "error" });
+  };
+
   const handleJoinSociety = async () => {
-    const normalizedCode = normalizeJoinCode(joinCode);
+    console.log("JOIN CLICKED");
+    if (joinLoading) return;
+    console.log("[join] JOIN_TAP");
+    setJoinError(null);
 
-    if (!normalizedCode) {
-      Alert.alert("Missing Code", "Please enter the society join code.");
+    const code = joinCode.trim().toUpperCase();
+    const nameInput = displayName.trim();
+
+    if (!code) {
+      showJoinFailure("Please enter the society join code.");
       return;
     }
-    if (normalizedCode.length < 4) {
-      Alert.alert("Invalid Code", "Join code must be at least 4 characters.");
+    if (code.length < 4 || code.length > 10) {
+      showJoinFailure("Join code must be 4–10 characters.");
       return;
     }
-    if (!displayName.trim()) {
-      Alert.alert("Missing Name", "Please enter your name.");
+    if (!nameInput) {
+      showJoinFailure("Please enter your name.");
       return;
     }
 
-    setLoading(true);
-    console.log("[join] === JOIN SOCIETY START ===");
-    console.log("[join] Raw input:", JSON.stringify(joinCode));
-    console.log("[join] Normalized code:", normalizedCode);
+    setJoinLoading(true);
+    console.log("[join] JOIN_START", { normalized: code });
 
     try {
-      // Step 1: Ensure signed in
-      console.log("[join] Ensuring signed in...");
       const authUser = await ensureSignedIn();
       const uid = authUser?.id;
       if (!uid) {
-        Alert.alert("Error", "Authentication failed. Please try again.");
-        setLoading(false);
+        showJoinFailure("Authentication failed. Please try again.");
         return;
       }
-      console.log("[join] Authenticated as:", uid);
-
-      // Step 2: Lookup society by join code using new structured result
-      console.log("[join] code lookup start:", normalizedCode);
-      const lookupResult = await lookupSocietyByJoinCode(joinCode);
-
-      if (!lookupResult.ok) {
-        console.log("[join] Lookup failed:", lookupResult.reason, lookupResult.message);
-
-        switch (lookupResult.reason) {
-          case "NOT_FOUND":
-            Alert.alert(
-              "Society Not Found",
-              `No society found with code "${normalizedCode}". Please check the code and try again.`
-            );
-            break;
-          case "FORBIDDEN":
-            Alert.alert(
-              "Access Denied",
-              "Unable to look up societies. This may be a server configuration issue. Please try again or contact support."
-            );
-            break;
-          case "ERROR":
-            Alert.alert(
-              "Lookup Failed",
-              lookupResult.message || "Failed to look up society. Please try again."
-            );
-            break;
-        }
-        setLoading(false);
-        return;
-      }
-
-      const society = lookupResult.society;
-      console.log("[join] code lookup success:", {
-        id: society.id,
-        name: society.name,
-        join_code: society.join_code,
+      console.log("[join] Calling join_society RPC", {
+        code,
+        p_name: nameInput,
+        hasEmail: !!authUser.email,
       });
 
-      // Step 3: Check if membership already exists
-      console.log("[join] Checking for existing membership...");
-      const existingMember = await findMemberByUserAndSociety(society.id, uid);
+      const { data: rpcMember, error } = await supabase.rpc("join_society", {
+        p_join_code: code,
+        p_name: nameInput,
+        p_email: authUser.email ?? null,
+      });
 
-      let memberId: string;
+      if (error) {
+        console.error("[join] JOIN_FAILED rpc:", error);
+        showJoinFailure(error.message || "Failed to join society.");
+        return;
+      }
 
-      if (existingMember) {
-        // Already a member - just use existing membership
-        console.log("[join] Existing membership found:", existingMember.id);
-        memberId = existingMember.id;
-      } else {
-        // Step 4a: Try to claim a captain-added member with matching name
-        console.log("[join] Trying to claim captain-added member by name...");
-        const claimed = await claimCaptainAddedMember(society.id, displayName.trim());
+      const joinedPayload = Array.isArray(rpcMember) ? rpcMember[0] : rpcMember;
+      if (!joinedPayload || typeof joinedPayload !== "object") {
+        showJoinFailure("Failed to join society. Please try again.");
+        return;
+      }
 
-        if (claimed) {
-          console.log("[join] Claimed existing member:", claimed.id);
-          memberId = claimed.id;
-        } else {
-          // Step 4b: No match — create a new member row
-          console.log("[join] No unlinked match, createMember start");
-          memberId = await createMember(society.id, {
-            displayName: displayName.trim(),
-            name: displayName.trim(),
-            roles: ["member"],
-            userId: uid,
-          });
-          console.log("[join] createMember success:", memberId);
+      const joinedMemberId =
+        typeof (joinedPayload as any).id === "string"
+          ? (joinedPayload as any).id
+          : typeof (joinedPayload as any).member_id === "string"
+            ? (joinedPayload as any).member_id
+            : typeof (joinedPayload as any).memberId === "string"
+              ? (joinedPayload as any).memberId
+              : null;
+
+      const joinedSocietyId =
+        typeof (joinedPayload as any).society_id === "string"
+          ? (joinedPayload as any).society_id
+          : typeof (joinedPayload as any).societyId === "string"
+            ? (joinedPayload as any).societyId
+            : null;
+
+      if (!joinedMemberId || !joinedSocietyId) {
+        showJoinFailure("Failed to join society. Please try again.");
+        return;
+      }
+
+      let joinedMemberRecord: any = joinedPayload;
+      if (
+        typeof (joinedPayload as any).user_id !== "string" ||
+        typeof (joinedPayload as any).society_id !== "string"
+      ) {
+        const { data: fetchedMember, error: memberFetchError } = await supabase
+          .from("members")
+          .select("*")
+          .eq("id", joinedMemberId)
+          .maybeSingle();
+
+        console.log("[join] Member fetch by memberId:", {
+          memberId: joinedMemberId,
+          found: !!fetchedMember,
+          error: memberFetchError
+            ? {
+                message: memberFetchError.message,
+                code: memberFetchError.code,
+                details: memberFetchError.details,
+              }
+            : null,
+        });
+
+        if (fetchedMember) {
+          joinedMemberRecord = fetchedMember;
         }
       }
 
-      // Step 5: Update profile with active society/member
-      console.log("[join] updateProfile start");
-      await setActiveSocietyAndMember(uid, society.id, memberId);
-      console.log("[join] updateProfile success");
+      // Persist profile pointers to DB (defense-in-depth: the RPC also
+      // writes these, but an explicit client-side write guarantees the
+      // profile is correct before bootstrap re-reads it).
+      try {
+        await setActiveSocietyAndMember(uid, joinedSocietyId, joinedMemberId);
+      } catch (profileErr) {
+        console.warn("[join] setActiveSocietyAndMember failed (RPC already wrote it):", profileErr);
+      }
 
-      // Refresh bootstrap state to pick up the new active society
+      // Set local state so the UI can react immediately.
+      setActiveSocietyId(joinedSocietyId);
+      setMember(joinedMemberRecord as any);
       refresh();
-
-      // Step 6: Navigate to app home
-      console.log("[join] === JOIN SOCIETY COMPLETE ===");
-      router.replace("/(app)/(tabs)");
+      console.log("[join] JOIN_COMPLETE", {
+        memberId: joinedMemberId,
+        societyId: joinedSocietyId,
+        pathname,
+      });
+      setToast({ visible: true, message: "Joined society ✅", type: "success" });
+      setPendingJoinNavigation({
+        societyId: joinedSocietyId,
+        memberId: joinedMemberId,
+      });
     } catch (e: any) {
-      console.error("[join] Join society error:", e);
-      showRlsError(e);
+      console.error("[join] JOIN_FAILED", e);
+      const msg = e?.message || "Something went wrong. Please try again.";
+      showJoinFailure(msg);
     } finally {
-      setLoading(false);
+      setJoinLoading(false);
     }
   };
 
@@ -206,7 +396,7 @@ export default function OnboardingScreen() {
       return;
     }
 
-    setLoading(true);
+    setCreateLoading(true);
     console.log("[onboarding] === CREATE SOCIETY START ===");
 
     try {
@@ -216,7 +406,6 @@ export default function OnboardingScreen() {
       const uid = authUser?.id;
       if (!uid) {
         Alert.alert("Error", "Authentication failed. Please try again.");
-        setLoading(false);
         return;
       }
       console.log("[onboarding] Authenticated as:", uid);
@@ -250,24 +439,15 @@ export default function OnboardingScreen() {
 
       // Step 5: Navigate to app home
       console.log("[onboarding] === CREATE SOCIETY COMPLETE ===");
+      blurWebActiveElement();
       router.replace("/(app)/(tabs)");
     } catch (e: any) {
       console.error("[onboarding] Create society error:", e);
       showRlsError(e);
     } finally {
-      setLoading(false);
+      setCreateLoading(false);
     }
   };
-
-  if (loading) {
-    return (
-      <Screen scrollable={false}>
-        <View style={styles.centered}>
-          <LoadingState message={mode === "join" ? "Joining society..." : "Creating society..."} />
-        </View>
-      </Screen>
-    );
-  }
 
   // Show loading while waiting for auth
   if (!ready) {
@@ -300,15 +480,22 @@ export default function OnboardingScreen() {
             </AppText>
 
             <AppCard style={styles.formCard}>
+              {joinError && (
+                <InlineNotice variant="error" message={joinError} style={styles.errorNotice} />
+              )}
               <View style={styles.formField}>
                 <AppText variant="captionBold" style={styles.label}>Join Code</AppText>
                 <AppInput
                   placeholder="e.g. ABC123"
                   value={joinCode}
-                  onChangeText={(text) => setJoinCode(text.toUpperCase().replace(/\s/g, ""))}
+                  editable={!joinLoading}
+                  onChangeText={(text) => {
+                    setJoinCode(text.toUpperCase().replace(/\s/g, ""));
+                    setJoinError(null);
+                  }}
                   autoCapitalize="characters"
                   autoCorrect={false}
-                  maxLength={8}
+                  maxLength={10}
                 />
               </View>
 
@@ -317,20 +504,31 @@ export default function OnboardingScreen() {
                 <AppInput
                   placeholder="e.g. John Smith"
                   value={displayName}
-                  onChangeText={setDisplayName}
+                  editable={!joinLoading}
+                  onChangeText={(t) => { setDisplayName(t); setJoinError(null); }}
                   autoCapitalize="words"
                 />
               </View>
 
               <PrimaryButton
-                onPress={handleJoinSociety}
+                onPress={() => {
+                  console.log("[join] Join button onPress fired");
+                  void handleJoinSociety();
+                }}
+                loading={joinLoading}
+                disabled={joinLoading}
                 style={styles.submitButton}
-                disabled={!isAuthReady}
               >
-                {isAuthReady ? "Join Society" : "Signing in..."}
+                Join Society
               </PrimaryButton>
             </AppCard>
           </View>
+          <Toast
+            visible={toast.visible}
+            message={toast.message}
+            type={toast.type}
+            onHide={() => setToast((t) => ({ ...t, visible: false }))}
+          />
         </KeyboardAvoidingView>
       </Screen>
     );
@@ -389,12 +587,19 @@ export default function OnboardingScreen() {
               <PrimaryButton
                 onPress={handleCreateSociety}
                 style={styles.submitButton}
-                disabled={!isAuthReady}
+                disabled={!isAuthReady || createLoading}
+                loading={createLoading}
               >
                 {isAuthReady ? "Create Society" : "Signing in..."}
               </PrimaryButton>
             </AppCard>
           </View>
+          <Toast
+            visible={toast.visible}
+            message={toast.message}
+            type={toast.type}
+            onHide={() => setToast((t) => ({ ...t, visible: false }))}
+          />
         </KeyboardAvoidingView>
       </Screen>
     );
@@ -421,13 +626,23 @@ export default function OnboardingScreen() {
             <AppText variant="caption" color="secondary" style={styles.optionDescription}>
               Have a join code? Enter it to join your society.
             </AppText>
-            <PrimaryButton
+            <TouchableOpacity
               onPress={() => setMode("join")}
-              style={styles.optionButton}
-              disabled={!isAuthReady}
+              disabled={loading}
+              activeOpacity={0.8}
+              hitSlop={{ top: 16, bottom: 16, left: 16, right: 16 }}
+              style={[
+                styles.optionButtonTouch,
+                {
+                  backgroundColor: loading ? colors.surfaceDisabled : colors.primary,
+                  opacity: loading ? 0.7 : 1,
+                },
+              ]}
             >
-              {isAuthReady ? "Join with Code" : "Signing in..."}
-            </PrimaryButton>
+              <AppText variant="button" color="inverse">
+                {isAuthReady ? "Join with Code" : "Signing in…"}
+              </AppText>
+            </TouchableOpacity>
           </AppCard>
 
           <AppCard style={styles.optionCard}>
@@ -441,13 +656,19 @@ export default function OnboardingScreen() {
             <SecondaryButton
               onPress={() => setMode("create")}
               style={styles.optionButton}
-              disabled={!isAuthReady}
+              disabled={loading}
             >
-              {isAuthReady ? "Create New" : "Signing in..."}
+              {isAuthReady ? "Create New" : "Signing in…"}
             </SecondaryButton>
           </AppCard>
         </View>
       </View>
+      <Toast
+        visible={toast.visible}
+        message={toast.message}
+        type={toast.type}
+        onHide={() => setToast((t) => ({ ...t, visible: false }))}
+      />
     </Screen>
   );
 }
@@ -510,10 +731,22 @@ const styles = StyleSheet.create({
   optionButton: {
     width: "100%",
   },
+  optionButtonTouch: {
+    width: "100%",
+    minHeight: 44,
+    borderRadius: radius.md,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.lg,
+    alignItems: "center",
+    justifyContent: "center",
+  },
   formCard: {
     width: "100%",
   },
   formField: {
+    marginBottom: spacing.base,
+  },
+  errorNotice: {
     marginBottom: spacing.base,
   },
   label: {

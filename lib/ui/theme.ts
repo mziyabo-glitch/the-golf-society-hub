@@ -28,10 +28,10 @@ export const colors = {
     surfaceElevated: "#FFFFFF",
     surfaceDisabled: "#F3F4F6",
     
-    // Text
-    text: "#111827",
-    textSecondary: "#6B7280",
-    textTertiary: "#9CA3AF",
+    // Text (slate palette: 900 / 600 / 500)
+    text: "#0F172A",
+    textSecondary: "#475569",
+    textTertiary: "#64748B",
     textInverse: "#FFFFFF",
     
     // Borders
@@ -107,8 +107,8 @@ export const radius = {
 export const premiumTokens = {
   background: "#F7F8FA",
   cardBorder: "#E6E8EC",
-  textPrimary: "#111827",
-  textSecondary: "#6B7280",
+  textPrimary: "#0F172A",
+  textSecondary: "#475569",
   cardShadow: {
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 1 },
@@ -118,60 +118,77 @@ export const premiumTokens = {
   },
 } as const;
 
-// Typography (premium UI requirements)
+// Typography — increased for 40+ readability, mobile-first premium scale
+// ~12–15% larger than previous; line heights ~1.4x for comfortable reading
 export const typography = {
+  // pageTitle: hero headings, event names (was 20 → 24)
   title: {
+    fontSize: 24,
+    fontWeight: "700" as const,
+    lineHeight: 30,
+    letterSpacing: -0.2,
+  },
+  // h1: large section headings (was 18 → 22)
+  h1: {
     fontSize: 22,
     fontWeight: "700" as const,
     lineHeight: 28,
-    letterSpacing: -0.2,
+    letterSpacing: -0.15,
   },
-  h1: {
-    fontSize: 20,
-    fontWeight: "700" as const,
-    lineHeight: 26,
-    letterSpacing: -0.1,
-  },
+  // h2 / sectionTitle: card headers, section labels (was 15 → 18)
   h2: {
     fontSize: 18,
-    fontWeight: "600" as const,
+    fontWeight: "700" as const,
     lineHeight: 24,
-    letterSpacing: 0,
+    letterSpacing: -0.08,
   },
+  // body: primary readable text (was 13 → 16)
   body: {
-    fontSize: 15,
-    fontWeight: "400" as const,
-    lineHeight: 22,
-    letterSpacing: 0,
-  },
-  bodyBold: {
     fontSize: 16,
-    fontWeight: "600" as const,
+    fontWeight: "500" as const,
     lineHeight: 24,
     letterSpacing: 0,
   },
+  // bodyBold: emphasized body, member names (was 14 → 17)
+  bodyBold: {
+    fontSize: 17,
+    fontWeight: "700" as const,
+    lineHeight: 24,
+    letterSpacing: 0,
+  },
+  // caption: secondary info lines (was 12.5 → 15)
   caption: {
-    fontSize: 14,
-    fontWeight: "400" as const,
-    lineHeight: 20,
+    fontSize: 15,
+    fontWeight: "500" as const,
+    lineHeight: 21,
     letterSpacing: 0,
   },
+  // captionBold: labels, card sub-headers (was 12.5 → 15)
   captionBold: {
+    fontSize: 15,
+    fontWeight: "700" as const,
+    lineHeight: 21,
+    letterSpacing: 0,
+  },
+  // small / meta: helper text, timestamps, badges (was 12 → 14)
+  small: {
     fontSize: 14,
-    fontWeight: "600" as const,
+    fontWeight: "500" as const,
     lineHeight: 20,
     letterSpacing: 0,
   },
-  small: {
-    fontSize: 13,
-    fontWeight: "400" as const,
-    lineHeight: 18,
-    letterSpacing: 0,
+  // display: key numbers (tee times, OOM points) — 800 weight
+  display: {
+    fontSize: 26,
+    fontWeight: "800" as const,
+    lineHeight: 32,
+    letterSpacing: -0.2,
   },
+  // button (was 14 → 16)
   button: {
     fontSize: 16,
     fontWeight: "600" as const,
-    lineHeight: 24,
+    lineHeight: 22,
     letterSpacing: 0,
   },
   buttonLarge: {
@@ -207,9 +224,9 @@ export const shadows = {
   },
 } as const;
 
-// Button heights
+// Button heights — min 44px for primary/accessibility
 export const buttonHeights = {
-  sm: 36,
+  sm: 40,
   md: 44,
   lg: 52,
 } as const;

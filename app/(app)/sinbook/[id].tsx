@@ -6,9 +6,11 @@
 
 import { useCallback, useState } from "react";
 import { Pressable, Share, StyleSheet, View } from "react-native";
+import * as Clipboard from "expo-clipboard";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
 import { Feather } from "@expo/vector-icons";
+import { goBack } from "@/lib/navigation";
 
 import { Screen } from "@/components/ui/Screen";
 import { AppText } from "@/components/ui/AppText";
@@ -33,6 +35,8 @@ import {
 import { getColors, spacing, radius } from "@/lib/ui/theme";
 import { formatError, type FormattedError } from "@/lib/ui/formatError";
 import { confirmDestructive, showAlert } from "@/lib/ui/alert";
+import { Toast } from "@/components/ui/Toast";
+import { getRivalryInviteMessage } from "@/lib/appConfig";
 
 export default function RivalryDetailScreen() {
   const router = useRouter();
@@ -75,10 +79,11 @@ export default function RivalryDetailScreen() {
 
   useFocusEffect(useCallback(() => { loadData(); }, [loadData]));
 
-  // Derived data
-  const acceptedParticipants = sinbook?.participants.filter((p) => p.status === "accepted") ?? [];
+  // Derived data — map ALL participants by user_id for name resolution
+  const allParticipants = sinbook?.participants ?? [];
+  const acceptedParticipants = allParticipants.filter((p) => p.status === "accepted");
   const participantMap = new Map<string, SinbookParticipant>();
-  for (const p of acceptedParticipants) participantMap.set(p.user_id, p);
+  for (const p of allParticipants) participantMap.set(p.user_id, p);
 
   // Standings: count wins per participant
   const standings = new Map<string, number>();
@@ -156,15 +161,34 @@ export default function RivalryDetailScreen() {
   };
 
   const handleShare = async () => {
-    const code = sinbook?.join_code ?? sinbookId;
+    const code = sinbook?.join_code?.trim() ?? "";
+    if (!code) {
+      setToast({ visible: true, message: "Invite code not ready yet. Please try again in a moment.", type: "info" });
+      return;
+    }
+    const message = getRivalryInviteMessage(sinbook?.title ?? "Rivalry", code.toUpperCase());
     try {
-      await Share.share({
-        message: `Join my rivalry "${sinbook?.title}" on The Golf Society Hub!\n\nJoin code: ${code}\n\nDownload the app:\nAndroid: https://play.google.com/store/apps/details?id=com.thegolfsocietyhub.app\niOS: https://apps.apple.com/app/the-golf-society-hub/id6740041032`,
-      });
+      await Share.share({ message });
     } catch { /* cancelled */ }
   };
 
   const [actionBusy, setActionBusy] = useState(false);
+  const [toast, setToast] = useState({ visible: false, message: "", type: "success" as "success" | "error" | "info" });
+
+  const handleCopyCode = async () => {
+    const code = sinbook?.join_code?.trim();
+    if (!code) {
+      setToast({ visible: true, message: "Invite code not ready yet. Please try again in a moment.", type: "info" });
+      return;
+    }
+    try {
+      await Clipboard.setStringAsync(code.toUpperCase());
+      setToast({ visible: true, message: "Join code copied", type: "success" });
+    } catch {
+      showAlert("Copy failed", "Could not copy to clipboard.");
+    }
+  };
+
 
   const handleDeleteSinbook = () => {
     if (actionBusy) return;
@@ -195,9 +219,12 @@ export default function RivalryDetailScreen() {
     });
   };
 
-  const getName = (uid: string | null) => {
+  const getName = (uid: string | null): string => {
     if (!uid) return "No winner";
-    return participantMap.get(uid)?.display_name ?? "Unknown";
+    const p = participantMap.get(uid);
+    const name = p?.display_name?.trim();
+    if (name && name !== "Player") return name;
+    return uid === userId ? "You" : "Rival";
   };
 
   const formatDate = (dateStr: string) => {
@@ -227,7 +254,7 @@ export default function RivalryDetailScreen() {
           icon={<Feather name="alert-circle" size={24} color={colors.error} />}
           title="Error"
           message={loadError?.message || "Rivalry not found."}
-          action={{ label: "Go Back", onPress: () => router.back() }}
+          action={{ label: "Go Back", onPress: () => goBack(router, "/(app)/(tabs)/sinbook") }}
         />
       </Screen>
     );
@@ -285,7 +312,7 @@ export default function RivalryDetailScreen() {
                   ]}
                 >
                   <AppText variant="caption" style={{ color: entryWinner === p.user_id ? colors.primary : colors.text }}>
-                    {p.display_name}
+                    {getName(p.user_id)}
                   </AppText>
                 </Pressable>
               ))}
@@ -308,7 +335,7 @@ export default function RivalryDetailScreen() {
     <Screen>
       {/* Header */}
       <View style={styles.header}>
-        <SecondaryButton onPress={() => router.back()} size="sm">
+        <SecondaryButton onPress={() => goBack(router, "/(app)/(tabs)/sinbook")} size="sm">
           <Feather name="arrow-left" size={16} color={colors.text} /> Back
         </SecondaryButton>
         <View style={{ flexDirection: "row", gap: spacing.xs }}>
@@ -334,31 +361,46 @@ export default function RivalryDetailScreen() {
         </AppText>
       )}
 
-      {/* Join Code Card */}
-      {sinbook.join_code && (
+      {/* Join Code Card — always show when rivalry is inviteable or user is owner */}
+      {(acceptedParticipants.length < 2 || sinbook.created_by === userId) && (
         <AppCard style={{ marginTop: spacing.sm }}>
-          <AppText variant="captionBold" color="primary" style={{ marginBottom: spacing.xs }}>
+          <AppText variant="captionBold" color="primary" style={{ marginBottom: spacing.sm }}>
             JOIN CODE
           </AppText>
-          <View style={styles.joinCodeRow}>
-            <View style={[styles.joinCodeBadge, { backgroundColor: colors.backgroundTertiary, borderColor: colors.border }]}>
-              <AppText variant="h1" style={styles.joinCodeText}>
-                {sinbook.join_code}
+          {sinbook.join_code ? (
+            <>
+              <View style={styles.joinCodeRow}>
+                <View style={[styles.joinCodeBadge, { backgroundColor: colors.backgroundTertiary, borderColor: colors.border }]}>
+                  <AppText variant="h1" style={styles.joinCodeText}>
+                    {sinbook.join_code}
+                  </AppText>
+                </View>
+                <View style={styles.joinCodeActions}>
+                  <Pressable
+                    onPress={handleCopyCode}
+                    style={[styles.joinCodeBtn, { backgroundColor: colors.backgroundTertiary }]}
+                  >
+                    <Feather name="copy" size={14} color={colors.text} />
+                    <AppText variant="caption" style={{ marginLeft: 4 }}>Copy Code</AppText>
+                  </Pressable>
+                  <Pressable
+                    onPress={handleShare}
+                    style={[styles.joinCodeBtn, { backgroundColor: colors.primary + "12" }]}
+                  >
+                    <Feather name="share-2" size={14} color={colors.primary} />
+                    <AppText variant="caption" style={{ color: colors.primary, marginLeft: 4 }}>Share Invite</AppText>
+                  </Pressable>
+                </View>
+              </View>
+              <AppText variant="small" color="tertiary" style={{ marginTop: spacing.xs }}>
+                Share this code or the invite link so others can join the rivalry.
               </AppText>
-            </View>
-            <View style={styles.joinCodeActions}>
-              <Pressable
-                onPress={handleShare}
-                style={[styles.joinCodeBtn, { backgroundColor: colors.primary + "12" }]}
-              >
-                <Feather name="share-2" size={16} color={colors.primary} />
-                <AppText variant="caption" style={{ color: colors.primary, marginLeft: 4 }}>Share</AppText>
-              </Pressable>
-            </View>
-          </View>
-          <AppText variant="small" color="tertiary" style={{ marginTop: spacing.xs }}>
-            Share this code so others can join the rivalry.
-          </AppText>
+            </>
+          ) : (
+            <AppText variant="body" color="secondary">
+              Invite code not ready yet. Please try again in a moment.
+            </AppText>
+          )}
         </AppCard>
       )}
 
@@ -384,8 +426,8 @@ export default function RivalryDetailScreen() {
                   <AppText variant="h1" style={{ color: isLeading ? colors.primary : colors.text }}>
                     {wins}
                   </AppText>
-                  <AppText variant="caption" color="secondary" numberOfLines={1}>
-                    {p.display_name}
+                  <AppText variant="bodyBold" numberOfLines={1}>
+                    {getName(p.user_id)}
                   </AppText>
                 </View>
               );
@@ -404,6 +446,13 @@ export default function RivalryDetailScreen() {
           Add Entry
         </PrimaryButton>
       )}
+
+      <Toast
+        visible={toast.visible}
+        message={toast.message}
+        type={toast.type}
+        onHide={() => setToast((t) => ({ ...t, visible: false }))}
+      />
 
       {/* Timeline */}
       {entries.length === 0 ? (
@@ -490,19 +539,23 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
   },
   joinCodeBadge: {
-    paddingHorizontal: spacing.base,
-    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
     borderRadius: radius.sm,
     borderWidth: 1,
     borderStyle: "dashed" as const,
+    alignItems: "center",
+    justifyContent: "center",
   },
   joinCodeText: {
     letterSpacing: 4,
     fontVariant: ["tabular-nums"],
   },
   joinCodeActions: {
-    flexDirection: "column",
-    gap: spacing.xs,
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: spacing.sm,
+    marginTop: spacing.sm,
   },
   joinCodeBtn: {
     flexDirection: "row",
