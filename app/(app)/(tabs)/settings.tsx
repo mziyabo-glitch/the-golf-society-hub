@@ -622,6 +622,28 @@ export default function SettingsScreen() {
         </>
       )}
 
+      {/* Club Domain Review - Captain only (platform admin) */}
+      {canRegenCode && (
+        <>
+          <AppText variant="h2" style={styles.sectionTitle}>Club Domains</AppText>
+          <AppCard padding="sm">
+            <Pressable
+              style={({ pressed }) => [styles.linkRow, { opacity: pressed ? 0.7 : 1 }]}
+              onPress={() => router.push("/course-domains")}
+            >
+              <View style={[styles.linkIcon, { backgroundColor: colors.info + "20" }]}>
+                <Feather name="globe" size={16} color={colors.info} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <AppText variant="body">Domain Review</AppText>
+                <AppText variant="small" color="secondary">Approve/reject club website candidates</AppText>
+              </View>
+              <Feather name="chevron-right" size={18} color={colors.textTertiary} />
+            </Pressable>
+          </AppCard>
+        </>
+      )}
+
       {/* ManCo Tools - Only visible to ManCo members */}
       {permissions.canGenerateTeeSheet && (
         <>

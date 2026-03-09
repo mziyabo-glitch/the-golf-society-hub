@@ -9,7 +9,11 @@
     "web": "expo start --web",
     "lint": "expo lint -- --cache --cache-location .cache/eslint/.eslintcache",
     "build": "expo export -p web",
-    "vercel-build": "npm run build"
+    "vercel-build": "npm run build",
+    "build-pilot": "node scripts/build-pilot-course-list.js",
+    "discover-domains": "node scripts/discover-club-domains.js",
+    "score-domains": "node scripts/score-domain-candidates.js",
+    "approve-domain": "node scripts/approve-club-domain.js"
   },
   "engines": {
     "node": ">=18.x"
@@ -54,6 +58,7 @@
   },
   "devDependencies": {
     "@types/react": "~19.1.0",
+    "dotenv": "^16.4.5",
     "eslint": "^9.25.0",
     "eslint-config-expo": "~10.0.0",
     "serve": "^14.2.5",
