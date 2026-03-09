@@ -2,7 +2,7 @@
   "expo": {
     "name": "The Golf Society Hub",
     "slug": "the-golf-society-hub",
-    "version": "1.0.0",
+    "version": "1.0.6",
     "description": "Everything Golf Society",
     "orientation": "portrait",
     "icon": "./assets/images/app-icon.png",
@@ -14,7 +14,7 @@
     },
     "android": {
       "package": "com.godskid.golfsocietyhub",
-      "versionCode": 2,
+      "versionCode": 6,
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/app-icon.png",
         "backgroundColor": "#FFFFFF"
