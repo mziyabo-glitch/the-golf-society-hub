@@ -69,6 +69,10 @@ export default function CoursesAdminScreen() {
   const [manualPar, setManualPar] = useState("");
   const [manualCourseRating, setManualCourseRating] = useState("");
   const [manualSlopeRating, setManualSlopeRating] = useState("");
+  const [importLoading, setImportLoading] = useState(false);
+  const [importNotice, setImportNotice] = useState<{ imported: number; skipped: number } | null>(
+    null
+  );
 
   const load = useCallback(
     async (searchQuery: string) => {
@@ -272,6 +276,29 @@ export default function CoursesAdminScreen() {
     });
   };
 
+  const handleImportUkCourses = async () => {
+    setImportLoading(true);
+    setImportNotice(null);
+    try {
+      const response = await fetch("/api/admin/import-courses", { method: "POST" });
+      const payload = (await response.json()) as
+        | { imported?: number; skipped?: number; error?: string }
+        | null;
+      if (!response.ok) {
+        throw new Error(payload?.error || "Course import failed.");
+      }
+      const imported = Number(payload?.imported ?? 0);
+      const skipped = Number(payload?.skipped ?? 0);
+      setImportNotice({ imported, skipped });
+      showAlert("Import complete", `Imported ${imported} courses. Skipped ${skipped}.`);
+      await load(query);
+    } catch (err: any) {
+      showAlert("Import failed", err?.message || "Could not import UK courses.");
+    } finally {
+      setImportLoading(false);
+    }
+  };
+
   const statusOptions: EnrichmentStatusFilter[] = [
     "needs_review",
     "pending",
@@ -329,9 +356,19 @@ export default function CoursesAdminScreen() {
             Match imported courses to tee/rating metadata
           </AppText>
         </View>
-        <SecondaryButton size="sm" onPress={() => load(query)} disabled={loading}>
-          Refresh
-        </SecondaryButton>
+        <View style={styles.headerActions}>
+          <SecondaryButton
+            size="sm"
+            onPress={handleImportUkCourses}
+            disabled={loading || importLoading}
+            loading={importLoading}
+          >
+            Import UK Courses
+          </SecondaryButton>
+          <SecondaryButton size="sm" onPress={() => load(query)} disabled={loading || importLoading}>
+            Refresh
+          </SecondaryButton>
+        </View>
       </View>
 
       {error ? (
@@ -339,6 +376,15 @@ export default function CoursesAdminScreen() {
           variant="error"
           message={error.message}
           detail={error.detail}
+          style={{ marginBottom: spacing.sm }}
+        />
+      ) : null}
+
+      {importNotice ? (
+        <InlineNotice
+          variant="success"
+          message={`Imported ${importNotice.imported} course${importNotice.imported === 1 ? "" : "s"}`}
+          detail={`Skipped ${importNotice.skipped} duplicates`}
           style={{ marginBottom: spacing.sm }}
         />
       ) : null}
@@ -598,6 +644,11 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     marginBottom: spacing.sm,
     gap: spacing.sm,
+  },
+  headerActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.xs,
   },
   summaryGrid: {
     flexDirection: "row",
