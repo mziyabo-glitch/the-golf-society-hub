@@ -1,9 +1,8 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { StyleSheet, View, Pressable, ScrollView } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
 import { Feather } from "@expo/vector-icons";
-import { goBack } from "@/lib/navigation";
 
 import { Screen } from "@/components/ui/Screen";
 import { AppText } from "@/components/ui/AppText";
@@ -26,15 +25,16 @@ import {
   EVENT_FORMATS,
   EVENT_CLASSIFICATIONS,
 } from "@/lib/db_supabase/eventRepo";
-import { getPermissionsForMember } from "@/lib/rbac";
 import {
-  getEventRegistrations,
-  markMePaid,
-  type EventRegistration,
-} from "@/lib/db_supabase/eventRegistrationRepo";
-import { getMembersBySocietyId, type MemberDoc } from "@/lib/db_supabase/memberRepo";
-import { Toast } from "@/components/ui/Toast";
-import { getColors, spacing, radius, typography } from "@/lib/ui/theme";
+  searchCourses,
+  formatCourseLabel,
+  getCourseById,
+  listCourseTees,
+  type CourseLibraryDoc,
+  type CourseTeeDoc,
+} from "@/lib/db_supabase/courseRepo";
+import { getPermissionsForMember } from "@/lib/rbac";
+import { getColors, spacing, radius } from "@/lib/ui/theme";
 import { confirmDestructive, showAlert } from "@/lib/ui/alert";
 import { getSocietyLogoUrl } from "@/lib/societyLogo";
 
@@ -178,7 +178,16 @@ export default function EventDetailScreen() {
   const [formDate, setFormDate] = useState("");
   const [formFormat, setFormFormat] = useState<EventFormat>("stableford");
   const [formClassification, setFormClassification] = useState<EventClassification>("general");
-  const [formCourseName, setFormCourseName] = useState("");
+  const [formCourseQuery, setFormCourseQuery] = useState("");
+  const [selectedCourse, setSelectedCourse] = useState<CourseLibraryDoc | null>(null);
+  const [courseResults, setCourseResults] = useState<CourseLibraryDoc[]>([]);
+  const [coursesLoading, setCoursesLoading] = useState(false);
+  const [courseSearchError, setCourseSearchError] = useState<string | null>(null);
+  const [availableTees, setAvailableTees] = useState<CourseTeeDoc[]>([]);
+  const [teesLoading, setTeesLoading] = useState(false);
+  const [teeLoadError, setTeeLoadError] = useState<string | null>(null);
+  const [selectedTeeId, setSelectedTeeId] = useState<string | null>(null);
+  const courseSearchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Men's tee settings
   const [formMenTeeName, setFormMenTeeName] = useState("");
@@ -227,60 +236,105 @@ export default function EventDetailScreen() {
     }, [loadEvent])
   );
 
-  // ---- Paid Players dashboard ----
-  const canManagePayments = permissions.canManageEventPayments;
-  const [registrations, setRegistrations] = useState<EventRegistration[]>([]);
-  const [regMembers, setRegMembers] = useState<MemberDoc[]>([]);
-  const [payBusy, setPayBusy] = useState<string | null>(null);
-  const [payToast, setPayToast] = useState<{ visible: boolean; message: string; type: "success" | "error" }>({ visible: false, message: "", type: "success" });
+  useEffect(() => {
+    if (!isEditing) {
+      setCourseResults([]);
+      setCoursesLoading(false);
+      setCourseSearchError(null);
+      return;
+    }
 
-  const loadRegistrations = useCallback(async () => {
-    if (!eventId || !societyId) return;
-    try {
-      const [regs, mems] = await Promise.all([
-        getEventRegistrations(eventId),
-        getMembersBySocietyId(societyId),
-      ]);
-      setRegistrations(regs);
-      setRegMembers(mems);
-    } catch { /* non-critical */ }
-  }, [eventId, societyId]);
+    const query = formCourseQuery.trim();
+    const selectedLabel = selectedCourse ? formatCourseLabel(selectedCourse) : "";
+    if (!query || query === selectedLabel || query.length < 2) {
+      setCourseResults([]);
+      setCoursesLoading(false);
+      setCourseSearchError(null);
+      return;
+    }
+
+    if (courseSearchTimerRef.current) {
+      clearTimeout(courseSearchTimerRef.current);
+    }
+
+    let cancelled = false;
+    courseSearchTimerRef.current = setTimeout(async () => {
+      setCoursesLoading(true);
+      setCourseSearchError(null);
+      try {
+        const rows = await searchCourses(query, { countryCode: "gb", limit: 20 });
+        if (!cancelled) setCourseResults(rows);
+      } catch (err: any) {
+        if (!cancelled) {
+          setCourseResults([]);
+          setCourseSearchError(err?.message || "Failed to search courses.");
+        }
+      } finally {
+        if (!cancelled) setCoursesLoading(false);
+      }
+    }, 220);
+
+    return () => {
+      cancelled = true;
+      if (courseSearchTimerRef.current) {
+        clearTimeout(courseSearchTimerRef.current);
+      }
+    };
+  }, [isEditing, formCourseQuery, selectedCourse]);
 
   useEffect(() => {
-    if (eventId && societyId) loadRegistrations();
-  }, [eventId, societyId, loadRegistrations]);
-
-  const memberNameMap = useMemo(() => {
-    const map: Record<string, string> = {};
-    for (const m of regMembers) map[m.id] = m.name || m.display_name || m.displayName || "Member";
-    return map;
-  }, [regMembers]);
-
-  const paidCount = registrations.filter((r) => r.paid).length;
-  const inCount = registrations.filter((r) => r.status === "in").length;
-
-  const handleTogglePaid = async (reg: EventRegistration) => {
-    if (payBusy) return;
-    setPayBusy(reg.member_id);
-    try {
-      await markMePaid(reg.event_id, reg.member_id, !reg.paid);
-      setPayToast({ visible: true, message: reg.paid ? "Marked unpaid" : "Marked paid", type: "success" });
-      await loadRegistrations();
-    } catch (e: any) {
-      setPayToast({ visible: true, message: e?.message || "Failed", type: "error" });
-    } finally {
-      setPayBusy(null);
+    if (!isEditing) {
+      setAvailableTees([]);
+      setTeesLoading(false);
+      setTeeLoadError(null);
+      return;
     }
-  };
+    if (!selectedCourse?.id) {
+      setAvailableTees([]);
+      setSelectedTeeId(null);
+      setTeesLoading(false);
+      setTeeLoadError(null);
+      return;
+    }
+
+    let cancelled = false;
+    setTeesLoading(true);
+    setTeeLoadError(null);
+
+    listCourseTees(selectedCourse.id)
+      .then((rows) => {
+        if (cancelled) return;
+        setAvailableTees(rows);
+      })
+      .catch((err: any) => {
+        if (cancelled) return;
+        setAvailableTees([]);
+        setTeeLoadError(err?.message || "Failed to load tee sets.");
+      })
+      .finally(() => {
+        if (cancelled) return;
+        setTeesLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isEditing, selectedCourse?.id]);
 
   // Populate form when entering edit mode
-  const startEditing = () => {
+  const startEditing = async () => {
     if (!event) return;
     setFormName(event.name || "");
     setFormDate(event.date || "");
     setFormFormat(event.format || "stableford");
     setFormClassification(event.classification || "general");
-    setFormCourseName(event.courseName || "");
+    setFormCourseQuery(event.courseName || "");
+    setSelectedCourse(null);
+    setCourseResults([]);
+    setCourseSearchError(null);
+    setSelectedTeeId(typeof event.teeId === "string" ? event.teeId : null);
+    setAvailableTees([]);
+    setTeeLoadError(null);
 
     // Men's tee settings
     setFormMenTeeName(event.teeName || "");
@@ -306,6 +360,19 @@ export default function EventDetailScreen() {
       event.teeName || event.par != null || event.slopeRating != null ||
       event.ladiesTeeName || event.ladiesPar != null || event.ladiesSlopeRating != null;
     setShowTeeSettings(!!hasTeeSettings);
+
+    if (event.course_id) {
+      try {
+        const [courseDoc, teeRows] = await Promise.all([
+          getCourseById(event.course_id),
+          listCourseTees(event.course_id),
+        ]);
+        setSelectedCourse(courseDoc);
+        setAvailableTees(teeRows);
+      } catch (err: any) {
+        setTeeLoadError(err?.message || "Failed to load course tee sets.");
+      }
+    }
 
     setIsEditing(true);
   };
@@ -362,6 +429,14 @@ export default function EventDetailScreen() {
         return;
       }
     }
+    if (formCourseQuery.trim() && !selectedCourse) {
+      showAlert("Select Course", "Please choose a course from the suggestions.");
+      return;
+    }
+    if (selectedCourse && availableTees.length > 0 && !selectedTeeId) {
+      showAlert("Select Tee", "This course has tee metadata. Please pick a tee set.");
+      return;
+    }
 
     // Validate Men's tee settings
     if (!validateTeeInput(formMenPar, formMenCourseRating, formMenSlopeRating, "Men's")) {
@@ -381,6 +456,7 @@ export default function EventDetailScreen() {
     const womenPar = formWomenPar.trim() ? parseInt(formWomenPar.trim(), 10) : undefined;
     const womenCourseRating = formWomenCourseRating.trim() ? parseFloat(formWomenCourseRating.trim()) : undefined;
     const womenSlopeRating = formWomenSlopeRating.trim() ? parseInt(formWomenSlopeRating.trim(), 10) : undefined;
+    const selectedTee = availableTees.find((tee) => tee.id === selectedTeeId) ?? null;
 
     const handicapAllowance = formHandicapAllowance.trim()
       ? parseFloat(formHandicapAllowance.trim()) / 100
@@ -393,12 +469,14 @@ export default function EventDetailScreen() {
         date: formDate.trim() || undefined,
         format: formFormat,
         classification: formClassification,
-        courseName: formCourseName.trim() || undefined,
+        courseId: selectedCourse ? selectedCourse.id : null,
+        teeId: selectedTee?.id ?? null,
+        courseName: selectedCourse ? formatCourseLabel(selectedCourse) : null,
         // Men's tee settings
-        teeName: formMenTeeName.trim() || undefined,
-        par: menPar,
-        courseRating: menCourseRating,
-        slopeRating: menSlopeRating,
+        teeName: selectedTee?.tee_name || formMenTeeName.trim() || undefined,
+        par: selectedTee?.par ?? menPar,
+        courseRating: selectedTee?.course_rating ?? menCourseRating,
+        slopeRating: selectedTee?.slope_rating ?? menSlopeRating,
         // Women's tee settings
         ladiesTeeName: formWomenTeeName.trim() || undefined,
         ladiesPar: womenPar,
@@ -449,7 +527,7 @@ export default function EventDetailScreen() {
   if (error) {
     return (
       <Screen>
-        <SecondaryButton onPress={() => goBack(router, "/(app)/(tabs)/events")} size="sm">
+        <SecondaryButton onPress={() => router.back()} size="sm">
           <Feather name="arrow-left" size={16} color={colors.text} /> Back
         </SecondaryButton>
         <EmptyState title="Error" message={error} />
@@ -569,13 +647,146 @@ export default function EventDetailScreen() {
             {showTeeSettings && (
               <View style={styles.teeSettingsContainer}>
                 <View style={styles.formField}>
-                  <AppText variant="caption" style={styles.label}>Course Name</AppText>
+                  <AppText variant="caption" style={styles.label}>Course</AppText>
                   <AppInput
-                    placeholder="e.g. Royal Liverpool"
-                    value={formCourseName}
-                    onChangeText={setFormCourseName}
+                    placeholder="Search imported UK courses..."
+                    value={formCourseQuery}
+                    onChangeText={(value) => {
+                      setFormCourseQuery(value);
+                      if (selectedCourse && value.trim() !== formatCourseLabel(selectedCourse)) {
+                        setSelectedCourse(null);
+                        setAvailableTees([]);
+                        setSelectedTeeId(null);
+                      }
+                    }}
+                    autoCorrect={false}
                     autoCapitalize="words"
                   />
+                  {selectedCourse ? (
+                    <View style={[styles.selectedCourseRow, { backgroundColor: colors.backgroundSecondary }]}>
+                      <View style={{ flex: 1 }}>
+                        <AppText variant="small" color="secondary">Selected course</AppText>
+                        <AppText variant="captionBold">{formatCourseLabel(selectedCourse)}</AppText>
+                      </View>
+                      <SecondaryButton
+                        size="sm"
+                        onPress={() => {
+                          setSelectedCourse(null);
+                          setFormCourseQuery("");
+                          setCourseResults([]);
+                          setAvailableTees([]);
+                          setSelectedTeeId(null);
+                        }}
+                      >
+                        Clear
+                      </SecondaryButton>
+                    </View>
+                  ) : null}
+                  {selectedCourse ? (
+                    <View style={[styles.courseTeeContainer, { borderColor: colors.border }]}>
+                      <AppText variant="small" color="secondary" style={{ marginBottom: 6 }}>
+                        Tee sets
+                      </AppText>
+                      {teesLoading ? (
+                        <AppText variant="small" color="secondary">Loading tee sets...</AppText>
+                      ) : teeLoadError ? (
+                        <AppText variant="small" style={{ color: colors.error }}>{teeLoadError}</AppText>
+                      ) : availableTees.length === 0 ? (
+                        <AppText variant="small" color="tertiary">
+                          No tee metadata found. You can edit tee values manually below.
+                        </AppText>
+                      ) : (
+                        <View style={styles.teeChipWrap}>
+                          {availableTees.map((tee) => {
+                            const selected = tee.id === selectedTeeId;
+                            return (
+                              <Pressable
+                                key={tee.id}
+                                onPress={() => {
+                                  setSelectedTeeId(tee.id);
+                                  setFormMenTeeName(tee.tee_name || "");
+                                  setFormMenPar(tee.par != null ? String(tee.par) : "");
+                                  setFormMenCourseRating(
+                                    tee.course_rating != null ? String(tee.course_rating) : ""
+                                  );
+                                  setFormMenSlopeRating(
+                                    tee.slope_rating != null ? String(tee.slope_rating) : ""
+                                  );
+                                }}
+                                style={[
+                                  styles.teeChip,
+                                  {
+                                    backgroundColor: selected
+                                      ? colors.primary
+                                      : colors.backgroundSecondary,
+                                    borderColor: selected ? colors.primary : colors.border,
+                                  },
+                                ]}
+                              >
+                                <AppText
+                                  variant="small"
+                                  style={{ color: selected ? "#fff" : colors.text }}
+                                >
+                                  {tee.tee_name}
+                                  {tee.gender ? ` · ${tee.gender}` : ""}
+                                  {tee.slope_rating != null ? ` · S${tee.slope_rating}` : ""}
+                                </AppText>
+                              </Pressable>
+                            );
+                          })}
+                        </View>
+                      )}
+                    </View>
+                  ) : null}
+                  {coursesLoading ? (
+                    <AppText variant="small" color="secondary" style={{ marginTop: 6 }}>
+                      Searching course library...
+                    </AppText>
+                  ) : null}
+                  {courseSearchError ? (
+                    <AppText variant="small" style={{ color: colors.error, marginTop: 6 }}>
+                      {courseSearchError}
+                    </AppText>
+                  ) : null}
+                  {!coursesLoading && formCourseQuery.trim().length >= 2 && courseResults.length > 0 ? (
+                    <View style={[styles.courseResultsList, { borderColor: colors.border }]}>
+                      {courseResults.map((course) => (
+                        <Pressable
+                          key={course.id}
+                          onPress={() => {
+                            setSelectedCourse(course);
+                            setFormCourseQuery(formatCourseLabel(course));
+                            setCourseResults([]);
+                            setCourseSearchError(null);
+                            setSelectedTeeId(null);
+                          }}
+                          style={({ pressed }) => [
+                            styles.courseResultItem,
+                            {
+                              backgroundColor: pressed
+                                ? colors.backgroundSecondary
+                                : colors.surface,
+                              borderBottomColor: colors.border,
+                            },
+                          ]}
+                        >
+                          <AppText variant="body">{course.name}</AppText>
+                          <AppText variant="small" color="secondary">
+                            {course.area || "Area unknown"}
+                          </AppText>
+                        </Pressable>
+                      ))}
+                    </View>
+                  ) : null}
+                  {!coursesLoading &&
+                  formCourseQuery.trim().length >= 2 &&
+                  courseResults.length === 0 &&
+                  !courseSearchError &&
+                  !selectedCourse ? (
+                    <AppText variant="small" color="secondary" style={{ marginTop: 6 }}>
+                      No matching courses found.
+                    </AppText>
+                  ) : null}
                 </View>
 
                 {/* Men's Tee Block */}
@@ -652,7 +863,7 @@ export default function EventDetailScreen() {
     <Screen>
       {/* Header with Back, Edit, and Society Badge */}
       <View style={styles.header}>
-        <SecondaryButton onPress={() => goBack(router, "/(app)/(tabs)/events")} size="sm">
+        <SecondaryButton onPress={() => router.back()} size="sm">
           <Feather name="arrow-left" size={16} color={colors.text} /> Back
         </SecondaryButton>
         <View style={styles.headerRight}>
@@ -707,7 +918,7 @@ export default function EventDetailScreen() {
         </AppCard>
       )}
 
-      {/* Players link */}
+      {/* Players */}
       <Pressable
         onPress={() =>
           router.push({
@@ -720,97 +931,10 @@ export default function EventDetailScreen() {
           <ActionRow
             icon="users"
             title="Players"
-            subtitle={`${paidCount} paid · ${inCount} confirmed`}
+            subtitle={`${(event as any).player_ids?.length ?? event.playerIds?.length ?? 0} registered`}
           />
         </AppCard>
       </Pressable>
-
-      {/* View Tee Sheet — when tee times published */}
-      {event.teeTimePublishedAt && (
-        <Pressable
-          onPress={() =>
-            router.push({
-              pathname: "/(app)/event/[id]/tee-sheet",
-              params: { id: eventId },
-            })
-          }
-        >
-          <AppCard style={styles.actionCard}>
-            <View style={styles.actionRow}>
-              <View style={[styles.iconContainer, { backgroundColor: colors.success + "20" }]}>
-                <Feather name="flag" size={18} color={colors.success} />
-              </View>
-              <View style={styles.actionContent}>
-                <AppText variant="bodyBold">View Tee Sheet</AppText>
-                <AppText variant="caption" color="secondary">
-                  Your tee time and full tee sheet
-                </AppText>
-              </View>
-              <Feather name="chevron-right" size={20} color={colors.textTertiary} />
-            </View>
-          </AppCard>
-        </Pressable>
-      )}
-
-      {/* Paid Players dashboard */}
-      {registrations.length > 0 && (
-        <AppCard style={styles.card}>
-          <View style={styles.paidHeader}>
-            <View style={{ flex: 1 }}>
-              <AppText variant="h2">Paid Players</AppText>
-              <AppText variant="small" color="secondary">
-                {paidCount} of {inCount} paid
-              </AppText>
-            </View>
-            <View style={[styles.paidSummaryPill, { backgroundColor: paidCount === inCount && inCount > 0 ? colors.success + "14" : colors.warning + "14" }]}>
-              <Feather
-                name={paidCount === inCount && inCount > 0 ? "check-circle" : "alert-circle"}
-                size={14}
-                color={paidCount === inCount && inCount > 0 ? colors.success : colors.warning}
-              />
-              <AppText variant="small" style={{ color: paidCount === inCount && inCount > 0 ? colors.success : colors.warning, fontWeight: "700" }}>
-                {paidCount === inCount && inCount > 0 ? "All paid" : `${inCount - paidCount} unpaid`}
-              </AppText>
-            </View>
-          </View>
-
-          {registrations
-            .filter((r) => r.status === "in")
-            .map((reg) => (
-            <View key={reg.id} style={styles.paidRow}>
-              <AppText variant="body" numberOfLines={1} style={{ flex: 1 }}>
-                {memberNameMap[reg.member_id] ?? "Member"}
-              </AppText>
-              <View style={[styles.paidPill, { backgroundColor: reg.paid ? colors.success : colors.error }]}>
-                <AppText style={styles.paidPillText}>{reg.paid ? "PAID" : "UNPAID"}</AppText>
-              </View>
-              {canManagePayments && (
-                <Pressable
-                  disabled={payBusy === reg.member_id}
-                  onPress={() => handleTogglePaid(reg)}
-                  hitSlop={8}
-                  style={({ pressed }) => [styles.paidToggleBtn, { borderColor: colors.border, opacity: pressed ? 0.6 : payBusy === reg.member_id ? 0.4 : 1 }]}
-                >
-                  <AppText variant="small" color="primary" style={{ fontWeight: "600" }}>
-                    {reg.paid ? "Undo" : "Confirm"}
-                  </AppText>
-                </Pressable>
-              )}
-            </View>
-          ))}
-
-          {registrations.filter((r) => r.status === "out").length > 0 && (
-            <View style={{ marginTop: spacing.sm, paddingTop: spacing.sm, borderTopWidth: 1, borderTopColor: "#F3F4F6" }}>
-              <AppText variant="captionBold" color="tertiary" style={{ marginBottom: spacing.xs }}>Not playing</AppText>
-              {registrations.filter((r) => r.status === "out").map((reg) => (
-                <AppText key={reg.id} variant="small" color="tertiary" style={{ paddingVertical: 2 }}>
-                  {memberNameMap[reg.member_id] ?? "Member"}
-                </AppText>
-              ))}
-            </View>
-          )}
-        </AppCard>
-      )}
 
       {/* Enter Points Section - Captain/Handicapper only */}
       {canEnterPoints && (
@@ -854,7 +978,6 @@ export default function EventDetailScreen() {
         </AppText>
       )}
       <LicenceRequiredModal visible={modalVisible} onClose={() => setModalVisible(false)} societyId={guardSocietyId} />
-      <Toast visible={payToast.visible} message={payToast.message} type={payToast.type} onHide={() => setPayToast((t) => ({ ...t, visible: false }))} />
     </Screen>
   );
 }
@@ -944,44 +1067,6 @@ const styles = StyleSheet.create({
   actionContent: {
     flex: 1,
   },
-  paidHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginBottom: spacing.sm,
-  },
-  paidSummaryPill: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 4,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 4,
-    borderRadius: radius.full,
-  },
-  paidRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing.xs,
-    paddingVertical: spacing.sm,
-    borderBottomWidth: 1,
-    borderBottomColor: "#F3F4F6",
-  },
-  paidPill: {
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 2,
-    borderRadius: radius.full,
-  },
-  paidPillText: {
-    color: "#FFFFFF",
-    fontWeight: "700",
-    fontSize: typography.small.fontSize,
-  },
-  paidToggleBtn: {
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 4,
-    borderWidth: 1,
-    borderRadius: radius.sm,
-    marginLeft: spacing.xs,
-  },
   createdText: {
     marginTop: spacing.lg,
     textAlign: "center",
@@ -1022,6 +1107,42 @@ const styles = StyleSheet.create({
     paddingTop: spacing.sm,
     borderTopWidth: 1,
     borderTopColor: "rgba(0,0,0,0.04)",
+  },
+  selectedCourseRow: {
+    marginTop: spacing.xs,
+    borderRadius: radius.sm,
+    padding: spacing.sm,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+  },
+  courseResultsList: {
+    marginTop: spacing.xs,
+    borderWidth: 1,
+    borderRadius: radius.sm,
+    overflow: "hidden",
+  },
+  courseResultItem: {
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  courseTeeContainer: {
+    marginTop: spacing.xs,
+    borderWidth: 1,
+    borderRadius: radius.sm,
+    padding: spacing.sm,
+  },
+  teeChipWrap: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: spacing.xs,
+  },
+  teeChip: {
+    borderWidth: 1,
+    borderRadius: radius.sm,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 6,
   },
   teeSettingsRow: {
     flexDirection: "row",

@@ -77,6 +77,142 @@ for production as needed).
 - [React Native](https://reactnative.dev) - Mobile app framework
 - [AsyncStorage](https://react-native-async-storage.github.io/async-storage/) - Local data persistence
 
+## Shared Course Library (Phase 1)
+
+Golf Society Hub uses UK course discovery data from the Fairway Forecast repository
+as the shared course library for event creation.
+
+### What Phase 1 includes
+
+- Supabase tables:
+  - `public.courses_seed` (raw imported source rows)
+  - `public.courses` (normalized/deduped course library)
+- Import script: `scripts/importCoursesGb.ts`
+- Admin review screen: `/(app)/courses-admin`
+- Event Create uses course search/select from imported data (no free-text course input)
+
+### Run the import
+
+1. Apply latest Supabase migrations (includes `038_courses_library_phase1.sql`).
+2. Make sure you have:
+   - a local checkout of Fairway Forecast, or direct access to `data/courses/gb.json`
+   - Supabase URL + service role key
+3. Set env vars in your shell:
+
+```bash
+export SUPABASE_URL="https://<project-ref>.supabase.co"
+export SUPABASE_SERVICE_ROLE_KEY="<service-role-key>"
+```
+
+4. Run import (from repo root):
+
+```bash
+npm run import:courses:gb -- --file ../fairway-forecast/data/courses/gb.json
+```
+
+Optional:
+
+- `--dry-run` to validate/parse without writing
+- `--country gb` (defaults to `gb`)
+- `--source fairway_forecast` (defaults to `fairway_forecast`)
+
+Examples:
+
+```bash
+npm run import:courses:gb -- --file /absolute/path/to/fairway-forecast/data/courses/gb.json --dry-run
+npm run import:courses:gb -- --file ../fairway-forecast/data/courses/gb.json
+```
+
+### Notes
+
+- Phase 1 does **not** include scraping, tee/rating derivation, or advanced matching logic.
+- Import expects Fairway Forecast UK schema rows like:
+  `["Abbey Hill Golf Centre", 52.04426, -0.81176, "Milton Keynes"]`
+- `normalized_name` is persisted for dedupe + search.
+
+## Course Enrichment (Phase 2)
+
+Phase 2 enriches imported courses with tee/rating metadata and introduces a review
+workflow for uncertain matches.
+
+### Schema additions
+
+- `public.courses` enrichment fields:
+  - `enrichment_status` (`pending` default)
+  - `matched_source`
+  - `matched_name`
+  - `match_confidence`
+  - `reviewed_at`
+  - `reviewed_by`
+- `public.tees` stores tee metadata:
+  - `tee_name`, `tee_color`, `gender`
+  - `par`, `course_rating`, `slope_rating`
+  - `source`, `source_ref`, `is_verified`
+- `public.course_enrichment_runs` stores enrichment audit payloads.
+- `public.events.tee_id` persists selected tee row on events.
+
+### Matching rules
+
+- **Never match on name alone**
+- Match confidence uses:
+  - normalized name similarity
+  - area similarity
+  - coordinate proximity
+- Decision thresholds:
+  - `>= 0.86` and eligibility checks pass → `matched`
+  - `>= 0.68` and `< 0.86` → `needs_review`
+  - below review threshold or no candidates → `needs_review` / `skipped`
+
+### Run enrichment
+
+Required env:
+
+```bash
+export SUPABASE_URL="https://<project-ref>.supabase.co"
+export SUPABASE_SERVICE_ROLE_KEY="<service-role-key>"
+```
+
+Run:
+
+```bash
+npm run enrich:courses -- --candidates-file ../fairway-forecast/data/courses/gb-enriched.json
+```
+
+Useful flags:
+
+- `--dry-run` (no database writes)
+- `--course-id <uuid>` (single-course debug mode)
+- `--limit <n>` (batch size in one run)
+- `--high-threshold <num>`
+- `--review-threshold <num>`
+
+The script prints summary counts:
+
+- matched
+- needs_review
+- failed
+- skipped
+
+### Manual review workflow
+
+Use `/(app)/courses-admin` (Course Enrichment Admin) to:
+
+- filter courses by enrichment status
+- inspect proposed match + confidence
+- accept/reject proposed match
+- edit matched name manually
+- add tee rows manually
+- mark course as complete after review
+
+### Event setup integration
+
+In Event Create/Edit:
+
+- selecting a course loads available tee sets
+- tee selection is required when tee metadata exists
+- selected tee is stored on `events.tee_id`
+- tee values are copied into event snapshot fields for scoring compatibility
+
 ## Learn more
 
 - [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).

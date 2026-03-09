@@ -857,6 +857,22 @@ export default function SettingsScreen() {
           <Feather name="chevron-right" size={18} color={colors.textTertiary} />
         </Pressable>
 
+        {permissions.canCreateEvents && (
+          <Pressable
+            style={({ pressed }) => [styles.linkRow, { opacity: pressed ? 0.7 : 1 }]}
+            onPress={() => router.push("/(app)/courses-admin")}
+          >
+            <View style={[styles.linkIcon, { backgroundColor: colors.info + "20" }]}>
+              <Feather name="map-pin" size={16} color={colors.info} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <AppText variant="body">Course Enrichment (Admin)</AppText>
+              <AppText variant="small" color="secondary">Review matches and tee metadata</AppText>
+            </View>
+            <Feather name="chevron-right" size={18} color={colors.textTertiary} />
+          </Pressable>
+        )}
+
         <Pressable
           style={({ pressed }) => [styles.linkRow, { opacity: pressed ? 0.7 : 1 }]}
           onPress={() => router.push("/(app)/(tabs)/leaderboard")}
