@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { StyleSheet, View, Pressable } from "react-native";
 import { useFocusEffect } from "@react-navigation/native";
-import { useBottomTabBarHeight } from "@react-navigation/bottom-tabs";
 import { Feather } from "@expo/vector-icons";
 
 import { Screen } from "@/components/ui/Screen";
@@ -40,12 +39,11 @@ type EnrichmentStatusFilter =
   | "complete";
 
 export default function CoursesAdminScreen() {
-  const tabBarHeight = useBottomTabBarHeight();
   const colors = getColors();
   const { member, user, activeSocietyId, loading: bootstrapLoading } = useBootstrap();
   const permissions = getPermissionsForMember(member as any);
   const canReviewCourses = permissions.canCreateEvents;
-  const tabContentStyle = { paddingTop: 16, paddingBottom: tabBarHeight + 24 };
+  const tabContentStyle = { paddingTop: 16, paddingBottom: 24 };
 
   const [summary, setSummary] = useState<{
     coursesCount: number;
