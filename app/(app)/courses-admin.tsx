@@ -278,10 +278,35 @@ export default function CoursesAdminScreen() {
     setImportLoading(true);
     setImportNotice(null);
     try {
-      const response = await fetch("/api/admin/import-courses", { method: "POST" });
-      const payload = (await response.json()) as
-        | { imported?: number; skipped?: number; error?: string }
-        | null;
+      const callImport = async (method: "POST" | "GET") =>
+        fetch("/api/admin/import-courses", {
+          method,
+          headers: { Accept: "application/json" },
+        });
+
+      let response = await callImport("POST");
+      if (response.status === 405) {
+        response = await callImport("GET");
+      }
+
+      const rawText = await response.text();
+      let payload: { imported?: number; skipped?: number; error?: string } | null = null;
+      if (rawText) {
+        try {
+          payload = JSON.parse(rawText) as {
+            imported?: number;
+            skipped?: number;
+            error?: string;
+          };
+        } catch {
+          throw new Error(
+            response.ok
+              ? "Import endpoint returned a non-JSON response."
+              : `Import failed (${response.status}).`
+          );
+        }
+      }
+
       if (!response.ok) {
         throw new Error(payload?.error || "Course import failed.");
       }
