@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { StyleSheet, View, Text } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
+import { goBack } from "@/lib/navigation";
 
 import { Screen } from "@/components/ui/Screen";
 import { SocietyLogoImage } from "@/components/ui/SocietyLogoImage";
@@ -8,7 +9,7 @@ import { AppCard } from "@/components/ui/AppCard";
 import { InlineNotice } from "@/components/ui/InlineNotice";
 import { LoadingState } from "@/components/ui/LoadingState";
 import { PrimaryButton, SecondaryButton } from "@/components/ui/Button";
-import { spacing } from "@/lib/ui/theme";
+import { spacing, typography } from "@/lib/ui/theme";
 import { captureAndShareMultiple, type ShareTarget } from "@/lib/share/captureAndShare";
 import { assertPngExportOnly } from "@/lib/share/pngExportGuard";
 import { getSocietyLogoDataUri } from "@/lib/societyLogo";
@@ -108,6 +109,8 @@ export default function TeeSheetShareScreen() {
         const targets: ShareTarget[] = refs.map((ref, index) => ({
           ref,
           title: `Tee Sheet ${index + 1}`,
+          width: PAGE_WIDTH * 3,
+          height: PAGE_HEIGHT * 3,
         }));
 
         await captureAndShareMultiple(targets, {
@@ -116,7 +119,7 @@ export default function TeeSheetShareScreen() {
 
         if (!mounted) return;
         setStatus("success");
-        setTimeout(() => router.back(), 400);
+        setTimeout(() => goBack(router, "/(app)/(tabs)"), 400);
       } catch (err) {
         if (!mounted) return;
         setError(formatError(err, "Couldn't generate tee sheet."));
@@ -153,7 +156,7 @@ export default function TeeSheetShareScreen() {
               style={{ marginBottom: spacing.sm }}
             />
             <View style={styles.noticeActions}>
-              <SecondaryButton onPress={() => router.back()} style={{ flex: 1 }}>
+              <SecondaryButton onPress={() => goBack(router, "/(app)/(tabs)")} style={{ flex: 1 }}>
                 Close
               </SecondaryButton>
               {payload ? (
@@ -239,7 +242,7 @@ const TeeSheetPage = React.forwardRef<View, {
         <View style={styles.headerLeft}>
           <SocietyLogoImage
             logoUrl={logoSrc}
-            size={40}
+            size={48}
             placeholderText={getInitials(data.societyName)}
           />
           <View>
@@ -316,13 +319,13 @@ function GroupTable({ group }: { group: GroupWithTime }) {
           return (
             <View key={`${group.groupNumber}-${idx}`} style={styles.groupRow}>
               <Text style={[styles.groupCell, styles.nameCol]} numberOfLines={1}>
-                {player?.name ?? ""}
+                {player?.name || "\u00A0"}
               </Text>
               <Text style={[styles.groupCell, styles.hiCol]}>
-                {formatHandicap(player?.handicapIndex ?? null, 1)}
+                {player ? formatHandicap(player.handicapIndex, 1) : "\u00A0"}
               </Text>
               <Text style={[styles.groupCell, styles.phCol]}>
-                {formatHandicap(player?.playingHandicap ?? null)}
+                {player ? formatHandicap(player.playingHandicap) : "\u00A0"}
               </Text>
             </View>
           );
@@ -378,12 +381,23 @@ function buildTeeSheetPages(data: TeeSheetData): GroupWithTime[][] {
       ? data.teeTimeInterval!
       : 8;
 
-  const groupsWithTimes: GroupWithTime[] = groups.map((group, index) => ({
+  // Cap to 12 groups per page; pad to exactly 12 for consistent PNG dimensions.
+  const capped = groups.slice(0, 12);
+  const groupsWithTimes: GroupWithTime[] = capped.map((group, index) => ({
     ...group,
     teeTime: buildTeeTime(baseStartTime, intervalMinutes, index),
   }));
 
-  return chunkArray(groupsWithTimes, 12);
+  while (groupsWithTimes.length < 12) {
+    const idx = groupsWithTimes.length;
+    groupsWithTimes.push({
+      groupNumber: idx + 1,
+      players: [],
+      teeTime: buildTeeTime(baseStartTime, intervalMinutes, idx),
+    });
+  }
+
+  return [groupsWithTimes];
 }
 
 function isValidTime(value: string | null | undefined): value is string {
@@ -404,14 +418,6 @@ function buildTeeTime(startTime: string, intervalMinutes: number, index: number)
   return `${String(teeHours).padStart(2, "0")}:${String(teeMins).padStart(2, "0")}`;
 }
 
-function chunkArray<T>(items: T[], size: number): T[][] {
-  const chunks: T[][] = [];
-  for (let i = 0; i < items.length; i += size) {
-    chunks.push(items.slice(i, i + size));
-  }
-  return chunks;
-}
-
 function getInitials(name: string): string {
   if (!name) return "GS";
   const words = name.trim().split(/\s+/);
@@ -419,7 +425,7 @@ function getInitials(name: string): string {
   return words.slice(0, 2).map((w) => w[0]).join("").toUpperCase();
 }
 
-const PAGE_WIDTH = 1120;
+const PAGE_WIDTH = 900;
 const PAGE_HEIGHT = 792;
 
 const styles = StyleSheet.create({
@@ -463,29 +469,29 @@ const styles = StyleSheet.create({
     width: 260,
   },
   societyName: {
-    fontSize: 10,
+    fontSize: typography.captionBold.fontSize,
     textTransform: "uppercase",
     letterSpacing: 1,
-    color: "#6B7280",
+    color: "#0f172a",
     fontWeight: "700",
   },
   headerSubtitle: {
-    fontSize: 10,
-    color: "#9CA3AF",
+    fontSize: typography.small.fontSize,
+    color: "#0f172a",
   },
   headerCenter: {
     flex: 1,
     alignItems: "center",
   },
   eventTitle: {
-    fontSize: 18,
-    fontWeight: "700",
-    color: "#111827",
+    fontSize: typography.display.fontSize,
+    fontWeight: "800",
+    color: "#0f172a",
     marginBottom: 2,
   },
   eventMeta: {
-    fontSize: 11,
-    color: "#6B7280",
+    fontSize: typography.body.fontSize,
+    color: "#0f172a",
   },
   headerRight: {
     width: 320,
@@ -497,16 +503,16 @@ const styles = StyleSheet.create({
     borderRadius: 6,
   },
   teeTitle: {
-    fontSize: 10,
+    fontSize: typography.small.fontSize,
     textTransform: "uppercase",
     letterSpacing: 0.6,
-    color: "#6B7280",
+    color: "#0f172a",
     marginBottom: 4,
     fontWeight: "700",
   },
   teeLine: {
-    fontSize: 10,
-    color: "#374151",
+    fontSize: typography.small.fontSize,
+    color: "#0f172a",
     marginBottom: 2,
   },
   grid: {
@@ -519,8 +525,8 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   emptyColumn: {
-    fontSize: 10,
-    color: "#9CA3AF",
+    fontSize: typography.small.fontSize,
+    color: "#0f172a",
   },
   groupTable: {
     flexDirection: "row",
@@ -536,7 +542,7 @@ const styles = StyleSheet.create({
     borderRightColor: "#E5E7EB",
   },
   timeText: {
-    fontSize: 11,
+    fontSize: typography.h1.fontSize,
     fontWeight: "700",
     color: "#0B6E4F",
   },
@@ -548,39 +554,45 @@ const styles = StyleSheet.create({
     backgroundColor: "#F9FAFB",
     borderBottomWidth: 1,
     borderBottomColor: "#F3F4F6",
-    paddingVertical: 3,
+    paddingVertical: 12,
   },
   groupHeaderCell: {
-    fontSize: 9,
+    fontSize: typography.small.fontSize,
     textTransform: "uppercase",
     letterSpacing: 0.4,
-    color: "#6B7280",
+    color: "#0f172a",
     paddingHorizontal: 4,
+    fontWeight: "600",
   },
   groupRow: {
     flexDirection: "row",
-    paddingVertical: 3,
+    paddingVertical: 12,
     borderBottomWidth: 1,
     borderBottomColor: "#F3F4F6",
   },
   groupCell: {
-    fontSize: 10,
-    color: "#111827",
+    fontSize: typography.body.fontSize,
+    color: "#0f172a",
     paddingHorizontal: 4,
   },
   nameCol: {
     flex: 1,
+    fontSize: typography.h2.fontSize,
+    fontWeight: "700",
   },
   hiCol: {
-    width: 40,
+    width: 48,
     textAlign: "right",
     fontFamily: "monospace",
+    fontSize: typography.body.fontSize,
+    fontWeight: "600",
   },
   phCol: {
-    width: 40,
+    width: 48,
     textAlign: "right",
     fontFamily: "monospace",
     fontWeight: "700",
+    fontSize: typography.body.fontSize,
     color: "#0B6E4F",
   },
   specialInfo: {
@@ -590,16 +602,16 @@ const styles = StyleSheet.create({
     marginTop: 6,
   },
   specialTitle: {
-    fontSize: 10,
+    fontSize: typography.small.fontSize,
     textTransform: "uppercase",
     letterSpacing: 0.6,
-    color: "#6B7280",
+    color: "#0f172a",
     fontWeight: "700",
     marginBottom: 2,
   },
   specialBody: {
-    fontSize: 10,
-    color: "#374151",
+    fontSize: typography.small.fontSize,
+    color: "#0f172a",
   },
   footer: {
     flexDirection: "row",
@@ -610,7 +622,7 @@ const styles = StyleSheet.create({
     marginTop: 8,
   },
   footerText: {
-    fontSize: 10,
-    color: "#9CA3AF",
+    fontSize: typography.small.fontSize,
+    color: "#0f172a",
   },
 });

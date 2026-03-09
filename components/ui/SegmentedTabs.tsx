@@ -5,7 +5,7 @@
 
 import { StyleSheet, View, Pressable, Text } from "react-native";
 import { ReactNode } from "react";
-import { getColors, spacing } from "@/lib/ui/theme";
+import { getColors, spacing, typography } from "@/lib/ui/theme";
 
 export type SegmentedTabItem<T extends string> = {
   id: T;
@@ -100,7 +100,7 @@ const styles = StyleSheet.create({
     elevation: 2,
   },
   label: {
-    fontSize: 14,
+    fontSize: typography.button.fontSize,
     textAlign: "center",
   },
 });

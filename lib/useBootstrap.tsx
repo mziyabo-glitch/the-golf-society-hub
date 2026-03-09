@@ -3,9 +3,10 @@
 // Uses singleton supabase client for consistent auth
 // NO .select().single() after upsert to avoid 406 errors
 
-import { createContext, useContext, useEffect, useMemo, useRef, useState, ReactNode } from "react";
+import { createContext, useContext, useCallback, useEffect, useMemo, useRef, useState, ReactNode } from "react";
 import { supabase } from "@/lib/supabase";
 import type { User, Session } from "@supabase/supabase-js";
+import { getMySocieties, type MySocietyMembership } from "@/lib/db_supabase/mySocietiesRepo";
 
 // ============================================================================
 // Types
@@ -48,6 +49,10 @@ type BootstrapState = {
   society: SocietyData | null;
   member: MemberData | null;
 
+  // Multi-society
+  memberships: MySocietyMembership[];
+  switchSociety: (societyId: string) => Promise<void>;
+
   // Actions
   setActiveSociety: (societyId: string | null, memberId: string | null) => Promise<void>;
   setActiveSocietyId: (societyId: string | null) => void;
@@ -81,6 +86,8 @@ const BOOTSTRAP_FALLBACK: BootstrapState = {
   societyId: null,
   society: null,
   member: null,
+  memberships: [],
+  switchSociety: async () => {},
   setActiveSociety: async () => {},
   setActiveSocietyId: () => {},
   setMember: () => {},
@@ -135,6 +142,8 @@ function normalizeMemberData(memberData: any): MemberData {
           ? String(memberData.whs_number)
           : null,
     hasSeat: memberData?.has_seat ?? false,
+    handicapLock: memberData?.handicap_lock ?? false,
+    handicapUpdatedAt: memberData?.handicap_updated_at ?? null,
   };
 }
 
@@ -150,6 +159,7 @@ function useBootstrapInternal(): BootstrapState {
   const [profile, setProfile] = useState<any | null>(null);
   const [society, setSociety] = useState<SocietyData | null>(null);
   const [member, setMemberState] = useState<MemberData | null>(null);
+  const [memberships, setMemberships] = useState<MySocietyMembership[]>([]);
   const [refreshKey, setRefreshKey] = useState(0);
 
   const mounted = useRef(true);
@@ -259,12 +269,54 @@ function useBootstrapInternal(): BootstrapState {
 
         if (!mounted.current) return;
 
-        const finalProfile = profileData;
+        let finalProfile = profileData;
         setProfile(finalProfile);
         console.log("[useBootstrap] Profile loaded:", finalProfile?.id);
 
         // ----------------------------------------------------------------
-        // Step 3: Load society if active_society_id exists
+        // Step 2c: Load all memberships (multi-society support)
+        // ----------------------------------------------------------------
+        const allMemberships = await getMySocieties();
+        if (!mounted.current) return;
+        setMemberships(allMemberships);
+
+        // ----------------------------------------------------------------
+        // Step 3: Self-heal — if profile has no active_society_id but
+        // the user has a membership, recover the pointers.
+        // ----------------------------------------------------------------
+        if (!finalProfile?.active_society_id && currentUser) {
+          const healRow = allMemberships[0];
+          if (healRow) {
+            console.log("[useBootstrap] Self-heal: recovering pointers", {
+              society_id: healRow.societyId,
+              member_id: healRow.memberId,
+            });
+            const { error: healErr } = await supabase
+              .from("profiles")
+              .update({
+                active_society_id: healRow.societyId,
+                active_member_id: healRow.memberId,
+              })
+              .eq("id", currentUser.id);
+
+            if (!mounted.current) return;
+
+            if (!healErr) {
+              finalProfile = {
+                ...(finalProfile ?? {}),
+                id: currentUser.id,
+                active_society_id: healRow.societyId,
+                active_member_id: healRow.memberId,
+              };
+              setProfile(finalProfile);
+            } else {
+              console.warn("[useBootstrap] Self-heal DB update failed:", healErr.message);
+            }
+          }
+        }
+
+        // ----------------------------------------------------------------
+        // Step 4: Load society if active_society_id exists
         // ----------------------------------------------------------------
         if (finalProfile?.active_society_id) {
           console.log("[useBootstrap] Loading society:", finalProfile.active_society_id);
@@ -281,7 +333,6 @@ function useBootstrapInternal(): BootstrapState {
 
           if (!mounted.current) return;
           if (societyData) {
-            // Ensure name is always a plain string (guard against unexpected types)
             const safeSocietyName =
               typeof societyData.name === "string"
                 ? societyData.name
@@ -296,7 +347,7 @@ function useBootstrapInternal(): BootstrapState {
         }
 
         // ----------------------------------------------------------------
-        // Step 4: Load membership by active society + current auth user
+        // Step 5: Load membership by active society + current auth user
         // ----------------------------------------------------------------
         if (finalProfile?.active_society_id) {
           const targetSocietyId = finalProfile.active_society_id as string;
@@ -322,14 +373,8 @@ function useBootstrapInternal(): BootstrapState {
             society_id: targetSocietyId,
             user_id: targetUserId,
             memberId: firstMember?.id ?? null,
-            error: memberError
-              ? {
-                  message: memberError.message,
-                  code: memberError.code,
-                  details: memberError.details,
-                  hint: memberError.hint,
-                }
-              : null,
+            found: !!firstMember,
+            error: memberError?.message ?? null,
           });
 
           if (memberError) {
@@ -338,7 +383,6 @@ function useBootstrapInternal(): BootstrapState {
           } else if (firstMember) {
             setMemberState(normalizeMemberData(firstMember));
 
-            // Keep profile pointer aligned to the actual member row found
             if (finalProfile.active_member_id !== firstMember.id) {
               setProfile((prev: any) => ({
                 ...(prev ?? {}),
@@ -349,8 +393,8 @@ function useBootstrapInternal(): BootstrapState {
             }
             setMembershipLoading(false);
           } else {
-            // No matching member found for this user/society pair.
-            setMemberState(null);
+            // No matching member — preserve existing member if one was set
+            // locally (e.g. from join flow) to avoid triggering the guard.
             setMembershipLoading(false);
           }
         } else {
@@ -522,10 +566,40 @@ function useBootstrapInternal(): BootstrapState {
     }));
   };
 
-  const refresh = () => {
+  const refresh = useCallback(() => {
     console.log("[useBootstrap] Manual refresh triggered");
     setRefreshKey((k) => k + 1);
-  };
+  }, []);
+
+  const switchSociety = useCallback(async (targetSocietyId: string) => {
+    if (!userId) return;
+    const target = memberships.find((m) => m.societyId === targetSocietyId);
+    if (!target) {
+      console.warn("[useBootstrap] switchSociety: no membership for", targetSocietyId);
+      return;
+    }
+
+    const { error: err } = await supabase
+      .from("profiles")
+      .update({ active_society_id: target.societyId, active_member_id: target.memberId })
+      .eq("id", userId);
+
+    if (err) {
+      console.error("[useBootstrap] switchSociety DB error:", err.message);
+      return;
+    }
+
+    setProfile((prev: any) => ({
+      ...(prev ?? {}),
+      id: userId,
+      active_society_id: target.societyId,
+      active_member_id: target.memberId,
+    }));
+    setSociety(null);
+    setMemberState(null);
+    setLoading(true);
+    setRefreshKey((k) => k + 1);
+  }, [userId, memberships]);
 
   const signOut = async () => {
     console.log("[useBootstrap] Signing out...");
@@ -554,6 +628,10 @@ function useBootstrapInternal(): BootstrapState {
     societyId: activeSocietyId,
     society,
     member,
+
+    // Multi-society
+    memberships,
+    switchSociety,
 
     // Actions
     setActiveSociety,

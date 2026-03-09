@@ -343,12 +343,23 @@ export default function OnboardingScreen() {
         }
       }
 
+      // Persist profile pointers to DB (defense-in-depth: the RPC also
+      // writes these, but an explicit client-side write guarantees the
+      // profile is correct before bootstrap re-reads it).
+      try {
+        await setActiveSocietyAndMember(uid, joinedSocietyId, joinedMemberId);
+      } catch (profileErr) {
+        console.warn("[join] setActiveSocietyAndMember failed (RPC already wrote it):", profileErr);
+      }
+
+      // Set local state so the UI can react immediately.
       setActiveSocietyId(joinedSocietyId);
       setMember(joinedMemberRecord as any);
       refresh();
       console.log("[join] JOIN_COMPLETE", {
         memberId: joinedMemberId,
         societyId: joinedSocietyId,
+        pathname,
       });
       setToast({ visible: true, message: "Joined society ✅", type: "success" });
       setPendingJoinNavigation({

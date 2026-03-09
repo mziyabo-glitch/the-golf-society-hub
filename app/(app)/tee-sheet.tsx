@@ -14,6 +14,7 @@ import { StyleSheet, View, Pressable, ScrollView } from "react-native";
 import { useRouter } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
 import { Feather } from "@expo/vector-icons";
+import { goBack } from "@/lib/navigation";
 
 import { Screen } from "@/components/ui/Screen";
 import { AppText } from "@/components/ui/AppText";
@@ -28,6 +29,7 @@ import { LicenceRequiredModal } from "@/components/LicenceRequiredModal";
 import { useBootstrap } from "@/lib/useBootstrap";
 import { usePaidAccess } from "@/lib/access/usePaidAccess";
 import { getEventsBySocietyId, getEvent, updateEvent, publishTeeTime, type EventDoc } from "@/lib/db_supabase/eventRepo";
+import { getEventRegistrations, type EventRegistration } from "@/lib/db_supabase/eventRegistrationRepo";
 import { getMembersBySocietyId, getManCoRoleHolders, type MemberDoc, type Gender, type ManCoDetails } from "@/lib/db_supabase/memberRepo";
 import { getPermissionsForMember } from "@/lib/rbac";
 import {
@@ -74,7 +76,7 @@ export default function TeeSheetScreen() {
   const [generating, setGenerating] = useState(false);
   const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState<{ type: "success" | "error" | "info"; message: string; detail?: string } | null>(null);
-  const [toast, setToast] = useState({ visible: false, message: "", type: "success" as const });
+  const [toast, setToast] = useState<{ visible: boolean; message: string; type: "success" | "error" | "info" }>({ visible: false, message: "", type: "success" });
 
   // Form state
   const [ntpHolesInput, setNtpHolesInput] = useState("");
@@ -84,6 +86,7 @@ export default function TeeSheetScreen() {
 
   // Editable groups state
   const [groups, setGroups] = useState<PlayerGroup[]>([]);
+  const [selectedEventRegistrations, setSelectedEventRegistrations] = useState<EventRegistration[]>([]);
   const [showGroupEditor, setShowGroupEditor] = useState(false);
   const [manCo, setManCo] = useState<ManCoDetails>({ captain: null, secretary: null, treasurer: null, handicapper: null });
 
@@ -133,22 +136,31 @@ export default function TeeSheetScreen() {
     const loadEventDetails = async () => {
       if (!selectedEventId) {
         setSelectedEvent(null);
+        setSelectedEventRegistrations([]);
         setGroups([]);
         return;
       }
 
       setNotice(null);
       try {
-        const event = await getEvent(selectedEventId);
+        const [event, registrations] = await Promise.all([
+          getEvent(selectedEventId),
+          getEventRegistrations(selectedEventId),
+        ]);
         setSelectedEvent(event);
+        setSelectedEventRegistrations(registrations);
 
         // Populate form with existing values
         if (event) {
           setNtpHolesInput(formatHoleNumbers(event.nearestPinHoles));
           setLdHolesInput(formatHoleNumbers(event.longestDriveHoles));
 
-          // Initialize groups from event players
-          initializeGroups(event);
+          // Use player_ids if set; else event_registrations (status=in) for societies using In/Out
+          const playerIds =
+            event.playerIds?.length
+              ? event.playerIds
+              : registrations.filter((r) => r.status === "in").map((r) => r.member_id);
+          initializeGroups({ ...event, playerIds }, members);
         }
       } catch (err) {
         console.error("[TeeSheet] loadEventDetails error:", err);
@@ -160,10 +172,10 @@ export default function TeeSheetScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedEventId, members]);
 
-  // Initialize groups from event players
-  const initializeGroups = (event: EventDoc) => {
+  // Initialize groups from event players (playerIds from event or registrations)
+  const initializeGroups = (event: EventDoc & { playerIds?: string[] }, membersList: MemberDoc[]) => {
     const playerIds = event.playerIds || [];
-    const eventMembers = members.filter((m) => playerIds.includes(m.id));
+    const eventMembers = membersList.filter((m) => playerIds.includes(m.id));
 
     if (eventMembers.length === 0) {
       setGroups([]);
@@ -315,16 +327,23 @@ export default function TeeSheetScreen() {
   };
 
   // Share/export tee sheet
+  const MAX_TEE_TIMES = 12;
+
   const handleGenerateTeeSheet = async () => {
     if (!guardPaidAction()) return;
     if (!selectedEvent || !societyId) return;
 
-    // Clean up empty groups first
-    const cleanedGroups = groups.filter((g) => g.players.length > 0);
-    if (cleanedGroups.length === 0) {
+    const nonEmptyGroups = groups.filter((g) => g.players.length > 0);
+    if (nonEmptyGroups.length === 0) {
       setNotice({ type: "error", message: "No players added", detail: "Add players to the event before generating the tee sheet." });
       return;
     }
+
+    if (nonEmptyGroups.length > MAX_TEE_TIMES) {
+      setToast({ visible: true, message: `Max ${MAX_TEE_TIMES} tee times — split into 2 exports.`, type: "error" });
+    }
+
+    const groupsForExport = nonEmptyGroups.slice(0, MAX_TEE_TIMES);
 
     setNotice(null);
     setGenerating(true);
@@ -333,7 +352,7 @@ export default function TeeSheetScreen() {
       const ntpHoles = parseHoleNumbers(ntpHolesInput === "-" ? "" : ntpHolesInput);
       const ldHoles = parseHoleNumbers(ldHolesInput === "-" ? "" : ldHolesInput);
 
-      const players: TeeSheetData["players"] = cleanedGroups.flatMap((group) =>
+      const players: TeeSheetData["players"] = groupsForExport.flatMap((group) =>
         group.players.map((player) => ({
           id: player.id,
           name: player.name,
@@ -343,39 +362,44 @@ export default function TeeSheetScreen() {
         }))
       );
 
+      // Publish tee times to DB so Home/event detail show "Your Tee Time"
+      const refreshed = await publishTeeTime(selectedEvent.id, startTime || "08:00", interval);
+      if (refreshed) setSelectedEvent(refreshed);
+
+      const ev = refreshed ?? selectedEvent;
       const exportData: TeeSheetData = {
         societyId,
         societyName: society?.name || "Golf Society",
         logoUrl,
         manCo,
-        eventName: selectedEvent.name || "Event",
-        eventDate: selectedEvent.date || null,
-        courseName: selectedEvent.courseName || null,
+        eventName: ev.name || "Event",
+        eventDate: ev.date || null,
+        courseName: ev.courseName || null,
         startTime: startTime || null,
         teeTimeInterval: interval,
         nearestPinHoles: ntpHoles.length > 0 ? ntpHoles : null,
         longestDriveHoles: ldHoles.length > 0 ? ldHoles : null,
-        teeName: selectedEvent.teeName || null,
-        ladiesTeeName: selectedEvent.ladiesTeeName || null,
-        teeSettings: selectedEvent.par != null && selectedEvent.courseRating != null && selectedEvent.slopeRating != null
-          ? { par: selectedEvent.par, courseRating: selectedEvent.courseRating, slopeRating: selectedEvent.slopeRating }
+        teeName: ev.teeName || null,
+        ladiesTeeName: ev.ladiesTeeName || null,
+        teeSettings: ev.par != null && ev.courseRating != null && ev.slopeRating != null
+          ? { par: ev.par, courseRating: ev.courseRating, slopeRating: ev.slopeRating }
           : null,
-        ladiesTeeSettings: selectedEvent.ladiesPar != null && selectedEvent.ladiesCourseRating != null && selectedEvent.ladiesSlopeRating != null
-          ? { par: selectedEvent.ladiesPar, courseRating: selectedEvent.ladiesCourseRating, slopeRating: selectedEvent.ladiesSlopeRating }
+        ladiesTeeSettings: ev.ladiesPar != null && ev.ladiesCourseRating != null && ev.ladiesSlopeRating != null
+          ? { par: ev.ladiesPar, courseRating: ev.ladiesCourseRating, slopeRating: ev.ladiesSlopeRating }
           : null,
-        handicapAllowance: selectedEvent.handicapAllowance ?? null,
-        format: selectedEvent.format ?? null,
+        handicapAllowance: ev.handicapAllowance ?? null,
+        format: ev.format ?? null,
         players,
         preGrouped: true,
       };
       assertPngExportOnly("Tee Sheet export");
 
-      // Publish tee time data to the event so the home page can display it
-      try {
-        await publishTeeTime(selectedEvent.id, startTime || "08:00", interval);
-      } catch (err) {
-        console.warn("[TeeSheet] publishTeeTime failed (non-blocking):", err);
-      }
+      setToast({
+        visible: true,
+        message: "Tee times published — members can now see their slot.",
+        type: "success",
+      });
+      await new Promise((r) => setTimeout(r, 1200));
 
       console.log("[TeeSheet] Export tee sheet PNG");
       const payload = encodeURIComponent(JSON.stringify(exportData));
@@ -403,7 +427,7 @@ export default function TeeSheetScreen() {
     return (
       <Screen>
         <View style={styles.header}>
-          <SecondaryButton onPress={() => router.back()} size="sm">
+          <SecondaryButton onPress={() => goBack(router, "/(app)/(tabs)/settings")} size="sm">
             <Feather name="arrow-left" size={16} color={colors.text} /> Back
           </SecondaryButton>
         </View>
@@ -434,7 +458,7 @@ export default function TeeSheetScreen() {
       />
       {/* Header */}
       <View style={styles.header}>
-        <SecondaryButton onPress={() => router.back()} size="sm">
+        <SecondaryButton onPress={() => goBack(router, "/(app)/(tabs)/settings")} size="sm">
           <Feather name="arrow-left" size={16} color={colors.text} /> Back
         </SecondaryButton>
         <View style={{ flex: 1 }} />
@@ -642,7 +666,17 @@ export default function TeeSheetScreen() {
                     <SecondaryButton size="sm" onPress={cleanupGroups}>
                       <Feather name="trash-2" size={14} color={colors.text} /> Remove Empty
                     </SecondaryButton>
-                    <SecondaryButton size="sm" onPress={() => selectedEvent && initializeGroups(selectedEvent)}>
+                    <SecondaryButton
+                      size="sm"
+                      onPress={() => {
+                        if (!selectedEvent) return;
+                        const playerIds =
+                          selectedEvent.playerIds?.length
+                            ? selectedEvent.playerIds
+                            : selectedEventRegistrations.filter((r) => r.status === "in").map((r) => r.member_id);
+                        initializeGroups({ ...selectedEvent, playerIds }, members);
+                      }}
+                    >
                       <Feather name="refresh-cw" size={14} color={colors.text} /> Reset
                     </SecondaryButton>
                   </View>

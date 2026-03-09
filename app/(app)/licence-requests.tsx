@@ -5,6 +5,7 @@ import { useCallback, useEffect, useState } from "react";
 import { StyleSheet, View, Pressable, FlatList } from "react-native";
 import { useRouter } from "expo-router";
 import { Feather } from "@expo/vector-icons";
+import { goBack } from "@/lib/navigation";
 
 import { Screen } from "@/components/ui/Screen";
 import { AppText } from "@/components/ui/AppText";
@@ -177,7 +178,7 @@ export default function LicenceRequestsScreen() {
     return (
       <Screen>
         <View style={styles.headerRow}>
-          <Pressable onPress={() => router.back()} hitSlop={12}>
+          <Pressable onPress={() => goBack(router, "/(app)/(tabs)/settings")} hitSlop={12}>
             <Feather name="arrow-left" size={24} color={colors.text} />
           </Pressable>
           <AppText variant="title" style={styles.headerTitle}>Licence Requests</AppText>
@@ -194,7 +195,7 @@ export default function LicenceRequestsScreen() {
           <AppText variant="body" color="secondary" style={{ marginTop: spacing.sm, textAlign: "center" }}>
             Only the society Captain can manage licence requests.
           </AppText>
-          <SecondaryButton onPress={() => router.back()} style={{ marginTop: spacing.xl }}>
+          <SecondaryButton onPress={() => goBack(router, "/(app)/(tabs)/settings")} style={{ marginTop: spacing.xl }}>
             Go Back
           </SecondaryButton>
         </View>
@@ -297,7 +298,7 @@ export default function LicenceRequestsScreen() {
 
       {/* Header */}
       <View style={styles.headerRow}>
-        <Pressable onPress={() => router.back()} hitSlop={12}>
+        <Pressable onPress={() => goBack(router, "/(app)/(tabs)/settings")} hitSlop={12}>
           <Feather name="arrow-left" size={24} color={colors.text} />
         </Pressable>
         <AppText variant="title" style={styles.headerTitle}>Licence Requests</AppText>

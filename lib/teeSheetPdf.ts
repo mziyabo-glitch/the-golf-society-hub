@@ -99,14 +99,6 @@ function buildTeeTime(startTime: string, intervalMinutes: number, index: number)
   return `${String(teeHours).padStart(2, "0")}:${String(teeMins).padStart(2, "0")}`;
 }
 
-function chunkArray<T>(items: T[], size: number): T[][] {
-  const chunks: T[][] = [];
-  for (let i = 0; i < items.length; i += size) {
-    chunks.push(items.slice(i, i + size));
-  }
-  return chunks;
-}
-
 /**
  * Generate HTML for the tee sheet PDF
  */
@@ -212,12 +204,22 @@ function generateTeeSheetHTML(data: TeeSheetData, logoSrc?: string | null): stri
   const intervalMinutes =
     Number.isFinite(teeTimeInterval) && teeTimeInterval > 0 ? teeTimeInterval : 8;
 
-  const groupsWithTimes: GroupWithTime[] = groups.map((group, index) => ({
+  // Cap to 12 groups and pad blank slots so every page is a full 6+6 grid.
+  const capped = groups.slice(0, 12);
+  const groupsWithTimes: GroupWithTime[] = capped.map((group, index) => ({
     ...group,
     teeTime: buildTeeTime(baseStartTime, intervalMinutes, index),
   }));
+  while (groupsWithTimes.length < 12) {
+    const idx = groupsWithTimes.length;
+    groupsWithTimes.push({
+      groupNumber: idx + 1,
+      players: [],
+      teeTime: buildTeeTime(baseStartTime, intervalMinutes, idx),
+    });
+  }
 
-  const pages = chunkArray(groupsWithTimes, 12);
+  const pages = [groupsWithTimes];
 
   const teeInfoLines = [
     teeSettings

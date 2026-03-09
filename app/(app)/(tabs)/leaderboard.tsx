@@ -35,7 +35,7 @@ import {
   type OrderOfMeritEntry,
   type ResultsLogEntry,
 } from "@/lib/db_supabase/resultsRepo";
-import { getColors, spacing } from "@/lib/ui/theme";
+import { getColors, spacing, typography } from "@/lib/ui/theme";
 import { assertPngExportOnly } from "@/lib/share/pngExportGuard";
 import { getSocietyLogoUrl } from "@/lib/societyLogo";
 
@@ -112,7 +112,7 @@ export default function LeaderboardScreen() {
   const colors = getColors();
   const tabBarHeight = useContext(BottomTabBarHeightContext) ?? 0;
   const { width: screenWidth } = useWindowDimensions();
-  const logoSize = screenWidth < 600 ? 40 : 32;
+  const logoSize = screenWidth < 600 ? 52 : 44;
 
   const params = useLocalSearchParams<{ view?: string }>();
   const initialTab: TabType =
@@ -489,7 +489,7 @@ export default function LeaderboardScreen() {
                     <AppText style={[styles.fieldTitle, { textAlign: "center", marginBottom: 4 }]}>
                       Full leaderboard
                     </AppText>
-                    <AppText style={{ fontSize: 13, color: "#6B7280", textAlign: "center", marginBottom: 16 }}>
+                    <AppText variant="body" color="secondary" style={{ textAlign: "center", marginBottom: 16 }}>
                       Get a licence to see the full standings and results matrix.
                     </AppText>
                     <PrimaryButton onPress={() => setModalVisible(true)} size="sm">
@@ -739,13 +739,14 @@ const styles = StyleSheet.create({
     marginBottom: spacing.lg,
   },
   mainTitle: {
-    fontSize: 26,
+    fontSize: typography.title.fontSize,
     fontWeight: "700",
     color: "#111827",
     letterSpacing: -0.5,
   },
   seasonText: {
-    fontSize: 12,
+    fontSize: typography.small.fontSize,
+    lineHeight: typography.small.lineHeight,
     color: "#6B7280",
     marginTop: 4,
   },
@@ -778,7 +779,7 @@ const styles = StyleSheet.create({
     elevation: 2,
   },
   tabText: {
-    fontSize: 14,
+    fontSize: typography.button.fontSize,
     fontWeight: "600",
     color: "#9CA3AF",
   },
@@ -832,29 +833,29 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(251, 191, 36, 0.15)",
   },
   podiumMedalText: {
-    fontSize: 20,
+    fontSize: typography.h1.fontSize,
   },
   podiumName: {
-    fontSize: 12,
+    fontSize: typography.small.fontSize,
     fontWeight: "600",
     color: "#374151",
     marginBottom: 6,
     textAlign: "center",
-    lineHeight: 16,
+    lineHeight: typography.small.lineHeight,
     minHeight: 32,
     paddingHorizontal: 4,
   },
   podiumPoints: {
-    fontSize: 22,
+    fontSize: typography.h1.fontSize,
     fontWeight: "800",
     color: "#0B6E4F",
     fontVariant: ["tabular-nums"],
   },
   podiumPointsGold: {
-    fontSize: 26,
+    fontSize: typography.display.fontSize,
   },
   podiumPtsLabel: {
-    fontSize: 10,
+    fontSize: typography.small.fontSize,
     color: "#9CA3AF",
     textTransform: "uppercase",
     letterSpacing: 0.5,
@@ -883,7 +884,7 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   fieldTitle: {
-    fontSize: 12,
+    fontSize: typography.captionBold.fontSize,
     fontWeight: "700",
     color: "#9CA3AF",
     textTransform: "uppercase",
@@ -900,7 +901,7 @@ const styles = StyleSheet.create({
   },
   fieldPosition: {
     width: 28,
-    fontSize: 14,
+    fontSize: typography.button.fontSize,
     fontWeight: "600",
     color: "#6B7280",
     textAlign: "center",
@@ -912,21 +913,21 @@ const styles = StyleSheet.create({
   },
   fieldName: {
     flex: 1,
-    fontSize: 14,
+    fontSize: typography.body.fontSize,
     fontWeight: "500",
     color: "#111827",
-    lineHeight: 20,
+    lineHeight: typography.body.lineHeight,
     paddingRight: 8,
   },
   fieldEvents: {
     width: 32,
-    fontSize: 13,
+    fontSize: typography.body.fontSize,
     color: "#9CA3AF",
     textAlign: "center",
   },
   fieldPoints: {
     width: 50,
-    fontSize: 16,
+    fontSize: typography.bodyBold.fontSize,
     fontWeight: "700",
     color: "#0B6E4F",
     textAlign: "right",
@@ -961,7 +962,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   accordionEventNumber: {
-    fontSize: 13,
+    fontSize: typography.body.fontSize,
     fontWeight: "700",
     color: "#0B6E4F",
   },
@@ -969,13 +970,13 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   accordionEventName: {
-    fontSize: 15,
+    fontSize: typography.caption.fontSize,
     fontWeight: "600",
     color: "#111827",
     marginBottom: 2,
   },
   accordionEventMeta: {
-    fontSize: 12,
+    fontSize: typography.small.fontSize,
     color: "#9CA3AF",
   },
   accordionChevron: {
@@ -1001,7 +1002,7 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(0, 0, 0, 0.02)",
   },
   accordionColHeader: {
-    fontSize: 10,
+    fontSize: typography.small.fontSize,
     fontWeight: "700",
     color: "#9CA3AF",
     textTransform: "uppercase",
@@ -1020,30 +1021,30 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   accordionPositionText: {
-    fontSize: 14,
+    fontSize: typography.button.fontSize,
     fontWeight: "600",
     color: "#6B7280",
   },
   accordionPositionMedal: {
-    fontSize: 16,
+    fontSize: typography.body.fontSize,
   },
   accordionPlayerName: {
     flex: 1,
-    fontSize: 14,
+    fontSize: typography.body.fontSize,
     fontWeight: "500",
     color: "#374151",
     paddingRight: 8,
   },
   accordionScore: {
     width: 50,
-    fontSize: 13,
+    fontSize: typography.body.fontSize,
     color: "#6B7280",
     textAlign: "center",
     fontVariant: ["tabular-nums"],
   },
   accordionPoints: {
     width: 50,
-    fontSize: 15,
+    fontSize: typography.caption.fontSize,
     fontWeight: "700",
     color: "#0B6E4F",
     textAlign: "right",
@@ -1057,7 +1058,7 @@ const styles = StyleSheet.create({
     paddingTop: 16,
   },
   footerText: {
-    fontSize: 11,
+    fontSize: typography.small.fontSize,
     color: "#9CA3AF",
   },
 

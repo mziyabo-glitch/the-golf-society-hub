@@ -40,10 +40,11 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { useBootstrap } from "@/lib/useBootstrap";
 import { useAsyncAction } from "@/lib/hooks/useAsyncAction";
 import { getPermissionsForMember } from "@/lib/rbac";
-import { getColors, spacing, radius } from "@/lib/ui/theme";
+import { getColors, spacing, radius, typography } from "@/lib/ui/theme";
 import { formatError } from "@/lib/ui/formatError";
 import { assertNoPrintAsync, wrapExportErrors } from "@/lib/pdf/exportContract";
 import { getSocietyLogoDataUri, getSocietyLogoUrl } from "@/lib/societyLogo";
+import { goBack } from "@/lib/navigation";
 
 import { guard } from "@/lib/guards";
 import {
@@ -384,7 +385,7 @@ export default function TreasurerScreen() {
     return (
       <Screen>
         <View style={styles.header}>
-          <SecondaryButton onPress={() => router.back()} size="sm">
+          <SecondaryButton onPress={() => goBack(router, "/(app)/(tabs)/settings")} size="sm">
             <Feather name="arrow-left" size={16} color={colors.text} /> Back
           </SecondaryButton>
         </View>
@@ -415,7 +416,7 @@ export default function TreasurerScreen() {
       <View style={styles.header}>
         <Pressable
           style={({ pressed }) => [styles.backButton, { opacity: pressed ? 0.7 : 1 }]}
-          onPress={() => router.back()}
+          onPress={() => goBack(router, "/(app)/(tabs)/settings")}
         >
           <Feather name="arrow-left" size={20} color={colors.text} />
         </Pressable>
@@ -1155,7 +1156,7 @@ const styles = StyleSheet.create({
   formLabel: {
     textTransform: "uppercase",
     letterSpacing: 0.5,
-    fontSize: 11,
+    fontSize: typography.small.fontSize,
     marginBottom: spacing.xs,
   },
   input: {

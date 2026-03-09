@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { StyleSheet, View, Pressable } from "react-native";
 import { useRouter } from "expo-router";
 import { Feather } from "@expo/vector-icons";
+import { goBack } from "@/lib/navigation";
 
 import { Screen } from "@/components/ui/Screen";
 import { AppText } from "@/components/ui/AppText";
@@ -14,15 +15,19 @@ import { Toast } from "@/components/ui/Toast";
 import { useBootstrap } from "@/lib/useBootstrap";
 import { getProfile, updateUserProfile } from "@/lib/db_supabase/profileRepo";
 import type { ProfileDoc } from "@/lib/db_supabase/profileRepo";
+import { updateHandicap } from "@/lib/db_supabase/memberRepo";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
 
 const SEX_OPTIONS = ["Male", "Female"] as const;
 
 export default function MyProfileScreen() {
   const router = useRouter();
-  const { userId, profile, refresh } = useBootstrap();
+  const { userId, profile, member, refresh } = useBootstrap();
   const isFirstTime = !profile?.profile_complete;
   const colors = getColors();
+
+  const handicapLocked = (member as any)?.handicapLock === true || (member as any)?.handicap_lock === true;
+  const currentHI = (member as any)?.handicapIndex ?? (member as any)?.handicap_index ?? null;
 
   const [profileLoading, setProfileLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -36,6 +41,10 @@ export default function MyProfileScreen() {
   const [sex, setSex] = useState<string>("");
   const [whsIndex, setWhsIndex] = useState("");
   const [email, setEmail] = useState("");
+
+  // Member HI (separate from profile WHS index)
+  const [memberHI, setMemberHI] = useState("");
+  const [savingHI, setSavingHI] = useState(false);
 
   // Load profile on mount
   useEffect(() => {
@@ -57,6 +66,10 @@ export default function MyProfileScreen() {
       }
     })();
   }, [userId]);
+
+  useEffect(() => {
+    setMemberHI(currentHI != null ? String(currentHI) : "");
+  }, [currentHI]);
 
   const canSave = fullName.trim().length > 0 && sex.length > 0;
 
@@ -94,6 +107,27 @@ export default function MyProfileScreen() {
     }
   };
 
+  const handleSaveHI = async () => {
+    if (!member?.id || savingHI) return;
+    setSavingHI(true);
+    setError(null);
+    try {
+      const parsed = memberHI.trim() ? parseFloat(memberHI.trim()) : null;
+      if (parsed !== null && (isNaN(parsed) || parsed < -10 || parsed > 54)) {
+        setError("Handicap Index must be between -10 and 54.");
+        setSavingHI(false);
+        return;
+      }
+      await updateHandicap(member.id, parsed);
+      refresh();
+      setToast({ visible: true, message: "Handicap saved.", type: "success" });
+    } catch (e: any) {
+      setError(e?.message || "Failed to save handicap.");
+    } finally {
+      setSavingHI(false);
+    }
+  };
+
   if (profileLoading) {
     return (
       <Screen scrollable={false}>
@@ -111,7 +145,7 @@ export default function MyProfileScreen() {
         {isFirstTime ? (
           <View style={{ width: 24 }} />
         ) : (
-          <Pressable onPress={() => router.back()} hitSlop={8}>
+          <Pressable onPress={() => goBack(router, "/(app)/(tabs)/settings")} hitSlop={8}>
             <Feather name="arrow-left" size={24} color={colors.text} />
           </Pressable>
         )}
@@ -214,6 +248,57 @@ export default function MyProfileScreen() {
         </PrimaryButton>
       </AppCard>
 
+      {/* Handicap Index (member-level, with lock awareness) */}
+      {member?.id && !isFirstTime && (
+        <AppCard style={{ marginTop: spacing.base }}>
+          <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: spacing.sm }}>
+            <AppText variant="captionBold">Handicap Index</AppText>
+            {handicapLocked ? (
+              <View style={[styles.lockBadge, { backgroundColor: colors.error + "14" }]}>
+                <Feather name="lock" size={11} color={colors.error} />
+                <AppText variant="small" style={{ color: colors.error, fontWeight: "700" }}>Locked</AppText>
+              </View>
+            ) : (
+              <View style={[styles.lockBadge, { backgroundColor: colors.success + "14" }]}>
+                <Feather name="unlock" size={11} color={colors.success} />
+                <AppText variant="small" style={{ color: colors.success, fontWeight: "700" }}>Editable</AppText>
+              </View>
+            )}
+          </View>
+
+          {handicapLocked ? (
+            <AppText variant="body" color="secondary">
+              {currentHI != null ? String(currentHI) : "Not set"}
+              {" — Locked by Handicapper. Contact them to make changes."}
+            </AppText>
+          ) : (
+            <>
+              <AppInput
+                placeholder="e.g. 12.4"
+                value={memberHI}
+                onChangeText={setMemberHI}
+                keyboardType="decimal-pad"
+              />
+              <PrimaryButton
+                onPress={handleSaveHI}
+                loading={savingHI}
+                disabled={savingHI}
+                style={{ marginTop: spacing.sm }}
+                size="sm"
+              >
+                Save Handicap
+              </PrimaryButton>
+            </>
+          )}
+
+          {(member as any)?.handicapUpdatedAt && (
+            <AppText variant="small" color="tertiary" style={{ marginTop: spacing.xs }}>
+              Last updated: {new Date((member as any).handicapUpdatedAt).toLocaleDateString("en-GB")}
+            </AppText>
+          )}
+        </AppCard>
+      )}
+
       <Toast
         visible={toast.visible}
         message={toast.message}
@@ -258,5 +343,13 @@ const styles = StyleSheet.create({
   },
   saveButton: {
     marginTop: spacing.sm,
+  },
+  lockBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 3,
+    paddingHorizontal: spacing.xs,
+    paddingVertical: 2,
+    borderRadius: radius.full,
   },
 });

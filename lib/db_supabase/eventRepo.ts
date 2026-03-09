@@ -286,9 +286,7 @@ export async function updateEvent(
     longestDriveHoles: number[];
   }>
 ): Promise<void> {
-  const payload: Record<string, unknown> = {
-    updated_at: new Date().toISOString(),
-  };
+  const payload: Record<string, unknown> = {};
 
   if (updates.name !== undefined) payload.name = updates.name;
   if (updates.date !== undefined) payload.date = updates.date;
@@ -366,28 +364,46 @@ export async function deleteEvent(eventId: string): Promise<void> {
 
 /**
  * Publish tee times for an event.
- * Called when ManCo shares the tee sheet — persists the start time + interval
- * and timestamps the publish so the home page can display it.
+ * Tries RPC first; falls back to direct UPDATE if RPC is missing (e.g. migrations not run).
+ * Returns the refreshed event row so the caller has up-to-date data.
  */
 export async function publishTeeTime(
   eventId: string,
   startTime: string,
   intervalMinutes: number,
-): Promise<void> {
-  const { error } = await supabase
+): Promise<EventDoc | null> {
+  const start = (startTime || "08:00").trim() || "08:00";
+  const interval = Number.isFinite(intervalMinutes) && intervalMinutes > 0 ? intervalMinutes : 10;
+
+  // Try RPC first (migrations 038/039)
+  const { error: rpcError } = await supabase.rpc("publish_tee_times", {
+    p_event_id: eventId,
+    p_start: start,
+    p_interval: interval,
+  });
+
+  if (!rpcError) {
+    return getEvent(eventId);
+  }
+
+  // Fallback: direct UPDATE (works when RPC doesn't exist)
+  console.warn("[eventRepo] publishTeeTime RPC failed, trying direct update:", rpcError.message);
+  const { error: updateError } = await supabase
     .from("events")
     .update({
-      tee_time_start: startTime,
-      tee_time_interval: intervalMinutes,
+      tee_time_start: start,
+      tee_time_interval: interval,
       tee_time_published_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     })
     .eq("id", eventId);
 
-  if (error) {
-    console.error("[eventRepo] publishTeeTime failed:", error.message);
-    throw new Error(error.message || "Failed to publish tee times");
+  if (updateError) {
+    console.error("[eventRepo] publishTeeTime direct update failed:", updateError.message);
+    throw new Error(updateError.message || "Failed to publish tee times");
   }
+
+  return getEvent(eventId);
 }
 
 // =====================================================
@@ -415,7 +431,6 @@ export async function updateEventFinance(
   const payload: Record<string, unknown> = {
     income_pence: incomePence,
     costs_pence: costsPence,
-    updated_at: new Date().toISOString(),
   };
 
   const { error } = await supabase
