@@ -9,6 +9,7 @@ import { Screen } from "@/components/ui/Screen";
 import { AppText } from "@/components/ui/AppText";
 import { AppCard } from "@/components/ui/AppCard";
 import { AppInput } from "@/components/ui/AppInput";
+import { CoursePicker } from "@/components/CoursePicker";
 import { PrimaryButton, SecondaryButton } from "@/components/ui/Button";
 import { LoadingState } from "@/components/ui/LoadingState";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -27,6 +28,7 @@ import {
   EVENT_FORMATS,
   EVENT_CLASSIFICATIONS,
 } from "@/lib/db_supabase/eventRepo";
+import type { CourseDoc } from "@/lib/db_supabase/courseRepo";
 import { getPermissionsForMember } from "@/lib/rbac";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
 import { formatError, type FormattedError } from "@/lib/ui/formatError";
@@ -184,6 +186,7 @@ export default function EventsScreen() {
 
   // Tee Settings form state
   const [showTeeSettings, setShowTeeSettings] = useState(false);
+  const [formCourseId, setFormCourseId] = useState("");
   const [formCourseName, setFormCourseName] = useState("");
 
   // Men's tee settings
@@ -332,6 +335,8 @@ export default function EventsScreen() {
       formClassification,
       societyId,
       userId: user?.uid,
+      courseId: formCourseId,
+      courseName: formCourseName.trim(),
       submitting: createAction.loading,
     });
 
@@ -386,6 +391,7 @@ export default function EventsScreen() {
         format: formFormat,
         classification: formClassification,
         createdBy: user.uid,
+        courseId: formCourseId || undefined,
         // Course name
         courseName: formCourseName.trim() || undefined,
         // Men's tee settings
@@ -419,6 +425,7 @@ export default function EventsScreen() {
     setFormDate("");
     setFormFormat("stableford");
     setFormClassification("general");
+    setFormCourseId("");
     setFormCourseName("");
     setFormMenTeeName("");
     setFormMenPar("");
@@ -596,6 +603,15 @@ export default function EventsScreen() {
               ) : null}
             </View>
 
+            <CoursePicker
+              initialQuery={formCourseName}
+              onCourseChange={(course: CourseDoc | null, query: string) => {
+                setFormCourseId(course?.id ?? "");
+                setFormCourseName(query);
+                setValidationNotice(null);
+              }}
+            />
+
             {/* Course / Tee Setup Toggle */}
             <Pressable
               onPress={() => setShowTeeSettings(!showTeeSettings)}
@@ -617,19 +633,6 @@ export default function EventsScreen() {
             {/* Tee Settings Fields (Collapsible) */}
             {showTeeSettings && (
               <View style={styles.teeSettingsContainer}>
-                <View style={styles.formField}>
-                  <AppText variant="caption" style={styles.label}>Course Name</AppText>
-                  <AppInput
-                    placeholder="e.g. Royal Liverpool"
-                    value={formCourseName}
-                    onChangeText={(value) => {
-                      setFormCourseName(value);
-                      setValidationNotice(null);
-                    }}
-                    autoCapitalize="words"
-                  />
-                </View>
-
                 {/* Men's Tee Block */}
                 <TeeBlockForm
                   title="Men's Tees"

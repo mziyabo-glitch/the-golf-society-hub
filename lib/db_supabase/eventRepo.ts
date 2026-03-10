@@ -37,6 +37,7 @@ export type EventDoc = {
   society_id: string;
   name: string;
   date?: string;
+  courseId?: string | null;
   course_id?: string;
   courseName?: string;
   format: EventFormat;
@@ -88,6 +89,7 @@ export type EventTeeSettings = {
 function mapEvent(row: any): EventDoc {
   return {
     ...row,
+    courseId: row.course_id ?? null,
     courseName: row.course_name,
     format: row.format ?? 'stableford',
     classification: row.classification ?? 'general',

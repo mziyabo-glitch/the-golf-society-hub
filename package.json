@@ -9,7 +9,9 @@
     "web": "expo start --web",
     "lint": "expo lint -- --cache --cache-location .cache/eslint/.eslintcache",
     "build": "expo export -p web",
-    "vercel-build": "npm run build"
+    "vercel-build": "npm run build",
+    "build-pilot": "node scripts/build-pilot-course-list.js",
+    "discover-domains": "node scripts/discover-club-domains.js"
   },
   "engines": {
     "node": ">=18.x"
