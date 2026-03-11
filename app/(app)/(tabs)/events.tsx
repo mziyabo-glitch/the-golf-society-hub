@@ -9,7 +9,6 @@ import { Screen } from "@/components/ui/Screen";
 import { AppText } from "@/components/ui/AppText";
 import { AppCard } from "@/components/ui/AppCard";
 import { AppInput } from "@/components/ui/AppInput";
-import { CoursePicker } from "@/components/CoursePicker";
 import { PrimaryButton, SecondaryButton } from "@/components/ui/Button";
 import { LoadingState } from "@/components/ui/LoadingState";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -28,7 +27,8 @@ import {
   EVENT_FORMATS,
   EVENT_CLASSIFICATIONS,
 } from "@/lib/db_supabase/eventRepo";
-import type { CourseDoc } from "@/lib/db_supabase/courseRepo";
+import { searchCourses as searchGolfApiCourses, getCourseById, type ApiCourseSearchResult } from "@/lib/golfApi";
+import { importCourse, type ImportedTee } from "@/lib/importCourse";
 import { getPermissionsForMember } from "@/lib/rbac";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
 import { formatError, type FormattedError } from "@/lib/ui/formatError";
@@ -188,6 +188,12 @@ export default function EventsScreen() {
   const [showTeeSettings, setShowTeeSettings] = useState(false);
   const [formCourseId, setFormCourseId] = useState("");
   const [formCourseName, setFormCourseName] = useState("");
+  const [courseSearchQuery, setCourseSearchQuery] = useState("");
+  const [courseSearchResults, setCourseSearchResults] = useState<ApiCourseSearchResult[]>([]);
+  const [courseSearchLoading, setCourseSearchLoading] = useState(false);
+  const [courseSearchError, setCourseSearchError] = useState<string | null>(null);
+  const [importingCourseId, setImportingCourseId] = useState<number | null>(null);
+  const [importedTees, setImportedTees] = useState<ImportedTee[]>([]);
 
   // Men's tee settings
   const [formMenTeeName, setFormMenTeeName] = useState("");
@@ -250,6 +256,33 @@ export default function EventsScreen() {
   useEffect(() => {
     loadEvents();
   }, [loadEvents]);
+
+  useEffect(() => {
+    const query = courseSearchQuery.trim();
+    if (!query || query.length < 2) {
+      setCourseSearchResults([]);
+      setCourseSearchError(null);
+      setCourseSearchLoading(false);
+      return;
+    }
+
+    const timeout = setTimeout(async () => {
+      setCourseSearchLoading(true);
+      setCourseSearchError(null);
+      try {
+        const data = await searchGolfApiCourses(query);
+        console.log("[events] GolfCourseAPI search results:", data.length);
+        setCourseSearchResults(data.slice(0, 10));
+      } catch (err: any) {
+        setCourseSearchResults([]);
+        setCourseSearchError(err?.message || "Failed to search courses.");
+      } finally {
+        setCourseSearchLoading(false);
+      }
+    }, 300);
+
+    return () => clearTimeout(timeout);
+  }, [courseSearchQuery]);
 
   // Refetch on focus to pick up changes from other screens
   useFocusEffect(
@@ -323,6 +356,60 @@ export default function EventsScreen() {
     }
 
     return errors;
+  };
+
+  const applyImportedTeeToMen = (tee: ImportedTee) => {
+    setFormMenTeeName(tee.teeName || "");
+    setFormMenPar(tee.parTotal != null ? String(tee.parTotal) : "");
+    setFormMenCourseRating(tee.courseRating != null ? String(tee.courseRating) : "");
+    setFormMenSlopeRating(tee.slopeRating != null ? String(tee.slopeRating) : "");
+  };
+
+  const applyImportedTeeToWomen = (tee: ImportedTee) => {
+    setFormWomenTeeName(tee.teeName || "");
+    setFormWomenPar(tee.parTotal != null ? String(tee.parTotal) : "");
+    setFormWomenCourseRating(tee.courseRating != null ? String(tee.courseRating) : "");
+    setFormWomenSlopeRating(tee.slopeRating != null ? String(tee.slopeRating) : "");
+  };
+
+  const handleSelectApiCourse = async (course: ApiCourseSearchResult) => {
+    if (!course?.id || importingCourseId != null) return;
+
+    setImportingCourseId(course.id);
+    setCourseSearchError(null);
+    try {
+      const apiCourse = await getCourseById(course.id);
+      const imported = await importCourse(apiCourse);
+
+      setFormCourseId(imported.courseId);
+      setFormCourseName(imported.courseName);
+      setImportedTees(imported.tees);
+      setCourseSearchQuery(imported.courseName);
+      setCourseSearchResults([]);
+      setShowTeeSettings(true);
+
+      // Auto-apply first tee for convenience.
+      if (imported.tees.length > 0) {
+        applyImportedTeeToMen(imported.tees[0]);
+      }
+
+      setToast({
+        visible: true,
+        message: imported.imported
+          ? "Course imported from GolfCourseAPI."
+          : "Course already imported. Using existing record.",
+        type: "success",
+      });
+    } catch (err: any) {
+      setCourseSearchError(err?.message || "Failed to import course.");
+      setToast({
+        visible: true,
+        message: err?.message || "Failed to import course.",
+        type: "error",
+      });
+    } finally {
+      setImportingCourseId(null);
+    }
   };
 
   const handleCreateEvent = async () => {
@@ -427,6 +514,12 @@ export default function EventsScreen() {
     setFormClassification("general");
     setFormCourseId("");
     setFormCourseName("");
+    setCourseSearchQuery("");
+    setCourseSearchResults([]);
+    setCourseSearchError(null);
+    setCourseSearchLoading(false);
+    setImportingCourseId(null);
+    setImportedTees([]);
     setFormMenTeeName("");
     setFormMenPar("");
     setFormMenCourseRating("");
@@ -603,14 +696,67 @@ export default function EventsScreen() {
               ) : null}
             </View>
 
-            <CoursePicker
-              initialQuery={formCourseName}
-              onCourseChange={(course: CourseDoc | null, query: string) => {
-                setFormCourseId(course?.id ?? "");
-                setFormCourseName(query);
-                setValidationNotice(null);
-              }}
-            />
+            <View style={styles.formField}>
+              <AppText variant="captionBold" style={styles.label}>Search Course (GolfCourseAPI)</AppText>
+              <AppInput
+                placeholder="Type course name (min 2 chars)"
+                value={courseSearchQuery}
+                onChangeText={(value) => {
+                  setCourseSearchQuery(value);
+                  setCourseSearchError(null);
+                  setValidationNotice(null);
+                }}
+                autoCapitalize="words"
+              />
+              {courseSearchLoading ? (
+                <AppText variant="small" color="secondary" style={{ marginTop: 4 }}>
+                  Searching...
+                </AppText>
+              ) : null}
+              {courseSearchError ? (
+                <AppText variant="small" style={[styles.fieldError, { color: colors.error }]}>
+                  {courseSearchError}
+                </AppText>
+              ) : null}
+            </View>
+
+            {courseSearchResults.length > 0 && (
+              <View style={[styles.searchResultsCard, { borderColor: colors.border, backgroundColor: colors.surface }]}>
+                {courseSearchResults.map((c) => (
+                  <Pressable
+                    key={String(c.id)}
+                    onPress={() => handleSelectApiCourse(c)}
+                    disabled={importingCourseId !== null}
+                    style={({ pressed }) => [
+                      styles.searchResultRow,
+                      {
+                        borderColor: colors.border,
+                        backgroundColor: pressed ? colors.backgroundSecondary : colors.surface,
+                        opacity: importingCourseId === c.id ? 0.6 : 1,
+                      },
+                    ]}
+                  >
+                    <View style={{ flex: 1 }}>
+                      <AppText variant="bodyBold">{c.name}</AppText>
+                      {c.club_name ? (
+                        <AppText variant="small" color="secondary">{c.club_name}</AppText>
+                      ) : null}
+                    </View>
+                    <AppText variant="small" color="primary">
+                      {importingCourseId === c.id ? "Importing..." : "Import"}
+                    </AppText>
+                  </Pressable>
+                ))}
+              </View>
+            )}
+
+            {formCourseName ? (
+              <View style={styles.formField}>
+                <AppText variant="small" color="secondary">
+                  Selected course: {formCourseName}
+                </AppText>
+              </View>
+            ) : null}
 
             {/* Course / Tee Setup Toggle */}
             <Pressable
@@ -633,6 +779,40 @@ export default function EventsScreen() {
             {/* Tee Settings Fields (Collapsible) */}
             {showTeeSettings && (
               <View style={styles.teeSettingsContainer}>
+                {importedTees.length > 0 && (
+                  <>
+                    <View style={styles.formField}>
+                      <AppText variant="captionBold" style={styles.label}>Apply Imported Tee to Men's</AppText>
+                      <View style={styles.pickerRow}>
+                        {importedTees.map((tee) => (
+                          <PickerOption
+                            key={`men-${tee.id}`}
+                            label={tee.teeName}
+                            selected={formMenTeeName === tee.teeName}
+                            onPress={() => applyImportedTeeToMen(tee)}
+                            colors={colors}
+                          />
+                        ))}
+                      </View>
+                    </View>
+
+                    <View style={styles.formField}>
+                      <AppText variant="captionBold" style={styles.label}>Apply Imported Tee to Women's</AppText>
+                      <View style={styles.pickerRow}>
+                        {importedTees.map((tee) => (
+                          <PickerOption
+                            key={`women-${tee.id}`}
+                            label={tee.teeName}
+                            selected={formWomenTeeName === tee.teeName}
+                            onPress={() => applyImportedTeeToWomen(tee)}
+                            colors={colors}
+                          />
+                        ))}
+                      </View>
+                    </View>
+                  </>
+                )}
+
                 {/* Men's Tee Block */}
                 <TeeBlockForm
                   title="Men's Tees"
@@ -959,6 +1139,20 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.xs,
     borderRadius: radius.sm,
     borderWidth: 1,
+  },
+  searchResultsCard: {
+    borderWidth: 1,
+    borderRadius: radius.md,
+    marginBottom: spacing.base,
+    overflow: "hidden",
+  },
+  searchResultRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: spacing.base,
+    paddingVertical: spacing.sm,
+    borderBottomWidth: StyleSheet.hairlineWidth,
   },
   teeSettingsToggle: {
     flexDirection: "row",
