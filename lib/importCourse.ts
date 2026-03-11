@@ -1,5 +1,5 @@
 import { supabase } from "@/lib/supabase";
-import type { ApiCourse, ApiHole, ApiTee } from "@/lib/golfApi";
+import type { ApiCourse, ApiTee } from "@/lib/golfApi";
 
 export type ImportedTee = {
   id: string;
@@ -40,23 +40,6 @@ function normalizeTee(tee: ApiTee): {
     courseRating: tee.course_rating != null ? Number(tee.course_rating) : null,
     slopeRating: tee.slope_rating != null ? Number(tee.slope_rating) : null,
     parTotal: tee.par_total != null ? Number(tee.par_total) : null,
-  };
-}
-
-function normalizeHole(hole: ApiHole, idx: number) {
-  const holeNumberRaw = hole.hole_number ?? hole.number ?? idx + 1;
-  const holeNumber = Number(holeNumberRaw);
-  if (!Number.isFinite(holeNumber) || holeNumber < 1 || holeNumber > 36) return null;
-
-  return {
-    hole_number: holeNumber,
-    par: hole.par != null ? Number(hole.par) : null,
-    yardage: hole.yardage != null ? Number(hole.yardage) : null,
-    stroke_index: hole.stroke_index != null
-      ? Number(hole.stroke_index)
-      : hole.hcp != null
-        ? Number(hole.hcp)
-        : null,
   };
 }
 
@@ -123,21 +106,33 @@ async function importTeesAndHoles(courseId: string, tees: ApiTee[] | undefined):
 
     const { data: teeRow, error: teeError } = await supabase
       .from("course_tees")
-      .upsert(
-        {
-          course_id: courseId,
-          tee_name: normalized.teeName,
-          course_rating: normalized.courseRating,
-          slope_rating: normalized.slopeRating,
-          par_total: normalized.parTotal,
-        },
-        { onConflict: "course_id,tee_name" }
-      )
+      .insert({
+        course_id: courseId,
+        tee_name: normalized.teeName,
+        course_rating: normalized.courseRating,
+        slope_rating: normalized.slopeRating,
+        par_total: normalized.parTotal,
+      })
       .select("id")
       .single();
 
-    if (teeError) throw teeError;
-    if (!teeRow?.id) continue;
+    let teeId: string | null = teeRow?.id ?? null;
+
+    if (teeError && (teeError as any).code === "23505") {
+      const { data: existingTee, error: existingTeeError } = await supabase
+        .from("course_tees")
+        .select("id")
+        .eq("course_id", courseId)
+        .eq("tee_name", normalized.teeName)
+        .maybeSingle();
+      if (existingTeeError) throw existingTeeError;
+      teeId = existingTee?.id ?? null;
+    } else if (teeError) {
+      throw teeError;
+    }
+
+    if (!teeId) continue;
+    console.log("Imported tee:", normalized.teeName);
 
     if (!Array.isArray(tee.holes) || tee.holes.length === 0) {
       console.log("[importCourse] tee has no hole data:", normalized.teeName);
@@ -145,24 +140,34 @@ async function importTeesAndHoles(courseId: string, tees: ApiTee[] | undefined):
     }
 
     const holeRows = tee.holes
-      .map((hole, idx) => normalizeHole(hole, idx))
-      .filter(Boolean)
-      .map((hole: any) => ({
+      .map((hole: any, i: number) => ({
         course_id: courseId,
-        tee_id: teeRow.id,
-        hole_number: hole.hole_number,
-        par: hole.par,
-        yardage: hole.yardage,
-        stroke_index: hole.stroke_index,
-      }));
+        tee_id: teeId,
+        hole_number: i + 1,
+        par: hole?.par != null ? Number(hole.par) : null,
+        yardage: hole?.yardage != null ? Number(hole.yardage) : null,
+        stroke_index:
+          hole?.handicap != null
+            ? Number(hole.handicap)
+            : hole?.stroke_index != null
+              ? Number(hole.stroke_index)
+              : hole?.hcp != null
+                ? Number(hole.hcp)
+                : null,
+      }))
+      .filter((h) => Number.isFinite(h.hole_number));
 
     if (holeRows.length === 0) continue;
 
     const { error: holesError } = await supabase
       .from("course_holes")
-      .upsert(holeRows, { onConflict: "tee_id,hole_number" });
+      .insert(holeRows);
 
-    if (holesError) throw holesError;
+    if (holesError && (holesError as any).code !== "23505") {
+      throw holesError;
+    }
+
+    // Duplicate holes are okay for re-imports if tee already existed.
   }
 }
 
@@ -187,7 +192,15 @@ export async function importCourse(apiCourse: ApiCourse): Promise<ImportedCourse
   }
 
   const created = await insertCourse(apiCourse);
-  await importTeesAndHoles(created.id, apiCourse.tees);
+
+  const mergedTees = Array.isArray(apiCourse.tees)
+    ? apiCourse.tees
+    : [
+        ...((apiCourse.tees?.male as ApiTee[] | undefined) || []),
+        ...((apiCourse.tees?.female as ApiTee[] | undefined) || []),
+      ];
+
+  await importTeesAndHoles(created.id, mergedTees);
   const tees = await getImportedTees(created.id);
 
   console.log("[importCourse] import completed", {

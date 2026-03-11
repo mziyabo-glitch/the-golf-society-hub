@@ -5,6 +5,7 @@ export type ApiHole = {
   number?: number;
   par?: number;
   yardage?: number;
+  handicap?: number;
   stroke_index?: number;
   hcp?: number;
 };
@@ -27,7 +28,10 @@ export type ApiCourse = {
   lng?: number;
   latitude?: number;
   longitude?: number;
-  tees?: ApiTee[];
+  tees?: {
+    male?: ApiTee[];
+    female?: ApiTee[];
+  } | ApiTee[];
 };
 
 export type ApiCourseSearchResult = {
@@ -102,6 +106,11 @@ export async function getCourseById(id: number): Promise<ApiCourse> {
     lng: row.lng ?? row.longitude ?? undefined,
     latitude: row.latitude ?? row.lat ?? undefined,
     longitude: row.longitude ?? row.lng ?? undefined,
-    tees: Array.isArray(row.tees) ? row.tees : [],
+    tees: Array.isArray(row.tees)
+      ? row.tees
+      : {
+          male: Array.isArray(row?.tees?.male) ? row.tees.male : [],
+          female: Array.isArray(row?.tees?.female) ? row.tees.female : [],
+        },
   };
 }
