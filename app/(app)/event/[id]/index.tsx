@@ -372,7 +372,7 @@ export default function EventDetailScreen() {
           <View style={{ width: 60 }} />
         </View>
 
-        <ScrollView showsVerticalScrollIndicator={false}>
+        <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
           <AppCard>
             <View style={styles.formField}>
               <AppText variant="captionBold" style={styles.label}>Event Name</AppText>

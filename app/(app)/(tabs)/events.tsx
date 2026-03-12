@@ -107,6 +107,7 @@ export default function EventsScreen() {
   const [manualCourseName, setManualCourseName] = useState("");
   const [tees, setTees] = useState<CourseTee[]>([]);
   const [teesLoading, setTeesLoading] = useState(false);
+  const [teesError, setTeesError] = useState<string | null>(null);
   const [selectedTee, setSelectedTee] = useState<CourseTee | null>(null);
 
   // Handicap allowance (shared)
@@ -154,18 +155,21 @@ export default function EventsScreen() {
   }, [courseSearchQuery]);
 
   const handleSelectCourse = useCallback(async (course: CourseSearchHit) => {
+    console.log("[events] handleSelectCourse:", course.id, course.name);
     setSelectedCourse(course);
     setCourseSearchResults([]);
     setCourseSearchQuery("");
     setSelectedTee(null);
     setTees([]);
+    setTeesError(null);
     setTeesLoading(true);
     try {
       const list = await getTeesByCourseId(course.id);
       setTees(list);
-    } catch (e) {
-      console.warn("[events] getTeesByCourseId failed", e);
+    } catch (e: any) {
+      console.warn("[events] getTeesByCourseId failed", e?.message || e);
       setTees([]);
+      setTeesError(e?.message || "Failed to load tees");
     } finally {
       setTeesLoading(false);
     }
@@ -322,6 +326,7 @@ export default function EventsScreen() {
     setSelectedCourse(null);
     setManualCourseName("");
     setTees([]);
+    setTeesError(null);
     setSelectedTee(null);
     setFormHandicapAllowance("95");
     setShowCreateForm(false);
@@ -389,6 +394,7 @@ export default function EventsScreen() {
 
         <ScrollView
           showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
           contentContainerStyle={{ paddingBottom: tabBarHeight + 24 }}
         >
           <AppCard>
@@ -497,7 +503,7 @@ export default function EventsScreen() {
                 <View style={[styles.selectedCourseRow, { borderColor: colors.border }]}>
                   <AppText variant="body" numberOfLines={1} style={{ flex: 1 }}>
                     {selectedCourse.name}
-                    {selectedCourse.area ? ` · ${selectedCourse.area}` : ""}
+                    {selectedCourse.location ? ` · ${selectedCourse.location}` : ""}
                   </AppText>
                   <Pressable
                     onPress={() => {
@@ -527,7 +533,7 @@ export default function EventsScreen() {
                   )}
                   {courseSearchError && !courseSearching && (
                     <AppText variant="small" style={{ marginTop: 4, color: colors.error }}>
-                      Couldn&apos;t load courses. {courseSearchError}
+                      {"Couldn't load courses. "}{courseSearchError}
                     </AppText>
                   )}
                   {!courseSearchError && courseSearchResults.length > 0 && !selectedCourse && (
@@ -542,9 +548,9 @@ export default function EventsScreen() {
                           ]}
                         >
                           <AppText variant="body" numberOfLines={1}>{c.name}</AppText>
-                          {c.area && (
-                            <AppText variant="small" color="secondary" numberOfLines={1}>{c.area}</AppText>
-                          )}
+                          {c.location ? (
+                            <AppText variant="small" color="secondary" numberOfLines={1}>{c.location}</AppText>
+                          ) : null}
                         </Pressable>
                       ))}
                     </View>
@@ -574,12 +580,17 @@ export default function EventsScreen() {
               <View style={styles.formField}>
                 {teesLoading ? (
                   <AppText variant="small" color="tertiary">Loading tees…</AppText>
+                ) : teesError ? (
+                  <AppText variant="small" style={{ color: colors.error }}>
+                    {"Couldn't load tees: "}{teesError}
+                  </AppText>
                 ) : (
                   <>
                     <CourseTeeSelector
                       tees={tees}
                       selectedTee={selectedTee}
                       onSelectTee={(tee) => {
+                        console.log("[events] tee selected:", tee.id, tee.tee_name);
                         setSelectedTee(tee);
                         setFormErrors((prev) => ({ ...prev, courseTee: undefined }));
                       }}
