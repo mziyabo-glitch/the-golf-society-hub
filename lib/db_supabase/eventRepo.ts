@@ -39,6 +39,7 @@ export type EventDoc = {
   date?: string;
   course_id?: string;
   courseName?: string;
+  tee_id?: string | null;
   format: EventFormat;
   classification: EventClassification;
   status?: string;
@@ -117,6 +118,7 @@ function mapEvent(row: any): EventDoc {
     teeTimeStart: row.tee_time_start ?? null,
     teeTimeInterval: row.tee_time_interval ?? null,
     teeTimePublishedAt: row.tee_time_published_at ?? null,
+    tee_id: row.tee_id ?? null,
   };
 }
 
@@ -180,10 +182,11 @@ export async function createEvent(
     date?: string;
     courseId?: string;
     courseName?: string;
+    teeId?: string | null;
     format: EventFormat;
     classification?: EventClassification;
     createdBy?: string;
-    // Men's tee settings
+    // Men's tee settings (from selected tee or manual)
     teeName?: string;
     par?: number;
     courseRating?: number;
@@ -204,6 +207,7 @@ export async function createEvent(
     date: data.date ?? null,
     course_id: data.courseId ?? null,
     course_name: data.courseName ?? null,
+    tee_id: data.teeId ?? null,
     format: data.format,
     classification: classification,
     is_oom: classification === 'oom',
@@ -259,6 +263,7 @@ export async function updateEvent(
     date: string;
     courseId: string;
     courseName: string;
+    teeId: string | null;
     format: EventFormat;
     classification: EventClassification;
     status: string;
@@ -287,6 +292,7 @@ export async function updateEvent(
   if (updates.date !== undefined) payload.date = updates.date;
   if (updates.courseId !== undefined) payload.course_id = updates.courseId;
   if (updates.courseName !== undefined) payload.course_name = updates.courseName;
+  if (updates.teeId !== undefined) payload.tee_id = updates.teeId;
   if (updates.format !== undefined) payload.format = updates.format;
   if (updates.classification !== undefined) {
     payload.classification = updates.classification;

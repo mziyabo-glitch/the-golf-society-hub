@@ -27,6 +27,8 @@ import {
   EVENT_FORMATS,
   EVENT_CLASSIFICATIONS,
 } from "@/lib/db_supabase/eventRepo";
+import { searchCourses, getTeesByCourseId, type CourseSearchHit, type CourseTee } from "@/lib/db_supabase/courseRepo";
+import { CourseTeeSelector } from "@/components/CourseTeeSelector";
 import { getPermissionsForMember } from "@/lib/rbac";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
 import { formatError, type FormattedError } from "@/lib/ui/formatError";
@@ -64,98 +66,12 @@ function PickerOption({
   );
 }
 
-// Tee block component for reuse (Men's and Women's)
-function TeeBlockForm({
-  title,
-  color,
-  teeName,
-  par,
-  courseRating,
-  slopeRating,
-  onTeeNameChange,
-  onParChange,
-  onCourseRatingChange,
-  onSlopeRatingChange,
-  errorMessage,
-}: {
-  title: string;
-  color: string;
-  teeName: string;
-  par: string;
-  courseRating: string;
-  slopeRating: string;
-  onTeeNameChange: (v: string) => void;
-  onParChange: (v: string) => void;
-  onCourseRatingChange: (v: string) => void;
-  onSlopeRatingChange: (v: string) => void;
-  errorMessage?: string;
-}) {
-  const colors = getColors();
-
-  return (
-    <View style={[styles.teeBlock, { borderLeftColor: color }]}>
-      <View style={styles.teeBlockHeader}>
-        <View style={[styles.teeColorDot, { backgroundColor: color }]} />
-        <AppText variant="captionBold">{title}</AppText>
-      </View>
-
-      <View style={styles.formField}>
-        <AppText variant="caption" style={styles.label}>Tee Name</AppText>
-        <AppInput
-          placeholder={title === "Men's Tees" ? "e.g. Yellow" : "e.g. Red"}
-          value={teeName}
-          onChangeText={onTeeNameChange}
-          autoCapitalize="words"
-        />
-      </View>
-
-      <View style={styles.teeSettingsRow}>
-        <View style={[styles.formField, { flex: 1 }]}>
-          <AppText variant="caption" style={styles.label}>Par</AppText>
-          <AppInput
-            placeholder="72"
-            value={par}
-            onChangeText={onParChange}
-            keyboardType="number-pad"
-          />
-        </View>
-
-        <View style={[styles.formField, { flex: 1.5 }]}>
-          <AppText variant="caption" style={styles.label}>Course Rating</AppText>
-          <AppInput
-            placeholder="72.5"
-            value={courseRating}
-            onChangeText={onCourseRatingChange}
-            keyboardType="decimal-pad"
-          />
-        </View>
-
-        <View style={[styles.formField, { flex: 1 }]}>
-          <AppText variant="caption" style={styles.label}>Slope</AppText>
-          <AppInput
-            placeholder="127"
-            value={slopeRating}
-            onChangeText={onSlopeRatingChange}
-            keyboardType="number-pad"
-          />
-        </View>
-      </View>
-      {errorMessage ? (
-        <AppText variant="small" style={[styles.fieldError, { color: colors.error }]}>
-          {errorMessage}
-        </AppText>
-      ) : null}
-    </View>
-  );
-}
-
 type FormErrors = {
   name?: string;
   date?: string;
   format?: string;
   classification?: string;
-  menTees?: string;
-  womenTees?: string;
+  courseTee?: string;
   handicapAllowance?: string;
 };
 
@@ -182,21 +98,14 @@ export default function EventsScreen() {
   const [validationNotice, setValidationNotice] = useState<string | null>(null);
   const [toast, setToast] = useState({ visible: false, message: "", type: "success" as const });
 
-  // Tee Settings form state
-  const [showTeeSettings, setShowTeeSettings] = useState(false);
-  const [formCourseName, setFormCourseName] = useState("");
-
-  // Men's tee settings
-  const [formMenTeeName, setFormMenTeeName] = useState("");
-  const [formMenPar, setFormMenPar] = useState("");
-  const [formMenCourseRating, setFormMenCourseRating] = useState("");
-  const [formMenSlopeRating, setFormMenSlopeRating] = useState("");
-
-  // Women's tee settings
-  const [formWomenTeeName, setFormWomenTeeName] = useState("");
-  const [formWomenPar, setFormWomenPar] = useState("");
-  const [formWomenCourseRating, setFormWomenCourseRating] = useState("");
-  const [formWomenSlopeRating, setFormWomenSlopeRating] = useState("");
+  // Course / Tee: search course → select tee
+  const [courseSearchQuery, setCourseSearchQuery] = useState("");
+  const [courseSearchResults, setCourseSearchResults] = useState<CourseSearchHit[]>([]);
+  const [courseSearching, setCourseSearching] = useState(false);
+  const [selectedCourse, setSelectedCourse] = useState<CourseSearchHit | null>(null);
+  const [tees, setTees] = useState<CourseTee[]>([]);
+  const [teesLoading, setTeesLoading] = useState(false);
+  const [selectedTee, setSelectedTee] = useState<CourseTee | null>(null);
 
   // Handicap allowance (shared)
   const [formHandicapAllowance, setFormHandicapAllowance] = useState("95");
@@ -219,6 +128,43 @@ export default function EventsScreen() {
       paramsHandledRef.current = true;
     }
   }, [params.create, params.classification, permissions.canCreateEvents]);
+
+  // Debounced course search
+  useEffect(() => {
+    const q = courseSearchQuery.trim();
+    if (!q) {
+      setCourseSearchResults([]);
+      return;
+    }
+    const t = setTimeout(async () => {
+      setCourseSearching(true);
+      try {
+        const hits = await searchCourses(q);
+        setCourseSearchResults(hits);
+      } finally {
+        setCourseSearching(false);
+      }
+    }, 300);
+    return () => clearTimeout(t);
+  }, [courseSearchQuery]);
+
+  const handleSelectCourse = useCallback(async (course: CourseSearchHit) => {
+    setSelectedCourse(course);
+    setCourseSearchResults([]);
+    setCourseSearchQuery("");
+    setSelectedTee(null);
+    setTees([]);
+    setTeesLoading(true);
+    try {
+      const list = await getTeesByCourseId(course.id);
+      setTees(list);
+    } catch (e) {
+      console.warn("[events] getTeesByCourseId failed", e);
+      setTees([]);
+    } finally {
+      setTeesLoading(false);
+    }
+  }, []);
 
   const loadEvents = useCallback(async () => {
     const sid = societyId || activeSocietyId;
@@ -257,34 +203,6 @@ export default function EventsScreen() {
     }, [societyId, loadEvents])
   );
 
-  // Validate numeric tee input
-  const validateTeeInput = (
-    par: string,
-    courseRating: string,
-    slopeRating: string,
-    label: string
-  ): string | null => {
-    if (par.trim()) {
-      const parNum = parseInt(par.trim(), 10);
-      if (isNaN(parNum) || parNum < 27 || parNum > 90) {
-        return `${label} Par must be between 27 and 90.`;
-      }
-    }
-    if (courseRating.trim()) {
-      const crNum = parseFloat(courseRating.trim());
-      if (isNaN(crNum) || crNum < 50 || crNum > 90) {
-        return `${label} Course Rating must be between 50 and 90.`;
-      }
-    }
-    if (slopeRating.trim()) {
-      const srNum = parseInt(slopeRating.trim(), 10);
-      if (isNaN(srNum) || srNum < 55 || srNum > 155) {
-        return `${label} Slope Rating must be between 55 and 155.`;
-      }
-    }
-    return null;
-  };
-
   const validateForm = (): FormErrors => {
     const errors: FormErrors = {};
 
@@ -306,11 +224,9 @@ export default function EventsScreen() {
       errors.classification = "Select a classification.";
     }
 
-    const menError = validateTeeInput(formMenPar, formMenCourseRating, formMenSlopeRating, "Men's");
-    if (menError) errors.menTees = menError;
-
-    const womenError = validateTeeInput(formWomenPar, formWomenCourseRating, formWomenSlopeRating, "Women's");
-    if (womenError) errors.womenTees = womenError;
+    if (selectedCourse && tees.length > 0 && !selectedTee) {
+      errors.courseTee = "Select a tee for this course.";
+    }
 
     if (formHandicapAllowance.trim()) {
       const allowanceValue = Number(formHandicapAllowance.trim());
@@ -344,9 +260,6 @@ export default function EventsScreen() {
     setFormErrors(errors);
     if (Object.keys(errors).length > 0) {
       setValidationNotice("Please fix the highlighted fields.");
-      if (errors.menTees || errors.womenTees || errors.handicapAllowance) {
-        setShowTeeSettings(true);
-      }
       return;
     }
 
@@ -356,27 +269,9 @@ export default function EventsScreen() {
       return;
     }
 
-    // Parse tee settings
-    const menPar = formMenPar.trim() ? parseInt(formMenPar.trim(), 10) : undefined;
-    const menCourseRating = formMenCourseRating.trim() ? parseFloat(formMenCourseRating.trim()) : undefined;
-    const menSlopeRating = formMenSlopeRating.trim() ? parseInt(formMenSlopeRating.trim(), 10) : undefined;
-
-    const womenPar = formWomenPar.trim() ? parseInt(formWomenPar.trim(), 10) : undefined;
-    const womenCourseRating = formWomenCourseRating.trim() ? parseFloat(formWomenCourseRating.trim()) : undefined;
-    const womenSlopeRating = formWomenSlopeRating.trim() ? parseInt(formWomenSlopeRating.trim(), 10) : undefined;
-
     const handicapAllowance = formHandicapAllowance.trim()
       ? parseFloat(formHandicapAllowance.trim()) / 100
-      : 0.95; // Default to 95%
-
-    // Warn if generating tee sheet without tee settings
-    const hasMenTees = menPar != null && menCourseRating != null && menSlopeRating != null;
-    const hasWomenTees = womenPar != null && womenCourseRating != null && womenSlopeRating != null;
-
-    if (!hasMenTees && !hasWomenTees) {
-      // Just a warning, not blocking
-      console.log("[createEvent] Warning: No tee settings configured");
-    }
+      : 0.95;
 
     console.log("[createEvent] Calling createEvent...");
     const created = await createAction.run(async () =>
@@ -386,19 +281,13 @@ export default function EventsScreen() {
         format: formFormat,
         classification: formClassification,
         createdBy: user.uid,
-        // Course name
-        courseName: formCourseName.trim() || undefined,
-        // Men's tee settings
-        teeName: formMenTeeName.trim() || undefined,
-        par: menPar,
-        courseRating: menCourseRating,
-        slopeRating: menSlopeRating,
-        // Women's tee settings
-        ladiesTeeName: formWomenTeeName.trim() || undefined,
-        ladiesPar: womenPar,
-        ladiesCourseRating: womenCourseRating,
-        ladiesSlopeRating: womenSlopeRating,
-        // Shared allowance
+        courseId: selectedCourse?.id,
+        courseName: selectedCourse?.name,
+        teeId: selectedTee?.id ?? undefined,
+        teeName: selectedTee?.tee_name,
+        par: selectedTee?.par_total,
+        courseRating: selectedTee?.course_rating,
+        slopeRating: selectedTee?.slope_rating,
         handicapAllowance,
       })
     );
@@ -419,17 +308,12 @@ export default function EventsScreen() {
     setFormDate("");
     setFormFormat("stableford");
     setFormClassification("general");
-    setFormCourseName("");
-    setFormMenTeeName("");
-    setFormMenPar("");
-    setFormMenCourseRating("");
-    setFormMenSlopeRating("");
-    setFormWomenTeeName("");
-    setFormWomenPar("");
-    setFormWomenCourseRating("");
-    setFormWomenSlopeRating("");
+    setCourseSearchQuery("");
+    setCourseSearchResults([]);
+    setSelectedCourse(null);
+    setTees([]);
+    setSelectedTee(null);
     setFormHandicapAllowance("95");
-    setShowTeeSettings(false);
     setShowCreateForm(false);
     setFormErrors({});
     setValidationNotice(null);
@@ -596,126 +480,113 @@ export default function EventsScreen() {
               ) : null}
             </View>
 
-            {/* Course / Tee Setup Toggle */}
-            <Pressable
-              onPress={() => setShowTeeSettings(!showTeeSettings)}
-              style={styles.teeSettingsToggle}
-            >
-              <View style={{ flex: 1 }}>
-                <AppText variant="captionBold">Course / Tee Setup</AppText>
-                <AppText variant="small" color="secondary">
-                  Optional - for WHS handicap calculations
-                </AppText>
-              </View>
-              <Feather
-                name={showTeeSettings ? "chevron-up" : "chevron-down"}
-                size={20}
-                color={colors.textTertiary}
-              />
-            </Pressable>
-
-            {/* Tee Settings Fields (Collapsible) */}
-            {showTeeSettings && (
-              <View style={styles.teeSettingsContainer}>
-                <View style={styles.formField}>
-                  <AppText variant="caption" style={styles.label}>Course Name</AppText>
+            {/* Course: Search → Select Tee */}
+            <View style={styles.formField}>
+              <AppText variant="captionBold" style={styles.label}>Course</AppText>
+              {selectedCourse ? (
+                <View style={[styles.selectedCourseRow, { borderColor: colors.border }]}>
+                  <AppText variant="body" numberOfLines={1} style={{ flex: 1 }}>
+                    {selectedCourse.name}
+                    {selectedCourse.area ? ` · ${selectedCourse.area}` : ""}
+                  </AppText>
+                  <Pressable
+                    onPress={() => {
+                      setSelectedCourse(null);
+                      setTees([]);
+                      setSelectedTee(null);
+                      setFormErrors((prev) => ({ ...prev, courseTee: undefined }));
+                    }}
+                    hitSlop={8}
+                  >
+                    <AppText variant="small" style={{ color: colors.primary }}>Change</AppText>
+                  </Pressable>
+                </View>
+              ) : (
+                <>
                   <AppInput
-                    placeholder="e.g. Royal Liverpool"
-                    value={formCourseName}
-                    onChangeText={(value) => {
-                      setFormCourseName(value);
-                      setValidationNotice(null);
+                    placeholder="Search course (e.g. Forest of Arden)"
+                    value={courseSearchQuery}
+                    onChangeText={(v) => {
+                      setCourseSearchQuery(v);
+                      setFormErrors((prev) => ({ ...prev, courseTee: undefined }));
                     }}
                     autoCapitalize="words"
                   />
-                </View>
+                  {courseSearching && (
+                    <AppText variant="small" color="tertiary" style={{ marginTop: 4 }}>Searching…</AppText>
+                  )}
+                  {courseSearchResults.length > 0 && !selectedCourse && (
+                    <View style={styles.searchResults}>
+                      {courseSearchResults.slice(0, 8).map((c) => (
+                        <Pressable
+                          key={c.id}
+                          onPress={() => handleSelectCourse(c)}
+                          style={({ pressed }) => [
+                            styles.searchResultItem,
+                            { backgroundColor: colors.backgroundSecondary, opacity: pressed ? 0.8 : 1 },
+                          ]}
+                        >
+                          <AppText variant="body" numberOfLines={1}>{c.name}</AppText>
+                          {c.area && (
+                            <AppText variant="small" color="secondary" numberOfLines={1}>{c.area}</AppText>
+                          )}
+                        </Pressable>
+                      ))}
+                    </View>
+                  )}
+                </>
+              )}
+            </View>
 
-                {/* Men's Tee Block */}
-                <TeeBlockForm
-                  title="Men's Tees"
-                  color="#FFD700"
-                  teeName={formMenTeeName}
-                  par={formMenPar}
-                  courseRating={formMenCourseRating}
-                  slopeRating={formMenSlopeRating}
-                  onTeeNameChange={(value) => {
-                    setFormMenTeeName(value);
-                    setValidationNotice(null);
-                  }}
-                  onParChange={(value) => {
-                    setFormMenPar(value);
-                    setValidationNotice(null);
-                    setFormErrors((prev) => ({ ...prev, menTees: undefined }));
-                  }}
-                  onCourseRatingChange={(value) => {
-                    setFormMenCourseRating(value);
-                    setValidationNotice(null);
-                    setFormErrors((prev) => ({ ...prev, menTees: undefined }));
-                  }}
-                  onSlopeRatingChange={(value) => {
-                    setFormMenSlopeRating(value);
-                    setValidationNotice(null);
-                    setFormErrors((prev) => ({ ...prev, menTees: undefined }));
-                  }}
-                  errorMessage={formErrors.menTees}
-                />
-
-                {/* Women's Tee Block */}
-                <TeeBlockForm
-                  title="Women's Tees"
-                  color="#E53935"
-                  teeName={formWomenTeeName}
-                  par={formWomenPar}
-                  courseRating={formWomenCourseRating}
-                  slopeRating={formWomenSlopeRating}
-                  onTeeNameChange={(value) => {
-                    setFormWomenTeeName(value);
-                    setValidationNotice(null);
-                  }}
-                  onParChange={(value) => {
-                    setFormWomenPar(value);
-                    setValidationNotice(null);
-                    setFormErrors((prev) => ({ ...prev, womenTees: undefined }));
-                  }}
-                  onCourseRatingChange={(value) => {
-                    setFormWomenCourseRating(value);
-                    setValidationNotice(null);
-                    setFormErrors((prev) => ({ ...prev, womenTees: undefined }));
-                  }}
-                  onSlopeRatingChange={(value) => {
-                    setFormWomenSlopeRating(value);
-                    setValidationNotice(null);
-                    setFormErrors((prev) => ({ ...prev, womenTees: undefined }));
-                  }}
-                  errorMessage={formErrors.womenTees}
-                />
-
-                {/* Handicap Allowance */}
-                <View style={styles.formField}>
-                  <AppText variant="caption" style={styles.label}>
-                    Handicap Allowance (%)
-                  </AppText>
-                  <AppInput
-                    placeholder="95"
-                    value={formHandicapAllowance}
-                    onChangeText={(value) => {
-                      setFormHandicapAllowance(value);
-                      setValidationNotice(null);
-                      setFormErrors((prev) => ({ ...prev, handicapAllowance: undefined }));
-                    }}
-                    keyboardType="number-pad"
-                  />
-                  {formErrors.handicapAllowance ? (
-                    <AppText variant="small" style={[styles.fieldError, { color: colors.error }]}>
-                      {formErrors.handicapAllowance}
-                    </AppText>
-                  ) : null}
-                  <AppText variant="small" color="tertiary" style={{ marginTop: 4 }}>
-                    Default 95% for individual stroke play
-                  </AppText>
-                </View>
+            {/* Select Tee (when course has tees) */}
+            {selectedCourse && (
+              <View style={styles.formField}>
+                {teesLoading ? (
+                  <AppText variant="small" color="tertiary">Loading tees…</AppText>
+                ) : (
+                  <>
+                    <CourseTeeSelector
+                      tees={tees}
+                      selectedTee={selectedTee}
+                      onSelectTee={(tee) => {
+                        setSelectedTee(tee);
+                        setFormErrors((prev) => ({ ...prev, courseTee: undefined }));
+                      }}
+                    />
+                    {formErrors.courseTee ? (
+                      <AppText variant="small" style={[styles.fieldError, { color: colors.error, marginTop: 4 }]}>
+                        {formErrors.courseTee}
+                      </AppText>
+                    ) : null}
+                  </>
+                )}
               </View>
             )}
+
+            {/* Handicap Allowance */}
+            <View style={styles.formField}>
+              <AppText variant="caption" style={styles.label}>
+                Handicap Allowance (%)
+              </AppText>
+              <AppInput
+                placeholder="95"
+                value={formHandicapAllowance}
+                onChangeText={(value) => {
+                  setFormHandicapAllowance(value);
+                  setValidationNotice(null);
+                  setFormErrors((prev) => ({ ...prev, handicapAllowance: undefined }));
+                }}
+                keyboardType="number-pad"
+              />
+              {formErrors.handicapAllowance ? (
+                <AppText variant="small" style={[styles.fieldError, { color: colors.error }]}>
+                  {formErrors.handicapAllowance}
+                </AppText>
+              ) : null}
+              <AppText variant="small" color="tertiary" style={{ marginTop: 4 }}>
+                Default 95% for individual stroke play
+              </AppText>
+            </View>
 
             <PrimaryButton
               onPress={handleCreateEvent}
@@ -957,38 +828,20 @@ const styles = StyleSheet.create({
     borderRadius: radius.sm,
     borderWidth: 1,
   },
-  teeSettingsToggle: {
+  selectedCourseRow: {
     flexDirection: "row",
     alignItems: "center",
-    paddingVertical: spacing.sm,
-    borderTopWidth: 1,
-    borderTopColor: "rgba(0,0,0,0.06)",
-    marginTop: spacing.sm,
-  },
-  teeSettingsContainer: {
-    paddingTop: spacing.sm,
-    borderTopWidth: 1,
-    borderTopColor: "rgba(0,0,0,0.04)",
-  },
-  teeSettingsRow: {
-    flexDirection: "row",
+    padding: spacing.sm,
+    borderRadius: radius.sm,
+    borderWidth: 1,
     gap: spacing.sm,
   },
-  teeBlock: {
-    marginBottom: spacing.base,
-    paddingLeft: spacing.sm,
-    borderLeftWidth: 4,
-    borderLeftColor: "#FFD700",
-  },
-  teeBlockHeader: {
-    flexDirection: "row",
-    alignItems: "center",
+  searchResults: {
+    marginTop: spacing.xs,
     gap: spacing.xs,
-    marginBottom: spacing.sm,
   },
-  teeColorDot: {
-    width: 12,
-    height: 12,
-    borderRadius: 6,
+  searchResultItem: {
+    padding: spacing.sm,
+    borderRadius: radius.sm,
   },
 });
