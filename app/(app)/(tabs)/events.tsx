@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import debounce from "lodash.debounce";
 import { StyleSheet, View, Pressable, ScrollView } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
@@ -146,7 +147,25 @@ export default function EventsScreen() {
     }
   }, [params.create, params.classification, permissions.canCreateEvents]);
 
-  // Debounced course search via GolfCourseAPI
+  // Debounced course search (400ms - only fires after typing stops to avoid API quota burn)
+  const debouncedSearch = useMemo(
+    () =>
+      debounce(async (q: string) => {
+        setCourseSearching(true);
+        setCourseSearchError(null);
+        try {
+          const hits = await searchCoursesApi(q);
+          setCourseSearchResults(hits);
+        } catch (e: any) {
+          setCourseSearchError(e?.message || "Course search failed");
+          setCourseSearchResults([]);
+        } finally {
+          setCourseSearching(false);
+        }
+      }, 400),
+    []
+  );
+
   useEffect(() => {
     const q = courseSearchQuery.trim();
     if (!q || q.length < 2) {
@@ -154,24 +173,9 @@ export default function EventsScreen() {
       setCourseSearchError(null);
       return;
     }
-    const t = setTimeout(async () => {
-      setCourseSearching(true);
-      setCourseSearchError(null);
-      try {
-        console.log("[events] Searching GolfCourseAPI:", q);
-        const hits = await searchCoursesApi(q);
-        console.log("[events] GolfCourseAPI returned", hits.length, "results");
-        setCourseSearchResults(hits);
-      } catch (e: any) {
-        console.warn("[events] GolfCourseAPI search failed:", e?.message);
-        setCourseSearchError(e?.message || "Course search failed");
-        setCourseSearchResults([]);
-      } finally {
-        setCourseSearching(false);
-      }
-    }, 400);
-    return () => clearTimeout(t);
-  }, [courseSearchQuery]);
+    debouncedSearch(q);
+    return () => debouncedSearch.cancel();
+  }, [courseSearchQuery, debouncedSearch]);
 
   const handleSelectCourse = useCallback(async (hit: ApiCourseSearchResult) => {
     console.log("[events] handleSelectCourse:", hit.id, hit.name);

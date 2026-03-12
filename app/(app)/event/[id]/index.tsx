@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import debounce from "lodash.debounce";
 import { StyleSheet, View, Pressable, ScrollView } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
@@ -212,7 +213,25 @@ export default function EventDetailScreen() {
     }
   };
 
-  // Debounced course search via GolfCourseAPI (edit mode)
+  // Debounced course search (400ms - only fires after typing stops to avoid API quota burn)
+  const debouncedSearch = useMemo(
+    () =>
+      debounce(async (q: string) => {
+        setCourseSearching(true);
+        setCourseSearchError(null);
+        try {
+          const hits = await searchCoursesApi(q);
+          setCourseSearchResults(hits);
+        } catch (e: any) {
+          setCourseSearchError(e?.message || "Search failed");
+          setCourseSearchResults([]);
+        } finally {
+          setCourseSearching(false);
+        }
+      }, 400),
+    []
+  );
+
   useEffect(() => {
     if (!isEditing) return;
     const q = courseSearchQuery.trim();
@@ -221,21 +240,9 @@ export default function EventDetailScreen() {
       setCourseSearchError(null);
       return;
     }
-    const t = setTimeout(async () => {
-      setCourseSearching(true);
-      setCourseSearchError(null);
-      try {
-        const hits = await searchCoursesApi(q);
-        setCourseSearchResults(hits);
-      } catch (e: any) {
-        setCourseSearchError(e?.message || "Search failed");
-        setCourseSearchResults([]);
-      } finally {
-        setCourseSearching(false);
-      }
-    }, 400);
-    return () => clearTimeout(t);
-  }, [courseSearchQuery, isEditing]);
+    debouncedSearch(q);
+    return () => debouncedSearch.cancel();
+  }, [courseSearchQuery, isEditing, debouncedSearch]);
 
   const handleEditSelectCourse = useCallback(async (hit: ApiCourseSearchResult) => {
     setCourseSearchResults([]);
