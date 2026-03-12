@@ -362,6 +362,7 @@ export default function TeeSheetScreen() {
       const interval = parseInt(teeInterval, 10) || 10;
       const ntpHoles = parseHoleNumbers(ntpHolesInput === "-" ? "" : ntpHolesInput);
       const ldHoles = parseHoleNumbers(ldHolesInput === "-" ? "" : ldHolesInput);
+      console.log("[TeeSheet] Saving playerIds:", playerIds.length, playerIds);
       await updateEvent(selectedEventId, {
         playerIds,
         teeTimeStart: startTime || "08:00",
@@ -381,6 +382,7 @@ export default function TeeSheetScreen() {
       if (refreshedEvent) {
         setSelectedEvent(refreshedEvent);
         const ids = refreshedEvent.playerIds?.length ? refreshedEvent.playerIds : regs.filter((r) => r.status === "in").map((r) => r.member_id);
+        console.log("[TeeSheet] After save, refreshed player_ids:", refreshedEvent.playerIds?.length ?? 0, ids);
         initializeGroups({ ...refreshedEvent, playerIds: ids }, members, guestList);
       }
       loadData();

@@ -335,7 +335,7 @@ export async function updateEvent(
     .from("events")
     .update(payload)
     .eq("id", eventId)
-    .select();
+    .select("id, player_ids, tee_time_start, tee_time_interval, tee_time_published_at");
 
   if (error) {
     console.error("[eventRepo] updateEvent failed:", {
@@ -352,7 +352,8 @@ export async function updateEvent(
     throw new Error("Event could not be updated. You may not have permission to edit this event.");
   }
 
-  console.log("[eventRepo] updateEvent success:", data);
+  const row = Array.isArray(data) ? data[0] : data;
+  console.log("[eventRepo] updateEvent success, persisted player_ids:", row?.player_ids?.length ?? 0, "ids");
 }
 
 /**
