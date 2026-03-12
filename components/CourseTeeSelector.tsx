@@ -104,7 +104,7 @@ export function CourseTeeSelector({
             </View>
             <View style={styles.statsRow}>
               <AppText variant="caption" color="secondary">
-                Rating {tee.course_rating} / Slope {tee.slope_rating}
+                CR {tee.course_rating} / SR {tee.slope_rating}
               </AppText>
               <AppText variant="caption" color="secondary">
                 Par {tee.par_total}

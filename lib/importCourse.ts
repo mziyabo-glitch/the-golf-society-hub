@@ -36,17 +36,17 @@ function normalizeTee(tee: ApiTee, gender?: "M" | "F"): {
   gender: string | null;
   yards: number | null;
 } | null {
-  const teeName = (tee.tee_name || tee.name || "").trim();
+  const teeName = (tee.tee_name || tee.name || (tee as any).name || "").trim();
   if (!teeName) return null;
 
   const g = tee.gender ?? gender;
-  const yards = tee.total_yards ?? tee.yards ?? (tee as any).yardage;
+  const yards = tee.total_yards ?? tee.yards ?? (tee as any).yardage ?? (tee as any).total_yards;
 
   return {
     teeName,
     courseRating: tee.course_rating != null ? Number(tee.course_rating) : null,
     slopeRating: tee.slope_rating != null ? Number(tee.slope_rating) : null,
-    parTotal: tee.par_total != null ? Number(tee.par_total) : null,
+    parTotal: tee.par_total != null ? Number(tee.par_total) : (tee as any).par != null ? Number((tee as any).par) : null,
     gender: g ? (g === "female" ? "F" : g === "male" ? "M" : String(g).charAt(0).toUpperCase()) : null,
     yards: yards != null ? Number(yards) : null,
   };
@@ -198,12 +198,31 @@ export async function importCourse(apiCourse: ApiCourse): Promise<ImportedCourse
 
   const existing = await getExistingCourseByApiId(apiCourse.id);
   if (existing) {
-    console.log("[importCourse] course already exists", existing.id);
     const tees = await getImportedTees(existing.id);
+    if (tees.length > 0) {
+      console.log("[importCourse] course already exists with tees", existing.id, tees.length);
+      return {
+        courseId: existing.id,
+        courseName: existing.name,
+        tees,
+        imported: false,
+      };
+    }
+    // Course exists but no tees - re-import from API payload
+    console.log("[importCourse] course exists but 0 tees, re-importing tees from API");
+    const mergedTees: ApiTee[] = Array.isArray(apiCourse.tees)
+      ? apiCourse.tees
+      : [
+          ...((apiCourse.tees?.male as ApiTee[] | undefined) || []).map((t) => ({ ...t, gender: "M" as const })),
+          ...((apiCourse.tees?.female as ApiTee[] | undefined) || []).map((t) => ({ ...t, gender: "F" as const })),
+        ];
+    await importTeesAndHoles(existing.id, mergedTees);
+    const teesAfter = await getImportedTees(existing.id);
+    console.log("[importCourse] re-imported tees:", teesAfter.length, teesAfter.map((t) => t.teeName));
     return {
       courseId: existing.id,
       courseName: existing.name,
-      tees,
+      tees: teesAfter,
       imported: false,
     };
   }
@@ -220,10 +239,7 @@ export async function importCourse(apiCourse: ApiCourse): Promise<ImportedCourse
   await importTeesAndHoles(created.id, mergedTees);
   const tees = await getImportedTees(created.id);
 
-  console.log("[importCourse] import completed", {
-    courseId: created.id,
-    tees: tees.length,
-  });
+  console.log("[importCourse] Imported tees:", tees.length, tees.map((t) => `${t.teeName} – CR ${t.courseRating} / SR ${t.slopeRating}`));
 
   return {
     courseId: created.id,

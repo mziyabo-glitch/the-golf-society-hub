@@ -70,7 +70,7 @@ export type CourseWithTees = {
 
 /**
  * Get course + tees from DB by GolfCourseAPI id (api_id).
- * Use for cache-first: if course was previously imported, skip API call.
+ * Returns null if course not found or has 0 tees (so caller fetches from API).
  */
 export async function getCourseByApiId(apiId: number): Promise<CourseWithTees | null> {
   const { data: course, error: courseErr } = await supabase
@@ -82,6 +82,10 @@ export async function getCourseByApiId(apiId: number): Promise<CourseWithTees | 
   if (courseErr || !course) return null;
 
   const tees = await getTeesByCourseId(course.id);
+  if (tees.length === 0) {
+    console.log("[courseRepo] getCourseByApiId: course exists but 0 tees, returning null to trigger API fetch");
+    return null;
+  }
   return {
     courseId: course.id,
     courseName: course.name ?? "",

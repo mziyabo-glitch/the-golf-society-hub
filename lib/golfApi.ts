@@ -45,26 +45,34 @@ export type ApiCourseSearchResult = {
 };
 
 function getGolfApiKey(): string | undefined {
-  return process.env.GOLF_API_KEY || process.env.EXPO_PUBLIC_GOLF_API_KEY;
+  return (
+    process.env.GOLFCOURSE_API_KEY ||
+    process.env.GOLF_API_KEY ||
+    process.env.EXPO_PUBLIC_GOLFCOURSE_API_KEY ||
+    process.env.EXPO_PUBLIC_GOLF_API_KEY
+  );
 }
 
 async function request<T>(path: string): Promise<T> {
   const apiKey = getGolfApiKey();
   if (!apiKey) {
-    throw new Error("Golf API key missing. Set GOLF_API_KEY or EXPO_PUBLIC_GOLF_API_KEY.");
+    throw new Error("Golf API key missing. Set GOLFCOURSE_API_KEY or GOLF_API_KEY.");
   }
 
-  // GolfCourseAPI uses ApiKeyAuth; try Key header first, fallback to X-API-Key for 400 issues
+  // GolfCourseAPI: try Bearer first (common for API keys), fallback to Key
   const headers: Record<string, string> = {
     Accept: "application/json",
     "Content-Type": "application/json",
-    Authorization: `Key ${apiKey}`,
+    Authorization: `Bearer ${apiKey}`,
   };
 
-  const res = await fetch(`${API_BASE}${path}`, {
-    method: "GET",
-    headers,
-  });
+  let res = await fetch(`${API_BASE}${path}`, { method: "GET", headers });
+
+  // Retry with "Key" auth if Bearer returns 401 (some APIs use Key)
+  if (res.status === 401 && headers.Authorization?.startsWith("Bearer")) {
+    headers.Authorization = `Key ${apiKey}`;
+    res = await fetch(`${API_BASE}${path}`, { method: "GET", headers });
+  }
 
   if (res.status === 429) {
     throw new Error("GolfCourseAPI rate limit reached. Please try again shortly.");
@@ -75,7 +83,7 @@ async function request<T>(path: string): Promise<T> {
     const msg = text || "Unknown error";
     console.error("[golfApi] Request failed:", res.status, path, msg);
     if (res.status === 400) {
-      throw new Error(`GolfCourseAPI 400: ${msg}. Check API key (GOLF_API_KEY) and endpoint.`);
+      throw new Error(`GolfCourseAPI 400: ${msg}. Check API key (GOLFCOURSE_API_KEY) and endpoint.`);
     }
     if (res.status === 401) {
       throw new Error("GolfCourseAPI: Invalid or missing API key.");
