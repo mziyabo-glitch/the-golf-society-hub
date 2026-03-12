@@ -308,7 +308,7 @@ export async function updateEvent(
   if (updates.isCompleted !== undefined) payload.is_completed = updates.isCompleted;
   if (updates.winnerName !== undefined) payload.winner_name = updates.winnerName;
   if (updates.playerIds !== undefined) payload.player_ids = updates.playerIds;
-  if (updates.teeTimeStart !== undefined) payload.tee_time_start = updates.teeTimeStart;
+  if (updates.teeTimeStart !== undefined) payload.tee_time_start = formatTeeTimeForDb(updates.teeTimeStart);
   if (updates.teeTimeInterval !== undefined) payload.tee_time_interval = updates.teeTimeInterval;
   if (updates.teeTimePublishedAt !== undefined) payload.tee_time_published_at = updates.teeTimePublishedAt;
 
@@ -378,21 +378,20 @@ export async function deleteEvent(eventId: string): Promise<void> {
 // =====================================================
 
 /**
- * Normalize start time to HH:MM format for DB (time type expects "HH:MM" or "HH:MM:SS").
- * Handles "11.12" -> "11:12", "8.30" -> "08:30", etc.
+ * Normalize start time to HH:MM:SS for Postgres TIME WITHOUT TIME ZONE.
+ * Handles "11.12" -> "11:12:00", "8:30" -> "08:30:00", etc.
  */
-function normalizeTeeTimeStart(input: string): string {
+function formatTeeTimeForDb(input: string): string {
   const s = (input || "08:00").trim() || "08:00";
-  // If user typed "11.12" (period) instead of "11:12", convert
   const normalized = s.replace(/\./g, ":");
   const match = normalized.match(/^(\d{1,2}):(\d{1,2})(?::(\d{1,2}))?$/);
   if (match) {
     const h = Math.min(23, Math.max(0, parseInt(match[1], 10)));
     const m = Math.min(59, Math.max(0, parseInt(match[2], 10)));
     const sec = match[3] != null ? Math.min(59, Math.max(0, parseInt(match[3], 10))) : 0;
-    return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}${sec > 0 ? `:${String(sec).padStart(2, "0")}` : ""}`;
+    return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}`;
   }
-  return "08:00";
+  return "08:00:00";
 }
 
 /**
@@ -405,8 +404,12 @@ export async function publishTeeTime(
   startTime: string,
   intervalMinutes: number,
 ): Promise<EventDoc | null> {
-  const start = normalizeTeeTimeStart(startTime || "08:00");
+  const start = formatTeeTimeForDb(startTime || "08:00");
   const interval = Number.isFinite(intervalMinutes) && intervalMinutes > 0 ? intervalMinutes : 10;
+
+  if (!/^\d{2}:\d{2}:\d{2}$/.test(start)) {
+    throw new Error(`Invalid tee time format: ${start}. Expected HH:MM:SS`);
+  }
 
   // Try RPC first (migrations 038/039)
   const { error: rpcError } = await supabase.rpc("publish_tee_times", {
