@@ -31,7 +31,7 @@ import { usePaidAccess } from "@/lib/access/usePaidAccess";
 import { getEventsBySocietyId, getEvent, updateEvent, publishTeeTime, type EventDoc } from "@/lib/db_supabase/eventRepo";
 import { getEventRegistrations, type EventRegistration } from "@/lib/db_supabase/eventRegistrationRepo";
 import { getEventGuests } from "@/lib/db_supabase/eventGuestRepo";
-import { getTeeGroups, getTeeGroupPlayers, upsertTeeSheet, teeTimeToDisplay, type TeeGroupRow, type TeeGroupPlayerRow } from "@/lib/db_supabase/teeGroupsRepo";
+import { loadTeeSheet, getTeeGroups, getTeeGroupPlayers, upsertTeeSheet, teeTimeToDisplay, type TeeGroupRow, type TeeGroupPlayerRow } from "@/lib/db_supabase/teeGroupsRepo";
 import { getMembersBySocietyId, getManCoRoleHolders, type MemberDoc, type Gender, type ManCoDetails } from "@/lib/db_supabase/memberRepo";
 import { getPermissionsForMember } from "@/lib/rbac";
 import {
@@ -205,39 +205,37 @@ export default function TeeSheetScreen() {
 
       setNotice(null);
       try {
-        const [event, registrations, guests, teeGroups, teeGroupPlayers] = await Promise.all([
+        const [event, registrations, guests] = await Promise.all([
           getEvent(selectedEventId),
           getEventRegistrations(selectedEventId),
           getEventGuests(selectedEventId),
-          getTeeGroups(selectedEventId),
-          getTeeGroupPlayers(selectedEventId),
         ]);
         setSelectedEvent(event);
         setSelectedEventRegistrations(registrations);
 
-        console.log("[TeeSheet] Loaded tee groups:", teeGroups?.length ?? 0, teeGroups);
-        console.log("[TeeSheet] Loaded tee players:", teeGroupPlayers?.length ?? 0, teeGroupPlayers);
+        if (!event) return;
 
-        // Populate form with existing values (preserve published tee times when they exist)
-        if (event) {
-          setNtpHolesInput(formatHoleNumbers(event.nearestPinHoles));
-          setLdHolesInput(formatHoleNumbers(event.longestDriveHoles));
-          if (event.teeTimeStart) setStartTime(event.teeTimeStart);
-          if (event.teeTimeInterval != null && event.teeTimeInterval > 0) {
-            setTeeInterval(String(event.teeTimeInterval));
-          }
+        setNtpHolesInput(formatHoleNumbers(event.nearestPinHoles));
+        setLdHolesInput(formatHoleNumbers(event.longestDriveHoles));
+        if (event.teeTimeStart) setStartTime(event.teeTimeStart);
+        if (event.teeTimeInterval != null && event.teeTimeInterval > 0) {
+          setTeeInterval(String(event.teeTimeInterval));
+        }
 
-          const groupsExist = (teeGroups?.length ?? 0) > 0 && (teeGroupPlayers?.length ?? 0) > 0;
-          if (groupsExist) {
-            reconstructGroupsFromDb(teeGroups!, teeGroupPlayers!, members, guests, event);
-          } else {
-            // Use player_ids if set; else event_registrations (status=in) for societies using In/Out
-            const playerIds =
-              event.playerIds?.length
-                ? event.playerIds
-                : registrations.filter((r) => r.status === "in").map((r) => r.member_id);
-            initializeGroups({ ...event, playerIds }, members, guests);
-          }
+        // Load persisted tee sheet; only generate default when no tee_groups exist
+        const { groups: teeGroups, players: teeGroupPlayers } = await loadTeeSheet(selectedEventId);
+        console.log("[TeeSheet] Loaded tee groups:", teeGroups.length, teeGroups);
+        console.log("[TeeSheet] Loaded tee players:", teeGroupPlayers.length, teeGroupPlayers);
+
+        const groupsExist = teeGroups.length > 0 && teeGroupPlayers.length > 0;
+        if (groupsExist) {
+          setGroups(rebuildGroups(teeGroups, teeGroupPlayers, members, guests, event));
+        } else {
+          const playerIds =
+            event.playerIds?.length
+              ? event.playerIds
+              : registrations.filter((r) => r.status === "in").map((r) => r.member_id);
+          initializeGroups({ ...event, playerIds }, members, guests);
         }
       } catch (err) {
         console.error("[TeeSheet] loadEventDetails error:", err);
@@ -249,23 +247,23 @@ export default function TeeSheetScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedEventId, members]);
 
-  // Reconstruct groups from persisted tee_groups and tee_group_players
-  const reconstructGroupsFromDb = (
-    teeGroups: TeeGroupRow[],
-    teeGroupPlayers: TeeGroupPlayerRow[],
+  // Rebuild UI state from persisted tee_groups and tee_group_players
+  const rebuildGroups = (
+    groups: TeeGroupRow[],
+    players: TeeGroupPlayerRow[],
     membersList: MemberDoc[],
     guests: { id: string; name: string; sex: "male" | "female"; handicap_index: number | null }[],
-    event: EventDoc
-  ) => {
+    evt: EventDoc
+  ): PlayerGroup[] => {
     const menTee: TeeBlock | null =
-      event.par != null && event.courseRating != null && event.slopeRating != null
-        ? { par: event.par, courseRating: event.courseRating, slopeRating: event.slopeRating }
+      evt.par != null && evt.courseRating != null && evt.slopeRating != null
+        ? { par: evt.par, courseRating: evt.courseRating, slopeRating: evt.slopeRating }
         : null;
     const ladiesTee: TeeBlock | null =
-      event.ladiesPar != null && event.ladiesCourseRating != null && event.ladiesSlopeRating != null
-        ? { par: event.ladiesPar, courseRating: event.ladiesCourseRating, slopeRating: event.ladiesSlopeRating }
+      evt.ladiesPar != null && evt.ladiesCourseRating != null && evt.ladiesSlopeRating != null
+        ? { par: evt.ladiesPar, courseRating: evt.ladiesCourseRating, slopeRating: evt.ladiesSlopeRating }
         : null;
-    const allowance = event.handicapAllowance ?? DEFAULT_ALLOWANCE;
+    const allowance = evt.handicapAllowance ?? DEFAULT_ALLOWANCE;
 
     const lookupPlayer = (playerId: string): { id: string; name: string; handicapIndex: number | null; gender: Gender | null } | null => {
       if (playerId.startsWith("guest-")) {
@@ -278,13 +276,13 @@ export default function TeeSheetScreen() {
     };
 
     const groupMap = new Map<number, { teeTime: string; players: { playerId: string; position: number }[] }>();
-    for (const grp of teeGroups) {
+    for (const grp of groups) {
       groupMap.set(grp.group_number, {
         teeTime: grp.tee_time ? teeTimeToDisplay(grp.tee_time) : "08:00",
         players: [],
       });
     }
-    for (const row of teeGroupPlayers) {
+    for (const row of players) {
       if (!groupMap.has(row.group_number)) {
         groupMap.set(row.group_number, { teeTime: "08:00", players: [] });
       }
@@ -317,7 +315,7 @@ export default function TeeSheetScreen() {
       newGroups.push({ groupNumber, players: groupPlayers });
     }
 
-    setGroups(newGroups);
+    return newGroups;
   };
 
   // Initialize groups from event players (playerIds from event or registrations) + guests
@@ -493,7 +491,7 @@ export default function TeeSheetScreen() {
         setSelectedEvent(refreshedEvent);
         const groupsExist = teeGroups.length > 0 && teeGroupPlayers.length > 0;
         if (groupsExist) {
-          reconstructGroupsFromDb(teeGroups, teeGroupPlayers, members, guestList, refreshedEvent);
+          setGroups(rebuildGroups(teeGroups, teeGroupPlayers, members, guestList, refreshedEvent));
         } else {
           const ids = refreshedEvent.playerIds?.length ? refreshedEvent.playerIds : regs.filter((r) => r.status === "in").map((r) => r.member_id);
           initializeGroups({ ...refreshedEvent, playerIds: ids }, members, guestList);

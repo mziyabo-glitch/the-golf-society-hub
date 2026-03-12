@@ -49,6 +49,36 @@ export function teeTimeToDisplay(dbTime: string | null): string {
 }
 
 /**
+ * Load persisted tee sheet for an event (groups + player assignments).
+ * Use this when event is selected to restore saved tee sheet.
+ * Returns empty arrays if tables don't exist or on error (caller will generate default).
+ */
+export async function loadTeeSheet(eventId: string): Promise<{ groups: TeeGroupRow[]; players: TeeGroupPlayerRow[] }> {
+  const { data: groups, error: groupsErr } = await supabase
+    .from("tee_groups")
+    .select("*")
+    .eq("event_id", eventId)
+    .order("group_number", { ascending: true });
+
+  const { data: players, error: playersErr } = await supabase
+    .from("tee_group_players")
+    .select("*")
+    .eq("event_id", eventId)
+    .order("group_number", { ascending: true })
+    .order("position", { ascending: true });
+
+  if (groupsErr || playersErr) {
+    console.warn("[teeGroupsRepo] loadTeeSheet error (tables may not exist):", groupsErr || playersErr);
+    return { groups: [], players: [] };
+  }
+
+  return {
+    groups: (groups ?? []) as TeeGroupRow[],
+    players: (players ?? []) as TeeGroupPlayerRow[],
+  };
+}
+
+/**
  * Get tee groups for an event
  */
 export async function getTeeGroups(eventId: string): Promise<TeeGroupRow[]> {
