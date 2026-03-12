@@ -272,6 +272,10 @@ export async function updateEvent(
     isCompleted: boolean;
     winnerName: string;
     playerIds: string[];
+    // Tee time draft (save without publishing)
+    teeTimeStart?: string;
+    teeTimeInterval?: number;
+    teeTimePublishedAt?: string | null;
     // Men's tee settings
     teeName: string;
     par: number;
@@ -304,6 +308,9 @@ export async function updateEvent(
   if (updates.isCompleted !== undefined) payload.is_completed = updates.isCompleted;
   if (updates.winnerName !== undefined) payload.winner_name = updates.winnerName;
   if (updates.playerIds !== undefined) payload.player_ids = updates.playerIds;
+  if (updates.teeTimeStart !== undefined) payload.tee_time_start = updates.teeTimeStart;
+  if (updates.teeTimeInterval !== undefined) payload.tee_time_interval = updates.teeTimeInterval;
+  if (updates.teeTimePublishedAt !== undefined) payload.tee_time_published_at = updates.teeTimePublishedAt;
 
   // Men's tee settings
   if (updates.teeName !== undefined) payload.tee_name = updates.teeName;
@@ -338,6 +345,11 @@ export async function updateEvent(
       code: error.code,
     });
     throw new Error(error.message || "Failed to update event");
+  }
+
+  if (!data || (Array.isArray(data) && data.length === 0)) {
+    console.error("[eventRepo] updateEvent: 0 rows updated (RLS may have blocked)");
+    throw new Error("Event could not be updated. You may not have permission to edit this event.");
   }
 
   console.log("[eventRepo] updateEvent success:", data);

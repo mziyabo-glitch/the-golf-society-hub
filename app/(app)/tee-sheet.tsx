@@ -62,6 +62,38 @@ type PlayerGroup = {
   players: EditablePlayer[];
 };
 
+function GroupNumInput({
+  currentGroup,
+  onMove,
+}: {
+  currentGroup: number;
+  onMove: (value: string) => void;
+}) {
+  const [value, setValue] = useState(String(currentGroup));
+  useEffect(() => setValue(String(currentGroup)), [currentGroup]);
+
+  const handleBlur = () => {
+    const v = value.trim();
+    if (v) onMove(v);
+  };
+
+  return (
+    <View style={styles.groupNumInputWrap}>
+      <AppText variant="caption" color="tertiary" style={styles.groupNumLabel}>Grp</AppText>
+      <AppInput
+        style={styles.groupNumInput}
+        value={value}
+        onChangeText={setValue}
+        placeholder={String(currentGroup)}
+        keyboardType="number-pad"
+        maxLength={2}
+        onBlur={handleBlur}
+        onSubmitEditing={handleBlur}
+      />
+    </View>
+  );
+}
+
 const GroupTableCard = React.memo(function GroupTableCard({ group }: { group: PlayerGroup }) {
   return (
     <AppCard style={styles.groupTableCard}>
@@ -213,7 +245,10 @@ export default function TeeSheetScreen() {
     guests: { id: string; name: string; sex: "male" | "female"; handicap_index: number | null }[] = []
   ) => {
     const playerIds = event.playerIds || [];
-    const eventMembers = membersList.filter((m) => playerIds.includes(m.id));
+    // Preserve saved order when playerIds has content (tee sheet was saved)
+    const eventMembers = playerIds.length > 0
+      ? playerIds.map((id) => membersList.find((m) => m.id === id)).filter(Boolean) as typeof membersList
+      : membersList.filter((m) => playerIds.includes(m.id));
 
     // Convert guests to same shape as members for grouping
     const guestPlayers = guests.map((g) => ({
@@ -304,6 +339,44 @@ export default function TeeSheetScreen() {
     }, [societyId, loadData])
   );
 
+  // Flatten groups to playerIds (member IDs only)
+  const groupsToPlayerIds = (): string[] =>
+    groups.flatMap((g) => g.players).map((p) => p.id).filter((id) => !id.startsWith("guest-"));
+
+  // Save tee sheet (groups + tee times) without publishing — editable, re-issue when ready
+  const handleSaveTeeSheet = async () => {
+    if (!guardPaidAction()) return;
+    if (!selectedEventId) return;
+    const nonEmptyGroups = groups.filter((g) => g.players.length > 0);
+    if (nonEmptyGroups.length === 0) {
+      setNotice({ type: "error", message: "No players added", detail: "Add players to groups before saving." });
+      return;
+    }
+    setNotice(null);
+    setSaving(true);
+    try {
+      const playerIds = groupsToPlayerIds();
+      const interval = parseInt(teeInterval, 10) || 10;
+      const ntpHoles = parseHoleNumbers(ntpHolesInput === "-" ? "" : ntpHolesInput);
+      const ldHoles = parseHoleNumbers(ldHolesInput === "-" ? "" : ldHolesInput);
+      await updateEvent(selectedEventId, {
+        playerIds,
+        teeTimeStart: startTime || "08:00",
+        teeTimeInterval: interval,
+        teeTimePublishedAt: new Date().toISOString(),
+        nearestPinHoles: ntpHoles.length > 0 ? ntpHoles : undefined,
+        longestDriveHoles: ldHoles.length > 0 ? ldHoles : undefined,
+      });
+      setToast({ visible: true, message: "Tee sheet saved", type: "success" });
+      loadData();
+    } catch (err: any) {
+      const formatted = formatError(err);
+      setNotice({ type: "error", message: formatted.message, detail: formatted.detail });
+    } finally {
+      setSaving(false);
+    }
+  };
+
   // Save NTP/LD settings to event
   const handleSaveSettings = async () => {
     if (!selectedEventId) return;
@@ -327,7 +400,7 @@ export default function TeeSheetScreen() {
     }
   };
 
-  // Move player to a different group
+  // Move player to a different group by index (0-based)
   const movePlayer = (playerId: string, fromGroup: number, toGroup: number) => {
     if (fromGroup === toGroup) return;
 
@@ -351,6 +424,15 @@ export default function TeeSheetScreen() {
 
       return newGroups;
     });
+  };
+
+  // Move player to group by number (1-based); called when user types group number
+  const movePlayerToGroupNumber = (playerId: string, fromGroupIdx: number, groupNumStr: string) => {
+    const n = parseInt(groupNumStr.trim(), 10);
+    if (!Number.isFinite(n) || n < 1 || n > groups.length) return;
+    const toGroupIdx = n - 1;
+    if (fromGroupIdx === toGroupIdx) return;
+    movePlayer(playerId, fromGroupIdx, toGroupIdx);
   };
 
   // Add an empty group
@@ -415,6 +497,10 @@ export default function TeeSheetScreen() {
       // Publish tee times to DB so Home/event detail show "Your Tee Time"
       const refreshed = await publishTeeTime(selectedEvent.id, startTime || "08:00", interval);
       if (refreshed) setSelectedEvent(refreshed);
+
+      // Persist tee sheet groups so it's saved and editable; changes can be re-issued
+      const playerIds = groupsToPlayerIds();
+      await updateEvent(selectedEvent.id, { playerIds });
 
       const ev = refreshed ?? selectedEvent;
       const exportData: TeeSheetData = {
@@ -684,6 +770,12 @@ export default function TeeSheetScreen() {
                               </AppText>
                             </View>
 
+                            {/* Group number input — type target group and blur to move */}
+                            <GroupNumInput
+                              currentGroup={groupIdx + 1}
+                              onMove={(v) => movePlayerToGroupNumber(player.id, groupIdx, v)}
+                            />
+
                             {/* Move buttons */}
                             <View style={styles.moveButtons}>
                               {groupIdx > 0 && (
@@ -833,16 +925,27 @@ export default function TeeSheetScreen() {
                 </View>
               )}
 
-              {/* Generate Button */}
-              <PrimaryButton
-                onPress={handleGenerateTeeSheet}
-                loading={generating}
-                disabled={selectedPlayerCount === 0}
-                style={{ marginTop: spacing.lg, marginBottom: spacing.xl }}
-              >
-                <Feather name="share-2" size={18} color={colors.textInverse} />
-                {" Share Tee Sheet"}
-              </PrimaryButton>
+              {/* Save (persist without publishing) and Share */}
+              <View style={{ flexDirection: "row", gap: spacing.sm, marginTop: spacing.lg, marginBottom: spacing.xl }}>
+                <SecondaryButton
+                  onPress={handleSaveTeeSheet}
+                  loading={saving}
+                  disabled={selectedPlayerCount === 0}
+                  style={{ flex: 1 }}
+                >
+                  <Feather name="save" size={18} color={colors.primary} />
+                  {" Save Tee Sheet"}
+                </SecondaryButton>
+                <PrimaryButton
+                  onPress={handleGenerateTeeSheet}
+                  loading={generating}
+                  disabled={selectedPlayerCount === 0}
+                  style={{ flex: 1 }}
+                >
+                  <Feather name="share-2" size={18} color={colors.textInverse} />
+                  {" Share Tee Sheet"}
+                </PrimaryButton>
+              </View>
 
             </>
             )
@@ -919,6 +1022,21 @@ const styles = StyleSheet.create({
   },
   playerInfo: {
     flex: 1,
+  },
+  groupNumInputWrap: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginRight: spacing.sm,
+  },
+  groupNumLabel: {
+    marginRight: 4,
+    minWidth: 24,
+  },
+  groupNumInput: {
+    width: 40,
+    minHeight: 32,
+    paddingHorizontal: spacing.xs,
+    textAlign: "center",
   },
   moveButtons: {
     flexDirection: "row",
