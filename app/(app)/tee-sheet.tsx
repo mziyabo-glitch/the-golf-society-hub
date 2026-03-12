@@ -9,7 +9,7 @@
  * - Generate grouped tee sheet PDF with gender-based tee settings
  */
 
-import { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import { StyleSheet, View, Pressable, ScrollView } from "react-native";
 import { useRouter } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
@@ -61,6 +61,34 @@ type PlayerGroup = {
   groupNumber: number;
   players: EditablePlayer[];
 };
+
+const GroupTableCard = React.memo(function GroupTableCard({ group }: { group: PlayerGroup }) {
+  return (
+    <AppCard style={styles.groupTableCard}>
+      <AppText variant="bodyBold" color="primary" style={styles.groupTitle}>
+        Group {group.groupNumber}
+      </AppText>
+      <View style={styles.tableHeader}>
+        <AppText variant="caption" color="secondary" style={styles.nameCol}>Name</AppText>
+        <AppText variant="caption" color="secondary" style={styles.hiCol}>HI</AppText>
+        <AppText variant="caption" color="secondary" style={styles.phCol}>PH</AppText>
+      </View>
+      {group.players.map((player) => (
+        <View key={player.id} style={styles.tableRow}>
+          <AppText variant="body" numberOfLines={1} style={styles.nameCol}>
+            {player.name}
+          </AppText>
+          <AppText variant="body" color="secondary" style={styles.hiCol}>
+            {formatHandicap(player.handicapIndex, 1)}
+          </AppText>
+          <AppText variant="bodyBold" color="primary" style={styles.phCol}>
+            {formatHandicap(player.playingHandicap)}
+          </AppText>
+        </View>
+      ))}
+    </AppCard>
+  );
+});
 
 export default function TeeSheetScreen() {
   const router = useRouter();
@@ -152,10 +180,14 @@ export default function TeeSheetScreen() {
         setSelectedEvent(event);
         setSelectedEventRegistrations(registrations);
 
-        // Populate form with existing values
+        // Populate form with existing values (preserve published tee times when they exist)
         if (event) {
           setNtpHolesInput(formatHoleNumbers(event.nearestPinHoles));
           setLdHolesInput(formatHoleNumbers(event.longestDriveHoles));
+          if (event.teeTimeStart) setStartTime(event.teeTimeStart);
+          if (event.teeTimeInterval != null && event.teeTimeInterval > 0) {
+            setTeeInterval(String(event.teeTimeInterval));
+          }
 
           // Use player_ids if set; else event_registrations (status=in) for societies using In/Out
           const playerIds =
@@ -708,32 +740,8 @@ export default function TeeSheetScreen() {
               ) : (
                 /* Compact Group Summary - Table format */
                 <View style={styles.groupsContainer}>
-                  {groups.filter((g) => g.players.length > 0).map((group, idx) => (
-                    <AppCard key={idx} style={styles.groupTableCard}>
-                      <AppText variant="bodyBold" color="primary" style={styles.groupTitle}>
-                        Group {group.groupNumber}
-                      </AppText>
-                      {/* Table Header */}
-                      <View style={styles.tableHeader}>
-                        <AppText variant="caption" color="secondary" style={styles.nameCol}>Name</AppText>
-                        <AppText variant="caption" color="secondary" style={styles.hiCol}>HI</AppText>
-                        <AppText variant="caption" color="secondary" style={styles.phCol}>PH</AppText>
-                      </View>
-                      {/* Table Rows */}
-                      {group.players.map((player) => (
-                        <View key={player.id} style={styles.tableRow}>
-                          <AppText variant="body" numberOfLines={1} style={styles.nameCol}>
-                            {player.name}
-                          </AppText>
-                          <AppText variant="body" color="secondary" style={styles.hiCol}>
-                            {formatHandicap(player.handicapIndex, 1)}
-                          </AppText>
-                          <AppText variant="bodyBold" color="primary" style={styles.phCol}>
-                            {formatHandicap(player.playingHandicap)}
-                          </AppText>
-                        </View>
-                      ))}
-                    </AppCard>
+                  {groups.filter((g) => g.players.length > 0).map((group) => (
+                    <GroupTableCard key={group.groupNumber} group={group} />
                   ))}
                 </View>
               )}
@@ -931,36 +939,37 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
   },
   groupTableCard: {
-    marginBottom: 0,
+    marginBottom: 14,
+    padding: 18,
   },
   groupTitle: {
-    marginBottom: spacing.xs,
-    paddingBottom: spacing.xs,
+    marginBottom: spacing.sm,
+    paddingBottom: spacing.sm,
     borderBottomWidth: 1,
     borderBottomColor: "#E5E7EB",
   },
   tableHeader: {
     flexDirection: "row",
-    paddingVertical: spacing.xs,
+    paddingVertical: 10,
     borderBottomWidth: 1,
     borderBottomColor: "#F3F4F6",
   },
   tableRow: {
     flexDirection: "row",
-    paddingVertical: spacing.sm,
+    paddingVertical: 14,
     borderBottomWidth: 1,
     borderBottomColor: "#F3F4F6",
   },
   nameCol: {
-    flex: 1,
+    flex: 1.8,
   },
   hiCol: {
-    width: 50,
-    textAlign: "right",
+    flex: 0.6,
+    textAlign: "center",
   },
   phCol: {
-    width: 50,
-    textAlign: "right",
+    flex: 0.6,
+    textAlign: "center",
   },
   teeRow: {
     flexDirection: "row",

@@ -365,6 +365,24 @@ export async function deleteEvent(eventId: string): Promise<void> {
 // =====================================================
 
 /**
+ * Normalize start time to HH:MM format for DB (time type expects "HH:MM" or "HH:MM:SS").
+ * Handles "11.12" -> "11:12", "8.30" -> "08:30", etc.
+ */
+function normalizeTeeTimeStart(input: string): string {
+  const s = (input || "08:00").trim() || "08:00";
+  // If user typed "11.12" (period) instead of "11:12", convert
+  const normalized = s.replace(/\./g, ":");
+  const match = normalized.match(/^(\d{1,2}):(\d{1,2})(?::(\d{1,2}))?$/);
+  if (match) {
+    const h = Math.min(23, Math.max(0, parseInt(match[1], 10)));
+    const m = Math.min(59, Math.max(0, parseInt(match[2], 10)));
+    const sec = match[3] != null ? Math.min(59, Math.max(0, parseInt(match[3], 10))) : 0;
+    return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}${sec > 0 ? `:${String(sec).padStart(2, "0")}` : ""}`;
+  }
+  return "08:00";
+}
+
+/**
  * Publish tee times for an event.
  * Tries RPC first; falls back to direct UPDATE if RPC is missing (e.g. migrations not run).
  * Returns the refreshed event row so the caller has up-to-date data.
@@ -374,7 +392,7 @@ export async function publishTeeTime(
   startTime: string,
   intervalMinutes: number,
 ): Promise<EventDoc | null> {
-  const start = (startTime || "08:00").trim() || "08:00";
+  const start = normalizeTeeTimeStart(startTime || "08:00");
   const interval = Number.isFinite(intervalMinutes) && intervalMinutes > 0 ? intervalMinutes : 10;
 
   // Try RPC first (migrations 038/039)

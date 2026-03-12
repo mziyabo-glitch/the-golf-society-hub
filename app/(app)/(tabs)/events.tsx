@@ -73,6 +73,7 @@ type FormErrors = {
   date?: string;
   format?: string;
   classification?: string;
+  course?: string;
   courseTee?: string;
   handicapAllowance?: string;
 };
@@ -181,6 +182,7 @@ export default function EventsScreen() {
     setTeesError(null);
     setTeesLoading(true);
     setShowManualTee(false);
+    setFormErrors((prev) => ({ ...prev, course: undefined, courseTee: undefined }));
     try {
       const full = await getCourseById(hit.id);
       console.log("[events] getCourseById done, importing...");
@@ -265,6 +267,10 @@ export default function EventsScreen() {
 
     if (!formClassification) {
       errors.classification = "Select a classification.";
+    }
+
+    if (!selectedCourse && !manualCourseName.trim()) {
+      errors.course = "Select a course or enter a course name.";
     }
 
     if (selectedCourse && tees.length > 0 && !selectedTee) {
@@ -563,7 +569,7 @@ export default function EventsScreen() {
                       setTees([]);
                       setSelectedTee(null);
                       setShowManualTee(false);
-                      setFormErrors((prev) => ({ ...prev, courseTee: undefined }));
+                      setFormErrors((prev) => ({ ...prev, course: undefined, courseTee: undefined }));
                     }}
                     hitSlop={8}
                   >
@@ -624,12 +630,20 @@ export default function EventsScreen() {
                     <AppInput
                       placeholder="e.g. Forest of Arden"
                       value={manualCourseName}
-                      onChangeText={setManualCourseName}
+                      onChangeText={(v) => {
+                        setManualCourseName(v);
+                        setFormErrors((prev) => ({ ...prev, course: undefined }));
+                      }}
                       autoCapitalize="words"
                     />
                   </View>
                 </>
               )}
+              {formErrors.course ? (
+                <AppText variant="small" style={[styles.fieldError, { color: colors.error, marginTop: 4 }]}>
+                  {formErrors.course}
+                </AppText>
+              ) : null}
             </View>
 
             {/* Select Tee (when course has tees) */}

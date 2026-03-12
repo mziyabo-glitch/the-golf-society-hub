@@ -5,7 +5,7 @@
  * and the full tee sheet. Sticky "Your Tee Time" card at top, full sheet below.
  */
 
-import { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import { StyleSheet, View, ScrollView } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { Feather } from "@expo/vector-icons";
@@ -31,6 +31,43 @@ const DEFAULT_START = "08:00";
 const DEFAULT_INTERVAL = 10;
 
 type GroupWithTime = PlayerGroup & { teeTime: string };
+
+const MemberGroupCard = React.memo(function MemberGroupCard({
+  group,
+  memberId,
+}: {
+  group: GroupWithTime;
+  memberId: string | undefined;
+}) {
+  const colors = getColors();
+  return (
+    <AppCard style={styles.groupCard}>
+      <View style={styles.groupHeader}>
+        <AppText variant="bodyBold" color="primary">
+          Group {group.groupNumber}
+        </AppText>
+        <View style={[styles.timeBadge, { backgroundColor: colors.primary + "20" }]}>
+          <AppText variant="captionBold" color="primary">{group.teeTime}</AppText>
+        </View>
+      </View>
+      <View style={styles.tableHeader}>
+        <AppText variant="caption" color="secondary" style={styles.nameCol}>Name</AppText>
+        <AppText variant="caption" color="secondary" style={styles.hiCol}>HI</AppText>
+      </View>
+      {group.players.map((player) => (
+        <View key={player.id} style={styles.tableRow}>
+          <AppText variant="body" numberOfLines={1} style={styles.nameCol}>
+            {player.name}
+            {player.id === memberId ? " (You)" : ""}
+          </AppText>
+          <AppText variant="body" color="secondary" style={styles.hiCol}>
+            {formatHandicap(player.handicapIndex, 1)}
+          </AppText>
+        </View>
+      ))}
+    </AppCard>
+  );
+});
 
 function buildGroupsWithTimes(
   event: EventDoc,
@@ -222,31 +259,7 @@ export default function EventTeeSheetScreen() {
             </AppCard>
           ) : (
             groupsWithTimes.map((group) => (
-              <AppCard key={group.groupNumber} style={styles.groupCard}>
-                <View style={styles.groupHeader}>
-                  <AppText variant="bodyBold" color="primary">
-                    Group {group.groupNumber}
-                  </AppText>
-                  <View style={[styles.timeBadge, { backgroundColor: colors.primary + "20" }]}>
-                    <AppText variant="captionBold" color="primary">{group.teeTime}</AppText>
-                  </View>
-                </View>
-                <View style={styles.tableHeader}>
-                  <AppText variant="caption" color="secondary" style={styles.nameCol}>Name</AppText>
-                  <AppText variant="caption" color="secondary" style={styles.hiCol}>HI</AppText>
-                </View>
-                {group.players.map((player) => (
-                  <View key={player.id} style={styles.tableRow}>
-                    <AppText variant="body" numberOfLines={1} style={styles.nameCol}>
-                      {player.name}
-                      {player.id === memberId ? " (You)" : ""}
-                    </AppText>
-                    <AppText variant="body" color="secondary" style={styles.hiCol}>
-                      {formatHandicap(player.handicapIndex, 1)}
-                    </AppText>
-                  </View>
-                ))}
-              </AppCard>
+              <MemberGroupCard key={group.groupNumber} group={group} memberId={memberId} />
             ))
           )}
         </ScrollView>
@@ -278,7 +291,8 @@ const styles = StyleSheet.create({
     marginBottom: spacing.sm,
   },
   groupCard: {
-    marginBottom: spacing.sm,
+    marginBottom: 14,
+    padding: 18,
   },
   groupHeader: {
     flexDirection: "row",
@@ -291,26 +305,26 @@ const styles = StyleSheet.create({
   },
   timeBadge: {
     paddingHorizontal: spacing.sm,
-    paddingVertical: 4,
+    paddingVertical: 6,
     borderRadius: radius.full,
   },
   tableHeader: {
     flexDirection: "row",
-    paddingVertical: spacing.xs,
+    paddingVertical: 10,
     borderBottomWidth: 1,
     borderBottomColor: "#F3F4F6",
   },
   tableRow: {
     flexDirection: "row",
-    paddingVertical: spacing.sm,
+    paddingVertical: 14,
     borderBottomWidth: 1,
     borderBottomColor: "#F3F4F6",
   },
   nameCol: {
-    flex: 1,
+    flex: 1.8,
   },
   hiCol: {
-    width: 50,
-    textAlign: "right",
+    flex: 0.6,
+    textAlign: "center",
   },
 });

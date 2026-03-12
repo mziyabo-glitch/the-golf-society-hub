@@ -302,7 +302,7 @@ const TeeSheetPage = React.forwardRef<View, {
 
 TeeSheetPage.displayName = "TeeSheetPage";
 
-function GroupTable({ group }: { group: GroupWithTime }) {
+const GroupTable = React.memo(function GroupTable({ group }: { group: GroupWithTime }) {
   return (
     <View style={styles.groupTable}>
       <View style={styles.timeCell}>
@@ -333,7 +333,7 @@ function GroupTable({ group }: { group: GroupWithTime }) {
       </View>
     </View>
   );
-}
+});
 
 function buildTeeSheetPages(data: TeeSheetData): GroupWithTime[][] {
   const allowance = data.handicapAllowance ?? DEFAULT_ALLOWANCE;
@@ -453,8 +453,8 @@ const styles = StyleSheet.create({
     backgroundColor: "#FFFFFF",
     borderWidth: 1,
     borderColor: "#E5E7EB",
-    padding: 16,
-    marginBottom: 24,
+    padding: 18,
+    marginBottom: 14,
   },
   headerRow: {
     flexDirection: "row",
@@ -532,19 +532,25 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     borderWidth: 1,
     borderColor: "#E5E7EB",
+    marginBottom: 14,
+    paddingBottom: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: "#EEEEEE",
   },
   timeCell: {
-    width: 52,
+    width: 60,
     alignItems: "center",
     justifyContent: "center",
     backgroundColor: "#F3F4F6",
     borderRightWidth: 1,
     borderRightColor: "#E5E7EB",
+    paddingVertical: 8,
   },
   timeText: {
-    fontSize: typography.h1.fontSize,
-    fontWeight: "700",
+    fontSize: 16,
+    fontWeight: "600",
     color: "#0B6E4F",
+    marginBottom: 8,
   },
   groupBody: {
     flex: 1,
@@ -554,42 +560,44 @@ const styles = StyleSheet.create({
     backgroundColor: "#F9FAFB",
     borderBottomWidth: 1,
     borderBottomColor: "#F3F4F6",
-    paddingVertical: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 8,
   },
   groupHeaderCell: {
     fontSize: typography.small.fontSize,
     textTransform: "uppercase",
     letterSpacing: 0.4,
     color: "#0f172a",
-    paddingHorizontal: 4,
     fontWeight: "600",
   },
   groupRow: {
     flexDirection: "row",
-    paddingVertical: 12,
+    paddingVertical: 14,
+    paddingHorizontal: 8,
     borderBottomWidth: 1,
     borderBottomColor: "#F3F4F6",
+    minHeight: 28,
   },
   groupCell: {
     fontSize: typography.body.fontSize,
     color: "#0f172a",
-    paddingHorizontal: 4,
+    lineHeight: 22,
   },
   nameCol: {
-    flex: 1,
-    fontSize: typography.h2.fontSize,
-    fontWeight: "700",
+    flex: 1.8,
+    fontSize: typography.body.fontSize,
+    fontWeight: "500",
   },
   hiCol: {
-    width: 48,
-    textAlign: "right",
+    flex: 0.6,
+    textAlign: "center",
     fontFamily: "monospace",
     fontSize: typography.body.fontSize,
     fontWeight: "600",
   },
   phCol: {
-    width: 48,
-    textAlign: "right",
+    flex: 0.6,
+    textAlign: "center",
     fontFamily: "monospace",
     fontWeight: "700",
     fontSize: typography.body.fontSize,
