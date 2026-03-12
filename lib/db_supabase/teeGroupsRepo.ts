@@ -133,19 +133,14 @@ export async function upsertTeeSheet(
   groups: TeeGroupInput[],
   players: TeeGroupPlayerInput[]
 ): Promise<void> {
-  // Delete existing rows for this event
-  const [delGroupsErr, delPlayersErr] = await Promise.all([
-    supabase.from("tee_groups").delete().eq("event_id", eventId),
-    supabase.from("tee_group_players").delete().eq("event_id", eventId),
-  ]);
+  // Clear existing rows via RPC (bypasses RLS delete issues; permission checked in RPC)
+  const { error: clearErr } = await supabase.rpc("clear_tee_sheet_for_event", {
+    p_event_id: eventId,
+  });
 
-  if (delGroupsErr) {
-    console.error("[teeGroupsRepo] delete tee_groups error:", delGroupsErr);
-    throw new Error(delGroupsErr.message || "Failed to clear tee groups");
-  }
-  if (delPlayersErr) {
-    console.error("[teeGroupsRepo] delete tee_group_players error:", delPlayersErr);
-    throw new Error(delPlayersErr.message || "Failed to clear tee group players");
+  if (clearErr) {
+    console.error("[teeGroupsRepo] Failed clearing tee sheet:", clearErr);
+    throw new Error(clearErr.message || "Failed to clear tee groups");
   }
 
   if (groups.length === 0 && players.length === 0) return;
