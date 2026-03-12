@@ -20,6 +20,7 @@ import { useBootstrap } from "@/lib/useBootstrap";
 import { getEvent, type EventDoc } from "@/lib/db_supabase/eventRepo";
 import { getMembersBySocietyId, type MemberDoc } from "@/lib/db_supabase/memberRepo";
 import { getEventRegistrations } from "@/lib/db_supabase/eventRegistrationRepo";
+import { getEventGuests } from "@/lib/db_supabase/eventGuestRepo";
 import { findMemberGroup } from "@/lib/findMemberGroup";
 import { groupPlayers, assignTeeTimes, type PlayerGroup } from "@/lib/teeSheetGrouping";
 import { formatHandicap } from "@/lib/whs";
@@ -35,12 +36,12 @@ function buildGroupsWithTimes(
   event: EventDoc,
   members: MemberDoc[],
   registrationMemberIds: string[] = [],
+  guests: { id: string; name: string; sex: "male" | "female"; handicap_index: number | null }[] = [],
 ): GroupWithTime[] {
   const playerIds =
     event.playerIds?.length
       ? event.playerIds
       : registrationMemberIds;
-  if (playerIds.length === 0) return [];
 
   const eventMembers = members
     .filter((m) => playerIds.includes(m.id))
@@ -52,7 +53,18 @@ function buildGroupsWithTimes(
       playingHandicap: null as number | null,
     }));
 
-  const groups = groupPlayers(eventMembers, true);
+  const guestPlayers = guests.map((g) => ({
+    id: `guest-${g.id}`,
+    name: g.name,
+    handicapIndex: g.handicap_index ?? null,
+    courseHandicap: null as number | null,
+    playingHandicap: null as number | null,
+  }));
+
+  const allPlayers = [...eventMembers, ...guestPlayers];
+  if (allPlayers.length === 0) return [];
+
+  const groups = groupPlayers(allPlayers, true);
   const start = event.teeTimeStart ?? DEFAULT_START;
   const interval =
     Number.isFinite(event.teeTimeInterval) && (event.teeTimeInterval ?? 0) > 0
@@ -71,6 +83,7 @@ export default function EventTeeSheetScreen() {
   const [event, setEvent] = useState<EventDoc | null>(null);
   const [members, setMembers] = useState<MemberDoc[]>([]);
   const [registrationMemberIds, setRegistrationMemberIds] = useState<string[]>([]);
+  const [guests, setGuests] = useState<{ id: string; name: string; sex: "male" | "female"; handicap_index: number | null }[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<FormattedError | null>(null);
 
@@ -80,16 +93,18 @@ export default function EventTeeSheetScreen() {
     setLoading(true);
     setError(null);
     try {
-      const [eventData, membersData, registrations] = await Promise.all([
+      const [eventData, membersData, registrations, guestList] = await Promise.all([
         getEvent(eventId),
         getMembersBySocietyId(societyId),
         getEventRegistrations(eventId),
+        getEventGuests(eventId),
       ]);
       setEvent(eventData ?? null);
       setMembers(membersData);
       setRegistrationMemberIds(
         registrations.filter((r) => r.status === "in").map((r) => r.member_id),
       );
+      setGuests(guestList);
     } catch (err) {
       setError(formatError(err));
     } finally {

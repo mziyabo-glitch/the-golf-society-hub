@@ -30,6 +30,7 @@ import { useBootstrap } from "@/lib/useBootstrap";
 import { usePaidAccess } from "@/lib/access/usePaidAccess";
 import { getEventsBySocietyId, getEvent, updateEvent, publishTeeTime, type EventDoc } from "@/lib/db_supabase/eventRepo";
 import { getEventRegistrations, type EventRegistration } from "@/lib/db_supabase/eventRegistrationRepo";
+import { getEventGuests } from "@/lib/db_supabase/eventGuestRepo";
 import { getMembersBySocietyId, getManCoRoleHolders, type MemberDoc, type Gender, type ManCoDetails } from "@/lib/db_supabase/memberRepo";
 import { getPermissionsForMember } from "@/lib/rbac";
 import {
@@ -143,9 +144,10 @@ export default function TeeSheetScreen() {
 
       setNotice(null);
       try {
-        const [event, registrations] = await Promise.all([
+        const [event, registrations, guests] = await Promise.all([
           getEvent(selectedEventId),
           getEventRegistrations(selectedEventId),
+          getEventGuests(selectedEventId),
         ]);
         setSelectedEvent(event);
         setSelectedEventRegistrations(registrations);
@@ -160,7 +162,7 @@ export default function TeeSheetScreen() {
             event.playerIds?.length
               ? event.playerIds
               : registrations.filter((r) => r.status === "in").map((r) => r.member_id);
-          initializeGroups({ ...event, playerIds }, members);
+          initializeGroups({ ...event, playerIds }, members, guests);
         }
       } catch (err) {
         console.error("[TeeSheet] loadEventDetails error:", err);
@@ -172,12 +174,28 @@ export default function TeeSheetScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedEventId, members]);
 
-  // Initialize groups from event players (playerIds from event or registrations)
-  const initializeGroups = (event: EventDoc & { playerIds?: string[] }, membersList: MemberDoc[]) => {
+  // Initialize groups from event players (playerIds from event or registrations) + guests
+  const initializeGroups = (
+    event: EventDoc & { playerIds?: string[] },
+    membersList: MemberDoc[],
+    guests: { id: string; name: string; sex: "male" | "female"; handicap_index: number | null }[] = []
+  ) => {
     const playerIds = event.playerIds || [];
     const eventMembers = membersList.filter((m) => playerIds.includes(m.id));
 
-    if (eventMembers.length === 0) {
+    // Convert guests to same shape as members for grouping
+    const guestPlayers = guests.map((g) => ({
+      id: `guest-${g.id}`,
+      name: g.name,
+      handicapIndex: g.handicap_index ?? null,
+      handicap_index: g.handicap_index ?? null,
+      gender: g.sex as Gender,
+      displayName: g.name,
+    }));
+
+    const allPlayers = [...eventMembers, ...guestPlayers];
+
+    if (allPlayers.length === 0) {
       setGroups([]);
       return;
     }
@@ -194,7 +212,7 @@ export default function TeeSheetScreen() {
     const allowance = event.handicapAllowance ?? DEFAULT_ALLOWANCE;
 
     // Sort by handicap (high to low, nulls last)
-    const sorted = [...eventMembers].sort((a, b) => {
+    const sorted = [...allPlayers].sort((a, b) => {
       const hiA = a.handicapIndex ?? a.handicap_index ?? null;
       const hiB = b.handicapIndex ?? b.handicap_index ?? null;
       if (hiA == null && hiB == null) return 0;
@@ -668,13 +686,19 @@ export default function TeeSheetScreen() {
                     </SecondaryButton>
                     <SecondaryButton
                       size="sm"
-                      onPress={() => {
-                        if (!selectedEvent) return;
+                      onPress={async () => {
+                        if (!selectedEventId) return;
+                        const [evt, regs, guestList] = await Promise.all([
+                          getEvent(selectedEventId),
+                          getEventRegistrations(selectedEventId),
+                          getEventGuests(selectedEventId),
+                        ]);
+                        if (!evt) return;
                         const playerIds =
-                          selectedEvent.playerIds?.length
-                            ? selectedEvent.playerIds
-                            : selectedEventRegistrations.filter((r) => r.status === "in").map((r) => r.member_id);
-                        initializeGroups({ ...selectedEvent, playerIds }, members);
+                          evt.playerIds?.length
+                            ? evt.playerIds
+                            : regs.filter((r) => r.status === "in").map((r) => r.member_id);
+                        initializeGroups({ ...evt, playerIds }, members, guestList);
                       }}
                     >
                       <Feather name="refresh-cw" size={14} color={colors.text} /> Reset
