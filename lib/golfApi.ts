@@ -84,13 +84,31 @@ export async function searchCourses(query: string): Promise<ApiCourseSearchResul
         ? payload.data
         : [];
 
+  const toLocationString = (v: unknown): string | undefined => {
+    if (typeof v === "string" && v.trim()) return v.trim();
+    if (v && typeof v === "object" && !Array.isArray(v)) {
+      const o = v as Record<string, unknown>;
+      const parts = [o.address, o.city, o.region, o.country].filter(
+        (x) => typeof x === "string" && (x as string).trim()
+      ) as string[];
+      return parts.length > 0 ? parts.join(", ") : undefined;
+    }
+    return undefined;
+  };
+
   return list
-    .map((row) => ({
-      id: Number(row.id),
-      name: row.name || row.course_name || "",
-      club_name: row.club_name || row.club || undefined,
-      location: row.location || row.region || row.country || undefined,
-    }))
+    .map((row) => {
+      const loc =
+        toLocationString(row.location) ||
+        toLocationString(row.region) ||
+        toLocationString(row.country);
+      return {
+        id: Number(row.id),
+        name: row.name || row.course_name || "",
+        club_name: row.club_name || row.club || undefined,
+        location: loc,
+      };
+    })
     .filter((row) => Number.isFinite(row.id) && !!row.name);
 }
 

@@ -125,6 +125,10 @@ export default function EventDetailScreen() {
   const [manualPar, setManualPar] = useState("");
   const [manualCourseRating, setManualCourseRating] = useState("");
   const [manualSlopeRating, setManualSlopeRating] = useState("");
+  const [manualLadiesTeeName, setManualLadiesTeeName] = useState("");
+  const [manualLadiesPar, setManualLadiesPar] = useState("");
+  const [manualLadiesCourseRating, setManualLadiesCourseRating] = useState("");
+  const [manualLadiesSlopeRating, setManualLadiesSlopeRating] = useState("");
   const [showManualTee, setShowManualTee] = useState(false);
 
   // Handicap allowance
@@ -308,6 +312,10 @@ export default function EventDetailScreen() {
     setManualPar(event.par != null ? String(event.par) : "");
     setManualCourseRating(event.courseRating != null ? String(event.courseRating) : "");
     setManualSlopeRating(event.slopeRating != null ? String(event.slopeRating) : "");
+    setManualLadiesTeeName(event.ladiesTeeName || "");
+    setManualLadiesPar(event.ladiesPar != null ? String(event.ladiesPar) : "");
+    setManualLadiesCourseRating(event.ladiesCourseRating != null ? String(event.ladiesCourseRating) : "");
+    setManualLadiesSlopeRating(event.ladiesSlopeRating != null ? String(event.ladiesSlopeRating) : "");
 
     const hasTeeSettings =
       event.teeName != null || event.par != null || event.slopeRating != null ||
@@ -363,6 +371,10 @@ export default function EventDetailScreen() {
     const par = selectedTee ? selectedTee.par_total : (manualPar.trim() ? parseFloat(manualPar) : undefined);
     const courseRating = selectedTee ? selectedTee.course_rating : (manualCourseRating.trim() ? parseFloat(manualCourseRating) : undefined);
     const slopeRating = selectedTee ? selectedTee.slope_rating : (manualSlopeRating.trim() ? parseFloat(manualSlopeRating) : undefined);
+    const ladiesTeeName = manualLadiesTeeName.trim() || undefined;
+    const ladiesPar = manualLadiesPar.trim() ? parseFloat(manualLadiesPar) : undefined;
+    const ladiesCourseRating = manualLadiesCourseRating.trim() ? parseFloat(manualLadiesCourseRating) : undefined;
+    const ladiesSlopeRating = manualLadiesSlopeRating.trim() ? parseFloat(manualLadiesSlopeRating) : undefined;
     const courseId = selectedCourseEdit?.id || event?.course_id || undefined;
 
     setSaving(true);
@@ -379,6 +391,10 @@ export default function EventDetailScreen() {
         par,
         courseRating,
         slopeRating,
+        ladiesTeeName,
+        ladiesPar,
+        ladiesCourseRating,
+        ladiesSlopeRating,
         handicapAllowance,
       });
 
@@ -566,7 +582,9 @@ export default function EventDetailScreen() {
                           style={({ pressed }) => [styles.searchResultItem, { backgroundColor: pressed ? colors.backgroundSecondary : "transparent" }]}
                         >
                           <AppText variant="body" numberOfLines={1}>{hit.club_name || hit.name}</AppText>
-                          {hit.location && <AppText variant="small" color="tertiary">{hit.location}</AppText>}
+                          {typeof hit.location === "string" && hit.location && (
+                            <AppText variant="small" color="tertiary">{hit.location}</AppText>
+                          )}
                         </Pressable>
                       ))}
                     </View>
@@ -631,6 +649,8 @@ export default function EventDetailScreen() {
                         </Pressable>
                       )}
                     </View>
+
+                    <AppText variant="captionBold" color="secondary" style={{ marginBottom: spacing.xs }}>Male Tee</AppText>
                     <View style={styles.formField}>
                       <AppText variant="caption" style={styles.label}>Tee Name</AppText>
                       <AppInput
@@ -664,6 +684,44 @@ export default function EventDetailScreen() {
                         placeholder="e.g. 128"
                         value={manualSlopeRating}
                         onChangeText={(v) => { setManualSlopeRating(v); setSelectedTee(null); }}
+                        keyboardType="number-pad"
+                      />
+                    </View>
+
+                    <AppText variant="captionBold" color="secondary" style={{ marginTop: spacing.sm, marginBottom: spacing.xs }}>Female Tee</AppText>
+                    <View style={styles.formField}>
+                      <AppText variant="caption" style={styles.label}>Tee Name</AppText>
+                      <AppInput
+                        placeholder="e.g. Red"
+                        value={manualLadiesTeeName}
+                        onChangeText={setManualLadiesTeeName}
+                        autoCapitalize="words"
+                      />
+                    </View>
+                    <View style={styles.formField}>
+                      <AppText variant="caption" style={styles.label}>Par</AppText>
+                      <AppInput
+                        placeholder="e.g. 72"
+                        value={manualLadiesPar}
+                        onChangeText={setManualLadiesPar}
+                        keyboardType="number-pad"
+                      />
+                    </View>
+                    <View style={styles.formField}>
+                      <AppText variant="caption" style={styles.label}>Course Rating</AppText>
+                      <AppInput
+                        placeholder="e.g. 68.4"
+                        value={manualLadiesCourseRating}
+                        onChangeText={setManualLadiesCourseRating}
+                        keyboardType="decimal-pad"
+                      />
+                    </View>
+                    <View style={styles.formField}>
+                      <AppText variant="caption" style={styles.label}>Slope Rating</AppText>
+                      <AppInput
+                        placeholder="e.g. 120"
+                        value={manualLadiesSlopeRating}
+                        onChangeText={setManualLadiesSlopeRating}
                         keyboardType="number-pad"
                       />
                     </View>
@@ -747,18 +805,37 @@ export default function EventDetailScreen() {
       </AppCard>
 
       {/* Tee Settings - only show if configured */}
-      {(event.teeName || event.par != null || event.slopeRating != null) && (
+      {(event.teeName || event.par != null || event.slopeRating != null ||
+        event.ladiesTeeName || event.ladiesPar != null || event.ladiesSlopeRating != null) && (
         <AppCard style={styles.card}>
           <AppText variant="captionBold" color="secondary" style={{ marginBottom: spacing.sm }}>
             Course / Tee Setup
           </AppText>
-          {event.teeName && <Row icon="flag" label="Tee" value={event.teeName} />}
-          {event.par != null && <Row icon="hash" label="Par" value={String(event.par)} />}
-          {event.courseRating != null && (
-            <Row icon="activity" label="Course Rating" value={String(event.courseRating)} />
+          {(event.teeName || event.par != null || event.courseRating != null || event.slopeRating != null) && (
+            <>
+              <AppText variant="caption" color="tertiary" style={{ marginBottom: spacing.xs }}>Male Tee</AppText>
+              {event.teeName && <Row icon="flag" label="Tee" value={event.teeName} />}
+              {event.par != null && <Row icon="hash" label="Par" value={String(event.par)} />}
+              {event.courseRating != null && (
+                <Row icon="activity" label="Course Rating" value={String(event.courseRating)} />
+              )}
+              {event.slopeRating != null && (
+                <Row icon="trending-up" label="Slope Rating" value={String(event.slopeRating)} />
+              )}
+            </>
           )}
-          {event.slopeRating != null && (
-            <Row icon="trending-up" label="Slope Rating" value={String(event.slopeRating)} />
+          {(event.ladiesTeeName || event.ladiesPar != null || event.ladiesCourseRating != null || event.ladiesSlopeRating != null) && (
+            <>
+              <AppText variant="caption" color="tertiary" style={{ marginTop: spacing.sm, marginBottom: spacing.xs }}>Female Tee</AppText>
+              {event.ladiesTeeName && <Row icon="flag" label="Tee" value={event.ladiesTeeName} />}
+              {event.ladiesPar != null && <Row icon="hash" label="Par" value={String(event.ladiesPar)} />}
+              {event.ladiesCourseRating != null && (
+                <Row icon="activity" label="Course Rating" value={String(event.ladiesCourseRating)} />
+              )}
+              {event.ladiesSlopeRating != null && (
+                <Row icon="trending-up" label="Slope Rating" value={String(event.ladiesSlopeRating)} />
+              )}
+            </>
           )}
           {event.handicapAllowance != null && (
             <Row
@@ -924,6 +1001,16 @@ export default function EventDetailScreen() {
 
 /* ---------- Helpers ---------- */
 
+function safeValue(v: unknown): string {
+  if (v == null) return "";
+  if (typeof v === "string" || typeof v === "number") return String(v);
+  if (typeof v === "object" && "address" in (v as object)) {
+    const o = v as { address?: string; city?: string; country?: string };
+    return [o.address, o.city, o.country].filter(Boolean).join(", ") || "";
+  }
+  return String(v);
+}
+
 function Row({
   icon,
   label,
@@ -931,7 +1018,7 @@ function Row({
 }: {
   icon: any;
   label: string;
-  value: string;
+  value: string | unknown;
 }) {
   const colors = getColors();
   return (
@@ -939,7 +1026,7 @@ function Row({
       <Feather name={icon} size={16} color={colors.primary} />
       <View style={{ marginLeft: spacing.sm }}>
         <AppText variant="caption">{label}</AppText>
-        <AppText>{value}</AppText>
+        <AppText>{safeValue(value)}</AppText>
       </View>
     </View>
   );

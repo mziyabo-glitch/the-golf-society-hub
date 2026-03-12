@@ -118,6 +118,10 @@ export default function EventsScreen() {
   const [manualPar, setManualPar] = useState("");
   const [manualCourseRating, setManualCourseRating] = useState("");
   const [manualSlopeRating, setManualSlopeRating] = useState("");
+  const [manualLadiesTeeName, setManualLadiesTeeName] = useState("");
+  const [manualLadiesPar, setManualLadiesPar] = useState("");
+  const [manualLadiesCourseRating, setManualLadiesCourseRating] = useState("");
+  const [manualLadiesSlopeRating, setManualLadiesSlopeRating] = useState("");
 
   // Handicap allowance (shared)
   const [formHandicapAllowance, setFormHandicapAllowance] = useState("95");
@@ -320,6 +324,10 @@ export default function EventsScreen() {
     const par = selectedTee ? selectedTee.par_total : (manualPar.trim() ? parseFloat(manualPar) : undefined);
     const courseRating = selectedTee ? selectedTee.course_rating : (manualCourseRating.trim() ? parseFloat(manualCourseRating) : undefined);
     const slopeRating = selectedTee ? selectedTee.slope_rating : (manualSlopeRating.trim() ? parseFloat(manualSlopeRating) : undefined);
+    const ladiesTeeName = manualLadiesTeeName.trim() || undefined;
+    const ladiesPar = manualLadiesPar.trim() ? parseFloat(manualLadiesPar) : undefined;
+    const ladiesCourseRating = manualLadiesCourseRating.trim() ? parseFloat(manualLadiesCourseRating) : undefined;
+    const ladiesSlopeRating = manualLadiesSlopeRating.trim() ? parseFloat(manualLadiesSlopeRating) : undefined;
 
     console.log("[createEvent] Calling createEvent...");
     const created = await createAction.run(async () =>
@@ -336,6 +344,10 @@ export default function EventsScreen() {
         par,
         courseRating,
         slopeRating,
+        ladiesTeeName,
+        ladiesPar,
+        ladiesCourseRating,
+        ladiesSlopeRating,
         handicapAllowance,
       })
     );
@@ -589,9 +601,11 @@ export default function EventsScreen() {
                           ]}
                         >
                           <AppText variant="body" numberOfLines={1}>{c.name}</AppText>
-                          {(c.club_name || c.location) ? (
+                          {(c.club_name || (typeof c.location === "string" && c.location)) ? (
                             <AppText variant="small" color="secondary" numberOfLines={1}>
-                              {[c.club_name, c.location].filter(Boolean).join(" · ")}
+                              {[c.club_name, typeof c.location === "string" ? c.location : ""]
+                                .filter(Boolean)
+                                .join(" · ")}
                             </AppText>
                           ) : null}
                         </Pressable>
@@ -678,6 +692,8 @@ export default function EventsScreen() {
                     </Pressable>
                   )}
                 </View>
+
+                <AppText variant="captionBold" color="secondary" style={{ marginBottom: spacing.xs }}>Male Tee</AppText>
                 <View style={styles.formField}>
                   <AppText variant="caption" style={styles.label}>Tee Name</AppText>
                   <AppInput
@@ -711,6 +727,44 @@ export default function EventsScreen() {
                     placeholder="e.g. 128"
                     value={manualSlopeRating}
                     onChangeText={(v) => { setManualSlopeRating(v); setSelectedTee(null); }}
+                    keyboardType="number-pad"
+                  />
+                </View>
+
+                <AppText variant="captionBold" color="secondary" style={{ marginTop: spacing.sm, marginBottom: spacing.xs }}>Female Tee</AppText>
+                <View style={styles.formField}>
+                  <AppText variant="caption" style={styles.label}>Tee Name</AppText>
+                  <AppInput
+                    placeholder="e.g. Red"
+                    value={manualLadiesTeeName}
+                    onChangeText={setManualLadiesTeeName}
+                    autoCapitalize="words"
+                  />
+                </View>
+                <View style={styles.formField}>
+                  <AppText variant="caption" style={styles.label}>Par</AppText>
+                  <AppInput
+                    placeholder="e.g. 72"
+                    value={manualLadiesPar}
+                    onChangeText={setManualLadiesPar}
+                    keyboardType="number-pad"
+                  />
+                </View>
+                <View style={styles.formField}>
+                  <AppText variant="caption" style={styles.label}>Course Rating</AppText>
+                  <AppInput
+                    placeholder="e.g. 68.4"
+                    value={manualLadiesCourseRating}
+                    onChangeText={setManualLadiesCourseRating}
+                    keyboardType="decimal-pad"
+                  />
+                </View>
+                <View style={styles.formField}>
+                  <AppText variant="caption" style={styles.label}>Slope Rating</AppText>
+                  <AppInput
+                    placeholder="e.g. 120"
+                    value={manualLadiesSlopeRating}
+                    onChangeText={setManualLadiesSlopeRating}
                     keyboardType="number-pad"
                   />
                 </View>
