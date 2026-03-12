@@ -1,6 +1,7 @@
 /**
  * Find a member's tee time group from event data.
- * Uses the same grouping algorithm as the tee sheet (groupPlayers, calculateGroupSizes).
+ * When tee_groups/tee_group_players exist, use findMemberGroupFromTeeSheet.
+ * Otherwise uses groupPlayers (regenerated from playerIds).
  *
  * @param memberId - Current member ID
  * @param event - Event with playerIds, teeTimeStart, teeTimeInterval
@@ -10,6 +11,7 @@
 
 import { groupPlayers, type GroupedPlayer } from "./teeSheetGrouping";
 import { computeTeeTime } from "./computeTeeTime";
+import { teeTimeToDisplay } from "./db_supabase/teeGroupsRepo";
 
 export type MemberGroupInfo = {
   groupIndex: number;
@@ -90,4 +92,39 @@ export function findMemberGroup(
   }
 
   return null;
+}
+
+type TeeGroupRow = { group_number: number; tee_time: string | null };
+type TeeGroupPlayerRow = { player_id: string; group_number: number; position: number };
+
+/**
+ * Find a member's tee time from persisted tee_groups and tee_group_players.
+ * Use when tee sheet has been saved to DB.
+ */
+export function findMemberGroupFromTeeSheet(
+  memberId: string,
+  teeGroups: TeeGroupRow[],
+  teeGroupPlayers: TeeGroupPlayerRow[],
+  members: MemberLike[]
+): MemberGroupInfo | null {
+  if (!memberId || !teeGroups?.length || !teeGroupPlayers?.length) return null;
+
+  const assignment = teeGroupPlayers.find((p) => p.player_id === memberId);
+  if (!assignment) return null;
+
+  const grp = teeGroups.find((g) => g.group_number === assignment.group_number);
+  const teeTime = grp?.tee_time ? teeTimeToDisplay(grp.tee_time) : "08:00";
+
+  const groupMates = teeGroupPlayers
+    .filter((p) => p.group_number === assignment.group_number && p.player_id !== memberId)
+    .sort((a, b) => a.position - b.position)
+    .map((p) => members.find((m) => m.id === p.player_id)?.name || members.find((m) => m.id === p.player_id)?.displayName)
+    .filter(Boolean) as string[];
+
+  return {
+    groupIndex: assignment.group_number - 1,
+    groupNumber: assignment.group_number,
+    teeTime,
+    groupMates,
+  };
 }

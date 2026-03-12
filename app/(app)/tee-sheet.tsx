@@ -31,6 +31,7 @@ import { usePaidAccess } from "@/lib/access/usePaidAccess";
 import { getEventsBySocietyId, getEvent, updateEvent, publishTeeTime, type EventDoc } from "@/lib/db_supabase/eventRepo";
 import { getEventRegistrations, type EventRegistration } from "@/lib/db_supabase/eventRegistrationRepo";
 import { getEventGuests } from "@/lib/db_supabase/eventGuestRepo";
+import { getTeeGroups, getTeeGroupPlayers, upsertTeeSheet, teeTimeToDisplay, type TeeGroupRow, type TeeGroupPlayerRow } from "@/lib/db_supabase/teeGroupsRepo";
 import { getMembersBySocietyId, getManCoRoleHolders, type MemberDoc, type Gender, type ManCoDetails } from "@/lib/db_supabase/memberRepo";
 import { getPermissionsForMember } from "@/lib/rbac";
 import {
@@ -204,13 +205,18 @@ export default function TeeSheetScreen() {
 
       setNotice(null);
       try {
-        const [event, registrations, guests] = await Promise.all([
+        const [event, registrations, guests, teeGroups, teeGroupPlayers] = await Promise.all([
           getEvent(selectedEventId),
           getEventRegistrations(selectedEventId),
           getEventGuests(selectedEventId),
+          getTeeGroups(selectedEventId),
+          getTeeGroupPlayers(selectedEventId),
         ]);
         setSelectedEvent(event);
         setSelectedEventRegistrations(registrations);
+
+        console.log("[TeeSheet] Loaded tee groups:", teeGroups?.length ?? 0, teeGroups);
+        console.log("[TeeSheet] Loaded tee players:", teeGroupPlayers?.length ?? 0, teeGroupPlayers);
 
         // Populate form with existing values (preserve published tee times when they exist)
         if (event) {
@@ -221,12 +227,17 @@ export default function TeeSheetScreen() {
             setTeeInterval(String(event.teeTimeInterval));
           }
 
-          // Use player_ids if set; else event_registrations (status=in) for societies using In/Out
-          const playerIds =
-            event.playerIds?.length
-              ? event.playerIds
-              : registrations.filter((r) => r.status === "in").map((r) => r.member_id);
-          initializeGroups({ ...event, playerIds }, members, guests);
+          const groupsExist = (teeGroups?.length ?? 0) > 0 && (teeGroupPlayers?.length ?? 0) > 0;
+          if (groupsExist) {
+            reconstructGroupsFromDb(teeGroups!, teeGroupPlayers!, members, guests, event);
+          } else {
+            // Use player_ids if set; else event_registrations (status=in) for societies using In/Out
+            const playerIds =
+              event.playerIds?.length
+                ? event.playerIds
+                : registrations.filter((r) => r.status === "in").map((r) => r.member_id);
+            initializeGroups({ ...event, playerIds }, members, guests);
+          }
         }
       } catch (err) {
         console.error("[TeeSheet] loadEventDetails error:", err);
@@ -237,6 +248,77 @@ export default function TeeSheetScreen() {
     loadEventDetails();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedEventId, members]);
+
+  // Reconstruct groups from persisted tee_groups and tee_group_players
+  const reconstructGroupsFromDb = (
+    teeGroups: TeeGroupRow[],
+    teeGroupPlayers: TeeGroupPlayerRow[],
+    membersList: MemberDoc[],
+    guests: { id: string; name: string; sex: "male" | "female"; handicap_index: number | null }[],
+    event: EventDoc
+  ) => {
+    const menTee: TeeBlock | null =
+      event.par != null && event.courseRating != null && event.slopeRating != null
+        ? { par: event.par, courseRating: event.courseRating, slopeRating: event.slopeRating }
+        : null;
+    const ladiesTee: TeeBlock | null =
+      event.ladiesPar != null && event.ladiesCourseRating != null && event.ladiesSlopeRating != null
+        ? { par: event.ladiesPar, courseRating: event.ladiesCourseRating, slopeRating: event.ladiesSlopeRating }
+        : null;
+    const allowance = event.handicapAllowance ?? DEFAULT_ALLOWANCE;
+
+    const lookupPlayer = (playerId: string): { id: string; name: string; handicapIndex: number | null; gender: Gender | null } | null => {
+      if (playerId.startsWith("guest-")) {
+        const guestId = playerId.slice(6);
+        const g = guests.find((x) => x.id === guestId);
+        return g ? { id: playerId, name: g.name, handicapIndex: g.handicap_index ?? null, gender: g.sex as Gender } : null;
+      }
+      const m = membersList.find((x) => x.id === playerId);
+      return m ? { id: m.id, name: m.name || m.displayName || "Member", handicapIndex: m.handicapIndex ?? m.handicap_index ?? null, gender: m.gender ?? null } : null;
+    };
+
+    const groupMap = new Map<number, { teeTime: string; players: { playerId: string; position: number }[] }>();
+    for (const grp of teeGroups) {
+      groupMap.set(grp.group_number, {
+        teeTime: grp.tee_time ? teeTimeToDisplay(grp.tee_time) : "08:00",
+        players: [],
+      });
+    }
+    for (const row of teeGroupPlayers) {
+      if (!groupMap.has(row.group_number)) {
+        groupMap.set(row.group_number, { teeTime: "08:00", players: [] });
+      }
+      groupMap.get(row.group_number)!.players.push({ playerId: row.player_id, position: row.position });
+    }
+    for (const [, data] of groupMap) {
+      data.players.sort((a, b) => a.position - b.position);
+    }
+    const sortedGroupNumbers = [...groupMap.keys()].sort((a, b) => a - b);
+    const newGroups: PlayerGroup[] = [];
+
+    for (const groupNumber of sortedGroupNumbers) {
+      const data = groupMap.get(groupNumber)!;
+      const groupPlayers: EditablePlayer[] = [];
+      for (const { playerId } of data.players) {
+        const p = lookupPlayer(playerId);
+        if (!p) continue;
+        const playerTee = selectTeeByGender(p.gender, menTee, ladiesTee);
+        const courseHandicap = calcCourseHandicap(p.handicapIndex, playerTee);
+        const playingHandicap = calcPlayingHandicap(courseHandicap, allowance);
+        groupPlayers.push({
+          id: p.id,
+          name: p.name,
+          handicapIndex: p.handicapIndex,
+          playingHandicap,
+          gender: p.gender ?? undefined,
+          groupIndex: groupNumber - 1,
+        });
+      }
+      newGroups.push({ groupNumber, players: groupPlayers });
+    }
+
+    setGroups(newGroups);
+  };
 
   // Initialize groups from event players (playerIds from event or registrations) + guests
   const initializeGroups = (
@@ -346,6 +428,18 @@ export default function TeeSheetScreen() {
   const groupsToPlayerIds = (): string[] =>
     groups.flatMap((g) => g.players).map((p) => p.id).filter((id) => !id.startsWith("guest-"));
 
+  // Compute tee time for group number (1-based): start + (n-1) * interval
+  const computeTeeTimeForGroup = (groupNumber: number): string => {
+    const start = (startTime || "08:00").trim() || "08:00";
+    const [h, m] = start.split(":").map(Number);
+    const startMins = (isNaN(h) ? 8 : h) * 60 + (isNaN(m) ? 0 : m);
+    const interval = parseInt(teeInterval, 10) || 10;
+    const totalMins = startMins + (groupNumber - 1) * interval;
+    const th = Math.floor(totalMins / 60);
+    const tm = totalMins % 60;
+    return `${String(th).padStart(2, "0")}:${String(tm).padStart(2, "0")}`;
+  };
+
   // Save tee sheet (groups + tee times) without publishing — editable, re-issue when ready
   const handleSaveTeeSheet = async () => {
     if (!guardPaidAction()) return;
@@ -363,6 +457,20 @@ export default function TeeSheetScreen() {
       const ntpHoles = parseHoleNumbers(ntpHolesInput === "-" ? "" : ntpHolesInput);
       const ldHoles = parseHoleNumbers(ldHolesInput === "-" ? "" : ldHolesInput);
       console.log("[TeeSheet] Saving playerIds:", playerIds.length, playerIds);
+
+      const teeGroupInputs = nonEmptyGroups.map((g) => ({
+        group_number: g.groupNumber,
+        tee_time: computeTeeTimeForGroup(g.groupNumber),
+      }));
+      const teePlayerInputs = nonEmptyGroups.flatMap((g) =>
+        g.players.map((p, idx) => ({
+          player_id: p.id,
+          group_number: g.groupNumber,
+          position: idx,
+        }))
+      );
+      await upsertTeeSheet(selectedEventId, teeGroupInputs, teePlayerInputs);
+
       await updateEvent(selectedEventId, {
         playerIds,
         teeTimeStart: startTime || "08:00",
@@ -373,17 +481,24 @@ export default function TeeSheetScreen() {
       });
       setToast({ visible: true, message: "Tee sheet saved", type: "success" });
 
-      // Explicitly refetch event and reinitialize groups so saved order persists in UI
-      const [refreshedEvent, regs, guestList] = await Promise.all([
+      // Refetch and reconstruct from DB so UI matches persisted state
+      const [refreshedEvent, regs, guestList, teeGroups, teeGroupPlayers] = await Promise.all([
         getEvent(selectedEventId),
         getEventRegistrations(selectedEventId),
         getEventGuests(selectedEventId),
+        getTeeGroups(selectedEventId),
+        getTeeGroupPlayers(selectedEventId),
       ]);
-      if (refreshedEvent) {
+      if (refreshedEvent && teeGroups && teeGroupPlayers) {
         setSelectedEvent(refreshedEvent);
-        const ids = refreshedEvent.playerIds?.length ? refreshedEvent.playerIds : regs.filter((r) => r.status === "in").map((r) => r.member_id);
-        console.log("[TeeSheet] After save, refreshed player_ids:", refreshedEvent.playerIds?.length ?? 0, ids);
-        initializeGroups({ ...refreshedEvent, playerIds: ids }, members, guestList);
+        const groupsExist = teeGroups.length > 0 && teeGroupPlayers.length > 0;
+        if (groupsExist) {
+          reconstructGroupsFromDb(teeGroups, teeGroupPlayers, members, guestList, refreshedEvent);
+        } else {
+          const ids = refreshedEvent.playerIds?.length ? refreshedEvent.playerIds : regs.filter((r) => r.status === "in").map((r) => r.member_id);
+          initializeGroups({ ...refreshedEvent, playerIds: ids }, members, guestList);
+        }
+        console.log("[TeeSheet] After save, loaded tee groups:", teeGroups.length, "players:", teeGroupPlayers.length);
       }
       loadData();
     } catch (err: any) {
@@ -515,7 +630,16 @@ export default function TeeSheetScreen() {
       const refreshed = await publishTeeTime(selectedEvent.id, startTime || "08:00", interval);
       if (refreshed) setSelectedEvent(refreshed);
 
-      // Persist tee sheet groups so it's saved and editable; changes can be re-issued
+      // Persist tee groups and player assignments
+      const teeGroupInputs = groupsForExport.map((g) => ({
+        group_number: g.groupNumber,
+        tee_time: computeTeeTimeForGroup(g.groupNumber),
+      }));
+      const teePlayerInputs = groupsForExport.flatMap((g) =>
+        g.players.map((p, idx) => ({ player_id: p.id, group_number: g.groupNumber, position: idx }))
+      );
+      await upsertTeeSheet(selectedEvent.id, teeGroupInputs, teePlayerInputs);
+
       const playerIds = groupsToPlayerIds();
       await updateEvent(selectedEvent.id, { playerIds });
 

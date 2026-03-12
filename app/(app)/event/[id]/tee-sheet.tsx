@@ -21,7 +21,8 @@ import { getEvent, type EventDoc } from "@/lib/db_supabase/eventRepo";
 import { getMembersBySocietyId, type MemberDoc } from "@/lib/db_supabase/memberRepo";
 import { getEventRegistrations } from "@/lib/db_supabase/eventRegistrationRepo";
 import { getEventGuests } from "@/lib/db_supabase/eventGuestRepo";
-import { findMemberGroup } from "@/lib/findMemberGroup";
+import { getTeeGroups, getTeeGroupPlayers, teeTimeToDisplay } from "@/lib/db_supabase/teeGroupsRepo";
+import { findMemberGroup, findMemberGroupFromTeeSheet } from "@/lib/findMemberGroup";
 import { groupPlayers, assignTeeTimes, type PlayerGroup } from "@/lib/teeSheetGrouping";
 import { formatHandicap } from "@/lib/whs";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
@@ -111,6 +112,46 @@ function buildGroupsWithTimes(
   return assignTeeTimes(groups, start, interval) as GroupWithTime[];
 }
 
+function buildGroupsWithTimesFromDb(
+  teeGroups: { group_number: number; tee_time: string | null }[],
+  teeGroupPlayers: { player_id: string; group_number: number; position: number }[],
+  members: MemberDoc[],
+  guests: { id: string; name: string; sex: "male" | "female"; handicap_index: number | null }[]
+): GroupWithTime[] {
+  const lookup = (playerId: string) => {
+    if (playerId.startsWith("guest-")) {
+      const g = guests.find((x) => x.id === playerId.slice(6));
+      return g ? { id: playerId, name: g.name, handicapIndex: g.handicap_index ?? null } : null;
+    }
+    const m = members.find((x) => x.id === playerId);
+    return m ? { id: m.id, name: m.name || m.displayName || "Member", handicapIndex: m.handicapIndex ?? m.handicap_index ?? null } : null;
+  };
+
+  const byGroup = new Map<number, { teeTime: string; players: { player_id: string; position: number }[] }>();
+  for (const g of teeGroups) {
+    byGroup.set(g.group_number, { teeTime: g.tee_time ? teeTimeToDisplay(g.tee_time) : "08:00", players: [] });
+  }
+  for (const p of teeGroupPlayers) {
+    const data = byGroup.get(p.group_number);
+    if (data) data.players.push({ player_id: p.player_id, position: p.position });
+  }
+  for (const [, data] of byGroup) {
+    data.players.sort((a, b) => a.position - b.position);
+  }
+
+  return [...byGroup.keys()].sort((a, b) => a - b).map((groupNumber) => {
+    const data = byGroup.get(groupNumber)!;
+    const players = data.players
+      .map(({ player_id }) => lookup(player_id))
+      .filter(Boolean) as { id: string; name: string; handicapIndex: number | null }[];
+    return {
+      groupNumber,
+      players: players.map((p) => ({ ...p, courseHandicap: null, playingHandicap: null })),
+      teeTime: data.teeTime,
+    } as GroupWithTime;
+  });
+}
+
 export default function EventTeeSheetScreen() {
   const router = useRouter();
   const { id: eventId } = useLocalSearchParams<{ id: string }>();
@@ -121,6 +162,8 @@ export default function EventTeeSheetScreen() {
   const [members, setMembers] = useState<MemberDoc[]>([]);
   const [registrationMemberIds, setRegistrationMemberIds] = useState<string[]>([]);
   const [guests, setGuests] = useState<{ id: string; name: string; sex: "male" | "female"; handicap_index: number | null }[]>([]);
+  const [teeGroups, setTeeGroups] = useState<{ group_number: number; tee_time: string | null }[]>([]);
+  const [teeGroupPlayers, setTeeGroupPlayers] = useState<{ player_id: string; group_number: number; position: number }[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<FormattedError | null>(null);
 
@@ -130,11 +173,13 @@ export default function EventTeeSheetScreen() {
     setLoading(true);
     setError(null);
     try {
-      const [eventData, membersData, registrations, guestList] = await Promise.all([
+      const [eventData, membersData, registrations, guestList, groupsData, playersData] = await Promise.all([
         getEvent(eventId),
         getMembersBySocietyId(societyId),
         getEventRegistrations(eventId),
         getEventGuests(eventId),
+        getTeeGroups(eventId),
+        getTeeGroupPlayers(eventId),
       ]);
       setEvent(eventData ?? null);
       setMembers(membersData);
@@ -142,6 +187,8 @@ export default function EventTeeSheetScreen() {
         registrations.filter((r) => r.status === "in").map((r) => r.member_id),
       );
       setGuests(guestList);
+      setTeeGroups(groupsData);
+      setTeeGroupPlayers(playersData);
     } catch (err) {
       setError(formatError(err));
     } finally {
@@ -177,6 +224,7 @@ export default function EventTeeSheetScreen() {
   }
 
   const memberId = member?.id;
+  const usePersistedTeeSheet = teeGroups.length > 0 && teeGroupPlayers.length > 0;
   const eventWithPlayers = {
     ...event,
     playerIds:
@@ -184,8 +232,14 @@ export default function EventTeeSheetScreen() {
         ? event.playerIds
         : registrationMemberIds,
   };
-  const myGroup = memberId ? findMemberGroup(memberId, eventWithPlayers, members) : null;
-  const groupsWithTimes = buildGroupsWithTimes(event, members, registrationMemberIds);
+  const myGroup = memberId
+    ? (usePersistedTeeSheet
+        ? findMemberGroupFromTeeSheet(memberId, teeGroups, teeGroupPlayers, members)
+        : findMemberGroup(memberId, eventWithPlayers, members))
+    : null;
+  const groupsWithTimes = usePersistedTeeSheet
+    ? buildGroupsWithTimesFromDb(teeGroups, teeGroupPlayers, members, guests)
+    : buildGroupsWithTimes(event, members, registrationMemberIds, guests);
 
   const hasTeeTimes = !!event.teeTimePublishedAt;
 

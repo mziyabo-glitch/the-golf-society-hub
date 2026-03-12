@@ -35,7 +35,8 @@ import { isCaptain, isTreasurer } from "@/lib/rbac";
 import { supabase } from "@/lib/supabase";
 import { getEventsBySocietyId, type EventDoc } from "@/lib/db_supabase/eventRepo";
 import { getMembersBySocietyId, type MemberDoc } from "@/lib/db_supabase/memberRepo";
-import { findMemberGroup } from "@/lib/findMemberGroup";
+import { findMemberGroup, findMemberGroupFromTeeSheet } from "@/lib/findMemberGroup";
+import { getTeeGroups, getTeeGroupPlayers } from "@/lib/db_supabase/teeGroupsRepo";
 import {
   getOrderOfMeritTotals,
   getEventResults,
@@ -204,6 +205,8 @@ export default function HomeScreen() {
   // Event registration state
   const [myReg, setMyReg] = useState<EventRegistration | null>(null);
   const [nextEventRegistrations, setNextEventRegistrations] = useState<EventRegistration[]>([]);
+  const [nextEventTeeGroups, setNextEventTeeGroups] = useState<{ group_number: number; tee_time: string | null }[]>([]);
+  const [nextEventTeeGroupPlayers, setNextEventTeeGroupPlayers] = useState<{ player_id: string; group_number: number; position: number }[]>([]);
   const [regBusy, setRegBusy] = useState(false);
 
   // Licence banner state
@@ -381,6 +384,23 @@ export default function HomeScreen() {
     return () => { cancelled = true; };
   }, [nextEventId, nextEvent?.teeTimePublishedAt]);
 
+  // Load persisted tee groups for next event (when tee sheet was saved)
+  useEffect(() => {
+    if (!nextEventId || !nextEvent?.teeTimePublishedAt) {
+      setNextEventTeeGroups([]);
+      setNextEventTeeGroupPlayers([]);
+      return;
+    }
+    let cancelled = false;
+    Promise.all([getTeeGroups(nextEventId), getTeeGroupPlayers(nextEventId)]).then(([groups, players]) => {
+      if (!cancelled) {
+        setNextEventTeeGroups(groups);
+        setNextEventTeeGroupPlayers(players);
+      }
+    });
+    return () => { cancelled = true; };
+  }, [nextEventId, nextEvent?.teeTimePublishedAt]);
+
   // Past events (completed, sorted desc) — last 3
   const recentEvents = useMemo(() => {
     return events
@@ -404,15 +424,19 @@ export default function HomeScreen() {
   }, [memberId, oomStandings]);
 
   // My tee time for next event (when published)
-  // Use player_ids if set; else fall back to event_registrations (status=in) for societies using In/Out
+  // Use persisted tee_groups/tee_group_players when available; else fall back to player_ids + groupPlayers
   const myTeeTimeInfo = useMemo(() => {
     if (!memberId || !nextEvent?.teeTimePublishedAt || !nextEvent) return null;
+    const usePersisted = nextEventTeeGroups.length > 0 && nextEventTeeGroupPlayers.length > 0;
+    if (usePersisted) {
+      return findMemberGroupFromTeeSheet(memberId, nextEventTeeGroups, nextEventTeeGroupPlayers, members);
+    }
     const playerIds = nextEvent.playerIds?.length
       ? nextEvent.playerIds
       : nextEventRegistrations.filter((r) => r.status === "in").map((r) => r.member_id);
     const eventWithPlayers = { ...nextEvent, playerIds };
     return findMemberGroup(memberId, eventWithPlayers, members);
-  }, [memberId, nextEvent, members, nextEventRegistrations]);
+  }, [memberId, nextEvent, members, nextEventRegistrations, nextEventTeeGroups, nextEventTeeGroupPlayers]);
 
   // OOM teaser: top 5 + current user pinned
   const oomTeaser = useMemo(() => {
