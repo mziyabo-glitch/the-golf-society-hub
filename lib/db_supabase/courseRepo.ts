@@ -9,6 +9,8 @@ export type CourseTee = {
   course_rating: number;
   slope_rating: number;
   par_total: number;
+  gender?: string | null;
+  yards?: number | null;
 };
 
 export type CourseSearchHit = {
@@ -47,6 +49,8 @@ export async function getTeesByCourseId(courseId: string): Promise<CourseTee[]> 
     course_rating: Number(row.course_rating),
     slope_rating: Number(row.slope_rating),
     par_total: Number(row.par_total),
+    gender: row.gender ?? null,
+    yards: row.yards ?? null,
   }));
 
   console.log("[courseRepo] getTeesByCourseId returned", tees.length, "tees");
@@ -56,6 +60,35 @@ export type SearchCoursesResult = {
   data: CourseSearchHit[];
   error: string | null;
 };
+
+export type CourseWithTees = {
+  courseId: string;
+  courseName: string;
+  tees: CourseTee[];
+  fromCache: boolean;
+};
+
+/**
+ * Get course + tees from DB by GolfCourseAPI id (api_id).
+ * Use for cache-first: if course was previously imported, skip API call.
+ */
+export async function getCourseByApiId(apiId: number): Promise<CourseWithTees | null> {
+  const { data: course, error: courseErr } = await supabase
+    .from("courses")
+    .select("id, name")
+    .eq("api_id", apiId)
+    .maybeSingle();
+
+  if (courseErr || !course) return null;
+
+  const tees = await getTeesByCourseId(course.id);
+  return {
+    courseId: course.id,
+    courseName: course.name ?? "",
+    tees,
+    fromCache: true,
+  };
+}
 
 /**
  * Search courses by name (for event creation: Search Course → Select Tee).

@@ -27,7 +27,7 @@ import {
   EVENT_FORMATS,
   EVENT_CLASSIFICATIONS,
 } from "@/lib/db_supabase/eventRepo";
-import { type CourseTee } from "@/lib/db_supabase/courseRepo";
+import { type CourseTee, getCourseByApiId } from "@/lib/db_supabase/courseRepo";
 import { searchCourses as searchCoursesApi, getCourseById, type ApiCourseSearchResult } from "@/lib/golfApi";
 import { importCourse, type ImportedCourse } from "@/lib/importCourse";
 import { CourseTeeSelector } from "@/components/CourseTeeSelector";
@@ -184,22 +184,31 @@ export default function EventsScreen() {
     setShowManualTee(false);
     setFormErrors((prev) => ({ ...prev, course: undefined, courseTee: undefined }));
     try {
-      const full = await getCourseById(hit.id);
-      console.log("[events] getCourseById done, importing...");
-      const result: ImportedCourse = await importCourse(full);
-      console.log("[events] importCourse done:", result.courseId, result.tees.length, "tees");
-      setSelectedCourse({ id: result.courseId, name: result.courseName });
-      const mapped: CourseTee[] = result.tees.map((t) => ({
-        id: t.id,
-        course_id: result.courseId,
-        tee_name: t.teeName,
-        tee_color: null,
-        course_rating: t.courseRating ?? 0,
-        slope_rating: t.slopeRating ?? 0,
-        par_total: t.parTotal ?? 0,
-      }));
-      setTees(mapped);
-      if (mapped.length === 0) setShowManualTee(true);
+      // Cache-first: load from DB if previously imported (avoids repeated API calls)
+      const cached = await getCourseByApiId(hit.id);
+      if (cached) {
+        console.log("[events] Loaded from cache:", cached.courseId, cached.tees.length, "tees");
+        setSelectedCourse({ id: cached.courseId, name: cached.courseName });
+        setTees(cached.tees);
+        if (cached.tees.length === 0) setShowManualTee(true);
+      } else {
+        const full = await getCourseById(hit.id);
+        console.log("[events] getCourseById done, importing...");
+        const result: ImportedCourse = await importCourse(full);
+        console.log("[events] importCourse done:", result.courseId, result.tees.length, "tees");
+        setSelectedCourse({ id: result.courseId, name: result.courseName });
+        const mapped: CourseTee[] = result.tees.map((t) => ({
+          id: t.id,
+          course_id: result.courseId,
+          tee_name: t.teeName,
+          tee_color: null,
+          course_rating: t.courseRating ?? 0,
+          slope_rating: t.slopeRating ?? 0,
+          par_total: t.parTotal ?? 0,
+        }));
+        setTees(mapped);
+        if (mapped.length === 0) setShowManualTee(true);
+      }
     } catch (e: any) {
       console.error("[events] course import failed:", e?.message || e);
       setTeesError(e?.message || "Failed to import course");

@@ -26,7 +26,7 @@ import {
   EVENT_FORMATS,
   EVENT_CLASSIFICATIONS,
 } from "@/lib/db_supabase/eventRepo";
-import { getTeesByCourseId, type CourseTee } from "@/lib/db_supabase/courseRepo";
+import { getTeesByCourseId, getCourseByApiId, type CourseTee } from "@/lib/db_supabase/courseRepo";
 import { searchCourses as searchCoursesApi, getCourseById, type ApiCourseSearchResult } from "@/lib/golfApi";
 import { importCourse, type ImportedCourse } from "@/lib/importCourse";
 import { CourseTeeSelector } from "@/components/CourseTeeSelector";
@@ -245,21 +245,29 @@ export default function EventDetailScreen() {
     setTeesLoading(true);
     setShowManualTee(false);
     try {
-      const full = await getCourseById(hit.id);
-      const result: ImportedCourse = await importCourse(full);
-      setSelectedCourseEdit({ id: result.courseId, name: result.courseName });
-      setFormCourseName(result.courseName);
-      const mapped: CourseTee[] = result.tees.map((t) => ({
-        id: t.id,
-        course_id: result.courseId,
-        tee_name: t.teeName,
-        tee_color: null,
-        course_rating: t.courseRating ?? 0,
-        slope_rating: t.slopeRating ?? 0,
-        par_total: t.parTotal ?? 0,
-      }));
-      setTees(mapped);
-      if (mapped.length === 0) setShowManualTee(true);
+      const cached = await getCourseByApiId(hit.id);
+      if (cached) {
+        setSelectedCourseEdit({ id: cached.courseId, name: cached.courseName });
+        setFormCourseName(cached.courseName);
+        setTees(cached.tees);
+        if (cached.tees.length === 0) setShowManualTee(true);
+      } else {
+        const full = await getCourseById(hit.id);
+        const result: ImportedCourse = await importCourse(full);
+        setSelectedCourseEdit({ id: result.courseId, name: result.courseName });
+        setFormCourseName(result.courseName);
+        const mapped: CourseTee[] = result.tees.map((t) => ({
+          id: t.id,
+          course_id: result.courseId,
+          tee_name: t.teeName,
+          tee_color: null,
+          course_rating: t.courseRating ?? 0,
+          slope_rating: t.slopeRating ?? 0,
+          par_total: t.parTotal ?? 0,
+        }));
+        setTees(mapped);
+        if (mapped.length === 0) setShowManualTee(true);
+      }
     } catch (e: any) {
       setSelectedCourseEdit({ id: "", name: hit.name });
       setFormCourseName(hit.name);

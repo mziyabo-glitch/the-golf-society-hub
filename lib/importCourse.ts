@@ -7,6 +7,8 @@ export type ImportedTee = {
   courseRating: number | null;
   slopeRating: number | null;
   parTotal: number | null;
+  gender?: string | null;
+  yards?: number | null;
 };
 
 export type ImportedCourse = {
@@ -26,20 +28,27 @@ function getLng(course: ApiCourse): number | null {
   return Number.isFinite(val) ? Number(val) : null;
 }
 
-function normalizeTee(tee: ApiTee): {
+function normalizeTee(tee: ApiTee, gender?: "M" | "F"): {
   teeName: string;
   courseRating: number | null;
   slopeRating: number | null;
   parTotal: number | null;
+  gender: string | null;
+  yards: number | null;
 } | null {
   const teeName = (tee.tee_name || tee.name || "").trim();
   if (!teeName) return null;
+
+  const g = tee.gender ?? gender;
+  const yards = tee.total_yards ?? tee.yards ?? (tee as any).yardage;
 
   return {
     teeName,
     courseRating: tee.course_rating != null ? Number(tee.course_rating) : null,
     slopeRating: tee.slope_rating != null ? Number(tee.slope_rating) : null,
     parTotal: tee.par_total != null ? Number(tee.par_total) : null,
+    gender: g ? (g === "female" ? "F" : g === "male" ? "M" : String(g).charAt(0).toUpperCase()) : null,
+    yards: yards != null ? Number(yards) : null,
   };
 }
 
@@ -57,17 +66,19 @@ async function getExistingCourseByApiId(apiId: number) {
 async function getImportedTees(courseId: string): Promise<ImportedTee[]> {
   const { data, error } = await supabase
     .from("course_tees")
-    .select("id, tee_name, course_rating, slope_rating, par_total")
+    .select("id, tee_name, course_rating, slope_rating, par_total, gender, yards")
     .eq("course_id", courseId)
     .order("tee_name", { ascending: true });
 
   if (error) throw error;
-  return (data ?? []).map((row) => ({
+  return (data ?? []).map((row: any) => ({
     id: row.id,
     teeName: row.tee_name,
     courseRating: row.course_rating ?? null,
     slopeRating: row.slope_rating ?? null,
     parTotal: row.par_total ?? null,
+    gender: row.gender ?? null,
+    yards: row.yards ?? null,
   }));
 }
 
@@ -97,11 +108,15 @@ async function insertCourse(course: ApiCourse): Promise<{ id: string; name: stri
   throw error;
 }
 
-async function importTeesAndHoles(courseId: string, tees: ApiTee[] | undefined): Promise<void> {
+async function importTeesAndHoles(
+  courseId: string,
+  tees: ApiTee[] | undefined,
+  gender?: "M" | "F"
+): Promise<void> {
   if (!Array.isArray(tees) || tees.length === 0) return;
 
   for (const tee of tees) {
-    const normalized = normalizeTee(tee);
+    const normalized = normalizeTee(tee, gender);
     if (!normalized) continue;
 
     const { data: teeRow, error: teeError } = await supabase
@@ -112,6 +127,8 @@ async function importTeesAndHoles(courseId: string, tees: ApiTee[] | undefined):
         course_rating: normalized.courseRating,
         slope_rating: normalized.slopeRating,
         par_total: normalized.parTotal,
+        gender: normalized.gender,
+        yards: normalized.yards,
       })
       .select("id")
       .single();
@@ -193,11 +210,11 @@ export async function importCourse(apiCourse: ApiCourse): Promise<ImportedCourse
 
   const created = await insertCourse(apiCourse);
 
-  const mergedTees = Array.isArray(apiCourse.tees)
+  const mergedTees: ApiTee[] = Array.isArray(apiCourse.tees)
     ? apiCourse.tees
     : [
-        ...((apiCourse.tees?.male as ApiTee[] | undefined) || []),
-        ...((apiCourse.tees?.female as ApiTee[] | undefined) || []),
+        ...((apiCourse.tees?.male as ApiTee[] | undefined) || []).map((t) => ({ ...t, gender: "M" as const })),
+        ...((apiCourse.tees?.female as ApiTee[] | undefined) || []).map((t) => ({ ...t, gender: "F" as const })),
       ];
 
   await importTeesAndHoles(created.id, mergedTees);

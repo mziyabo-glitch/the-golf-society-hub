@@ -17,6 +17,9 @@ export type ApiTee = {
   course_rating?: number;
   slope_rating?: number;
   par_total?: number;
+  total_yards?: number;
+  yards?: number;
+  gender?: "M" | "F" | "male" | "female";
   holes?: ApiHole[];
 };
 
@@ -48,15 +51,19 @@ function getGolfApiKey(): string | undefined {
 async function request<T>(path: string): Promise<T> {
   const apiKey = getGolfApiKey();
   if (!apiKey) {
-    throw new Error("Golf API key missing. Set GOLF_API_KEY.");
+    throw new Error("Golf API key missing. Set GOLF_API_KEY or EXPO_PUBLIC_GOLF_API_KEY.");
   }
+
+  // GolfCourseAPI uses ApiKeyAuth; try Key header first, fallback to X-API-Key for 400 issues
+  const headers: Record<string, string> = {
+    Accept: "application/json",
+    "Content-Type": "application/json",
+    Authorization: `Key ${apiKey}`,
+  };
 
   const res = await fetch(`${API_BASE}${path}`, {
     method: "GET",
-    headers: {
-      Authorization: `Key ${apiKey}`,
-      Accept: "application/json",
-    },
+    headers,
   });
 
   if (res.status === 429) {
@@ -65,7 +72,15 @@ async function request<T>(path: string): Promise<T> {
 
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(`GolfCourseAPI error (${res.status}): ${text || "Unknown error"}`);
+    const msg = text || "Unknown error";
+    console.error("[golfApi] Request failed:", res.status, path, msg);
+    if (res.status === 400) {
+      throw new Error(`GolfCourseAPI 400: ${msg}. Check API key (GOLF_API_KEY) and endpoint.`);
+    }
+    if (res.status === 401) {
+      throw new Error("GolfCourseAPI: Invalid or missing API key.");
+    }
+    throw new Error(`GolfCourseAPI error (${res.status}): ${msg}`);
   }
 
   return res.json() as Promise<T>;
@@ -116,6 +131,27 @@ export async function getCourseById(id: number): Promise<ApiCourse> {
   const payload: any = await request(`/courses/${id}`);
   const row = payload?.course ?? payload?.data ?? payload;
 
+  // Parse tees: API returns { male: [...], female: [...] } or flat array
+  let tees: ApiTee[] | { male: ApiTee[]; female: ApiTee[] };
+  if (Array.isArray(row.tees)) {
+    tees = row.tees.map((t: any) => ({
+      ...t,
+      total_yards: t.total_yards ?? t.yards ?? t.yardage,
+    }));
+  } else {
+    const male = (row?.tees?.male ?? []).map((t: any) => ({
+      ...t,
+      gender: "M" as const,
+      total_yards: t.total_yards ?? t.yards ?? t.yardage,
+    }));
+    const female = (row?.tees?.female ?? []).map((t: any) => ({
+      ...t,
+      gender: "F" as const,
+      total_yards: t.total_yards ?? t.yards ?? t.yardage,
+    }));
+    tees = { male, female };
+  }
+
   return {
     id: Number(row.id),
     name: row.name || row.course_name || "Unknown course",
@@ -124,11 +160,6 @@ export async function getCourseById(id: number): Promise<ApiCourse> {
     lng: row.lng ?? row.longitude ?? undefined,
     latitude: row.latitude ?? row.lat ?? undefined,
     longitude: row.longitude ?? row.lng ?? undefined,
-    tees: Array.isArray(row.tees)
-      ? row.tees
-      : {
-          male: Array.isArray(row?.tees?.male) ? row.tees.male : [],
-          female: Array.isArray(row?.tees?.female) ? row.tees.female : [],
-        },
+    tees,
   };
 }

@@ -26,6 +26,19 @@ export type TeeBlock = {
 };
 
 /**
+ * Calculate Course Handicap from raw values.
+ * Formula: CH = HI × (Slope ÷ 113) + (Course Rating − Par)
+ */
+export function calculateCourseHandicap(
+  hi: number,
+  slope: number,
+  rating: number,
+  par: number
+): number {
+  return Math.round(hi * (slope / 113) + (rating - par));
+}
+
+/**
  * Calculate Course Handicap from Handicap Index and tee settings
  *
  * Formula: CH = HI × (Slope ÷ 113) + (Course Rating − Par)
