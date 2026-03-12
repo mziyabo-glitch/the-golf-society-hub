@@ -112,6 +112,13 @@ export default function EventsScreen() {
   const [teesError, setTeesError] = useState<string | null>(null);
   const [selectedTee, setSelectedTee] = useState<CourseTee | null>(null);
 
+  // Manual tee entry fallback (when no tees from API)
+  const [showManualTee, setShowManualTee] = useState(false);
+  const [manualTeeName, setManualTeeName] = useState("");
+  const [manualPar, setManualPar] = useState("");
+  const [manualCourseRating, setManualCourseRating] = useState("");
+  const [manualSlopeRating, setManualSlopeRating] = useState("");
+
   // Handicap allowance (shared)
   const [formHandicapAllowance, setFormHandicapAllowance] = useState("95");
 
@@ -169,6 +176,7 @@ export default function EventsScreen() {
     setTees([]);
     setTeesError(null);
     setTeesLoading(true);
+    setShowManualTee(false);
     try {
       const full = await getCourseById(hit.id);
       console.log("[events] getCourseById done, importing...");
@@ -185,11 +193,13 @@ export default function EventsScreen() {
         par_total: t.parTotal ?? 0,
       }));
       setTees(mapped);
+      if (mapped.length === 0) setShowManualTee(true);
     } catch (e: any) {
       console.error("[events] course import failed:", e?.message || e);
       setTeesError(e?.message || "Failed to import course");
       setSelectedCourse({ id: "", name: hit.name });
       setTees([]);
+      setShowManualTee(true);
     } finally {
       setTeesLoading(false);
     }
@@ -305,6 +315,12 @@ export default function EventsScreen() {
     const courseName =
       selectedCourse?.name ?? (manualCourseName.trim() || undefined);
 
+    const teeId = selectedTee?.id ?? undefined;
+    const teeName = selectedTee ? selectedTee.tee_name : (manualTeeName.trim() || undefined);
+    const par = selectedTee ? selectedTee.par_total : (manualPar.trim() ? parseFloat(manualPar) : undefined);
+    const courseRating = selectedTee ? selectedTee.course_rating : (manualCourseRating.trim() ? parseFloat(manualCourseRating) : undefined);
+    const slopeRating = selectedTee ? selectedTee.slope_rating : (manualSlopeRating.trim() ? parseFloat(manualSlopeRating) : undefined);
+
     console.log("[createEvent] Calling createEvent...");
     const created = await createAction.run(async () =>
       createEvent(societyId, {
@@ -315,11 +331,11 @@ export default function EventsScreen() {
         createdBy: user.uid,
         courseId: selectedCourse?.id,
         courseName,
-        teeId: selectedTee?.id ?? undefined,
-        teeName: selectedTee?.tee_name,
-        par: selectedTee?.par_total,
-        courseRating: selectedTee?.course_rating,
-        slopeRating: selectedTee?.slope_rating,
+        teeId,
+        teeName,
+        par,
+        courseRating,
+        slopeRating,
         handicapAllowance,
       })
     );
@@ -348,6 +364,11 @@ export default function EventsScreen() {
     setTees([]);
     setTeesError(null);
     setSelectedTee(null);
+    setShowManualTee(false);
+    setManualTeeName("");
+    setManualPar("");
+    setManualCourseRating("");
+    setManualSlopeRating("");
     setFormHandicapAllowance("95");
     setShowCreateForm(false);
     setFormErrors({});
@@ -529,6 +550,7 @@ export default function EventsScreen() {
                       setSelectedCourse(null);
                       setTees([]);
                       setSelectedTee(null);
+                      setShowManualTee(false);
                       setFormErrors((prev) => ({ ...prev, courseTee: undefined }));
                     }}
                     hitSlop={8}
@@ -605,7 +627,7 @@ export default function EventsScreen() {
                   <AppText variant="small" style={{ color: colors.error }}>
                     {"Couldn't load tees: "}{teesError}
                   </AppText>
-                ) : (
+                ) : tees.length > 0 ? (
                   <>
                     <CourseTeeSelector
                       tees={tees}
@@ -613,6 +635,7 @@ export default function EventsScreen() {
                       onSelectTee={(tee) => {
                         console.log("[events] tee selected:", tee.id, tee.tee_name);
                         setSelectedTee(tee);
+                        setShowManualTee(false);
                         setFormErrors((prev) => ({ ...prev, courseTee: undefined }));
                       }}
                     />
@@ -622,7 +645,75 @@ export default function EventsScreen() {
                       </AppText>
                     ) : null}
                   </>
+                ) : (
+                  <AppText variant="small" color="tertiary">No tees found for this course.</AppText>
                 )}
+                {tees.length === 0 && !teesLoading && !showManualTee && (
+                  <Pressable onPress={() => setShowManualTee(true)}>
+                    <AppText variant="caption" color="primary" style={{ marginTop: spacing.xs }}>
+                      + Enter tee details manually
+                    </AppText>
+                  </Pressable>
+                )}
+              </View>
+            )}
+
+            {/* Manual tee link when no course selected */}
+            {!selectedCourse && !showManualTee && (
+              <Pressable onPress={() => setShowManualTee(true)} style={{ marginBottom: spacing.base }}>
+                <AppText variant="caption" color="primary">
+                  + Enter tee details manually
+                </AppText>
+              </Pressable>
+            )}
+
+            {/* Manual tee entry fallback */}
+            {showManualTee && (
+              <View style={styles.manualTeeContainer}>
+                <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: spacing.sm }}>
+                  <AppText variant="captionBold">Manual Tee Entry</AppText>
+                  {selectedTee && (
+                    <Pressable onPress={() => setShowManualTee(false)}>
+                      <AppText variant="small" color="primary">Use selected tee instead</AppText>
+                    </Pressable>
+                  )}
+                </View>
+                <View style={styles.formField}>
+                  <AppText variant="caption" style={styles.label}>Tee Name</AppText>
+                  <AppInput
+                    placeholder="e.g. Yellow"
+                    value={manualTeeName}
+                    onChangeText={(v) => { setManualTeeName(v); setSelectedTee(null); }}
+                    autoCapitalize="words"
+                  />
+                </View>
+                <View style={styles.formField}>
+                  <AppText variant="caption" style={styles.label}>Par</AppText>
+                  <AppInput
+                    placeholder="e.g. 72"
+                    value={manualPar}
+                    onChangeText={(v) => { setManualPar(v); setSelectedTee(null); }}
+                    keyboardType="number-pad"
+                  />
+                </View>
+                <View style={styles.formField}>
+                  <AppText variant="caption" style={styles.label}>Course Rating</AppText>
+                  <AppInput
+                    placeholder="e.g. 70.1"
+                    value={manualCourseRating}
+                    onChangeText={(v) => { setManualCourseRating(v); setSelectedTee(null); }}
+                    keyboardType="decimal-pad"
+                  />
+                </View>
+                <View style={styles.formField}>
+                  <AppText variant="caption" style={styles.label}>Slope Rating</AppText>
+                  <AppInput
+                    placeholder="e.g. 128"
+                    value={manualSlopeRating}
+                    onChangeText={(v) => { setManualSlopeRating(v); setSelectedTee(null); }}
+                    keyboardType="number-pad"
+                  />
+                </View>
               </View>
             )}
 
@@ -906,5 +997,13 @@ const styles = StyleSheet.create({
   searchResultItem: {
     padding: spacing.sm,
     borderRadius: radius.sm,
+  },
+  manualTeeContainer: {
+    padding: spacing.sm,
+    borderRadius: radius.sm,
+    backgroundColor: "rgba(0,0,0,0.02)",
+    borderWidth: 1,
+    borderColor: "rgba(0,0,0,0.06)",
+    marginBottom: spacing.base,
   },
 });

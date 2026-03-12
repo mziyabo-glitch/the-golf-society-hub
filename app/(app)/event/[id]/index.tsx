@@ -27,6 +27,8 @@ import {
   EVENT_CLASSIFICATIONS,
 } from "@/lib/db_supabase/eventRepo";
 import { getTeesByCourseId, type CourseTee } from "@/lib/db_supabase/courseRepo";
+import { searchCourses as searchCoursesApi, getCourseById, type ApiCourseSearchResult } from "@/lib/golfApi";
+import { importCourse, type ImportedCourse } from "@/lib/importCourse";
 import { CourseTeeSelector } from "@/components/CourseTeeSelector";
 import { getPermissionsForMember } from "@/lib/rbac";
 import {
@@ -106,10 +108,24 @@ export default function EventDetailScreen() {
   const [formClassification, setFormClassification] = useState<EventClassification>("general");
   const [formCourseName, setFormCourseName] = useState("");
 
+  // Course search (GolfCourseAPI) for edit mode
+  const [courseSearchQuery, setCourseSearchQuery] = useState("");
+  const [courseSearchResults, setCourseSearchResults] = useState<ApiCourseSearchResult[]>([]);
+  const [courseSearching, setCourseSearching] = useState(false);
+  const [courseSearchError, setCourseSearchError] = useState<string | null>(null);
+  const [selectedCourseEdit, setSelectedCourseEdit] = useState<{ id: string; name: string } | null>(null);
+
   // Tee from course_tees (when event has course_id)
   const [tees, setTees] = useState<CourseTee[]>([]);
   const [teesLoading, setTeesLoading] = useState(false);
   const [selectedTee, setSelectedTee] = useState<CourseTee | null>(null);
+
+  // Manual tee entry (fallback when no tees from API)
+  const [manualTeeName, setManualTeeName] = useState("");
+  const [manualPar, setManualPar] = useState("");
+  const [manualCourseRating, setManualCourseRating] = useState("");
+  const [manualSlopeRating, setManualSlopeRating] = useState("");
+  const [showManualTee, setShowManualTee] = useState(false);
 
   // Handicap allowance
   const [formHandicapAllowance, setFormHandicapAllowance] = useState("95");
@@ -192,6 +208,64 @@ export default function EventDetailScreen() {
     }
   };
 
+  // Debounced course search via GolfCourseAPI (edit mode)
+  useEffect(() => {
+    if (!isEditing) return;
+    const q = courseSearchQuery.trim();
+    if (!q || q.length < 2) {
+      setCourseSearchResults([]);
+      setCourseSearchError(null);
+      return;
+    }
+    const t = setTimeout(async () => {
+      setCourseSearching(true);
+      setCourseSearchError(null);
+      try {
+        const hits = await searchCoursesApi(q);
+        setCourseSearchResults(hits);
+      } catch (e: any) {
+        setCourseSearchError(e?.message || "Search failed");
+        setCourseSearchResults([]);
+      } finally {
+        setCourseSearching(false);
+      }
+    }, 400);
+    return () => clearTimeout(t);
+  }, [courseSearchQuery, isEditing]);
+
+  const handleEditSelectCourse = useCallback(async (hit: ApiCourseSearchResult) => {
+    setCourseSearchResults([]);
+    setCourseSearchQuery("");
+    setSelectedTee(null);
+    setTees([]);
+    setTeesLoading(true);
+    setShowManualTee(false);
+    try {
+      const full = await getCourseById(hit.id);
+      const result: ImportedCourse = await importCourse(full);
+      setSelectedCourseEdit({ id: result.courseId, name: result.courseName });
+      setFormCourseName(result.courseName);
+      const mapped: CourseTee[] = result.tees.map((t) => ({
+        id: t.id,
+        course_id: result.courseId,
+        tee_name: t.teeName,
+        tee_color: null,
+        course_rating: t.courseRating ?? 0,
+        slope_rating: t.slopeRating ?? 0,
+        par_total: t.parTotal ?? 0,
+      }));
+      setTees(mapped);
+      if (mapped.length === 0) setShowManualTee(true);
+    } catch (e: any) {
+      setSelectedCourseEdit({ id: "", name: hit.name });
+      setFormCourseName(hit.name);
+      setTees([]);
+      setShowManualTee(true);
+    } finally {
+      setTeesLoading(false);
+    }
+  }, []);
+
   // Load tees when event has course_id
   const loadTeesForEvent = useCallback(async (courseId: string | undefined, teeId: string | undefined) => {
     if (!courseId) {
@@ -229,16 +303,29 @@ export default function EventDetailScreen() {
         : "95"
     );
 
+    // Manual tee fields (pre-fill from existing event data)
+    setManualTeeName(event.teeName || "");
+    setManualPar(event.par != null ? String(event.par) : "");
+    setManualCourseRating(event.courseRating != null ? String(event.courseRating) : "");
+    setManualSlopeRating(event.slopeRating != null ? String(event.slopeRating) : "");
+
     const hasTeeSettings =
       event.teeName != null || event.par != null || event.slopeRating != null ||
-      event.ladiesTeeName != null || event.ladiesPar != null || event.ladiesSlopeRating != null;
+      event.courseName != null;
     setShowTeeSettings(!!hasTeeSettings);
+
+    // Course search state
+    setCourseSearchQuery("");
+    setCourseSearchResults([]);
+    setSelectedCourseEdit(event.course_id ? { id: event.course_id, name: event.courseName || "" } : null);
 
     if (event.course_id) {
       loadTeesForEvent(event.course_id, event.tee_id ?? undefined);
+      setShowManualTee(false);
     } else {
       setTees([]);
       setSelectedTee(null);
+      setShowManualTee(!!(event.teeName || event.par != null));
     }
 
     setIsEditing(true);
@@ -270,6 +357,14 @@ export default function EventDetailScreen() {
       ? parseFloat(formHandicapAllowance.trim()) / 100
       : 0.95;
 
+    // Determine tee values: selected from DB or manual entry
+    const teeId = selectedTee?.id ?? undefined;
+    const teeName = selectedTee ? selectedTee.tee_name : (manualTeeName.trim() || undefined);
+    const par = selectedTee ? selectedTee.par_total : (manualPar.trim() ? parseFloat(manualPar) : undefined);
+    const courseRating = selectedTee ? selectedTee.course_rating : (manualCourseRating.trim() ? parseFloat(manualCourseRating) : undefined);
+    const slopeRating = selectedTee ? selectedTee.slope_rating : (manualSlopeRating.trim() ? parseFloat(manualSlopeRating) : undefined);
+    const courseId = selectedCourseEdit?.id || event?.course_id || undefined;
+
     setSaving(true);
     try {
       await updateEvent(eventId, {
@@ -278,11 +373,12 @@ export default function EventDetailScreen() {
         format: formFormat,
         classification: formClassification,
         courseName: formCourseName.trim() || undefined,
-        teeId: selectedTee?.id ?? undefined,
-        teeName: selectedTee?.tee_name ?? undefined,
-        par: selectedTee?.par_total,
-        courseRating: selectedTee?.course_rating,
-        slopeRating: selectedTee?.slope_rating,
+        courseId: courseId || undefined,
+        teeId,
+        teeName,
+        par,
+        courseRating,
+        slopeRating,
         handicapAllowance,
       });
 
@@ -443,9 +539,41 @@ export default function EventDetailScreen() {
               />
             </Pressable>
 
-            {/* Course / Tee: course name + tee selector (when course has tees) */}
+            {/* Course / Tee Setup body */}
             {showTeeSettings && (
               <View style={styles.teeSettingsContainer}>
+                {/* Course search */}
+                <View style={styles.formField}>
+                  <AppText variant="caption" style={styles.label}>Search Course</AppText>
+                  <AppInput
+                    placeholder="Search courses…"
+                    value={courseSearchQuery}
+                    onChangeText={setCourseSearchQuery}
+                    autoCapitalize="none"
+                  />
+                  {courseSearching && (
+                    <AppText variant="small" color="tertiary" style={{ marginTop: 4 }}>Searching…</AppText>
+                  )}
+                  {courseSearchError && (
+                    <AppText variant="small" style={{ color: colors.error, marginTop: 4 }}>{courseSearchError}</AppText>
+                  )}
+                  {courseSearchResults.length > 0 && (
+                    <View style={styles.searchResults}>
+                      {courseSearchResults.slice(0, 8).map((hit) => (
+                        <Pressable
+                          key={hit.id}
+                          onPress={() => handleEditSelectCourse(hit)}
+                          style={({ pressed }) => [styles.searchResultItem, { backgroundColor: pressed ? colors.backgroundSecondary : "transparent" }]}
+                        >
+                          <AppText variant="body" numberOfLines={1}>{hit.club_name || hit.name}</AppText>
+                          {hit.location && <AppText variant="small" color="tertiary">{hit.location}</AppText>}
+                        </Pressable>
+                      ))}
+                    </View>
+                  )}
+                </View>
+
+                {/* Selected course name (editable) */}
                 <View style={styles.formField}>
                   <AppText variant="caption" style={styles.label}>Course Name</AppText>
                   <AppInput
@@ -456,32 +584,88 @@ export default function EventDetailScreen() {
                   />
                 </View>
 
-                {event.course_id && (
+                {/* Tee selector from imported tees */}
+                {(selectedCourseEdit?.id || event.course_id) && (
                   <View style={styles.formField}>
                     <AppText variant="captionBold" style={styles.label}>Select Tee</AppText>
                     {teesLoading ? (
-                      <AppText variant="small" color="tertiary">Loading tees…</AppText>
-                    ) : (
+                      <AppText variant="small" color="tertiary">Importing course and tees…</AppText>
+                    ) : tees.length > 0 ? (
                       <CourseTeeSelector
                         tees={tees}
                         selectedTee={selectedTee}
-                        onSelectTee={setSelectedTee}
+                        onSelectTee={(tee) => { setSelectedTee(tee); setShowManualTee(false); }}
                       />
+                    ) : (
+                      <AppText variant="small" color="tertiary" style={{ marginBottom: spacing.xs }}>
+                        No tees found for this course.
+                      </AppText>
+                    )}
+                    {tees.length === 0 && !teesLoading && !showManualTee && (
+                      <Pressable onPress={() => setShowManualTee(true)}>
+                        <AppText variant="caption" color="primary" style={{ marginTop: spacing.xs }}>
+                          + Enter tee details manually
+                        </AppText>
+                      </Pressable>
                     )}
                   </View>
                 )}
 
-                {!event.course_id && (event.teeName != null || event.par != null) && (
-                  <View style={styles.formField}>
-                    <AppText variant="caption" color="secondary">Tee (read-only)</AppText>
-                    <View style={styles.readOnlyTee}>
-                      {event.teeName && <AppText variant="body">{event.teeName}</AppText>}
-                      {event.par != null && <AppText variant="caption" color="secondary">Par {event.par}</AppText>}
-                      {event.courseRating != null && event.slopeRating != null && (
-                        <AppText variant="caption" color="secondary">
-                          Rating {event.courseRating} / Slope {event.slopeRating}
-                        </AppText>
+                {/* Manual tee link when no course selected at all */}
+                {!selectedCourseEdit?.id && !event.course_id && !showManualTee && (
+                  <Pressable onPress={() => setShowManualTee(true)} style={{ marginBottom: spacing.base }}>
+                    <AppText variant="caption" color="primary">
+                      + Enter tee details manually
+                    </AppText>
+                  </Pressable>
+                )}
+
+                {/* Manual tee entry fallback */}
+                {showManualTee && (
+                  <View style={styles.manualTeeContainer}>
+                    <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: spacing.sm }}>
+                      <AppText variant="captionBold">Manual Tee Entry</AppText>
+                      {selectedTee && (
+                        <Pressable onPress={() => setShowManualTee(false)}>
+                          <AppText variant="small" color="primary">Use selected tee instead</AppText>
+                        </Pressable>
                       )}
+                    </View>
+                    <View style={styles.formField}>
+                      <AppText variant="caption" style={styles.label}>Tee Name</AppText>
+                      <AppInput
+                        placeholder="e.g. Yellow"
+                        value={manualTeeName}
+                        onChangeText={(v) => { setManualTeeName(v); setSelectedTee(null); }}
+                        autoCapitalize="words"
+                      />
+                    </View>
+                    <View style={styles.formField}>
+                      <AppText variant="caption" style={styles.label}>Par</AppText>
+                      <AppInput
+                        placeholder="e.g. 72"
+                        value={manualPar}
+                        onChangeText={(v) => { setManualPar(v); setSelectedTee(null); }}
+                        keyboardType="number-pad"
+                      />
+                    </View>
+                    <View style={styles.formField}>
+                      <AppText variant="caption" style={styles.label}>Course Rating</AppText>
+                      <AppInput
+                        placeholder="e.g. 70.1"
+                        value={manualCourseRating}
+                        onChangeText={(v) => { setManualCourseRating(v); setSelectedTee(null); }}
+                        keyboardType="decimal-pad"
+                      />
+                    </View>
+                    <View style={styles.formField}>
+                      <AppText variant="caption" style={styles.label}>Slope Rating</AppText>
+                      <AppInput
+                        placeholder="e.g. 128"
+                        value={manualSlopeRating}
+                        onChangeText={(v) => { setManualSlopeRating(v); setSelectedTee(null); }}
+                        keyboardType="number-pad"
+                      />
                     </View>
                   </View>
                 )}
@@ -907,5 +1091,26 @@ const styles = StyleSheet.create({
     borderRadius: radius.sm,
     backgroundColor: "rgba(0,0,0,0.04)",
     gap: 2,
+  },
+  searchResults: {
+    marginTop: spacing.xs,
+    borderWidth: 1,
+    borderColor: "rgba(0,0,0,0.08)",
+    borderRadius: radius.sm,
+    maxHeight: 240,
+  },
+  searchResultItem: {
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.sm,
+    borderBottomWidth: 1,
+    borderBottomColor: "rgba(0,0,0,0.06)",
+  },
+  manualTeeContainer: {
+    padding: spacing.sm,
+    borderRadius: radius.sm,
+    backgroundColor: "rgba(0,0,0,0.02)",
+    borderWidth: 1,
+    borderColor: "rgba(0,0,0,0.06)",
+    marginBottom: spacing.base,
   },
 });
