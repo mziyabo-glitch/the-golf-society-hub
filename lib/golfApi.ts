@@ -45,13 +45,13 @@ export type ApiCourseSearchResult = {
 };
 
 function getGolfApiKey(): string | undefined {
-  return process.env.EXPO_PUBLIC_GOLF_API_KEY ?? process.env.GOLF_API_KEY;
+  return process.env.NEXT_PUBLIC_GOLF_API_KEY ?? process.env.GOLF_API_KEY;
 }
 
 async function request<T>(path: string): Promise<T> {
   const apiKey = getGolfApiKey();
   if (!apiKey) {
-    throw new Error("Golf API key missing. Set EXPO_PUBLIC_GOLF_API_KEY.");
+    throw new Error("Golf API key missing. Set NEXT_PUBLIC_GOLF_API_KEY.");
   }
 
   const headers: Record<string, string> = {
