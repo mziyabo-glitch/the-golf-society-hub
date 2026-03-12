@@ -27,7 +27,9 @@ import {
   EVENT_FORMATS,
   EVENT_CLASSIFICATIONS,
 } from "@/lib/db_supabase/eventRepo";
-import { searchCourses, getTeesByCourseId, type CourseSearchHit, type CourseTee } from "@/lib/db_supabase/courseRepo";
+import { type CourseTee } from "@/lib/db_supabase/courseRepo";
+import { searchCourses as searchCoursesApi, getCourseById, type ApiCourseSearchResult } from "@/lib/golfApi";
+import { importCourse, type ImportedCourse } from "@/lib/importCourse";
 import { CourseTeeSelector } from "@/components/CourseTeeSelector";
 import { getPermissionsForMember } from "@/lib/rbac";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
@@ -98,12 +100,12 @@ export default function EventsScreen() {
   const [validationNotice, setValidationNotice] = useState<string | null>(null);
   const [toast, setToast] = useState({ visible: false, message: "", type: "success" as const });
 
-  // Course / Tee: search course → select tee
+  // Course / Tee: GolfCourseAPI search → import → select tee
   const [courseSearchQuery, setCourseSearchQuery] = useState("");
-  const [courseSearchResults, setCourseSearchResults] = useState<CourseSearchHit[]>([]);
+  const [courseSearchResults, setCourseSearchResults] = useState<ApiCourseSearchResult[]>([]);
   const [courseSearchError, setCourseSearchError] = useState<string | null>(null);
   const [courseSearching, setCourseSearching] = useState(false);
-  const [selectedCourse, setSelectedCourse] = useState<CourseSearchHit | null>(null);
+  const [selectedCourse, setSelectedCourse] = useState<{ id: string; name: string } | null>(null);
   const [manualCourseName, setManualCourseName] = useState("");
   const [tees, setTees] = useState<CourseTee[]>([]);
   const [teesLoading, setTeesLoading] = useState(false);
@@ -132,10 +134,10 @@ export default function EventsScreen() {
     }
   }, [params.create, params.classification, permissions.canCreateEvents]);
 
-  // Debounced course search
+  // Debounced course search via GolfCourseAPI
   useEffect(() => {
     const q = courseSearchQuery.trim();
-    if (!q) {
+    if (!q || q.length < 2) {
       setCourseSearchResults([]);
       setCourseSearchError(null);
       return;
@@ -144,19 +146,23 @@ export default function EventsScreen() {
       setCourseSearching(true);
       setCourseSearchError(null);
       try {
-        const { data: hits, error } = await searchCourses(q);
+        console.log("[events] Searching GolfCourseAPI:", q);
+        const hits = await searchCoursesApi(q);
+        console.log("[events] GolfCourseAPI returned", hits.length, "results");
         setCourseSearchResults(hits);
-        setCourseSearchError(error);
+      } catch (e: any) {
+        console.warn("[events] GolfCourseAPI search failed:", e?.message);
+        setCourseSearchError(e?.message || "Course search failed");
+        setCourseSearchResults([]);
       } finally {
         setCourseSearching(false);
       }
-    }, 300);
+    }, 400);
     return () => clearTimeout(t);
   }, [courseSearchQuery]);
 
-  const handleSelectCourse = useCallback(async (course: CourseSearchHit) => {
-    console.log("[events] handleSelectCourse:", course.id, course.name);
-    setSelectedCourse(course);
+  const handleSelectCourse = useCallback(async (hit: ApiCourseSearchResult) => {
+    console.log("[events] handleSelectCourse:", hit.id, hit.name);
     setCourseSearchResults([]);
     setCourseSearchQuery("");
     setSelectedTee(null);
@@ -164,12 +170,26 @@ export default function EventsScreen() {
     setTeesError(null);
     setTeesLoading(true);
     try {
-      const list = await getTeesByCourseId(course.id);
-      setTees(list);
+      const full = await getCourseById(hit.id);
+      console.log("[events] getCourseById done, importing...");
+      const result: ImportedCourse = await importCourse(full);
+      console.log("[events] importCourse done:", result.courseId, result.tees.length, "tees");
+      setSelectedCourse({ id: result.courseId, name: result.courseName });
+      const mapped: CourseTee[] = result.tees.map((t) => ({
+        id: t.id,
+        course_id: result.courseId,
+        tee_name: t.teeName,
+        tee_color: null,
+        course_rating: t.courseRating ?? 0,
+        slope_rating: t.slopeRating ?? 0,
+        par_total: t.parTotal ?? 0,
+      }));
+      setTees(mapped);
     } catch (e: any) {
-      console.warn("[events] getTeesByCourseId failed", e?.message || e);
+      console.error("[events] course import failed:", e?.message || e);
+      setTeesError(e?.message || "Failed to import course");
+      setSelectedCourse({ id: "", name: hit.name });
       setTees([]);
-      setTeesError(e?.message || "Failed to load tees");
     } finally {
       setTeesLoading(false);
     }
@@ -503,7 +523,6 @@ export default function EventsScreen() {
                 <View style={[styles.selectedCourseRow, { borderColor: colors.border }]}>
                   <AppText variant="body" numberOfLines={1} style={{ flex: 1 }}>
                     {selectedCourse.name}
-                    {selectedCourse.location ? ` · ${selectedCourse.location}` : ""}
                   </AppText>
                   <Pressable
                     onPress={() => {
@@ -548,8 +567,10 @@ export default function EventsScreen() {
                           ]}
                         >
                           <AppText variant="body" numberOfLines={1}>{c.name}</AppText>
-                          {c.location ? (
-                            <AppText variant="small" color="secondary" numberOfLines={1}>{c.location}</AppText>
+                          {(c.club_name || c.location) ? (
+                            <AppText variant="small" color="secondary" numberOfLines={1}>
+                              {[c.club_name, c.location].filter(Boolean).join(" · ")}
+                            </AppText>
                           ) : null}
                         </Pressable>
                       ))}
@@ -557,7 +578,7 @@ export default function EventsScreen() {
                   )}
                   {!courseSearching && !courseSearchError && courseSearchQuery.trim().length >= 2 && courseSearchResults.length === 0 && (
                     <AppText variant="small" color="secondary" style={{ marginTop: 4 }}>
-                      No courses found. Add courses to the database or enter a name below.
+                      No courses found. Enter a name manually below.
                     </AppText>
                   )}
                   <View style={{ marginTop: spacing.sm }}>
@@ -579,7 +600,7 @@ export default function EventsScreen() {
             {selectedCourse && (
               <View style={styles.formField}>
                 {teesLoading ? (
-                  <AppText variant="small" color="tertiary">Loading tees…</AppText>
+                  <AppText variant="small" color="tertiary">Importing course and tees…</AppText>
                 ) : teesError ? (
                   <AppText variant="small" style={{ color: colors.error }}>
                     {"Couldn't load tees: "}{teesError}

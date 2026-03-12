@@ -52,7 +52,6 @@ export async function getTeesByCourseId(courseId: string): Promise<CourseTee[]> 
   console.log("[courseRepo] getTeesByCourseId returned", tees.length, "tees");
   return tees;
 }
-
 export type SearchCoursesResult = {
   data: CourseSearchHit[];
   error: string | null;
@@ -101,3 +100,4 @@ export async function searchCourses(
   });
   return { data: hits, error: null };
 }
+
