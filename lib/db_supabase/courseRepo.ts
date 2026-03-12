@@ -43,12 +43,21 @@ export async function getTeesByCourseId(courseId: string): Promise<CourseTee[]> 
   }));
 }
 
+export type SearchCoursesResult = {
+  data: CourseSearchHit[];
+  error: string | null;
+};
+
 /**
  * Search courses by name (for event creation: Search Course → Select Tee).
+ * Returns { data, error } so the UI can show "No results" vs "Search failed".
  */
-export async function searchCourses(query: string, limit = 20): Promise<CourseSearchHit[]> {
+export async function searchCourses(
+  query: string,
+  limit = 20
+): Promise<SearchCoursesResult> {
   const q = (query || "").trim();
-  if (!q) return [];
+  if (!q) return { data: [], error: null };
 
   const { data, error } = await supabase
     .from("courses")
@@ -58,13 +67,14 @@ export async function searchCourses(query: string, limit = 20): Promise<CourseSe
     .limit(limit);
 
   if (error) {
-    console.error("[courseRepo] searchCourses failed:", error.message);
-    return [];
+    console.error("[courseRepo] searchCourses failed:", error.message, error.code);
+    return { data: [], error: error.message };
   }
 
-  return (data ?? []).map((row: any) => ({
+  const hits = (data ?? []).map((row: any) => ({
     id: row.id,
     name: row.name ?? "",
     area: row.area ?? null,
   }));
+  return { data: hits, error: null };
 }

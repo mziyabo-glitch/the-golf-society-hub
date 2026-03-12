@@ -101,8 +101,10 @@ export default function EventsScreen() {
   // Course / Tee: search course → select tee
   const [courseSearchQuery, setCourseSearchQuery] = useState("");
   const [courseSearchResults, setCourseSearchResults] = useState<CourseSearchHit[]>([]);
+  const [courseSearchError, setCourseSearchError] = useState<string | null>(null);
   const [courseSearching, setCourseSearching] = useState(false);
   const [selectedCourse, setSelectedCourse] = useState<CourseSearchHit | null>(null);
+  const [manualCourseName, setManualCourseName] = useState("");
   const [tees, setTees] = useState<CourseTee[]>([]);
   const [teesLoading, setTeesLoading] = useState(false);
   const [selectedTee, setSelectedTee] = useState<CourseTee | null>(null);
@@ -134,13 +136,16 @@ export default function EventsScreen() {
     const q = courseSearchQuery.trim();
     if (!q) {
       setCourseSearchResults([]);
+      setCourseSearchError(null);
       return;
     }
     const t = setTimeout(async () => {
       setCourseSearching(true);
+      setCourseSearchError(null);
       try {
-        const hits = await searchCourses(q);
+        const { data: hits, error } = await searchCourses(q);
         setCourseSearchResults(hits);
+        setCourseSearchError(error);
       } finally {
         setCourseSearching(false);
       }
@@ -273,6 +278,9 @@ export default function EventsScreen() {
       ? parseFloat(formHandicapAllowance.trim()) / 100
       : 0.95;
 
+    const courseName =
+      selectedCourse?.name ?? (manualCourseName.trim() || undefined);
+
     console.log("[createEvent] Calling createEvent...");
     const created = await createAction.run(async () =>
       createEvent(societyId, {
@@ -282,7 +290,7 @@ export default function EventsScreen() {
         classification: formClassification,
         createdBy: user.uid,
         courseId: selectedCourse?.id,
-        courseName: selectedCourse?.name,
+        courseName,
         teeId: selectedTee?.id ?? undefined,
         teeName: selectedTee?.tee_name,
         par: selectedTee?.par_total,
@@ -310,7 +318,9 @@ export default function EventsScreen() {
     setFormClassification("general");
     setCourseSearchQuery("");
     setCourseSearchResults([]);
+    setCourseSearchError(null);
     setSelectedCourse(null);
+    setManualCourseName("");
     setTees([]);
     setSelectedTee(null);
     setFormHandicapAllowance("95");
@@ -515,7 +525,12 @@ export default function EventsScreen() {
                   {courseSearching && (
                     <AppText variant="small" color="tertiary" style={{ marginTop: 4 }}>Searching…</AppText>
                   )}
-                  {courseSearchResults.length > 0 && !selectedCourse && (
+                  {courseSearchError && !courseSearching && (
+                    <AppText variant="small" style={{ marginTop: 4, color: colors.error }}>
+                      Couldn&apos;t load courses. {courseSearchError}
+                    </AppText>
+                  )}
+                  {!courseSearchError && courseSearchResults.length > 0 && !selectedCourse && (
                     <View style={styles.searchResults}>
                       {courseSearchResults.slice(0, 8).map((c) => (
                         <Pressable
@@ -534,6 +549,22 @@ export default function EventsScreen() {
                       ))}
                     </View>
                   )}
+                  {!courseSearching && !courseSearchError && courseSearchQuery.trim().length >= 2 && courseSearchResults.length === 0 && (
+                    <AppText variant="small" color="secondary" style={{ marginTop: 4 }}>
+                      No courses found. Add courses to the database or enter a name below.
+                    </AppText>
+                  )}
+                  <View style={{ marginTop: spacing.sm }}>
+                    <AppText variant="caption" color="secondary" style={styles.label}>
+                      Or enter course name (no tee data)
+                    </AppText>
+                    <AppInput
+                      placeholder="e.g. Forest of Arden"
+                      value={manualCourseName}
+                      onChangeText={setManualCourseName}
+                      autoCapitalize="words"
+                    />
+                  </View>
                 </>
               )}
             </View>
