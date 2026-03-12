@@ -278,15 +278,18 @@ export default function TeeSheetScreen() {
         : null;
     const allowance = event.handicapAllowance ?? DEFAULT_ALLOWANCE;
 
-    // Sort by handicap (high to low, nulls last)
-    const sorted = [...allPlayers].sort((a, b) => {
-      const hiA = a.handicapIndex ?? a.handicap_index ?? null;
-      const hiB = b.handicapIndex ?? b.handicap_index ?? null;
-      if (hiA == null && hiB == null) return 0;
-      if (hiA == null) return 1;
-      if (hiB == null) return -1;
-      return hiB - hiA;
-    });
+    // When playerIds has content, preserve saved tee sheet order; else sort by handicap
+    const sorted =
+      playerIds.length > 0
+        ? allPlayers
+        : [...allPlayers].sort((a, b) => {
+            const hiA = a.handicapIndex ?? a.handicap_index ?? null;
+            const hiB = b.handicapIndex ?? b.handicap_index ?? null;
+            if (hiA == null && hiB == null) return 0;
+            if (hiA == null) return 1;
+            if (hiB == null) return -1;
+            return hiB - hiA;
+          });
 
     // Calculate group sizes
     const groupSizes = calculateGroupSizes(sorted.length);
@@ -368,6 +371,18 @@ export default function TeeSheetScreen() {
         longestDriveHoles: ldHoles.length > 0 ? ldHoles : undefined,
       });
       setToast({ visible: true, message: "Tee sheet saved", type: "success" });
+
+      // Explicitly refetch event and reinitialize groups so saved order persists in UI
+      const [refreshedEvent, regs, guestList] = await Promise.all([
+        getEvent(selectedEventId),
+        getEventRegistrations(selectedEventId),
+        getEventGuests(selectedEventId),
+      ]);
+      if (refreshedEvent) {
+        setSelectedEvent(refreshedEvent);
+        const ids = refreshedEvent.playerIds?.length ? refreshedEvent.playerIds : regs.filter((r) => r.status === "in").map((r) => r.member_id);
+        initializeGroups({ ...refreshedEvent, playerIds: ids }, members, guestList);
+      }
       loadData();
     } catch (err: any) {
       const formatted = formatError(err);
