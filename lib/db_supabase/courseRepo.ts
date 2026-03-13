@@ -94,6 +94,66 @@ export async function getCourseByApiId(apiId: number): Promise<CourseWithTees | 
   };
 }
 
+export type ApiTeeInput = {
+  tee_name?: string;
+  name?: string;
+  course_rating?: number;
+  slope_rating?: number;
+  par_total?: number;
+  par?: number;
+  total_yards?: number;
+  yards?: number;
+  gender?: string;
+};
+
+/**
+ * Upsert tees from API response into course_tees.
+ * Prevents duplicates by checking (course_id, tee_name).
+ * Call getTeesByCourseId after to reload.
+ */
+export async function upsertTeesFromApi(
+  courseId: string,
+  apiTees: ApiTeeInput[] | { male?: ApiTeeInput[]; female?: ApiTeeInput[] }
+): Promise<CourseTee[]> {
+  const flat: ApiTeeInput[] = Array.isArray(apiTees)
+    ? apiTees
+    : [
+        ...(apiTees?.male ?? []).map((t) => ({ ...t, gender: "M" })),
+        ...(apiTees?.female ?? []).map((t) => ({ ...t, gender: "F" })),
+      ];
+
+  if (flat.length === 0) return getTeesByCourseId(courseId);
+
+  const rows = flat
+    .map((t) => {
+      const teeName = (t.tee_name || t.name || "").trim();
+      if (!teeName) return null;
+      const yards = t.total_yards ?? t.yards;
+      return {
+        course_id: courseId,
+        tee_name: teeName,
+        course_rating: t.course_rating ?? null,
+        slope_rating: t.slope_rating ?? null,
+        par_total: t.par_total ?? t.par ?? null,
+        yards: yards != null ? Number(yards) : null,
+        gender: t.gender ?? null,
+      };
+    })
+    .filter((r): r is NonNullable<typeof r> => r !== null);
+
+  for (const row of rows) {
+    const { error } = await supabase.from("course_tees").upsert(row, {
+      onConflict: "course_id,tee_name",
+      ignoreDuplicates: false,
+    });
+    if (error) {
+      console.warn("[courseRepo] upsertTeesFromApi:", error.message);
+    }
+  }
+
+  return getTeesByCourseId(courseId);
+}
+
 /**
  * Search courses by name (for event creation: Search Course → Select Tee).
  *

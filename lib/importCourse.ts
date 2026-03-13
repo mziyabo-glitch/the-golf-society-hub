@@ -1,4 +1,5 @@
 import { supabase } from "@/lib/supabase";
+import { upsertTeesFromApi } from "@/lib/db_supabase/courseRepo";
 import type { ApiCourse, ApiTee } from "@/lib/golfApi";
 
 export type ImportedTee = {
@@ -217,7 +218,20 @@ export async function importCourse(apiCourse: ApiCourse): Promise<ImportedCourse
           ...((apiCourse.tees?.female as ApiTee[] | undefined) || []).map((t) => ({ ...t, gender: "F" as const })),
         ];
     await importTeesAndHoles(existing.id, mergedTees);
-    const teesAfter = await getImportedTees(existing.id);
+    let teesAfter = await getImportedTees(existing.id);
+    if (teesAfter.length === 0 && mergedTees.length > 0) {
+      console.log("[importCourse] No tees from re-import, trying upsertTeesFromApi");
+      const list = await upsertTeesFromApi(existing.id, apiCourse.tees as any);
+      teesAfter = list.map((t) => ({
+        id: t.id,
+        teeName: t.tee_name,
+        courseRating: t.course_rating ?? null,
+        slopeRating: t.slope_rating ?? null,
+        parTotal: t.par_total ?? null,
+        gender: t.gender ?? null,
+        yards: t.yards ?? null,
+      }));
+    }
     console.log("[importCourse] re-imported tees:", teesAfter.length, teesAfter.map((t) => t.teeName));
     return {
       courseId: existing.id,
@@ -237,7 +251,21 @@ export async function importCourse(apiCourse: ApiCourse): Promise<ImportedCourse
       ];
 
   await importTeesAndHoles(created.id, mergedTees);
-  const tees = await getImportedTees(created.id);
+  let tees = await getImportedTees(created.id);
+
+  if (tees.length === 0 && mergedTees.length > 0) {
+    console.log("[importCourse] No tees from importTeesAndHoles, trying upsertTeesFromApi");
+    const list = await upsertTeesFromApi(created.id, apiCourse.tees as any);
+    tees = list.map((t) => ({
+      id: t.id,
+      teeName: t.tee_name,
+      courseRating: t.course_rating ?? null,
+      slopeRating: t.slope_rating ?? null,
+      parTotal: t.par_total ?? null,
+      gender: t.gender ?? null,
+      yards: t.yards ?? null,
+    }));
+  }
 
   console.log("[importCourse] Imported tees:", tees.length, tees.map((t) => `${t.teeName} – CR ${t.courseRating} / SR ${t.slopeRating}`));
 
