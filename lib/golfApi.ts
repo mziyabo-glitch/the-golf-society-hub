@@ -1,3 +1,5 @@
+import { GOLF_API_KEY } from "@/lib/env";
+
 const API_BASE = "https://api.golfcourseapi.com/v1";
 
 export type ApiHole = {
@@ -44,20 +46,15 @@ export type ApiCourseSearchResult = {
   location?: string;
 };
 
-function getGolfApiKey(): string | undefined {
-  return process.env.NEXT_PUBLIC_GOLF_API_KEY ?? process.env.GOLF_API_KEY;
-}
-
 async function request<T>(path: string): Promise<T> {
-  const apiKey = getGolfApiKey();
-  if (!apiKey) {
-    throw new Error("Golf API key missing. Set NEXT_PUBLIC_GOLF_API_KEY.");
+  if (!GOLF_API_KEY) {
+    throw new Error("Golf API authentication failed.");
   }
 
   const headers: Record<string, string> = {
     Accept: "application/json",
     "Content-Type": "application/json",
-    Authorization: `Bearer ${apiKey}`,
+    Authorization: `Key ${GOLF_API_KEY}`,
   };
 
   const res = await fetch(`${API_BASE}${path}`, { method: "GET", headers });
@@ -74,7 +71,8 @@ async function request<T>(path: string): Promise<T> {
       throw new Error(`GolfCourseAPI 400: ${msg}. Check API key (GOLFCOURSE_API_KEY) and endpoint.`);
     }
     if (res.status === 401) {
-      throw new Error("GolfCourseAPI: Invalid or missing API key.");
+      console.error("GolfCourseAPI authorization failed. Check API key format.");
+      throw new Error("Golf API authentication failed.");
     }
     throw new Error(`GolfCourseAPI error (${res.status}): ${msg}`);
   }
@@ -82,11 +80,7 @@ async function request<T>(path: string): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-export async function searchCourses(query: string): Promise<ApiCourseSearchResult[]> {
-  const trimmed = query.trim();
-  if (!trimmed) return [];
-
-  const payload: any = await request(`/search?search_query=${encodeURIComponent(trimmed)}`);
+function parseSearchPayload(payload: any): ApiCourseSearchResult[] {
   const list: any[] = Array.isArray(payload)
     ? payload
     : Array.isArray(payload?.courses)
@@ -121,6 +115,33 @@ export async function searchCourses(query: string): Promise<ApiCourseSearchResul
       };
     })
     .filter((row) => Number.isFinite(row.id) && !!row.name);
+}
+
+export async function searchCourses(query: string): Promise<ApiCourseSearchResult[]> {
+  const trimmed = query.trim();
+  if (!trimmed) return [];
+
+  if (typeof window !== "undefined") {
+    try {
+      const res = await fetch(`/api/golf/search?q=${encodeURIComponent(trimmed)}`);
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err?.error || `Search failed (${res.status})`);
+      }
+      const payload = await res.json();
+      return parseSearchPayload(payload);
+    } catch (e: any) {
+      throw e;
+    }
+  }
+
+  if (!GOLF_API_KEY) {
+    console.warn("Skipping GolfCourseAPI request: key missing");
+    return [];
+  }
+
+  const payload: any = await request(`/search?search_query=${encodeURIComponent(trimmed)}`);
+  return parseSearchPayload(payload);
 }
 
 export async function getCourseById(id: number): Promise<ApiCourse> {
