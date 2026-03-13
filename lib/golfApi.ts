@@ -144,9 +144,26 @@ export async function searchCourses(query: string): Promise<ApiCourseSearchResul
   return parseSearchPayload(payload);
 }
 
+function extractCourseRow(payload: any): any {
+  const course = payload?.courses?.[0] ?? payload?.course ?? payload?.data ?? payload;
+  return course;
+}
+
 export async function getCourseById(id: number): Promise<ApiCourse> {
-  const payload: any = await request(`/courses/${id}`);
-  const row = payload?.course ?? payload?.data ?? payload;
+  let payload: any;
+
+  if (typeof window !== "undefined") {
+    const res = await fetch(`/api/golf/course/${id}`);
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err?.error || `Failed to fetch course (${res.status})`);
+    }
+    payload = await res.json();
+  } else {
+    payload = await request(`/courses/${id}`);
+  }
+
+  const row = extractCourseRow(payload);
 
   // Parse tees: API returns { male: [...], female: [...] } or flat array
   let tees: ApiTee[] | { male: ApiTee[]; female: ApiTee[] };
