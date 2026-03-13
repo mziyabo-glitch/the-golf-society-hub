@@ -129,25 +129,28 @@ export async function upsertTeesFromApi(
       const teeName = (t.tee_name || t.name || "").trim();
       if (!teeName) return null;
       const yards = t.total_yards ?? t.yards;
+      const slope = t.slope_rating;
+      const courseRating = t.course_rating;
       return {
         course_id: courseId,
         tee_name: teeName,
-        course_rating: t.course_rating ?? null,
-        slope_rating: t.slope_rating ?? null,
+        course_rating: courseRating != null ? Number(courseRating) : null,
+        slope_rating: slope != null ? Math.round(Number(slope)) : null,
         par_total: t.par_total ?? t.par ?? null,
-        yards: yards != null ? Number(yards) : null,
+        yards: yards != null ? Math.round(Number(yards)) : null,
         gender: t.gender ?? null,
       };
     })
     .filter((r): r is NonNullable<typeof r> => r !== null);
 
   for (const row of rows) {
-    const { error } = await supabase.from("course_tees").upsert(row, {
-      onConflict: "course_id,tee_name",
-      ignoreDuplicates: false,
-    });
+    const { error } = await supabase.from("course_tees").insert(row);
+
     if (error) {
-      console.warn("[courseRepo] upsertTeesFromApi:", error.message);
+      if ((error as any).code === "23505") {
+        continue;
+      }
+      console.warn("[courseRepo] upsertTeesFromApi insert:", error.message);
     }
   }
 
