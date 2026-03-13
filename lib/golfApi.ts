@@ -1,4 +1,4 @@
-import { GOLF_API_KEY } from "@/lib/config";
+import { GOLF_API_KEY } from "@/lib/env";
 
 const API_BASE = "https://api.golfcourseapi.com/v1";
 
