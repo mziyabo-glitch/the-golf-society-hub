@@ -1,3 +1,5 @@
+import { GOLF_API_KEY } from "@/lib/config";
+
 const API_BASE = "https://api.golfcourseapi.com/v1";
 
 export type ApiHole = {
@@ -44,20 +46,15 @@ export type ApiCourseSearchResult = {
   location?: string;
 };
 
-function getGolfApiKey(): string | undefined {
-  return process.env.NEXT_PUBLIC_GOLF_API_KEY ?? process.env.GOLF_API_KEY;
-}
-
 async function request<T>(path: string): Promise<T> {
-  const apiKey = getGolfApiKey();
-  if (!apiKey) {
+  if (!GOLF_API_KEY) {
     throw new Error("Golf API key missing. Set NEXT_PUBLIC_GOLF_API_KEY.");
   }
 
   const headers: Record<string, string> = {
     Accept: "application/json",
     "Content-Type": "application/json",
-    Authorization: `Bearer ${apiKey}`,
+    Authorization: `Bearer ${GOLF_API_KEY}`,
   };
 
   const res = await fetch(`${API_BASE}${path}`, { method: "GET", headers });
@@ -85,6 +82,11 @@ async function request<T>(path: string): Promise<T> {
 export async function searchCourses(query: string): Promise<ApiCourseSearchResult[]> {
   const trimmed = query.trim();
   if (!trimmed) return [];
+
+  if (!GOLF_API_KEY) {
+    console.warn("Skipping GolfCourseAPI request: key missing");
+    return [];
+  }
 
   const payload: any = await request(`/search?search_query=${encodeURIComponent(trimmed)}`);
   const list: any[] = Array.isArray(payload)
