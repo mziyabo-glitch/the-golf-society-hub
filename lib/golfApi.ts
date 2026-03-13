@@ -80,16 +80,7 @@ async function request<T>(path: string): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-export async function searchCourses(query: string): Promise<ApiCourseSearchResult[]> {
-  const trimmed = query.trim();
-  if (!trimmed) return [];
-
-  if (!GOLF_API_KEY) {
-    console.warn("Skipping GolfCourseAPI request: key missing");
-    return [];
-  }
-
-  const payload: any = await request(`/search?search_query=${encodeURIComponent(trimmed)}`);
+function parseSearchPayload(payload: any): ApiCourseSearchResult[] {
   const list: any[] = Array.isArray(payload)
     ? payload
     : Array.isArray(payload?.courses)
@@ -124,6 +115,33 @@ export async function searchCourses(query: string): Promise<ApiCourseSearchResul
       };
     })
     .filter((row) => Number.isFinite(row.id) && !!row.name);
+}
+
+export async function searchCourses(query: string): Promise<ApiCourseSearchResult[]> {
+  const trimmed = query.trim();
+  if (!trimmed) return [];
+
+  if (typeof window !== "undefined") {
+    try {
+      const res = await fetch(`/api/golf/search?q=${encodeURIComponent(trimmed)}`);
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err?.error || `Search failed (${res.status})`);
+      }
+      const payload = await res.json();
+      return parseSearchPayload(payload);
+    } catch (e: any) {
+      throw e;
+    }
+  }
+
+  if (!GOLF_API_KEY) {
+    console.warn("Skipping GolfCourseAPI request: key missing");
+    return [];
+  }
+
+  const payload: any = await request(`/search?search_query=${encodeURIComponent(trimmed)}`);
+  return parseSearchPayload(payload);
 }
 
 export async function getCourseById(id: number): Promise<ApiCourse> {

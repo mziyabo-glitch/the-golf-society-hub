@@ -28,7 +28,6 @@ import {
   EVENT_CLASSIFICATIONS,
 } from "@/lib/db_supabase/eventRepo";
 import { getTeesByCourseId, getCourseByApiId, type CourseTee } from "@/lib/db_supabase/courseRepo";
-import { GOLF_API_KEY } from "@/lib/env";
 import { searchCourses as searchCoursesApi, getCourseById, type ApiCourseSearchResult } from "@/lib/golfApi";
 import { importCourse, type ImportedCourse } from "@/lib/importCourse";
 import { CourseTeeSelector } from "@/components/CourseTeeSelector";
@@ -220,12 +219,6 @@ export default function EventDetailScreen() {
       debounce(async (q: string) => {
         setCourseSearching(true);
         setCourseSearchError(null);
-        if (!GOLF_API_KEY) {
-          setCourseSearchError("Golf API authentication failed.");
-          setCourseSearchResults([]);
-          setCourseSearching(false);
-          return;
-        }
         try {
           const hits = await searchCoursesApi(q);
           setCourseSearchResults(hits);
