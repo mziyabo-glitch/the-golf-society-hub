@@ -221,7 +221,7 @@ export default function EventDetailScreen() {
         setCourseSearching(true);
         setCourseSearchError(null);
         if (!GOLF_API_KEY) {
-          setCourseSearchError("Golf API key missing. Set NEXT_PUBLIC_GOLF_API_KEY.");
+          setCourseSearchError("Golf API authentication failed.");
           setCourseSearchResults([]);
           setCourseSearching(false);
           return;

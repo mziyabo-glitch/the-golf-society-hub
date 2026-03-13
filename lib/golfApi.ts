@@ -48,13 +48,13 @@ export type ApiCourseSearchResult = {
 
 async function request<T>(path: string): Promise<T> {
   if (!GOLF_API_KEY) {
-    throw new Error("Golf API key missing. Set NEXT_PUBLIC_GOLF_API_KEY.");
+    throw new Error("Golf API authentication failed.");
   }
 
   const headers: Record<string, string> = {
     Accept: "application/json",
     "Content-Type": "application/json",
-    Authorization: `Bearer ${GOLF_API_KEY}`,
+    Authorization: `Key ${GOLF_API_KEY}`,
   };
 
   const res = await fetch(`${API_BASE}${path}`, { method: "GET", headers });
@@ -71,7 +71,8 @@ async function request<T>(path: string): Promise<T> {
       throw new Error(`GolfCourseAPI 400: ${msg}. Check API key (GOLFCOURSE_API_KEY) and endpoint.`);
     }
     if (res.status === 401) {
-      throw new Error("GolfCourseAPI: Invalid or missing API key.");
+      console.error("GolfCourseAPI authorization failed. Check API key format.");
+      throw new Error("Golf API authentication failed.");
     }
     throw new Error(`GolfCourseAPI error (${res.status}): ${msg}`);
   }
