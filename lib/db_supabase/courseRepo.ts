@@ -75,7 +75,7 @@ export type CourseWithTees = {
 export async function getCourseByApiId(apiId: number): Promise<CourseWithTees | null> {
   const { data: course, error: courseErr } = await supabase
     .from("courses")
-    .select("id, name")
+    .select("id, course_name")
     .eq("api_id", apiId)
     .maybeSingle();
 
@@ -88,7 +88,7 @@ export async function getCourseByApiId(apiId: number): Promise<CourseWithTees | 
   }
   return {
     courseId: course.id,
-    courseName: course.name ?? "",
+    courseName: course.course_name ?? course.name ?? "",
     tees,
     fromCache: true,
   };
@@ -176,8 +176,8 @@ export async function searchCourses(
   const { data, error } = await supabase
     .from("courses")
     .select("*")
-    .ilike("name", `%${q}%`)
-    .order("name")
+    .ilike("course_name", `%${q}%`)
+    .order("course_name")
     .limit(limit);
 
   if (error) {
@@ -194,7 +194,7 @@ export async function searchCourses(
     const location = row.area || row.city || row.country || null;
     return {
       id: row.id,
-      name: row.name ?? "",
+      name: row.course_name ?? row.name ?? "",
       location,
     };
   });

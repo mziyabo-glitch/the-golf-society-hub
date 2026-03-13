@@ -56,7 +56,7 @@ function normalizeTee(tee: ApiTee, gender?: "M" | "F"): {
 async function getExistingCourseByApiId(apiId: number) {
   const { data, error } = await supabase
     .from("courses")
-    .select("id, name")
+    .select("id, course_name")
     .eq("api_id", apiId)
     .maybeSingle();
 

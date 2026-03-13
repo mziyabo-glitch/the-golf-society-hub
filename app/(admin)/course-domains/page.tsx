@@ -29,6 +29,7 @@ type CourseDomain = {
 type CourseWithCandidates = {
   id: string;
   name: string;
+  course_name?: string;
   area: string | null;
   candidates: CourseDomain[];
 };
@@ -47,8 +48,8 @@ export default function CourseDomainsPage() {
     try {
       const { data: courseRows, error: e1 } = await supabase
         .from("courses")
-        .select("id, name, area")
-        .order("name")
+        .select("id, course_name, area")
+        .order("course_name")
         .range(offset, offset + PAGE_SIZE - 1);
 
       if (e1) throw e1;
@@ -75,6 +76,7 @@ export default function CourseDomainsPage() {
 
       const merged: CourseWithCandidates[] = courseRows.map((c) => ({
         ...c,
+        name: c.course_name ?? c.name ?? "",
         candidates: (byCourse[c.id] || []).sort((a, b) => (b.confidence || 0) - (a.confidence || 0)),
       }));
 

@@ -68,7 +68,7 @@ async function main() {
 
   let q = supabaseAdmin
     .from("course_domains")
-    .select("id, course_id, domain, homepage_url, confidence, courses(name, area)")
+    .select("id, course_id, domain, homepage_url, confidence, courses(course_name, area)")
     .eq("status", "candidate");
 
   if (courseId) q = q.eq("course_id", courseId);
@@ -95,7 +95,7 @@ async function main() {
       domain: row.domain,
       homepageUrl: row.homepage_url,
       pageTitle,
-      courseName: course.name || "",
+      courseName: course.course_name ?? course.name ?? "",
       area: course.area || null,
     });
 
