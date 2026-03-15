@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { StyleSheet, View, Alert, KeyboardAvoidingView, Platform, TouchableOpacity } from "react-native";
+import { StyleSheet, View, Image, Alert, KeyboardAvoidingView, Platform, TouchableOpacity, Pressable } from "react-native";
 import { useLocalSearchParams, usePathname, useRouter } from "expo-router";
 import { Feather } from "@expo/vector-icons";
 
@@ -13,11 +13,14 @@ import { PrimaryButton, SecondaryButton } from "@/components/ui/Button";
 import { LoadingState } from "@/components/ui/LoadingState";
 import { useBootstrap } from "@/lib/useBootstrap";
 import { ensureSignedIn } from "@/lib/auth_supabase";
-import { createSociety } from "@/lib/db_supabase/societyRepo";
+import { createSociety, lookupSocietyByJoinCode, type SocietyDoc } from "@/lib/db_supabase/societyRepo";
 import { createMember } from "@/lib/db_supabase/memberRepo";
-import { setActiveSocietyAndMember } from "@/lib/db_supabase/profileRepo";
+import { setActiveSocietyAndMember, setSocietyOnboardingSkipped } from "@/lib/db_supabase/profileRepo";
 import { supabase } from "@/lib/supabase";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
+import { getSocietyLogoUrl } from "@/lib/societyLogo";
+import { uploadSocietyLogo } from "@/lib/db_supabase/societyRepo";
+import * as ImagePicker from "expo-image-picker";
 import { blurWebActiveElement } from "@/lib/ui/focus";
 
 type Mode = "choose" | "join" | "create";
@@ -49,6 +52,7 @@ export default function OnboardingScreen() {
   const {
     user,
     ready,
+    profile,
     activeSocietyId,
     member,
     membershipLoading,
@@ -71,6 +75,8 @@ export default function OnboardingScreen() {
   const [joinCode, setJoinCode] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [joinError, setJoinError] = useState<string | null>(null);
+  const [lookupResult, setLookupResult] = useState<{ society: SocietyDoc } | null>(null);
+  const [lookupLoading, setLookupLoading] = useState(false);
   const [pendingJoinNavigation, setPendingJoinNavigation] = useState<{
     societyId: string;
     memberId: string;
@@ -84,10 +90,25 @@ export default function OnboardingScreen() {
 
   const loading = joinLoading || createLoading;
 
+  const handleSkip = async () => {
+    try {
+      const authUser = await ensureSignedIn();
+      if (authUser?.id) {
+        await setSocietyOnboardingSkipped(authUser.id);
+      }
+    } catch (e) {
+      console.warn("[onboarding] setSocietyOnboardingSkipped failed:", e);
+    }
+    refresh();
+    blurWebActiveElement();
+    router.replace(SOCIETY_HOME_ROUTE);
+  };
+
   // Create form state
   const [societyName, setSocietyName] = useState("");
   const [country, setCountry] = useState("");
-  const [captainName, setCaptainName] = useState("");
+  const [captainName, setCaptainName] = useState(profile?.full_name ?? "");
+  const [logoUri, setLogoUri] = useState<string | null>(null);
 
   // Buttons are disabled until auth is ready
   const isAuthReady = ready && !!user?.uid;
@@ -101,6 +122,38 @@ export default function OnboardingScreen() {
       setMode("join");
     }
   }, [routeMode, isJoinAliasRoute]);
+
+  useEffect(() => {
+    if (mode === "create" && profile?.full_name && !captainName.trim()) {
+      setCaptainName(profile.full_name);
+    }
+  }, [mode, profile?.full_name]);
+
+  // Instant validation: debounced lookup when join code is 4+ chars
+  useEffect(() => {
+    const code = joinCode.trim().toUpperCase().replace(/\s/g, "");
+    if (code.length < 4) {
+      setLookupResult(null);
+      return;
+    }
+    const t = setTimeout(async () => {
+      setLookupLoading(true);
+      setLookupResult(null);
+      try {
+        const result = await lookupSocietyByJoinCode(code);
+        if (result.ok && result.society) {
+          setLookupResult({ society: result.society });
+        } else {
+          setLookupResult(null);
+        }
+      } catch {
+        setLookupResult(null);
+      } finally {
+        setLookupLoading(false);
+      }
+    }, 300);
+    return () => clearTimeout(t);
+  }, [joinCode]);
 
   useEffect(() => {
     if (!pendingJoinNavigation) return;
@@ -387,10 +440,6 @@ export default function OnboardingScreen() {
       Alert.alert("Missing Name", "Please enter a society name.");
       return;
     }
-    if (!country.trim()) {
-      Alert.alert("Missing Country", "Please enter a country.");
-      return;
-    }
     if (!captainName.trim()) {
       Alert.alert("Missing Name", "Please enter your name (you will be the Captain).");
       return;
@@ -414,7 +463,7 @@ export default function OnboardingScreen() {
       console.log("[onboarding] createSociety start");
       const society = await createSociety({
         name: societyName.trim(),
-        country: country.trim(),
+        country: country.trim() || undefined,
         createdBy: uid,
       });
       console.log("[onboarding] createSociety success:", society.id, "joinCode:", society.join_code);
@@ -433,6 +482,15 @@ export default function OnboardingScreen() {
       console.log("[onboarding] updateProfile start");
       await setActiveSocietyAndMember(uid, society.id, memberId);
       console.log("[onboarding] updateProfile success");
+
+      // Step 4b: Upload logo if selected
+      if (logoUri) {
+        try {
+          await uploadSocietyLogo(society.id, { uri: logoUri });
+        } catch (logoErr) {
+          console.warn("[onboarding] Logo upload failed:", logoErr);
+        }
+      }
 
       // Refresh bootstrap state to pick up the new active society
       refresh();
@@ -497,7 +555,34 @@ export default function OnboardingScreen() {
                   autoCorrect={false}
                   maxLength={10}
                 />
+                {lookupLoading && (
+                  <AppText variant="small" color="tertiary" style={{ marginTop: 4 }}>
+                    Checking...
+                  </AppText>
+                )}
               </View>
+
+              {lookupResult && (
+                <View style={[styles.societyPreview, { backgroundColor: colors.backgroundTertiary, borderColor: colors.border }]}>
+                  {getSocietyLogoUrl(lookupResult.society) ? (
+                    <Image
+                      source={{ uri: getSocietyLogoUrl(lookupResult.society)! }}
+                      style={styles.societyLogo}
+                      resizeMode="contain"
+                    />
+                  ) : (
+                    <View style={[styles.societyLogoPlaceholder, { backgroundColor: colors.primary + "20" }]}>
+                      <Feather name="flag" size={24} color={colors.primary} />
+                    </View>
+                  )}
+                  <AppText variant="bodyBold" style={styles.societyPreviewName}>
+                    {lookupResult.society.name}
+                  </AppText>
+                  <AppText variant="small" color="tertiary">
+                    Ready to join
+                  </AppText>
+                </View>
+              )}
 
               <View style={styles.formField}>
                 <AppText variant="captionBold" style={styles.label}>Your Name</AppText>
@@ -516,10 +601,10 @@ export default function OnboardingScreen() {
                   void handleJoinSociety();
                 }}
                 loading={joinLoading}
-                disabled={joinLoading}
+                disabled={joinLoading || (!!lookupResult && !displayName.trim())}
                 style={styles.submitButton}
               >
-                Join Society
+                {lookupResult ? `Join ${lookupResult.society.name}` : "Join Society"}
               </PrimaryButton>
             </AppCard>
           </View>
@@ -565,7 +650,43 @@ export default function OnboardingScreen() {
               </View>
 
               <View style={styles.formField}>
-                <AppText variant="captionBold" style={styles.label}>Country</AppText>
+                <AppText variant="captionBold" style={styles.label}>Logo (optional)</AppText>
+                <View style={styles.logoRow}>
+                  {logoUri ? (
+                    <View style={styles.logoPreviewRow}>
+                      <Image source={{ uri: logoUri }} style={styles.logoPreview} resizeMode="cover" />
+                      <SecondaryButton onPress={() => setLogoUri(null)} size="sm">
+                        Remove
+                      </SecondaryButton>
+                    </View>
+                  ) : (
+                    <SecondaryButton
+                      onPress={async () => {
+                        const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+                        if (status !== "granted") {
+                          Alert.alert("Permission needed", "Allow access to photos to add a logo.");
+                          return;
+                        }
+                        const result = await ImagePicker.launchImageLibraryAsync({
+                          mediaTypes: ["images"],
+                          allowsEditing: true,
+                          aspect: [1, 1],
+                          quality: 0.8,
+                        });
+                        if (!result.canceled && result.assets[0]) {
+                          setLogoUri(result.assets[0].uri);
+                        }
+                      }}
+                      size="sm"
+                    >
+                      Add logo
+                    </SecondaryButton>
+                  )}
+                </View>
+              </View>
+
+              <View style={styles.formField}>
+                <AppText variant="captionBold" style={styles.label}>Country (optional)</AppText>
                 <AppInput
                   placeholder="e.g. United Kingdom"
                   value={country}
@@ -612,9 +733,9 @@ export default function OnboardingScreen() {
         <View style={[styles.iconContainer, { backgroundColor: colors.backgroundTertiary }]}>
           <Feather name="flag" size={40} color={colors.primary} />
         </View>
-        <AppText variant="title" style={styles.title}>Golf Society Hub</AppText>
+        <AppText variant="title" style={styles.title}>Join your golf society</AppText>
         <AppText variant="body" color="secondary" style={styles.subtitle}>
-          Manage your golf society with ease. Track events, members, handicaps, and more.
+          Join with a code, create your own, or explore the app first.
         </AppText>
 
         <View style={styles.optionsContainer}>
@@ -640,7 +761,7 @@ export default function OnboardingScreen() {
               ]}
             >
               <AppText variant="button" color="inverse">
-                {isAuthReady ? "Join with Code" : "Signing in…"}
+                {isAuthReady ? "Join a Society" : "Signing in…"}
               </AppText>
             </TouchableOpacity>
           </AppCard>
@@ -658,9 +779,15 @@ export default function OnboardingScreen() {
               style={styles.optionButton}
               disabled={loading}
             >
-              {isAuthReady ? "Create New" : "Signing in…"}
+              {isAuthReady ? "Create a Society" : "Signing in…"}
             </SecondaryButton>
           </AppCard>
+
+          <Pressable onPress={handleSkip} style={styles.skipRow} hitSlop={12}>
+            <AppText variant="small" color="tertiary">
+              Skip for now
+            </AppText>
+          </Pressable>
         </View>
       </View>
       <Toast
@@ -731,6 +858,11 @@ const styles = StyleSheet.create({
   optionButton: {
     width: "100%",
   },
+  skipRow: {
+    alignItems: "center",
+    paddingVertical: spacing.lg,
+    marginTop: spacing.sm,
+  },
   optionButtonTouch: {
     width: "100%",
     minHeight: 44,
@@ -745,6 +877,43 @@ const styles = StyleSheet.create({
   },
   formField: {
     marginBottom: spacing.base,
+  },
+  societyPreview: {
+    flexDirection: "row",
+    alignItems: "center",
+    padding: spacing.base,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    marginBottom: spacing.base,
+    gap: spacing.sm,
+  },
+  societyLogo: {
+    width: 48,
+    height: 48,
+    borderRadius: radius.sm,
+  },
+  societyLogoPlaceholder: {
+    width: 48,
+    height: 48,
+    borderRadius: radius.sm,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  societyPreviewName: {
+    flex: 1,
+  },
+  logoRow: {
+    marginTop: spacing.xs,
+  },
+  logoPreviewRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+  },
+  logoPreview: {
+    width: 64,
+    height: 64,
+    borderRadius: radius.sm,
   },
   errorNotice: {
     marginBottom: spacing.base,

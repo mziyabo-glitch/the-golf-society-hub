@@ -30,6 +30,18 @@ function isJoinFlowRoute(pathname?: string, seg0?: string): boolean {
   );
 }
 
+function isCompleteProfileRoute(pathname?: string, seg0?: string): boolean {
+  if (seg0 === "complete-profile") return true;
+  if (typeof pathname === "string" && pathname === "/complete-profile") return true;
+  return false;
+}
+
+function isAuthCallbackRoute(pathname?: string, seg0?: string): boolean {
+  if (seg0 === "auth") return true;
+  if (typeof pathname === "string" && pathname.startsWith("/auth/")) return true;
+  return false;
+}
+
 /** Routes that must never be redirected away from by any guard. */
 function isToolRoute(pathname?: string, seg0?: string): boolean {
   if (seg0 === "(share)") return true;
@@ -48,7 +60,8 @@ function RootNavigator() {
   const router = useRouter();
   const colors = getColors();
 
-  const isPublicPath = pathname === "/reset-password";
+  const isPublicPath =
+    pathname === "/reset-password" || isAuthCallbackRoute(pathname, segments[0]);
 
   // Track if we've already routed to prevent loops
   const hasRouted = useRef(false);
@@ -79,7 +92,8 @@ function RootNavigator() {
       const inApp = seg0 === "(app)" || seg0 === "app" || (typeof p === "string" && p?.startsWith("/(app)"));
       const inPublic = p === "/reset-password" || seg0 === "reset-password";
       const inJoinFlow = isJoinFlowRoute(p, seg0);
-      if (inPublic || inJoinFlow || isToolRoute(p, seg0)) return;
+      const inAuthCallback = isAuthCallbackRoute(p, seg0);
+      if (inPublic || inJoinFlow || inAuthCallback || isToolRoute(p, seg0)) return;
 
       if (session && !inApp) {
         const pendingRivalryCode = await consumePendingRivalryJoinCode();
@@ -126,6 +140,7 @@ function RootNavigator() {
     const inSinbookInvite = segments[0] === "sinbook";
     const inPublicRoute = isPublicPath || segments[0] === "reset-password";
     const inJoinFlow = isJoinFlowRoute(pathname, segments[0]);
+    const inCompleteProfile = isCompleteProfileRoute(pathname, segments[0]);
     const inMyProfile = pathname === "/(app)/my-profile";
     const hasSociety = !!activeSocietyId;
     const needsProfileCompletion = !!profile && !profile.profile_complete;
@@ -152,7 +167,7 @@ function RootNavigator() {
     }
 
     // Exempt routes that handle their own flow
-    if (inSinbookInvite || inPublicRoute || isToolRoute(pathname, segments[0])) {
+    if (inSinbookInvite || inPublicRoute || inCompleteProfile || isToolRoute(pathname, segments[0])) {
       return;
     }
     if (pathname === "/join-rivalry" || (typeof pathname === "string" && pathname.startsWith("/join-rivalry"))) {
@@ -167,12 +182,22 @@ function RootNavigator() {
       return;
     }
 
-    // Force profile completion before anything else
-    if (needsProfileCompletion && !inMyProfile && hasSociety) {
-      console.log("[_layout] Profile incomplete, redirecting to /my-profile");
+    // Force profile completion before anything else (all signed-in users)
+    if (needsProfileCompletion && !inCompleteProfile) {
+      console.log("[_layout] Profile incomplete, redirecting to /complete-profile");
       hasRouted.current = true;
       blurWebActiveElement();
-      router.replace("/(app)/my-profile");
+      router.replace("/complete-profile");
+      return;
+    }
+
+    // Profile complete + no society + not skipped -> onboarding (join/create/skip)
+    const hasSkippedSociety = !!profile?.society_onboarding_skipped;
+    if (!hasSociety && !inOnboarding && !recentlyHadSociety && !hasSkippedSociety) {
+      console.log("[_layout] No society, redirecting to /onboarding");
+      hasRouted.current = true;
+      blurWebActiveElement();
+      router.replace("/onboarding");
       return;
     }
 

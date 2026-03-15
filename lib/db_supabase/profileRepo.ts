@@ -13,6 +13,7 @@ export type ProfileDoc = {
   profile_complete: boolean;
   active_society_id: string | null;
   active_member_id: string | null;
+  society_onboarding_skipped?: boolean;
   created_at?: string;
   updated_at?: string;
 };
@@ -145,6 +146,40 @@ export async function updateUserProfile(
 }
 
 /**
+ * Update profile for first-time completion (full_name, email, whs_index).
+ * Sets profile_complete = true when full_name and email are present.
+ * Used by the onboarding "Complete your profile" screen.
+ */
+export async function updateProfileForCompletion(
+  userId: string,
+  fields: {
+    full_name: string;
+    email: string;
+    whs_index: number | null;
+  }
+): Promise<void> {
+  const profileComplete = !!(
+    fields.full_name?.trim() && fields.email?.trim()
+  );
+
+  const { error } = await supabase
+    .from("profiles")
+    .update({
+      full_name: fields.full_name.trim(),
+      email: fields.email.trim().toLowerCase(),
+      whs_index: fields.whs_index,
+      profile_complete: profileComplete,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", userId);
+
+  if (error) {
+    console.error("[profileRepo] updateProfileForCompletion failed:", error.message);
+    throw new Error(error.message || "Failed to save profile");
+  }
+}
+
+/**
  * Set active society + member
  * Called after Create Society or Join Society
  */
@@ -168,4 +203,14 @@ export async function clearActiveSociety(userId: string): Promise<void> {
     active_society_id: null,
     active_member_id: null,
   });
+}
+
+/**
+ * Mark that user chose "Skip for now" on society onboarding.
+ * Allows personal mode without redirecting back to onboarding.
+ */
+export async function setSocietyOnboardingSkipped(userId: string): Promise<void> {
+  await updateProfile(userId, {
+    society_onboarding_skipped: true,
+  } as Partial<ProfileDoc>);
 }

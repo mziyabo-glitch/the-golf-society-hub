@@ -3,10 +3,28 @@
 // All auth uses supabase-js, no manual fetch calls
 // NO .select().single() after upsert to avoid 406 errors
 
+import { Platform } from "react-native";
+import * as Linking from "expo-linking";
 import { supabase } from "@/lib/supabase";
 import type { User, Session } from "@supabase/supabase-js";
 
 const WEB_BASE_URL = "https://the-golf-society-hub.vercel.app";
+const AUTH_CALLBACK_PATH = "/auth/callback";
+
+/**
+ * Get the redirect URL for OAuth and magic link.
+ * Web: /auth/callback on same origin
+ * Native: Expo scheme (thegolfsocietyhub://auth/callback)
+ */
+export function getAuthRedirectUrl(): string {
+  if (typeof window !== "undefined" && window.location?.origin) {
+    return `${window.location.origin}${AUTH_CALLBACK_PATH}`;
+  }
+  if (Platform.OS === "web") {
+    return `${WEB_BASE_URL}${AUTH_CALLBACK_PATH}`;
+  }
+  return Linking.createURL(AUTH_CALLBACK_PATH);
+}
 
 // ============================================================================
 // Session Management
@@ -175,6 +193,107 @@ export async function resetPassword(email: string): Promise<void> {
   }
 
   console.log("[auth] resetPassword email sent to:", cleanEmail);
+}
+
+// ============================================================================
+// OAuth (Google, Apple)
+// ============================================================================
+
+export type OAuthProvider = "google" | "apple";
+
+/**
+ * Sign in with OAuth provider (Google or Apple).
+ * Opens browser/WebView for auth flow. Redirect URL must be configured in Supabase Dashboard.
+ */
+export async function signInWithOAuth(
+  provider: OAuthProvider
+): Promise<{ data: { url: string } | null; error: Error | null }> {
+  const redirectTo = getAuthRedirectUrl();
+  console.log("[auth] signInWithOAuth", { provider, redirectTo });
+
+  const { data, error } = await supabase.auth.signInWithOAuth({
+    provider,
+    options: {
+      redirectTo,
+      skipBrowserRedirect: Platform.OS !== "web",
+    },
+  });
+
+  if (error) {
+    console.error("[auth] signInWithOAuth error:", error.message);
+    return { data: null, error };
+  }
+
+  if (data?.url) {
+    return { data: { url: data.url }, error: null };
+  }
+
+  return { data: null, error: new Error("No OAuth URL returned") };
+}
+
+// ============================================================================
+// Magic Link / One-Time Code (Email)
+// ============================================================================
+
+/**
+ * Sign in with magic link — sends email with one-time link.
+ * User clicks link and is redirected to auth callback.
+ */
+export async function signInWithMagicLink(
+  email: string
+): Promise<{ data: { message: string } | null; error: Error | null }> {
+  const cleanEmail = email.trim().toLowerCase();
+  const redirectTo = getAuthRedirectUrl();
+  console.log("[auth] signInWithMagicLink", { email: cleanEmail, redirectTo });
+
+  const { data, error } = await supabase.auth.signInWithOtp({
+    email: cleanEmail,
+    options: {
+      emailRedirectTo: redirectTo,
+      shouldCreateUser: true,
+    },
+  });
+
+  if (error) {
+    console.error("[auth] signInWithMagicLink error:", error.message);
+    return { data: null, error };
+  }
+
+  return {
+    data: {
+      message: "Check your email for a sign-in link. Click it to continue.",
+    },
+    error: null,
+  };
+}
+
+/**
+ * Verify OTP code (for email OTP flow if enabled in Supabase).
+ * Alternative to magic link when using 6-digit codes.
+ */
+export async function verifyOtp(
+  email: string,
+  token: string
+): Promise<SignInResult> {
+  const cleanEmail = email.trim().toLowerCase();
+  console.log("[auth] verifyOtp", { email: cleanEmail });
+
+  const { data, error } = await supabase.auth.verifyOtp({
+    email: cleanEmail,
+    token,
+    type: "email",
+  });
+
+  if (error) {
+    console.error("[auth] verifyOtp error:", error.message);
+    return { data: null, error };
+  }
+
+  if (!data?.user || !data?.session) {
+    return { data: null, error: new Error("Verification failed — no session") };
+  }
+
+  return { data: data as { user: User; session: Session }, error: null };
 }
 
 /**
