@@ -1,5 +1,5 @@
 import { supabase } from "@/lib/supabase";
-import { upsertTeesFromApi } from "@/lib/db_supabase/courseRepo";
+import { upsertTeesFromApi, getCanonicalCourseByNormalizedName } from "@/lib/db_supabase/courseRepo";
 import { isValidUuid } from "@/lib/uuid";
 import type { ApiCourse, ApiTee } from "@/lib/golfApi";
 
@@ -488,11 +488,19 @@ export async function importCourse(apiCourse: ApiCourse): Promise<ImportedCourse
       return { courseId: "", courseName: existing.course_name ?? apiCourse.name ?? "", tees: apiTees, imported: false };
     }
     console.log("[importCourse] course exists but 0 tees, re-importing tees from API");
-    const teeStats = await importTeesAndHoles(existing.id, mergedTees);
+    const canonical = await getCanonicalCourseByNormalizedName(
+      existing.course_name ?? apiCourse.name ?? "",
+      existing.id
+    );
+    const courseIdForTees = canonical?.id ?? existing.id;
+    if (canonical) {
+      console.log("[importCourse] Using canonical course for tees:", canonical.id, canonical.course_name);
+    }
+    const teeStats = await importTeesAndHoles(courseIdForTees, mergedTees);
     console.log("[importCourse] tee import stats:", teeStats);
-    let teesAfter = await getImportedTees(existing.id);
+    let teesAfter = await getImportedTees(courseIdForTees);
     if (teesAfter.length === 0 && mergedTees.length > 0) {
-      const list = await upsertTeesFromApi(existing.id, apiCourse.tees as any);
+      const list = await upsertTeesFromApi(courseIdForTees, apiCourse.tees as any);
       teesAfter = list.map((t) => ({
         id: t.id,
         teeName: t.tee_name,
@@ -507,22 +515,55 @@ export async function importCourse(apiCourse: ApiCourse): Promise<ImportedCourse
       const apiTees = apiTeesToImported(apiCourse);
       console.log("[importCourse] FINAL RESULT:", {
         courseInsertSucceeded: true,
-        localCourseUuid: existing.id,
+        localCourseUuid: courseIdForTees,
         teeImportProceeded: true,
         reused: true,
         teesFromDb: 0,
         teesFromApi: apiTees.length,
       });
-      return { courseId: existing.id, courseName: existing.course_name ?? "", tees: apiTees, imported: false };
+      return { courseId: courseIdForTees, courseName: existing.course_name ?? "", tees: apiTees, imported: false };
     }
     console.log("[importCourse] FINAL RESULT:", {
       courseInsertSucceeded: true,
-      localCourseUuid: existing.id,
+      localCourseUuid: courseIdForTees,
       teeImportProceeded: true,
       reused: true,
       teesFromDb: teesAfter.length,
     });
-    return { courseId: existing.id, courseName: existing.course_name ?? "", tees: teesAfter, imported: false };
+    return { courseId: courseIdForTees, courseName: existing.course_name ?? "", tees: teesAfter, imported: false };
+  }
+
+  const canonicalBeforeInsert = await getCanonicalCourseByNormalizedName(apiCourse.name ?? "");
+  if (canonicalBeforeInsert) {
+    console.log("[importCourse] Reusing canonical course instead of creating duplicate:", canonicalBeforeInsert.id, canonicalBeforeInsert.course_name);
+    const teeStats = await importTeesAndHoles(canonicalBeforeInsert.id, mergedTees);
+    let teesAfter = await getImportedTees(canonicalBeforeInsert.id);
+    if (teesAfter.length === 0 && mergedTees.length > 0) {
+      const list = await upsertTeesFromApi(canonicalBeforeInsert.id, apiCourse.tees as any);
+      teesAfter = list.map((t) => ({
+        id: t.id,
+        teeName: t.tee_name,
+        courseRating: t.course_rating ?? null,
+        slopeRating: t.slope_rating ?? null,
+        parTotal: t.par_total ?? null,
+        gender: t.gender ?? null,
+        yards: t.yards ?? null,
+      }));
+    }
+    if (teesAfter.length === 0) {
+      return {
+        courseId: canonicalBeforeInsert.id,
+        courseName: canonicalBeforeInsert.course_name,
+        tees: apiTeesToImported(apiCourse),
+        imported: false,
+      };
+    }
+    return {
+      courseId: canonicalBeforeInsert.id,
+      courseName: canonicalBeforeInsert.course_name,
+      tees: teesAfter,
+      imported: false,
+    };
   }
 
   let created: { id: string; course_name: string };

@@ -95,7 +95,8 @@ export async function getTeesForCourseWithMerge(
     return [];
   }
 
-  const localTees = await getTeesByCourseId(courseId);
+  const canonicalId = await getCanonicalCourseId(courseId, options?.courseName);
+  const localTees = await getTeesByCourseId(canonicalId);
   const seen = new Set<string>();
   const result: CourseTeeWithSource[] = [];
 
@@ -143,7 +144,7 @@ export async function getTeesForCourseWithMerge(
     const vals = isMale ? options?.eventTeeValues?.male : options?.eventTeeValues?.female;
     result.push({
       id: `event-saved-${key}`,
-      course_id: courseId,
+      course_id: canonicalId,
       tee_name: name,
       tee_color: null,
       course_rating: vals?.courseRating ?? 0,
@@ -165,7 +166,7 @@ export async function getTeesForCourseWithMerge(
       const { data: otherCourses } = await supabase
         .from("courses")
         .select("id, course_name")
-        .neq("id", courseId)
+        .neq("id", canonicalId)
         .ilike("course_name", `%${searchTerm}%`);
       for (const c of otherCourses ?? []) {
         const otherTees = await getTeesByCourseId(c.id);
@@ -197,6 +198,119 @@ export async function getTeesForCourseWithMerge(
   }
   return result;
 }
+function normalizeCourseNameForMatch(name: string): string {
+  return (name || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/**
+ * Find canonical course_id for a course name (for import deduplication).
+ * Returns a course that has tees and matches the normalized name, if one exists.
+ */
+export async function getCanonicalCourseByNormalizedName(
+  courseName: string,
+  excludeCourseId?: string
+): Promise<{ id: string; course_name: string } | null> {
+  const norm = normalizeCourseNameForMatch(courseName);
+  if (norm.length < 4) return null;
+  const searchTerm = norm.split(/\s+/)[0];
+  const { data: courses } = await supabase
+    .from("courses")
+    .select("id, course_name, normalized_name")
+    .ilike("course_name", `%${searchTerm}%`);
+  for (const c of courses ?? []) {
+    if (excludeCourseId && c.id === excludeCourseId) continue;
+    const tees = await getTeesByCourseId(c.id);
+    if (tees.length > 0) {
+      const cNorm = normalizeCourseNameForMatch(c.course_name ?? "");
+      const firstWord = norm.split(/\s+/)[0];
+      const cFirst = cNorm.split(/\s+/)[0];
+      if (firstWord && cFirst && (firstWord.startsWith(cFirst) || cFirst.startsWith(firstWord))) {
+        return { id: c.id, course_name: c.course_name ?? "" };
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * Find canonical course_id for tee operations.
+ * If the given course has 0 tees, look for another course with similar name that has tees.
+ * Prefer the course that already has tees (canonical row).
+ */
+export async function getCanonicalCourseId(
+  courseId: string,
+  courseName?: string
+): Promise<string> {
+  if (!isValidUuid(courseId)) return courseId;
+  const tees = await getTeesByCourseId(courseId);
+  if (tees.length > 0) return courseId;
+  const name = (courseName || "").trim();
+  if (name.length < 4) return courseId;
+  const searchTerm = name.split(/\s+/)[0];
+  const { data: courses } = await supabase
+    .from("courses")
+    .select("id, course_name")
+    .ilike("course_name", `%${searchTerm}%`);
+  for (const c of courses ?? []) {
+    if (c.id === courseId) continue;
+    const otherTees = await getTeesByCourseId(c.id);
+    if (otherTees.length > 0) {
+      console.log("[courseRepo] Using canonical course", c.id, c.course_name, "instead of", courseId);
+      return c.id;
+    }
+  }
+  return courseId;
+}
+
+/**
+ * Persist manually entered tees to course_tees so they are reusable for future events.
+ * Uses canonical course_id (prefers course with existing tees).
+ */
+export async function upsertManualTeesToCourse(
+  courseId: string,
+  courseName: string | undefined,
+  tees: {
+    male?: { tee_name: string; par?: number; course_rating?: number; slope_rating?: number };
+    female?: { tee_name: string; par?: number; course_rating?: number; slope_rating?: number };
+  }
+): Promise<void> {
+  const canonicalId = await getCanonicalCourseId(courseId, courseName);
+  if (!isValidUuid(canonicalId)) return;
+  const rows: { course_id: string; tee_name: string; par_total: number | null; course_rating: number | null; slope_rating: number | null }[] = [];
+  if (tees.male?.tee_name?.trim()) {
+    rows.push({
+      course_id: canonicalId,
+      tee_name: tees.male.tee_name.trim(),
+      par_total: tees.male.par != null && Number.isFinite(tees.male.par) ? Math.round(tees.male.par) : null,
+      course_rating: tees.male.course_rating != null && Number.isFinite(tees.male.course_rating) ? tees.male.course_rating : null,
+      slope_rating: tees.male.slope_rating != null && Number.isFinite(tees.male.slope_rating) ? Math.round(tees.male.slope_rating) : null,
+    });
+  }
+  if (tees.female?.tee_name?.trim() && tees.female.tee_name.trim() !== tees.male?.tee_name?.trim()) {
+    rows.push({
+      course_id: canonicalId,
+      tee_name: tees.female.tee_name.trim(),
+      par_total: tees.female.par != null && Number.isFinite(tees.female.par) ? Math.round(tees.female.par) : null,
+      course_rating: tees.female.course_rating != null && Number.isFinite(tees.female.course_rating) ? tees.female.course_rating : null,
+      slope_rating: tees.female.slope_rating != null && Number.isFinite(tees.female.slope_rating) ? Math.round(tees.female.slope_rating) : null,
+    });
+  }
+  for (const row of rows) {
+    const { error } = await supabase
+      .from("course_tees")
+      .upsert(row, { onConflict: "course_id,tee_name" });
+    if (error) {
+      console.warn("[courseRepo] upsertManualTeesToCourse failed:", row.tee_name, error.message);
+    } else {
+      console.log("[courseRepo] Persisted manual tee to course_tees:", row.tee_name);
+    }
+  }
+}
+
 export type SearchCoursesResult = {
   data: CourseSearchHit[];
   error: string | null;

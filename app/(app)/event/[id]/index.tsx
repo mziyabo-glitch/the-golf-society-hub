@@ -27,7 +27,7 @@ import {
   EVENT_FORMATS,
   EVENT_CLASSIFICATIONS,
 } from "@/lib/db_supabase/eventRepo";
-import { getTeesByCourseId, getTeesForCourseWithMerge, getCourseByApiId, upsertTeesFromApi, type CourseTee } from "@/lib/db_supabase/courseRepo";
+import { getTeesByCourseId, getTeesForCourseWithMerge, getCourseByApiId, upsertManualTeesToCourse, upsertTeesFromApi, type CourseTee } from "@/lib/db_supabase/courseRepo";
 import { isValidUuid } from "@/lib/uuid";
 import { searchCourses as searchCoursesApi, getCourseById, type ApiCourseSearchResult } from "@/lib/golfApi";
 import { importCourse, type ImportedCourse } from "@/lib/importCourse";
@@ -548,6 +548,17 @@ export default function EventDetailScreen() {
     const teeSource = fromImported ? "imported" : (teeName || par != null || courseRating != null || slopeRating != null) ? "manual" : undefined;
 
     console.log("[EventDetail] save tee values (tee_id not saved):", { tee_name: teeName, ladies_tee_name: ladiesTeeName, tee_source: teeSource });
+
+    if (teeSource === "manual" && courseId && (teeName || ladiesTeeName)) {
+      try {
+        await upsertManualTeesToCourse(courseId, formCourseName.trim() || undefined, {
+          male: teeName ? { tee_name: teeName, par, course_rating: courseRating, slope_rating: slopeRating } : undefined,
+          female: ladiesTeeName ? { tee_name: ladiesTeeName, par: ladiesPar, course_rating: ladiesCourseRating, slope_rating: ladiesSlopeRating } : undefined,
+        });
+      } catch (e) {
+        console.warn("[EventDetail] Failed to persist manual tees to course_tees:", (e as Error)?.message);
+      }
+    }
 
     setSaving(true);
     try {

@@ -28,7 +28,7 @@ import {
   EVENT_FORMATS,
   EVENT_CLASSIFICATIONS,
 } from "@/lib/db_supabase/eventRepo";
-import { type CourseTee, getCourseByApiId, getTeesByCourseId, getTeesForCourseWithMerge, upsertTeesFromApi } from "@/lib/db_supabase/courseRepo";
+import { type CourseTee, getCourseByApiId, getTeesByCourseId, getTeesForCourseWithMerge, upsertManualTeesToCourse, upsertTeesFromApi } from "@/lib/db_supabase/courseRepo";
 import { searchCourses as searchCoursesApi, getCourseById, type ApiCourseSearchResult } from "@/lib/golfApi";
 import { importCourse, type ImportedCourse } from "@/lib/importCourse";
 import { CourseTeeSetupCard, type TeeSyncStatus, type TeeSetupMode } from "@/components/CourseTeeSetupCard";
@@ -485,6 +485,17 @@ export default function EventsScreen() {
       ladies_tee_name: ladiesTeeName,
       tee_source: teeSource,
     });
+    const courseIdForSave = selectedCourse?.id && selectedCourse.id.trim() ? selectedCourse.id : undefined;
+    if (teeSource === "manual" && courseIdForSave && (teeName || ladiesTeeName)) {
+      try {
+        await upsertManualTeesToCourse(courseIdForSave, courseName, {
+          male: teeName ? { tee_name: teeName, par, course_rating: courseRating, slope_rating: slopeRating } : undefined,
+          female: ladiesTeeName ? { tee_name: ladiesTeeName, par: ladiesPar, course_rating: ladiesCourseRating, slope_rating: ladiesSlopeRating } : undefined,
+        });
+      } catch (e) {
+        console.warn("[createEvent] Failed to persist manual tees to course_tees:", (e as Error)?.message);
+      }
+    }
     const created = await createAction.run(async () =>
       createEvent(societyId, {
         name: formName.trim(),
@@ -492,7 +503,7 @@ export default function EventsScreen() {
         format: formFormat,
         classification: formClassification,
         createdBy: user.uid,
-        courseId: selectedCourse?.id && selectedCourse.id.trim() ? selectedCourse.id : undefined,
+        courseId: courseIdForSave,
         courseName,
         teeId: undefined,
         teeName,
