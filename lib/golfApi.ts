@@ -37,6 +37,8 @@ export type ApiCourse = {
     male?: ApiTee[];
     female?: ApiTee[];
   } | ApiTee[];
+  /** Raw API response object for courses.raw_row (NOT NULL). */
+  raw_row?: unknown;
 };
 
 export type ApiCourseSearchResult = {
@@ -217,6 +219,7 @@ export async function getCourseById(id: number): Promise<ApiCourse> {
     latitude: lat,
     longitude: lng,
     tees,
+    raw_row: row,
   };
 }
 

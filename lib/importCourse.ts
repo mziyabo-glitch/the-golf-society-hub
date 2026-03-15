@@ -150,7 +150,8 @@ function buildDedupeKey(course: ApiCourse, apiId: number | null): string {
 
 /**
  * Build courses insert payload: only valid DB columns, no undefined, schema-safe.
- * Includes dedupe_key (NOT NULL required by schema).
+ * Includes dedupe_key and raw_row (NOT NULL required by schema).
+ * raw_row: original API response object (jsonb) or JSON string (text). Never null.
  */
 function buildCoursePayload(course: ApiCourse): Record<string, unknown> {
   const apiId = safeApiId(course.id);
@@ -161,6 +162,13 @@ function buildCoursePayload(course: ApiCourse): Record<string, unknown> {
   const dedupeKey = buildDedupeKey(course, apiId);
   const normalizedName = normalizeName(courseName);
 
+  // raw_row: NOT NULL. Use raw API object; fallback to minimal object if missing.
+  const rawRow = course.raw_row != null && typeof course.raw_row === "object"
+    ? course.raw_row
+    : course.raw_row != null
+      ? { value: course.raw_row }
+      : { source: "golfcourseapi", api_id: apiId, course_name: courseName };
+
   const payload: Record<string, unknown> = {
     course_name: courseName,
     club_name: clubName,
@@ -169,6 +177,7 @@ function buildCoursePayload(course: ApiCourse): Record<string, unknown> {
     api_id: apiId,
     dedupe_key: dedupeKey.trim() || "unknown",
     normalized_name: normalizedName,
+    raw_row: rawRow,
   };
 
   const cleaned: Record<string, unknown> = {};
@@ -203,6 +212,7 @@ async function insertCourse(course: ApiCourse): Promise<{ id: string; course_nam
       id: data.id,
       isValidUuid: isValidUuid(data.id),
       course_name: data.course_name,
+      teeImportProceeds: isValidUuid(data.id),
     });
     return data;
   }
@@ -415,6 +425,13 @@ export async function importCourse(apiCourse: ApiCourse): Promise<ImportedCourse
     const tees = await getImportedTees(existing.id);
     if (tees.length > 0) {
       console.log("[importCourse] course already exists with tees", existing.id, tees.length);
+      console.log("[importCourse] FINAL RESULT:", {
+        courseInsertSucceeded: true,
+        localCourseUuid: existing.id,
+        teeImportProceeded: false,
+        reused: true,
+        teesFromDb: tees.length,
+      });
       return {
         courseId: existing.id,
         courseName: existing.course_name ?? "",
@@ -425,6 +442,12 @@ export async function importCourse(apiCourse: ApiCourse): Promise<ImportedCourse
     if (!isValidUuid(existing.id)) {
       console.warn("[importCourse] existing course id invalid, skipping tee DB writes");
       const apiTees = apiTeesToImported(apiCourse);
+      console.log("[importCourse] FINAL RESULT:", {
+        courseInsertSucceeded: true,
+        localCourseUuid: null,
+        teeImportProceeded: false,
+        fallback: "API tees for manual selection",
+      });
       return { courseId: "", courseName: existing.course_name ?? apiCourse.name ?? "", tees: apiTees, imported: false };
     }
     console.log("[importCourse] course exists but 0 tees, re-importing tees from API");
@@ -444,8 +467,23 @@ export async function importCourse(apiCourse: ApiCourse): Promise<ImportedCourse
     }
     if (teesAfter.length === 0) {
       const apiTees = apiTeesToImported(apiCourse);
+      console.log("[importCourse] FINAL RESULT:", {
+        courseInsertSucceeded: true,
+        localCourseUuid: existing.id,
+        teeImportProceeded: true,
+        reused: true,
+        teesFromDb: 0,
+        teesFromApi: apiTees.length,
+      });
       return { courseId: existing.id, courseName: existing.course_name ?? "", tees: apiTees, imported: false };
     }
+    console.log("[importCourse] FINAL RESULT:", {
+      courseInsertSucceeded: true,
+      localCourseUuid: existing.id,
+      teeImportProceeded: true,
+      reused: true,
+      teesFromDb: teesAfter.length,
+    });
     return { courseId: existing.id, courseName: existing.course_name ?? "", tees: teesAfter, imported: false };
   }
 
@@ -455,6 +493,12 @@ export async function importCourse(apiCourse: ApiCourse): Promise<ImportedCourse
   } catch (insertErr: any) {
     console.error("[importCourse] insertCourse threw, returning API tees as fallback:", insertErr?.message);
     const apiTees = apiTeesToImported(apiCourse);
+    console.log("[importCourse] FINAL RESULT:", {
+      courseInsertSucceeded: false,
+      localCourseUuid: null,
+      teeImportProceeded: false,
+      fallback: "manual tee entry + event save still available",
+    });
     return {
       courseId: "",
       courseName: apiCourse.name ?? "",
@@ -466,6 +510,12 @@ export async function importCourse(apiCourse: ApiCourse): Promise<ImportedCourse
   if (!isValidUuid(created.id)) {
     console.warn("[importCourse] created course id invalid, skipping tee DB writes, returning API tees");
     const apiTees = apiTeesToImported(apiCourse);
+    console.log("[importCourse] FINAL RESULT:", {
+      courseInsertSucceeded: true,
+      localCourseUuid: null,
+      teeImportProceeded: false,
+      fallback: "API tees for manual selection",
+    });
     return { courseId: "", courseName: created.course_name ?? "", tees: apiTees, imported: true };
   }
 
@@ -496,8 +546,22 @@ export async function importCourse(apiCourse: ApiCourse): Promise<ImportedCourse
 
   if (tees.length === 0 && mergedTees.length > 0) {
     const apiTees = apiTeesToImported(apiCourse);
+    console.log("[importCourse] FINAL RESULT:", {
+      courseInsertSucceeded: true,
+      localCourseUuid: created.id,
+      teeImportProceeded: true,
+      teesFromDb: 0,
+      teesFromApi: apiTees.length,
+    });
     return { courseId: created.id, courseName: created.course_name ?? "", tees: apiTees, imported: true };
   }
 
+  console.log("[importCourse] FINAL RESULT:", {
+    courseInsertSucceeded: true,
+    localCourseUuid: created.id,
+    teeImportProceeded: true,
+    teesFromDb: tees.length,
+    teesFromApi: 0,
+  });
   return { courseId: created.id, courseName: created.course_name ?? "", tees, imported: true };
 }
