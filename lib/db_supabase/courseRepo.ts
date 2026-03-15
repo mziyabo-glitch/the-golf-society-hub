@@ -168,6 +168,7 @@ export async function upsertTeesFromApi(
     .filter((r): r is NonNullable<typeof r> => r !== null);
 
   for (const row of rows) {
+    console.log("[courseRepo] upsertTeesFromApi tee payload:", JSON.stringify(row, null, 2));
     const { error } = await supabase.from("course_tees").insert(row);
 
     if (error) {

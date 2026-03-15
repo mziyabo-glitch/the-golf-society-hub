@@ -29,6 +29,7 @@ import {
   EVENT_CLASSIFICATIONS,
 } from "@/lib/db_supabase/eventRepo";
 import { type CourseTee, getCourseByApiId, getTeesByCourseId, upsertTeesFromApi } from "@/lib/db_supabase/courseRepo";
+import { isValidUuid } from "@/lib/uuid";
 import { searchCourses as searchCoursesApi, getCourseById, type ApiCourseSearchResult } from "@/lib/golfApi";
 import { importCourse, type ImportedCourse } from "@/lib/importCourse";
 import { CourseTeeSetupCard, type TeeSyncStatus } from "@/components/CourseTeeSetupCard";
@@ -405,7 +406,7 @@ export default function EventsScreen() {
       const n = parseFloat(s.trim());
       return Number.isFinite(n) ? n : undefined;
     };
-    const teeId = selectedTee?.id ?? undefined;
+    const teeId = selectedTee?.id && isValidUuid(selectedTee.id) ? selectedTee.id : undefined;
     const teeName = selectedTee ? selectedTee.tee_name : (manualTeeName.trim() || undefined);
     const par = selectedTee ? selectedTee.par_total : safeNum(manualPar);
     const courseRating = selectedTee ? selectedTee.course_rating : safeNum(manualCourseRating);

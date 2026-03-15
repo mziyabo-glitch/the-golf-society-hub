@@ -429,7 +429,7 @@ export default function EventDetailScreen() {
       : 0.95;
 
     // Determine tee values: selected from DB or manual entry
-    const teeId = selectedTee?.id ?? undefined;
+    const teeId = selectedTee?.id && isValidUuid(selectedTee.id) ? selectedTee.id : undefined;
     const teeName = selectedTee ? selectedTee.tee_name : (manualTeeName.trim() || undefined);
     const par = selectedTee ? selectedTee.par_total : (manualPar.trim() ? parseFloat(manualPar) : undefined);
     const courseRating = selectedTee ? selectedTee.course_rating : (manualCourseRating.trim() ? parseFloat(manualCourseRating) : undefined);
