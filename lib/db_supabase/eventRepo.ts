@@ -208,11 +208,12 @@ export async function createEvent(
 ): Promise<EventDoc> {
   const classification = data.classification ?? 'general';
 
+  const courseId = data.courseId?.trim();
   const payload: Record<string, unknown> = {
     society_id: societyId,
     name: data.name,
     date: data.date ?? null,
-    course_id: data.courseId ?? null,
+    course_id: courseId || null,
     course_name: data.courseName ?? null,
     tee_id: data.teeId ?? null,
     format: data.format,
@@ -306,7 +307,10 @@ export async function updateEvent(
 
   if (updates.name !== undefined) payload.name = updates.name;
   if (updates.date !== undefined) payload.date = updates.date;
-  if (updates.courseId !== undefined) payload.course_id = updates.courseId;
+  if (updates.courseId !== undefined) {
+    const cid = (updates.courseId ?? "").trim();
+    payload.course_id = cid || null;
+  }
   if (updates.courseName !== undefined) payload.course_name = updates.courseName;
   if (updates.teeId !== undefined) payload.tee_id = updates.teeId;
   if (updates.format !== undefined) payload.format = updates.format;

@@ -1,5 +1,6 @@
 import { supabase } from "@/lib/supabase";
 import { upsertTeesFromApi } from "@/lib/db_supabase/courseRepo";
+import { isValidUuid } from "@/lib/uuid";
 import type { ApiCourse, ApiTee } from "@/lib/golfApi";
 
 export type ImportedTee = {
@@ -65,6 +66,10 @@ async function getExistingCourseByApiId(apiId: number) {
 }
 
 async function getImportedTees(courseId: string): Promise<ImportedTee[]> {
+  if (!isValidUuid(courseId)) {
+    console.warn("[importCourse] Skipping tee lookup: invalid courseId");
+    return [];
+  }
   const { data, error } = await supabase
     .from("course_tees")
     .select("id, tee_name, course_rating, slope_rating, par_total, gender, yards")
@@ -87,6 +92,21 @@ function safeCourseName(name: unknown): string {
   if (name == null) return "Unknown course";
   const s = String(name).trim();
   return s || "Unknown course";
+}
+
+/**
+ * Normalize name for DB normalized_name column (NOT NULL).
+ * - lowercase, trim, collapse whitespace, remove punctuation
+ * - always returns non-empty string
+ */
+function normalizeName(input: string): string {
+  const s = (input ?? "").trim();
+  if (!s) return "unknown";
+  return s
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/gi, "")
+    .replace(/\s+/g, " ")
+    .trim() || "unknown";
 }
 
 /** Normalize value for DB: never insert undefined; NaN -> null; ensure bigint-safe integer */
@@ -139,6 +159,7 @@ function buildCoursePayload(course: ApiCourse): Record<string, unknown> {
   const lat = safeDouble(getLat(course));
   const lng = safeDouble(getLng(course));
   const dedupeKey = buildDedupeKey(course, apiId);
+  const normalizedName = normalizeName(courseName);
 
   const payload: Record<string, unknown> = {
     course_name: courseName,
@@ -147,6 +168,7 @@ function buildCoursePayload(course: ApiCourse): Record<string, unknown> {
     lng,
     api_id: apiId,
     dedupe_key: dedupeKey.trim() || "unknown",
+    normalized_name: normalizedName,
   };
 
   const cleaned: Record<string, unknown> = {};
@@ -163,7 +185,11 @@ async function insertCourse(course: ApiCourse): Promise<{ id: string; course_nam
     throw new Error("dedupe_key is required for courses insert");
   }
 
-  console.log("[importCourse] insertCourse payload", JSON.stringify(payload, null, 2));
+  console.log("[importCourse] insertCourse payload", {
+    dedupe_key: payload.dedupe_key,
+    normalized_name: payload.normalized_name,
+    course_name: payload.course_name,
+  });
 
   let data: { id: string; course_name: string } | null = null;
   let error: any = null;
@@ -222,6 +248,10 @@ async function importTeesAndHoles(
   tees: ApiTee[] | undefined,
   gender?: "M" | "F"
 ): Promise<void> {
+  if (!isValidUuid(courseId)) {
+    console.warn("[importCourse] Skipping tee import: invalid courseId");
+    return;
+  }
   if (!Array.isArray(tees) || tees.length === 0) return;
 
   for (const tee of tees) {

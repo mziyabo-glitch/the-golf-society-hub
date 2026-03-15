@@ -28,6 +28,7 @@ import {
   EVENT_CLASSIFICATIONS,
 } from "@/lib/db_supabase/eventRepo";
 import { getTeesByCourseId, getCourseByApiId, upsertTeesFromApi, type CourseTee } from "@/lib/db_supabase/courseRepo";
+import { isValidUuid } from "@/lib/uuid";
 import { searchCourses as searchCoursesApi, getCourseById, type ApiCourseSearchResult } from "@/lib/golfApi";
 import { importCourse, type ImportedCourse } from "@/lib/importCourse";
 import { CourseTeeSelector } from "@/components/CourseTeeSelector";
@@ -324,9 +325,12 @@ export default function EventDetailScreen() {
     teeId: string | undefined,
     hasSavedTeeData?: boolean
   ) => {
-    if (!courseId) {
+    if (!isValidUuid(courseId)) {
       setTees([]);
       setSelectedTee(null);
+      if (courseId === "" || (courseId && !courseId.trim())) {
+        console.warn("[EventDetail] Skipping tee lookup: invalid courseId (empty or blank)");
+      }
       return;
     }
     setTeesLoading(true);

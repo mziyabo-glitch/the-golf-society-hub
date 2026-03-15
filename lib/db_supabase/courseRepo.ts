@@ -1,5 +1,6 @@
 // Course and course_tees for event setup (search course → select tee)
 import { supabase } from "@/lib/supabase";
+import { isValidUuid } from "@/lib/uuid";
 
 export type CourseTee = {
   id: string;
@@ -22,9 +23,13 @@ export type CourseSearchHit = {
 /**
  * Fetch tees for a course (from course_tees table).
  * Gracefully handles table-not-found (migration 048 not applied).
+ * Returns [] if courseId is not a valid UUID (avoids "invalid input syntax for type uuid").
  */
 export async function getTeesByCourseId(courseId: string): Promise<CourseTee[]> {
-  console.log("[courseRepo] getTeesByCourseId:", courseId);
+  if (!isValidUuid(courseId)) {
+    console.warn("[courseRepo] Skipping tee lookup: invalid courseId", { courseId: courseId || "(empty)" });
+    return [];
+  }
 
   const { data, error } = await supabase
     .from("course_tees")
@@ -85,6 +90,10 @@ export async function getCourseByApiId(apiId: number): Promise<CourseWithTees | 
     .maybeSingle();
 
   if (courseErr || !course) return null;
+  if (!isValidUuid(course.id)) {
+    console.warn("[courseRepo] getCourseByApiId: course.id is not valid UUID, skipping tee lookup");
+    return null;
+  }
 
   const tees = await getTeesByCourseId(course.id);
   if (tees.length === 0) {
@@ -120,6 +129,11 @@ export async function upsertTeesFromApi(
   courseId: string,
   apiTees: ApiTeeInput[] | { male?: ApiTeeInput[]; female?: ApiTeeInput[] }
 ): Promise<CourseTee[]> {
+  if (!isValidUuid(courseId)) {
+    console.warn("[courseRepo] Skipping tee upsert: invalid courseId", { courseId: courseId || "(empty)" });
+    return [];
+  }
+
   const flat: ApiTeeInput[] = Array.isArray(apiTees)
     ? apiTees
     : [
