@@ -41,17 +41,22 @@ export async function getTeesByCourseId(courseId: string): Promise<CourseTee[]> 
     throw new Error(error.message || "Failed to load tees");
   }
 
-  const tees = (data ?? []).map((row: any) => ({
-    id: row.id,
-    course_id: row.course_id,
-    tee_name: row.tee_name ?? "",
-    tee_color: row.tee_color ?? null,
-    course_rating: Number(row.course_rating),
-    slope_rating: Number(row.slope_rating),
-    par_total: Number(row.par_total),
-    gender: row.gender ?? null,
-    yards: row.yards ?? null,
-  }));
+  const tees = (data ?? []).map((row: any) => {
+    const cr = row.course_rating;
+    const sr = row.slope_rating;
+    const pt = row.par_total;
+    return {
+      id: row.id,
+      course_id: row.course_id,
+      tee_name: row.tee_name ?? "",
+      tee_color: row.tee_color ?? null,
+      course_rating: cr != null && Number.isFinite(Number(cr)) ? Number(cr) : 0,
+      slope_rating: sr != null && Number.isFinite(Number(sr)) ? Number(sr) : 0,
+      par_total: pt != null && Number.isFinite(Number(pt)) ? Number(pt) : 0,
+      gender: row.gender ?? null,
+      yards: row.yards ?? null,
+    };
+  });
 
   console.log("[courseRepo] getTeesByCourseId returned", tees.length, "tees");
   return tees;
@@ -131,13 +136,18 @@ export async function upsertTeesFromApi(
       const yards = t.total_yards ?? t.yards;
       const slope = t.slope_rating;
       const courseRating = t.course_rating;
+      const parVal = t.par_total ?? t.par;
+      const cr = courseRating != null && Number.isFinite(Number(courseRating)) ? Number(courseRating) : null;
+      const sr = slope != null && Number.isFinite(Number(slope)) ? Math.round(Number(slope)) : null;
+      const pt = parVal != null && Number.isFinite(Number(parVal)) ? Math.round(Number(parVal)) : null;
+      const y = yards != null && Number.isFinite(Number(yards)) ? Math.round(Number(yards)) : null;
       return {
         course_id: courseId,
         tee_name: teeName,
-        course_rating: courseRating != null ? Number(courseRating) : null,
-        slope_rating: slope != null ? Math.round(Number(slope)) : null,
-        par_total: t.par_total ?? t.par ?? null,
-        yards: yards != null ? Math.round(Number(yards)) : null,
+        course_rating: cr,
+        slope_rating: sr,
+        par_total: pt,
+        yards: y,
         gender: t.gender ?? null,
       };
     })
@@ -150,7 +160,7 @@ export async function upsertTeesFromApi(
       if ((error as any).code === "23505") {
         continue;
       }
-      console.warn("[courseRepo] upsertTeesFromApi insert:", error.message);
+      console.warn("[courseRepo] upsertTeesFromApi insert:", error.message, "tee:", row.tee_name);
     }
   }
 

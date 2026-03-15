@@ -31,7 +31,7 @@ import {
 import { type CourseTee, getCourseByApiId, getTeesByCourseId, upsertTeesFromApi } from "@/lib/db_supabase/courseRepo";
 import { searchCourses as searchCoursesApi, getCourseById, type ApiCourseSearchResult } from "@/lib/golfApi";
 import { importCourse, type ImportedCourse } from "@/lib/importCourse";
-import { CourseTeeSelector } from "@/components/CourseTeeSelector";
+import { CourseTeeSetupCard, type TeeSyncStatus } from "@/components/CourseTeeSetupCard";
 import { getPermissionsForMember } from "@/lib/rbac";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
 import { formatError, type FormattedError } from "@/lib/ui/formatError";
@@ -108,11 +108,13 @@ export default function EventsScreen() {
   const [courseSearchError, setCourseSearchError] = useState<string | null>(null);
   const [courseSearching, setCourseSearching] = useState(false);
   const [selectedCourse, setSelectedCourse] = useState<{ id: string; name: string } | null>(null);
+  const [selectedCourseApiId, setSelectedCourseApiId] = useState<number | null>(null);
   const [manualCourseName, setManualCourseName] = useState("");
   const [tees, setTees] = useState<CourseTee[]>([]);
   const [teesLoading, setTeesLoading] = useState(false);
   const [teesError, setTeesError] = useState<string | null>(null);
   const [selectedTee, setSelectedTee] = useState<CourseTee | null>(null);
+  const [teeSyncStatus, setTeeSyncStatus] = useState<TeeSyncStatus>("idle");
 
   // Manual tee entry fallback (when no tees from API)
   const [showManualTee, setShowManualTee] = useState(false);
@@ -186,21 +188,55 @@ export default function EventsScreen() {
     setTeesError(null);
     setTeesLoading(true);
     setShowManualTee(false);
+    setTeeSyncStatus("pending_sync");
     setFormErrors((prev) => ({ ...prev, course: undefined, courseTee: undefined }));
     try {
-      // Cache-first: load from DB if previously imported (avoids repeated API calls)
+      // 1. Cache-first: load from DB if previously imported
       const cached = await getCourseByApiId(hit.id);
-      if (cached) {
+      if (cached && cached.tees.length > 0) {
         console.log("[events] Loaded from cache:", cached.courseId, cached.tees.length, "tees");
         setSelectedCourse({ id: cached.courseId, name: cached.courseName });
+        setSelectedCourseApiId(hit.id);
         setTees(cached.tees);
-        if (cached.tees.length === 0) setShowManualTee(true);
+        setTeeSyncStatus("synced");
+      } else if (cached && cached.tees.length === 0) {
+        // Course exists but 0 tees: show immediately, try background sync
+        setSelectedCourse({ id: cached.courseId, name: cached.courseName });
+        setSelectedCourseApiId(hit.id);
+        setTees([]);
+        setShowManualTee(true);
+        setTeeSyncStatus("pending_sync");
+        // Background sync (non-blocking)
+        (async () => {
+          try {
+            const full = await getCourseById(hit.id);
+            const result = await importCourse(full);
+            setTees(result.tees.map((t) => ({
+              id: t.id,
+              course_id: result.courseId,
+              tee_name: t.teeName,
+              tee_color: null,
+              course_rating: t.courseRating ?? 0,
+              slope_rating: t.slopeRating ?? 0,
+              par_total: t.parTotal ?? 0,
+            })));
+            setTeeSyncStatus(result.tees.length > 0 ? "synced" : "import_failed");
+            if (result.tees.length > 0) setShowManualTee(false);
+          } catch {
+            setTeeSyncStatus("import_failed");
+          } finally {
+            setTeesLoading(false);
+          }
+        })();
+        return; // Don't set teesLoading false below - background will
       } else {
+        // No cache: fetch from API and import
         const full = await getCourseById(hit.id);
         console.log("[events] getCourseById done, importing...");
         const result: ImportedCourse = await importCourse(full);
         console.log("[events] importCourse done:", result.courseId, result.tees.length, "tees");
         setSelectedCourse({ id: result.courseId, name: result.courseName });
+        setSelectedCourseApiId(hit.id);
 
         let teesList: CourseTee[];
         if (result.tees.length > 0) {
@@ -213,6 +249,7 @@ export default function EventsScreen() {
             slope_rating: t.slopeRating ?? 0,
             par_total: t.parTotal ?? 0,
           }));
+          setTeeSyncStatus("synced");
         } else {
           const apiTees = full.tees;
           if (apiTees) {
@@ -221,16 +258,19 @@ export default function EventsScreen() {
           } else {
             teesList = [];
           }
+          setTeeSyncStatus(teesList.length > 0 ? "synced" : "import_failed");
+          if (teesList.length === 0) setShowManualTee(true);
         }
         setTees(teesList);
-        if (teesList.length === 0) setShowManualTee(true);
       }
     } catch (e: any) {
       console.error("[events] course import failed:", e?.message || e);
-      setTeesError(e?.message || "Failed to import course");
+      setTeesError(e?.message || "Import failed. You can enter tee details manually below.");
       setSelectedCourse({ id: "", name: hit.name });
+      setSelectedCourseApiId(hit.id);
       setTees([]);
       setShowManualTee(true);
+      setTeeSyncStatus("import_failed");
     } finally {
       setTeesLoading(false);
     }
@@ -298,8 +338,14 @@ export default function EventsScreen() {
       errors.course = "Select a course or enter a course name.";
     }
 
-    if (selectedCourse && tees.length > 0 && !selectedTee) {
-      errors.courseTee = "Select a tee for this course.";
+    const hasManualTeeData =
+      manualTeeName.trim() &&
+      (manualPar.trim() || manualCourseRating.trim() || manualSlopeRating.trim());
+    const hasTee = selectedTee || hasManualTeeData;
+    if ((selectedCourse || manualCourseName.trim()) && !hasTee) {
+      errors.courseTee = tees.length > 0
+        ? "Select a tee or enter tee details manually."
+        : "Enter tee details manually.";
     }
 
     if (formHandicapAllowance.trim()) {
@@ -350,15 +396,24 @@ export default function EventsScreen() {
     const courseName =
       selectedCourse?.name ?? (manualCourseName.trim() || undefined);
 
+    const hasManualTeeData =
+      manualTeeName.trim() &&
+      (manualPar.trim() || manualCourseRating.trim() || manualSlopeRating.trim());
+    const teeSource = selectedTee ? "imported" : hasManualTeeData ? "manual" : undefined;
+
+    const safeNum = (s: string): number | undefined => {
+      const n = parseFloat(s.trim());
+      return Number.isFinite(n) ? n : undefined;
+    };
     const teeId = selectedTee?.id ?? undefined;
     const teeName = selectedTee ? selectedTee.tee_name : (manualTeeName.trim() || undefined);
-    const par = selectedTee ? selectedTee.par_total : (manualPar.trim() ? parseFloat(manualPar) : undefined);
-    const courseRating = selectedTee ? selectedTee.course_rating : (manualCourseRating.trim() ? parseFloat(manualCourseRating) : undefined);
-    const slopeRating = selectedTee ? selectedTee.slope_rating : (manualSlopeRating.trim() ? parseFloat(manualSlopeRating) : undefined);
+    const par = selectedTee ? selectedTee.par_total : safeNum(manualPar);
+    const courseRating = selectedTee ? selectedTee.course_rating : safeNum(manualCourseRating);
+    const slopeRating = selectedTee ? selectedTee.slope_rating : safeNum(manualSlopeRating);
     const ladiesTeeName = manualLadiesTeeName.trim() || undefined;
-    const ladiesPar = manualLadiesPar.trim() ? parseFloat(manualLadiesPar) : undefined;
-    const ladiesCourseRating = manualLadiesCourseRating.trim() ? parseFloat(manualLadiesCourseRating) : undefined;
-    const ladiesSlopeRating = manualLadiesSlopeRating.trim() ? parseFloat(manualLadiesSlopeRating) : undefined;
+    const ladiesPar = safeNum(manualLadiesPar);
+    const ladiesCourseRating = safeNum(manualLadiesCourseRating);
+    const ladiesSlopeRating = safeNum(manualLadiesSlopeRating);
 
     console.log("[createEvent] Calling createEvent...");
     const created = await createAction.run(async () =>
@@ -368,7 +423,7 @@ export default function EventsScreen() {
         format: formFormat,
         classification: formClassification,
         createdBy: user.uid,
-        courseId: selectedCourse?.id,
+        courseId: selectedCourse?.id && selectedCourse.id.trim() ? selectedCourse.id : undefined,
         courseName,
         teeId,
         teeName,
@@ -380,6 +435,7 @@ export default function EventsScreen() {
         ladiesCourseRating,
         ladiesSlopeRating,
         handicapAllowance,
+        teeSource,
       })
     );
 
@@ -403,6 +459,7 @@ export default function EventsScreen() {
     setCourseSearchResults([]);
     setCourseSearchError(null);
     setSelectedCourse(null);
+    setSelectedCourseApiId(null);
     setManualCourseName("");
     setTees([]);
     setTeesError(null);
@@ -580,260 +637,91 @@ export default function EventsScreen() {
               ) : null}
             </View>
 
-            {/* Course: Search → Select Tee */}
-            <View style={styles.formField}>
-              <AppText variant="captionBold" style={styles.label}>Course</AppText>
-              {selectedCourse ? (
-                <View style={[styles.selectedCourseRow, { borderColor: colors.border }]}>
-                  <AppText variant="body" numberOfLines={1} style={{ flex: 1 }}>
-                    {selectedCourse.name}
-                  </AppText>
-                  <Pressable
-                    onPress={() => {
-                      setSelectedCourse(null);
-                      setTees([]);
-                      setSelectedTee(null);
-                      setShowManualTee(false);
-                      setFormErrors((prev) => ({ ...prev, course: undefined, courseTee: undefined }));
-                    }}
-                    hitSlop={8}
-                  >
-                    <AppText variant="small" style={{ color: colors.primary }}>Change</AppText>
-                  </Pressable>
-                </View>
-              ) : (
-                <>
-                  <AppInput
-                    placeholder="Search course (e.g. Forest of Arden)"
-                    value={courseSearchQuery}
-                    onChangeText={(v) => {
-                      setCourseSearchQuery(v);
-                      setFormErrors((prev) => ({ ...prev, courseTee: undefined }));
-                    }}
-                    autoCapitalize="words"
-                  />
-                  {courseSearching && (
-                    <AppText variant="small" color="tertiary" style={{ marginTop: 4 }}>Searching…</AppText>
-                  )}
-                  {courseSearchError && !courseSearching && (
-                    <AppText variant="small" style={{ marginTop: 4, color: colors.error }}>
-                      {"Couldn't load courses. "}{courseSearchError}
-                    </AppText>
-                  )}
-                  {!courseSearchError && courseSearchResults.length > 0 && !selectedCourse && (
-                    <View style={styles.searchResults}>
-                      {courseSearchResults.slice(0, 8).map((c) => (
-                        <Pressable
-                          key={c.id}
-                          onPress={() => handleSelectCourse(c)}
-                          style={({ pressed }) => [
-                            styles.searchResultItem,
-                            { backgroundColor: colors.backgroundSecondary, opacity: pressed ? 0.8 : 1 },
-                          ]}
-                        >
-                          <AppText variant="body" numberOfLines={1}>{c.name}</AppText>
-                          {(c.club_name || (typeof c.location === "string" && c.location)) ? (
-                            <AppText variant="small" color="secondary" numberOfLines={1}>
-                              {[c.club_name, typeof c.location === "string" ? c.location : ""]
-                                .filter(Boolean)
-                                .join(" · ")}
-                            </AppText>
-                          ) : null}
-                        </Pressable>
-                      ))}
-                    </View>
-                  )}
-                  {!courseSearching && !courseSearchError && courseSearchQuery.trim().length >= 2 && courseSearchResults.length === 0 && (
-                    <AppText variant="small" color="secondary" style={{ marginTop: 4 }}>
-                      No courses found. Enter a name manually below.
-                    </AppText>
-                  )}
-                  <View style={{ marginTop: spacing.sm }}>
-                    <AppText variant="caption" color="secondary" style={styles.label}>
-                      Or enter course name (no tee data)
-                    </AppText>
-                    <AppInput
-                      placeholder="e.g. Forest of Arden"
-                      value={manualCourseName}
-                      onChangeText={(v) => {
-                        setManualCourseName(v);
-                        setFormErrors((prev) => ({ ...prev, course: undefined }));
-                      }}
-                      autoCapitalize="words"
-                    />
-                  </View>
-                </>
-              )}
-              {formErrors.course ? (
-                <AppText variant="small" style={[styles.fieldError, { color: colors.error, marginTop: 4 }]}>
-                  {formErrors.course}
-                </AppText>
-              ) : null}
-            </View>
+            {/* Course / Tee Setup */}
+            <CourseTeeSetupCard
+              courseSearchQuery={courseSearchQuery}
+              onCourseSearchChange={(v) => {
+                setCourseSearchQuery(v);
+                setFormErrors((prev) => ({ ...prev, courseTee: undefined }));
+              }}
+              selectedCourse={selectedCourse}
+              onChangeCourse={() => {
+                setSelectedCourse(null);
+                setSelectedCourseApiId(null);
+                setTees([]);
+                setSelectedTee(null);
+                setShowManualTee(false);
+                setTeeSyncStatus("idle");
+                setFormErrors((prev) => ({ ...prev, course: undefined, courseTee: undefined }));
+              }}
+              courseSearching={courseSearching}
+              courseSearchError={courseSearchError ? `Couldn't load courses. ${courseSearchError}` : null}
+              courseSearchResults={courseSearchResults}
+              onSelectCourseResult={handleSelectCourse}
+              manualCourseName={manualCourseName}
+              onManualCourseNameChange={(v) => {
+                setManualCourseName(v);
+                setFormErrors((prev) => ({ ...prev, course: undefined }));
+              }}
+              showManualCourseInput={true}
+              tees={tees}
+              selectedTee={selectedTee}
+              onSelectTee={(tee) => {
+                setSelectedTee(tee);
+                setFormErrors((prev) => ({ ...prev, courseTee: undefined }));
+              }}
+              teesLoading={teesLoading}
+              teesError={teesError}
+              showManualTee={showManualTee}
+              onSetShowManualTee={setShowManualTee}
+              manualTeeName={manualTeeName}
+              manualPar={manualPar}
+              manualCourseRating={manualCourseRating}
+              manualSlopeRating={manualSlopeRating}
+              manualLadiesTeeName={manualLadiesTeeName}
+              manualLadiesPar={manualLadiesPar}
+              manualLadiesCourseRating={manualLadiesCourseRating}
+              manualLadiesSlopeRating={manualLadiesSlopeRating}
+              onManualTeeChange={(field, value) => {
+                if (field === "teeName") setManualTeeName(value);
+                else if (field === "par") setManualPar(value);
+                else if (field === "courseRating") setManualCourseRating(value);
+                else if (field === "slopeRating") setManualSlopeRating(value);
+                else if (field === "ladiesTeeName") setManualLadiesTeeName(value);
+                else if (field === "ladiesPar") setManualLadiesPar(value);
+                else if (field === "ladiesCourseRating") setManualLadiesCourseRating(value);
+                else if (field === "ladiesSlopeRating") setManualLadiesSlopeRating(value);
+                setSelectedTee(null);
+                setFormErrors((prev) => ({ ...prev, courseTee: undefined }));
+              }}
+              syncStatus={teeSyncStatus}
+              onRetrySync={selectedCourseApiId != null ? () => {
+                const hit = courseSearchResults.find((c) => c.id === selectedCourseApiId)
+                  ?? { id: selectedCourseApiId, name: selectedCourse?.name ?? "" };
+                handleSelectCourse(hit);
+              } : undefined}
+              statusMessage={teesLoading ? "Tee data is still syncing." : teesError ?? undefined}
+              handicapAllowance={formHandicapAllowance}
+              onHandicapAllowanceChange={(v) => {
+                setFormHandicapAllowance(v);
+                setFormErrors((prev) => ({ ...prev, handicapAllowance: undefined }));
+              }}
+              courseError={formErrors.course}
+              teeError={formErrors.courseTee}
+              handicapError={formErrors.handicapAllowance}
+            />
 
-            {/* Select Tee (when course has tees) */}
-            {selectedCourse && (
-              <View style={styles.formField}>
-                {teesLoading ? (
-                  <AppText variant="small" color="tertiary">Importing course and tees…</AppText>
-                ) : teesError ? (
-                  <AppText variant="small" style={{ color: colors.error }}>
-                    {"Couldn't load tees: "}{teesError}
-                  </AppText>
-                ) : tees.length > 0 ? (
-                  <>
-                    <CourseTeeSelector
-                      tees={tees}
-                      selectedTee={selectedTee}
-                      onSelectTee={(tee) => {
-                        console.log("[events] tee selected:", tee.id, tee.tee_name);
-                        setSelectedTee(tee);
-                        setShowManualTee(false);
-                        setFormErrors((prev) => ({ ...prev, courseTee: undefined }));
-                      }}
-                    />
-                    {formErrors.courseTee ? (
-                      <AppText variant="small" style={[styles.fieldError, { color: colors.error, marginTop: 4 }]}>
-                        {formErrors.courseTee}
-                      </AppText>
-                    ) : null}
-                  </>
-                ) : (
-                  <AppText variant="small" color="tertiary">No tees found for this course.</AppText>
-                )}
-                {tees.length === 0 && !teesLoading && !showManualTee && (
-                  <Pressable onPress={() => setShowManualTee(true)}>
-                    <AppText variant="caption" color="primary" style={{ marginTop: spacing.xs }}>
-                      + Enter tee details manually
-                    </AppText>
-                  </Pressable>
-                )}
+            {/* Temp debug panel - dev only */}
+            {__DEV__ && (
+              <View style={[styles.debugPanel, { borderColor: colors.border, backgroundColor: colors.backgroundSecondary }]}>
+                <AppText variant="captionBold" style={{ marginBottom: 4 }}>Debug (dev only)</AppText>
+                <AppText variant="small" color="secondary">selected course id: {selectedCourse?.id ?? "(none)"}</AppText>
+                <AppText variant="small" color="secondary">import status: {teeSyncStatus}</AppText>
+                <AppText variant="small" color="secondary">last error: {teesError ?? "(none)"}</AppText>
+                <AppText variant="small" color="secondary">local course exists: {selectedCourse?.id ? "yes" : "no"}</AppText>
+                <AppText variant="small" color="secondary">local tees count: {tees.length}</AppText>
               </View>
             )}
-
-            {/* Manual tee link when no course selected */}
-            {!selectedCourse && !showManualTee && (
-              <Pressable onPress={() => setShowManualTee(true)} style={{ marginBottom: spacing.base }}>
-                <AppText variant="caption" color="primary">
-                  + Enter tee details manually
-                </AppText>
-              </Pressable>
-            )}
-
-            {/* Manual tee entry fallback */}
-            {showManualTee && (
-              <View style={styles.manualTeeContainer}>
-                <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: spacing.sm }}>
-                  <AppText variant="captionBold">Manual Tee Entry</AppText>
-                  {selectedTee && (
-                    <Pressable onPress={() => setShowManualTee(false)}>
-                      <AppText variant="small" color="primary">Use selected tee instead</AppText>
-                    </Pressable>
-                  )}
-                </View>
-
-                <AppText variant="captionBold" color="secondary" style={{ marginBottom: spacing.xs }}>Male Tee</AppText>
-                <View style={styles.formField}>
-                  <AppText variant="caption" style={styles.label}>Tee Name</AppText>
-                  <AppInput
-                    placeholder="e.g. Yellow"
-                    value={manualTeeName}
-                    onChangeText={(v) => { setManualTeeName(v); setSelectedTee(null); }}
-                    autoCapitalize="words"
-                  />
-                </View>
-                <View style={styles.formField}>
-                  <AppText variant="caption" style={styles.label}>Par</AppText>
-                  <AppInput
-                    placeholder="e.g. 72"
-                    value={manualPar}
-                    onChangeText={(v) => { setManualPar(v); setSelectedTee(null); }}
-                    keyboardType="number-pad"
-                  />
-                </View>
-                <View style={styles.formField}>
-                  <AppText variant="caption" style={styles.label}>Course Rating</AppText>
-                  <AppInput
-                    placeholder="e.g. 70.1"
-                    value={manualCourseRating}
-                    onChangeText={(v) => { setManualCourseRating(v); setSelectedTee(null); }}
-                    keyboardType="decimal-pad"
-                  />
-                </View>
-                <View style={styles.formField}>
-                  <AppText variant="caption" style={styles.label}>Slope Rating</AppText>
-                  <AppInput
-                    placeholder="e.g. 128"
-                    value={manualSlopeRating}
-                    onChangeText={(v) => { setManualSlopeRating(v); setSelectedTee(null); }}
-                    keyboardType="number-pad"
-                  />
-                </View>
-
-                <AppText variant="captionBold" color="secondary" style={{ marginTop: spacing.sm, marginBottom: spacing.xs }}>Female Tee</AppText>
-                <View style={styles.formField}>
-                  <AppText variant="caption" style={styles.label}>Tee Name</AppText>
-                  <AppInput
-                    placeholder="e.g. Red"
-                    value={manualLadiesTeeName}
-                    onChangeText={setManualLadiesTeeName}
-                    autoCapitalize="words"
-                  />
-                </View>
-                <View style={styles.formField}>
-                  <AppText variant="caption" style={styles.label}>Par</AppText>
-                  <AppInput
-                    placeholder="e.g. 72"
-                    value={manualLadiesPar}
-                    onChangeText={setManualLadiesPar}
-                    keyboardType="number-pad"
-                  />
-                </View>
-                <View style={styles.formField}>
-                  <AppText variant="caption" style={styles.label}>Course Rating</AppText>
-                  <AppInput
-                    placeholder="e.g. 68.4"
-                    value={manualLadiesCourseRating}
-                    onChangeText={setManualLadiesCourseRating}
-                    keyboardType="decimal-pad"
-                  />
-                </View>
-                <View style={styles.formField}>
-                  <AppText variant="caption" style={styles.label}>Slope Rating</AppText>
-                  <AppInput
-                    placeholder="e.g. 120"
-                    value={manualLadiesSlopeRating}
-                    onChangeText={setManualLadiesSlopeRating}
-                    keyboardType="number-pad"
-                  />
-                </View>
-              </View>
-            )}
-
-            {/* Handicap Allowance */}
-            <View style={styles.formField}>
-              <AppText variant="caption" style={styles.label}>
-                Handicap Allowance (%)
-              </AppText>
-              <AppInput
-                placeholder="95"
-                value={formHandicapAllowance}
-                onChangeText={(value) => {
-                  setFormHandicapAllowance(value);
-                  setValidationNotice(null);
-                  setFormErrors((prev) => ({ ...prev, handicapAllowance: undefined }));
-                }}
-                keyboardType="number-pad"
-              />
-              {formErrors.handicapAllowance ? (
-                <AppText variant="small" style={[styles.fieldError, { color: colors.error }]}>
-                  {formErrors.handicapAllowance}
-                </AppText>
-              ) : null}
-              <AppText variant="small" color="tertiary" style={{ marginTop: 4 }}>
-                Default 95% for individual stroke play
-              </AppText>
-            </View>
 
             <PrimaryButton
               onPress={handleCreateEvent}
@@ -1098,5 +986,12 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "rgba(0,0,0,0.06)",
     marginBottom: spacing.base,
+  },
+  debugPanel: {
+    marginTop: spacing.sm,
+    padding: spacing.sm,
+    borderRadius: radius.sm,
+    borderWidth: 1,
+    gap: 2,
   },
 });
