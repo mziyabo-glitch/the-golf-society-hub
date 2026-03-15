@@ -77,6 +77,8 @@ export type EventDoc = {
   teeTimePublishedAt?: string | null;
   // Tee source: 'imported' | 'manual' — for resilience when API import fails
   teeSource?: "imported" | "manual" | null;
+  // Tee setup mode: 'single' | 'separate' — for save/reload persistence
+  teeSetupMode?: "single" | "separate" | null;
   [key: string]: unknown;
 };
 
@@ -124,6 +126,7 @@ function mapEvent(row: any): EventDoc {
     teeTimePublishedAt: row.tee_time_published_at ?? null,
     tee_id: row.tee_id ?? null,
     teeSource: row.tee_source ?? null,
+    teeSetupMode: row.tee_setup_mode ?? null,
   };
 }
 
@@ -204,6 +207,8 @@ export async function createEvent(
     ladiesSlopeRating?: number;
     // Tee source: 'imported' | 'manual'
     teeSource?: "imported" | "manual";
+    // Tee setup mode: 'single' | 'separate'
+    teeSetupMode?: "single" | "separate";
   }
 ): Promise<EventDoc> {
   const classification = data.classification ?? 'general';
@@ -243,6 +248,8 @@ export async function createEvent(
 
   // Tee source: imported (from course_tees) or manual (user-entered)
   if (data.teeSource !== undefined) payload.tee_source = data.teeSource;
+  // Tee setup mode: single or separate male/female
+  if (data.teeSetupMode !== undefined) payload.tee_setup_mode = data.teeSetupMode;
 
   console.log("[eventRepo] createEvent payload:", JSON.stringify(payload, null, 2));
   console.log("[eventRepo] tee_id intentionally null; tee values saved on event:", {
@@ -304,6 +311,8 @@ export async function updateEvent(
     ladiesSlopeRating: number;
     // Tee source
     teeSource: "imported" | "manual";
+    // Tee setup mode
+    teeSetupMode: "single" | "separate";
     // Competition holes
     nearestPinHoles: number[];
     longestDriveHoles: number[];
@@ -354,6 +363,8 @@ export async function updateEvent(
 
   // Tee source
   if (updates.teeSource !== undefined) payload.tee_source = updates.teeSource;
+  // Tee setup mode
+  if (updates.teeSetupMode !== undefined) payload.tee_setup_mode = updates.teeSetupMode;
 
   // Competition holes
   if (updates.nearestPinHoles !== undefined) payload.nearest_pin_holes = updates.nearestPinHoles;

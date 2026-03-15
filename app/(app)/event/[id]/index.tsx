@@ -41,6 +41,7 @@ import {
 } from "@/lib/db_supabase/eventRegistrationRepo";
 import { getMembersBySocietyId, type MemberDoc } from "@/lib/db_supabase/memberRepo";
 import { Toast } from "@/components/ui/Toast";
+import { InlineNotice } from "@/components/ui/InlineNotice";
 import { getColors, spacing, radius, typography } from "@/lib/ui/theme";
 import { confirmDestructive, showAlert } from "@/lib/ui/alert";
 import { getSocietyLogoUrl } from "@/lib/societyLogo";
@@ -349,15 +350,17 @@ export default function EventDetailScreen() {
       setTees(list);
       const maleMatch = savedMaleTeeName ? list.find((t) => t.tee_name === savedMaleTeeName) : null;
       const femaleMatch = savedFemaleTeeName ? list.find((t) => t.tee_name === savedFemaleTeeName) : null;
-      const singleMatch = savedMaleTeeName && !savedFemaleTeeName ? list.find((t) => t.tee_name === savedMaleTeeName) : null;
-      if (savedMaleTeeName && savedFemaleTeeName && savedMaleTeeName !== savedFemaleTeeName) {
+      const isSeparateMode = !!(savedMaleTeeName && savedFemaleTeeName && savedMaleTeeName !== savedFemaleTeeName);
+      const singleTeeName = savedMaleTeeName || savedFemaleTeeName;
+      const singleMatch = singleTeeName && !isSeparateMode ? list.find((t) => t.tee_name === singleTeeName) : null;
+      if (isSeparateMode) {
         setTeeSetupMode("separate");
         setSelectedMaleTee(maleMatch ?? null);
         setSelectedFemaleTee(femaleMatch ?? null);
         setSelectedTee(null);
-      } else if (singleMatch || (savedMaleTeeName && !savedFemaleTeeName)) {
+      } else if (singleMatch) {
         setTeeSetupMode("single");
-        setSelectedTee(singleMatch ?? maleMatch ?? null);
+        setSelectedTee(singleMatch);
         setSelectedMaleTee(null);
         setSelectedFemaleTee(null);
       } else {
@@ -381,15 +384,7 @@ export default function EventDetailScreen() {
     }
   }, []);
 
-  // Default tee setup mode when tees load: separate if both male and female tees exist
-  useEffect(() => {
-    if (tees.length === 0) return;
-    const hasMale = tees.some((t) => (t.gender ?? "").toUpperCase().startsWith("M"));
-    const hasFemale = tees.some((t) => (t.gender ?? "").toUpperCase().startsWith("F"));
-    if (hasMale && hasFemale) setTeeSetupMode("separate");
-  }, [tees]);
-
-  // Populate form when entering edit mode
+  // Populate form when entering edit mode (tee setup mode comes from saved event, not from tees list)
   const startEditing = () => {
     if (!event) return;
     setFormName(event.name || "");
@@ -427,7 +422,7 @@ export default function EventDetailScreen() {
 
     const hasSavedTeeData = !!(event.teeName || event.par != null || event.courseRating != null || event.slopeRating != null);
     const hasBothTees = !!(event.teeName && event.ladiesTeeName && event.teeName !== event.ladiesTeeName);
-    setTeeSetupMode(hasBothTees ? "separate" : "single");
+    setTeeSetupMode((event.teeSetupMode as "single" | "separate") ?? (hasBothTees ? "separate" : "single"));
     if (event.course_id) {
       setShowManualTee(hasSavedTeeData && !event.tee_id);
       loadTeesForEvent(
@@ -541,6 +536,7 @@ export default function EventDetailScreen() {
         ladiesSlopeRating,
         handicapAllowance,
         teeSource,
+        teeSetupMode,
       });
 
       setIsEditing(false);
@@ -747,6 +743,17 @@ export default function EventDetailScreen() {
                   />
                 </View>
 
+                {/* Separate mode with only one tee: show non-blocking warning */}
+                {teeSetupMode === "separate" && (
+                  (showManualTee && ((manualTeeName.trim() && !manualLadiesTeeName.trim()) || (!manualTeeName.trim() && manualLadiesTeeName.trim()))) ||
+                  (!showManualTee && ((selectedMaleTee && !selectedFemaleTee) || (!selectedMaleTee && selectedFemaleTee)))
+                ) && (
+                  <InlineNotice
+                    variant="info"
+                    message="Consider selecting both male and female tees for mixed-gender events. You can still save with one tee."
+                    style={{ marginBottom: spacing.sm }}
+                  />
+                )}
                 {/* Tee Setup Mode + selectors */}
                 {(selectedCourseEdit?.id || event.course_id) && (
                   <View style={styles.formField}>

@@ -489,6 +489,7 @@ export default function EventsScreen() {
         ladiesSlopeRating,
         handicapAllowance,
         teeSource,
+        teeSetupMode,
       })
     );
 
@@ -697,6 +698,17 @@ export default function EventsScreen() {
               ) : null}
             </View>
 
+            {/* Separate mode with only one tee: show non-blocking warning */}
+            {teeSetupMode === "separate" && (
+              (showManualTee && ((manualTeeName.trim() && !manualLadiesTeeName.trim()) || (!manualTeeName.trim() && manualLadiesTeeName.trim()))) ||
+              (!showManualTee && ((selectedMaleTee && !selectedFemaleTee) || (!selectedMaleTee && selectedFemaleTee)))
+            ) && (
+              <InlineNotice
+                variant="info"
+                message="Consider selecting both male and female tees for mixed-gender events. You can still save with one tee."
+                style={{ marginBottom: spacing.sm }}
+              />
+            )}
             {/* Course / Tee Setup */}
             <CourseTeeSetupCard
               courseSearchQuery={courseSearchQuery}
