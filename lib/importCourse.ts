@@ -168,16 +168,13 @@ async function insertCourse(course: ApiCourse): Promise<{ id: string; course_nam
   let data: { id: string; course_name: string } | null = null;
   let error: any = null;
 
-  const hasDedupeKeyUnique = true;
-  if (hasDedupeKeyUnique) {
-    const result = await supabase
-      .from("courses")
-      .upsert(payload, { onConflict: "dedupe_key" })
-      .select("id, course_name")
-      .single();
-    data = result.data;
-    error = result.error;
-  }
+  const result = await supabase
+    .from("courses")
+    .upsert(payload, { onConflict: "dedupe_key" })
+    .select("id, course_name")
+    .single();
+  data = result.data;
+  error = result.error;
 
   if (!error && data) {
     console.log("[importCourse] insertCourse success", { id: data.id, dedupe_key: payload.dedupe_key });
@@ -185,21 +182,16 @@ async function insertCourse(course: ApiCourse): Promise<{ id: string; course_nam
   }
 
   if (error) {
-    const errObj = {
-      code: (error as any).code,
-      message: error.message,
-      details: (error as any).details,
-      hint: (error as any).hint,
-    };
-    console.error("[importCourse] insertCourse FAILED", JSON.stringify(errObj, null, 2));
-    console.error("[importCourse] payload sent", JSON.stringify(payload, null, 2));
+    const code = (error as any).code;
+    const msg = error.message;
 
-    if ((error as any).code === "23505") {
+    if (code === "23505") {
       const existing = await getExistingCourseByApiId(course.id);
       if (existing) return existing;
     }
 
-    if ((error as any).code === "42710" || (error as any).message?.includes("conflict")) {
+    if (code === "42P10" || msg?.includes("ON CONFLICT") || msg?.includes("conflict")) {
+      console.warn("[importCourse] upsert failed (no dedupe_key unique?), falling back to insert:", msg);
       const insertResult = await supabase
         .from("courses")
         .insert(payload)
@@ -210,9 +202,16 @@ async function insertCourse(course: ApiCourse): Promise<{ id: string; course_nam
         const existing = await getExistingCourseByApiId(course.id);
         if (existing) return existing;
       }
+      throw new Error(
+        `Course import failed. You can still save the event with manual tee details. ` +
+          (insertResult.error?.message ?? "Unknown error")
+      );
     }
 
-    throw error;
+    console.error("[importCourse] insertCourse FAILED", { code, message: msg });
+    throw new Error(
+      `Course import failed: ${msg}. You can still save the event with manual tee details.`
+    );
   }
 
   throw new Error("insertCourse: no data returned");
