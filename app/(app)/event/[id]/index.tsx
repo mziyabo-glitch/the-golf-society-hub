@@ -253,11 +253,32 @@ export default function EventDetailScreen() {
     setShowManualTee(false);
     try {
       const cached = await getCourseByApiId(hit.id);
-      if (cached) {
+      if (cached && cached.tees.length > 0) {
         setSelectedCourseEdit({ id: cached.courseId, name: cached.courseName });
         setFormCourseName(cached.courseName);
         setTees(cached.tees);
-        if (cached.tees.length === 0) setShowManualTee(true);
+      } else if (cached && cached.tees.length === 0) {
+        setSelectedCourseEdit({ id: cached.courseId, name: cached.courseName });
+        setFormCourseName(cached.courseName);
+        setTees([]);
+        setShowManualTee(true);
+        try {
+          const full = await getCourseById(hit.id);
+          const result = await importCourse(full);
+          const teesList = result.tees.map((t) => ({
+            id: t.id,
+            course_id: result.courseId,
+            tee_name: t.teeName,
+            tee_color: null,
+            course_rating: t.courseRating ?? 0,
+            slope_rating: t.slopeRating ?? 0,
+            par_total: t.parTotal ?? 0,
+          }));
+          setTees(teesList);
+          if (teesList.length > 0) setShowManualTee(false);
+        } catch {
+          /* keep manual tee visible */
+        }
       } else {
         const full = await getCourseById(hit.id);
         const result: ImportedCourse = await importCourse(full);
@@ -297,8 +318,12 @@ export default function EventDetailScreen() {
     }
   }, []);
 
-  // Load tees when event has course_id
-  const loadTeesForEvent = useCallback(async (courseId: string | undefined, teeId: string | undefined) => {
+  // Load tees when event has course_id (non-blocking; shows saved tee data immediately)
+  const loadTeesForEvent = useCallback(async (
+    courseId: string | undefined,
+    teeId: string | undefined,
+    hasSavedTeeData?: boolean
+  ) => {
     if (!courseId) {
       setTees([]);
       setSelectedTee(null);
@@ -310,9 +335,15 @@ export default function EventDetailScreen() {
       setTees(list);
       const match = teeId ? list.find((t) => t.id === teeId) : null;
       setSelectedTee(match ?? null);
+      if (list.length === 0 && hasSavedTeeData) {
+        setShowManualTee(true);
+      } else if (match) {
+        setShowManualTee(false);
+      }
     } catch {
       setTees([]);
       setSelectedTee(null);
+      if (hasSavedTeeData) setShowManualTee(true);
     } finally {
       setTeesLoading(false);
     }
@@ -354,13 +385,14 @@ export default function EventDetailScreen() {
     setCourseSearchResults([]);
     setSelectedCourseEdit(event.course_id ? { id: event.course_id, name: event.courseName || "" } : null);
 
+    const hasSavedTeeData = !!(event.teeName || event.par != null || event.courseRating != null || event.slopeRating != null);
     if (event.course_id) {
-      loadTeesForEvent(event.course_id, event.tee_id ?? undefined);
-      setShowManualTee(false);
+      setShowManualTee(hasSavedTeeData && !event.tee_id);
+      loadTeesForEvent(event.course_id, event.tee_id ?? undefined, hasSavedTeeData);
     } else {
       setTees([]);
       setSelectedTee(null);
-      setShowManualTee(!!(event.teeName || event.par != null));
+      setShowManualTee(hasSavedTeeData);
     }
 
     setIsEditing(true);
@@ -403,6 +435,7 @@ export default function EventDetailScreen() {
     const ladiesCourseRating = manualLadiesCourseRating.trim() ? parseFloat(manualLadiesCourseRating) : undefined;
     const ladiesSlopeRating = manualLadiesSlopeRating.trim() ? parseFloat(manualLadiesSlopeRating) : undefined;
     const courseId = selectedCourseEdit?.id || event?.course_id || undefined;
+    const teeSource = selectedTee ? "imported" : (teeName || par != null || courseRating != null || slopeRating != null) ? "manual" : undefined;
 
     setSaving(true);
     try {
@@ -423,6 +456,7 @@ export default function EventDetailScreen() {
         ladiesCourseRating,
         ladiesSlopeRating,
         handicapAllowance,
+        teeSource,
       });
 
       setIsEditing(false);
