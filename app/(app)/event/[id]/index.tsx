@@ -13,7 +13,7 @@ import { AppInput } from "@/components/ui/AppInput";
 import { PrimaryButton, SecondaryButton } from "@/components/ui/Button";
 import { LoadingState } from "@/components/ui/LoadingState";
 import { EmptyState } from "@/components/ui/EmptyState";
-import { SocietyBadge } from "@/components/ui/SocietyHeader";
+import { SocietyPageHeader } from "@/components/ui/SocietyPageHeader";
 import { LicenceRequiredModal } from "@/components/LicenceRequiredModal";
 import { useBootstrap } from "@/lib/useBootstrap";
 import { usePaidAccess } from "@/lib/access/usePaidAccess";
@@ -1015,7 +1015,18 @@ export default function EventDetailScreen() {
 
   return (
     <Screen>
-      {/* Header with Back, Edit, and Society Badge */}
+      {/* Society logo centered at top */}
+      <SocietyPageHeader
+        logoUrl={logoUrl}
+        societyName={society?.name || "Golf Society"}
+        placeholderText={
+          society?.name
+            ? society.name.trim().split(/\s+/).slice(0, 2).map((w) => w[0]).join("").toUpperCase() || "GS"
+            : "GS"
+        }
+      />
+
+      {/* Header with Back and Edit */}
       <View style={styles.header}>
         <SecondaryButton onPress={() => goBack(router, "/(app)/(tabs)/events")} size="sm">
           <Feather name="arrow-left" size={16} color={colors.text} /> Back
@@ -1026,12 +1037,6 @@ export default function EventDetailScreen() {
               <Feather name="edit-2" size={14} color={colors.text} /> Edit
             </SecondaryButton>
           )}
-          <SocietyBadge
-            societyName={society?.name || "Golf Society"}
-            logoUrl={logoUrl}
-            size="sm"
-            showName={false}
-          />
         </View>
       </View>
 

@@ -4,7 +4,7 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { goBack } from "@/lib/navigation";
 
 import { Screen } from "@/components/ui/Screen";
-import { SocietyLogoImage } from "@/components/ui/SocietyLogoImage";
+import { SocietyLogoBadge } from "@/components/ui/SocietyLogoBadge";
 import { AppCard } from "@/components/ui/AppCard";
 import { InlineNotice } from "@/components/ui/InlineNotice";
 import { LoadingState } from "@/components/ui/LoadingState";
@@ -240,9 +240,9 @@ const TeeSheetPage = React.forwardRef<View, {
     <View ref={ref} style={styles.page} collapsable={false}>
       <View style={styles.headerRow}>
         <View style={styles.headerLeft}>
-          <SocietyLogoImage
+          <SocietyLogoBadge
             logoUrl={logoSrc}
-            size={48}
+            size={56}
             placeholderText={getInitials(data.societyName)}
           />
           <View>

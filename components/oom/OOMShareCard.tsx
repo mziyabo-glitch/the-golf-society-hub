@@ -10,7 +10,7 @@
 
 import React, { forwardRef } from "react";
 import { View, Text, StyleSheet } from "react-native";
-import { SocietyLogoImage } from "@/components/ui/SocietyLogoImage";
+import { SocietyLogoBadge } from "@/components/ui/SocietyLogoBadge";
 import { BrandingFooter } from "@/components/ui/BrandingFooter";
 import { typography } from "@/lib/ui/theme";
 
@@ -61,9 +61,9 @@ const OOMShareCard = forwardRef<View, OOMShareCardProps>(
       <View ref={ref} style={styles.container} collapsable={false}>
         {/* Society header — society branding is primary */}
         <View style={styles.header}>
-          <SocietyLogoImage
+          <SocietyLogoBadge
             logoUrl={logoUrl ?? null}
-            size={56}
+            size={72}
             placeholderText={getInitials(societyName)}
             style={{ marginBottom: 8 }}
           />

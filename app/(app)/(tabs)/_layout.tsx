@@ -1,10 +1,27 @@
 import { Tabs } from "expo-router";
 import { Feather } from "@expo/vector-icons";
-import { StyleSheet } from "react-native";
+import { StyleSheet, View } from "react-native";
+import { BottomTabBar } from "@react-navigation/bottom-tabs";
+import type { BottomTabBarProps } from "@react-navigation/bottom-tabs";
+import { AppText } from "@/components/ui/AppText";
 import { useBootstrap } from "@/lib/useBootstrap";
 import { isCaptain } from "@/lib/rbac";
 import { getColors } from "@/lib/ui/theme";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+
+function TabBarWithBranding(props: BottomTabBarProps) {
+  const insets = useSafeAreaInsets();
+  return (
+    <View style={[styles.tabBarWrapper, { paddingBottom: insets.bottom }]}>
+      <BottomTabBar {...props} />
+      <View style={styles.brandingFooter}>
+        <AppText variant="small" color="tertiary" style={styles.brandingText}>
+          Golf Society Hub
+        </AppText>
+      </View>
+    </View>
+  );
+}
 
 export default function TabsLayout() {
   const { member, activeSocietyId } = useBootstrap();
@@ -12,7 +29,6 @@ export default function TabsLayout() {
   const insets = useSafeAreaInsets();
 
   const hasSociety = !!activeSocietyId && !!member;
-  const tabBarHeight = 56 + insets.bottom;
 
   // Captains always have full access; regular members need a licence (seat)
   const hasFullAccess =
@@ -25,6 +41,7 @@ export default function TabsLayout() {
     <Tabs
       screenOptions={{
         headerShown: false,
+        tabBar: TabBarWithBranding,
         tabBarActiveTintColor: colors.primary,
         tabBarInactiveTintColor: colors.textTertiary,
         tabBarHideOnKeyboard: true,
@@ -34,8 +51,8 @@ export default function TabsLayout() {
         tabBarStyle: [
           styles.tabBar,
           {
-            height: tabBarHeight,
-            paddingBottom: Math.max(insets.bottom, 8),
+            height: 56,
+            paddingBottom: 0,
             paddingTop: 8,
             backgroundColor: "#FFFFFF",
             borderTopColor: colors.border,
@@ -88,9 +105,14 @@ export default function TabsLayout() {
 }
 
 const styles = StyleSheet.create({
+  tabBarWrapper: {
+    backgroundColor: "#FFFFFF",
+    borderTopWidth: 1,
+    borderTopColor: "#E6E8EC",
+  },
   tabBar: {
     position: "relative",
-    borderTopWidth: 1,
+    borderTopWidth: 0,
   },
   tabBarIcon: {
     marginBottom: 0,
@@ -99,5 +121,13 @@ const styles = StyleSheet.create({
     height: 46,
     justifyContent: "center",
     alignItems: "center",
+  },
+  brandingFooter: {
+    alignItems: "center",
+    paddingVertical: 4,
+  },
+  brandingText: {
+    fontSize: 10,
+    opacity: 0.7,
   },
 });

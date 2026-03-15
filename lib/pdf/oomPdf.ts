@@ -74,8 +74,8 @@ export function buildOomPdfHtml(options: OomPdfOptions): string {
     .join("");
 
   const logoHtml = logoUrl
-    ? `<img class="logo" src="${escapeAttribute(logoUrl)}" />`
-    : "";
+    ? `<div class="logo-badge"><img class="logo" src="${escapeAttribute(logoUrl)}" /></div>`
+    : `<div class="logo-placeholder">${societyName.slice(0, 2).toUpperCase()}</div>`;
 
   return `<!doctype html>
 <html>
@@ -84,7 +84,9 @@ export function buildOomPdfHtml(options: OomPdfOptions): string {
 <style>
   body { font-family: Arial, sans-serif; padding: 24px; color:#111; }
   .wrap { max-width: 720px; margin: 0 auto; }
-  .logo { width: 56px; height: 56px; object-fit: contain; display:block; margin: 0 auto 8px; }
+  .logo-badge { width: 72px; height: 72px; border-radius: 50%; background: #fff; box-shadow: 0 2px 8px rgba(0,0,0,0.08); display: flex; align-items: center; justify-content: center; margin: 0 auto 12px; overflow: hidden; }
+  .logo { width: 58px; height: 58px; object-fit: contain; }
+  .logo-placeholder { width: 72px; height: 72px; border-radius: 50%; background: #fff; box-shadow: 0 2px 8px rgba(0,0,0,0.08); display: flex; align-items: center; justify-content: center; margin: 0 auto 12px; font-size: 18px; font-weight: 700; color: #0B6E4F; }
   h1 { text-align:center; margin: 6px 0 2px; font-size: 20px; }
   .sub { text-align:center; color:#444; margin: 0 0 16px; font-size: 12px; }
   table { width:100%; border-collapse: collapse; font-size: 12px; }
@@ -227,8 +229,8 @@ export function buildOomResultsLogHtml(options: {
   const { societyName, logoUrl, seasonYear, events } = options;
 
   const logoHtml = logoUrl
-    ? `<img class="logo" src="${escapeAttribute(logoUrl)}" />`
-    : "";
+    ? `<div class="logo-badge"><img class="logo" src="${escapeAttribute(logoUrl)}" /></div>`
+    : `<div class="logo-placeholder">${societyName.slice(0, 2).toUpperCase()}</div>`;
 
   const eventBlocks = events
     .map((event) => {
@@ -290,7 +292,9 @@ export function buildOomResultsLogHtml(options: {
 <style>
   body { font-family: Arial, sans-serif; padding: 24px; color:#111; }
   .wrap { max-width: 720px; margin: 0 auto; }
-  .logo { width: 56px; height: 56px; object-fit: contain; display:block; margin: 0 auto 8px; }
+  .logo-badge { width: 72px; height: 72px; border-radius: 50%; background: #fff; box-shadow: 0 2px 8px rgba(0,0,0,0.08); display: flex; align-items: center; justify-content: center; margin: 0 auto 12px; overflow: hidden; }
+  .logo { width: 58px; height: 58px; object-fit: contain; }
+  .logo-placeholder { width: 72px; height: 72px; border-radius: 50%; background: #fff; box-shadow: 0 2px 8px rgba(0,0,0,0.08); display: flex; align-items: center; justify-content: center; margin: 0 auto 12px; font-size: 18px; font-weight: 700; color: #0B6E4F; }
   h1 { text-align:center; margin: 6px 0 2px; font-size: 20px; }
   .sub { text-align:center; color:#444; margin: 0 0 16px; font-size: 12px; }
   .event-block { margin-bottom: 18px; border:1px solid #e5e7eb; border-radius: 8px; overflow: hidden; }

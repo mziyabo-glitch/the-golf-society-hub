@@ -386,8 +386,8 @@ export async function resetSocietyData(societyId: string): Promise<void> {
 // =====================================================
 
 const LOGO_BUCKET = SOCIETY_LOGO_BUCKET;
-const MAX_LOGO_SIZE_BYTES = 2 * 1024 * 1024; // 2MB
-const ALLOWED_LOGO_TYPES = ["image/jpeg", "image/png", "image/gif", "image/webp"];
+const MAX_LOGO_SIZE_BYTES = 4 * 1024 * 1024; // 4MB for high-res (512x512 PNG/SVG)
+const ALLOWED_LOGO_TYPES = ["image/jpeg", "image/png", "image/gif", "image/webp", "image/svg+xml"];
 
 export type LogoUploadResult = {
   success: boolean;
@@ -450,13 +450,14 @@ function getExtension(mimeType?: string, fileName?: string): string {
       "image/png": "png",
       "image/gif": "gif",
       "image/webp": "webp",
+      "image/svg+xml": "svg",
     };
     if (extensions[mimeType]) return extensions[mimeType];
   }
 
   if (fileName) {
     const ext = fileName.split(".").pop()?.toLowerCase();
-    if (ext && ["jpg", "jpeg", "png", "gif", "webp"].includes(ext)) {
+    if (ext && ["jpg", "jpeg", "png", "gif", "webp", "svg"].includes(ext)) {
       return ext === "jpeg" ? "jpg" : ext;
     }
   }
@@ -505,7 +506,7 @@ export async function uploadSocietyLogo(
     }
 
     // Delete existing logo first (if any) - ignore errors
-    await supabase.storage.from(LOGO_BUCKET).remove([`${societyId}/logo.jpg`, `${societyId}/logo.png`, `${societyId}/logo.gif`, `${societyId}/logo.webp`]);
+    await supabase.storage.from(LOGO_BUCKET).remove([`${societyId}/logo.jpg`, `${societyId}/logo.png`, `${societyId}/logo.gif`, `${societyId}/logo.webp`, `${societyId}/logo.svg`]);
 
     // Upload new logo
     const { data, error } = await supabase.storage
@@ -587,6 +588,7 @@ export async function removeSocietyLogo(societyId: string): Promise<LogoUploadRe
         `${societyId}/logo.png`,
         `${societyId}/logo.gif`,
         `${societyId}/logo.webp`,
+        `${societyId}/logo.svg`,
       ]);
 
     if (error) {

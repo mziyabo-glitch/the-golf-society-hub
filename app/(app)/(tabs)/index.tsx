@@ -25,7 +25,7 @@ import { AppCard } from "@/components/ui/AppCard";
 import { Card } from "@/components/ui/Card";
 import { StatCard } from "@/components/ui/StatCard";
 import { LinkRowCard } from "@/components/ui/LinkRowCard";
-import { SocietyHeaderCard } from "@/components/ui/SocietyHeaderCard";
+import { SocietyPageHeader } from "@/components/ui/SocietyPageHeader";
 import { Chip } from "@/components/ui/Chip";
 import { PrimaryButton } from "@/components/ui/Button";
 import { InlineNotice } from "@/components/ui/InlineNotice";
@@ -160,21 +160,6 @@ function HomeAppBar({
       >
         <Feather name="settings" size={16} color={colors.textSecondary} />
       </Pressable>
-    </View>
-  );
-}
-
-function PoweredByFooter({
-  colors,
-}: {
-  colors: ReturnType<typeof getColors>;
-}) {
-  return (
-    <View style={styles.poweredByWrap}>
-      <Image source={appIcon} style={styles.poweredByIcon} resizeMode="contain" />
-      <AppText style={[styles.poweredByText, { color: colors.textTertiary }]}>
-        Powered by Golf Society Hub
-      </AppText>
     </View>
   );
 }
@@ -572,11 +557,11 @@ export default function HomeScreen() {
         onOpenSettings={() => pushWithBlur("/(app)/(tabs)/settings")}
       />
 
-      <SocietyHeaderCard
+      <SocietyPageHeader
         logoUrl={logoUrl}
         societyName={String(society.name ?? "Society")}
         subtitle={heroSecondaryText}
-        getInitials={getInitials}
+        placeholderText={getInitials(String(society.name ?? "Society"))}
       />
 
       {/* OOM Rank + Points compact StatCards */}
@@ -1075,7 +1060,6 @@ export default function HomeScreen() {
 
       </>)}
 
-      <PoweredByFooter colors={colors} />
     </Screen>
   );
 }
@@ -1259,7 +1243,6 @@ function PersonalModeHome({
         </AppCard>
       )}
 
-      <PoweredByFooter colors={colors} />
     </Screen>
   );
 }
@@ -1453,24 +1436,6 @@ const styles = StyleSheet.create({
   },
   appBarActionPressed: {
     opacity: 0.75,
-  },
-  poweredByWrap: {
-    marginTop: spacing.xs,
-    marginBottom: spacing.sm,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 4,
-  },
-  poweredByIcon: {
-    width: 14,
-    height: 14,
-    opacity: 0.55,
-  },
-  poweredByText: {
-    fontSize: typography.small.fontSize,
-    lineHeight: typography.small.lineHeight,
-    opacity: 0.8,
   },
   societyHeroCard: {
     alignItems: "center",

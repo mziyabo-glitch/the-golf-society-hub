@@ -536,7 +536,7 @@ export default function SettingsScreen() {
               </View>
 
               <AppText variant="small" color="tertiary" style={{ marginTop: spacing.sm }}>
-                Recommended: Square image, max 2MB (JPEG, PNG, GIF, WebP)
+                Recommended: 512×512 PNG or SVG for best quality. Max 4MB.
               </AppText>
 
               <View style={styles.logoDiagnostics}>

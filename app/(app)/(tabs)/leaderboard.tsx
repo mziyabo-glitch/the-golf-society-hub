@@ -10,7 +10,6 @@ import {
   Alert,
   Pressable,
   ScrollView,
-  useWindowDimensions,
 } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
@@ -19,7 +18,7 @@ import { BottomTabBarHeightContext } from "@react-navigation/bottom-tabs";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { AppText } from "@/components/ui/AppText";
-import { SocietyLogoImage } from "@/components/ui/SocietyLogoImage";
+import { SocietyPageHeader } from "@/components/ui/SocietyPageHeader";
 import { PrimaryButton } from "@/components/ui/Button";
 import { LoadingState } from "@/components/ui/LoadingState";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -111,8 +110,6 @@ export default function LeaderboardScreen() {
   const router = useRouter();
   const colors = getColors();
   const tabBarHeight = useContext(BottomTabBarHeightContext) ?? 0;
-  const { width: screenWidth } = useWindowDimensions();
-  const logoSize = screenWidth < 600 ? 52 : 44;
 
   const params = useLocalSearchParams<{ view?: string }>();
   const initialTab: TabType =
@@ -356,17 +353,13 @@ export default function LeaderboardScreen() {
         ]}
         showsVerticalScrollIndicator={false}
       >
-        {/* ========== HEADER WITH LOGO ========== */}
-        <View style={styles.headerRow}>
-          <SocietyLogoImage
+        {/* ========== SOCIETY LOGO CENTERED AT TOP ========== */}
+        <View style={styles.headerWrapper}>
+          <SocietyPageHeader
             logoUrl={logoUrl}
-            size={logoSize}
+            societyName={society?.name || undefined}
             placeholderText={getInitials(society?.name || "GS")}
           />
-
-          <View style={{ flex: 1 }} />
-
-          {/* Share Button */}
           {canShare && (
             <Pressable
               style={({ pressed }) => [
@@ -684,10 +677,6 @@ export default function LeaderboardScreen() {
           </>
         )}
 
-        {/* Subtle footer */}
-        <View style={styles.footer}>
-          <AppText style={styles.footerText}>The Golf Society Hub</AppText>
-        </View>
       </ScrollView>
 
       <LicenceRequiredModal visible={modalVisible} onClose={() => setModalVisible(false)} societyId={guardSocietyId} />
@@ -714,12 +703,19 @@ const styles = StyleSheet.create({
   },
 
   // Header
+  headerWrapper: {
+    position: "relative",
+    marginBottom: 8,
+  },
   headerRow: {
     flexDirection: "row",
     alignItems: "center",
     marginBottom: 16,
   },
   shareButton: {
+    position: "absolute",
+    top: 8,
+    right: 0,
     width: 44,
     height: 44,
     borderRadius: 12,
@@ -1052,14 +1048,4 @@ const styles = StyleSheet.create({
   },
 
   // Footer
-  footer: {
-    alignItems: "center",
-    marginTop: 24,
-    paddingTop: 16,
-  },
-  footerText: {
-    fontSize: typography.small.fontSize,
-    color: "#9CA3AF",
-  },
-
 });

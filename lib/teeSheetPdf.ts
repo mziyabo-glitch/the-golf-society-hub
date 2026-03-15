@@ -274,7 +274,7 @@ function generateTeeSheetHTML(data: TeeSheetData, logoSrc?: string | null): stri
             <div class="header-left">
               ${
                 logoSrc
-                  ? `<img class="logo" src="${escapeAttribute(logoSrc)}" />`
+                  ? `<div class="logo-badge"><img class="logo" src="${escapeAttribute(logoSrc)}" /></div>`
                   : `<div class="logo-placeholder">${societyName.slice(0, 2).toUpperCase()}</div>`
               }
               <div>
@@ -349,22 +349,35 @@ function generateTeeSheetHTML(data: TeeSheetData, logoSrc?: string | null): stri
           .header-left {
             display: flex;
             align-items: center;
-            gap: 8px;
-            width: 240px;
+            gap: 12px;
+            width: 260px;
           }
-          .logo { width: 40px; height: 40px; object-fit: contain; }
+          .logo-badge {
+            width: 56px;
+            height: 56px;
+            border-radius: 50%;
+            background: #FFFFFF;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+            flex-shrink: 0;
+          }
+          .logo { width: 44px; height: 44px; object-fit: contain; }
           .logo-placeholder {
-            width: 40px;
-            height: 40px;
-            border-radius: 8px;
+            width: 56px;
+            height: 56px;
+            border-radius: 50%;
             border: 1px solid #E5E7EB;
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: 12px;
+            font-size: 14px;
             font-weight: 700;
             color: #0B6E4F;
-            background: #F3F4F6;
+            background: #FFFFFF;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.08);
           }
           .society-name {
             font-size: 10px;
