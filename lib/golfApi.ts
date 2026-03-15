@@ -183,6 +183,7 @@ export async function getCourseById(id: number): Promise<ApiCourse> {
   }
 
   const row = extractCourseRow(payload);
+  console.log("[golfApi] getCourseById raw API row:", JSON.stringify(row, null, 2).slice(0, 2000));
 
   // Parse tees: API returns { male: [...], female: [...] } or flat array
   let tees: ApiTee[] | { male: ApiTee[]; female: ApiTee[] };

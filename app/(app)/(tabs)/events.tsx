@@ -711,6 +711,18 @@ export default function EventsScreen() {
               handicapError={formErrors.handicapAllowance}
             />
 
+            {/* Temp debug panel - dev only */}
+            {__DEV__ && (
+              <View style={[styles.debugPanel, { borderColor: colors.border, backgroundColor: colors.backgroundSecondary }]}>
+                <AppText variant="captionBold" style={{ marginBottom: 4 }}>Debug (dev only)</AppText>
+                <AppText variant="small" color="secondary">selected course id: {selectedCourse?.id ?? "(none)"}</AppText>
+                <AppText variant="small" color="secondary">import status: {teeSyncStatus}</AppText>
+                <AppText variant="small" color="secondary">last error: {teesError ?? "(none)"}</AppText>
+                <AppText variant="small" color="secondary">local course exists: {selectedCourse?.id ? "yes" : "no"}</AppText>
+                <AppText variant="small" color="secondary">local tees count: {tees.length}</AppText>
+              </View>
+            )}
+
             <PrimaryButton
               onPress={handleCreateEvent}
               loading={createAction.loading}
@@ -974,5 +986,12 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "rgba(0,0,0,0.06)",
     marginBottom: spacing.base,
+  },
+  debugPanel: {
+    marginTop: spacing.sm,
+    padding: spacing.sm,
+    borderRadius: radius.sm,
+    borderWidth: 1,
+    gap: 2,
   },
 });

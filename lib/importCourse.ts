@@ -2,6 +2,11 @@ import { supabase } from "@/lib/supabase";
 import { upsertTeesFromApi } from "@/lib/db_supabase/courseRepo";
 import type { ApiCourse, ApiTee } from "@/lib/golfApi";
 
+const LOG = (label: string, data: unknown) => {
+  const str = typeof data === "string" ? data : JSON.stringify(data, null, 2);
+  console.log(`[importCourse] ${label}:`, str);
+};
+
 export type ImportedTee = {
   id: string;
   teeName: string;
@@ -89,22 +94,55 @@ function safeCourseName(name: unknown): string {
   return s || "Unknown course";
 }
 
-async function insertCourse(course: ApiCourse): Promise<{ id: string; course_name: string }> {
-  const courseName = safeCourseName(course.name);
-  const payload = {
-    course_name: courseName,
-    club_name: course.club_name ?? null,
-    lat: getLat(course),
-    lng: getLng(course),
-    api_id: course.id,
-  };
+/** Normalize value for DB: never insert undefined; NaN -> null; ensure bigint-safe integer */
+function safeApiId(id: unknown): number | null {
+  if (id == null) return null;
+  const n = Number(id);
+  if (!Number.isFinite(n) || !Number.isInteger(n)) return null;
+  return n;
+}
 
-  console.log("[importCourse] insertCourse payload:", {
-    api_id: payload.api_id,
-    course_name: payload.course_name,
-    club_name: payload.club_name,
-    lat: payload.lat,
-    lng: payload.lng,
+/** Normalize double for DB */
+function safeDouble(val: unknown): number | null {
+  if (val == null) return null;
+  const n = Number(val);
+  return Number.isFinite(n) ? n : null;
+}
+
+/** Build courses insert payload: only known columns, no undefined, schema-safe */
+function buildCoursePayload(course: ApiCourse): Record<string, unknown> {
+  const apiId = safeApiId(course.id);
+  const payload: Record<string, unknown> = {
+    course_name: safeCourseName(course.name),
+    club_name: course.club_name != null ? String(course.club_name).trim() || null : null,
+    lat: safeDouble(getLat(course)),
+    lng: safeDouble(getLng(course)),
+    api_id: apiId,
+  };
+  // Remove undefined - Supabase/PostgREST can reject payloads with undefined
+  const cleaned: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(payload)) {
+    if (v !== undefined) cleaned[k] = v;
+  }
+  return cleaned;
+}
+
+async function insertCourse(course: ApiCourse): Promise<{ id: string; course_name: string }> {
+  const payload = buildCoursePayload(course);
+
+  if (payload.api_id == null) {
+    LOG("insertCourse ABORT - api_id is null/invalid", { courseId: course.id, courseName: course.name });
+    throw new Error("Invalid course id from API - cannot insert without api_id");
+  }
+
+  LOG("insertCourse payload (full)", payload);
+  LOG("insertCourse payload types", {
+    course_name: typeof payload.course_name,
+    club_name: typeof payload.club_name,
+    lat: typeof payload.lat,
+    lng: typeof payload.lng,
+    api_id: typeof payload.api_id,
+    api_id_value: payload.api_id,
   });
 
   const { data, error } = await supabase
@@ -114,21 +152,42 @@ async function insertCourse(course: ApiCourse): Promise<{ id: string; course_nam
     .single();
 
   if (!error) {
-    console.log("[importCourse] insertCourse success:", data?.id);
+    LOG("insertCourse success", { id: data?.id, course_name: data?.course_name });
     return data;
   }
 
-  console.error("[importCourse] insertCourse failed:", {
+  const errObj = {
     code: (error as any).code,
     message: error.message,
     details: (error as any).details,
-    payload,
-  });
+    hint: (error as any).hint,
+    fullError: JSON.stringify(error),
+  };
+  LOG("insertCourse FAILED - full error", errObj);
+  LOG("insertCourse FAILED - payload that was sent", payload);
+  console.error("[importCourse] insertCourse FAILED - do not swallow:", JSON.stringify(errObj, null, 2));
 
-  // Duplicate race condition safety (unique api_id)
   if ((error as any).code === "23505") {
     const existing = await getExistingCourseByApiId(course.id);
     if (existing) return existing;
+  }
+
+  // Fallback: schema may have `name` not `course_name` (migration 056 not run)
+  if ((error as any).code === "42703" && (error as any).message?.includes("course_name")) {
+    LOG("insertCourse retry with name column (schema fallback)", {});
+    const fallbackPayload: Record<string, unknown> = {
+      name: payload.course_name,
+      club_name: payload.club_name,
+      lat: payload.lat,
+      lng: payload.lng,
+      api_id: payload.api_id,
+    };
+    const { data: fd, error: fe } = await supabase
+      .from("courses")
+      .insert(fallbackPayload)
+      .select("id, name")
+      .single();
+    if (!fe) return { id: fd.id, course_name: fd.name ?? String(payload.course_name) };
   }
 
   throw error;
@@ -159,13 +218,7 @@ async function importTeesAndHoles(
       yards: normalized.yards != null && Number.isFinite(normalized.yards) ? Math.round(normalized.yards) : null,
     };
 
-    console.log("[importCourse] importTeesAndHoles insert tee:", {
-      course_id: courseId,
-      tee_name: insertPayload.tee_name,
-      course_rating: insertPayload.course_rating,
-      slope_rating: insertPayload.slope_rating,
-      par_total: insertPayload.par_total,
-    });
+    LOG("importTeesAndHoles tee payload (full)", insertPayload);
 
     const { data: teeRow, error: teeError } = await supabase
       .from("course_tees")
@@ -176,11 +229,14 @@ async function importTeesAndHoles(
     let teeId: string | null = teeRow?.id ?? null;
 
     if (teeError) {
-      console.error("[importCourse] course_tees insert failed:", {
+      LOG("course_tees insert FAILED", {
         code: (teeError as any).code,
         message: teeError.message,
+        details: (teeError as any).details,
+        hint: (teeError as any).hint,
         tee_name: normalized.teeName,
         course_id: courseId,
+        payload: insertPayload,
       });
     }
 
@@ -252,11 +308,20 @@ async function importTeesAndHoles(
 }
 
 export async function importCourse(apiCourse: ApiCourse): Promise<ImportedCourse> {
+  LOG("importCourse RAW API course response", apiCourse);
+
   if (!apiCourse?.id) throw new Error("Invalid GolfCourseAPI course payload.");
 
-  console.log("[importCourse] Import start", {
+  LOG("importCourse start", {
     api_id: apiCourse.id,
+    api_id_type: typeof apiCourse.id,
     name: apiCourse.name,
+    hasTees: !!apiCourse.tees,
+    teesShape: Array.isArray(apiCourse.tees)
+      ? `array[${(apiCourse.tees as any[]).length}]`
+      : typeof apiCourse.tees === "object"
+        ? `object keys: ${Object.keys(apiCourse.tees as object).join(",")}`
+        : "unknown",
   });
 
   const existing = await getExistingCourseByApiId(apiCourse.id);
