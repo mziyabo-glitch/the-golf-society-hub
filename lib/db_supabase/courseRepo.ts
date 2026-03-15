@@ -66,6 +66,137 @@ export async function getTeesByCourseId(courseId: string): Promise<CourseTee[]> 
   console.log("[courseRepo] getTeesByCourseId returned", tees.length, "tees");
   return tees;
 }
+
+export type TeeSource = "imported" | "local-manual" | "event-saved";
+
+export type CourseTeeWithSource = CourseTee & { _source?: TeeSource };
+
+/**
+ * Merge tee options from multiple sources for full selector coverage.
+ * - Local course_tees (imported or manually added to DB)
+ * - Event-saved tee names (tee_name, ladies_tee_name) if not already in list
+ * - Optionally tees from other course records with same normalized name (duplicate course handling)
+ * Dedupes by tee_name (case-insensitive).
+ */
+export async function getTeesForCourseWithMerge(
+  courseId: string,
+  options?: {
+    eventTeeNames?: { male?: string; female?: string };
+    eventTeeValues?: {
+      male?: { par?: number; courseRating?: number; slopeRating?: number };
+      female?: { par?: number; courseRating?: number; slopeRating?: number };
+    };
+    courseName?: string;
+    includeOtherCourseTees?: boolean;
+  }
+): Promise<CourseTeeWithSource[]> {
+  if (!isValidUuid(courseId)) {
+    console.warn("[courseRepo] getTeesForCourseWithMerge: invalid courseId");
+    return [];
+  }
+
+  const localTees = await getTeesByCourseId(courseId);
+  const seen = new Set<string>();
+  const result: CourseTeeWithSource[] = [];
+
+  for (const t of localTees) {
+    const key = (t.tee_name || "").toLowerCase().trim();
+    if (key && !seen.has(key)) {
+      seen.add(key);
+      result.push({ ...t, _source: "imported" as TeeSource });
+    }
+  }
+
+  if (__DEV__ && options?.courseName) {
+    const courseNameLower = (options.courseName || "").toLowerCase();
+    const isShrivenham = courseNameLower.includes("shrivenham");
+    if (isShrivenham) {
+      const { data: blueInCourseTees } = await supabase
+        .from("course_tees")
+        .select("id, course_id, tee_name")
+        .ilike("tee_name", "%blue%");
+      const { data: allShrivenhamCourses } = await supabase
+        .from("courses")
+        .select("id, course_name, api_id")
+        .ilike("course_name", "%shrivenham%");
+      console.log("[courseRepo] TEE INVESTIGATION (Shrivenham):", {
+        currentCourseId: courseId,
+        localTeeNames: localTees.map((t) => t.tee_name),
+        hasBlueInLocal: localTees.some((t) => (t.tee_name || "").toLowerCase().includes("blue")),
+        blueInCourseTees: blueInCourseTees ?? [],
+        allShrivenhamCourseIds: (allShrivenhamCourses ?? []).map((c) => ({ id: c.id, name: c.course_name })),
+        eventTeeNames: options?.eventTeeNames,
+      });
+    }
+  }
+
+  const maleName = (options?.eventTeeNames?.male ?? "").trim();
+  const femaleName = (options?.eventTeeNames?.female ?? "").trim();
+  const namesToAdd = [maleName, femaleName].filter((n) => n && !seen.has(n.toLowerCase()));
+
+  for (const name of namesToAdd) {
+    if (!name) continue;
+    const key = name.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const isMale = name === maleName;
+    const vals = isMale ? options?.eventTeeValues?.male : options?.eventTeeValues?.female;
+    result.push({
+      id: `event-saved-${key}`,
+      course_id: courseId,
+      tee_name: name,
+      tee_color: null,
+      course_rating: vals?.courseRating ?? 0,
+      slope_rating: vals?.slopeRating ?? 0,
+      par_total: vals?.par ?? 0,
+      gender: isMale ? "M" : "F",
+      yards: null,
+      _source: "event-saved",
+    });
+    if (__DEV__) {
+      console.log("[courseRepo] tee option source: event-saved", { tee_name: name });
+    }
+  }
+
+  if (options?.includeOtherCourseTees && options?.courseName) {
+    const name = (options.courseName || "").trim();
+    const searchTerm = name.length >= 4 ? name.split(/\s+/)[0] : "";
+    if (searchTerm) {
+      const { data: otherCourses } = await supabase
+        .from("courses")
+        .select("id, course_name")
+        .neq("id", courseId)
+        .ilike("course_name", `%${searchTerm}%`);
+      for (const c of otherCourses ?? []) {
+        const otherTees = await getTeesByCourseId(c.id);
+        for (const t of otherTees) {
+          const key = (t.tee_name || "").toLowerCase().trim();
+          if (key && !seen.has(key)) {
+            seen.add(key);
+            result.push({ ...t, _source: "local-manual" as TeeSource });
+            if (__DEV__) {
+              console.log("[courseRepo] tee option source: local-manual (other course)", {
+                tee_name: t.tee_name,
+                otherCourseId: c.id,
+                otherCourseName: c.course_name,
+              });
+            }
+          }
+        }
+      }
+    }
+  }
+
+  result.sort((a, b) => (a.tee_name || "").localeCompare(b.tee_name || ""));
+  if (__DEV__) {
+    console.log("[courseRepo] getTeesForCourseWithMerge final:", {
+      total: result.length,
+      names: result.map((t) => t.tee_name),
+      sources: result.map((t) => (t as CourseTeeWithSource)._source),
+    });
+  }
+  return result;
+}
 export type SearchCoursesResult = {
   data: CourseSearchHit[];
   error: string | null;

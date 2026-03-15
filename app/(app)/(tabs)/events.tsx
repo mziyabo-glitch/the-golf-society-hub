@@ -28,7 +28,7 @@ import {
   EVENT_FORMATS,
   EVENT_CLASSIFICATIONS,
 } from "@/lib/db_supabase/eventRepo";
-import { type CourseTee, getCourseByApiId, getTeesByCourseId, upsertTeesFromApi } from "@/lib/db_supabase/courseRepo";
+import { type CourseTee, getCourseByApiId, getTeesByCourseId, getTeesForCourseWithMerge, upsertTeesFromApi } from "@/lib/db_supabase/courseRepo";
 import { searchCourses as searchCoursesApi, getCourseById, type ApiCourseSearchResult } from "@/lib/golfApi";
 import { importCourse, type ImportedCourse } from "@/lib/importCourse";
 import { CourseTeeSetupCard, type TeeSyncStatus, type TeeSetupMode } from "@/components/CourseTeeSetupCard";
@@ -210,7 +210,11 @@ export default function EventsScreen() {
         console.log("[events] Loaded from cache:", cached.courseId, cached.tees.length, "tees");
         setSelectedCourse({ id: cached.courseId, name: cached.courseName });
         setSelectedCourseApiId(hit.id);
-        setTees(cached.tees);
+        const merged = await getTeesForCourseWithMerge(cached.courseId, {
+          courseName: cached.courseName,
+          includeOtherCourseTees: true,
+        });
+        setTees(merged);
         setTeeSyncStatus("synced");
       } else if (cached && cached.tees.length === 0) {
         // Course exists but 0 tees: show immediately, try background sync
@@ -224,7 +228,7 @@ export default function EventsScreen() {
           try {
             const full = await getCourseById(hit.id);
             const result = await importCourse(full);
-            setTees(result.tees.map((t) => ({
+            const teesList = result.tees.map((t) => ({
               id: t.id,
               course_id: result.courseId,
               tee_name: t.teeName,
@@ -232,9 +236,14 @@ export default function EventsScreen() {
               course_rating: t.courseRating ?? 0,
               slope_rating: t.slopeRating ?? 0,
               par_total: t.parTotal ?? 0,
-            })));
-            setTeeSyncStatus(result.tees.length > 0 ? "synced" : "import_failed");
-            if (result.tees.length > 0) setShowManualTee(false);
+            }));
+            const merged = await getTeesForCourseWithMerge(cached.courseId, {
+              courseName: cached.courseName,
+              includeOtherCourseTees: true,
+            });
+            setTees(merged.length > 0 ? merged : teesList);
+            setTeeSyncStatus((merged.length || result.tees.length) > 0 ? "synced" : "import_failed");
+            if ((merged.length || result.tees.length) > 0) setShowManualTee(false);
           } catch {
             setTeeSyncStatus("import_failed");
           } finally {
@@ -275,7 +284,14 @@ export default function EventsScreen() {
           setTeeSyncStatus(teesList.length > 0 ? "synced" : "import_failed");
           if (teesList.length === 0) setShowManualTee(true);
         }
-        setTees(teesList);
+        const merged = await getTeesForCourseWithMerge(result.courseId, {
+          courseName: result.courseName,
+          includeOtherCourseTees: true,
+        });
+        setTees(merged.length > 0 ? merged : teesList);
+        if (merged.length > teesList.length && __DEV__) {
+          console.log("[events] Merged tees from other sources:", merged.length - teesList.length, "additional");
+        }
       }
     } catch (e: any) {
       console.error("[events] course import failed:", e?.message || e);

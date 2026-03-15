@@ -27,7 +27,7 @@ import {
   EVENT_FORMATS,
   EVENT_CLASSIFICATIONS,
 } from "@/lib/db_supabase/eventRepo";
-import { getTeesByCourseId, getCourseByApiId, upsertTeesFromApi, type CourseTee } from "@/lib/db_supabase/courseRepo";
+import { getTeesByCourseId, getTeesForCourseWithMerge, getCourseByApiId, upsertTeesFromApi, type CourseTee } from "@/lib/db_supabase/courseRepo";
 import { isValidUuid } from "@/lib/uuid";
 import { searchCourses as searchCoursesApi, getCourseById, type ApiCourseSearchResult } from "@/lib/golfApi";
 import { importCourse, type ImportedCourse } from "@/lib/importCourse";
@@ -264,7 +264,11 @@ export default function EventDetailScreen() {
       if (cached && cached.tees.length > 0) {
         setSelectedCourseEdit({ id: cached.courseId, name: cached.courseName });
         setFormCourseName(cached.courseName);
-        setTees(cached.tees);
+        const merged = await getTeesForCourseWithMerge(cached.courseId, {
+          courseName: cached.courseName,
+          includeOtherCourseTees: true,
+        });
+        setTees(merged.length > 0 ? merged : cached.tees);
       } else if (cached && cached.tees.length === 0) {
         setSelectedCourseEdit({ id: cached.courseId, name: cached.courseName });
         setFormCourseName(cached.courseName);
@@ -282,8 +286,12 @@ export default function EventDetailScreen() {
             slope_rating: t.slopeRating ?? 0,
             par_total: t.parTotal ?? 0,
           }));
-          setTees(teesList);
-          if (teesList.length > 0) setShowManualTee(false);
+          const merged = await getTeesForCourseWithMerge(result.courseId, {
+            courseName: result.courseName,
+            includeOtherCourseTees: true,
+          });
+          setTees(merged.length > 0 ? merged : teesList);
+          if ((merged.length || teesList.length) > 0) setShowManualTee(false);
         } catch {
           /* keep manual tee visible */
         }
@@ -313,8 +321,12 @@ export default function EventDetailScreen() {
             teesList = [];
           }
         }
-        setTees(teesList);
-        if (teesList.length === 0) setShowManualTee(true);
+        const merged = await getTeesForCourseWithMerge(result.courseId, {
+          courseName: result.courseName,
+          includeOtherCourseTees: true,
+        });
+        setTees(merged.length > 0 ? merged : teesList);
+        if (merged.length === 0 && teesList.length === 0) setShowManualTee(true);
       }
     } catch (e: any) {
       setSelectedCourseEdit({ id: "", name: hit.name });
@@ -326,13 +338,14 @@ export default function EventDetailScreen() {
     }
   }, []);
 
-  // Load tees when event has course_id. Match saved tee names to set selected tees.
+  // Load tees when event has course_id. Merge local tees + event-saved tees so manual/event-only tees appear.
   const loadTeesForEvent = useCallback(async (
     courseId: string | undefined,
     _teeId: string | undefined,
     hasSavedTeeData?: boolean,
     savedMaleTeeName?: string,
-    savedFemaleTeeName?: string
+    savedFemaleTeeName?: string,
+    event?: EventDoc | null
   ) => {
     if (!isValidUuid(courseId)) {
       setTees([]);
@@ -346,7 +359,26 @@ export default function EventDetailScreen() {
     }
     setTeesLoading(true);
     try {
-      const list = await getTeesByCourseId(courseId);
+      const list = await getTeesForCourseWithMerge(courseId, {
+        eventTeeNames: {
+          male: savedMaleTeeName || undefined,
+          female: savedFemaleTeeName || undefined,
+        },
+        eventTeeValues: event ? {
+          male: {
+            par: event.par ?? undefined,
+            courseRating: event.courseRating ?? undefined,
+            slopeRating: event.slopeRating ?? undefined,
+          },
+          female: {
+            par: event.ladiesPar ?? undefined,
+            courseRating: event.ladiesCourseRating ?? undefined,
+            slopeRating: event.ladiesSlopeRating ?? undefined,
+          },
+        } : undefined,
+        courseName: event?.courseName ?? undefined,
+        includeOtherCourseTees: true,
+      });
       setTees(list);
       const maleMatch = savedMaleTeeName ? list.find((t) => t.tee_name === savedMaleTeeName) : null;
       const femaleMatch = savedFemaleTeeName ? list.find((t) => t.tee_name === savedFemaleTeeName) : null;
@@ -430,7 +462,8 @@ export default function EventDetailScreen() {
         event.tee_id ?? undefined,
         hasSavedTeeData,
         event.teeName ?? undefined,
-        event.ladiesTeeName ?? undefined
+        event.ladiesTeeName ?? undefined,
+        event
       );
     } else {
       setTees([]);
