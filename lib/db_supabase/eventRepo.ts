@@ -209,13 +209,14 @@ export async function createEvent(
   const classification = data.classification ?? 'general';
 
   const courseId = data.courseId?.trim();
+  // tee_id: never save API/synthetic IDs; FK target may not exist. Use null; rely on event-level tee fields.
   const payload: Record<string, unknown> = {
     society_id: societyId,
     name: data.name,
     date: data.date ?? null,
     course_id: courseId || null,
     course_name: data.courseName ?? null,
-    tee_id: data.teeId ?? null,
+    tee_id: null,
     format: data.format,
     classification: classification,
     is_oom: classification === 'oom',
@@ -244,6 +245,11 @@ export async function createEvent(
   if (data.teeSource !== undefined) payload.tee_source = data.teeSource;
 
   console.log("[eventRepo] createEvent payload:", JSON.stringify(payload, null, 2));
+  console.log("[eventRepo] tee_id intentionally null; tee values saved on event:", {
+    tee_name: payload.tee_name,
+    ladies_tee_name: payload.ladies_tee_name,
+    tee_source: payload.tee_source,
+  });
 
   const { data: row, error } = await supabase
     .from("events")
@@ -312,7 +318,14 @@ export async function updateEvent(
     payload.course_id = cid || null;
   }
   if (updates.courseName !== undefined) payload.course_name = updates.courseName;
-  if (updates.teeId !== undefined) payload.tee_id = updates.teeId;
+  // tee_id: never persist; avoid FK failure. Always null; rely on event-level tee fields.
+  payload.tee_id = null;
+  if (updates.teeId !== undefined) {
+    console.log("[eventRepo] tee_id nullified (not persisting to avoid FK failure); tee values on event:", {
+      tee_name: payload.tee_name ?? updates.teeName,
+      ladies_tee_name: payload.ladies_tee_name ?? updates.ladiesTeeName,
+    });
+  }
   if (updates.format !== undefined) payload.format = updates.format;
   if (updates.classification !== undefined) {
     payload.classification = updates.classification;
