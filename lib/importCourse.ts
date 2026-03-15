@@ -83,9 +83,9 @@ async function getImportedTees(courseId: string): Promise<ImportedTee[]> {
   }));
 }
 
-async function insertCourse(course: ApiCourse): Promise<{ id: string; name: string }> {
+async function insertCourse(course: ApiCourse): Promise<{ id: string; course_name: string }> {
   const payload = {
-    name: course.name,
+    course_name: course.name,
     club_name: course.club_name ?? null,
     lat: getLat(course),
     lng: getLng(course),
@@ -95,7 +95,7 @@ async function insertCourse(course: ApiCourse): Promise<{ id: string; name: stri
   const { data, error } = await supabase
     .from("courses")
     .insert(payload)
-    .select("id, name")
+    .select("id, course_name")
     .single();
 
   if (!error) return data;
@@ -204,7 +204,7 @@ export async function importCourse(apiCourse: ApiCourse): Promise<ImportedCourse
       console.log("[importCourse] course already exists with tees", existing.id, tees.length);
       return {
         courseId: existing.id,
-        courseName: existing.name,
+        courseName: existing.course_name ?? "",
         tees,
         imported: false,
       };
@@ -235,7 +235,7 @@ export async function importCourse(apiCourse: ApiCourse): Promise<ImportedCourse
     console.log("[importCourse] re-imported tees:", teesAfter.length, teesAfter.map((t) => t.teeName));
     return {
       courseId: existing.id,
-      courseName: existing.name,
+      courseName: existing.course_name ?? "",
       tees: teesAfter,
       imported: false,
     };
@@ -271,7 +271,7 @@ export async function importCourse(apiCourse: ApiCourse): Promise<ImportedCourse
 
   return {
     courseId: created.id,
-    courseName: created.name,
+    courseName: created.course_name ?? "",
     tees,
     imported: true,
   };

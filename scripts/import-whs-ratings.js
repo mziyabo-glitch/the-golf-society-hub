@@ -24,7 +24,7 @@ async function loadCourses() {
 
   const { data } = await supabase
    .from("courses")
-   .select("id,name")
+   .select("id,course_name")
    .range(from, from + page - 1)
 
   if (!data || data.length === 0) break
@@ -46,7 +46,7 @@ async function run() {
  const courseMap = {}
 
  courses.forEach(c => {
-  courseMap[normalize(c.name)] = c.id
+  courseMap[normalize(c.course_name)] = c.id
  })
 
  console.log(`Loaded ${courses.length} courses`)

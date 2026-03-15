@@ -20,7 +20,7 @@ async function loadAllCourses() {
 
   const { data } = await supabase
    .from("courses")
-   .select("id,name,lat,lng")
+   .select("id,course_name,lat,lng")
    .range(from, from + pageSize - 1)
 
   if (!data || data.length === 0) break
