@@ -160,7 +160,14 @@ export async function upsertTeesFromApi(
       if ((error as any).code === "23505") {
         continue;
       }
-      console.warn("[courseRepo] upsertTeesFromApi insert:", error.message, "tee:", row.tee_name);
+      console.warn("[courseRepo] upsertTeesFromApi insert failed:", {
+        code: (error as any).code,
+        message: error.message,
+        details: (error as any).details,
+        hint: (error as any).hint,
+        tee_name: row.tee_name,
+      });
+      try { console.warn("[courseRepo] upsertTeesFromApi FULL ERROR:", JSON.stringify(error, null, 2)); } catch {}
     }
   }
 

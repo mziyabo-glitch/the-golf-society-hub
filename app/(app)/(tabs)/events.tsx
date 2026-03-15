@@ -235,37 +235,47 @@ export default function EventsScreen() {
         console.log("[events] getCourseById done, importing...");
         const result: ImportedCourse = await importCourse(full);
         console.log("[events] importCourse done:", result.courseId, result.tees.length, "tees");
-        setSelectedCourse({ id: result.courseId, name: result.courseName });
+        setSelectedCourse({ id: result.courseId || "", name: result.courseName || hit.name });
         setSelectedCourseApiId(hit.id);
 
-        let teesList: CourseTee[];
-        if (result.tees.length > 0) {
-          teesList = result.tees.map((t) => ({
-            id: t.id,
-            course_id: result.courseId,
-            tee_name: t.teeName,
-            tee_color: null,
-            course_rating: t.courseRating ?? 0,
-            slope_rating: t.slopeRating ?? 0,
-            par_total: t.parTotal ?? 0,
-          }));
-          setTeeSyncStatus("synced");
+        // If course insert failed entirely (courseId is empty), skip DB tee ops
+        if (!result.courseId) {
+          console.warn("[events] courseId empty after import — showing manual tee entry");
+          setTees([]);
+          setShowManualTee(true);
+          setTeeSyncStatus("import_failed");
+          setTeesError("Course import failed. You can still enter tee details manually below.");
         } else {
-          const apiTees = full.tees;
-          if (apiTees) {
-            await upsertTeesFromApi(result.courseId, apiTees as any);
-            teesList = await getTeesByCourseId(result.courseId);
+          let teesList: CourseTee[];
+          if (result.tees.length > 0) {
+            teesList = result.tees.map((t) => ({
+              id: t.id,
+              course_id: result.courseId,
+              tee_name: t.teeName,
+              tee_color: null,
+              course_rating: t.courseRating ?? 0,
+              slope_rating: t.slopeRating ?? 0,
+              par_total: t.parTotal ?? 0,
+            }));
+            setTeeSyncStatus("synced");
           } else {
-            teesList = [];
+            const apiTees = full.tees;
+            if (apiTees && result.courseId) {
+              await upsertTeesFromApi(result.courseId, apiTees as any);
+              teesList = await getTeesByCourseId(result.courseId);
+            } else {
+              teesList = [];
+            }
+            setTeeSyncStatus(teesList.length > 0 ? "synced" : "import_failed");
+            if (teesList.length === 0) setShowManualTee(true);
           }
-          setTeeSyncStatus(teesList.length > 0 ? "synced" : "import_failed");
-          if (teesList.length === 0) setShowManualTee(true);
+          setTees(teesList);
         }
-        setTees(teesList);
       }
     } catch (e: any) {
       console.error("[events] course import failed:", e?.message || e);
-      setTeesError(e?.message || "Import failed. You can enter tee details manually below.");
+      try { console.error("[events] course import error detail:", JSON.stringify(e, null, 2)); } catch {}
+      setTeesError("Import failed. You can still enter tee details manually below.");
       setSelectedCourse({ id: "", name: hit.name });
       setSelectedCourseApiId(hit.id);
       setTees([]);
