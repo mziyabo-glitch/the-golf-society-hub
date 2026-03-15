@@ -267,26 +267,43 @@ async function insertCourse(course: ApiCourse): Promise<{ id: string; course_nam
   throw new Error("insertCourse: no data returned");
 }
 
+/**
+ * Idempotent tee + hole import. Uses upsert for tees (course_id, tee_name) and
+ * inserts only missing holes. Never throws on duplicates; reuses existing rows.
+ */
 async function importTeesAndHoles(
   courseId: string,
   tees: ApiTee[] | undefined,
   gender?: "M" | "F"
-): Promise<void> {
+): Promise<{ teesInserted: number; teesSkipped: number; holesInserted: number; holesSkipped: number }> {
+  const stats = { teesInserted: 0, teesSkipped: 0, holesInserted: 0, holesSkipped: 0 };
+
   if (!isValidUuid(courseId)) {
     console.warn("[importCourse] Skipping tee import: invalid courseId (no valid local course UUID)");
-    return;
+    return stats;
   }
-  if (!Array.isArray(tees) || tees.length === 0) return;
+  if (!Array.isArray(tees) || tees.length === 0) return stats;
+
+  // 1. Fetch existing tees for course (idempotent: know what's already there)
+  const { data: existingTees, error: fetchErr } = await supabase
+    .from("course_tees")
+    .select("id, tee_name")
+    .eq("course_id", courseId);
+  if (fetchErr) {
+    console.error("[importCourse] Failed to fetch existing tees:", fetchErr.message);
+    return stats;
+  }
+  const existingByTeeName = new Map<string, string>((existingTees ?? []).map((t: any) => [t.tee_name, t.id]));
+  console.log("[importCourse] Existing tees for course:", existingByTeeName.size, Array.from(existingByTeeName.keys()));
 
   for (const tee of tees) {
     const normalized = normalizeTee(tee, gender);
     if (!normalized) continue;
 
-    // Sanitize: avoid NaN, undefined; use null for optional numeric fields
     const cr = normalized.courseRating;
     const sr = normalized.slopeRating;
     const pt = normalized.parTotal;
-    const insertPayload = {
+    const teePayload = {
       course_id: courseId,
       tee_name: normalized.teeName,
       course_rating: cr != null && Number.isFinite(cr) ? cr : null,
@@ -295,52 +312,65 @@ async function importTeesAndHoles(
       gender: normalized.gender ?? null,
       yards: normalized.yards != null && Number.isFinite(normalized.yards) ? Math.round(normalized.yards) : null,
     };
-    console.log("[importCourse] course_tees insert payload:", JSON.stringify(insertPayload, null, 2));
 
-    const { data: teeRow, error: teeError } = await supabase
-      .from("course_tees")
-      .insert(insertPayload)
-      .select("id")
-      .single();
+    let teeId: string | null = existingByTeeName.get(normalized.teeName) ?? null;
 
-    let teeId: string | null = teeRow?.id ?? null;
-
-    if (teeError) {
-      const te = teeError as any;
-      console.error("[importCourse] course_tees insert FAILED:\n" + JSON.stringify({
-        code: te.code,
-        message: te.message,
-        details: te.details,
-        hint: te.hint,
-        tee_name: normalized.teeName,
-        payload: insertPayload,
-      }, null, 2));
-    }
-
-    if (teeError && (teeError as any).code === "23505") {
-      const { data: existingTee, error: existingTeeError } = await supabase
+    if (!teeId) {
+      // Upsert: insert or update on (course_id, tee_name). Conflict target matches UNIQUE(course_id, tee_name).
+      const { data: upserted, error: teeError } = await supabase
         .from("course_tees")
+        .upsert(teePayload, { onConflict: "course_id,tee_name" })
         .select("id")
-        .eq("course_id", courseId)
-        .eq("tee_name", normalized.teeName)
-        .maybeSingle();
-      if (existingTeeError) throw existingTeeError;
-      teeId = existingTee?.id ?? null;
-    } else if (teeError) {
-      throw teeError;
+        .single();
+
+      if (teeError) {
+        const te = teeError as any;
+        if (te.code === "23505" || te.message?.includes("duplicate") || te.message?.includes("unique")) {
+          const { data: existing } = await supabase
+            .from("course_tees")
+            .select("id")
+            .eq("course_id", courseId)
+            .eq("tee_name", normalized.teeName)
+            .maybeSingle();
+          teeId = existing?.id ?? null;
+          stats.teesSkipped++;
+          console.log("[importCourse] Tee already exists, reusing:", normalized.teeName);
+        } else {
+          console.error("[importCourse] course_tees upsert failed:", te.code, te.message);
+          continue;
+        }
+      } else {
+        teeId = upserted?.id ?? null;
+        stats.teesInserted++;
+        if (teeId) existingByTeeName.set(normalized.teeName, teeId);
+        console.log("[importCourse] Tee inserted:", normalized.teeName);
+      }
+    } else {
+      stats.teesSkipped++;
+      console.log("[importCourse] Tee already in DB, reusing:", normalized.teeName);
     }
 
     if (!teeId) continue;
-    console.log("Imported tee:", normalized.teeName);
 
     if (!Array.isArray(tee.holes) || tee.holes.length === 0) {
       console.log("[importCourse] tee has no hole data:", normalized.teeName);
       continue;
     }
 
+    // 2. Fetch existing holes for this tee
+    const { data: existingHoles } = await supabase
+      .from("course_holes")
+      .select("hole_number")
+      .eq("tee_id", teeId);
+    const existingHoleNums = new Set((existingHoles ?? []).map((h: any) => h.hole_number));
+
     const holeRows = tee.holes
       .map((hole: any, i: number) => {
         const holeNum = i + 1;
+        if (existingHoleNums.has(holeNum)) {
+          stats.holesSkipped++;
+          return null;
+        }
         const parVal = hole?.par != null ? Number(hole.par) : null;
         const yardVal = hole?.yardage != null ? Number(hole.yardage) : null;
         const siVal =
@@ -360,28 +390,35 @@ async function importTeesAndHoles(
           stroke_index: siVal != null && Number.isFinite(siVal) ? siVal : null,
         };
       })
-      .filter((h) => Number.isFinite(h.hole_number));
+      .filter((h): h is NonNullable<typeof h> => h != null && Number.isFinite(h.hole_number));
 
     if (holeRows.length === 0) continue;
 
     const { error: holesError } = await supabase
       .from("course_holes")
-      .insert(holeRows);
+      .upsert(holeRows, { onConflict: "tee_id,hole_number" });
 
     if (holesError) {
-      console.error("[importCourse] course_holes insert failed:", {
-        code: (holesError as any).code,
-        message: holesError.message,
-        tee_id: teeId,
-        holeCount: holeRows.length,
-      });
-      if ((holesError as any).code !== "23505") {
-        throw holesError;
+      const he = holesError as any;
+      if (he.code === "23505" || he.message?.includes("duplicate") || he.message?.includes("unique")) {
+        stats.holesSkipped += holeRows.length;
+        console.log("[importCourse] Holes already exist for tee, skipped:", normalized.teeName);
+      } else {
+        console.error("[importCourse] course_holes upsert failed:", he.code, he.message);
+        for (const row of holeRows) {
+          const { error: singleErr } = await supabase.from("course_holes").insert(row);
+          if (!singleErr) stats.holesInserted++;
+          else if ((singleErr as any).code === "23505") stats.holesSkipped++;
+        }
       }
+    } else {
+      stats.holesInserted += holeRows.length;
+      console.log("[importCourse] Holes inserted:", holeRows.length, "for tee", normalized.teeName);
     }
-
-    // Duplicate holes are okay for re-imports if tee already existed.
   }
+
+  console.log("[importCourse] importTeesAndHoles stats:", stats);
+  return stats;
 }
 
 /** Extract API tees as ImportedTee[] with synthetic ids for UI when DB persist fails */
@@ -451,7 +488,8 @@ export async function importCourse(apiCourse: ApiCourse): Promise<ImportedCourse
       return { courseId: "", courseName: existing.course_name ?? apiCourse.name ?? "", tees: apiTees, imported: false };
     }
     console.log("[importCourse] course exists but 0 tees, re-importing tees from API");
-    await importTeesAndHoles(existing.id, mergedTees);
+    const teeStats = await importTeesAndHoles(existing.id, mergedTees);
+    console.log("[importCourse] tee import stats:", teeStats);
     let teesAfter = await getImportedTees(existing.id);
     if (teesAfter.length === 0 && mergedTees.length > 0) {
       const list = await upsertTeesFromApi(existing.id, apiCourse.tees as any);
@@ -520,9 +558,10 @@ export async function importCourse(apiCourse: ApiCourse): Promise<ImportedCourse
   }
 
   try {
-    await importTeesAndHoles(created.id, mergedTees);
+    const teeStats = await importTeesAndHoles(created.id, mergedTees);
+    console.log("[importCourse] tee import stats:", teeStats);
   } catch (teeErr: any) {
-    console.error("[importCourse] importTeesAndHoles failed:", JSON.stringify({ message: teeErr?.message }, null, 2));
+    console.error("[importCourse] importTeesAndHoles failed (non-fatal):", teeErr?.message);
   }
 
   let tees = await getImportedTees(created.id);

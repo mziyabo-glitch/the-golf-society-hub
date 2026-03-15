@@ -167,17 +167,24 @@ export async function upsertTeesFromApi(
     })
     .filter((r): r is NonNullable<typeof r> => r !== null);
 
+  let inserted = 0;
+  let skipped = 0;
   for (const row of rows) {
-    console.log("[courseRepo] upsertTeesFromApi tee payload:", JSON.stringify(row, null, 2));
-    const { error } = await supabase.from("course_tees").insert(row);
+    const { error } = await supabase
+      .from("course_tees")
+      .upsert(row, { onConflict: "course_id,tee_name" });
 
     if (error) {
-      if ((error as any).code === "23505") {
+      if ((error as any).code === "23505" || (error as any).message?.includes("duplicate")) {
+        skipped++;
         continue;
       }
-      console.warn("[courseRepo] upsertTeesFromApi insert:", error.message, "tee:", row.tee_name);
+      console.warn("[courseRepo] upsertTeesFromApi upsert:", error.message, "tee:", row.tee_name);
+    } else {
+      inserted++;
     }
   }
+  console.log("[courseRepo] upsertTeesFromApi: inserted", inserted, "skipped", skipped);
 
   return getTeesByCourseId(courseId);
 }
