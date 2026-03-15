@@ -185,6 +185,8 @@ export async function getCourseById(id: number): Promise<ApiCourse> {
   const row = extractCourseRow(payload);
   console.log("[golfApi] getCourseById raw API row:", JSON.stringify(row, null, 2).slice(0, 2000));
 
+  const { lat, lng } = extractCoordinates(row);
+
   // Parse tees: API returns { male: [...], female: [...] } or flat array
   let tees: ApiTee[] | { male: ApiTee[]; female: ApiTee[] };
   if (Array.isArray(row.tees)) {
@@ -210,10 +212,50 @@ export async function getCourseById(id: number): Promise<ApiCourse> {
     id: Number(row.id),
     name: row.name || row.course_name || "Unknown course",
     club_name: row.club_name || row.club || undefined,
-    lat: row.lat ?? row.latitude ?? undefined,
-    lng: row.lng ?? row.longitude ?? undefined,
-    latitude: row.latitude ?? row.lat ?? undefined,
-    longitude: row.longitude ?? row.lng ?? undefined,
+    lat,
+    lng,
+    latitude: lat,
+    longitude: lng,
     tees,
   };
+}
+
+/**
+ * Extract coordinates from API response. Handles all supported shapes:
+ * - row.lat, row.lng
+ * - row.latitude, row.longitude
+ * - row.location.latitude, row.location.longitude
+ * - row.coordinates.lat, row.coordinates.lng
+ * - row.coordinates.latitude, row.coordinates.longitude
+ * - row.geo.lat, row.geo.lng
+ * Returns undefined for missing/invalid values.
+ */
+function extractCoordinates(row: any): { lat?: number; lng?: number } {
+  const toNum = (v: unknown): number | undefined => {
+    if (v == null) return undefined;
+    const n = typeof v === "string" ? parseFloat(v) : Number(v);
+    return Number.isFinite(n) ? n : undefined;
+  };
+
+  const lat =
+    toNum(row?.lat) ??
+    toNum(row?.latitude) ??
+    toNum(row?.location?.latitude) ??
+    toNum(row?.location?.lat) ??
+    toNum(row?.coordinates?.latitude) ??
+    toNum(row?.coordinates?.lat) ??
+    toNum(row?.geo?.lat) ??
+    toNum(row?.geo?.latitude);
+
+  const lng =
+    toNum(row?.lng) ??
+    toNum(row?.longitude) ??
+    toNum(row?.location?.longitude) ??
+    toNum(row?.location?.lng) ??
+    toNum(row?.coordinates?.longitude) ??
+    toNum(row?.coordinates?.lng) ??
+    toNum(row?.geo?.lng) ??
+    toNum(row?.geo?.longitude);
+
+  return { lat, lng };
 }
