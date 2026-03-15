@@ -2,11 +2,6 @@ import { supabase } from "@/lib/supabase";
 import { upsertTeesFromApi } from "@/lib/db_supabase/courseRepo";
 import type { ApiCourse, ApiTee } from "@/lib/golfApi";
 
-const LOG = (label: string, data: unknown) => {
-  const str = typeof data === "string" ? data : JSON.stringify(data, null, 2);
-  console.log(`[importCourse] ${label}:`, str);
-};
-
 export type ImportedTee = {
   id: string;
   teeName: string;
@@ -109,17 +104,51 @@ function safeDouble(val: unknown): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
-/** Build courses insert payload: only known columns, no undefined, schema-safe */
+/** Slugify for dedupe_key fallback: lowercase, replace non-alphanumeric with hyphen, collapse, trim */
+function slugify(s: string): string {
+  return s
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .trim() || "unknown";
+}
+
+/**
+ * Build deterministic dedupe_key for courses table (NOT NULL).
+ * - If api_id exists: golfcourseapi:{api_id}
+ * - Otherwise: slugify(club_name-course_name)
+ */
+function buildDedupeKey(course: ApiCourse, apiId: number | null): string {
+  if (apiId != null) {
+    return `golfcourseapi:${apiId}`;
+  }
+  const club = (course.club_name ?? "").trim();
+  const name = (course.name ?? course.course_name ?? "").trim();
+  const combined = [club, name].filter(Boolean).join("-") || "unknown";
+  return slugify(combined);
+}
+
+/**
+ * Build courses insert payload: only valid DB columns, no undefined, schema-safe.
+ * Includes dedupe_key (NOT NULL required by schema).
+ */
 function buildCoursePayload(course: ApiCourse): Record<string, unknown> {
   const apiId = safeApiId(course.id);
+  const courseName = safeCourseName(course.name);
+  const clubName = course.club_name != null ? String(course.club_name).trim() || null : null;
+  const lat = safeDouble(getLat(course));
+  const lng = safeDouble(getLng(course));
+  const dedupeKey = buildDedupeKey(course, apiId);
+
   const payload: Record<string, unknown> = {
-    course_name: safeCourseName(course.name),
-    club_name: course.club_name != null ? String(course.club_name).trim() || null : null,
-    lat: safeDouble(getLat(course)),
-    lng: safeDouble(getLng(course)),
+    course_name: courseName,
+    club_name: clubName,
+    lat,
+    lng,
     api_id: apiId,
+    dedupe_key: dedupeKey.trim() || "unknown",
   };
-  // Remove undefined - Supabase/PostgREST can reject payloads with undefined
+
   const cleaned: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(payload)) {
     if (v !== undefined) cleaned[k] = v;
@@ -130,67 +159,63 @@ function buildCoursePayload(course: ApiCourse): Record<string, unknown> {
 async function insertCourse(course: ApiCourse): Promise<{ id: string; course_name: string }> {
   const payload = buildCoursePayload(course);
 
-  if (payload.api_id == null) {
-    LOG("insertCourse ABORT - api_id is null/invalid", { courseId: course.id, courseName: course.name });
-    throw new Error("Invalid course id from API - cannot insert without api_id");
+  if (payload.dedupe_key == null || String(payload.dedupe_key).trim() === "") {
+    throw new Error("dedupe_key is required for courses insert");
   }
 
-  LOG("insertCourse payload (full)", payload);
-  LOG("insertCourse payload types", {
-    course_name: typeof payload.course_name,
-    club_name: typeof payload.club_name,
-    lat: typeof payload.lat,
-    lng: typeof payload.lng,
-    api_id: typeof payload.api_id,
-    api_id_value: payload.api_id,
-  });
+  console.log("[importCourse] insertCourse payload", JSON.stringify(payload, null, 2));
 
-  const { data, error } = await supabase
-    .from("courses")
-    .insert(payload)
-    .select("id, course_name")
-    .single();
+  let data: { id: string; course_name: string } | null = null;
+  let error: any = null;
 
-  if (!error) {
-    LOG("insertCourse success", { id: data?.id, course_name: data?.course_name });
+  const hasDedupeKeyUnique = true;
+  if (hasDedupeKeyUnique) {
+    const result = await supabase
+      .from("courses")
+      .upsert(payload, { onConflict: "dedupe_key" })
+      .select("id, course_name")
+      .single();
+    data = result.data;
+    error = result.error;
+  }
+
+  if (!error && data) {
+    console.log("[importCourse] insertCourse success", { id: data.id, dedupe_key: payload.dedupe_key });
     return data;
   }
 
-  const errObj = {
-    code: (error as any).code,
-    message: error.message,
-    details: (error as any).details,
-    hint: (error as any).hint,
-    fullError: JSON.stringify(error),
-  };
-  LOG("insertCourse FAILED - full error", errObj);
-  LOG("insertCourse FAILED - payload that was sent", payload);
-  console.error("[importCourse] insertCourse FAILED - do not swallow:", JSON.stringify(errObj, null, 2));
-
-  if ((error as any).code === "23505") {
-    const existing = await getExistingCourseByApiId(course.id);
-    if (existing) return existing;
-  }
-
-  // Fallback: schema may have `name` not `course_name` (migration 056 not run)
-  if ((error as any).code === "42703" && (error as any).message?.includes("course_name")) {
-    LOG("insertCourse retry with name column (schema fallback)", {});
-    const fallbackPayload: Record<string, unknown> = {
-      name: payload.course_name,
-      club_name: payload.club_name,
-      lat: payload.lat,
-      lng: payload.lng,
-      api_id: payload.api_id,
+  if (error) {
+    const errObj = {
+      code: (error as any).code,
+      message: error.message,
+      details: (error as any).details,
+      hint: (error as any).hint,
     };
-    const { data: fd, error: fe } = await supabase
-      .from("courses")
-      .insert(fallbackPayload)
-      .select("id, name")
-      .single();
-    if (!fe) return { id: fd.id, course_name: fd.name ?? String(payload.course_name) };
+    console.error("[importCourse] insertCourse FAILED", JSON.stringify(errObj, null, 2));
+    console.error("[importCourse] payload sent", JSON.stringify(payload, null, 2));
+
+    if ((error as any).code === "23505") {
+      const existing = await getExistingCourseByApiId(course.id);
+      if (existing) return existing;
+    }
+
+    if ((error as any).code === "42710" || (error as any).message?.includes("conflict")) {
+      const insertResult = await supabase
+        .from("courses")
+        .insert(payload)
+        .select("id, course_name")
+        .single();
+      if (!insertResult.error) return insertResult.data;
+      if ((insertResult.error as any).code === "23505") {
+        const existing = await getExistingCourseByApiId(course.id);
+        if (existing) return existing;
+      }
+    }
+
+    throw error;
   }
 
-  throw error;
+  throw new Error("insertCourse: no data returned");
 }
 
 async function importTeesAndHoles(
@@ -218,8 +243,6 @@ async function importTeesAndHoles(
       yards: normalized.yards != null && Number.isFinite(normalized.yards) ? Math.round(normalized.yards) : null,
     };
 
-    LOG("importTeesAndHoles tee payload (full)", insertPayload);
-
     const { data: teeRow, error: teeError } = await supabase
       .from("course_tees")
       .insert(insertPayload)
@@ -229,14 +252,10 @@ async function importTeesAndHoles(
     let teeId: string | null = teeRow?.id ?? null;
 
     if (teeError) {
-      LOG("course_tees insert FAILED", {
+      console.error("[importCourse] course_tees insert failed", {
         code: (teeError as any).code,
         message: teeError.message,
-        details: (teeError as any).details,
-        hint: (teeError as any).hint,
         tee_name: normalized.teeName,
-        course_id: courseId,
-        payload: insertPayload,
       });
     }
 
@@ -308,21 +327,7 @@ async function importTeesAndHoles(
 }
 
 export async function importCourse(apiCourse: ApiCourse): Promise<ImportedCourse> {
-  LOG("importCourse RAW API course response", apiCourse);
-
   if (!apiCourse?.id) throw new Error("Invalid GolfCourseAPI course payload.");
-
-  LOG("importCourse start", {
-    api_id: apiCourse.id,
-    api_id_type: typeof apiCourse.id,
-    name: apiCourse.name,
-    hasTees: !!apiCourse.tees,
-    teesShape: Array.isArray(apiCourse.tees)
-      ? `array[${(apiCourse.tees as any[]).length}]`
-      : typeof apiCourse.tees === "object"
-        ? `object keys: ${Object.keys(apiCourse.tees as object).join(",")}`
-        : "unknown",
-  });
 
   const existing = await getExistingCourseByApiId(apiCourse.id);
   if (existing) {
