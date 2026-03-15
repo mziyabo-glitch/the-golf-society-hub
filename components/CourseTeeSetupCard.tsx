@@ -2,10 +2,12 @@
  * CourseTeeSetupCard – resilient Course / Tee Setup for event creation and editing.
  *
  * Section A: Course – search, selected summary, change action
- * Section B: Tee setup – imported tees or manual entry fallback
- * Section C: Status / tools – retry sync, save, status text
+ * Section B: Tee Setup Mode – Single Tee For All | Separate Male/Female Tees
+ * Section C: Tee selectors (from imported tees or manual entry)
+ * Section D: Status / tools
  *
  * Local-first: shows saved tee data immediately, never dead-ends.
+ * Event save uses event-level tee fields only (no tee_id FK).
  */
 import { StyleSheet, View, Pressable } from "react-native";
 import { Feather } from "@expo/vector-icons";
@@ -17,6 +19,8 @@ import { getColors, spacing, radius } from "@/lib/ui/theme";
 import type { CourseTee } from "@/lib/db_supabase/courseRepo";
 
 export type TeeSyncStatus = "synced" | "manual" | "import_failed" | "pending_sync" | "idle";
+
+export type TeeSetupMode = "single" | "separate";
 
 export type CourseTeeSetupCardProps = {
   // Section A: Course
@@ -32,15 +36,22 @@ export type CourseTeeSetupCardProps = {
   onManualCourseNameChange?: (v: string) => void;
   showManualCourseInput?: boolean;
 
-  // Section B: Tee setup
+  // Section B: Tee setup mode
+  teeSetupMode: TeeSetupMode;
+  onTeeSetupModeChange: (mode: TeeSetupMode) => void;
+
+  // Section C: Tee setup (imported or manual)
   tees: CourseTee[];
   selectedTee: CourseTee | null;
+  selectedMaleTee: CourseTee | null;
+  selectedFemaleTee: CourseTee | null;
   onSelectTee: (tee: CourseTee) => void;
+  onSelectMaleTee: (tee: CourseTee | null) => void;
+  onSelectFemaleTee: (tee: CourseTee | null) => void;
   teesLoading?: boolean;
   teesError?: string | null;
   showManualTee: boolean;
   onSetShowManualTee: (show: boolean) => void;
-  // Manual tee fields
   manualTeeName: string;
   manualPar: string;
   manualCourseRating: string;
@@ -51,16 +62,14 @@ export type CourseTeeSetupCardProps = {
   manualLadiesSlopeRating?: string;
   onManualTeeChange?: (field: string, value: string) => void;
 
-  // Section C: Status / tools
+  // Section D: Status / tools
   syncStatus: TeeSyncStatus;
   onRetrySync?: () => void;
   statusMessage?: string;
 
-  // Handicap allowance (optional)
   handicapAllowance?: string;
   onHandicapAllowanceChange?: (v: string) => void;
 
-  // Validation
   courseError?: string;
   teeError?: string;
   handicapError?: string;
@@ -97,9 +106,15 @@ export function CourseTeeSetupCard({
   manualCourseName = "",
   onManualCourseNameChange,
   showManualCourseInput = true,
+  teeSetupMode,
+  onTeeSetupModeChange,
   tees,
   selectedTee,
+  selectedMaleTee,
+  selectedFemaleTee,
   onSelectTee,
+  onSelectMaleTee,
+  onSelectFemaleTee,
   teesLoading,
   teesError,
   showManualTee,
@@ -197,53 +212,55 @@ export function CourseTeeSetupCard({
         <AppText variant="small" style={[styles.fieldError, { color: colors.error }]}>{courseError}</AppText>
       ) : null}
 
-      {/* Section B: Tee setup */}
+      {/* Section B: Tee Setup Mode */}
       <AppText variant="captionBold" style={[styles.sectionLabel, { marginTop: spacing.base }]}>
         Tee Setup
       </AppText>
+      <View style={[styles.modeRow, { borderColor: colors.border }]}>
+        <Pressable
+          onPress={() => onTeeSetupModeChange("single")}
+          style={[
+            styles.modeOption,
+            { borderColor: teeSetupMode === "single" ? colors.primary : colors.border },
+            teeSetupMode === "single" && { backgroundColor: colors.primary + "14" },
+          ]}
+        >
+          <AppText variant="caption" style={{ color: teeSetupMode === "single" ? colors.primary : colors.text }}>
+            Single Tee For All
+          </AppText>
+        </Pressable>
+        <Pressable
+          onPress={() => onTeeSetupModeChange("separate")}
+          style={[
+            styles.modeOption,
+            { borderColor: teeSetupMode === "separate" ? colors.primary : colors.border },
+            teeSetupMode === "separate" && { backgroundColor: colors.primary + "14" },
+          ]}
+        >
+          <AppText variant="caption" style={{ color: teeSetupMode === "separate" ? colors.primary : colors.text }}>
+            Separate Male/Female Tees
+          </AppText>
+        </Pressable>
+      </View>
+
       {teesLoading ? (
-        <AppText variant="small" color="tertiary">
-          Tee data is still syncing. You can select a tee manually below.
+        <AppText variant="small" color="tertiary" style={{ marginTop: spacing.sm }}>
+          Tee data is still syncing. You can select or enter tees manually below.
         </AppText>
       ) : teesError ? (
-        <AppText variant="small" style={{ color: colors.warning, marginBottom: spacing.xs }}>
+        <AppText variant="small" style={{ color: colors.warning, marginTop: spacing.sm }}>
           {teesError}
         </AppText>
       ) : null}
 
-      {tees.length > 0 ? (
-        <>
-          <CourseTeeSelector
-            tees={tees}
-            selectedTee={selectedTee}
-            onSelectTee={(tee) => { onSelectTee(tee); onSetShowManualTee(false); }}
-          />
-          {!showManualTee && (
-            <Pressable onPress={() => onSetShowManualTee(true)} style={{ marginTop: spacing.xs }}>
-              <AppText variant="caption" color="primary">Enter tee details manually instead</AppText>
-            </Pressable>
-          )}
-        </>
-      ) : (
-        <>
-          <AppText variant="small" color="tertiary" style={{ marginBottom: spacing.xs }}>
-            No imported tees found yet
-          </AppText>
-          <Pressable onPress={() => onSetShowManualTee(true)}>
-            <AppText variant="caption" color="primary" style={{ marginBottom: spacing.sm }}>
-              [Enter tee details manually]
-            </AppText>
-          </Pressable>
-        </>
-      )}
-
-      {showManualTee && onManualTeeChange && (
-        <View style={[styles.manualTeeContainer, { borderColor: colors.border }]}>
+      {/* Section C: Tee selectors or manual entry */}
+      {showManualTee && onManualTeeChange ? (
+        <View style={[styles.manualTeeContainer, { borderColor: colors.border, marginTop: spacing.sm }]}>
           <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: spacing.sm }}>
             <AppText variant="captionBold">Manual Tee Entry</AppText>
-            {selectedTee && (
+            {tees.length > 0 && (
               <Pressable onPress={() => onSetShowManualTee(false)}>
-                <AppText variant="small" color="primary">Use selected tee instead</AppText>
+                <AppText variant="small" color="primary">Use imported tees instead</AppText>
               </Pressable>
             )}
           </View>
@@ -282,12 +299,55 @@ export function CourseTeeSetupCard({
             <AppInput placeholder="120" value={manualLadiesSlopeRating} onChangeText={(v) => onManualTeeChange("ladiesSlopeRating", v)} keyboardType="number-pad" />
           </View>
         </View>
+      ) : tees.length > 0 ? (
+        <View style={{ marginTop: spacing.sm }}>
+          {teeSetupMode === "single" ? (
+            <>
+              <AppText variant="caption" color="secondary" style={styles.label}>Tee (all players)</AppText>
+              <CourseTeeSelector
+                tees={tees}
+                selectedTee={selectedTee}
+                onSelectTee={(tee) => { onSelectTee(tee); onSetShowManualTee(false); }}
+              />
+            </>
+          ) : (
+            <>
+              <AppText variant="caption" color="secondary" style={styles.label}>Male Tee</AppText>
+              <CourseTeeSelector
+                tees={tees}
+                selectedTee={selectedMaleTee}
+                onSelectTee={(tee) => { onSelectMaleTee(tee); onSetShowManualTee(false); }}
+              />
+              <AppText variant="caption" color="secondary" style={[styles.label, { marginTop: spacing.base }]}>Female Tee</AppText>
+              <CourseTeeSelector
+                tees={tees}
+                selectedTee={selectedFemaleTee}
+                onSelectTee={(tee) => { onSelectFemaleTee(tee); onSetShowManualTee(false); }}
+              />
+            </>
+          )}
+          <Pressable onPress={() => onSetShowManualTee(true)} style={{ marginTop: spacing.xs }}>
+            <AppText variant="caption" color="primary">Enter tee details manually instead</AppText>
+          </Pressable>
+        </View>
+      ) : (
+        <View style={{ marginTop: spacing.sm }}>
+          <AppText variant="small" color="tertiary" style={{ marginBottom: spacing.xs }}>
+            No imported tees found yet
+          </AppText>
+          <Pressable onPress={() => onSetShowManualTee(true)}>
+            <AppText variant="caption" color="primary" style={{ marginBottom: spacing.sm }}>
+              [Enter tee details manually]
+            </AppText>
+          </Pressable>
+        </View>
       )}
+
       {teeError ? (
-        <AppText variant="small" style={[styles.fieldError, { color: colors.error }]}>{teeError}</AppText>
+        <AppText variant="small" style={[styles.fieldError, { color: colors.error, marginTop: spacing.xs }]}>{teeError}</AppText>
       ) : null}
 
-      {/* Section C: Status / tools */}
+      {/* Section D: Status / tools */}
       <View style={[styles.statusRow, { marginTop: spacing.sm }]}>
         <StatusBadge status={syncStatus} colors={colors} />
         {statusMessage ? (
@@ -330,6 +390,18 @@ const styles = StyleSheet.create({
     borderRadius: radius.sm,
     borderWidth: 1,
     gap: spacing.sm,
+  },
+  modeRow: {
+    flexDirection: "row",
+    gap: spacing.xs,
+  },
+  modeOption: {
+    flex: 1,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.xs,
+    borderRadius: radius.sm,
+    borderWidth: 1,
+    alignItems: "center",
   },
   searchResults: {
     marginTop: spacing.xs,

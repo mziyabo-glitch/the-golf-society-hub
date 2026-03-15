@@ -29,10 +29,9 @@ import {
   EVENT_CLASSIFICATIONS,
 } from "@/lib/db_supabase/eventRepo";
 import { type CourseTee, getCourseByApiId, getTeesByCourseId, upsertTeesFromApi } from "@/lib/db_supabase/courseRepo";
-import { isValidUuid } from "@/lib/uuid";
 import { searchCourses as searchCoursesApi, getCourseById, type ApiCourseSearchResult } from "@/lib/golfApi";
 import { importCourse, type ImportedCourse } from "@/lib/importCourse";
-import { CourseTeeSetupCard, type TeeSyncStatus } from "@/components/CourseTeeSetupCard";
+import { CourseTeeSetupCard, type TeeSyncStatus, type TeeSetupMode } from "@/components/CourseTeeSetupCard";
 import { getPermissionsForMember } from "@/lib/rbac";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
 import { formatError, type FormattedError } from "@/lib/ui/formatError";
@@ -115,6 +114,9 @@ export default function EventsScreen() {
   const [teesLoading, setTeesLoading] = useState(false);
   const [teesError, setTeesError] = useState<string | null>(null);
   const [selectedTee, setSelectedTee] = useState<CourseTee | null>(null);
+  const [selectedMaleTee, setSelectedMaleTee] = useState<CourseTee | null>(null);
+  const [selectedFemaleTee, setSelectedFemaleTee] = useState<CourseTee | null>(null);
+  const [teeSetupMode, setTeeSetupMode] = useState<TeeSetupMode>("separate");
   const [teeSyncStatus, setTeeSyncStatus] = useState<TeeSyncStatus>("idle");
 
   // Manual tee entry fallback (when no tees from API)
@@ -180,11 +182,21 @@ export default function EventsScreen() {
     return () => debouncedSearch.cancel();
   }, [courseSearchQuery, debouncedSearch]);
 
+  // Default tee setup mode: separate if both male and female tees exist, else single
+  useEffect(() => {
+    if (tees.length === 0) return;
+    const hasMale = tees.some((t) => (t.gender ?? "").toUpperCase().startsWith("M"));
+    const hasFemale = tees.some((t) => (t.gender ?? "").toUpperCase().startsWith("F"));
+    setTeeSetupMode(hasMale && hasFemale ? "separate" : "single");
+  }, [tees]);
+
   const handleSelectCourse = useCallback(async (hit: ApiCourseSearchResult) => {
     console.log("[events] handleSelectCourse:", hit.id, hit.name);
     setCourseSearchResults([]);
     setCourseSearchQuery("");
     setSelectedTee(null);
+    setSelectedMaleTee(null);
+    setSelectedFemaleTee(null);
     setTees([]);
     setTeesError(null);
     setTeesLoading(true);
@@ -249,6 +261,7 @@ export default function EventsScreen() {
             course_rating: t.courseRating ?? 0,
             slope_rating: t.slopeRating ?? 0,
             par_total: t.parTotal ?? 0,
+            gender: t.gender ?? null,
           }));
           setTeeSyncStatus("synced");
         } else {
@@ -342,10 +355,13 @@ export default function EventsScreen() {
     const hasManualTeeData =
       manualTeeName.trim() &&
       (manualPar.trim() || manualCourseRating.trim() || manualSlopeRating.trim());
-    const hasTee = selectedTee || hasManualTeeData;
+    const hasSingleTee = selectedTee != null;
+    const hasSeparateTees = (teeSetupMode === "single" && selectedTee != null) ||
+      (teeSetupMode === "separate" && (selectedMaleTee != null || selectedFemaleTee != null));
+    const hasTee = hasManualTeeData || hasSingleTee || hasSeparateTees;
     if ((selectedCourse || manualCourseName.trim()) && !hasTee) {
       errors.courseTee = tees.length > 0
-        ? "Select a tee or enter tee details manually."
+        ? "Select tee(s) or enter tee details manually."
         : "Enter tee details manually.";
     }
 
@@ -400,23 +416,59 @@ export default function EventsScreen() {
     const hasManualTeeData =
       manualTeeName.trim() &&
       (manualPar.trim() || manualCourseRating.trim() || manualSlopeRating.trim());
-    const teeSource = selectedTee ? "imported" : hasManualTeeData ? "manual" : undefined;
+    const fromImported = showManualTee ? false : (teeSetupMode === "single" ? selectedTee : (selectedMaleTee || selectedFemaleTee));
+    const teeSource = fromImported ? "imported" : hasManualTeeData ? "manual" : undefined;
 
     const safeNum = (s: string): number | undefined => {
       const n = parseFloat(s.trim());
       return Number.isFinite(n) ? n : undefined;
     };
-    const teeId = selectedTee?.id && isValidUuid(selectedTee.id) ? selectedTee.id : undefined;
-    const teeName = selectedTee ? selectedTee.tee_name : (manualTeeName.trim() || undefined);
-    const par = selectedTee ? selectedTee.par_total : safeNum(manualPar);
-    const courseRating = selectedTee ? selectedTee.course_rating : safeNum(manualCourseRating);
-    const slopeRating = selectedTee ? selectedTee.slope_rating : safeNum(manualSlopeRating);
-    const ladiesTeeName = manualLadiesTeeName.trim() || undefined;
-    const ladiesPar = safeNum(manualLadiesPar);
-    const ladiesCourseRating = safeNum(manualLadiesCourseRating);
-    const ladiesSlopeRating = safeNum(manualLadiesSlopeRating);
+    // tee_id: never saved (eventRepo sets null). Use event-level tee fields only.
+    let teeName: string | undefined;
+    let par: number | undefined;
+    let courseRating: number | undefined;
+    let slopeRating: number | undefined;
+    let ladiesTeeName: string | undefined;
+    let ladiesPar: number | undefined;
+    let ladiesCourseRating: number | undefined;
+    let ladiesSlopeRating: number | undefined;
 
-    console.log("[createEvent] Calling createEvent...");
+    if (showManualTee || hasManualTeeData) {
+      teeName = manualTeeName.trim() || undefined;
+      par = safeNum(manualPar);
+      courseRating = safeNum(manualCourseRating);
+      slopeRating = safeNum(manualSlopeRating);
+      ladiesTeeName = manualLadiesTeeName.trim() || undefined;
+      ladiesPar = safeNum(manualLadiesPar);
+      ladiesCourseRating = safeNum(manualLadiesCourseRating);
+      ladiesSlopeRating = safeNum(manualLadiesSlopeRating);
+    } else if (teeSetupMode === "single" && selectedTee) {
+      teeName = selectedTee.tee_name;
+      par = selectedTee.par_total;
+      courseRating = selectedTee.course_rating;
+      slopeRating = selectedTee.slope_rating;
+      ladiesTeeName = selectedTee.tee_name;
+      ladiesPar = selectedTee.par_total;
+      ladiesCourseRating = selectedTee.course_rating;
+      ladiesSlopeRating = selectedTee.slope_rating;
+    } else {
+      const male = selectedMaleTee;
+      const female = selectedFemaleTee;
+      teeName = male?.tee_name;
+      par = male?.par_total;
+      courseRating = male?.course_rating;
+      slopeRating = male?.slope_rating;
+      ladiesTeeName = female?.tee_name;
+      ladiesPar = female?.par_total;
+      ladiesCourseRating = female?.course_rating;
+      ladiesSlopeRating = female?.slope_rating;
+    }
+
+    console.log("[createEvent] tee values (tee_id not saved):", {
+      tee_name: teeName,
+      ladies_tee_name: ladiesTeeName,
+      tee_source: teeSource,
+    });
     const created = await createAction.run(async () =>
       createEvent(societyId, {
         name: formName.trim(),
@@ -426,7 +478,7 @@ export default function EventsScreen() {
         createdBy: user.uid,
         courseId: selectedCourse?.id && selectedCourse.id.trim() ? selectedCourse.id : undefined,
         courseName,
-        teeId,
+        teeId: undefined,
         teeName,
         par,
         courseRating,
@@ -465,11 +517,18 @@ export default function EventsScreen() {
     setTees([]);
     setTeesError(null);
     setSelectedTee(null);
+    setSelectedMaleTee(null);
+    setSelectedFemaleTee(null);
+    setTeeSetupMode("separate");
     setShowManualTee(false);
     setManualTeeName("");
     setManualPar("");
     setManualCourseRating("");
     setManualSlopeRating("");
+    setManualLadiesTeeName("");
+    setManualLadiesPar("");
+    setManualLadiesCourseRating("");
+    setManualLadiesSlopeRating("");
     setFormHandicapAllowance("95");
     setShowCreateForm(false);
     setFormErrors({});
@@ -651,6 +710,8 @@ export default function EventsScreen() {
                 setSelectedCourseApiId(null);
                 setTees([]);
                 setSelectedTee(null);
+                setSelectedMaleTee(null);
+                setSelectedFemaleTee(null);
                 setShowManualTee(false);
                 setTeeSyncStatus("idle");
                 setFormErrors((prev) => ({ ...prev, course: undefined, courseTee: undefined }));
@@ -665,10 +726,26 @@ export default function EventsScreen() {
                 setFormErrors((prev) => ({ ...prev, course: undefined }));
               }}
               showManualCourseInput={true}
+              teeSetupMode={teeSetupMode}
+              onTeeSetupModeChange={(m) => { setTeeSetupMode(m); setFormErrors((prev) => ({ ...prev, courseTee: undefined })); }}
               tees={tees}
               selectedTee={selectedTee}
+              selectedMaleTee={selectedMaleTee}
+              selectedFemaleTee={selectedFemaleTee}
               onSelectTee={(tee) => {
                 setSelectedTee(tee);
+                setSelectedMaleTee(null);
+                setSelectedFemaleTee(null);
+                setFormErrors((prev) => ({ ...prev, courseTee: undefined }));
+              }}
+              onSelectMaleTee={(tee) => {
+                setSelectedMaleTee(tee);
+                setSelectedTee(null);
+                setFormErrors((prev) => ({ ...prev, courseTee: undefined }));
+              }}
+              onSelectFemaleTee={(tee) => {
+                setSelectedFemaleTee(tee);
+                setSelectedTee(null);
                 setFormErrors((prev) => ({ ...prev, courseTee: undefined }));
               }}
               teesLoading={teesLoading}
@@ -693,6 +770,8 @@ export default function EventsScreen() {
                 else if (field === "ladiesCourseRating") setManualLadiesCourseRating(value);
                 else if (field === "ladiesSlopeRating") setManualLadiesSlopeRating(value);
                 setSelectedTee(null);
+                setSelectedMaleTee(null);
+                setSelectedFemaleTee(null);
                 setFormErrors((prev) => ({ ...prev, courseTee: undefined }));
               }}
               syncStatus={teeSyncStatus}

@@ -32,6 +32,7 @@ import { isValidUuid } from "@/lib/uuid";
 import { searchCourses as searchCoursesApi, getCourseById, type ApiCourseSearchResult } from "@/lib/golfApi";
 import { importCourse, type ImportedCourse } from "@/lib/importCourse";
 import { CourseTeeSelector } from "@/components/CourseTeeSelector";
+import type { TeeSetupMode } from "@/components/CourseTeeSetupCard";
 import { getPermissionsForMember } from "@/lib/rbac";
 import {
   getEventRegistrations,
@@ -121,6 +122,9 @@ export default function EventDetailScreen() {
   const [tees, setTees] = useState<CourseTee[]>([]);
   const [teesLoading, setTeesLoading] = useState(false);
   const [selectedTee, setSelectedTee] = useState<CourseTee | null>(null);
+  const [selectedMaleTee, setSelectedMaleTee] = useState<CourseTee | null>(null);
+  const [selectedFemaleTee, setSelectedFemaleTee] = useState<CourseTee | null>(null);
+  const [teeSetupMode, setTeeSetupMode] = useState<TeeSetupMode>("separate");
 
   // Manual tee entry (fallback when no tees from API)
   const [manualTeeName, setManualTeeName] = useState("");
@@ -249,6 +253,8 @@ export default function EventDetailScreen() {
     setCourseSearchResults([]);
     setCourseSearchQuery("");
     setSelectedTee(null);
+    setSelectedMaleTee(null);
+    setSelectedFemaleTee(null);
     setTees([]);
     setTeesLoading(true);
     setShowManualTee(false);
@@ -319,15 +325,19 @@ export default function EventDetailScreen() {
     }
   }, []);
 
-  // Load tees when event has course_id (non-blocking; shows saved tee data immediately)
+  // Load tees when event has course_id. Match saved tee names to set selected tees.
   const loadTeesForEvent = useCallback(async (
     courseId: string | undefined,
-    teeId: string | undefined,
-    hasSavedTeeData?: boolean
+    _teeId: string | undefined,
+    hasSavedTeeData?: boolean,
+    savedMaleTeeName?: string,
+    savedFemaleTeeName?: string
   ) => {
     if (!isValidUuid(courseId)) {
       setTees([]);
       setSelectedTee(null);
+      setSelectedMaleTee(null);
+      setSelectedFemaleTee(null);
       if (courseId === "" || (courseId && !courseId.trim())) {
         console.warn("[EventDetail] Skipping tee lookup: invalid courseId (empty or blank)");
       }
@@ -337,21 +347,47 @@ export default function EventDetailScreen() {
     try {
       const list = await getTeesByCourseId(courseId);
       setTees(list);
-      const match = teeId ? list.find((t) => t.id === teeId) : null;
-      setSelectedTee(match ?? null);
+      const maleMatch = savedMaleTeeName ? list.find((t) => t.tee_name === savedMaleTeeName) : null;
+      const femaleMatch = savedFemaleTeeName ? list.find((t) => t.tee_name === savedFemaleTeeName) : null;
+      const singleMatch = savedMaleTeeName && !savedFemaleTeeName ? list.find((t) => t.tee_name === savedMaleTeeName) : null;
+      if (savedMaleTeeName && savedFemaleTeeName && savedMaleTeeName !== savedFemaleTeeName) {
+        setTeeSetupMode("separate");
+        setSelectedMaleTee(maleMatch ?? null);
+        setSelectedFemaleTee(femaleMatch ?? null);
+        setSelectedTee(null);
+      } else if (singleMatch || (savedMaleTeeName && !savedFemaleTeeName)) {
+        setTeeSetupMode("single");
+        setSelectedTee(singleMatch ?? maleMatch ?? null);
+        setSelectedMaleTee(null);
+        setSelectedFemaleTee(null);
+      } else {
+        setSelectedTee(null);
+        setSelectedMaleTee(null);
+        setSelectedFemaleTee(null);
+      }
       if (list.length === 0 && hasSavedTeeData) {
         setShowManualTee(true);
-      } else if (match) {
+      } else if (maleMatch || femaleMatch || singleMatch) {
         setShowManualTee(false);
       }
     } catch {
       setTees([]);
       setSelectedTee(null);
+      setSelectedMaleTee(null);
+      setSelectedFemaleTee(null);
       if (hasSavedTeeData) setShowManualTee(true);
     } finally {
       setTeesLoading(false);
     }
   }, []);
+
+  // Default tee setup mode when tees load: separate if both male and female tees exist
+  useEffect(() => {
+    if (tees.length === 0) return;
+    const hasMale = tees.some((t) => (t.gender ?? "").toUpperCase().startsWith("M"));
+    const hasFemale = tees.some((t) => (t.gender ?? "").toUpperCase().startsWith("F"));
+    if (hasMale && hasFemale) setTeeSetupMode("separate");
+  }, [tees]);
 
   // Populate form when entering edit mode
   const startEditing = () => {
@@ -390,12 +426,22 @@ export default function EventDetailScreen() {
     setSelectedCourseEdit(event.course_id ? { id: event.course_id, name: event.courseName || "" } : null);
 
     const hasSavedTeeData = !!(event.teeName || event.par != null || event.courseRating != null || event.slopeRating != null);
+    const hasBothTees = !!(event.teeName && event.ladiesTeeName && event.teeName !== event.ladiesTeeName);
+    setTeeSetupMode(hasBothTees ? "separate" : "single");
     if (event.course_id) {
       setShowManualTee(hasSavedTeeData && !event.tee_id);
-      loadTeesForEvent(event.course_id, event.tee_id ?? undefined, hasSavedTeeData);
+      loadTeesForEvent(
+        event.course_id,
+        event.tee_id ?? undefined,
+        hasSavedTeeData,
+        event.teeName ?? undefined,
+        event.ladiesTeeName ?? undefined
+      );
     } else {
       setTees([]);
       setSelectedTee(null);
+      setSelectedMaleTee(null);
+      setSelectedFemaleTee(null);
       setShowManualTee(hasSavedTeeData);
     }
 
@@ -428,18 +474,52 @@ export default function EventDetailScreen() {
       ? parseFloat(formHandicapAllowance.trim()) / 100
       : 0.95;
 
-    // Determine tee values: selected from DB or manual entry
-    const teeId = selectedTee?.id && isValidUuid(selectedTee.id) ? selectedTee.id : undefined;
-    const teeName = selectedTee ? selectedTee.tee_name : (manualTeeName.trim() || undefined);
-    const par = selectedTee ? selectedTee.par_total : (manualPar.trim() ? parseFloat(manualPar) : undefined);
-    const courseRating = selectedTee ? selectedTee.course_rating : (manualCourseRating.trim() ? parseFloat(manualCourseRating) : undefined);
-    const slopeRating = selectedTee ? selectedTee.slope_rating : (manualSlopeRating.trim() ? parseFloat(manualSlopeRating) : undefined);
-    const ladiesTeeName = manualLadiesTeeName.trim() || undefined;
-    const ladiesPar = manualLadiesPar.trim() ? parseFloat(manualLadiesPar) : undefined;
-    const ladiesCourseRating = manualLadiesCourseRating.trim() ? parseFloat(manualLadiesCourseRating) : undefined;
-    const ladiesSlopeRating = manualLadiesSlopeRating.trim() ? parseFloat(manualLadiesSlopeRating) : undefined;
+    // tee_id: never saved (eventRepo sets null). Use event-level tee fields only.
+    let teeName: string | undefined;
+    let par: number | undefined;
+    let courseRating: number | undefined;
+    let slopeRating: number | undefined;
+    let ladiesTeeName: string | undefined;
+    let ladiesPar: number | undefined;
+    let ladiesCourseRating: number | undefined;
+    let ladiesSlopeRating: number | undefined;
+
+    if (showManualTee || manualTeeName.trim() || manualPar.trim() || manualCourseRating.trim() || manualSlopeRating.trim()) {
+      teeName = manualTeeName.trim() || undefined;
+      par = manualPar.trim() ? parseFloat(manualPar) : undefined;
+      courseRating = manualCourseRating.trim() ? parseFloat(manualCourseRating) : undefined;
+      slopeRating = manualSlopeRating.trim() ? parseFloat(manualSlopeRating) : undefined;
+      ladiesTeeName = manualLadiesTeeName.trim() || undefined;
+      ladiesPar = manualLadiesPar.trim() ? parseFloat(manualLadiesPar) : undefined;
+      ladiesCourseRating = manualLadiesCourseRating.trim() ? parseFloat(manualLadiesCourseRating) : undefined;
+      ladiesSlopeRating = manualLadiesSlopeRating.trim() ? parseFloat(manualLadiesSlopeRating) : undefined;
+    } else if (teeSetupMode === "single" && selectedTee) {
+      teeName = selectedTee.tee_name;
+      par = selectedTee.par_total;
+      courseRating = selectedTee.course_rating;
+      slopeRating = selectedTee.slope_rating;
+      ladiesTeeName = selectedTee.tee_name;
+      ladiesPar = selectedTee.par_total;
+      ladiesCourseRating = selectedTee.course_rating;
+      ladiesSlopeRating = selectedTee.slope_rating;
+    } else {
+      const male = selectedMaleTee;
+      const female = selectedFemaleTee;
+      teeName = male?.tee_name;
+      par = male?.par_total;
+      courseRating = male?.course_rating;
+      slopeRating = male?.slope_rating;
+      ladiesTeeName = female?.tee_name;
+      ladiesPar = female?.par_total;
+      ladiesCourseRating = female?.course_rating;
+      ladiesSlopeRating = female?.slope_rating;
+    }
+
     const courseId = selectedCourseEdit?.id || event?.course_id || undefined;
-    const teeSource = selectedTee ? "imported" : (teeName || par != null || courseRating != null || slopeRating != null) ? "manual" : undefined;
+    const fromImported = !showManualTee && (teeSetupMode === "single" ? selectedTee : (selectedMaleTee || selectedFemaleTee));
+    const teeSource = fromImported ? "imported" : (teeName || par != null || courseRating != null || slopeRating != null) ? "manual" : undefined;
+
+    console.log("[EventDetail] save tee values (tee_id not saved):", { tee_name: teeName, ladies_tee_name: ladiesTeeName, tee_source: teeSource });
 
     setSaving(true);
     try {
@@ -450,7 +530,7 @@ export default function EventDetailScreen() {
         classification: formClassification,
         courseName: formCourseName.trim() || undefined,
         courseId: courseId || undefined,
-        teeId,
+        teeId: undefined,
         teeName,
         par,
         courseRating,
@@ -667,20 +747,68 @@ export default function EventDetailScreen() {
                   />
                 </View>
 
-                {/* Tee selector from imported tees */}
+                {/* Tee Setup Mode + selectors */}
                 {(selectedCourseEdit?.id || event.course_id) && (
                   <View style={styles.formField}>
-                    <AppText variant="captionBold" style={styles.label}>Select Tee</AppText>
+                    <AppText variant="captionBold" style={styles.label}>Tee Setup Mode</AppText>
+                    <View style={[styles.modeRow, { borderColor: colors.border }]}>
+                      <Pressable
+                        onPress={() => setTeeSetupMode("single")}
+                        style={[
+                          styles.modeOption,
+                          { borderColor: teeSetupMode === "single" ? colors.primary : colors.border },
+                          teeSetupMode === "single" && { backgroundColor: colors.primary + "14" },
+                        ]}
+                      >
+                        <AppText variant="caption" style={{ color: teeSetupMode === "single" ? colors.primary : colors.text }}>
+                          Single Tee For All
+                        </AppText>
+                      </Pressable>
+                      <Pressable
+                        onPress={() => setTeeSetupMode("separate")}
+                        style={[
+                          styles.modeOption,
+                          { borderColor: teeSetupMode === "separate" ? colors.primary : colors.border },
+                          teeSetupMode === "separate" && { backgroundColor: colors.primary + "14" },
+                        ]}
+                      >
+                        <AppText variant="caption" style={{ color: teeSetupMode === "separate" ? colors.primary : colors.text }}>
+                          Separate Male/Female Tees
+                        </AppText>
+                      </Pressable>
+                    </View>
                     {teesLoading ? (
-                      <AppText variant="small" color="tertiary">Importing course and tees…</AppText>
+                      <AppText variant="small" color="tertiary" style={{ marginTop: spacing.sm }}>Importing course and tees…</AppText>
                     ) : tees.length > 0 ? (
-                      <CourseTeeSelector
-                        tees={tees}
-                        selectedTee={selectedTee}
-                        onSelectTee={(tee) => { setSelectedTee(tee); setShowManualTee(false); }}
-                      />
+                      <View style={{ marginTop: spacing.sm }}>
+                        {teeSetupMode === "single" ? (
+                          <>
+                            <AppText variant="caption" color="secondary" style={styles.label}>Tee (all players)</AppText>
+                            <CourseTeeSelector
+                              tees={tees}
+                              selectedTee={selectedTee}
+                              onSelectTee={(tee) => { setSelectedTee(tee); setSelectedMaleTee(null); setSelectedFemaleTee(null); setShowManualTee(false); }}
+                            />
+                          </>
+                        ) : (
+                          <>
+                            <AppText variant="caption" color="secondary" style={styles.label}>Male Tee</AppText>
+                            <CourseTeeSelector
+                              tees={tees}
+                              selectedTee={selectedMaleTee}
+                              onSelectTee={(tee) => { setSelectedMaleTee(tee); setSelectedTee(null); setShowManualTee(false); }}
+                            />
+                            <AppText variant="caption" color="secondary" style={[styles.label, { marginTop: spacing.base }]}>Female Tee</AppText>
+                            <CourseTeeSelector
+                              tees={tees}
+                              selectedTee={selectedFemaleTee}
+                              onSelectTee={(tee) => { setSelectedFemaleTee(tee); setSelectedTee(null); setShowManualTee(false); }}
+                            />
+                          </>
+                        )}
+                      </View>
                     ) : (
-                      <AppText variant="small" color="tertiary" style={{ marginBottom: spacing.xs }}>
+                      <AppText variant="small" color="tertiary" style={{ marginTop: spacing.sm, marginBottom: spacing.xs }}>
                         No tees found for this course.
                       </AppText>
                     )}
@@ -1224,6 +1352,18 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.xs,
     borderRadius: radius.sm,
     borderWidth: 1,
+  },
+  modeRow: {
+    flexDirection: "row",
+    gap: spacing.xs,
+  },
+  modeOption: {
+    flex: 1,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.xs,
+    borderRadius: radius.sm,
+    borderWidth: 1,
+    alignItems: "center",
   },
   teeSettingsToggle: {
     flexDirection: "row",
