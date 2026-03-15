@@ -123,7 +123,7 @@ function buildDedupeKey(course: ApiCourse, apiId: number | null): string {
     return `golfcourseapi:${apiId}`;
   }
   const club = (course.club_name ?? "").trim();
-  const name = (course.name ?? course.course_name ?? "").trim();
+  const name = (course.name ?? (course as any).course_name ?? "").trim();
   const combined = [club, name].filter(Boolean).join("-") || "unknown";
   return slugify(combined);
 }
@@ -156,6 +156,36 @@ function buildCoursePayload(course: ApiCourse): Record<string, unknown> {
   return cleaned;
 }
 
+function logSupabaseError(label: string, error: any, extra?: Record<string, unknown>) {
+  console.error(`[importCourse] ${label}`, {
+    code: error?.code,
+    message: error?.message,
+    details: error?.details,
+    hint: error?.hint,
+    ...(extra ?? {}),
+  });
+  try {
+    console.error(`[importCourse] ${label} FULL ERROR:`, JSON.stringify(error, null, 2));
+  } catch {
+    console.error(`[importCourse] ${label} (not serializable):`, String(error));
+  }
+}
+
+async function selectCourseByDedupeKey(
+  dedupeKey: string
+): Promise<{ id: string; course_name: string } | null> {
+  const { data, error } = await supabase
+    .from("courses")
+    .select("id, course_name")
+    .eq("dedupe_key", dedupeKey)
+    .maybeSingle();
+  if (error) {
+    logSupabaseError("selectCourseByDedupeKey failed", error, { dedupe_key: dedupeKey });
+    return null;
+  }
+  return data;
+}
+
 async function insertCourse(course: ApiCourse): Promise<{ id: string; course_name: string }> {
   const payload = buildCoursePayload(course);
 
@@ -163,58 +193,97 @@ async function insertCourse(course: ApiCourse): Promise<{ id: string; course_nam
     throw new Error("dedupe_key is required for courses insert");
   }
 
-  console.log("[importCourse] insertCourse payload", JSON.stringify(payload, null, 2));
+  console.log("[importCourse] insertCourse payload:", JSON.stringify(payload, null, 2));
 
-  let data: { id: string; course_name: string } | null = null;
-  let error: any = null;
+  // ─── Strategy 1: select-then-insert (safe fallback, no ON CONFLICT needed) ───
+  console.log("[importCourse] STRATEGY: select-then-insert fallback (dedupe_key =", payload.dedupe_key, ")");
 
-  const result = await supabase
-    .from("courses")
-    .upsert(payload, { onConflict: "dedupe_key" })
-    .select("id, course_name")
-    .single();
-  data = result.data;
-  error = result.error;
-
-  if (!error && data) {
-    console.log("[importCourse] insertCourse success", { id: data.id, dedupe_key: payload.dedupe_key });
-    return data;
+  const existing = await selectCourseByDedupeKey(String(payload.dedupe_key));
+  if (existing) {
+    console.log("[importCourse] select-then-insert: found existing course by dedupe_key", {
+      id: existing.id,
+      course_name: existing.course_name,
+      dedupe_key: payload.dedupe_key,
+    });
+    return existing;
   }
 
-  if (error) {
-    const code = (error as any).code;
-    const msg = error.message;
+  // Also check by api_id as secondary lookup
+  if (course.id) {
+    const byApiId = await getExistingCourseByApiId(course.id);
+    if (byApiId) {
+      console.log("[importCourse] select-then-insert: found existing course by api_id", {
+        id: byApiId.id,
+        api_id: course.id,
+      });
+      return byApiId;
+    }
+  }
 
-    if (code === "23505") {
-      const existing = await getExistingCourseByApiId(course.id);
-      if (existing) return existing;
+  // ─── Strategy 2: plain insert (no upsert, no ON CONFLICT) ───
+  console.log("[importCourse] STRATEGY: plain insert (no existing row found)");
+  const insertResult = await supabase
+    .from("courses")
+    .insert(payload)
+    .select("id, course_name")
+    .single();
+
+  if (!insertResult.error && insertResult.data) {
+    console.log("[importCourse] plain insert success", {
+      id: insertResult.data.id,
+      dedupe_key: payload.dedupe_key,
+    });
+    return insertResult.data;
+  }
+
+  if (insertResult.error) {
+    logSupabaseError("plain insert FAILED", insertResult.error, {
+      supabase_call: "supabase.from('courses').insert(payload).select('id, course_name').single()",
+      payload_keys: Object.keys(payload),
+      dedupe_key: payload.dedupe_key,
+    });
+
+    // 23505 = unique violation — row was inserted concurrently; re-select
+    if (insertResult.error.code === "23505") {
+      console.log("[importCourse] 23505 unique violation on insert, re-selecting...");
+      const raceWinner =
+        (await selectCourseByDedupeKey(String(payload.dedupe_key))) ||
+        (course.id ? await getExistingCourseByApiId(course.id) : null);
+      if (raceWinner) return raceWinner;
     }
 
-    if (code === "42P10" || msg?.includes("ON CONFLICT") || msg?.includes("conflict")) {
-      console.warn("[importCourse] upsert failed (no dedupe_key unique?), falling back to insert:", msg);
-      const insertResult = await supabase
-        .from("courses")
-        .insert(payload)
-        .select("id, course_name")
-        .single();
-      if (!insertResult.error) return insertResult.data;
-      if ((insertResult.error as any).code === "23505") {
-        const existing = await getExistingCourseByApiId(course.id);
-        if (existing) return existing;
-      }
-      throw new Error(
-        `Course import failed. You can still save the event with manual tee details. ` +
-          (insertResult.error?.message ?? "Unknown error")
-      );
+    // ─── Strategy 3: upsert as last resort ───
+    console.log("[importCourse] STRATEGY: upsert on dedupe_key (last resort)");
+    const upsertResult = await supabase
+      .from("courses")
+      .upsert(payload, { onConflict: "dedupe_key" })
+      .select("id, course_name")
+      .single();
+
+    if (!upsertResult.error && upsertResult.data) {
+      console.log("[importCourse] upsert success", {
+        id: upsertResult.data.id,
+        dedupe_key: payload.dedupe_key,
+      });
+      return upsertResult.data;
     }
 
-    console.error("[importCourse] insertCourse FAILED", { code, message: msg });
+    if (upsertResult.error) {
+      logSupabaseError("upsert ALSO FAILED", upsertResult.error, {
+        supabase_call: "supabase.from('courses').upsert(payload, { onConflict: 'dedupe_key' })",
+        dedupe_key: payload.dedupe_key,
+      });
+    }
+
     throw new Error(
-      `Course import failed: ${msg}. You can still save the event with manual tee details.`
+      `Course import failed: ${insertResult.error.message}. ` +
+        `code=${insertResult.error.code}, details=${insertResult.error.details ?? "none"}, ` +
+        `hint=${(insertResult.error as any).hint ?? "none"}. ` +
+        `You can still save the event with manual tee details.`
     );
   }
 
-  throw new Error("insertCourse: no data returned");
+  throw new Error("insertCourse: no data returned from insert");
 }
 
 async function importTeesAndHoles(
@@ -251,10 +320,10 @@ async function importTeesAndHoles(
     let teeId: string | null = teeRow?.id ?? null;
 
     if (teeError) {
-      console.error("[importCourse] course_tees insert failed", {
-        code: (teeError as any).code,
-        message: teeError.message,
+      logSupabaseError("course_tees insert failed", teeError, {
+        supabase_call: "supabase.from('course_tees').insert()",
         tee_name: normalized.teeName,
+        course_id: courseId,
       });
     }
 
@@ -310,9 +379,8 @@ async function importTeesAndHoles(
       .insert(holeRows);
 
     if (holesError) {
-      console.error("[importCourse] course_holes insert failed:", {
-        code: (holesError as any).code,
-        message: holesError.message,
+      logSupabaseError("course_holes insert failed", holesError, {
+        supabase_call: "supabase.from('course_holes').insert()",
         tee_id: teeId,
         holeCount: holeRows.length,
       });
@@ -372,7 +440,39 @@ export async function importCourse(apiCourse: ApiCourse): Promise<ImportedCourse
     };
   }
 
-  const created = await insertCourse(apiCourse);
+  let created: { id: string; course_name: string } | null = null;
+  let courseInsertError: string | null = null;
+
+  try {
+    created = await insertCourse(apiCourse);
+  } catch (insertErr: any) {
+    logSupabaseError("insertCourse threw (non-blocking)", insertErr);
+    courseInsertError = insertErr?.message ?? "Unknown course insert error";
+
+    // Last-ditch: try select by api_id in case the course was partially created
+    if (apiCourse.id) {
+      try {
+        created = await getExistingCourseByApiId(apiCourse.id);
+        if (created) {
+          console.log("[importCourse] recovered course from api_id after insert failure:", created.id);
+        }
+      } catch { /* ignore */ }
+    }
+  }
+
+  if (!created) {
+    console.error("[importCourse] course insert completely failed — returning empty result for manual tee entry.", {
+      courseInsertError,
+      courseName: apiCourse.name,
+      apiId: apiCourse.id,
+    });
+    return {
+      courseId: "",
+      courseName: apiCourse.name ?? "",
+      tees: [],
+      imported: false,
+    };
+  }
 
   const mergedTees: ApiTee[] = Array.isArray(apiCourse.tees)
     ? apiCourse.tees
@@ -384,8 +484,7 @@ export async function importCourse(apiCourse: ApiCourse): Promise<ImportedCourse
   try {
     await importTeesAndHoles(created.id, mergedTees);
   } catch (teeErr: any) {
-    console.error("[importCourse] importTeesAndHoles failed, continuing with 0 tees:", teeErr?.message);
-    // Course was created; return with empty tees so user can use manual entry
+    logSupabaseError("importTeesAndHoles failed, continuing with 0 tees", teeErr);
   }
 
   let tees = await getImportedTees(created.id);
@@ -404,7 +503,7 @@ export async function importCourse(apiCourse: ApiCourse): Promise<ImportedCourse
         yards: t.yards ?? null,
       }));
     } catch (upsertErr: any) {
-      console.error("[importCourse] upsertTeesFromApi failed:", upsertErr?.message);
+      logSupabaseError("upsertTeesFromApi failed", upsertErr);
     }
   }
 
