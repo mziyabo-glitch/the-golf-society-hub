@@ -38,6 +38,7 @@ export type EventDoc = {
   society_id: string;
   host_society_id?: string | null;
   is_multi_society?: boolean;
+  is_joint_event?: boolean;
   participatingSocietyIds?: string[];
   name: string;
   date?: string;
@@ -237,7 +238,8 @@ export async function getEvent(eventId: string): Promise<EventDoc | null> {
   const doc = mapEvent(data);
   doc.participatingSocietyIds = participatingIds;
   doc.host_society_id = data.host_society_id ?? data.society_id;
-  doc.is_multi_society = data.is_multi_society ?? false;
+  doc.is_multi_society = data.is_multi_society ?? data.is_joint_event ?? false;
+  doc.is_joint_event = data.is_joint_event ?? data.is_multi_society ?? false;
   return doc;
 }
 
@@ -298,6 +300,7 @@ export async function createEvent(
     society_id: hostSocietyId,
     host_society_id: hostSocietyId,
     is_multi_society: isMultiSociety,
+    is_joint_event: isMultiSociety,
     name: data.name,
     date: data.date ?? null,
     course_id: courseId || null,
@@ -379,6 +382,7 @@ export async function createEvent(
   doc.participatingSocietyIds = societiesToSet;
   doc.host_society_id = hostSocietyId;
   doc.is_multi_society = isMultiSociety;
+  doc.is_joint_event = isMultiSociety;
   return doc;
 }
 
@@ -504,8 +508,11 @@ export async function updateEvent(
   if (updates.nearestPinHoles !== undefined) payload.nearest_pin_holes = updates.nearestPinHoles;
   if (updates.longestDriveHoles !== undefined) payload.longest_drive_holes = updates.longestDriveHoles;
 
-  // Multi-society
-  if (updates.isMultiSociety !== undefined) payload.is_multi_society = updates.isMultiSociety;
+  // Multi-society / Joint event
+  if (updates.isMultiSociety !== undefined) {
+    payload.is_multi_society = updates.isMultiSociety;
+    payload.is_joint_event = updates.isMultiSociety;
+  }
   if (updates.participatingSocietyIds !== undefined) {
     const { data: ev } = await supabase.from("events").select("society_id, host_society_id").eq("id", eventId).single();
     const hostId = (ev as any)?.host_society_id ?? (ev as any)?.society_id;

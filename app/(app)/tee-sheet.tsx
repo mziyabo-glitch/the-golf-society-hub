@@ -226,7 +226,7 @@ export default function TeeSheetScreen() {
           setTeeInterval(String(event.teeTimeInterval));
         }
 
-        const societyIds = event.is_multi_society && event.participatingSocietyIds?.length
+        const societyIds = (event.is_joint_event ?? event.is_multi_society) && event.participatingSocietyIds?.length
           ? event.participatingSocietyIds
           : [event.society_id ?? societyId].filter(Boolean);
         const eventMembers = societyIds.length > 1
@@ -639,7 +639,7 @@ export default function TeeSheetScreen() {
       const ldHoles = parseHoleNumbers(ldHolesInput === "-" ? "" : ldHolesInput);
 
       const societyLabels: Record<string, string> = {};
-      if (selectedEvent?.is_multi_society && selectedEvent?.participatingSocietyIds?.length) {
+      if ((selectedEvent?.is_joint_event ?? selectedEvent?.is_multi_society) && selectedEvent?.participatingSocietyIds?.length) {
         await Promise.all(
           selectedEvent.participatingSocietyIds.map(async (sid) => {
             const s = await getSocietyDoc(sid);

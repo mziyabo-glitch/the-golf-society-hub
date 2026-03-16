@@ -140,7 +140,7 @@ export default function EventPointsScreen() {
       }
       setEvent(evt);
 
-      const societyIds = evt.is_multi_society && evt.participatingSocietyIds?.length
+      const societyIds = (evt.is_joint_event ?? evt.is_multi_society) && evt.participatingSocietyIds?.length
         ? evt.participatingSocietyIds
         : [evt.society_id ?? societyId].filter(Boolean);
       const members = societyIds.length > 0
@@ -164,7 +164,7 @@ export default function EventPointsScreen() {
 
       setPlayers(playerList);
 
-      if (evt.is_multi_society && societyIds.length > 0) {
+      if ((evt.is_joint_event ?? evt.is_multi_society) && societyIds.length > 0) {
         const names: Record<string, string> = {};
         await Promise.all(societyIds.map(async (sid) => {
           const s = await getSocietyDoc(sid);
@@ -278,7 +278,7 @@ export default function EventPointsScreen() {
   }, [players]);
 
   // Leaderboard filter: overall or by society (multi-society only)
-  const participatingSocietyIds = event?.is_multi_society && event?.participatingSocietyIds?.length
+  const participatingSocietyIds = (event?.is_joint_event ?? event?.is_multi_society) && event?.participatingSocietyIds?.length
     ? event.participatingSocietyIds
     : [];
   const filteredPlayers = useMemo(() => {
@@ -629,7 +629,7 @@ export default function EventPointsScreen() {
                 <AppText variant="body" numberOfLines={1} style={{ flex: 1 }}>
                   {player.memberName}
                 </AppText>
-                {event?.is_multi_society && player.societyId && (
+                {(event?.is_joint_event ?? event?.is_multi_society) && player.societyId && (
                   <View style={{ backgroundColor: colors.border, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
                     <AppText variant="small" color="tertiary">
                       {societyNames[player.societyId] ?? "?"}

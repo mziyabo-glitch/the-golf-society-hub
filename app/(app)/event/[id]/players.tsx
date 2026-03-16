@@ -100,7 +100,7 @@ export default function EventPlayersScreen() {
         const evt = await getEvent(eventId);
         if (cancelled) return;
 
-        const societyIds = evt?.is_multi_society && evt?.participatingSocietyIds?.length
+        const societyIds = (evt?.is_joint_event ?? evt?.is_multi_society) && evt?.participatingSocietyIds?.length
           ? evt.participatingSocietyIds
           : [evt?.society_id ?? societyId].filter(Boolean);
         const mems = societyIds.length > 0
@@ -121,7 +121,7 @@ export default function EventPlayersScreen() {
         setMembers(mems);
         setGuests(guestList);
 
-        if (evt?.is_multi_society && societyIds.length > 0) {
+        if ((evt?.is_joint_event ?? evt?.is_multi_society) && societyIds.length > 0) {
           const names: Record<string, string> = {};
           await Promise.all(societyIds.map(async (sid) => {
             const s = await getSocietyDoc(sid);
@@ -302,7 +302,7 @@ export default function EventPlayersScreen() {
   }
 
   const selectedCount = selectedPlayerIds.size;
-  const participatingSocietyIds = event?.is_multi_society && event?.participatingSocietyIds?.length
+  const participatingSocietyIds = (event?.is_joint_event ?? event?.is_multi_society) && event?.participatingSocietyIds?.length
     ? event.participatingSocietyIds
     : [];
   const filteredMembers = useMemo(() => {
@@ -311,7 +311,7 @@ export default function EventPlayersScreen() {
   }, [members, societyFilter]);
 
   const membersWithAlternates = useMemo(() => {
-    if (!event?.is_multi_society || participatingSocietyIds.length < 2) return new Set<string>();
+    if (!(event?.is_joint_event ?? event?.is_multi_society) || participatingSocietyIds.length < 2) return new Set<string>();
     const byUser = new Map<string, MemberDoc[]>();
     for (const m of members) {
       if (!m.user_id) continue;
@@ -324,7 +324,7 @@ export default function EventPlayersScreen() {
       if (list.length > 1) for (const m of list) hasAlternates.add(m.id);
     }
     return hasAlternates;
-  }, [members, event?.is_multi_society, participatingSocietyIds.length]);
+  }, [members, event?.is_joint_event, event?.is_multi_society, participatingSocietyIds.length]);
 
   return (
     <Screen>
@@ -417,7 +417,7 @@ export default function EventPlayersScreen() {
                         <AppText style={styles.name}>
                           {m.name || m.displayName || "Member"}
                         </AppText>
-                        {event?.is_multi_society && m.society_id && societyNames[m.society_id] && (
+                        {(event?.is_joint_event ?? event?.is_multi_society) && m.society_id && societyNames[m.society_id] && (
                           <View style={{ backgroundColor: colors.primary + "20", paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
                             <AppText variant="small" style={{ color: colors.primary }}>
                               {societyNames[m.society_id]}
@@ -434,7 +434,7 @@ export default function EventPlayersScreen() {
                     </View>
 
                     <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-                      {selected && hasAlternates && !event?.isCompleted && (
+                      {selected && hasAlternates && !event?.isCompleted && (event?.is_joint_event ?? event?.is_multi_society) && (
                         <Pressable
                           onPress={(e) => { e.stopPropagation(); openChangeSociety(m); }}
                           hitSlop={8}
@@ -484,7 +484,7 @@ export default function EventPlayersScreen() {
                 <View style={{ flex: 1 }}>
                   <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
                     <AppText style={styles.name}>{g.name}</AppText>
-                    {event?.is_multi_society && g.society_id && societyNames[g.society_id] && (
+                    {(event?.is_joint_event ?? event?.is_multi_society) && g.society_id && societyNames[g.society_id] && (
                       <View style={{ backgroundColor: colors.primary + "20", paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
                         <AppText variant="small" style={{ color: colors.primary }}>
                           {societyNames[g.society_id]}
@@ -516,7 +516,7 @@ export default function EventPlayersScreen() {
         >
           <Pressable style={[styles.modalContent, { backgroundColor: colors.surface }]} onPress={(e) => e.stopPropagation()}>
             <AppText variant="h2" style={{ marginBottom: spacing.md }}>Add Guest</AppText>
-            {event?.is_multi_society && participatingSocietyIds.length > 1 && (
+            {(event?.is_joint_event ?? event?.is_multi_society) && participatingSocietyIds.length > 1 && (
               <View style={styles.formField}>
                 <AppText variant="caption" style={styles.label}>Representing society</AppText>
                 <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>

@@ -693,10 +693,10 @@ export default function EventsScreen() {
               ) : null}
             </View>
 
-            {/* Multi-society toggle */}
+            {/* Joint Event toggle */}
             <View style={styles.formField}>
               <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: spacing.xs }}>
-                <AppText variant="captionBold" style={styles.label}>Multi-society event</AppText>
+                <AppText variant="captionBold" style={styles.label}>Joint Event (Multiple Societies)</AppText>
                 <Pressable
                   onPress={() => {
                     const next = !formIsMultiSociety;
@@ -730,8 +730,11 @@ export default function EventsScreen() {
               </View>
               {formIsMultiSociety ? (
                 <View style={{ marginTop: spacing.sm }}>
+                  <AppText variant="captionBold" color="secondary" style={{ marginBottom: spacing.xs }}>
+                    Participating Societies
+                  </AppText>
                   <AppText variant="small" color="tertiary" style={{ marginBottom: spacing.xs }}>
-                    Select participating societies (host is pre-selected):
+                    Host society is pre-selected. Add more societies:
                   </AppText>
                   <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
                     {mySocieties.map((s) => {

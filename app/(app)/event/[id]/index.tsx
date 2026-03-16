@@ -45,6 +45,7 @@ import { InlineNotice } from "@/components/ui/InlineNotice";
 import { getColors, spacing, radius, typography } from "@/lib/ui/theme";
 import { confirmDestructive, showAlert } from "@/lib/ui/alert";
 import { getSocietyLogoUrl } from "@/lib/societyLogo";
+import { getSocietyDoc } from "@/lib/db_supabase/societyRepo";
 
 // Picker option component
 function PickerOption({
@@ -100,6 +101,7 @@ export default function EventDetailScreen() {
   const [event, setEvent] = useState<EventDoc | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [participatingSocietyNames, setParticipatingSocietyNames] = useState<Record<string, string>>({});
 
   // Edit mode state
   const [isEditing, setIsEditing] = useState(false);
@@ -159,6 +161,15 @@ export default function EventDetailScreen() {
         setError("Event not found");
       } else {
         setEvent(data);
+        if (data.is_joint_event ?? data.is_multi_society) {
+          const ids = data.participatingSocietyIds ?? [];
+          const names: Record<string, string> = {};
+          await Promise.all(ids.map(async (sid) => {
+            const s = await getSocietyDoc(sid);
+            if (s) names[sid] = s.name ?? "Society";
+          }));
+          setParticipatingSocietyNames(names);
+        }
       }
     } catch (err: any) {
       setError(err?.message ?? "Failed to load event");
@@ -984,11 +995,25 @@ export default function EventDetailScreen() {
       {/* Title */}
       <View style={{ marginBottom: spacing.sm }}>
         <AppText variant="title">{event.name}</AppText>
-        {event.is_multi_society && (
-          <View style={{ flexDirection: "row", alignItems: "center", marginTop: spacing.xs, gap: spacing.xs }}>
+        {(event.is_joint_event ?? event.is_multi_society) && (
+          <View style={{ flexDirection: "row", alignItems: "center", marginTop: spacing.xs, gap: spacing.xs, flexWrap: "wrap" }}>
             <View style={{ backgroundColor: colors.primary + "20", paddingHorizontal: 8, paddingVertical: 4, borderRadius: radius.sm }}>
-              <AppText variant="caption" style={{ color: colors.primary }}>Multi-society event</AppText>
+              <AppText variant="caption" style={{ color: colors.primary }}>Joint Event</AppText>
             </View>
+            {event.participatingSocietyIds && event.participatingSocietyIds.length > 0 && (
+              <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 4, alignItems: "center" }}>
+                {event.participatingSocietyIds.slice(0, 5).map((sid) => (
+                  <View key={sid} style={{ backgroundColor: colors.border, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
+                    <AppText variant="small" color="tertiary">
+                      {participatingSocietyNames[sid] ?? (society?.id === sid ? society?.name : sid.slice(0, 8))}
+                    </AppText>
+                  </View>
+                ))}
+                {event.participatingSocietyIds.length > 5 && (
+                  <AppText variant="small" color="tertiary">+{event.participatingSocietyIds.length - 5} more</AppText>
+                )}
+              </View>
+            )}
           </View>
         )}
       </View>
