@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import debounce from "lodash.debounce";
-import { StyleSheet, View, Pressable, ScrollView, Switch } from "react-native";
+import { StyleSheet, View, Pressable, ScrollView } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
 import { Feather } from "@expo/vector-icons";
@@ -35,6 +35,7 @@ import { CourseTeeSetupCard, type TeeSyncStatus, type TeeSetupMode } from "@/com
 import { getPermissionsForMember } from "@/lib/rbac";
 import { getMySocieties, type MySocietyMembership } from "@/lib/db_supabase/mySocietiesRepo";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
+import { Toggle } from "@/components/ui/Toggle";
 import { formatError, type FormattedError } from "@/lib/ui/formatError";
 
 // Simple picker option component
@@ -645,11 +646,14 @@ export default function EventsScreen() {
               ) : null}
             </View>
 
-            {/* Joint Event toggle - visible at top of form */}
-            <View style={[styles.formField, { marginTop: spacing.md, paddingTop: spacing.md, borderTopWidth: 1, borderTopColor: colors.border }]}>
+            {/* Joint Event toggle - always visible, cross-platform (avoids Switch web zero-size bug) */}
+            <View
+              style={[styles.formField, { marginTop: spacing.md, paddingTop: spacing.md, borderTopWidth: 1, borderTopColor: colors.border }]}
+              accessibilityLabel="Joint Event toggle"
+            >
               <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: spacing.xs }}>
                 <AppText variant="captionBold" style={styles.label}>Joint Event (Multiple Societies)</AppText>
-                <Switch
+                <Toggle
                   value={formIsMultiSociety}
                   onValueChange={(next) => {
                     setFormIsMultiSociety(next);
@@ -660,8 +664,6 @@ export default function EventsScreen() {
                     }
                     setFormErrors((prev) => ({ ...prev, societies: undefined }));
                   }}
-                  trackColor={{ false: colors.border, true: colors.primary }}
-                  thumbColor="#fff"
                 />
               </View>
               {formIsMultiSociety ? (
@@ -714,6 +716,11 @@ export default function EventsScreen() {
                   {formErrors.societies ? (
                     <AppText variant="small" style={[styles.fieldError, { color: colors.error, marginTop: spacing.xs }]}>
                       {formErrors.societies}
+                    </AppText>
+                  ) : null}
+                  {mySocieties.length < 2 && !formErrors.societies ? (
+                    <AppText variant="small" color="tertiary" style={{ marginTop: spacing.xs }}>
+                      You need to be a member of 2+ societies to create a joint event.
                     </AppText>
                   ) : null}
                 </View>
