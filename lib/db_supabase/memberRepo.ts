@@ -22,11 +22,11 @@ export type MemberDoc = {
   amount_paid_pence?: number;
   paid_at?: string | null;
   created_at?: string;
-  // WHS / Handicap fields
+  // WHS / Handicap fields (only handicap_index used in UI; whs_number deprecated)
   whs_number?: string | null;
   handicap_index?: number | null;
-  whsNumber?: string | null; // camelCase alias
-  handicapIndex?: number | null; // camelCase alias
+  whsNumber?: string | null;
+  handicapIndex?: number | null;
   // Gender for tee selection
   gender?: Gender;
   // Annual membership fee tracking
@@ -480,7 +480,6 @@ export async function updateMember(
     name: string;
     displayName: string;
     email: string;
-    whsNumber: string | null;
     handicapIndex: number | null;
     gender: Gender;
   }>
@@ -517,9 +516,8 @@ export async function updateMember(
     }
   }
 
-  // Update handicap fields if provided (uses RPC for permission check)
-  const hasHandicapUpdate =
-    patch.whsNumber !== undefined || patch.handicapIndex !== undefined;
+  // Update handicap field if provided (uses RPC for permission check)
+  const hasHandicapUpdate = patch.handicapIndex !== undefined;
 
   if (hasHandicapUpdate) {
     // Validate handicap range
@@ -531,7 +529,7 @@ export async function updateMember(
 
     return await updateMemberHandicap(
       memberId,
-      patch.whsNumber,
+      null, // whs_number: leave unchanged (deprecated, not used in UI)
       patch.handicapIndex
     );
   }

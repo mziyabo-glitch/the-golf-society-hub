@@ -18,7 +18,6 @@ import {
   getMembersBySocietyId,
   addMemberAsCaptain,
   updateMemberDoc,
-  updateMemberHandicap,
   updateHandicap,
   deleteMember,
   type MemberDoc,
@@ -29,6 +28,8 @@ import { getPermissionsForMember } from "@/lib/rbac";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
 import { confirmDestructive, showAlert } from "@/lib/ui/alert";
 import { guard } from "@/lib/guards";
+import { HandicapEditModal } from "@/components/HandicapEditModal";
+import { Toast } from "@/components/ui/Toast";
 /**
  * Format OOM points for display (handles decimals from tie averaging)
  */
@@ -95,10 +96,11 @@ export default function MembersScreen() {
   // Form state
   const [formName, setFormName] = useState("");
   const [formEmail, setFormEmail] = useState("");
-  const [formWhsNumber, setFormWhsNumber] = useState("");
   const [formHandicapIndex, setFormHandicapIndex] = useState("");
   const [formLockHI, setFormLockHI] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [handicapEditMember, setHandicapEditMember] = useState<MemberDoc | null>(null);
+  const [toast, setToast] = useState({ visible: false, message: "", type: "success" as const });
 
   // Get permissions for current member
   const permissions = getPermissionsForMember(currentMember as any);
@@ -197,7 +199,6 @@ export default function MembersScreen() {
   const openAddModal = () => {
     setFormName("");
     setFormEmail("");
-    setFormWhsNumber("");
     setFormHandicapIndex("");
     setEditingMember(null);
     setModalMode("add");
@@ -208,7 +209,6 @@ export default function MembersScreen() {
     setEditingMember(null);
     setFormName("");
     setFormEmail("");
-    setFormWhsNumber("");
     setFormHandicapIndex("");
   };
 
@@ -276,21 +276,14 @@ export default function MembersScreen() {
 
       // Update handicap if Captain/Handicapper and values changed
       if (permissions.canManageHandicaps) {
-        const oldWhs = editingMember.whsNumber || editingMember.whs_number || "";
         const oldHcap = editingMember.handicapIndex ?? editingMember.handicap_index ?? null;
         const oldLock = editingMember.handicapLock ?? editingMember.handicap_lock ?? false;
-        const newWhs = formWhsNumber.trim() || null;
         const newHcap = formHandicapIndex.trim() ? parseFloat(formHandicapIndex.trim()) : null;
-
-        const whsChanged = (newWhs || "") !== oldWhs;
         const hcapChanged = newHcap !== oldHcap;
         const lockChanged = formLockHI !== oldLock;
 
         if (hcapChanged || lockChanged) {
           await updateHandicap(editingMember.id, newHcap, lockChanged ? formLockHI : undefined);
-        }
-        if (whsChanged) {
-          await updateMemberHandicap(editingMember.id, newWhs, null);
         }
       }
 
@@ -327,6 +320,17 @@ export default function MembersScreen() {
         }
       },
     );
+  };
+
+  const handleSaveHandicapFromList = async (member: MemberDoc, value: number | null) => {
+    try {
+      await updateHandicap(member.id, value);
+      setToast({ visible: true, message: "Handicap saved.", type: "success" });
+      setHandicapEditMember(null);
+      loadMembers();
+    } catch (e: any) {
+      showAlert("Error", (e as Error)?.message || "Failed to save handicap.");
+    }
   };
 
   const handleTogglePaid = async (member: MemberDoc) => {
@@ -414,21 +418,11 @@ export default function MembersScreen() {
             />
           </View>
 
-          {/* Handicap fields - only shown in edit mode for Captain/Handicapper */}
+          {/* Handicap field - only shown in edit mode for Captain/Handicapper */}
           {modalMode === "edit" && permissions.canManageHandicaps && (
             <>
               <View style={[styles.formField, { marginTop: spacing.sm }]}>
-                <AppText variant="captionBold" style={styles.label}>WHS Number (optional)</AppText>
-                <AppInput
-                  placeholder="e.g. 1234567"
-                  value={formWhsNumber}
-                  onChangeText={setFormWhsNumber}
-                  autoCapitalize="none"
-                />
-              </View>
-
-              <View style={styles.formField}>
-                <AppText variant="captionBold" style={styles.label}>Handicap Index (optional)</AppText>
+                <AppText variant="captionBold" style={styles.label}>WHS Handicap Index (optional)</AppText>
                 <AppInput
                   placeholder="e.g. 12.4"
                   value={formHandicapIndex}
@@ -524,7 +518,6 @@ export default function MembersScreen() {
             const hiVal = member.handicapIndex ?? member.handicap_index ?? null;
             const hiNum = hiVal != null ? Number(hiVal) : null;
             const hiText = (hiNum != null && Number.isFinite(hiNum)) ? `HI ${hiNum.toFixed(1)}` : null;
-            console.log("[members:render]", member.name, "handicapIndex=", member.handicapIndex, "handicap_index=", member.handicap_index, "hiText=", hiText);
 
             return (
               <Pressable
@@ -567,10 +560,25 @@ export default function MembersScreen() {
                         <AppText variant="caption" color="tertiary">{member.email}</AppText>
                       )}
 
-                      {/* Handicap index */}
-                      <AppText variant="caption" color={hiText ? "secondary" : "tertiary"} style={{ marginTop: 2 }}>
-                        {hiText || "Awaiting assignment"}
-                      </AppText>
+                      {/* Handicap index - tappable for quick edit when Captain/Handicapper */}
+                      {permissions.canManageHandicaps ? (
+                        <Pressable
+                          onPress={(e) => {
+                            e.stopPropagation();
+                            setHandicapEditMember(member);
+                          }}
+                          style={{ marginTop: 2, flexDirection: "row", alignItems: "center", gap: 4 }}
+                        >
+                          <AppText variant="caption" color={hiText ? "secondary" : "tertiary"}>
+                            {hiText || "Not set"}
+                          </AppText>
+                          <Feather name="edit-2" size={12} color={colors.primary} />
+                        </Pressable>
+                      ) : (
+                        <AppText variant="caption" color={hiText ? "secondary" : "tertiary"} style={{ marginTop: 2 }}>
+                          {hiText || "Not set"}
+                        </AppText>
+                      )}
 
                       {/* OOM Position + Points - only show if member has OOM points */}
                       {oomEntry && oomEntry.totalPoints > 0 && (
@@ -630,6 +638,22 @@ export default function MembersScreen() {
           })}
         </View>
       )}
+
+      <HandicapEditModal
+        visible={!!handicapEditMember}
+        onClose={() => setHandicapEditMember(null)}
+        currentValue={handicapEditMember ? (handicapEditMember.handicapIndex ?? handicapEditMember.handicap_index ?? null) : null}
+        onSave={async (value) => {
+          if (handicapEditMember) await handleSaveHandicapFromList(handicapEditMember, value);
+        }}
+        canEdit={!!handicapEditMember && permissions.canManageHandicaps}
+      />
+      <Toast
+        visible={toast.visible}
+        message={toast.message}
+        type={toast.type}
+        onDismiss={() => setToast({ ...toast, visible: false })}
+      />
     </Screen>
   );
 }

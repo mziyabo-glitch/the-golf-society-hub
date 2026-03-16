@@ -36,6 +36,8 @@ import { getColors, spacing, radius } from "@/lib/ui/theme";
 import { guard } from "@/lib/guards";
 import { confirmDestructive, showAlert } from "@/lib/ui/alert";
 import { LicenceRequiredModal } from "@/components/LicenceRequiredModal";
+import { HandicapEditModal } from "@/components/HandicapEditModal";
+import { Toast } from "@/components/ui/Toast";
 import { usePaidAccess } from "@/lib/access/usePaidAccess";
 
 type RoleValue = "member" | "treasurer" | "secretary" | "handicapper" | "captain";
@@ -153,10 +155,11 @@ export default function MemberDetailScreen() {
   // Form state
   const [formName, setFormName] = useState("");
   const [formEmail, setFormEmail] = useState("");
-  const [formWhsNumber, setFormWhsNumber] = useState("");
   const [formHandicapIndex, setFormHandicapIndex] = useState("");
   const [formGender, setFormGender] = useState<Gender>(null);
   const [formLockHI, setFormLockHI] = useState(false);
+  const [handicapModalVisible, setHandicapModalVisible] = useState(false);
+  const [toast, setToast] = useState({ visible: false, message: "", type: "success" as const });
 
   // Permissions
   const permissions = getPermissionsForMember(currentMember as any);
@@ -191,7 +194,6 @@ export default function MemberDetailScreen() {
         // Initialize form with current values
         setFormName(data.displayName || data.name || "");
         setFormEmail(data.email || "");
-        setFormWhsNumber(data.whsNumber || data.whs_number || "");
         setFormHandicapIndex(
           data.handicapIndex != null
             ? String(data.handicapIndex)
@@ -262,7 +264,6 @@ export default function MemberDetailScreen() {
 
       // Handicap fields (Captain/Handicapper only)
       if (canEditHandicap) {
-        patch.whsNumber = formWhsNumber.trim() || null;
         patch.handicapIndex = formHandicapIndex.trim()
           ? parseFloat(formHandicapIndex.trim())
           : null;
@@ -296,7 +297,6 @@ export default function MemberDetailScreen() {
     if (member) {
       setFormName(member.displayName || member.name || "");
       setFormEmail(member.email || "");
-      setFormWhsNumber(member.whsNumber || member.whs_number || "");
       setFormHandicapIndex(
         member.handicapIndex != null
           ? String(member.handicapIndex)
@@ -334,6 +334,19 @@ export default function MemberDetailScreen() {
     } finally {
       setRoleSaving(false);
     }
+  };
+
+  const handleSaveHandicapFromModal = async (value: number | null) => {
+    if (!member) return;
+    if (!guardPaidAction()) return;
+    if (!canEditHandicap) return;
+    if ((member as any).handicapLock || (member as any).handicap_lock) return;
+
+    await updateHandicap(member.id, value);
+    const updated = await getMember(member.id);
+    if (updated) setMember(updated);
+    setFormHandicapIndex(value != null ? String(value) : "");
+    setToast({ visible: true, message: "Handicap saved.", type: "success" });
   };
 
   const handleDeleteMember = () => {
@@ -533,19 +546,7 @@ export default function MemberDetailScreen() {
             <>
               <View style={styles.formField}>
                 <AppText variant="captionBold" style={styles.label}>
-                  WHS Number (optional)
-                </AppText>
-                <AppInput
-                  placeholder="e.g. 1234567"
-                  value={formWhsNumber}
-                  onChangeText={setFormWhsNumber}
-                  autoCapitalize="none"
-                />
-              </View>
-
-              <View style={styles.formField}>
-                <AppText variant="captionBold" style={styles.label}>
-                  Handicap Index
+                  WHS Handicap Index
                 </AppText>
                 <AppInput
                   placeholder="e.g. 12.4"
@@ -582,7 +583,7 @@ export default function MemberDetailScreen() {
               <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
                 <Feather name="info" size={16} color={colors.textTertiary} />
                 <AppText variant="caption" color="tertiary">
-                  Only Captain or Handicapper can edit WHS and Handicap fields.
+                  Only Captain or Handicapper can edit handicap fields.
                 </AppText>
               </View>
             </AppCard>
@@ -626,29 +627,17 @@ export default function MemberDetailScreen() {
             </View>
           </View>
 
-          {/* WHS Number */}
-          <View style={styles.infoRow}>
-            <View style={[styles.infoIcon, { backgroundColor: colors.backgroundTertiary }]}>
-              <Feather name="hash" size={16} color={colors.textSecondary} />
-            </View>
-            <View style={{ flex: 1 }}>
-              <AppText variant="caption" color="tertiary">
-                WHS Number
-              </AppText>
-              <AppText variant="body">
-                {member.whsNumber || member.whs_number || "Not set"}
-              </AppText>
-            </View>
-          </View>
-
-          {/* Handicap Index */}
-          <View style={styles.infoRow}>
+          {/* WHS Handicap Index - tappable for quick edit */}
+          <Pressable
+            style={styles.infoRow}
+            onPress={() => canEditHandicap && !((member as any).handicapLock || (member as any).handicap_lock) && setHandicapModalVisible(true)}
+          >
             <View style={[styles.infoIcon, { backgroundColor: colors.backgroundTertiary }]}>
               <Feather name="trending-down" size={16} color={colors.textSecondary} />
             </View>
             <View style={{ flex: 1 }}>
               <AppText variant="caption" color="tertiary">
-                Handicap Index
+                WHS Handicap Index
               </AppText>
               <AppText variant="body">
                 {member.handicapIndex != null
@@ -658,13 +647,16 @@ export default function MemberDetailScreen() {
                   : "Not set"}
               </AppText>
             </View>
+            {canEditHandicap && !((member as any).handicapLock || (member as any).handicap_lock) && (
+              <Feather name="edit-2" size={16} color={colors.primary} />
+            )}
             {((member as any).handicapLock || (member as any).handicap_lock) ? (
               <View style={[styles.lockPill, { backgroundColor: colors.error + "14" }]}>
                 <Feather name="lock" size={10} color={colors.error} />
                 <AppText variant="small" style={{ color: colors.error, fontWeight: "700" }}>Locked</AppText>
               </View>
             ) : null}
-          </View>
+          </Pressable>
 
           {/* Payment Status */}
           <View style={styles.infoRow}>
@@ -767,6 +759,19 @@ export default function MemberDetailScreen() {
           )}
         </AppCard>
       )}
+      <HandicapEditModal
+        visible={handicapModalVisible}
+        onClose={() => setHandicapModalVisible(false)}
+        currentValue={member.handicapIndex ?? member.handicap_index ?? null}
+        onSave={handleSaveHandicapFromModal}
+        canEdit={canEditHandicap && !((member as any).handicapLock || (member as any).handicap_lock)}
+      />
+      <Toast
+        visible={toast.visible}
+        message={toast.message}
+        type={toast.type}
+        onDismiss={() => setToast({ ...toast, visible: false })}
+      />
       <LicenceRequiredModal visible={modalVisible} onClose={() => setModalVisible(false)} societyId={guardSocietyId} />
     </Screen>
   );
