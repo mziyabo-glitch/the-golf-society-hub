@@ -18,7 +18,12 @@ export type CourseSearchHit = {
   id: string;
   name: string;
   location?: string | null;
+  city?: string | null;
+  country?: string | null;
 };
+
+/** Alias for CourseSearchHit (used by CoursePicker) */
+export type CourseDoc = CourseSearchHit;
 
 /**
  * Fetch tees for a course (from course_tees table).
@@ -347,7 +352,7 @@ export async function getCourseByApiId(apiId: number): Promise<CourseWithTees | 
   }
   return {
     courseId: course.id,
-    courseName: course.course_name ?? course.name ?? "",
+    courseName: course.course_name ?? "",
     tees,
     fromCache: true,
   };
@@ -436,9 +441,7 @@ export async function upsertTeesFromApi(
 
 /**
  * Search courses by name (for event creation: Search Course → Select Tee).
- *
- * Selects only `id, name` (always present), then tries to get location
- * from `area`, `city`, or `country` — the schema varies across setups.
+ * Uses course_name (not name) — courses table has course_name column.
  */
 export async function searchCourses(
   query: string,
@@ -449,10 +452,9 @@ export async function searchCourses(
 
   console.log("[courseRepo] searchCourses:", q);
 
-  // Select all columns (*) so we can pick location from whatever exists
   const { data, error } = await supabase
     .from("courses")
-    .select("*")
+    .select("id, course_name, area")
     .ilike("course_name", `%${q}%`)
     .order("course_name")
     .limit(limit);
@@ -471,8 +473,10 @@ export async function searchCourses(
     const location = row.area || row.city || row.country || null;
     return {
       id: row.id,
-      name: row.course_name ?? row.name ?? "",
+      name: row.course_name ?? "",
       location,
+      city: row.city ?? null,
+      country: row.country ?? null,
     };
   });
   return { data: hits, error: null };

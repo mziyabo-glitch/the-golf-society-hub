@@ -32,8 +32,8 @@ export function CoursePicker({
       setLoading(true);
       setError(null);
       try {
-        const rows = await searchCourses(query, query.trim() ? 25 : 15);
-        setResults(rows);
+        const { data: rows, error } = await searchCourses(query, query.trim() ? 25 : 15);
+        setResults(error ? [] : rows ?? []);
       } catch (err: any) {
         setResults([]);
         setError(err?.message || "Failed to load courses");
@@ -102,9 +102,9 @@ export function CoursePicker({
               ]}
             >
               <AppText variant="bodyBold">{course.name}</AppText>
-              {(course.city || course.country) ? (
+              {(course.location || course.city || course.country) ? (
                 <AppText variant="small" color="secondary">
-                  {[course.city, course.country].filter(Boolean).join(", ")}
+                  {course.location ?? [course.city, course.country].filter(Boolean).join(", ")}
                 </AppText>
               ) : null}
             </Pressable>

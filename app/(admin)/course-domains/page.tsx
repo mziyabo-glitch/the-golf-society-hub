@@ -76,7 +76,7 @@ export default function CourseDomainsPage() {
 
       const merged: CourseWithCandidates[] = courseRows.map((c) => ({
         ...c,
-        name: c.course_name ?? c.name ?? "",
+        name: c.course_name ?? "",
         candidates: (byCourse[c.id] || []).sort((a, b) => (b.confidence || 0) - (a.confidence || 0)),
       }));
 
