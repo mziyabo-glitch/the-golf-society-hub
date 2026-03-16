@@ -79,6 +79,19 @@ export type EventDoc = {
   teeSource?: "imported" | "manual" | null;
   // Tee setup mode: 'single' | 'separate' — for save/reload persistence
   teeSetupMode?: "single" | "separate" | null;
+  // Explicit tee snapshot (single source of truth)
+  singleTeeName?: string | null;
+  singleCourseRating?: number | null;
+  singleSlopeRating?: number | null;
+  singlePar?: number | null;
+  maleTeeName?: string | null;
+  maleCourseRating?: number | null;
+  maleSlopeRating?: number | null;
+  malePar?: number | null;
+  femaleTeeName?: string | null;
+  femaleCourseRating?: number | null;
+  femaleSlopeRating?: number | null;
+  femalePar?: number | null;
   [key: string]: unknown;
 };
 
@@ -127,6 +140,19 @@ function mapEvent(row: any): EventDoc {
     tee_id: row.tee_id ?? null,
     teeSource: row.tee_source ?? null,
     teeSetupMode: row.tee_setup_mode ?? null,
+    // Explicit tee snapshot
+    singleTeeName: row.single_tee_name ?? null,
+    singleCourseRating: row.single_course_rating ?? null,
+    singleSlopeRating: row.single_slope_rating ?? null,
+    singlePar: row.single_par ?? null,
+    maleTeeName: row.male_tee_name ?? null,
+    maleCourseRating: row.male_course_rating ?? null,
+    maleSlopeRating: row.male_slope_rating ?? null,
+    malePar: row.male_par ?? null,
+    femaleTeeName: row.female_tee_name ?? null,
+    femaleCourseRating: row.female_course_rating ?? null,
+    femaleSlopeRating: row.female_slope_rating ?? null,
+    femalePar: row.female_par ?? null,
   };
 }
 
@@ -209,6 +235,19 @@ export async function createEvent(
     teeSource?: "imported" | "manual";
     // Tee setup mode: 'single' | 'separate'
     teeSetupMode?: "single" | "separate";
+    // Explicit tee snapshot
+    singleTeeName?: string | null;
+    singleCourseRating?: number | null;
+    singleSlopeRating?: number | null;
+    singlePar?: number | null;
+    maleTeeName?: string | null;
+    maleCourseRating?: number | null;
+    maleSlopeRating?: number | null;
+    malePar?: number | null;
+    femaleTeeName?: string | null;
+    femaleCourseRating?: number | null;
+    femaleSlopeRating?: number | null;
+    femalePar?: number | null;
   }
 ): Promise<EventDoc> {
   const classification = data.classification ?? 'general';
@@ -250,6 +289,20 @@ export async function createEvent(
   if (data.teeSource !== undefined) payload.tee_source = data.teeSource;
   // Tee setup mode: single or separate male/female
   if (data.teeSetupMode !== undefined) payload.tee_setup_mode = data.teeSetupMode;
+
+  // Explicit tee snapshot
+  if (data.singleTeeName !== undefined) payload.single_tee_name = data.singleTeeName;
+  if (data.singleCourseRating !== undefined) payload.single_course_rating = data.singleCourseRating;
+  if (data.singleSlopeRating !== undefined) payload.single_slope_rating = data.singleSlopeRating;
+  if (data.singlePar !== undefined) payload.single_par = data.singlePar;
+  if (data.maleTeeName !== undefined) payload.male_tee_name = data.maleTeeName;
+  if (data.maleCourseRating !== undefined) payload.male_course_rating = data.maleCourseRating;
+  if (data.maleSlopeRating !== undefined) payload.male_slope_rating = data.maleSlopeRating;
+  if (data.malePar !== undefined) payload.male_par = data.malePar;
+  if (data.femaleTeeName !== undefined) payload.female_tee_name = data.femaleTeeName;
+  if (data.femaleCourseRating !== undefined) payload.female_course_rating = data.femaleCourseRating;
+  if (data.femaleSlopeRating !== undefined) payload.female_slope_rating = data.femaleSlopeRating;
+  if (data.femalePar !== undefined) payload.female_par = data.femalePar;
 
   console.log("[eventRepo] createEvent payload:", JSON.stringify(payload, null, 2));
   console.log("[eventRepo] tee_id intentionally null; tee values saved on event:", {
@@ -313,6 +366,19 @@ export async function updateEvent(
     teeSource: "imported" | "manual";
     // Tee setup mode
     teeSetupMode: "single" | "separate";
+    // Explicit tee snapshot (single source of truth)
+    singleTeeName?: string | null;
+    singleCourseRating?: number | null;
+    singleSlopeRating?: number | null;
+    singlePar?: number | null;
+    maleTeeName?: string | null;
+    maleCourseRating?: number | null;
+    maleSlopeRating?: number | null;
+    malePar?: number | null;
+    femaleTeeName?: string | null;
+    femaleCourseRating?: number | null;
+    femaleSlopeRating?: number | null;
+    femalePar?: number | null;
     // Competition holes
     nearestPinHoles: number[];
     longestDriveHoles: number[];
@@ -365,6 +431,20 @@ export async function updateEvent(
   if (updates.teeSource !== undefined) payload.tee_source = updates.teeSource;
   // Tee setup mode
   if (updates.teeSetupMode !== undefined) payload.tee_setup_mode = updates.teeSetupMode;
+
+  // Explicit tee snapshot
+  if (updates.singleTeeName !== undefined) payload.single_tee_name = updates.singleTeeName;
+  if (updates.singleCourseRating !== undefined) payload.single_course_rating = updates.singleCourseRating;
+  if (updates.singleSlopeRating !== undefined) payload.single_slope_rating = updates.singleSlopeRating;
+  if (updates.singlePar !== undefined) payload.single_par = updates.singlePar;
+  if (updates.maleTeeName !== undefined) payload.male_tee_name = updates.maleTeeName;
+  if (updates.maleCourseRating !== undefined) payload.male_course_rating = updates.maleCourseRating;
+  if (updates.maleSlopeRating !== undefined) payload.male_slope_rating = updates.maleSlopeRating;
+  if (updates.malePar !== undefined) payload.male_par = updates.malePar;
+  if (updates.femaleTeeName !== undefined) payload.female_tee_name = updates.femaleTeeName;
+  if (updates.femaleCourseRating !== undefined) payload.female_course_rating = updates.femaleCourseRating;
+  if (updates.femaleSlopeRating !== undefined) payload.female_slope_rating = updates.femaleSlopeRating;
+  if (updates.femalePar !== undefined) payload.female_par = updates.femalePar;
 
   // Competition holes
   if (updates.nearestPinHoles !== undefined) payload.nearest_pin_holes = updates.nearestPinHoles;

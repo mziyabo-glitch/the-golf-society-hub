@@ -33,6 +33,7 @@ export type EventTeeSnapshot = {
 
 /**
  * Build tee display snapshot from event. Pure function, no I/O.
+ * Reads from explicit snapshot fields first, fallback to legacy (tee_name, ladies_*).
  */
 export function buildTeeSnapshotFromEvent(event: EventDoc | null): EventTeeSnapshot | null {
   if (!event) return null;
@@ -47,10 +48,10 @@ export function buildTeeSnapshotFromEvent(event: EventDoc | null): EventTeeSnaps
     return {
       teeSetupMode: "single",
       single: {
-        teeName: event.teeName ?? "",
-        par: event.par ?? null,
-        courseRating: event.courseRating ?? null,
-        slopeRating: event.slopeRating ?? null,
+        teeName: event.singleTeeName ?? event.teeName ?? "",
+        par: event.singlePar ?? event.par ?? null,
+        courseRating: event.singleCourseRating ?? event.courseRating ?? null,
+        slopeRating: event.singleSlopeRating ?? event.slopeRating ?? null,
       },
       handicapAllowance,
     };
@@ -59,16 +60,16 @@ export function buildTeeSnapshotFromEvent(event: EventDoc | null): EventTeeSnaps
   return {
     teeSetupMode: "separate",
     male: {
-      teeName: event.teeName ?? "",
-      par: event.par ?? null,
-      courseRating: event.courseRating ?? null,
-      slopeRating: event.slopeRating ?? null,
+      teeName: event.maleTeeName ?? event.teeName ?? "",
+      par: event.malePar ?? event.par ?? null,
+      courseRating: event.maleCourseRating ?? event.courseRating ?? null,
+      slopeRating: event.maleSlopeRating ?? event.slopeRating ?? null,
     },
     female: {
-      teeName: event.ladiesTeeName ?? "",
-      par: event.ladiesPar ?? null,
-      courseRating: event.ladiesCourseRating ?? null,
-      slopeRating: event.ladiesSlopeRating ?? null,
+      teeName: event.femaleTeeName ?? event.ladiesTeeName ?? "",
+      par: event.femalePar ?? event.ladiesPar ?? null,
+      courseRating: event.femaleCourseRating ?? event.ladiesCourseRating ?? null,
+      slopeRating: event.femaleSlopeRating ?? event.ladiesSlopeRating ?? null,
     },
     handicapAllowance,
   };
@@ -80,13 +81,13 @@ export function buildTeeSnapshotFromEvent(event: EventDoc | null): EventTeeSnaps
 export function hasTeeSnapshot(event: EventDoc | null): boolean {
   if (!event) return false;
   return !!(
-    event.teeName ||
-    event.par != null ||
-    event.courseRating != null ||
-    event.slopeRating != null ||
-    event.ladiesTeeName ||
-    event.ladiesPar != null ||
-    event.ladiesCourseRating != null ||
-    event.ladiesSlopeRating != null
+    event.singleTeeName || event.maleTeeName || event.teeName ||
+    event.singlePar != null || event.malePar != null || event.par != null ||
+    event.singleCourseRating != null || event.maleCourseRating != null || event.courseRating != null ||
+    event.singleSlopeRating != null || event.maleSlopeRating != null || event.slopeRating != null ||
+    event.femaleTeeName || event.ladiesTeeName ||
+    event.femalePar != null || event.ladiesPar != null ||
+    event.femaleCourseRating != null || event.ladiesCourseRating != null ||
+    event.femaleSlopeRating != null || event.ladiesSlopeRating != null
   );
 }

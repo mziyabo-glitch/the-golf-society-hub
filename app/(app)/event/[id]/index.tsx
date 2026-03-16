@@ -313,15 +313,36 @@ export default function EventDetailScreen() {
       event.handicapAllowance != null ? String(Math.round(event.handicapAllowance * 100)) : "95"
     );
 
-    // Tee snapshot: pre-fill manual fields from event (single source of truth)
-    setManualTeeName(event.teeName || "");
-    setManualPar(event.par != null ? String(event.par) : "");
-    setManualCourseRating(event.courseRating != null ? String(event.courseRating) : "");
-    setManualSlopeRating(event.slopeRating != null ? String(event.slopeRating) : "");
-    setManualLadiesTeeName(event.ladiesTeeName || "");
-    setManualLadiesPar(event.ladiesPar != null ? String(event.ladiesPar) : "");
-    setManualLadiesCourseRating(event.ladiesCourseRating != null ? String(event.ladiesCourseRating) : "");
-    setManualLadiesSlopeRating(event.ladiesSlopeRating != null ? String(event.ladiesSlopeRating) : "");
+    // Tee snapshot: pre-fill manual fields from event (new fields first, fallback to legacy)
+    const snap = buildTeeSnapshotFromEvent(event);
+    if (snap?.teeSetupMode === "single" && snap.single) {
+      setManualTeeName(snap.single.teeName || "");
+      setManualPar(snap.single.par != null ? String(snap.single.par) : "");
+      setManualCourseRating(snap.single.courseRating != null ? String(snap.single.courseRating) : "");
+      setManualSlopeRating(snap.single.slopeRating != null ? String(snap.single.slopeRating) : "");
+      setManualLadiesTeeName(snap.single.teeName || "");
+      setManualLadiesPar(snap.single.par != null ? String(snap.single.par) : "");
+      setManualLadiesCourseRating(snap.single.courseRating != null ? String(snap.single.courseRating) : "");
+      setManualLadiesSlopeRating(snap.single.slopeRating != null ? String(snap.single.slopeRating) : "");
+    } else if (snap?.male || snap?.female) {
+      setManualTeeName(snap.male?.teeName ?? event.teeName ?? "");
+      setManualPar(snap.male?.par != null ? String(snap.male.par) : (event.par != null ? String(event.par) : ""));
+      setManualCourseRating(snap.male?.courseRating != null ? String(snap.male.courseRating) : (event.courseRating != null ? String(event.courseRating) : ""));
+      setManualSlopeRating(snap.male?.slopeRating != null ? String(snap.male.slopeRating) : (event.slopeRating != null ? String(event.slopeRating) : ""));
+      setManualLadiesTeeName(snap.female?.teeName ?? event.ladiesTeeName ?? "");
+      setManualLadiesPar(snap.female?.par != null ? String(snap.female.par) : (event.ladiesPar != null ? String(event.ladiesPar) : ""));
+      setManualLadiesCourseRating(snap.female?.courseRating != null ? String(snap.female.courseRating) : (event.ladiesCourseRating != null ? String(event.ladiesCourseRating) : ""));
+      setManualLadiesSlopeRating(snap.female?.slopeRating != null ? String(snap.female.slopeRating) : (event.ladiesSlopeRating != null ? String(event.ladiesSlopeRating) : ""));
+    } else {
+      setManualTeeName(event.teeName || "");
+      setManualPar(event.par != null ? String(event.par) : "");
+      setManualCourseRating(event.courseRating != null ? String(event.courseRating) : "");
+      setManualSlopeRating(event.slopeRating != null ? String(event.slopeRating) : "");
+      setManualLadiesTeeName(event.ladiesTeeName || "");
+      setManualLadiesPar(event.ladiesPar != null ? String(event.ladiesPar) : "");
+      setManualLadiesCourseRating(event.ladiesCourseRating != null ? String(event.ladiesCourseRating) : "");
+      setManualLadiesSlopeRating(event.ladiesSlopeRating != null ? String(event.ladiesSlopeRating) : "");
+    }
 
     const hasTeeSettings =
       event.teeName != null || event.par != null || event.slopeRating != null || event.courseName != null;
@@ -429,6 +450,26 @@ export default function EventDetailScreen() {
       }
     }
 
+    // Explicit tee snapshot (single source of truth) + legacy for backward compatibility
+    const snapshot =
+      teeSetupMode === "single"
+        ? {
+            singleTeeName: teeName,
+            singleCourseRating: courseRating,
+            singleSlopeRating: slopeRating,
+            singlePar: par,
+          }
+        : {
+            maleTeeName: teeName,
+            maleCourseRating: courseRating,
+            maleSlopeRating: slopeRating,
+            malePar: par,
+            femaleTeeName: ladiesTeeName,
+            femaleCourseRating: ladiesCourseRating,
+            femaleSlopeRating: ladiesSlopeRating,
+            femalePar: ladiesPar,
+          };
+
     setSaving(true);
     try {
       await updateEvent(eventId, {
@@ -450,6 +491,7 @@ export default function EventDetailScreen() {
         handicapAllowance,
         teeSource,
         teeSetupMode,
+        ...snapshot,
       });
 
       setIsEditing(false);

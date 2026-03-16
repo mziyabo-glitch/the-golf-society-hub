@@ -420,6 +420,25 @@ export default function EventsScreen() {
         console.warn("[createEvent] Failed to persist manual tees to course_tees:", (e as Error)?.message);
       }
     }
+    const snapshot =
+      teeSetupMode === "single"
+        ? {
+            singleTeeName: teeName,
+            singleCourseRating: courseRating,
+            singleSlopeRating: slopeRating,
+            singlePar: par,
+          }
+        : {
+            maleTeeName: teeName,
+            maleCourseRating: courseRating,
+            maleSlopeRating: slopeRating,
+            malePar: par,
+            femaleTeeName: ladiesTeeName,
+            femaleCourseRating: ladiesCourseRating,
+            femaleSlopeRating: ladiesSlopeRating,
+            femalePar: ladiesPar,
+          };
+
     const created = await createAction.run(async () =>
       createEvent(societyId, {
         name: formName.trim(),
@@ -441,6 +460,7 @@ export default function EventsScreen() {
         handicapAllowance,
         teeSource,
         teeSetupMode,
+        ...snapshot,
       })
     );
 
