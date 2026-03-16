@@ -4,7 +4,7 @@
   "crons": [
     {
       "path": "/api/cron/process-course-jobs",
-      "schedule": "*/5 * * * *"
+      "schedule": "0 2 * * *"
     }
   ],
   "headers": [
