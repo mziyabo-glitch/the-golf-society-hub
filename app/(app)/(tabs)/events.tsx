@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import debounce from "lodash.debounce";
-import { StyleSheet, View, Pressable, ScrollView } from "react-native";
+import { StyleSheet, View, Pressable, ScrollView, Switch } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
 import { Feather } from "@expo/vector-icons";
@@ -570,7 +570,7 @@ export default function EventsScreen() {
   // Create form view
   if (showCreateForm) {
     return (
-      <Screen contentStyle={tabContentStyle}>
+      <Screen scrollable={false} contentStyle={tabContentStyle}>
         <Toast
           visible={toast.visible}
           message={toast.message}
@@ -649,9 +649,9 @@ export default function EventsScreen() {
             <View style={[styles.formField, { marginTop: spacing.md, paddingTop: spacing.md, borderTopWidth: 1, borderTopColor: colors.border }]}>
               <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: spacing.xs }}>
                 <AppText variant="captionBold" style={styles.label}>Joint Event (Multiple Societies)</AppText>
-                <Pressable
-                  onPress={() => {
-                    const next = !formIsMultiSociety;
+                <Switch
+                  value={formIsMultiSociety}
+                  onValueChange={(next) => {
                     setFormIsMultiSociety(next);
                     if (next && societyId) {
                       setFormParticipatingSocietyIds([societyId]);
@@ -660,25 +660,9 @@ export default function EventsScreen() {
                     }
                     setFormErrors((prev) => ({ ...prev, societies: undefined }));
                   }}
-                  style={{
-                    width: 44,
-                    height: 24,
-                    borderRadius: 12,
-                    backgroundColor: formIsMultiSociety ? colors.primary : colors.border,
-                    justifyContent: "center",
-                    paddingHorizontal: 2,
-                  }}
-                >
-                  <View
-                    style={{
-                      width: 20,
-                      height: 20,
-                      borderRadius: 10,
-                      backgroundColor: "#fff",
-                      alignSelf: formIsMultiSociety ? "flex-end" : "flex-start",
-                    }}
-                  />
-                </Pressable>
+                  trackColor={{ false: colors.border, true: colors.primary }}
+                  thumbColor="#fff"
+                />
               </View>
               {formIsMultiSociety ? (
                 <View style={{ marginTop: spacing.sm }}>
