@@ -21,7 +21,7 @@ import { LoadingState } from "@/components/ui/LoadingState";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { useBootstrap } from "@/lib/useBootstrap";
 import { getEvent, updateEvent, type EventDoc } from "@/lib/db_supabase/eventRepo";
-import { getMembersBySocietyId, type MemberDoc } from "@/lib/db_supabase/memberRepo";
+import { getMembersBySocietyId, getMembersBySocietyIds, type MemberDoc } from "@/lib/db_supabase/memberRepo";
 import {
   getEventGuests,
   addEventGuest,
@@ -29,6 +29,7 @@ import {
   type EventGuest,
 } from "@/lib/db_supabase/eventGuestRepo";
 import { getPermissionsForMember } from "@/lib/rbac";
+import { getSocietyDoc } from "@/lib/db_supabase/societyRepo";
 import { getColors, spacing, radius, typography } from "@/lib/ui/theme";
 
 export default function EventPlayersScreen() {
@@ -56,6 +57,8 @@ export default function EventPlayersScreen() {
   const [guestSex, setGuestSex] = useState<"male" | "female">("male");
   const [guestHandicap, setGuestHandicap] = useState("");
   const [addingGuest, setAddingGuest] = useState(false);
+  const [societyFilter, setSocietyFilter] = useState<string>("all");
+  const [societyNames, setSocietyNames] = useState<Record<string, string>>({});
 
   const permissions = getPermissionsForMember(member as any);
 
@@ -90,11 +93,16 @@ export default function EventPlayersScreen() {
       try {
         console.log("[players] loading event + members + guests", { eventId, societyId });
 
-        const [evt, mems, guestList] = await Promise.all([
-          getEvent(eventId),
-          getMembersBySocietyId(societyId),
-          getEventGuests(eventId),
-        ]);
+        const evt = await getEvent(eventId);
+        if (cancelled) return;
+
+        const societyIds = evt?.is_multi_society && evt?.participatingSocietyIds?.length
+          ? evt.participatingSocietyIds
+          : [evt?.society_id ?? societyId].filter(Boolean);
+        const mems = societyIds.length > 0
+          ? await getMembersBySocietyIds(societyIds)
+          : await getMembersBySocietyId(societyId);
+        const guestList = await getEventGuests(eventId);
 
         if (cancelled) return;
 
@@ -102,11 +110,21 @@ export default function EventPlayersScreen() {
           id: evt?.id,
           playerIds: evt?.playerIds,
           guests: guestList.length,
+          societyIds,
         });
 
         setEvent(evt);
         setMembers(mems);
         setGuests(guestList);
+
+        if (evt?.is_multi_society && societyIds.length > 0) {
+          const names: Record<string, string> = {};
+          await Promise.all(societyIds.map(async (sid) => {
+            const s = await getSocietyDoc(sid);
+            if (s) names[sid] = s.name ?? "Society";
+          }));
+          setSocietyNames(names);
+        }
 
         // Use playerIds (camelCase) as returned by mapEvent
         const existing = evt?.playerIds ?? [];
@@ -253,6 +271,13 @@ export default function EventPlayersScreen() {
   }
 
   const selectedCount = selectedPlayerIds.size;
+  const participatingSocietyIds = event?.is_multi_society && event?.participatingSocietyIds?.length
+    ? event.participatingSocietyIds
+    : [];
+  const filteredMembers = useMemo(() => {
+    if (societyFilter === "all") return members;
+    return members.filter((m) => m.society_id === societyFilter);
+  }, [members, societyFilter]);
 
   return (
     <Screen>
@@ -283,11 +308,46 @@ export default function EventPlayersScreen() {
       </View>
 
       <ScrollView contentContainerStyle={{ paddingBottom: spacing.xl }}>
+        {/* Society filter (multi-society only) */}
+        {participatingSocietyIds.length > 1 && (
+          <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: spacing.md }}>
+            <Pressable
+              onPress={() => setSocietyFilter("all")}
+              style={{
+                paddingHorizontal: 12,
+                paddingVertical: 8,
+                borderRadius: radius.md,
+                backgroundColor: societyFilter === "all" ? colors.primary : colors.backgroundSecondary,
+              }}
+            >
+              <AppText variant="caption" style={{ color: societyFilter === "all" ? "#fff" : colors.text }}>
+                All societies
+              </AppText>
+            </Pressable>
+            {participatingSocietyIds.map((sid) => (
+              <Pressable
+                key={sid}
+                onPress={() => setSocietyFilter(sid)}
+                style={{
+                  paddingHorizontal: 12,
+                  paddingVertical: 8,
+                  borderRadius: radius.md,
+                  backgroundColor: societyFilter === sid ? colors.primary : colors.backgroundSecondary,
+                }}
+              >
+                <AppText variant="caption" style={{ color: societyFilter === sid ? "#fff" : colors.text }}>
+                  {societyNames[sid] ?? "Society"}
+                </AppText>
+              </Pressable>
+            ))}
+          </View>
+        )}
+
         {/* Members */}
         <AppText variant="captionBold" color="secondary" style={{ marginBottom: spacing.sm }}>
           Society Members
         </AppText>
-        {members.length === 0 ? (
+        {filteredMembers.length === 0 ? (
           <EmptyState
             title="No members"
             message="Add members first, then you can select players."
@@ -295,7 +355,7 @@ export default function EventPlayersScreen() {
           />
         ) : (
           <View style={{ gap: spacing.md, marginBottom: spacing.xl }}>
-            {members.map((m) => {
+            {filteredMembers.map((m) => {
               const id = String(m.id);
               const selected = selectedPlayerIds.has(id);
               const handicap = m.handicapIndex ?? (m as any).handicap_index;
@@ -304,9 +364,18 @@ export default function EventPlayersScreen() {
                 <Pressable key={id} onPress={() => togglePlayer(id)}>
                   <AppCard style={selected ? { ...styles.row, ...styles.rowSelected } : styles.row}>
                     <View style={{ flex: 1 }}>
-                      <AppText style={styles.name}>
-                        {m.name || m.displayName || "Member"}
-                      </AppText>
+                      <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                        <AppText style={styles.name}>
+                          {m.name || m.displayName || "Member"}
+                        </AppText>
+                        {event?.is_multi_society && m.society_id && societyNames[m.society_id] && (
+                          <View style={{ backgroundColor: colors.border, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
+                            <AppText variant="small" color="tertiary">
+                              {societyNames[m.society_id]}
+                            </AppText>
+                          </View>
+                        )}
+                      </View>
 
                       {handicap != null && (
                         <AppText style={styles.subtle}>

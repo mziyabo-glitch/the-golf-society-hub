@@ -48,6 +48,7 @@ import { assertPngExportOnly } from "@/lib/share/pngExportGuard";
 import { formatError, type FormattedError } from "@/lib/ui/formatError";
 import type { TeeSheetData } from "@/lib/teeSheetPdf";
 import { getSocietyLogoUrl } from "@/lib/societyLogo";
+import { getSocietyDoc } from "@/lib/db_supabase/societyRepo";
 
 type EditablePlayer = {
   id: string;
@@ -56,12 +57,15 @@ type EditablePlayer = {
   playingHandicap: number | null;
   gender: Gender;
   groupIndex: number;
+  societyId?: string | null;
 };
 
 type PlayerGroup = {
   groupNumber: number;
   players: EditablePlayer[];
 };
+
+type GuestWithSociety = { id: string; name: string; sex: "male" | "female"; handicap_index: number | null; society_id?: string };
 
 function GroupNumInput({
   currentGroup,
@@ -252,7 +256,7 @@ export default function TeeSheetScreen() {
     groups: TeeGroupRow[],
     players: TeeGroupPlayerRow[],
     membersList: MemberDoc[],
-    guests: { id: string; name: string; sex: "male" | "female"; handicap_index: number | null }[],
+    guests: GuestWithSociety[],
     evt: EventDoc
   ): PlayerGroup[] => {
     const menTee: TeeBlock | null =
@@ -265,14 +269,14 @@ export default function TeeSheetScreen() {
         : null;
     const allowance = evt.handicapAllowance ?? DEFAULT_ALLOWANCE;
 
-    const lookupPlayer = (playerId: string): { id: string; name: string; handicapIndex: number | null; gender: Gender | null } | null => {
+    const lookupPlayer = (playerId: string): { id: string; name: string; handicapIndex: number | null; gender: Gender | null; societyId?: string | null } | null => {
       if (playerId.startsWith("guest-")) {
         const guestId = playerId.slice(6);
         const g = guests.find((x) => x.id === guestId);
-        return g ? { id: playerId, name: g.name, handicapIndex: g.handicap_index ?? null, gender: g.sex as Gender } : null;
+        return g ? { id: playerId, name: g.name, handicapIndex: g.handicap_index ?? null, gender: g.sex as Gender, societyId: g.society_id ?? null } : null;
       }
       const m = membersList.find((x) => x.id === playerId);
-      return m ? { id: m.id, name: m.name || m.displayName || "Member", handicapIndex: m.handicapIndex ?? m.handicap_index ?? null, gender: m.gender ?? null } : null;
+      return m ? { id: m.id, name: m.name || m.displayName || "Member", handicapIndex: m.handicapIndex ?? m.handicap_index ?? null, gender: m.gender ?? null, societyId: m.society_id ?? null } : null;
     };
 
     const groupMap = new Map<number, { teeTime: string; players: { playerId: string; position: number }[] }>();
@@ -308,8 +312,9 @@ export default function TeeSheetScreen() {
           name: p.name,
           handicapIndex: p.handicapIndex,
           playingHandicap,
-          gender: p.gender ?? undefined,
+          gender: p.gender ?? null,
           groupIndex: groupNumber - 1,
+          societyId: p.societyId ?? null,
         });
       }
       newGroups.push({ groupNumber, players: groupPlayers });
@@ -322,7 +327,7 @@ export default function TeeSheetScreen() {
   const initializeGroups = (
     event: EventDoc & { playerIds?: string[] },
     membersList: MemberDoc[],
-    guests: { id: string; name: string; sex: "male" | "female"; handicap_index: number | null }[] = []
+    guests: GuestWithSociety[] = []
   ) => {
     const playerIds = event.playerIds || [];
     // Preserve saved order when playerIds has content (tee sheet was saved)
@@ -338,6 +343,7 @@ export default function TeeSheetScreen() {
       handicap_index: g.handicap_index ?? null,
       gender: g.sex as Gender,
       displayName: g.name,
+      society_id: g.society_id ?? null,
     }));
 
     const allPlayers = [...eventMembers, ...guestPlayers];
@@ -399,6 +405,7 @@ export default function TeeSheetScreen() {
           playingHandicap,
           gender,
           groupIndex: i,
+          societyId: (m as { society_id?: string }).society_id ?? null,
         });
         playerIndex++;
       }
@@ -465,6 +472,7 @@ export default function TeeSheetScreen() {
           player_id: p.id,
           group_number: g.groupNumber,
           position: idx,
+          society_id: p.societyId ?? selectedEvent?.society_id ?? societyId,
         }))
       );
       await upsertTeeSheet(selectedEventId, teeGroupInputs, teePlayerInputs);
@@ -614,6 +622,15 @@ export default function TeeSheetScreen() {
       const ntpHoles = parseHoleNumbers(ntpHolesInput === "-" ? "" : ntpHolesInput);
       const ldHoles = parseHoleNumbers(ldHolesInput === "-" ? "" : ldHolesInput);
 
+      const societyLabels: Record<string, string> = {};
+      if (selectedEvent?.is_multi_society && selectedEvent?.participatingSocietyIds?.length) {
+        await Promise.all(
+          selectedEvent.participatingSocietyIds.map(async (sid) => {
+            const s = await getSocietyDoc(sid);
+            if (s) societyLabels[sid] = (s.name ?? "Soc").slice(0, 6);
+          })
+        );
+      }
       const players: TeeSheetData["players"] = groupsForExport.flatMap((group) =>
         group.players.map((player) => ({
           id: player.id,
@@ -621,6 +638,9 @@ export default function TeeSheetScreen() {
           handicapIndex: player.handicapIndex ?? null,
           gender: player.gender ?? null,
           group: group.groupNumber,
+          societyLabel: player.societyId && societyLabels[player.societyId]
+            ? societyLabels[player.societyId]
+            : null,
         }))
       );
 
@@ -634,7 +654,12 @@ export default function TeeSheetScreen() {
         tee_time: computeTeeTimeForGroup(g.groupNumber),
       }));
       const teePlayerInputs = groupsForExport.flatMap((g) =>
-        g.players.map((p, idx) => ({ player_id: p.id, group_number: g.groupNumber, position: idx }))
+        g.players.map((p, idx) => ({
+          player_id: p.id,
+          group_number: g.groupNumber,
+          position: idx,
+          society_id: p.societyId ?? selectedEvent?.society_id ?? societyId,
+        }))
       );
       await upsertTeeSheet(selectedEvent.id, teeGroupInputs, teePlayerInputs);
 

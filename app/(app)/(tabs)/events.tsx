@@ -33,6 +33,7 @@ import { searchCourses as searchCoursesApi, type ApiCourseSearchResult } from "@
 import { resolveCourseByApiId } from "@/lib/courseResolution";
 import { CourseTeeSetupCard, type TeeSyncStatus, type TeeSetupMode } from "@/components/CourseTeeSetupCard";
 import { getPermissionsForMember } from "@/lib/rbac";
+import { getMySocieties, type MySocietyMembership } from "@/lib/db_supabase/mySocietiesRepo";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
 import { formatError, type FormattedError } from "@/lib/ui/formatError";
 
@@ -77,6 +78,7 @@ type FormErrors = {
   course?: string;
   courseTee?: string;
   handicapAllowance?: string;
+  societies?: string;
 };
 
 export default function EventsScreen() {
@@ -133,7 +135,16 @@ export default function EventsScreen() {
   // Handicap allowance (shared)
   const [formHandicapAllowance, setFormHandicapAllowance] = useState("95");
 
+  // Multi-society
+  const [formIsMultiSociety, setFormIsMultiSociety] = useState(false);
+  const [formParticipatingSocietyIds, setFormParticipatingSocietyIds] = useState<string[]>([]);
+  const [mySocieties, setMySocieties] = useState<MySocietyMembership[]>([]);
+
   const permissions = getPermissionsForMember(member as any);
+
+  useEffect(() => {
+    getMySocieties().then(setMySocieties);
+  }, []);
 
   useEffect(() => {
     if (paramsHandledRef.current) return;
@@ -313,6 +324,10 @@ export default function EventsScreen() {
       }
     }
 
+    if (formIsMultiSociety && formParticipatingSocietyIds.length < 2) {
+      errors.societies = "Multi-society events require at least 2 participating societies.";
+    }
+
     return errors;
   };
 
@@ -440,6 +455,10 @@ export default function EventsScreen() {
             femalePar: ladiesPar,
           };
 
+    const participatingIds = formIsMultiSociety
+      ? formParticipatingSocietyIds
+      : (societyId ? [societyId] : []);
+
     const created = await createAction.run(async () =>
       createEvent(societyId, {
         name: formName.trim(),
@@ -461,6 +480,8 @@ export default function EventsScreen() {
         handicapAllowance,
         teeSource,
         teeSetupMode,
+        isMultiSociety: formIsMultiSociety,
+        participatingSocietyIds: participatingIds,
         ...snapshot,
       })
     );
@@ -503,6 +524,8 @@ export default function EventsScreen() {
     setManualLadiesCourseRating("");
     setManualLadiesSlopeRating("");
     setFormHandicapAllowance("95");
+    setFormIsMultiSociety(false);
+    setFormParticipatingSocietyIds([]);
     setShowCreateForm(false);
     setFormErrors({});
     setValidationNotice(null);
@@ -667,6 +690,94 @@ export default function EventsScreen() {
                 <AppText variant="small" style={[styles.fieldError, { color: colors.error }]}>
                   {formErrors.classification}
                 </AppText>
+              ) : null}
+            </View>
+
+            {/* Multi-society toggle */}
+            <View style={styles.formField}>
+              <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: spacing.xs }}>
+                <AppText variant="captionBold" style={styles.label}>Multi-society event</AppText>
+                <Pressable
+                  onPress={() => {
+                    const next = !formIsMultiSociety;
+                    setFormIsMultiSociety(next);
+                    if (next && societyId) {
+                      setFormParticipatingSocietyIds([societyId]);
+                    } else {
+                      setFormParticipatingSocietyIds([]);
+                    }
+                    setFormErrors((prev) => ({ ...prev, societies: undefined }));
+                  }}
+                  style={{
+                    width: 44,
+                    height: 24,
+                    borderRadius: 12,
+                    backgroundColor: formIsMultiSociety ? colors.primary : colors.border,
+                    justifyContent: "center",
+                    paddingHorizontal: 2,
+                  }}
+                >
+                  <View
+                    style={{
+                      width: 20,
+                      height: 20,
+                      borderRadius: 10,
+                      backgroundColor: "#fff",
+                      alignSelf: formIsMultiSociety ? "flex-end" : "flex-start",
+                    }}
+                  />
+                </Pressable>
+              </View>
+              {formIsMultiSociety ? (
+                <View style={{ marginTop: spacing.sm }}>
+                  <AppText variant="small" color="tertiary" style={{ marginBottom: spacing.xs }}>
+                    Select participating societies (host is pre-selected):
+                  </AppText>
+                  <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+                    {mySocieties.map((s) => {
+                      const isHost = s.societyId === societyId;
+                      const isSelected = formParticipatingSocietyIds.includes(s.societyId);
+                      return (
+                        <Pressable
+                          key={s.societyId}
+                          onPress={() => {
+                            if (isHost) return;
+                            const hostId = societyId ?? "";
+                            setFormParticipatingSocietyIds((prev) => {
+                              if (isSelected) {
+                                return prev.filter((id) => id !== s.societyId);
+                              }
+                              return [...new Set([hostId, ...prev, s.societyId])];
+                            });
+                            setFormErrors((prev) => ({ ...prev, societies: undefined }));
+                          }}
+                          style={{
+                            paddingHorizontal: 12,
+                            paddingVertical: 8,
+                            borderRadius: radius.md,
+                            backgroundColor: isSelected ? colors.primary : colors.backgroundSecondary,
+                            borderWidth: 1,
+                            borderColor: isSelected ? colors.primary : colors.border,
+                            opacity: isHost ? 1 : 1,
+                          }}
+                        >
+                          <AppText
+                            variant="caption"
+                            style={{ color: isSelected ? "#fff" : colors.text }}
+                          >
+                            {s.societyName}
+                            {isHost ? " (host)" : ""}
+                          </AppText>
+                        </Pressable>
+                      );
+                    })}
+                  </View>
+                  {formErrors.societies ? (
+                    <AppText variant="small" style={[styles.fieldError, { color: colors.error, marginTop: spacing.xs }]}>
+                      {formErrors.societies}
+                    </AppText>
+                  ) : null}
+                </View>
               ) : null}
             </View>
 

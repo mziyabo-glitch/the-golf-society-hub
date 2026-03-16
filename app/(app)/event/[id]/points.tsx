@@ -12,7 +12,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ScrollView, StyleSheet, View } from "react-native";
+import { Pressable, ScrollView, StyleSheet, View } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { Feather } from "@expo/vector-icons";
 import { goBack } from "@/lib/navigation";
@@ -31,11 +31,12 @@ import { useBootstrap } from "@/lib/useBootstrap";
 import { useAsyncAction } from "@/lib/hooks/useAsyncAction";
 import { usePaidAccess } from "@/lib/access/usePaidAccess";
 import { getEvent, getFormatSortOrder, type EventDoc } from "@/lib/db_supabase/eventRepo";
-import { getMembersBySocietyId } from "@/lib/db_supabase/memberRepo";
+import { getMembersBySocietyId, getMembersBySocietyIds } from "@/lib/db_supabase/memberRepo";
 import {
   upsertEventResults,
   getEventResults,
 } from "@/lib/db_supabase/resultsRepo";
+import { getSocietyDoc } from "@/lib/db_supabase/societyRepo";
 import { getPermissionsForMember } from "@/lib/rbac";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
 
@@ -80,6 +81,7 @@ function formatPoints(pts: number): string {
 type PlayerEntry = {
   memberId: string;
   memberName: string;
+  societyId?: string | null; // For multi-society leaderboard filter
   dayPoints: string; // User input - the competition/stableford score
   position: number | null; // Auto-calculated
   oomPoints: number; // Auto-calculated F1 points
@@ -103,6 +105,8 @@ export default function EventPointsScreen() {
   const [error, setError] = useState<string | null>(null);
   const [saveNotice, setSaveNotice] = useState<{ type: "error" | "success" | "info"; message: string; detail?: string } | null>(null);
   const [toast, setToast] = useState({ visible: false, message: "", type: "success" as const });
+  const [leaderboardFilter, setLeaderboardFilter] = useState<string>("overall"); // "overall" or society_id
+  const [societyNames, setSocietyNames] = useState<Record<string, string>>({});
   const saveAction = useAsyncAction();
 
   const permissions = getPermissionsForMember(currentMember as any);
@@ -128,31 +132,30 @@ export default function EventPointsScreen() {
     setError(null);
 
     try {
-      const [evt, members] = await Promise.all([
-        getEvent(eventId),
-        getMembersBySocietyId(societyId),
-        getEventResults(eventId),
-      ]);
-
+      const evt = await getEvent(eventId);
       if (!evt) {
         setError("Event not found");
         setLoading(false);
         return;
       }
-
       setEvent(evt);
 
-      // Build player list from event's playerIds
-      const playerIds = evt.playerIds ?? [];
-      const memberMap = new Map(members.map((m) => [m.id, m]));
+      const societyIds = evt.is_multi_society && evt.participatingSocietyIds?.length
+        ? evt.participatingSocietyIds
+        : [evt.society_id ?? societyId].filter(Boolean);
+      const members = societyIds.length > 0
+        ? await getMembersBySocietyIds(societyIds)
+        : await getMembersBySocietyId(societyId);
 
-      // Initialize players with empty day points
-      // If existing OOM points exist, we can't reverse-engineer day points, so leave blank
+      const memberMap = new Map(members.map((m) => [m.id, m]));
+      const playerIds = evt.playerIds ?? [];
+
       const playerList: PlayerEntry[] = playerIds.map((pid) => {
         const member = memberMap.get(pid);
         return {
           memberId: pid,
           memberName: member?.displayName || member?.name || "Unknown",
+          societyId: member?.society_id ?? null,
           dayPoints: "",
           position: null,
           oomPoints: 0,
@@ -160,6 +163,15 @@ export default function EventPointsScreen() {
       });
 
       setPlayers(playerList);
+
+      if (evt.is_multi_society && societyIds.length > 0) {
+        const names: Record<string, string> = {};
+        await Promise.all(societyIds.map(async (sid) => {
+          const s = await getSocietyDoc(sid);
+          if (s) names[sid] = s.name ?? "Society";
+        }));
+        setSocietyNames(names);
+      }
     } catch (e: any) {
       console.error("[points] load FAILED", e);
       setError(e?.message ?? "Failed to load data");
@@ -265,6 +277,15 @@ export default function EventPointsScreen() {
     );
   }, [players]);
 
+  // Leaderboard filter: overall or by society (multi-society only)
+  const participatingSocietyIds = event?.is_multi_society && event?.participatingSocietyIds?.length
+    ? event.participatingSocietyIds
+    : [];
+  const filteredPlayers = useMemo(() => {
+    if (leaderboardFilter === "overall") return players;
+    return players.filter((p) => p.societyId === leaderboardFilter);
+  }, [players, leaderboardFilter]);
+
   // Compute canSave with clear reasons
   const saveReadiness = useMemo(() => {
     if (!eventId) return { canSave: false, reason: "Missing event ID" };
@@ -334,12 +355,13 @@ export default function EventPointsScreen() {
         players: playersToSave,
       });
 
-      // Include day_value and position for audit trail
-      const results: { member_id: string; points: number; day_value?: number; position?: number }[] = [];
+      // Include day_value, position, society_id (for multi-society) for audit trail
+      const results: { member_id: string; society_id?: string; points: number; day_value?: number; position?: number }[] = [];
       for (const p of playersToSave) {
         const dayValue = parseInt(p.dayPoints.trim(), 10);
         results.push({
           member_id: p.memberId,
+          society_id: p.societyId ?? undefined,
           points: p.oomPoints,
           day_value: !isNaN(dayValue) ? dayValue : undefined,
           position: p.position ?? undefined,
@@ -496,6 +518,41 @@ export default function EventPointsScreen() {
         {event.name}
       </AppText>
 
+      {/* Leaderboard filter (multi-society only) */}
+      {participatingSocietyIds.length > 1 && (
+        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: spacing.md }}>
+          <Pressable
+            onPress={() => setLeaderboardFilter("overall")}
+            style={{
+              paddingHorizontal: 12,
+              paddingVertical: 8,
+              borderRadius: 8,
+              backgroundColor: leaderboardFilter === "overall" ? colors.primary : colors.backgroundSecondary,
+            }}
+          >
+            <AppText variant="caption" style={{ color: leaderboardFilter === "overall" ? "#fff" : colors.text }}>
+              Overall
+            </AppText>
+          </Pressable>
+          {participatingSocietyIds.map((sid) => (
+            <Pressable
+              key={sid}
+              onPress={() => setLeaderboardFilter(sid)}
+              style={{
+                paddingHorizontal: 12,
+                paddingVertical: 8,
+                borderRadius: 8,
+                backgroundColor: leaderboardFilter === sid ? colors.primary : colors.backgroundSecondary,
+              }}
+            >
+              <AppText variant="caption" style={{ color: leaderboardFilter === sid ? "#fff" : colors.text }}>
+                {societyNames[sid] ?? "Society"}
+              </AppText>
+            </Pressable>
+          ))}
+        </View>
+      )}
+
       {/* Instructions - format-specific */}
       <AppCard style={styles.instructionCard}>
         <View style={styles.instructionContent}>
@@ -562,15 +619,24 @@ export default function EventPointsScreen() {
       {/* Player List */}
       <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: spacing.xl }}>
         <View style={{ gap: spacing.xs }}>
-          {players.map((player) => (
+          {filteredPlayers.map((player) => (
             <View
               key={player.memberId}
               style={[styles.playerRow, { backgroundColor: colors.backgroundSecondary }]}
             >
-              {/* Player Name */}
-              <AppText variant="body" style={{ flex: 1 }} numberOfLines={1}>
-                {player.memberName}
-              </AppText>
+              {/* Player Name + society badge (multi-society) */}
+              <View style={{ flex: 1, flexDirection: "row", alignItems: "center", gap: 6 }}>
+                <AppText variant="body" numberOfLines={1} style={{ flex: 1 }}>
+                  {player.memberName}
+                </AppText>
+                {event?.is_multi_society && player.societyId && (
+                  <View style={{ backgroundColor: colors.border, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
+                    <AppText variant="small" color="tertiary">
+                      {societyNames[player.societyId] ?? "?"}
+                    </AppText>
+                  </View>
+                )}
+              </View>
 
               {/* Day Points Input */}
               <View style={styles.colDayPoints}>

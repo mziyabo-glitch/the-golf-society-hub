@@ -1,5 +1,6 @@
 // lib/db_supabase/eventRepo.ts
 import { supabase } from "@/lib/supabase";
+import { getEventSocietyIds, setEventSocieties } from "@/lib/db_supabase/eventSocietiesRepo";
 
 // Event format types - simplified to core formats
 // 'medal' kept as alias for backwards compatibility with existing data
@@ -35,6 +36,9 @@ export const EVENT_CLASSIFICATIONS: { value: EventClassification; label: string 
 export type EventDoc = {
   id: string;
   society_id: string;
+  host_society_id?: string | null;
+  is_multi_society?: boolean;
+  participatingSocietyIds?: string[];
   name: string;
   date?: string;
   courseId?: string | null;
@@ -157,32 +161,56 @@ function mapEvent(row: any): EventDoc {
 }
 
 /**
- * Get events for a society (one-time fetch)
+ * Get events for a society (one-time fetch).
+ * Includes: events where society is host, and events where society is participating (multi-society).
  */
 export async function getEventsBySocietyId(societyId: string): Promise<EventDoc[]> {
   console.log("[eventRepo] getEventsBySocietyId called with:", societyId);
-  const { data, error } = await supabase
+
+  const { data: hostData, error: hostErr } = await supabase
     .from("events")
     .select("*")
     .eq("society_id", societyId)
     .order("date", { ascending: true });
 
-  if (error) {
-    console.error("[eventRepo] getEventsBySocietyId failed:", {
-      message: error.message,
-      details: error.details,
-      hint: error.hint,
-      code: error.code,
-    });
-    throw new Error(error.message || "Failed to load events");
+  if (hostErr) {
+    console.error("[eventRepo] getEventsBySocietyId (host) failed:", hostErr.message);
+    throw new Error(hostErr.message || "Failed to load events");
   }
 
-  console.log("[eventRepo] getEventsBySocietyId returned", (data ?? []).length, "events for society:", societyId);
-  return (data ?? []).map(mapEvent);
+  const { data: participantData } = await supabase
+    .from("event_societies")
+    .select("event_id")
+    .eq("society_id", societyId);
+
+  const participantEventIds = (participantData ?? [])
+    .map((r: any) => r.event_id)
+    .filter((id: string) => id);
+
+  let allRows = (hostData ?? []).map((r: any) => ({ ...r, _source: "host" }));
+
+  if (participantEventIds.length > 0) {
+    const { data: participantEvents } = await supabase
+      .from("events")
+      .select("*")
+      .in("id", participantEventIds)
+      .order("date", { ascending: true });
+
+    const hostIds = new Set((hostData ?? []).map((r: any) => r.id));
+    for (const r of participantEvents ?? []) {
+      if (!hostIds.has(r.id)) {
+        allRows.push({ ...r, _source: "participant" });
+      }
+    }
+    allRows.sort((a, b) => (a.date || "").localeCompare(b.date || ""));
+  }
+
+  console.log("[eventRepo] getEventsBySocietyId returned", allRows.length, "events for society:", societyId);
+  return allRows.map((r) => mapEvent(r));
 }
 
 /**
- * Get a single event by ID
+ * Get a single event by ID with participating societies.
  */
 export async function getEvent(eventId: string): Promise<EventDoc | null> {
   console.log("[eventRepo] getEvent called with id:", eventId);
@@ -203,7 +231,14 @@ export async function getEvent(eventId: string): Promise<EventDoc | null> {
     return null;
   }
 
-  return data ? mapEvent(data) : null;
+  if (!data) return null;
+
+  const participatingIds = await getEventSocietyIds(eventId);
+  const doc = mapEvent(data);
+  doc.participatingSocietyIds = participatingIds;
+  doc.host_society_id = data.host_society_id ?? data.society_id;
+  doc.is_multi_society = data.is_multi_society ?? false;
+  return doc;
 }
 
 /**
@@ -220,6 +255,8 @@ export async function createEvent(
     format: EventFormat;
     classification?: EventClassification;
     createdBy?: string;
+    isMultiSociety?: boolean;
+    participatingSocietyIds?: string[];
     // Men's tee settings (from selected tee or manual)
     teeName?: string;
     par?: number;
@@ -251,11 +288,16 @@ export async function createEvent(
   }
 ): Promise<EventDoc> {
   const classification = data.classification ?? 'general';
+  const isMultiSociety = data.isMultiSociety ?? false;
+  const participatingIds = data.participatingSocietyIds ?? [];
+  const hostSocietyId = societyId;
 
   const courseId = data.courseId?.trim();
   // tee_id: never save API/synthetic IDs; FK target may not exist. Use null; rely on event-level tee fields.
   const payload: Record<string, unknown> = {
-    society_id: societyId,
+    society_id: hostSocietyId,
+    host_society_id: hostSocietyId,
+    is_multi_society: isMultiSociety,
     name: data.name,
     date: data.date ?? null,
     course_id: courseId || null,
@@ -327,7 +369,17 @@ export async function createEvent(
     throw new Error(error.message || "Failed to create event");
   }
 
-  return mapEvent(row);
+  const eventId = row.id;
+  const societiesToSet = isMultiSociety
+    ? Array.from(new Set([hostSocietyId, ...participatingIds]))
+    : [hostSocietyId];
+  await setEventSocieties(eventId, hostSocietyId, societiesToSet);
+
+  const doc = mapEvent(row);
+  doc.participatingSocietyIds = societiesToSet;
+  doc.host_society_id = hostSocietyId;
+  doc.is_multi_society = isMultiSociety;
+  return doc;
 }
 
 /**
@@ -347,6 +399,8 @@ export async function updateEvent(
     isCompleted: boolean;
     winnerName: string;
     playerIds: string[];
+    isMultiSociety: boolean;
+    participatingSocietyIds: string[];
     // Tee time draft (save without publishing)
     teeTimeStart?: string;
     teeTimeInterval?: number;
@@ -449,6 +503,16 @@ export async function updateEvent(
   // Competition holes
   if (updates.nearestPinHoles !== undefined) payload.nearest_pin_holes = updates.nearestPinHoles;
   if (updates.longestDriveHoles !== undefined) payload.longest_drive_holes = updates.longestDriveHoles;
+
+  // Multi-society
+  if (updates.isMultiSociety !== undefined) payload.is_multi_society = updates.isMultiSociety;
+  if (updates.participatingSocietyIds !== undefined) {
+    const { data: ev } = await supabase.from("events").select("society_id, host_society_id").eq("id", eventId).single();
+    const hostId = (ev as any)?.host_society_id ?? (ev as any)?.society_id;
+    if (hostId) {
+      await setEventSocieties(eventId, hostId, updates.participatingSocietyIds);
+    }
+  }
 
   console.log("[eventRepo] updateEvent:", { eventId, payload });
 

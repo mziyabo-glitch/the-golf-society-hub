@@ -15,6 +15,7 @@ export type EventResultDoc = {
 
 export type EventResultInput = {
   member_id: string;
+  society_id?: string;  // For multi-society: each result can have its own society. If omitted, uses societyId param.
   points: number;  // OOM points (can be decimal for tie averaging)
   day_value?: number;  // Raw score for audit trail
   position?: number;   // Finishing position for audit trail
@@ -65,7 +66,7 @@ export async function upsertEventResults(
   // Requires migration 013 to add these columns to the database
   const rows = results.map((r) => ({
     event_id: eventId,
-    society_id: societyId,
+    society_id: r.society_id ?? societyId,
     member_id: r.member_id,
     points: r.points,
     day_value: r.day_value ?? null,

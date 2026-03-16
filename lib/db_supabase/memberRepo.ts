@@ -251,6 +251,29 @@ export async function getMembersBySocietyId(
 }
 
 /**
+ * Get members from multiple societies (for multi-society events)
+ */
+export async function getMembersBySocietyIds(
+  societyIds: string[]
+): Promise<MemberDoc[]> {
+  if (societyIds.length === 0) return [];
+  if (societyIds.length === 1) return getMembersBySocietyId(societyIds[0]);
+
+  const { data, error } = await supabase
+    .from("members")
+    .select("*")
+    .in("society_id", societyIds)
+    .order("society_id")
+    .order("created_at", { ascending: false });
+
+  if (error) {
+    console.error("[memberRepo] getMembersBySocietyIds failed:", error.message);
+    throw new Error(error.message || "Failed to load members");
+  }
+  return (data ?? []).map(mapMember);
+}
+
+/**
  * Update member document
  * ONLY sends columns that exist in the members table
  * Note: societyId param is for API compatibility but not used

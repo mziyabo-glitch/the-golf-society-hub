@@ -982,9 +982,16 @@ export default function EventDetailScreen() {
       </View>
 
       {/* Title */}
-      <AppText variant="title" style={{ marginBottom: spacing.sm }}>
-        {event.name}
-      </AppText>
+      <View style={{ marginBottom: spacing.sm }}>
+        <AppText variant="title">{event.name}</AppText>
+        {event.is_multi_society && (
+          <View style={{ flexDirection: "row", alignItems: "center", marginTop: spacing.xs, gap: spacing.xs }}>
+            <View style={{ backgroundColor: colors.primary + "20", paddingHorizontal: 8, paddingVertical: 4, borderRadius: radius.sm }}>
+              <AppText variant="caption" style={{ color: colors.primary }}>Multi-society event</AppText>
+            </View>
+          </View>
+        )}
+      </View>
 
       {/* Details */}
       <AppCard style={styles.card}>

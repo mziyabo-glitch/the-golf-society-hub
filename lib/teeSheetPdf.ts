@@ -35,6 +35,7 @@ export type TeeSheetPlayer = {
   gender?: "male" | "female" | null;
   teeTime?: string | null;
   group?: number | null;
+  societyLabel?: string | null; // Multi-society: short label/badge (e.g. "M4", "ZGS")
 };
 
 export type TeeSheetData = {
@@ -169,6 +170,7 @@ function generateTeeSheetHTML(data: TeeSheetData, logoSrc?: string | null): stri
       courseHandicap,
       playingHandicap,
       gender,
+      societyLabel: player.societyLabel ?? null,
     };
   });
 
@@ -235,12 +237,15 @@ function generateTeeSheetHTML(data: TeeSheetData, logoSrc?: string | null): stri
     const rows = Array.from({ length: 4 }).map((_, idx) => {
       const player = group.players[idx];
       const name = player?.name ?? "&nbsp;";
+      const societyBadge = (player as any)?.societyLabel
+        ? ` <span class="society-badge">${String((player as any).societyLabel).slice(0, 8)}</span>`
+        : "";
       const hiDisplay = player ? formatHandicap(player.handicapIndex, 1) : "&nbsp;";
       const phDisplay = player ? formatHandicap(player.playingHandicap) : "&nbsp;";
 
       return `
         <tr>
-          <td>${name}</td>
+          <td>${name}${societyBadge}</td>
           <td class="col-hi">${hiDisplay}</td>
           <td class="col-ph">${phDisplay}</td>
         </tr>
@@ -442,6 +447,7 @@ function generateTeeSheetHTML(data: TeeSheetData, logoSrc?: string | null): stri
             border-right: 1px solid #E5E7EB;
           }
           .col-name { width: auto; }
+          .society-badge { font-size: 8px; color: #6B7280; background: #F3F4F6; padding: 1px 4px; border-radius: 2px; margin-left: 4px; }
           .col-hi, .col-ph { width: 40px; text-align: right; font-family: 'SF Mono', Consolas, monospace; }
           .col-ph { color: #0B6E4F; font-weight: 700; }
 

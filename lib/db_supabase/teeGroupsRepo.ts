@@ -16,6 +16,7 @@ export type TeeGroupPlayerRow = {
   group_number: number;
   position: number;
   player_id: string;
+  society_id?: string | null;
   created_at?: string;
   updated_at?: string;
 };
@@ -122,6 +123,7 @@ export type TeeGroupPlayerInput = {
   player_id: string;
   group_number: number;
   position: number;
+  society_id?: string | null;
 };
 
 /**
@@ -156,6 +158,7 @@ export async function upsertTeeSheet(
     player_id: p.player_id,
     group_number: p.group_number,
     position: p.position,
+    society_id: p.society_id ?? null,
   }));
 
   if (groupRows.length > 0) {
