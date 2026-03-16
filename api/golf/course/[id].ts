@@ -1,3 +1,5 @@
+import { enqueueCourseSyncJob } from "@/lib/courseSyncJobs";
+
 export async function GET(req: Request) {
   try {
     const pathParts = new URL(req.url).pathname.split("/");
@@ -66,6 +68,21 @@ export async function GET(req: Request) {
         { error: (data as { error?: string })?.error || bodyText || `Golf API error (${response.status})` },
         { status: response.status }
       );
+    }
+
+    if (response.ok && data && typeof data === "object") {
+      const obj = data as Record<string, unknown>;
+      const courseName = (obj.name ?? obj.course_name ?? "") as string;
+      const apiId = Number(id);
+      if (Number.isFinite(apiId)) {
+        console.log("[golf/course] live fetch succeeded, enqueueing sync job", { api_id: apiId });
+        enqueueCourseSyncJob({
+          api_id: apiId,
+          course_name: courseName || undefined,
+          job_type: "sync_course",
+          payload: obj as Record<string, unknown>,
+        }).catch((err) => console.warn("[golf/course] sync job enqueue failed:", (err as Error)?.message));
+      }
     }
 
     return Response.json(typeof data === "object" && data ? data : {});

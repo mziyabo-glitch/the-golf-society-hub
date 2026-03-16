@@ -4,6 +4,7 @@
  * Secure with CRON_SECRET header to prevent public abuse.
  */
 import { runWorker } from "@/lib/courseEnrichmentWorker";
+import { runSyncWorker } from "@/lib/courseSyncWorker";
 
 const CRON_SECRET = process.env.CRON_SECRET;
 
@@ -25,11 +26,14 @@ async function handleRequest(req: Request) {
   }
 
   try {
-    const { processed, succeeded } = await runWorker(5);
+    const [importResult, syncResult] = await Promise.all([
+      runWorker(5),
+      runSyncWorker(5),
+    ]);
     return Response.json({
       ok: true,
-      processed,
-      succeeded,
+      import: { processed: importResult.processed, succeeded: importResult.succeeded },
+      sync: { processed: syncResult.processed, succeeded: syncResult.succeeded },
     });
   } catch (err) {
     console.error("[cron] process-course-jobs error:", err);

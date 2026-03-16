@@ -151,6 +151,50 @@ function extractCourseRow(payload: any): any {
   return course;
 }
 
+/**
+ * Parse raw Golf API response into ApiCourse. Used by background sync worker.
+ */
+export function parseApiCourseFromRaw(payload: unknown, apiId?: number): ApiCourse | null {
+  if (!payload || typeof payload !== "object") return null;
+  const row = extractCourseRow(payload);
+  if (!row || !row.id) return null;
+  const id = apiId ?? Number(row.id);
+  if (!Number.isFinite(id)) return null;
+
+  const { lat, lng } = extractCoordinates(row);
+  let tees: ApiTee[] | { male: ApiTee[]; female: ApiTee[] };
+  if (Array.isArray(row.tees)) {
+    tees = row.tees.map((t: any) => ({
+      ...t,
+      total_yards: t.total_yards ?? t.yards ?? t.yardage,
+    }));
+  } else {
+    const male = (row?.tees?.male ?? []).map((t: any) => ({
+      ...t,
+      gender: "M" as const,
+      total_yards: t.total_yards ?? t.yards ?? t.yardage,
+    }));
+    const female = (row?.tees?.female ?? []).map((t: any) => ({
+      ...t,
+      gender: "F" as const,
+      total_yards: t.total_yards ?? t.yards ?? t.yardage,
+    }));
+    tees = { male, female };
+  }
+
+  return {
+    id,
+    name: row.name || row.course_name || "Unknown course",
+    club_name: row.club_name || row.club || undefined,
+    lat,
+    lng,
+    latitude: lat,
+    longitude: lng,
+    tees,
+    raw_row: row,
+  };
+}
+
 export async function getCourseById(id: number): Promise<ApiCourse> {
   const url = typeof window !== "undefined" ? `/api/golf/course/${id}` : `https://api.golfcourseapi.com/v1/courses/${id}`;
   console.log("[golfApi] getCourseById:", { id, url });

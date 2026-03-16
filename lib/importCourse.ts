@@ -1,6 +1,11 @@
 import { supabase } from "@/lib/supabase";
+import { getSupabaseServer } from "@/lib/supabase-server";
 import { upsertTeesFromApi, getCanonicalCourseByNormalizedName } from "@/lib/db_supabase/courseRepo";
 import { isValidUuid } from "@/lib/uuid";
+
+function getClient() {
+  return getSupabaseServer() ?? supabase;
+}
 import type { ApiCourse, ApiTee } from "@/lib/golfApi";
 
 export type ImportedTee = {
@@ -69,7 +74,7 @@ async function getExistingCourseByApiId(apiId: number) {
     fullUrl,
   });
   try {
-    const { data, error } = await supabase
+    const { data, error } = await getClient()
       .from("courses")
       .select(selectStr)
       .eq("api_id", apiId)
@@ -102,7 +107,7 @@ async function getImportedTees(courseId: string): Promise<ImportedTee[]> {
     console.warn("[importCourse] Skipping tee lookup: invalid courseId");
     return [];
   }
-  const { data, error } = await supabase
+  const { data, error } = await getClient()
     .from("course_tees")
     .select("id, tee_name, course_rating, slope_rating, par_total, gender, yards")
     .eq("course_id", courseId)
@@ -233,7 +238,7 @@ async function insertCourse(course: ApiCourse): Promise<{ id: string; course_nam
 
   const selectStr = "id,course_name";
   console.log("[importCourse] courses upsert:", { select: selectStr, onConflict: "dedupe_key" });
-  const result = await supabase
+  const result = await getClient()
     .from("courses")
     .upsert(payload, { onConflict: "dedupe_key" })
     .select(selectStr)
@@ -271,7 +276,7 @@ async function insertCourse(course: ApiCourse): Promise<{ id: string; course_nam
     if (err.code === "42P10" || err.message?.includes("ON CONFLICT") || err.message?.includes("conflict")) {
       console.warn("[importCourse] upsert failed, falling back to insert");
       console.log("[importCourse] courses insert:", { select: "id,course_name" });
-      const insertResult = await supabase
+      const insertResult = await getClient()
         .from("courses")
         .insert(payload)
         .select("id,course_name")
@@ -320,20 +325,29 @@ async function importTeesAndHoles(
   if (!Array.isArray(tees) || tees.length === 0) return stats;
 
   // 1. Fetch existing tees for course (idempotent: know what's already there)
-  const { data: existingTees, error: fetchErr } = await supabase
+  const { data: existingTees, error: fetchErr } = await getClient()
     .from("course_tees")
-    .select("id, tee_name")
+    .select("id, tee_name, is_manual_override")
     .eq("course_id", courseId);
   if (fetchErr) {
     console.error("[importCourse] Failed to fetch existing tees:", fetchErr.message);
     return stats;
   }
   const existingByTeeName = new Map<string, string>((existingTees ?? []).map((t: any) => [t.tee_name, t.id]));
+  const manualOverrideNames = new Set(
+    (existingTees ?? []).filter((t: any) => t.is_manual_override === true).map((t: any) => (t.tee_name || "").toLowerCase())
+  );
   console.log("[importCourse] Existing tees for course:", existingByTeeName.size, Array.from(existingByTeeName.keys()));
 
   for (const tee of tees) {
     const normalized = normalizeTee(tee, gender);
     if (!normalized) continue;
+
+    if (manualOverrideNames.has(normalized.teeName.toLowerCase())) {
+      stats.teesSkipped++;
+      console.log("[importCourse] Skipping tee (manual override):", normalized.teeName);
+      continue;
+    }
 
     const cr = normalized.courseRating;
     const sr = normalized.slopeRating;
@@ -353,7 +367,7 @@ async function importTeesAndHoles(
 
     if (!teeId) {
       // Upsert: insert or update on (course_id, tee_name). Conflict target matches UNIQUE(course_id, tee_name).
-      const { data: upserted, error: teeError } = await supabase
+      const { data: upserted, error: teeError } = await getClient()
         .from("course_tees")
         .upsert(teePayload, { onConflict: "course_id,tee_name" })
         .select("id")
@@ -362,7 +376,7 @@ async function importTeesAndHoles(
       if (teeError) {
         const te = teeError as any;
         if (te.code === "23505" || te.message?.includes("duplicate") || te.message?.includes("unique")) {
-          const { data: existing } = await supabase
+          const { data: existing } = await getClient()
             .from("course_tees")
             .select("id")
             .eq("course_id", courseId)
@@ -394,7 +408,7 @@ async function importTeesAndHoles(
     }
 
     // 2. Fetch existing holes for this tee
-    const { data: existingHoles } = await supabase
+    const { data: existingHoles } = await getClient()
       .from("course_holes")
       .select("hole_number")
       .eq("tee_id", teeId);
@@ -430,7 +444,7 @@ async function importTeesAndHoles(
 
     if (holeRows.length === 0) continue;
 
-    const { error: holesError } = await supabase
+    const { error: holesError } = await getClient()
       .from("course_holes")
       .upsert(holeRows, { onConflict: "tee_id,hole_number" });
 
@@ -442,7 +456,7 @@ async function importTeesAndHoles(
       } else {
         console.error("[importCourse] course_holes upsert failed:", he.code, he.message);
         for (const row of holeRows) {
-          const { error: singleErr } = await supabase.from("course_holes").insert(row);
+          const { error: singleErr } = await getClient().from("course_holes").insert(row);
           if (!singleErr) stats.holesInserted++;
           else if ((singleErr as any).code === "23505") stats.holesSkipped++;
         }
@@ -638,7 +652,7 @@ export async function importCourse(apiCourse: ApiCourse): Promise<ImportedCourse
     const teeStats = await importTeesAndHoles(created.id, mergedTees);
     console.log("[importCourse] tee import stats:", teeStats);
     if (teeStats.teesInserted > 0 || teeStats.holesInserted > 0) {
-      await supabase
+      await getClient()
         .from("courses")
         .update({
           enrichment_status: teeStats.holesInserted > 0 ? "holes_loaded" : "tees_loaded",
