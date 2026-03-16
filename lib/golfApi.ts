@@ -153,12 +153,25 @@ export async function getCourseById(id: number): Promise<ApiCourse> {
   let payload: any;
 
   if (typeof window !== "undefined") {
-    const res = await fetch(`/api/golf/course/${id}`);
+    const url = `/api/golf/course/${id}`;
+    console.log("[golfApi] getCourseById request:", url);
+    const res = await fetch(url);
+    const body = await res.text();
     if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
+      let err: any = {};
+      try {
+        err = body ? JSON.parse(body) : {};
+      } catch {
+        err = { error: body?.slice(0, 200) };
+      }
+      console.error("[golfApi] getCourseById failed:", { url, status: res.status, body: body?.slice(0, 500) });
       throw new Error(err?.error || `Failed to fetch course (${res.status})`);
     }
-    payload = await res.json();
+    try {
+      payload = body ? JSON.parse(body) : {};
+    } catch {
+      payload = {};
+    }
   } else {
     payload = await request(`/courses/${id}`);
   }

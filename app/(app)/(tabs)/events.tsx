@@ -28,7 +28,7 @@ import {
   EVENT_FORMATS,
   EVENT_CLASSIFICATIONS,
 } from "@/lib/db_supabase/eventRepo";
-import { type CourseTee, getCourseByApiId, getTeesByCourseId, upsertTeesFromApi } from "@/lib/db_supabase/courseRepo";
+import { type CourseTee, getCourseByApiId, getCourseMetaById, getTeesByCourseId, upsertTeesFromApi } from "@/lib/db_supabase/courseRepo";
 import { searchCourses as searchCoursesApi, getCourseById, type ApiCourseSearchResult } from "@/lib/golfApi";
 import { importCourse, type ImportedCourse } from "@/lib/importCourse";
 import { CourseTeeSelector } from "@/components/CourseTeeSelector";
@@ -188,23 +188,28 @@ export default function EventsScreen() {
     setShowManualTee(false);
     setFormErrors((prev) => ({ ...prev, course: undefined, courseTee: undefined }));
     try {
-      // Cache-first: load from DB if previously imported (avoids repeated API calls)
+      // Step 1: Check DB cache first (avoids API call if already imported with tees)
       const cached = await getCourseByApiId(hit.id);
-      if (cached) {
+      if (cached && cached.tees.length > 0) {
         console.log("[events] Loaded from cache:", cached.courseId, cached.tees.length, "tees");
         setSelectedCourse({ id: cached.courseId, name: cached.courseName });
         setTees(cached.tees);
-        if (cached.tees.length === 0) setShowManualTee(true);
-      } else {
-        const full = await getCourseById(hit.id);
-        console.log("[events] getCourseById done, importing...");
-        const result: ImportedCourse = await importCourse(full);
-        console.log("[events] importCourse done:", result.courseId, result.tees.length, "tees");
-        setSelectedCourse({ id: result.courseId, name: result.courseName });
+        setTeesLoading(false);
+        return;
+      }
 
-        let teesList: CourseTee[];
-        if (result.tees.length > 0) {
-          teesList = result.tees.map((t) => ({
+      // Step 2: Fetch from API and import — always sets course even if tees fail
+      const full = await getCourseById(hit.id);
+      console.log("[events] getCourseById done, importing...");
+      const result: ImportedCourse = await importCourse(full);
+      console.log("[events] importCourse done:", result.courseId, result.tees.length, "tees");
+      setSelectedCourse({ id: result.courseId, name: result.courseName });
+
+      // Step 3: Reload tees from DB (most authoritative source after import)
+      const freshTees = await getTeesByCourseId(result.courseId).catch(() => [] as CourseTee[]);
+      const teesList = freshTees.length > 0
+        ? freshTees
+        : result.tees.map((t) => ({
             id: t.id,
             course_id: result.courseId,
             tee_name: t.teeName,
@@ -212,25 +217,23 @@ export default function EventsScreen() {
             course_rating: t.courseRating ?? 0,
             slope_rating: t.slopeRating ?? 0,
             par_total: t.parTotal ?? 0,
+            gender: t.gender ?? null,
+            yards: t.yards ?? null,
           }));
-        } else {
-          const apiTees = full.tees;
-          if (apiTees) {
-            await upsertTeesFromApi(result.courseId, apiTees as any);
-            teesList = await getTeesByCourseId(result.courseId);
-          } else {
-            teesList = [];
-          }
-        }
-        setTees(teesList);
-        if (teesList.length === 0) setShowManualTee(true);
+
+      setTees(teesList);
+      // Show manual entry if no tees found — but never dead-end
+      if (teesList.length === 0) {
+        setShowManualTee(true);
+        setTeesError("No tee data imported yet. Enter tee details manually below.");
       }
     } catch (e: any) {
       console.error("[events] course import failed:", e?.message || e);
-      setTeesError(e?.message || "Failed to import course");
+      // Still set the course so the user can proceed with manual tee entry
       setSelectedCourse({ id: "", name: hit.name });
       setTees([]);
       setShowManualTee(true);
+      setTeesError(null); // Don't show red error — just open manual entry silently
     } finally {
       setTeesLoading(false);
     }

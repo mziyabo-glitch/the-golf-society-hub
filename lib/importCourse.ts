@@ -29,6 +29,12 @@ function getLng(course: ApiCourse): number | null {
   return Number.isFinite(val) ? Number(val) : null;
 }
 
+function safeNum(v: unknown): number | null {
+  if (v == null) return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
 function normalizeTee(tee: ApiTee, gender?: "M" | "F"): {
   teeName: string;
   courseRating: number | null;
@@ -45,12 +51,27 @@ function normalizeTee(tee: ApiTee, gender?: "M" | "F"): {
 
   return {
     teeName,
-    courseRating: tee.course_rating != null ? Number(tee.course_rating) : null,
-    slopeRating: tee.slope_rating != null ? Number(tee.slope_rating) : null,
-    parTotal: tee.par_total != null ? Number(tee.par_total) : (tee as any).par != null ? Number((tee as any).par) : null,
+    courseRating: safeNum(tee.course_rating),
+    slopeRating: safeNum(tee.slope_rating),
+    parTotal: safeNum(tee.par_total ?? (tee as any).par),
     gender: g ? (g === "female" ? "F" : g === "male" ? "M" : String(g).charAt(0).toUpperCase()) : null,
-    yards: yards != null ? Number(yards) : null,
+    yards: safeNum(yards),
   };
+}
+
+function logSupabaseError(
+  op: string,
+  table: string,
+  payload: unknown,
+  error: { message?: string; code?: string; details?: string }
+) {
+  console.error(`[importCourse] Supabase ${op} failed:`, {
+    table,
+    payload: JSON.stringify(payload),
+    errorCode: error?.code,
+    errorMessage: error?.message,
+    errorDetails: error?.details,
+  });
 }
 
 async function getExistingCourseByApiId(apiId: number) {
@@ -60,7 +81,10 @@ async function getExistingCourseByApiId(apiId: number) {
     .eq("api_id", apiId)
     .maybeSingle();
 
-  if (error) throw error;
+  if (error) {
+    logSupabaseError("select", "courses", { api_id: apiId }, error);
+    throw error;
+  }
   return data;
 }
 
@@ -85,12 +109,14 @@ async function getImportedTees(courseId: string): Promise<ImportedTee[]> {
 
 async function insertCourse(course: ApiCourse): Promise<{ id: string; course_name: string }> {
   const payload = {
-    course_name: course.name,
+    course_name: (course.name ?? course.club_name ?? "Unknown").trim() || "Unknown",
     club_name: course.club_name ?? null,
     lat: getLat(course),
     lng: getLng(course),
     api_id: course.id,
   };
+
+  console.log("[importCourse] insertCourse payload:", { course_id: course.id, course_name: payload.course_name, payload });
 
   const { data, error } = await supabase
     .from("courses")
@@ -99,6 +125,8 @@ async function insertCourse(course: ApiCourse): Promise<{ id: string; course_nam
     .single();
 
   if (!error) return data;
+
+  logSupabaseError("insert", "courses", payload, error as any);
 
   // Duplicate race condition safety (unique api_id)
   if ((error as any).code === "23505") {
@@ -120,17 +148,19 @@ async function importTeesAndHoles(
     const normalized = normalizeTee(tee, gender);
     if (!normalized) continue;
 
+    const teePayload = {
+      course_id: courseId,
+      tee_name: normalized.teeName,
+      course_rating: normalized.courseRating,
+      slope_rating: normalized.slopeRating != null ? Math.round(normalized.slopeRating) : null,
+      par_total: normalized.parTotal != null ? Math.round(normalized.parTotal) : null,
+      gender: normalized.gender,
+      yards: normalized.yards != null ? Math.round(normalized.yards) : null,
+    };
+
     const { data: teeRow, error: teeError } = await supabase
       .from("course_tees")
-      .insert({
-        course_id: courseId,
-        tee_name: normalized.teeName,
-        course_rating: normalized.courseRating,
-        slope_rating: normalized.slopeRating,
-        par_total: normalized.parTotal,
-        gender: normalized.gender,
-        yards: normalized.yards,
-      })
+      .insert(teePayload)
       .select("id")
       .single();
 
@@ -143,17 +173,21 @@ async function importTeesAndHoles(
         .eq("course_id", courseId)
         .eq("tee_name", normalized.teeName)
         .maybeSingle();
-      if (existingTeeError) throw existingTeeError;
+      if (existingTeeError) {
+        logSupabaseError("select", "course_tees", { course_id: courseId, tee_name: normalized.teeName }, existingTeeError as any);
+        throw existingTeeError;
+      }
       teeId = existingTee?.id ?? null;
     } else if (teeError) {
+      logSupabaseError("insert", "course_tees", teePayload, teeError as any);
       throw teeError;
     }
 
     if (!teeId) continue;
-    console.log("Imported tee:", normalized.teeName);
+    console.log("[importCourse] Imported tee:", normalized.teeName);
 
     if (!Array.isArray(tee.holes) || tee.holes.length === 0) {
-      console.log("[importCourse] tee has no hole data:", normalized.teeName);
+      console.log("[importCourse] tee has no hole data (skipping holes):", normalized.teeName);
       continue;
     }
 
@@ -182,6 +216,7 @@ async function importTeesAndHoles(
       .insert(holeRows);
 
     if (holesError && (holesError as any).code !== "23505") {
+      logSupabaseError("insert", "course_holes", { course_id: courseId, tee_id: teeId, holeCount: holeRows.length }, holesError as any);
       throw holesError;
     }
 
@@ -217,20 +252,26 @@ export async function importCourse(apiCourse: ApiCourse): Promise<ImportedCourse
           ...((apiCourse.tees?.male as ApiTee[] | undefined) || []).map((t) => ({ ...t, gender: "M" as const })),
           ...((apiCourse.tees?.female as ApiTee[] | undefined) || []).map((t) => ({ ...t, gender: "F" as const })),
         ];
-    await importTeesAndHoles(existing.id, mergedTees);
-    let teesAfter = await getImportedTees(existing.id);
-    if (teesAfter.length === 0 && mergedTees.length > 0) {
-      console.log("[importCourse] No tees from re-import, trying upsertTeesFromApi");
-      const list = await upsertTeesFromApi(existing.id, apiCourse.tees as any);
-      teesAfter = list.map((t) => ({
-        id: t.id,
-        teeName: t.tee_name,
-        courseRating: t.course_rating ?? null,
-        slopeRating: t.slope_rating ?? null,
-        parTotal: t.par_total ?? null,
-        gender: t.gender ?? null,
-        yards: t.yards ?? null,
-      }));
+    let teesAfter: ImportedTee[] = [];
+    try {
+      await importTeesAndHoles(existing.id, mergedTees);
+      teesAfter = await getImportedTees(existing.id);
+      if (teesAfter.length === 0 && mergedTees.length > 0) {
+        console.log("[importCourse] No tees from re-import, trying upsertTeesFromApi");
+        const list = await upsertTeesFromApi(existing.id, apiCourse.tees as any);
+        teesAfter = list.map((t) => ({
+          id: t.id,
+          teeName: t.tee_name,
+          courseRating: t.course_rating ?? null,
+          slopeRating: t.slope_rating ?? null,
+          parTotal: t.par_total ?? null,
+          gender: t.gender ?? null,
+          yards: t.yards ?? null,
+        }));
+      }
+    } catch (teeErr: any) {
+      console.warn("[importCourse] Existing course tee import failed; manual fallback remains available:", teeErr?.message);
+      teesAfter = [];
     }
     console.log("[importCourse] re-imported tees:", teesAfter.length, teesAfter.map((t) => t.teeName));
     return {
@@ -250,21 +291,26 @@ export async function importCourse(apiCourse: ApiCourse): Promise<ImportedCourse
         ...((apiCourse.tees?.female as ApiTee[] | undefined) || []).map((t) => ({ ...t, gender: "F" as const })),
       ];
 
-  await importTeesAndHoles(created.id, mergedTees);
-  let tees = await getImportedTees(created.id);
+  let tees: ImportedTee[] = [];
+  try {
+    await importTeesAndHoles(created.id, mergedTees);
+    tees = await getImportedTees(created.id);
 
-  if (tees.length === 0 && mergedTees.length > 0) {
-    console.log("[importCourse] No tees from importTeesAndHoles, trying upsertTeesFromApi");
-    const list = await upsertTeesFromApi(created.id, apiCourse.tees as any);
-    tees = list.map((t) => ({
-      id: t.id,
-      teeName: t.tee_name,
-      courseRating: t.course_rating ?? null,
-      slopeRating: t.slope_rating ?? null,
-      parTotal: t.par_total ?? null,
-      gender: t.gender ?? null,
-      yards: t.yards ?? null,
-    }));
+    if (tees.length === 0 && mergedTees.length > 0) {
+      console.log("[importCourse] No tees from importTeesAndHoles, trying upsertTeesFromApi");
+      const list = await upsertTeesFromApi(created.id, apiCourse.tees as any);
+      tees = list.map((t) => ({
+        id: t.id,
+        teeName: t.tee_name,
+        courseRating: t.course_rating ?? null,
+        slopeRating: t.slope_rating ?? null,
+        parTotal: t.par_total ?? null,
+        gender: t.gender ?? null,
+        yards: t.yards ?? null,
+      }));
+    }
+  } catch (teeErr: any) {
+    console.warn("[importCourse] Tee import failed, returning course with 0 tees:", teeErr?.message);
   }
 
   console.log("[importCourse] Imported tees:", tees.length, tees.map((t) => `${t.teeName} – CR ${t.courseRating} / SR ${t.slopeRating}`));

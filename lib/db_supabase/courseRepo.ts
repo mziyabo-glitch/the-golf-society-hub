@@ -68,6 +68,12 @@ export type CourseWithTees = {
   fromCache: boolean;
 };
 
+export type CourseMeta = {
+  id: string;
+  course_name: string | null;
+  api_id: number | null;
+};
+
 /**
  * Get course + tees from DB by GolfCourseAPI id (api_id).
  * Returns null if course not found or has 0 tees (so caller fetches from API).
@@ -91,6 +97,21 @@ export async function getCourseByApiId(apiId: number): Promise<CourseWithTees | 
     courseName: course.course_name ?? course.name ?? "",
     tees,
     fromCache: true,
+  };
+}
+
+export async function getCourseMetaById(courseId: string): Promise<CourseMeta | null> {
+  const { data, error } = await supabase
+    .from("courses")
+    .select("id, course_name, api_id")
+    .eq("id", courseId)
+    .maybeSingle();
+
+  if (error || !data) return null;
+  return {
+    id: data.id,
+    course_name: data.course_name ?? null,
+    api_id: data.api_id != null ? Number(data.api_id) : null,
   };
 }
 

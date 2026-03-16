@@ -75,6 +75,8 @@ export type EventDoc = {
   teeTimeStart?: string | null;
   teeTimeInterval?: number | null;
   teeTimePublishedAt?: string | null;
+  /** Source of tee data: 'imported' | 'manual' */
+  teeSource?: "imported" | "manual" | null;
   [key: string]: unknown;
 };
 
@@ -121,6 +123,7 @@ function mapEvent(row: any): EventDoc {
     teeTimeInterval: row.tee_time_interval ?? null,
     teeTimePublishedAt: row.tee_time_published_at ?? null,
     tee_id: row.tee_id ?? null,
+    teeSource: row.tee_source ?? null,
   };
 }
 
@@ -199,6 +202,8 @@ export async function createEvent(
     ladiesPar?: number;
     ladiesCourseRating?: number;
     ladiesSlopeRating?: number;
+    /** 'imported' when from course_tees, 'manual' when user-entered */
+    teeSource?: "imported" | "manual";
   }
 ): Promise<EventDoc> {
   const classification = data.classification ?? 'general';
@@ -233,6 +238,7 @@ export async function createEvent(
   if (data.ladiesPar !== undefined) payload.ladies_par = data.ladiesPar;
   if (data.ladiesCourseRating !== undefined) payload.ladies_course_rating = data.ladiesCourseRating;
   if (data.ladiesSlopeRating !== undefined) payload.ladies_slope_rating = data.ladiesSlopeRating;
+  if (data.teeSource !== undefined) payload.tee_source = data.teeSource;
 
   console.log("[eventRepo] createEvent payload:", JSON.stringify(payload, null, 2));
 
@@ -287,6 +293,7 @@ export async function updateEvent(
     ladiesPar: number;
     ladiesCourseRating: number;
     ladiesSlopeRating: number;
+    teeSource: "imported" | "manual";
     // Competition holes
     nearestPinHoles: number[];
     longestDriveHoles: number[];
@@ -324,6 +331,7 @@ export async function updateEvent(
   if (updates.ladiesPar !== undefined) payload.ladies_par = updates.ladiesPar;
   if (updates.ladiesCourseRating !== undefined) payload.ladies_course_rating = updates.ladiesCourseRating;
   if (updates.ladiesSlopeRating !== undefined) payload.ladies_slope_rating = updates.ladiesSlopeRating;
+  if (updates.teeSource !== undefined) payload.tee_source = updates.teeSource;
 
   // Competition holes
   if (updates.nearestPinHoles !== undefined) payload.nearest_pin_holes = updates.nearestPinHoles;
