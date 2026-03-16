@@ -95,7 +95,7 @@ async function main() {
       domain: row.domain,
       homepageUrl: row.homepage_url,
       pageTitle,
-      courseName: course.course_name ?? course.name ?? "",
+      courseName: course.course_name ?? "",
       area: course.area || null,
     });
 

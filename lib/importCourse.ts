@@ -55,9 +55,11 @@ function normalizeTee(tee: ApiTee, gender?: "M" | "F"): {
 }
 
 async function getExistingCourseByApiId(apiId: number) {
+  const selectStr = "id,course_name,club_name,api_id";
+  console.log("[importCourse] courses query:", { select: selectStr, filter: { api_id: apiId } });
   const { data, error } = await supabase
     .from("courses")
-    .select("id, course_name")
+    .select(selectStr)
     .eq("api_id", apiId)
     .maybeSingle();
 
@@ -199,10 +201,12 @@ async function insertCourse(course: ApiCourse): Promise<{ id: string; course_nam
   let data: { id: string; course_name: string } | null = null;
   let error: any = null;
 
+  const selectStr = "id,course_name";
+  console.log("[importCourse] courses upsert:", { select: selectStr, onConflict: "dedupe_key" });
   const result = await supabase
     .from("courses")
     .upsert(payload, { onConflict: "dedupe_key" })
-    .select("id, course_name")
+    .select(selectStr)
     .single();
   data = result.data;
   error = result.error;
@@ -236,10 +240,11 @@ async function insertCourse(course: ApiCourse): Promise<{ id: string; course_nam
 
     if (err.code === "42P10" || err.message?.includes("ON CONFLICT") || err.message?.includes("conflict")) {
       console.warn("[importCourse] upsert failed, falling back to insert");
+      console.log("[importCourse] courses insert:", { select: "id,course_name" });
       const insertResult = await supabase
         .from("courses")
         .insert(payload)
-        .select("id, course_name")
+        .select("id,course_name")
         .single();
       if (!insertResult.error) return insertResult.data;
       const insErr = insertResult.error as any;

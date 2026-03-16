@@ -46,9 +46,11 @@ export default function CourseDomainsPage() {
   const load = async () => {
     setLoading(true);
     try {
+      const selectStr = "id,course_name,area";
+      console.log("[course-domains] courses query:", { select: selectStr, range: [offset, offset + PAGE_SIZE - 1] });
       const { data: courseRows, error: e1 } = await supabase
         .from("courses")
-        .select("id, course_name, area")
+        .select(selectStr)
         .order("course_name")
         .range(offset, offset + PAGE_SIZE - 1);
 

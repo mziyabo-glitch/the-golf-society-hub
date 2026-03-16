@@ -121,9 +121,11 @@ export async function getTeesForCourseWithMerge(
         .from("course_tees")
         .select("id, course_id, tee_name")
         .ilike("tee_name", "%blue%");
+      const selectStr = "id,course_name,api_id";
+      console.log("[courseRepo] courses query (Shrivenham):", { select: selectStr, filter: { ilike: "course_name,%shrivenham%" } });
       const { data: allShrivenhamCourses } = await supabase
         .from("courses")
-        .select("id, course_name, api_id")
+        .select(selectStr)
         .ilike("course_name", "%shrivenham%");
       console.log("[courseRepo] TEE INVESTIGATION (Shrivenham):", {
         currentCourseId: courseId,
@@ -168,9 +170,11 @@ export async function getTeesForCourseWithMerge(
     const name = (options.courseName || "").trim();
     const searchTerm = name.length >= 4 ? name.split(/\s+/)[0] : "";
     if (searchTerm) {
+      const selectStr = "id,course_name";
+      console.log("[courseRepo] courses query (other):", { select: selectStr, filter: { neq_id: canonicalId, ilike: `course_name,%${searchTerm}%` } });
       const { data: otherCourses } = await supabase
         .from("courses")
-        .select("id, course_name")
+        .select(selectStr)
         .neq("id", canonicalId)
         .ilike("course_name", `%${searchTerm}%`);
       for (const c of otherCourses ?? []) {
@@ -222,9 +226,11 @@ export async function getCanonicalCourseByNormalizedName(
   const norm = normalizeCourseNameForMatch(courseName);
   if (norm.length < 4) return null;
   const searchTerm = norm.split(/\s+/)[0];
+  const selectStr = "id,course_name";
+  console.log("[courseRepo] getCanonicalCourseByNormalizedName:", { select: selectStr, filter: { ilike: `course_name,%${searchTerm}%` } });
   const { data: courses } = await supabase
     .from("courses")
-    .select("id, course_name, normalized_name")
+    .select(selectStr)
     .ilike("course_name", `%${searchTerm}%`);
   for (const c of courses ?? []) {
     if (excludeCourseId && c.id === excludeCourseId) continue;
@@ -256,9 +262,11 @@ export async function getCanonicalCourseId(
   const name = (courseName || "").trim();
   if (name.length < 4) return courseId;
   const searchTerm = name.split(/\s+/)[0];
+  const selectStr = "id,course_name";
+  console.log("[courseRepo] getCanonicalCourseId:", { select: selectStr, filter: { ilike: `course_name,%${searchTerm}%` } });
   const { data: courses } = await supabase
     .from("courses")
-    .select("id, course_name")
+    .select(selectStr)
     .ilike("course_name", `%${searchTerm}%`);
   for (const c of courses ?? []) {
     if (c.id === courseId) continue;
@@ -333,9 +341,11 @@ export type CourseWithTees = {
  * Returns null if course not found or has 0 tees (so caller fetches from API).
  */
 export async function getCourseByApiId(apiId: number): Promise<CourseWithTees | null> {
+  const selectStr = "id,course_name,club_name,api_id";
+  console.log("[courseRepo] getCourseByApiId:", { select: selectStr, filter: { api_id: apiId } });
   const { data: course, error: courseErr } = await supabase
     .from("courses")
-    .select("id, course_name")
+    .select(selectStr)
     .eq("api_id", apiId)
     .maybeSingle();
 
@@ -450,11 +460,11 @@ export async function searchCourses(
   const q = (query || "").trim();
   if (!q) return { data: [], error: null };
 
-  console.log("[courseRepo] searchCourses:", q);
-
+  const selectStr = "id,course_name,area";
+  console.log("[courseRepo] searchCourses:", { select: selectStr, filter: { ilike: `course_name,%${q}%` }, order: "course_name", limit });
   const { data, error } = await supabase
     .from("courses")
-    .select("id, course_name, area")
+    .select(selectStr)
     .ilike("course_name", `%${q}%`)
     .order("course_name")
     .limit(limit);
