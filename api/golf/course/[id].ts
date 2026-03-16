@@ -2,7 +2,12 @@ export async function GET(req: Request) {
   try {
     const pathParts = new URL(req.url).pathname.split("/");
     const id = pathParts[pathParts.length - 1];
+    const url = `https://api.golfcourseapi.com/v1/courses/${id}`;
+
+    console.log("[golf/course] GET request:", { id, url });
+
     if (!id) {
+      console.error("[golf/course] 400: Missing course id");
       return Response.json({ error: "Missing course id" }, { status: 400 });
     }
 
@@ -15,28 +20,57 @@ export async function GET(req: Request) {
       );
     }
 
-    const response = await fetch(
-      `https://api.golfcourseapi.com/v1/courses/${id}`,
-      {
-        headers: {
-          Authorization: `Key ${apiKey}`,
-          "Content-Type": "application/json",
-        },
-      }
-    );
+    const response = await fetch(url, {
+      headers: {
+        Authorization: `Key ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+    });
+
+    const bodyText = await response.text();
+    let data: unknown;
+    try {
+      data = bodyText ? JSON.parse(bodyText) : {};
+    } catch {
+      data = { raw: bodyText?.slice(0, 500) };
+    }
+
+    console.log("[golf/course] GolfCourseAPI response:", {
+      status: response.status,
+      statusText: response.statusText,
+      courseId: id,
+      bodyPreview: typeof data === "object" && data && "name" in (data as object)
+        ? (data as { name?: string }).name
+        : "(no name)",
+      errorPreview: typeof data === "object" && data && "error" in (data as object)
+        ? (data as { error?: string }).error
+        : undefined,
+    });
 
     if (response.status === 401) {
-      console.error("GolfCourseAPI authorization failed. Check API key format.");
+      console.error("[golf/course] GolfCourseAPI authorization failed. Check API key format.");
       return Response.json(
         { error: "Golf API authentication failed" },
         { status: 401 }
       );
     }
 
-    const data = await response.json();
-    return Response.json(data);
+    if (!response.ok) {
+      console.error("[golf/course] GolfCourseAPI error:", {
+        status: response.status,
+        url,
+        courseId: id,
+        body: bodyText?.slice(0, 1000),
+      });
+      return Response.json(
+        { error: (data as { error?: string })?.error || bodyText || `Golf API error (${response.status})` },
+        { status: response.status }
+      );
+    }
+
+    return Response.json(typeof data === "object" && data ? data : {});
   } catch (error) {
-    console.error("Golf API error:", error);
+    console.error("[golf/course] Golf API error:", error);
     return Response.json({ error: "Failed to fetch course" }, { status: 500 });
   }
 }
