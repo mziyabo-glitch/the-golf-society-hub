@@ -274,6 +274,30 @@ export async function getMembersBySocietyIds(
 }
 
 /**
+ * Get all member rows for a user across the given societies (for dual-members).
+ * Used when switching representing society or showing multi-society member options.
+ */
+export async function getMemberRowsByUserIdForSocieties(
+  userId: string,
+  societyIds: string[]
+): Promise<MemberDoc[]> {
+  if (!userId || societyIds.length === 0) return [];
+
+  const { data, error } = await supabase
+    .from("members")
+    .select("*")
+    .eq("user_id", userId)
+    .in("society_id", societyIds)
+    .order("created_at", { ascending: false });
+
+  if (error) {
+    console.error("[memberRepo] getMemberRowsByUserIdForSocieties failed:", error.message);
+    return [];
+  }
+  return (data ?? []).map(mapMember);
+}
+
+/**
  * Update member document
  * ONLY sends columns that exist in the members table
  * Note: societyId param is for API compatibility but not used

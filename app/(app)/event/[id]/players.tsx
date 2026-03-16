@@ -21,7 +21,7 @@ import { LoadingState } from "@/components/ui/LoadingState";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { useBootstrap } from "@/lib/useBootstrap";
 import { getEvent, updateEvent, type EventDoc } from "@/lib/db_supabase/eventRepo";
-import { getMembersBySocietyId, getMembersBySocietyIds, type MemberDoc } from "@/lib/db_supabase/memberRepo";
+import { getMembersBySocietyId, getMembersBySocietyIds, getMemberRowsByUserIdForSocieties, type MemberDoc } from "@/lib/db_supabase/memberRepo";
 import {
   getEventGuests,
   addEventGuest,
@@ -59,6 +59,10 @@ export default function EventPlayersScreen() {
   const [addingGuest, setAddingGuest] = useState(false);
   const [societyFilter, setSocietyFilter] = useState<string>("all");
   const [societyNames, setSocietyNames] = useState<Record<string, string>>({});
+  const [showChangeSociety, setShowChangeSociety] = useState(false);
+  const [changeSocietyMember, setChangeSocietyMember] = useState<MemberDoc | null>(null);
+  const [alternateMembers, setAlternateMembers] = useState<MemberDoc[]>([]);
+  const [guestSocietyId, setGuestSocietyId] = useState<string>("");
 
   const permissions = getPermissionsForMember(member as any);
 
@@ -124,6 +128,7 @@ export default function EventPlayersScreen() {
             if (s) names[sid] = s.name ?? "Society";
           }));
           setSocietyNames(names);
+          setGuestSocietyId(evt.society_id ?? societyIds[0]);
         }
 
         // Use playerIds (camelCase) as returned by mapEvent
@@ -152,6 +157,29 @@ export default function EventPlayersScreen() {
       if (next.has(id)) { next.delete(id); } else { next.add(id); }
       return next;
     });
+  }
+
+  async function openChangeSociety(m: MemberDoc) {
+    if (!event?.participatingSocietyIds?.length || !m.user_id) return;
+    const all = await getMemberRowsByUserIdForSocieties(m.user_id, event.participatingSocietyIds);
+    const others = all.filter((x) => x.id !== m.id);
+    if (others.length === 0) return;
+    setChangeSocietyMember(m);
+    setAlternateMembers(others);
+    setShowChangeSociety(true);
+  }
+
+  function applyChangeSociety(newMember: MemberDoc) {
+    if (!changeSocietyMember) return;
+    setSelectedPlayerIds((prev) => {
+      const next = new Set(prev);
+      next.delete(changeSocietyMember.id);
+      next.add(newMember.id);
+      return next;
+    });
+    setShowChangeSociety(false);
+    setChangeSocietyMember(null);
+    setAlternateMembers([]);
   }
 
   async function save() {
@@ -192,14 +220,17 @@ export default function EventPlayersScreen() {
       Alert.alert("Name required", "Please enter the guest's name.");
       return;
     }
-    if (!event?.id || !societyId) return;
+    const repSocietyId = event?.is_multi_society && participatingSocietyIds.length
+      ? (guestSocietyId || participatingSocietyIds[0])
+      : societyId;
+    if (!event?.id || !repSocietyId) return;
 
     setAddingGuest(true);
     try {
       const handicap = guestHandicap.trim() ? parseFloat(guestHandicap) : null;
       await addEventGuest({
         eventId: event.id,
-        societyId,
+        societyId: repSocietyId,
         name,
         sex: guestSex,
         handicapIndex: handicap != null && !isNaN(handicap) ? handicap : null,
@@ -278,6 +309,22 @@ export default function EventPlayersScreen() {
     if (societyFilter === "all") return members;
     return members.filter((m) => m.society_id === societyFilter);
   }, [members, societyFilter]);
+
+  const membersWithAlternates = useMemo(() => {
+    if (!event?.is_multi_society || participatingSocietyIds.length < 2) return new Set<string>();
+    const byUser = new Map<string, MemberDoc[]>();
+    for (const m of members) {
+      if (!m.user_id) continue;
+      const list = byUser.get(m.user_id) ?? [];
+      list.push(m);
+      byUser.set(m.user_id, list);
+    }
+    const hasAlternates = new Set<string>();
+    for (const [, list] of byUser) {
+      if (list.length > 1) for (const m of list) hasAlternates.add(m.id);
+    }
+    return hasAlternates;
+  }, [members, event?.is_multi_society, participatingSocietyIds.length]);
 
   return (
     <Screen>
@@ -360,17 +407,19 @@ export default function EventPlayersScreen() {
               const selected = selectedPlayerIds.has(id);
               const handicap = m.handicapIndex ?? (m as any).handicap_index;
 
+              const hasAlternates = membersWithAlternates.has(id);
+
               return (
                 <Pressable key={id} onPress={() => togglePlayer(id)}>
                   <AppCard style={selected ? { ...styles.row, ...styles.rowSelected } : styles.row}>
                     <View style={{ flex: 1 }}>
-                      <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                      <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
                         <AppText style={styles.name}>
                           {m.name || m.displayName || "Member"}
                         </AppText>
                         {event?.is_multi_society && m.society_id && societyNames[m.society_id] && (
-                          <View style={{ backgroundColor: colors.border, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
-                            <AppText variant="small" color="tertiary">
+                          <View style={{ backgroundColor: colors.primary + "20", paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
+                            <AppText variant="small" style={{ color: colors.primary }}>
                               {societyNames[m.society_id]}
                             </AppText>
                           </View>
@@ -384,11 +433,22 @@ export default function EventPlayersScreen() {
                       )}
                     </View>
 
-                    <Feather
-                      name={selected ? "check-circle" : "circle"}
-                      size={22}
-                      color={selected ? colors.primary : colors.textTertiary}
-                    />
+                    <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                      {selected && hasAlternates && !event?.isCompleted && (
+                        <Pressable
+                          onPress={(e) => { e.stopPropagation(); openChangeSociety(m); }}
+                          hitSlop={8}
+                          style={{ padding: 4 }}
+                        >
+                          <AppText variant="small" style={{ color: colors.primary }}>Change</AppText>
+                        </Pressable>
+                      )}
+                      <Feather
+                        name={selected ? "check-circle" : "circle"}
+                        size={22}
+                        color={selected ? colors.primary : colors.textTertiary}
+                      />
+                    </View>
                   </AppCard>
                 </Pressable>
               );
@@ -422,7 +482,16 @@ export default function EventPlayersScreen() {
             {guests.map((g) => (
               <AppCard key={g.id} style={styles.row}>
                 <View style={{ flex: 1 }}>
-                  <AppText style={styles.name}>{g.name}</AppText>
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                    <AppText style={styles.name}>{g.name}</AppText>
+                    {event?.is_multi_society && g.society_id && societyNames[g.society_id] && (
+                      <View style={{ backgroundColor: colors.primary + "20", paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
+                        <AppText variant="small" style={{ color: colors.primary }}>
+                          {societyNames[g.society_id]}
+                        </AppText>
+                      </View>
+                    )}
+                  </View>
                   <AppText style={styles.subtle}>
                     {g.sex === "male" ? "Male" : "Female"}
                     {g.handicap_index != null ? ` · HI ${g.handicap_index}` : ""}
@@ -447,6 +516,29 @@ export default function EventPlayersScreen() {
         >
           <Pressable style={[styles.modalContent, { backgroundColor: colors.surface }]} onPress={(e) => e.stopPropagation()}>
             <AppText variant="h2" style={{ marginBottom: spacing.md }}>Add Guest</AppText>
+            {event?.is_multi_society && participatingSocietyIds.length > 1 && (
+              <View style={styles.formField}>
+                <AppText variant="caption" style={styles.label}>Representing society</AppText>
+                <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+                  {participatingSocietyIds.map((sid) => (
+                    <Pressable
+                      key={sid}
+                      onPress={() => setGuestSocietyId(sid)}
+                      style={{
+                        paddingHorizontal: 12,
+                        paddingVertical: 8,
+                        borderRadius: radius.md,
+                        backgroundColor: guestSocietyId === sid ? colors.primary : colors.backgroundSecondary,
+                      }}
+                    >
+                      <AppText variant="caption" style={{ color: guestSocietyId === sid ? "#fff" : colors.text }}>
+                        {societyNames[sid] ?? "Society"}
+                      </AppText>
+                    </Pressable>
+                  ))}
+                </View>
+              </View>
+            )}
             <View style={styles.formField}>
               <AppText variant="caption" style={styles.label}>Name</AppText>
               <AppInput
@@ -498,6 +590,43 @@ export default function EventPlayersScreen() {
                 Add
               </PrimaryButton>
             </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      {/* Change Representing Society Modal */}
+      <Modal visible={showChangeSociety} transparent animationType="fade">
+        <Pressable
+          style={styles.modalOverlay}
+          onPress={() => setShowChangeSociety(false)}
+        >
+          <Pressable style={[styles.modalContent, { backgroundColor: colors.surface }]} onPress={(e) => e.stopPropagation()}>
+            <AppText variant="h2" style={{ marginBottom: spacing.md }}>Change representing society</AppText>
+            {changeSocietyMember && (
+              <AppText variant="body" color="secondary" style={{ marginBottom: spacing.md }}>
+                {changeSocietyMember.name || changeSocietyMember.displayName} is in multiple societies. Choose which they represent for this event:
+              </AppText>
+            )}
+            <View style={{ gap: spacing.sm }}>
+              {alternateMembers.map((m) => (
+                <Pressable
+                  key={m.id}
+                  onPress={() => applyChangeSociety(m)}
+                  style={{
+                    padding: spacing.md,
+                    borderRadius: radius.md,
+                    backgroundColor: colors.backgroundSecondary,
+                    borderWidth: 1,
+                    borderColor: colors.border,
+                  }}
+                >
+                  <AppText variant="bodyBold">{societyNames[m.society_id] ?? "Society"}</AppText>
+                </Pressable>
+              ))}
+            </View>
+            <SecondaryButton onPress={() => { setShowChangeSociety(false); setChangeSocietyMember(null); setAlternateMembers([]); }} style={{ marginTop: spacing.md }}>
+              Cancel
+            </SecondaryButton>
           </Pressable>
         </Pressable>
       </Modal>
