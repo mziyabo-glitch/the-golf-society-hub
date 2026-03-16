@@ -645,56 +645,8 @@ export default function EventsScreen() {
               ) : null}
             </View>
 
-            <View style={styles.formField}>
-              <AppText variant="captionBold" style={styles.label}>Format</AppText>
-              <View style={styles.pickerRow}>
-                {EVENT_FORMATS.map((f) => (
-                  <PickerOption
-                    key={f.value}
-                    label={f.label}
-                    selected={formFormat === f.value}
-                    onPress={() => {
-                      setFormFormat(f.value);
-                      setValidationNotice(null);
-                      setFormErrors((prev) => ({ ...prev, format: undefined }));
-                    }}
-                    colors={colors}
-                  />
-                ))}
-              </View>
-              {formErrors.format ? (
-                <AppText variant="small" style={[styles.fieldError, { color: colors.error }]}>
-                  {formErrors.format}
-                </AppText>
-              ) : null}
-            </View>
-
-            <View style={styles.formField}>
-              <AppText variant="captionBold" style={styles.label}>Classification</AppText>
-              <View style={styles.pickerRow}>
-                {EVENT_CLASSIFICATIONS.map((c) => (
-                  <PickerOption
-                    key={c.value}
-                    label={c.label}
-                    selected={formClassification === c.value}
-                    onPress={() => {
-                      setFormClassification(c.value);
-                      setValidationNotice(null);
-                      setFormErrors((prev) => ({ ...prev, classification: undefined }));
-                    }}
-                    colors={colors}
-                  />
-                ))}
-              </View>
-              {formErrors.classification ? (
-                <AppText variant="small" style={[styles.fieldError, { color: colors.error }]}>
-                  {formErrors.classification}
-                </AppText>
-              ) : null}
-            </View>
-
-            {/* Joint Event toggle */}
-            <View style={styles.formField}>
+            {/* Joint Event toggle - visible at top of form */}
+            <View style={[styles.formField, { marginTop: spacing.md, paddingTop: spacing.md, borderTopWidth: 1, borderTopColor: colors.border }]}>
               <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: spacing.xs }}>
                 <AppText variant="captionBold" style={styles.label}>Joint Event (Multiple Societies)</AppText>
                 <Pressable
@@ -781,6 +733,54 @@ export default function EventsScreen() {
                     </AppText>
                   ) : null}
                 </View>
+              ) : null}
+            </View>
+
+            <View style={styles.formField}>
+              <AppText variant="captionBold" style={styles.label}>Format</AppText>
+              <View style={styles.pickerRow}>
+                {EVENT_FORMATS.map((f) => (
+                  <PickerOption
+                    key={f.value}
+                    label={f.label}
+                    selected={formFormat === f.value}
+                    onPress={() => {
+                      setFormFormat(f.value);
+                      setValidationNotice(null);
+                      setFormErrors((prev) => ({ ...prev, format: undefined }));
+                    }}
+                    colors={colors}
+                  />
+                ))}
+              </View>
+              {formErrors.format ? (
+                <AppText variant="small" style={[styles.fieldError, { color: colors.error }]}>
+                  {formErrors.format}
+                </AppText>
+              ) : null}
+            </View>
+
+            <View style={styles.formField}>
+              <AppText variant="captionBold" style={styles.label}>Classification</AppText>
+              <View style={styles.pickerRow}>
+                {EVENT_CLASSIFICATIONS.map((c) => (
+                  <PickerOption
+                    key={c.value}
+                    label={c.label}
+                    selected={formClassification === c.value}
+                    onPress={() => {
+                      setFormClassification(c.value);
+                      setValidationNotice(null);
+                      setFormErrors((prev) => ({ ...prev, classification: undefined }));
+                    }}
+                    colors={colors}
+                  />
+                ))}
+              </View>
+              {formErrors.classification ? (
+                <AppText variant="small" style={[styles.fieldError, { color: colors.error }]}>
+                  {formErrors.classification}
+                </AppText>
               ) : null}
             </View>
 
