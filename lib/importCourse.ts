@@ -54,21 +54,24 @@ function normalizeTee(tee: ApiTee, gender?: "M" | "F"): {
   };
 }
 
-/** Safe select for courses — NO "name" column; use course_name, club_name, api_id. */
-const COURSES_SELECT = "id,course_name,club_name,api_id";
-
 async function getExistingCourseByApiId(apiId: number) {
-  console.log("[importCourse] courses query:", {
-    select: COURSES_SELECT,
-    filter: { api_id: apiId },
-    course_id: "(N/A)",
-    course_name: "(N/A)",
-    api_id: apiId,
+  const selectStr = "*";
+  const base = process.env.EXPO_PUBLIC_SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || "";
+  const params = new URLSearchParams();
+  params.set("select", selectStr);
+  params.set("api_id", `eq.${apiId}`);
+  const path = `/rest/v1/courses?${params.toString()}`;
+  const fullUrl = base ? `${base.replace(/\/$/, "")}${path}` : path;
+  console.log("[importCourse] getExistingCourseByApiId FULL QUERY:", {
+    select: selectStr,
+    filters: { api_id: apiId },
+    builtPath: path,
+    fullUrl,
   });
   try {
     const { data, error } = await supabase
       .from("courses")
-      .select(COURSES_SELECT)
+      .select(selectStr)
       .eq("api_id", apiId)
       .maybeSingle();
 

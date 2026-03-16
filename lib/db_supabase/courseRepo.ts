@@ -2,6 +2,32 @@
 import { supabase } from "@/lib/supabase";
 import { isValidUuid } from "@/lib/uuid";
 
+/** Log full courses query before execution (for debugging 400 errors). */
+function logCoursesQuery(
+  context: string,
+  opts: { select: string; filters: Record<string, unknown>; order?: string; limit?: number }
+) {
+  const base = process.env.EXPO_PUBLIC_SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || "";
+  const params = new URLSearchParams();
+  params.set("select", opts.select);
+  for (const [k, v] of Object.entries(opts.filters)) {
+    if (v === undefined || v === null) continue;
+    params.set(k, String(v));
+  }
+  if (opts.order) params.set("order", opts.order);
+  if (opts.limit != null) params.set("limit", String(opts.limit));
+  const path = `/rest/v1/courses?${params.toString()}`;
+  const fullUrl = base ? `${base.replace(/\/$/, "")}${path}` : path;
+  console.log(`[courses] ${context} FULL QUERY:`, {
+    select: opts.select,
+    filters: opts.filters,
+    order: opts.order,
+    limit: opts.limit,
+    builtPath: path,
+    fullUrl,
+  });
+}
+
 export type CourseTee = {
   id: string;
   course_id: string;
@@ -122,8 +148,11 @@ export async function getTeesForCourseWithMerge(
           .from("course_tees")
           .select("id, course_id, tee_name")
           .ilike("tee_name", "%blue%");
-        const selectStr = "id,course_name,api_id";
-        console.log("[courseRepo] courses query (Shrivenham):", { select: selectStr, filter: { ilike: "course_name,%shrivenham%" } });
+        const selectStr = "*";
+        logCoursesQuery("Shrivenham __DEV__", {
+          select: selectStr,
+          filters: { "course_name": "ilike.%shrivenham%" },
+        });
         const { data: allShrivenhamCourses } = await supabase
           .from("courses")
           .select(selectStr)
@@ -176,11 +205,9 @@ export async function getTeesForCourseWithMerge(
     if (searchTerm) {
       try {
         const selectStr = "id,course_name";
-        console.log("[courseRepo] courses query (other):", {
+        logCoursesQuery("includeOtherCourseTees", {
           select: selectStr,
-          filter: { neq_id: canonicalId, ilike: `course_name,%${searchTerm}%` },
-          course_id: canonicalId,
-          course_name: name,
+          filters: { id: `neq.${canonicalId}`, "course_name": `ilike.%${searchTerm}%` },
         });
         const { data: otherCourses, error } = await supabase
           .from("courses")
@@ -245,7 +272,10 @@ export async function getCanonicalCourseByNormalizedName(
   if (norm.length < 4) return null;
   const searchTerm = norm.split(/\s+/)[0];
   const selectStr = "id,course_name";
-  console.log("[courseRepo] getCanonicalCourseByNormalizedName:", { select: selectStr, filter: { ilike: `course_name,%${searchTerm}%` } });
+  logCoursesQuery("getCanonicalCourseByNormalizedName", {
+    select: selectStr,
+    filters: { "course_name": `ilike.%${searchTerm}%` },
+  });
   const { data: courses } = await supabase
     .from("courses")
     .select(selectStr)
@@ -284,15 +314,13 @@ export async function getCanonicalCourseId(
   const name = (courseName || "").trim();
   if (name.length >= 4) {
     const searchTerm = name.split(/\s+/)[0];
-    const selectStr = "id,course_name";
-    console.log("[courseRepo] getCanonicalCourseId (name):", {
-      select: selectStr,
-      filter: { ilike: `course_name,%${searchTerm}%` },
-      course_id: courseId,
-      course_name: name,
-    });
-    try {
-      const { data: courses, error } = await supabase
+        const selectStr = "id,course_name";
+        logCoursesQuery("getCanonicalCourseId (name)", {
+          select: selectStr,
+          filters: { "course_name": `ilike.%${searchTerm}%` },
+        });
+        try {
+          const { data: courses, error } = await supabase
         .from("courses")
         .select(selectStr)
         .ilike("course_name", `%${searchTerm}%`);
@@ -318,15 +346,15 @@ export async function getCanonicalCourseId(
   const courseRow = await getCourseByIdForApiLookup(courseId);
   if (courseRow?.api_id != null) {
     const apiId = courseRow.api_id;
-    console.log("[courseRepo] getCanonicalCourseId (api_id fallback):", {
-      course_id: courseId,
-      course_name: courseRow.course_name,
-      api_id: apiId,
+    const selectStr = "*";
+    logCoursesQuery("getCanonicalCourseId api_id fallback", {
+      select: selectStr,
+      filters: { api_id: apiId },
     });
     try {
       const { data: byApiId, error } = await supabase
         .from("courses")
-        .select(COURSES_SELECT_API_LOOKUP)
+        .select(selectStr)
         .eq("api_id", apiId);
 
       if (error) {
@@ -405,21 +433,16 @@ export type CourseWithTees = {
   fromCache: boolean;
 };
 
-/** Safe select for courses table — NO "name" column; use course_name, club_name, api_id, etc. */
-const COURSES_SELECT_API_LOOKUP = "id,api_id,course_name,club_name";
-
 /**
  * Get course + tees from DB by GolfCourseAPI id (api_id).
  * Returns null if course not found or has 0 tees (so caller fetches from API).
- * Uses valid columns only (no "name" — courses has course_name).
+ * TEMPORARY: uses select("*") to avoid 400 from invalid column in select.
  */
 export async function getCourseByApiId(apiId: number): Promise<CourseWithTees | null> {
-  const selectStr = COURSES_SELECT_API_LOOKUP;
-  console.log("[courseRepo] getCourseByApiId:", {
+  const selectStr = "*";
+  logCoursesQuery("getCourseByApiId", {
     select: selectStr,
-    filter: { api_id: apiId },
-    course_id: "(N/A)",
-    course_name: "(N/A)",
+    filters: { api_id: apiId },
   });
   try {
     const { data: course, error: courseErr } = await supabase
@@ -476,11 +499,10 @@ export async function getCourseByIdForApiLookup(courseId: string): Promise<{
   course_name: string;
 } | null> {
   if (!isValidUuid(courseId)) return null;
-  const selectStr = "id,api_id,course_name";
-  console.log("[courseRepo] getCourseByIdForApiLookup:", {
+  const selectStr = "*";
+  logCoursesQuery("getCourseByIdForApiLookup", {
     select: selectStr,
-    filter: { id: courseId },
-    course_id: courseId,
+    filters: { id: courseId },
   });
   try {
     const { data, error } = await supabase
@@ -604,7 +626,12 @@ export async function searchCourses(
   if (!q) return { data: [], error: null };
 
   const selectStr = "id,course_name,area";
-  console.log("[courseRepo] searchCourses:", { select: selectStr, filter: { ilike: `course_name,%${q}%` }, order: "course_name", limit });
+  logCoursesQuery("searchCourses", {
+    select: selectStr,
+    filters: { "course_name": `ilike.%${q}%` },
+    order: "course_name.asc",
+    limit,
+  });
   const { data, error } = await supabase
     .from("courses")
     .select(selectStr)
