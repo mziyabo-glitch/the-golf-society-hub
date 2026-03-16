@@ -342,37 +342,8 @@ export async function getCanonicalCourseId(
     }
   }
 
-  // 2. api_id fallback: event's course may be empty duplicate; find canonical by api_id
-  const courseRow = await getCourseByIdForApiLookup(courseId);
-  if (courseRow?.api_id != null) {
-    const apiId = courseRow.api_id;
-    const selectStr = "*";
-    logCoursesQuery("getCanonicalCourseId api_id fallback", {
-      select: selectStr,
-      filters: { api_id: apiId },
-    });
-    try {
-      const { data: byApiId, error } = await supabase
-        .from("courses")
-        .select(selectStr)
-        .eq("api_id", apiId);
-
-      if (error) {
-        console.warn("[courseRepo] getCanonicalCourseId api_id lookup failed:", error.message);
-      } else {
-        for (const c of byApiId ?? []) {
-          const otherTees = await getTeesByCourseId(c.id);
-          if (otherTees.length > 0) {
-            console.log("[courseRepo] Using canonical course (api_id)", c.id, c.course_name, "instead of", courseId);
-            return c.id;
-          }
-        }
-      }
-    } catch (e) {
-      console.warn("[courseRepo] getCanonicalCourseId api_id fallback exception:", (e as Error)?.message);
-    }
-  }
-
+  // api_id fallback DISABLED — broken Supabase courses query returns 400.
+  // Return courseId; caller uses event snapshot or manual entry.
   return courseId;
 }
 

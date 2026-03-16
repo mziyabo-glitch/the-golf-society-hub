@@ -206,7 +206,7 @@ export default function EventsScreen() {
     try {
       const resolved = await resolveCourseByApiId(hit.id);
       if (resolved) {
-        setSelectedCourse(resolved.courseId ? { id: resolved.courseId, name: resolved.courseName } : null);
+        setSelectedCourse({ id: resolved.courseId || "", name: resolved.courseName });
         setSelectedCourseApiId(hit.id);
         setTees(resolved.tees);
         setTeeSyncStatus(resolved.tees.length > 0 ? "synced" : "import_failed");

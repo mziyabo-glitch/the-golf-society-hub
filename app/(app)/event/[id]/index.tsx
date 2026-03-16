@@ -27,7 +27,7 @@ import {
   EVENT_FORMATS,
   EVENT_CLASSIFICATIONS,
 } from "@/lib/db_supabase/eventRepo";
-import { upsertManualTeesToCourse, type CourseTee } from "@/lib/db_supabase/courseRepo";
+import { getTeesByCourseId, upsertManualTeesToCourse, type CourseTee } from "@/lib/db_supabase/courseRepo";
 import { searchCourses as searchCoursesApi, type ApiCourseSearchResult } from "@/lib/golfApi";
 import { resolveCourseByApiId } from "@/lib/courseResolution";
 import { buildTeeSnapshotFromEvent, hasTeeSnapshot } from "@/lib/eventTeeSnapshot";
@@ -263,11 +263,12 @@ export default function EventDetailScreen() {
     try {
       const resolved = await resolveCourseByApiId(hit.id);
       if (resolved) {
-        setSelectedCourseEdit(resolved.courseId ? { id: resolved.courseId, name: resolved.courseName } : null);
+        setSelectedCourseEdit({ id: resolved.courseId || "", name: resolved.courseName });
         setFormCourseName(resolved.courseName);
         setTees(resolved.tees);
         if (resolved.tees.length === 0) {
           setShowManualTee(true);
+          console.log("[EventDetail] direct API tees=0, manual mode shown");
         } else {
           const snap = buildTeeSnapshotFromEvent(event);
           const maleName = snap?.male?.teeName || event?.teeName;
@@ -356,14 +357,42 @@ export default function EventDetailScreen() {
     const hasBothTees = !!(event.teeName && event.ladiesTeeName && event.teeName !== event.ladiesTeeName);
     setTeeSetupMode((event.teeSetupMode as "single" | "separate") ?? (hasBothTees ? "separate" : "single"));
 
-    // No tee lookup on edit open — render from snapshot. Tee options only when user changes course.
+    // Local tees only (no courses fallback). Event snapshot or manual if 0.
     setTees([]);
     setSelectedTee(null);
     setSelectedMaleTee(null);
     setSelectedFemaleTee(null);
     setShowManualTee(hasSavedTeeData || true);
-
     setIsEditing(true);
+
+    // Optional: load local tees by course_id only — no Supabase courses query
+    if (event.course_id) {
+      setTeesLoading(true);
+      getTeesByCourseId(event.course_id)
+        .then((localTees) => {
+          const count = localTees.length;
+          console.log("[EventDetail] local tee count:", count, "eventSnapshotUsed:", hasSavedTeeData, "manualModeShown:", count === 0);
+          setTees(localTees);
+          if (count > 0) {
+            const snap = buildTeeSnapshotFromEvent(event);
+            const maleName = snap?.male?.teeName || event.teeName;
+            const femaleName = snap?.female?.teeName || event.ladiesTeeName;
+            const isSep = !!(maleName && femaleName && maleName !== femaleName);
+            if (isSep) {
+              setSelectedMaleTee(localTees.find((t) => t.tee_name === maleName) ?? null);
+              setSelectedFemaleTee(localTees.find((t) => t.tee_name === femaleName) ?? null);
+            } else {
+              const singleName = maleName || femaleName;
+              setSelectedTee(singleName ? localTees.find((t) => t.tee_name === singleName) ?? null : null);
+            }
+            if (hasSavedTeeData) setShowManualTee(false);
+          }
+        })
+        .catch(() => {
+          console.log("[EventDetail] local tee load failed, manual mode shown");
+        })
+        .finally(() => setTeesLoading(false));
+    }
   };
 
   const cancelEditing = () => {
