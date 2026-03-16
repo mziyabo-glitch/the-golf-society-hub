@@ -346,6 +346,7 @@ async function importTeesAndHoles(
       par_total: pt != null && Number.isFinite(pt) ? Math.round(pt) : null,
       gender: normalized.gender ?? null,
       yards: normalized.yards != null && Number.isFinite(normalized.yards) ? Math.round(normalized.yards) : null,
+      source: "imported",
     };
 
     let teeId: string | null = existingByTeeName.get(normalized.teeName) ?? null;
@@ -636,6 +637,15 @@ export async function importCourse(apiCourse: ApiCourse): Promise<ImportedCourse
   try {
     const teeStats = await importTeesAndHoles(created.id, mergedTees);
     console.log("[importCourse] tee import stats:", teeStats);
+    if (teeStats.teesInserted > 0 || teeStats.holesInserted > 0) {
+      await supabase
+        .from("courses")
+        .update({
+          enrichment_status: teeStats.holesInserted > 0 ? "holes_loaded" : "tees_loaded",
+          enrichment_updated_at: new Date().toISOString(),
+        })
+        .eq("id", created.id);
+    }
   } catch (teeErr: any) {
     console.error("[importCourse] importTeesAndHoles failed (non-fatal):", teeErr?.message);
   }

@@ -30,6 +30,7 @@ import {
 import { getTeesByCourseId, upsertManualTeesToCourse, type CourseTee } from "@/lib/db_supabase/courseRepo";
 import { searchCourses as searchCoursesApi, type ApiCourseSearchResult } from "@/lib/golfApi";
 import { resolveCourseByApiId } from "@/lib/courseResolution";
+import { seedCourseByApiId, seedTeesToCourseTees } from "@/lib/courseSeedClient";
 import { buildTeeSnapshotFromEvent, hasTeeSnapshot } from "@/lib/eventTeeSnapshot";
 import { CourseTeeSelector } from "@/components/CourseTeeSelector";
 import type { TeeSetupMode } from "@/components/CourseTeeSetupCard";
@@ -261,7 +262,11 @@ export default function EventDetailScreen() {
     setTeesLoading(true);
     setShowManualTee(false);
     try {
-      const resolved = await resolveCourseByApiId(hit.id);
+      const seed = await seedCourseByApiId(hit.id);
+      const resolved = seed
+        ? { courseId: seed.courseId, courseName: seed.courseName, tees: seedTeesToCourseTees(seed) }
+        : await resolveCourseByApiId(hit.id);
+
       if (resolved) {
         setSelectedCourseEdit({ id: resolved.courseId || "", name: resolved.courseName });
         setFormCourseName(resolved.courseName);

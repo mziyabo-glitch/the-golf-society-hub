@@ -1,6 +1,12 @@
 {
   "buildCommand": "npm run vercel-build",
   "outputDirectory": "dist",
+  "crons": [
+    {
+      "path": "/api/cron/process-course-jobs",
+      "schedule": "*/5 * * * *"
+    }
+  ],
   "headers": [
     {
       "source": "/index.html",

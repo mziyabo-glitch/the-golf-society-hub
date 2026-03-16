@@ -361,7 +361,15 @@ export async function upsertManualTeesToCourse(
 ): Promise<void> {
   const canonicalId = await getCanonicalCourseId(courseId, courseName);
   if (!isValidUuid(canonicalId)) return;
-  const rows: { course_id: string; tee_name: string; par_total: number | null; course_rating: number | null; slope_rating: number | null }[] = [];
+  const rows: Array<{
+    course_id: string;
+    tee_name: string;
+    par_total: number | null;
+    course_rating: number | null;
+    slope_rating: number | null;
+    is_manual_override?: boolean;
+    source?: string;
+  }> = [];
   if (tees.male?.tee_name?.trim()) {
     rows.push({
       course_id: canonicalId,
@@ -369,6 +377,8 @@ export async function upsertManualTeesToCourse(
       par_total: tees.male.par != null && Number.isFinite(tees.male.par) ? Math.round(tees.male.par) : null,
       course_rating: tees.male.course_rating != null && Number.isFinite(tees.male.course_rating) ? tees.male.course_rating : null,
       slope_rating: tees.male.slope_rating != null && Number.isFinite(tees.male.slope_rating) ? Math.round(tees.male.slope_rating) : null,
+      is_manual_override: true,
+      source: "manual",
     });
   }
   if (tees.female?.tee_name?.trim() && tees.female.tee_name.trim() !== tees.male?.tee_name?.trim()) {
@@ -378,6 +388,8 @@ export async function upsertManualTeesToCourse(
       par_total: tees.female.par != null && Number.isFinite(tees.female.par) ? Math.round(tees.female.par) : null,
       course_rating: tees.female.course_rating != null && Number.isFinite(tees.female.course_rating) ? tees.female.course_rating : null,
       slope_rating: tees.female.slope_rating != null && Number.isFinite(tees.female.slope_rating) ? Math.round(tees.female.slope_rating) : null,
+      is_manual_override: true,
+      source: "manual",
     });
   }
   for (const row of rows) {
@@ -559,6 +571,7 @@ export async function upsertTeesFromApi(
         par_total: pt,
         yards: y,
         gender: t.gender ?? null,
+        source: "imported",
       };
     })
     .filter((r): r is NonNullable<typeof r> => r !== null);

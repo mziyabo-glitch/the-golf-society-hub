@@ -31,6 +31,7 @@ import {
 import { type CourseTee, upsertManualTeesToCourse } from "@/lib/db_supabase/courseRepo";
 import { searchCourses as searchCoursesApi, type ApiCourseSearchResult } from "@/lib/golfApi";
 import { resolveCourseByApiId } from "@/lib/courseResolution";
+import { seedCourseByApiId, seedTeesToCourseTees } from "@/lib/courseSeedClient";
 import { CourseTeeSetupCard, type TeeSyncStatus, type TeeSetupMode } from "@/components/CourseTeeSetupCard";
 import { getPermissionsForMember } from "@/lib/rbac";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
@@ -204,7 +205,11 @@ export default function EventsScreen() {
     setTeeSyncStatus("pending_sync");
     setFormErrors((prev) => ({ ...prev, course: undefined, courseTee: undefined }));
     try {
-      const resolved = await resolveCourseByApiId(hit.id);
+      const seed = await seedCourseByApiId(hit.id);
+      const resolved = seed
+        ? { courseId: seed.courseId, courseName: seed.courseName, tees: seedTeesToCourseTees(seed) }
+        : await resolveCourseByApiId(hit.id);
+
       if (resolved) {
         setSelectedCourse({ id: resolved.courseId || "", name: resolved.courseName });
         setSelectedCourseApiId(hit.id);
