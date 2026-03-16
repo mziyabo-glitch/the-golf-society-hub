@@ -117,24 +117,28 @@ export async function getTeesForCourseWithMerge(
     const courseNameLower = (options.courseName || "").toLowerCase();
     const isShrivenham = courseNameLower.includes("shrivenham");
     if (isShrivenham) {
-      const { data: blueInCourseTees } = await supabase
-        .from("course_tees")
-        .select("id, course_id, tee_name")
-        .ilike("tee_name", "%blue%");
-      const selectStr = "id,course_name,api_id";
-      console.log("[courseRepo] courses query (Shrivenham):", { select: selectStr, filter: { ilike: "course_name,%shrivenham%" } });
-      const { data: allShrivenhamCourses } = await supabase
-        .from("courses")
-        .select(selectStr)
-        .ilike("course_name", "%shrivenham%");
-      console.log("[courseRepo] TEE INVESTIGATION (Shrivenham):", {
-        currentCourseId: courseId,
-        localTeeNames: localTees.map((t) => t.tee_name),
-        hasBlueInLocal: localTees.some((t) => (t.tee_name || "").toLowerCase().includes("blue")),
-        blueInCourseTees: blueInCourseTees ?? [],
-        allShrivenhamCourseIds: (allShrivenhamCourses ?? []).map((c) => ({ id: c.id, name: c.course_name })),
-        eventTeeNames: options?.eventTeeNames,
-      });
+      try {
+        const { data: blueInCourseTees } = await supabase
+          .from("course_tees")
+          .select("id, course_id, tee_name")
+          .ilike("tee_name", "%blue%");
+        const selectStr = "id,course_name,api_id";
+        console.log("[courseRepo] courses query (Shrivenham):", { select: selectStr, filter: { ilike: "course_name,%shrivenham%" } });
+        const { data: allShrivenhamCourses } = await supabase
+          .from("courses")
+          .select(selectStr)
+          .ilike("course_name", "%shrivenham%");
+        console.log("[courseRepo] TEE INVESTIGATION (Shrivenham):", {
+          currentCourseId: courseId,
+          localTeeNames: localTees.map((t) => t.tee_name),
+          hasBlueInLocal: localTees.some((t) => (t.tee_name || "").toLowerCase().includes("blue")),
+          blueInCourseTees: blueInCourseTees ?? [],
+          allShrivenhamCourseIds: (allShrivenhamCourses ?? []).map((c) => ({ id: c.id, name: c.course_name })),
+          eventTeeNames: options?.eventTeeNames,
+        });
+      } catch (e) {
+        console.warn("[courseRepo] Shrivenham investigation failed:", (e as Error)?.message);
+      }
     }
   }
 
@@ -170,29 +174,43 @@ export async function getTeesForCourseWithMerge(
     const name = (options.courseName || "").trim();
     const searchTerm = name.length >= 4 ? name.split(/\s+/)[0] : "";
     if (searchTerm) {
-      const selectStr = "id,course_name";
-      console.log("[courseRepo] courses query (other):", { select: selectStr, filter: { neq_id: canonicalId, ilike: `course_name,%${searchTerm}%` } });
-      const { data: otherCourses } = await supabase
-        .from("courses")
-        .select(selectStr)
-        .neq("id", canonicalId)
-        .ilike("course_name", `%${searchTerm}%`);
-      for (const c of otherCourses ?? []) {
-        const otherTees = await getTeesByCourseId(c.id);
-        for (const t of otherTees) {
-          const key = (t.tee_name || "").toLowerCase().trim();
-          if (key && !seen.has(key)) {
-            seen.add(key);
-            result.push({ ...t, _source: "local-manual" as TeeSource });
-            if (__DEV__) {
-              console.log("[courseRepo] tee option source: local-manual (other course)", {
-                tee_name: t.tee_name,
-                otherCourseId: c.id,
-                otherCourseName: c.course_name,
-              });
+      try {
+        const selectStr = "id,course_name";
+        console.log("[courseRepo] courses query (other):", {
+          select: selectStr,
+          filter: { neq_id: canonicalId, ilike: `course_name,%${searchTerm}%` },
+          course_id: canonicalId,
+          course_name: name,
+        });
+        const { data: otherCourses, error } = await supabase
+          .from("courses")
+          .select(selectStr)
+          .neq("id", canonicalId)
+          .ilike("course_name", `%${searchTerm}%`);
+
+        if (error) {
+          console.warn("[courseRepo] includeOtherCourseTees failed:", error.message, error.code);
+        } else {
+          for (const c of otherCourses ?? []) {
+            const otherTees = await getTeesByCourseId(c.id);
+            for (const t of otherTees) {
+              const key = (t.tee_name || "").toLowerCase().trim();
+              if (key && !seen.has(key)) {
+                seen.add(key);
+                result.push({ ...t, _source: "local-manual" as TeeSource });
+                if (__DEV__) {
+                  console.log("[courseRepo] tee option source: local-manual (other course)", {
+                    tee_name: t.tee_name,
+                    otherCourseId: c.id,
+                    otherCourseName: c.course_name,
+                  });
+                }
+              }
             }
           }
         }
+      } catch (e) {
+        console.warn("[courseRepo] includeOtherCourseTees exception:", (e as Error)?.message);
       }
     }
   }
@@ -249,7 +267,9 @@ export async function getCanonicalCourseByNormalizedName(
 
 /**
  * Find canonical course_id for tee operations.
- * If the given course has 0 tees, look for another course with similar name that has tees.
+ * If the given course has 0 tees:
+ * 1. Try name-based search for another course with similar name that has tees.
+ * 2. Try api_id fallback: get course by id → api_id, then find course with same api_id that has tees.
  * Prefer the course that already has tees (canonical row).
  */
 export async function getCanonicalCourseId(
@@ -259,23 +279,72 @@ export async function getCanonicalCourseId(
   if (!isValidUuid(courseId)) return courseId;
   const tees = await getTeesByCourseId(courseId);
   if (tees.length > 0) return courseId;
+
+  // 1. Name-based search
   const name = (courseName || "").trim();
-  if (name.length < 4) return courseId;
-  const searchTerm = name.split(/\s+/)[0];
-  const selectStr = "id,course_name";
-  console.log("[courseRepo] getCanonicalCourseId:", { select: selectStr, filter: { ilike: `course_name,%${searchTerm}%` } });
-  const { data: courses } = await supabase
-    .from("courses")
-    .select(selectStr)
-    .ilike("course_name", `%${searchTerm}%`);
-  for (const c of courses ?? []) {
-    if (c.id === courseId) continue;
-    const otherTees = await getTeesByCourseId(c.id);
-    if (otherTees.length > 0) {
-      console.log("[courseRepo] Using canonical course", c.id, c.course_name, "instead of", courseId);
-      return c.id;
+  if (name.length >= 4) {
+    const searchTerm = name.split(/\s+/)[0];
+    const selectStr = "id,course_name";
+    console.log("[courseRepo] getCanonicalCourseId (name):", {
+      select: selectStr,
+      filter: { ilike: `course_name,%${searchTerm}%` },
+      course_id: courseId,
+      course_name: name,
+    });
+    try {
+      const { data: courses, error } = await supabase
+        .from("courses")
+        .select(selectStr)
+        .ilike("course_name", `%${searchTerm}%`);
+
+      if (error) {
+        console.warn("[courseRepo] getCanonicalCourseId name search failed:", error.message);
+      } else {
+        for (const c of courses ?? []) {
+          if (c.id === courseId) continue;
+          const otherTees = await getTeesByCourseId(c.id);
+          if (otherTees.length > 0) {
+            console.log("[courseRepo] Using canonical course (name)", c.id, c.course_name, "instead of", courseId);
+            return c.id;
+          }
+        }
+      }
+    } catch (e) {
+      console.warn("[courseRepo] getCanonicalCourseId name search exception:", (e as Error)?.message);
     }
   }
+
+  // 2. api_id fallback: event's course may be empty duplicate; find canonical by api_id
+  const courseRow = await getCourseByIdForApiLookup(courseId);
+  if (courseRow?.api_id != null) {
+    const apiId = courseRow.api_id;
+    console.log("[courseRepo] getCanonicalCourseId (api_id fallback):", {
+      course_id: courseId,
+      course_name: courseRow.course_name,
+      api_id: apiId,
+    });
+    try {
+      const { data: byApiId, error } = await supabase
+        .from("courses")
+        .select(COURSES_SELECT_API_LOOKUP)
+        .eq("api_id", apiId);
+
+      if (error) {
+        console.warn("[courseRepo] getCanonicalCourseId api_id lookup failed:", error.message);
+      } else {
+        for (const c of byApiId ?? []) {
+          const otherTees = await getTeesByCourseId(c.id);
+          if (otherTees.length > 0) {
+            console.log("[courseRepo] Using canonical course (api_id)", c.id, c.course_name, "instead of", courseId);
+            return c.id;
+          }
+        }
+      }
+    } catch (e) {
+      console.warn("[courseRepo] getCanonicalCourseId api_id fallback exception:", (e as Error)?.message);
+    }
+  }
+
   return courseId;
 }
 
@@ -336,36 +405,110 @@ export type CourseWithTees = {
   fromCache: boolean;
 };
 
+/** Safe select for courses table — NO "name" column; use course_name, club_name, api_id, etc. */
+const COURSES_SELECT_API_LOOKUP = "id,api_id,course_name,club_name";
+
 /**
  * Get course + tees from DB by GolfCourseAPI id (api_id).
  * Returns null if course not found or has 0 tees (so caller fetches from API).
+ * Uses valid columns only (no "name" — courses has course_name).
  */
 export async function getCourseByApiId(apiId: number): Promise<CourseWithTees | null> {
-  const selectStr = "id,course_name,club_name,api_id";
-  console.log("[courseRepo] getCourseByApiId:", { select: selectStr, filter: { api_id: apiId } });
-  const { data: course, error: courseErr } = await supabase
-    .from("courses")
-    .select(selectStr)
-    .eq("api_id", apiId)
-    .maybeSingle();
+  const selectStr = COURSES_SELECT_API_LOOKUP;
+  console.log("[courseRepo] getCourseByApiId:", {
+    select: selectStr,
+    filter: { api_id: apiId },
+    course_id: "(N/A)",
+    course_name: "(N/A)",
+  });
+  try {
+    const { data: course, error: courseErr } = await supabase
+      .from("courses")
+      .select(selectStr)
+      .eq("api_id", apiId)
+      .maybeSingle();
 
-  if (courseErr || !course) return null;
-  if (!isValidUuid(course.id)) {
-    console.warn("[courseRepo] getCourseByApiId: course.id is not valid UUID, skipping tee lookup");
+    if (courseErr) {
+      console.error("[courseRepo] getCourseByApiId FAILED:", {
+        message: courseErr.message,
+        code: courseErr.code,
+        details: courseErr.details,
+        hint: courseErr.hint,
+      });
+      return null;
+    }
+    if (!course) return null;
+    if (!isValidUuid(course.id)) {
+      console.warn("[courseRepo] getCourseByApiId: course.id is not valid UUID, skipping tee lookup");
+      return null;
+    }
+
+    const tees = await getTeesByCourseId(course.id);
+    if (tees.length === 0) {
+      console.log("[courseRepo] getCourseByApiId: course exists but 0 tees, returning null to trigger API fetch");
+      return null;
+    }
+    return {
+      courseId: course.id,
+      courseName: course.course_name ?? "",
+      tees,
+      fromCache: true,
+    };
+  } catch (err: unknown) {
+    const e = err as { message?: string; code?: string; details?: unknown; hint?: string };
+    console.error("[courseRepo] getCourseByApiId exception:", {
+      message: e?.message,
+      code: e?.code,
+      details: e?.details,
+      hint: e?.hint,
+    });
     return null;
   }
+}
 
-  const tees = await getTeesByCourseId(course.id);
-  if (tees.length === 0) {
-    console.log("[courseRepo] getCourseByApiId: course exists but 0 tees, returning null to trigger API fetch");
+/**
+ * Get course by UUID (for api_id fallback when event has course_id but 0 tees).
+ * Returns { id, api_id, course_name } or null. Does NOT throw.
+ */
+export async function getCourseByIdForApiLookup(courseId: string): Promise<{
+  id: string;
+  api_id: number | null;
+  course_name: string;
+} | null> {
+  if (!isValidUuid(courseId)) return null;
+  const selectStr = "id,api_id,course_name";
+  console.log("[courseRepo] getCourseByIdForApiLookup:", {
+    select: selectStr,
+    filter: { id: courseId },
+    course_id: courseId,
+  });
+  try {
+    const { data, error } = await supabase
+      .from("courses")
+      .select(selectStr)
+      .eq("id", courseId)
+      .maybeSingle();
+
+    if (error) {
+      console.error("[courseRepo] getCourseByIdForApiLookup FAILED:", {
+        message: error.message,
+        code: error.code,
+        details: error.details,
+        hint: error.hint,
+      });
+      return null;
+    }
+    if (!data) return null;
+    return {
+      id: data.id,
+      api_id: data.api_id != null ? Number(data.api_id) : null,
+      course_name: data.course_name ?? "",
+    };
+  } catch (err: unknown) {
+    const e = err as { message?: string };
+    console.error("[courseRepo] getCourseByIdForApiLookup exception:", e?.message);
     return null;
   }
-  return {
-    courseId: course.id,
-    courseName: course.course_name ?? "",
-    tees,
-    fromCache: true,
-  };
 }
 
 export type ApiTeeInput = {

@@ -27,7 +27,7 @@ import {
   EVENT_FORMATS,
   EVENT_CLASSIFICATIONS,
 } from "@/lib/db_supabase/eventRepo";
-import { getTeesByCourseId, getTeesForCourseWithMerge, getCourseByApiId, upsertManualTeesToCourse, upsertTeesFromApi, type CourseTee } from "@/lib/db_supabase/courseRepo";
+import { getTeesByCourseId, getTeesForCourseWithMerge, getCourseByApiId, getCourseByIdForApiLookup, upsertManualTeesToCourse, upsertTeesFromApi, type CourseTee } from "@/lib/db_supabase/courseRepo";
 import { isValidUuid } from "@/lib/uuid";
 import { searchCourses as searchCoursesApi, getCourseById, type ApiCourseSearchResult } from "@/lib/golfApi";
 import { importCourse, type ImportedCourse } from "@/lib/importCourse";
@@ -347,7 +347,7 @@ export default function EventDetailScreen() {
     savedFemaleTeeName?: string,
     event?: EventDoc | null
   ) => {
-    if (!isValidUuid(courseId)) {
+    if (!courseId || !isValidUuid(courseId)) {
       setTees([]);
       setSelectedTee(null);
       setSelectedMaleTee(null);
@@ -357,9 +357,10 @@ export default function EventDetailScreen() {
       }
       return;
     }
+    const cid = courseId;
     setTeesLoading(true);
     try {
-      const list = await getTeesForCourseWithMerge(courseId, {
+      let list = await getTeesForCourseWithMerge(cid, {
         eventTeeNames: {
           male: savedMaleTeeName || undefined,
           female: savedFemaleTeeName || undefined,
@@ -379,6 +380,32 @@ export default function EventDetailScreen() {
         courseName: event?.courseName ?? undefined,
         includeOtherCourseTees: true,
       });
+
+      // Fallback: if 0 tees, try API import (handles Wycombe Heights etc. when local course has no tees)
+      if (list.length === 0) {
+        const courseRow = await getCourseByIdForApiLookup(cid);
+        if (courseRow?.api_id != null) {
+          try {
+            const full = await getCourseById(courseRow.api_id);
+            const result = await importCourse(full);
+            if (result.tees.length > 0) {
+              list = result.tees.map((t) => ({
+                id: t.id,
+                course_id: result.courseId,
+                tee_name: t.teeName,
+                tee_color: null,
+                course_rating: t.courseRating ?? 0,
+                slope_rating: t.slopeRating ?? 0,
+                par_total: t.parTotal ?? 0,
+              }));
+              console.log("[EventDetail] API import fallback: loaded", list.length, "tees for", courseRow.course_name);
+            }
+          } catch (importErr) {
+            console.warn("[EventDetail] API import fallback failed:", (importErr as Error)?.message);
+          }
+        }
+      }
+
       setTees(list);
       const maleMatch = savedMaleTeeName ? list.find((t) => t.tee_name === savedMaleTeeName) : null;
       const femaleMatch = savedFemaleTeeName ? list.find((t) => t.tee_name === savedFemaleTeeName) : null;
@@ -405,7 +432,8 @@ export default function EventDetailScreen() {
       } else if (maleMatch || femaleMatch || singleMatch) {
         setShowManualTee(false);
       }
-    } catch {
+    } catch (e) {
+      console.warn("[EventDetail] loadTeesForEvent failed, showing manual fallback:", (e as Error)?.message);
       setTees([]);
       setSelectedTee(null);
       setSelectedMaleTee(null);

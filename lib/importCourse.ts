@@ -54,17 +54,44 @@ function normalizeTee(tee: ApiTee, gender?: "M" | "F"): {
   };
 }
 
-async function getExistingCourseByApiId(apiId: number) {
-  const selectStr = "id,course_name,club_name,api_id";
-  console.log("[importCourse] courses query:", { select: selectStr, filter: { api_id: apiId } });
-  const { data, error } = await supabase
-    .from("courses")
-    .select(selectStr)
-    .eq("api_id", apiId)
-    .maybeSingle();
+/** Safe select for courses — NO "name" column; use course_name, club_name, api_id. */
+const COURSES_SELECT = "id,course_name,club_name,api_id";
 
-  if (error) throw error;
-  return data;
+async function getExistingCourseByApiId(apiId: number) {
+  console.log("[importCourse] courses query:", {
+    select: COURSES_SELECT,
+    filter: { api_id: apiId },
+    course_id: "(N/A)",
+    course_name: "(N/A)",
+    api_id: apiId,
+  });
+  try {
+    const { data, error } = await supabase
+      .from("courses")
+      .select(COURSES_SELECT)
+      .eq("api_id", apiId)
+      .maybeSingle();
+
+    if (error) {
+      console.error("[importCourse] getExistingCourseByApiId FAILED:", {
+        message: error.message,
+        code: error.code,
+        details: error.details,
+        hint: error.hint,
+      });
+      throw error;
+    }
+    return data;
+  } catch (err) {
+    const e = err as { message?: string; code?: string; details?: unknown; hint?: string };
+    console.error("[importCourse] getExistingCourseByApiId exception:", {
+      message: e?.message,
+      code: e?.code,
+      details: e?.details,
+      hint: e?.hint,
+    });
+    throw err;
+  }
 }
 
 async function getImportedTees(courseId: string): Promise<ImportedTee[]> {
