@@ -27,10 +27,10 @@ import {
   EVENT_FORMATS,
   EVENT_CLASSIFICATIONS,
 } from "@/lib/db_supabase/eventRepo";
-import { getTeesByCourseId, getTeesForCourseWithMerge, getCourseByApiId, getCourseByIdForApiLookup, upsertManualTeesToCourse, upsertTeesFromApi, type CourseTee } from "@/lib/db_supabase/courseRepo";
-import { isValidUuid } from "@/lib/uuid";
-import { searchCourses as searchCoursesApi, getCourseById, type ApiCourseSearchResult } from "@/lib/golfApi";
-import { importCourse, type ImportedCourse } from "@/lib/importCourse";
+import { upsertManualTeesToCourse, type CourseTee } from "@/lib/db_supabase/courseRepo";
+import { searchCourses as searchCoursesApi, type ApiCourseSearchResult } from "@/lib/golfApi";
+import { resolveCourseByApiId } from "@/lib/courseResolution";
+import { buildTeeSnapshotFromEvent, hasTeeSnapshot } from "@/lib/eventTeeSnapshot";
 import { CourseTeeSelector } from "@/components/CourseTeeSelector";
 import type { TeeSetupMode } from "@/components/CourseTeeSetupCard";
 import { getPermissionsForMember } from "@/lib/rbac";
@@ -250,6 +250,7 @@ export default function EventDetailScreen() {
     return () => debouncedSearch.cancel();
   }, [courseSearchQuery, isEditing, debouncedSearch]);
 
+  /** Resolve course + load tees — only when user explicitly selects course. Single phase, no fallback chain. */
   const handleEditSelectCourse = useCallback(async (hit: ApiCourseSearchResult) => {
     setCourseSearchResults([]);
     setCourseSearchQuery("");
@@ -260,75 +261,36 @@ export default function EventDetailScreen() {
     setTeesLoading(true);
     setShowManualTee(false);
     try {
-      const cached = await getCourseByApiId(hit.id);
-      if (cached && cached.tees.length > 0) {
-        setSelectedCourseEdit({ id: cached.courseId, name: cached.courseName });
-        setFormCourseName(cached.courseName);
-        const merged = await getTeesForCourseWithMerge(cached.courseId, {
-          courseName: cached.courseName,
-          includeOtherCourseTees: true,
-        });
-        setTees(merged.length > 0 ? merged : cached.tees);
-      } else if (cached && cached.tees.length === 0) {
-        setSelectedCourseEdit({ id: cached.courseId, name: cached.courseName });
-        setFormCourseName(cached.courseName);
-        setTees([]);
-        setShowManualTee(true);
-        try {
-          const full = await getCourseById(hit.id);
-          const result = await importCourse(full);
-          const teesList = result.tees.map((t) => ({
-            id: t.id,
-            course_id: result.courseId,
-            tee_name: t.teeName,
-            tee_color: null,
-            course_rating: t.courseRating ?? 0,
-            slope_rating: t.slopeRating ?? 0,
-            par_total: t.parTotal ?? 0,
-          }));
-          const merged = await getTeesForCourseWithMerge(result.courseId, {
-            courseName: result.courseName,
-            includeOtherCourseTees: true,
-          });
-          setTees(merged.length > 0 ? merged : teesList);
-          if ((merged.length || teesList.length) > 0) setShowManualTee(false);
-        } catch {
-          /* keep manual tee visible */
-        }
-      } else {
-        const full = await getCourseById(hit.id);
-        const result: ImportedCourse = await importCourse(full);
-        setSelectedCourseEdit({ id: result.courseId, name: result.courseName });
-        setFormCourseName(result.courseName);
-
-        let teesList: CourseTee[];
-        if (result.tees.length > 0) {
-          teesList = result.tees.map((t) => ({
-            id: t.id,
-            course_id: result.courseId,
-            tee_name: t.teeName,
-            tee_color: null,
-            course_rating: t.courseRating ?? 0,
-            slope_rating: t.slopeRating ?? 0,
-            par_total: t.parTotal ?? 0,
-          }));
+      const resolved = await resolveCourseByApiId(hit.id);
+      if (resolved) {
+        setSelectedCourseEdit(resolved.courseId ? { id: resolved.courseId, name: resolved.courseName } : null);
+        setFormCourseName(resolved.courseName);
+        setTees(resolved.tees);
+        if (resolved.tees.length === 0) {
+          setShowManualTee(true);
         } else {
-          const apiTees = full.tees;
-          if (apiTees) {
-            await upsertTeesFromApi(result.courseId, apiTees as any);
-            teesList = await getTeesByCourseId(result.courseId);
+          const snap = buildTeeSnapshotFromEvent(event);
+          const maleName = snap?.male?.teeName || event?.teeName;
+          const femaleName = snap?.female?.teeName || event?.ladiesTeeName;
+          const isSep = !!(maleName && femaleName && maleName !== femaleName);
+          if (isSep) {
+            setTeeSetupMode("separate");
+            setSelectedMaleTee(resolved.tees.find((t) => t.tee_name === maleName) ?? null);
+            setSelectedFemaleTee(resolved.tees.find((t) => t.tee_name === femaleName) ?? null);
           } else {
-            teesList = [];
+            const singleName = maleName || femaleName;
+            const match = singleName ? resolved.tees.find((t) => t.tee_name === singleName) : null;
+            setTeeSetupMode("single");
+            setSelectedTee(match ?? null);
           }
         }
-        const merged = await getTeesForCourseWithMerge(result.courseId, {
-          courseName: result.courseName,
-          includeOtherCourseTees: true,
-        });
-        setTees(merged.length > 0 ? merged : teesList);
-        if (merged.length === 0 && teesList.length === 0) setShowManualTee(true);
+      } else {
+        setSelectedCourseEdit({ id: "", name: hit.name });
+        setFormCourseName(hit.name);
+        setTees([]);
+        setShowManualTee(true);
       }
-    } catch (e: any) {
+    } catch (e) {
       setSelectedCourseEdit({ id: "", name: hit.name });
       setFormCourseName(hit.name);
       setTees([]);
@@ -336,115 +298,9 @@ export default function EventDetailScreen() {
     } finally {
       setTeesLoading(false);
     }
-  }, []);
+  }, [event]);
 
-  // Load tees when event has course_id. Merge local tees + event-saved tees so manual/event-only tees appear.
-  const loadTeesForEvent = useCallback(async (
-    courseId: string | undefined,
-    _teeId: string | undefined,
-    hasSavedTeeData?: boolean,
-    savedMaleTeeName?: string,
-    savedFemaleTeeName?: string,
-    event?: EventDoc | null
-  ) => {
-    if (!courseId || !isValidUuid(courseId)) {
-      setTees([]);
-      setSelectedTee(null);
-      setSelectedMaleTee(null);
-      setSelectedFemaleTee(null);
-      if (courseId === "" || (courseId && !courseId.trim())) {
-        console.warn("[EventDetail] Skipping tee lookup: invalid courseId (empty or blank)");
-      }
-      return;
-    }
-    const cid = courseId;
-    setTeesLoading(true);
-    try {
-      let list = await getTeesForCourseWithMerge(cid, {
-        eventTeeNames: {
-          male: savedMaleTeeName || undefined,
-          female: savedFemaleTeeName || undefined,
-        },
-        eventTeeValues: event ? {
-          male: {
-            par: event.par ?? undefined,
-            courseRating: event.courseRating ?? undefined,
-            slopeRating: event.slopeRating ?? undefined,
-          },
-          female: {
-            par: event.ladiesPar ?? undefined,
-            courseRating: event.ladiesCourseRating ?? undefined,
-            slopeRating: event.ladiesSlopeRating ?? undefined,
-          },
-        } : undefined,
-        courseName: event?.courseName ?? undefined,
-        includeOtherCourseTees: true,
-      });
-
-      // Fallback: if 0 tees, try API import (handles Wycombe Heights etc. when local course has no tees)
-      if (list.length === 0) {
-        const courseRow = await getCourseByIdForApiLookup(cid);
-        if (courseRow?.api_id != null) {
-          try {
-            const full = await getCourseById(courseRow.api_id);
-            const result = await importCourse(full);
-            if (result.tees.length > 0) {
-              list = result.tees.map((t) => ({
-                id: t.id,
-                course_id: result.courseId,
-                tee_name: t.teeName,
-                tee_color: null,
-                course_rating: t.courseRating ?? 0,
-                slope_rating: t.slopeRating ?? 0,
-                par_total: t.parTotal ?? 0,
-              }));
-              console.log("[EventDetail] API import fallback: loaded", list.length, "tees for", courseRow.course_name);
-            }
-          } catch (importErr) {
-            console.warn("[EventDetail] API import fallback failed:", (importErr as Error)?.message);
-          }
-        }
-      }
-
-      setTees(list);
-      const maleMatch = savedMaleTeeName ? list.find((t) => t.tee_name === savedMaleTeeName) : null;
-      const femaleMatch = savedFemaleTeeName ? list.find((t) => t.tee_name === savedFemaleTeeName) : null;
-      const isSeparateMode = !!(savedMaleTeeName && savedFemaleTeeName && savedMaleTeeName !== savedFemaleTeeName);
-      const singleTeeName = savedMaleTeeName || savedFemaleTeeName;
-      const singleMatch = singleTeeName && !isSeparateMode ? list.find((t) => t.tee_name === singleTeeName) : null;
-      if (isSeparateMode) {
-        setTeeSetupMode("separate");
-        setSelectedMaleTee(maleMatch ?? null);
-        setSelectedFemaleTee(femaleMatch ?? null);
-        setSelectedTee(null);
-      } else if (singleMatch) {
-        setTeeSetupMode("single");
-        setSelectedTee(singleMatch);
-        setSelectedMaleTee(null);
-        setSelectedFemaleTee(null);
-      } else {
-        setSelectedTee(null);
-        setSelectedMaleTee(null);
-        setSelectedFemaleTee(null);
-      }
-      if (list.length === 0 && hasSavedTeeData) {
-        setShowManualTee(true);
-      } else if (maleMatch || femaleMatch || singleMatch) {
-        setShowManualTee(false);
-      }
-    } catch (e) {
-      console.warn("[EventDetail] loadTeesForEvent failed, showing manual fallback:", (e as Error)?.message);
-      setTees([]);
-      setSelectedTee(null);
-      setSelectedMaleTee(null);
-      setSelectedFemaleTee(null);
-      if (hasSavedTeeData) setShowManualTee(true);
-    } finally {
-      setTeesLoading(false);
-    }
-  }, []);
-
-  // Populate form when entering edit mode (tee setup mode comes from saved event, not from tees list)
+  /** Enter edit mode — apply event snapshot to form. No tee lookup; manual form always available. */
   const startEditing = () => {
     if (!event) return;
     setFormName(event.name || "");
@@ -453,14 +309,11 @@ export default function EventDetailScreen() {
     setFormClassification(event.classification || "general");
     setFormCourseName(event.courseName || "");
 
-    // Handicap allowance
     setFormHandicapAllowance(
-      event.handicapAllowance != null
-        ? String(Math.round(event.handicapAllowance * 100))
-        : "95"
+      event.handicapAllowance != null ? String(Math.round(event.handicapAllowance * 100)) : "95"
     );
 
-    // Manual tee fields (pre-fill from existing event data)
+    // Tee snapshot: pre-fill manual fields from event (single source of truth)
     setManualTeeName(event.teeName || "");
     setManualPar(event.par != null ? String(event.par) : "");
     setManualCourseRating(event.courseRating != null ? String(event.courseRating) : "");
@@ -471,35 +324,23 @@ export default function EventDetailScreen() {
     setManualLadiesSlopeRating(event.ladiesSlopeRating != null ? String(event.ladiesSlopeRating) : "");
 
     const hasTeeSettings =
-      event.teeName != null || event.par != null || event.slopeRating != null ||
-      event.courseName != null;
+      event.teeName != null || event.par != null || event.slopeRating != null || event.courseName != null;
     setShowTeeSettings(!!hasTeeSettings);
 
-    // Course search state
     setCourseSearchQuery("");
     setCourseSearchResults([]);
     setSelectedCourseEdit(event.course_id ? { id: event.course_id, name: event.courseName || "" } : null);
 
-    const hasSavedTeeData = !!(event.teeName || event.par != null || event.courseRating != null || event.slopeRating != null);
+    const hasSavedTeeData = hasTeeSnapshot(event);
     const hasBothTees = !!(event.teeName && event.ladiesTeeName && event.teeName !== event.ladiesTeeName);
     setTeeSetupMode((event.teeSetupMode as "single" | "separate") ?? (hasBothTees ? "separate" : "single"));
-    if (event.course_id) {
-      setShowManualTee(hasSavedTeeData && !event.tee_id);
-      loadTeesForEvent(
-        event.course_id,
-        event.tee_id ?? undefined,
-        hasSavedTeeData,
-        event.teeName ?? undefined,
-        event.ladiesTeeName ?? undefined,
-        event
-      );
-    } else {
-      setTees([]);
-      setSelectedTee(null);
-      setSelectedMaleTee(null);
-      setSelectedFemaleTee(null);
-      setShowManualTee(hasSavedTeeData);
-    }
+
+    // No tee lookup on edit open — render from snapshot. Tee options only when user changes course.
+    setTees([]);
+    setSelectedTee(null);
+    setSelectedMaleTee(null);
+    setSelectedFemaleTee(null);
+    setShowManualTee(hasSavedTeeData || true);
 
     setIsEditing(true);
   };
@@ -915,7 +756,7 @@ export default function EventDetailScreen() {
                   <View style={styles.manualTeeContainer}>
                     <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: spacing.sm }}>
                       <AppText variant="captionBold">Manual Tee Entry</AppText>
-                      {selectedTee && (
+                      {(selectedTee || selectedMaleTee || selectedFemaleTee) && tees.length > 0 && (
                         <Pressable onPress={() => setShowManualTee(false)}>
                           <AppText variant="small" color="primary">Use selected tee instead</AppText>
                         </Pressable>

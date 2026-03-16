@@ -172,7 +172,7 @@ function buildDedupeKey(course: ApiCourse, apiId: number | null): string {
     return `golfcourseapi:${apiId}`;
   }
   const club = (course.club_name ?? "").trim();
-  const name = (course.name ?? course.course_name ?? "").trim();
+  const name = (course.name ?? "").trim();
   const combined = [club, name].filter(Boolean).join("-") || "unknown";
   return slugify(combined);
 }

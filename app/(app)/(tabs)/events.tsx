@@ -28,9 +28,9 @@ import {
   EVENT_FORMATS,
   EVENT_CLASSIFICATIONS,
 } from "@/lib/db_supabase/eventRepo";
-import { type CourseTee, getCourseByApiId, getTeesByCourseId, getTeesForCourseWithMerge, upsertManualTeesToCourse, upsertTeesFromApi } from "@/lib/db_supabase/courseRepo";
-import { searchCourses as searchCoursesApi, getCourseById, type ApiCourseSearchResult } from "@/lib/golfApi";
-import { importCourse, type ImportedCourse } from "@/lib/importCourse";
+import { type CourseTee, upsertManualTeesToCourse } from "@/lib/db_supabase/courseRepo";
+import { searchCourses as searchCoursesApi, type ApiCourseSearchResult } from "@/lib/golfApi";
+import { resolveCourseByApiId } from "@/lib/courseResolution";
 import { CourseTeeSetupCard, type TeeSyncStatus, type TeeSetupMode } from "@/components/CourseTeeSetupCard";
 import { getPermissionsForMember } from "@/lib/rbac";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
@@ -190,8 +190,8 @@ export default function EventsScreen() {
     setTeeSetupMode(hasMale && hasFemale ? "separate" : "single");
   }, [tees]);
 
+  /** Resolve course + load tees — single phase, no fallback chain. */
   const handleSelectCourse = useCallback(async (hit: ApiCourseSearchResult) => {
-    console.log("[events] handleSelectCourse:", hit.id, hit.name);
     setCourseSearchResults([]);
     setCourseSearchQuery("");
     setSelectedTee(null);
@@ -204,97 +204,21 @@ export default function EventsScreen() {
     setTeeSyncStatus("pending_sync");
     setFormErrors((prev) => ({ ...prev, course: undefined, courseTee: undefined }));
     try {
-      // 1. Cache-first: load from DB if previously imported
-      const cached = await getCourseByApiId(hit.id);
-      if (cached && cached.tees.length > 0) {
-        console.log("[events] Loaded from cache:", cached.courseId, cached.tees.length, "tees");
-        setSelectedCourse({ id: cached.courseId, name: cached.courseName });
+      const resolved = await resolveCourseByApiId(hit.id);
+      if (resolved) {
+        setSelectedCourse(resolved.courseId ? { id: resolved.courseId, name: resolved.courseName } : null);
         setSelectedCourseApiId(hit.id);
-        const merged = await getTeesForCourseWithMerge(cached.courseId, {
-          courseName: cached.courseName,
-          includeOtherCourseTees: true,
-        });
-        setTees(merged);
-        setTeeSyncStatus("synced");
-      } else if (cached && cached.tees.length === 0) {
-        // Course exists but 0 tees: show immediately, try background sync
-        setSelectedCourse({ id: cached.courseId, name: cached.courseName });
+        setTees(resolved.tees);
+        setTeeSyncStatus(resolved.tees.length > 0 ? "synced" : "import_failed");
+        if (resolved.tees.length === 0) setShowManualTee(true);
+      } else {
+        setSelectedCourse({ id: "", name: hit.name });
         setSelectedCourseApiId(hit.id);
         setTees([]);
         setShowManualTee(true);
-        setTeeSyncStatus("pending_sync");
-        // Background sync (non-blocking)
-        (async () => {
-          try {
-            const full = await getCourseById(hit.id);
-            const result = await importCourse(full);
-            const teesList = result.tees.map((t) => ({
-              id: t.id,
-              course_id: result.courseId,
-              tee_name: t.teeName,
-              tee_color: null,
-              course_rating: t.courseRating ?? 0,
-              slope_rating: t.slopeRating ?? 0,
-              par_total: t.parTotal ?? 0,
-            }));
-            const merged = await getTeesForCourseWithMerge(cached.courseId, {
-              courseName: cached.courseName,
-              includeOtherCourseTees: true,
-            });
-            setTees(merged.length > 0 ? merged : teesList);
-            setTeeSyncStatus((merged.length || result.tees.length) > 0 ? "synced" : "import_failed");
-            if ((merged.length || result.tees.length) > 0) setShowManualTee(false);
-          } catch {
-            setTeeSyncStatus("import_failed");
-          } finally {
-            setTeesLoading(false);
-          }
-        })();
-        return; // Don't set teesLoading false below - background will
-      } else {
-        // No cache: fetch from API and import
-        const full = await getCourseById(hit.id);
-        console.log("[events] getCourseById done, importing...");
-        const result: ImportedCourse = await importCourse(full);
-        console.log("[events] importCourse done:", result.courseId, result.tees.length, "tees");
-        setSelectedCourse({ id: result.courseId, name: result.courseName });
-        setSelectedCourseApiId(hit.id);
-
-        let teesList: CourseTee[];
-        if (result.tees.length > 0) {
-          teesList = result.tees.map((t) => ({
-            id: t.id,
-            course_id: result.courseId,
-            tee_name: t.teeName,
-            tee_color: null,
-            course_rating: t.courseRating ?? 0,
-            slope_rating: t.slopeRating ?? 0,
-            par_total: t.parTotal ?? 0,
-            gender: t.gender ?? null,
-          }));
-          setTeeSyncStatus("synced");
-        } else {
-          const apiTees = full.tees;
-          if (apiTees) {
-            await upsertTeesFromApi(result.courseId, apiTees as any);
-            teesList = await getTeesByCourseId(result.courseId);
-          } else {
-            teesList = [];
-          }
-          setTeeSyncStatus(teesList.length > 0 ? "synced" : "import_failed");
-          if (teesList.length === 0) setShowManualTee(true);
-        }
-        const merged = await getTeesForCourseWithMerge(result.courseId, {
-          courseName: result.courseName,
-          includeOtherCourseTees: true,
-        });
-        setTees(merged.length > 0 ? merged : teesList);
-        if (merged.length > teesList.length && __DEV__) {
-          console.log("[events] Merged tees from other sources:", merged.length - teesList.length, "additional");
-        }
+        setTeeSyncStatus("import_failed");
       }
     } catch (e: any) {
-      console.error("[events] course import failed:", e?.message || e);
       setTeesError(e?.message || "Import failed. You can enter tee details manually below.");
       setSelectedCourse({ id: "", name: hit.name });
       setSelectedCourseApiId(hit.id);
