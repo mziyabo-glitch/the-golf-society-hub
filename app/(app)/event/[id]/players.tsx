@@ -36,7 +36,7 @@
 
 import React, { Component } from "react";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Alert, Modal, Pressable, ScrollView, StyleSheet, View } from "react-native";
 import { Feather } from "@expo/vector-icons";
 import { goBack } from "@/lib/navigation";
@@ -239,10 +239,8 @@ export default function EventPlayersScreen() {
   const { societyId, member, loading: bootstrapLoading } = useBootstrap(); // 3
   const colors = getColors(); // NOT a hook
 
-  const eventId = useMemo(() => {                                       // 4
-    const raw = (params as any)?.id;
-    return Array.isArray(raw) ? raw[0] : raw;
-  }, [params]);
+  const raw = (params as any)?.id;
+  const eventId = Array.isArray(raw) ? raw[0] : raw;
 
   const [event, setEvent] = useState<EventDoc | null>(null);           // 5
   const [members, setMembers] = useState<MemberDoc[]>([]);             // 6
@@ -263,23 +261,19 @@ export default function EventPlayersScreen() {
   const [changeSocietyMember, setChangeSocietyMember] = useState<MemberDoc | null>(null); // 21
   const [alternateMembers, setAlternateMembers] = useState<MemberDoc[]>([]); // 22
 
-  const isJointEvent = useMemo(                                        // 23
-    () => Boolean(event?.is_joint_event ?? event?.is_multi_society),
-    [event],
-  );
+  const isJointEvent = Boolean(event?.is_joint_event ?? event?.is_multi_society);
 
-  const participatingSocietyIds = useMemo<string[]>(() => {            // 24
+  const participatingSocietyIds: string[] = (() => {
     if (!event) return [];
     const ids = event.participatingSocietyIds;
     return isJointEvent && Array.isArray(ids) && ids.length > 0 ? ids : [];
-  }, [event, isJointEvent]);
+  })();
 
-  const filteredMembers = useMemo<MemberDoc[]>(() => {                 // 25
-    if (societyFilter === "all") return members;
-    return members.filter((m) => m.society_id === societyFilter);
-  }, [members, societyFilter]);
+  const filteredMembers: MemberDoc[] = societyFilter === "all"
+    ? members
+    : members.filter((m) => m.society_id === societyFilter);
 
-  const membersWithAlternates = useMemo<Set<string>>(() => {           // 26
+  const membersWithAlternates = (() => {
     if (!event || participatingSocietyIds.length < 2) return new Set<string>();
     const byUser = new Map<string, MemberDoc[]>();
     for (const m of members) {
@@ -293,7 +287,7 @@ export default function EventPlayersScreen() {
       if (list.length > 1) for (const m of list) result.add(m.id);
     }
     return result;
-  }, [members, event, participatingSocietyIds.length]);
+  })();
 
   const permissions = getPermissionsForMember(member as any);
   const selectedCount = selectedPlayerIds.size;
