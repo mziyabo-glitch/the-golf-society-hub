@@ -100,6 +100,7 @@ const BOOTSTRAP_FALLBACK: BootstrapState = {
 };
 
 export function BootstrapProvider({ children }: { children: ReactNode }) {
+  console.log("BOOTSTRAP_PROVIDER_TOP");
   const value = useBootstrapInternal();
   return <BootstrapContext.Provider value={value}>{children}</BootstrapContext.Provider>;
 }

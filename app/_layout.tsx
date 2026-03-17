@@ -294,16 +294,26 @@ function RootNavigator() {
   );
 }
 
-// STEP 3: Pass-through to isolate #310. Replace with BootstrapProvider to restore.
+// Provider strip test: pass-through (replace with real provider to restore)
 function BootstrapProviderStripped({ children }: { children: ReactNode }) {
-  console.log("PROVIDER_BOOTSTRAP_STRIPPED");
+  console.log("BOOTSTRAP_PROVIDER_STRIPPED");
   return <>{children}</>;
 }
 
+// RootNavigator strip test: minimal Stack only, no hooks
+function RootNavigatorStripped() {
+  console.log("ROOT_NAVIGATOR_STRIPPED");
+  return <Stack screenOptions={{ headerShown: false }} />;
+}
+
 export default function RootLayout() {
+  console.log("ROOT_LAYOUT_TOP");
+  // Test A: BootstrapProviderStripped + RootNavigatorStripped (both stripped)
+  // Test B: BootstrapProvider + RootNavigatorStripped (only RootNav stripped)
+  // Test C: BootstrapProvider + RootNavigator (full - restore for normal use)
   return (
     <BootstrapProviderStripped>
-      <RootNavigator />
+      <RootNavigatorStripped />
     </BootstrapProviderStripped>
   );
 }
