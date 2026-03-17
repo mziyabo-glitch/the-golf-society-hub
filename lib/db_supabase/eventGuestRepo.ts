@@ -2,6 +2,7 @@
 // Guest players for events (name, sex, handicap index).
 
 import { supabase } from "@/lib/supabase";
+import { addEventPlayerGuest } from "@/lib/db_supabase/eventPlayerRepo";
 
 export type EventGuest = {
   id: string;
@@ -51,7 +52,9 @@ export async function addEventGuest(opts: {
     console.error("[eventGuestRepo] addEventGuest:", error.message);
     throw new Error(error.message || "Failed to add guest");
   }
-  return data as EventGuest;
+  const guest = data as EventGuest;
+  await addEventPlayerGuest(opts.eventId, guest.id);
+  return guest;
 }
 
 export async function updateEventGuest(

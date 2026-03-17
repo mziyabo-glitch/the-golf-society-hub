@@ -58,7 +58,6 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { useBootstrap } from "@/lib/useBootstrap";
 import { getEvent, updateEvent, type EventDoc } from "@/lib/db_supabase/eventRepo";
 import {
-  getMembersBySocietyId,
   getMembersBySocietyIds,
   getMemberRowsByUserIdForSocieties,
   type MemberDoc,
@@ -318,27 +317,28 @@ export default function EventPlayersScreen() {
         console.log("[EventPlayersScreen] loading", { eventId, societyId });
         const evt = await getEvent(eventId);
         if (cancelled) return;
-        const societyIds =
-          (evt?.is_joint_event ?? evt?.is_multi_society) && evt?.participatingSocietyIds?.length
-            ? evt.participatingSocietyIds
-            : [evt?.society_id ?? societyId].filter(Boolean);
-        const mems = societyIds.length > 0
-          ? await getMembersBySocietyIds(societyIds)
-          : await getMembersBySocietyId(societyId);
-        const guestList = await getEventGuests(eventId);
+        // Unified load: always use participating societies (single = 1, joint = many)
+        const societyIds = (evt?.participatingSocietyIds?.length
+          ? evt.participatingSocietyIds
+          : [evt?.society_id ?? societyId].filter(Boolean)) as string[];
+        const [mems, guestList] = await Promise.all([
+          getMembersBySocietyIds(societyIds),
+          getEventGuests(eventId),
+        ]);
         if (cancelled) return;
         setEvent(evt);
         setMembers(mems);
         setGuests(guestList);
-        if ((evt?.is_joint_event ?? evt?.is_multi_society) && societyIds.length > 0) {
+        if (societyIds.length > 0) {
           const names: Record<string, string> = {};
           await Promise.all(societyIds.map(async (sid) => {
             const s = await getSocietyDoc(sid);
             if (s) names[sid] = s.name ?? "Society";
           }));
           setSocietyNames(names);
-          setGuestSocietyId(evt.society_id ?? societyIds[0]);
+          setGuestSocietyId(evt?.society_id ?? societyIds[0]);
         }
+        // selectedPlayerIds from event_players (via getEvent.playerIds)
         const existing = evt?.playerIds ?? [];
         setSelectedPlayerIds(new Set(existing.map(String)));
       } catch (e: any) {
