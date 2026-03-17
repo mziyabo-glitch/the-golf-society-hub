@@ -109,9 +109,24 @@ export type EventTeeSettings = {
   handicapAllowance: number | null;
 };
 
+function normalizeJointEventFlag(isJointEvent: unknown, isMultiSociety: unknown): boolean {
+  return Boolean(isJointEvent) || Boolean(isMultiSociety);
+}
+
+function normalizeParticipatingSocietyIds(hostSocietyId: string | null, ids: string[]): string[] {
+  const cleaned = ids.filter((id) => typeof id === "string" && id.trim().length > 0);
+  if (!hostSocietyId) return Array.from(new Set(cleaned));
+  return Array.from(new Set([hostSocietyId, ...cleaned]));
+}
+
 function mapEvent(row: any): EventDoc {
+  const hostSocietyId = row.host_society_id ?? row.society_id ?? null;
+  const isJointEvent = normalizeJointEventFlag(row.is_joint_event, row.is_multi_society);
   return {
     ...row,
+    host_society_id: hostSocietyId,
+    is_joint_event: isJointEvent,
+    is_multi_society: isJointEvent,
     courseId: row.course_id ?? null,
     courseName: row.course_name,
     format: row.format ?? 'stableford',
@@ -236,10 +251,13 @@ export async function getEvent(eventId: string): Promise<EventDoc | null> {
 
   const participatingIds = await getEventSocietyIds(eventId);
   const doc = mapEvent(data);
-  doc.participatingSocietyIds = participatingIds;
-  doc.host_society_id = data.host_society_id ?? data.society_id;
-  doc.is_multi_society = data.is_multi_society ?? data.is_joint_event ?? false;
-  doc.is_joint_event = data.is_joint_event ?? data.is_multi_society ?? false;
+  const hostSocietyId = doc.host_society_id ?? data.society_id ?? null;
+  const normalizedIds = normalizeParticipatingSocietyIds(hostSocietyId, participatingIds);
+  doc.participatingSocietyIds = normalizedIds.length > 0 ? normalizedIds : (hostSocietyId ? [hostSocietyId] : []);
+  doc.host_society_id = hostSocietyId;
+  const isJointEvent = normalizeJointEventFlag(data.is_joint_event, data.is_multi_society);
+  doc.is_multi_society = isJointEvent;
+  doc.is_joint_event = isJointEvent;
   return doc;
 }
 
@@ -293,6 +311,10 @@ export async function createEvent(
   const isMultiSociety = data.isMultiSociety ?? false;
   const participatingIds = data.participatingSocietyIds ?? [];
   const hostSocietyId = societyId;
+  const normalizedParticipatingIds = normalizeParticipatingSocietyIds(hostSocietyId, participatingIds);
+  if (isMultiSociety && normalizedParticipatingIds.length < 2) {
+    throw new Error("Joint events require at least 2 participating societies (including host society).");
+  }
 
   const courseId = data.courseId?.trim();
   // tee_id: never save API/synthetic IDs; FK target may not exist. Use null; rely on event-level tee fields.
@@ -374,7 +396,7 @@ export async function createEvent(
 
   const eventId = row.id;
   const societiesToSet = isMultiSociety
-    ? Array.from(new Set([hostSocietyId, ...participatingIds]))
+    ? normalizedParticipatingIds
     : [hostSocietyId];
   await setEventSocieties(eventId, hostSocietyId, societiesToSet);
 
@@ -443,6 +465,7 @@ export async function updateEvent(
   }>
 ): Promise<void> {
   const payload: Record<string, unknown> = {};
+  let societiesToSet: string[] | null = null;
 
   if (updates.name !== undefined) payload.name = updates.name;
   if (updates.date !== undefined) payload.date = updates.date;
@@ -509,16 +532,36 @@ export async function updateEvent(
   if (updates.longestDriveHoles !== undefined) payload.longest_drive_holes = updates.longestDriveHoles;
 
   // Multi-society / Joint event
-  if (updates.isMultiSociety !== undefined) {
-    payload.is_multi_society = updates.isMultiSociety;
-    payload.is_joint_event = updates.isMultiSociety;
-  }
-  if (updates.participatingSocietyIds !== undefined) {
-    const { data: ev } = await supabase.from("events").select("society_id, host_society_id").eq("id", eventId).single();
-    const hostId = (ev as any)?.host_society_id ?? (ev as any)?.society_id;
-    if (hostId) {
-      await setEventSocieties(eventId, hostId, updates.participatingSocietyIds);
+  if (updates.isMultiSociety !== undefined || updates.participatingSocietyIds !== undefined) {
+    const { data: ev, error: evErr } = await supabase
+      .from("events")
+      .select("society_id, host_society_id, is_multi_society, is_joint_event")
+      .eq("id", eventId)
+      .single();
+    if (evErr) {
+      throw new Error(evErr.message || "Failed to resolve event host society");
     }
+
+    const hostId = (ev as any)?.host_society_id ?? (ev as any)?.society_id ?? null;
+    if (!hostId) {
+      throw new Error("Event host society is missing.");
+    }
+
+    const currentIsMulti = normalizeJointEventFlag((ev as any)?.is_joint_event, (ev as any)?.is_multi_society);
+    const inferredIsMulti = updates.participatingSocietyIds && updates.participatingSocietyIds.length > 1
+      ? true
+      : undefined;
+    const nextIsMulti = updates.isMultiSociety ?? inferredIsMulti ?? currentIsMulti;
+
+    payload.is_multi_society = nextIsMulti;
+    payload.is_joint_event = nextIsMulti;
+
+    const requestedIds = updates.participatingSocietyIds ?? (nextIsMulti ? await getEventSocietyIds(eventId) : [hostId]);
+    const normalizedIds = normalizeParticipatingSocietyIds(hostId, requestedIds);
+    if (nextIsMulti && normalizedIds.length < 2) {
+      throw new Error("Joint events require at least 2 participating societies (including host society).");
+    }
+    societiesToSet = nextIsMulti ? normalizedIds : [hostId];
   }
 
   console.log("[eventRepo] updateEvent:", { eventId, payload });
@@ -546,6 +589,19 @@ export async function updateEvent(
 
   const row = Array.isArray(data) ? data[0] : data;
   console.log("[eventRepo] updateEvent success, persisted player_ids:", row?.player_ids?.length ?? 0, "ids");
+
+  if (societiesToSet) {
+    const { data: evHost } = await supabase
+      .from("events")
+      .select("society_id, host_society_id")
+      .eq("id", eventId)
+      .single();
+    const hostId = (evHost as any)?.host_society_id ?? (evHost as any)?.society_id;
+    if (!hostId) {
+      throw new Error("Failed to set event societies: host society missing.");
+    }
+    await setEventSocieties(eventId, hostId, societiesToSet);
+  }
 }
 
 /**

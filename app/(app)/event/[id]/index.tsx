@@ -46,6 +46,8 @@ import { getColors, spacing, radius, typography } from "@/lib/ui/theme";
 import { confirmDestructive, showAlert } from "@/lib/ui/alert";
 import { getSocietyLogoUrl } from "@/lib/societyLogo";
 import { getSocietyDoc } from "@/lib/db_supabase/societyRepo";
+import { getMySocieties, type MySocietyMembership } from "@/lib/db_supabase/mySocietiesRepo";
+import { Toggle } from "@/components/ui/Toggle";
 
 // Picker option component
 function PickerOption({
@@ -102,6 +104,7 @@ export default function EventDetailScreen() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [participatingSocietyNames, setParticipatingSocietyNames] = useState<Record<string, string>>({});
+  const [hostSocietyName, setHostSocietyName] = useState<string>("");
 
   // Edit mode state
   const [isEditing, setIsEditing] = useState(false);
@@ -113,6 +116,10 @@ export default function EventDetailScreen() {
   const [formFormat, setFormFormat] = useState<EventFormat>("stableford");
   const [formClassification, setFormClassification] = useState<EventClassification>("general");
   const [formCourseName, setFormCourseName] = useState("");
+  const [formIsJointEvent, setFormIsJointEvent] = useState(false);
+  const [formParticipatingSocietyIds, setFormParticipatingSocietyIds] = useState<string[]>([]);
+  const [formSocietiesError, setFormSocietiesError] = useState<string | null>(null);
+  const [mySocieties, setMySocieties] = useState<MySocietyMembership[]>([]);
 
   // Course search (GolfCourseAPI) for edit mode
   const [courseSearchQuery, setCourseSearchQuery] = useState("");
@@ -146,6 +153,24 @@ export default function EventDetailScreen() {
   // Tee settings toggle
   const [showTeeSettings, setShowTeeSettings] = useState(false);
 
+  useEffect(() => {
+    getMySocieties()
+      .then(setMySocieties)
+      .catch(() => setMySocieties([]));
+  }, []);
+
+  const isJointEvent = useCallback(
+    (evt: Pick<EventDoc, "is_joint_event" | "is_multi_society"> | null | undefined) =>
+      Boolean(evt?.is_joint_event) || Boolean(evt?.is_multi_society),
+    []
+  );
+
+  const getHostSocietyId = useCallback(
+    (evt: Pick<EventDoc, "host_society_id" | "society_id"> | null | undefined) =>
+      (evt?.host_society_id ?? evt?.society_id ?? ""),
+    []
+  );
+
   const loadEvent = useCallback(async () => {
     if (!eventId || !societyId) {
       setError("Missing event or society");
@@ -161,14 +186,20 @@ export default function EventDetailScreen() {
         setError("Event not found");
       } else {
         setEvent(data);
-        if (data.is_joint_event ?? data.is_multi_society) {
-          const ids = data.participatingSocietyIds ?? [];
+        const hostId = getHostSocietyId(data);
+        const hostSociety = hostId ? await getSocietyDoc(hostId) : null;
+        setHostSocietyName(hostSociety?.name ?? "");
+
+        if (isJointEvent(data)) {
+          const ids = Array.from(new Set([hostId, ...(data.participatingSocietyIds ?? [])].filter(Boolean)));
           const names: Record<string, string> = {};
           await Promise.all(ids.map(async (sid) => {
             const s = await getSocietyDoc(sid);
             if (s) names[sid] = s.name ?? "Society";
           }));
           setParticipatingSocietyNames(names);
+        } else {
+          setParticipatingSocietyNames({});
         }
       }
     } catch (err: any) {
@@ -176,7 +207,7 @@ export default function EventDetailScreen() {
     } finally {
       setLoading(false);
     }
-  }, [eventId, societyId]);
+  }, [eventId, societyId, getHostSocietyId, isJointEvent]);
 
   useFocusEffect(
     useCallback(() => {
@@ -303,7 +334,7 @@ export default function EventDetailScreen() {
         setTees([]);
         setShowManualTee(true);
       }
-    } catch (e) {
+    } catch {
       setSelectedCourseEdit({ id: "", name: hit.name });
       setFormCourseName(hit.name);
       setTees([]);
@@ -316,11 +347,22 @@ export default function EventDetailScreen() {
   /** Enter edit mode — apply event snapshot to form. No tee lookup; manual form always available. */
   const startEditing = () => {
     if (!event) return;
+    const hostId = getHostSocietyId(event);
+    const jointEventEnabled = isJointEvent(event);
+    const normalizedParticipatingIds = Array.from(
+      new Set(
+        [hostId, ...(event.participatingSocietyIds ?? [])].filter((id): id is string => Boolean(id && id.trim()))
+      )
+    );
+
     setFormName(event.name || "");
     setFormDate(event.date || "");
     setFormFormat(event.format || "stableford");
     setFormClassification(event.classification || "general");
     setFormCourseName(event.courseName || "");
+    setFormIsJointEvent(jointEventEnabled);
+    setFormParticipatingSocietyIds(jointEventEnabled ? normalizedParticipatingIds : (hostId ? [hostId] : []));
+    setFormSocietiesError(null);
 
     setFormHandicapAllowance(
       event.handicapAllowance != null ? String(Math.round(event.handicapAllowance * 100)) : "95"
@@ -408,6 +450,7 @@ export default function EventDetailScreen() {
   };
 
   const cancelEditing = () => {
+    setFormSocietiesError(null);
     setIsEditing(false);
   };
 
@@ -428,6 +471,22 @@ export default function EventDetailScreen() {
         return;
       }
     }
+
+    const hostSocietyId = getHostSocietyId(event);
+    if (!hostSocietyId) {
+      showAlert("Missing Host Society", "Host society could not be determined for this event.");
+      return;
+    }
+
+    const participatingSocietiesToSave = formIsJointEvent
+      ? Array.from(new Set([hostSocietyId, ...formParticipatingSocietyIds].filter(Boolean)))
+      : [hostSocietyId];
+    if (formIsJointEvent && participatingSocietiesToSave.length < 2) {
+      setFormSocietiesError("Joint events require at least 2 participating societies including host.");
+      showAlert("Select More Societies", "Joint events require at least 2 participating societies including host.");
+      return;
+    }
+    setFormSocietiesError(null);
 
     const handicapAllowance = formHandicapAllowance.trim()
       ? parseFloat(formHandicapAllowance.trim()) / 100
@@ -518,6 +577,8 @@ export default function EventDetailScreen() {
         date: formDate.trim() || undefined,
         format: formFormat,
         classification: formClassification,
+        isMultiSociety: formIsJointEvent,
+        participatingSocietyIds: participatingSocietiesToSave,
         courseName: formCourseName.trim() || undefined,
         courseId: courseId || undefined,
         teeId: undefined,
@@ -599,6 +660,11 @@ export default function EventDetailScreen() {
   const classificationLabel =
     EVENT_CLASSIFICATIONS.find((c) => c.value === event.classification)
       ?.label ?? event.classification;
+  const hostSocietyId = getHostSocietyId(event);
+  const eventIsJoint = isJointEvent(event);
+  const displayParticipatingSocietyIds = eventIsJoint
+    ? Array.from(new Set([hostSocietyId, ...(event.participatingSocietyIds ?? [])].filter(Boolean)))
+    : [];
 
   const handleOpenPoints = () => {
     if (!eventId) {
@@ -642,6 +708,93 @@ export default function EventDetailScreen() {
                 keyboardType="numbers-and-punctuation"
                 autoCapitalize="none"
               />
+            </View>
+
+            <View
+              style={[
+                styles.formField,
+                { marginTop: spacing.md, paddingTop: spacing.md, borderTopWidth: 1, borderTopColor: colors.border }
+              ]}
+            >
+              <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: spacing.xs }}>
+                <AppText variant="captionBold" style={styles.label}>Joint Event</AppText>
+                <Toggle
+                  value={formIsJointEvent}
+                  onValueChange={(next) => {
+                    setFormIsJointEvent(next);
+                    setFormSocietiesError(null);
+                    if (next && hostSocietyId) {
+                      setFormParticipatingSocietyIds((prev) => Array.from(new Set([hostSocietyId, ...prev])));
+                    } else if (!next && hostSocietyId) {
+                      setFormParticipatingSocietyIds([hostSocietyId]);
+                    }
+                  }}
+                />
+              </View>
+              <AppText variant="small" color="tertiary">
+                {formIsJointEvent
+                  ? "Host society must be included. Select at least one more society."
+                  : "This event is hosted by a single society."}
+              </AppText>
+              {formIsJointEvent && (
+                <View style={{ marginTop: spacing.sm }}>
+                  <AppText variant="captionBold" color="secondary" style={{ marginBottom: spacing.xs }}>
+                    Participating Societies
+                  </AppText>
+                  <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+                    {mySocieties.map((s) => {
+                      const isHost = s.societyId === hostSocietyId;
+                      const isSelected = formParticipatingSocietyIds.includes(s.societyId);
+                      return (
+                        <Pressable
+                          key={s.societyId}
+                          onPress={() => {
+                            if (isHost) return;
+                            setFormParticipatingSocietyIds((prev) => {
+                              if (isSelected) return prev.filter((id) => id !== s.societyId);
+                              return Array.from(new Set([hostSocietyId, ...prev, s.societyId].filter(Boolean)));
+                            });
+                            setFormSocietiesError(null);
+                          }}
+                          style={{
+                            paddingHorizontal: 12,
+                            paddingVertical: 8,
+                            borderRadius: radius.md,
+                            backgroundColor: isSelected ? colors.primary : colors.backgroundSecondary,
+                            borderWidth: 1,
+                            borderColor: isSelected ? colors.primary : colors.border,
+                          }}
+                        >
+                          <AppText variant="caption" style={{ color: isSelected ? "#fff" : colors.text }}>
+                            {s.societyName}{isHost ? " (host)" : ""}
+                          </AppText>
+                        </Pressable>
+                      );
+                    })}
+                    {hostSocietyId && !mySocieties.some((s) => s.societyId === hostSocietyId) && (
+                      <View
+                        style={{
+                          paddingHorizontal: 12,
+                          paddingVertical: 8,
+                          borderRadius: radius.md,
+                          backgroundColor: colors.primary,
+                          borderWidth: 1,
+                          borderColor: colors.primary,
+                        }}
+                      >
+                        <AppText variant="caption" style={{ color: "#fff" }}>
+                          {hostSocietyName || "Host Society"} (host)
+                        </AppText>
+                      </View>
+                    )}
+                  </View>
+                  {formSocietiesError ? (
+                    <AppText variant="small" style={{ color: colors.error, marginTop: spacing.xs }}>
+                      {formSocietiesError}
+                    </AppText>
+                  ) : null}
+                </View>
+              )}
             </View>
 
             <View style={styles.formField}>
@@ -995,22 +1148,27 @@ export default function EventDetailScreen() {
       {/* Title */}
       <View style={{ marginBottom: spacing.sm }}>
         <AppText variant="title">{event.name}</AppText>
-        {(event.is_joint_event ?? event.is_multi_society) && (
-          <View style={{ flexDirection: "row", alignItems: "center", marginTop: spacing.xs, gap: spacing.xs, flexWrap: "wrap" }}>
-            <View style={{ backgroundColor: colors.primary + "20", paddingHorizontal: 8, paddingVertical: 4, borderRadius: radius.sm }}>
-              <AppText variant="caption" style={{ color: colors.primary }}>Joint Event</AppText>
+        {eventIsJoint && (
+          <View style={{ marginTop: spacing.xs }}>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.xs, flexWrap: "wrap", marginBottom: 4 }}>
+              <View style={{ backgroundColor: colors.primary + "20", paddingHorizontal: 8, paddingVertical: 4, borderRadius: radius.sm }}>
+                <AppText variant="caption" style={{ color: colors.primary }}>Joint Event</AppText>
+              </View>
+              <AppText variant="small" color="secondary">
+                Host: {hostSocietyName || (hostSocietyId === society?.id ? society?.name : "Host Society")}
+              </AppText>
             </View>
-            {event.participatingSocietyIds && event.participatingSocietyIds.length > 0 && (
+            {displayParticipatingSocietyIds.length > 0 && (
               <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 4, alignItems: "center" }}>
-                {event.participatingSocietyIds.slice(0, 5).map((sid) => (
+                {displayParticipatingSocietyIds.slice(0, 5).map((sid) => (
                   <View key={sid} style={{ backgroundColor: colors.border, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
                     <AppText variant="small" color="tertiary">
-                      {participatingSocietyNames[sid] ?? (society?.id === sid ? society?.name : sid.slice(0, 8))}
+                      {participatingSocietyNames[sid] ?? (hostSocietyId === sid ? hostSocietyName || "Host Society" : sid.slice(0, 8))}
                     </AppText>
                   </View>
                 ))}
-                {event.participatingSocietyIds.length > 5 && (
-                  <AppText variant="small" color="tertiary">+{event.participatingSocietyIds.length - 5} more</AppText>
+                {displayParticipatingSocietyIds.length > 5 && (
+                  <AppText variant="small" color="tertiary">+{displayParticipatingSocietyIds.length - 5} more</AppText>
                 )}
               </View>
             )}

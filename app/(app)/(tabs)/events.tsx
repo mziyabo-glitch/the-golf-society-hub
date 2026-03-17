@@ -326,7 +326,7 @@ export default function EventsScreen() {
     }
 
     if (formIsMultiSociety && formParticipatingSocietyIds.length < 2) {
-      errors.societies = "Multi-society events require at least 2 participating societies.";
+      errors.societies = "Joint events require at least 2 participating societies including host.";
     }
 
     return errors;
@@ -720,7 +720,7 @@ export default function EventsScreen() {
                   ) : null}
                   {mySocieties.length < 2 && !formErrors.societies ? (
                     <AppText variant="small" color="tertiary" style={{ marginTop: spacing.xs }}>
-                      You need to be a member of 2+ societies to create a joint event.
+                      Join at least one more society to create a joint event.
                     </AppText>
                   ) : null}
                 </View>
