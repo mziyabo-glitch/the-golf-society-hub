@@ -99,16 +99,6 @@ export default function EventPlayersScreen() {
 
   const selectedCount = selectedPlayerIds.size;
 
-  // Debug logs (temporary) - run unconditionally after hooks
-  const renderBranch = bootstrapLoading || loading ? "loading" : error ? "error" : !event ? "no-event" : "main";
-  console.log("[players] render", {
-    is_joint_event: event?.is_joint_event,
-    participatingSocietyIds,
-    eligibleMembersCount: allEligibleMembers.length,
-    selectedCount,
-    renderBranch,
-  });
-
   const loadGuests = useCallback(async () => {
     if (!eventId) return [];
     const list = await getEventGuests(eventId);
@@ -312,40 +302,39 @@ export default function EventPlayersScreen() {
     );
   }
 
-  if (bootstrapLoading || loading) {
-    return (
-      <Screen>
-        <LoadingState message="Loading players..." />
-      </Screen>
-    );
-  }
+  // Single return: no early returns to avoid hook-order mismatch (React #310)
+  const showMain = !bootstrapLoading && !loading && !error && !!event;
 
-  if (error) {
-    return (
-      <Screen>
+  // Hard logging before render (temporary)
+  console.log("[players] before-render", {
+    eventId,
+    is_joint_event: event?.is_joint_event,
+    participatingSocietyIds: participatingSocietyIds,
+    event_societies_count: event?.participatingSocietyIds?.length ?? 0,
+    eligibleMembersCount: allEligibleMembers.length,
+    selectedPlayersCount: selectedCount,
+    renderBranch: showMain ? "main" : bootstrapLoading || loading ? "loading" : error ? "error" : "no-event",
+    childComponents: showMain ? "Screen,View,ScrollView,Modal,Pressable,AppCard,AppText,Feather,AppInput,PrimaryButton,SecondaryButton,EmptyState" : "Screen,LoadingState|EmptyState",
+  });
+
+  return (
+    <Screen scrollable={showMain}>
+      {bootstrapLoading || loading ? (
+        <LoadingState message="Loading players..." />
+      ) : error ? (
         <EmptyState
           title="Error"
           message={error}
           action={{ label: "Go Back", onPress: () => router.replace({ pathname: "/event/[id]", params: { id: eventId, refresh: Date.now().toString() } }) }}
         />
-      </Screen>
-    );
-  }
-
-  if (!event) {
-    return (
-      <Screen>
+      ) : !event ? (
         <EmptyState
           title="Not found"
           message="Event not found."
           action={{ label: "Go Back", onPress: () => router.replace({ pathname: "/event/[id]", params: { id: eventId, refresh: Date.now().toString() } }) }}
         />
-      </Screen>
-    );
-  }
-
-  return (
-    <Screen>
+      ) : (
+    <>
       <View style={styles.header}>
         <SecondaryButton onPress={() => goBack(router, "/(app)/(tabs)/events")} size="sm">
           <Feather name="arrow-left" size={16} color={colors.text} />
@@ -648,6 +637,8 @@ export default function EventPlayersScreen() {
           </Pressable>
         </Pressable>
       </Modal>
+    </>
+      )}
     </Screen>
   );
 }
