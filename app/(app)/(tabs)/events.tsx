@@ -646,92 +646,6 @@ export default function EventsScreen() {
               ) : null}
             </View>
 
-            {/* Joint Event toggle - always visible, cross-platform (avoids Switch web zero-size bug) */}
-            <View
-              style={[styles.formField, { marginTop: spacing.md, paddingTop: spacing.md, borderTopWidth: 1, borderTopColor: colors.border }]}
-              accessibilityLabel="Joint Event toggle"
-            >
-              <View style={styles.toggleRow}>
-                <View style={styles.toggleLabelWrap}>
-                  <AppText variant="captionBold" style={styles.label}>Joint Event</AppText>
-                  <AppText variant="small" color="tertiary">
-                    Include players from multiple societies in one event.
-                  </AppText>
-                </View>
-                <Toggle
-                  value={formIsMultiSociety}
-                  onValueChange={(next) => {
-                    setFormIsMultiSociety(next);
-                    if (next && societyId) {
-                      setFormParticipatingSocietyIds([societyId]);
-                    } else {
-                      setFormParticipatingSocietyIds([]);
-                    }
-                    setFormErrors((prev) => ({ ...prev, societies: undefined }));
-                  }}
-                />
-              </View>
-              {formIsMultiSociety ? (
-                <View style={{ marginTop: spacing.sm }}>
-                  <AppText variant="captionBold" color="secondary" style={{ marginBottom: spacing.xs }}>
-                    Participating Societies
-                  </AppText>
-                  <AppText variant="small" color="tertiary" style={{ marginBottom: spacing.xs }}>
-                    Host society is pre-selected. Add more societies:
-                  </AppText>
-                  <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
-                    {mySocieties.map((s) => {
-                      const isHost = s.societyId === societyId;
-                      const isSelected = formParticipatingSocietyIds.includes(s.societyId);
-                      return (
-                        <Pressable
-                          key={s.societyId}
-                          onPress={() => {
-                            if (isHost) return;
-                            const hostId = societyId ?? "";
-                            setFormParticipatingSocietyIds((prev) => {
-                              if (isSelected) {
-                                return prev.filter((id) => id !== s.societyId);
-                              }
-                              return [...new Set([hostId, ...prev, s.societyId])];
-                            });
-                            setFormErrors((prev) => ({ ...prev, societies: undefined }));
-                          }}
-                          style={{
-                            paddingHorizontal: 12,
-                            paddingVertical: 8,
-                            borderRadius: radius.md,
-                            backgroundColor: isSelected ? colors.primary : colors.backgroundSecondary,
-                            borderWidth: 1,
-                            borderColor: isSelected ? colors.primary : colors.border,
-                            opacity: isHost ? 1 : 1,
-                          }}
-                        >
-                          <AppText
-                            variant="caption"
-                            style={{ color: isSelected ? "#fff" : colors.text }}
-                          >
-                            {s.societyName}
-                            {isHost ? " (host)" : ""}
-                          </AppText>
-                        </Pressable>
-                      );
-                    })}
-                  </View>
-                  {formErrors.societies ? (
-                    <AppText variant="small" style={[styles.fieldError, { color: colors.error, marginTop: spacing.xs }]}>
-                      {formErrors.societies}
-                    </AppText>
-                  ) : null}
-                  {mySocieties.length < 2 && !formErrors.societies ? (
-                    <AppText variant="small" color="tertiary" style={{ marginTop: spacing.xs }}>
-                      Join at least one more society to create a joint event.
-                    </AppText>
-                  ) : null}
-                </View>
-              ) : null}
-            </View>
-
             <View style={styles.formField}>
               <AppText variant="captionBold" style={styles.label}>Format</AppText>
               <View style={styles.pickerRow}>
@@ -778,6 +692,102 @@ export default function EventsScreen() {
                   {formErrors.classification}
                 </AppText>
               ) : null}
+            </View>
+
+            {/* DEBUG: joint event controls mounted */}
+            <AppText variant="small" style={{ color: "red", marginBottom: 4 }}>
+              DEBUG: joint event controls mounted
+            </AppText>
+
+            {/* Joint Event toggle */}
+            <View
+              style={[
+                styles.formField,
+                {
+                  paddingTop: spacing.md,
+                  borderTopWidth: 1,
+                  borderTopColor: colors.border,
+                },
+              ]}
+            >
+              <View style={styles.toggleRow}>
+                <View style={styles.toggleLabelWrap}>
+                  <AppText variant="captionBold" style={styles.label}>Joint Event</AppText>
+                  <AppText variant="small" color="tertiary">
+                    Include players from multiple societies in one event.
+                  </AppText>
+                </View>
+                <Toggle
+                  value={formIsMultiSociety}
+                  onValueChange={(next) => {
+                    setFormIsMultiSociety(next);
+                    if (next && societyId) {
+                      setFormParticipatingSocietyIds([societyId]);
+                    } else {
+                      setFormParticipatingSocietyIds([]);
+                    }
+                    setFormErrors((prev) => ({ ...prev, societies: undefined }));
+                  }}
+                />
+              </View>
+              {formIsMultiSociety && (
+                <View style={{ marginTop: spacing.sm }}>
+                  <AppText variant="captionBold" color="secondary" style={{ marginBottom: spacing.xs }}>
+                    Participating Societies
+                  </AppText>
+                  <AppText variant="small" color="tertiary" style={{ marginBottom: spacing.xs }}>
+                    Host society is pre-selected. Add more societies:
+                  </AppText>
+                  <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+                    {mySocieties.map((s) => {
+                      const isHost = s.societyId === societyId;
+                      const isSelected = formParticipatingSocietyIds.includes(s.societyId);
+                      return (
+                        <Pressable
+                          key={s.societyId}
+                          onPress={() => {
+                            if (isHost) return;
+                            const hostId = societyId ?? "";
+                            setFormParticipatingSocietyIds((prev) => {
+                              if (isSelected) {
+                                return prev.filter((id) => id !== s.societyId);
+                              }
+                              return [...new Set([hostId, ...prev, s.societyId])];
+                            });
+                            setFormErrors((prev) => ({ ...prev, societies: undefined }));
+                          }}
+                          style={{
+                            paddingHorizontal: 12,
+                            paddingVertical: 8,
+                            borderRadius: radius.md,
+                            backgroundColor: isSelected ? colors.primary : colors.backgroundSecondary,
+                            borderWidth: 1,
+                            borderColor: isSelected ? colors.primary : colors.border,
+                          }}
+                        >
+                          <AppText
+                            variant="caption"
+                            style={{ color: isSelected ? "#fff" : colors.text }}
+                          >
+                            {s.societyName}
+                            {isHost ? " (host)" : ""}
+                          </AppText>
+                        </Pressable>
+                      );
+                    })}
+                  </View>
+                  {formErrors.societies && (
+                    <AppText variant="small" style={[styles.fieldError, { color: colors.error, marginTop: spacing.xs }]}>
+                      {formErrors.societies}
+                    </AppText>
+                  )}
+                  {mySocieties.length < 2 && !formErrors.societies && (
+                    <AppText variant="small" color="tertiary" style={{ marginTop: spacing.xs }}>
+                      Join at least one more society to create a joint event.
+                    </AppText>
+                  )}
+                </View>
+              )}
             </View>
 
             {/* Separate mode with only one tee: show non-blocking warning */}
