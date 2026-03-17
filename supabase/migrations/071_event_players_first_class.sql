@@ -4,7 +4,20 @@
 -- Joint = 1 event + multiple event_societies rows.
 -- Players always in event_players (members + guests).
 
--- 1. Create event_players table
+-- 0. Add society_id if table exists from 071_event_players (which has representing_society_id only)
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'event_players')
+     AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'event_players' AND column_name = 'society_id') THEN
+    ALTER TABLE public.event_players ADD COLUMN society_id uuid REFERENCES public.societies(id) ON DELETE CASCADE;
+    UPDATE public.event_players ep SET society_id = m.society_id FROM public.members m WHERE ep.member_id = m.id AND ep.society_id IS NULL;
+    UPDATE public.event_players ep SET society_id = eg.society_id FROM public.event_guests eg WHERE ep.event_guest_id = eg.id AND ep.society_id IS NULL;
+    UPDATE public.event_players ep SET society_id = COALESCE(ep.representing_society_id, e.society_id) FROM public.events e WHERE ep.event_id = e.id AND ep.society_id IS NULL;
+    ALTER TABLE public.event_players ALTER COLUMN society_id SET NOT NULL;
+  END IF;
+END $$;
+
+-- 1. Create event_players table (if not exists)
 CREATE TABLE IF NOT EXISTS public.event_players (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   event_id uuid NOT NULL REFERENCES public.events(id) ON DELETE CASCADE,
