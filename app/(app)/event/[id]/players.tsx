@@ -363,6 +363,7 @@ export default function EventPlayersScreen() {
     "filteredMembers.length": filteredMembers.length,
     "selectedPlayers.length": selectedCount,
   });
+  console.log("PLAYERS_FIX_BUILD_01", { hookFixLive: true });
 
   // ---- Early returns ----
 
@@ -487,6 +488,12 @@ export default function EventPlayersScreen() {
         </View>
         <View style={styles.titleRow}>
           <View style={{ flex: 1 }}>
+            <AppText
+              variant="captionBold"
+              style={{ color: colors.primary, marginBottom: spacing.xs }}
+            >
+              PLAYERS_FIX_BUILD_01
+            </AppText>
             <AppText variant="h2">Players</AppText>
             <AppText variant="caption" color="secondary">
               {selectedCount} members selected · {guests.length} guest{guests.length !== 1 ? "s" : ""}
