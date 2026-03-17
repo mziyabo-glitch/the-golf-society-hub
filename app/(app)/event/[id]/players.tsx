@@ -33,55 +33,74 @@ import { getSocietyDoc } from "@/lib/db_supabase/societyRepo";
 import { getColors, spacing, radius, typography } from "@/lib/ui/theme";
 
 export default function EventPlayersScreen() {
+  // =========================================================================
+  // HOOKS — ALL declared unconditionally before any return (React Rules of Hooks)
+  // This single block must never be split by an if/return.
+  // =========================================================================
+
   const router = useRouter();
   const params = useLocalSearchParams<{ id: string }>();
   const { societyId, member, loading: bootstrapLoading } = useBootstrap();
   const colors = getColors();
 
+  // Stable event ID regardless of whether params.id is a string or array
   const eventId = useMemo(() => {
     const raw = (params as any)?.id;
     return Array.isArray(raw) ? raw[0] : raw;
   }, [params]);
 
+  // Core entity state
   const [event, setEvent] = useState<EventDoc | null>(null);
   const [members, setMembers] = useState<MemberDoc[]>([]);
   const [guests, setGuests] = useState<EventGuest[]>([]);
   const [selectedPlayerIds, setSelectedPlayerIds] = useState<Set<string>>(new Set());
+
+  // Loading / error state
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Add guest modal
+  // Add-guest modal state
   const [showAddGuest, setShowAddGuest] = useState(false);
   const [guestName, setGuestName] = useState("");
   const [guestSex, setGuestSex] = useState<"male" | "female">("male");
   const [guestHandicap, setGuestHandicap] = useState("");
   const [addingGuest, setAddingGuest] = useState(false);
+
+  // Multi-society UI state
   const [societyFilter, setSocietyFilter] = useState<string>("all");
   const [societyNames, setSocietyNames] = useState<Record<string, string>>({});
+  const [guestSocietyId, setGuestSocietyId] = useState<string>("");
+
+  // Change-society modal state
   const [showChangeSociety, setShowChangeSociety] = useState(false);
   const [changeSocietyMember, setChangeSocietyMember] = useState<MemberDoc | null>(null);
   const [alternateMembers, setAlternateMembers] = useState<MemberDoc[]>([]);
-  const [guestSocietyId, setGuestSocietyId] = useState<string>("");
 
-  const permissions = getPermissionsForMember(member as any);
+  // ---- Derived / memoised values — ALWAYS computed, never conditional ----
 
-  // --- UNIFIED HOOKS: always run before any returns to avoid React #310 (hooks order) ---
-  const participatingSocietyIds = useMemo(() => {
+  // Whether this is a joint/multi-society event
+  const isJointEvent = useMemo(
+    () => Boolean(event?.is_joint_event ?? event?.is_multi_society),
+    [event],
+  );
+
+  // IDs of all participating societies (empty array for single-society events)
+  const participatingSocietyIds = useMemo<string[]>(() => {
     if (!event) return [];
-    const isJoint = Boolean(event?.is_joint_event ?? event?.is_multi_society);
-    const ids = event?.participatingSocietyIds;
-    return isJoint && ids?.length ? ids : [];
-  }, [event]);
+    const ids = event.participatingSocietyIds;
+    return isJointEvent && Array.isArray(ids) && ids.length > 0 ? ids : [];
+  }, [event, isJointEvent]);
 
-  const allEligibleMembers = members; // already loaded; no extra derivation
-
-  const filteredMembers = useMemo(() => {
+  // Members visible after applying the society filter pill
+  const filteredMembers = useMemo<MemberDoc[]>(() => {
     if (societyFilter === "all") return members;
     return members.filter((m) => m.society_id === societyFilter);
   }, [members, societyFilter]);
 
-  const membersWithAlternates = useMemo(() => {
+  // Set of member IDs that have entries in multiple participating societies
+  // (used to show the "Change" button for dual-membership players)
+  const membersWithAlternates = useMemo<Set<string>>(() => {
     if (!event || participatingSocietyIds.length < 2) return new Set<string>();
     const byUser = new Map<string, MemberDoc[]>();
     for (const m of members) {
@@ -97,8 +116,12 @@ export default function EventPlayersScreen() {
     return hasAlternates;
   }, [members, event, participatingSocietyIds.length]);
 
+  // Convenient aliases (non-hook)
+  const permissions = getPermissionsForMember(member as any);
+  const allEligibleMembers = members;
   const selectedCount = selectedPlayerIds.size;
 
+  // Load guests on demand (used after add / delete)
   const loadGuests = useCallback(async () => {
     if (!eventId) return [];
     const list = await getEventGuests(eventId);
@@ -106,6 +129,7 @@ export default function EventPlayersScreen() {
     return list;
   }, [eventId]);
 
+  // Main data-load effect (runs when bootstrap finishes or eventId changes)
   useEffect(() => {
     let cancelled = false;
 
@@ -128,22 +152,26 @@ export default function EventPlayersScreen() {
       setError(null);
 
       try {
-        console.log("[players] loading event + members + guests", { eventId, societyId });
+        console.log("[EventPlayersScreen] loading event + members + guests", { eventId, societyId });
 
         const evt = await getEvent(eventId);
         if (cancelled) return;
 
-        const societyIds = (evt?.is_joint_event ?? evt?.is_multi_society) && evt?.participatingSocietyIds?.length
-          ? evt.participatingSocietyIds
-          : [evt?.society_id ?? societyId].filter(Boolean);
-        const mems = societyIds.length > 0
-          ? await getMembersBySocietyIds(societyIds)
-          : await getMembersBySocietyId(societyId);
+        const societyIds =
+          (evt?.is_joint_event ?? evt?.is_multi_society) && evt?.participatingSocietyIds?.length
+            ? evt.participatingSocietyIds
+            : [evt?.society_id ?? societyId].filter(Boolean);
+
+        const mems =
+          societyIds.length > 0
+            ? await getMembersBySocietyIds(societyIds)
+            : await getMembersBySocietyId(societyId);
+
         const guestList = await getEventGuests(eventId);
 
         if (cancelled) return;
 
-        console.log("[players] loaded event:", {
+        console.log("[EventPlayersScreen] loaded event:", {
           id: evt?.id,
           playerIds: evt?.playerIds,
           guests: guestList.length,
@@ -156,20 +184,21 @@ export default function EventPlayersScreen() {
 
         if ((evt?.is_joint_event ?? evt?.is_multi_society) && societyIds.length > 0) {
           const names: Record<string, string> = {};
-          await Promise.all(societyIds.map(async (sid) => {
-            const s = await getSocietyDoc(sid);
-            if (s) names[sid] = s.name ?? "Society";
-          }));
+          await Promise.all(
+            societyIds.map(async (sid) => {
+              const s = await getSocietyDoc(sid);
+              if (s) names[sid] = s.name ?? "Society";
+            }),
+          );
           setSocietyNames(names);
           setGuestSocietyId(evt.society_id ?? societyIds[0]);
         }
 
-        // Use playerIds (camelCase) as returned by mapEvent
         const existing = evt?.playerIds ?? [];
-        console.log("[players] initializing selection from:", existing);
+        console.log("[EventPlayersScreen] initializing selection from:", existing);
         setSelectedPlayerIds(new Set(existing.map(String)));
       } catch (e: any) {
-        console.error("[players] load FAILED", e);
+        console.error("[EventPlayersScreen] load FAILED", e);
         if (!cancelled) {
           setError(e?.message ?? "Failed to load players");
         }
@@ -184,10 +213,78 @@ export default function EventPlayersScreen() {
     };
   }, [bootstrapLoading, societyId, eventId]);
 
+  // =========================================================================
+  // END OF HOOKS — No hooks may appear below this line.
+  // =========================================================================
+
+  // Temporary diagnostic logs (remove after the crash is confirmed fixed)
+  console.log("[EventPlayersScreen] render →", {
+    component: "EventPlayersScreen",
+    "event?.id": event?.id ?? null,
+    isJointEvent,
+    participatingSocietyIds,
+    "eligibleMembers.length": allEligibleMembers.length,
+    "selectedPlayers.length": selectedCount,
+  });
+
+  // ----- Early returns (all hooks already called above) -----
+
+  if (bootstrapLoading || loading) {
+    return (
+      <Screen>
+        <LoadingState message="Loading players..." />
+      </Screen>
+    );
+  }
+
+  if (error) {
+    return (
+      <Screen>
+        <EmptyState
+          title="Error"
+          message={error}
+          action={{
+            label: "Go Back",
+            onPress: () =>
+              router.replace({
+                pathname: "/event/[id]",
+                params: { id: eventId, refresh: Date.now().toString() },
+              }),
+          }}
+        />
+      </Screen>
+    );
+  }
+
+  if (!event) {
+    return (
+      <Screen>
+        <EmptyState
+          title="Not found"
+          message="Event not found."
+          action={{
+            label: "Go Back",
+            onPress: () =>
+              router.replace({
+                pathname: "/event/[id]",
+                params: { id: eventId, refresh: Date.now().toString() },
+              }),
+          }}
+        />
+      </Screen>
+    );
+  }
+
+  // ----- Non-hook helpers used in the main render -----
+
   function togglePlayer(id: string) {
     setSelectedPlayerIds((prev) => {
       const next = new Set(prev);
-      if (next.has(id)) { next.delete(id); } else { next.add(id); }
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
       return next;
     });
   }
@@ -218,29 +315,17 @@ export default function EventPlayersScreen() {
   async function save() {
     try {
       setSaving(true);
-
       const ids = Array.from(selectedPlayerIds);
-      console.log("[players] saving", {
-        eventId: event?.id,
-        societyId,
-        playerIds: ids,
-      });
-
+      console.log("[EventPlayersScreen] saving", { eventId: event?.id, societyId, playerIds: ids });
       await updateEvent(event!.id, { playerIds: ids });
-
-      console.log("[players] save OK, refetching to confirm...");
-
-      // Refetch to confirm persistence
+      console.log("[EventPlayersScreen] save OK, refetching to confirm…");
       const refreshed = await getEvent(event!.id);
       if (refreshed) {
-        const reloaded = refreshed.playerIds ?? [];
-        console.log("[players] confirmed playerIds:", reloaded);
+        console.log("[EventPlayersScreen] confirmed playerIds:", refreshed.playerIds ?? []);
       }
-
-      // Navigate back - Event Detail will refetch via useFocusEffect
       goBack(router, "/(app)/(tabs)/events");
     } catch (e: any) {
-      console.error("[players] save FAILED", e);
+      console.error("[EventPlayersScreen] save FAILED", e);
       Alert.alert("Save failed", e?.message ?? JSON.stringify(e));
     } finally {
       setSaving(false);
@@ -253,9 +338,10 @@ export default function EventPlayersScreen() {
       Alert.alert("Name required", "Please enter the guest's name.");
       return;
     }
-    const repSocietyId = (event?.is_joint_event ?? event?.is_multi_society) && participatingSocietyIds.length
-      ? (guestSocietyId || participatingSocietyIds[0])
-      : societyId;
+    const repSocietyId =
+      isJointEvent && participatingSocietyIds.length
+        ? guestSocietyId || participatingSocietyIds[0]
+        : societyId;
     if (!event?.id || !repSocietyId) return;
 
     setAddingGuest(true);
@@ -281,60 +367,27 @@ export default function EventPlayersScreen() {
   }
 
   async function handleDeleteGuest(g: EventGuest) {
-    Alert.alert(
-      "Remove Guest",
-      `Remove ${g.name} from this event?`,
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Remove",
-          style: "destructive",
-          onPress: async () => {
-            try {
-              await deleteEventGuest(g.id);
-              await loadGuests();
-            } catch (e: any) {
-              Alert.alert("Failed", e?.message ?? "Could not remove guest.");
-            }
-          },
+    Alert.alert("Remove Guest", `Remove ${g.name} from this event?`, [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Remove",
+        style: "destructive",
+        onPress: async () => {
+          try {
+            await deleteEventGuest(g.id);
+            await loadGuests();
+          } catch (e: any) {
+            Alert.alert("Failed", e?.message ?? "Could not remove guest.");
+          }
         },
-      ]
-    );
+      },
+    ]);
   }
 
-  // Single return: no early returns to avoid hook-order mismatch (React #310)
-  const showMain = !bootstrapLoading && !loading && !error && !!event;
-
-  // Hard logging before render (temporary)
-  console.log("[players] before-render", {
-    eventId,
-    is_joint_event: event?.is_joint_event,
-    participatingSocietyIds: participatingSocietyIds,
-    event_societies_count: event?.participatingSocietyIds?.length ?? 0,
-    eligibleMembersCount: allEligibleMembers.length,
-    selectedPlayersCount: selectedCount,
-    renderBranch: showMain ? "main" : bootstrapLoading || loading ? "loading" : error ? "error" : "no-event",
-    childComponents: showMain ? "Screen,View,ScrollView,Modal,Pressable,AppCard,AppText,Feather,AppInput,PrimaryButton,SecondaryButton,EmptyState" : "Screen,LoadingState|EmptyState",
-  });
+  // ----- Main render — event is guaranteed non-null here -----
 
   return (
-    <Screen scrollable={showMain}>
-      {bootstrapLoading || loading ? (
-        <LoadingState message="Loading players..." />
-      ) : error ? (
-        <EmptyState
-          title="Error"
-          message={error}
-          action={{ label: "Go Back", onPress: () => router.replace({ pathname: "/event/[id]", params: { id: eventId, refresh: Date.now().toString() } }) }}
-        />
-      ) : !event ? (
-        <EmptyState
-          title="Not found"
-          message="Event not found."
-          action={{ label: "Go Back", onPress: () => router.replace({ pathname: "/event/[id]", params: { id: eventId, refresh: Date.now().toString() } }) }}
-        />
-      ) : (
-    <>
+    <Screen>
       <View style={styles.header}>
         <SecondaryButton onPress={() => goBack(router, "/(app)/(tabs)/events")} size="sm">
           <Feather name="arrow-left" size={16} color={colors.text} />
@@ -362,7 +415,7 @@ export default function EventPlayersScreen() {
       </View>
 
       <ScrollView contentContainerStyle={{ paddingBottom: spacing.xl }}>
-        {/* Society filter (multi-society only) */}
+        {/* Society filter tabs — shown only for joint events with 2+ societies */}
         {participatingSocietyIds.length > 1 && (
           <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: spacing.md }}>
             <Pressable
@@ -371,10 +424,14 @@ export default function EventPlayersScreen() {
                 paddingHorizontal: 12,
                 paddingVertical: 8,
                 borderRadius: radius.md,
-                backgroundColor: societyFilter === "all" ? colors.primary : colors.backgroundSecondary,
+                backgroundColor:
+                  societyFilter === "all" ? colors.primary : colors.backgroundSecondary,
               }}
             >
-              <AppText variant="caption" style={{ color: societyFilter === "all" ? "#fff" : colors.text }}>
+              <AppText
+                variant="caption"
+                style={{ color: societyFilter === "all" ? "#fff" : colors.text }}
+              >
                 All societies
               </AppText>
             </Pressable>
@@ -386,10 +443,14 @@ export default function EventPlayersScreen() {
                   paddingHorizontal: 12,
                   paddingVertical: 8,
                   borderRadius: radius.md,
-                  backgroundColor: societyFilter === sid ? colors.primary : colors.backgroundSecondary,
+                  backgroundColor:
+                    societyFilter === sid ? colors.primary : colors.backgroundSecondary,
                 }}
               >
-                <AppText variant="caption" style={{ color: societyFilter === sid ? "#fff" : colors.text }}>
+                <AppText
+                  variant="caption"
+                  style={{ color: societyFilter === sid ? "#fff" : colors.text }}
+                >
                   {societyNames[sid] ?? "Society"}
                 </AppText>
               </Pressable>
@@ -397,7 +458,7 @@ export default function EventPlayersScreen() {
           </View>
         )}
 
-        {/* Members */}
+        {/* Members list */}
         <AppText variant="captionBold" color="secondary" style={{ marginBottom: spacing.sm }}>
           Society Members
         </AppText>
@@ -405,7 +466,14 @@ export default function EventPlayersScreen() {
           <EmptyState
             title="No members"
             message="Add members first, then you can select players."
-            action={{ label: "Go Back", onPress: () => router.replace({ pathname: "/event/[id]", params: { id: eventId, refresh: Date.now().toString() } }) }}
+            action={{
+              label: "Go Back",
+              onPress: () =>
+                router.replace({
+                  pathname: "/event/[id]",
+                  params: { id: eventId, refresh: Date.now().toString() },
+                }),
+            }}
           />
         ) : (
           <View style={{ gap: spacing.md, marginBottom: spacing.xl }}>
@@ -413,19 +481,34 @@ export default function EventPlayersScreen() {
               const id = String(m.id);
               const selected = selectedPlayerIds.has(id);
               const handicap = m.handicapIndex ?? (m as any).handicap_index;
-
               const hasAlternates = membersWithAlternates.has(id);
 
               return (
                 <Pressable key={id} onPress={() => togglePlayer(id)}>
-                  <AppCard style={selected ? { ...styles.row, ...styles.rowSelected } : styles.row}>
+                  <AppCard
+                    style={selected ? { ...styles.row, ...styles.rowSelected } : styles.row}
+                  >
                     <View style={{ flex: 1 }}>
-                      <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                      <View
+                        style={{
+                          flexDirection: "row",
+                          alignItems: "center",
+                          gap: 6,
+                          flexWrap: "wrap",
+                        }}
+                      >
                         <AppText style={styles.name}>
                           {m.name || m.displayName || "Member"}
                         </AppText>
-                        {(event?.is_joint_event ?? event?.is_multi_society) && m.society_id && societyNames[m.society_id] && (
-                          <View style={{ backgroundColor: colors.primary + "20", paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
+                        {isJointEvent && m.society_id && societyNames[m.society_id] && (
+                          <View
+                            style={{
+                              backgroundColor: colors.primary + "20",
+                              paddingHorizontal: 6,
+                              paddingVertical: 2,
+                              borderRadius: 4,
+                            }}
+                          >
                             <AppText variant="small" style={{ color: colors.primary }}>
                               {societyNames[m.society_id]}
                             </AppText>
@@ -434,20 +517,23 @@ export default function EventPlayersScreen() {
                       </View>
 
                       {handicap != null && (
-                        <AppText style={styles.subtle}>
-                          HCP: {handicap}
-                        </AppText>
+                        <AppText style={styles.subtle}>HCP: {handicap}</AppText>
                       )}
                     </View>
 
                     <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-                      {selected && hasAlternates && !event?.isCompleted && (event?.is_joint_event ?? event?.is_multi_society) && (
+                      {selected && hasAlternates && !event?.isCompleted && isJointEvent && (
                         <Pressable
-                          onPress={(e) => { e.stopPropagation(); openChangeSociety(m); }}
+                          onPress={(e) => {
+                            e.stopPropagation();
+                            openChangeSociety(m);
+                          }}
                           hitSlop={8}
                           style={{ padding: 4 }}
                         >
-                          <AppText variant="small" style={{ color: colors.primary }}>Change</AppText>
+                          <AppText variant="small" style={{ color: colors.primary }}>
+                            Change
+                          </AppText>
                         </Pressable>
                       )}
                       <Feather
@@ -463,7 +549,7 @@ export default function EventPlayersScreen() {
           </View>
         )}
 
-        {/* Guest Players */}
+        {/* Guest players */}
         <AppText variant="captionBold" color="secondary" style={{ marginBottom: spacing.sm }}>
           Guest Players
         </AppText>
@@ -489,10 +575,24 @@ export default function EventPlayersScreen() {
             {guests.map((g) => (
               <AppCard key={g.id} style={styles.row}>
                 <View style={{ flex: 1 }}>
-                  <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                  <View
+                    style={{
+                      flexDirection: "row",
+                      alignItems: "center",
+                      gap: 6,
+                      flexWrap: "wrap",
+                    }}
+                  >
                     <AppText style={styles.name}>{g.name}</AppText>
-                    {(event?.is_joint_event ?? event?.is_multi_society) && g.society_id && societyNames[g.society_id] && (
-                      <View style={{ backgroundColor: colors.primary + "20", paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
+                    {isJointEvent && g.society_id && societyNames[g.society_id] && (
+                      <View
+                        style={{
+                          backgroundColor: colors.primary + "20",
+                          paddingHorizontal: 6,
+                          paddingVertical: 2,
+                          borderRadius: 4,
+                        }}
+                      >
                         <AppText variant="small" style={{ color: colors.primary }}>
                           {societyNames[g.society_id]}
                         </AppText>
@@ -521,11 +621,20 @@ export default function EventPlayersScreen() {
           style={styles.modalOverlay}
           onPress={() => !addingGuest && setShowAddGuest(false)}
         >
-          <Pressable style={[styles.modalContent, { backgroundColor: colors.surface }]} onPress={(e) => e.stopPropagation()}>
-            <AppText variant="h2" style={{ marginBottom: spacing.md }}>Add Guest</AppText>
-            {(event?.is_joint_event ?? event?.is_multi_society) && participatingSocietyIds.length > 1 && (
+          <Pressable
+            style={[styles.modalContent, { backgroundColor: colors.surface }]}
+            onPress={(e) => e.stopPropagation()}
+          >
+            <AppText variant="h2" style={{ marginBottom: spacing.md }}>
+              Add Guest
+            </AppText>
+
+            {/* Representing society selector (joint events only) */}
+            {isJointEvent && participatingSocietyIds.length > 1 && (
               <View style={styles.formField}>
-                <AppText variant="caption" style={styles.label}>Representing society</AppText>
+                <AppText variant="caption" style={styles.label}>
+                  Representing society
+                </AppText>
                 <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
                   {participatingSocietyIds.map((sid) => (
                     <Pressable
@@ -535,10 +644,14 @@ export default function EventPlayersScreen() {
                         paddingHorizontal: 12,
                         paddingVertical: 8,
                         borderRadius: radius.md,
-                        backgroundColor: guestSocietyId === sid ? colors.primary : colors.backgroundSecondary,
+                        backgroundColor:
+                          guestSocietyId === sid ? colors.primary : colors.backgroundSecondary,
                       }}
                     >
-                      <AppText variant="caption" style={{ color: guestSocietyId === sid ? "#fff" : colors.text }}>
+                      <AppText
+                        variant="caption"
+                        style={{ color: guestSocietyId === sid ? "#fff" : colors.text }}
+                      >
                         {societyNames[sid] ?? "Society"}
                       </AppText>
                     </Pressable>
@@ -546,8 +659,11 @@ export default function EventPlayersScreen() {
                 </View>
               </View>
             )}
+
             <View style={styles.formField}>
-              <AppText variant="caption" style={styles.label}>Name</AppText>
+              <AppText variant="caption" style={styles.label}>
+                Name
+              </AppText>
               <AppInput
                 placeholder="Guest name"
                 value={guestName}
@@ -555,8 +671,11 @@ export default function EventPlayersScreen() {
                 autoCapitalize="words"
               />
             </View>
+
             <View style={styles.formField}>
-              <AppText variant="caption" style={styles.label}>Sex</AppText>
+              <AppText variant="caption" style={styles.label}>
+                Sex
+              </AppText>
               <View style={styles.sexRow}>
                 <Pressable
                   onPress={() => setGuestSex("male")}
@@ -566,7 +685,11 @@ export default function EventPlayersScreen() {
                     guestSex === "male" && { backgroundColor: colors.primary + "14" },
                   ]}
                 >
-                  <AppText style={guestSex === "male" ? { color: colors.primary, fontWeight: "600" } : {}}>Male</AppText>
+                  <AppText
+                    style={guestSex === "male" ? { color: colors.primary, fontWeight: "600" } : {}}
+                  >
+                    Male
+                  </AppText>
                 </Pressable>
                 <Pressable
                   onPress={() => setGuestSex("female")}
@@ -576,12 +699,21 @@ export default function EventPlayersScreen() {
                     guestSex === "female" && { backgroundColor: colors.primary + "14" },
                   ]}
                 >
-                  <AppText style={guestSex === "female" ? { color: colors.primary, fontWeight: "600" } : {}}>Female</AppText>
+                  <AppText
+                    style={
+                      guestSex === "female" ? { color: colors.primary, fontWeight: "600" } : {}
+                    }
+                  >
+                    Female
+                  </AppText>
                 </Pressable>
               </View>
             </View>
+
             <View style={styles.formField}>
-              <AppText variant="caption" style={styles.label}>Handicap Index</AppText>
+              <AppText variant="caption" style={styles.label}>
+                Handicap Index
+              </AppText>
               <AppInput
                 placeholder="e.g. 18.5"
                 value={guestHandicap}
@@ -589,8 +721,13 @@ export default function EventPlayersScreen() {
                 keyboardType="decimal-pad"
               />
             </View>
+
             <View style={{ flexDirection: "row", gap: spacing.sm, marginTop: spacing.md }}>
-              <SecondaryButton onPress={() => setShowAddGuest(false)} disabled={addingGuest} style={{ flex: 1 }}>
+              <SecondaryButton
+                onPress={() => setShowAddGuest(false)}
+                disabled={addingGuest}
+                style={{ flex: 1 }}
+              >
                 Cancel
               </SecondaryButton>
               <PrimaryButton onPress={handleAddGuest} loading={addingGuest} style={{ flex: 1 }}>
@@ -607,11 +744,17 @@ export default function EventPlayersScreen() {
           style={styles.modalOverlay}
           onPress={() => setShowChangeSociety(false)}
         >
-          <Pressable style={[styles.modalContent, { backgroundColor: colors.surface }]} onPress={(e) => e.stopPropagation()}>
-            <AppText variant="h2" style={{ marginBottom: spacing.md }}>Change representing society</AppText>
+          <Pressable
+            style={[styles.modalContent, { backgroundColor: colors.surface }]}
+            onPress={(e) => e.stopPropagation()}
+          >
+            <AppText variant="h2" style={{ marginBottom: spacing.md }}>
+              Change representing society
+            </AppText>
             {changeSocietyMember && (
               <AppText variant="body" color="secondary" style={{ marginBottom: spacing.md }}>
-                {changeSocietyMember.name || changeSocietyMember.displayName} is in multiple societies. Choose which they represent for this event:
+                {changeSocietyMember.name || changeSocietyMember.displayName} is in multiple
+                societies. Choose which they represent for this event:
               </AppText>
             )}
             <View style={{ gap: spacing.sm }}>
@@ -631,14 +774,19 @@ export default function EventPlayersScreen() {
                 </Pressable>
               ))}
             </View>
-            <SecondaryButton onPress={() => { setShowChangeSociety(false); setChangeSocietyMember(null); setAlternateMembers([]); }} style={{ marginTop: spacing.md }}>
+            <SecondaryButton
+              onPress={() => {
+                setShowChangeSociety(false);
+                setChangeSocietyMember(null);
+                setAlternateMembers([]);
+              }}
+              style={{ marginTop: spacing.md }}
+            >
               Cancel
             </SecondaryButton>
           </Pressable>
         </Pressable>
       </Modal>
-    </>
-      )}
     </Screen>
   );
 }
