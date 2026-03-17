@@ -596,6 +596,11 @@ export default function EventsScreen() {
           contentContainerStyle={{ paddingBottom: tabBarHeight + 24 }}
         >
           <AppCard>
+            {/* Proof marker: identifies which file renders this form */}
+            <AppText style={{ color: "red", fontSize: 14, fontWeight: "bold", marginBottom: 8 }}>
+              CREATE FORM SOURCE: app/(app)/(tabs)/events.tsx
+            </AppText>
+
             {validationNotice ? (
               <InlineNotice variant="error" message={validationNotice} style={{ marginBottom: spacing.sm }} />
             ) : null}
@@ -694,9 +699,9 @@ export default function EventsScreen() {
               ) : null}
             </View>
 
-            {/* DEBUG: joint event controls mounted */}
-            <AppText variant="small" style={{ color: "red", marginBottom: 4 }}>
-              DEBUG: joint event controls mounted
+            {/* Proof marker: visible under Classification */}
+            <AppText style={{ color: "red", fontSize: 20, fontWeight: "bold", marginBottom: 8, marginTop: 8 }}>
+              JOINT EVENT DEBUG MARKER
             </AppText>
 
             {/* Joint Event toggle */}
