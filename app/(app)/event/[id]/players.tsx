@@ -66,6 +66,49 @@ export default function EventPlayersScreen() {
 
   const permissions = getPermissionsForMember(member as any);
 
+  // --- UNIFIED HOOKS: always run before any returns to avoid React #310 (hooks order) ---
+  const participatingSocietyIds = useMemo(() => {
+    if (!event) return [];
+    const isJoint = Boolean(event?.is_joint_event ?? event?.is_multi_society);
+    const ids = event?.participatingSocietyIds;
+    return isJoint && ids?.length ? ids : [];
+  }, [event]);
+
+  const allEligibleMembers = members; // already loaded; no extra derivation
+
+  const filteredMembers = useMemo(() => {
+    if (societyFilter === "all") return members;
+    return members.filter((m) => m.society_id === societyFilter);
+  }, [members, societyFilter]);
+
+  const membersWithAlternates = useMemo(() => {
+    if (!event || participatingSocietyIds.length < 2) return new Set<string>();
+    const byUser = new Map<string, MemberDoc[]>();
+    for (const m of members) {
+      if (!m.user_id) continue;
+      const list = byUser.get(m.user_id) ?? [];
+      list.push(m);
+      byUser.set(m.user_id, list);
+    }
+    const hasAlternates = new Set<string>();
+    for (const [, list] of byUser) {
+      if (list.length > 1) for (const m of list) hasAlternates.add(m.id);
+    }
+    return hasAlternates;
+  }, [members, event, participatingSocietyIds.length]);
+
+  const selectedCount = selectedPlayerIds.size;
+
+  // Debug logs (temporary) - run unconditionally after hooks
+  const renderBranch = bootstrapLoading || loading ? "loading" : error ? "error" : !event ? "no-event" : "main";
+  console.log("[players] render", {
+    is_joint_event: event?.is_joint_event,
+    participatingSocietyIds,
+    eligibleMembersCount: allEligibleMembers.length,
+    selectedCount,
+    renderBranch,
+  });
+
   const loadGuests = useCallback(async () => {
     if (!eventId) return [];
     const list = await getEventGuests(eventId);
@@ -220,7 +263,7 @@ export default function EventPlayersScreen() {
       Alert.alert("Name required", "Please enter the guest's name.");
       return;
     }
-    const repSocietyId = event?.is_multi_society && participatingSocietyIds.length
+    const repSocietyId = (event?.is_joint_event ?? event?.is_multi_society) && participatingSocietyIds.length
       ? (guestSocietyId || participatingSocietyIds[0])
       : societyId;
     if (!event?.id || !repSocietyId) return;
@@ -300,31 +343,6 @@ export default function EventPlayersScreen() {
       </Screen>
     );
   }
-
-  const selectedCount = selectedPlayerIds.size;
-  const participatingSocietyIds = (event?.is_joint_event ?? event?.is_multi_society) && event?.participatingSocietyIds?.length
-    ? event.participatingSocietyIds
-    : [];
-  const filteredMembers = useMemo(() => {
-    if (societyFilter === "all") return members;
-    return members.filter((m) => m.society_id === societyFilter);
-  }, [members, societyFilter]);
-
-  const membersWithAlternates = useMemo(() => {
-    if (!(event?.is_joint_event ?? event?.is_multi_society) || participatingSocietyIds.length < 2) return new Set<string>();
-    const byUser = new Map<string, MemberDoc[]>();
-    for (const m of members) {
-      if (!m.user_id) continue;
-      const list = byUser.get(m.user_id) ?? [];
-      list.push(m);
-      byUser.set(m.user_id, list);
-    }
-    const hasAlternates = new Set<string>();
-    for (const [, list] of byUser) {
-      if (list.length > 1) for (const m of list) hasAlternates.add(m.id);
-    }
-    return hasAlternates;
-  }, [members, event?.is_joint_event, event?.is_multi_society, participatingSocietyIds.length]);
 
   return (
     <Screen>
