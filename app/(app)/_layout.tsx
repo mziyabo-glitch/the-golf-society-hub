@@ -8,34 +8,27 @@ import { getColors, spacing } from "@/lib/ui/theme";
 export default function AppLayout() {
   console.log("APP_LAYOUT_TOP");
   const { loading, isMember, redirecting } = useSocietyMembershipGuard();
+  console.log("APP_LAYOUT_AFTER_HOOK_1");
   const colors = getColors();
-
-  // Track whether the Stack has been rendered at least once.
-  // Once rendered, keep it mounted even during bootstrap refreshes
-  // so that navigation state (e.g. Billing screen) is preserved.
   const hasRenderedStack = useRef(false);
   if (isMember || !loading) hasRenderedStack.current = true;
+  const showOverlay = (loading && !hasRenderedStack.current) || redirecting;
+  console.log("APP_LAYOUT_AFTER_HOOK_2");
 
-  // First-time bootstrap: show spinner until we know state.
-  if (loading && !hasRenderedStack.current) {
-    return (
-      <View style={[styles.center, { backgroundColor: colors.background }]}>
-        <LoadingState message="Loading..." />
-      </View>
-    );
-  }
-
-  // Guard is actively clearing a stale pointer.
-  if (redirecting) {
-    return (
-      <View style={[styles.center, { backgroundColor: colors.background }]}>
-        <LoadingState message="Loading..." />
-      </View>
-    );
-  }
-
-  // Render Stack for both Personal Mode (no society) and Society Mode.
-  return <Stack screenOptions={{ headerShown: false }} />;
+  // FIX React #310: Always render the Stack so expo-router can match child routes.
+  // Overlay loading/redirecting on top (matches root _layout.tsx pattern).
+  // Previously we returned early with a spinner, which unmounted the Stack and
+  // caused hook count mismatch when the Stack remounted.
+  return (
+    <View style={{ flex: 1, backgroundColor: colors.background }}>
+      <Stack screenOptions={{ headerShown: false }} />
+      {showOverlay && (
+        <View style={[StyleSheet.absoluteFill, styles.center, { backgroundColor: colors.background }]}>
+          <LoadingState message="Loading..." />
+        </View>
+      )}
+    </View>
+  );
 }
 
 const styles = StyleSheet.create({

@@ -135,6 +135,7 @@ export function useSocietyMembershipGuard(): GuardResult {
       .catch((e) => console.error("[MembershipGuard] clear error:", e));
   }, [loading, membershipLoading, hasSociety, hasMember, inMembershipsList, setActiveSociety, activeSocietyId, refresh, onToolRoute]);
 
+  console.log("ROUTE_GUARD_BEFORE_RETURN");
   return {
     loading: loading || membershipLoading,
     isMember,
