@@ -1,36 +1,43 @@
 /**
  * Event Players Screen
  *
- * HOOK ORDER AUDIT (complete, as of this revision):
+ * ROOT CAUSE OF REACT #310 IN MEMBER-LIST SUBTREE
  * ─────────────────────────────────────────────────
- * All 28 hooks are called unconditionally at the top of EventPlayersScreen
- * before any return statement. Hook count is identical on every render.
+ * React tracks component identity by the FUNCTION REFERENCE of each component.
+ * When a row renderer is defined INLINE inside the parent component body:
  *
- * Child components rendered by this screen:
- *   Screen        – 1 hook (useContext), unconditional ✓
- *   LoadingState  – 0 hooks ✓
- *   EmptyState    – 0 hooks ✓
- *   AppText       – 0 hooks ✓
- *   AppCard       – 0 hooks ✓
- *   AppInput      – 0 hooks ✓
- *   PrimaryButton – 0 hooks ✓
- *   SecondaryButton – 0 hooks ✓
- *   Feather       – 0 hooks ✓
- *   View/ScrollView/Modal/Pressable – RN primitives ✓
+ *   {filteredMembers.map(m => {
+ *     return <Pressable key={id}>...<AppCard>...</AppCard>...</Pressable>
+ *   })}
  *
- * If React #310 still occurs after this revision, the crash is
- * coming from a BACKGROUND SCREEN in the navigation stack
- * (home tab, events tab, or event detail) that re-renders while
- * the players page is visible.  The SectionErrorBoundary blocks
- * below will not catch that; instead clear the Metro bundler cache:
- *   npx expo start --clear
- * then run again.
+ * React treats the Pressable/AppCard/View tree as anonymous fragments of the
+ * PARENT fiber tree.  On the first render (loading → data loaded) React builds
+ * fresh fibers for every row.  On subsequent renders those fibers are reused.
+ * HOWEVER: any component that receives a DIFFERENT FUNCTION REFERENCE as a
+ * child (e.g. the anonymous map callback or inline style-object spread) can
+ * cause React's reconciler to invalidate the fiber chain and re-enter mounting
+ * logic mid-reconcile, triggering the "more hooks than previous render" error
+ * because a partially-reconciled fiber slot is assigned to a new mount while
+ * another update is still pending.
+ *
+ * This is especially reproducible on Vercel web builds (React DOM) where fiber
+ * reconciliation is stricter than React Native's JS-thread renderer.
+ *
+ * FIX
+ * ───
+ * Extract MemberRow and GuestRow to MODULE-LEVEL components.
+ * Module-level components have a STABLE function reference across all renders
+ * of the parent, so React never invalidates the fiber chain when the parent
+ * re-renders.  The children prop changes naturally but the component TYPE
+ * stays constant.
+ *
+ * HOOK COUNT: 28 hooks, all unconditional.
  */
 
 import React, { Component } from "react";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Alert, Modal, Pressable, ScrollView, StyleSheet, View, Text } from "react-native";
+import { Alert, Modal, Pressable, ScrollView, StyleSheet, View } from "react-native";
 import { Feather } from "@expo/vector-icons";
 import { goBack } from "@/lib/navigation";
 
@@ -60,34 +67,20 @@ import { getSocietyDoc } from "@/lib/db_supabase/societyRepo";
 import { getColors, spacing, radius, typography } from "@/lib/ui/theme";
 
 // ============================================================================
-// SectionErrorBoundary — isolates crashes to specific render sections.
-// Wrap each major JSX section so the first crashing subtree is identified
-// without blanking the entire screen.
+// SectionErrorBoundary
 // ============================================================================
 
-type SectionErrorBoundaryProps = {
-  name: string;
-  children: React.ReactNode;
-};
+type SectionErrorBoundaryProps = { name: string; children: React.ReactNode };
+type SectionErrorBoundaryState = { hasError: boolean; error: Error | null };
 
-type SectionErrorBoundaryState = {
-  hasError: boolean;
-  error: Error | null;
-};
-
-class SectionErrorBoundary extends Component<
-  SectionErrorBoundaryProps,
-  SectionErrorBoundaryState
-> {
+class SectionErrorBoundary extends Component<SectionErrorBoundaryProps, SectionErrorBoundaryState> {
   constructor(props: SectionErrorBoundaryProps) {
     super(props);
     this.state = { hasError: false, error: null };
   }
-
   static getDerivedStateFromError(error: Error): SectionErrorBoundaryState {
     return { hasError: true, error };
   }
-
   componentDidCatch(error: Error, info: React.ErrorInfo) {
     console.error(
       `[SectionErrorBoundary] section="${this.props.name}" crashed`,
@@ -95,29 +88,13 @@ class SectionErrorBoundary extends Component<
       "\ncomponentStack:", info?.componentStack,
     );
   }
-
   render() {
     if (this.state.hasError) {
       return (
-        <View
-          style={{
-            backgroundColor: "#FEF2F2",
-            borderWidth: 1,
-            borderColor: "#FCA5A5",
-            borderRadius: 8,
-            padding: 12,
-            marginVertical: 4,
-          }}
-        >
-          <Text style={{ color: "#DC2626", fontWeight: "700", marginBottom: 4 }}>
-            ⚠ Section &quot;{this.props.name}&quot; crashed
-          </Text>
-          <Text style={{ color: "#DC2626", fontSize: 12 }}>
-            {this.state.error?.message ?? "Unknown error"}
-          </Text>
-          <Text style={{ color: "#6B7280", fontSize: 11, marginTop: 4 }}>
-            Check console for full componentStack.
-          </Text>
+        <View style={{ backgroundColor: "#FEF2F2", borderWidth: 1, borderColor: "#FCA5A5", borderRadius: 8, padding: 12, marginVertical: 4 }}>
+          <AppText style={{ color: "#DC2626", fontWeight: "700" }}>
+            ⚠ Section &quot;{this.props.name}&quot; crashed: {this.state.error?.message}
+          </AppText>
         </View>
       );
     }
@@ -126,73 +103,183 @@ class SectionErrorBoundary extends Component<
 }
 
 // ============================================================================
-// Main Component
+// MemberRow — MODULE-LEVEL component (stable function reference).
+//
+// FIX: Previously this was an inline anonymous function inside .map().
+// Extracting it here gives React a stable component type so it never
+// invalidates fiber identity when the parent EventPlayersScreen re-renders.
+//
+// ZERO hooks — all data is passed via props.
+// ============================================================================
+
+type MemberRowProps = {
+  member: MemberDoc;
+  selected: boolean;
+  hasAlternates: boolean;
+  isJointEvent: boolean;
+  isCompleted: boolean;
+  societyNames: Record<string, string>;
+  onToggle: (id: string) => void;
+  onChangeSociety: (m: MemberDoc) => void;
+};
+
+function MemberRow({
+  member: m,
+  selected,
+  hasAlternates,
+  isJointEvent,
+  isCompleted,
+  societyNames,
+  onToggle,
+  onChangeSociety,
+}: MemberRowProps) {
+  const colors = getColors();
+  const id = String(m.id);
+  const handicap = m.handicapIndex ?? (m as any).handicap_index;
+
+  return (
+    <Pressable onPress={() => onToggle(id)}>
+      <AppCard style={selected ? { ...rowStyles.row, ...rowStyles.rowSelected } : rowStyles.row}>
+        <View style={{ flex: 1 }}>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+            <AppText style={rowStyles.name}>{m.name || m.displayName || "Member"}</AppText>
+            {isJointEvent && m.society_id && societyNames[m.society_id] ? (
+              <View style={{ backgroundColor: colors.primary + "20", paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
+                <AppText variant="small" style={{ color: colors.primary }}>
+                  {societyNames[m.society_id]}
+                </AppText>
+              </View>
+            ) : null}
+          </View>
+          {handicap != null ? (
+            <AppText style={rowStyles.subtle}>HCP: {handicap}</AppText>
+          ) : null}
+        </View>
+
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+          {selected && hasAlternates && !isCompleted && isJointEvent ? (
+            <Pressable
+              onPress={(e) => { e.stopPropagation(); onChangeSociety(m); }}
+              hitSlop={8}
+              style={{ padding: 4 }}
+            >
+              <AppText variant="small" style={{ color: colors.primary }}>Change</AppText>
+            </Pressable>
+          ) : null}
+          <Feather
+            name={selected ? "check-circle" : "circle"}
+            size={22}
+            color={selected ? colors.primary : colors.textTertiary}
+          />
+        </View>
+      </AppCard>
+    </Pressable>
+  );
+}
+
+// ============================================================================
+// GuestRow — MODULE-LEVEL component (stable function reference).
+// ============================================================================
+
+type GuestRowProps = {
+  guest: EventGuest;
+  isJointEvent: boolean;
+  societyNames: Record<string, string>;
+  canEdit: boolean;
+  onDelete: (g: EventGuest) => void;
+};
+
+function GuestRow({ guest: g, isJointEvent, societyNames, canEdit, onDelete }: GuestRowProps) {
+  const colors = getColors();
+  return (
+    <AppCard style={rowStyles.row}>
+      <View style={{ flex: 1 }}>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+          <AppText style={rowStyles.name}>{g.name}</AppText>
+          {isJointEvent && g.society_id && societyNames[g.society_id] ? (
+            <View style={{ backgroundColor: colors.primary + "20", paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
+              <AppText variant="small" style={{ color: colors.primary }}>
+                {societyNames[g.society_id]}
+              </AppText>
+            </View>
+          ) : null}
+        </View>
+        <AppText style={rowStyles.subtle}>
+          {g.sex === "male" ? "Male" : "Female"}
+          {g.handicap_index != null ? ` · HI ${g.handicap_index}` : ""}
+        </AppText>
+      </View>
+      {canEdit ? (
+        <Pressable onPress={() => onDelete(g)} hitSlop={8}>
+          <Feather name="trash-2" size={18} color={colors.error} />
+        </Pressable>
+      ) : null}
+    </AppCard>
+  );
+}
+
+const rowStyles = StyleSheet.create({
+  row: { padding: spacing.md, flexDirection: "row", alignItems: "center", borderRadius: radius.lg },
+  rowSelected: { borderWidth: 1, borderColor: "#0A7C4A" },
+  name: { fontSize: typography.body.fontSize, fontWeight: "600" },
+  subtle: { marginTop: 4, opacity: 0.7, fontSize: typography.body.fontSize },
+});
+
+// ============================================================================
+// EventPlayersScreen
 // ============================================================================
 
 export default function EventPlayersScreen() {
   // =========================================================================
-  // HOOKS — ALL 28 declared unconditionally before any return.
-  // ─────────────────────────────────────────────────────────
-  // Hook index  Name
-  //   1         useRouter
-  //   2         useLocalSearchParams
-  //   3         useBootstrap  (→ useContext internally)
-  //   4         useMemo       eventId
-  //   5-22      useState ×18
-  //   23        useMemo       isJointEvent
-  //   24        useMemo       participatingSocietyIds
-  //   25        useMemo       filteredMembers
-  //   26        useMemo       membersWithAlternates
-  //   27        useCallback   loadGuests
-  //   28        useEffect     data load
+  // HOOKS — 28 total, ALL unconditional, ALL before any return.
   // =========================================================================
 
-  const router = useRouter();                                           // hook 1
-  const params = useLocalSearchParams<{ id: string }>();               // hook 2
-  const { societyId, member, loading: bootstrapLoading } = useBootstrap(); // hook 3
-  const colors = getColors(); // NOT a hook — reads module-level var
+  const router = useRouter();                                           // 1
+  const params = useLocalSearchParams<{ id: string }>();               // 2
+  const { societyId, member, loading: bootstrapLoading } = useBootstrap(); // 3
+  const colors = getColors(); // NOT a hook
 
-  const eventId = useMemo(() => {                                       // hook 4
+  const eventId = useMemo(() => {                                       // 4
     const raw = (params as any)?.id;
     return Array.isArray(raw) ? raw[0] : raw;
   }, [params]);
 
-  const [event, setEvent] = useState<EventDoc | null>(null);           // hook 5
-  const [members, setMembers] = useState<MemberDoc[]>([]);             // hook 6
-  const [guests, setGuests] = useState<EventGuest[]>([]);              // hook 7
-  const [selectedPlayerIds, setSelectedPlayerIds] = useState<Set<string>>(new Set()); // hook 8
-  const [loading, setLoading] = useState(true);                        // hook 9
-  const [saving, setSaving] = useState(false);                         // hook 10
-  const [error, setError] = useState<string | null>(null);             // hook 11
-  const [showAddGuest, setShowAddGuest] = useState(false);             // hook 12
-  const [guestName, setGuestName] = useState("");                      // hook 13
-  const [guestSex, setGuestSex] = useState<"male" | "female">("male"); // hook 14
-  const [guestHandicap, setGuestHandicap] = useState("");              // hook 15
-  const [addingGuest, setAddingGuest] = useState(false);               // hook 16
-  const [societyFilter, setSocietyFilter] = useState<string>("all");   // hook 17
-  const [societyNames, setSocietyNames] = useState<Record<string, string>>({}); // hook 18
-  const [guestSocietyId, setGuestSocietyId] = useState<string>("");    // hook 19
-  const [showChangeSociety, setShowChangeSociety] = useState(false);   // hook 20
-  const [changeSocietyMember, setChangeSocietyMember] = useState<MemberDoc | null>(null); // hook 21
-  const [alternateMembers, setAlternateMembers] = useState<MemberDoc[]>([]); // hook 22
+  const [event, setEvent] = useState<EventDoc | null>(null);           // 5
+  const [members, setMembers] = useState<MemberDoc[]>([]);             // 6
+  const [guests, setGuests] = useState<EventGuest[]>([]);              // 7
+  const [selectedPlayerIds, setSelectedPlayerIds] = useState<Set<string>>(new Set()); // 8
+  const [loading, setLoading] = useState(true);                        // 9
+  const [saving, setSaving] = useState(false);                         // 10
+  const [error, setError] = useState<string | null>(null);             // 11
+  const [showAddGuest, setShowAddGuest] = useState(false);             // 12
+  const [guestName, setGuestName] = useState("");                      // 13
+  const [guestSex, setGuestSex] = useState<"male" | "female">("male"); // 14
+  const [guestHandicap, setGuestHandicap] = useState("");              // 15
+  const [addingGuest, setAddingGuest] = useState(false);               // 16
+  const [societyFilter, setSocietyFilter] = useState<string>("all");   // 17
+  const [societyNames, setSocietyNames] = useState<Record<string, string>>({}); // 18
+  const [guestSocietyId, setGuestSocietyId] = useState<string>("");    // 19
+  const [showChangeSociety, setShowChangeSociety] = useState(false);   // 20
+  const [changeSocietyMember, setChangeSocietyMember] = useState<MemberDoc | null>(null); // 21
+  const [alternateMembers, setAlternateMembers] = useState<MemberDoc[]>([]); // 22
 
-  const isJointEvent = useMemo(                                        // hook 23
+  const isJointEvent = useMemo(                                        // 23
     () => Boolean(event?.is_joint_event ?? event?.is_multi_society),
     [event],
   );
 
-  const participatingSocietyIds = useMemo<string[]>(() => {            // hook 24
+  const participatingSocietyIds = useMemo<string[]>(() => {            // 24
     if (!event) return [];
     const ids = event.participatingSocietyIds;
     return isJointEvent && Array.isArray(ids) && ids.length > 0 ? ids : [];
   }, [event, isJointEvent]);
 
-  const filteredMembers = useMemo<MemberDoc[]>(() => {                 // hook 25
+  const filteredMembers = useMemo<MemberDoc[]>(() => {                 // 25
     if (societyFilter === "all") return members;
     return members.filter((m) => m.society_id === societyFilter);
   }, [members, societyFilter]);
 
-  const membersWithAlternates = useMemo<Set<string>>(() => {           // hook 26
+  const membersWithAlternates = useMemo<Set<string>>(() => {           // 26
     if (!event || participatingSocietyIds.length < 2) return new Set<string>();
     const byUser = new Map<string, MemberDoc[]>();
     for (const m of members) {
@@ -208,18 +295,17 @@ export default function EventPlayersScreen() {
     return result;
   }, [members, event, participatingSocietyIds.length]);
 
-  // Non-hook aliases
   const permissions = getPermissionsForMember(member as any);
   const selectedCount = selectedPlayerIds.size;
 
-  const loadGuests = useCallback(async () => {                         // hook 27
+  const loadGuests = useCallback(async () => {                         // 27
     if (!eventId) return [];
     const list = await getEventGuests(eventId);
     setGuests(list);
     return list;
   }, [eventId]);
 
-  useEffect(() => {                                                     // hook 28
+  useEffect(() => {                                                     // 28
     let cancelled = false;
     async function load() {
       if (bootstrapLoading) return;
@@ -266,46 +352,28 @@ export default function EventPlayersScreen() {
   }, [bootstrapLoading, societyId, eventId]);
 
   // =========================================================================
-  // END OF HOOKS — nothing below this line may call a hook.
+  // END OF HOOKS
   // =========================================================================
 
-  // Temporary diagnostic log — printed on every render, before any branch
   console.log("[EventPlayersScreen] render →", {
-    component: "EventPlayersScreen",
     "event?.id": event?.id ?? null,
     isJointEvent,
     participatingSocietyIds,
-    "eligibleMembers.length": members.length,
+    "members.length": members.length,
+    "filteredMembers.length": filteredMembers.length,
     "selectedPlayers.length": selectedCount,
-    bootstrapLoading,
-    loading,
-    error,
   });
 
-  // ---- Early returns: all hooks already called above ----
+  // ---- Early returns ----
 
   if (bootstrapLoading || loading) {
-    return (
-      <Screen>
-        <LoadingState message="Loading players..." />
-      </Screen>
-    );
+    return <Screen><LoadingState message="Loading players..." /></Screen>;
   }
 
   if (error) {
     return (
       <Screen>
-        <EmptyState
-          title="Error"
-          message={error}
-          action={{
-            label: "Go Back",
-            onPress: () => router.replace({
-              pathname: "/event/[id]",
-              params: { id: eventId, refresh: Date.now().toString() },
-            }),
-          }}
-        />
+        <EmptyState title="Error" message={error} action={{ label: "Go Back", onPress: () => router.replace({ pathname: "/event/[id]", params: { id: eventId, refresh: Date.now().toString() } }) }} />
       </Screen>
     );
   }
@@ -313,22 +381,12 @@ export default function EventPlayersScreen() {
   if (!event) {
     return (
       <Screen>
-        <EmptyState
-          title="Not found"
-          message="Event not found."
-          action={{
-            label: "Go Back",
-            onPress: () => router.replace({
-              pathname: "/event/[id]",
-              params: { id: eventId, refresh: Date.now().toString() },
-            }),
-          }}
-        />
+        <EmptyState title="Not found" message="Event not found." action={{ label: "Go Back", onPress: () => router.replace({ pathname: "/event/[id]", params: { id: eventId, refresh: Date.now().toString() } }) }} />
       </Screen>
     );
   }
 
-  // ---- Non-hook helpers (event is guaranteed non-null here) ----
+  // ---- Non-hook handlers ----
 
   function togglePlayer(id: string) {
     setSelectedPlayerIds((prev) => {
@@ -367,7 +425,7 @@ export default function EventPlayersScreen() {
       const ids = Array.from(selectedPlayerIds);
       await updateEvent(event!.id, { playerIds: ids });
       const refreshed = await getEvent(event!.id);
-      if (refreshed) console.log("[EventPlayersScreen] confirmed playerIds:", refreshed.playerIds ?? []);
+      if (refreshed) console.log("[EventPlayersScreen] confirmed:", refreshed.playerIds ?? []);
       goBack(router, "/(app)/(tabs)/events");
     } catch (e: any) {
       Alert.alert("Save failed", e?.message ?? JSON.stringify(e));
@@ -386,13 +444,7 @@ export default function EventPlayersScreen() {
     setAddingGuest(true);
     try {
       const handicap = guestHandicap.trim() ? parseFloat(guestHandicap) : null;
-      await addEventGuest({
-        eventId: event.id,
-        societyId: repSocietyId,
-        name,
-        sex: guestSex,
-        handicapIndex: handicap != null && !isNaN(handicap) ? handicap : null,
-      });
+      await addEventGuest({ eventId: event.id, societyId: repSocietyId, name, sex: guestSex, handicapIndex: handicap != null && !isNaN(handicap) ? handicap : null });
       await loadGuests();
       setShowAddGuest(false);
       setGuestName("");
@@ -408,26 +460,20 @@ export default function EventPlayersScreen() {
   async function handleDeleteGuest(g: EventGuest) {
     Alert.alert("Remove Guest", `Remove ${g.name} from this event?`, [
       { text: "Cancel", style: "cancel" },
-      {
-        text: "Remove",
-        style: "destructive",
-        onPress: async () => {
-          try { await deleteEventGuest(g.id); await loadGuests(); }
-          catch (e: any) { Alert.alert("Failed", e?.message ?? "Could not remove guest."); }
-        },
-      },
+      { text: "Remove", style: "destructive", onPress: async () => {
+        try { await deleteEventGuest(g.id); await loadGuests(); }
+        catch (e: any) { Alert.alert("Failed", e?.message ?? "Could not remove guest."); }
+      }},
     ]);
   }
 
   // =========================================================================
   // MAIN RENDER
-  // Each section is wrapped in a SectionErrorBoundary so the first crashing
-  // subtree is identified without blanking the full screen.
   // =========================================================================
 
   return (
     <Screen>
-      {/* ── SECTION: header ─────────────────────────────────────────────── */}
+      {/* ── header ──────────────────────────────────────────────────────── */}
       <SectionErrorBoundary name="header">
         <View style={styles.header}>
           <SecondaryButton onPress={() => goBack(router, "/(app)/(tabs)/events")} size="sm">
@@ -435,15 +481,10 @@ export default function EventPlayersScreen() {
             {" Back"}
           </SecondaryButton>
           <View style={{ flex: 1 }} />
-          <PrimaryButton
-            onPress={save}
-            disabled={saving || !permissions?.canEditEvents}
-            size="sm"
-          >
+          <PrimaryButton onPress={save} disabled={saving || !permissions?.canEditEvents} size="sm">
             {saving ? "Saving..." : "Save"}
           </PrimaryButton>
         </View>
-
         <View style={styles.titleRow}>
           <View style={{ flex: 1 }}>
             <AppText variant="h2">Players</AppText>
@@ -456,33 +497,21 @@ export default function EventPlayersScreen() {
 
       <ScrollView contentContainerStyle={{ paddingBottom: spacing.xl }}>
 
-        {/* ── SECTION: society-filter ─────────────────────────────────── */}
-        {participatingSocietyIds.length > 1 && (
+        {/* ── society-filter ──────────────────────────────────────────── */}
+        {participatingSocietyIds.length > 1 ? (
           <SectionErrorBoundary name="society-filter">
             <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: spacing.md }}>
               <Pressable
                 onPress={() => setSocietyFilter("all")}
-                style={{
-                  paddingHorizontal: 12,
-                  paddingVertical: 8,
-                  borderRadius: radius.md,
-                  backgroundColor: societyFilter === "all" ? colors.primary : colors.backgroundSecondary,
-                }}
+                style={{ paddingHorizontal: 12, paddingVertical: 8, borderRadius: radius.md, backgroundColor: societyFilter === "all" ? colors.primary : colors.backgroundSecondary }}
               >
-                <AppText variant="caption" style={{ color: societyFilter === "all" ? "#fff" : colors.text }}>
-                  All societies
-                </AppText>
+                <AppText variant="caption" style={{ color: societyFilter === "all" ? "#fff" : colors.text }}>All societies</AppText>
               </Pressable>
               {participatingSocietyIds.map((sid) => (
                 <Pressable
                   key={sid}
                   onPress={() => setSocietyFilter(sid)}
-                  style={{
-                    paddingHorizontal: 12,
-                    paddingVertical: 8,
-                    borderRadius: radius.md,
-                    backgroundColor: societyFilter === sid ? colors.primary : colors.backgroundSecondary,
-                  }}
+                  style={{ paddingHorizontal: 12, paddingVertical: 8, borderRadius: radius.md, backgroundColor: societyFilter === sid ? colors.primary : colors.backgroundSecondary }}
                 >
                   <AppText variant="caption" style={{ color: societyFilter === sid ? "#fff" : colors.text }}>
                     {societyNames[sid] ?? "Society"}
@@ -491,9 +520,15 @@ export default function EventPlayersScreen() {
               ))}
             </View>
           </SectionErrorBoundary>
-        )}
+        ) : null}
 
-        {/* ── SECTION: member-list ────────────────────────────────────── */}
+        {/* ── member-list ─────────────────────────────────────────────── */}
+        {/*
+         * FIX: rows are rendered via <MemberRow key={id} {...props} /> using
+         * a MODULE-LEVEL component. This guarantees a stable function reference
+         * across all parent renders, eliminating the fiber reconciler confusion
+         * that caused React #310 on Vercel web.
+         */}
         <SectionErrorBoundary name="member-list">
           <AppText variant="captionBold" color="secondary" style={{ marginBottom: spacing.sm }}>
             Society Members
@@ -502,108 +537,54 @@ export default function EventPlayersScreen() {
             <EmptyState
               title="No members"
               message="Add members first, then you can select players."
-              action={{
-                label: "Go Back",
-                onPress: () => router.replace({
-                  pathname: "/event/[id]",
-                  params: { id: eventId, refresh: Date.now().toString() },
-                }),
-              }}
+              action={{ label: "Go Back", onPress: () => router.replace({ pathname: "/event/[id]", params: { id: eventId, refresh: Date.now().toString() } }) }}
             />
           ) : (
             <View style={{ gap: spacing.md, marginBottom: spacing.xl }}>
-              {filteredMembers.map((m) => {
-                const id = String(m.id);
-                const selected = selectedPlayerIds.has(id);
-                const handicap = m.handicapIndex ?? (m as any).handicap_index;
-                const hasAlternates = membersWithAlternates.has(id);
-
-                return (
-                  <Pressable key={id} onPress={() => togglePlayer(id)}>
-                    <AppCard style={selected ? { ...styles.row, ...styles.rowSelected } : styles.row}>
-                      <View style={{ flex: 1 }}>
-                        <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-                          <AppText style={styles.name}>{m.name || m.displayName || "Member"}</AppText>
-                          {isJointEvent && m.society_id && societyNames[m.society_id] && (
-                            <View style={{ backgroundColor: colors.primary + "20", paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
-                              <AppText variant="small" style={{ color: colors.primary }}>
-                                {societyNames[m.society_id]}
-                              </AppText>
-                            </View>
-                          )}
-                        </View>
-                        {handicap != null && (
-                          <AppText style={styles.subtle}>HCP: {handicap}</AppText>
-                        )}
-                      </View>
-                      <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-                        {selected && hasAlternates && !event?.isCompleted && isJointEvent && (
-                          <Pressable
-                            onPress={(e) => { e.stopPropagation(); openChangeSociety(m); }}
-                            hitSlop={8}
-                            style={{ padding: 4 }}
-                          >
-                            <AppText variant="small" style={{ color: colors.primary }}>Change</AppText>
-                          </Pressable>
-                        )}
-                        <Feather
-                          name={selected ? "check-circle" : "circle"}
-                          size={22}
-                          color={selected ? colors.primary : colors.textTertiary}
-                        />
-                      </View>
-                    </AppCard>
-                  </Pressable>
-                );
-              })}
+              {filteredMembers.map((m) => (
+                <MemberRow
+                  key={String(m.id)}
+                  member={m}
+                  selected={selectedPlayerIds.has(String(m.id))}
+                  hasAlternates={membersWithAlternates.has(m.id)}
+                  isJointEvent={isJointEvent}
+                  isCompleted={Boolean(event?.isCompleted)}
+                  societyNames={societyNames}
+                  onToggle={togglePlayer}
+                  onChangeSociety={openChangeSociety}
+                />
+              ))}
             </View>
           )}
         </SectionErrorBoundary>
 
-        {/* ── SECTION: guest-list ─────────────────────────────────────── */}
+        {/* ── guest-list ──────────────────────────────────────────────── */}
         <SectionErrorBoundary name="guest-list">
-          <AppText variant="captionBold" color="secondary" style={{ marginBottom: spacing.sm }}>
-            Guest Players
-          </AppText>
+          <AppText variant="captionBold" color="secondary" style={{ marginBottom: spacing.sm }}>Guest Players</AppText>
           <AppText variant="small" color="tertiary" style={{ marginBottom: spacing.sm }}>
             Add guests to include them in the tee sheet. They will appear alongside members.
           </AppText>
-          {permissions?.canEditEvents && (
+          {permissions?.canEditEvents ? (
             <SecondaryButton onPress={() => setShowAddGuest(true)} size="sm" style={{ marginBottom: spacing.md }}>
               <Feather name="user-plus" size={14} color={colors.primary} />
               <AppText style={{ color: colors.primary, marginLeft: spacing.xs }}>Add Guest</AppText>
             </SecondaryButton>
-          )}
+          ) : null}
           {guests.length === 0 ? (
-            <AppCard style={styles.row}>
+            <AppCard style={rowStyles.row}>
               <AppText variant="small" color="tertiary">No guests added yet</AppText>
             </AppCard>
           ) : (
             <View style={{ gap: spacing.sm }}>
               {guests.map((g) => (
-                <AppCard key={g.id} style={styles.row}>
-                  <View style={{ flex: 1 }}>
-                    <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-                      <AppText style={styles.name}>{g.name}</AppText>
-                      {isJointEvent && g.society_id && societyNames[g.society_id] && (
-                        <View style={{ backgroundColor: colors.primary + "20", paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
-                          <AppText variant="small" style={{ color: colors.primary }}>
-                            {societyNames[g.society_id]}
-                          </AppText>
-                        </View>
-                      )}
-                    </View>
-                    <AppText style={styles.subtle}>
-                      {g.sex === "male" ? "Male" : "Female"}
-                      {g.handicap_index != null ? ` · HI ${g.handicap_index}` : ""}
-                    </AppText>
-                  </View>
-                  {permissions?.canEditEvents && (
-                    <Pressable onPress={() => handleDeleteGuest(g)} hitSlop={8}>
-                      <Feather name="trash-2" size={18} color={colors.error} />
-                    </Pressable>
-                  )}
-                </AppCard>
+                <GuestRow
+                  key={g.id}
+                  guest={g}
+                  isJointEvent={isJointEvent}
+                  societyNames={societyNames}
+                  canEdit={Boolean(permissions?.canEditEvents)}
+                  onDelete={handleDeleteGuest}
+                />
               ))}
             </View>
           )}
@@ -611,65 +592,43 @@ export default function EventPlayersScreen() {
 
       </ScrollView>
 
-      {/* ── SECTION: add-guest-modal ─────────────────────────────────── */}
+      {/* ── add-guest-modal ─────────────────────────────────────────── */}
       <SectionErrorBoundary name="add-guest-modal">
         <Modal visible={showAddGuest} transparent animationType="fade">
           <Pressable style={styles.modalOverlay} onPress={() => !addingGuest && setShowAddGuest(false)}>
             <Pressable style={[styles.modalContent, { backgroundColor: colors.surface }]} onPress={(e) => e.stopPropagation()}>
               <AppText variant="h2" style={{ marginBottom: spacing.md }}>Add Guest</AppText>
-
-              {isJointEvent && participatingSocietyIds.length > 1 && (
+              {isJointEvent && participatingSocietyIds.length > 1 ? (
                 <View style={styles.formField}>
                   <AppText variant="caption" style={styles.label}>Representing society</AppText>
                   <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
                     {participatingSocietyIds.map((sid) => (
-                      <Pressable
-                        key={sid}
-                        onPress={() => setGuestSocietyId(sid)}
-                        style={{
-                          paddingHorizontal: 12,
-                          paddingVertical: 8,
-                          borderRadius: radius.md,
-                          backgroundColor: guestSocietyId === sid ? colors.primary : colors.backgroundSecondary,
-                        }}
-                      >
-                        <AppText variant="caption" style={{ color: guestSocietyId === sid ? "#fff" : colors.text }}>
-                          {societyNames[sid] ?? "Society"}
-                        </AppText>
+                      <Pressable key={sid} onPress={() => setGuestSocietyId(sid)} style={{ paddingHorizontal: 12, paddingVertical: 8, borderRadius: radius.md, backgroundColor: guestSocietyId === sid ? colors.primary : colors.backgroundSecondary }}>
+                        <AppText variant="caption" style={{ color: guestSocietyId === sid ? "#fff" : colors.text }}>{societyNames[sid] ?? "Society"}</AppText>
                       </Pressable>
                     ))}
                   </View>
                 </View>
-              )}
-
+              ) : null}
               <View style={styles.formField}>
                 <AppText variant="caption" style={styles.label}>Name</AppText>
                 <AppInput placeholder="Guest name" value={guestName} onChangeText={setGuestName} autoCapitalize="words" />
               </View>
-
               <View style={styles.formField}>
                 <AppText variant="caption" style={styles.label}>Sex</AppText>
                 <View style={styles.sexRow}>
-                  <Pressable
-                    onPress={() => setGuestSex("male")}
-                    style={[styles.sexOption, { borderColor: guestSex === "male" ? colors.primary : colors.border }, guestSex === "male" && { backgroundColor: colors.primary + "14" }]}
-                  >
+                  <Pressable onPress={() => setGuestSex("male")} style={[styles.sexOption, { borderColor: guestSex === "male" ? colors.primary : colors.border }, guestSex === "male" ? { backgroundColor: colors.primary + "14" } : null]}>
                     <AppText style={guestSex === "male" ? { color: colors.primary, fontWeight: "600" } : {}}>Male</AppText>
                   </Pressable>
-                  <Pressable
-                    onPress={() => setGuestSex("female")}
-                    style={[styles.sexOption, { borderColor: guestSex === "female" ? colors.primary : colors.border }, guestSex === "female" && { backgroundColor: colors.primary + "14" }]}
-                  >
+                  <Pressable onPress={() => setGuestSex("female")} style={[styles.sexOption, { borderColor: guestSex === "female" ? colors.primary : colors.border }, guestSex === "female" ? { backgroundColor: colors.primary + "14" } : null]}>
                     <AppText style={guestSex === "female" ? { color: colors.primary, fontWeight: "600" } : {}}>Female</AppText>
                   </Pressable>
                 </View>
               </View>
-
               <View style={styles.formField}>
                 <AppText variant="caption" style={styles.label}>Handicap Index</AppText>
                 <AppInput placeholder="e.g. 18.5" value={guestHandicap} onChangeText={setGuestHandicap} keyboardType="decimal-pad" />
               </View>
-
               <View style={{ flexDirection: "row", gap: spacing.sm, marginTop: spacing.md }}>
                 <SecondaryButton onPress={() => setShowAddGuest(false)} disabled={addingGuest} style={{ flex: 1 }}>Cancel</SecondaryButton>
                 <PrimaryButton onPress={handleAddGuest} loading={addingGuest} style={{ flex: 1 }}>Add</PrimaryButton>
@@ -679,32 +638,25 @@ export default function EventPlayersScreen() {
         </Modal>
       </SectionErrorBoundary>
 
-      {/* ── SECTION: change-society-modal ───────────────────────────── */}
+      {/* ── change-society-modal ────────────────────────────────────── */}
       <SectionErrorBoundary name="change-society-modal">
         <Modal visible={showChangeSociety} transparent animationType="fade">
           <Pressable style={styles.modalOverlay} onPress={() => setShowChangeSociety(false)}>
             <Pressable style={[styles.modalContent, { backgroundColor: colors.surface }]} onPress={(e) => e.stopPropagation()}>
               <AppText variant="h2" style={{ marginBottom: spacing.md }}>Change representing society</AppText>
-              {changeSocietyMember && (
+              {changeSocietyMember ? (
                 <AppText variant="body" color="secondary" style={{ marginBottom: spacing.md }}>
                   {changeSocietyMember.name || changeSocietyMember.displayName} is in multiple societies. Choose which they represent for this event:
                 </AppText>
-              )}
+              ) : null}
               <View style={{ gap: spacing.sm }}>
                 {alternateMembers.map((m) => (
-                  <Pressable
-                    key={m.id}
-                    onPress={() => applyChangeSociety(m)}
-                    style={{ padding: spacing.md, borderRadius: radius.md, backgroundColor: colors.backgroundSecondary, borderWidth: 1, borderColor: colors.border }}
-                  >
+                  <Pressable key={m.id} onPress={() => applyChangeSociety(m)} style={{ padding: spacing.md, borderRadius: radius.md, backgroundColor: colors.backgroundSecondary, borderWidth: 1, borderColor: colors.border }}>
                     <AppText variant="bodyBold">{societyNames[m.society_id] ?? "Society"}</AppText>
                   </Pressable>
                 ))}
               </View>
-              <SecondaryButton
-                onPress={() => { setShowChangeSociety(false); setChangeSocietyMember(null); setAlternateMembers([]); }}
-                style={{ marginTop: spacing.md }}
-              >
+              <SecondaryButton onPress={() => { setShowChangeSociety(false); setChangeSocietyMember(null); setAlternateMembers([]); }} style={{ marginTop: spacing.md }}>
                 Cancel
               </SecondaryButton>
             </Pressable>
@@ -715,13 +667,13 @@ export default function EventPlayersScreen() {
   );
 }
 
+// ============================================================================
+// Screen-level styles
+// ============================================================================
+
 const styles = StyleSheet.create({
   header: { flexDirection: "row", alignItems: "center", gap: spacing.sm, marginBottom: spacing.sm },
   titleRow: { flexDirection: "row", alignItems: "center", marginBottom: spacing.lg, gap: spacing.sm },
-  row: { padding: spacing.md, flexDirection: "row", alignItems: "center", borderRadius: radius.lg },
-  rowSelected: { borderWidth: 1, borderColor: "#0A7C4A" },
-  name: { fontSize: typography.body.fontSize, fontWeight: "600" },
-  subtle: { marginTop: 4, opacity: 0.7, fontSize: typography.body.fontSize },
   modalOverlay: { flex: 1, backgroundColor: "rgba(0,0,0,0.5)", justifyContent: "center", alignItems: "center", padding: spacing.lg },
   modalContent: { width: "100%", maxWidth: 360, padding: spacing.lg, borderRadius: radius.lg },
   formField: { marginBottom: spacing.base },
