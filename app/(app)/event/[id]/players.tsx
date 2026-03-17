@@ -1,10 +1,9 @@
 /**
  * Event Players Screen
  *
- * Phase A: Single-society only. Joint-event flow disabled until new architecture is ready.
- * - Load: event → events.player_ids → members from event.society_id
+ * Single-society: full player management.
+ * Joint events: show temporary message (old flow disabled until redesign).
  */
-const DISABLE_JOINT_EVENT_FLOW = true;
 
 /**
  * ROOT CAUSE OF REACT #310 IN MEMBER-LIST SUBTREE
@@ -266,12 +265,11 @@ export default function EventPlayersScreen() {
   const [changeSocietyMember, setChangeSocietyMember] = useState<MemberDoc | null>(null); // 21
   const [alternateMembers, setAlternateMembers] = useState<MemberDoc[]>([]); // 22
 
-  const isJointEvent = DISABLE_JOINT_EVENT_FLOW
-    ? false
-    : Boolean(event?.is_joint_event ?? event?.is_multi_society);
+  const isJointEvent = Boolean(event?.is_joint_event ?? event?.is_multi_society);
+  const jointEventUnavailable = isJointEvent; // Block old flow for joint events
 
   const participatingSocietyIds: string[] = (() => {
-    if (DISABLE_JOINT_EVENT_FLOW || !event) return [];
+    if (!event) return [];
     const ids = event.participatingSocietyIds;
     return isJointEvent && Array.isArray(ids) && ids.length > 0 ? ids : [];
   })();
@@ -318,18 +316,27 @@ export default function EventPlayersScreen() {
         console.log("[EventPlayersScreen] loading", { eventId, societyId });
         const evt = await getEvent(eventId);
         if (cancelled) return;
-        // Phase A: single society only (event.society_id or host)
-        const societyIds = DISABLE_JOINT_EVENT_FLOW
-          ? ([evt?.society_id ?? evt?.host_society_id ?? societyId].filter(Boolean) as string[])
-          : (evt?.participatingSocietyIds?.length
-            ? evt.participatingSocietyIds
-            : [evt?.society_id ?? societyId].filter(Boolean)) as string[];
+        setEvent(evt);
+        if (!evt) {
+          if (!cancelled) setLoading(false);
+          return;
+        }
+
+        // Joint events: do NOT load old player flow — show temporary message
+        const isJoint = Boolean(evt.is_joint_event ?? evt.is_multi_society)
+          || (Array.isArray(evt.participatingSocietyIds) && evt.participatingSocietyIds.length > 1);
+        if (isJoint) {
+          if (!cancelled) setLoading(false);
+          return;
+        }
+
+        // Single-society: load members, guests, etc.
+        const societyIds = [evt?.society_id ?? evt?.host_society_id ?? societyId].filter(Boolean) as string[];
         const [mems, guestList] = await Promise.all([
           getMembersBySocietyIds(societyIds),
           getEventGuests(eventId),
         ]);
         if (cancelled) return;
-        setEvent(evt);
         setMembers(mems);
         setGuests(guestList);
         if (societyIds.length > 0) {
@@ -341,7 +348,6 @@ export default function EventPlayersScreen() {
           setSocietyNames(names);
           setGuestSocietyId(evt?.society_id ?? societyIds[0]);
         }
-        // selectedPlayerIds from event_players (via getEvent.playerIds)
         const existing = evt?.playerIds ?? [];
         setSelectedPlayerIds(new Set(existing.map(String)));
       } catch (e: any) {
@@ -385,6 +391,26 @@ export default function EventPlayersScreen() {
     return (
       <Screen>
         <EmptyState title="Not found" message="Event not found." action={{ label: "Go Back", onPress: () => router.replace({ pathname: "/event/[id]", params: { id: eventId, refresh: Date.now().toString() } }) }} />
+      </Screen>
+    );
+  }
+
+  // Joint event: show temporary message, no player selection
+  if (jointEventUnavailable) {
+    return (
+      <Screen>
+        <View style={{ padding: spacing.lg, gap: spacing.md }}>
+          <SecondaryButton onPress={() => router.replace({ pathname: "/event/[id]", params: { id: eventId, refresh: Date.now().toString() } })} size="sm">
+            <Feather name="arrow-left" size={16} color={colors.text} />
+            {" Back to Event"}
+          </SecondaryButton>
+          <AppCard style={{ padding: spacing.lg }}>
+            <AppText variant="h3" style={{ marginBottom: spacing.sm }}>Temporarily unavailable</AppText>
+            <AppText variant="body" color="secondary">
+              Joint event player management is being upgraded and is temporarily unavailable.
+            </AppText>
+          </AppCard>
+        </View>
       </Screen>
     );
   }
