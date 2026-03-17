@@ -3,7 +3,7 @@
 // Uses singleton supabase client for consistent auth
 // NO .select().single() after upsert to avoid 406 errors
 
-import { createContext, useContext, useCallback, useEffect, useMemo, useRef, useState, ReactNode } from "react";
+import { createContext, useContext, useCallback, useEffect, useRef, useState, ReactNode } from "react";
 import { supabase } from "@/lib/supabase";
 import type { User, Session } from "@supabase/supabase-js";
 import { getMySocieties, type MySocietyMembership } from "@/lib/db_supabase/mySocietiesRepo";
@@ -486,15 +486,9 @@ function useBootstrapInternal(): BootstrapState {
 
   const userId = session?.user?.id ?? null;
 
-  const activeSocietyId = useMemo(
-    () => (profile?.active_society_id ?? null) as string | null,
-    [profile]
-  );
-
-  const activeMemberId = useMemo(
-    () => (profile?.active_member_id ?? null) as string | null,
-    [profile]
-  );
+  // Plain derivations — avoid useMemo to prevent React #310 hook-order issues
+  const activeSocietyId = (profile?.active_society_id ?? null) as string | null;
+  const activeMemberId = (profile?.active_member_id ?? null) as string | null;
 
   // ============================================================================
   // Actions
