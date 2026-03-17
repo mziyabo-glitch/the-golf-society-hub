@@ -651,8 +651,13 @@ export default function EventsScreen() {
               style={[styles.formField, { marginTop: spacing.md, paddingTop: spacing.md, borderTopWidth: 1, borderTopColor: colors.border }]}
               accessibilityLabel="Joint Event toggle"
             >
-              <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: spacing.xs }}>
-                <AppText variant="captionBold" style={styles.label}>Joint Event (Multiple Societies)</AppText>
+              <View style={styles.toggleRow}>
+                <View style={styles.toggleLabelWrap}>
+                  <AppText variant="captionBold" style={styles.label}>Joint Event</AppText>
+                  <AppText variant="small" color="tertiary">
+                    Include players from multiple societies in one event.
+                  </AppText>
+                </View>
                 <Toggle
                   value={formIsMultiSociety}
                   onValueChange={(next) => {
@@ -1131,6 +1136,17 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.xs,
     borderRadius: radius.sm,
     borderWidth: 1,
+  },
+  toggleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: spacing.sm,
+    marginBottom: spacing.xs,
+  },
+  toggleLabelWrap: {
+    flex: 1,
+    minWidth: 0,
   },
   selectedCourseRow: {
     flexDirection: "row",

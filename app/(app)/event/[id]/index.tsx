@@ -716,8 +716,13 @@ export default function EventDetailScreen() {
                 { marginTop: spacing.md, paddingTop: spacing.md, borderTopWidth: 1, borderTopColor: colors.border }
               ]}
             >
-              <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: spacing.xs }}>
-                <AppText variant="captionBold" style={styles.label}>Joint Event</AppText>
+              <View style={styles.toggleRow}>
+                <View style={styles.toggleLabelWrap}>
+                  <AppText variant="captionBold" style={styles.label}>Joint Event</AppText>
+                  <AppText variant="small" color="tertiary">
+                    Include players from multiple societies in one event.
+                  </AppText>
+                </View>
                 <Toggle
                   value={formIsJointEvent}
                   onValueChange={(next) => {
@@ -731,11 +736,11 @@ export default function EventDetailScreen() {
                   }}
                 />
               </View>
-              <AppText variant="small" color="tertiary">
-                {formIsJointEvent
-                  ? "Host society must be included. Select at least one more society."
-                  : "This event is hosted by a single society."}
-              </AppText>
+              {formIsJointEvent ? (
+                <AppText variant="small" color="tertiary">
+                  Host society must be included. Select at least one more society.
+                </AppText>
+              ) : null}
               {formIsJointEvent && (
                 <View style={{ marginTop: spacing.sm }}>
                   <AppText variant="captionBold" color="secondary" style={{ marginBottom: spacing.xs }}>
@@ -1539,6 +1544,17 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.xs,
     borderRadius: radius.sm,
     borderWidth: 1,
+  },
+  toggleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: spacing.sm,
+    marginBottom: spacing.xs,
+  },
+  toggleLabelWrap: {
+    flex: 1,
+    minWidth: 0,
   },
   modeRow: {
     flexDirection: "row",
