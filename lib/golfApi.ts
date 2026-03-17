@@ -156,10 +156,7 @@ export async function getCourseById(id: number): Promise<ApiCourse> {
   let payload: any;
 
   if (typeof window !== "undefined") {
-<<<<<<< HEAD
-    const url = `/api/golf/course/${id}`;
-    console.log("[golfApi] getCourseById request:", url);
-    const res = await fetch(url);
+    const res = await fetch(`/api/golf/course/${id}`);
     const body = await res.text();
     if (!res.ok) {
       let err: any = {};
@@ -176,30 +173,6 @@ export async function getCourseById(id: number): Promise<ApiCourse> {
     } catch {
       payload = {};
     }
-=======
-    const res = await fetch(`/api/golf/course/${id}`);
-    const bodyText = await res.text();
-    let errData: any;
-    try {
-      errData = bodyText ? JSON.parse(bodyText) : {};
-    } catch {
-      errData = { error: bodyText?.slice(0, 200) };
-    }
-    if (!res.ok) {
-      console.error("[golfApi] getCourseById failed:", {
-        status: res.status,
-        courseId: id,
-        error: errData?.error,
-        bodyPreview: bodyText?.slice(0, 300),
-      });
-      throw new Error(errData?.error || `Failed to fetch course (${res.status})`);
-    }
-    try {
-      payload = bodyText ? JSON.parse(bodyText) : {};
-    } catch {
-      throw new Error("Invalid JSON response from course API");
-    }
->>>>>>> ca1bb6f25f008b02cd462f3514a4565252022fc2
   } else {
     payload = await request(`/courses/${id}`);
   }

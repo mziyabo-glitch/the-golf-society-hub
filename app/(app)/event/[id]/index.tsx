@@ -269,33 +269,8 @@ export default function EventDetailScreen() {
         setSelectedCourseEdit({ id: cached.courseId, name: cached.courseName });
         setFormCourseName(cached.courseName);
         setTees(cached.tees);
-<<<<<<< HEAD
         setTeeStatus("synced");
         setTeeStatusMessage("Synced tee data loaded.");
-=======
-      } else if (cached && cached.tees.length === 0) {
-        setSelectedCourseEdit({ id: cached.courseId, name: cached.courseName });
-        setFormCourseName(cached.courseName);
-        setTees([]);
-        setShowManualTee(true);
-        try {
-          const full = await getCourseById(hit.id);
-          const result = await importCourse(full);
-          const teesList = result.tees.map((t) => ({
-            id: t.id,
-            course_id: result.courseId,
-            tee_name: t.teeName,
-            tee_color: null,
-            course_rating: t.courseRating ?? 0,
-            slope_rating: t.slopeRating ?? 0,
-            par_total: t.parTotal ?? 0,
-          }));
-          setTees(teesList);
-          if (teesList.length > 0) setShowManualTee(false);
-        } catch {
-          /* keep manual tee visible */
-        }
->>>>>>> ca1bb6f25f008b02cd462f3514a4565252022fc2
       } else {
         const full = await getCourseById(hit.id);
         const result: ImportedCourse = await importCourse(full);
@@ -345,17 +320,8 @@ export default function EventDetailScreen() {
     }
   }, []);
 
-<<<<<<< HEAD
   // Load tees when event has course_id
   const loadTeesForEvent = useCallback(async (courseId: string | undefined, teeId: string | undefined, savedEvent?: EventDoc | null) => {
-=======
-  // Load tees when event has course_id (non-blocking; shows saved tee data immediately)
-  const loadTeesForEvent = useCallback(async (
-    courseId: string | undefined,
-    teeId: string | undefined,
-    hasSavedTeeData?: boolean
-  ) => {
->>>>>>> ca1bb6f25f008b02cd462f3514a4565252022fc2
     if (!courseId) {
       setTees([]);
       setSelectedTee(null);
@@ -369,7 +335,6 @@ export default function EventDetailScreen() {
       setTees(list);
       const match = teeId ? list.find((t) => t.id === teeId) : null;
       setSelectedTee(match ?? null);
-<<<<<<< HEAD
       if (list.length > 0) {
         setTeeStatus("synced");
         setTeeStatusMessage("Synced tee data loaded.");
@@ -419,25 +384,15 @@ export default function EventDetailScreen() {
         setTeeStatusMessage(savedEvent?.teeName
           ? "Saved tee setup loaded from this event. You can edit it below."
           : "Import failed. You can still save manual tee details below.");
-=======
-      if (list.length === 0 && hasSavedTeeData) {
-        setShowManualTee(true);
-      } else if (match) {
-        setShowManualTee(false);
->>>>>>> ca1bb6f25f008b02cd462f3514a4565252022fc2
       }
     } catch {
       setTees([]);
       setSelectedTee(null);
-<<<<<<< HEAD
       setShowManualTee(true);
       setTeeStatus(savedEvent?.teeName ? "manual" : "import_failed");
       setTeeStatusMessage(savedEvent?.teeName
         ? "Saved tee setup loaded from this event. You can edit it below."
         : "Import failed. You can still save manual tee details below.");
-=======
-      if (hasSavedTeeData) setShowManualTee(true);
->>>>>>> ca1bb6f25f008b02cd462f3514a4565252022fc2
     } finally {
       setTeesLoading(false);
     }
@@ -478,7 +433,7 @@ export default function EventDetailScreen() {
     setCourseSearchQuery("");
     setCourseSearchResults([]);
     setSelectedCourseEdit(event.course_id ? { id: event.course_id, name: event.courseName || "" } : null);
-    setTeeStatus(event.teeSource ?? null);
+    setTeeStatus(event.teeSource === "imported" ? "synced" : event.teeSource === "manual" ? "manual" : null);
     setTeeStatusMessage(
       event.teeName || event.par != null || event.courseRating != null || event.slopeRating != null
         ? "Saved tee setup loaded from this event."
@@ -487,7 +442,6 @@ export default function EventDetailScreen() {
 
     const hasSavedTeeData = !!(event.teeName || event.par != null || event.courseRating != null || event.slopeRating != null);
     if (event.course_id) {
-<<<<<<< HEAD
       setShowManualTee(!!(event.teeName || event.par != null || event.courseRating != null || event.slopeRating != null));
       loadTeesForEvent(event.course_id, event.tee_id ?? undefined, event);
     } else {
@@ -496,14 +450,6 @@ export default function EventDetailScreen() {
       setTeeStatus(event.teeName ? "manual" : null);
       setTeeStatusMessage(event.teeName ? "Saved tee setup loaded from this event." : null);
       setShowManualTee(!!(event.teeName || event.par != null));
-=======
-      setShowManualTee(hasSavedTeeData && !event.tee_id);
-      loadTeesForEvent(event.course_id, event.tee_id ?? undefined, hasSavedTeeData);
-    } else {
-      setTees([]);
-      setSelectedTee(null);
-      setShowManualTee(hasSavedTeeData);
->>>>>>> ca1bb6f25f008b02cd462f3514a4565252022fc2
     }
 
     setIsEditing(true);
@@ -537,28 +483,20 @@ export default function EventDetailScreen() {
 
     // Determine tee values: selected from DB or manual entry
     const teeId = selectedTee ? selectedTee.id : (showManualTee ? null : event?.tee_id ?? undefined);
-    const teeName = selectedTee?.tee_name ?? manualTeeName.trim() || event?.teeName || undefined;
+    const teeName = selectedTee?.tee_name ?? (manualTeeName.trim() || event?.teeName || undefined);
     const par = selectedTee?.par_total ?? parseOptionalNumber(manualPar, true) ?? event?.par ?? undefined;
     const courseRating = selectedTee?.course_rating ?? parseOptionalNumber(manualCourseRating) ?? event?.courseRating ?? undefined;
     const slopeRating = selectedTee?.slope_rating ?? parseOptionalNumber(manualSlopeRating, true) ?? event?.slopeRating ?? undefined;
     const ladiesTeeName = manualLadiesTeeName.trim() || undefined;
-<<<<<<< HEAD
     const ladiesPar = parseOptionalNumber(manualLadiesPar, true);
     const ladiesCourseRating = parseOptionalNumber(manualLadiesCourseRating);
     const ladiesSlopeRating = parseOptionalNumber(manualLadiesSlopeRating, true);
-    const courseId = selectedCourseEdit ? (selectedCourseEdit.id || undefined) : (event?.course_id || undefined);
+    const courseId = (selectedCourseEdit?.id) ?? event?.course_id ?? undefined;
     const teeSource = selectedTee
       ? "imported"
       : teeName || par != null || courseRating != null || slopeRating != null
         ? "manual"
         : event?.teeSource ?? undefined;
-=======
-    const ladiesPar = manualLadiesPar.trim() ? parseFloat(manualLadiesPar) : undefined;
-    const ladiesCourseRating = manualLadiesCourseRating.trim() ? parseFloat(manualLadiesCourseRating) : undefined;
-    const ladiesSlopeRating = manualLadiesSlopeRating.trim() ? parseFloat(manualLadiesSlopeRating) : undefined;
-    const courseId = selectedCourseEdit?.id || event?.course_id || undefined;
-    const teeSource = selectedTee ? "imported" : (teeName || par != null || courseRating != null || slopeRating != null) ? "manual" : undefined;
->>>>>>> ca1bb6f25f008b02cd462f3514a4565252022fc2
 
     setSaving(true);
     try {
