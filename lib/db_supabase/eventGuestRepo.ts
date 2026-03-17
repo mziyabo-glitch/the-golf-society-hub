@@ -1,9 +1,7 @@
 // lib/db_supabase/eventGuestRepo.ts
 // Guest players for events (name, sex, handicap index).
-// When adding a guest, also adds to event_players (canonical selection).
 
 import { supabase } from "@/lib/supabase";
-import { addEventPlayerGuest, removeEventPlayerGuest } from "@/lib/db_supabase/eventPlayerRepo";
 
 export type EventGuest = {
   id: string;
@@ -53,13 +51,7 @@ export async function addEventGuest(opts: {
     console.error("[eventGuestRepo] addEventGuest:", error.message);
     throw new Error(error.message || "Failed to add guest");
   }
-  const guest = data as EventGuest;
-  try {
-    await addEventPlayerGuest(opts.eventId, guest.id, opts.societyId);
-  } catch (e) {
-    console.warn("[eventGuestRepo] addEventPlayerGuest failed (guest created):", e);
-  }
-  return guest;
+  return data as EventGuest;
 }
 
 export async function updateEventGuest(
@@ -99,13 +91,5 @@ export async function deleteEventGuest(guestId: string): Promise<void> {
   if (error) {
     console.error("[eventGuestRepo] deleteEventGuest:", error.message);
     throw new Error(error.message || "Failed to delete guest");
-  }
-
-  if (guest?.event_id) {
-    try {
-      await removeEventPlayerGuest(guest.event_id, guestId);
-    } catch (e) {
-      console.warn("[eventGuestRepo] removeEventPlayerGuest failed (guest deleted):", e);
-    }
   }
 }

@@ -1,10 +1,10 @@
 /**
  * Event Players Screen
  *
- * Unified architecture: single/joint events use same model.
- * - Load: event → event_societies (participatingSocietyIds) → members for all societies → event_players
- * - No separate hook/render path for joint events.
+ * Phase A: Single-society only. Joint-event flow disabled until new architecture is ready.
+ * - Load: event → events.player_ids → members from event.society_id
  */
+const DISABLE_JOINT_EVENT_FLOW = true;
 
 /**
  * ROOT CAUSE OF REACT #310 IN MEMBER-LIST SUBTREE
@@ -266,10 +266,12 @@ export default function EventPlayersScreen() {
   const [changeSocietyMember, setChangeSocietyMember] = useState<MemberDoc | null>(null); // 21
   const [alternateMembers, setAlternateMembers] = useState<MemberDoc[]>([]); // 22
 
-  const isJointEvent = Boolean(event?.is_joint_event ?? event?.is_multi_society);
+  const isJointEvent = DISABLE_JOINT_EVENT_FLOW
+    ? false
+    : Boolean(event?.is_joint_event ?? event?.is_multi_society);
 
   const participatingSocietyIds: string[] = (() => {
-    if (!event) return [];
+    if (DISABLE_JOINT_EVENT_FLOW || !event) return [];
     const ids = event.participatingSocietyIds;
     return isJointEvent && Array.isArray(ids) && ids.length > 0 ? ids : [];
   })();
@@ -316,10 +318,12 @@ export default function EventPlayersScreen() {
         console.log("[EventPlayersScreen] loading", { eventId, societyId });
         const evt = await getEvent(eventId);
         if (cancelled) return;
-        // Unified load: always use participating societies (single = 1, joint = many)
-        const societyIds = (evt?.participatingSocietyIds?.length
-          ? evt.participatingSocietyIds
-          : [evt?.society_id ?? societyId].filter(Boolean)) as string[];
+        // Phase A: single society only (event.society_id or host)
+        const societyIds = DISABLE_JOINT_EVENT_FLOW
+          ? ([evt?.society_id ?? evt?.host_society_id ?? societyId].filter(Boolean) as string[])
+          : (evt?.participatingSocietyIds?.length
+            ? evt.participatingSocietyIds
+            : [evt?.society_id ?? societyId].filter(Boolean)) as string[];
         const [mems, guestList] = await Promise.all([
           getMembersBySocietyIds(societyIds),
           getEventGuests(eventId),

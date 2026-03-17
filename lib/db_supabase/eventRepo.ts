@@ -1,10 +1,6 @@
 // lib/db_supabase/eventRepo.ts
 import { supabase } from "@/lib/supabase";
 import { getEventSocietyIds, setEventSocieties } from "@/lib/db_supabase/eventSocietiesRepo";
-import {
-  getEventMemberIds,
-  setEventPlayersFromIds,
-} from "@/lib/db_supabase/eventPlayerRepo";
 import { getEventGuests } from "@/lib/db_supabase/eventGuestRepo";
 
 // Event format types - simplified to core formats
@@ -264,9 +260,7 @@ export async function getEvent(eventId: string): Promise<EventDoc | null> {
   doc.is_multi_society = isJointEvent;
   doc.is_joint_event = isJointEvent;
 
-  // Prefer event_players over events.player_ids
-  const memberIds = await getEventMemberIds(eventId);
-  doc.playerIds = memberIds.length > 0 ? memberIds : (data.player_ids ?? []);
+  doc.playerIds = data.player_ids ?? [];
 
   return doc;
 }
@@ -500,13 +494,7 @@ export async function updateEvent(
   if (updates.status !== undefined) payload.status = updates.status;
   if (updates.isCompleted !== undefined) payload.is_completed = updates.isCompleted;
   if (updates.winnerName !== undefined) payload.winner_name = updates.winnerName;
-  // playerIds: persist to event_players, not events.player_ids
-  if (updates.playerIds !== undefined) {
-    const guests = await getEventGuests(eventId);
-    const guestIds = guests.map((g) => g.id);
-    await setEventPlayersFromIds(eventId, updates.playerIds, guestIds);
-    // Do not add player_ids to payload - event_players is canonical
-  }
+  if (updates.playerIds !== undefined) payload.player_ids = updates.playerIds;
   if (updates.teeTimeStart !== undefined) payload.tee_time_start = formatTeeTimeForDb(updates.teeTimeStart);
   if (updates.teeTimeInterval !== undefined) payload.tee_time_interval = updates.teeTimeInterval;
   if (updates.teeTimePublishedAt !== undefined) payload.tee_time_published_at = updates.teeTimePublishedAt;
