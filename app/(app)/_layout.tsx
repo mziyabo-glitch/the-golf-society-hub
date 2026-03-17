@@ -6,6 +6,7 @@ import { LoadingState } from "@/components/ui/LoadingState";
 import { getColors, spacing } from "@/lib/ui/theme";
 
 export default function AppLayout() {
+  console.log("APP_LAYOUT_TOP");
   const { loading, isMember, redirecting } = useSocietyMembershipGuard();
   const colors = getColors();
 

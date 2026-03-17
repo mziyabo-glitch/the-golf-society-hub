@@ -43,6 +43,7 @@ function isGuardExemptRoute(pathname: string | undefined): boolean {
 }
 
 export function useSocietyMembershipGuard(): GuardResult {
+  console.log("ROUTE_GUARD_TOP");
   const {
     loading,
     membershipLoading,
@@ -52,7 +53,9 @@ export function useSocietyMembershipGuard(): GuardResult {
     setActiveSociety,
     refresh,
   } = useBootstrap();
+  console.log("ROUTE_GUARD_AFTER_HOOK_1");
   const pathname = usePathname();
+  console.log("ROUTE_GUARD_AFTER_HOOK_2");
 
   const redirected = useRef(false);
   const trackedSocietyId = useRef<string | null>(null);
