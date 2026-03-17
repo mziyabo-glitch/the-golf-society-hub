@@ -43,7 +43,6 @@ function isGuardExemptRoute(pathname: string | undefined): boolean {
 }
 
 export function useSocietyMembershipGuard(): GuardResult {
-  console.log("ROUTE_GUARD_TOP");
   const {
     loading,
     membershipLoading,
@@ -53,9 +52,7 @@ export function useSocietyMembershipGuard(): GuardResult {
     setActiveSociety,
     refresh,
   } = useBootstrap();
-  console.log("ROUTE_GUARD_AFTER_HOOK_1");
   const pathname = usePathname();
-  console.log("ROUTE_GUARD_AFTER_HOOK_2");
 
   const redirected = useRef(false);
   const trackedSocietyId = useRef<string | null>(null);
@@ -134,15 +131,6 @@ export function useSocietyMembershipGuard(): GuardResult {
     setActiveSociety(null, null)
       .catch((e) => console.error("[MembershipGuard] clear error:", e));
   }, [loading, membershipLoading, hasSociety, hasMember, inMembershipsList, setActiveSociety, activeSocietyId, refresh, onToolRoute]);
-
-  console.log("ROUTE_GUARD_BEFORE_RETURN");
-
-  // DIAGNOSIS: Bypass guard entirely for /event/.../players to isolate #310
-  const path = typeof pathname === "string" ? pathname : "";
-  const isPlayersRoute = path.includes("/event/") && path.endsWith("/players");
-  if (isPlayersRoute) {
-    return { loading: false, isMember: true, redirecting: false };
-  }
 
   return {
     loading: loading || membershipLoading,

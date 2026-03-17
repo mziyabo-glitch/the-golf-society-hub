@@ -1,4 +1,4 @@
-import { useEffect, useRef, type ReactNode } from "react";
+import { useEffect, useRef } from "react";
 import { Stack, usePathname, useRouter, useSegments } from "expo-router";
 import { StyleSheet, View } from "react-native";
 import { supabase } from "@/lib/supabase";
@@ -294,26 +294,10 @@ function RootNavigator() {
   );
 }
 
-// Provider strip test: pass-through (replace with real provider to restore)
-function BootstrapProviderStripped({ children }: { children: ReactNode }) {
-  console.log("BOOTSTRAP_PROVIDER_STRIPPED");
-  return <>{children}</>;
-}
-
-// RootNavigator strip test: minimal Stack only, no hooks
-function RootNavigatorStripped() {
-  console.log("ROOT_NAVIGATOR_STRIPPED");
-  return <Stack screenOptions={{ headerShown: false }} />;
-}
-
 export default function RootLayout() {
-  console.log("ROOT_LAYOUT_TOP");
-  // Test A: BootstrapProviderStripped + RootNavigatorStripped (both stripped)
-  // Test B: BootstrapProvider + RootNavigatorStripped (only RootNav stripped)
-  // Test C: BootstrapProvider + RootNavigator (full - restore for normal use)
   return (
-    <BootstrapProviderStripped>
-      <RootNavigatorStripped />
-    </BootstrapProviderStripped>
+    <BootstrapProvider>
+      <RootNavigator />
+    </BootstrapProvider>
   );
 }

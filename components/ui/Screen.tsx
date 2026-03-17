@@ -17,7 +17,6 @@ type ScreenProps = {
 };
 
 export function Screen({ children, scrollable = true, style, contentStyle }: ScreenProps) {
-  console.log("SCREEN_WRAPPER_TOP");
   const colors = getColors();
   const tabBarHeight = useContext(BottomTabBarHeightContext) ?? 0;
   const bottomContentPadding = tabBarHeight > 0 ? tabBarHeight + spacing.base : spacing.lg;
