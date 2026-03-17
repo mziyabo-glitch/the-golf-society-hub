@@ -136,6 +136,14 @@ export function useSocietyMembershipGuard(): GuardResult {
   }, [loading, membershipLoading, hasSociety, hasMember, inMembershipsList, setActiveSociety, activeSocietyId, refresh, onToolRoute]);
 
   console.log("ROUTE_GUARD_BEFORE_RETURN");
+
+  // DIAGNOSIS: Bypass guard entirely for /event/.../players to isolate #310
+  const path = typeof pathname === "string" ? pathname : "";
+  const isPlayersRoute = path.includes("/event/") && path.endsWith("/players");
+  if (isPlayersRoute) {
+    return { loading: false, isMember: true, redirecting: false };
+  }
+
   return {
     loading: loading || membershipLoading,
     isMember,
