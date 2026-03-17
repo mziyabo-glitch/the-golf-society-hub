@@ -1,6 +1,13 @@
 /**
  * Event Players Screen
  *
+ * DEBUG_310_JOINT_UI: Set to false to disable joint-event UI (society filter,
+ * change-society, society badges). Use for regression test — if #310 disappears,
+ * the conditional joint-event UI is the culprit.
+ */
+const DEBUG_310_JOINT_UI = true;
+
+/**
  * ROOT CAUSE OF REACT #310 IN MEMBER-LIST SUBTREE
  * ─────────────────────────────────────────────────
  * React tracks component identity by the FUNCTION REFERENCE of each component.
@@ -491,7 +498,7 @@ export default function EventPlayersScreen() {
       <ScrollView contentContainerStyle={{ paddingBottom: spacing.xl }}>
 
         {/* ── society-filter ──────────────────────────────────────────── */}
-        {participatingSocietyIds.length > 1 ? (
+        {DEBUG_310_JOINT_UI && participatingSocietyIds.length > 1 ? (
           <SectionErrorBoundary name="society-filter">
             <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: spacing.md }}>
               <Pressable
@@ -539,8 +546,8 @@ export default function EventPlayersScreen() {
                   key={String(m.id)}
                   member={m}
                   selected={selectedPlayerIds.has(String(m.id))}
-                  hasAlternates={membersWithAlternates.has(m.id)}
-                  isJointEvent={isJointEvent}
+                  hasAlternates={DEBUG_310_JOINT_UI && membersWithAlternates.has(m.id)}
+                  isJointEvent={DEBUG_310_JOINT_UI && isJointEvent}
                   isCompleted={Boolean(event?.isCompleted)}
                   societyNames={societyNames}
                   onToggle={togglePlayer}
@@ -573,7 +580,7 @@ export default function EventPlayersScreen() {
                 <GuestRow
                   key={g.id}
                   guest={g}
-                  isJointEvent={isJointEvent}
+                  isJointEvent={DEBUG_310_JOINT_UI && isJointEvent}
                   societyNames={societyNames}
                   canEdit={Boolean(permissions?.canEditEvents)}
                   onDelete={handleDeleteGuest}
@@ -591,7 +598,7 @@ export default function EventPlayersScreen() {
           <Pressable style={styles.modalOverlay} onPress={() => !addingGuest && setShowAddGuest(false)}>
             <Pressable style={[styles.modalContent, { backgroundColor: colors.surface }]} onPress={(e) => e.stopPropagation()}>
               <AppText variant="h2" style={{ marginBottom: spacing.md }}>Add Guest</AppText>
-              {isJointEvent && participatingSocietyIds.length > 1 ? (
+              {DEBUG_310_JOINT_UI && isJointEvent && participatingSocietyIds.length > 1 ? (
                 <View style={styles.formField}>
                   <AppText variant="caption" style={styles.label}>Representing society</AppText>
                   <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
