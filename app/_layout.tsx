@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 import { Stack, usePathname, useRouter, useSegments } from "expo-router";
 import { StyleSheet, View } from "react-native";
 import { supabase } from "@/lib/supabase";
@@ -294,10 +294,16 @@ function RootNavigator() {
   );
 }
 
+// STEP 3: Pass-through to isolate #310. Replace with BootstrapProvider to restore.
+function BootstrapProviderStripped({ children }: { children: ReactNode }) {
+  console.log("PROVIDER_BOOTSTRAP_STRIPPED");
+  return <>{children}</>;
+}
+
 export default function RootLayout() {
   return (
-    <BootstrapProvider>
+    <BootstrapProviderStripped>
       <RootNavigator />
-    </BootstrapProvider>
+    </BootstrapProviderStripped>
   );
 }
