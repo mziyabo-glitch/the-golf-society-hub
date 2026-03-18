@@ -29,13 +29,15 @@ function getSupabaseClient(): SupabaseClient {
     return supabaseInstance;
   }
 
+  // On web, detect OAuth/magic-link session from URL hash after redirect
+  const isWeb = typeof window !== "undefined" && typeof document !== "undefined";
   supabaseInstance = createClient(supabaseUrl!, supabaseAnonKey!, {
     auth: {
       // AsyncStorage on native, localStorage on web (via supabaseStorage)
       storage: supabaseStorage,
       persistSession: true,
       autoRefreshToken: true,
-      detectSessionInUrl: false,
+      detectSessionInUrl: isWeb,
       storageKey: "supabase-auth",
     },
   });

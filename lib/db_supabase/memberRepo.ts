@@ -46,6 +46,7 @@ export type MemberDoc = {
   handicap_updated_at?: string | null;
   handicapUpdatedAt?: string | null;
   handicap_updated_by?: string | null;
+  emergency_contact?: string | null;
 };
 
 function mapMember(row: any): MemberDoc {

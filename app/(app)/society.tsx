@@ -22,15 +22,15 @@ export default function SocietyDashboardScreen() {
             <SectionHeader title="ManCo Tools" />
 
             <View style={styles.stack}>
-              <SecondaryButton onPress={() => router.push("/(app)/members")}>
+              <SecondaryButton onPress={() => router.push("/(app)/(tabs)/members")}>
                 Members
               </SecondaryButton>
 
-              <SecondaryButton onPress={() => router.push("/(app)/leaderboard")}>
+              <SecondaryButton onPress={() => router.push("/(app)/(tabs)/leaderboard")}>
                 Leaderboard
               </SecondaryButton>
 
-              <SecondaryButton onPress={() => router.push("/(app)/settings")}>
+              <SecondaryButton onPress={() => router.push("/(app)/(tabs)/settings")}>
                 Settings
               </SecondaryButton>
             </View>
@@ -38,8 +38,8 @@ export default function SocietyDashboardScreen() {
         )}
 
         <SectionHeader title="General" />
-        <SecondaryButton onPress={() => router.push("/(app)/explore")}>
-          Explore
+        <SecondaryButton onPress={() => router.push("/(app)/(tabs)")}>
+          Home
         </SecondaryButton>
       </View>
     </Screen>

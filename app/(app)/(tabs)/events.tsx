@@ -205,8 +205,10 @@ export default function EventsScreen() {
       console.log("[events] importCourse done:", result.courseId, result.tees.length, "tees");
       setSelectedCourse({ id: result.courseId, name: result.courseName });
 
-      // Step 3: Reload tees from DB (most authoritative source after import)
-      const freshTees = await getTeesByCourseId(result.courseId).catch(() => [] as CourseTee[]);
+      // Step 3: Reload tees from DB if we have a real course ID; else use API tees
+      const freshTees = result.courseId.startsWith("api-course-")
+        ? []
+        : await getTeesByCourseId(result.courseId).catch(() => [] as CourseTee[]);
       const teesList = freshTees.length > 0
         ? freshTees
         : result.tees.map((t) => ({
@@ -353,7 +355,22 @@ export default function EventsScreen() {
     const courseName =
       selectedCourse?.name ?? (manualCourseName.trim() || undefined);
 
-    const teeId = selectedTee?.id ?? undefined;
+    let teeId: string | undefined = selectedTee?.id ?? undefined;
+    let courseId: string | undefined = selectedCourse?.id;
+
+    // API-only IDs (api-course-*, api-tee-*) are not real DB UUIDs — don't save as FK
+    if (courseId?.startsWith("api-course-")) courseId = undefined;
+    if (teeId?.startsWith("api-tee-")) teeId = undefined;
+
+    // Validate tee_id: must exist in loaded tees for current course (events.tee_id FK → course_tees.id)
+    if (teeId && courseId && tees.length > 0 && !tees.some((t) => t.id === teeId)) {
+      console.warn("[createEvent] tee_id not in loaded tees, saving without tee:", {
+        teeId,
+        courseId,
+        loadedTeeIds: tees.map((t) => t.id),
+      });
+      teeId = undefined;
+    }
     const teeName = selectedTee ? selectedTee.tee_name : (manualTeeName.trim() || undefined);
     const par = selectedTee ? selectedTee.par_total : (manualPar.trim() ? parseFloat(manualPar) : undefined);
     const courseRating = selectedTee ? selectedTee.course_rating : (manualCourseRating.trim() ? parseFloat(manualCourseRating) : undefined);
@@ -363,7 +380,13 @@ export default function EventsScreen() {
     const ladiesCourseRating = manualLadiesCourseRating.trim() ? parseFloat(manualLadiesCourseRating) : undefined;
     const ladiesSlopeRating = manualLadiesSlopeRating.trim() ? parseFloat(manualLadiesSlopeRating) : undefined;
 
-    console.log("[createEvent] Calling createEvent...");
+    console.log("[createEvent] Calling createEvent...", {
+      course_id: courseId,
+      tee_id: teeId,
+      selectedTeeId: selectedTee?.id ?? null,
+      selectedTee: selectedTee ? { id: selectedTee.id, tee_name: selectedTee.tee_name } : null,
+      loadedTeeIds: tees.map((t) => t.id),
+    });
     const created = await createAction.run(async () =>
       createEvent(societyId, {
         name: formName.trim(),
@@ -371,7 +394,7 @@ export default function EventsScreen() {
         format: formFormat,
         classification: formClassification,
         createdBy: user.uid,
-        courseId: selectedCourse?.id,
+        courseId: courseId,
         courseName,
         teeId,
         teeName,
@@ -383,6 +406,7 @@ export default function EventsScreen() {
         ladiesCourseRating,
         ladiesSlopeRating,
         handicapAllowance,
+        teeSource: selectedTee ? "imported" : undefined,
       })
     );
 

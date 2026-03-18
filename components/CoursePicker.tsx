@@ -3,13 +3,13 @@ import { Pressable, StyleSheet, View } from "react-native";
 
 import { AppInput } from "@/components/ui/AppInput";
 import { AppText } from "@/components/ui/AppText";
-import { searchCourses, type CourseDoc } from "@/lib/db_supabase/courseRepo";
+import { searchCourses, type CourseSearchHit } from "@/lib/db_supabase/courseRepo";
 import { getColors, radius, spacing } from "@/lib/ui/theme";
 
 type CoursePickerProps = {
   label?: string;
   initialQuery?: string;
-  onCourseChange: (course: CourseDoc | null, query: string) => void;
+  onCourseChange: (course: CourseSearchHit | null, query: string) => void;
 };
 
 export function CoursePicker({
@@ -19,7 +19,7 @@ export function CoursePicker({
 }: CoursePickerProps) {
   const colors = getColors();
   const [query, setQuery] = useState(initialQuery);
-  const [results, setResults] = useState<CourseDoc[]>([]);
+  const [results, setResults] = useState<CourseSearchHit[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -32,8 +32,9 @@ export function CoursePicker({
       setLoading(true);
       setError(null);
       try {
-        const rows = await searchCourses(query, query.trim() ? 25 : 15);
-        setResults(rows);
+        const { data, error } = await searchCourses(query, query.trim() ? 25 : 15);
+        setResults(data ?? []);
+        if (error) setError(error);
       } catch (err: any) {
         setResults([]);
         setError(err?.message || "Failed to load courses");
@@ -102,9 +103,9 @@ export function CoursePicker({
               ]}
             >
               <AppText variant="bodyBold">{course.name}</AppText>
-              {(course.city || course.country) ? (
+              {course.location ? (
                 <AppText variant="small" color="secondary">
-                  {[course.city, course.country].filter(Boolean).join(", ")}
+                  {course.location}
                 </AppText>
               ) : null}
             </Pressable>

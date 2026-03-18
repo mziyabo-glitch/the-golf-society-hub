@@ -94,6 +94,15 @@ export function CourseTeeSelector({
               <AppText variant="bodyBold" numberOfLines={1} style={styles.teeName}>
                 {tee.tee_name}
               </AppText>
+              {(tee.gender === "F" || (tee.tee_name || "").includes("(Ladies)")) ? (
+                <AppText variant="caption" color="secondary" style={styles.genderBadge}>
+                  Ladies
+                </AppText>
+              ) : tee.gender === "M" ? (
+                <AppText variant="caption" color="secondary" style={styles.genderBadge}>
+                  Men
+                </AppText>
+              ) : null}
               {isSelected && (
                 <View style={[styles.checkBadge, { backgroundColor: colors.primary }]}>
                   <AppText variant="small" style={styles.checkText}>
@@ -150,6 +159,9 @@ const styles = StyleSheet.create({
   },
   teeName: {
     flex: 1,
+  },
+  genderBadge: {
+    marginLeft: spacing.xs,
   },
   checkBadge: {
     width: 20,

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
-import { StyleSheet, View, Pressable, Image, Platform } from "react-native";
+import { StyleSheet, View, Pressable, Image, Platform, Share } from "react-native";
+import * as Clipboard from "expo-clipboard";
 import { useRouter } from "expo-router";
 import { Feather } from "@expo/vector-icons";
 import * as ImagePicker from "expo-image-picker";
@@ -18,6 +19,7 @@ import { supabase } from "@/lib/supabase";
 import { clearActiveSociety } from "@/lib/db_supabase/profileRepo";
 import { regenerateJoinCode, uploadSocietyLogo, removeSocietyLogo, resetSocietyData } from "@/lib/db_supabase/societyRepo";
 import { isCaptain, getPermissionsForMember } from "@/lib/rbac";
+import { getSocietyInviteUrl, getSocietyInviteMessage } from "@/lib/appConfig";
 import {
   getSocietyLogoUrl,
   getSocietyLogoDataUri,
@@ -64,6 +66,8 @@ export default function SettingsScreen() {
   const [reappointing, setReappointing] = useState(false);
   const [showReappoint, setShowReappoint] = useState(false);
   const [adminToast, setAdminToast] = useState<{ visible: boolean; message: string; type: "success" | "error" | "info" }>({ visible: false, message: "", type: "success" });
+  const [inviteLinkToast, setInviteLinkToast] = useState(false);
+  const [codeCopyToast, setCodeCopyToast] = useState(false);
 
   useEffect(() => {
     isPlatformAdmin().then(setIsAdmin);
@@ -468,24 +472,85 @@ export default function SettingsScreen() {
         </View>
 
         {society?.joinCode && (
-          <View style={[styles.settingRow, { marginTop: spacing.base }]}>
-            <View style={[styles.settingIcon, { backgroundColor: colors.backgroundTertiary }]}>
-              <Feather name="key" size={18} color={colors.primary} />
-            </View>
-            <View style={styles.settingInfo}>
-              <AppText variant="caption" color="secondary">Join Code</AppText>
-              <AppText variant="bodyBold" style={{ letterSpacing: 2 }}>{society.joinCode}</AppText>
+          <>
+            <View style={[styles.settingRow, { marginTop: spacing.base }]}>
+              <View style={[styles.settingIcon, { backgroundColor: colors.backgroundTertiary }]}>
+                <Feather name="key" size={18} color={colors.primary} />
+              </View>
+              <View style={styles.settingInfo}>
+                <AppText variant="caption" color="secondary">Join Code</AppText>
+                {canRegenCode ? (
+                  <Pressable
+                    onPress={async () => {
+                      await Clipboard.setStringAsync(society.joinCode!);
+                      setCodeCopyToast(true);
+                    }}
+                    style={({ pressed }) => ({ opacity: pressed ? 0.7 : 1 })}
+                  >
+                    <AppText variant="bodyBold" style={{ letterSpacing: 2 }}>{society.joinCode}</AppText>
+                  </Pressable>
+                ) : (
+                  <AppText variant="bodyBold" style={{ letterSpacing: 2 }}>{society.joinCode}</AppText>
+                )}
+              </View>
+              {canRegenCode && (
+                <SecondaryButton
+                  onPress={handleRegenerateCode}
+                  size="sm"
+                  loading={regenerating}
+                >
+                  Regenerate
+                </SecondaryButton>
+              )}
             </View>
             {canRegenCode && (
-              <SecondaryButton
-                onPress={handleRegenerateCode}
-                size="sm"
-                loading={regenerating}
-              >
-                Regenerate
-              </SecondaryButton>
+              <>
+                <Pressable
+                  onPress={async () => {
+                    const url = getSocietyInviteUrl(society.joinCode!);
+                    await Clipboard.setStringAsync(url);
+                    setInviteLinkToast(true);
+                  }}
+                  style={({ pressed }) => [styles.linkRow, { opacity: pressed ? 0.7 : 1, marginTop: spacing.sm }]}
+                >
+                  <View style={[styles.linkIcon, { backgroundColor: colors.primary + "14" }]}>
+                    <Feather name="link" size={18} color={colors.primary} />
+                  </View>
+                  <View style={styles.settingInfo}>
+                    <AppText variant="bodyBold">Copy invite link</AppText>
+                    <AppText variant="small" color="secondary">Members enter name, WHS index & emergency contact</AppText>
+                  </View>
+                </Pressable>
+                <Pressable
+                  onPress={async () => {
+                    const message = getSocietyInviteMessage(society?.name ?? "our society", society.joinCode!);
+                    try {
+                      if (Platform.OS === "web" && typeof navigator !== "undefined" && navigator.share) {
+                        await navigator.share({
+                          title: `Join ${society?.name ?? "Society"}`,
+                          text: message,
+                        });
+                      } else if (Platform.OS === "web") {
+                        await Clipboard.setStringAsync(message);
+                        setInviteLinkToast(true);
+                      } else {
+                        await Share.share({ message });
+                      }
+                    } catch { /* cancelled or unsupported */ }
+                  }}
+                  style={({ pressed }) => [styles.linkRow, { opacity: pressed ? 0.7 : 1, marginTop: spacing.xs }]}
+                >
+                  <View style={[styles.linkIcon, { backgroundColor: colors.primary + "14" }]}>
+                    <Feather name="share-2" size={18} color={colors.primary} />
+                  </View>
+                  <View style={styles.settingInfo}>
+                    <AppText variant="bodyBold">Share society code</AppText>
+                    <AppText variant="small" color="secondary">Share via WhatsApp, SMS, email, etc.</AppText>
+                  </View>
+                </Pressable>
+              </>
             )}
-          </View>
+          </>
         )}
       </AppCard>
 
@@ -498,7 +563,7 @@ export default function SettingsScreen() {
               {/* Logo Preview */}
               <View style={styles.logoPreviewContainer}>
                 {logoUrl ? (
-                  <SocietyLogoImage logoUrl={logoUrl} size={120} placeholderText="" />
+                  <SocietyLogoImage logoUrl={logoUrl} size={140} variant="hero" placeholderText="" />
                 ) : (
                   <View style={[styles.logoPlaceholder, { backgroundColor: colors.backgroundTertiary }]}>
                     <Feather name="image" size={32} color={colors.textTertiary} />
@@ -629,7 +694,7 @@ export default function SettingsScreen() {
           <AppCard padding="sm">
             <Pressable
               style={({ pressed }) => [styles.linkRow, { opacity: pressed ? 0.7 : 1 }]}
-              onPress={() => router.push("/course-domains")}
+              onPress={() => router.push("/(admin)/course-domains" as any)}
             >
               <View style={[styles.linkIcon, { backgroundColor: colors.info + "20" }]}>
                 <Feather name="globe" size={16} color={colors.info} />
@@ -853,6 +918,9 @@ export default function SettingsScreen() {
           <Toast visible={adminToast.visible} message={adminToast.message} type={adminToast.type} onHide={() => setAdminToast((t) => ({ ...t, visible: false }))} />
         </>
       )}
+
+      <Toast visible={inviteLinkToast} message="Invite link copied to clipboard" type="success" onHide={() => setInviteLinkToast(false)} />
+      <Toast visible={codeCopyToast} message="Join code copied" type="success" onHide={() => setCodeCopyToast(false)} />
 
       {/* Quick Links */}
       <AppText variant="h2" style={styles.sectionTitle}>Quick Actions</AppText>

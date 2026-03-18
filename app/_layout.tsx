@@ -11,10 +11,11 @@ import { PrimaryButton } from "@/components/ui/Button";
 import { getColors, spacing } from "@/lib/ui/theme";
 import { consumePendingInviteToken } from "@/lib/sinbookInviteToken";
 import { consumePendingRivalryJoinCode } from "@/lib/pendingRivalryJoinCode";
+import { consumePendingSocietyJoinCode } from "@/lib/pendingSocietyJoinCode";
 import { blurWebActiveElement } from "@/lib/ui/focus";
 
 const APP_TABS = "/(app)/(tabs)";
-const JOIN_FLOW_SEGMENTS = new Set(["onboarding", "join", "join-society"]);
+const JOIN_FLOW_SEGMENTS = new Set(["onboarding", "join", "join-society", "invite"]);
 const JOIN_RIVALRY_SEGMENT = "join-rivalry";
 
 function isJoinFlowRoute(pathname?: string, seg0?: string): boolean {
@@ -26,7 +27,8 @@ function isJoinFlowRoute(pathname?: string, seg0?: string): boolean {
     pathname === "/onboarding" ||
     pathname.startsWith("/onboarding/") ||
     pathname === "/join-rivalry" ||
-    pathname.startsWith("/join-rivalry")
+    pathname.startsWith("/join-rivalry") ||
+    pathname.startsWith("/invite/")
   );
 }
 
@@ -76,7 +78,7 @@ function RootNavigator() {
       if (!mounted) return;
       const seg0 = segmentsRef.current[0];
       const p = pathnameRef.current;
-      const inApp = seg0 === "(app)" || seg0 === "app" || (typeof p === "string" && p?.startsWith("/(app)"));
+      const inApp = seg0 === "(app)" || (typeof p === "string" && p?.startsWith("/(app)"));
       const inPublic = p === "/reset-password" || seg0 === "reset-password";
       const inJoinFlow = isJoinFlowRoute(p, seg0);
       if (inPublic || inJoinFlow || isToolRoute(p, seg0)) return;
@@ -88,11 +90,19 @@ function RootNavigator() {
           console.log("[_layout] Auth gate: resuming rivalry join with code");
           blurWebActiveElement();
           router.replace({ pathname: "/join-rivalry", params: { code: pendingRivalryCode } });
-        } else {
-          console.log("[_layout] Auth gate: session present, redirecting to", APP_TABS);
-          blurWebActiveElement();
-          router.replace(APP_TABS);
+          return;
         }
+        const pendingSocietyCode = await consumePendingSocietyJoinCode();
+        if (!mounted) return;
+        if (pendingSocietyCode) {
+          console.log("[_layout] Auth gate: resuming society join with code");
+          blurWebActiveElement();
+          router.replace({ pathname: "/onboarding", params: { mode: "join", code: pendingSocietyCode, invite: "1" } });
+          return;
+        }
+        console.log("[_layout] Auth gate: session present, redirecting to", APP_TABS);
+        blurWebActiveElement();
+        router.replace(APP_TABS);
       }
     };
 
@@ -221,7 +231,7 @@ function RootNavigator() {
     const seg0 = segments[0];
     const inJoinFlow = isJoinFlowRoute(pathname, seg0);
     if (inJoinFlow || isToolRoute(pathname, seg0)) return;
-    const inApp = seg0 === "(app)" || seg0 === "app" || (typeof pathname === "string" && pathname.startsWith("/(app)"));
+    const inApp = seg0 === "(app)" || (typeof pathname === "string" && pathname.startsWith("/(app)"));
     if (inApp) return;
     console.log("[_layout] Session present but not in app, redirecting");
     blurWebActiveElement();

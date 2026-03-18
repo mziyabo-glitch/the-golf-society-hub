@@ -452,29 +452,26 @@ export default function TreasurerScreen() {
         {/* 2x2 Stat Cards Grid */}
         <View style={styles.statsGrid}>
           <StatCard
+            icon="edit-3"
             label="Opening Balance"
             value={formatPenceToGBP(summary?.openingBalancePence ?? 0)}
-            hint="Tap to edit"
-            variant="muted"
+            detail="Tap to edit"
             onPress={handleOpenOpeningBalanceModal}
           />
           <StatCard
+            icon="trending-up"
             label="Total Income"
             value={formatPenceToGBP(summary?.totalIncomePence ?? 0)}
-            variant="success"
-            icon={<Feather name="trending-up" size={12} color={colors.success} />}
           />
           <StatCard
+            icon="trending-down"
             label="Total Costs"
             value={formatPenceToGBP(summary?.totalCostsPence ?? 0)}
-            variant="error"
-            icon={<Feather name="trending-down" size={12} color={colors.error} />}
           />
           <StatCard
+            icon="dollar-sign"
             label="Current Balance"
             value={formatPenceToGBP(currentBalance)}
-            variant={balanceVariant}
-            emphasis
           />
         </View>
 
@@ -870,7 +867,7 @@ function generateLedgerPdfHtml(data: LedgerPdfData): string {
   });
 
   const logoHtml = logoSrc
-    ? `<img src="${escapeAttribute(logoSrc)}" style="height: 50px; width: auto; margin-right: 16px;" />`
+    ? `<img src="${escapeAttribute(logoSrc)}" style="height: 64px; width: auto; margin-right: 20px; object-fit: contain;" />`
     : "";
 
   const entriesHtml = entries.length === 0

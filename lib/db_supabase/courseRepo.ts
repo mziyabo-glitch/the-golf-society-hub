@@ -99,7 +99,7 @@ export async function getCourseByApiId(apiId: number): Promise<CourseWithTees | 
   }
   return {
     courseId: course.id,
-    courseName: course.course_name ?? course.name ?? "",
+    courseName: course.course_name ?? "",
     tees,
     fromCache: true,
   };
@@ -134,26 +134,30 @@ export type ApiTeeInput = {
 
 /**
  * Upsert tees from API response into course_tees.
- * Prevents duplicates by checking (course_id, tee_name).
+ * Supports male/female and alternate keys (men, women, ladies).
+ * Prevents duplicates by (course_id, tee_name) — female tees use "(Ladies)" suffix.
  * Call getTeesByCourseId after to reload.
  */
 export async function upsertTeesFromApi(
   courseId: string,
-  apiTees: ApiTeeInput[] | { male?: ApiTeeInput[]; female?: ApiTeeInput[] }
+  apiTees: ApiTeeInput[] | { male?: ApiTeeInput[]; female?: ApiTeeInput[]; men?: ApiTeeInput[]; women?: ApiTeeInput[]; ladies?: ApiTeeInput[] }
 ): Promise<CourseTee[]> {
   const flat: ApiTeeInput[] = Array.isArray(apiTees)
     ? apiTees
     : [
-        ...(apiTees?.male ?? []).map((t) => ({ ...t, gender: "M" })),
-        ...(apiTees?.female ?? []).map((t) => ({ ...t, gender: "F" })),
+        ...((apiTees?.male ?? apiTees?.men) ?? []).map((t) => ({ ...t, gender: "M" })),
+        ...((apiTees?.female ?? apiTees?.women ?? apiTees?.ladies) ?? []).map((t) => ({ ...t, gender: "F" })),
       ];
 
   if (flat.length === 0) return getTeesByCourseId(courseId);
 
   const rows = flat
     .map((t) => {
-      const teeName = (t.tee_name || t.name || "").trim();
+      let teeName = (t.tee_name || t.name || "").trim();
       if (!teeName) return null;
+      if (t.gender === "F" || (t.gender && String(t.gender).toUpperCase().startsWith("F"))) {
+        if (!teeName.includes("(Ladies)")) teeName = `${teeName} (Ladies)`;
+      }
       const yards = t.total_yards ?? t.yards;
       const slope = t.slope_rating;
       const courseRating = t.course_rating;

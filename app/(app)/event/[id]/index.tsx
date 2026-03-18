@@ -482,7 +482,40 @@ export default function EventDetailScreen() {
       : 0.95;
 
     // Determine tee values: selected from DB or manual entry
-    const teeId = selectedTee ? selectedTee.id : (showManualTee ? null : event?.tee_id ?? undefined);
+    let courseId = (selectedCourseEdit?.id) ?? event?.course_id ?? undefined;
+    const courseChanged = courseId && event?.course_id && courseId !== event.course_id;
+    let teeId: string | null | undefined = selectedTee
+      ? selectedTee.id
+      : showManualTee
+        ? null
+        : courseChanged
+          ? null
+          : event?.tee_id ?? undefined;
+
+    // Validate tee_id: must exist in loaded tees for current course (events.tee_id FK → course_tees.id)
+    let teeValidationMessage: string | null = null;
+    if (teeId && courseId && tees.length > 0) {
+      const teeExists = tees.some((t) => t.id === teeId);
+      if (!teeExists) {
+        console.warn("[event] tee_id not in loaded tees, saving null:", {
+          teeId,
+          courseId,
+          loadedTeeIds: tees.map((t) => t.id),
+          selectedTee: selectedTee ? { id: selectedTee.id, tee_name: selectedTee.tee_name } : null,
+        });
+        teeId = null;
+        setSelectedTee(null);
+        teeValidationMessage = "Selected tee no longer available for this course. Saving without tee selection.";
+      }
+    }
+    if (teeId && courseId && tees.length === 0) {
+      teeId = null;
+    }
+
+    // API-only IDs (api-course-*, api-tee-*) are not real DB UUIDs — don't save as FK
+    if (courseId?.startsWith("api-course-")) courseId = undefined;
+    if (teeId?.startsWith?.("api-tee-")) teeId = null;
+
     const teeName = selectedTee?.tee_name ?? (manualTeeName.trim() || event?.teeName || undefined);
     const par = selectedTee?.par_total ?? parseOptionalNumber(manualPar, true) ?? event?.par ?? undefined;
     const courseRating = selectedTee?.course_rating ?? parseOptionalNumber(manualCourseRating) ?? event?.courseRating ?? undefined;
@@ -491,12 +524,19 @@ export default function EventDetailScreen() {
     const ladiesPar = parseOptionalNumber(manualLadiesPar, true);
     const ladiesCourseRating = parseOptionalNumber(manualLadiesCourseRating);
     const ladiesSlopeRating = parseOptionalNumber(manualLadiesSlopeRating, true);
-    const courseId = (selectedCourseEdit?.id) ?? event?.course_id ?? undefined;
     const teeSource = selectedTee
       ? "imported"
       : teeName || par != null || courseRating != null || slopeRating != null
         ? "manual"
         : event?.teeSource ?? undefined;
+
+    console.log("[event] handleSaveEvent before update:", {
+      course_id: courseId,
+      tee_id: teeId,
+      selectedTeeId: selectedTee?.id ?? null,
+      selectedTee: selectedTee ? { id: selectedTee.id, tee_name: selectedTee.tee_name } : null,
+      loadedTeeIds: tees.map((t) => t.id),
+    });
 
     setSaving(true);
     try {
@@ -522,7 +562,7 @@ export default function EventDetailScreen() {
 
       setIsEditing(false);
       loadEvent(); // Reload to get updated data
-      showAlert("Saved", "Event updated successfully.");
+      showAlert("Saved", teeValidationMessage ?? "Event updated successfully.");
     } catch (e: any) {
       showAlert("Error", e?.message || "Failed to update event.");
     } finally {
@@ -907,7 +947,7 @@ export default function EventDetailScreen() {
           <SocietyBadge
             societyName={society?.name || "Golf Society"}
             logoUrl={logoUrl}
-            size="sm"
+            size="md"
             showName={false}
           />
         </View>

@@ -1,4 +1,4 @@
-﻿// lib/db_supabase/eventRepo.ts
+// lib/db_supabase/eventRepo.ts
 import { supabase } from "@/lib/supabase";
 
 // Event format types - simplified to core formats
@@ -240,22 +240,46 @@ export async function createEvent(
   if (data.ladiesSlopeRating !== undefined) payload.ladies_slope_rating = data.ladiesSlopeRating;
   if (data.teeSource !== undefined) payload.tee_source = data.teeSource;
 
+  // Server-side: ensure tee_id exists in course_tees (FK events_tee_id_fkey)
+  if (payload.tee_id != null && payload.tee_id !== "") {
+    const { data: teeRow } = await supabase
+      .from("course_tees")
+      .select("id")
+      .eq("id", payload.tee_id)
+      .maybeSingle();
+    if (!teeRow) {
+      console.warn("[eventRepo] createEvent: tee_id not found in course_tees, clearing:", payload.tee_id);
+      payload.tee_id = null;
+    }
+  }
+
   console.log("[eventRepo] createEvent payload:", JSON.stringify(payload, null, 2));
 
-  const { data: row, error } = await supabase
+  let { data: row, error } = await supabase
     .from("events")
     .insert(payload)
     .select()
     .single();
 
   if (error) {
-    console.error("[eventRepo] createEvent failed:", {
-      message: error.message,
-      details: error.details,
-      hint: error.hint,
-      code: error.code,
-    });
-    throw new Error(error.message || "Failed to create event");
+    if ((error as any).code === "23503" && payload.tee_id != null) {
+      console.warn("[eventRepo] createEvent: FK violation on tee_id, retrying with tee_id=null:", payload.tee_id);
+      payload.tee_id = null;
+      const retry = await supabase.from("events").insert(payload).select().single();
+      if (retry.error) {
+        console.error("[eventRepo] createEvent retry failed:", retry.error.message);
+        throw new Error(retry.error.message || "Failed to create event");
+      }
+      row = retry.data;
+    } else {
+      console.error("[eventRepo] createEvent failed:", {
+        message: error.message,
+        details: error.details,
+        hint: error.hint,
+        code: error.code,
+      });
+      throw new Error(error.message || "Failed to create event");
+    }
   }
 
   return mapEvent(row);
@@ -337,22 +361,50 @@ export async function updateEvent(
   if (updates.nearestPinHoles !== undefined) payload.nearest_pin_holes = updates.nearestPinHoles;
   if (updates.longestDriveHoles !== undefined) payload.longest_drive_holes = updates.longestDriveHoles;
 
+  // Server-side: ensure tee_id exists in course_tees (FK events_tee_id_fkey)
+  if (payload.tee_id != null && payload.tee_id !== "") {
+    const { data: teeRow } = await supabase
+      .from("course_tees")
+      .select("id")
+      .eq("id", payload.tee_id)
+      .maybeSingle();
+    if (!teeRow) {
+      console.warn("[eventRepo] updateEvent: tee_id not found in course_tees, clearing:", payload.tee_id);
+      payload.tee_id = null;
+    }
+  }
+
   console.log("[eventRepo] updateEvent:", { eventId, payload });
 
-  const { data, error } = await supabase
+  let { data, error } = await supabase
     .from("events")
     .update(payload)
     .eq("id", eventId)
     .select("id, player_ids, tee_time_start, tee_time_interval, tee_time_published_at");
 
   if (error) {
-    console.error("[eventRepo] updateEvent failed:", {
-      message: error.message,
-      details: error.details,
-      hint: error.hint,
-      code: error.code,
-    });
-    throw new Error(error.message || "Failed to update event");
+    if ((error as any).code === "23503" && payload.tee_id != null) {
+      console.warn("[eventRepo] updateEvent: FK violation on tee_id, retrying with tee_id=null:", payload.tee_id);
+      payload.tee_id = null;
+      const retry = await supabase
+        .from("events")
+        .update(payload)
+        .eq("id", eventId)
+        .select("id, player_ids, tee_time_start, tee_time_interval, tee_time_published_at");
+      if (retry.error) {
+        console.error("[eventRepo] updateEvent retry failed:", retry.error.message);
+        throw new Error(retry.error.message || "Failed to update event");
+      }
+      data = retry.data;
+    } else {
+      console.error("[eventRepo] updateEvent failed:", {
+        message: error.message,
+        details: error.details,
+        hint: error.hint,
+        code: error.code,
+      });
+      throw new Error(error.message || "Failed to update event");
+    }
   }
 
   if (!data || (Array.isArray(data) && data.length === 0)) {

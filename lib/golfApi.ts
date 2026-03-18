@@ -33,10 +33,15 @@ export type ApiCourse = {
   lng?: number;
   latitude?: number;
   longitude?: number;
-  tees?: {
-    male?: ApiTee[];
-    female?: ApiTee[];
-  } | ApiTee[];
+  tees?:
+    | {
+        male?: ApiTee[];
+        female?: ApiTee[];
+        men?: ApiTee[];
+        women?: ApiTee[];
+        ladies?: ApiTee[];
+      }
+    | ApiTee[];
 };
 
 export type ApiCourseSearchResult = {
@@ -117,13 +122,21 @@ function parseSearchPayload(payload: any): ApiCourseSearchResult[] {
     .filter((row) => Number.isFinite(row.id) && !!row.name);
 }
 
+function getApiBase(): string {
+  if (typeof window === "undefined") return "";
+  const { hostname, port } = window.location;
+  if (hostname === "localhost" && (port === "8081" || port === "19006")) return "http://localhost:3001";
+  return "";
+}
+
 export async function searchCourses(query: string): Promise<ApiCourseSearchResult[]> {
   const trimmed = query.trim();
   if (!trimmed) return [];
 
   if (typeof window !== "undefined") {
     try {
-      const res = await fetch(`/api/golf/search?q=${encodeURIComponent(trimmed)}`);
+      const base = getApiBase();
+      const res = await fetch(`${base}/api/golf/search?q=${encodeURIComponent(trimmed)}`);
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
         throw new Error(err?.error || `Search failed (${res.status})`);
@@ -156,7 +169,8 @@ export async function getCourseById(id: number): Promise<ApiCourse> {
   let payload: any;
 
   if (typeof window !== "undefined") {
-    const res = await fetch(`/api/golf/course/${id}`);
+    const base = getApiBase();
+    const res = await fetch(`${base}/api/golf/course/${id}`);
     const body = await res.text();
     if (!res.ok) {
       let err: any = {};
@@ -181,6 +195,7 @@ export async function getCourseById(id: number): Promise<ApiCourse> {
   console.log("[golfApi] getCourseById raw API row:", JSON.stringify(row, null, 2).slice(0, 2000));
 
   // Parse tees: API returns { male: [...], female: [...] } or flat array
+  // Support alternate keys: men/women, ladies (for female)
   let tees: ApiTee[] | { male: ApiTee[]; female: ApiTee[] };
   if (Array.isArray(row.tees)) {
     tees = row.tees.map((t: any) => ({
@@ -188,12 +203,14 @@ export async function getCourseById(id: number): Promise<ApiCourse> {
       total_yards: t.total_yards ?? t.yards ?? t.yardage,
     }));
   } else {
-    const male = (row?.tees?.male ?? []).map((t: any) => ({
+    const maleRaw = row?.tees?.male ?? row?.tees?.men ?? [];
+    const femaleRaw = row?.tees?.female ?? row?.tees?.women ?? row?.tees?.ladies ?? [];
+    const male = (Array.isArray(maleRaw) ? maleRaw : []).map((t: any) => ({
       ...t,
       gender: "M" as const,
       total_yards: t.total_yards ?? t.yards ?? t.yardage,
     }));
-    const female = (row?.tees?.female ?? []).map((t: any) => ({
+    const female = (Array.isArray(femaleRaw) ? femaleRaw : []).map((t: any) => ({
       ...t,
       gender: "F" as const,
       total_yards: t.total_yards ?? t.yards ?? t.yardage,

@@ -63,7 +63,8 @@ const OOMShareCard = forwardRef<View, OOMShareCardProps>(
         <View style={styles.header}>
           <SocietyLogoImage
             logoUrl={logoUrl ?? null}
-            size={56}
+            size="hero"
+            variant="hero"
             placeholderText={getInitials(societyName)}
             style={{ marginBottom: 8 }}
           />

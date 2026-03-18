@@ -33,7 +33,8 @@ export function SocietyHeader({ societyName, logoUrl, subtitle, style }: Society
       <View style={styles.content}>
         <SocietyLogoImage
           logoUrl={logoUrl ?? null}
-          size={68}
+          size="hero"
+          variant="hero"
           placeholderText={initials}
         />
         <View style={styles.textContainer}>
@@ -64,14 +65,14 @@ type SocietyBadgeProps = {
 };
 
 const BADGE_SIZES = {
-  sm: 36,
-  md: 50,
-  lg: 64,
+  sm: 44,
+  md: 64,
+  lg: 80,
 };
 
 const BADGE_FONT_SIZES = {
-  sm: 12,
-  md: 16,
+  sm: 13,
+  md: 17,
   lg: 20,
 };
 

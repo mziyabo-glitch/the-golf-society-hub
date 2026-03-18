@@ -73,8 +73,8 @@ export async function getOomChampionsBySociety(
       points_total: row.points_total ?? null,
       created_at: row.created_at,
       updated_at: row.updated_at,
-      member_name: m?.name ?? null,
-      member_display_name: m?.display_name ?? m?.name ?? null,
+      member_name: m?.name ?? undefined,
+      member_display_name: m?.display_name ?? m?.name ?? undefined,
     };
   });
 }

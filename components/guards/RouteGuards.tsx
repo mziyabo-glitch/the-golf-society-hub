@@ -33,8 +33,8 @@ export function RequireAuth({ children }: GuardProps) {
     if (!bootstrapped) return;
     if (!isSignedIn && canRedirect()) {
       markRedirected();
-      if (pathname !== "/(auth)/sign-in") {
-        router.replace("/(auth)/sign-in");
+      if (pathname !== "/onboarding") {
+        router.replace("/onboarding" as any);
       }
     }
   }, [bootstrapped, isSignedIn, pathname, router, canRedirect, markRedirected]);
@@ -55,13 +55,13 @@ export function RequireSociety({ children }: GuardProps) {
     if (!bootstrapped) return;
     if (!isSignedIn && canRedirect()) {
       markRedirected();
-      router.replace("/(auth)/sign-in");
+      router.replace("/onboarding" as any);
       return;
     }
     if (isSignedIn && !activeSocietyId && canRedirect()) {
       markRedirected();
-      if (pathname !== "/(auth)/join") {
-        router.replace("/(auth)/join");
+      if (pathname !== "/onboarding") {
+        router.replace("/onboarding" as any);
       }
     }
   }, [
@@ -91,8 +91,8 @@ export function RequireNoSociety({ children }: GuardProps) {
     if (!bootstrapped) return;
     if (!isSignedIn && canRedirect()) {
       markRedirected();
-      if (pathname !== "/(auth)/sign-in") {
-        router.replace("/(auth)/sign-in");
+      if (pathname !== "/onboarding") {
+        router.replace("/onboarding" as any);
       }
       return;
     }

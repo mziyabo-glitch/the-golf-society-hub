@@ -60,7 +60,7 @@ function getStatusInfo(
   rivalWins: number,
   hasRival: boolean,
 ): { kind: StatusKind; label: string } {
-  if (!hasRival) return { kind: "waiting", label: "Waiting for rival" };
+  if (!hasRival) return { kind: "waiting", label: "Awaiting opponent" };
   if (myWins === 0 && rivalWins === 0) return { kind: "fresh", label: "No entries yet" };
   if (myWins > rivalWins) return { kind: "leading", label: `Leading ${myWins}–${rivalWins}` };
   if (rivalWins > myWins) return { kind: "trailing", label: `Trailing ${myWins}–${rivalWins}` };
@@ -131,10 +131,11 @@ export default function SinbookHomeScreen() {
   // ============================================================================
 
   const getRival = useCallback((sb: SinbookWithParticipants) => {
-    const other = sb.participants.find((p) => p.user_id !== userId && p.status === "accepted");
-    const rawName = other?.display_name?.trim();
-    const name = rawName && rawName !== "Player" ? rawName : null;
-    return { name, id: other?.user_id ?? null, hasRival: !!other };
+    const opponent = sb.participants.find((p) => p.user_id !== userId && p.status === "accepted");
+    const rawName = opponent?.display_name?.trim();
+    // When opponent exists: use their name; "Opponent" only if empty/placeholder
+    const name = rawName ? (rawName !== "Player" ? rawName : "Opponent") : (opponent ? "Opponent" : null);
+    return { name, id: opponent?.user_id ?? null, hasRival: !!opponent };
   }, [userId]);
 
   const getMyName = useCallback((sb: SinbookWithParticipants) => {
@@ -204,13 +205,13 @@ export default function SinbookHomeScreen() {
       const result = await joinByCode(code, displayName);
       setJoinCode(""); setShowJoin(false);
       showAlert("Joined!", `You're now part of "${result.title}".`);
-      loadData();
+      await loadData();
     } catch { showAlert("Join failed", "Invite code not ready yet. Please try again."); }
     finally { setJoining(false); }
   };
 
   const handleAcceptInvite = async (id: string) => {
-    try { await acceptInvite(id); loadData(); }
+    try { await acceptInvite(id); await loadData(); }
     catch (err: any) { showAlert("Error", err?.message || "Failed."); }
   };
 
@@ -248,7 +249,7 @@ export default function SinbookHomeScreen() {
     return (
       <Screen scrollable={false}>
         <View style={styles.centered}>
-          <LoadingState message="Loading Sinbook..." />
+          <LoadingState message="Loading Sidebets..." />
         </View>
       </Screen>
     );
@@ -315,7 +316,7 @@ export default function SinbookHomeScreen() {
       {/* Header */}
       <View style={styles.header}>
         <View>
-          <AppText variant="title">Sinbook</AppText>
+          <AppText variant="title">Sidebets</AppText>
           <AppText variant="caption" color="secondary">Head-to-head rivalry hub</AppText>
         </View>
         <Pressable onPress={openNotifications} style={styles.bellBtn}>
@@ -368,9 +369,9 @@ export default function SinbookHomeScreen() {
             const creator = inv.participants.find((p) => p.user_id === inv.created_by);
             return (
               <AppCard key={inv.id} style={{ marginBottom: spacing.xs }}>
-                <AppText variant="bodyBold" numberOfLines={1}>{inv.title}</AppText>
+                <AppText variant="bodyBold" numberOfLines={1}>{inv.title?.trim() || "Sidebet"}</AppText>
                 <AppText variant="small" color="secondary" style={{ marginTop: 2 }}>
-                  From {creator?.display_name?.trim() || "a rival"}
+                  From {creator?.display_name?.trim() || "someone"}
                   {inv.stake ? ` · ${inv.stake}` : ""}
                 </AppText>
                 <View style={styles.inviteActions}>
@@ -386,7 +387,7 @@ export default function SinbookHomeScreen() {
       {/* Waiting for rival */}
       {waitingList.length > 0 && (
         <View style={{ marginBottom: spacing.base }}>
-          <AppText variant="captionBold" color="secondary" style={styles.sectionLabel}>WAITING FOR RIVAL</AppText>
+          <AppText variant="captionBold" color="secondary" style={styles.sectionLabel}>AWAITING OPPONENT</AppText>
           {waitingList.map((sb) => {
             const myName = getMyName(sb);
             return (
@@ -403,7 +404,7 @@ export default function SinbookHomeScreen() {
                       </View>
                     </View>
                     <View style={{ flex: 1 }}>
-                      <AppText variant="bodyBold" numberOfLines={1}>{sb.title}</AppText>
+                      <AppText variant="bodyBold" numberOfLines={1}>{sb.title?.trim() || "Sidebet"}</AppText>
                       {sb.stake && <AppText variant="small" color="tertiary" numberOfLines={1}>{sb.stake}</AppText>}
                     </View>
                     <View style={[styles.statusChip, { backgroundColor: colors.warning + "14" }]}>
@@ -424,7 +425,7 @@ export default function SinbookHomeScreen() {
           {liveList.map((sb) => {
             const { myWins, rivalWins, rival } = getStandings(sb);
             const myName = getMyName(sb);
-            const rivalName = rival.name || "Rival";
+            const rivalName = rival.hasRival ? (rival.name ?? "Opponent") : "Awaiting opponent";
             const status = getStatusInfo(myWins, rivalWins, rival.hasRival);
             const chipColor = statusColor[status.kind];
 
@@ -443,7 +444,10 @@ export default function SinbookHomeScreen() {
                     </View>
                     <View style={{ flex: 1 }}>
                       <AppText variant="bodyBold" numberOfLines={1}>
-                        {myName} vs {rivalName}
+                        {sb.title?.trim() || "Sidebet"}
+                      </AppText>
+                      <AppText variant="small" color="secondary" style={{ marginTop: 2 }}>
+                        {rivalName}
                       </AppText>
                       <AppText variant="small" style={{ color: chipColor, fontWeight: "700", marginTop: 1 }}>
                         {status.label}

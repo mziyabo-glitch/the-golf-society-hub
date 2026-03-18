@@ -308,7 +308,7 @@ export default function TeeSheetScreen() {
           name: p.name,
           handicapIndex: p.handicapIndex,
           playingHandicap,
-          gender: p.gender ?? undefined,
+          gender: p.gender ?? null,
           groupIndex: groupNumber - 1,
         });
       }

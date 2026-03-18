@@ -242,7 +242,8 @@ const TeeSheetPage = React.forwardRef<View, {
         <View style={styles.headerLeft}>
           <SocietyLogoImage
             logoUrl={logoSrc}
-            size={48}
+            size="medium"
+            variant="hero"
             placeholderText={getInitials(data.societyName)}
           />
           <View>

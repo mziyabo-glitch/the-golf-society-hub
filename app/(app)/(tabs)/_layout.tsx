@@ -66,9 +66,9 @@ export default function TabsLayout() {
       <Tabs.Screen
         name="sinbook"
         options={{
-          title: "Sinbook",
+          title: "Sidebets",
           tabBarIcon: ({ color }) => <Feather name="zap" color={color} size={22} />,
-          // Sinbook is always visible — has its own paywall
+          // Sidebets is always visible — has its own paywall
         }}
       />
       <Tabs.Screen

@@ -84,7 +84,7 @@ export function buildOomPdfHtml(options: OomPdfOptions): string {
 <style>
   body { font-family: Arial, sans-serif; padding: 24px; color:#111; }
   .wrap { max-width: 720px; margin: 0 auto; }
-  .logo { width: 56px; height: 56px; object-fit: contain; display:block; margin: 0 auto 8px; }
+  .logo { width: 72px; height: 72px; object-fit: contain; object-position: center; display: block; margin: 0 auto 12px; }
   h1 { text-align:center; margin: 6px 0 2px; font-size: 20px; }
   .sub { text-align:center; color:#444; margin: 0 0 16px; font-size: 12px; }
   table { width:100%; border-collapse: collapse; font-size: 12px; }
@@ -290,7 +290,7 @@ export function buildOomResultsLogHtml(options: {
 <style>
   body { font-family: Arial, sans-serif; padding: 24px; color:#111; }
   .wrap { max-width: 720px; margin: 0 auto; }
-  .logo { width: 56px; height: 56px; object-fit: contain; display:block; margin: 0 auto 8px; }
+  .logo { width: 72px; height: 72px; object-fit: contain; object-position: center; display: block; margin: 0 auto 12px; }
   h1 { text-align:center; margin: 6px 0 2px; font-size: 20px; }
   .sub { text-align:center; color:#444; margin: 0 0 16px; font-size: 12px; }
   .event-block { margin-bottom: 18px; border:1px solid #e5e7eb; border-radius: 8px; overflow: hidden; }

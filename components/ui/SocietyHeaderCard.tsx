@@ -27,7 +27,8 @@ export function SocietyHeaderCard({
     <Card style={styles.card} padding={spacing.md}>
       <SocietyLogoImage
         logoUrl={logoUrl}
-        size={56}
+        size="hero"
+        variant="hero"
         placeholderText={getInitials(societyName)}
       />
       <View style={styles.textWrap}>
@@ -47,10 +48,11 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     marginBottom: spacing.sm,
+    gap: spacing.md,
   },
   textWrap: {
     flex: 1,
-    marginLeft: spacing.md,
+    minWidth: 0,
   },
   societyName: {
     // Uses variant="h2" from AppText

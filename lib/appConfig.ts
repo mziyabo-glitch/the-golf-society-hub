@@ -25,7 +25,7 @@ export function getRivalryInviteUrl(joinCode: string): string {
 }
 
 /**
- * Returns the app link text for Sinbook rivalry share messages.
+ * Returns the app link text for Sidebets rivalry share messages.
  * Beta: Vercel URL only (no App Store / Play Store).
  * Production: App Store and Play Store download links.
  */
@@ -41,4 +41,22 @@ export function getRivalryShareLinkText(joinCode: string): string {
 export function getRivalryInviteMessage(title: string, joinCode: string): string {
   const code = String(joinCode).trim().toUpperCase();
   return `Join my rivalry "${title}" on The Golf Society Hub!\n\nOpen here:\n${getRivalryInviteUrl(code)}\n\nOr use join code: ${code}`;
+}
+
+/**
+ * Returns the society invite URL for captain to share.
+ * When a user opens this link, they are prompted to sign in (if needed),
+ * then enter name, WHS index, and emergency contact before joining.
+ */
+export function getSocietyInviteUrl(joinCode: string): string {
+  const code = String(joinCode).trim().toUpperCase();
+  return `${VERCEL_WEB_URL}/invite/${encodeURIComponent(code)}`;
+}
+
+/**
+ * Returns the share message for society invite (captain shares via WhatsApp, SMS, etc.).
+ */
+export function getSocietyInviteMessage(societyName: string, joinCode: string): string {
+  const code = String(joinCode).trim().toUpperCase();
+  return `Join ${societyName} on The Golf Society Hub!\n\nOpen here:\n${getSocietyInviteUrl(code)}\n\nOr use join code: ${code}`;
 }

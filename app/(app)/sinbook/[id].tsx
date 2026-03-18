@@ -166,7 +166,7 @@ export default function RivalryDetailScreen() {
       setToast({ visible: true, message: "Invite code not ready yet. Please try again in a moment.", type: "info" });
       return;
     }
-    const message = getRivalryInviteMessage(sinbook?.title ?? "Rivalry", code.toUpperCase());
+    const message = getRivalryInviteMessage(sinbook?.title?.trim() || "Sidebet", code.toUpperCase());
     try {
       await Share.share({ message });
     } catch { /* cancelled */ }
@@ -224,7 +224,7 @@ export default function RivalryDetailScreen() {
     const p = participantMap.get(uid);
     const name = p?.display_name?.trim();
     if (name && name !== "Player") return name;
-    return uid === userId ? "You" : "Rival";
+    return uid === userId ? "You" : "Opponent";
   };
 
   const formatDate = (dateStr: string) => {
@@ -354,7 +354,7 @@ export default function RivalryDetailScreen() {
       </View>
 
       {/* Title */}
-      <AppText variant="title" style={{ marginBottom: 2 }}>{sinbook.title}</AppText>
+      <AppText variant="title" style={{ marginBottom: 2 }}>{sinbook.title?.trim() || "Sidebet"}</AppText>
       {sinbook.stake && (
         <AppText variant="caption" color="secondary" style={{ marginBottom: spacing.sm }}>
           {sinbook.stake}
@@ -411,9 +411,9 @@ export default function RivalryDetailScreen() {
         </AppText>
         {acceptedParticipants.length < 2 ? (
           <View style={{ alignItems: "center", paddingVertical: spacing.sm }}>
-            <AppText variant="body" color="secondary">Waiting for rival to join...</AppText>
+            <AppText variant="body" color="secondary">Waiting for opponent to join...</AppText>
             <PrimaryButton onPress={handleShare} size="sm" style={{ marginTop: spacing.sm }}>
-              Invite Rival
+              Invite opponent
             </PrimaryButton>
           </View>
         ) : (

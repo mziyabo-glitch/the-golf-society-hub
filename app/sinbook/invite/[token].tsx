@@ -116,7 +116,7 @@ export default function SinbookInviteScreen() {
           icon={<Feather name="alert-circle" size={24} color={colors.error} />}
           title="Couldn't Join"
           message={errorMsg}
-          action={{ label: "Go to Sinbook", onPress: () => router.replace("/(app)/(tabs)/sinbook") }}
+          action={{ label: "Go to Sidebets", onPress: () => router.replace("/(app)/(tabs)/sinbook") }}
         />
       </Screen>
     );
@@ -163,7 +163,7 @@ export default function SinbookInviteScreen() {
         <AppCard style={{ marginTop: spacing.lg, width: "100%" }}>
           {sinbook ? (
             <>
-              <AppText variant="h2">{sinbook.title}</AppText>
+              <AppText variant="h2">{sinbook.title?.trim() || "Sidebet"}</AppText>
               {creator && (
                 <AppText variant="caption" color="secondary" style={{ marginTop: 2 }}>
                   Created by {creator.display_name}

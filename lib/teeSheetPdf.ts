@@ -352,10 +352,10 @@ function generateTeeSheetHTML(data: TeeSheetData, logoSrc?: string | null): stri
             gap: 8px;
             width: 240px;
           }
-          .logo { width: 40px; height: 40px; object-fit: contain; }
+          .logo { width: 56px; height: 56px; object-fit: contain; object-position: center; flex-shrink: 0; }
           .logo-placeholder {
-            width: 40px;
-            height: 40px;
+            width: 56px;
+            height: 56px;
             border-radius: 8px;
             border: 1px solid #E5E7EB;
             display: flex;

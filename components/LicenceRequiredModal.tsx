@@ -77,7 +77,7 @@ export function LicenceRequiredModal({ visible, onClose, societyId }: Props) {
 
           {/* Body */}
           <AppText variant="body" color="secondary" style={styles.body}>
-            This action needs a society licence or Sinbook access.
+            This action needs a society licence or Sidebets access.
           </AppText>
 
           {/* Buttons */}
@@ -92,7 +92,7 @@ export function LicenceRequiredModal({ visible, onClose, societyId }: Props) {
             </PrimaryButton>
 
             <SecondaryButton onPress={handleUnlockWithSinbook} style={styles.btn}>
-              Unlock with Sinbook
+              Unlock with Sidebets
             </SecondaryButton>
 
             <Pressable onPress={onClose} style={styles.notNow}>

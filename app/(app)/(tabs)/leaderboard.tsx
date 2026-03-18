@@ -112,7 +112,7 @@ export default function LeaderboardScreen() {
   const colors = getColors();
   const tabBarHeight = useContext(BottomTabBarHeightContext) ?? 0;
   const { width: screenWidth } = useWindowDimensions();
-  const logoSize = screenWidth < 600 ? 52 : 44;
+  const logoSize = screenWidth < 600 ? 72 : 64;
 
   const params = useLocalSearchParams<{ view?: string }>();
   const initialTab: TabType =
@@ -361,6 +361,7 @@ export default function LeaderboardScreen() {
           <SocietyLogoImage
             logoUrl={logoUrl}
             size={logoSize}
+            variant="hero"
             placeholderText={getInitials(society?.name || "GS")}
           />
 
@@ -393,7 +394,7 @@ export default function LeaderboardScreen() {
             items={[
               { id: "leaderboard" as TabType, label: "Leaders", icon: <Feather name="award" size={16} color={activeTab === "leaderboard" ? "#0B6E4F" : "#9CA3AF"} /> },
               { id: "resultsLog" as TabType, label: "Matrix", icon: <Feather name="grid" size={16} color={activeTab === "resultsLog" ? "#0B6E4F" : "#9CA3AF"} /> },
-              { id: "honour" as TabType, label: "Honour", icon: <Feather name="trophy" size={16} color="#9CA3AF" /> },
+              { id: "honour" as TabType, label: "Honour", icon: <Feather name="award" size={16} color="#9CA3AF" /> },
             ]}
             selectedId={activeTab}
             onSelect={(id) => {

@@ -185,7 +185,7 @@ function PoweredByFooter({
 
 export default function HomeScreen() {
   const router = useRouter();
-  const { society, member, societyId, profile, loading: bootstrapLoading } = useBootstrap();
+  const { society, member, societyId, profile, userId, loading: bootstrapLoading } = useBootstrap();
   const colors = getColors();
   const tabBarHeight = useBottomTabBarHeight();
   const tabContentStyle = {
@@ -1050,13 +1050,17 @@ export default function HomeScreen() {
         <AppCard style={styles.premiumCard}>
           <View style={styles.cardTitleRow}>
             <Feather name="zap" size={16} color={colors.primary} />
-            <AppText variant="captionBold" color="primary">Sinbook</AppText>
+            <AppText variant="captionBold" color="primary">Sidebets</AppText>
           </View>
           {activeSinbook ? (
             <View style={{ marginTop: spacing.xs }}>
-              <AppText variant="bodyBold" numberOfLines={1}>{String(activeSinbook.title ?? "Rivalry")}</AppText>
+              <AppText variant="bodyBold" numberOfLines={1}>{activeSinbook.title?.trim() || "Sidebet"}</AppText>
               <AppText variant="caption" color="secondary">
-                vs {String(activeSinbook.participants.find((p) => p.user_id !== memberId && p.status === "accepted")?.display_name || "rival")}
+                {(() => {
+                  if (!userId) return "Awaiting opponent";
+                  const opp = activeSinbook.participants.find((p) => p.user_id !== userId && p.status === "accepted");
+                  return opp ? (opp.display_name?.trim() || "Opponent") : "Awaiting opponent";
+                })()}
               </AppText>
             </View>
           ) : (
@@ -1169,7 +1173,7 @@ function PersonalModeHome({
               <Feather name="zap" size={20} color={colors.primary} />
             </View>
             <View style={{ flex: 1 }}>
-              <AppText variant="bodyBold">Sinbook Rivalries</AppText>
+              <AppText variant="bodyBold">Sidebets Rivalries</AppText>
               <AppText variant="small" color="secondary">
                 Challenge a mate to a side bet and track it all season
               </AppText>
@@ -1359,7 +1363,7 @@ function SkeletonCards({ colors }: { colors: ReturnType<typeof getColors> }) {
       </View>
       <AppCard style={[styles.skeletonHeaderCard, styles.premiumCard]}>
         <View style={[styles.skeletonLogoFrame, { backgroundColor: shimmer }]} />
-        <View style={{ flex: 1, marginLeft: spacing.md }}>
+        <View style={{ flex: 1, minWidth: 0 }}>
           <View style={[styles.skeletonLine, { width: "70%", backgroundColor: shimmer }]} />
           <View style={[styles.skeletonLine, { width: "50%", backgroundColor: shimmer, marginTop: 6 }]} />
         </View>
@@ -1836,11 +1840,12 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     padding: spacing.md,
+    gap: spacing.md,
   },
   skeletonLogoFrame: {
-    width: 48,
-    height: 48,
-    borderRadius: 14,
+    width: 80,
+    height: 80,
+    borderRadius: 18,
   },
   skeletonStatCard: {
     flex: 1,

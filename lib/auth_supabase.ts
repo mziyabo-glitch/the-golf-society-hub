@@ -197,6 +197,78 @@ export async function ensureSignedIn(): Promise<User> {
 }
 
 /**
+ * Sign in with Google OAuth.
+ * On web: redirects to Google, then back to app with session in URL.
+ * Configure redirect URLs in Supabase Dashboard → Auth → URL Configuration.
+ */
+export async function signInWithGoogle(): Promise<SignInResult> {
+  console.log("[auth] signInWithGoogle");
+
+  const redirectTo =
+    typeof window !== "undefined"
+      ? `${window.location.origin}${window.location.pathname || "/"}`
+      : WEB_BASE_URL;
+
+  const { data, error } = await supabase.auth.signInWithOAuth({
+    provider: "google",
+    options: {
+      redirectTo,
+      queryParams: {
+        access_type: "offline",
+        prompt: "consent",
+      },
+    },
+  });
+
+  if (error) {
+    console.error("[auth] signInWithGoogle error:", error.message);
+    return { data: null, error };
+  }
+
+  // On web, signInWithOAuth redirects automatically; no session yet.
+  // Session will appear after redirect when detectSessionInUrl parses the hash.
+  if (data?.url && typeof window !== "undefined") {
+    window.location.href = data.url;
+    return { data: null, error: null }; // Caller won't see this; page is navigating
+  }
+
+  return { data: null, error: new Error("OAuth redirect URL not returned") };
+}
+
+/**
+ * Sign in with magic link (passwordless email).
+ * Sends a link to the user's email; they click it to sign in.
+ */
+export async function signInWithMagicLink(email: string): Promise<{ error: Error | null }> {
+  const cleanEmail = email.trim().toLowerCase();
+  if (!cleanEmail) {
+    return { error: new Error("Email is required") };
+  }
+
+  console.log("[auth] signInWithMagicLink", cleanEmail);
+
+  const redirectTo =
+    typeof window !== "undefined"
+      ? `${window.location.origin}${window.location.pathname || "/"}`
+      : WEB_BASE_URL;
+
+  const { error } = await supabase.auth.signInWithOtp({
+    email: cleanEmail,
+    options: {
+      emailRedirectTo: redirectTo,
+      shouldCreateUser: true,
+    },
+  });
+
+  if (error) {
+    console.error("[auth] signInWithMagicLink error:", error.message);
+    return { error };
+  }
+
+  return { error: null };
+}
+
+/**
  * Sign out the current user
  */
 export async function signOut(): Promise<void> {

@@ -45,7 +45,7 @@ function showRlsError(error: any): void {
 export default function OnboardingScreen() {
   const router = useRouter();
   const pathname = usePathname();
-  const params = useLocalSearchParams<{ mode?: string | string[] }>();
+  const params = useLocalSearchParams<{ mode?: string | string[]; code?: string | string[]; invite?: string | string[] }>();
   const {
     user,
     ready,
@@ -70,7 +70,10 @@ export default function OnboardingScreen() {
   // Join form state
   const [joinCode, setJoinCode] = useState("");
   const [displayName, setDisplayName] = useState("");
+  const [whsIndex, setWhsIndex] = useState("");
+  const [emergencyContact, setEmergencyContact] = useState("");
   const [joinError, setJoinError] = useState<string | null>(null);
+  const isInviteFlow = params.invite === "1" || (Array.isArray(params.invite) && params.invite[0] === "1");
   const [pendingJoinNavigation, setPendingJoinNavigation] = useState<{
     societyId: string;
     memberId: string;
@@ -101,6 +104,14 @@ export default function OnboardingScreen() {
       setMode("join");
     }
   }, [routeMode, isJoinAliasRoute]);
+
+  // Pre-fill join code from URL params (captain's invite link)
+  useEffect(() => {
+    const codeParam = Array.isArray(params.code) ? params.code[0] : params.code;
+    if (codeParam) {
+      setJoinCode(String(codeParam).trim().toUpperCase());
+    }
+  }, [params.code]);
 
   useEffect(() => {
     if (!pendingJoinNavigation) return;
@@ -239,9 +250,7 @@ export default function OnboardingScreen() {
   };
 
   const handleJoinSociety = async () => {
-    console.log("JOIN CLICKED");
     if (joinLoading) return;
-    console.log("[join] JOIN_TAP");
     setJoinError(null);
 
     const code = joinCode.trim().toUpperCase();
@@ -259,9 +268,12 @@ export default function OnboardingScreen() {
       showJoinFailure("Please enter your name.");
       return;
     }
+    if (isInviteFlow && !emergencyContact.trim()) {
+      showJoinFailure("Please enter your emergency contact details.");
+      return;
+    }
 
     setJoinLoading(true);
-    console.log("[join] JOIN_START", { normalized: code });
 
     try {
       const authUser = await ensureSignedIn();
@@ -276,10 +288,19 @@ export default function OnboardingScreen() {
         hasEmail: !!authUser.email,
       });
 
+      const handicapVal = whsIndex.trim() ? parseFloat(whsIndex.trim()) : null;
+      const emergencyVal = emergencyContact.trim() || null;
+      if (handicapVal != null && (handicapVal < -10 || handicapVal > 54)) {
+        showJoinFailure("Handicap index must be between -10 and 54.");
+        return;
+      }
+
       const { data: rpcMember, error } = await supabase.rpc("join_society", {
         p_join_code: code,
         p_name: nameInput,
         p_email: authUser.email ?? null,
+        p_handicap_index: handicapVal,
+        p_emergency_contact: emergencyVal,
       });
 
       if (error) {
@@ -356,18 +377,12 @@ export default function OnboardingScreen() {
       setActiveSocietyId(joinedSocietyId);
       setMember(joinedMemberRecord as any);
       refresh();
-      console.log("[join] JOIN_COMPLETE", {
-        memberId: joinedMemberId,
-        societyId: joinedSocietyId,
-        pathname,
-      });
       setToast({ visible: true, message: "Joined society ✅", type: "success" });
       setPendingJoinNavigation({
         societyId: joinedSocietyId,
         memberId: joinedMemberId,
       });
     } catch (e: any) {
-      console.error("[join] JOIN_FAILED", e);
       const msg = e?.message || "Something went wrong. Please try again.";
       showJoinFailure(msg);
     } finally {
@@ -474,9 +489,13 @@ export default function OnboardingScreen() {
             <View style={[styles.iconContainer, { backgroundColor: colors.backgroundTertiary }]}>
               <Feather name="users" size={32} color={colors.primary} />
             </View>
-            <AppText variant="title" style={styles.title}>Join a Society</AppText>
+            <AppText variant="title" style={styles.title}>
+              {isInviteFlow ? "Join via Captain's Link" : "Join a Society"}
+            </AppText>
             <AppText variant="body" color="secondary" style={styles.subtitle}>
-              Enter the code shared by your society captain to join.
+              {isInviteFlow
+                ? "Enter your details to join this society."
+                : "Enter the code shared by your society captain to join."}
             </AppText>
 
             <AppCard style={styles.formCard}>
@@ -509,6 +528,31 @@ export default function OnboardingScreen() {
                   autoCapitalize="words"
                 />
               </View>
+
+              {isInviteFlow && (
+                <>
+                  <View style={styles.formField}>
+                    <AppText variant="captionBold" style={styles.label}>WHS Index (optional)</AppText>
+                    <AppInput
+                      placeholder="e.g. 12.4"
+                      value={whsIndex}
+                      editable={!joinLoading}
+                      onChangeText={(t) => { setWhsIndex(t); setJoinError(null); }}
+                      keyboardType="decimal-pad"
+                    />
+                  </View>
+                  <View style={styles.formField}>
+                    <AppText variant="captionBold" style={styles.label}>Emergency Contact (required)</AppText>
+                    <AppInput
+                      placeholder="e.g. Jane Smith +44 7700 900123"
+                      value={emergencyContact}
+                      editable={!joinLoading}
+                      onChangeText={(t) => { setEmergencyContact(t); setJoinError(null); }}
+                      autoCapitalize="words"
+                    />
+                  </View>
+                </>
+              )}
 
               <PrimaryButton
                 onPress={() => {
