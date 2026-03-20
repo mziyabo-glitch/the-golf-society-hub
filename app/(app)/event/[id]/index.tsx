@@ -1632,72 +1632,92 @@ export default function EventDetailScreen() {
 
           {attendingRegs.map((reg) => (
             <View key={reg.id} style={styles.paidRow}>
-              <AppText variant="body" numberOfLines={1} style={{ flex: 1 }}>
-                {registrationMemberDisplayName(reg)}
-              </AppText>
-              <View style={[styles.paidPill, { backgroundColor: reg.paid ? colors.success : colors.warning + "35" }]}>
-                <AppText style={[styles.paidPillText, !reg.paid && { color: colors.warning }]}>
-                  {reg.paid ? PaymentPill.paid : PaymentPill.unpaid}
+              <View style={styles.paidLeftCol}>
+                <AppText variant="body" numberOfLines={2} style={styles.paidNameText}>
+                  {registrationMemberDisplayName(reg)}
                 </AppText>
               </View>
-              {canManagePayments && (
-                <Pressable
-                  disabled={payBusy === reg.member_id}
-                  onPress={() => handleTogglePaid(reg)}
-                  hitSlop={8}
-                  style={({ pressed }) => [styles.paidToggleBtn, { borderColor: colors.border, opacity: pressed ? 0.6 : payBusy === reg.member_id ? 0.4 : 1 }]}
-                >
-                  <AppText variant="small" color="primary" style={{ fontWeight: "600" }}>
-                    {reg.paid ? "Mark unpaid" : "Mark paid"}
+
+              <View style={styles.paidRightCol}>
+                <View style={[styles.paidPill, { backgroundColor: reg.paid ? colors.success : colors.warning + "35" }]}>
+                  <AppText style={[styles.paidPillText, !reg.paid && { color: colors.warning }]}>
+                    {reg.paid ? PaymentPill.paid : PaymentPill.unpaid}
                   </AppText>
-                </Pressable>
-              )}
+                </View>
+                {canManagePayments && (
+                  <Pressable
+                    disabled={payBusy === reg.member_id}
+                    onPress={() => handleTogglePaid(reg)}
+                    hitSlop={10}
+                    style={({ pressed }) => [
+                      styles.paidToggleBtn,
+                      {
+                        borderColor: colors.border,
+                        opacity: pressed ? 0.6 : payBusy === reg.member_id ? 0.4 : 1,
+                      },
+                    ]}
+                  >
+                    <AppText variant="small" color="primary" style={{ fontWeight: "600" }}>
+                      {reg.paid ? "Mark unpaid" : "Mark paid"}
+                    </AppText>
+                  </Pressable>
+                )}
+              </View>
             </View>
           ))}
 
           {captainPickMemberIds.map((mid) => (
             <View key={`lineup-${mid}`} style={styles.paidRow}>
-              <View style={{ flex: 1, minWidth: 0 }}>
-                <AppText variant="body" numberOfLines={1}>
+              <View style={styles.paidLeftCol}>
+                <AppText variant="body" numberOfLines={2} style={styles.paidNameText}>
                   {memberNameForAttendeeId(mid)}
                 </AppText>
-                <AppText variant="caption" color="tertiary">
+                <AppText variant="caption" color="tertiary" style={styles.paidHelperText}>
                   Playing list · no fee row yet — actions create the fee record
                 </AppText>
               </View>
-              <View style={[styles.paidPill, { backgroundColor: colors.warning + "35" }]}>
-                <AppText style={[styles.paidPillText, { color: colors.warning }]}>{PaymentPill.unpaid}</AppText>
-              </View>
-              {canManagePayments && (
-                <View style={{ flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 6, maxWidth: 220 }}>
-                  <Pressable
-                    disabled={payBusy === mid}
-                    onPress={() => handleLineupMemberFeeAction(mid, true)}
-                    hitSlop={8}
-                    style={({ pressed }) => [
-                      styles.paidToggleBtn,
-                      { borderColor: colors.border, opacity: pressed ? 0.6 : payBusy === mid ? 0.4 : 1 },
-                    ]}
-                  >
-                    <AppText variant="small" color="primary" style={{ fontWeight: "600" }}>
-                      Mark paid
-                    </AppText>
-                  </Pressable>
-                  <Pressable
-                    disabled={payBusy === mid}
-                    onPress={() => handleLineupMemberFeeAction(mid, false)}
-                    hitSlop={8}
-                    style={({ pressed }) => [
-                      styles.paidToggleBtn,
-                      { borderColor: colors.border, opacity: pressed ? 0.6 : payBusy === mid ? 0.4 : 1 },
-                    ]}
-                  >
-                    <AppText variant="small" color="secondary" style={{ fontWeight: "600" }}>
-                      Record unpaid
-                    </AppText>
-                  </Pressable>
+
+              <View style={styles.paidRightCol}>
+                <View style={[styles.paidPill, { backgroundColor: colors.warning + "35" }]}>
+                  <AppText style={[styles.paidPillText, { color: colors.warning }]}>{PaymentPill.unpaid}</AppText>
                 </View>
-              )}
+                {canManagePayments && (
+                  <View style={styles.paidActionsStack}>
+                    <Pressable
+                      disabled={payBusy === mid}
+                      onPress={() => handleLineupMemberFeeAction(mid, true)}
+                      hitSlop={10}
+                      style={({ pressed }) => [
+                        styles.paidToggleBtn,
+                        {
+                          borderColor: colors.border,
+                          opacity: pressed ? 0.6 : payBusy === mid ? 0.4 : 1,
+                        },
+                      ]}
+                    >
+                      <AppText variant="small" color="primary" style={{ fontWeight: "600" }}>
+                        Mark paid
+                      </AppText>
+                    </Pressable>
+                    <Pressable
+                      disabled={payBusy === mid}
+                      onPress={() => handleLineupMemberFeeAction(mid, false)}
+                      hitSlop={10}
+                      style={({ pressed }) => [
+                        styles.paidToggleBtn,
+                        {
+                          borderColor: colors.border,
+                          opacity: pressed ? 0.6 : payBusy === mid ? 0.4 : 1,
+                        },
+                      ]}
+                    >
+                      <AppText variant="small" color="secondary" style={{ fontWeight: "600" }}>
+                        Record unpaid
+                      </AppText>
+                    </Pressable>
+                  </View>
+                )}
+              </View>
             </View>
           ))}
 
@@ -1871,15 +1891,45 @@ const styles = StyleSheet.create({
   },
   paidRow: {
     flexDirection: "row",
-    alignItems: "center",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
     gap: spacing.xs,
     paddingVertical: spacing.sm,
     borderBottomWidth: 1,
     borderBottomColor: "#F3F4F6",
+    width: "100%",
+    minWidth: 0,
+  },
+  paidLeftCol: {
+    flex: 1,
+    minWidth: 0,
+    paddingRight: spacing.xs,
+  },
+  paidRightCol: {
+    width: 152,
+    minWidth: 132,
+    maxWidth: "48%",
+    alignItems: "flex-end",
+    gap: 6,
+    flexShrink: 0,
+  },
+  paidActionsStack: {
+    width: "100%",
+    alignItems: "stretch",
+    gap: 6,
+  },
+  paidNameText: {
+    flexShrink: 1,
+    minWidth: 0,
+  },
+  paidHelperText: {
+    marginTop: 4,
+    flexShrink: 1,
+    minWidth: 0,
   },
   paidPill: {
     paddingHorizontal: spacing.sm,
-    paddingVertical: 2,
+    paddingVertical: 4,
     borderRadius: radius.full,
   },
   paidPillText: {
@@ -1889,10 +1939,13 @@ const styles = StyleSheet.create({
   },
   paidToggleBtn: {
     paddingHorizontal: spacing.sm,
-    paddingVertical: 4,
+    paddingVertical: 10,
+    minHeight: 44,
+    justifyContent: "center",
+    alignItems: "center",
     borderWidth: 1,
     borderRadius: radius.sm,
-    marginLeft: spacing.xs,
+    width: "100%",
   },
   createdText: {
     marginTop: spacing.lg,

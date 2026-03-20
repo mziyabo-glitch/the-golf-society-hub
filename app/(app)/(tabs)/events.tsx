@@ -1037,9 +1037,11 @@ export default function EventsScreen() {
           </View>
 
           <View style={styles.eventInfo}>
-            <AppText variant="bodyBold" numberOfLines={1}>{event.name}</AppText>
+            <AppText variant="bodyBold" numberOfLines={2} style={styles.eventTitle}>
+              {event.name}
+            </AppText>
             {event.courseName && (
-              <AppText variant="caption" color="secondary" numberOfLines={1}>
+              <AppText variant="caption" color="secondary" numberOfLines={2} style={styles.eventCourse}>
                 {event.courseName}
               </AppText>
             )}
@@ -1069,13 +1071,21 @@ export default function EventsScreen() {
               {event.is_joint_event === true && (
                 <View style={[styles.jointBadge, { backgroundColor: colors.info + "16", borderColor: colors.info + "40" }]}>
                   <Feather name="link" size={10} color={colors.info} />
-                  <AppText variant="small" style={{ color: colors.info }}>{JOINT_EVENT_CHIP_LONG}</AppText>
+                  <AppText
+                    variant="small"
+                    style={{ color: colors.info }}
+                    numberOfLines={1}
+                  >
+                    {JOINT_EVENT_CHIP_LONG}
+                  </AppText>
                 </View>
               )}
             </View>
           </View>
 
-          <Feather name="chevron-right" size={20} color={colors.textTertiary} />
+          <View style={styles.chevronWrap}>
+            <Feather name="chevron-right" size={20} color={colors.textTertiary} />
+          </View>
         </View>
       </AppCard>
     </Pressable>
@@ -1173,29 +1183,41 @@ const styles = StyleSheet.create({
   },
   eventRow: {
     flexDirection: "row",
-    alignItems: "center",
+    alignItems: "flex-start",
     gap: spacing.sm,
   },
   dateBadge: {
-    width: 50,
-    height: 50,
+    width: 52,
+    minWidth: 52,
+    height: 52,
     borderRadius: radius.sm,
     alignItems: "center",
     justifyContent: "center",
+    flexShrink: 0,
   },
   eventInfo: {
     flex: 1,
+    minWidth: 0,
+  },
+  eventTitle: {
+    lineHeight: 20,
+  },
+  eventCourse: {
+    marginTop: 2,
   },
   eventMeta: {
     flexDirection: "row",
     alignItems: "center",
+    flexWrap: "wrap",
     gap: spacing.xs,
     marginTop: 4,
+    minWidth: 0,
   },
   statusBadge: {
     paddingHorizontal: spacing.xs,
     paddingVertical: 2,
     borderRadius: radius.sm,
+    flexShrink: 0,
   },
   oomBadge: {
     flexDirection: "row",
@@ -1204,6 +1226,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.xs,
     paddingVertical: 2,
     borderRadius: radius.sm,
+    flexShrink: 0,
   },
   jointBadge: {
     flexDirection: "row",
@@ -1213,6 +1236,16 @@ const styles = StyleSheet.create({
     paddingVertical: 2,
     borderRadius: radius.sm,
     borderWidth: 1,
+    flexShrink: 0,
+    maxWidth: "100%",
+  },
+  chevronWrap: {
+    width: 20,
+    minWidth: 20,
+    alignItems: "flex-end",
+    justifyContent: "center",
+    paddingTop: 2,
+    flexShrink: 0,
   },
   formHeader: {
     flexDirection: "row",
