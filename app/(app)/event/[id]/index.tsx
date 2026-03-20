@@ -325,6 +325,15 @@ export default function EventDetailScreen() {
   }, [eventId, societyId, loadRegistrations]);
 
   const memberByIdForRegs = useMemo(() => new Map(regMembers.map((m) => [m.id, m])), [regMembers]);
+  const memberStubById = useCallback(
+    (memberId: string): MemberDoc =>
+      memberByIdForRegs.get(memberId) ?? ({ id: memberId, society_id: "" } as MemberDoc),
+    [memberByIdForRegs],
+  );
+  const canonicalKeyForMemberId = useCallback(
+    (memberId: string): string => canonicalJointPersonKey(memberStubById(memberId)),
+    [memberStubById],
+  );
 
   /** Display name per registration row (hydrates cross-society players for joint events). */
   const registrationMemberDisplayName = useCallback(
@@ -376,22 +385,50 @@ export default function EventDetailScreen() {
     };
   }, [eventId, societyId, event?.playerIds, jointEntries, memberByIdForRegs]);
 
+  const attendanceRegsByPerson = useMemo(() => {
+    const pickBetter = (a: EventRegistration, b: EventRegistration): EventRegistration => {
+      const score = (r: EventRegistration) =>
+        (r.paid ? 100 : 0) +
+        (r.status === "in" ? 10 : 0) +
+        (r.updated_at ? new Date(r.updated_at).getTime() / 1_000_000_000_000 : 0);
+      return score(b) > score(a) ? b : a;
+    };
+    const byKey = new Map<string, EventRegistration>();
+    for (const reg of registrations) {
+      const key = canonicalKeyForMemberId(String(reg.member_id));
+      const prev = byKey.get(key);
+      byKey.set(key, prev ? pickBetter(prev, reg) : reg);
+    }
+    return byKey;
+  }, [registrations, canonicalKeyForMemberId]);
+
   const attendingRegs = useMemo(
-    () => registrations.filter((r) => r.status === "in"),
-    [registrations],
+    () => [...attendanceRegsByPerson.values()].filter((r) => r.status === "in"),
+    [attendanceRegsByPerson],
   );
 
   const captainPickMemberIds = useMemo(() => {
-    const regIn = new Set(attendingRegs.map((r) => String(r.member_id)));
-    return (event?.playerIds ?? []).map(String).filter((id) => id && !regIn.has(id));
-  }, [attendingRegs, event?.playerIds]);
+    const regInKeys = new Set(attendingRegs.map((r) => canonicalKeyForMemberId(String(r.member_id))));
+    const seenKeys = new Set<string>();
+    const out: string[] = [];
+    for (const rawId of event?.playerIds ?? []) {
+      const id = String(rawId);
+      if (!id) continue;
+      const key = canonicalKeyForMemberId(id);
+      if (regInKeys.has(key)) continue;
+      if (seenKeys.has(key)) continue;
+      seenKeys.add(key);
+      out.push(id);
+    }
+    return out;
+  }, [attendingRegs, event?.playerIds, canonicalKeyForMemberId]);
 
   const standardAttendingTotalCount = useMemo(() => {
     const s = new Set<string>();
-    attendingRegs.forEach((r) => s.add(String(r.member_id)));
-    captainPickMemberIds.forEach((id) => s.add(id));
+    attendingRegs.forEach((r) => s.add(canonicalKeyForMemberId(String(r.member_id))));
+    captainPickMemberIds.forEach((id) => s.add(canonicalKeyForMemberId(id)));
     return s.size;
-  }, [attendingRegs, captainPickMemberIds]);
+  }, [attendingRegs, captainPickMemberIds, canonicalKeyForMemberId]);
 
   const regSummary = useMemo(
     () => summarizeEventRegistrations(registrations),
@@ -517,9 +554,25 @@ export default function EventDetailScreen() {
    */
   const handleLineupMemberFeeAction = async (memberId: string, paid: boolean) => {
     if (payBusy || !eventId) return;
+    const actionType = paid ? "mark_paid" : "record_unpaid";
+    const sourceMember = memberStubById(memberId);
+    const sourceKey = canonicalJointPersonKey(sourceMember);
+    const hostSocietyId = event?.society_id ?? societyId ?? "";
+    const hostCandidate = regMembers.find((m) =>
+      m.society_id === hostSocietyId && canonicalJointPersonKey(m) === sourceKey,
+    );
+    const targetMemberId = hostCandidate?.id ?? memberId;
+    if (__DEV__) {
+      console.log("[attendance-actions] create fee row start", {
+        eventId,
+        memberId,
+        targetMemberId,
+        actionType,
+      });
+    }
     setPayBusy(memberId);
     try {
-      await markMePaid(eventId, memberId, paid);
+      await markMePaid(eventId, targetMemberId, paid);
       setPayToast({
         visible: true,
         message: paid
@@ -528,12 +581,126 @@ export default function EventDetailScreen() {
         type: "success",
       });
       await loadRegistrations();
+      if (__DEV__) {
+        console.log("[attendance-actions] create fee row success", {
+          eventId,
+          memberId,
+          targetMemberId,
+          actionType,
+        });
+      }
     } catch (e: any) {
       setPayToast({ visible: true, message: e?.message || "Failed", type: "error" });
+      if (__DEV__) {
+        console.log("[attendance-actions] create fee row failure", {
+          eventId,
+          memberId,
+          targetMemberId,
+          actionType,
+          error: e?.message || String(e),
+        });
+      }
     } finally {
       setPayBusy(null);
     }
   };
+
+  const notPlayingRegs = useMemo(() => {
+    const byKey = new Map<string, EventRegistration>();
+    const inMainKeys = new Set<string>([
+      ...attendingRegs.map((r) => canonicalKeyForMemberId(String(r.member_id))),
+      ...captainPickMemberIds.map((id) => canonicalKeyForMemberId(id)),
+    ]);
+    for (const reg of registrations) {
+      if (reg.status !== "out") continue;
+      const key = canonicalKeyForMemberId(String(reg.member_id));
+      if (inMainKeys.has(key)) continue;
+      const prev = byKey.get(key);
+      if (!prev) {
+        byKey.set(key, reg);
+        continue;
+      }
+      const prevTs = prev.updated_at ? new Date(prev.updated_at).getTime() : 0;
+      const nextTs = reg.updated_at ? new Date(reg.updated_at).getTime() : 0;
+      if (nextTs >= prevTs) byKey.set(key, reg);
+    }
+    return [...byKey.values()];
+  }, [registrations, attendingRegs, captainPickMemberIds, canonicalKeyForMemberId]);
+
+  useEffect(() => {
+    if (!__DEV__ || event?.is_joint_event === true) return;
+    const srcRows = [
+      ...registrations.map((r) => {
+        const m = memberByIdForRegs.get(r.member_id);
+        return {
+          sourceType: `registration:${r.status}:${r.paid ? "paid" : "unpaid"}`,
+          member_id: r.member_id,
+          user_id: m?.user_id ?? null,
+          person_id: m?.person_id ?? null,
+          email: m?.email ?? null,
+          display_name: registrationMemberDisplayName(r),
+        };
+      }),
+      ...(event?.playerIds ?? []).map((id) => {
+        const m = memberByIdForRegs.get(String(id));
+        return {
+          sourceType: "playing_list",
+          member_id: String(id),
+          user_id: m?.user_id ?? null,
+          person_id: m?.person_id ?? null,
+          email: m?.email ?? null,
+          display_name: memberNameForAttendeeId(String(id)),
+        };
+      }),
+    ];
+    const dedupRows = [
+      ...attendingRegs.map((r) => {
+        const m = memberByIdForRegs.get(r.member_id);
+        return {
+          sourceType: `dedup_main:registration:${r.status}:${r.paid ? "paid" : "unpaid"}`,
+          member_id: r.member_id,
+          user_id: m?.user_id ?? null,
+          person_id: m?.person_id ?? null,
+          email: m?.email ?? null,
+          display_name: registrationMemberDisplayName(r),
+        };
+      }),
+      ...captainPickMemberIds.map((id) => {
+        const m = memberByIdForRegs.get(String(id));
+        return {
+          sourceType: "dedup_main:playing_list_placeholder",
+          member_id: String(id),
+          user_id: m?.user_id ?? null,
+          person_id: m?.person_id ?? null,
+          email: m?.email ?? null,
+          display_name: memberNameForAttendeeId(String(id)),
+        };
+      }),
+      ...notPlayingRegs.map((r) => {
+        const m = memberByIdForRegs.get(r.member_id);
+        return {
+          sourceType: "dedup_not_playing",
+          member_id: r.member_id,
+          user_id: m?.user_id ?? null,
+          person_id: m?.person_id ?? null,
+          email: m?.email ?? null,
+          display_name: registrationMemberDisplayName(r),
+        };
+      }),
+    ];
+    console.log("[attendance-list] source rows", srcRows);
+    console.log("[attendance-list] deduped rows", dedupRows);
+  }, [
+    event?.is_joint_event,
+    event?.playerIds,
+    registrations,
+    memberByIdForRegs,
+    registrationMemberDisplayName,
+    memberNameForAttendeeId,
+    attendingRegs,
+    captainPickMemberIds,
+    notPlayingRegs,
+  ]);
 
   // Debounced course search (400ms - only fires after typing stops to avoid API quota burn)
   const debouncedSearch = useMemo(
@@ -1721,10 +1888,10 @@ export default function EventDetailScreen() {
             </View>
           ))}
 
-          {registrations.filter((r) => r.status === "out").length > 0 && (
+          {notPlayingRegs.length > 0 && (
             <View style={{ marginTop: spacing.sm, paddingTop: spacing.sm, borderTopWidth: 1, borderTopColor: "#F3F4F6" }}>
               <AppText variant="captionBold" color="tertiary" style={{ marginBottom: spacing.xs }}>Not playing</AppText>
-              {registrations.filter((r) => r.status === "out").map((reg) => (
+              {notPlayingRegs.map((reg) => (
                 <AppText key={reg.id} variant="small" color="tertiary" style={{ paddingVertical: 2 }}>
                   {registrationMemberDisplayName(reg)}
                 </AppText>
