@@ -77,6 +77,13 @@ export type EventDoc = {
   teeTimePublishedAt?: string | null;
   /** Source of tee data: 'imported' | 'manual' */
   teeSource?: "imported" | "manual" | null;
+  /**
+   * Canonical joint flag: true when `event_societies` has 2+ distinct society_id values
+   * (same rule as `get_joint_event_detail` / `isEventJoint`). Set by repo when loading lists or `getEvent`.
+   */
+  is_joint_event?: boolean;
+  /** Distinct societies linked in `event_societies` for this event (0 if none). */
+  linked_society_count?: number;
   [key: string]: unknown;
 };
 
@@ -127,11 +134,37 @@ function mapEvent(row: any): EventDoc {
   };
 }
 
+function logJointClassificationDev(event: EventDoc, linkedSocietyCount: number, is_joint_event: boolean) {
+  if (!__DEV__) return;
+  console.log("[events] joint classification", {
+    eventId: event.id,
+    title: event.name,
+    hostSocietyId: event.society_id,
+    linkedSocietyCount,
+    is_joint_event,
+  });
+}
+
 /**
- * Get events for a society (one-time fetch)
+ * Attach `is_joint_event` and `linked_society_count` from `event_societies` for each event.
  */
-export async function getEventsBySocietyId(societyId: string): Promise<EventDoc[]> {
-  console.log("[eventRepo] getEventsBySocietyId called with:", societyId);
+export async function enrichEventsWithJointClassification(events: EventDoc[]): Promise<EventDoc[]> {
+  if (events.length === 0) return events;
+  const { getJointMetaForEventIds } = await import("@/lib/db_supabase/jointEventRepo");
+  const metaMap = await getJointMetaForEventIds(events.map((e) => e.id));
+  return events.map((e) => {
+    const m = metaMap.get(e.id) ?? { is_joint_event: false, linkedSocietyCount: 0 };
+    logJointClassificationDev(e, m.linkedSocietyCount, m.is_joint_event);
+    return {
+      ...e,
+      is_joint_event: m.is_joint_event,
+      linked_society_count: m.linkedSocietyCount,
+    };
+  });
+}
+
+/** Raw `events` rows for a society, mapped to EventDoc without joint enrichment. */
+async function fetchMappedEventsForSociety(societyId: string): Promise<EventDoc[]> {
   const { data, error } = await supabase
     .from("events")
     .select("*")
@@ -139,7 +172,7 @@ export async function getEventsBySocietyId(societyId: string): Promise<EventDoc[
     .order("date", { ascending: true });
 
   if (error) {
-    console.error("[eventRepo] getEventsBySocietyId failed:", {
+    console.error("[eventRepo] fetchMappedEventsForSociety failed:", {
       message: error.message,
       details: error.details,
       hint: error.hint,
@@ -148,8 +181,88 @@ export async function getEventsBySocietyId(societyId: string): Promise<EventDoc[
     throw new Error(error.message || "Failed to load events");
   }
 
-  console.log("[eventRepo] getEventsBySocietyId returned", (data ?? []).length, "events for society:", societyId);
   return (data ?? []).map(mapEvent);
+}
+
+/** Single event by id, mapped only (no joint enrichment). */
+async function getEventMappedById(eventId: string): Promise<EventDoc | null> {
+  const { data, error } = await supabase
+    .from("events")
+    .select("*")
+    .eq("id", eventId)
+    .maybeSingle();
+
+  if (error) {
+    console.error("[eventRepo] getEventMappedById failed:", error.message);
+    return null;
+  }
+  return data ? mapEvent(data) : null;
+}
+
+/**
+ * Get events for a society (one-time fetch)
+ */
+export async function getEventsBySocietyId(societyId: string): Promise<EventDoc[]> {
+  console.log("[eventRepo] getEventsBySocietyId called with:", societyId);
+  const mapped = await fetchMappedEventsForSociety(societyId);
+  console.log("[eventRepo] getEventsBySocietyId returned", mapped.length, "events for society:", societyId);
+  return enrichEventsWithJointClassification(mapped);
+}
+
+/**
+ * Get all events visible to a society: host events + joint events where society participates.
+ * Use this for the main events list so participant societies see joint events too.
+ */
+export async function getEventsForSociety(societyId: string): Promise<EventDoc[]> {
+  let hostMapped: EventDoc[];
+  try {
+    hostMapped = await fetchMappedEventsForSociety(societyId);
+  } catch (e) {
+    throw e;
+  }
+  try {
+    const { getEventIdsWhereSocietyParticipates } = await import("@/lib/db_supabase/jointEventRepo");
+    const participantEventIdList = await getEventIdsWhereSocietyParticipates(societyId);
+    const hostIds = new Set(hostMapped.map((e) => e.id));
+    const missingIds = participantEventIdList.filter((id) => !hostIds.has(id));
+    if (missingIds.length === 0) {
+      return enrichEventsWithJointClassification(hostMapped);
+    }
+    console.log("[eventRepo] getEventsForSociety: fetching", missingIds.length, "extra events for participant society:", societyId);
+    const missingMapped = (await Promise.all(missingIds.map((id) => getEventMappedById(id)))).filter(
+      (e): e is EventDoc => e != null,
+    );
+    const combined = [...hostMapped, ...missingMapped];
+    const enriched = await enrichEventsWithJointClassification(combined);
+    enriched.sort((a, b) => (a.date ?? "").localeCompare(b.date ?? ""));
+    return enriched;
+  } catch (err) {
+    console.warn("[eventRepo] getEventsForSociety: participant merge failed, falling back to host-only:", err);
+    return enrichEventsWithJointClassification(hostMapped);
+  }
+}
+
+/**
+ * Get events available for the tee sheet screen: host events plus joint events where society participates.
+ * Use this so joint events appear in the tee sheet event dropdown for participant societies.
+ */
+export async function getEventsForTeeSheet(societyId: string): Promise<EventDoc[]> {
+  const { getEventIdsWhereSocietyParticipates } = await import("@/lib/db_supabase/jointEventRepo");
+  const hostMapped = await fetchMappedEventsForSociety(societyId);
+  const participantEventIds = await getEventIdsWhereSocietyParticipates(societyId);
+  const hostIds = new Set(hostMapped.map((e) => e.id));
+  const missingIds = participantEventIds.filter((id) => !hostIds.has(id));
+  if (missingIds.length === 0) {
+    const enriched = await enrichEventsWithJointClassification(hostMapped);
+    return enriched;
+  }
+  const missingMapped = (await Promise.all(missingIds.map((id) => getEventMappedById(id)))).filter(
+    (e): e is EventDoc => e != null,
+  );
+  const combined = [...hostMapped, ...missingMapped];
+  const enriched = await enrichEventsWithJointClassification(combined);
+  enriched.sort((a, b) => (a.date ?? "").localeCompare(b.date ?? ""));
+  return enriched;
 }
 
 /**
@@ -282,7 +395,9 @@ export async function createEvent(
     }
   }
 
-  return mapEvent(row);
+  const created = mapEvent(row);
+  const [enriched] = await enrichEventsWithJointClassification([created]);
+  return enriched ?? created;
 }
 
 /**
@@ -500,6 +615,34 @@ export async function publishTeeTime(
   }
 
   return getEvent(eventId);
+}
+
+/**
+ * Clear published tee times so members no longer see them.
+ * Uses RPC (joint events: participant ManCo cannot UPDATE events row via RLS).
+ */
+export async function unpublishTeeTimes(eventId: string): Promise<void> {
+  if (!eventId) throw new Error("unpublishTeeTimes: missing eventId");
+
+  const { error: rpcError } = await supabase.rpc("unpublish_tee_times", {
+    p_event_id: eventId,
+  });
+
+  if (!rpcError) return;
+
+  console.warn("[eventRepo] unpublishTeeTimes RPC failed, trying direct update:", rpcError.message);
+  const { error: updateError } = await supabase
+    .from("events")
+    .update({
+      tee_time_published_at: null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", eventId);
+
+  if (updateError) {
+    console.error("[eventRepo] unpublishTeeTimes direct update failed:", updateError.message);
+    throw new Error(updateError.message || "Failed to unpublish tee times");
+  }
 }
 
 // =====================================================

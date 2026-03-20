@@ -125,6 +125,21 @@ export type TeeGroupPlayerInput = {
 };
 
 /**
+ * Remove all tee_groups / tee_group_players rows for an event (via RPC).
+ * Use before rebuilding from scratch or when clearing the tee sheet.
+ */
+export async function clearPersistedTeeSheet(eventId: string): Promise<void> {
+  if (!eventId?.trim()) throw new Error("clearPersistedTeeSheet: missing eventId");
+  const { error } = await supabase.rpc("clear_tee_sheet_for_event", {
+    p_event_id: eventId,
+  });
+  if (error) {
+    console.error("[teeGroupsRepo] clearPersistedTeeSheet failed:", error);
+    throw new Error(error.message || "Failed to clear tee sheet");
+  }
+}
+
+/**
  * Upsert tee groups and player assignments for an event.
  * Replaces all existing groups/players for the event.
  */
@@ -133,15 +148,7 @@ export async function upsertTeeSheet(
   groups: TeeGroupInput[],
   players: TeeGroupPlayerInput[]
 ): Promise<void> {
-  // Clear existing rows via RPC (bypasses RLS delete issues; permission checked in RPC)
-  const { error: clearErr } = await supabase.rpc("clear_tee_sheet_for_event", {
-    p_event_id: eventId,
-  });
-
-  if (clearErr) {
-    console.error("[teeGroupsRepo] Failed clearing tee sheet:", clearErr);
-    throw new Error(clearErr.message || "Failed to clear tee groups");
-  }
+  await clearPersistedTeeSheet(eventId);
 
   if (groups.length === 0 && players.length === 0) return;
 

@@ -13,7 +13,7 @@ import { PrimaryButton, SecondaryButton } from "@/components/ui/Button";
 import { LoadingState } from "@/components/ui/LoadingState";
 import { useBootstrap } from "@/lib/useBootstrap";
 import { ensureSignedIn } from "@/lib/auth_supabase";
-import { createSociety } from "@/lib/db_supabase/societyRepo";
+import { createSociety, joinSociety } from "@/lib/db_supabase/societyRepo";
 import { createMember } from "@/lib/db_supabase/memberRepo";
 import { setActiveSocietyAndMember } from "@/lib/db_supabase/profileRepo";
 import { supabase } from "@/lib/supabase";
@@ -295,7 +295,7 @@ export default function OnboardingScreen() {
         return;
       }
 
-      const { data: rpcMember, error } = await supabase.rpc("join_society", {
+      const { data: joinedPayload, error } = await joinSociety({
         p_join_code: code,
         p_name: nameInput,
         p_email: authUser.email ?? null,
@@ -309,7 +309,6 @@ export default function OnboardingScreen() {
         return;
       }
 
-      const joinedPayload = Array.isArray(rpcMember) ? rpcMember[0] : rpcMember;
       if (!joinedPayload || typeof joinedPayload !== "object") {
         showJoinFailure("Failed to join society. Please try again.");
         return;

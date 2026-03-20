@@ -27,6 +27,11 @@ import {
   EVENT_FORMATS,
   EVENT_CLASSIFICATIONS,
 } from "@/lib/db_supabase/eventRepo";
+import { getJointEventDetail, mapJointEventToEventDoc, updateJointEvent, validateJointEventInput } from "@/lib/db_supabase/jointEventRepo";
+import { getMySocieties } from "@/lib/db_supabase/mySocietiesRepo";
+import { ParticipatingSocietiesSection } from "@/components/event/ParticipatingSocietiesSection";
+import type { EventSocietyInput } from "@/lib/db_supabase/jointEventTypes";
+import type { JointEventEntry } from "@/lib/db_supabase/jointEventTypes";
 import { getTeesByCourseId, getCourseByApiId, getCourseMetaById, upsertTeesFromApi, type CourseTee } from "@/lib/db_supabase/courseRepo";
 import { searchCourses as searchCoursesApi, getCourseById, type ApiCourseSearchResult } from "@/lib/golfApi";
 import { importCourse, type ImportedCourse } from "@/lib/importCourse";
@@ -35,12 +40,25 @@ import { getPermissionsForMember } from "@/lib/rbac";
 import {
   getEventRegistrations,
   markMePaid,
+  summarizeEventRegistrations,
   type EventRegistration,
 } from "@/lib/db_supabase/eventRegistrationRepo";
-import { getMembersBySocietyId, type MemberDoc } from "@/lib/db_supabase/memberRepo";
+import { getMembersBySocietyId, getMembersByIds, type MemberDoc } from "@/lib/db_supabase/memberRepo";
+import { resolveAttendeeDisplayName } from "@/lib/eventAttendeeName";
+import { buildSocietyIdToNameMap } from "@/lib/jointEventSocietyLabel";
+import {
+  canonicalJointPersonKey,
+  mergeJointAttendingDisplayRows,
+} from "@/lib/jointPersonDedupe";
 import { Toast } from "@/components/ui/Toast";
 import { getColors, spacing, radius, typography } from "@/lib/ui/theme";
 import { confirmDestructive, showAlert } from "@/lib/ui/alert";
+import {
+  JOINT_EVENT_CHIP_LONG,
+  JOINT_EVENT_CHIP_SHORT,
+  JOINT_EVENT_DETAIL_ATTENDANCE_NOTE,
+  PaymentPill,
+} from "@/lib/eventModuleUi";
 import { getSocietyLogoUrl } from "@/lib/societyLogo";
 
 // Picker option component
@@ -95,6 +113,8 @@ export default function EventDetailScreen() {
   const eventId = Array.isArray(params.id) ? params.id[0] : params.id;
 
   const [event, setEvent] = useState<EventDoc | null>(null);
+  const [jointParticipatingSocieties, setJointParticipatingSocieties] = useState<EventSocietyInput[]>([]);
+  const [jointEntries, setJointEntries] = useState<JointEventEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -140,6 +160,37 @@ export default function EventDetailScreen() {
   // Tee settings toggle
   const [showTeeSettings, setShowTeeSettings] = useState(false);
 
+  // Joint event edit (Phase 3)
+  const [formEditIsJointEvent, setFormEditIsJointEvent] = useState(false);
+  const [formEditHostSocietyId, setFormEditHostSocietyId] = useState("");
+  const [formEditParticipatingSocieties, setFormEditParticipatingSocieties] = useState<EventSocietyInput[]>([]);
+  const [mySocieties, setMySocieties] = useState<Awaited<ReturnType<typeof getMySocieties>>>([]);
+
+  /** When enabling joint on a standard event, seed host society (same as Create Event on Events tab). */
+  useEffect(() => {
+    if (!isEditing || !formEditIsJointEvent) return;
+    if (event?.is_joint_event === true) return;
+    if (!societyId || formEditParticipatingSocieties.length > 0 || mySocieties.length === 0) return;
+    const current = mySocieties.find((s) => s.societyId === societyId);
+    if (!current) return;
+    setFormEditHostSocietyId(current.societyId);
+    setFormEditParticipatingSocieties([
+      {
+        society_id: current.societyId,
+        society_name: current.societyName,
+        role: "host",
+        has_society_oom: true,
+      },
+    ]);
+  }, [
+    isEditing,
+    formEditIsJointEvent,
+    event?.is_joint_event,
+    societyId,
+    mySocieties,
+    formEditParticipatingSocieties.length,
+  ]);
+
   const parseOptionalNumber = (value: string, round = false): number | undefined => {
     const trimmed = value.trim();
     if (!trimmed) return undefined;
@@ -149,8 +200,8 @@ export default function EventDetailScreen() {
   };
 
   const loadEvent = useCallback(async () => {
-    if (!eventId || !societyId) {
-      setError("Missing event or society");
+    if (!eventId) {
+      setError("Missing event");
       setLoading(false);
       return;
     }
@@ -158,14 +209,77 @@ export default function EventDetailScreen() {
     try {
       setLoading(true);
       setError(null);
-      const data = await getEvent(eventId);
-      if (!data) {
-        setError("Event not found");
+
+      // (a) Fetch base event
+      const baseEvent = await getEvent(eventId);
+
+      if (baseEvent) {
+        // (b) If base exists and is joint, load joint payload; (c) else keep standard path
+        const joint = baseEvent.is_joint_event === true;
+        if (joint) {
+          const jointPayload = await getJointEventDetail(eventId);
+          if (jointPayload) {
+            setEvent(mapJointEventToEventDoc(jointPayload.event) as EventDoc);
+            setJointParticipatingSocieties(
+              jointPayload.participating_societies.map((s) => ({
+                society_id: s.society_id,
+                society_name: s.society_name,
+                role: s.role,
+                has_society_oom: s.has_society_oom,
+                society_oom_name: s.society_oom_name || null,
+              }))
+            );
+            setJointEntries(jointPayload.entries ?? []);
+            if (__DEV__) {
+              console.log("[EventDetail] Joint path (base event + joint payload):", {
+                eventId,
+                societies: jointPayload.participating_societies?.length ?? 0,
+                entries: jointPayload.entries?.length ?? 0,
+                legacyPlayerIdsCount: baseEvent?.playerIds?.length ?? 0,
+              });
+            }
+          } else {
+            setEvent(baseEvent);
+            setJointParticipatingSocieties([]);
+            setJointEntries([]);
+          }
+        } else {
+          setEvent(baseEvent);
+          setJointParticipatingSocieties([]);
+          setJointEntries([]);
+        }
       } else {
-        setEvent(data);
+        // (d) Base event not found: try joint payload as fallback (e.g. access via participating society)
+        // (RLS blocks direct events read for non-host societies)
+        const jointPayload = await getJointEventDetail(eventId);
+        if (jointPayload) {
+          setEvent(mapJointEventToEventDoc(jointPayload.event) as EventDoc);
+          setJointParticipatingSocieties(
+            jointPayload.participating_societies.map((s) => ({
+              society_id: s.society_id,
+              society_name: s.society_name,
+              role: s.role,
+              has_society_oom: s.has_society_oom,
+              society_oom_name: s.society_oom_name || null,
+            }))
+          );
+          setJointEntries(jointPayload.entries ?? []);
+          if (__DEV__) {
+            console.log("[EventDetail] Joint path (fallback, participating-society access):", {
+              eventId,
+              societies: jointPayload.participating_societies?.length ?? 0,
+              entries: jointPayload.entries?.length ?? 0,
+            });
+          }
+        } else {
+          setError("Event not found");
+        }
       }
     } catch (err: any) {
+      console.error("[EventDetail] loadEvent error:", err?.message ?? err);
       setError(err?.message ?? "Failed to load event");
+      setEvent(null);
+      setJointEntries([]);
     } finally {
       setLoading(false);
     }
@@ -192,7 +306,17 @@ export default function EventDetailScreen() {
         getMembersBySocietyId(societyId),
       ]);
       setRegistrations(regs);
-      setRegMembers(mems);
+      const byId = new Map<string, MemberDoc>();
+      for (const m of mems) byId.set(m.id, m);
+      const regMemberIds = [...new Set(regs.map((r) => r.member_id).filter(Boolean))];
+      const missing = regMemberIds.filter((id) => !byId.has(id));
+      if (missing.length > 0) {
+        const extra = await getMembersByIds(missing);
+        for (const m of extra) {
+          if (m?.id && !byId.has(m.id)) byId.set(m.id, m);
+        }
+      }
+      setRegMembers(Array.from(byId.values()));
     } catch { /* non-critical */ }
   }, [eventId, societyId]);
 
@@ -200,21 +324,209 @@ export default function EventDetailScreen() {
     if (eventId && societyId) loadRegistrations();
   }, [eventId, societyId, loadRegistrations]);
 
-  const memberNameMap = useMemo(() => {
-    const map: Record<string, string> = {};
-    for (const m of regMembers) map[m.id] = m.name || m.display_name || m.displayName || "Member";
-    return map;
-  }, [regMembers]);
+  const memberByIdForRegs = useMemo(() => new Map(regMembers.map((m) => [m.id, m])), [regMembers]);
 
-  const paidCount = registrations.filter((r) => r.paid).length;
-  const inCount = registrations.filter((r) => r.status === "in").length;
+  /** Display name per registration row (hydrates cross-society players for joint events). */
+  const registrationMemberDisplayName = useCallback(
+    (reg: EventRegistration) => {
+      const m = memberByIdForRegs.get(reg.member_id);
+      const snap = (reg as { member_display_name?: string | null }).member_display_name;
+      return resolveAttendeeDisplayName(m, {
+        registrationId: reg.id,
+        memberId: reg.member_id,
+        snapshotName: snap,
+      }).name;
+    },
+    [memberByIdForRegs],
+  );
+
+  const memberNameForAttendeeId = useCallback(
+    (memberId: string) =>
+      resolveAttendeeDisplayName(memberByIdForRegs.get(memberId), { memberId }).name,
+    [memberByIdForRegs],
+  );
+
+  /** Hydrate display names for captain line-up (playerIds) and joint entry player ids. */
+  useEffect(() => {
+    if (!eventId || !societyId) return;
+    const ids = [...(event?.playerIds ?? []), ...jointEntries.map((e) => e.player_id)]
+      .filter(Boolean)
+      .map(String);
+    const unique = [...new Set(ids)];
+    const need = unique.filter((id) => !memberByIdForRegs.has(id));
+    if (need.length === 0) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const extra = await getMembersByIds(need);
+        if (cancelled) return;
+        setRegMembers((prev) => {
+          const m = new Map(prev.map((x) => [x.id, x]));
+          for (const x of extra) {
+            if (x?.id && !m.has(x.id)) m.set(x.id, x);
+          }
+          return Array.from(m.values());
+        });
+      } catch {
+        /* non-critical */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [eventId, societyId, event?.playerIds, jointEntries, memberByIdForRegs]);
+
+  const attendingRegs = useMemo(
+    () => registrations.filter((r) => r.status === "in"),
+    [registrations],
+  );
+
+  const captainPickMemberIds = useMemo(() => {
+    const regIn = new Set(attendingRegs.map((r) => String(r.member_id)));
+    return (event?.playerIds ?? []).map(String).filter((id) => id && !regIn.has(id));
+  }, [attendingRegs, event?.playerIds]);
+
+  const standardAttendingTotalCount = useMemo(() => {
+    const s = new Set<string>();
+    attendingRegs.forEach((r) => s.add(String(r.member_id)));
+    captainPickMemberIds.forEach((id) => s.add(id));
+    return s.size;
+  }, [attendingRegs, captainPickMemberIds]);
+
+  const regSummary = useMemo(
+    () => summarizeEventRegistrations(registrations),
+    [registrations],
+  );
+  const {
+    attendingCount,
+    outstandingCount,
+    paidAmongAttendingCount,
+  } = regSummary;
+
+  const jointConfirmedCount = useMemo(() => {
+    if (event?.is_joint_event !== true) return 0;
+    const memberIds: string[] = [];
+    jointEntries.forEach((e) => {
+      if (e.player_id) memberIds.push(String(e.player_id));
+    });
+    (event.playerIds ?? []).forEach((id) => {
+      if (id) memberIds.push(String(id));
+    });
+    registrations.filter((r) => r.status === "in").forEach((r) => memberIds.push(String(r.member_id)));
+    const keys = new Set<string>();
+    for (const id of memberIds) {
+      const m = memberByIdForRegs.get(id);
+      keys.add(
+        canonicalJointPersonKey(
+          m ?? ({ id, society_id: "" } as MemberDoc),
+        ),
+      );
+    }
+    return keys.size;
+  }, [
+    event?.is_joint_event,
+    event?.playerIds,
+    jointEntries,
+    registrations,
+    memberByIdForRegs,
+  ]);
+
+  const jointSocietyIdToName = useMemo(
+    () => buildSocietyIdToNameMap(jointParticipatingSocieties),
+    [jointParticipatingSocieties],
+  );
+
+  const jointAttendingRows = useMemo(() => {
+    if (event?.is_joint_event !== true) return [];
+
+    const items: {
+      memberId: string;
+      primary: string;
+      sourceNote?: string;
+      priority: number;
+    }[] = [];
+
+    for (const entry of jointEntries) {
+      const pid = String(entry.player_id);
+      if (!pid) continue;
+      const fromEntry = entry.player_name?.trim();
+      const primary =
+        fromEntry ||
+        resolveAttendeeDisplayName(memberByIdForRegs.get(pid), { memberId: pid }).name;
+      items.push({ memberId: pid, primary, sourceNote: "Event entry", priority: 0 });
+    }
+
+    for (const raw of event?.playerIds ?? []) {
+      const pid = String(raw);
+      if (!pid) continue;
+      const mem = memberByIdForRegs.get(pid);
+      items.push({
+        memberId: pid,
+        primary: resolveAttendeeDisplayName(mem, { memberId: pid }).name,
+        sourceNote: "Players list",
+        priority: 1,
+      });
+    }
+
+    for (const r of registrations) {
+      if (r.status !== "in") continue;
+      items.push({
+        memberId: String(r.member_id),
+        primary: registrationMemberDisplayName(r),
+        sourceNote: "RSVP",
+        priority: 2,
+      });
+    }
+
+    return mergeJointAttendingDisplayRows(
+      items,
+      (id) => memberByIdForRegs.get(id),
+      jointSocietyIdToName,
+    );
+  }, [
+    event?.is_joint_event,
+    event?.playerIds,
+    jointEntries,
+    jointSocietyIdToName,
+    registrations,
+    memberByIdForRegs,
+    registrationMemberDisplayName,
+  ]);
 
   const handleTogglePaid = async (reg: EventRegistration) => {
     if (payBusy) return;
     setPayBusy(reg.member_id);
     try {
       await markMePaid(reg.event_id, reg.member_id, !reg.paid);
-      setPayToast({ visible: true, message: reg.paid ? "Marked unpaid" : "Marked paid", type: "success" });
+      setPayToast({
+        visible: true,
+        message: reg.paid ? "Marked unpaid" : "Marked paid (also confirmed as attending)",
+        type: "success",
+      });
+      await loadRegistrations();
+    } catch (e: any) {
+      setPayToast({ visible: true, message: e?.message || "Failed", type: "error" });
+    } finally {
+      setPayBusy(null);
+    }
+  };
+
+  /**
+   * Playing-list-only members (no `event_registrations` row yet). RPC inserts the row.
+   * @param paid - target state: true = paid + confirmed; false = fee row, attending, unpaid.
+   */
+  const handleLineupMemberFeeAction = async (memberId: string, paid: boolean) => {
+    if (payBusy || !eventId) return;
+    setPayBusy(memberId);
+    try {
+      await markMePaid(eventId, memberId, paid);
+      setPayToast({
+        visible: true,
+        message: paid
+          ? "Marked paid — fee record created (confirmed as attending)"
+          : "Fee record added (unpaid, confirmed as attending)",
+        type: "success",
+      });
       await loadRegistrations();
     } catch (e: any) {
       setPayToast({ visible: true, message: e?.message || "Failed", type: "error" });
@@ -399,7 +711,7 @@ export default function EventDetailScreen() {
   }, []);
 
   // Populate form when entering edit mode
-  const startEditing = () => {
+  const startEditing = async () => {
     if (!event) return;
     setFormName(event.name || "");
     setFormDate(event.date || "");
@@ -452,6 +764,14 @@ export default function EventDetailScreen() {
       setShowManualTee(!!(event.teeName || event.par != null));
     }
 
+    setFormEditIsJointEvent(event.is_joint_event === true);
+    setFormEditHostSocietyId(
+      jointParticipatingSocieties.find((s) => s.role === "host")?.society_id ?? event.society_id ?? ""
+    );
+    setFormEditParticipatingSocieties(jointParticipatingSocieties);
+    const societies = await getMySocieties();
+    setMySocieties(societies);
+
     setIsEditing(true);
   };
 
@@ -466,6 +786,25 @@ export default function EventDetailScreen() {
     if (!formName.trim()) {
       showAlert("Missing Name", "Please enter an event name.");
       return;
+    }
+
+    if (formEditIsJointEvent) {
+      if (formEditParticipatingSocieties.length < 2) {
+        showAlert(
+          "Joint event",
+          "Add at least two participating societies (host + another society) to save as a joint event.",
+        );
+        return;
+      }
+      const jointErrors = validateJointEventInput({
+        is_joint_event: true,
+        host_society_id: formEditHostSocietyId,
+        participating_societies: formEditParticipatingSocieties,
+      });
+      if (jointErrors.length > 0) {
+        showAlert("Validation", jointErrors[0].message);
+        return;
+      }
     }
 
     // Validate date format if provided
@@ -540,25 +879,50 @@ export default function EventDetailScreen() {
 
     setSaving(true);
     try {
-      await updateEvent(eventId, {
-        name: formName.trim(),
-        date: formDate.trim() || undefined,
-        format: formFormat,
-        classification: formClassification,
-        courseName: formCourseName.trim() || undefined,
-        courseId: courseId || undefined,
-        teeId,
-        teeName,
-        par,
-        courseRating,
-        slopeRating,
-        ladiesTeeName,
-        ladiesPar,
-        ladiesCourseRating,
-        ladiesSlopeRating,
-        handicapAllowance,
-        teeSource,
-      });
+      if (formEditIsJointEvent) {
+        await updateJointEvent(eventId, {
+          name: formName.trim(),
+          date: formDate.trim() || undefined,
+          format: formFormat,
+          classification: formClassification,
+          courseName: formCourseName.trim() || undefined,
+          courseId: courseId || undefined,
+          teeId,
+          teeName,
+          par,
+          courseRating,
+          slopeRating,
+          ladiesTeeName,
+          ladiesPar,
+          ladiesCourseRating,
+          ladiesSlopeRating,
+          handicapAllowance,
+          teeSource,
+          is_joint_event: true,
+          host_society_id: formEditHostSocietyId,
+          participating_societies: formEditParticipatingSocieties,
+        });
+      } else {
+        await updateEvent(eventId, {
+          name: formName.trim(),
+          date: formDate.trim() || undefined,
+          format: formFormat,
+          classification: formClassification,
+          courseName: formCourseName.trim() || undefined,
+          courseId: courseId || undefined,
+          teeId,
+          teeName,
+          par,
+          courseRating,
+          slopeRating,
+          ladiesTeeName,
+          ladiesPar,
+          ladiesCourseRating,
+          ladiesSlopeRating,
+          handicapAllowance,
+          teeSource,
+        });
+      }
 
       setIsEditing(false);
       loadEvent(); // Reload to get updated data
@@ -647,6 +1011,34 @@ export default function EventDetailScreen() {
         </View>
 
         <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+          {formEditIsJointEvent && (
+            <AppCard
+              style={{
+                marginBottom: spacing.base,
+                borderWidth: 1,
+                borderColor: colors.primary + "50",
+                backgroundColor: colors.primary + "0D",
+              }}
+            >
+              <View style={{ flexDirection: "row", alignItems: "flex-start", gap: spacing.sm }}>
+                <Feather name="link" size={20} color={colors.primary} />
+                <View style={{ flex: 1 }}>
+                  <AppText variant="captionBold" color="primary">{JOINT_EVENT_CHIP_LONG}</AppText>
+                  <AppText variant="small" color="secondary" style={{ marginTop: 4 }}>
+                    Fees are per society; shared attendance uses the Players screen.
+                    {event?.is_joint_event === true
+                      ? " Update participating societies below."
+                      : " Add at least one other society below, then save."}
+                  </AppText>
+                  {formEditParticipatingSocieties.length > 0 ? (
+                    <AppText variant="small" color="tertiary" style={{ marginTop: 6 }}>
+                      {formEditParticipatingSocieties.map((s) => s.society_name?.trim() || s.society_id).filter(Boolean).join(" · ")}
+                    </AppText>
+                  ) : null}
+                </View>
+              </View>
+            </AppCard>
+          )}
           <AppCard>
             <View style={styles.formField}>
               <AppText variant="captionBold" style={styles.label}>Event Name</AppText>
@@ -698,6 +1090,65 @@ export default function EventDetailScreen() {
                 ))}
               </View>
             </View>
+
+            {/* Joint event toggle (always visible in edit — was previously only when already joint) */}
+            {canEditEvent ? (
+              <Pressable
+                disabled={event?.is_joint_event === true}
+                onPress={() => {
+                  if (event?.is_joint_event === true) return;
+                  const next = !formEditIsJointEvent;
+                  setFormEditIsJointEvent(next);
+                  if (!next) {
+                    setFormEditHostSocietyId("");
+                    setFormEditParticipatingSocieties([]);
+                  }
+                }}
+                style={[
+                  styles.jointEventToggle,
+                  {
+                    borderColor: colors.border,
+                    opacity: event?.is_joint_event === true ? 0.75 : 1,
+                  },
+                ]}
+              >
+                <View style={{ flex: 1 }}>
+                  <AppText variant="captionBold">{JOINT_EVENT_CHIP_LONG}</AppText>
+                  <AppText variant="small" color="secondary">
+                    {event?.is_joint_event === true
+                      ? "This event is joint. Participating societies can be updated below. Turning joint off is not supported yet."
+                      : formEditIsJointEvent
+                        ? mySocieties.length < 2
+                          ? "Join another society in the app to add a second participant."
+                          : "On — add host + another society below, then save."
+                        : "Off — single society. Turn on to link another society."}
+                  </AppText>
+                </View>
+                <View
+                  style={[
+                    styles.pickerOption,
+                    {
+                      backgroundColor: formEditIsJointEvent ? colors.primary : colors.backgroundSecondary,
+                      borderColor: formEditIsJointEvent ? colors.primary : colors.border,
+                    },
+                  ]}
+                >
+                  <AppText variant="caption" style={{ color: formEditIsJointEvent ? "#fff" : colors.text }}>
+                    {formEditIsJointEvent ? "On" : "Off"}
+                  </AppText>
+                </View>
+              </Pressable>
+            ) : null}
+
+            {formEditIsJointEvent && (
+              <ParticipatingSocietiesSection
+                hostSocietyId={formEditHostSocietyId}
+                participatingSocieties={formEditParticipatingSocieties}
+                availableSocieties={mySocieties}
+                onHostChange={setFormEditHostSocietyId}
+                onSocietiesChange={setFormEditParticipatingSocieties}
+              />
+            )}
 
             {/* Course / Tee Setup Toggle */}
             <Pressable
@@ -953,6 +1404,30 @@ export default function EventDetailScreen() {
         </View>
       </View>
 
+      {/* Joint Event — canonical `event.is_joint_event` from event_societies (2+ societies) */}
+      {event.is_joint_event === true && (
+        <AppCard
+          style={{
+            marginBottom: spacing.base,
+            borderWidth: 1,
+            borderColor: colors.primary + "55",
+            backgroundColor: colors.primary + "0C",
+          }}
+        >
+          <View style={{ flexDirection: "row", alignItems: "flex-start", gap: spacing.sm }}>
+            <Feather name="link" size={22} color={colors.primary} />
+            <View style={{ flex: 1 }}>
+              <AppText variant="captionBold" color="primary">{JOINT_EVENT_CHIP_LONG}</AppText>
+              <AppText variant="small" color="secondary" style={{ marginTop: 4 }}>
+                {jointParticipatingSocieties.length > 0
+                  ? jointParticipatingSocieties.map((s) => s.society_name?.trim() || s.society_id).filter(Boolean).join(" · ")
+                  : "Multiple societies participate — open Players to manage shared entries."}
+              </AppText>
+            </View>
+          </View>
+        </AppCard>
+      )}
+
       {/* Title */}
       <AppText variant="title" style={{ marginBottom: spacing.sm }}>
         {event.name}
@@ -1022,7 +1497,9 @@ export default function EventDetailScreen() {
           <ActionRow
             icon="users"
             title="Players"
-            subtitle={`${paidCount} paid · ${inCount} confirmed`}
+            subtitle={event.is_joint_event === true
+              ? `${jointConfirmedCount} confirmed · ${JOINT_EVENT_CHIP_SHORT} (fees per society)`
+              : `${standardAttendingTotalCount} confirmed · ${paidAmongAttendingCount} paid · ${outstandingCount} payment due`}
           />
         </AppCard>
       </Pressable>
@@ -1054,37 +1531,114 @@ export default function EventDetailScreen() {
         </Pressable>
       )}
 
-      {/* Paid Players dashboard */}
-      {registrations.length > 0 && (
+      {/* Confirmed players (joint: event entries + Players line-up + visible RSVPs) */}
+      {event.is_joint_event === true && jointAttendingRows.length > 0 && (
+        <AppCard style={styles.card}>
+          <AppText variant="h2" style={{ marginBottom: spacing.sm }}>Confirmed Players</AppText>
+          <AppText variant="small" color="secondary" style={{ marginBottom: spacing.sm }}>
+            {jointConfirmedCount} player{jointConfirmedCount !== 1 ? "s" : ""} · add or remove via Players
+          </AppText>
+          <AppText variant="small" color="tertiary" style={{ marginBottom: spacing.sm }}>
+            {JOINT_EVENT_DETAIL_ATTENDANCE_NOTE}
+          </AppText>
+          {jointAttendingRows.map((row) => (
+            <View key={row.key} style={{ paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: "#F3F4F6" }}>
+              <AppText variant="body" numberOfLines={2} style={{ fontWeight: "600" }}>
+                {row.primary}
+              </AppText>
+              <AppText variant="caption" color="secondary" style={{ marginTop: 4 }}>
+                {row.societyLine}
+              </AppText>
+              {row.sourceNote ? (
+                <AppText variant="small" color="tertiary" style={{ marginTop: 2 }}>
+                  {row.sourceNote}
+                </AppText>
+              ) : null}
+            </View>
+          ))}
+        </AppCard>
+      )}
+
+      {/* Attendance & payment (standard: RSVP rows + captain Players list line-up) */}
+      {event.is_joint_event !== true &&
+        (registrations.length > 0 || standardAttendingTotalCount > 0) && (
         <AppCard style={styles.card}>
           <View style={styles.paidHeader}>
             <View style={{ flex: 1 }}>
-              <AppText variant="h2">Paid Players</AppText>
+              <AppText variant="h2">Attendance &amp; payment</AppText>
               <AppText variant="small" color="secondary">
-                {paidCount} of {inCount} paid
+                Confirmed = playing. Marking paid also confirms attendance. Unpaid confirmed players show as payment due.
+              </AppText>
+              <AppText variant="small" color="tertiary" style={{ marginTop: 4 }}>
+                {standardAttendingTotalCount} playing · {paidAmongAttendingCount} paid · {outstandingCount} payment due
+                {captainPickMemberIds.length > 0 ? (
+                  <AppText variant="small" color="tertiary">
+                    {" "}
+                    · {captainPickMemberIds.length} on playing list without a fee row — use Mark paid / Record unpaid below
+                  </AppText>
+                ) : null}
               </AppText>
             </View>
-            <View style={[styles.paidSummaryPill, { backgroundColor: paidCount === inCount && inCount > 0 ? colors.success + "14" : colors.warning + "14" }]}>
+            <View
+              style={[
+                styles.paidSummaryPill,
+                {
+                  backgroundColor:
+                    attendingCount === 0 && captainPickMemberIds.length > 0
+                      ? colors.textTertiary + "18"
+                      : outstandingCount === 0 && attendingCount > 0
+                        ? colors.success + "14"
+                        : colors.warning + "14",
+                },
+              ]}
+            >
               <Feather
-                name={paidCount === inCount && inCount > 0 ? "check-circle" : "alert-circle"}
+                name={
+                  attendingCount === 0 && captainPickMemberIds.length > 0
+                    ? "info"
+                    : outstandingCount === 0 && attendingCount > 0
+                      ? "check-circle"
+                      : "alert-circle"
+                }
                 size={14}
-                color={paidCount === inCount && inCount > 0 ? colors.success : colors.warning}
+                color={
+                  attendingCount === 0 && captainPickMemberIds.length > 0
+                    ? colors.textTertiary
+                    : outstandingCount === 0 && attendingCount > 0
+                      ? colors.success
+                      : colors.warning
+                }
               />
-              <AppText variant="small" style={{ color: paidCount === inCount && inCount > 0 ? colors.success : colors.warning, fontWeight: "700" }}>
-                {paidCount === inCount && inCount > 0 ? "All paid" : `${inCount - paidCount} unpaid`}
+              <AppText
+                variant="small"
+                style={{
+                  color:
+                    attendingCount === 0 && captainPickMemberIds.length > 0
+                      ? colors.textSecondary
+                      : outstandingCount === 0 && attendingCount > 0
+                        ? colors.success
+                        : colors.warning,
+                  fontWeight: "700",
+                }}
+              >
+                {attendingCount === 0 && captainPickMemberIds.length > 0
+                  ? "Line-up only"
+                  : outstandingCount === 0 && attendingCount > 0
+                    ? "All paid"
+                    : `${outstandingCount} due`}
               </AppText>
             </View>
           </View>
 
-          {registrations
-            .filter((r) => r.status === "in")
-            .map((reg) => (
+          {attendingRegs.map((reg) => (
             <View key={reg.id} style={styles.paidRow}>
               <AppText variant="body" numberOfLines={1} style={{ flex: 1 }}>
-                {memberNameMap[reg.member_id] ?? "Member"}
+                {registrationMemberDisplayName(reg)}
               </AppText>
-              <View style={[styles.paidPill, { backgroundColor: reg.paid ? colors.success : colors.error }]}>
-                <AppText style={styles.paidPillText}>{reg.paid ? "PAID" : "UNPAID"}</AppText>
+              <View style={[styles.paidPill, { backgroundColor: reg.paid ? colors.success : colors.warning + "35" }]}>
+                <AppText style={[styles.paidPillText, !reg.paid && { color: colors.warning }]}>
+                  {reg.paid ? PaymentPill.paid : PaymentPill.unpaid}
+                </AppText>
               </View>
               {canManagePayments && (
                 <Pressable
@@ -1094,9 +1648,55 @@ export default function EventDetailScreen() {
                   style={({ pressed }) => [styles.paidToggleBtn, { borderColor: colors.border, opacity: pressed ? 0.6 : payBusy === reg.member_id ? 0.4 : 1 }]}
                 >
                   <AppText variant="small" color="primary" style={{ fontWeight: "600" }}>
-                    {reg.paid ? "Undo" : "Confirm"}
+                    {reg.paid ? "Mark unpaid" : "Mark paid"}
                   </AppText>
                 </Pressable>
+              )}
+            </View>
+          ))}
+
+          {captainPickMemberIds.map((mid) => (
+            <View key={`lineup-${mid}`} style={styles.paidRow}>
+              <View style={{ flex: 1, minWidth: 0 }}>
+                <AppText variant="body" numberOfLines={1}>
+                  {memberNameForAttendeeId(mid)}
+                </AppText>
+                <AppText variant="caption" color="tertiary">
+                  Playing list · no fee row yet — actions create the fee record
+                </AppText>
+              </View>
+              <View style={[styles.paidPill, { backgroundColor: colors.warning + "35" }]}>
+                <AppText style={[styles.paidPillText, { color: colors.warning }]}>{PaymentPill.unpaid}</AppText>
+              </View>
+              {canManagePayments && (
+                <View style={{ flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 6, maxWidth: 220 }}>
+                  <Pressable
+                    disabled={payBusy === mid}
+                    onPress={() => handleLineupMemberFeeAction(mid, true)}
+                    hitSlop={8}
+                    style={({ pressed }) => [
+                      styles.paidToggleBtn,
+                      { borderColor: colors.border, opacity: pressed ? 0.6 : payBusy === mid ? 0.4 : 1 },
+                    ]}
+                  >
+                    <AppText variant="small" color="primary" style={{ fontWeight: "600" }}>
+                      Mark paid
+                    </AppText>
+                  </Pressable>
+                  <Pressable
+                    disabled={payBusy === mid}
+                    onPress={() => handleLineupMemberFeeAction(mid, false)}
+                    hitSlop={8}
+                    style={({ pressed }) => [
+                      styles.paidToggleBtn,
+                      { borderColor: colors.border, opacity: pressed ? 0.6 : payBusy === mid ? 0.4 : 1 },
+                    ]}
+                  >
+                    <AppText variant="small" color="secondary" style={{ fontWeight: "600" }}>
+                      Record unpaid
+                    </AppText>
+                  </Pressable>
+                </View>
               )}
             </View>
           ))}
@@ -1106,7 +1706,7 @@ export default function EventDetailScreen() {
               <AppText variant="captionBold" color="tertiary" style={{ marginBottom: spacing.xs }}>Not playing</AppText>
               {registrations.filter((r) => r.status === "out").map((reg) => (
                 <AppText key={reg.id} variant="small" color="tertiary" style={{ paddingVertical: 2 }}>
-                  {memberNameMap[reg.member_id] ?? "Member"}
+                  {registrationMemberDisplayName(reg)}
                 </AppText>
               ))}
             </View>
@@ -1361,5 +1961,15 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "rgba(0,0,0,0.06)",
     marginBottom: spacing.base,
+  },
+  jointEventToggle: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingVertical: spacing.sm,
+    marginTop: spacing.sm,
+    marginBottom: spacing.sm,
+    borderTopWidth: 1,
+    borderTopColor: "rgba(0,0,0,0.06)",
   },
 });

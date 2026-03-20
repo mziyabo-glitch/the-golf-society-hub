@@ -8,6 +8,12 @@
 
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { buildSocietyIdToNameMap, societyLabelFromMember } from "@/lib/jointEventSocietyLabel";
+import {
+  dedupeJointMembers,
+  normalizeJointSelectedMemberIds,
+  representativeMemberIdForJoint,
+} from "@/lib/jointPersonDedupe";
 import { Alert, Modal, Pressable, ScrollView, StyleSheet, View } from "react-native";
 import { Feather } from "@expo/vector-icons";
 import { goBack } from "@/lib/navigation";
@@ -22,6 +28,8 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { useBootstrap } from "@/lib/useBootstrap";
 import { getEvent, updateEvent, type EventDoc } from "@/lib/db_supabase/eventRepo";
 import { getMembersBySocietyId, type MemberDoc } from "@/lib/db_supabase/memberRepo";
+import { resolveAttendeeDisplayName } from "@/lib/eventAttendeeName";
+import { getJointMetaForEventIds, getJointEventDetail, syncJointEventEntries } from "@/lib/db_supabase/jointEventRepo";
 import {
   getEventGuests,
   addEventGuest,
@@ -30,6 +38,7 @@ import {
 } from "@/lib/db_supabase/eventGuestRepo";
 import { getPermissionsForMember } from "@/lib/rbac";
 import { getColors, spacing, radius, typography } from "@/lib/ui/theme";
+import { JOINT_EVENT_CHIP_LONG } from "@/lib/eventModuleUi";
 
 export default function EventPlayersScreen() {
   const router = useRouter();
@@ -49,6 +58,10 @@ export default function EventPlayersScreen() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [participatingSocietyIds, setParticipatingSocietyIds] = useState<string[]>([]);
+  const [jointParticipatingSocieties, setJointParticipatingSocieties] = useState<
+    { society_id: string; society_name?: string | null }[]
+  >([]);
 
   // Add guest modal
   const [showAddGuest, setShowAddGuest] = useState(false);
@@ -58,6 +71,16 @@ export default function EventPlayersScreen() {
   const [addingGuest, setAddingGuest] = useState(false);
 
   const permissions = getPermissionsForMember(member as any);
+
+  const jointSocietyIdToName = useMemo(
+    () => buildSocietyIdToNameMap(jointParticipatingSocieties),
+    [jointParticipatingSocieties],
+  );
+
+  const dedupedJointMembers = useMemo(() => {
+    if (!event || event.is_joint_event !== true || members.length === 0) return [];
+    return dedupeJointMembers(members, jointSocietyIdToName);
+  }, [event, members, jointSocietyIdToName]);
 
   const loadGuests = useCallback(async () => {
     if (!eventId) return [];
@@ -90,28 +113,86 @@ export default function EventPlayersScreen() {
       try {
         console.log("[players] loading event + members + guests", { eventId, societyId });
 
-        const [evt, mems, guestList] = await Promise.all([
-          getEvent(eventId),
-          getMembersBySocietyId(societyId),
-          getEventGuests(eventId),
-        ]);
+        const jointMeta = await getJointMetaForEventIds([eventId]);
+        const joint = jointMeta.get(eventId)?.is_joint_event ?? false;
 
-        if (cancelled) return;
+        if (joint) {
+          const [jointPayload, guestList] = await Promise.all([
+            getJointEventDetail(eventId),
+            getEventGuests(eventId),
+          ]);
+          if (cancelled) return;
+          const evt = jointPayload ? await getEvent(eventId) : null;
+          setEvent(evt);
+          setGuests(guestList ?? []);
 
-        console.log("[players] loaded event:", {
-          id: evt?.id,
-          playerIds: evt?.playerIds,
-          guests: guestList.length,
-        });
+          if (jointPayload) {
+            const societies = jointPayload.participating_societies ?? [];
+            setJointParticipatingSocieties(
+              societies.map((s) => ({ society_id: s.society_id, society_name: s.society_name })),
+            );
+            const societyIds = societies.map((s) => s.society_id).filter(Boolean);
+            setParticipatingSocietyIds(societyIds);
 
-        setEvent(evt);
-        setMembers(mems);
-        setGuests(guestList);
+            const allMembers: MemberDoc[] = [];
+            for (const sid of societyIds) {
+              const m = await getMembersBySocietyId(sid);
+              allMembers.push(...m);
+            }
+            setMembers(allMembers);
 
-        // Use playerIds (camelCase) as returned by mapEvent
-        const existing = evt?.playerIds ?? [];
-        console.log("[players] initializing selection from:", existing);
-        setSelectedPlayerIds(new Set(existing.map(String)));
+            const entryPlayerIds = (jointPayload.entries ?? []).map((e) => e.player_id).filter(Boolean);
+            const legacyPlayerIds = evt?.playerIds ?? [];
+            const mergedIds = new Set([
+              ...entryPlayerIds.map(String),
+              ...legacyPlayerIds.map(String),
+            ]);
+            const map = buildSocietyIdToNameMap(
+              societies.map((s) => ({ society_id: s.society_id, society_name: s.society_name })),
+            );
+            setSelectedPlayerIds(normalizeJointSelectedMemberIds(mergedIds, allMembers, map));
+
+            if (__DEV__) {
+              console.log("[players] attendee confirmation restore:", {
+                eventId,
+                societyId,
+                isJointEvent: true,
+                persistedFromEntries: entryPlayerIds.length,
+                persistedFromEventPlayerIds: legacyPlayerIds.length,
+                mergedCount: mergedIds.size,
+              });
+            }
+          } else {
+            setMembers([]);
+            setParticipatingSocietyIds([]);
+            setJointParticipatingSocieties([]);
+            setSelectedPlayerIds(new Set());
+          }
+        } else {
+          const [evt, mems, guestList] = await Promise.all([
+            getEvent(eventId),
+            getMembersBySocietyId(societyId),
+            getEventGuests(eventId),
+          ]);
+          if (cancelled) return;
+
+          setEvent(evt);
+          setMembers(mems);
+          setGuests(guestList);
+          setParticipatingSocietyIds([]);
+          setJointParticipatingSocieties([]);
+
+          const existing = evt?.playerIds ?? [];
+          setSelectedPlayerIds(new Set(existing.map(String)));
+          if (__DEV__) {
+            console.log("[players] attendee confirmation restore:", {
+              eventId,
+              societyId,
+              isJointEvent: false,
+              persistedFromEventPlayerIds: existing.length,
+            });
+          }
+        }
       } catch (e: any) {
         console.error("[players] load FAILED", e);
         if (!cancelled) {
@@ -128,37 +209,56 @@ export default function EventPlayersScreen() {
     };
   }, [bootstrapLoading, societyId, eventId]);
 
+  useEffect(() => {
+    if (!__DEV__ || !eventId || !societyId || members.length === 0) return;
+    const sample = members.slice(0, 5).map((m) => ({
+      memberId: String(m.id),
+      renderedTick: selectedPlayerIds.has(String(m.id)),
+    }));
+    console.log("[players] tick status sample:", { eventId, societyId, memberCount: members.length, selectedCount: selectedPlayerIds.size, sample });
+  }, [eventId, societyId, members.length, selectedPlayerIds.size]);
+
   function togglePlayer(id: string) {
+    const effectiveId =
+      event?.is_joint_event === true
+        ? representativeMemberIdForJoint(id, members, jointSocietyIdToName)
+        : id;
     setSelectedPlayerIds((prev) => {
       const next = new Set(prev);
-      if (next.has(id)) { next.delete(id); } else { next.add(id); }
+      if (next.has(effectiveId)) {
+        next.delete(effectiveId);
+      } else {
+        next.add(effectiveId);
+      }
       return next;
     });
   }
 
   async function save() {
+    if (!event?.id) return;
     try {
       setSaving(true);
 
       const ids = Array.from(selectedPlayerIds);
       console.log("[players] saving", {
-        eventId: event?.id,
-        societyId,
-        playerIds: ids,
+        eventId: event.id,
+        isJointEvent: event.is_joint_event === true,
+        playerIds: ids.length,
       });
 
-      await updateEvent(event!.id, { playerIds: ids });
-
-      console.log("[players] save OK, refetching to confirm...");
-
-      // Refetch to confirm persistence
-      const refreshed = await getEvent(event!.id);
-      if (refreshed) {
-        const reloaded = refreshed.playerIds ?? [];
-        console.log("[players] confirmed playerIds:", reloaded);
+      if (event.is_joint_event === true && participatingSocietyIds.length >= 2) {
+        await syncJointEventEntries(event.id, ids, participatingSocietyIds);
+        console.log("[players] joint save OK, synced entries");
+      } else {
+        await updateEvent(event.id, { playerIds: ids });
+        console.log("[players] save OK, refetching to confirm...");
+        const refreshed = await getEvent(event.id);
+        if (refreshed) {
+          const reloaded = refreshed.playerIds ?? [];
+          console.log("[players] confirmed playerIds:", reloaded.length);
+        }
       }
 
-      // Navigate back - Event Detail will refetch via useFocusEffect
       goBack(router, "/(app)/(tabs)/events");
     } catch (e: any) {
       console.error("[players] save FAILED", e);
@@ -234,7 +334,7 @@ export default function EventPlayersScreen() {
         <EmptyState
           title="Error"
           message={error}
-          action={{ label: "Go Back", onPress: () => router.replace({ pathname: "/event/[id]", params: { id: eventId, refresh: Date.now().toString() } }) }}
+          action={{ label: "Go Back", onPress: () => router.replace({ pathname: "/(app)/event/[id]", params: { id: eventId, refresh: Date.now().toString() } }) }}
         />
       </Screen>
     );
@@ -246,7 +346,7 @@ export default function EventPlayersScreen() {
         <EmptyState
           title="Not found"
           message="Event not found."
-          action={{ label: "Go Back", onPress: () => router.replace({ pathname: "/event/[id]", params: { id: eventId, refresh: Date.now().toString() } }) }}
+          action={{ label: "Go Back", onPress: () => router.replace({ pathname: "/(app)/event/[id]", params: { id: eventId, refresh: Date.now().toString() } }) }}
         />
       </Screen>
     );
@@ -282,6 +382,35 @@ export default function EventPlayersScreen() {
         </View>
       </View>
 
+      {event.is_joint_event === true && (
+        <AppCard
+          style={{
+            marginBottom: spacing.md,
+            padding: spacing.md,
+            borderWidth: 1,
+            borderColor: colors.info + "50",
+            backgroundColor: colors.info + "0C",
+          }}
+        >
+          <View style={{ flexDirection: "row", alignItems: "flex-start", gap: spacing.sm }}>
+            <Feather name="link" size={20} color={colors.info} />
+            <View style={{ flex: 1, minWidth: 0 }}>
+              <AppText variant="captionBold" style={{ color: colors.info }}>
+                {JOINT_EVENT_CHIP_LONG}
+              </AppText>
+              <AppText variant="small" color="secondary" style={{ marginTop: 4 }}>
+                {jointParticipatingSocieties.length > 0
+                  ? jointParticipatingSocieties
+                      .map((s) => s.society_name?.trim() || s.society_id)
+                      .filter(Boolean)
+                      .join(" · ")
+                  : "Multiple societies — attendance is shared."}
+              </AppText>
+            </View>
+          </View>
+        </AppCard>
+      )}
+
       <ScrollView contentContainerStyle={{ paddingBottom: spacing.xl }}>
         {/* Members */}
         <AppText variant="captionBold" color="secondary" style={{ marginBottom: spacing.sm }}>
@@ -291,39 +420,78 @@ export default function EventPlayersScreen() {
           <EmptyState
             title="No members"
             message="Add members first, then you can select players."
-            action={{ label: "Go Back", onPress: () => router.replace({ pathname: "/event/[id]", params: { id: eventId, refresh: Date.now().toString() } }) }}
+            action={{ label: "Go Back", onPress: () => router.replace({ pathname: "/(app)/event/[id]", params: { id: eventId, refresh: Date.now().toString() } }) }}
           />
         ) : (
           <View style={{ gap: spacing.md, marginBottom: spacing.xl }}>
-            {members.map((m) => {
-              const id = String(m.id);
-              const selected = selectedPlayerIds.has(id);
-              const handicap = m.handicapIndex ?? (m as any).handicap_index;
+            {event.is_joint_event === true
+              ? dedupedJointMembers.map((d) => {
+                  const id = String(d.representative.id);
+                  const selected = selectedPlayerIds.has(id);
+                  const handicap =
+                    d.representative.handicapIndex ?? (d.representative as any).handicap_index;
+                  const societyLine =
+                    d.mergedMemberIds.length > 1
+                      ? d.societyLabelMerged
+                      : societyLabelFromMember(d.representative, jointSocietyIdToName) ??
+                        d.representative.society_id;
+                  return (
+                    <Pressable key={d.key} onPress={() => togglePlayer(id)}>
+                      <AppCard style={selected ? { ...styles.row, ...styles.rowSelected } : styles.row}>
+                        <View style={{ flex: 1 }}>
+                          <AppText style={styles.name}>
+                            {resolveAttendeeDisplayName(d.representative, { memberId: d.representative.id }).name}
+                          </AppText>
+                          <AppText variant="caption" color="secondary" style={{ marginTop: 4 }}>
+                            {societyLine}
+                            {d.mergedMemberIds.length > 1 ? " · Dual membership" : ""}
+                          </AppText>
 
-              return (
-                <Pressable key={id} onPress={() => togglePlayer(id)}>
-                  <AppCard style={selected ? { ...styles.row, ...styles.rowSelected } : styles.row}>
-                    <View style={{ flex: 1 }}>
-                      <AppText style={styles.name}>
-                        {m.name || m.displayName || "Member"}
-                      </AppText>
+                          {handicap != null && (
+                            <AppText style={styles.subtle}>
+                              HCP: {handicap}
+                            </AppText>
+                          )}
+                        </View>
 
-                      {handicap != null && (
-                        <AppText style={styles.subtle}>
-                          HCP: {handicap}
-                        </AppText>
-                      )}
-                    </View>
+                        <Feather
+                          name={selected ? "check-circle" : "circle"}
+                          size={22}
+                          color={selected ? colors.primary : colors.textTertiary}
+                        />
+                      </AppCard>
+                    </Pressable>
+                  );
+                })
+              : members.map((m) => {
+                  const id = String(m.id);
+                  const selected = selectedPlayerIds.has(id);
+                  const handicap = m.handicapIndex ?? (m as any).handicap_index;
 
-                    <Feather
-                      name={selected ? "check-circle" : "circle"}
-                      size={22}
-                      color={selected ? colors.primary : colors.textTertiary}
-                    />
-                  </AppCard>
-                </Pressable>
-              );
-            })}
+                  return (
+                    <Pressable key={id} onPress={() => togglePlayer(id)}>
+                      <AppCard style={selected ? { ...styles.row, ...styles.rowSelected } : styles.row}>
+                        <View style={{ flex: 1 }}>
+                          <AppText style={styles.name}>
+                            {resolveAttendeeDisplayName(m, { memberId: m.id }).name}
+                          </AppText>
+
+                          {handicap != null && (
+                            <AppText style={styles.subtle}>
+                              HCP: {handicap}
+                            </AppText>
+                          )}
+                        </View>
+
+                        <Feather
+                          name={selected ? "check-circle" : "circle"}
+                          size={22}
+                          color={selected ? colors.primary : colors.textTertiary}
+                        />
+                      </AppCard>
+                    </Pressable>
+                  );
+                })}
           </View>
         )}
 

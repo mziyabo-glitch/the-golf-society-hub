@@ -5,7 +5,7 @@
  * and the full tee sheet. Sticky "Your Tee Time" card at top, full sheet below.
  */
 
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { StyleSheet, View, ScrollView } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { Feather } from "@expo/vector-icons";
@@ -18,15 +18,20 @@ import { SecondaryButton } from "@/components/ui/Button";
 import { LoadingState } from "@/components/ui/LoadingState";
 import { useBootstrap } from "@/lib/useBootstrap";
 import { getEvent, type EventDoc } from "@/lib/db_supabase/eventRepo";
-import { getMembersBySocietyId, type MemberDoc } from "@/lib/db_supabase/memberRepo";
+import { getJointEventDetail } from "@/lib/db_supabase/jointEventRepo";
+import { buildSocietyIdToNameMap, societyLabelFromMember } from "@/lib/jointEventSocietyLabel";
+import { dedupeJointGroupedPlayers, dedupeJointMembers } from "@/lib/jointPersonDedupe";
+import { getMembersBySocietyId, getMembersByIds, type MemberDoc } from "@/lib/db_supabase/memberRepo";
+import { resolveAttendeeDisplayName } from "@/lib/eventAttendeeName";
 import { getEventRegistrations } from "@/lib/db_supabase/eventRegistrationRepo";
 import { getEventGuests } from "@/lib/db_supabase/eventGuestRepo";
 import { getTeeGroups, getTeeGroupPlayers, teeTimeToDisplay } from "@/lib/db_supabase/teeGroupsRepo";
 import { findMemberGroup, findMemberGroupFromTeeSheet } from "@/lib/findMemberGroup";
-import { groupPlayers, assignTeeTimes, type PlayerGroup } from "@/lib/teeSheetGrouping";
+import { groupPlayers, assignTeeTimes, type GroupedPlayer, type PlayerGroup } from "@/lib/teeSheetGrouping";
 import { formatHandicap } from "@/lib/whs";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
 import { formatError, type FormattedError } from "@/lib/ui/formatError";
+import { JOINT_EVENT_CHIP_LONG } from "@/lib/eventModuleUi";
 
 const DEFAULT_START = "08:00";
 const DEFAULT_INTERVAL = 10;
@@ -57,10 +62,17 @@ const MemberGroupCard = React.memo(function MemberGroupCard({
       </View>
       {group.players.map((player) => (
         <View key={player.id} style={styles.tableRow}>
-          <AppText variant="body" numberOfLines={1} style={styles.nameCol}>
-            {player.name}
-            {player.id === memberId ? " (You)" : ""}
-          </AppText>
+          <View style={styles.nameCol}>
+            <AppText variant="body" numberOfLines={2}>
+              {player.name}
+              {player.id === memberId ? " (You)" : ""}
+            </AppText>
+            {player.societyLabel ? (
+              <AppText variant="caption" color="secondary" numberOfLines={2} style={{ marginTop: 2 }}>
+                {player.societyLabel}
+              </AppText>
+            ) : null}
+          </View>
           <AppText variant="body" color="secondary" style={styles.hiCol}>
             {formatHandicap(player.handicapIndex, 1)}
           </AppText>
@@ -75,21 +87,34 @@ function buildGroupsWithTimes(
   members: MemberDoc[],
   registrationMemberIds: string[] = [],
   guests: { id: string; name: string; sex: "male" | "female"; handicap_index: number | null }[] = [],
+  isJoint = false,
+  societyIdToName?: Map<string, string>,
 ): GroupWithTime[] {
   const playerIds =
     event.playerIds?.length
       ? event.playerIds
       : registrationMemberIds;
 
-  const eventMembers = members
-    .filter((m) => playerIds.includes(m.id))
-    .map((m) => ({
-      id: m.id,
-      name: m.name || m.displayName || "Member",
-      handicapIndex: m.handicapIndex ?? m.handicap_index ?? null,
-      courseHandicap: null as number | null,
-      playingHandicap: null as number | null,
-    }));
+  const subset = members.filter((m) => playerIds.includes(m.id));
+
+  const eventMembers: GroupedPlayer[] =
+    isJoint && societyIdToName && societyIdToName.size > 0
+      ? dedupeJointMembers(subset, societyIdToName).map((d) => ({
+          id: d.representative.id,
+          name: resolveAttendeeDisplayName(d.representative, { memberId: d.representative.id }).name,
+          handicapIndex: d.representative.handicapIndex ?? d.representative.handicap_index ?? null,
+          courseHandicap: null as number | null,
+          playingHandicap: null as number | null,
+          societyLabel: d.societyLabelMerged,
+        }))
+      : subset.map((m) => ({
+          id: m.id,
+          name: resolveAttendeeDisplayName(m, { memberId: m.id }).name,
+          handicapIndex: m.handicapIndex ?? m.handicap_index ?? null,
+          courseHandicap: null as number | null,
+          playingHandicap: null as number | null,
+          societyLabel: undefined,
+        }));
 
   const guestPlayers = guests.map((g) => ({
     id: `guest-${g.id}`,
@@ -116,15 +141,37 @@ function buildGroupsWithTimesFromDb(
   teeGroups: { group_number: number; tee_time: string | null }[],
   teeGroupPlayers: { player_id: string; group_number: number; position: number }[],
   members: MemberDoc[],
-  guests: { id: string; name: string; sex: "male" | "female"; handicap_index: number | null }[]
+  guests: { id: string; name: string; sex: "male" | "female"; handicap_index: number | null }[],
+  isJoint = false,
+  societyIdToName?: Map<string, string>,
 ): GroupWithTime[] {
   const lookup = (playerId: string) => {
     if (playerId.startsWith("guest-")) {
       const g = guests.find((x) => x.id === playerId.slice(6));
-      return g ? { id: playerId, name: g.name, handicapIndex: g.handicap_index ?? null } : null;
+      return g
+        ? {
+            id: playerId,
+            name: g.name,
+            handicapIndex: g.handicap_index ?? null,
+            courseHandicap: null as number | null,
+            playingHandicap: null as number | null,
+            societyLabel: undefined as string | undefined,
+          }
+        : null;
     }
     const m = members.find((x) => x.id === playerId);
-    return m ? { id: m.id, name: m.name || m.displayName || "Member", handicapIndex: m.handicapIndex ?? m.handicap_index ?? null } : null;
+    if (!m) return null;
+    return {
+      id: m.id,
+      name: resolveAttendeeDisplayName(m, { memberId: m.id }).name,
+      handicapIndex: m.handicapIndex ?? m.handicap_index ?? null,
+      courseHandicap: null as number | null,
+      playingHandicap: null as number | null,
+      societyLabel:
+        isJoint && societyIdToName && societyIdToName.size > 0
+          ? societyLabelFromMember(m, societyIdToName) ?? undefined
+          : undefined,
+    };
   };
 
   const byGroup = new Map<number, { teeTime: string; players: { player_id: string; position: number }[] }>();
@@ -141,12 +188,15 @@ function buildGroupsWithTimesFromDb(
 
   return [...byGroup.keys()].sort((a, b) => a - b).map((groupNumber) => {
     const data = byGroup.get(groupNumber)!;
-    const players = data.players
+    let players = data.players
       .map(({ player_id }) => lookup(player_id))
-      .filter(Boolean) as { id: string; name: string; handicapIndex: number | null }[];
+      .filter(Boolean) as GroupedPlayer[];
+    if (isJoint && societyIdToName && societyIdToName.size > 0) {
+      players = dedupeJointGroupedPlayers(players, members, societyIdToName);
+    }
     return {
       groupNumber,
-      players: players.map((p) => ({ ...p, courseHandicap: null, playingHandicap: null })),
+      players,
       teeTime: data.teeTime,
     } as GroupWithTime;
   });
@@ -164,6 +214,9 @@ export default function EventTeeSheetScreen() {
   const [guests, setGuests] = useState<{ id: string; name: string; sex: "male" | "female"; handicap_index: number | null }[]>([]);
   const [teeGroups, setTeeGroups] = useState<{ group_number: number; tee_time: string | null }[]>([]);
   const [teeGroupPlayers, setTeeGroupPlayers] = useState<{ player_id: string; group_number: number; position: number }[]>([]);
+  const [jointParticipatingSocieties, setJointParticipatingSocieties] = useState<
+    { society_id: string; society_name?: string | null }[]
+  >([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<FormattedError | null>(null);
 
@@ -182,10 +235,35 @@ export default function EventTeeSheetScreen() {
         getTeeGroupPlayers(eventId),
       ]);
       setEvent(eventData ?? null);
-      setMembers(membersData);
-      setRegistrationMemberIds(
-        registrations.filter((r) => r.status === "in").map((r) => r.member_id),
-      );
+
+      if (eventData?.is_joint_event === true) {
+        const jd = await getJointEventDetail(eventId);
+        setJointParticipatingSocieties(
+          jd?.participating_societies?.map((s) => ({
+            society_id: s.society_id,
+            society_name: s.society_name,
+          })) ?? [],
+        );
+      } else {
+        setJointParticipatingSocieties([]);
+      }
+      const byId = new Map<string, MemberDoc>();
+      for (const m of membersData) byId.set(m.id, m);
+      const regIds = registrations.filter((r) => r.status === "in").map((r) => r.member_id);
+      const teeMemberIds = playersData
+        .map((p) => p.player_id)
+        .filter((id) => id && !String(id).startsWith("guest-"));
+      const eventPlayerIds = eventData?.playerIds ?? [];
+      const allIds = [...new Set([...regIds, ...teeMemberIds, ...eventPlayerIds.map(String)])];
+      const missing = allIds.filter((id) => id && !byId.has(id));
+      if (missing.length > 0) {
+        const extra = await getMembersByIds(missing);
+        for (const m of extra) {
+          if (m?.id && !byId.has(m.id)) byId.set(m.id, m);
+        }
+      }
+      setMembers(Array.from(byId.values()));
+      setRegistrationMemberIds(regIds);
       setGuests(guestList);
       setTeeGroups(groupsData);
       setTeeGroupPlayers(playersData);
@@ -199,6 +277,12 @@ export default function EventTeeSheetScreen() {
   useEffect(() => {
     loadData();
   }, [loadData]);
+
+  /** Must run before any early return — Rules of Hooks. */
+  const jointSocietyIdToName = useMemo(
+    () => buildSocietyIdToNameMap(jointParticipatingSocieties),
+    [jointParticipatingSocieties],
+  );
 
   if (loading) {
     return (
@@ -224,6 +308,7 @@ export default function EventTeeSheetScreen() {
   }
 
   const memberId = member?.id;
+  const isJointEvent = event.is_joint_event === true;
   const usePersistedTeeSheet = teeGroups.length > 0 && teeGroupPlayers.length > 0;
   const eventWithPlayers = {
     ...event,
@@ -234,12 +319,37 @@ export default function EventTeeSheetScreen() {
   };
   const myGroup = memberId
     ? (usePersistedTeeSheet
-        ? findMemberGroupFromTeeSheet(memberId, teeGroups, teeGroupPlayers, members)
-        : findMemberGroup(memberId, eventWithPlayers, members))
+        ? findMemberGroupFromTeeSheet(
+            memberId,
+            teeGroups,
+            teeGroupPlayers,
+            members,
+            isJointEvent ? jointSocietyIdToName : undefined,
+          )
+        : findMemberGroup(
+            memberId,
+            eventWithPlayers,
+            members,
+            isJointEvent ? jointSocietyIdToName : undefined,
+          ))
     : null;
   const groupsWithTimes = usePersistedTeeSheet
-    ? buildGroupsWithTimesFromDb(teeGroups, teeGroupPlayers, members, guests)
-    : buildGroupsWithTimes(event, members, registrationMemberIds, guests);
+    ? buildGroupsWithTimesFromDb(
+        teeGroups,
+        teeGroupPlayers,
+        members,
+        guests,
+        isJointEvent,
+        jointSocietyIdToName,
+      )
+    : buildGroupsWithTimes(
+        event,
+        members,
+        registrationMemberIds,
+        guests,
+        isJointEvent,
+        jointSocietyIdToName,
+      );
 
   const hasTeeTimes = !!event.teeTimePublishedAt;
 
@@ -254,7 +364,7 @@ export default function EventTeeSheetScreen() {
       <AppText variant="title" style={styles.title}>
         Tee Sheet
       </AppText>
-      <AppText variant="body" color="secondary" style={{ marginBottom: spacing.lg }}>
+      <AppText variant="body" color="secondary" style={{ marginBottom: spacing.sm }}>
         {event.name}
         {event.date
           ? ` • ${new Date(event.date).toLocaleDateString("en-GB", {
@@ -264,6 +374,20 @@ export default function EventTeeSheetScreen() {
             })}`
           : ""}
       </AppText>
+
+      {isJointEvent && (
+        <View
+          style={[
+            styles.jointTeeBanner,
+            { borderColor: colors.info + "44", backgroundColor: colors.info + "0A" },
+          ]}
+        >
+          <Feather name="link" size={16} color={colors.info} />
+          <AppText variant="caption" color="secondary" style={{ flex: 1 }}>
+            {JOINT_EVENT_CHIP_LONG} — mixed societies; each player appears once.
+          </AppText>
+        </View>
+      )}
 
       {!hasTeeTimes ? (
         <AppCard>
@@ -330,6 +454,15 @@ const styles = StyleSheet.create({
   },
   title: {
     marginBottom: spacing.xs,
+  },
+  jointTeeBanner: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: spacing.sm,
+    padding: spacing.sm,
+    borderRadius: radius.sm,
+    borderWidth: 1,
+    marginBottom: spacing.lg,
   },
   stickyCard: {
     marginBottom: spacing.lg,

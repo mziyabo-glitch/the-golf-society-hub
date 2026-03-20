@@ -33,7 +33,7 @@ import { Toast } from "@/components/ui/Toast";
 import { useBootstrap } from "@/lib/useBootstrap";
 import { isCaptain, isTreasurer } from "@/lib/rbac";
 import { supabase } from "@/lib/supabase";
-import { getEventsBySocietyId, type EventDoc } from "@/lib/db_supabase/eventRepo";
+import { getEventsForSociety, type EventDoc } from "@/lib/db_supabase/eventRepo";
 import { getMembersBySocietyId, type MemberDoc } from "@/lib/db_supabase/memberRepo";
 import { findMemberGroup, findMemberGroupFromTeeSheet } from "@/lib/findMemberGroup";
 import { getTeeGroups, getTeeGroupPlayers } from "@/lib/db_supabase/teeGroupsRepo";
@@ -56,6 +56,11 @@ import {
 } from "@/lib/db_supabase/eventRegistrationRepo";
 import { blurWebActiveElement } from "@/lib/ui/focus";
 import { SocietySwitcherPill } from "@/components/SocietySwitcher";
+import {
+  JOINT_EVENT_CHIP_SHORT,
+  JOINT_HOME_RSVP_NOTE,
+  PaymentStatus,
+} from "@/lib/eventModuleUi";
 
 const appIcon = require("@/assets/images/app-icon.png");
 
@@ -275,7 +280,7 @@ export default function HomeScreen() {
     setLoadError(null);
     try {
       const [eventsData, standingsData, membersData] = await Promise.all([
-        getEventsBySocietyId(societyId),
+        getEventsForSociety(societyId),
         getOrderOfMeritTotals(societyId),
         getMembersBySocietyId(societyId),
       ]);
@@ -342,21 +347,37 @@ export default function HomeScreen() {
   const logoUrl = getSocietyLogoUrl(society);
   const memberId = member?.id;
 
-  // Today's date at midnight for comparison
-  const today = useMemo(() => {
+  /** Local calendar date as YYYY-MM-DD (avoids UTC midnight issues with date-only strings). */
+  const todayLocalKey = useMemo(() => {
     const d = new Date();
-    d.setHours(0, 0, 0, 0);
-    return d;
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return `${y}-${m}-${day}`;
   }, []);
 
-  // Next upcoming event (date >= today, not completed, sorted ascending)
+  // Next upcoming event (date >= today in local calendar, not completed, sorted ascending)
   const nextEvent = useMemo(() => {
-    return events
-      .filter((e) => !e.isCompleted && e.date && new Date(e.date) >= today)
-      .sort((a, b) => new Date(a.date!).getTime() - new Date(b.date!).getTime())[0] ?? null;
-  }, [events, today]);
+    const upcoming = events.filter(
+      (e) =>
+        !e.isCompleted &&
+        e.date &&
+        /^\d{4}-\d{2}-\d{2}$/.test(e.date.trim()) &&
+        e.date.trim() >= todayLocalKey
+    );
+    upcoming.sort((a, b) => {
+      const da = a.date!.trim();
+      const db = b.date!.trim();
+      if (da !== db) return da.localeCompare(db);
+      return (a.name || "").localeCompare(b.name || "");
+    });
+    return upcoming[0] ?? null;
+  }, [events, todayLocalKey]);
 
   const nextEventId = nextEvent?.id ?? null;
+
+  /** Canonical joint flag from repo (`event_societies` count ≥ 2). */
+  const nextEventIsJoint = nextEvent?.is_joint_event === true;
 
   // Load registration for the next event whenever it changes
   useEffect(() => {
@@ -734,6 +755,14 @@ export default function HomeScreen() {
             <View style={styles.nextEventDetails}>
               {nextEvent.format && <Chip>{formatFormatLabel(nextEvent.format)}</Chip>}
               {nextEvent.classification && <Chip>{formatClassification(nextEvent.classification)}</Chip>}
+              {nextEventIsJoint && (
+                <View style={[styles.jointChipHome, { borderColor: colors.info + "55", backgroundColor: colors.info + "12" }]}>
+                  <Feather name="link" size={10} color={colors.info} />
+                  <AppText variant="small" style={{ color: colors.info, fontWeight: "600" }}>
+                    {JOINT_EVENT_CHIP_SHORT}
+                  </AppText>
+                </View>
+              )}
             </View>
             {nextEvent.isOOM && (
               <View style={styles.oomPremiumPill}>
@@ -783,9 +812,14 @@ export default function HomeScreen() {
               </View>
             )}
 
-            {/* Registration + Payment */}
+            {/* Registration (+ payment for standard events only) */}
             <View style={[styles.regRow, { borderTopColor: colors.borderLight }]}>
               <View style={{ flex: 1, gap: spacing.xs }}>
+                {nextEventIsJoint ? (
+                  <AppText variant="small" color="tertiary" style={{ marginBottom: 2 }}>
+                    {JOINT_HOME_RSVP_NOTE}
+                  </AppText>
+                ) : null}
                 {/* Status line */}
                 <View style={styles.regStatusWrap}>
                   <AppText variant="small" color="secondary" style={{ fontWeight: "600" }}>You:</AppText>
@@ -793,17 +827,19 @@ export default function HomeScreen() {
                     <>
                       <View style={[styles.regBadge, { backgroundColor: colors.success + "18" }]}>
                         <Feather name="check-circle" size={12} color={colors.success} />
-                        <AppText variant="small" style={{ color: colors.success, fontWeight: "700" }}>IN</AppText>
+                        <AppText variant="small" style={{ color: colors.success, fontWeight: "700" }}>CONFIRMED</AppText>
                       </View>
-                      {myReg.paid ? (
-                        <View style={[styles.paidPill, { backgroundColor: colors.success }]}>
-                          <AppText style={styles.paidPillText}>PAID</AppText>
-                        </View>
-                      ) : (
-                        <View style={[styles.paidPill, { backgroundColor: colors.error }]}>
-                          <AppText style={styles.paidPillText}>UNPAID</AppText>
-                        </View>
-                      )}
+                      {!nextEventIsJoint ? (
+                        myReg.paid ? (
+                          <View style={[styles.paidPill, { backgroundColor: colors.success }]}>
+                            <AppText style={styles.paidPillText}>PAID</AppText>
+                          </View>
+                        ) : (
+                          <View style={[styles.paidPill, { backgroundColor: colors.warning + "40" }]}>
+                            <AppText style={[styles.paidPillText, { color: colors.warning }]}>{PaymentStatus.unpaid}</AppText>
+                          </View>
+                        )
+                      ) : null}
                     </>
                   ) : myReg?.status === "out" ? (
                     <View style={[styles.regBadge, { backgroundColor: colors.textTertiary + "18" }]}>
@@ -850,8 +886,8 @@ export default function HomeScreen() {
                   )}
                 </View>
 
-                {/* Admin panel (collapsed) */}
-                {canAdmin && showAdmin && (
+                {/* Admin panel (collapsed) — standard events only */}
+                {canAdmin && showAdmin && !nextEventIsJoint && (
                   <View style={[styles.regActions, { marginTop: 2 }]}>
                     <Pressable
                       hitSlop={8}
@@ -859,7 +895,7 @@ export default function HomeScreen() {
                       onPress={(e) => { e.stopPropagation(); handleMarkPaid(true); }}
                       style={[styles.regBtn, { backgroundColor: colors.success, borderColor: colors.success }]}
                     >
-                      <AppText variant="small" style={{ color: "#fff", fontWeight: "600" }}>Mark ME Paid</AppText>
+                      <AppText variant="small" style={{ color: "#fff", fontWeight: "600" }}>Mark me paid (confirms me)</AppText>
                     </Pressable>
                     <Pressable
                       hitSlop={8}
@@ -867,7 +903,7 @@ export default function HomeScreen() {
                       onPress={(e) => { e.stopPropagation(); handleMarkPaid(false); }}
                       style={[styles.regBtn, { backgroundColor: colors.error, borderColor: colors.error }]}
                     >
-                      <AppText variant="small" style={{ color: "#fff", fontWeight: "600" }}>Mark ME Unpaid</AppText>
+                      <AppText variant="small" style={{ color: "#fff", fontWeight: "600" }}>Mark me unpaid</AppText>
                     </Pressable>
                   </View>
                 )}
@@ -1678,6 +1714,16 @@ const styles = StyleSheet.create({
     flexWrap: "wrap",
     gap: spacing.xs,
     marginTop: spacing.sm,
+    alignItems: "center",
+  },
+  jointChipHome: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 4,
+    borderRadius: radius.full,
+    borderWidth: 1,
   },
   oomPremiumPill: {
     flexDirection: "row",

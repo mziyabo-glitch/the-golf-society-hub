@@ -12,7 +12,12 @@ export type MemberDoc = {
   id: string;
   society_id: string;
   user_id?: string | null;
+  /** Rare: global person key if present in DB (joint dedupe). */
+  person_id?: string | null;
   name?: string;
+  /** Optional split name fields if present in DB */
+  first_name?: string | null;
+  last_name?: string | null;
   display_name?: string;
   displayName?: string; // alias for name (camelCase for app compatibility)
   email?: string;
@@ -222,6 +227,29 @@ export async function getMember(memberId: string): Promise<MemberDoc | null> {
     throw new Error(error.message || "Failed to get member");
   }
   return data ? mapMember(data) : null;
+}
+
+const MEMBERS_BY_IDS_CHUNK = 120;
+
+/**
+ * Load many members by id (e.g. registrations include players from other societies on joint events).
+ * RLS may omit rows the user cannot see; callers should still handle missing ids.
+ */
+export async function getMembersByIds(memberIds: string[]): Promise<MemberDoc[]> {
+  const ids = [...new Set(memberIds.map((id) => id?.trim()).filter(Boolean) as string[])];
+  if (ids.length === 0) return [];
+
+  const all: MemberDoc[] = [];
+  for (let i = 0; i < ids.length; i += MEMBERS_BY_IDS_CHUNK) {
+    const slice = ids.slice(i, i + MEMBERS_BY_IDS_CHUNK);
+    const { data, error } = await supabase.from("members").select("*").in("id", slice);
+    if (error) {
+      console.error("[memberRepo] getMembersByIds failed:", error.message);
+      continue;
+    }
+    all.push(...(data ?? []).map(mapMember));
+  }
+  return all;
 }
 
 /**

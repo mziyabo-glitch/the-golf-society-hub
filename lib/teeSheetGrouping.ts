@@ -28,6 +28,8 @@ export type GroupedPlayer = {
   handicapIndex: number | null;
   courseHandicap: number | null;
   playingHandicap: number | null;
+  /** Joint events: home society display name (from member.society_id + participating map). */
+  societyLabel?: string | null;
 };
 
 export type PlayerGroup = {

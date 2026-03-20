@@ -31,13 +31,17 @@ import { useBootstrap } from "@/lib/useBootstrap";
 import { useAsyncAction } from "@/lib/hooks/useAsyncAction";
 import { usePaidAccess } from "@/lib/access/usePaidAccess";
 import { getEvent, getFormatSortOrder, type EventDoc } from "@/lib/db_supabase/eventRepo";
-import { getMembersBySocietyId } from "@/lib/db_supabase/memberRepo";
+import { getMembersBySocietyId, getMembersByIds, type MemberDoc } from "@/lib/db_supabase/memberRepo";
+import { getJointEventDetail } from "@/lib/db_supabase/jointEventRepo";
+import { buildSocietyIdToNameMap } from "@/lib/jointEventSocietyLabel";
+import { dedupeJointMembers } from "@/lib/jointPersonDedupe";
 import {
   upsertEventResults,
   getEventResults,
 } from "@/lib/db_supabase/resultsRepo";
 import { getPermissionsForMember } from "@/lib/rbac";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
+import { JOINT_EVENT_CHIP_SHORT } from "@/lib/eventModuleUi";
 
 // F1-style OOM points: positions 1-10 get points, rest get 0
 const F1_OOM_POINTS = [25, 18, 15, 12, 10, 8, 6, 4, 2, 1];
@@ -85,6 +89,66 @@ type PlayerEntry = {
   oomPoints: number; // Auto-calculated F1 points
 };
 
+type FormatSortOrder = ReturnType<typeof getFormatSortOrder>;
+
+function calculatePositionsAndOOM(
+  playerList: PlayerEntry[],
+  sortOrder: FormatSortOrder,
+): PlayerEntry[] {
+  const withPoints: PlayerEntry[] = [];
+  const withoutPoints: PlayerEntry[] = [];
+
+  for (const p of playerList) {
+    const dayPts = parseInt(p.dayPoints.trim(), 10);
+    if (!isNaN(dayPts) && p.dayPoints.trim() !== "") {
+      withPoints.push({ ...p, position: null, oomPoints: 0 });
+    } else {
+      withoutPoints.push({ ...p, position: null, oomPoints: 0 });
+    }
+  }
+
+  withPoints.sort((a, b) => {
+    const aPts = parseInt(a.dayPoints.trim(), 10);
+    const bPts = parseInt(b.dayPoints.trim(), 10);
+
+    if (sortOrder === "low_wins") {
+      return aPts - bPts;
+    }
+    return bPts - aPts;
+  });
+
+  const positioned: PlayerEntry[] = [];
+  let currentPosition = 1;
+  let i = 0;
+
+  while (i < withPoints.length) {
+    const currentDayValue = parseInt(withPoints[i].dayPoints.trim(), 10);
+    let tieCount = 1;
+
+    while (
+      i + tieCount < withPoints.length &&
+      parseInt(withPoints[i + tieCount].dayPoints.trim(), 10) === currentDayValue
+    ) {
+      tieCount++;
+    }
+
+    const averagedOOM = getAveragedOOMPoints(currentPosition, tieCount);
+
+    for (let j = 0; j < tieCount; j++) {
+      positioned.push({
+        ...withPoints[i + j],
+        position: currentPosition,
+        oomPoints: averagedOOM,
+      });
+    }
+
+    currentPosition += tieCount;
+    i += tieCount;
+  }
+
+  return [...positioned, ...withoutPoints];
+}
+
 export default function EventPointsScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ id: string }>();
@@ -128,7 +192,7 @@ export default function EventPointsScreen() {
     setError(null);
 
     try {
-      const [evt, members] = await Promise.all([
+      const [evt, societyMembers, existingResults] = await Promise.all([
         getEvent(eventId),
         getMembersBySocietyId(societyId),
         getEventResults(eventId),
@@ -142,22 +206,69 @@ export default function EventPointsScreen() {
 
       setEvent(evt);
 
-      // Build player list from event's playerIds
       const playerIds = evt.playerIds ?? [];
-      const memberMap = new Map(members.map((m) => [m.id, m]));
+      let memberDocs: MemberDoc[] = [...societyMembers];
+      const missingIds = playerIds.filter((id) => !memberDocs.some((m) => m.id === id));
+      if (missingIds.length > 0) {
+        const extra = await getMembersByIds(missingIds);
+        for (const m of extra) {
+          if (m?.id && !memberDocs.some((x) => x.id === m.id)) memberDocs.push(m);
+        }
+      }
+      const memberMap = new Map(memberDocs.map((m) => [m.id, m]));
 
-      // Initialize players with empty day points
-      // If existing OOM points exist, we can't reverse-engineer day points, so leave blank
-      const playerList: PlayerEntry[] = playerIds.map((pid) => {
-        const member = memberMap.get(pid);
-        return {
-          memberId: pid,
-          memberName: member?.displayName || member?.name || "Unknown",
-          dayPoints: "",
-          position: null,
-          oomPoints: 0,
-        };
-      });
+      let playerList: PlayerEntry[];
+      let mergedByMember = new Map<string, string[]>();
+
+      if (evt.is_joint_event === true) {
+        const jointDetail = await getJointEventDetail(eventId);
+        const socMap = buildSocietyIdToNameMap(jointDetail?.participating_societies ?? []);
+        const subset = playerIds
+          .map((pid) => memberMap.get(pid))
+          .filter(Boolean) as MemberDoc[];
+        const deduped = dedupeJointMembers(subset, socMap);
+        mergedByMember = new Map(deduped.map((d) => [d.representative.id, d.mergedMemberIds]));
+        playerList = deduped.map((d) => {
+          const base = d.representative.displayName || d.representative.name || "Unknown";
+          const label =
+            d.mergedMemberIds.length > 1 ? `${base} · ${d.societyLabelMerged}` : base;
+          return {
+            memberId: d.representative.id,
+            memberName: label,
+            dayPoints: "",
+            position: null,
+            oomPoints: 0,
+          };
+        });
+      } else {
+        playerList = playerIds.map((pid) => {
+          const member = memberMap.get(pid);
+          return {
+            memberId: pid,
+            memberName: member?.displayName || member?.name || "Unknown",
+            dayPoints: "",
+            position: null,
+            oomPoints: 0,
+          };
+        });
+      }
+
+      const sortOrder = getFormatSortOrder(evt.format);
+      if (existingResults.length > 0) {
+        playerList = playerList.map((p) => {
+          const ids = mergedByMember.get(p.memberId) ?? [p.memberId];
+          const hit = existingResults.find((r) => ids.includes(r.member_id));
+          if (!hit) return p;
+          const dv = hit.day_value != null ? String(hit.day_value) : "";
+          return {
+            ...p,
+            dayPoints: dv,
+            position: null,
+            oomPoints: 0,
+          };
+        });
+        playerList = calculatePositionsAndOOM(playerList, sortOrder);
+      }
 
       setPlayers(playerList);
     } catch (e: any) {
@@ -183,80 +294,12 @@ export default function EventPointsScreen() {
       );
 
       // Recalculate positions and OOM points
-      return calculatePositionsAndOOM(updated);
+      return calculatePositionsAndOOM(updated, sortOrder);
     });
   };
 
   // Get sort order based on event format
   const sortOrder = getFormatSortOrder(event?.format);
-
-  // Calculate positions and OOM points based on day points
-  // Uses tie averaging: tied players share averaged OOM points for positions they occupy
-  const calculatePositionsAndOOM = (playerList: PlayerEntry[]): PlayerEntry[] => {
-    // Separate players with valid day points from those without
-    const withPoints: PlayerEntry[] = [];
-    const withoutPoints: PlayerEntry[] = [];
-
-    for (const p of playerList) {
-      const dayPts = parseInt(p.dayPoints.trim(), 10);
-      if (!isNaN(dayPts) && p.dayPoints.trim() !== "") {
-        withPoints.push({ ...p, position: null, oomPoints: 0 });
-      } else {
-        withoutPoints.push({ ...p, position: null, oomPoints: 0 });
-      }
-    }
-
-    // Sort based on format:
-    // - Stableford (high_wins): Higher points = better position (DESC)
-    // - Strokeplay (low_wins): Lower score = better position (ASC)
-    withPoints.sort((a, b) => {
-      const aPts = parseInt(a.dayPoints.trim(), 10);
-      const bPts = parseInt(b.dayPoints.trim(), 10);
-
-      if (sortOrder === 'low_wins') {
-        return aPts - bPts; // Lower is better for strokeplay
-      }
-      return bPts - aPts; // Higher is better for stableford
-    });
-
-    // Group into tie blocks and assign positions + averaged OOM points
-    // Example: [40, 38, 38, 35] → positions [1, 2, 2, 4] with tie averaging for 2nd/3rd
-    const positioned: PlayerEntry[] = [];
-    let currentPosition = 1;
-    let i = 0;
-
-    while (i < withPoints.length) {
-      // Find the tie block (players with same day value)
-      const currentDayValue = parseInt(withPoints[i].dayPoints.trim(), 10);
-      let tieCount = 1;
-
-      while (
-        i + tieCount < withPoints.length &&
-        parseInt(withPoints[i + tieCount].dayPoints.trim(), 10) === currentDayValue
-      ) {
-        tieCount++;
-      }
-
-      // Calculate averaged OOM points for this tie block
-      const averagedOOM = getAveragedOOMPoints(currentPosition, tieCount);
-
-      // Assign to all players in the tie block
-      for (let j = 0; j < tieCount; j++) {
-        positioned.push({
-          ...withPoints[i + j],
-          position: currentPosition, // All tied players share the same position
-          oomPoints: averagedOOM,
-        });
-      }
-
-      // Move to next position block (skip positions consumed by ties)
-      currentPosition += tieCount;
-      i += tieCount;
-    }
-
-    // Combine: players with points (sorted) + players without points (original order)
-    return [...positioned, ...withoutPoints];
-  };
 
   // Calculate players with valid day points (used for canSave and save)
   const playersWithDayPoints = useMemo(() => {
@@ -617,6 +660,15 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: spacing.sm,
     marginBottom: spacing.lg,
+  },
+  jointPointsNote: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: spacing.sm,
+    padding: spacing.sm,
+    borderRadius: radius.sm,
+    borderWidth: 1,
+    marginBottom: spacing.md,
   },
   instructionCard: {
     marginBottom: spacing.sm,

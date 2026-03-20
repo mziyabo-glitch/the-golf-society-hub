@@ -20,7 +20,7 @@ import { useBootstrap } from "@/lib/useBootstrap";
 import { useAsyncAction } from "@/lib/hooks/useAsyncAction";
 import { usePaidAccess } from "@/lib/access/usePaidAccess";
 import {
-  getEventsBySocietyId,
+  getEventsForSociety,
   createEvent,
   type EventDoc,
   type EventFormat,
@@ -28,6 +28,10 @@ import {
   EVENT_FORMATS,
   EVENT_CLASSIFICATIONS,
 } from "@/lib/db_supabase/eventRepo";
+import { createJointEvent, validateJointEventInput } from "@/lib/db_supabase/jointEventRepo";
+import { getMySocieties } from "@/lib/db_supabase/mySocietiesRepo";
+import { ParticipatingSocietiesSection } from "@/components/event/ParticipatingSocietiesSection";
+import type { EventSocietyInput } from "@/lib/db_supabase/jointEventTypes";
 import { type CourseTee, getCourseByApiId, getCourseMetaById, getTeesByCourseId, upsertTeesFromApi } from "@/lib/db_supabase/courseRepo";
 import { searchCourses as searchCoursesApi, getCourseById, type ApiCourseSearchResult } from "@/lib/golfApi";
 import { importCourse, type ImportedCourse } from "@/lib/importCourse";
@@ -35,6 +39,7 @@ import { CourseTeeSelector } from "@/components/CourseTeeSelector";
 import { getPermissionsForMember } from "@/lib/rbac";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
 import { formatError, type FormattedError } from "@/lib/ui/formatError";
+import { JOINT_EVENT_CHIP_LONG } from "@/lib/eventModuleUi";
 
 // Simple picker option component
 function PickerOption({
@@ -77,6 +82,7 @@ type FormErrors = {
   course?: string;
   courseTee?: string;
   handicapAllowance?: string;
+  participating_societies?: string;
 };
 
 export default function EventsScreen() {
@@ -102,7 +108,7 @@ export default function EventsScreen() {
   const [validationNotice, setValidationNotice] = useState<string | null>(null);
   const [toast, setToast] = useState({ visible: false, message: "", type: "success" as const });
 
-  // Course / Tee: GolfCourseAPI search â†’ import â†’ select tee
+  // Course / Tee: GolfCourseAPI search -> import -> select tee
   const [courseSearchQuery, setCourseSearchQuery] = useState("");
   const [courseSearchResults, setCourseSearchResults] = useState<ApiCourseSearchResult[]>([]);
   const [courseSearchError, setCourseSearchError] = useState<string | null>(null);
@@ -128,7 +134,36 @@ export default function EventsScreen() {
   // Handicap allowance (shared)
   const [formHandicapAllowance, setFormHandicapAllowance] = useState("95");
 
+  // Joint event (Phase 3)
+  const [isJointEvent, setIsJointEvent] = useState(false);
+  const [hostSocietyId, setHostSocietyId] = useState("");
+  const [participatingSocieties, setParticipatingSocieties] = useState<EventSocietyInput[]>([]);
+  const [mySocieties, setMySocieties] = useState<Awaited<ReturnType<typeof getMySocieties>>>([]);
+
   const permissions = getPermissionsForMember(member as any);
+
+  useEffect(() => {
+    if (showCreateForm && permissions.canCreateEvents) {
+      getMySocieties().then(setMySocieties);
+    }
+  }, [showCreateForm, permissions.canCreateEvents]);
+
+  useEffect(() => {
+    if (!isJointEvent) {
+      setHostSocietyId("");
+      setParticipatingSocieties([]);
+      return;
+    }
+    if (societyId && participatingSocieties.length === 0 && mySocieties.length > 0) {
+      const current = mySocieties.find((s) => s.societyId === societyId);
+      if (current) {
+        setHostSocietyId(current.societyId);
+        setParticipatingSocieties([
+          { society_id: current.societyId, society_name: current.societyName, role: "host", has_society_oom: true },
+        ]);
+      }
+    }
+  }, [isJointEvent, societyId, mySocieties]);
 
   useEffect(() => {
     if (paramsHandledRef.current) return;
@@ -252,7 +287,7 @@ export default function EventsScreen() {
     setLoading(true);
     setLoadError(null);
     try {
-      const data = await getEventsBySocietyId(sid);
+      const data = await getEventsForSociety(sid);
       console.log("[events] Loaded", data.length, "events. Upcoming:", data.filter((e) => !e.isCompleted).length, "Completed:", data.filter((e) => e.isCompleted).length);
       setEvents(data);
     } catch (err: any) {
@@ -311,6 +346,17 @@ export default function EventsScreen() {
       const allowanceValue = Number(formHandicapAllowance.trim());
       if (Number.isNaN(allowanceValue) || allowanceValue <= 0 || allowanceValue > 100) {
         errors.handicapAllowance = "Handicap allowance must be between 1 and 100.";
+      }
+    }
+
+    if (isJointEvent) {
+      const jointErrors = validateJointEventInput({
+        is_joint_event: true,
+        host_society_id: hostSocietyId,
+        participating_societies: participatingSocieties,
+      });
+      if (jointErrors.length > 0) {
+        errors.participating_societies = jointErrors[0].message;
       }
     }
 
@@ -380,35 +426,50 @@ export default function EventsScreen() {
     const ladiesCourseRating = manualLadiesCourseRating.trim() ? parseFloat(manualLadiesCourseRating) : undefined;
     const ladiesSlopeRating = manualLadiesSlopeRating.trim() ? parseFloat(manualLadiesSlopeRating) : undefined;
 
-    console.log("[createEvent] Calling createEvent...", {
-      course_id: courseId,
-      tee_id: teeId,
-      selectedTeeId: selectedTee?.id ?? null,
-      selectedTee: selectedTee ? { id: selectedTee.id, tee_name: selectedTee.tee_name } : null,
-      loadedTeeIds: tees.map((t) => t.id),
+    const createPayload = {
+      name: formName.trim(),
+      date: formDate.trim(),
+      format: formFormat,
+      classification: formClassification,
+      courseId: courseId,
+      courseName,
+      teeId,
+      teeName,
+      par,
+      courseRating,
+      slopeRating,
+      ladiesTeeName,
+      ladiesPar,
+      ladiesCourseRating,
+      ladiesSlopeRating,
+      handicapAllowance,
+      teeSource: selectedTee ? ("imported" as const) : undefined,
+    };
+
+    if (__DEV__) {
+      console.log("[createEvent] Calling create...", {
+        isJointEvent,
+        course_id: courseId,
+        tee_id: teeId,
+        participatingSocieties: participatingSocieties?.length ?? 0,
+      });
+    }
+
+    const created = await createAction.run(async () => {
+      if (isJointEvent && participatingSocieties.length >= 2) {
+        return createJointEvent({
+          ...createPayload,
+          is_joint_event: true,
+          host_society_id: hostSocietyId || societyId!,
+          participating_societies: participatingSocieties,
+          createdBy: user!.uid,
+        });
+      }
+      return createEvent(societyId!, {
+        ...createPayload,
+        createdBy: user!.uid,
+      });
     });
-    const created = await createAction.run(async () =>
-      createEvent(societyId, {
-        name: formName.trim(),
-        date: formDate.trim(),
-        format: formFormat,
-        classification: formClassification,
-        createdBy: user.uid,
-        courseId: courseId,
-        courseName,
-        teeId,
-        teeName,
-        par,
-        courseRating,
-        slopeRating,
-        ladiesTeeName,
-        ladiesPar,
-        ladiesCourseRating,
-        ladiesSlopeRating,
-        handicapAllowance,
-        teeSource: selectedTee ? "imported" : undefined,
-      })
-    );
 
     if (!created) {
       console.error("[createEvent] FAILED");
@@ -440,6 +501,9 @@ export default function EventsScreen() {
     setManualCourseRating("");
     setManualSlopeRating("");
     setFormHandicapAllowance("95");
+    setIsJointEvent(false);
+    setHostSocietyId("");
+    setParticipatingSocieties([]);
     setShowCreateForm(false);
     setFormErrors({});
     setValidationNotice(null);
@@ -606,6 +670,48 @@ export default function EventsScreen() {
                 </AppText>
               ) : null}
             </View>
+
+            {/* Joint Event: directly after Classification, before Course / Tee Setup */}
+            <Pressable
+              onPress={() => {
+                setIsJointEvent(!isJointEvent);
+                setFormErrors((prev) => ({ ...prev, participating_societies: undefined }));
+              }}
+              style={[
+                styles.jointEventToggle,
+                { borderColor: colors.border },
+              ]}
+            >
+              <View style={{ flex: 1 }}>
+                <AppText variant="captionBold">Joint Event</AppText>
+                <AppText variant="small" color="secondary">
+                  {isJointEvent
+                    ? mySocieties.length < 2
+                      ? "Join another society to create joint events."
+                      : "2+ societies participating"
+                    : "Single society only"}
+                </AppText>
+              </View>
+              <View style={[styles.pickerOption, { backgroundColor: isJointEvent ? colors.primary : colors.backgroundSecondary,
+                borderColor: isJointEvent ? colors.primary : colors.border }]}>
+                <AppText variant="caption" style={{ color: isJointEvent ? "#fff" : colors.text }}>
+                  {isJointEvent ? "On" : "Off"}
+                </AppText>
+              </View>
+            </Pressable>
+
+            {isJointEvent && (
+              <View style={styles.formField}>
+                <ParticipatingSocietiesSection
+                  hostSocietyId={hostSocietyId}
+                  participatingSocieties={participatingSocieties}
+                  availableSocieties={mySocieties}
+                  errors={formErrors}
+                  onHostChange={setHostSocietyId}
+                  onSocietiesChange={setParticipatingSocieties}
+                />
+              </View>
+            )}
 
             {/* Course: Search â†’ Select Tee */}
             <View style={styles.formField}>
@@ -876,8 +982,24 @@ export default function EventsScreen() {
     );
   }
 
-  const upcomingEvents = events.filter((e) => !e.isCompleted);
-  const completedEvents = events.filter((e) => e.isCompleted);
+  const toDateMs = (value?: string) => {
+    if (!value) return Number.MAX_SAFE_INTEGER;
+    const ms = new Date(value).getTime();
+    return Number.isFinite(ms) ? ms : Number.MAX_SAFE_INTEGER;
+  };
+
+  const toPastDateMs = (value?: string) => {
+    if (!value) return Number.MIN_SAFE_INTEGER;
+    const ms = new Date(value).getTime();
+    return Number.isFinite(ms) ? ms : Number.MIN_SAFE_INTEGER;
+  };
+
+  const upcomingEvents = events
+    .filter((e) => !e.isCompleted)
+    .sort((a, b) => toDateMs(a.date) - toDateMs(b.date));
+  const completedEvents = events
+    .filter((e) => e.isCompleted)
+    .sort((a, b) => toPastDateMs(b.date) - toPastDateMs(a.date));
 
   const getStatusColor = (event: EventDoc) => {
     if (event.isCompleted) return colors.success;
@@ -942,6 +1064,12 @@ export default function EventsScreen() {
                 <View style={[styles.oomBadge, { backgroundColor: colors.info + "20" }]}>
                   <Feather name="star" size={10} color={colors.info} />
                   <AppText variant="small" style={{ color: colors.info }}>Major</AppText>
+                </View>
+              )}
+              {event.is_joint_event === true && (
+                <View style={[styles.jointBadge, { backgroundColor: colors.info + "16", borderColor: colors.info + "40" }]}>
+                  <Feather name="link" size={10} color={colors.info} />
+                  <AppText variant="small" style={{ color: colors.info }}>{JOINT_EVENT_CHIP_LONG}</AppText>
                 </View>
               )}
             </View>
@@ -1038,6 +1166,7 @@ const styles = StyleSheet.create({
   },
   sectionTitle: {
     marginBottom: spacing.sm,
+    letterSpacing: 0.2,
   },
   eventCard: {
     marginBottom: spacing.xs,
@@ -1075,6 +1204,15 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.xs,
     paddingVertical: 2,
     borderRadius: radius.sm,
+  },
+  jointBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 3,
+    paddingHorizontal: spacing.xs,
+    paddingVertical: 2,
+    borderRadius: radius.sm,
+    borderWidth: 1,
   },
   formHeader: {
     flexDirection: "row",
@@ -1125,5 +1263,14 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "rgba(0,0,0,0.06)",
     marginBottom: spacing.base,
+  },
+  jointEventToggle: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingVertical: spacing.sm,
+    paddingTop: spacing.sm,
+    marginTop: spacing.sm,
+    borderTopWidth: 1,
   },
 });
