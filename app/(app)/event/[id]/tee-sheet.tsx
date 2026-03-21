@@ -23,7 +23,7 @@ import { buildSocietyIdToNameMap, societyLabelFromMember } from "@/lib/jointEven
 import { dedupeJointGroupedPlayers, dedupeJointMembers } from "@/lib/jointPersonDedupe";
 import { getMembersBySocietyId, getMembersByIds, type MemberDoc } from "@/lib/db_supabase/memberRepo";
 import { resolveAttendeeDisplayName } from "@/lib/eventAttendeeName";
-import { getEventRegistrations } from "@/lib/db_supabase/eventRegistrationRepo";
+import { getEventRegistrations, isTeeSheetEligible, scopeEventRegistrations } from "@/lib/db_supabase/eventRegistrationRepo";
 import { getEventGuests } from "@/lib/db_supabase/eventGuestRepo";
 import { getTeeGroups, getTeeGroupPlayers, teeTimeToDisplay } from "@/lib/db_supabase/teeGroupsRepo";
 import { findMemberGroup, findMemberGroupFromTeeSheet } from "@/lib/findMemberGroup";
@@ -226,9 +226,8 @@ export default function EventTeeSheetScreen() {
     setLoading(true);
     setError(null);
     try {
-      const [eventData, membersData, registrations, guestList, groupsData, playersData] = await Promise.all([
+      const [eventData, registrations, guestList, groupsData, playersData] = await Promise.all([
         getEvent(eventId),
-        getMembersBySocietyId(societyId),
         getEventRegistrations(eventId),
         getEventGuests(eventId),
         getTeeGroups(eventId),
@@ -236,8 +235,10 @@ export default function EventTeeSheetScreen() {
       ]);
       setEvent(eventData ?? null);
 
+      let participantSocietyIds: string[] = [];
       if (eventData?.is_joint_event === true) {
         const jd = await getJointEventDetail(eventId);
+        participantSocietyIds = jd?.participating_societies?.map((s) => s.society_id).filter(Boolean) ?? [];
         setJointParticipatingSocieties(
           jd?.participating_societies?.map((s) => ({
             society_id: s.society_id,
@@ -247,9 +248,27 @@ export default function EventTeeSheetScreen() {
       } else {
         setJointParticipatingSocieties([]);
       }
+
+      const hostId = eventData?.society_id ?? societyId;
+      let membersMerged: MemberDoc[] = [];
+      if (eventData?.is_joint_event === true && participantSocietyIds.length > 0) {
+        const lists = await Promise.all(participantSocietyIds.map((sid) => getMembersBySocietyId(sid)));
+        membersMerged = lists.flat();
+      } else {
+        membersMerged = await getMembersBySocietyId(hostId);
+      }
+
+      const scopedRegs =
+        eventData?.is_joint_event === true
+          ? scopeEventRegistrations(registrations, {
+              kind: "joint_participants",
+              participantSocietyIds,
+            })
+          : scopeEventRegistrations(registrations, { kind: "standard", hostSocietyId: hostId });
+
       const byId = new Map<string, MemberDoc>();
-      for (const m of membersData) byId.set(m.id, m);
-      const regIds = registrations.filter((r) => r.status === "in").map((r) => r.member_id);
+      for (const m of membersMerged) byId.set(m.id, m);
+      const regIds = scopedRegs.filter(isTeeSheetEligible).map((r) => r.member_id);
       const teeMemberIds = playersData
         .map((p) => p.player_id)
         .filter((id) => id && !String(id).startsWith("guest-"));

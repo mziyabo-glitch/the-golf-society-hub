@@ -1,14 +1,13 @@
 // lib/db_supabase/eventRegistrationRepo.ts
 // MVP data layer for event_registrations (attendance + payment).
 //
-// v1 business rules (standard / single-society events):
-// - `status`: "in" = confirmed / attending, "out" = not playing.
-// - `paid`: fee collected for this event (Captain/Treasurer via mark_event_paid RPC).
-// - Paid implies confirmed: when paid becomes true, server sets status to "in".
-// - Confirmed does NOT imply paid: "in" + unpaid = attending with payment outstanding.
+// Business rules (simplified):
+// - `paid`: fee recorded — RPC `mark_event_paid` sets status to "in" when paid (paid ⇒ confirmed).
+// - `status`: "in" = attending, "out" = not playing / withdrawn.
+// - Tee sheet / ManCo: only rows with status "in" AND paid (see `isTeeSheetEligible`).
+// - Society-scoped UI: `filterRegistrationsForActiveSocietyMembers` + `partitionSocietyRegistrations` (eventPlayerStatus).
 //
-// Joint events: use event_entries / joint payload for shared attendance; do not use
-// `paid` in joint attendance counts or labels (per-society payment only).
+// Joint: per-society rows in `event_registrations`; shared tee/entries use joint repos elsewhere.
 
 import { supabase } from "@/lib/supabase";
 
@@ -68,9 +67,60 @@ export async function getEventRegistrations(
   return (data ?? []) as EventRegistration[];
 }
 
+/**
+ * Filter registration rows for attendance/tee UI so we never mix unrelated societies.
+ *
+ * - **standard**: only rows whose `society_id` is the event host (`event.society_id`).
+ * - **joint_participants**: only rows for societies in the joint event (union of participants).
+ * - **joint_home**: dashboard / per-society context — only the active society's rows.
+ */
+export function scopeEventRegistrations(
+  regs: EventRegistration[],
+  opts:
+    | { kind: "standard"; hostSocietyId: string | null }
+    | { kind: "joint_participants"; participantSocietyIds: string[] }
+    | { kind: "joint_home"; activeSocietyId: string },
+): EventRegistration[] {
+  if (opts.kind === "standard") {
+    if (!opts.hostSocietyId) return regs;
+    return regs.filter((r) => r.society_id === opts.hostSocietyId);
+  }
+  if (opts.kind === "joint_home") {
+    return regs.filter((r) => r.society_id === opts.activeSocietyId);
+  }
+  const set = new Set(opts.participantSocietyIds.filter(Boolean));
+  if (set.size === 0) return [];
+  return regs.filter((r) => set.has(r.society_id));
+}
+
+/**
+ * Event detail (society tab): fee/RSVP rows for `activeSocietyId` whose `member_id` is in the
+ * member list from `getMembersBySocietyId(activeSocietyId)`. Prevents cross-society rows without
+ * duplicating joint/eligibility logic elsewhere.
+ *
+ * Tee sheets / publish flow use `isTeeSheetEligible` (confirmed + paid) in `teeSheetEligibility.ts` — different predicate.
+ */
+export function filterRegistrationsForActiveSocietyMembers(
+  regs: EventRegistration[],
+  activeSocietyId: string,
+  activeMemberIds: Set<string>,
+): EventRegistration[] {
+  return regs.filter(
+    (r) => r.society_id === activeSocietyId && activeMemberIds.has(String(r.member_id)),
+  );
+}
+
 /** Confirmed / attending */
 export function isRegistrationConfirmed(r: EventRegistration): boolean {
   return r.status === "in";
+}
+
+/**
+ * Tee sheet generation (pairings / published tee sheet) — only these members are included.
+ * Requires both confirmed attendance and payment recorded (paid ⇒ confirmed is enforced server-side).
+ */
+export function isTeeSheetEligible(r: EventRegistration): boolean {
+  return r.status === "in" && r.paid === true;
 }
 
 /** Standard event summaries (joint attendance uses event entries, not this). */
@@ -85,6 +135,8 @@ export function summarizeEventRegistrations(regs: EventRegistration[]) {
     outstandingCount: attending.filter((r) => !r.paid).length,
     /** Of those attending, how many are paid (for “X of Y paid”) */
     paidAmongAttendingCount: attending.filter((r) => r.paid).length,
+    /** Confirmed + paid — only these names appear on generated / saved tee sheets */
+    teeSheetEligibleCount: regs.filter(isTeeSheetEligible).length,
   };
 }
 
@@ -142,6 +194,17 @@ export async function markMePaid(
 
   if (error) {
     console.error("[eventRegRepo] markMePaid RPC:", error.message);
-    throw new Error(error.message || "Failed to update payment status");
+    const msg = error.message || "";
+    if (msg.includes("person_id")) {
+      throw new Error(
+        "Database function is out of date: apply migration 073_fix_mark_event_paid_remove_person_id.sql to Supabase (SQL Editor or supabase db push), then retry.",
+      );
+    }
+    if (msg.includes("Target member not found in this society")) {
+      throw new Error(
+        "Could not record payment for this member. For joint events, apply migration 074_mark_event_paid_joint_event_societies.sql (see supabase/README_MARK_EVENT_PAID.md), then retry.",
+      );
+    }
+    throw new Error(msg || "Failed to update payment status");
   }
 }

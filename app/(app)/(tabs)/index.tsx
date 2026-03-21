@@ -50,6 +50,7 @@ import { getMySinbooks, type SinbookWithParticipants } from "@/lib/db_supabase/s
 import {
   getMyRegistration,
   getEventRegistrations,
+  scopeEventRegistrations,
   setMyStatus,
   markMePaid,
   type EventRegistration,
@@ -394,16 +395,31 @@ export default function HomeScreen() {
 
   // Load all registrations for next event when tee times published (for societies using In/Out)
   useEffect(() => {
-    if (!nextEventId || !nextEvent?.teeTimePublishedAt) {
+    if (!nextEventId || !nextEvent?.teeTimePublishedAt || !societyId || !nextEvent) {
       setNextEventRegistrations([]);
       return;
     }
+    const ev = nextEvent;
     let cancelled = false;
     getEventRegistrations(nextEventId).then((regs) => {
-      if (!cancelled) setNextEventRegistrations(regs);
+      if (cancelled) return;
+      const scoped = ev.is_joint_event
+        ? scopeEventRegistrations(regs, { kind: "joint_home", activeSocietyId: societyId })
+        : scopeEventRegistrations(regs, {
+            kind: "standard",
+            hostSocietyId: ev.society_id ?? societyId,
+          });
+      setNextEventRegistrations(scoped);
     });
     return () => { cancelled = true; };
-  }, [nextEventId, nextEvent?.teeTimePublishedAt]);
+  }, [
+    nextEventId,
+    nextEvent,
+    nextEvent?.teeTimePublishedAt,
+    nextEvent?.society_id,
+    nextEvent?.is_joint_event,
+    societyId,
+  ]);
 
   // Load persisted tee groups for next event (when tee sheet was saved)
   useEffect(() => {

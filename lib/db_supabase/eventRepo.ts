@@ -203,17 +203,18 @@ async function getEventMappedById(eventId: string): Promise<EventDoc | null> {
  * Get events for a society (one-time fetch)
  */
 export async function getEventsBySocietyId(societyId: string): Promise<EventDoc[]> {
-  console.log("[eventRepo] getEventsBySocietyId called with:", societyId);
+  if (__DEV__) {
+    console.log("[eventRepo] getEventsBySocietyId:", societyId);
+  }
   const mapped = await fetchMappedEventsForSociety(societyId);
-  console.log("[eventRepo] getEventsBySocietyId returned", mapped.length, "events for society:", societyId);
   return enrichEventsWithJointClassification(mapped);
 }
 
 /**
- * Get all events visible to a society: host events + joint events where society participates.
- * Use this for the main events list so participant societies see joint events too.
+ * Host events + joint participant events for this society (raw rows, not joint-enriched).
+ * On participant lookup failure, returns host-only rows (same behaviour as the events list).
  */
-export async function getEventsForSociety(societyId: string): Promise<EventDoc[]> {
+async function fetchEventsVisibleToSociety(societyId: string): Promise<EventDoc[]> {
   let hostMapped: EventDoc[];
   try {
     hostMapped = await fetchMappedEventsForSociety(societyId);
@@ -226,51 +227,46 @@ export async function getEventsForSociety(societyId: string): Promise<EventDoc[]
     const hostIds = new Set(hostMapped.map((e) => e.id));
     const missingIds = participantEventIdList.filter((id) => !hostIds.has(id));
     if (missingIds.length === 0) {
-      return enrichEventsWithJointClassification(hostMapped);
+      return hostMapped;
     }
-    console.log("[eventRepo] getEventsForSociety: fetching", missingIds.length, "extra events for participant society:", societyId);
+    if (__DEV__) {
+      console.log("[eventRepo] merge participant events:", missingIds.length, "society:", societyId);
+    }
     const missingMapped = (await Promise.all(missingIds.map((id) => getEventMappedById(id)))).filter(
       (e): e is EventDoc => e != null,
     );
     const combined = [...hostMapped, ...missingMapped];
-    const enriched = await enrichEventsWithJointClassification(combined);
-    enriched.sort((a, b) => (a.date ?? "").localeCompare(b.date ?? ""));
-    return enriched;
+    combined.sort((a, b) => (a.date ?? "").localeCompare(b.date ?? ""));
+    return combined;
   } catch (err) {
-    console.warn("[eventRepo] getEventsForSociety: participant merge failed, falling back to host-only:", err);
-    return enrichEventsWithJointClassification(hostMapped);
+    console.warn("[eventRepo] fetchEventsVisibleToSociety: participant merge failed, host-only:", err);
+    return hostMapped;
   }
+}
+
+/**
+ * Get all events visible to a society: host events + joint events where society participates.
+ * Use this for the main events list so participant societies see joint events too.
+ */
+export async function getEventsForSociety(societyId: string): Promise<EventDoc[]> {
+  const merged = await fetchEventsVisibleToSociety(societyId);
+  return enrichEventsWithJointClassification(merged);
 }
 
 /**
  * Get events available for the tee sheet screen: host events plus joint events where society participates.
  * Use this so joint events appear in the tee sheet event dropdown for participant societies.
+ * Uses the same merge + fallback rules as {@link getEventsForSociety}.
  */
 export async function getEventsForTeeSheet(societyId: string): Promise<EventDoc[]> {
-  const { getEventIdsWhereSocietyParticipates } = await import("@/lib/db_supabase/jointEventRepo");
-  const hostMapped = await fetchMappedEventsForSociety(societyId);
-  const participantEventIds = await getEventIdsWhereSocietyParticipates(societyId);
-  const hostIds = new Set(hostMapped.map((e) => e.id));
-  const missingIds = participantEventIds.filter((id) => !hostIds.has(id));
-  if (missingIds.length === 0) {
-    const enriched = await enrichEventsWithJointClassification(hostMapped);
-    return enriched;
-  }
-  const missingMapped = (await Promise.all(missingIds.map((id) => getEventMappedById(id)))).filter(
-    (e): e is EventDoc => e != null,
-  );
-  const combined = [...hostMapped, ...missingMapped];
-  const enriched = await enrichEventsWithJointClassification(combined);
-  enriched.sort((a, b) => (a.date ?? "").localeCompare(b.date ?? ""));
-  return enriched;
+  const merged = await fetchEventsVisibleToSociety(societyId);
+  return enrichEventsWithJointClassification(merged);
 }
 
 /**
  * Get a single event by ID
  */
 export async function getEvent(eventId: string): Promise<EventDoc | null> {
-  console.log("[eventRepo] getEvent called with id:", eventId);
-
   const { data, error } = await supabase
     .from("events")
     .select("*")

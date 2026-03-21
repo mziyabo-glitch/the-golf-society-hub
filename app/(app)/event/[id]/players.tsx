@@ -169,12 +169,14 @@ export default function EventPlayersScreen() {
             setSelectedPlayerIds(new Set());
           }
         } else {
-          const [evt, mems, guestList] = await Promise.all([
+          const [evt, guestList] = await Promise.all([
             getEvent(eventId),
-            getMembersBySocietyId(societyId),
             getEventGuests(eventId),
           ]);
           if (cancelled) return;
+
+          const hostSocietyId = evt?.society_id ?? societyId;
+          const mems = await getMembersBySocietyId(hostSocietyId);
 
           setEvent(evt);
           setMembers(mems);

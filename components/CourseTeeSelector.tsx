@@ -35,6 +35,8 @@ export type CourseTeeSelectorProps = {
   onSelectTee: (tee: CourseTee) => void;
   /** Optional: handicap index for course handicap display */
   handicapIndex?: number | null;
+  /** e.g. "Men's tee" / "Ladies' tee" */
+  sectionTitle?: string;
 };
 
 /**
@@ -49,6 +51,7 @@ export function CourseTeeSelector({
   selectedTee,
   onSelectTee,
   handicapIndex,
+  sectionTitle = "Select tee",
 }: CourseTeeSelectorProps) {
   const colors = getColors();
 
@@ -65,7 +68,7 @@ export function CourseTeeSelector({
   return (
     <View style={styles.container}>
       <AppText variant="captionBold" style={styles.sectionLabel}>
-        Select Tee
+        {sectionTitle}
       </AppText>
       {tees.map((tee) => {
         const isSelected = selectedTee?.id === tee.id;

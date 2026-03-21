@@ -36,6 +36,10 @@ import { type CourseTee, getCourseByApiId, getCourseMetaById, getTeesByCourseId,
 import { searchCourses as searchCoursesApi, getCourseById, type ApiCourseSearchResult } from "@/lib/golfApi";
 import { importCourse, type ImportedCourse } from "@/lib/importCourse";
 import { CourseTeeSelector } from "@/components/CourseTeeSelector";
+import {
+  menAndLadiesTeeOptions,
+  hasManualLadiesTeeMinimum,
+} from "@/lib/courseTeeGender";
 import { getPermissionsForMember } from "@/lib/rbac";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
 import { formatError, type FormattedError } from "@/lib/ui/formatError";
@@ -81,6 +85,7 @@ type FormErrors = {
   classification?: string;
   course?: string;
   courseTee?: string;
+  courseTeeLadies?: string;
   handicapAllowance?: string;
   participating_societies?: string;
 };
@@ -119,6 +124,7 @@ export default function EventsScreen() {
   const [teesLoading, setTeesLoading] = useState(false);
   const [teesError, setTeesError] = useState<string | null>(null);
   const [selectedTee, setSelectedTee] = useState<CourseTee | null>(null);
+  const [selectedLadiesTee, setSelectedLadiesTee] = useState<CourseTee | null>(null);
 
   // Manual tee entry fallback (when no tees from API)
   const [showManualTee, setShowManualTee] = useState(false);
@@ -130,6 +136,8 @@ export default function EventsScreen() {
   const [manualLadiesPar, setManualLadiesPar] = useState("");
   const [manualLadiesCourseRating, setManualLadiesCourseRating] = useState("");
   const [manualLadiesSlopeRating, setManualLadiesSlopeRating] = useState("");
+
+  const { menOptions, ladiesOptions } = useMemo(() => menAndLadiesTeeOptions(tees), [tees]);
 
   // Handicap allowance (shared)
   const [formHandicapAllowance, setFormHandicapAllowance] = useState("95");
@@ -217,11 +225,12 @@ export default function EventsScreen() {
     setCourseSearchResults([]);
     setCourseSearchQuery("");
     setSelectedTee(null);
+    setSelectedLadiesTee(null);
     setTees([]);
     setTeesError(null);
     setTeesLoading(true);
     setShowManualTee(false);
-    setFormErrors((prev) => ({ ...prev, course: undefined, courseTee: undefined }));
+    setFormErrors((prev) => ({ ...prev, course: undefined, courseTee: undefined, courseTeeLadies: undefined }));
     try {
       // Step 1: Check DB cache first (avoids API call if already imported with tees)
       const cached = await getCourseByApiId(hit.id);
@@ -307,10 +316,11 @@ export default function EventsScreen() {
   // Refetch on focus to pick up changes from other screens
   useFocusEffect(
     useCallback(() => {
-      if (societyId) {
+      const sid = societyId || activeSocietyId;
+      if (sid) {
         loadEvents();
       }
-    }, [societyId, loadEvents])
+    }, [societyId, activeSocietyId, loadEvents])
   );
 
   const validateForm = (): FormErrors => {
@@ -338,8 +348,46 @@ export default function EventsScreen() {
       errors.course = "Select a course or enter a course name.";
     }
 
-    if (selectedCourse && tees.length > 0 && !selectedTee) {
-      errors.courseTee = "Select a tee for this course.";
+    if (selectedCourse && tees.length > 0 && !showManualTee) {
+      if (!selectedTee) {
+        errors.courseTee = "Select a men's tee for this course.";
+      }
+      if (ladiesOptions.length > 0) {
+        if (!selectedLadiesTee) {
+          errors.courseTeeLadies = "Select a ladies' tee for this course.";
+        }
+      } else if (
+        !hasManualLadiesTeeMinimum({
+          manualLadiesTeeName,
+          manualLadiesPar,
+          manualLadiesCourseRating,
+          manualLadiesSlopeRating,
+        })
+      ) {
+        errors.courseTeeLadies =
+          "No ladies' tees in course data — enter ladies' tee name, par, course rating, and slope below.";
+      }
+    }
+    if (showManualTee) {
+      const maleOk =
+        selectedTee != null ||
+        (manualTeeName.trim() &&
+          manualPar.trim() &&
+          manualCourseRating.trim() &&
+          manualSlopeRating.trim());
+      if (!maleOk) {
+        errors.courseTee = "Enter men's tee details (name, par, course rating, slope) or select a men's tee above.";
+      }
+      if (
+        !hasManualLadiesTeeMinimum({
+          manualLadiesTeeName,
+          manualLadiesPar,
+          manualLadiesCourseRating,
+          manualLadiesSlopeRating,
+        })
+      ) {
+        errors.courseTeeLadies = "Enter ladies' tee name, par, course rating, and slope.";
+      }
     }
 
     if (formHandicapAllowance.trim()) {
@@ -421,10 +469,23 @@ export default function EventsScreen() {
     const par = selectedTee ? selectedTee.par_total : (manualPar.trim() ? parseFloat(manualPar) : undefined);
     const courseRating = selectedTee ? selectedTee.course_rating : (manualCourseRating.trim() ? parseFloat(manualCourseRating) : undefined);
     const slopeRating = selectedTee ? selectedTee.slope_rating : (manualSlopeRating.trim() ? parseFloat(manualSlopeRating) : undefined);
-    const ladiesTeeName = manualLadiesTeeName.trim() || undefined;
-    const ladiesPar = manualLadiesPar.trim() ? parseFloat(manualLadiesPar) : undefined;
-    const ladiesCourseRating = manualLadiesCourseRating.trim() ? parseFloat(manualLadiesCourseRating) : undefined;
-    const ladiesSlopeRating = manualLadiesSlopeRating.trim() ? parseFloat(manualLadiesSlopeRating) : undefined;
+    const ladiesTeeName =
+      selectedLadiesTee?.tee_name ?? (manualLadiesTeeName.trim() || undefined);
+    const ladiesPar = selectedLadiesTee
+      ? selectedLadiesTee.par_total
+      : manualLadiesPar.trim()
+        ? parseFloat(manualLadiesPar)
+        : undefined;
+    const ladiesCourseRating = selectedLadiesTee
+      ? selectedLadiesTee.course_rating
+      : manualLadiesCourseRating.trim()
+        ? parseFloat(manualLadiesCourseRating)
+        : undefined;
+    const ladiesSlopeRating = selectedLadiesTee
+      ? selectedLadiesTee.slope_rating
+      : manualLadiesSlopeRating.trim()
+        ? parseFloat(manualLadiesSlopeRating)
+        : undefined;
 
     const createPayload = {
       name: formName.trim(),
@@ -495,11 +556,16 @@ export default function EventsScreen() {
     setTees([]);
     setTeesError(null);
     setSelectedTee(null);
+    setSelectedLadiesTee(null);
     setShowManualTee(false);
     setManualTeeName("");
     setManualPar("");
     setManualCourseRating("");
     setManualSlopeRating("");
+    setManualLadiesTeeName("");
+    setManualLadiesPar("");
+    setManualLadiesCourseRating("");
+    setManualLadiesSlopeRating("");
     setFormHandicapAllowance("95");
     setIsJointEvent(false);
     setHostSocietyId("");
@@ -726,8 +792,14 @@ export default function EventsScreen() {
                       setSelectedCourse(null);
                       setTees([]);
                       setSelectedTee(null);
+                      setSelectedLadiesTee(null);
                       setShowManualTee(false);
-                      setFormErrors((prev) => ({ ...prev, course: undefined, courseTee: undefined }));
+                      setFormErrors((prev) => ({
+                        ...prev,
+                        course: undefined,
+                        courseTee: undefined,
+                        courseTeeLadies: undefined,
+                      }));
                     }}
                     hitSlop={8}
                   >
@@ -815,19 +887,97 @@ export default function EventsScreen() {
                   </AppText>
                 ) : tees.length > 0 ? (
                   <>
-                    <CourseTeeSelector
-                      tees={tees}
-                      selectedTee={selectedTee}
-                      onSelectTee={(tee) => {
-                        console.log("[events] tee selected:", tee.id, tee.tee_name);
-                        setSelectedTee(tee);
-                        setShowManualTee(false);
-                        setFormErrors((prev) => ({ ...prev, courseTee: undefined }));
-                      }}
-                    />
+                    {!showManualTee && (
+                      <>
+                        <CourseTeeSelector
+                          sectionTitle="Men's tee (required)"
+                          tees={menOptions}
+                          selectedTee={selectedTee}
+                          onSelectTee={(tee) => {
+                            setSelectedTee(tee);
+                            setShowManualTee(false);
+                            setFormErrors((prev) => ({ ...prev, courseTee: undefined }));
+                          }}
+                        />
+                        <CourseTeeSelector
+                          sectionTitle="Ladies' tee (required)"
+                          tees={ladiesOptions}
+                          selectedTee={selectedLadiesTee}
+                          onSelectTee={(tee) => {
+                            setSelectedLadiesTee(tee);
+                            setFormErrors((prev) => ({ ...prev, courseTeeLadies: undefined }));
+                          }}
+                        />
+                        {ladiesOptions.length === 0 && (
+                          <>
+                            <InlineNotice
+                              variant="info"
+                              message="No ladies' tees found in course data. Enter ladies' tee ratings below (required)."
+                              style={{ marginTop: spacing.sm }}
+                            />
+                            <AppText variant="captionBold" color="secondary" style={{ marginTop: spacing.sm }}>
+                              Ladies&apos; tee — manual entry
+                            </AppText>
+                            <View style={styles.formField}>
+                              <AppText variant="caption" style={styles.label}>Tee name</AppText>
+                              <AppInput
+                                placeholder="e.g. Red"
+                                value={manualLadiesTeeName}
+                                onChangeText={(v) => {
+                                  setManualLadiesTeeName(v);
+                                  setFormErrors((prev) => ({ ...prev, courseTeeLadies: undefined }));
+                                }}
+                                autoCapitalize="words"
+                              />
+                            </View>
+                            <View style={styles.formField}>
+                              <AppText variant="caption" style={styles.label}>Par</AppText>
+                              <AppInput
+                                placeholder="e.g. 72"
+                                value={manualLadiesPar}
+                                onChangeText={(v) => {
+                                  setManualLadiesPar(v);
+                                  setFormErrors((prev) => ({ ...prev, courseTeeLadies: undefined }));
+                                }}
+                                keyboardType="number-pad"
+                              />
+                            </View>
+                            <View style={styles.formField}>
+                              <AppText variant="caption" style={styles.label}>Course rating</AppText>
+                              <AppInput
+                                placeholder="e.g. 68.4"
+                                value={manualLadiesCourseRating}
+                                onChangeText={(v) => {
+                                  setManualLadiesCourseRating(v);
+                                  setFormErrors((prev) => ({ ...prev, courseTeeLadies: undefined }));
+                                }}
+                                keyboardType="decimal-pad"
+                              />
+                            </View>
+                            <View style={styles.formField}>
+                              <AppText variant="caption" style={styles.label}>Slope rating</AppText>
+                              <AppInput
+                                placeholder="e.g. 120"
+                                value={manualLadiesSlopeRating}
+                                onChangeText={(v) => {
+                                  setManualLadiesSlopeRating(v);
+                                  setFormErrors((prev) => ({ ...prev, courseTeeLadies: undefined }));
+                                }}
+                                keyboardType="number-pad"
+                              />
+                            </View>
+                          </>
+                        )}
+                      </>
+                    )}
                     {formErrors.courseTee ? (
                       <AppText variant="small" style={[styles.fieldError, { color: colors.error, marginTop: 4 }]}>
                         {formErrors.courseTee}
+                      </AppText>
+                    ) : null}
+                    {formErrors.courseTeeLadies ? (
+                      <AppText variant="small" style={[styles.fieldError, { color: colors.error, marginTop: 4 }]}>
+                        {formErrors.courseTeeLadies}
                       </AppText>
                     ) : null}
                   </>

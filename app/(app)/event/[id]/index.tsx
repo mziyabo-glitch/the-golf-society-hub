@@ -36,27 +36,33 @@ import { getTeesByCourseId, getCourseByApiId, getCourseMetaById, upsertTeesFromA
 import { searchCourses as searchCoursesApi, getCourseById, type ApiCourseSearchResult } from "@/lib/golfApi";
 import { importCourse, type ImportedCourse } from "@/lib/importCourse";
 import { CourseTeeSelector } from "@/components/CourseTeeSelector";
+import { InlineNotice } from "@/components/ui/InlineNotice";
+import {
+  menAndLadiesTeeOptions,
+  matchLadiesTeeFromEvent,
+  hasManualLadiesTeeMinimum,
+} from "@/lib/courseTeeGender";
 import { getPermissionsForMember } from "@/lib/rbac";
 import {
   getEventRegistrations,
   markMePaid,
-  summarizeEventRegistrations,
+  filterRegistrationsForActiveSocietyMembers,
   type EventRegistration,
 } from "@/lib/db_supabase/eventRegistrationRepo";
 import { getMembersBySocietyId, getMembersByIds, type MemberDoc } from "@/lib/db_supabase/memberRepo";
 import { resolveAttendeeDisplayName } from "@/lib/eventAttendeeName";
-import { buildSocietyIdToNameMap } from "@/lib/jointEventSocietyLabel";
 import {
-  canonicalJointPersonKey,
-  mergeJointAttendingDisplayRows,
-} from "@/lib/jointPersonDedupe";
+  partitionSocietyRegistrations,
+  lineupMemberIdsPendingFee,
+  memberIdsConfirmedIn,
+  withdrawnRegsForDisplay,
+} from "@/lib/eventPlayerStatus";
 import { Toast } from "@/components/ui/Toast";
 import { getColors, spacing, radius, typography } from "@/lib/ui/theme";
 import { confirmDestructive, showAlert } from "@/lib/ui/alert";
 import {
   JOINT_EVENT_CHIP_LONG,
   JOINT_EVENT_CHIP_SHORT,
-  JOINT_EVENT_DETAIL_ATTENDANCE_NOTE,
   PaymentPill,
 } from "@/lib/eventModuleUi";
 import { getSocietyLogoUrl } from "@/lib/societyLogo";
@@ -140,6 +146,7 @@ export default function EventDetailScreen() {
   const [tees, setTees] = useState<CourseTee[]>([]);
   const [teesLoading, setTeesLoading] = useState(false);
   const [selectedTee, setSelectedTee] = useState<CourseTee | null>(null);
+  const [selectedLadiesTee, setSelectedLadiesTee] = useState<CourseTee | null>(null);
   const [teeStatus, setTeeStatus] = useState<"synced" | "manual" | "import_failed" | "pending_sync" | null>(null);
   const [teeStatusMessage, setTeeStatusMessage] = useState<string | null>(null);
 
@@ -191,6 +198,8 @@ export default function EventDetailScreen() {
     formEditParticipatingSocieties.length,
   ]);
 
+  const { menOptions, ladiesOptions } = useMemo(() => menAndLadiesTeeOptions(tees), [tees]);
+
   const parseOptionalNumber = (value: string, round = false): number | undefined => {
     const trimmed = value.trim();
     if (!trimmed) return undefined;
@@ -230,14 +239,6 @@ export default function EventDetailScreen() {
               }))
             );
             setJointEntries(jointPayload.entries ?? []);
-            if (__DEV__) {
-              console.log("[EventDetail] Joint path (base event + joint payload):", {
-                eventId,
-                societies: jointPayload.participating_societies?.length ?? 0,
-                entries: jointPayload.entries?.length ?? 0,
-                legacyPlayerIdsCount: baseEvent?.playerIds?.length ?? 0,
-              });
-            }
           } else {
             setEvent(baseEvent);
             setJointParticipatingSocieties([]);
@@ -264,13 +265,6 @@ export default function EventDetailScreen() {
             }))
           );
           setJointEntries(jointPayload.entries ?? []);
-          if (__DEV__) {
-            console.log("[EventDetail] Joint path (fallback, participating-society access):", {
-              eventId,
-              societies: jointPayload.participating_societies?.length ?? 0,
-              entries: jointPayload.entries?.length ?? 0,
-            });
-          }
         } else {
           setError("Event not found");
         }
@@ -294,9 +288,12 @@ export default function EventDetailScreen() {
   // ---- Paid Players dashboard ----
   const canManagePayments = permissions.canManageEventPayments;
   const [registrations, setRegistrations] = useState<EventRegistration[]>([]);
-  const [regMembers, setRegMembers] = useState<MemberDoc[]>([]);
+  /** Members of the active society only — sole source for society-scoped attendance / payment / confirmed lists. */
+  const [activeSocietyMembers, setActiveSocietyMembers] = useState<MemberDoc[]>([]);
   const [payBusy, setPayBusy] = useState<string | null>(null);
   const [payToast, setPayToast] = useState<{ visible: boolean; message: string; type: "success" | "error" }>({ visible: false, message: "", type: "success" });
+
+  const hostSocietyId = event?.society_id ?? societyId ?? null;
 
   const loadRegistrations = useCallback(async () => {
     if (!eventId || !societyId) return;
@@ -306,36 +303,33 @@ export default function EventDetailScreen() {
         getMembersBySocietyId(societyId),
       ]);
       setRegistrations(regs);
-      const byId = new Map<string, MemberDoc>();
-      for (const m of mems) byId.set(m.id, m);
-      const regMemberIds = [...new Set(regs.map((r) => r.member_id).filter(Boolean))];
-      const missing = regMemberIds.filter((id) => !byId.has(id));
-      if (missing.length > 0) {
-        const extra = await getMembersByIds(missing);
-        for (const m of extra) {
-          if (m?.id && !byId.has(m.id)) byId.set(m.id, m);
-        }
-      }
-      setRegMembers(Array.from(byId.values()));
-    } catch { /* non-critical */ }
+      setActiveSocietyMembers(mems);
+    } catch {
+      /* non-critical */
+    }
   }, [eventId, societyId]);
 
   useEffect(() => {
     if (eventId && societyId) loadRegistrations();
   }, [eventId, societyId, loadRegistrations]);
 
-  const memberByIdForRegs = useMemo(() => new Map(regMembers.map((m) => [m.id, m])), [regMembers]);
-  const memberStubById = useCallback(
-    (memberId: string): MemberDoc =>
-      memberByIdForRegs.get(memberId) ?? ({ id: memberId, society_id: "" } as MemberDoc),
-    [memberByIdForRegs],
+  const memberByIdForRegs = useMemo(
+    () => new Map(activeSocietyMembers.map((m) => [m.id, m])),
+    [activeSocietyMembers],
   );
-  const canonicalKeyForMemberId = useCallback(
-    (memberId: string): string => canonicalJointPersonKey(memberStubById(memberId)),
-    [memberStubById],
+  const activeMemberIdSet = useMemo(
+    () => new Set(activeSocietyMembers.map((m) => m.id)),
+    [activeSocietyMembers],
   );
+  /**
+   * Fee/RSVP rows for this page: registration.society_id === active society and member in activeSocietyMembers.
+   */
+  const societyPageRegistrations = useMemo(() => {
+    if (!societyId) return [];
+    return filterRegistrationsForActiveSocietyMembers(registrations, societyId, activeMemberIdSet);
+  }, [registrations, societyId, activeMemberIdSet]);
 
-  /** Display name per registration row (hydrates cross-society players for joint events). */
+  /** Display name per registration row. */
   const registrationMemberDisplayName = useCallback(
     (reg: EventRegistration) => {
       const m = memberByIdForRegs.get(reg.member_id);
@@ -355,24 +349,21 @@ export default function EventDetailScreen() {
     [memberByIdForRegs],
   );
 
-  /** Hydrate display names for captain line-up (playerIds) and joint entry player ids. */
+  /** Optional: fetch member docs for playerIds not yet in active society list (same society only). */
   useEffect(() => {
     if (!eventId || !societyId) return;
-    const ids = [...(event?.playerIds ?? []), ...jointEntries.map((e) => e.player_id)]
-      .filter(Boolean)
-      .map(String);
-    const unique = [...new Set(ids)];
-    const need = unique.filter((id) => !memberByIdForRegs.has(id));
+    const ids = [...new Set((event?.playerIds ?? []).map(String).filter(Boolean))];
+    const need = ids.filter((id) => !memberByIdForRegs.has(id));
     if (need.length === 0) return;
     let cancelled = false;
     void (async () => {
       try {
         const extra = await getMembersByIds(need);
         if (cancelled) return;
-        setRegMembers((prev) => {
+        setActiveSocietyMembers((prev) => {
           const m = new Map(prev.map((x) => [x.id, x]));
           for (const x of extra) {
-            if (x?.id && !m.has(x.id)) m.set(x.id, x);
+            if (x?.id && x.society_id === societyId && !m.has(x.id)) m.set(x.id, x);
           }
           return Array.from(m.values());
         });
@@ -383,152 +374,45 @@ export default function EventDetailScreen() {
     return () => {
       cancelled = true;
     };
-  }, [eventId, societyId, event?.playerIds, jointEntries, memberByIdForRegs]);
+  }, [eventId, societyId, event?.playerIds, memberByIdForRegs]);
 
-  const attendanceRegsByPerson = useMemo(() => {
-    const pickBetter = (a: EventRegistration, b: EventRegistration): EventRegistration => {
-      const score = (r: EventRegistration) =>
-        (r.paid ? 100 : 0) +
-        (r.status === "in" ? 10 : 0) +
-        (r.updated_at ? new Date(r.updated_at).getTime() / 1_000_000_000_000 : 0);
-      return score(b) > score(a) ? b : a;
-    };
-    const byKey = new Map<string, EventRegistration>();
-    for (const reg of registrations) {
-      const key = canonicalKeyForMemberId(String(reg.member_id));
-      const prev = byKey.get(key);
-      byKey.set(key, prev ? pickBetter(prev, reg) : reg);
-    }
-    return byKey;
-  }, [registrations, canonicalKeyForMemberId]);
-
-  const attendingRegs = useMemo(
-    () => [...attendanceRegsByPerson.values()].filter((r) => r.status === "in"),
-    [attendanceRegsByPerson],
+  /** Canonical buckets: paid ⇒ confirmed; tee sheet = paid + confirmed (see `eventPlayerStatus`). */
+  const buckets = useMemo(
+    () => partitionSocietyRegistrations(societyPageRegistrations),
+    [societyPageRegistrations],
   );
 
-  const captainPickMemberIds = useMemo(() => {
-    const regInKeys = new Set(attendingRegs.map((r) => canonicalKeyForMemberId(String(r.member_id))));
-    const seenKeys = new Set<string>();
-    const out: string[] = [];
-    for (const rawId of event?.playerIds ?? []) {
-      const id = String(rawId);
-      if (!id) continue;
-      const key = canonicalKeyForMemberId(id);
-      if (regInKeys.has(key)) continue;
-      if (seenKeys.has(key)) continue;
-      seenKeys.add(key);
-      out.push(id);
-    }
-    return out;
-  }, [attendingRegs, event?.playerIds, canonicalKeyForMemberId]);
-
-  const standardAttendingTotalCount = useMemo(() => {
-    const s = new Set<string>();
-    attendingRegs.forEach((r) => s.add(canonicalKeyForMemberId(String(r.member_id))));
-    captainPickMemberIds.forEach((id) => s.add(canonicalKeyForMemberId(id)));
-    return s.size;
-  }, [attendingRegs, captainPickMemberIds, canonicalKeyForMemberId]);
-
-  const regSummary = useMemo(
-    () => summarizeEventRegistrations(registrations),
-    [registrations],
-  );
-  const {
-    attendingCount,
-    outstandingCount,
-    paidAmongAttendingCount,
-  } = regSummary;
-
-  const jointConfirmedCount = useMemo(() => {
-    if (event?.is_joint_event !== true) return 0;
-    const memberIds: string[] = [];
-    jointEntries.forEach((e) => {
-      if (e.player_id) memberIds.push(String(e.player_id));
-    });
-    (event.playerIds ?? []).forEach((id) => {
-      if (id) memberIds.push(String(id));
-    });
-    registrations.filter((r) => r.status === "in").forEach((r) => memberIds.push(String(r.member_id)));
-    const keys = new Set<string>();
-    for (const id of memberIds) {
-      const m = memberByIdForRegs.get(id);
-      keys.add(
-        canonicalJointPersonKey(
-          m ?? ({ id, society_id: "" } as MemberDoc),
-        ),
-      );
-    }
-    return keys.size;
-  }, [
-    event?.is_joint_event,
-    event?.playerIds,
-    jointEntries,
-    registrations,
-    memberByIdForRegs,
-  ]);
-
-  const jointSocietyIdToName = useMemo(
-    () => buildSocietyIdToNameMap(jointParticipatingSocieties),
-    [jointParticipatingSocieties],
+  const regInMemberIds = useMemo(
+    () => memberIdsConfirmedIn(societyPageRegistrations),
+    [societyPageRegistrations],
   );
 
-  const jointAttendingRows = useMemo(() => {
-    if (event?.is_joint_event !== true) return [];
+  /** Playing list (event.playerIds) in this society with no "in" registration row yet. */
+  const captainPickMemberIds = useMemo(
+    () =>
+      lineupMemberIdsPendingFee({
+        playerIds: event?.playerIds,
+        societyMemberIds: activeMemberIdSet,
+        regInMemberIds,
+      }),
+    [event?.playerIds, activeMemberIdSet, regInMemberIds],
+  );
 
-    const items: {
-      memberId: string;
-      primary: string;
-      sourceNote?: string;
-      priority: number;
-    }[] = [];
+  const notPlayingRegs = useMemo(
+    () =>
+      withdrawnRegsForDisplay(
+        societyPageRegistrations,
+        activeMemberIdSet,
+        regInMemberIds,
+        captainPickMemberIds,
+      ),
+    [societyPageRegistrations, activeMemberIdSet, regInMemberIds, captainPickMemberIds],
+  );
 
-    for (const entry of jointEntries) {
-      const pid = String(entry.player_id);
-      if (!pid) continue;
-      const fromEntry = entry.player_name?.trim();
-      const primary =
-        fromEntry ||
-        resolveAttendeeDisplayName(memberByIdForRegs.get(pid), { memberId: pid }).name;
-      items.push({ memberId: pid, primary, sourceNote: "Event entry", priority: 0 });
-    }
-
-    for (const raw of event?.playerIds ?? []) {
-      const pid = String(raw);
-      if (!pid) continue;
-      const mem = memberByIdForRegs.get(pid);
-      items.push({
-        memberId: pid,
-        primary: resolveAttendeeDisplayName(mem, { memberId: pid }).name,
-        sourceNote: "Players list",
-        priority: 1,
-      });
-    }
-
-    for (const r of registrations) {
-      if (r.status !== "in") continue;
-      items.push({
-        memberId: String(r.member_id),
-        primary: registrationMemberDisplayName(r),
-        sourceNote: "RSVP",
-        priority: 2,
-      });
-    }
-
-    return mergeJointAttendingDisplayRows(
-      items,
-      (id) => memberByIdForRegs.get(id),
-      jointSocietyIdToName,
-    );
-  }, [
-    event?.is_joint_event,
-    event?.playerIds,
-    jointEntries,
-    jointSocietyIdToName,
-    registrations,
-    memberByIdForRegs,
-    registrationMemberDisplayName,
-  ]);
+  const teeSheetEligibleCount = buckets.confirmedPaid.length;
+  const pendingPaymentCount = buckets.pendingPayment.length + captainPickMemberIds.length;
+  const activeRosterCount =
+    buckets.confirmedPaid.length + buckets.pendingPayment.length + captainPickMemberIds.length;
 
   const handleTogglePaid = async (reg: EventRegistration) => {
     if (payBusy) return;
@@ -554,22 +438,8 @@ export default function EventDetailScreen() {
    */
   const handleLineupMemberFeeAction = async (memberId: string, paid: boolean) => {
     if (payBusy || !eventId) return;
-    const actionType = paid ? "mark_paid" : "record_unpaid";
-    const sourceMember = memberStubById(memberId);
-    const sourceKey = canonicalJointPersonKey(sourceMember);
-    const hostSocietyId = event?.society_id ?? societyId ?? "";
-    const hostCandidate = regMembers.find((m) =>
-      m.society_id === hostSocietyId && canonicalJointPersonKey(m) === sourceKey,
-    );
-    const targetMemberId = hostCandidate?.id ?? memberId;
-    if (__DEV__) {
-      console.log("[attendance-actions] create fee row start", {
-        eventId,
-        memberId,
-        targetMemberId,
-        actionType,
-      });
-    }
+    /** Society-scoped page: fee row is always for this member_id in the active society. */
+    const targetMemberId = memberId;
     setPayBusy(memberId);
     try {
       await markMePaid(eventId, targetMemberId, paid);
@@ -581,126 +451,12 @@ export default function EventDetailScreen() {
         type: "success",
       });
       await loadRegistrations();
-      if (__DEV__) {
-        console.log("[attendance-actions] create fee row success", {
-          eventId,
-          memberId,
-          targetMemberId,
-          actionType,
-        });
-      }
     } catch (e: any) {
       setPayToast({ visible: true, message: e?.message || "Failed", type: "error" });
-      if (__DEV__) {
-        console.log("[attendance-actions] create fee row failure", {
-          eventId,
-          memberId,
-          targetMemberId,
-          actionType,
-          error: e?.message || String(e),
-        });
-      }
     } finally {
       setPayBusy(null);
     }
   };
-
-  const notPlayingRegs = useMemo(() => {
-    const byKey = new Map<string, EventRegistration>();
-    const inMainKeys = new Set<string>([
-      ...attendingRegs.map((r) => canonicalKeyForMemberId(String(r.member_id))),
-      ...captainPickMemberIds.map((id) => canonicalKeyForMemberId(id)),
-    ]);
-    for (const reg of registrations) {
-      if (reg.status !== "out") continue;
-      const key = canonicalKeyForMemberId(String(reg.member_id));
-      if (inMainKeys.has(key)) continue;
-      const prev = byKey.get(key);
-      if (!prev) {
-        byKey.set(key, reg);
-        continue;
-      }
-      const prevTs = prev.updated_at ? new Date(prev.updated_at).getTime() : 0;
-      const nextTs = reg.updated_at ? new Date(reg.updated_at).getTime() : 0;
-      if (nextTs >= prevTs) byKey.set(key, reg);
-    }
-    return [...byKey.values()];
-  }, [registrations, attendingRegs, captainPickMemberIds, canonicalKeyForMemberId]);
-
-  useEffect(() => {
-    if (!__DEV__ || event?.is_joint_event === true) return;
-    const srcRows = [
-      ...registrations.map((r) => {
-        const m = memberByIdForRegs.get(r.member_id);
-        return {
-          sourceType: `registration:${r.status}:${r.paid ? "paid" : "unpaid"}`,
-          member_id: r.member_id,
-          user_id: m?.user_id ?? null,
-          person_id: m?.person_id ?? null,
-          email: m?.email ?? null,
-          display_name: registrationMemberDisplayName(r),
-        };
-      }),
-      ...(event?.playerIds ?? []).map((id) => {
-        const m = memberByIdForRegs.get(String(id));
-        return {
-          sourceType: "playing_list",
-          member_id: String(id),
-          user_id: m?.user_id ?? null,
-          person_id: m?.person_id ?? null,
-          email: m?.email ?? null,
-          display_name: memberNameForAttendeeId(String(id)),
-        };
-      }),
-    ];
-    const dedupRows = [
-      ...attendingRegs.map((r) => {
-        const m = memberByIdForRegs.get(r.member_id);
-        return {
-          sourceType: `dedup_main:registration:${r.status}:${r.paid ? "paid" : "unpaid"}`,
-          member_id: r.member_id,
-          user_id: m?.user_id ?? null,
-          person_id: m?.person_id ?? null,
-          email: m?.email ?? null,
-          display_name: registrationMemberDisplayName(r),
-        };
-      }),
-      ...captainPickMemberIds.map((id) => {
-        const m = memberByIdForRegs.get(String(id));
-        return {
-          sourceType: "dedup_main:playing_list_placeholder",
-          member_id: String(id),
-          user_id: m?.user_id ?? null,
-          person_id: m?.person_id ?? null,
-          email: m?.email ?? null,
-          display_name: memberNameForAttendeeId(String(id)),
-        };
-      }),
-      ...notPlayingRegs.map((r) => {
-        const m = memberByIdForRegs.get(r.member_id);
-        return {
-          sourceType: "dedup_not_playing",
-          member_id: r.member_id,
-          user_id: m?.user_id ?? null,
-          person_id: m?.person_id ?? null,
-          email: m?.email ?? null,
-          display_name: registrationMemberDisplayName(r),
-        };
-      }),
-    ];
-    console.log("[attendance-list] source rows", srcRows);
-    console.log("[attendance-list] deduped rows", dedupRows);
-  }, [
-    event?.is_joint_event,
-    event?.playerIds,
-    registrations,
-    memberByIdForRegs,
-    registrationMemberDisplayName,
-    memberNameForAttendeeId,
-    attendingRegs,
-    captainPickMemberIds,
-    notPlayingRegs,
-  ]);
 
   // Debounced course search (400ms - only fires after typing stops to avoid API quota burn)
   const debouncedSearch = useMemo(
@@ -737,6 +493,7 @@ export default function EventDetailScreen() {
     setCourseSearchResults([]);
     setCourseSearchQuery("");
     setSelectedTee(null);
+    setSelectedLadiesTee(null);
     setTees([]);
     setTeesLoading(true);
     setTeeStatus(null);
@@ -804,6 +561,7 @@ export default function EventDetailScreen() {
     if (!courseId) {
       setTees([]);
       setSelectedTee(null);
+      setSelectedLadiesTee(null);
       setTeeStatus(null);
       setTeeStatusMessage(null);
       return;
@@ -814,6 +572,18 @@ export default function EventDetailScreen() {
       setTees(list);
       const match = teeId ? list.find((t) => t.id === teeId) : null;
       setSelectedTee(match ?? null);
+      if (savedEvent) {
+        setSelectedLadiesTee(
+          matchLadiesTeeFromEvent(list, {
+            ladiesTeeName: savedEvent.ladiesTeeName,
+            ladiesPar: savedEvent.ladiesPar,
+            ladiesCourseRating: savedEvent.ladiesCourseRating,
+            ladiesSlopeRating: savedEvent.ladiesSlopeRating,
+          }),
+        );
+      } else {
+        setSelectedLadiesTee(null);
+      }
       if (list.length > 0) {
         setTeeStatus("synced");
         setTeeStatusMessage("Synced tee data loaded.");
@@ -867,6 +637,7 @@ export default function EventDetailScreen() {
     } catch {
       setTees([]);
       setSelectedTee(null);
+      setSelectedLadiesTee(null);
       setShowManualTee(true);
       setTeeStatus(savedEvent?.teeName ? "manual" : "import_failed");
       setTeeStatusMessage(savedEvent?.teeName
@@ -880,6 +651,7 @@ export default function EventDetailScreen() {
   // Populate form when entering edit mode
   const startEditing = async () => {
     if (!event) return;
+    setSelectedLadiesTee(null);
     setFormName(event.name || "");
     setFormDate(event.date || "");
     setFormFormat(event.format || "stableford");
@@ -983,6 +755,59 @@ export default function EventDetailScreen() {
       }
     }
 
+    const courseForTee = selectedCourseEdit?.id ?? event?.course_id;
+    if (courseForTee && tees.length > 0 && !showManualTee) {
+      if (!selectedTee) {
+        showAlert("Tee setup", "Select a men's tee for this course.");
+        return;
+      }
+      if (ladiesOptions.length > 0) {
+        if (!selectedLadiesTee) {
+          showAlert("Tee setup", "Select a ladies' tee for this course.");
+          return;
+        }
+      } else if (
+        !hasManualLadiesTeeMinimum({
+          manualLadiesTeeName,
+          manualLadiesPar,
+          manualLadiesCourseRating,
+          manualLadiesSlopeRating,
+        })
+      ) {
+        showAlert(
+          "Tee setup",
+          "No ladies' tees in course data — enter ladies' tee name, par, course rating, and slope.",
+        );
+        return;
+      }
+    }
+    if (showManualTee) {
+      const maleOk =
+        selectedTee != null ||
+        (manualTeeName.trim() &&
+          manualPar.trim() &&
+          manualCourseRating.trim() &&
+          manualSlopeRating.trim());
+      if (!maleOk) {
+        showAlert(
+          "Tee setup",
+          "Enter men's tee details (name, par, course rating, slope) or select a men's tee above.",
+        );
+        return;
+      }
+      if (
+        !hasManualLadiesTeeMinimum({
+          manualLadiesTeeName,
+          manualLadiesPar,
+          manualLadiesCourseRating,
+          manualLadiesSlopeRating,
+        })
+      ) {
+        showAlert("Tee setup", "Enter ladies' tee name, par, course rating, and slope.");
+        return;
+      }
+    }
+
     const handicapAllowance = formHandicapAllowance.trim()
       ? parseFloat(formHandicapAllowance.trim()) / 100
       : 0.95;
@@ -1026,23 +851,22 @@ export default function EventDetailScreen() {
     const par = selectedTee?.par_total ?? parseOptionalNumber(manualPar, true) ?? event?.par ?? undefined;
     const courseRating = selectedTee?.course_rating ?? parseOptionalNumber(manualCourseRating) ?? event?.courseRating ?? undefined;
     const slopeRating = selectedTee?.slope_rating ?? parseOptionalNumber(manualSlopeRating, true) ?? event?.slopeRating ?? undefined;
-    const ladiesTeeName = manualLadiesTeeName.trim() || undefined;
-    const ladiesPar = parseOptionalNumber(manualLadiesPar, true);
-    const ladiesCourseRating = parseOptionalNumber(manualLadiesCourseRating);
-    const ladiesSlopeRating = parseOptionalNumber(manualLadiesSlopeRating, true);
+    const ladiesTeeName =
+      selectedLadiesTee?.tee_name ?? (manualLadiesTeeName.trim() || event?.ladiesTeeName || undefined);
+    const ladiesPar = selectedLadiesTee
+      ? selectedLadiesTee.par_total
+      : parseOptionalNumber(manualLadiesPar, true) ?? event?.ladiesPar ?? undefined;
+    const ladiesCourseRating = selectedLadiesTee
+      ? selectedLadiesTee.course_rating
+      : parseOptionalNumber(manualLadiesCourseRating) ?? event?.ladiesCourseRating ?? undefined;
+    const ladiesSlopeRating = selectedLadiesTee
+      ? selectedLadiesTee.slope_rating
+      : parseOptionalNumber(manualLadiesSlopeRating, true) ?? event?.ladiesSlopeRating ?? undefined;
     const teeSource = selectedTee
       ? "imported"
       : teeName || par != null || courseRating != null || slopeRating != null
         ? "manual"
         : event?.teeSource ?? undefined;
-
-    console.log("[event] handleSaveEvent before update:", {
-      course_id: courseId,
-      tee_id: teeId,
-      selectedTeeId: selectedTee?.id ?? null,
-      selectedTee: selectedTee ? { id: selectedTee.id, tee_name: selectedTee.tee_name } : null,
-      loadedTeeIds: tees.map((t) => t.id),
-    });
 
     setSaving(true);
     try {
@@ -1161,7 +985,6 @@ export default function EventDetailScreen() {
       console.error("[EventDetail] Cannot open points: eventId is undefined");
       return;
     }
-    console.log("[EventDetail] opening points for event:", eventId);
     router.push({ pathname: "/(app)/event/[id]/points", params: { id: eventId } });
   };
 
@@ -1385,15 +1208,81 @@ export default function EventDetailScreen() {
                 {/* Tee selector from imported tees */}
                 {(selectedCourseEdit?.id || event.course_id) && (
                   <View style={styles.formField}>
-                    <AppText variant="captionBold" style={styles.label}>Select Tee</AppText>
+                    <AppText variant="captionBold" style={styles.label}>Tees</AppText>
                     {teesLoading ? (
                       <AppText variant="small" color="tertiary">Importing course and tees…</AppText>
                     ) : tees.length > 0 ? (
-                      <CourseTeeSelector
-                        tees={tees}
-                        selectedTee={selectedTee}
-                        onSelectTee={(tee) => { setSelectedTee(tee); setShowManualTee(false); }}
-                      />
+                      !showManualTee ? (
+                        <>
+                          <CourseTeeSelector
+                            sectionTitle="Men's tee (required)"
+                            tees={menOptions}
+                            selectedTee={selectedTee}
+                            onSelectTee={(tee) => {
+                              setSelectedTee(tee);
+                              setShowManualTee(false);
+                            }}
+                          />
+                          <CourseTeeSelector
+                            sectionTitle="Ladies' tee (required)"
+                            tees={ladiesOptions}
+                            selectedTee={selectedLadiesTee}
+                            onSelectTee={(tee) => setSelectedLadiesTee(tee)}
+                          />
+                          {ladiesOptions.length === 0 && (
+                            <>
+                              <InlineNotice
+                                variant="info"
+                                message="No ladies' tees found in course data. Enter ladies' tee ratings below (required)."
+                                style={{ marginTop: spacing.sm }}
+                              />
+                              <AppText variant="captionBold" color="secondary" style={{ marginTop: spacing.sm }}>
+                                Ladies&apos; tee — manual entry
+                              </AppText>
+                              <View style={styles.formField}>
+                                <AppText variant="caption" style={styles.label}>Tee name</AppText>
+                                <AppInput
+                                  placeholder="e.g. Red"
+                                  value={manualLadiesTeeName}
+                                  onChangeText={setManualLadiesTeeName}
+                                  autoCapitalize="words"
+                                />
+                              </View>
+                              <View style={styles.formField}>
+                                <AppText variant="caption" style={styles.label}>Par</AppText>
+                                <AppInput
+                                  placeholder="e.g. 72"
+                                  value={manualLadiesPar}
+                                  onChangeText={setManualLadiesPar}
+                                  keyboardType="number-pad"
+                                />
+                              </View>
+                              <View style={styles.formField}>
+                                <AppText variant="caption" style={styles.label}>Course rating</AppText>
+                                <AppInput
+                                  placeholder="e.g. 68.4"
+                                  value={manualLadiesCourseRating}
+                                  onChangeText={setManualLadiesCourseRating}
+                                  keyboardType="decimal-pad"
+                                />
+                              </View>
+                              <View style={styles.formField}>
+                                <AppText variant="caption" style={styles.label}>Slope rating</AppText>
+                                <AppInput
+                                  placeholder="e.g. 120"
+                                  value={manualLadiesSlopeRating}
+                                  onChangeText={setManualLadiesSlopeRating}
+                                  keyboardType="number-pad"
+                                />
+                              </View>
+                            </>
+                          )}
+                        </>
+                      ) : (
+                        <AppText variant="small" color="tertiary" style={{ marginBottom: spacing.xs }}>
+                          Using manual tee entry below.
+                        </AppText>
+                      )
                     ) : (
                       <AppText variant="small" color="tertiary" style={{ marginBottom: spacing.xs }}>
                         No tees found for this course.
@@ -1550,7 +1439,7 @@ export default function EventDetailScreen() {
   }
 
   return (
-    <Screen>
+    <Screen contentStyle={styles.screenContent}>
       {/* Header with Back, Edit, and Society Badge */}
       <View style={styles.header}>
         <SecondaryButton onPress={() => goBack(router, "/(app)/(tabs)/events")} size="sm">
@@ -1665,8 +1554,8 @@ export default function EventDetailScreen() {
             icon="users"
             title="Players"
             subtitle={event.is_joint_event === true
-              ? `${jointConfirmedCount} confirmed · ${JOINT_EVENT_CHIP_SHORT} (fees per society)`
-              : `${standardAttendingTotalCount} confirmed · ${paidAmongAttendingCount} paid · ${outstandingCount} payment due`}
+              ? `${activeRosterCount} on roster (this society) · ${teeSheetEligibleCount} paid & confirmed (tee sheet) · ${pendingPaymentCount} payment pending · ${JOINT_EVENT_CHIP_SHORT}`
+              : `${activeRosterCount} on roster · ${teeSheetEligibleCount} paid & confirmed (tee sheet) · ${pendingPaymentCount} payment pending`}
           />
         </AppCard>
       </Pressable>
@@ -1698,52 +1587,29 @@ export default function EventDetailScreen() {
         </Pressable>
       )}
 
-      {/* Confirmed players (joint: event entries + Players line-up + visible RSVPs) */}
-      {event.is_joint_event === true && jointAttendingRows.length > 0 && (
-        <AppCard style={styles.card}>
-          <AppText variant="h2" style={{ marginBottom: spacing.sm }}>Confirmed Players</AppText>
-          <AppText variant="small" color="secondary" style={{ marginBottom: spacing.sm }}>
-            {jointConfirmedCount} player{jointConfirmedCount !== 1 ? "s" : ""} · add or remove via Players
-          </AppText>
-          <AppText variant="small" color="tertiary" style={{ marginBottom: spacing.sm }}>
-            {JOINT_EVENT_DETAIL_ATTENDANCE_NOTE}
-          </AppText>
-          {jointAttendingRows.map((row) => (
-            <View key={row.key} style={{ paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: "#F3F4F6" }}>
-              <AppText variant="body" numberOfLines={2} style={{ fontWeight: "600" }}>
-                {row.primary}
-              </AppText>
-              <AppText variant="caption" color="secondary" style={{ marginTop: 4 }}>
-                {row.societyLine}
-              </AppText>
-              {row.sourceNote ? (
-                <AppText variant="small" color="tertiary" style={{ marginTop: 2 }}>
-                  {row.sourceNote}
-                </AppText>
-              ) : null}
-            </View>
-          ))}
-        </AppCard>
-      )}
-
-      {/* Attendance & payment (standard: RSVP rows + captain Players list line-up) */}
-      {event.is_joint_event !== true &&
-        (registrations.length > 0 || standardAttendingTotalCount > 0) && (
+      {/* Society-scoped payment: paid = confirmed; tee sheet = paid + confirmed */}
+      {(societyPageRegistrations.length > 0 ||
+        captainPickMemberIds.length > 0 ||
+        notPlayingRegs.length > 0) && (
         <AppCard style={styles.card}>
           <View style={styles.paidHeader}>
             <View style={{ flex: 1 }}>
-              <AppText variant="h2">Attendance &amp; payment</AppText>
+              <AppText variant="h2">Payment &amp; status</AppText>
               <AppText variant="small" color="secondary">
-                Confirmed = playing. Marking paid also confirms attendance. Unpaid confirmed players show as payment due.
+                {event.is_joint_event
+                  ? "This list is only your society’s members and fee rows. Switch society in the header to manage the other club. Marking paid confirms the player for this event."
+                  : "Marking paid confirms the player. Tee sheet (ManCo) uses only paid & confirmed players."}
               </AppText>
+              {event.is_joint_event && societyId && hostSocietyId === societyId ? (
+                <AppText variant="small" color="tertiary" style={{ marginTop: 4 }}>
+                  Host view: payment actions still apply only to members of the society selected above.
+                </AppText>
+              ) : null}
               <AppText variant="small" color="tertiary" style={{ marginTop: 4 }}>
-                {standardAttendingTotalCount} playing · {paidAmongAttendingCount} paid · {outstandingCount} payment due
-                {captainPickMemberIds.length > 0 ? (
-                  <AppText variant="small" color="tertiary">
-                    {" "}
-                    · {captainPickMemberIds.length} on playing list without a fee row — use Mark paid / Record unpaid below
-                  </AppText>
-                ) : null}
+                {`${teeSheetEligibleCount} paid & confirmed · ${pendingPaymentCount} payment pending`}
+                {captainPickMemberIds.length > 0
+                  ? ` · ${captainPickMemberIds.length} on playing list without a fee row`
+                  : ""}
               </AppText>
             </View>
             <View
@@ -1751,70 +1617,65 @@ export default function EventDetailScreen() {
                 styles.paidSummaryPill,
                 {
                   backgroundColor:
-                    attendingCount === 0 && captainPickMemberIds.length > 0
-                      ? colors.textTertiary + "18"
-                      : outstandingCount === 0 && attendingCount > 0
-                        ? colors.success + "14"
-                        : colors.warning + "14",
+                    buckets.pendingPayment.length === 0 && captainPickMemberIds.length === 0
+                      ? colors.success + "14"
+                      : colors.warning + "14",
                 },
               ]}
             >
               <Feather
                 name={
-                  attendingCount === 0 && captainPickMemberIds.length > 0
-                    ? "info"
-                    : outstandingCount === 0 && attendingCount > 0
-                      ? "check-circle"
-                      : "alert-circle"
+                  buckets.pendingPayment.length === 0 && captainPickMemberIds.length === 0
+                    ? "check-circle"
+                    : "alert-circle"
                 }
                 size={14}
                 color={
-                  attendingCount === 0 && captainPickMemberIds.length > 0
-                    ? colors.textTertiary
-                    : outstandingCount === 0 && attendingCount > 0
-                      ? colors.success
-                      : colors.warning
+                  buckets.pendingPayment.length === 0 && captainPickMemberIds.length === 0
+                    ? colors.success
+                    : colors.warning
                 }
               />
               <AppText
                 variant="small"
                 style={{
                   color:
-                    attendingCount === 0 && captainPickMemberIds.length > 0
-                      ? colors.textSecondary
-                      : outstandingCount === 0 && attendingCount > 0
-                        ? colors.success
-                        : colors.warning,
+                    buckets.pendingPayment.length === 0 && captainPickMemberIds.length === 0
+                      ? colors.success
+                      : colors.warning,
                   fontWeight: "700",
                 }}
               >
-                {attendingCount === 0 && captainPickMemberIds.length > 0
-                  ? "Line-up only"
-                  : outstandingCount === 0 && attendingCount > 0
-                    ? "All paid"
-                    : `${outstandingCount} due`}
+                {buckets.pendingPayment.length === 0 && captainPickMemberIds.length === 0
+                  ? "All paid"
+                  : `${pendingPaymentCount} pending`}
               </AppText>
             </View>
           </View>
 
-          {attendingRegs.map((reg) => (
+          {buckets.confirmedPaid.length > 0 ? (
+            <AppText variant="captionBold" color="secondary" style={{ marginTop: spacing.sm, marginBottom: spacing.xs }}>
+              Confirmed &amp; paid (tee sheet)
+            </AppText>
+          ) : null}
+          {buckets.confirmedPaid.map((reg) => (
             <View key={reg.id} style={styles.paidRow}>
-              <View style={styles.paidLeftCol}>
+              <View style={styles.paidLeftCol} pointerEvents="none">
                 <AppText variant="body" numberOfLines={2} style={styles.paidNameText}>
                   {registrationMemberDisplayName(reg)}
                 </AppText>
               </View>
 
               <View style={styles.paidRightCol}>
-                <View style={[styles.paidPill, { backgroundColor: reg.paid ? colors.success : colors.warning + "35" }]}>
-                  <AppText style={[styles.paidPillText, !reg.paid && { color: colors.warning }]}>
-                    {reg.paid ? PaymentPill.paid : PaymentPill.unpaid}
-                  </AppText>
+                <View style={[styles.paidPill, { backgroundColor: colors.success }]}>
+                  <AppText style={styles.paidPillText}>{PaymentPill.paid}</AppText>
                 </View>
                 {canManagePayments && (
                   <Pressable
                     disabled={payBusy === reg.member_id}
-                    onPress={() => handleTogglePaid(reg)}
+                    onPress={() => {
+                      void handleTogglePaid(reg);
+                    }}
                     hitSlop={10}
                     style={({ pressed }) => [
                       styles.paidToggleBtn,
@@ -1825,7 +1686,48 @@ export default function EventDetailScreen() {
                     ]}
                   >
                     <AppText variant="small" color="primary" style={{ fontWeight: "600" }}>
-                      {reg.paid ? "Mark unpaid" : "Mark paid"}
+                      Mark unpaid
+                    </AppText>
+                  </Pressable>
+                )}
+              </View>
+            </View>
+          ))}
+
+          {(buckets.pendingPayment.length > 0 || captainPickMemberIds.length > 0) ? (
+            <AppText variant="captionBold" color="secondary" style={{ marginTop: spacing.sm, marginBottom: spacing.xs }}>
+              Pending payment
+            </AppText>
+          ) : null}
+          {buckets.pendingPayment.map((reg) => (
+            <View key={reg.id} style={styles.paidRow}>
+              <View style={styles.paidLeftCol} pointerEvents="none">
+                <AppText variant="body" numberOfLines={2} style={styles.paidNameText}>
+                  {registrationMemberDisplayName(reg)}
+                </AppText>
+              </View>
+
+              <View style={styles.paidRightCol}>
+                <View style={[styles.paidPill, { backgroundColor: colors.warning + "35" }]}>
+                  <AppText style={[styles.paidPillText, { color: colors.warning }]}>{PaymentPill.unpaid}</AppText>
+                </View>
+                {canManagePayments && (
+                  <Pressable
+                    disabled={payBusy === reg.member_id}
+                    onPress={() => {
+                      void handleTogglePaid(reg);
+                    }}
+                    hitSlop={10}
+                    style={({ pressed }) => [
+                      styles.paidToggleBtn,
+                      {
+                        borderColor: colors.border,
+                        opacity: pressed ? 0.6 : payBusy === reg.member_id ? 0.4 : 1,
+                      },
+                    ]}
+                  >
+                    <AppText variant="small" color="primary" style={{ fontWeight: "600" }}>
+                      Mark paid
                     </AppText>
                   </Pressable>
                 )}
@@ -1839,7 +1741,12 @@ export default function EventDetailScreen() {
                 <AppText variant="body" numberOfLines={2} style={styles.paidNameText}>
                   {memberNameForAttendeeId(mid)}
                 </AppText>
-                <AppText variant="caption" color="tertiary" style={styles.paidHelperText}>
+                <AppText
+                  variant="caption"
+                  color="tertiary"
+                  style={styles.paidHelperText}
+                  pointerEvents="none"
+                >
                   Playing list · no fee row yet — actions create the fee record
                 </AppText>
               </View>
@@ -1852,7 +1759,9 @@ export default function EventDetailScreen() {
                   <View style={styles.paidActionsStack}>
                     <Pressable
                       disabled={payBusy === mid}
-                      onPress={() => handleLineupMemberFeeAction(mid, true)}
+                      onPress={() => {
+                        void handleLineupMemberFeeAction(mid, true);
+                      }}
                       hitSlop={10}
                       style={({ pressed }) => [
                         styles.paidToggleBtn,
@@ -1868,7 +1777,9 @@ export default function EventDetailScreen() {
                     </Pressable>
                     <Pressable
                       disabled={payBusy === mid}
-                      onPress={() => handleLineupMemberFeeAction(mid, false)}
+                      onPress={() => {
+                        void handleLineupMemberFeeAction(mid, false);
+                      }}
                       hitSlop={10}
                       style={({ pressed }) => [
                         styles.paidToggleBtn,
@@ -1890,7 +1801,7 @@ export default function EventDetailScreen() {
 
           {notPlayingRegs.length > 0 && (
             <View style={{ marginTop: spacing.sm, paddingTop: spacing.sm, borderTopWidth: 1, borderTopColor: "#F3F4F6" }}>
-              <AppText variant="captionBold" color="tertiary" style={{ marginBottom: spacing.xs }}>Not playing</AppText>
+              <AppText variant="captionBold" color="tertiary" style={{ marginBottom: spacing.xs }}>Not playing / withdrawn</AppText>
               {notPlayingRegs.map((reg) => (
                 <AppText key={reg.id} variant="small" color="tertiary" style={{ paddingVertical: 2 }}>
                   {registrationMemberDisplayName(reg)}
@@ -2006,6 +1917,10 @@ function ActionRow({
 /* ---------- Styles ---------- */
 
 const styles = StyleSheet.create({
+  screenContent: {
+    // Keep lower attendance actions clear of any mobile bottom chrome/overlays.
+    paddingBottom: spacing["3xl"] + 72,
+  },
   header: {
     flexDirection: "row",
     justifyContent: "space-between",
@@ -2070,7 +1985,10 @@ const styles = StyleSheet.create({
   paidLeftCol: {
     flex: 1,
     minWidth: 0,
+    flexBasis: 0,
+    overflow: "hidden",
     paddingRight: spacing.xs,
+    zIndex: 1,
   },
   paidRightCol: {
     width: 152,
@@ -2079,6 +1997,9 @@ const styles = StyleSheet.create({
     alignItems: "flex-end",
     gap: 6,
     flexShrink: 0,
+    zIndex: 3,
+    elevation: 3,
+    position: "relative",
   },
   paidActionsStack: {
     width: "100%",
@@ -2093,6 +2014,7 @@ const styles = StyleSheet.create({
     marginTop: 4,
     flexShrink: 1,
     minWidth: 0,
+    maxWidth: "100%",
   },
   paidPill: {
     paddingHorizontal: spacing.sm,
