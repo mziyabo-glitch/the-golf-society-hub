@@ -31,7 +31,7 @@ import { PrimaryButton } from "@/components/ui/Button";
 import { InlineNotice } from "@/components/ui/InlineNotice";
 import { Toast } from "@/components/ui/Toast";
 import { useBootstrap } from "@/lib/useBootstrap";
-import { isCaptain, isTreasurer } from "@/lib/rbac";
+import { isCaptain, canManageEventPaymentsForSociety } from "@/lib/rbac";
 import { supabase } from "@/lib/supabase";
 import { getEventsForSociety, type EventDoc } from "@/lib/db_supabase/eventRepo";
 import { getMembersBySocietyId, type MemberDoc } from "@/lib/db_supabase/memberRepo";
@@ -191,7 +191,8 @@ function PoweredByFooter({
 
 export default function HomeScreen() {
   const router = useRouter();
-  const { society, member, societyId, profile, userId, loading: bootstrapLoading } = useBootstrap();
+  const { society, member, societyId, memberships, profile, userId, loading: bootstrapLoading } =
+    useBootstrap();
   const colors = getColors();
   const tabBarHeight = useBottomTabBarHeight();
   const tabContentStyle = {
@@ -489,7 +490,11 @@ export default function HomeScreen() {
   // Registration Helpers
   // ============================================================================
 
-  const canAdmin = isCaptain(member as any) || isTreasurer(member as any);
+  /** Cap/Treas in active society (memberships), not a random multi-society row */
+  const canAdmin = useMemo(
+    () => canManageEventPaymentsForSociety(memberships, societyId),
+    [memberships, societyId],
+  );
   const [showAdmin, setShowAdmin] = useState(false);
 
   const toggleRegistration = async (newStatus: "in" | "out") => {
@@ -506,10 +511,10 @@ export default function HomeScreen() {
   };
 
   const handleMarkPaid = async (paid: boolean) => {
-    if (!nextEvent || !memberId || regBusy) return;
+    if (!nextEvent || !memberId || !societyId || regBusy) return;
     setRegBusy(true);
     try {
-      await markMePaid(nextEvent.id, memberId, paid);
+      await markMePaid(nextEvent.id, memberId, paid, societyId);
       const refreshed = await getMyRegistration(nextEvent.id, memberId);
       setMyReg(refreshed);
     } catch {

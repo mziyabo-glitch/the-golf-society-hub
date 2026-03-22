@@ -138,6 +138,18 @@ export const getPermissionsForMember = (
 /**
  * Convenience helpers (keep call-sites readable)
  */
+/** Captain/Treasurer in a specific society (from memberships list — avoids wrong row when user is in multiple clubs). */
+export function canManageEventPaymentsForSociety(
+  memberships: { societyId: string; role: string }[] | null | undefined,
+  activeSocietyId: string | null | undefined,
+): boolean {
+  if (!activeSocietyId || !memberships?.length) return false;
+  const m = memberships.find((x) => x.societyId === activeSocietyId);
+  if (!m) return false;
+  const r = String(m.role || "").toUpperCase();
+  return r === "CAPTAIN" || r === "TREASURER";
+}
+
 export const can = {
   resetSociety: (currentMember: MemberLike | null | undefined) =>
     getPermissionsForMember(currentMember).canResetSociety,

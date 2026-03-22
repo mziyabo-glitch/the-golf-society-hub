@@ -42,7 +42,7 @@ import {
   matchLadiesTeeFromEvent,
   hasManualLadiesTeeMinimum,
 } from "@/lib/courseTeeGender";
-import { getPermissionsForMember } from "@/lib/rbac";
+import { getPermissionsForMember, canManageEventPaymentsForSociety } from "@/lib/rbac";
 import {
   getEventRegistrations,
   markMePaid,
@@ -57,6 +57,14 @@ import {
   memberIdsConfirmedIn,
   withdrawnRegsForDisplay,
 } from "@/lib/eventPlayerStatus";
+import { DualMemberBadge } from "@/components/event/DualMemberBadge";
+import {
+  computeDualMemberResolution,
+  createEmptyDualMemberResolution,
+  dualParticipationPairSubtitle,
+  memberIsDualInJointEvent,
+  type DualMemberResolution,
+} from "@/lib/jointEventDualMembers";
 import { Toast } from "@/components/ui/Toast";
 import { getColors, spacing, radius, typography } from "@/lib/ui/theme";
 import { confirmDestructive, showAlert } from "@/lib/ui/alert";
@@ -103,7 +111,13 @@ function PickerOption({
 export default function EventDetailScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ id: string }>();
-  const { societyId, society, member: currentMember, loading: bootstrapLoading } = useBootstrap();
+  const {
+    societyId,
+    society,
+    member: currentMember,
+    memberships,
+    loading: bootstrapLoading,
+  } = useBootstrap();
   const { guardPaidAction, modalVisible, setModalVisible, societyId: guardSocietyId } = usePaidAccess();
   const colors = getColors();
 
@@ -286,14 +300,38 @@ export default function EventDetailScreen() {
   );
 
   // ---- Paid Players dashboard ----
-  const canManagePayments = permissions.canManageEventPayments;
+  /** Use per–active-society role from memberships (avoids wrong cap/treas when user is in multiple clubs). */
+  const canManagePayments = useMemo(
+    () => canManageEventPaymentsForSociety(memberships, societyId),
+    [memberships, societyId],
+  );
   const [registrations, setRegistrations] = useState<EventRegistration[]>([]);
   /** Members of the active society only — sole source for society-scoped attendance / payment / confirmed lists. */
   const [activeSocietyMembers, setActiveSocietyMembers] = useState<MemberDoc[]>([]);
   const [payBusy, setPayBusy] = useState<string | null>(null);
   const [payToast, setPayToast] = useState<{ visible: boolean; message: string; type: "success" | "error" }>({ visible: false, message: "", type: "success" });
+  /** Joint event: identities that appear in ≥2 participant societies (user_id / email / person_id — badge only). */
+  const [dualMemberResolution, setDualMemberResolution] = useState<DualMemberResolution>(() =>
+    createEmptyDualMemberResolution(),
+  );
 
   const hostSocietyId = event?.society_id ?? societyId ?? null;
+
+  const jointParticipantSocietyIds = useMemo(
+    () =>
+      event?.is_joint_event && jointParticipatingSocieties.length > 0
+        ? [...new Set(jointParticipatingSocieties.map((s) => s.society_id).filter(Boolean))]
+        : [],
+    [event?.is_joint_event, jointParticipatingSocieties],
+  );
+
+  const dualPairSubtitle = useMemo(
+    () =>
+      event?.is_joint_event && jointParticipatingSocieties.length >= 2
+        ? dualParticipationPairSubtitle(jointParticipatingSocieties)
+        : null,
+    [event?.is_joint_event, jointParticipatingSocieties],
+  );
 
   const loadRegistrations = useCallback(async () => {
     if (!eventId || !societyId) return;
@@ -376,6 +414,47 @@ export default function EventDetailScreen() {
     };
   }, [eventId, societyId, event?.playerIds, memberByIdForRegs]);
 
+  /** Load all participant society rosters to detect same person in multiple clubs (joint dual members). */
+  useEffect(() => {
+    if (!event?.is_joint_event || jointParticipantSocietyIds.length < 2) {
+      setDualMemberResolution(createEmptyDualMemberResolution());
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const lists = await Promise.all(
+          jointParticipantSocietyIds.map((sid) =>
+            societyId && sid === societyId
+              ? Promise.resolve(activeSocietyMembers)
+              : getMembersBySocietyId(sid),
+          ),
+        );
+        if (cancelled) return;
+        const resolution = computeDualMemberResolution(jointParticipantSocietyIds, lists);
+        setDualMemberResolution(resolution);
+        if (
+          __DEV__ &&
+          (resolution.dualUserIds.size > 0 ||
+            resolution.dualEmails.size > 0 ||
+            resolution.dualPersonIds.size > 0)
+        ) {
+          console.log(
+            "[dual-badge] at least one dual identity (user/email/person counts):",
+            resolution.dualUserIds.size,
+            resolution.dualEmails.size,
+            resolution.dualPersonIds.size,
+          );
+        }
+      } catch {
+        if (!cancelled) setDualMemberResolution(createEmptyDualMemberResolution());
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [event?.is_joint_event, jointParticipantSocietyIds, societyId, activeSocietyMembers]);
+
   /** Canonical buckets: paid ⇒ confirmed; tee sheet = paid + confirmed (see `eventPlayerStatus`). */
   const buckets = useMemo(
     () => partitionSocietyRegistrations(societyPageRegistrations),
@@ -415,10 +494,10 @@ export default function EventDetailScreen() {
     buckets.confirmedPaid.length + buckets.pendingPayment.length + captainPickMemberIds.length;
 
   const handleTogglePaid = async (reg: EventRegistration) => {
-    if (payBusy) return;
+    if (payBusy || !societyId) return;
     setPayBusy(reg.member_id);
     try {
-      await markMePaid(reg.event_id, reg.member_id, !reg.paid);
+      await markMePaid(reg.event_id, reg.member_id, !reg.paid, societyId);
       setPayToast({
         visible: true,
         message: reg.paid ? "Marked unpaid" : "Marked paid (also confirmed as attending)",
@@ -437,12 +516,12 @@ export default function EventDetailScreen() {
    * @param paid - target state: true = paid + confirmed; false = fee row, attending, unpaid.
    */
   const handleLineupMemberFeeAction = async (memberId: string, paid: boolean) => {
-    if (payBusy || !eventId) return;
+    if (payBusy || !eventId || !societyId) return;
     /** Society-scoped page: fee row is always for this member_id in the active society. */
     const targetMemberId = memberId;
     setPayBusy(memberId);
     try {
-      await markMePaid(eventId, targetMemberId, paid);
+      await markMePaid(eventId, targetMemberId, paid, societyId);
       setPayToast({
         visible: true,
         message: paid
@@ -1664,6 +1743,10 @@ export default function EventDetailScreen() {
                 <AppText variant="body" numberOfLines={2} style={styles.paidNameText}>
                   {registrationMemberDisplayName(reg)}
                 </AppText>
+                {event.is_joint_event &&
+                memberIsDualInJointEvent(memberByIdForRegs.get(reg.member_id), dualMemberResolution) ? (
+                  <DualMemberBadge pairSubtitle={dualPairSubtitle} />
+                ) : null}
               </View>
 
               <View style={styles.paidRightCol}>
@@ -1705,6 +1788,10 @@ export default function EventDetailScreen() {
                 <AppText variant="body" numberOfLines={2} style={styles.paidNameText}>
                   {registrationMemberDisplayName(reg)}
                 </AppText>
+                {event.is_joint_event &&
+                memberIsDualInJointEvent(memberByIdForRegs.get(reg.member_id), dualMemberResolution) ? (
+                  <DualMemberBadge pairSubtitle={dualPairSubtitle} />
+                ) : null}
               </View>
 
               <View style={styles.paidRightCol}>
@@ -1741,6 +1828,10 @@ export default function EventDetailScreen() {
                 <AppText variant="body" numberOfLines={2} style={styles.paidNameText}>
                   {memberNameForAttendeeId(mid)}
                 </AppText>
+                {event.is_joint_event &&
+                memberIsDualInJointEvent(memberByIdForRegs.get(mid), dualMemberResolution) ? (
+                  <DualMemberBadge pairSubtitle={dualPairSubtitle} />
+                ) : null}
                 <AppText
                   variant="caption"
                   color="tertiary"

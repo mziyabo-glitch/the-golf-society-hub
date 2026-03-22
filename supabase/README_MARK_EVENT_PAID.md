@@ -20,6 +20,18 @@ For **joint events**, captains/treasurers and fee rows belong to **participating
 
 Migration **074** had a typo: `WHERE m.id = p_target_member` instead of `p_target_member_id`. **075** applies the corrected function (same as fixed **074** in repo).
 
+## 076 — Wrong society / misleading "Only Captain or Treasurer" (multi–society users)
+
+Migrations **074/075** resolved the caller/target `IN (host ∪ participants)` with **`LIMIT 1`**, which could pick the **wrong** `members` row when the same user belongs to **multiple** societies (e.g. Member in one club, Captain in another). The RPC then saw the wrong **role** and raised `Only Captain or Treasurer can mark payments` incorrectly.
+
+**076** (`076_mark_event_paid_scope_society.sql`) replaces `mark_event_paid` with a **fifth argument** `p_society_id` (the **active society** from the app). The server:
+
+- Verifies the society is part of the event (host or `event_societies`).
+- Loads the caller’s role **only** for `p_society_id`.
+- Requires the target member to belong to **`p_society_id`** (no cross-society payment control).
+
+The client must pass **`societyId`** from bootstrap (same society as the fee list).
+
 ## Apply
 
-Run migrations in order: **073** → **074** → **075** (as needed), via SQL Editor or `supabase db push`.
+Run migrations in order: **073** → **074** → **075** → **076** (as needed), via SQL Editor or `supabase db push`.

@@ -180,13 +180,19 @@ export async function setMyStatus(opts: {
  * Creates `event_registrations` when missing (INSERT … ON CONFLICT), e.g. player is
  * only on the playing list with no RSVP row — admin can still record payment.
  */
+/**
+ * Captain/Treasurer marks a member paid/unpaid. `societyId` must be the **active society**
+ * (same as registration.society_id for that member). Server enforces role + same-society target.
+ */
 export async function markMePaid(
   eventId: string,
   memberId: string,
   paid: boolean,
+  societyId: string,
 ): Promise<void> {
   const { error } = await supabase.rpc("mark_event_paid", {
     p_event_id: eventId,
+    p_society_id: societyId,
     p_target_member_id: memberId,
     p_paid: paid,
     p_amount_pence: 0,
@@ -200,9 +206,17 @@ export async function markMePaid(
         "Database function is out of date: apply migration 073_fix_mark_event_paid_remove_person_id.sql to Supabase (SQL Editor or supabase db push), then retry.",
       );
     }
-    if (msg.includes("Target member not found in this society")) {
+    if (
+      msg.includes("Target member not found") ||
+      msg.includes("Member not found for this society")
+    ) {
       throw new Error(
-        "Could not record payment for this member. For joint events, apply migration 074_mark_event_paid_joint_event_societies.sql (see supabase/README_MARK_EVENT_PAID.md), then retry.",
+        "Could not record payment for this member. Ensure the player belongs to your active society, or apply the latest mark_event_paid migration (see supabase/README_MARK_EVENT_PAID.md).",
+      );
+    }
+    if (msg.includes("function public.mark_event_paid") && msg.includes("does not exist")) {
+      throw new Error(
+        "Database is out of date: apply migration 076_mark_event_paid_scope_society.sql (see supabase/README_MARK_EVENT_PAID.md), then retry.",
       );
     }
     throw new Error(msg || "Failed to update payment status");
