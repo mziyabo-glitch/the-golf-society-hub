@@ -10,7 +10,6 @@ Scope: recent fixes only — **no new features**. Use this for smoke / regressio
 |------|----------------|
 | **Event / payment simplification** | Single **Payment & status** model: buckets (confirmed+paid, pending payment, playing list without fee row, not playing). Canonical helpers in `eventPlayerStatus` + `eventRegistrationRepo`. **Paid ⇒ confirmed** server-side; tee sheet eligibility = **in + paid**. Joint duplicate “Confirmed Players” card removed. See `docs/EVENT_PAYMENT_SIMPLIFICATION.md`. |
 | **`mark_event_paid` society scoping (076)** | RPC takes **`p_society_id`** (active society). Caller must be **Captain/Treasurer in that society**; target **member must belong to that society**. No cross-society payment; **host does not override**. Client: `markMePaid(..., societyId)`. |
-| **Dual-member badge** | Joint events only. **`DualMemberResolution`**: dual if same **`user_id`**, **normalized email** (trim + lowercase), or **`person_id`** appears in **≥2** participant societies. **Names never used** for matching. Component: `DualMemberBadge` on event detail payment rows. |
 | **Tee sheet / `selectedEventId`** | After loading events for ManCo, selection is **reset only if** the previous `selectedEventId` is **no longer** in the upcoming list (e.g. **society switch**); otherwise **keeps** selection. Avoids loading wrong/stale event. Joint path can resolve meta when event not in local list. |
 | **Edit event — ladies tee** | Create/edit requires **men’s + ladies’** tee (or manual ladies when no ladies rows). **Edit event** hydrates **`selectedLadiesTee`** via `matchLadiesTeeFromEvent` and saves ladies fields from picker + manual. |
 
@@ -47,14 +46,7 @@ Scope: recent fixes only — **no new features**. Use this for smoke / regressio
 1. After **076** applied: mark paid **no** `function mark_event_paid(...) does not exist` / wrong arity.
 2. **Multi‑society user** who is **Captain in society A** only: with active **A**, mark paid works; **no** spurious “Only Captain or Treasurer…” from wrong membership row.
 
-### D. Dual-member badge
-
-1. **Non‑joint** event → **no** “Dual Member” on any row.
-2. **Joint** event, player with **same normalized email** on both participant rosters → badge **yes** (if `MemberDoc` resolves email).
-3. **Joint**, player **only** in one society → **no** badge.
-4. **Joint**, player with **same `user_id`** in both societies → badge **yes**.
-
-### E. Tee sheet (ManCo) — `selectedEventId`
+### D. Tee sheet (ManCo) — `selectedEventId`
 
 1. Open **Tee sheet** tab; pick **event A** from dropdown → details/groups load for **A**.
 2. Change **society** in app header → events list reloads; selection **either** stays on **A** if still in list **or** resets to first upcoming (no crash, no wrong event).
@@ -72,10 +64,10 @@ Scope: recent fixes only — **no new features**. Use this for smoke / regressio
 
 | Field | Recommendation |
 |--------|----------------|
-| **`user_id`** | Prefer **one auth user** per real person per society once they claim; reduces payment and dual-badge ambiguity. |
-| **`email`** | Keep **consistent** on `members` rows across societies for the same person so **dual-member** email resolution works. |
-| **`person_id`** | If your schema uses it globally, **populate** for linked identities so dual detection can use it without relying on email. |
-| **Captain-added rows** | Until claimed, **`user_id` NULL** is expected; **email** is the main cross-society link for dual badge. |
+| **`user_id`** | Prefer **one auth user** per real person per society once they claim; reduces payment ambiguity. |
+| **`email`** | Keep **consistent** on `members` rows across societies for the same person where useful for ops. |
+| **`person_id`** | If your schema uses it globally, **populate** for linked identities where you use it. |
+| **Captain-added rows** | Until claimed, **`user_id` NULL** is expected; **email** is a common cross-society link. |
 
 ---
 
@@ -83,5 +75,3 @@ Scope: recent fixes only — **no new features**. Use this for smoke / regressio
 
 - `docs/EVENT_PAYMENT_SIMPLIFICATION.md`
 - `supabase/README_MARK_EVENT_PAID.md` (073–076)
-- `lib/jointEventDualMembers.ts` — identity rules  
-- `lib/jointEventDualMembers.ts` — `normalizeMemberEmail`  

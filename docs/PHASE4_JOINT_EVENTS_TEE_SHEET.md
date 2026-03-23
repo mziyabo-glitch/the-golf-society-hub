@@ -3,7 +3,7 @@
 ## Summary
 
 - **One combined tee sheet** for joint events (no separate sheets per society).
-- **Entries appear once only** (one row per player; dual-members shown once with badge).
+- **Entries appear once only** (one row per player; dual-members deduped to a single entry).
 - **Event-wide pairing groups**; mixed societies in one group allowed.
 - **Standard event tee sheet** behavior unchanged.
 
@@ -81,7 +81,7 @@
 - [ ] **2. Joint event, one combined sheet** — Create/use a joint event (2+ societies); open tee sheet; one combined list of groups and players.
 - [ ] **3. Entries once only** — Joint event with dual-member; that player appears once in the tee sheet.
 - [ ] **4. Mixed-society group** — Joint event; put players from different societies in the same group; save and reload; group still mixed.
-- [ ] **5. Dual-member indicator** — Joint event; player in two participating societies shows “Dual” (or both society names) as badge.
+- [ ] **5. Society / dual context** — Joint event; tee sheet row shows society label (or equivalent) where the UI implements it (event-detail “Dual Member” chip was removed as low-value).
 - [ ] **6. No tee times yet** — Joint event, entries but no pairing assigned; screen shows entries in default group; no crash.
 - [ ] **7. Partial tee times** — Some entries with pairing_group, some without; screen renders; save updates only assigned.
 - [ ] **8. Tee sheet publish (joint)** — Joint event; assign groups; “Share Tee Sheet”; publish succeeds; event shows published; export opens.
