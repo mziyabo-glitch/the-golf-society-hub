@@ -27,7 +27,7 @@ import {
   EVENT_FORMATS,
   EVENT_CLASSIFICATIONS,
 } from "@/lib/db_supabase/eventRepo";
-import { getJointEventDetail, mapJointEventToEventDoc, updateJointEvent, validateJointEventInput } from "@/lib/db_supabase/jointEventRepo";
+import { getJointEventDetail, getJointMetaForEventIds, mapJointEventToEventDoc, updateJointEvent, validateJointEventInput } from "@/lib/db_supabase/jointEventRepo";
 import { getMySocieties } from "@/lib/db_supabase/mySocietiesRepo";
 import { ParticipatingSocietiesSection } from "@/components/event/ParticipatingSocietiesSection";
 import type { EventSocietyInput } from "@/lib/db_supabase/jointEventTypes";
@@ -227,13 +227,36 @@ export default function EventDetailScreen() {
 
       // (a) Fetch base event
       const baseEvent = await getEvent(eventId);
+      const jointMetaMap = await getJointMetaForEventIds([eventId]);
+      const jointMeta = jointMetaMap.get(eventId);
+      const isJointByMeta = jointMeta?.is_joint_event === true;
 
       if (baseEvent) {
-        // (b) If base exists and is joint, load joint payload; (c) else keep standard path
-        const joint = baseEvent.is_joint_event === true;
+        // (b) Use canonical joint classification from event_societies meta.
+        const joint = isJointByMeta;
+        if (__DEV__) {
+          console.log("[events] joint event read payload", {
+            source: "app/(app)/event/[id]/index.tsx::loadEvent(base)",
+            eventId,
+            event_is_joint_event: baseEvent.is_joint_event ?? null,
+            linkedSocietiesCount: jointMeta?.linkedSocietyCount ?? 0,
+            participantSocietiesCount: undefined,
+            jointDecision: joint,
+          });
+        }
         if (joint) {
           const jointPayload = await getJointEventDetail(eventId);
           if (jointPayload) {
+            if (__DEV__) {
+              console.log("[events] joint event read payload", {
+                source: "app/(app)/event/[id]/index.tsx::loadEvent(jointPayload)",
+                eventId,
+                event_is_joint_event: jointPayload.event.is_joint_event ?? null,
+                linkedSocietiesCount: jointMeta?.linkedSocietyCount ?? 0,
+                participantSocietiesCount: jointPayload.participating_societies?.length ?? 0,
+                jointDecision: true,
+              });
+            }
             setEvent(mapJointEventToEventDoc(jointPayload.event) as EventDoc);
             setJointParticipatingSocieties(
               jointPayload.participating_societies.map((s) => ({
@@ -251,6 +274,16 @@ export default function EventDetailScreen() {
             setJointEntries([]);
           }
         } else {
+          if (__DEV__) {
+            console.log("[events] joint event read payload", {
+              source: "app/(app)/event/[id]/index.tsx::loadEvent(standardPath)",
+              eventId,
+              event_is_joint_event: baseEvent.is_joint_event ?? null,
+              linkedSocietiesCount: jointMeta?.linkedSocietyCount ?? 0,
+              participantSocietiesCount: 0,
+              jointDecision: false,
+            });
+          }
           setEvent(baseEvent);
           setJointParticipatingSocieties([]);
           setJointEntries([]);
@@ -260,6 +293,16 @@ export default function EventDetailScreen() {
         // (RLS blocks direct events read for non-host societies)
         const jointPayload = await getJointEventDetail(eventId);
         if (jointPayload) {
+          if (__DEV__) {
+            console.log("[events] joint event read payload", {
+              source: "app/(app)/event/[id]/index.tsx::loadEvent(fallbackJointPayload)",
+              eventId,
+              event_is_joint_event: jointPayload.event.is_joint_event ?? null,
+              linkedSocietiesCount: jointMeta?.linkedSocietyCount ?? 0,
+              participantSocietiesCount: jointPayload.participating_societies?.length ?? 0,
+              jointDecision: true,
+            });
+          }
           setEvent(mapJointEventToEventDoc(jointPayload.event) as EventDoc);
           setJointParticipatingSocieties(
             jointPayload.participating_societies.map((s) => ({
@@ -720,6 +763,16 @@ export default function EventDetailScreen() {
     setFormEditParticipatingSocieties(jointParticipatingSocieties);
     const societies = await getMySocieties();
     setMySocieties(societies);
+    if (__DEV__) {
+      console.log("[events] joint toggle ui state", {
+        source: "app/(app)/event/[id]/index.tsx::startEditing",
+        eventId,
+        uiToggleValue: event.is_joint_event === true,
+        event_is_joint_event: event.is_joint_event ?? null,
+        linkedSocietiesCount: jointParticipatingSocieties.length,
+        participantSocietiesCount: formEditParticipatingSocieties.length,
+      });
+    }
 
     setIsEditing(true);
   };
@@ -881,6 +934,17 @@ export default function EventDetailScreen() {
     setSaving(true);
     try {
       if (formEditIsJointEvent) {
+        if (__DEV__) {
+          console.log("[events] joint save payload", {
+            source: "app/(app)/event/[id]/index.tsx::handleSaveEvent(updateJointEvent)",
+            eventId,
+            uiToggleValue: formEditIsJointEvent,
+            event_is_joint_event: event?.is_joint_event ?? null,
+            linkedSocietiesCount: jointParticipatingSocieties.length,
+            participantSocietiesCount: formEditParticipatingSocieties.length,
+            hostSocietyId: formEditHostSocietyId,
+          });
+        }
         await updateJointEvent(eventId, {
           name: formName.trim(),
           date: formDate.trim() || undefined,
@@ -904,6 +968,17 @@ export default function EventDetailScreen() {
           participating_societies: formEditParticipatingSocieties,
         });
       } else {
+        if (__DEV__) {
+          console.log("[events] joint save payload", {
+            source: "app/(app)/event/[id]/index.tsx::handleSaveEvent(updateEvent)",
+            eventId,
+            uiToggleValue: formEditIsJointEvent,
+            event_is_joint_event: event?.is_joint_event ?? null,
+            linkedSocietiesCount: jointParticipatingSocieties.length,
+            participantSocietiesCount: 0,
+            hostSocietyId: null,
+          });
+        }
         await updateEvent(eventId, {
           name: formName.trim(),
           date: formDate.trim() || undefined,
@@ -1098,6 +1173,16 @@ export default function EventDetailScreen() {
                 onPress={() => {
                   if (event?.is_joint_event === true) return;
                   const next = !formEditIsJointEvent;
+                  if (__DEV__) {
+                    console.log("[events] joint toggle ui state", {
+                      source: "app/(app)/event/[id]/index.tsx::editToggleOnPress",
+                      eventId,
+                      uiToggleValue: next,
+                      event_is_joint_event: event?.is_joint_event ?? null,
+                      linkedSocietiesCount: jointParticipatingSocieties.length,
+                      participantSocietiesCount: formEditParticipatingSocieties.length,
+                    });
+                  }
                   setFormEditIsJointEvent(next);
                   if (!next) {
                     setFormEditHostSocietyId("");

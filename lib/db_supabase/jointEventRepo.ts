@@ -690,6 +690,36 @@ export type EventEntryPairingAssignment = {
  * Call after editing the tee sheet; does not publish tee times (use updateEvent/publishTeeTime for that).
  * RLS: only host society can update event_entries (event.society_id in my_society_ids).
  */
+/** One row per player for full replace of `event_entries` (see RPC `replace_joint_event_tee_sheet_entries`). */
+export type JointEventTeeSheetReplaceRow = {
+  player_id: string;
+  pairing_group: number | null;
+  pairing_position: number | null;
+};
+
+/**
+ * Joint tee sheet: DELETE all `event_entries` for the event, then INSERT fresh rows (SECURITY DEFINER RPC).
+ * Use instead of `updateEventEntriesPairings` when saving the full field — avoids missing `event_entry_id`
+ * and RLS issues for participating-society ManCo.
+ */
+export async function replaceJointEventTeeSheetEntries(
+  eventId: string,
+  rows: JointEventTeeSheetReplaceRow[],
+): Promise<void> {
+  if (!eventId?.trim()) throw new Error("replaceJointEventTeeSheetEntries: missing eventId");
+  const { error } = await supabase.rpc("replace_joint_event_tee_sheet_entries", {
+    p_event_id: eventId,
+    p_rows: rows,
+  });
+  if (error) {
+    console.error("[jointEventRepo] replaceJointEventTeeSheetEntries:", error);
+    throw new Error(error.message || "Failed to save joint tee sheet entries");
+  }
+  if (DEBUG) {
+    console.log("[jointEventRepo] replaceJointEventTeeSheetEntries: eventId", eventId, "rows", rows.length);
+  }
+}
+
 export async function updateEventEntriesPairings(
   eventId: string,
   assignments: EventEntryPairingAssignment[]

@@ -518,12 +518,34 @@ export default function EventsScreen() {
 
     const created = await createAction.run(async () => {
       if (isJointEvent && participatingSocieties.length >= 2) {
+        if (__DEV__) {
+          console.log("[events] joint save payload", {
+            source: "app/(app)/(tabs)/events.tsx::handleCreateEvent(createJointEvent)",
+            eventId: null,
+            uiToggleValue: isJointEvent,
+            event_is_joint_event: true,
+            linkedSocietiesCount: participatingSocieties.length,
+            participantSocietiesCount: participatingSocieties.length,
+            hostSocietyId: hostSocietyId || societyId || null,
+          });
+        }
         return createJointEvent({
           ...createPayload,
           is_joint_event: true,
           host_society_id: hostSocietyId || societyId!,
           participating_societies: participatingSocieties,
           createdBy: user!.uid,
+        });
+      }
+      if (__DEV__) {
+        console.log("[events] joint save payload", {
+          source: "app/(app)/(tabs)/events.tsx::handleCreateEvent(createEvent)",
+          eventId: null,
+          uiToggleValue: isJointEvent,
+          event_is_joint_event: false,
+          linkedSocietiesCount: 0,
+          participantSocietiesCount: 0,
+          hostSocietyId: null,
         });
       }
       return createEvent(societyId!, {
@@ -740,7 +762,18 @@ export default function EventsScreen() {
             {/* Joint Event: directly after Classification, before Course / Tee Setup */}
             <Pressable
               onPress={() => {
-                setIsJointEvent(!isJointEvent);
+                const next = !isJointEvent;
+                if (__DEV__) {
+                  console.log("[events] joint toggle ui state", {
+                    source: "app/(app)/(tabs)/events.tsx::createToggleOnPress",
+                    eventId: null,
+                    uiToggleValue: next,
+                    event_is_joint_event: null,
+                    linkedSocietiesCount: participatingSocieties.length,
+                    participantSocietiesCount: participatingSocieties.length,
+                  });
+                }
+                setIsJointEvent(next);
                 setFormErrors((prev) => ({ ...prev, participating_societies: undefined }));
               }}
               style={[

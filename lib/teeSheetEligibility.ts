@@ -98,7 +98,12 @@ export function sanitizePlayerGroupsForTeeSheetSave<T extends { players: { id: s
     .filter((g) => g.players.length > 0);
 }
 
-/** Joint tee sheet read model for ManCo: same as `getJointEventTeeSheet` but entries filtered to tee-sheet-eligible members. */
+/**
+ * Joint tee sheet with **eligibility filter** (confirmed + paid per scoped registrations).
+ * Prefer **`getJointEventTeeSheet`** for member-facing / canonical display — published pairings must not
+ * be dropped when registration visibility differs by society (RLS). This helper remains for analytics
+ * or strict “paid-only” previews if needed.
+ */
 export async function loadJointTeeSheetForManCo(eventId: string): Promise<{
   teeSheet: JointEventTeeSheet;
   eligibleIds: Set<string>;

@@ -34,9 +34,13 @@ import { useBootstrap } from "@/lib/useBootstrap";
 import { isCaptain, canManageEventPaymentsForSociety } from "@/lib/rbac";
 import { supabase } from "@/lib/supabase";
 import { getEventsForSociety, type EventDoc } from "@/lib/db_supabase/eventRepo";
-import { getMembersBySocietyId, type MemberDoc } from "@/lib/db_supabase/memberRepo";
-import { findMemberGroup, findMemberGroupFromTeeSheet } from "@/lib/findMemberGroup";
-import { getTeeGroups, getTeeGroupPlayers } from "@/lib/db_supabase/teeGroupsRepo";
+import { getMembersBySocietyId, getMembersByIds, type MemberDoc } from "@/lib/db_supabase/memberRepo";
+import { buildSocietyIdToNameMap } from "@/lib/jointEventSocietyLabel";
+import {
+  loadCanonicalTeeSheet,
+  findMemberGroupInfoFromCanonical,
+  type CanonicalTeeSheetResult,
+} from "@/lib/teeSheet/canonicalTeeSheet";
 import {
   getOrderOfMeritTotals,
   getEventResults,
@@ -212,8 +216,9 @@ export default function HomeScreen() {
   // Event registration state
   const [myReg, setMyReg] = useState<EventRegistration | null>(null);
   const [nextEventRegistrations, setNextEventRegistrations] = useState<EventRegistration[]>([]);
-  const [nextEventTeeGroups, setNextEventTeeGroups] = useState<{ group_number: number; tee_time: string | null }[]>([]);
-  const [nextEventTeeGroupPlayers, setNextEventTeeGroupPlayers] = useState<{ player_id: string; group_number: number; position: number }[]>([]);
+  const [canonicalNextEventTee, setCanonicalNextEventTee] = useState<CanonicalTeeSheetResult | null>(null);
+  /** Joint events: member rows for all societies in canonical groups (home only loads active society by default). */
+  const [jointTeeMemberAugment, setJointTeeMemberAugment] = useState<MemberDoc[]>([]);
   const [regBusy, setRegBusy] = useState(false);
 
   // Licence banner state
@@ -380,6 +385,24 @@ export default function HomeScreen() {
 
   /** Canonical joint flag from repo (`event_societies` count ≥ 2). */
   const nextEventIsJoint = nextEvent?.is_joint_event === true;
+  useEffect(() => {
+    if (!nextEventId) return;
+    if (!__DEV__) return;
+    console.log("[dashboard] joint mode decision", {
+      source: "app/(app)/(tabs)/index.tsx::nextEventDerived",
+      eventId: nextEventId,
+      event_is_joint_event: nextEvent?.is_joint_event ?? null,
+      linkedSocietiesCount: nextEvent?.linked_society_count ?? null,
+      participantSocietiesCount: canonicalNextEventTee?.jointParticipatingSocieties?.length ?? null,
+      jointDecision: nextEventIsJoint,
+    });
+  }, [
+    nextEventId,
+    nextEvent?.is_joint_event,
+    nextEvent?.linked_society_count,
+    nextEventIsJoint,
+    canonicalNextEventTee?.jointParticipatingSocieties,
+  ]);
 
   // Load registration for the next event whenever it changes
   useEffect(() => {
@@ -422,22 +445,53 @@ export default function HomeScreen() {
     societyId,
   ]);
 
-  // Load persisted tee groups for next event (when tee sheet was saved)
+  // Canonical tee sheet for next event (joint entries, tee_groups snapshot, or computed fallback)
   useEffect(() => {
     if (!nextEventId || !nextEvent?.teeTimePublishedAt) {
-      setNextEventTeeGroups([]);
-      setNextEventTeeGroupPlayers([]);
+      setCanonicalNextEventTee(null);
+      setJointTeeMemberAugment([]);
       return;
     }
     let cancelled = false;
-    Promise.all([getTeeGroups(nextEventId), getTeeGroupPlayers(nextEventId)]).then(([groups, players]) => {
-      if (!cancelled) {
-        setNextEventTeeGroups(groups);
-        setNextEventTeeGroupPlayers(players);
-      }
+    loadCanonicalTeeSheet(nextEventId).then((c) => {
+      if (!cancelled) setCanonicalNextEventTee(c);
     });
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [nextEventId, nextEvent?.teeTimePublishedAt]);
+
+  // Hydrate members from all participant societies for joint "my tee time" (representative / dual membership)
+  useEffect(() => {
+    if (!canonicalNextEventTee?.isJoint || !canonicalNextEventTee.groups.length) {
+      setJointTeeMemberAugment([]);
+      return;
+    }
+    const ids = [
+      ...new Set(
+        canonicalNextEventTee.groups.flatMap((g) => g.players.map((p) => p.id)),
+      ),
+    ].filter((id) => id && !String(id).startsWith("guest-"));
+    const need = ids.filter((id) => !members.some((m) => m.id === id));
+    if (need.length === 0) {
+      setJointTeeMemberAugment([]);
+      return;
+    }
+    let cancelled = false;
+    getMembersByIds(need).then((extra) => {
+      if (cancelled) return;
+      setJointTeeMemberAugment((prev) => {
+        const byId = new Map(prev.map((m) => [m.id, m]));
+        for (const m of extra) {
+          if (m?.id) byId.set(m.id, m);
+        }
+        return Array.from(byId.values());
+      });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [canonicalNextEventTee, members]);
 
   // Past events (completed, sorted desc) — last 3
   const recentEvents = useMemo(() => {
@@ -461,20 +515,85 @@ export default function HomeScreen() {
     };
   }, [memberId, oomStandings]);
 
-  // My tee time for next event (when published)
-  // Use persisted tee_groups/tee_group_players when available; else fall back to player_ids + groupPlayers
-  const myTeeTimeInfo = useMemo(() => {
-    if (!memberId || !nextEvent?.teeTimePublishedAt || !nextEvent) return null;
-    const usePersisted = nextEventTeeGroups.length > 0 && nextEventTeeGroupPlayers.length > 0;
-    if (usePersisted) {
-      return findMemberGroupFromTeeSheet(memberId, nextEventTeeGroups, nextEventTeeGroupPlayers, members);
+  const nextEventJointSocietyMap = useMemo(() => {
+    if (!canonicalNextEventTee?.isJoint || !canonicalNextEventTee.jointParticipatingSocieties?.length) {
+      return undefined;
     }
-    const playerIds = nextEvent.playerIds?.length
-      ? nextEvent.playerIds
-      : nextEventRegistrations.filter((r) => r.status === "in").map((r) => r.member_id);
-    const eventWithPlayers = { ...nextEvent, playerIds };
-    return findMemberGroup(memberId, eventWithPlayers, members);
-  }, [memberId, nextEvent, members, nextEventRegistrations, nextEventTeeGroups, nextEventTeeGroupPlayers]);
+    return buildSocietyIdToNameMap(canonicalNextEventTee.jointParticipatingSocieties);
+  }, [canonicalNextEventTee?.isJoint, canonicalNextEventTee?.jointParticipatingSocieties]);
+
+  const membersForJointTeeCanonical = useMemo(() => {
+    if (jointTeeMemberAugment.length === 0) return members;
+    const byId = new Map(members.map((m) => [m.id, m]));
+    for (const m of jointTeeMemberAugment) byId.set(m.id, m);
+    return Array.from(byId.values());
+  }, [members, jointTeeMemberAugment]);
+
+  /**
+   * HARD RULE:
+   * For joint events, tee sheets are event-scoped. Do not filter by society.
+   * Always read canonical published groups for dashboard slot lookup.
+   */
+  // My tee time for next event (when published) — same canonical payload as member tee sheet / ManCo
+  const myTeeTimeInfo = useMemo(() => {
+    if (!memberId || !nextEvent?.teeTimePublishedAt || !nextEvent || !canonicalNextEventTee) return null;
+    const linkedMemberIds =
+      canonicalNextEventTee.isJoint && userId
+        ? [
+            ...new Set(
+              membersForJointTeeCanonical
+                .filter((m) => String(m.user_id ?? "") === String(userId))
+                .map((m) => String(m.id)),
+            ),
+          ]
+        : [memberId];
+    const idsToCheck = linkedMemberIds.length > 0 ? linkedMemberIds : [memberId];
+
+    const found = idsToCheck
+      .map((id) =>
+        findMemberGroupInfoFromCanonical(
+          id,
+          canonicalNextEventTee,
+          membersForJointTeeCanonical,
+          nextEventJointSocietyMap,
+        ),
+      )
+      .find(Boolean) ?? null;
+
+    if (__DEV__) {
+      console.log("[dashboard] published teesheet snapshot", {
+        eventId: canonicalNextEventTee.eventId,
+        isJoint: canonicalNextEventTee.isJoint,
+        source: `canonical:${canonicalNextEventTee.source}`,
+        playerIds: canonicalNextEventTee.groups.flatMap((g) => g.players.map((p) => p.id)),
+        societiesRepresented: [
+          ...new Set(
+            canonicalNextEventTee.groups.flatMap((g) => g.players.map((p) => p.societyLabel).filter(Boolean)),
+          ),
+        ],
+      });
+      console.log("[dashboard] player lookup", {
+        userId,
+        signedInUserId: userId,
+        memberIdsChecked: idsToCheck,
+        matchedMemberId: found
+          ? idsToCheck.find((id) =>
+              canonicalNextEventTee.groups.some((g) => g.players.some((p) => p.id === id)),
+            ) ?? null
+          : null,
+        found: !!found,
+        eventId: canonicalNextEventTee.eventId,
+      });
+    }
+    return found;
+  }, [
+    memberId,
+    nextEvent,
+    membersForJointTeeCanonical,
+    canonicalNextEventTee,
+    nextEventJointSocietyMap,
+    userId,
+  ]);
 
   // OOM teaser: top 5 + current user pinned
   const oomTeaser = useMemo(() => {

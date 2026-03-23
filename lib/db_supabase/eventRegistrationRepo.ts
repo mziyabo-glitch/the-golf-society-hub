@@ -116,6 +116,51 @@ export function isRegistrationConfirmed(r: EventRegistration): boolean {
 }
 
 /**
+ * Tee sheet default field list: confirmed attendees for this event.
+ * - Event-scoped (not active-society-scoped).
+ * - Joint events naturally include confirmed rows across participating societies.
+ */
+export async function getConfirmedPlayersForEvent(eventId: string): Promise<string[]> {
+  const regs = await getEventRegistrations(eventId);
+  const ids = regs
+    .filter(isRegistrationConfirmed)
+    .map((r) => String(r.member_id))
+    .filter(Boolean);
+  return [...new Set(ids)];
+}
+
+export const JOINT_TEE_SHEET_CANDIDATE_STATUSES = ["in", "maybe", "pending"] as const;
+
+/**
+ * Joint tee-sheet candidate pool:
+ * - scoped to participating societies
+ * - paid only
+ * - RSVP status in JOINT_TEE_SHEET_CANDIDATE_STATUSES
+ */
+export async function getJointTeeSheetCandidatePoolForEvent(
+  eventId: string,
+  participantSocietyIds: string[],
+): Promise<{
+  memberIds: string[];
+  registrations: EventRegistration[];
+  supportedStatuses: readonly string[];
+}> {
+  const regs = await getEventRegistrations(eventId);
+  const scoped = scopeEventRegistrations(regs, {
+    kind: "joint_participants",
+    participantSocietyIds,
+  });
+  const allowed = new Set<string>(JOINT_TEE_SHEET_CANDIDATE_STATUSES);
+  const filtered = scoped.filter((r) => r.paid === true && allowed.has(String(r.status)));
+  const memberIds = [...new Set(filtered.map((r) => String(r.member_id)).filter(Boolean))];
+  return {
+    memberIds,
+    registrations: filtered,
+    supportedStatuses: JOINT_TEE_SHEET_CANDIDATE_STATUSES,
+  };
+}
+
+/**
  * Tee sheet generation (pairings / published tee sheet) — only these members are included.
  * Requires both confirmed attendance and payment recorded (paid ⇒ confirmed is enforced server-side).
  */

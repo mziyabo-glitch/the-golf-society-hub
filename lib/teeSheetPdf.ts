@@ -151,7 +151,7 @@ function generateTeeSheetHTML(data: TeeSheetData, logoSrc?: string | null): stri
       : null,
   ]
     .filter(Boolean)
-    .join(" • ");
+    .join(" · ");
 
   // Calculate handicaps for each player based on their gender
   const playersWithHandicaps: PlayerWithCalcs[] = players.map((player, idx) => {
@@ -221,26 +221,50 @@ function generateTeeSheetHTML(data: TeeSheetData, logoSrc?: string | null): stri
 
   const pages = [groupsWithTimes];
 
+  const jointMatch = societyName.match(/^Joint:\s*(.+)$/i);
+  const jointLine = jointMatch ? jointMatch[1].trim() : null;
+  if (__DEV__) {
+    console.log("[png] joint mode decision", {
+      source: "lib/teeSheetPdf.ts::generateTeeSheetHTML",
+      eventId: eventName || null,
+      uiToggleValue: null,
+      event_is_joint_event: !!jointLine,
+      linkedSocietiesCount: jointLine ? jointLine.split("&").map((x) => x.trim()).filter(Boolean).length : 1,
+      participantSocietiesCount: jointLine ? jointLine.split("&").map((x) => x.trim()).filter(Boolean).length : 1,
+    });
+    console.log("[png] snapshot source", {
+      source: "lib/teeSheetPdf.ts::generateTeeSheetHTML",
+      eventId: eventName || null,
+      isJoint: !!jointLine,
+      sourceUsed: preGrouped ? "preGrouped payload" : "auto-grouped payload",
+      playerIds: players.map((p) => p.id ?? null),
+      displayNames: players.map((p) => p.name),
+      societiesRepresented: [societyName],
+    });
+  }
+
   const teeInfoLines = [
     teeSettings
-      ? `Male (${teeName || "Men's"}): Par ${teeSettings.par} • SR ${teeSettings.slopeRating} • CR ${teeSettings.courseRating}`
-      : "Male: tee info not set",
+      ? `Men: ${teeName || "White"} — Par ${teeSettings.par} | CR ${teeSettings.courseRating} | SR ${teeSettings.slopeRating}`
+      : "Men: tee not set",
     ladiesTeeSettings
-      ? `Female (${ladiesTeeName || "Ladies'"}): Par ${ladiesTeeSettings.par} • SR ${ladiesTeeSettings.slopeRating} • CR ${ladiesTeeSettings.courseRating}`
-      : "Female: tee info not set",
+      ? `Ladies: ${ladiesTeeName || "Red"} — Par ${ladiesTeeSettings.par} | CR ${ladiesTeeSettings.courseRating} | SR ${ladiesTeeSettings.slopeRating}`
+      : "Ladies: tee not set",
     `Allowance: ${Math.round(allowance * 100)}%`,
   ];
 
   const renderGroupTable = (group: GroupWithTime) => {
     const rows = Array.from({ length: 4 }).map((_, idx) => {
       const player = group.players[idx];
-      const name = player?.name ?? "&nbsp;";
+      const name = player?.name ? escapeHtml(player.name) : "&nbsp;";
       const hiDisplay = player ? formatHandicap(player.handicapIndex, 1) : "&nbsp;";
       const phDisplay = player ? formatHandicap(player.playingHandicap) : "&nbsp;";
+      const rowClass = idx === 3 ? "player-row player-row-last" : "player-row";
+      const emptyClass = !player ? " row-empty" : "";
 
       return `
-        <tr>
-          <td>${name}</td>
+        <tr class="${rowClass}${emptyClass}">
+          <td class="col-name">${name}</td>
           <td class="col-hi">${hiDisplay}</td>
           <td class="col-ph">${phDisplay}</td>
         </tr>
@@ -248,15 +272,19 @@ function generateTeeSheetHTML(data: TeeSheetData, logoSrc?: string | null): stri
     });
 
     return `
-      <table class="group-table">
-        <tr>
-          <td class="time-cell" rowspan="5">${group.teeTime}</td>
-          <th class="col-name">Name</th>
-          <th class="col-hi">HI</th>
-          <th class="col-ph">PH</th>
-        </tr>
-        ${rows.join("")}
-      </table>
+      <div class="group-wrap">
+        <div class="time-col">${escapeHtml(group.teeTime)}</div>
+        <table class="group-table">
+          <thead>
+            <tr>
+              <th class="col-name">NAME</th>
+              <th class="col-hi">HI</th>
+              <th class="col-ph">PH</th>
+            </tr>
+          </thead>
+          <tbody>${rows.join("")}</tbody>
+        </table>
+      </div>
     `;
   };
 
@@ -274,22 +302,18 @@ function generateTeeSheetHTML(data: TeeSheetData, logoSrc?: string | null): stri
             <div class="header-left">
               ${
                 logoSrc
-                  ? `<img class="logo" src="${escapeAttribute(logoSrc)}" />`
-                  : `<div class="logo-placeholder">${societyName.slice(0, 2).toUpperCase()}</div>`
+                  ? `<img class="logo" src="${escapeAttribute(logoSrc)}" alt="" />`
+                  : `<div class="logo-placeholder">${escapeHtml(societyName.slice(0, 2).toUpperCase())}</div>`
               }
-              <div>
-                <div class="society-name">${societyName}</div>
-                <div class="header-subtitle">Tee Sheet</div>
-              </div>
             </div>
             <div class="header-center">
-              <div class="event-title">${eventName}</div>
-              <div class="event-meta">${dateStr}${courseName ? ` • ${courseName}` : ""}${formatLabel ? ` • ${formatLabel}` : ""}</div>
+              <div class="event-title">${escapeHtml(eventName)}</div>
+              <div class="event-meta">${escapeHtml(dateStr)}${courseName ? ` · ${escapeHtml(courseName)}` : ""}${formatLabel ? ` · ${escapeHtml(formatLabel)}` : ""}</div>
+              ${jointLine ? `<div class="joint-line">JOINT · ${escapeHtml(jointLine)}</div>` : ""}
             </div>
             <div class="header-right">
               <div class="tee-box">
-                <div class="tee-title">Tee Information</div>
-                ${teeInfoLines.map((line) => `<div class="tee-line">${line}</div>`).join("")}
+                ${teeInfoLines.map((line) => `<div class="tee-line">${escapeHtml(line)}</div>`).join("")}
               </div>
             </div>
           </div>
@@ -300,13 +324,16 @@ function generateTeeSheetHTML(data: TeeSheetData, logoSrc?: string | null): stri
           </div>
 
           <div class="special-info">
-            <div class="special-title">Special Information</div>
-            <div class="special-body">${hasCompetitions ? competitionsText : "No competition holes set."}</div>
+            ${
+              hasCompetitions
+                ? `<div class="special-body">${escapeHtml(competitionsText)}</div>`
+                : `<div class="special-body special-body-muted">Competition holes: not set</div>`
+            }
           </div>
 
           <div class="footer">
-            <div>Produced by The Golf Society Hub</div>
-            <div>Page ${pageIndex + 1} of ${pages.length}</div>
+            <div class="footer-brand">Produced by The Golf Society Hub</div>
+            <div class="footer-page">Page ${pageIndex + 1} of ${pages.length}</div>
           </div>
         </div>
       `;
@@ -318,7 +345,7 @@ function generateTeeSheetHTML(data: TeeSheetData, logoSrc?: string | null): stri
     <html>
       <head>
         <meta charset="utf-8">
-        <title>Tee Sheet - ${eventName}</title>
+        <title>Tee Sheet - ${escapeHtml(eventName)}</title>
         <style>
           * { box-sizing: border-box; margin: 0; padding: 0; }
           @page {
@@ -326,137 +353,139 @@ function generateTeeSheetHTML(data: TeeSheetData, logoSrc?: string | null): stri
             margin: 12mm;
           }
           body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
             padding: 0;
             color: #111827;
             background: #fff;
             font-size: 11px;
-            line-height: 1.25;
+            line-height: 1.35;
           }
           .page {
             page-break-after: always;
-            border: 1px solid #E5E7EB;
-            padding: 12px;
+            padding: 16px 20px 12px;
             min-height: 100%;
+            background: #fff;
           }
           .page:last-child { page-break-after: auto; }
           .header-row {
             display: flex;
-            gap: 12px;
             align-items: flex-start;
-            margin-bottom: 10px;
+            margin-bottom: 14px;
+            min-height: 88px;
           }
           .header-left {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            width: 240px;
+            width: 88px;
+            flex-shrink: 0;
           }
-          .logo { width: 56px; height: 56px; object-fit: contain; object-position: center; flex-shrink: 0; }
+          .logo { width: 56px; height: 56px; object-fit: contain; object-position: left top; display: block; }
           .logo-placeholder {
             width: 56px;
             height: 56px;
-            border-radius: 8px;
-            border: 1px solid #E5E7EB;
+            border: 1px solid #e5e7eb;
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: 12px;
+            font-size: 11px;
             font-weight: 700;
-            color: #0B6E4F;
-            background: #F3F4F6;
+            color: #6b7280;
+            background: #fafafa;
           }
-          .society-name {
-            font-size: 10px;
-            text-transform: uppercase;
-            letter-spacing: 1px;
-            color: #6B7280;
-            font-weight: 700;
-          }
-          .header-subtitle {
-            font-size: 10px;
-            color: #9CA3AF;
-          }
-          .header-center { flex: 1; text-align: center; }
-          .event-title { font-size: 18px; font-weight: 700; margin-bottom: 2px; }
-          .event-meta { font-size: 11px; color: #6B7280; }
-          .header-right { width: 300px; }
+          .header-center { flex: 1; text-align: center; padding: 0 12px; }
+          .event-title { font-size: 22px; font-weight: 700; letter-spacing: -0.02em; margin-bottom: 4px; color: #111827; }
+          .event-meta { font-size: 11px; color: #6b7280; }
+          .joint-line { margin-top: 10px; font-size: 8px; letter-spacing: 0.09em; color: #c4c4c4; font-weight: 500; }
+          .header-right { width: 268px; flex-shrink: 0; }
           .tee-box {
-            border: 1px solid #E5E7EB;
-            padding: 8px;
-            border-radius: 6px;
+            border: 1px solid #e5e7eb;
+            padding: 10px 12px;
+            background: #fafafa;
           }
-          .tee-title { font-size: 10px; text-transform: uppercase; letter-spacing: 0.6px; color: #6B7280; margin-bottom: 4px; font-weight: 700; }
-          .tee-line { font-size: 10px; color: #374151; margin-bottom: 2px; }
+          .tee-line { font-size: 9px; color: #374151; line-height: 14px; margin-bottom: 4px; }
 
           .grid {
             display: grid;
             grid-template-columns: 1fr 1fr;
-            gap: 10px;
-            margin-bottom: 10px;
+            gap: 16px;
+            margin-bottom: 8px;
           }
           .column {
             display: flex;
             flex-direction: column;
-            gap: 8px;
+            gap: 6px;
+          }
+          .group-wrap {
+            display: flex;
+            align-items: flex-start;
+            margin-bottom: 8px;
+            padding-bottom: 6px;
+            border-bottom: 1px solid #e8e8e8;
+          }
+          .time-col {
+            width: 44px;
+            flex-shrink: 0;
+            padding-top: 22px;
+            padding-right: 8px;
+            text-align: right;
+            font-size: 13px;
+            font-weight: 600;
+            color: #111827;
+            border-right: 1px solid #ececec;
           }
           .group-table {
+            flex: 1;
             width: 100%;
             border-collapse: collapse;
-            border: 1px solid #E5E7EB;
+            margin-left: 8px;
           }
-          .group-table th,
-          .group-table td {
-            border-bottom: 1px solid #F3F4F6;
-            padding: 3px 4px;
-            font-size: 10px;
-          }
-          .group-table th {
-            background: #F9FAFB;
-            text-transform: uppercase;
-            letter-spacing: 0.4px;
-            font-size: 9px;
-            color: #6B7280;
+          .group-table thead th {
+            font-size: 8px;
+            letter-spacing: 0.085em;
+            color: #4b5563;
+            font-weight: 700;
+            padding: 4px 0;
+            border-bottom: 1px solid #e8e8e8;
             text-align: left;
           }
-          .time-cell {
-            width: 52px;
-            text-align: center;
-            font-weight: 700;
-            font-size: 11px;
-            color: #0B6E4F;
-            background: #F3F4F6;
-            border-right: 1px solid #E5E7EB;
+          .group-table thead .col-hi,
+          .group-table thead .col-ph { text-align: right; }
+          .group-table .col-name { width: auto; }
+          .group-table .col-hi,
+          .group-table .col-ph {
+            width: 40px;
+            text-align: right;
+            font-variant-numeric: tabular-nums;
+            font-family: ui-monospace, 'SF Mono', Consolas, monospace;
           }
-          .col-name { width: auto; }
-          .col-hi, .col-ph { width: 40px; text-align: right; font-family: 'SF Mono', Consolas, monospace; }
-          .col-ph { color: #0B6E4F; font-weight: 700; }
+          .group-table .col-hi { color: #374151; font-weight: 500; }
+          .group-table .col-ph { color: #374151; font-weight: 600; }
+          .group-table tbody td {
+            font-size: 12px;
+            padding: 4px 0;
+            line-height: 15px;
+            border-bottom: 1px solid #f0f0f0;
+            vertical-align: middle;
+          }
+          .player-row-last td { border-bottom: none; }
+          .row-empty td { color: #e8e8e8; opacity: 0.85; }
 
           .special-info {
-            border-top: 1px solid #E5E7EB;
-            padding-top: 6px;
-            margin-top: 6px;
+            border-top: 1px solid #e5e7eb;
+            padding-top: 8px;
+            margin-top: 4px;
           }
-          .special-title {
-            font-size: 10px;
-            text-transform: uppercase;
-            letter-spacing: 0.6px;
-            color: #6B7280;
-            font-weight: 700;
-            margin-bottom: 2px;
-          }
-          .special-body { font-size: 10px; color: #374151; }
+          .special-body { font-size: 9px; color: #6b7280; line-height: 13px; }
+          .special-body-muted { font-size: 8px; color: #c4c4c4; line-height: 12px; letter-spacing: 0.02em; }
 
           .footer {
             display: flex;
             justify-content: space-between;
-            border-top: 1px solid #E5E7EB;
-            padding-top: 6px;
-            margin-top: 8px;
-            font-size: 10px;
-            color: #9CA3AF;
-            font-style: italic;
+            align-items: center;
+            border-top: 1px solid #e5e7eb;
+            padding-top: 8px;
+            margin-top: 6px;
           }
+          .footer-brand { font-size: 8px; color: #9ca3af; }
+          .footer-page { font-size: 8px; color: #d1d5db; }
         </style>
       </head>
       <body>

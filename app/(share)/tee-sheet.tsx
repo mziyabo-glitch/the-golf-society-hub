@@ -83,8 +83,38 @@ export default function TeeSheetShareScreen() {
 
       try {
         assertPngExportOnly("Tee Sheet export");
+        if (__DEV__) {
+          const sourceIsJoint = /^Joint:/i.test(payload.societyName || "");
+          console.log("[png] joint mode decision", {
+            source: "app/(share)/tee-sheet.tsx::useEffect",
+            eventId: payload.eventName || null,
+            uiToggleValue: null,
+            event_is_joint_event: sourceIsJoint,
+            linkedSocietiesCount: null,
+            participantSocietiesCount: sourceIsJoint
+              ? (payload.societyName?.replace(/^Joint:\s*/i, "").split("&").map((x) => x.trim()).filter(Boolean).length ?? null)
+              : 1,
+          });
+        }
 
         const computedPages = buildTeeSheetPages(payload);
+        if (__DEV__) {
+          const flatPlayerIds = computedPages.flatMap((groups) =>
+            groups.flatMap((g) => g.players.map((p) => p.id)),
+          );
+          const flatNames = computedPages.flatMap((groups) =>
+            groups.flatMap((g) => g.players.map((p) => p.name)),
+          );
+          console.log("[png] snapshot source", {
+            source: "app/(share)/tee-sheet.tsx::buildTeeSheetPages",
+            eventId: payload.eventName || null,
+            isJoint: /^Joint:/i.test(payload.societyName || ""),
+            sourceUsed: payload.preGrouped ? "canonical preGrouped payload" : "computed grouping payload",
+            playerIds: flatPlayerIds,
+            displayNames: flatNames,
+            societiesRepresented: payload.societyName ? [payload.societyName] : [],
+          });
+        }
         if (computedPages.length === 0) {
           throw new Error("No player groups to share.");
         }
@@ -211,6 +241,9 @@ const TeeSheetPage = React.forwardRef<View, {
     ? data.format.charAt(0).toUpperCase() + data.format.slice(1).replace(/_/g, " ")
     : "";
 
+  const jointMatch = data.societyName?.match(/^Joint:\s*(.+)$/i);
+  const jointLine = jointMatch ? jointMatch[1].trim() : null;
+
   const hasCompetitions =
     (data.nearestPinHoles && data.nearestPinHoles.length > 0) ||
     (data.longestDriveHoles && data.longestDriveHoles.length > 0);
@@ -224,15 +257,15 @@ const TeeSheetPage = React.forwardRef<View, {
       : null,
   ]
     .filter(Boolean)
-    .join(" | ");
+    .join(" · ");
 
   const teeInfoLines = [
     data.teeSettings
-      ? `Male (${data.teeName || "Men's"}): Par ${data.teeSettings.par} | SR ${data.teeSettings.slopeRating} | CR ${data.teeSettings.courseRating}`
-      : "Male: tee info not set",
+      ? `Men: ${data.teeName || "White"} — Par ${data.teeSettings.par} | CR ${data.teeSettings.courseRating} | SR ${data.teeSettings.slopeRating}`
+      : "Men: tee not set",
     data.ladiesTeeSettings
-      ? `Female (${data.ladiesTeeName || "Ladies'"}): Par ${data.ladiesTeeSettings.par} | SR ${data.ladiesTeeSettings.slopeRating} | CR ${data.ladiesTeeSettings.courseRating}`
-      : "Female: tee info not set",
+      ? `Ladies: ${data.ladiesTeeName || "Red"} — Par ${data.ladiesTeeSettings.par} | CR ${data.ladiesTeeSettings.courseRating} | SR ${data.ladiesTeeSettings.slopeRating}`
+      : "Ladies: tee not set",
     `Allowance: ${Math.round(allowance * 100)}%`,
   ];
 
@@ -246,24 +279,24 @@ const TeeSheetPage = React.forwardRef<View, {
             variant="hero"
             placeholderText={getInitials(data.societyName)}
           />
-          <View>
-            <Text style={styles.societyName}>{data.societyName}</Text>
-            <Text style={styles.headerSubtitle}>Tee Sheet</Text>
-          </View>
         </View>
         <View style={styles.headerCenter}>
           <Text style={styles.eventTitle}>{data.eventName}</Text>
           <Text style={styles.eventMeta}>
             {dateStr}
-            {data.courseName ? ` | ${data.courseName}` : ""}
-            {formatLabel ? ` | ${formatLabel}` : ""}
+            {data.courseName ? ` · ${data.courseName}` : ""}
+            {formatLabel ? ` · ${formatLabel}` : ""}
           </Text>
+          {jointLine ? (
+            <Text style={styles.jointLine}>JOINT · {jointLine}</Text>
+          ) : null}
         </View>
         <View style={styles.headerRight}>
           <View style={styles.teeBox}>
-            <Text style={styles.teeTitle}>Tee Information</Text>
             {teeInfoLines.map((line) => (
-              <Text key={line} style={styles.teeLine}>{line}</Text>
+              <Text key={line} style={styles.teeLine}>
+                {line}
+              </Text>
             ))}
           </View>
         </View>
@@ -287,15 +320,14 @@ const TeeSheetPage = React.forwardRef<View, {
       </View>
 
       <View style={styles.specialInfo}>
-        <Text style={styles.specialTitle}>Special Information</Text>
-        <Text style={styles.specialBody}>
-          {hasCompetitions ? competitionsText : "No competition holes set."}
+        <Text style={hasCompetitions ? styles.specialBody : styles.specialBodyMuted}>
+          {hasCompetitions ? competitionsText : "Competition holes: not set"}
         </Text>
       </View>
 
       <View style={styles.footer}>
         <Text style={styles.footerText}>Produced by The Golf Society Hub</Text>
-        <Text style={styles.footerText}>Page {pageIndex + 1} of {pageCount}</Text>
+        <Text style={styles.footerTextMuted}>Page {pageIndex + 1} of {pageCount}</Text>
       </View>
     </View>
   );
@@ -306,26 +338,33 @@ TeeSheetPage.displayName = "TeeSheetPage";
 const GroupTable = React.memo(function GroupTable({ group }: { group: GroupWithTime }) {
   return (
     <View style={styles.groupTable}>
-      <View style={styles.timeCell}>
+      <View style={styles.timeColumn}>
         <Text style={styles.timeText}>{group.teeTime}</Text>
       </View>
       <View style={styles.groupBody}>
         <View style={styles.groupHeaderRow}>
-          <Text style={[styles.groupHeaderCell, styles.nameCol]}>Name</Text>
+          <Text style={[styles.groupHeaderCell, styles.nameCol]}>NAME</Text>
           <Text style={[styles.groupHeaderCell, styles.hiCol]}>HI</Text>
           <Text style={[styles.groupHeaderCell, styles.phCol]}>PH</Text>
         </View>
         {Array.from({ length: 4 }).map((_, idx) => {
           const player = group.players[idx];
+          const empty = !player;
           return (
-            <View key={`${group.groupNumber}-${idx}`} style={styles.groupRow}>
-              <Text style={[styles.groupCell, styles.nameCol]} numberOfLines={1}>
+            <View
+              key={`${group.groupNumber}-${idx}`}
+              style={[styles.groupRow, idx === 3 ? styles.groupRowLast : null]}
+            >
+              <Text
+                style={[styles.groupCell, styles.nameCol, empty ? styles.groupCellEmpty : null]}
+                numberOfLines={1}
+              >
                 {player?.name || "\u00A0"}
               </Text>
-              <Text style={[styles.groupCell, styles.hiCol]}>
+              <Text style={[styles.groupCell, styles.hiCol, empty ? styles.groupCellEmpty : null]}>
                 {player ? formatHandicap(player.handicapIndex, 1) : "\u00A0"}
               </Text>
-              <Text style={[styles.groupCell, styles.phCol]}>
+              <Text style={[styles.groupCell, styles.phCol, empty ? styles.groupCellEmpty : null]}>
                 {player ? formatHandicap(player.playingHandicap) : "\u00A0"}
               </Text>
             </View>
@@ -357,20 +396,22 @@ function buildTeeSheetPages(data: TeeSheetData): GroupWithTime[][] {
 
   let groups: PlayerGroup[];
   if (data.preGrouped) {
-    const groupMap = new Map<number, PlayerWithCalcs[]>();
+    const groupMap = new Map<number, { players: PlayerWithCalcs[]; teeTime?: string | null }>();
     data.players.forEach((player, idx) => {
       const groupNum = player.group ?? 1;
       const playerWithCalcs = playersWithHandicaps[idx];
-      if (!groupMap.has(groupNum)) groupMap.set(groupNum, []);
-      groupMap.get(groupNum)!.push(playerWithCalcs);
+      if (!groupMap.has(groupNum)) groupMap.set(groupNum, { players: [], teeTime: player.teeTime ?? null });
+      const row = groupMap.get(groupNum)!;
+      row.players.push(playerWithCalcs);
+      if (!row.teeTime && player.teeTime) row.teeTime = player.teeTime;
     });
 
     groups = Array.from(groupMap.entries())
       .sort((a, b) => a[0] - b[0])
-      .map(([groupNumber, groupPlayers]) => ({
+      .map(([groupNumber, grouped]) => ({
         groupNumber,
-        players: groupPlayers,
-        teeTime: undefined,
+        players: grouped.players,
+        teeTime: grouped.teeTime ?? undefined,
       }));
   } else {
     groups = groupPlayers(playersWithHandicaps, true);
@@ -386,7 +427,7 @@ function buildTeeSheetPages(data: TeeSheetData): GroupWithTime[][] {
   const capped = groups.slice(0, 12);
   const groupsWithTimes: GroupWithTime[] = capped.map((group, index) => ({
     ...group,
-    teeTime: buildTeeTime(baseStartTime, intervalMinutes, index),
+    teeTime: isValidTime(group.teeTime) ? group.teeTime : buildTeeTime(baseStartTime, intervalMinutes, index),
   }));
 
   while (groupsWithTimes.length < 12) {
@@ -452,186 +493,192 @@ const styles = StyleSheet.create({
     width: PAGE_WIDTH,
     minHeight: PAGE_HEIGHT,
     backgroundColor: "#FFFFFF",
-    borderWidth: 1,
-    borderColor: "#E5E7EB",
-    padding: 18,
+    paddingHorizontal: 20,
+    paddingTop: 16,
+    paddingBottom: 12,
     marginBottom: 14,
   },
   headerRow: {
     flexDirection: "row",
     alignItems: "flex-start",
-    gap: 12,
-    marginBottom: 10,
+    marginBottom: 14,
+    minHeight: 88,
   },
   headerLeft: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    width: 260,
-  },
-  societyName: {
-    fontSize: typography.captionBold.fontSize,
-    textTransform: "uppercase",
-    letterSpacing: 1,
-    color: "#0f172a",
-    fontWeight: "700",
-  },
-  headerSubtitle: {
-    fontSize: typography.small.fontSize,
-    color: "#0f172a",
+    width: 88,
+    alignItems: "flex-start",
+    justifyContent: "flex-start",
+    paddingTop: 2,
   },
   headerCenter: {
     flex: 1,
+    paddingHorizontal: 12,
     alignItems: "center",
   },
   eventTitle: {
-    fontSize: typography.display.fontSize,
-    fontWeight: "800",
-    color: "#0f172a",
-    marginBottom: 2,
+    fontSize: 22,
+    fontWeight: "700",
+    color: "#111827",
+    textAlign: "center",
+    letterSpacing: -0.3,
+    marginBottom: 4,
   },
   eventMeta: {
-    fontSize: typography.body.fontSize,
-    color: "#0f172a",
+    fontSize: 11,
+    color: "#6b7280",
+    textAlign: "center",
+    lineHeight: 15,
+  },
+  jointLine: {
+    marginTop: 10,
+    fontSize: 8,
+    letterSpacing: 0.9,
+    color: "#c4c4c4",
+    textAlign: "center",
+    fontWeight: "500",
   },
   headerRight: {
-    width: 320,
+    width: 268,
+    alignItems: "flex-end",
   },
   teeBox: {
-    borderWidth: 1,
-    borderColor: "#E5E7EB",
-    padding: 8,
-    borderRadius: 6,
-  },
-  teeTitle: {
-    fontSize: typography.small.fontSize,
-    textTransform: "uppercase",
-    letterSpacing: 0.6,
-    color: "#0f172a",
-    marginBottom: 4,
-    fontWeight: "700",
+    width: "100%",
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "#e5e7eb",
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    backgroundColor: "#fafafa",
   },
   teeLine: {
-    fontSize: typography.small.fontSize,
-    color: "#0f172a",
-    marginBottom: 2,
+    fontSize: 9,
+    color: "#374151",
+    lineHeight: 14,
+    marginBottom: 4,
   },
   grid: {
     flexDirection: "row",
-    gap: 10,
-    marginBottom: 10,
+    gap: 16,
+    marginBottom: 8,
   },
   column: {
     flex: 1,
-    gap: 8,
+    gap: 6,
   },
   emptyColumn: {
     fontSize: typography.small.fontSize,
-    color: "#0f172a",
+    color: "#6b7280",
   },
   groupTable: {
     flexDirection: "row",
-    borderWidth: 1,
-    borderColor: "#E5E7EB",
-    marginBottom: 14,
-    paddingBottom: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: "#EEEEEE",
+    alignItems: "flex-start",
+    marginBottom: 8,
+    paddingBottom: 6,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: "#efefef",
   },
-  timeCell: {
-    width: 60,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "#F3F4F6",
+  timeColumn: {
+    width: 48,
+    paddingTop: 20,
+    paddingRight: 10,
     borderRightWidth: 1,
-    borderRightColor: "#E5E7EB",
-    paddingVertical: 8,
+    borderRightColor: "#e2e2e2",
+    alignItems: "flex-end",
+    justifyContent: "flex-start",
   },
   timeText: {
-    fontSize: 16,
-    fontWeight: "600",
-    color: "#0B6E4F",
-    marginBottom: 8,
+    fontSize: 14,
+    fontWeight: "700",
+    color: "#0f172a",
+    letterSpacing: 0.3,
   },
   groupBody: {
     flex: 1,
+    paddingLeft: 8,
   },
   groupHeaderRow: {
     flexDirection: "row",
-    backgroundColor: "#F9FAFB",
-    borderBottomWidth: 1,
-    borderBottomColor: "#F3F4F6",
-    paddingVertical: 10,
-    paddingHorizontal: 8,
+    paddingVertical: 4,
+    paddingHorizontal: 0,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: "#e8e8e8",
+    marginBottom: 2,
   },
   groupHeaderCell: {
-    fontSize: typography.small.fontSize,
-    textTransform: "uppercase",
-    letterSpacing: 0.4,
-    color: "#0f172a",
-    fontWeight: "600",
+    fontSize: 8,
+    letterSpacing: 0.85,
+    color: "#4b5563",
+    fontWeight: "700",
   },
   groupRow: {
     flexDirection: "row",
-    paddingVertical: 14,
-    paddingHorizontal: 8,
-    borderBottomWidth: 1,
-    borderBottomColor: "#F3F4F6",
-    minHeight: 28,
+    paddingVertical: 4,
+    paddingHorizontal: 0,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: "#f0f0f0",
+  },
+  groupRowLast: {
+    borderBottomWidth: 0,
   },
   groupCell: {
-    fontSize: typography.body.fontSize,
-    color: "#0f172a",
-    lineHeight: 22,
+    fontSize: 12,
+    color: "#111827",
+    lineHeight: 15,
+  },
+  groupCellEmpty: {
+    color: "#e8e8e8",
+    opacity: 0.85,
   },
   nameCol: {
-    flex: 1.8,
-    fontSize: typography.body.fontSize,
+    flex: 1,
+    minWidth: 0,
     fontWeight: "500",
   },
   hiCol: {
-    flex: 0.6,
-    textAlign: "center",
-    fontFamily: "monospace",
-    fontSize: typography.body.fontSize,
-    fontWeight: "600",
+    width: 40,
+    textAlign: "right",
+    fontVariant: ["tabular-nums"],
+    fontWeight: "500",
+    color: "#374151",
   },
   phCol: {
-    flex: 0.6,
-    textAlign: "center",
-    fontFamily: "monospace",
-    fontWeight: "700",
-    fontSize: typography.body.fontSize,
-    color: "#0B6E4F",
+    width: 40,
+    textAlign: "right",
+    fontVariant: ["tabular-nums"],
+    fontWeight: "600",
+    color: "#374151",
   },
   specialInfo: {
-    borderTopWidth: 1,
-    borderTopColor: "#E5E7EB",
-    paddingTop: 6,
-    marginTop: 6,
-  },
-  specialTitle: {
-    fontSize: typography.small.fontSize,
-    textTransform: "uppercase",
-    letterSpacing: 0.6,
-    color: "#0f172a",
-    fontWeight: "700",
-    marginBottom: 2,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: "#e5e7eb",
+    paddingTop: 8,
+    marginTop: 4,
   },
   specialBody: {
-    fontSize: typography.small.fontSize,
-    color: "#0f172a",
+    fontSize: 9,
+    color: "#6b7280",
+    lineHeight: 13,
+  },
+  specialBodyMuted: {
+    fontSize: 8,
+    color: "#c4c4c4",
+    lineHeight: 12,
+    letterSpacing: 0.2,
   },
   footer: {
     flexDirection: "row",
     justifyContent: "space-between",
-    borderTopWidth: 1,
-    borderTopColor: "#E5E7EB",
-    paddingTop: 6,
-    marginTop: 8,
+    alignItems: "center",
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: "#e5e7eb",
+    paddingTop: 8,
+    marginTop: 6,
   },
   footerText: {
-    fontSize: typography.small.fontSize,
-    color: "#0f172a",
+    fontSize: 8,
+    color: "#9ca3af",
+  },
+  footerTextMuted: {
+    fontSize: 8,
+    color: "#d1d5db",
   },
 });
