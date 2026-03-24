@@ -72,7 +72,7 @@ export default function EventFinanceScreen() {
   const [editing, setEditing] = useState<EditingEvent | null>(null);
   const [saving, setSaving] = useState(false);
 
-  const permissions = getPermissionsForMember(member as any);
+  const permissions = getPermissionsForMember(member);
   const canManageFinance = permissions.canAccessFinance;
 
   // Load events finance data

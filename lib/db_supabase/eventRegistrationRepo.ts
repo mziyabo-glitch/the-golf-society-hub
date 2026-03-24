@@ -116,17 +116,26 @@ export function isRegistrationConfirmed(r: EventRegistration): boolean {
 }
 
 /**
- * Tee sheet default field list: confirmed attendees for this event.
- * - Event-scoped (not active-society-scoped).
- * - Joint events naturally include confirmed rows across participating societies.
+ * Member ids eligible for tee sheet / ManCo start flow: **status in AND paid** (see `isTeeSheetEligible`).
+ * Does not require `user_id` — placeholder members count when paid.
  */
-export async function getConfirmedPlayersForEvent(eventId: string): Promise<string[]> {
+export async function getTeeSheetEligibleMemberIdsForEvent(
+  eventId: string,
+): Promise<string[]> {
   const regs = await getEventRegistrations(eventId);
   const ids = regs
-    .filter(isRegistrationConfirmed)
+    .filter(isTeeSheetEligible)
     .map((r) => String(r.member_id))
     .filter(Boolean);
   return [...new Set(ids)];
+}
+
+/**
+ * @deprecated Use {@link getTeeSheetEligibleMemberIdsForEvent}. Historically misnamed: tee sheets
+ * require confirmed **and** paid, not merely status "in".
+ */
+export async function getConfirmedPlayersForEvent(eventId: string): Promise<string[]> {
+  return getTeeSheetEligibleMemberIdsForEvent(eventId);
 }
 
 export const JOINT_TEE_SHEET_CANDIDATE_STATUSES = ["in", "maybe", "pending"] as const;
@@ -265,5 +274,32 @@ export async function markMePaid(
       );
     }
     throw new Error(msg || "Failed to update payment status");
+  }
+}
+
+/**
+ * Captain/Treasurer/Secretary/Handicapper: ensure an `event_registrations` row for a society member
+ * (including placeholders with no app user). Sets status to `"in"`; does not clear payment on upsert.
+ */
+export async function addMemberToEventAsAdmin(opts: {
+  eventId: string;
+  societyId: string;
+  targetMemberId: string;
+}): Promise<void> {
+  const { error } = await supabase.rpc("admin_add_member_to_event", {
+    p_event_id: opts.eventId,
+    p_society_id: opts.societyId,
+    p_target_member_id: opts.targetMemberId,
+  });
+
+  if (error) {
+    console.error("[eventRegRepo] admin_add_member_to_event RPC:", error.message);
+    const msg = error.message || "";
+    if (msg.includes("function public.admin_add_member_to_event") && msg.includes("does not exist")) {
+      throw new Error(
+        "Database is out of date: apply migration 079_admin_add_member_to_event_and_manco_mark_paid.sql, then retry.",
+      );
+    }
+    throw new Error(msg || "Failed to add member to event");
   }
 }

@@ -67,7 +67,7 @@ export default function MembershipFeesScreen() {
   const [savingFee, setSavingFee] = useState(false);
   const [resetting, setResetting] = useState(false);
 
-  const permissions = getPermissionsForMember(member as any);
+  const permissions = getPermissionsForMember(member);
   const canManageFees = permissions.canManageMembershipFees;
 
   // Load members and fee data

@@ -122,7 +122,7 @@ export default function TreasurerScreen() {
   // Toast state
   const [toast, setToast] = useState<{ visible: boolean; message: string; type: "success" | "error" | "info" }>({ visible: false, message: "", type: "success" });
 
-  const permissions = getPermissionsForMember(member as any);
+  const permissions = getPermissionsForMember(member);
   const canManageFinance = permissions.canAccessFinance;
 
   // Entries sorted newest first for display

@@ -51,7 +51,7 @@ export default function SettingsScreen() {
   const [logoDiagnosticsLoading, setLogoDiagnosticsLoading] = useState(false);
   const [logoDiagnosticsError, setLogoDiagnosticsError] = useState<string | null>(null);
 
-  const permissions = getPermissionsForMember(member as any);
+  const permissions = getPermissionsForMember(member);
   const canRegenCode = isCaptain(member as any);
   const canManageLogo = permissions.canManageSocietyLogo;
 

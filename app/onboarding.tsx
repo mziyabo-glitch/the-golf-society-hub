@@ -501,6 +501,11 @@ export default function OnboardingScreen() {
               {joinError && (
                 <InlineNotice variant="error" message={joinError} style={styles.errorNotice} />
               )}
+              <InlineNotice
+                variant="info"
+                message="Already on the society list? Use the same name your captain entered, or sign up with the same email they saved — we link your account to that member so your history stays together."
+                style={styles.errorNotice}
+              />
               <View style={styles.formField}>
                 <AppText variant="captionBold" style={styles.label}>Join Code</AppText>
                 <AppInput

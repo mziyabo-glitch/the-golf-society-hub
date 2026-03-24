@@ -169,7 +169,7 @@ export default function EventPointsScreen() {
   const [toast, setToast] = useState({ visible: false, message: "", type: "success" as const });
   const saveAction = useAsyncAction();
 
-  const permissions = getPermissionsForMember(currentMember as any);
+  const permissions = getPermissionsForMember(currentMember);
   const canEnterPoints = permissions.canManageHandicaps;
 
   // Load event data and existing results
@@ -717,3 +717,4 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.xs,
   },
 });
+

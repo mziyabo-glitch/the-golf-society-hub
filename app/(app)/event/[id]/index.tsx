@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import debounce from "lodash.debounce";
-import { StyleSheet, View, Pressable, ScrollView } from "react-native";
+import { StyleSheet, View, Pressable, ScrollView, Modal } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
 import { Feather } from "@expo/vector-icons";
@@ -42,10 +42,11 @@ import {
   matchLadiesTeeFromEvent,
   hasManualLadiesTeeMinimum,
 } from "@/lib/courseTeeGender";
-import { getPermissionsForMember, canManageEventPaymentsForSociety } from "@/lib/rbac";
+import { getPermissionsForMember, canManageEventPaymentsForSociety, canManageEventRosterForSociety } from "@/lib/rbac";
 import {
   getEventRegistrations,
   markMePaid,
+  addMemberToEventAsAdmin,
   filterRegistrationsForActiveSocietyMembers,
   type EventRegistration,
 } from "@/lib/db_supabase/eventRegistrationRepo";
@@ -117,7 +118,7 @@ export default function EventDetailScreen() {
   const logoUrl = getSocietyLogoUrl(society);
 
   // Permissions
-  const permissions = getPermissionsForMember(currentMember as any);
+  const permissions = getPermissionsForMember(currentMember);
   const canEnterPoints = permissions.canManageHandicaps;
   const canEditEvent = permissions.canCreateEvents;
 
@@ -234,29 +235,9 @@ export default function EventDetailScreen() {
       if (baseEvent) {
         // (b) Use canonical joint classification from event_societies meta.
         const joint = isJointByMeta;
-        if (__DEV__) {
-          console.log("[events] joint event read payload", {
-            source: "app/(app)/event/[id]/index.tsx::loadEvent(base)",
-            eventId,
-            event_is_joint_event: baseEvent.is_joint_event ?? null,
-            linkedSocietiesCount: jointMeta?.linkedSocietyCount ?? 0,
-            participantSocietiesCount: undefined,
-            jointDecision: joint,
-          });
-        }
         if (joint) {
           const jointPayload = await getJointEventDetail(eventId);
           if (jointPayload) {
-            if (__DEV__) {
-              console.log("[events] joint event read payload", {
-                source: "app/(app)/event/[id]/index.tsx::loadEvent(jointPayload)",
-                eventId,
-                event_is_joint_event: jointPayload.event.is_joint_event ?? null,
-                linkedSocietiesCount: jointMeta?.linkedSocietyCount ?? 0,
-                participantSocietiesCount: jointPayload.participating_societies?.length ?? 0,
-                jointDecision: true,
-              });
-            }
             setEvent(mapJointEventToEventDoc(jointPayload.event) as EventDoc);
             setJointParticipatingSocieties(
               jointPayload.participating_societies.map((s) => ({
@@ -274,16 +255,6 @@ export default function EventDetailScreen() {
             setJointEntries([]);
           }
         } else {
-          if (__DEV__) {
-            console.log("[events] joint event read payload", {
-              source: "app/(app)/event/[id]/index.tsx::loadEvent(standardPath)",
-              eventId,
-              event_is_joint_event: baseEvent.is_joint_event ?? null,
-              linkedSocietiesCount: jointMeta?.linkedSocietyCount ?? 0,
-              participantSocietiesCount: 0,
-              jointDecision: false,
-            });
-          }
           setEvent(baseEvent);
           setJointParticipatingSocieties([]);
           setJointEntries([]);
@@ -293,16 +264,6 @@ export default function EventDetailScreen() {
         // (RLS blocks direct events read for non-host societies)
         const jointPayload = await getJointEventDetail(eventId);
         if (jointPayload) {
-          if (__DEV__) {
-            console.log("[events] joint event read payload", {
-              source: "app/(app)/event/[id]/index.tsx::loadEvent(fallbackJointPayload)",
-              eventId,
-              event_is_joint_event: jointPayload.event.is_joint_event ?? null,
-              linkedSocietiesCount: jointMeta?.linkedSocietyCount ?? 0,
-              participantSocietiesCount: jointPayload.participating_societies?.length ?? 0,
-              jointDecision: true,
-            });
-          }
           setEvent(mapJointEventToEventDoc(jointPayload.event) as EventDoc);
           setJointParticipatingSocieties(
             jointPayload.participating_societies.map((s) => ({
@@ -340,11 +301,18 @@ export default function EventDetailScreen() {
     () => canManageEventPaymentsForSociety(memberships, societyId),
     [memberships, societyId],
   );
+  const canManageEventRoster = useMemo(
+    () => canManageEventRosterForSociety(memberships, societyId),
+    [memberships, societyId],
+  );
   const [registrations, setRegistrations] = useState<EventRegistration[]>([]);
   /** Members of the active society only — sole source for society-scoped attendance / payment / confirmed lists. */
   const [activeSocietyMembers, setActiveSocietyMembers] = useState<MemberDoc[]>([]);
   const [payBusy, setPayBusy] = useState<string | null>(null);
   const [payToast, setPayToast] = useState<{ visible: boolean; message: string; type: "success" | "error" }>({ visible: false, message: "", type: "success" });
+  const [addMemberModalOpen, setAddMemberModalOpen] = useState(false);
+  const [addMemberSearch, setAddMemberSearch] = useState("");
+  const [addMemberBusy, setAddMemberBusy] = useState<string | null>(null);
 
   const hostSocietyId = event?.society_id ?? societyId ?? null;
 
@@ -451,6 +419,31 @@ export default function EventDetailScreen() {
     [event?.playerIds, activeMemberIdSet, regInMemberIds],
   );
 
+  /** Playing list is handled separately; these members are not yet on the event (incl. placeholders with no app account). */
+  const playerIdSet = useMemo(
+    () => new Set((event?.playerIds ?? []).map(String).filter(Boolean)),
+    [event?.playerIds],
+  );
+
+  const manualAddCandidates = useMemo(() => {
+    return activeSocietyMembers.filter((m) => {
+      const id = String(m.id);
+      if (regInMemberIds.has(id)) return false;
+      if (playerIdSet.has(id)) return false;
+      return true;
+    });
+  }, [activeSocietyMembers, regInMemberIds, playerIdSet]);
+
+  const filteredManualAddCandidates = useMemo(() => {
+    const q = addMemberSearch.trim().toLowerCase();
+    if (!q) return manualAddCandidates;
+    return manualAddCandidates.filter((m) => {
+      const name = (m.display_name || m.name || "").toLowerCase();
+      const email = (m.email || "").toLowerCase();
+      return name.includes(q) || email.includes(q);
+    });
+  }, [manualAddCandidates, addMemberSearch]);
+
   const notPlayingRegs = useMemo(
     () =>
       withdrawnRegsForDisplay(
@@ -508,6 +501,30 @@ export default function EventDetailScreen() {
       setPayToast({ visible: true, message: e?.message || "Failed", type: "error" });
     } finally {
       setPayBusy(null);
+    }
+  };
+
+  const handleAdminAddMemberToEvent = async (memberId: string) => {
+    if (addMemberBusy || !eventId || !societyId) return;
+    setAddMemberBusy(memberId);
+    try {
+      await addMemberToEventAsAdmin({
+        eventId,
+        societyId,
+        targetMemberId: memberId,
+      });
+      setPayToast({
+        visible: true,
+        message: "Added to event — pending payment until marked paid (tee sheet uses paid & confirmed only)",
+        type: "success",
+      });
+      setAddMemberModalOpen(false);
+      setAddMemberSearch("");
+      await loadRegistrations();
+    } catch (e: any) {
+      setPayToast({ visible: true, message: e?.message || "Failed", type: "error" });
+    } finally {
+      setAddMemberBusy(null);
     }
   };
 
@@ -763,16 +780,6 @@ export default function EventDetailScreen() {
     setFormEditParticipatingSocieties(jointParticipatingSocieties);
     const societies = await getMySocieties();
     setMySocieties(societies);
-    if (__DEV__) {
-      console.log("[events] joint toggle ui state", {
-        source: "app/(app)/event/[id]/index.tsx::startEditing",
-        eventId,
-        uiToggleValue: event.is_joint_event === true,
-        event_is_joint_event: event.is_joint_event ?? null,
-        linkedSocietiesCount: jointParticipatingSocieties.length,
-        participantSocietiesCount: formEditParticipatingSocieties.length,
-      });
-    }
 
     setIsEditing(true);
   };
@@ -934,17 +941,6 @@ export default function EventDetailScreen() {
     setSaving(true);
     try {
       if (formEditIsJointEvent) {
-        if (__DEV__) {
-          console.log("[events] joint save payload", {
-            source: "app/(app)/event/[id]/index.tsx::handleSaveEvent(updateJointEvent)",
-            eventId,
-            uiToggleValue: formEditIsJointEvent,
-            event_is_joint_event: event?.is_joint_event ?? null,
-            linkedSocietiesCount: jointParticipatingSocieties.length,
-            participantSocietiesCount: formEditParticipatingSocieties.length,
-            hostSocietyId: formEditHostSocietyId,
-          });
-        }
         await updateJointEvent(eventId, {
           name: formName.trim(),
           date: formDate.trim() || undefined,
@@ -968,17 +964,6 @@ export default function EventDetailScreen() {
           participating_societies: formEditParticipatingSocieties,
         });
       } else {
-        if (__DEV__) {
-          console.log("[events] joint save payload", {
-            source: "app/(app)/event/[id]/index.tsx::handleSaveEvent(updateEvent)",
-            eventId,
-            uiToggleValue: formEditIsJointEvent,
-            event_is_joint_event: event?.is_joint_event ?? null,
-            linkedSocietiesCount: jointParticipatingSocieties.length,
-            participantSocietiesCount: 0,
-            hostSocietyId: null,
-          });
-        }
         await updateEvent(eventId, {
           name: formName.trim(),
           date: formDate.trim() || undefined,
@@ -1173,16 +1158,6 @@ export default function EventDetailScreen() {
                 onPress={() => {
                   if (event?.is_joint_event === true) return;
                   const next = !formEditIsJointEvent;
-                  if (__DEV__) {
-                    console.log("[events] joint toggle ui state", {
-                      source: "app/(app)/event/[id]/index.tsx::editToggleOnPress",
-                      eventId,
-                      uiToggleValue: next,
-                      event_is_joint_event: event?.is_joint_event ?? null,
-                      linkedSocietiesCount: jointParticipatingSocieties.length,
-                      participantSocietiesCount: formEditParticipatingSocieties.length,
-                    });
-                  }
                   setFormEditIsJointEvent(next);
                   if (!next) {
                     setFormEditHostSocietyId("");
@@ -1685,7 +1660,8 @@ export default function EventDetailScreen() {
       {/* Society-scoped payment: paid = confirmed; tee sheet = paid + confirmed */}
       {(societyPageRegistrations.length > 0 ||
         captainPickMemberIds.length > 0 ||
-        notPlayingRegs.length > 0) && (
+        notPlayingRegs.length > 0 ||
+        (canManageEventRoster && manualAddCandidates.length > 0)) && (
         <AppCard style={styles.card}>
           <View style={styles.paidHeader}>
             <View style={{ flex: 1 }}>
@@ -1747,6 +1723,23 @@ export default function EventDetailScreen() {
               </AppText>
             </View>
           </View>
+
+          {canManageEventRoster && manualAddCandidates.length > 0 ? (
+            <View style={{ marginBottom: spacing.sm }}>
+              <SecondaryButton
+                icon={<Feather name="user-plus" size={16} color={colors.text} />}
+                label="Add society member to event…"
+                onPress={() => {
+                  setAddMemberSearch("");
+                  setAddMemberModalOpen(true);
+                }}
+              />
+              <AppText variant="small" color="tertiary" style={{ marginTop: spacing.xs }}>
+                Includes members who have not joined the app yet. Mark them paid when ready — only paid &amp; confirmed
+                players are used for the tee sheet.
+              </AppText>
+            </View>
+          ) : null}
 
           {buckets.confirmedPaid.length > 0 ? (
             <AppText variant="captionBold" color="secondary" style={{ marginTop: spacing.sm, marginBottom: spacing.xs }}>
@@ -1948,6 +1941,89 @@ export default function EventDetailScreen() {
           Created {new Date(event.created_at).toLocaleDateString("en-GB")}
         </AppText>
       )}
+      <Modal
+        visible={addMemberModalOpen}
+        animationType="slide"
+        transparent
+        onRequestClose={() => {
+          if (!addMemberBusy) setAddMemberModalOpen(false);
+        }}
+      >
+        <Pressable
+          style={styles.addMemberModalBackdrop}
+          onPress={() => {
+            if (!addMemberBusy) setAddMemberModalOpen(false);
+          }}
+        >
+          <Pressable style={[styles.addMemberModalCard, { backgroundColor: colors.background }]} onPress={(e) => e.stopPropagation()}>
+            <AppText variant="h2" style={{ marginBottom: spacing.sm }}>
+              Add to event
+            </AppText>
+            <AppText variant="small" color="secondary" style={{ marginBottom: spacing.sm }}>
+              Choose a member of this society. They will appear under Pending payment until marked paid.
+            </AppText>
+            <AppInput
+              placeholder="Search name or email"
+              value={addMemberSearch}
+              onChangeText={setAddMemberSearch}
+              autoCapitalize="none"
+              autoCorrect={false}
+            />
+            <ScrollView style={styles.searchResults} keyboardShouldPersistTaps="handled">
+              {filteredManualAddCandidates.length === 0 ? (
+                <AppText variant="small" color="tertiary" style={{ padding: spacing.sm }}>
+                  {manualAddCandidates.length === 0
+                    ? "All society members are already on this event."
+                    : "No matching members"}
+                </AppText>
+              ) : (
+                filteredManualAddCandidates.map((m) => {
+                  const label = resolveAttendeeDisplayName(m, { memberId: m.id }).name;
+                  const busy = addMemberBusy === m.id;
+                  return (
+                    <Pressable
+                      key={m.id}
+                      disabled={!!addMemberBusy}
+                      onPress={() => {
+                        void handleAdminAddMemberToEvent(m.id);
+                      }}
+                      style={({ pressed }) => [
+                        styles.searchResultItem,
+                        { opacity: pressed || busy ? 0.55 : 1 },
+                      ]}
+                    >
+                      <AppText variant="body" numberOfLines={2}>
+                        {label}
+                      </AppText>
+                      {!m.user_id ? (
+                        <AppText variant="caption" color="tertiary">
+                          No app account yet
+                        </AppText>
+                      ) : null}
+                    </Pressable>
+                  );
+                })
+              )}
+            </ScrollView>
+            {addMemberBusy ? (
+              <AppText variant="small" color="tertiary" style={{ marginTop: spacing.xs }}>
+                Adding member to event...
+              </AppText>
+            ) : null}
+            <SecondaryButton
+              disabled={!!addMemberBusy}
+              style={{ marginTop: spacing.sm }}
+              onPress={() => {
+                setAddMemberModalOpen(false);
+                setAddMemberSearch("");
+              }}
+            >
+              Cancel
+            </SecondaryButton>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
       <LicenceRequiredModal visible={modalVisible} onClose={() => setModalVisible(false)} societyId={guardSocietyId} />
       <Toast visible={payToast.visible} message={payToast.message} type={payToast.type} onHide={() => setPayToast((t) => ({ ...t, visible: false }))} />
     </Screen>
@@ -2208,5 +2284,16 @@ const styles = StyleSheet.create({
     marginBottom: spacing.sm,
     borderTopWidth: 1,
     borderTopColor: "rgba(0,0,0,0.06)",
+  },
+  addMemberModalBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.45)",
+    justifyContent: "flex-end",
+    padding: spacing.base,
+  },
+  addMemberModalCard: {
+    borderRadius: radius.md,
+    padding: spacing.base,
+    maxHeight: "85%",
   },
 });

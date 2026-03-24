@@ -38,7 +38,7 @@ export default function ChampionEditScreen() {
   const router = useRouter();
   const colors = getColors();
   const tabBarHeight = useContext(BottomTabBarHeightContext) ?? 0;
-  const canManage = getPermissionsForMember(member as any).canManageOomChampions;
+  const canManage = getPermissionsForMember(member).canManageOomChampions;
 
   const [existing, setExisting] = useState<OomChampionDoc | null>(null);
   const [members, setMembers] = useState<MemberDoc[]>([]);

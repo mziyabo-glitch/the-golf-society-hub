@@ -101,14 +101,9 @@ export default function MembersScreen() {
   const [submitting, setSubmitting] = useState(false);
 
   // Get permissions for current member
-  const permissions = getPermissionsForMember(currentMember as any);
+  const permissions = getPermissionsForMember(currentMember);
 
   
-
-// Debug: log activeSocietyId and permissions
-  console.log("[members] activeSocietyId:", activeSocietyId || societyId);
-  console.log("[members] currentMember:", currentMember?.id, "roles:", currentMember?.roles);
-  console.log("[members] permissions.canCreateMembers:", permissions.canCreateMembers);
 
   const loadMembers = async () => {
     if (!societyId) {
@@ -238,8 +233,8 @@ export default function MembersScreen() {
 
       // Show user-friendly error
       const errorMsg = e?.message || "Failed to add member.";
-      if (errorMsg.includes("Only Captains")) {
-        showAlert("Permission Denied", "Only Captains can add members to the society.");
+      if (errorMsg.includes("Permission denied") || errorMsg.includes("Only")) {
+        showAlert("Permission Denied", "Only ManCo (captain, treasurer, secretary, or handicapper) can add members.");
       } else {
         showAlert("Error", errorMsg);
       }
@@ -388,11 +383,16 @@ export default function MembersScreen() {
           <SecondaryButton onPress={closeModal} size="sm">
             Cancel
           </SecondaryButton>
-          <AppText variant="h2">{modalMode === "add" ? "Add Member" : "Edit Member"}</AppText>
+          <AppText variant="h2">{modalMode === "add" ? "Add member (pre-app)" : "Edit Member"}</AppText>
           <View style={{ width: 60 }} />
         </View>
 
         <AppCard>
+          {modalMode === "add" && (
+            <AppText variant="small" color="secondary" style={{ marginBottom: spacing.base }}>
+              Add someone who has paid or needs to appear on events before they install the app. They appear in lists, tee sheets, and results. When they join with the society code, use the same name or email so their account links to this record — no duplicate.
+            </AppText>
+          )}
           <View style={styles.formField}>
             <AppText variant="captionBold" style={styles.label}>Name</AppText>
             <AppInput
@@ -524,8 +524,6 @@ export default function MembersScreen() {
             const hiVal = member.handicapIndex ?? member.handicap_index ?? null;
             const hiNum = hiVal != null ? Number(hiVal) : null;
             const hiText = (hiNum != null && Number.isFinite(hiNum)) ? `HI ${hiNum.toFixed(1)}` : null;
-            console.log("[members:render]", member.name, "handicapIndex=", member.handicapIndex, "handicap_index=", member.handicap_index, "hiText=", hiText);
-
             return (
               <Pressable
                 key={member.id}
@@ -549,6 +547,11 @@ export default function MembersScreen() {
                         {isCurrentUser && (
                           <View style={[styles.badge, { backgroundColor: colors.primary + "20" }]}>
                             <AppText variant="small" color="primary">You</AppText>
+                          </View>
+                        )}
+                        {!member.user_id && (
+                          <View style={[styles.badge, { backgroundColor: colors.warning + "22" }]}>
+                            <AppText variant="small" style={{ color: colors.warning }}>No app yet</AppText>
                           </View>
                         )}
                       </View>

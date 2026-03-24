@@ -355,8 +355,8 @@ export async function deleteMember(memberId: string): Promise<void> {
  * Add a member as Captain (uses RPC to bypass RLS)
  *
  * This function calls the `add_member_as_captain` Supabase RPC which:
- * - Validates the caller is a captain of the society
- * - Inserts a new member with user_id = NULL
+ * - Validates the caller is ManCo (captain, secretary, handicapper, or treasurer)
+ * - Inserts a new member with user_id = NULL (placeholder until they join the app)
  * - Returns the inserted member
  *
  * @param societyId - The society to add the member to
@@ -397,8 +397,8 @@ export async function addMemberAsCaptain(
     });
 
     // Provide user-friendly error messages
-    if (error.message?.includes("Only Captains")) {
-      throw new Error("Only Captains can add members to the society.");
+    if (error.message?.includes("Permission denied") || error.message?.includes("Only")) {
+      throw new Error("Only ManCo (captain, treasurer, secretary, or handicapper) can add members.");
     }
     if (error.message?.includes("Not authenticated")) {
       throw new Error("Please sign in to add members.");
@@ -802,13 +802,16 @@ export async function resetAllMemberFees(societyId: string): Promise<void> {
  */
 export async function claimCaptainAddedMember(
   societyId: string,
-  name: string
+  name: string,
+  /** If ManCo stored this on the placeholder row, matching is safer than name-only. */
+  email?: string | null,
 ): Promise<MemberDoc | null> {
-  console.log("[memberRepo] claimCaptainAddedMember:", { societyId, name });
+  console.log("[memberRepo] claimCaptainAddedMember:", { societyId, name, hasEmail: !!email?.trim() });
 
   const { data, error } = await supabase.rpc("claim_captain_added_member", {
     p_society_id: societyId,
     p_name: name.trim(),
+    p_email: email?.trim() || null,
   });
 
   if (error) {

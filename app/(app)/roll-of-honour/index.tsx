@@ -43,7 +43,7 @@ export default function RollOfHonourScreen() {
     }
   };
   const tabBarHeight = useContext(BottomTabBarHeightContext) ?? 0;
-  const canManage = getPermissionsForMember(member as any).canManageOomChampions;
+  const canManage = getPermissionsForMember(member).canManageOomChampions;
 
   const [champions, setChampions] = useState<OomChampionDoc[]>([]);
   const [loading, setLoading] = useState(true);

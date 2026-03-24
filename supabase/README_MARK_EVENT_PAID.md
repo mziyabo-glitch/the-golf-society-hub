@@ -32,6 +32,13 @@ Migrations **074/075** resolved the caller/target `IN (host ∪ participants)` w
 
 The client must pass **`societyId`** from bootstrap (same society as the fee list).
 
+## 079 — ManCo + placeholder members on events
+
+**079** (`079_admin_add_member_to_event_and_manco_mark_paid.sql`):
+
+- Extends **`mark_event_paid`** caller roles to **Secretary** and **Handicapper** (same as event editing). Target members may have **`user_id` null** (placeholders).
+- Adds **`admin_add_member_to_event(p_event_id, p_society_id, p_target_member_id)`** — upserts `event_registrations` with **status `in`**, **without** clearing payment on conflict (ManCo “add to event” without using the playing list).
+
 ## Apply
 
-Run migrations in order: **073** → **074** → **075** → **076** (as needed), via SQL Editor or `supabase db push`.
+Run migrations in order: **073** → **074** → **075** → **076** → **079** (as needed), via SQL Editor or `supabase db push`.

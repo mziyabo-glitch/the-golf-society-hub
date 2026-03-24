@@ -159,7 +159,7 @@ export default function MemberDetailScreen() {
   const [formLockHI, setFormLockHI] = useState(false);
 
   // Permissions
-  const permissions = getPermissionsForMember(currentMember as any);
+  const permissions = getPermissionsForMember(currentMember);
   const canManageRoles = permissions.canManageRoles;
   const isOwnProfile = currentMember?.id === memberId;
   const canEditBasic = isOwnProfile || permissions.canEditMembers;
@@ -459,7 +459,19 @@ export default function MemberDetailScreen() {
                   </AppText>
                 </View>
               )}
+              {!member.user_id && (
+                <View style={[styles.roleBadge, { backgroundColor: colors.warning + "22" }]}>
+                  <AppText variant="caption" style={{ color: colors.warning }}>
+                    App not linked
+                  </AppText>
+                </View>
+              )}
             </View>
+            {!member.user_id && (
+              <AppText variant="small" color="tertiary" style={{ marginTop: spacing.xs, textAlign: "center", paddingHorizontal: spacing.md }}>
+                ManCo added this member before they had an account. When they join with the society code (use the same name or email you saved), their login attaches here and all history stays on this record.
+              </AppText>
+            )}
           </>
         )}
       </View>
@@ -886,3 +898,4 @@ const styles = StyleSheet.create({
     borderRadius: radius.full,
   },
 });
+

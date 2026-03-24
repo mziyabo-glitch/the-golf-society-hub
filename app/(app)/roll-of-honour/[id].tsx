@@ -33,7 +33,7 @@ export default function ChampionDetailScreen() {
   const router = useRouter();
   const colors = getColors();
   const tabBarHeight = useContext(BottomTabBarHeightContext) ?? 0;
-  const canManage = getPermissionsForMember(member as any).canManageOomChampions;
+  const canManage = getPermissionsForMember(member).canManageOomChampions;
 
   const [champion, setChampion] = useState<OomChampionDoc | null>(null);
   const [loading, setLoading] = useState(true);
@@ -257,3 +257,4 @@ const styles = StyleSheet.create({
     marginTop: spacing.lg,
   },
 });
+

@@ -70,7 +70,7 @@ export default function EventPlayersScreen() {
   const [guestHandicap, setGuestHandicap] = useState("");
   const [addingGuest, setAddingGuest] = useState(false);
 
-  const permissions = getPermissionsForMember(member as any);
+  const permissions = getPermissionsForMember(member);
 
   const jointSocietyIdToName = useMemo(
     () => buildSocietyIdToNameMap(jointParticipatingSocieties),
@@ -669,3 +669,4 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
 });
+

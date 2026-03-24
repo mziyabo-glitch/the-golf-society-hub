@@ -148,7 +148,7 @@ export default function EventsScreen() {
   const [participatingSocieties, setParticipatingSocieties] = useState<EventSocietyInput[]>([]);
   const [mySocieties, setMySocieties] = useState<Awaited<ReturnType<typeof getMySocieties>>>([]);
 
-  const permissions = getPermissionsForMember(member as any);
+  const permissions = getPermissionsForMember(member);
 
   useEffect(() => {
     if (showCreateForm && permissions.canCreateEvents) {

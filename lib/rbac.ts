@@ -105,8 +105,8 @@ export const getPermissionsForMember = (
     canResetSociety: captain || treasurer,
     canManageSocietyLogo: captain,
 
-    // Members
-    canCreateMembers: captain || treasurer,
+    // Members (placeholders / pre-app members: full ManCo can add)
+    canCreateMembers: captain || treasurer || secretary || handicapper,
     canEditMembers: captain || treasurer,
     canDeleteMembers: captain || secretary || treasurer,
     canEditOwnProfile: true,
@@ -124,7 +124,7 @@ export const getPermissionsForMember = (
     // Finance / P&L
     canAccessFinance: captain || treasurer,
     canManageMembershipFees: captain || treasurer,
-    canManageEventPayments: captain || treasurer,
+    canManageEventPayments: captain || treasurer || secretary || handicapper,
     canManageEventExpenses: captain || treasurer,
 
     // Handicaps
@@ -138,7 +138,7 @@ export const getPermissionsForMember = (
 /**
  * Convenience helpers (keep call-sites readable)
  */
-/** Captain/Treasurer in a specific society (from memberships list — avoids wrong row when user is in multiple clubs). */
+/** Captain/Treasurer/Secretary/Handicapper in a specific society (from memberships list — avoids wrong row when user is in multiple clubs). */
 export function canManageEventPaymentsForSociety(
   memberships: { societyId: string; role: string }[] | null | undefined,
   activeSocietyId: string | null | undefined,
@@ -147,7 +147,20 @@ export function canManageEventPaymentsForSociety(
   const m = memberships.find((x) => x.societyId === activeSocietyId);
   if (!m) return false;
   const r = String(m.role || "").toUpperCase();
-  return r === "CAPTAIN" || r === "TREASURER";
+  return (
+    r === "CAPTAIN" ||
+    r === "TREASURER" ||
+    r === "SECRETARY" ||
+    r === "HANDICAPPER"
+  );
+}
+
+/** Same roles as `mark_event_paid` / `admin_add_member_to_event` (per active society membership). */
+export function canManageEventRosterForSociety(
+  memberships: { societyId: string; role: string }[] | null | undefined,
+  activeSocietyId: string | null | undefined,
+): boolean {
+  return canManageEventPaymentsForSociety(memberships, activeSocietyId);
 }
 
 export const can = {
