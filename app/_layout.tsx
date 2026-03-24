@@ -50,7 +50,9 @@ function RootNavigator() {
   const router = useRouter();
   const colors = getColors();
 
-  const isPublicPath = pathname === "/reset-password";
+  const isPublicPath =
+    pathname === "/reset-password" ||
+    pathname === "/privacy-policy";
 
   // Track if we've already routed to prevent loops
   const hasRouted = useRef(false);
@@ -79,7 +81,11 @@ function RootNavigator() {
       const seg0 = segmentsRef.current[0];
       const p = pathnameRef.current;
       const inApp = seg0 === "(app)" || (typeof p === "string" && p?.startsWith("/(app)"));
-      const inPublic = p === "/reset-password" || seg0 === "reset-password";
+      const inPublic =
+        p === "/reset-password" ||
+        p === "/privacy-policy" ||
+        seg0 === "reset-password" ||
+        seg0 === "privacy-policy";
       const inJoinFlow = isJoinFlowRoute(p, seg0);
       if (inPublic || inJoinFlow || isToolRoute(p, seg0)) return;
 
@@ -134,7 +140,10 @@ function RootNavigator() {
 
     const inOnboarding = segments[0] === "onboarding" || segments[0] === "join" || segments[0] === "join-society";
     const inSinbookInvite = segments[0] === "sinbook";
-    const inPublicRoute = isPublicPath || segments[0] === "reset-password";
+    const inPublicRoute =
+      isPublicPath ||
+      segments[0] === "reset-password" ||
+      segments[0] === "privacy-policy";
     const inJoinFlow = isJoinFlowRoute(pathname, segments[0]);
     const inMyProfile = pathname === "/(app)/my-profile";
     const hasSociety = !!activeSocietyId;
@@ -241,7 +250,10 @@ function RootNavigator() {
   // Determine which overlay to show (if any).
   // The Stack ALWAYS renders so expo-router can match child routes.
   // Public routes are accessible without sign-in (OAuth callback, password reset).
-  const isPublicRoute = isPublicPath || segments[0] === "reset-password";
+  const isPublicRoute =
+    isPublicPath ||
+    segments[0] === "reset-password" ||
+    segments[0] === "privacy-policy";
   const showLoading = loading;
   const showAuth = !loading && !isSignedIn && !isPublicRoute;
   const showError = !loading && !showAuth && !!error;

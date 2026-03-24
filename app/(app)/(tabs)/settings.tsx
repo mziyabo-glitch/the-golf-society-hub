@@ -416,6 +416,23 @@ export default function SettingsScreen() {
           </DestructiveButton>
         </AppCard>
 
+        <AppText variant="h2" style={styles.sectionTitle}>Legal</AppText>
+        <AppCard padding="sm">
+          <Pressable
+            style={({ pressed }) => [styles.linkRow, { opacity: pressed ? 0.7 : 1 }]}
+            onPress={() => router.push("/privacy-policy")}
+          >
+            <View style={[styles.linkIcon, { backgroundColor: colors.backgroundTertiary }]}>
+              <Feather name="shield" size={16} color={colors.primary} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <AppText variant="body">Privacy Policy</AppText>
+              <AppText variant="small" color="secondary">How we collect and use your data</AppText>
+            </View>
+            <Feather name="chevron-right" size={18} color={colors.textTertiary} />
+          </Pressable>
+        </AppCard>
+
         <View style={styles.footer}>
           <AppText variant="caption" color="tertiary" style={{ textAlign: "center" }}>
             Golf Society Hub v1.0.0
@@ -453,6 +470,23 @@ export default function SettingsScreen() {
                 </View>
               ))}
             </View>
+          </View>
+          <Feather name="chevron-right" size={18} color={colors.textTertiary} />
+        </Pressable>
+      </AppCard>
+
+      <AppText variant="h2" style={styles.sectionTitle}>Legal</AppText>
+      <AppCard padding="sm">
+        <Pressable
+          style={({ pressed }) => [styles.linkRow, { opacity: pressed ? 0.7 : 1 }]}
+          onPress={() => router.push("/privacy-policy")}
+        >
+          <View style={[styles.linkIcon, { backgroundColor: colors.backgroundTertiary }]}>
+            <Feather name="shield" size={16} color={colors.primary} />
+          </View>
+          <View style={{ flex: 1 }}>
+            <AppText variant="body">Privacy Policy</AppText>
+            <AppText variant="small" color="secondary">How we collect and use your data</AppText>
           </View>
           <Feather name="chevron-right" size={18} color={colors.textTertiary} />
         </Pressable>

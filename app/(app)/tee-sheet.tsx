@@ -73,6 +73,7 @@ import { formatError, type FormattedError } from "@/lib/ui/formatError";
 import type { TeeSheetData } from "@/lib/teeSheetPdf";
 import { loadCanonicalTeeSheet, buildTeeSheetDataFromCanonical } from "@/lib/teeSheet/canonicalTeeSheet";
 import { getSocietyLogoUrl } from "@/lib/societyLogo";
+import { getCache, invalidateCache, invalidateCachePrefix, setCache } from "@/lib/cache/clientCache";
 
 type EditablePlayer = {
   id: string;
@@ -267,6 +268,7 @@ export default function TeeSheetScreen() {
   const [selectedEvent, setSelectedEvent] = useState<EventDoc | null>(null);
   const [members, setMembers] = useState<MemberDoc[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [loadError, setLoadError] = useState<FormattedError | null>(null);
   const [generating, setGenerating] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -288,18 +290,23 @@ export default function TeeSheetScreen() {
   const [manCo, setManCo] = useState<ManCoDetails>({ captain: null, secretary: null, treasurer: null, handicapper: null });
   const [isJointEventTeeSheet, setIsJointEventTeeSheet] = useState(false);
   const [jointTeeSheetData, setJointTeeSheetData] = useState<JointEventTeeSheet | null>(null);
+  const [eventDetailsRefreshing, setEventDetailsRefreshing] = useState(false);
+  const [hasHydratedIndexCache, setHasHydratedIndexCache] = useState(false);
+  const eventLoadSeqRef = React.useRef(0);
 
   const permissions = getPermissionsForMember(member);
   const canGenerateTeeSheet = permissions.canGenerateTeeSheet;
 
   // Get logo URL from society
   const logoUrl = getSocietyLogoUrl(society);
+  const indexCacheKey = societyId ? `society:${societyId}:tee-sheet:index` : null;
 
   // Load events (host + joint where society participates) and members
   const loadData = useCallback(async () => {
     if (!societyId) return;
 
-    setLoading(true);
+    setRefreshing(events.length > 0 || members.length > 0);
+    setLoading(!(events.length > 0 || members.length > 0));
     setLoadError(null);
     try {
       const [eventsData, membersData, manCoData] = await Promise.all([
@@ -312,6 +319,11 @@ export default function TeeSheetScreen() {
       setEvents(upcomingEvents);
       setMembers(membersData);
       setManCo(manCoData);
+      await setCache(`society:${societyId}:tee-sheet:index`, {
+        events: upcomingEvents,
+        members: membersData,
+        manCo: manCoData,
+      }, { ttlMs: 1000 * 60 * 5 });
 
       // Keep selection if still in this society’s list; otherwise first upcoming (fixes stale id after society switch)
       setSelectedEventId((prev) => {
@@ -323,12 +335,28 @@ export default function TeeSheetScreen() {
       setLoadError(formatError(err));
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
-  }, [societyId]);
+  }, [societyId, events.length, members.length]);
 
   useEffect(() => {
-    loadData();
-  }, [loadData]);
+    if (!societyId) return;
+    void (async () => {
+      const cached = await getCache<{
+        events: EventDoc[];
+        members: MemberDoc[];
+        manCo: ManCoDetails;
+      }>(`society:${societyId}:tee-sheet:index`, { maxAgeMs: 1000 * 60 * 60 });
+      if (cached) {
+        setEvents(cached.value.events ?? []);
+        setMembers(cached.value.members ?? []);
+        setManCo(cached.value.manCo ?? { captain: null, secretary: null, treasurer: null, handicapper: null });
+        setLoading(false);
+      }
+      setHasHydratedIndexCache(true);
+      await loadData();
+    })();
+  }, [societyId, loadData]);
 
   // Load selected event details and initialize groups (standard or joint path)
   useEffect(() => {
@@ -345,7 +373,9 @@ export default function TeeSheetScreen() {
       }
 
       setNotice(null);
+      const seq = ++eventLoadSeqRef.current;
       try {
+        setEventDetailsRefreshing(true);
         const listHit = events.find((e) => e.id === selectedEventId);
         let joint = listHit?.is_joint_event === true;
         if (listHit === undefined) {
@@ -402,6 +432,21 @@ export default function TeeSheetScreen() {
             initializeGroups(mapJointEventToEventDoc(teeSheet.event) as EventDoc, candidate.memberIds, candidateMembers, []);
             logSelectedPlayersDev("[teesheet] selected players (after ManCo edits)", selectedEventId, candidate.memberIds);
           }
+          if (eventLoadSeqRef.current === seq) {
+            await setCache(`event:${selectedEventId}:tee-sheet`, {
+              selectedEvent: mapJointEventToEventDoc(teeSheet.event) as EventDoc,
+              selectedEventRegistrations: regs,
+              groups: persistedIds.length > 0 ? persistedGroups : [],
+              selectedPlayerIds: persistedIds.length > 0 ? persistedIds : candidate.memberIds,
+              eventMemberPool: candidateMembers,
+              isJointEventTeeSheet: true,
+              jointTeeSheetData: teeSheet,
+              startTime: teeSheet.event.tee_time_start || "08:00",
+              teeInterval: String(teeSheet.event.tee_time_interval ?? 10),
+              ntpHolesInput: "-",
+              ldHolesInput: "-",
+            }, { ttlMs: 1000 * 60 * 5 });
+          }
           return;
         }
 
@@ -433,15 +478,68 @@ export default function TeeSheetScreen() {
         logSelectedPlayersDev("[teesheet] tee-sheet eligible (paid + in)", selectedEventId, eligibleIds);
         initializeGroups(event, eligibleIds, membersStd, guests ?? []);
         logSelectedPlayersDev("[teesheet] selected players (after ManCo edits)", selectedEventId, eligibleIds);
+        if (eventLoadSeqRef.current === seq) {
+          await setCache(`event:${selectedEventId}:tee-sheet`, {
+            selectedEvent: event,
+            selectedEventRegistrations: registrations ?? [],
+            groups: [],
+            selectedPlayerIds: eligibleIds,
+            eventMemberPool: membersStd,
+            isJointEventTeeSheet: false,
+            jointTeeSheetData: null,
+            startTime: event.teeTimeStart || "08:00",
+            teeInterval: String(event.teeTimeInterval ?? 10),
+            ntpHolesInput: formatHoleNumbers(event.nearestPinHoles),
+            ldHolesInput: formatHoleNumbers(event.longestDriveHoles),
+          }, { ttlMs: 1000 * 60 * 5 });
+        }
       } catch (err) {
         console.error("[TeeSheet] loadEventDetails error:", err);
         setNotice({ type: "error", ...formatError(err) });
+      } finally {
+        if (eventLoadSeqRef.current === seq) {
+          setEventDetailsRefreshing(false);
+        }
       }
     };
 
     loadEventDetails();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedEventId, members, events]);
+
+  useEffect(() => {
+    if (!selectedEventId) return;
+    void (async () => {
+      const cached = await getCache<{
+        selectedEvent: EventDoc | null;
+        selectedEventRegistrations: EventRegistration[];
+        groups: PlayerGroup[];
+        selectedPlayerIds: string[];
+        eventMemberPool: MemberDoc[];
+        isJointEventTeeSheet: boolean;
+        jointTeeSheetData: JointEventTeeSheet | null;
+        startTime: string;
+        teeInterval: string;
+        ntpHolesInput: string;
+        ldHolesInput: string;
+      }>(`event:${selectedEventId}:tee-sheet`, { maxAgeMs: 1000 * 60 * 60 });
+      if (!cached) {
+        return;
+      }
+      setSelectedEvent(cached.value.selectedEvent ?? null);
+      setSelectedEventRegistrations(cached.value.selectedEventRegistrations ?? []);
+      setGroups(cached.value.groups ?? []);
+      setSelectedPlayerIds(cached.value.selectedPlayerIds ?? []);
+      setEventMemberPool(cached.value.eventMemberPool ?? []);
+      setIsJointEventTeeSheet(cached.value.isJointEventTeeSheet ?? false);
+      setJointTeeSheetData(cached.value.jointTeeSheetData ?? null);
+      setStartTime(cached.value.startTime || "08:00");
+      setTeeInterval(cached.value.teeInterval || "10");
+      setNtpHolesInput(cached.value.ntpHolesInput ?? "");
+      setLdHolesInput(cached.value.ldHolesInput ?? "");
+      setLoading(false);
+    })();
+  }, [selectedEventId]);
 
   // Initialize groups from selected member ids + guests
   const initializeGroups = (
@@ -613,6 +711,9 @@ export default function TeeSheetScreen() {
         }
       }
       setToast({ visible: true, message: "Tee sheet cleared", type: "success" });
+      await invalidateCache(`event:${selectedEventId}:tee-sheet`);
+      await invalidateCache(`event:${selectedEventId}:detail`);
+      if (societyId) await invalidateCachePrefix(`society:${societyId}:`);
       loadData();
     } catch (err: unknown) {
       const formatted = formatError(err);
@@ -644,6 +745,9 @@ export default function TeeSheetScreen() {
         message: "Tee times unpublished — hidden from members until you publish again.",
         type: "success",
       });
+      await invalidateCache(`event:${selectedEventId}:tee-sheet`);
+      await invalidateCache(`event:${selectedEventId}:detail`);
+      if (societyId) await invalidateCachePrefix(`society:${societyId}:`);
       loadData();
     } catch (err: unknown) {
       const formatted = formatError(err);
@@ -754,6 +858,9 @@ export default function TeeSheetScreen() {
           logSelectedPlayersDev("[teesheet] selected players (after ManCo edits)", selectedEventId, ids);
         }
         loadData();
+        await invalidateCache(`event:${selectedEventId}:tee-sheet`);
+        await invalidateCache(`event:${selectedEventId}:detail`);
+        if (societyId) await invalidateCachePrefix(`society:${societyId}:`);
         return;
       }
 
@@ -790,6 +897,9 @@ export default function TeeSheetScreen() {
       });
       logSelectedPlayersDev("[teesheet] final published players", selectedEventId, playerIds);
       setToast({ visible: true, message: "Tee sheet saved", type: "success" });
+      await invalidateCache(`event:${selectedEventId}:tee-sheet`);
+      await invalidateCache(`event:${selectedEventId}:detail`);
+      if (societyId) await invalidateCachePrefix(`society:${societyId}:`);
       loadData();
     } catch (err: any) {
       console.error("[teesheet] handleSaveTeeSheet", err);
@@ -815,6 +925,9 @@ export default function TeeSheetScreen() {
         longestDriveHoles: ldHoles,
       });
       setToast({ visible: true, message: "Settings saved", type: "success" });
+      await invalidateCache(`event:${selectedEventId}:tee-sheet`);
+      await invalidateCache(`event:${selectedEventId}:detail`);
+      if (societyId) await invalidateCachePrefix(`society:${societyId}:`);
     } catch (err: any) {
       const formatted = formatError(err);
       setNotice({ type: "error", message: formatted.message, detail: formatted.detail });
@@ -1040,7 +1153,7 @@ export default function TeeSheetScreen() {
     }
   };
 
-  if (bootstrapLoading || loading) {
+  if ((bootstrapLoading && loading) || (!hasHydratedIndexCache && loading)) {
     return (
       <Screen>
         <LoadingState message="Loading..." />
@@ -1100,6 +1213,11 @@ export default function TeeSheetScreen() {
       <AppText variant="small" color="tertiary" style={{ marginBottom: spacing.lg }}>
         Tee sheet defaults to confirmed attendees. ManCo can manually add or remove players before publishing.
       </AppText>
+      {(refreshing || eventDetailsRefreshing) ? (
+        <AppText variant="small" color="tertiary" style={{ marginBottom: spacing.sm }}>
+          Refreshing...
+        </AppText>
+      ) : null}
 
       {loadError ? (
         <InlineNotice

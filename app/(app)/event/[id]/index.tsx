@@ -67,6 +67,7 @@ import {
   PaymentPill,
 } from "@/lib/eventModuleUi";
 import { getSocietyLogoUrl } from "@/lib/societyLogo";
+import { getCache, invalidateCache, invalidateCachePrefix, setCache } from "@/lib/cache/clientCache";
 
 // Picker option component
 function PickerOption({
@@ -130,6 +131,7 @@ export default function EventDetailScreen() {
   const [jointEntries, setJointEntries] = useState<JointEventEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
 
   // Edit mode state
   const [isEditing, setIsEditing] = useState(false);
@@ -223,7 +225,8 @@ export default function EventDetailScreen() {
     }
 
     try {
-      setLoading(true);
+      setRefreshing(!loading && !!event);
+      if (!event) setLoading(true);
       setError(null);
 
       // (a) Fetch base event
@@ -249,6 +252,11 @@ export default function EventDetailScreen() {
               }))
             );
             setJointEntries(jointPayload.entries ?? []);
+            await setCache(`event:${eventId}:detail`, {
+              event: mapJointEventToEventDoc(jointPayload.event) as EventDoc,
+              jointParticipatingSocieties: jointPayload.participating_societies,
+              jointEntries: jointPayload.entries ?? [],
+            }, { ttlMs: 1000 * 60 * 5 });
           } else {
             setEvent(baseEvent);
             setJointParticipatingSocieties([]);
@@ -258,6 +266,11 @@ export default function EventDetailScreen() {
           setEvent(baseEvent);
           setJointParticipatingSocieties([]);
           setJointEntries([]);
+          await setCache(`event:${eventId}:detail`, {
+            event: baseEvent,
+            jointParticipatingSocieties: [],
+            jointEntries: [],
+          }, { ttlMs: 1000 * 60 * 5 });
         }
       } else {
         // (d) Base event not found: try joint payload as fallback (e.g. access via participating society)
@@ -286,6 +299,7 @@ export default function EventDetailScreen() {
       setJointEntries([]);
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   }, [eventId, societyId]);
 
@@ -294,6 +308,23 @@ export default function EventDetailScreen() {
       loadEvent();
     }, [loadEvent])
   );
+
+  useEffect(() => {
+    if (!eventId) return;
+    void (async () => {
+      const cached = await getCache<{
+        event: EventDoc | null;
+        jointParticipatingSocieties: EventSocietyInput[];
+        jointEntries: JointEventEntry[];
+      }>(`event:${eventId}:detail`, { maxAgeMs: 1000 * 60 * 60 });
+      if (cached?.value?.event) {
+        setEvent(cached.value.event);
+        setJointParticipatingSocieties(cached.value.jointParticipatingSocieties ?? []);
+        setJointEntries(cached.value.jointEntries ?? []);
+        setLoading(false);
+      }
+    })();
+  }, [eventId]);
 
   // ---- Paid Players dashboard ----
   /** Use per–active-society role from memberships (avoids wrong cap/treas when user is in multiple clubs). */
@@ -313,25 +344,46 @@ export default function EventDetailScreen() {
   const [addMemberModalOpen, setAddMemberModalOpen] = useState(false);
   const [addMemberSearch, setAddMemberSearch] = useState("");
   const [addMemberBusy, setAddMemberBusy] = useState<string | null>(null);
+  const [registrationsRefreshing, setRegistrationsRefreshing] = useState(false);
 
   const hostSocietyId = event?.society_id ?? societyId ?? null;
+  const paymentsCacheKey = eventId && societyId ? `event:${eventId}:payments:${societyId}` : null;
+  const confirmedCacheKey = eventId && societyId ? `event:${eventId}:confirmed-players:${societyId}` : null;
 
   const loadRegistrations = useCallback(async () => {
     if (!eventId || !societyId) return;
     try {
+      setRegistrationsRefreshing(true);
       const [regs, mems] = await Promise.all([
         getEventRegistrations(eventId),
         getMembersBySocietyId(societyId),
       ]);
       setRegistrations(regs);
       setActiveSocietyMembers(mems);
+      await setCache(`event:${eventId}:registrations`, {
+        registrations: regs,
+        members: mems,
+      }, { ttlMs: 1000 * 60 * 2 });
     } catch {
       /* non-critical */
+    } finally {
+      setRegistrationsRefreshing(false);
     }
   }, [eventId, societyId]);
 
   useEffect(() => {
-    if (eventId && societyId) loadRegistrations();
+    if (!eventId || !societyId) return;
+    void (async () => {
+      const cached = await getCache<{ registrations: EventRegistration[]; members: MemberDoc[] }>(
+        `event:${eventId}:registrations`,
+        { maxAgeMs: 1000 * 60 * 30 },
+      );
+      if (cached) {
+        setRegistrations(cached.value.registrations ?? []);
+        setActiveSocietyMembers(cached.value.members ?? []);
+      }
+      await loadRegistrations();
+    })();
   }, [eventId, societyId, loadRegistrations]);
 
   const memberByIdForRegs = useMemo(
@@ -460,6 +512,32 @@ export default function EventDetailScreen() {
   const activeRosterCount =
     buckets.confirmedPaid.length + buckets.pendingPayment.length + captainPickMemberIds.length;
 
+  useEffect(() => {
+    if (!paymentsCacheKey || !confirmedCacheKey || !societyId) return;
+    void setCache(paymentsCacheKey, {
+      societyId,
+      pendingPayment: buckets.pendingPayment,
+      confirmedPaid: buckets.confirmedPaid,
+      pendingCount: pendingPaymentCount,
+      eligibleCount: teeSheetEligibleCount,
+    }, { ttlMs: 1000 * 60 * 2 });
+    void setCache(confirmedCacheKey, {
+      societyId,
+      confirmedMemberIds: Array.from(regInMemberIds),
+      captainPickMemberIds,
+    }, { ttlMs: 1000 * 60 * 2 });
+  }, [
+    paymentsCacheKey,
+    confirmedCacheKey,
+    societyId,
+    buckets.pendingPayment,
+    buckets.confirmedPaid,
+    pendingPaymentCount,
+    teeSheetEligibleCount,
+    regInMemberIds,
+    captainPickMemberIds,
+  ]);
+
   const handleTogglePaid = async (reg: EventRegistration) => {
     if (payBusy || !societyId) return;
     setPayBusy(reg.member_id);
@@ -471,6 +549,8 @@ export default function EventDetailScreen() {
         type: "success",
       });
       await loadRegistrations();
+      await invalidateCache(`event:${eventId}:detail`);
+      if (societyId) await invalidateCachePrefix(`society:${societyId}:`);
     } catch (e: any) {
       setPayToast({ visible: true, message: e?.message || "Failed", type: "error" });
     } finally {
@@ -497,6 +577,8 @@ export default function EventDetailScreen() {
         type: "success",
       });
       await loadRegistrations();
+      await invalidateCache(`event:${eventId}:detail`);
+      if (societyId) await invalidateCachePrefix(`society:${societyId}:`);
     } catch (e: any) {
       setPayToast({ visible: true, message: e?.message || "Failed", type: "error" });
     } finally {
@@ -521,6 +603,8 @@ export default function EventDetailScreen() {
       setAddMemberModalOpen(false);
       setAddMemberSearch("");
       await loadRegistrations();
+      await invalidateCache(`event:${eventId}:detail`);
+      if (societyId) await invalidateCachePrefix(`society:${societyId}:`);
     } catch (e: any) {
       setPayToast({ visible: true, message: e?.message || "Failed", type: "error" });
     } finally {
@@ -987,6 +1071,10 @@ export default function EventDetailScreen() {
 
       setIsEditing(false);
       loadEvent(); // Reload to get updated data
+      await invalidateCache(`event:${eventId}:detail`);
+      if (societyId) {
+        await invalidateCachePrefix(`society:${societyId}:`);
+      }
       showAlert("Saved", teeValidationMessage ?? "Event updated successfully.");
     } catch (e: any) {
       showAlert("Error", e?.message || "Failed to update event.");
@@ -1006,6 +1094,10 @@ export default function EventDetailScreen() {
         setSaving(true);
         try {
           await deleteEvent(eventId);
+          await invalidateCache(`event:${eventId}:detail`);
+          if (societyId) {
+            await invalidateCachePrefix(`society:${societyId}:`);
+          }
           router.replace("/(app)/(tabs)/events");
         } catch (e: any) {
           setSaving(false);
@@ -1015,7 +1107,7 @@ export default function EventDetailScreen() {
     );
   };
 
-  if (bootstrapLoading || loading) {
+  if (bootstrapLoading && loading) {
     return (
       <Screen>
         <LoadingState message="Loading event..." />
@@ -1555,6 +1647,11 @@ export default function EventDetailScreen() {
       )}
 
       {/* Title */}
+      {refreshing ? (
+        <AppText variant="small" color="tertiary" style={{ marginBottom: spacing.xs }}>
+          Refreshing...
+        </AppText>
+      ) : null}
       <AppText variant="title" style={{ marginBottom: spacing.sm }}>
         {event.name}
       </AppText>
@@ -1663,6 +1760,11 @@ export default function EventDetailScreen() {
         notPlayingRegs.length > 0 ||
         (canManageEventRoster && manualAddCandidates.length > 0)) && (
         <AppCard style={styles.card}>
+          {registrationsRefreshing ? (
+            <AppText variant="small" color="tertiary" style={{ marginBottom: spacing.xs }}>
+              Refreshing payment status...
+            </AppText>
+          ) : null}
           <View style={styles.paidHeader}>
             <View style={{ flex: 1 }}>
               <AppText variant="h2">Payment &amp; status</AppText>

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { StyleSheet, View, Pressable } from "react-native";
 import { useRouter } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
@@ -29,6 +29,7 @@ import { getPermissionsForMember } from "@/lib/rbac";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
 import { confirmDestructive, showAlert } from "@/lib/ui/alert";
 import { guard } from "@/lib/guards";
+import { getCache, invalidateCachePrefix, setCache } from "@/lib/cache/clientCache";
 /**
  * Format OOM points for display (handles decimals from tie averaging)
  */
@@ -89,6 +90,7 @@ export default function MembersScreen() {
   const [loading, setLoading] = useState(true);
   const [permissionError, setPermissionError] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
   const [modalMode, setModalMode] = useState<ModalMode>("none");
   const [editingMember, setEditingMember] = useState<MemberDoc | null>(null);
 
@@ -105,14 +107,20 @@ export default function MembersScreen() {
 
   
 
-  const loadMembers = async () => {
+  const membersCacheKey = societyId ? `society:${societyId}:members` : null;
+  const lastLoadRef = useRef(0);
+
+  const loadMembers = async (opts?: { silent?: boolean }) => {
     if (!societyId) {
       console.log("[members] No societyId, skipping load");
       setLoading(false);
       return;
     }
 
-    setLoading(true);
+    if (Date.now() - lastLoadRef.current < 5000) return;
+    lastLoadRef.current = Date.now();
+    if (opts?.silent) setRefreshing(true);
+    else setLoading(true);
     setPermissionError(null);
     setLoadError(null);
 
@@ -138,6 +146,12 @@ export default function MembersScreen() {
         oomMap.set(entry.memberId, entry);
       }
       setOomStandings(oomMap);
+      if (membersCacheKey) {
+        await setCache(membersCacheKey, {
+          members: sorted,
+          oom: oomData,
+        }, { ttlMs: 1000 * 60 * 5 });
+      }
 
       console.log("[members] Query success, members:", sorted.length, "OOM entries:", oomData.length);
     } catch (err: any) {
@@ -163,6 +177,7 @@ export default function MembersScreen() {
       }
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   };
 
@@ -175,15 +190,28 @@ export default function MembersScreen() {
   }, [bootstrapLoading, activeSocietyId, societyId, router]);
 
   useEffect(() => {
-    loadMembers();
+    void (async () => {
+      if (!membersCacheKey) return;
+      const cached = await getCache<{ members: MemberDoc[]; oom: OrderOfMeritEntry[] }>(membersCacheKey, {
+        maxAgeMs: 1000 * 60 * 60,
+      });
+      if (cached) {
+        setMembers(cached.value.members ?? []);
+        const map = new Map<string, OrderOfMeritEntry>();
+        for (const entry of cached.value.oom ?? []) map.set(entry.memberId, entry);
+        setOomStandings(map);
+        setLoading(false);
+      }
+      void loadMembers({ silent: !!cached });
+    })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [societyId]);
+  }, [societyId, membersCacheKey]);
 
   // Refetch on focus to pick up changes from detail screen
   useFocusEffect(
     useCallback(() => {
       if (societyId) {
-        loadMembers();
+        loadMembers({ silent: true });
       }
       // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [societyId])
@@ -227,6 +255,7 @@ export default function MembersScreen() {
       );
       console.log("[members] Member added successfully, id:", newMember.id);
       closeModal();
+      await invalidateCachePrefix(`society:${societyId}:`);
       loadMembers();
     } catch (e: any) {
       console.error("[members] Add member RPC error:", e?.message);
@@ -290,6 +319,7 @@ export default function MembersScreen() {
       }
 
       closeModal();
+      await invalidateCachePrefix(`society:${societyId}:`);
       loadMembers();
     } catch (e: any) {
       showAlert("Error", e?.message || "Failed to update member.");
@@ -314,6 +344,7 @@ export default function MembersScreen() {
         try {
           await deleteMember(member.id);
           closeModal();
+          await invalidateCachePrefix(`society:${societyId}:`);
           await loadMembers();
         } catch (e: any) {
           showAlert("Error", e?.message || "Failed to delete member.");
@@ -331,6 +362,7 @@ export default function MembersScreen() {
         paid: !member.paid,
         paid_at: !member.paid ? new Date().toISOString() : null,
       });
+      await invalidateCachePrefix(`society:${societyId}:`);
       loadMembers();
     } catch (e: any) {
       showAlert("Error", e?.message || "Failed to update payment status.");
@@ -349,7 +381,7 @@ export default function MembersScreen() {
     return badges;
   };
 
-  if (bootstrapLoading || loading) {
+  if (bootstrapLoading && loading) {
     return (
       <Screen scrollable={false}>
         <View style={styles.centered}>
@@ -499,6 +531,11 @@ export default function MembersScreen() {
       </View>
 
       {/* Load error */}
+      {refreshing && (
+        <AppText variant="small" color="tertiary" style={{ marginBottom: spacing.xs }}>
+          Refreshing...
+        </AppText>
+      )}
       {loadError && (
         <InlineNotice
           variant="error"

@@ -11,7 +11,7 @@
  *  E) Recent Activity Card — last 3 past events with result status
  */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { StyleSheet, View, Pressable, Image, Linking, type PressableStateCallbackType } from "react-native";
 import { useRouter } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
@@ -61,6 +61,7 @@ import {
 } from "@/lib/db_supabase/eventRegistrationRepo";
 import { blurWebActiveElement } from "@/lib/ui/focus";
 import { SocietySwitcherPill } from "@/components/SocietySwitcher";
+import { getCache, setCache } from "@/lib/cache/clientCache";
 import {
   JOINT_EVENT_CHIP_SHORT,
   JOINT_HOME_RSVP_NOTE,
@@ -210,6 +211,7 @@ export default function HomeScreen() {
   const [oomStandings, setOomStandings] = useState<OrderOfMeritEntry[]>([]);
   const [recentResultsMap, setRecentResultsMap] = useState<Record<string, EventResultDoc[]>>({});
   const [dataLoading, setDataLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [loadError, setLoadError] = useState<FormattedError | null>(null);
   const [activeSinbook, setActiveSinbook] = useState<SinbookWithParticipants | null>(null);
 
@@ -277,13 +279,19 @@ export default function HomeScreen() {
   // Data Loading
   // ============================================================================
 
+  const cacheKey = societyId ? `society:${societyId}:home-summary` : null;
+  const lastLoadAtRef = useRef(0);
+
   const loadData = useCallback(async () => {
     if (!societyId || (!memberHasSeat && !memberIsCaptain)) {
       setDataLoading(false);
       return;
     }
 
-    setDataLoading(true);
+    if (Date.now() - lastLoadAtRef.current < 5000) return;
+    lastLoadAtRef.current = Date.now();
+    setRefreshing(events.length > 0 || members.length > 0 || oomStandings.length > 0);
+    setDataLoading(!(events.length > 0 || members.length > 0 || oomStandings.length > 0));
     setLoadError(null);
     try {
       const [eventsData, standingsData, membersData] = await Promise.all([
@@ -327,17 +335,43 @@ export default function HomeScreen() {
       } catch {
         // Non-critical — silently ignore
       }
+      if (cacheKey) {
+        await setCache(cacheKey, {
+          events: eventsData,
+          members: membersData,
+          oomStandings: standingsData,
+          recentResultsMap: resultsMap,
+        }, { ttlMs: 1000 * 60 * 5 });
+      }
     } catch (err) {
       console.error("[Home] Failed to load data:", err);
       setLoadError(formatError(err));
     } finally {
       setDataLoading(false);
+      setRefreshing(false);
     }
-  }, [societyId, memberHasSeat, memberIsCaptain]);
+  }, [societyId, memberHasSeat, memberIsCaptain, cacheKey, events.length, members.length, oomStandings.length]);
 
   useEffect(() => {
-    loadData();
-  }, [loadData]);
+    void (async () => {
+      if (cacheKey) {
+        const cached = await getCache<{
+          events: EventDoc[];
+          members: MemberDoc[];
+          oomStandings: OrderOfMeritEntry[];
+          recentResultsMap: Record<string, EventResultDoc[]>;
+        }>(cacheKey, { maxAgeMs: 1000 * 60 * 60 });
+        if (cached) {
+          setEvents(cached.value.events ?? []);
+          setMembers(cached.value.members ?? []);
+          setOomStandings(cached.value.oomStandings ?? []);
+          setRecentResultsMap(cached.value.recentResultsMap ?? {});
+          setDataLoading(false);
+        }
+      }
+      loadData();
+    })();
+  }, [loadData, cacheKey]);
 
   useFocusEffect(
     useCallback(() => {
@@ -425,8 +459,21 @@ export default function HomeScreen() {
     }
     const ev = nextEvent;
     let cancelled = false;
-    getEventRegistrations(nextEventId).then((regs) => {
+    void (async () => {
+      const cacheKey = `event:${nextEventId}:registrations`;
+      const cached = await getCache<EventRegistration[]>(cacheKey, { maxAgeMs: 1000 * 60 * 30 });
+      if (cached && !cancelled) {
+        const scopedCached = ev.is_joint_event
+          ? scopeEventRegistrations(cached.value, { kind: "joint_home", activeSocietyId: societyId })
+          : scopeEventRegistrations(cached.value, {
+              kind: "standard",
+              hostSocietyId: ev.society_id ?? societyId,
+            });
+        setNextEventRegistrations(scopedCached);
+      }
+      const regs = await getEventRegistrations(nextEventId);
       if (cancelled) return;
+      await setCache(cacheKey, regs, { ttlMs: 1000 * 60 * 2 });
       const scoped = ev.is_joint_event
         ? scopeEventRegistrations(regs, { kind: "joint_home", activeSocietyId: societyId })
         : scopeEventRegistrations(regs, {
@@ -434,7 +481,7 @@ export default function HomeScreen() {
             hostSocietyId: ev.society_id ?? societyId,
           });
       setNextEventRegistrations(scoped);
-    });
+    })();
     return () => { cancelled = true; };
   }, [
     nextEventId,
@@ -675,7 +722,7 @@ export default function HomeScreen() {
   // Loading / No Society States
   // ============================================================================
 
-  if (bootstrapLoading || dataLoading) {
+  if (bootstrapLoading && dataLoading) {
     return (
       <Screen
         scrollable
@@ -765,6 +812,11 @@ export default function HomeScreen() {
           detail={loadError.detail}
           style={{ marginBottom: spacing.base }}
         />
+      )}
+      {refreshing && (
+        <AppText variant="small" color="tertiary" style={{ marginBottom: spacing.xs }}>
+          Refreshing...
+        </AppText>
       )}
 
       {/* ================================================================== */}

@@ -44,6 +44,7 @@ import { getPermissionsForMember } from "@/lib/rbac";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
 import { formatError, type FormattedError } from "@/lib/ui/formatError";
 import { JOINT_EVENT_CHIP_LONG } from "@/lib/eventModuleUi";
+import { getCache, invalidateCachePrefix, setCache } from "@/lib/cache/clientCache";
 
 // Simple picker option component
 function PickerOption({
@@ -100,9 +101,11 @@ export default function EventsScreen() {
   const tabContentStyle = { paddingTop: 16, paddingBottom: tabBarHeight + 24 };
   const createAction = useAsyncAction();
   const paramsHandledRef = useRef(false);
+  const lastLoadAtRef = useRef(0);
 
   const [events, setEvents] = useState<EventDoc[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [loadError, setLoadError] = useState<FormattedError | null>(null);
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [formName, setFormName] = useState("");
@@ -285,20 +288,31 @@ export default function EventsScreen() {
     }
   }, []);
 
-  const loadEvents = useCallback(async () => {
+  const cacheKey = useMemo(() => {
+    const sid = societyId || activeSocietyId;
+    return sid ? `society:${sid}:events` : null;
+  }, [societyId, activeSocietyId]);
+
+  const loadEvents = useCallback(async (opts?: { silent?: boolean }) => {
     const sid = societyId || activeSocietyId;
     if (!sid) {
       console.log("[events] No societyId/activeSocietyId, skipping load");
       setLoading(false);
       return;
     }
+    if (Date.now() - lastLoadAtRef.current < 5000) return;
+    lastLoadAtRef.current = Date.now();
     console.log("[events] Loading events for society:", sid);
-    setLoading(true);
+    if (opts?.silent) setRefreshing(true);
+    else setLoading(true);
     setLoadError(null);
     try {
       const data = await getEventsForSociety(sid);
       console.log("[events] Loaded", data.length, "events. Upcoming:", data.filter((e) => !e.isCompleted).length, "Completed:", data.filter((e) => e.isCompleted).length);
       setEvents(data);
+      if (cacheKey) {
+        await setCache(cacheKey, data, { ttlMs: 1000 * 60 * 5 });
+      }
     } catch (err: any) {
       console.error("[events] Failed to load events:", err?.message || err);
       const formatted = formatError(err);
@@ -306,19 +320,31 @@ export default function EventsScreen() {
       setEvents([]);
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
-  }, [societyId, activeSocietyId]);
+  }, [societyId, activeSocietyId, cacheKey]);
 
   useEffect(() => {
-    loadEvents();
-  }, [loadEvents]);
+    void (async () => {
+      if (cacheKey) {
+        const cached = await getCache<EventDoc[]>(cacheKey, { maxAgeMs: 1000 * 60 * 60 });
+        if (cached?.value?.length) {
+          setEvents(cached.value);
+          setLoading(false);
+        }
+        await loadEvents({ silent: !!cached });
+        return;
+      }
+      await loadEvents();
+    })();
+  }, [loadEvents, cacheKey]);
 
   // Refetch on focus to pick up changes from other screens
   useFocusEffect(
     useCallback(() => {
       const sid = societyId || activeSocietyId;
       if (sid) {
-        loadEvents();
+        loadEvents({ silent: true });
       }
     }, [societyId, activeSocietyId, loadEvents])
   );
@@ -562,6 +588,9 @@ export default function EventsScreen() {
     console.log("[createEvent] SUCCESS");
     resetForm();
     setToast({ visible: true, message: "Event created", type: "success" });
+    if (societyId) {
+      await invalidateCachePrefix(`society:${societyId}:`);
+    }
     loadEvents();
   };
 
@@ -607,7 +636,7 @@ export default function EventsScreen() {
     router.push({ pathname: "/(app)/event/[id]", params: { id: event.id } });
   };
 
-  if (bootstrapLoading || loading) {
+  if (bootstrapLoading && loading) {
     return (
       <Screen scrollable={false} contentStyle={tabContentStyle}>
         <View style={styles.centered}>
@@ -1295,6 +1324,11 @@ export default function EventsScreen() {
           </PrimaryButton>
         )}
       </View>
+      {refreshing ? (
+        <AppText variant="small" color="tertiary" style={{ marginBottom: spacing.xs }}>
+          Refreshing...
+        </AppText>
+      ) : null}
 
       {loadError ? (
         <InlineNotice

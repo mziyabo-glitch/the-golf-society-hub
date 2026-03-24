@@ -390,6 +390,20 @@ export function AuthScreen() {
             {isSignIn ? "Sign In" : "Create Account"}
           </PrimaryButton>
 
+          {!isSignIn && (
+            <AppText variant="small" color="secondary" style={styles.consentText}>
+              By creating an account, you agree to our{" "}
+              <AppText
+                variant="small"
+                style={[styles.inlineLink, { color: colors.primary }]}
+                onPress={() => router.push("/privacy-policy")}
+              >
+                Privacy Policy
+              </AppText>
+              .
+            </AppText>
+          )}
+
           {isSignIn && (
             <>
               <View style={styles.dividerRow}>
@@ -535,5 +549,14 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     marginTop: spacing.sm,
     paddingVertical: spacing.xs,
+  },
+  consentText: {
+    textAlign: "center",
+    marginTop: spacing.base,
+    lineHeight: 20,
+  },
+  inlineLink: {
+    textDecorationLine: "underline",
+    fontWeight: "600",
   },
 });

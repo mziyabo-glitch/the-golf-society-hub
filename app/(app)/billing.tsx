@@ -41,7 +41,6 @@ const MIN_QTY = 1;
 const MAX_QTY = 100;
 
 const TERMS_URL = "https://thegolfsocietyhub.com/terms";
-const PRIVACY_URL = "https://thegolfsocietyhub.com/privacy";
 
 // ---------------------------------------------------------------------------
 // Component
@@ -448,7 +447,7 @@ export default function BillingScreen() {
             </AppText>
           </Pressable>
           <AppText variant="small" color="tertiary"> | </AppText>
-          <Pressable onPress={() => Linking.openURL(PRIVACY_URL)}>
+          <Pressable onPress={() => router.push("/privacy-policy")}>
             <AppText variant="small" color="secondary" style={styles.legalLink}>
               Privacy Policy
             </AppText>

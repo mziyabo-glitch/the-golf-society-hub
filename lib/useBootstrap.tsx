@@ -7,6 +7,7 @@ import { createContext, useContext, useCallback, useEffect, useMemo, useRef, use
 import { supabase } from "@/lib/supabase";
 import type { User, Session } from "@supabase/supabase-js";
 import { getMySocieties, type MySocietyMembership } from "@/lib/db_supabase/mySocietiesRepo";
+import { getCache, setCache, invalidateCache } from "@/lib/cache/clientCache";
 
 // ============================================================================
 // Types
@@ -73,6 +74,7 @@ type BootstrapState = {
 
 const BootstrapContext = createContext<BootstrapState | null>(null);
 let warnedMissingBootstrapProvider = false;
+const ACTIVE_SOCIETY_CACHE_KEY = "app:activeSociety";
 
 const BOOTSTRAP_FALLBACK: BootstrapState = {
   loading: false,
@@ -165,6 +167,7 @@ function useBootstrapInternal(): BootstrapState {
   const mounted = useRef(true);
   const bootstrapRunRef = useRef(false);
   const bootstrapInFlight = useRef(false);
+  const hydratedFromCacheRef = useRef(false);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -480,6 +483,33 @@ function useBootstrapInternal(): BootstrapState {
     };
   }, [refreshKey]);
 
+  useEffect(() => {
+    if (hydratedFromCacheRef.current) return;
+    hydratedFromCacheRef.current = true;
+    void (async () => {
+      const cached = await getCache<{
+        profile: any | null;
+        society: SocietyData | null;
+        member: MemberData | null;
+      }>(ACTIVE_SOCIETY_CACHE_KEY, { maxAgeMs: 1000 * 60 * 60 * 24 });
+      if (!cached || !mounted.current) return;
+      if (cached.value.profile?.active_society_id) {
+        setProfile((prev: any) => prev ?? cached.value.profile);
+      }
+      if (cached.value.society) {
+        setSociety((prev) => prev ?? cached.value.society);
+      }
+      if (cached.value.member) {
+        setMemberState((prev) => prev ?? cached.value.member);
+      }
+    })();
+  }, []);
+
+  useEffect(() => {
+    if (!profile?.active_society_id || !society || !member) return;
+    void setCache(ACTIVE_SOCIETY_CACHE_KEY, { profile, society, member }, { ttlMs: 1000 * 60 * 60 * 24 });
+  }, [profile, society, member]);
+
   // ============================================================================
   // Derived state
   // ============================================================================
@@ -604,6 +634,7 @@ function useBootstrapInternal(): BootstrapState {
   const signOut = async () => {
     console.log("[useBootstrap] Signing out...");
     await supabase.auth.signOut();
+    await invalidateCache(ACTIVE_SOCIETY_CACHE_KEY);
     setSession(null);
     setProfile(null);
     setSociety(null);
