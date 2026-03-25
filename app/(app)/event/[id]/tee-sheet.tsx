@@ -19,6 +19,8 @@ import { AppCard } from "@/components/ui/AppCard";
 import { SecondaryButton } from "@/components/ui/Button";
 import { LoadingState } from "@/components/ui/LoadingState";
 import { useBootstrap } from "@/lib/useBootstrap";
+import { fetchMemberRowsForAuthUser } from "@/lib/db_supabase/mySocietiesRepo";
+import { getJointMetaForEventIds } from "@/lib/db_supabase/jointEventRepo";
 import { buildSocietyIdToNameMap } from "@/lib/jointEventSocietyLabel";
 import { getMembersBySocietyId, getMembersByIds, type MemberDoc } from "@/lib/db_supabase/memberRepo";
 import {
@@ -97,10 +99,21 @@ const MemberGroupCard = React.memo(function MemberGroupCard({
   );
 });
 
+function duplicateMemberRowsBySociety(
+  rows: { societyId: string }[],
+): { societyId: string; rowCount: number }[] {
+  const m = new Map<string, number>();
+  for (const r of rows) {
+    if (!r.societyId) continue;
+    m.set(r.societyId, (m.get(r.societyId) ?? 0) + 1);
+  }
+  return [...m.entries()].filter(([, n]) => n > 1).map(([societyId, rowCount]) => ({ societyId, rowCount }));
+}
+
 export default function EventTeeSheetScreen() {
   const router = useRouter();
   const { id: eventId } = useLocalSearchParams<{ id: string }>();
-  const { societyId, member } = useBootstrap();
+  const { societyId, member, userId, activeSocietyId, memberships, profile } = useBootstrap();
   const colors = getColors();
 
   const [canonical, setCanonical] = useState<CanonicalTeeSheetResult | null>(null);
@@ -110,6 +123,24 @@ export default function EventTeeSheetScreen() {
 
   const loadData = useCallback(async () => {
     if (!eventId || !societyId) {
+      console.log("[joint-access-user]", {
+        phase: "blocked_missing_event_or_society",
+        eventId: eventId ?? null,
+        userId: userId ?? null,
+        activeSocietyId: societyId ?? null,
+        profileActiveSocietyId: profile?.active_society_id ?? null,
+        bootstrapMembershipSocietyIds: memberships.map((m) => m.societyId).sort(),
+        userSocietyIds: [],
+        memberRowsFresh: [],
+        duplicateMemberRowsBySociety: [],
+        participantSocietyIdsMismatchBootstrapVsFresh: null,
+        hostSocietyId: null,
+        participantSocietyIds: [],
+        participantMatch: null,
+        derivedIsJoint: false,
+        isActiveSocietyParticipantForEvent_inputs: null,
+        canView: false,
+      });
       if (__DEV__) {
         console.log("[joint-access] final gate", {
           eventId: eventId ?? null,
@@ -126,8 +157,39 @@ export default function EventTeeSheetScreen() {
     setLoading(true);
     setError(null);
     try {
+      const memberRowsFresh = await fetchMemberRowsForAuthUser();
+      const userSocietyIds = [...new Set(memberRowsFresh.map((r) => r.societyId).filter(Boolean))].sort();
+      const bootstrapIds = [...new Set(memberships.map((m) => m.societyId))].sort();
+      const participantSocietyIdsMismatchBootstrapVsFresh =
+        bootstrapIds.join(",") !== userSocietyIds.join(",")
+          ? { bootstrap: bootstrapIds, fresh: userSocietyIds }
+          : null;
+
       const c = await loadCanonicalTeeSheet(eventId);
       if (!c) {
+        console.log("[joint-access-user]", {
+          phase: "blocked_canonical_null",
+          eventId,
+          userId: userId ?? null,
+          activeSocietyId: societyId,
+          profileActiveSocietyId: profile?.active_society_id ?? null,
+          bootstrapMembershipSocietyIds: bootstrapIds,
+          userSocietyIds,
+          memberRowsFresh: memberRowsFresh.map((r) => ({
+            memberId: r.memberId,
+            societyId: r.societyId,
+            userId: r.userId,
+            createdAt: r.createdAt,
+          })),
+          duplicateMemberRowsBySociety: duplicateMemberRowsBySociety(memberRowsFresh),
+          participantSocietyIdsMismatchBootstrapVsFresh,
+          hostSocietyId: null,
+          participantSocietyIds: [],
+          participantMatch: null,
+          derivedIsJoint: false,
+          isActiveSocietyParticipantForEvent_inputs: null,
+          canView: false,
+        });
         if (__DEV__) {
           console.log("[tee-debug] loadCanonicalTeeSheet returned null — member tee sheet cannot render (often events RLS for participant societies).", {
             eventId,
@@ -147,16 +209,138 @@ export default function EventTeeSheetScreen() {
         return;
       }
 
-      const gateParticipants =
+      const hostSid = c.event.society_id ?? "";
+      const fromCanon = (c.jointParticipatingSocieties ?? []).map((s) => s.society_id).filter(Boolean);
+      const jointMetaForGate = await getJointMetaForEventIds([eventId]);
+      const fromEventSocieties = jointMetaForGate.get(eventId)?.participantSocietyIds ?? [];
+      /** Full participant set for joint: event_societies (authoritative) ∪ RPC ∪ host — avoids host-only gate when joint detail payload is empty. */
+      const gateParticipants: string[] = c.isJoint
+        ? [...new Set([hostSid, ...fromEventSocieties, ...fromCanon].filter(Boolean))]
+        : [hostSid].filter(Boolean);
+      const legacyGateParticipants =
         c.isJoint && c.jointParticipatingSocieties?.length
           ? c.jointParticipatingSocieties.map((s) => s.society_id).filter(Boolean)
-          : [c.event.society_id].filter(Boolean);
+          : [hostSid].filter(Boolean);
       const derivedIsJoint = c.isJoint === true;
+      const participantMatch = gateParticipants.some((id) => String(id) === String(societyId));
+      const helperInputs = {
+        activeSocietyId: societyId,
+        hostSocietyId: hostSid,
+        participantSocietyIds: gateParticipants,
+      };
+      console.log("[joint-access-user]", {
+        phase: "before_canView",
+        eventId,
+        userId: userId ?? null,
+        activeSocietyId: societyId,
+        profileActiveSocietyId: profile?.active_society_id ?? null,
+        activeEqualsProfileSociety:
+          societyId != null && profile?.active_society_id != null
+            ? String(societyId) === String(profile.active_society_id)
+            : null,
+        bootstrapMembershipSocietyIds: bootstrapIds,
+        userSocietyIds,
+        memberRowsFresh: memberRowsFresh.map((r) => ({
+          memberId: r.memberId,
+          societyId: r.societyId,
+          userId: r.userId,
+          createdAt: r.createdAt,
+        })),
+        duplicateMemberRowsBySociety: duplicateMemberRowsBySociety(memberRowsFresh),
+        participantSocietyIdsMismatchBootstrapVsFresh,
+        hostSocietyId: hostSid,
+        participantSocietyIds: gateParticipants,
+        participantMatch,
+        derivedIsJoint,
+        isActiveSocietyParticipantForEvent_inputs: helperInputs,
+        canView: null,
+      });
       const canView = isActiveSocietyParticipantForEvent(
         societyId,
         c.event.society_id,
         gateParticipants,
       );
+      if (__DEV__) {
+        const legacyCanView = isActiveSocietyParticipantForEvent(
+          societyId,
+          c.event.society_id,
+          legacyGateParticipants,
+        );
+        const nm = (s: string) => (s || "").toLowerCase();
+        const isDualMember = userSocietyIds.length >= 2;
+        const isZgsMember = memberships.some((m) => nm(m.societyName).includes("zgs"));
+        const isM4Member = memberships.some(
+          (m) => /\bm4\b/i.test(m.societyName) || nm(m.societyName).includes("m4"),
+        );
+        const roleForActiveSociety =
+          memberships.find((m) => String(m.societyId) === String(societyId))?.role ??
+          (member as { role?: string })?.role ??
+          null;
+        let reason: string;
+        if (canView) {
+          if (!legacyCanView) {
+            reason = "allowed_fixed_by_event_societies_meta_union";
+          } else if (societyId && hostSid && String(societyId) === String(hostSid)) {
+            reason = "allowed_host_match";
+          } else {
+            reason = "allowed_participant_match";
+          }
+        } else if (!societyId || !hostSid) {
+          reason = "deny_missing_active_or_host";
+        } else {
+          reason = "deny_active_not_in_host_or_event_societies_union";
+        }
+        console.log("[joint-zgs-debug]", {
+          eventId,
+          userId: userId ?? null,
+          activeSocietyId: societyId,
+          userSocietyIds,
+          resolvedMembershipRows: memberRowsFresh.map((r) => ({
+            memberId: r.memberId,
+            societyId: r.societyId,
+          })),
+          participantSocietyIds: gateParticipants,
+          fromEventSocietiesRowCount: fromEventSocieties.length,
+          fromCanonRowCount: fromCanon.length,
+          legacyGateParticipantIds: legacyGateParticipants,
+          legacyCanView,
+          fixedByEventSocietiesMetaUnion: !legacyCanView && canView,
+          derivedIsJoint,
+          canView,
+          isDualMember,
+          isZgsMember,
+          isM4Member,
+          roleForActiveSociety,
+          reason,
+        });
+      }
+      console.log("[joint-access-user]", {
+        phase: canView ? "access_allowed" : "blocked_canView_false",
+        eventId,
+        userId: userId ?? null,
+        activeSocietyId: societyId,
+        profileActiveSocietyId: profile?.active_society_id ?? null,
+        activeEqualsProfileSociety:
+          societyId != null && profile?.active_society_id != null
+            ? String(societyId) === String(profile.active_society_id)
+            : null,
+        bootstrapMembershipSocietyIds: bootstrapIds,
+        userSocietyIds,
+        memberRowsFresh: memberRowsFresh.map((r) => ({
+          memberId: r.memberId,
+          societyId: r.societyId,
+          userId: r.userId,
+          createdAt: r.createdAt,
+        })),
+        duplicateMemberRowsBySociety: duplicateMemberRowsBySociety(memberRowsFresh),
+        participantSocietyIdsMismatchBootstrapVsFresh,
+        hostSocietyId: hostSid,
+        participantSocietyIds: gateParticipants,
+        participantMatch,
+        derivedIsJoint,
+        isActiveSocietyParticipantForEvent_inputs: helperInputs,
+        canView,
+      });
       if (!canView) {
         if (__DEV__) {
           console.log("[joint-access] final gate", {
@@ -178,14 +362,12 @@ export default function EventTeeSheetScreen() {
 
       const eventData = c.event;
       const hostId = eventData.society_id ?? societyId;
-      const participantSocietyIds =
-        c.isJoint && c.jointParticipatingSocieties?.length
-          ? c.jointParticipatingSocieties.map((s) => s.society_id).filter(Boolean)
-          : [];
+      const participantSocietyIdsForPool =
+        c.isJoint && gateParticipants.length > 0 ? gateParticipants : [];
 
       let membersMerged: MemberDoc[] = [];
-      if (c.isJoint && participantSocietyIds.length > 0) {
-        const lists = await Promise.all(participantSocietyIds.map((sid) => getMembersBySocietyId(sid)));
+      if (c.isJoint && participantSocietyIdsForPool.length > 0) {
+        const lists = await Promise.all(participantSocietyIdsForPool.map((sid) => getMembersBySocietyId(sid)));
         membersMerged = lists.flat();
       } else {
         membersMerged = await getMembersBySocietyId(hostId);
@@ -218,12 +400,31 @@ export default function EventTeeSheetScreen() {
         });
       }
     } catch (err) {
+      console.log("[joint-access-user]", {
+        phase: "blocked_load_error",
+        eventId: eventId ?? null,
+        userId: userId ?? null,
+        activeSocietyId: societyId ?? null,
+        profileActiveSocietyId: profile?.active_society_id ?? null,
+        bootstrapMembershipSocietyIds: memberships.map((m) => m.societyId).sort(),
+        userSocietyIds: [],
+        memberRowsFresh: [],
+        duplicateMemberRowsBySociety: [],
+        participantSocietyIdsMismatchBootstrapVsFresh: null,
+        hostSocietyId: null,
+        participantSocietyIds: [],
+        participantMatch: null,
+        derivedIsJoint: false,
+        isActiveSocietyParticipantForEvent_inputs: null,
+        canView: false,
+        errorMessage: err instanceof Error ? err.message : String(err),
+      });
       setError(formatError(err));
       setCanonical(null);
     } finally {
       setLoading(false);
     }
-  }, [eventId, societyId]);
+  }, [eventId, societyId, userId, profile, memberships]);
 
   useEffect(() => {
     loadData();

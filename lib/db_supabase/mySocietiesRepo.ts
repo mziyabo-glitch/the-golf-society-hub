@@ -13,6 +13,43 @@ export type MySocietyMembership = {
   joinedAt: string;
 };
 
+/** Raw `members` rows for the signed-in user (debug: linkage, duplicates). */
+export type MemberRowForAuthUser = {
+  memberId: string;
+  societyId: string;
+  userId: string;
+  createdAt: string | null;
+};
+
+/**
+ * All `members` rows for the current auth user (`user_id` linkage).
+ * Used to verify ZGS (or any society) membership vs `profiles.active_society_id`.
+ */
+export async function fetchMemberRowsForAuthUser(): Promise<MemberRowForAuthUser[]> {
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
+  if (!session?.user?.id) return [];
+
+  const { data, error } = await supabase
+    .from("members")
+    .select("id, society_id, user_id, created_at")
+    .eq("user_id", session.user.id)
+    .order("created_at", { ascending: false });
+
+  if (error) {
+    console.warn("[mySocietiesRepo] fetchMemberRowsForAuthUser:", error.message);
+    return [];
+  }
+
+  return (data ?? []).map((row: any) => ({
+    memberId: String(row.id ?? ""),
+    societyId: String(row.society_id ?? ""),
+    userId: String(row.user_id ?? ""),
+    createdAt: row.created_at != null ? String(row.created_at) : null,
+  }));
+}
+
 /**
  * Fetch every society the current auth user belongs to,
  * joined with the society row for name/country/logo.
