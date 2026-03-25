@@ -24,3 +24,25 @@ export function isJointEventFromMeta(
   if (typeof linkedSocietyCount === "number" && linkedSocietyCount >= 2) return true;
   return (participantSocietyIds?.length ?? 0) >= 2;
 }
+
+/**
+ * For joint events: pick the first of the user's memberships (stable order from getMySocieties)
+ * that is the host or in the participant set — so active society matches event participation.
+ */
+export function pickPreferredMembershipSocietyForJointEvent(
+  memberships: readonly { societyId: string; memberId: string }[],
+  participantSocietyIds: readonly string[],
+  hostSocietyId: string | null | undefined,
+): { societyId: string; memberId: string } | null {
+  const allowed = new Set<string>(
+    [hostSocietyId, ...participantSocietyIds]
+      .filter(Boolean)
+      .map((x) => String(x)),
+  );
+  for (const m of memberships) {
+    if (allowed.has(String(m.societyId))) {
+      return { societyId: m.societyId, memberId: m.memberId };
+    }
+  }
+  return null;
+}

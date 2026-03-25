@@ -33,7 +33,10 @@ import { formatHandicap } from "@/lib/whs";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
 import { formatError, type FormattedError } from "@/lib/ui/formatError";
 import { JOINT_EVENT_CHIP_LONG } from "@/lib/eventModuleUi";
-import { isActiveSocietyParticipantForEvent } from "@/lib/jointEventAccess";
+import {
+  isActiveSocietyParticipantForEvent,
+  pickPreferredMembershipSocietyForJointEvent,
+} from "@/lib/jointEventAccess";
 
 type GroupWithTime = PlayerGroup & { teeTime: string };
 
@@ -113,7 +116,8 @@ function duplicateMemberRowsBySociety(
 export default function EventTeeSheetScreen() {
   const router = useRouter();
   const { id: eventId } = useLocalSearchParams<{ id: string }>();
-  const { societyId, member, userId, activeSocietyId, memberships, profile } = useBootstrap();
+  const { societyId, member, userId, activeSocietyId, memberships, profile, switchSociety } =
+    useBootstrap();
   const colors = getColors();
 
   const [canonical, setCanonical] = useState<CanonicalTeeSheetResult | null>(null);
@@ -221,6 +225,40 @@ export default function EventTeeSheetScreen() {
         c.isJoint && c.jointParticipatingSocieties?.length
           ? c.jointParticipatingSocieties.map((s) => s.society_id).filter(Boolean)
           : [hostSid].filter(Boolean);
+
+      if (c.isJoint && memberships.length > 0) {
+        const pref = pickPreferredMembershipSocietyForJointEvent(
+          memberships,
+          gateParticipants,
+          hostSid,
+        );
+        const activeOkForEvent = isActiveSocietyParticipantForEvent(
+          societyId,
+          hostSid,
+          gateParticipants,
+        );
+        if (
+          pref &&
+          String(pref.societyId) !== String(societyId) &&
+          !activeOkForEvent
+        ) {
+          if (__DEV__) {
+            console.log("[joint-society-context]", {
+              userId: userId ?? null,
+              profileActiveSocietyId: profile?.active_society_id ?? null,
+              resolvedMembershipSocietyIds: memberships.map((m) => m.societyId).sort(),
+              chosenActiveSocietyId: pref.societyId,
+              reason: "tee_sheet_switch_to_first_membership_in_joint_participants",
+              eventId,
+              hostSocietyId: hostSid,
+              gateParticipantIds: gateParticipants,
+            });
+          }
+          await switchSociety(pref.societyId);
+          return;
+        }
+      }
+
       const derivedIsJoint = c.isJoint === true;
       const participantMatch = gateParticipants.some((id) => String(id) === String(societyId));
       const helperInputs = {
@@ -424,7 +462,7 @@ export default function EventTeeSheetScreen() {
     } finally {
       setLoading(false);
     }
-  }, [eventId, societyId, userId, profile, memberships]);
+  }, [eventId, societyId, userId, profile, memberships, switchSociety]);
 
   useEffect(() => {
     loadData();

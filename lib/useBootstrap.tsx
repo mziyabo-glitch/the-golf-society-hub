@@ -284,38 +284,76 @@ function useBootstrapInternal(): BootstrapState {
         setMemberships(allMemberships);
 
         // ----------------------------------------------------------------
-        // Step 3: Self-heal — if profile has no active_society_id but
-        // the user has a membership, recover the pointers.
+        // Step 3: Self-heal active society pointer
+        // - Missing active_society_id → first membership (existing behaviour).
+        // - active_society_id not in user's members rows (stale/joined wrong org) → same heal.
+        //   Otherwise tee-sheet and gates run under a society the user is not linked to.
         // ----------------------------------------------------------------
-        if (!finalProfile?.active_society_id && currentUser) {
+        const membershipSocietyIds = new Set(allMemberships.map((m) => m.societyId));
+        const profileActiveBeforeStep3 = finalProfile?.active_society_id ?? null;
+        const activePointer = finalProfile?.active_society_id as string | undefined;
+        const activeMissing = !activePointer;
+        const activeStale =
+          !!activePointer &&
+          allMemberships.length > 0 &&
+          !membershipSocietyIds.has(activePointer);
+
+        let healReasonApplied: string | null = null;
+
+        if (currentUser && allMemberships.length > 0 && (activeMissing || activeStale)) {
           const healRow = allMemberships[0];
-          if (healRow) {
-            console.log("[useBootstrap] Self-heal: recovering pointers", {
-              society_id: healRow.societyId,
-              member_id: healRow.memberId,
-            });
-            const { error: healErr } = await supabase
-              .from("profiles")
-              .update({
-                active_society_id: healRow.societyId,
-                active_member_id: healRow.memberId,
-              })
-              .eq("id", currentUser.id);
+          healReasonApplied = activeMissing ? "recover_missing_active_pointer" : "recover_stale_active_not_in_memberships";
+          console.log("[useBootstrap] Self-heal: active society pointer", {
+            reason: healReasonApplied,
+            stale_or_missing_active: activePointer ?? null,
+            new_society_id: healRow.societyId,
+            new_member_id: healRow.memberId,
+          });
+          const { error: healErr } = await supabase
+            .from("profiles")
+            .update({
+              active_society_id: healRow.societyId,
+              active_member_id: healRow.memberId,
+            })
+            .eq("id", currentUser.id);
 
-            if (!mounted.current) return;
+          if (!mounted.current) return;
 
-            if (!healErr) {
-              finalProfile = {
-                ...(finalProfile ?? {}),
-                id: currentUser.id,
-                active_society_id: healRow.societyId,
-                active_member_id: healRow.memberId,
-              };
-              setProfile(finalProfile);
-            } else {
-              console.warn("[useBootstrap] Self-heal DB update failed:", healErr.message);
-            }
+          if (!healErr) {
+            finalProfile = {
+              ...(finalProfile ?? {}),
+              id: currentUser.id,
+              active_society_id: healRow.societyId,
+              active_member_id: healRow.memberId,
+            };
+            setProfile(finalProfile);
+            await invalidateCache(ACTIVE_SOCIETY_CACHE_KEY);
+          } else {
+            console.warn("[useBootstrap] Self-heal DB update failed:", healErr.message);
+            healReasonApplied = null;
           }
+        }
+
+        if (__DEV__ && currentUser) {
+          const resolvedMembershipSocietyIds = [...membershipSocietyIds].sort();
+          const chosenActiveSocietyId = (finalProfile?.active_society_id as string | undefined) ?? null;
+          let reason: string;
+          if (allMemberships.length === 0) {
+            reason = "no_memberships_loaded";
+          } else if (healReasonApplied) {
+            reason = healReasonApplied;
+          } else if (chosenActiveSocietyId && !membershipSocietyIds.has(chosenActiveSocietyId)) {
+            reason = "active_not_in_memberships_unhealed";
+          } else {
+            reason = "active_ok";
+          }
+          console.log("[joint-society-context]", {
+            userId: currentUser.id,
+            profileActiveSocietyId: profileActiveBeforeStep3,
+            resolvedMembershipSocietyIds,
+            chosenActiveSocietyId,
+            reason,
+          });
         }
 
         // ----------------------------------------------------------------
