@@ -302,40 +302,49 @@ export default function EventTeeSheetScreen() {
       );
       if (__DEV__) {
         const metaEntry = jointMetaForGate.get(eventId) ?? null;
-        const jointDetailPayload = await getJointEventDetail(eventId);
-        const jointDetailParticipatingIds =
-          jointDetailPayload?.participating_societies?.map((s) => s.society_id).filter(Boolean) ?? [];
+        const detail = await getJointEventDetail(eventId);
         const activeInGate = gateParticipants.some((id) => String(id) === String(societyId));
-        console.log("[joint-gate-debug]", {
-          eventId,
-          activeSocietyId: societyId,
-          hostSocietyId: hostSid,
-          canonicalIsJoint: c.isJoint,
-          fromJointParticipatingSocieties: (c.jointParticipatingSocieties ?? []).map((s) => ({
-            society_id: s.society_id,
-            society_name: s.society_name ?? null,
-          })),
-          fromEventSocietiesMeta: [...fromEventSocieties],
-          fromCanon: [...fromCanon],
-          gateParticipants: [...gateParticipants],
-          canView,
-          activeInGate,
-          /** If ZGS is in gate but canView is false, mismatch is elsewhere (e.g. missing activeSocietyId). */
-          denyDespiteActiveInGate: activeInGate && !canView,
-        });
-        console.log("[joint-gate-debug] getJointMetaForEventIds raw", {
-          eventId,
-          metaEntry,
-          mapSize: jointMetaForGate.size,
-          mapKeys: [...jointMetaForGate.keys()],
-        });
-        console.log("[joint-gate-debug] canonical.jointParticipatingSocieties raw", c.jointParticipatingSocieties ?? null);
-        console.log("[joint-gate-debug] getJointEventDetail payload", {
-          eventId,
-          detailIsNull: jointDetailPayload == null,
-          detailIsJoint: jointDetailPayload?.event?.is_joint_event ?? null,
-          participatingSocietyIds: jointDetailParticipatingIds,
-        });
+        const denyDespiteActiveInGate = activeInGate && !canView;
+        const fromJointParticipatingSocieties = (c.jointParticipatingSocieties ?? []).map((s) => ({
+          society_id: s.society_id,
+          society_name: s.society_name ?? null,
+        }));
+        const fromEventSocietiesMeta = [...fromEventSocieties];
+
+        console.log(
+          "[joint-gate-debug:flat]",
+          JSON.stringify({
+            eventId,
+            activeSocietyId: societyId,
+            hostSocietyId: c.event.society_id,
+            canonicalIsJoint: c.isJoint,
+            fromJointParticipatingSocieties,
+            fromEventSocietiesMeta,
+            fromCanon,
+            gateParticipants,
+            canView,
+            activeInGate,
+            denyDespiteActiveInGate,
+          }),
+        );
+
+        console.log(
+          "[joint-gate-debug:meta]",
+          JSON.stringify({
+            eventId,
+            metaEntry,
+          }),
+        );
+
+        console.log(
+          "[joint-gate-debug:detail]",
+          JSON.stringify({
+            eventId,
+            detailIsNull: !detail,
+            detailIsJoint: detail?.event?.is_joint_event ?? null,
+            participatingSocietyIds: detail?.participating_societies?.map((s) => s.society_id) ?? [],
+          }),
+        );
 
         const legacyCanView = isActiveSocietyParticipantForEvent(
           societyId,
