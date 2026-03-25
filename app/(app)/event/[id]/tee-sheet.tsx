@@ -303,6 +303,46 @@ export default function EventTeeSheetScreen() {
       if (__DEV__) {
         const metaEntry = jointMetaForGate.get(eventId) ?? null;
         const detail = await getJointEventDetail(eventId);
+
+        console.log(
+          "[joint-gate-flat]",
+          JSON.stringify({
+            eventId,
+            activeSocietyId: societyId,
+            hostSocietyId: c.event.society_id,
+            canonicalIsJoint: c.isJoint,
+            fromJointParticipatingSocieties: (c.jointParticipatingSocieties ?? []).map((s) => ({
+              society_id: s.society_id,
+              society_name: s.society_name ?? null,
+            })),
+            fromEventSocietiesMeta: fromEventSocieties,
+            fromCanon,
+            gateParticipants,
+            canView,
+            activeInGate: gateParticipants.includes(societyId),
+            denyDespiteActiveInGate: gateParticipants.includes(societyId) && !canView,
+            published: !!c.event.tee_time_published_at,
+          }),
+        );
+
+        console.log(
+          "[joint-gate-meta]",
+          JSON.stringify({
+            eventId,
+            metaEntry,
+          }),
+        );
+
+        console.log(
+          "[joint-gate-detail]",
+          JSON.stringify({
+            eventId,
+            detailIsNull: !detail,
+            detailIsJoint: detail?.event?.is_joint_event ?? null,
+            participatingSocietyIds: detail?.participating_societies?.map((s) => s.society_id) ?? [],
+          }),
+        );
+
         const activeInGate = gateParticipants.some((id) => String(id) === String(societyId));
         const denyDespiteActiveInGate = activeInGate && !canView;
         const fromJointParticipatingSocieties = (c.jointParticipatingSocieties ?? []).map((s) => ({
