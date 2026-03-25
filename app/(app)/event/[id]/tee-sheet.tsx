@@ -20,7 +20,7 @@ import { SecondaryButton } from "@/components/ui/Button";
 import { LoadingState } from "@/components/ui/LoadingState";
 import { useBootstrap } from "@/lib/useBootstrap";
 import { fetchMemberRowsForAuthUser } from "@/lib/db_supabase/mySocietiesRepo";
-import { getJointMetaForEventIds } from "@/lib/db_supabase/jointEventRepo";
+import { getJointEventDetail, getJointMetaForEventIds } from "@/lib/db_supabase/jointEventRepo";
 import { buildSocietyIdToNameMap } from "@/lib/jointEventSocietyLabel";
 import { getMembersBySocietyId, getMembersByIds, type MemberDoc } from "@/lib/db_supabase/memberRepo";
 import {
@@ -266,6 +266,8 @@ export default function EventTeeSheetScreen() {
         hostSocietyId: hostSid,
         participantSocietyIds: gateParticipants,
       };
+      // Access uses participant/host membership only — not getMembersBySocietyId row count
+      // (that query is often host-scoped; ZGS-only users see 0 rows for the host society).
       console.log("[joint-access-user]", {
         phase: "before_canView",
         eventId,
@@ -299,6 +301,42 @@ export default function EventTeeSheetScreen() {
         gateParticipants,
       );
       if (__DEV__) {
+        const metaEntry = jointMetaForGate.get(eventId) ?? null;
+        const jointDetailPayload = await getJointEventDetail(eventId);
+        const jointDetailParticipatingIds =
+          jointDetailPayload?.participating_societies?.map((s) => s.society_id).filter(Boolean) ?? [];
+        const activeInGate = gateParticipants.some((id) => String(id) === String(societyId));
+        console.log("[joint-gate-debug]", {
+          eventId,
+          activeSocietyId: societyId,
+          hostSocietyId: hostSid,
+          canonicalIsJoint: c.isJoint,
+          fromJointParticipatingSocieties: (c.jointParticipatingSocieties ?? []).map((s) => ({
+            society_id: s.society_id,
+            society_name: s.society_name ?? null,
+          })),
+          fromEventSocietiesMeta: [...fromEventSocieties],
+          fromCanon: [...fromCanon],
+          gateParticipants: [...gateParticipants],
+          canView,
+          activeInGate,
+          /** If ZGS is in gate but canView is false, mismatch is elsewhere (e.g. missing activeSocietyId). */
+          denyDespiteActiveInGate: activeInGate && !canView,
+        });
+        console.log("[joint-gate-debug] getJointMetaForEventIds raw", {
+          eventId,
+          metaEntry,
+          mapSize: jointMetaForGate.size,
+          mapKeys: [...jointMetaForGate.keys()],
+        });
+        console.log("[joint-gate-debug] canonical.jointParticipatingSocieties raw", c.jointParticipatingSocieties ?? null);
+        console.log("[joint-gate-debug] getJointEventDetail payload", {
+          eventId,
+          detailIsNull: jointDetailPayload == null,
+          detailIsJoint: jointDetailPayload?.event?.is_joint_event ?? null,
+          participatingSocietyIds: jointDetailParticipatingIds,
+        });
+
         const legacyCanView = isActiveSocietyParticipantForEvent(
           societyId,
           c.event.society_id,

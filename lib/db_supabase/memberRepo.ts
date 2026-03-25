@@ -253,18 +253,38 @@ export async function getMembersByIds(memberIds: string[]): Promise<MemberDoc[]>
 }
 
 /**
- * Get members for a society
+ * Get members for a society (RLS: rows visible if society is in the user's memberships
+ * `my_society_ids()` or the row is `user_id = auth.uid()`). Querying a society the user
+ * does not belong to returns **zero rows** — unlike bootstrap, which selects **your** row
+ * by `society_id` + `user_id` for the active society.
  */
 export async function getMembersBySocietyId(
   societyId: string
 ): Promise<MemberDoc[]> {
+  const queryFilters = { society_id: societyId, order: "created_at desc" };
   const { data, error } = await supabase
     .from("members")
     .select("*")
     .eq("society_id", societyId)
     .order("created_at", { ascending: false });
 
+  let userId: string | null = null;
+  if (__DEV__) {
+    const { data: authData } = await supabase.auth.getUser();
+    userId = authData?.user?.id ?? null;
+  }
+
   if (error) {
+    if (__DEV__) {
+      console.log("[joint-member-query]", {
+        societyId,
+        userId,
+        queryFilters,
+        rowCount: 0,
+        firstRow: null,
+        error: error.message,
+      });
+    }
     console.error("[memberRepo] getMembersBySocietyId failed:", {
       message: error.message,
       details: error.details,
@@ -275,7 +295,16 @@ export async function getMembersBySocietyId(
   }
 
   const members = (data ?? []).map(mapMember);
-  console.log("[memberRepo] getMembersBySocietyId:", members.length, "members, first handicapIndex:", members[0]?.handicapIndex);
+  if (__DEV__) {
+    console.log("[joint-member-query]", {
+      societyId,
+      userId,
+      queryFilters,
+      rowCount: members.length,
+      firstRow: data?.[0] ?? null,
+      error: null,
+    });
+  }
   return members;
 }
 
