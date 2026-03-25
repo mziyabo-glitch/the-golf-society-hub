@@ -32,7 +32,8 @@ import { useAsyncAction } from "@/lib/hooks/useAsyncAction";
 import { usePaidAccess } from "@/lib/access/usePaidAccess";
 import { getEvent, getFormatSortOrder, type EventDoc } from "@/lib/db_supabase/eventRepo";
 import { getMembersBySocietyId, getMembersByIds, type MemberDoc } from "@/lib/db_supabase/memberRepo";
-import { getJointEventDetail } from "@/lib/db_supabase/jointEventRepo";
+import { getJointEventDetail, getJointMetaForEventIds } from "@/lib/db_supabase/jointEventRepo";
+import { isJointEventFromMeta, isActiveSocietyParticipantForEvent } from "@/lib/jointEventAccess";
 import { buildSocietyIdToNameMap } from "@/lib/jointEventSocietyLabel";
 import { dedupeJointMembers } from "@/lib/jointPersonDedupe";
 import {
@@ -192,10 +193,11 @@ export default function EventPointsScreen() {
     setError(null);
 
     try {
-      const [evt, societyMembers, existingResults] = await Promise.all([
+      const [evt, societyMembers, existingResults, jointMetaMap] = await Promise.all([
         getEvent(eventId),
         getMembersBySocietyId(societyId),
         getEventResults(eventId),
+        getJointMetaForEventIds([eventId]),
       ]);
 
       if (!evt) {
@@ -205,6 +207,9 @@ export default function EventPointsScreen() {
       }
 
       setEvent(evt);
+
+      const metaRow = jointMetaMap.get(eventId);
+      const derivedIsJoint = isJointEventFromMeta(metaRow?.participantSocietyIds, metaRow?.linkedSocietyCount);
 
       const playerIds = evt.playerIds ?? [];
       let memberDocs: MemberDoc[] = [...societyMembers];
@@ -219,10 +224,14 @@ export default function EventPointsScreen() {
 
       let playerList: PlayerEntry[];
       let mergedByMember = new Map<string, string[]>();
+      let jointDetail: Awaited<ReturnType<typeof getJointEventDetail>> = null;
 
-      if (evt.is_joint_event === true) {
-        const jointDetail = await getJointEventDetail(eventId);
-        const socMap = buildSocietyIdToNameMap(jointDetail?.participating_societies ?? []);
+      if (derivedIsJoint) {
+        jointDetail = await getJointEventDetail(eventId);
+      }
+
+      if (derivedIsJoint && jointDetail) {
+        const socMap = buildSocietyIdToNameMap(jointDetail.participating_societies ?? []);
         const subset = playerIds
           .map((pid) => memberMap.get(pid))
           .filter(Boolean) as MemberDoc[];
@@ -250,6 +259,22 @@ export default function EventPointsScreen() {
             position: null,
             oomPoints: 0,
           };
+        });
+      }
+
+      const fromDetail = (jointDetail?.participating_societies ?? []).map((s) => s.society_id).filter(Boolean);
+      const fromMeta = metaRow?.participantSocietyIds?.length ? [...metaRow.participantSocietyIds] : [];
+      const participantSocietyIdsForGate =
+        fromDetail.length > 0 ? fromDetail : fromMeta.length > 0 ? fromMeta : [evt.society_id].filter(Boolean);
+      const canView = isActiveSocietyParticipantForEvent(societyId, evt.society_id, participantSocietyIdsForGate);
+      if (__DEV__) {
+        console.log("[joint-access] final gate", {
+          eventId,
+          activeSocietyId: societyId,
+          hostSocietyId: evt.society_id,
+          participantSocietyIds: participantSocietyIdsForGate,
+          derivedIsJoint,
+          canView,
         });
       }
 

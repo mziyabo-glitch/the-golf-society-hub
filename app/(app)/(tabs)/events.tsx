@@ -29,6 +29,7 @@ import {
   EVENT_CLASSIFICATIONS,
 } from "@/lib/db_supabase/eventRepo";
 import { createJointEvent, validateJointEventInput } from "@/lib/db_supabase/jointEventRepo";
+import { isJointEventFromMeta } from "@/lib/jointEventAccess";
 import { getMySocieties } from "@/lib/db_supabase/mySocietiesRepo";
 import { ParticipatingSocietiesSection } from "@/components/event/ParticipatingSocietiesSection";
 import type { EventSocietyInput } from "@/lib/db_supabase/jointEventTypes";
@@ -309,6 +310,20 @@ export default function EventsScreen() {
     try {
       const data = await getEventsForSociety(sid);
       console.log("[events] Loaded", data.length, "events. Upcoming:", data.filter((e) => !e.isCompleted).length, "Completed:", data.filter((e) => e.isCompleted).length);
+      if (__DEV__) {
+        for (const ev of data) {
+          const jointish =
+            isJointEventFromMeta(ev.participant_society_ids, ev.linked_society_count) || ev.is_joint_event === true;
+          if (!jointish) continue;
+          console.log("[joint-access] event list candidate", {
+            eventId: ev.id,
+            activeSocietyId: sid,
+            hostSocietyId: ev.society_id,
+            participantSocietyIds: ev.participant_society_ids ?? [],
+            includeInList: true,
+          });
+        }
+      }
       setEvents(data);
       if (cacheKey) {
         await setCache(cacheKey, data, { ttlMs: 1000 * 60 * 5 });

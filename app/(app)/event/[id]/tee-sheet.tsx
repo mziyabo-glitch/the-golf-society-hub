@@ -31,6 +31,7 @@ import { formatHandicap } from "@/lib/whs";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
 import { formatError, type FormattedError } from "@/lib/ui/formatError";
 import { JOINT_EVENT_CHIP_LONG } from "@/lib/eventModuleUi";
+import { isActiveSocietyParticipantForEvent } from "@/lib/jointEventAccess";
 
 type GroupWithTime = PlayerGroup & { teeTime: string };
 
@@ -108,17 +109,71 @@ export default function EventTeeSheetScreen() {
   const [error, setError] = useState<FormattedError | null>(null);
 
   const loadData = useCallback(async () => {
-    if (!eventId || !societyId) return;
+    if (!eventId || !societyId) {
+      if (__DEV__) {
+        console.log("[joint-access] final gate", {
+          eventId: eventId ?? null,
+          activeSocietyId: societyId ?? null,
+          hostSocietyId: null,
+          participantSocietyIds: [],
+          derivedIsJoint: false,
+          canView: false,
+        });
+      }
+      return;
+    }
 
     setLoading(true);
     setError(null);
     try {
       const c = await loadCanonicalTeeSheet(eventId);
       if (!c) {
+        if (__DEV__) {
+          console.log("[tee-debug] loadCanonicalTeeSheet returned null — member tee sheet cannot render (often events RLS for participant societies).", {
+            eventId,
+            activeSocietyId: societyId,
+          });
+          console.log("[joint-access] final gate", {
+            eventId,
+            activeSocietyId: societyId,
+            hostSocietyId: null,
+            participantSocietyIds: [],
+            derivedIsJoint: false,
+            canView: false,
+          });
+        }
         setCanonical(null);
         setError(formatError(new Error("Event not found")));
         return;
       }
+
+      const gateParticipants =
+        c.isJoint && c.jointParticipatingSocieties?.length
+          ? c.jointParticipatingSocieties.map((s) => s.society_id).filter(Boolean)
+          : [c.event.society_id].filter(Boolean);
+      const derivedIsJoint = c.isJoint === true;
+      const canView = isActiveSocietyParticipantForEvent(
+        societyId,
+        c.event.society_id,
+        gateParticipants,
+      );
+      if (!canView) {
+        if (__DEV__) {
+          console.log("[joint-access] final gate", {
+            eventId,
+            activeSocietyId: societyId,
+            hostSocietyId: c.event.society_id,
+            participantSocietyIds: gateParticipants,
+            derivedIsJoint,
+            canView: false,
+          });
+        }
+        setCanonical(null);
+        setMembers([]);
+        setError(formatError(new Error("You don't have access to this tee sheet.")));
+        return;
+      }
+
       setCanonical(c);
 
       const eventData = c.event;
@@ -150,13 +205,16 @@ export default function EventTeeSheetScreen() {
       setMembers(Array.from(byId.values()));
 
       if (__DEV__) {
-        const renderedIds = [...new Set(c.groups.flatMap((g) => g.players.map((p) => p.id)))];
-        console.log("[teesheet] canonical render (member tee sheet)", {
-          eventId: c.eventId,
-          source: c.source,
+        console.log("[joint-access] final gate", {
+          eventId,
+          activeSocietyId: societyId,
+          hostSocietyId: c.event.society_id,
+          participantSocietyIds: gateParticipants,
+          derivedIsJoint,
+          canView: true,
+          published: !!c.event.teeTimePublishedAt,
           groupCount: c.groups.length,
-          memberIdsRendered: renderedIds,
-          societies: c.jointParticipatingSocieties?.map((s) => s.society_name ?? s.society_id),
+          source: c.source,
         });
       }
     } catch (err) {
@@ -204,7 +262,7 @@ export default function EventTeeSheetScreen() {
 
   const event = canonical.event;
   const memberId = member?.id;
-  const isJointEvent = event.is_joint_event === true;
+  const isJointEvent = canonical.isJoint === true;
 
   const myGroup = memberId
     ? findMemberGroupInfoFromCanonical(memberId, canonical, members, jointSocietyIdToName)

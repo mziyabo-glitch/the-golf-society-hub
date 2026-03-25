@@ -35,6 +35,8 @@ const DEBUG = __DEV__;
 export type EventJointMeta = {
   is_joint_event: boolean;
   linkedSocietyCount: number;
+  /** Distinct society_id from event_societies for this event (access / UX; not guest_society_id). */
+  participantSocietyIds: string[];
 };
 
 /**
@@ -47,7 +49,7 @@ export async function getJointMetaForEventIds(
   const result = new Map<string, EventJointMeta>();
   const ids = [...new Set(eventIds.map((id) => id?.trim()).filter(Boolean) as string[])];
   for (const id of ids) {
-    result.set(id, { is_joint_event: false, linkedSocietyCount: 0 });
+    result.set(id, { is_joint_event: false, linkedSocietyCount: 0, participantSocietyIds: [] });
   }
   if (ids.length === 0) return result;
 
@@ -74,9 +76,11 @@ export async function getJointMetaForEventIds(
     for (const id of ids) {
       const set = byEvent.get(id) ?? new Set();
       const linkedSocietyCount = set.size;
+      const participantSocietyIds = [...set].sort((a, b) => a.localeCompare(b));
       result.set(id, {
         is_joint_event: linkedSocietyCount >= 2,
         linkedSocietyCount,
+        participantSocietyIds,
       });
     }
   } catch {

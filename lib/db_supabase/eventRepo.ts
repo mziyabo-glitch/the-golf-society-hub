@@ -84,6 +84,8 @@ export type EventDoc = {
   is_joint_event?: boolean;
   /** Distinct societies linked in `event_societies` for this event (0 if none). */
   linked_society_count?: number;
+  /** society_id values from event_societies (set by enrichEventsWithJointClassification). */
+  participant_society_ids?: string[];
   [key: string]: unknown;
 };
 
@@ -153,12 +155,17 @@ export async function enrichEventsWithJointClassification(events: EventDoc[]): P
   const { getJointMetaForEventIds } = await import("@/lib/db_supabase/jointEventRepo");
   const metaMap = await getJointMetaForEventIds(events.map((e) => e.id));
   return events.map((e) => {
-    const m = metaMap.get(e.id) ?? { is_joint_event: false, linkedSocietyCount: 0 };
+    const m = metaMap.get(e.id) ?? {
+      is_joint_event: false,
+      linkedSocietyCount: 0,
+      participantSocietyIds: [] as string[],
+    };
     logJointClassificationDev(e, m.linkedSocietyCount, m.is_joint_event);
     return {
       ...e,
       is_joint_event: m.is_joint_event,
       linked_society_count: m.linkedSocietyCount,
+      participant_society_ids: m.participantSocietyIds,
     };
   });
 }

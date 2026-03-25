@@ -50,6 +50,7 @@ import {
 import { getColors, spacing, radius, typography } from "@/lib/ui/theme";
 import { formatError, type FormattedError } from "@/lib/ui/formatError";
 import { getSocietyLogoUrl } from "@/lib/societyLogo";
+import { isActiveSocietyParticipantForEvent, isJointEventFromMeta } from "@/lib/jointEventAccess";
 import { getMySinbooks, type SinbookWithParticipants } from "@/lib/db_supabase/sinbookRepo";
 import {
   getMyRegistration,
@@ -417,8 +418,27 @@ export default function HomeScreen() {
 
   const nextEventId = nextEvent?.id ?? null;
 
-  /** Canonical joint flag from repo (`event_societies` count ≥ 2). */
-  const nextEventIsJoint = nextEvent?.is_joint_event === true;
+  /** Joint truth from event_societies-derived fields — not raw events.is_joint_event alone. */
+  const nextEventIsJoint = useMemo(
+    () =>
+      isJointEventFromMeta(nextEvent?.participant_society_ids, nextEvent?.linked_society_count) ||
+      nextEvent?.is_joint_event === true,
+    [
+      nextEvent?.participant_society_ids,
+      nextEvent?.linked_society_count,
+      nextEvent?.is_joint_event,
+    ],
+  );
+
+  const canAccessNextEventTeeSheet = useMemo(() => {
+    if (!nextEvent?.society_id || !societyId) return false;
+    return isActiveSocietyParticipantForEvent(
+      societyId,
+      nextEvent.society_id,
+      nextEvent.participant_society_ids ?? [],
+    );
+  }, [nextEvent, societyId]);
+
   useEffect(() => {
     if (!nextEventId) return;
     if (!__DEV__) return;
@@ -437,6 +457,18 @@ export default function HomeScreen() {
     nextEventIsJoint,
     canonicalNextEventTee?.jointParticipatingSocieties,
   ]);
+
+  useEffect(() => {
+    if (!nextEvent?.id || !societyId || !__DEV__) return;
+    console.log("[joint-access] home next-event tee gate", {
+      eventId: nextEvent.id,
+      activeSocietyId: societyId,
+      hostSocietyId: nextEvent.society_id,
+      participantSocietyIds: nextEvent.participant_society_ids ?? [],
+      nextEventIsJoint,
+      canViewTeeNav: canAccessNextEventTeeSheet,
+    });
+  }, [nextEvent, societyId, nextEventIsJoint, canAccessNextEventTeeSheet]);
 
   // Load registration for the next event whenever it changes
   useEffect(() => {
@@ -463,7 +495,7 @@ export default function HomeScreen() {
       const cacheKey = `event:${nextEventId}:registrations`;
       const cached = await getCache<EventRegistration[]>(cacheKey, { maxAgeMs: 1000 * 60 * 30 });
       if (cached && !cancelled) {
-        const scopedCached = ev.is_joint_event
+        const scopedCached = nextEventIsJoint
           ? scopeEventRegistrations(cached.value, { kind: "joint_home", activeSocietyId: societyId })
           : scopeEventRegistrations(cached.value, {
               kind: "standard",
@@ -474,7 +506,7 @@ export default function HomeScreen() {
       const regs = await getEventRegistrations(nextEventId);
       if (cancelled) return;
       await setCache(cacheKey, regs, { ttlMs: 1000 * 60 * 2 });
-      const scoped = ev.is_joint_event
+      const scoped = nextEventIsJoint
         ? scopeEventRegistrations(regs, { kind: "joint_home", activeSocietyId: societyId })
         : scopeEventRegistrations(regs, {
             kind: "standard",
@@ -488,7 +520,7 @@ export default function HomeScreen() {
     nextEvent,
     nextEvent?.teeTimePublishedAt,
     nextEvent?.society_id,
-    nextEvent?.is_joint_event,
+    nextEventIsJoint,
     societyId,
   ]);
 
@@ -896,7 +928,7 @@ export default function HomeScreen() {
 
       {/* ================================================================== */}
       {/* NOTIFICATION: Tee times published — green badge "Tee times now available" */}
-      {nextEvent?.teeTimePublishedAt && (() => {
+      {nextEvent?.teeTimePublishedAt && canAccessNextEventTeeSheet && (() => {
         const publishedAt = new Date(nextEvent.teeTimePublishedAt!);
         const daysSince = (Date.now() - publishedAt.getTime()) / (1000 * 60 * 60 * 24);
         if (daysSince > 7) return null;
@@ -965,7 +997,7 @@ export default function HomeScreen() {
               </View>
             )}
             {/* Your Tee Time — premium section when published */}
-            {nextEvent.teeTimePublishedAt && (
+            {nextEvent.teeTimePublishedAt && canAccessNextEventTeeSheet && (
               <View style={[styles.yourTeeTimeCard, { borderTopColor: colors.borderLight, backgroundColor: colors.primary + "08" }]}>
                 <AppText variant="captionBold" color="primary" style={styles.yourTeeTimeLabel}>
                   Your Tee Time

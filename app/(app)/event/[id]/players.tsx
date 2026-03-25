@@ -39,6 +39,7 @@ import {
 import { getPermissionsForMember } from "@/lib/rbac";
 import { getColors, spacing, radius, typography } from "@/lib/ui/theme";
 import { JOINT_EVENT_CHIP_LONG } from "@/lib/eventModuleUi";
+import { isJointEventFromMeta, isActiveSocietyParticipantForEvent } from "@/lib/jointEventAccess";
 
 export default function EventPlayersScreen() {
   const router = useRouter();
@@ -77,10 +78,15 @@ export default function EventPlayersScreen() {
     [jointParticipatingSocieties],
   );
 
+  const derivedIsJointEvent = useMemo(
+    () => isJointEventFromMeta(participatingSocietyIds, participatingSocietyIds.length),
+    [participatingSocietyIds],
+  );
+
   const dedupedJointMembers = useMemo(() => {
-    if (!event || event.is_joint_event !== true || members.length === 0) return [];
+    if (!derivedIsJointEvent || members.length === 0) return [];
     return dedupeJointMembers(members, jointSocietyIdToName);
-  }, [event, members, jointSocietyIdToName]);
+  }, [derivedIsJointEvent, members, jointSocietyIdToName]);
 
   const loadGuests = useCallback(async () => {
     if (!eventId) return [];
@@ -114,9 +120,10 @@ export default function EventPlayersScreen() {
         console.log("[players] loading event + members + guests", { eventId, societyId });
 
         const jointMeta = await getJointMetaForEventIds([eventId]);
-        const joint = jointMeta.get(eventId)?.is_joint_event ?? false;
+        const metaRow = jointMeta.get(eventId);
+        const loadAsJoint = isJointEventFromMeta(metaRow?.participantSocietyIds, metaRow?.linkedSocietyCount);
 
-        if (joint) {
+        if (loadAsJoint) {
           const [jointPayload, guestList] = await Promise.all([
             getJointEventDetail(eventId),
             getEventGuests(eventId),
@@ -220,11 +227,26 @@ export default function EventPlayersScreen() {
     console.log("[players] tick status sample:", { eventId, societyId, memberCount: members.length, selectedCount: selectedPlayerIds.size, sample });
   }, [eventId, societyId, members.length, selectedPlayerIds.size]);
 
+  useEffect(() => {
+    if (!eventId || !societyId || !event || !__DEV__) return;
+    const host = event.society_id;
+    const participantSocietyIds =
+      participatingSocietyIds.length > 0 ? participatingSocietyIds : [host].filter(Boolean);
+    const canView = isActiveSocietyParticipantForEvent(societyId, host, participantSocietyIds);
+    console.log("[joint-access] final gate", {
+      eventId,
+      activeSocietyId: societyId,
+      hostSocietyId: host,
+      participantSocietyIds,
+      derivedIsJoint: derivedIsJointEvent,
+      canView,
+    });
+  }, [eventId, societyId, event, participatingSocietyIds, derivedIsJointEvent]);
+
   function togglePlayer(id: string) {
-    const effectiveId =
-      event?.is_joint_event === true
-        ? representativeMemberIdForJoint(id, members, jointSocietyIdToName)
-        : id;
+    const effectiveId = derivedIsJointEvent
+      ? representativeMemberIdForJoint(id, members, jointSocietyIdToName)
+      : id;
     setSelectedPlayerIds((prev) => {
       const next = new Set(prev);
       if (next.has(effectiveId)) {
@@ -244,11 +266,11 @@ export default function EventPlayersScreen() {
       const ids = Array.from(selectedPlayerIds);
       console.log("[players] saving", {
         eventId: event.id,
-        isJointEvent: event.is_joint_event === true,
+        isJointEvent: derivedIsJointEvent,
         playerIds: ids.length,
       });
 
-      if (event.is_joint_event === true && participatingSocietyIds.length >= 2) {
+      if (derivedIsJointEvent && participatingSocietyIds.length >= 2) {
         await syncJointEventEntries(event.id, ids, participatingSocietyIds);
         console.log("[players] joint save OK, synced entries");
       } else {
@@ -384,7 +406,7 @@ export default function EventPlayersScreen() {
         </View>
       </View>
 
-      {event.is_joint_event === true && (
+      {derivedIsJointEvent && (
         <AppCard
           style={{
             marginBottom: spacing.md,
@@ -426,7 +448,7 @@ export default function EventPlayersScreen() {
           />
         ) : (
           <View style={{ gap: spacing.md, marginBottom: spacing.xl }}>
-            {event.is_joint_event === true
+            {derivedIsJointEvent
               ? dedupedJointMembers.map((d) => {
                   const id = String(d.representative.id);
                   const selected = selectedPlayerIds.has(id);

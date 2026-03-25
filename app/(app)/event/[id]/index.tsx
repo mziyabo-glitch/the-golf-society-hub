@@ -21,6 +21,7 @@ import {
   getEvent,
   updateEvent,
   deleteEvent,
+  enrichEventsWithJointClassification,
   type EventDoc,
   type EventFormat,
   type EventClassification,
@@ -68,6 +69,10 @@ import {
 } from "@/lib/eventModuleUi";
 import { getSocietyLogoUrl } from "@/lib/societyLogo";
 import { getCache, invalidateCache, invalidateCachePrefix, setCache } from "@/lib/cache/clientCache";
+import {
+  isActiveSocietyParticipantForEvent,
+  isJointEventFromMeta,
+} from "@/lib/jointEventAccess";
 
 // Picker option component
 function PickerOption({
@@ -185,7 +190,7 @@ export default function EventDetailScreen() {
   /** When enabling joint on a standard event, seed host society (same as Create Event on Events tab). */
   useEffect(() => {
     if (!isEditing || !formEditIsJointEvent) return;
-    if (event?.is_joint_event === true) return;
+    if (isJointEventFromMeta(event?.participant_society_ids, event?.linked_society_count)) return;
     if (!societyId || formEditParticipatingSocieties.length > 0 || mySocieties.length === 0) return;
     const current = mySocieties.find((s) => s.societyId === societyId);
     if (!current) return;
@@ -201,7 +206,8 @@ export default function EventDetailScreen() {
   }, [
     isEditing,
     formEditIsJointEvent,
-    event?.is_joint_event,
+    event?.participant_society_ids,
+    event?.linked_society_count,
     societyId,
     mySocieties,
     formEditParticipatingSocieties.length,
@@ -229,8 +235,11 @@ export default function EventDetailScreen() {
       if (!event) setLoading(true);
       setError(null);
 
-      // (a) Fetch base event
-      const baseEvent = await getEvent(eventId);
+      // (a) Fetch base event — enrich from event_societies so is_joint / participant ids are not raw-row lies.
+      const baseEventRaw = await getEvent(eventId);
+      const baseEvent = baseEventRaw
+        ? (await enrichEventsWithJointClassification([baseEventRaw]))[0] ?? baseEventRaw
+        : null;
       const jointMetaMap = await getJointMetaForEventIds([eventId]);
       const jointMeta = jointMetaMap.get(eventId);
       const isJointByMeta = jointMeta?.is_joint_event === true;
@@ -347,6 +356,48 @@ export default function EventDetailScreen() {
   const [registrationsRefreshing, setRegistrationsRefreshing] = useState(false);
 
   const hostSocietyId = event?.society_id ?? societyId ?? null;
+
+  const participantSocietyIdsForAccess = useMemo(() => {
+    const fromJoint = jointParticipatingSocieties.map((s) => s.society_id).filter(Boolean);
+    if (fromJoint.length > 0) return [...new Set(fromJoint)];
+    return [...new Set(event?.participant_society_ids ?? [])];
+  }, [jointParticipatingSocieties, event?.participant_society_ids]);
+
+  const detailIsJointEvent = useMemo(
+    () =>
+      isJointEventFromMeta(participantSocietyIdsForAccess, event?.linked_society_count) ||
+      jointParticipatingSocieties.length >= 2,
+    [participantSocietyIdsForAccess, event?.linked_society_count, jointParticipatingSocieties.length],
+  );
+
+  const canShowMemberTeeSheetCta = useMemo(() => {
+    if (!event?.society_id || !societyId) return false;
+    return isActiveSocietyParticipantForEvent(
+      societyId,
+      event.society_id,
+      participantSocietyIdsForAccess,
+    );
+  }, [event?.society_id, societyId, participantSocietyIdsForAccess]);
+
+  useEffect(() => {
+    if (!eventId || !event || !__DEV__) return;
+    console.log("[joint-access] detail gate", {
+      eventId,
+      activeSocietyId: societyId,
+      hostSocietyId: event.society_id,
+      participantSocietyIds: participantSocietyIdsForAccess,
+      canView: canShowMemberTeeSheetCta,
+      detailIsJointEvent,
+    });
+  }, [
+    eventId,
+    event,
+    societyId,
+    participantSocietyIdsForAccess,
+    canShowMemberTeeSheetCta,
+    detailIsJointEvent,
+  ]);
+
   const paymentsCacheKey = eventId && societyId ? `event:${eventId}:payments:${societyId}` : null;
   const confirmedCacheKey = eventId && societyId ? `event:${eventId}:confirmed-players:${societyId}` : null;
 
@@ -857,7 +908,7 @@ export default function EventDetailScreen() {
       setShowManualTee(!!(event.teeName || event.par != null));
     }
 
-    setFormEditIsJointEvent(event.is_joint_event === true);
+    setFormEditIsJointEvent(detailIsJointEvent);
     setFormEditHostSocietyId(
       jointParticipatingSocieties.find((s) => s.role === "host")?.society_id ?? event.society_id ?? ""
     );
@@ -1178,7 +1229,7 @@ export default function EventDetailScreen() {
                   <AppText variant="captionBold" color="primary">{JOINT_EVENT_CHIP_LONG}</AppText>
                   <AppText variant="small" color="secondary" style={{ marginTop: 4 }}>
                     Fees are per society; shared attendance uses the Players screen.
-                    {event?.is_joint_event === true
+                    {detailIsJointEvent
                       ? " Update participating societies below."
                       : " Add at least one other society below, then save."}
                   </AppText>
@@ -1246,9 +1297,9 @@ export default function EventDetailScreen() {
             {/* Joint event toggle (always visible in edit — was previously only when already joint) */}
             {canEditEvent ? (
               <Pressable
-                disabled={event?.is_joint_event === true}
+                disabled={detailIsJointEvent}
                 onPress={() => {
-                  if (event?.is_joint_event === true) return;
+                  if (detailIsJointEvent) return;
                   const next = !formEditIsJointEvent;
                   setFormEditIsJointEvent(next);
                   if (!next) {
@@ -1260,14 +1311,14 @@ export default function EventDetailScreen() {
                   styles.jointEventToggle,
                   {
                     borderColor: colors.border,
-                    opacity: event?.is_joint_event === true ? 0.75 : 1,
+                    opacity: detailIsJointEvent ? 0.75 : 1,
                   },
                 ]}
               >
                 <View style={{ flex: 1 }}>
                   <AppText variant="captionBold">{JOINT_EVENT_CHIP_LONG}</AppText>
                   <AppText variant="small" color="secondary">
-                    {event?.is_joint_event === true
+                    {detailIsJointEvent
                       ? "This event is joint. Participating societies can be updated below. Turning joint off is not supported yet."
                       : formEditIsJointEvent
                         ? mySocieties.length < 2
@@ -1622,8 +1673,8 @@ export default function EventDetailScreen() {
         </View>
       </View>
 
-      {/* Joint Event — canonical `event.is_joint_event` from event_societies (2+ societies) */}
-      {event.is_joint_event === true && (
+      {/* Joint Event — event_societies (≥2 societies); not raw events.is_joint_event */}
+      {detailIsJointEvent && (
         <AppCard
           style={{
             marginBottom: spacing.base,
@@ -1720,15 +1771,15 @@ export default function EventDetailScreen() {
           <ActionRow
             icon="users"
             title="Players"
-            subtitle={event.is_joint_event === true
+            subtitle={detailIsJointEvent
               ? `${activeRosterCount} on roster (this society) · ${teeSheetEligibleCount} paid & confirmed (tee sheet) · ${pendingPaymentCount} payment pending · ${JOINT_EVENT_CHIP_SHORT}`
               : `${activeRosterCount} on roster · ${teeSheetEligibleCount} paid & confirmed (tee sheet) · ${pendingPaymentCount} payment pending`}
           />
         </AppCard>
       </Pressable>
 
-      {/* View Tee Sheet — when tee times published */}
-      {event.teeTimePublishedAt && (
+      {/* View Tee Sheet — published + active society is host or event_societies participant */}
+      {event.teeTimePublishedAt && canShowMemberTeeSheetCta && (
         <Pressable
           onPress={() =>
             router.push({
@@ -1769,11 +1820,11 @@ export default function EventDetailScreen() {
             <View style={{ flex: 1 }}>
               <AppText variant="h2">Payment &amp; status</AppText>
               <AppText variant="small" color="secondary">
-                {event.is_joint_event
+                {detailIsJointEvent
                   ? "This list is only your society’s members and fee rows. Switch society in the header to manage the other club. Marking paid confirms the player for this event."
                   : "Marking paid confirms the player. Tee sheet (ManCo) uses only paid & confirmed players."}
               </AppText>
-              {event.is_joint_event && societyId && hostSocietyId === societyId ? (
+              {detailIsJointEvent && societyId && hostSocietyId === societyId ? (
                 <AppText variant="small" color="tertiary" style={{ marginTop: 4 }}>
                   Host view: payment actions still apply only to members of the society selected above.
                 </AppText>
