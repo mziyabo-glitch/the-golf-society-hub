@@ -42,6 +42,7 @@ export type TeeSheetData = {
   societyId?: string;
   societyName: string;
   logoUrl?: string | null;
+  jointSocieties?: { societyId: string; societyName: string; logoUrl?: string | null }[];
   manCo: ManCoDetails;
 
   // Event details
@@ -102,7 +103,11 @@ function buildTeeTime(startTime: string, intervalMinutes: number, index: number)
 /**
  * Generate HTML for the tee sheet PDF
  */
-function generateTeeSheetHTML(data: TeeSheetData, logoSrc?: string | null): string {
+function generateTeeSheetHTML(
+  data: TeeSheetData,
+  logoSrc?: string | null,
+  jointLogoSrcs?: { src: string | null; name: string }[],
+): string {
   const {
     societyName,
     eventName,
@@ -142,16 +147,14 @@ function generateTeeSheetHTML(data: TeeSheetData, logoSrc?: string | null): stri
   const hasCompetitions =
     (nearestPinHoles && nearestPinHoles.length > 0) ||
     (longestDriveHoles && longestDriveHoles.length > 0);
-  const competitionsText = [
+  const competitionLines = [
     nearestPinHoles && nearestPinHoles.length > 0
-      ? `Nearest the Pin: Hole${nearestPinHoles.length > 1 ? "s" : ""} ${formatHoleNumbers(nearestPinHoles)}`
+      ? `Nearest the Pin (NTP): Hole${nearestPinHoles.length > 1 ? "s" : ""} ${formatHoleNumbers(nearestPinHoles)}`
       : null,
     longestDriveHoles && longestDriveHoles.length > 0
-      ? `Longest Drive: Hole${longestDriveHoles.length > 1 ? "s" : ""} ${formatHoleNumbers(longestDriveHoles)}`
+      ? `Longest Drive (LD): Hole${longestDriveHoles.length > 1 ? "s" : ""} ${formatHoleNumbers(longestDriveHoles)}`
       : null,
-  ]
-    .filter(Boolean)
-    .join(" · ");
+  ].filter((line): line is string => Boolean(line));
 
   // Calculate handicaps for each player based on their gender
   const playersWithHandicaps: PlayerWithCalcs[] = players.map((player, idx) => {
@@ -301,9 +304,19 @@ function generateTeeSheetHTML(data: TeeSheetData, logoSrc?: string | null): stri
           <div class="header-row">
             <div class="header-left">
               ${
-                logoSrc
-                  ? `<img class="logo" src="${escapeAttribute(logoSrc)}" alt="" />`
-                  : `<div class="logo-placeholder">${escapeHtml(societyName.slice(0, 2).toUpperCase())}</div>`
+                jointLogoSrcs && jointLogoSrcs.length > 1
+                  ? `<div class="joint-logo-stack">${
+                      jointLogoSrcs.slice(0, 2).map((l) =>
+                        l.src
+                          ? `<img class="logo logo-joint" src="${escapeAttribute(l.src)}" alt="${escapeAttribute(l.name)}" />`
+                          : `<div class="logo-placeholder logo-joint">${escapeHtml(l.name.slice(0, 2).toUpperCase())}</div>`
+                      ).join("")
+                    }</div>`
+                  : (
+                    logoSrc
+                      ? `<img class="logo" src="${escapeAttribute(logoSrc)}" alt="" />`
+                      : `<div class="logo-placeholder">${escapeHtml(societyName.slice(0, 2).toUpperCase())}</div>`
+                  )
               }
             </div>
             <div class="header-center">
@@ -326,7 +339,9 @@ function generateTeeSheetHTML(data: TeeSheetData, logoSrc?: string | null): stri
           <div class="special-info">
             ${
               hasCompetitions
-                ? `<div class="special-body">${escapeHtml(competitionsText)}</div>`
+                ? `<div class="special-body">
+                    ${competitionLines.map((line) => `<div class="competition-line">${escapeHtml(line)}</div>`).join("")}
+                   </div>`
                 : `<div class="special-body special-body-muted">Competition holes: not set</div>`
             }
           </div>
@@ -378,6 +393,8 @@ function generateTeeSheetHTML(data: TeeSheetData, logoSrc?: string | null): stri
             flex-shrink: 0;
           }
           .logo { width: 56px; height: 56px; object-fit: contain; object-position: left top; display: block; }
+          .joint-logo-stack { display: flex; flex-direction: row; gap: 6px; align-items: flex-start; }
+          .logo-joint { width: 42px; height: 42px; }
           .logo-placeholder {
             width: 56px;
             height: 56px;
@@ -474,6 +491,8 @@ function generateTeeSheetHTML(data: TeeSheetData, logoSrc?: string | null): stri
             margin-top: 4px;
           }
           .special-body { font-size: 9px; color: #6b7280; line-height: 13px; }
+          .competition-line { margin-bottom: 2px; }
+          .competition-line:last-child { margin-bottom: 0; }
           .special-body-muted { font-size: 8px; color: #c4c4c4; line-height: 12px; letter-spacing: 0.02em; }
 
           .footer {
@@ -510,7 +529,18 @@ export async function generateTeeSheetPdf(data: TeeSheetData): Promise<boolean> 
       : null;
     const logoSrc = logoDataUri ?? rawLogoUrl;
 
-    const html = generateTeeSheetHTML(data, logoSrc);
+    let jointLogoSrcs: { src: string | null; name: string }[] | undefined;
+    if ((data.jointSocieties?.length ?? 0) > 1) {
+      const logos = await Promise.all(
+        (data.jointSocieties ?? []).slice(0, 2).map(async (s) => {
+          const src = await getSocietyLogoDataUri(s.societyId, { logoUrl: s.logoUrl ?? null });
+          return { src: src ?? s.logoUrl ?? null, name: s.societyName };
+        }),
+      );
+      jointLogoSrcs = logos;
+    }
+
+    const html = generateTeeSheetHTML(data, logoSrc, jointLogoSrcs);
 
     const { uri } = await Print.printToFileAsync({
       html,

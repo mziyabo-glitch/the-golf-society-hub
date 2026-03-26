@@ -49,6 +49,7 @@ export default function TeeSheetShareScreen() {
   const [retryKey, setRetryKey] = useState(0);
 
   const [logoSrc, setLogoSrc] = useState<string | null>(null);
+  const [jointLogoSrcs, setJointLogoSrcs] = useState<{ src: string | null; name: string }[]>([]);
   const [pages, setPages] = useState<GroupWithTime[][]>([]);
 
   const pageRefs = useRef<React.RefObject<View>[]>([]);
@@ -129,6 +130,17 @@ export default function TeeSheetShareScreen() {
           ? await getSocietyLogoDataUri(payload.societyId, { logoUrl: payload.logoUrl ?? null })
           : null;
         setLogoSrc(logoDataUri);
+        if ((payload.jointSocieties?.length ?? 0) > 1) {
+          const logos = await Promise.all(
+            (payload.jointSocieties ?? []).slice(0, 2).map(async (s) => {
+              const src = await getSocietyLogoDataUri(s.societyId, { logoUrl: s.logoUrl ?? null });
+              return { src: src ?? s.logoUrl ?? null, name: s.societyName };
+            }),
+          );
+          setJointLogoSrcs(logos);
+        } else {
+          setJointLogoSrcs([]);
+        }
 
         setStatus("ready");
 
@@ -210,6 +222,7 @@ export default function TeeSheetShareScreen() {
               pageIndex={pageIndex}
               pageCount={pages.length}
               logoSrc={logoSrc}
+              jointLogoSrcs={jointLogoSrcs}
             />
           ))}
         </View>
@@ -224,7 +237,8 @@ const TeeSheetPage = React.forwardRef<View, {
   pageIndex: number;
   pageCount: number;
   logoSrc: string | null;
-}>(({ data, groups, pageIndex, pageCount, logoSrc }, ref) => {
+  jointLogoSrcs: { src: string | null; name: string }[];
+}>(({ data, groups, pageIndex, pageCount, logoSrc, jointLogoSrcs }, ref) => {
   const leftGroups = groups.slice(0, 6);
   const rightGroups = groups.slice(6, 12);
 
@@ -248,16 +262,14 @@ const TeeSheetPage = React.forwardRef<View, {
     (data.nearestPinHoles && data.nearestPinHoles.length > 0) ||
     (data.longestDriveHoles && data.longestDriveHoles.length > 0);
 
-  const competitionsText = [
+  const competitionLines = [
     data.nearestPinHoles && data.nearestPinHoles.length > 0
-      ? `Nearest the Pin: Hole${data.nearestPinHoles.length > 1 ? "s" : ""} ${formatHoleNumbers(data.nearestPinHoles)}`
+      ? `Nearest the Pin (NTP): Hole${data.nearestPinHoles.length > 1 ? "s" : ""} ${formatHoleNumbers(data.nearestPinHoles)}`
       : null,
     data.longestDriveHoles && data.longestDriveHoles.length > 0
-      ? `Longest Drive: Hole${data.longestDriveHoles.length > 1 ? "s" : ""} ${formatHoleNumbers(data.longestDriveHoles)}`
+      ? `Longest Drive (LD): Hole${data.longestDriveHoles.length > 1 ? "s" : ""} ${formatHoleNumbers(data.longestDriveHoles)}`
       : null,
-  ]
-    .filter(Boolean)
-    .join(" · ");
+  ].filter(Boolean) as string[];
 
   const teeInfoLines = [
     data.teeSettings
@@ -273,12 +285,26 @@ const TeeSheetPage = React.forwardRef<View, {
     <View ref={ref} style={styles.page} collapsable={false}>
       <View style={styles.headerRow}>
         <View style={styles.headerLeft}>
-          <SocietyLogoImage
-            logoUrl={logoSrc}
-            size="medium"
-            variant="hero"
-            placeholderText={getInitials(data.societyName)}
-          />
+          {jointLogoSrcs.length > 1 ? (
+            <View style={styles.jointLogoStack}>
+              {jointLogoSrcs.slice(0, 2).map((l, idx) => (
+                <SocietyLogoImage
+                  key={`${l.name}-${idx}`}
+                  logoUrl={l.src}
+                  size="small"
+                  variant="hero"
+                  placeholderText={getInitials(l.name)}
+                />
+              ))}
+            </View>
+          ) : (
+            <SocietyLogoImage
+              logoUrl={logoSrc}
+              size="medium"
+              variant="hero"
+              placeholderText={getInitials(data.societyName)}
+            />
+          )}
         </View>
         <View style={styles.headerCenter}>
           <Text style={styles.eventTitle}>{data.eventName}</Text>
@@ -320,9 +346,17 @@ const TeeSheetPage = React.forwardRef<View, {
       </View>
 
       <View style={styles.specialInfo}>
-        <Text style={hasCompetitions ? styles.specialBody : styles.specialBodyMuted}>
-          {hasCompetitions ? competitionsText : "Competition holes: not set"}
-        </Text>
+        {hasCompetitions ? (
+          <View>
+            {competitionLines.map((line) => (
+              <Text key={line} style={styles.specialBody}>
+                {line}
+              </Text>
+            ))}
+          </View>
+        ) : (
+          <Text style={styles.specialBodyMuted}>Competition holes: not set</Text>
+        )}
       </View>
 
       <View style={styles.footer}>
@@ -509,6 +543,11 @@ const styles = StyleSheet.create({
     alignItems: "flex-start",
     justifyContent: "flex-start",
     paddingTop: 2,
+  },
+  jointLogoStack: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: spacing.xs,
   },
   headerCenter: {
     flex: 1,

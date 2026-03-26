@@ -1232,6 +1232,14 @@ export default function TeeSheetScreen() {
         societyId,
         societyName: societyNameExport,
         logoUrl,
+        jointSocieties:
+          canonical.isJoint && canonical.jointParticipatingSocieties?.length
+            ? canonical.jointParticipatingSocieties.map((s) => ({
+                societyId: s.society_id,
+                societyName: s.society_name || s.society_id,
+                logoUrl: null,
+              }))
+            : undefined,
         manCo,
         nearestPinHoles: ntpHoles.length > 0 ? ntpHoles : null,
         longestDriveHoles: ldHoles.length > 0 ? ldHoles : null,

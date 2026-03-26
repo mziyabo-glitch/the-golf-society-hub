@@ -550,6 +550,7 @@ export type BuildTeeSheetDataFromCanonicalOpts = {
   societyId?: string;
   societyName: string;
   logoUrl?: string | null;
+  jointSocieties?: { societyId: string; societyName: string; logoUrl?: string | null }[];
   manCo: ManCoDetails;
   nearestPinHoles: number[] | null;
   longestDriveHoles: number[] | null;
@@ -578,6 +579,7 @@ export function buildTeeSheetDataFromCanonical(
     societyId: opts.societyId,
     societyName: opts.societyName,
     logoUrl: opts.logoUrl,
+    jointSocieties: opts.jointSocieties,
     manCo: opts.manCo,
     eventName: ev.name || "Event",
     eventDate: ev.date || null,
