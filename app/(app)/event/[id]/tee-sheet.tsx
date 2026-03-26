@@ -140,8 +140,54 @@ export default function EventTeeSheetScreen() {
   const [error, setError] = useState<FormattedError | null>(null);
   const loadRunCountRef = React.useRef(0);
   const pendingSwitchSocietyIdRef = React.useRef<string | null>(null);
+  const loadInFlightRef = React.useRef(false);
+  const lastLoadKeyRef = React.useRef<string | null>(null);
+  const lastLoadAtRef = React.useRef(0);
 
   const loadData = useCallback(async () => {
+    const membershipKey = memberships
+      .map((m) => `${String(m.societyId)}:${String(m.memberId)}`)
+      .sort()
+      .join(",");
+    const loadKey = [
+      String(eventId ?? ""),
+      String(societyId ?? ""),
+      String(userId ?? ""),
+      String(profile?.active_society_id ?? ""),
+      membershipKey,
+    ].join("|");
+    if (loadInFlightRef.current) {
+      if (__DEV__) {
+        console.log("[tee-loop-debug]", {
+          eventId: eventId ?? null,
+          effectRunCount: loadRunCountRef.current,
+          activeSocietyId: societyId ?? null,
+          derivedIsJoint: null,
+          sourceUsed: "skipped_in_flight",
+          canonicalSource: null,
+          groupCount: 0,
+          playerCount: 0,
+        });
+      }
+      return;
+    }
+    if (lastLoadKeyRef.current === loadKey && Date.now() - lastLoadAtRef.current < 4000) {
+      if (__DEV__) {
+        console.log("[tee-loop-debug]", {
+          eventId: eventId ?? null,
+          effectRunCount: loadRunCountRef.current,
+          activeSocietyId: societyId ?? null,
+          derivedIsJoint: null,
+          sourceUsed: "skipped_duplicate_key",
+          canonicalSource: null,
+          groupCount: 0,
+          playerCount: 0,
+        });
+      }
+      return;
+    }
+    loadInFlightRef.current = true;
+
     if (!eventId || !societyId) {
       if (__DEV__) {
         console.log("[joint-access-user]", {
@@ -624,6 +670,9 @@ export default function EventTeeSheetScreen() {
       setError(formatError(err));
       setCanonical(null);
     } finally {
+      lastLoadKeyRef.current = loadKey;
+      lastLoadAtRef.current = Date.now();
+      loadInFlightRef.current = false;
       setLoading(false);
     }
   }, [eventId, societyId, userId, profile, memberships, switchSociety]);
