@@ -290,11 +290,21 @@ function mergeJointEntryCluster(
  * Phase 4: Tee-sheet-ready read model for joint events.
  * One combined tee sheet; no duplicate players; groups are event-wide (mixed societies allowed).
  * Returns empty groups/entries if none; does not crash on partial tee times.
+ *
+ * @param detailFromCaller — when set (including `null`), skips a duplicate `getJointEventDetail` RPC.
  */
-export async function getJointEventTeeSheet(eventId: string): Promise<JointEventTeeSheet | null> {
+export async function getJointEventTeeSheet(
+  eventId: string,
+  detailFromCaller?: JointEventDetail | null,
+): Promise<JointEventTeeSheet | null> {
   if (!eventId?.trim()) return null;
 
-  const detail = await getJointEventDetail(eventId);
+  let detail: JointEventDetail | null;
+  if (detailFromCaller === undefined) {
+    detail = await getJointEventDetail(eventId);
+  } else {
+    detail = detailFromCaller;
+  }
   if (!detail) return null;
 
   const ev = detail.event;
@@ -440,6 +450,12 @@ function normalizeJointEventPayload(raw: unknown): JointEventDetail | null {
       tee_time_start: event.tee_time_start != null ? String(event.tee_time_start) : null,
       tee_time_interval: typeof event.tee_time_interval === "number" ? event.tee_time_interval : null,
       tee_time_published_at: event.tee_time_published_at != null ? String(event.tee_time_published_at) : null,
+      nearest_pin_holes: Array.isArray(event.nearest_pin_holes)
+        ? event.nearest_pin_holes.filter((n): n is number => typeof n === "number")
+        : null,
+      longest_drive_holes: Array.isArray(event.longest_drive_holes)
+        ? event.longest_drive_holes.filter((n): n is number => typeof n === "number")
+        : null,
       tee_source: event.tee_source != null ? String(event.tee_source) : null,
       income_pence: typeof event.income_pence === "number" ? event.income_pence : null,
       costs_pence: typeof event.costs_pence === "number" ? event.costs_pence : null,
@@ -533,6 +549,8 @@ export function mapJointEventToEventDoc(
     teeTimeStart: ev.tee_time_start ?? undefined,
     teeTimeInterval: ev.tee_time_interval ?? undefined,
     teeTimePublishedAt: ev.tee_time_published_at ?? undefined,
+    nearestPinHoles: ev.nearest_pin_holes ?? undefined,
+    longestDriveHoles: ev.longest_drive_holes ?? undefined,
     teeSource: ev.tee_source ?? undefined,
     created_at: ev.created_at ?? undefined,
     is_completed: ev.is_completed ?? false,
@@ -567,6 +585,8 @@ export interface EventDocLike {
   teeTimeStart?: string;
   teeTimeInterval?: number;
   teeTimePublishedAt?: string;
+  nearestPinHoles?: number[];
+  longestDriveHoles?: number[];
   teeSource?: string;
   created_at?: string;
   is_completed?: boolean;

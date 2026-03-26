@@ -35,6 +35,8 @@ export interface JointEventDetailEvent {
   tee_time_start: string | null;
   tee_time_interval: number | null;
   tee_time_published_at: string | null;
+  nearest_pin_holes: number[] | null;
+  longest_drive_holes: number[] | null;
   tee_source: string | null;
   income_pence: number | null;
   costs_pence: number | null;

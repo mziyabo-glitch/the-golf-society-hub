@@ -399,9 +399,19 @@ export default function TeeSheetScreen() {
           const regs = await getEventRegistrations(selectedEventId);
           setSelectedEventRegistrations(regs);
 
-          setNtpHolesInput("-");
-          setLdHolesInput("-");
           const ev = teeSheet.event;
+          const persistedNtp = formatHoleNumbers(ev.nearest_pin_holes ?? []);
+          const persistedLd = formatHoleNumbers(ev.longest_drive_holes ?? []);
+          setNtpHolesInput(persistedNtp);
+          setLdHolesInput(persistedLd);
+          if (__DEV__) {
+            console.log("[tee-competition-holes][load]", {
+              source: "joint_event_detail",
+              eventId: selectedEventId,
+              nearestPinHoles: ev.nearest_pin_holes ?? [],
+              longestDriveHoles: ev.longest_drive_holes ?? [],
+            });
+          }
           if (ev.tee_time_start) setStartTime(ev.tee_time_start);
           if (ev.tee_time_interval != null && ev.tee_time_interval > 0) {
             setTeeInterval(String(ev.tee_time_interval));
@@ -443,8 +453,8 @@ export default function TeeSheetScreen() {
               jointTeeSheetData: teeSheet,
               startTime: teeSheet.event.tee_time_start || "08:00",
               teeInterval: String(teeSheet.event.tee_time_interval ?? 10),
-              ntpHolesInput: "-",
-              ldHolesInput: "-",
+              ntpHolesInput: persistedNtp,
+              ldHolesInput: persistedLd,
             }, { ttlMs: 1000 * 60 * 5 });
           }
           return;
@@ -465,6 +475,14 @@ export default function TeeSheetScreen() {
 
         setNtpHolesInput(formatHoleNumbers(event.nearestPinHoles));
         setLdHolesInput(formatHoleNumbers(event.longestDriveHoles));
+        if (__DEV__) {
+          console.log("[tee-competition-holes][load]", {
+            source: "event_row",
+            eventId: selectedEventId,
+            nearestPinHoles: event.nearestPinHoles ?? [],
+            longestDriveHoles: event.longestDriveHoles ?? [],
+          });
+        }
         if (event.teeTimeStart) setStartTime(event.teeTimeStart);
         if (event.teeTimeInterval != null && event.teeTimeInterval > 0) {
           setTeeInterval(String(event.teeTimeInterval));
@@ -825,6 +843,8 @@ export default function TeeSheetScreen() {
     setSaving(true);
     try {
       const interval = parseInt(teeInterval, 10) || 10;
+      const ntpHoles = parseHoleNumbers(ntpHolesInput === "-" ? "" : ntpHolesInput);
+      const ldHoles = parseHoleNumbers(ldHolesInput === "-" ? "" : ldHolesInput);
 
       if (isJointEventTeeSheet) {
         const finalPlayerIds = groupsToPlayerIdsFrom(nonEmptyGroups);
@@ -839,10 +859,31 @@ export default function TeeSheetScreen() {
           console.error("[teesheet] replaceJointEventTeeSheetEntries failed", e);
           throw e;
         }
-        await updateEvent(selectedEventId, {
+        const savePayloadJoint = {
           teeTimeStart: startTime || "08:00",
           teeTimeInterval: interval,
-        });
+          nearestPinHoles: ntpHoles,
+          longestDriveHoles: ldHoles,
+        } as const;
+        if (__DEV__) {
+          console.log("[tee-competition-holes][save]", {
+            path: "joint_save_tee_sheet",
+            eventId: selectedEventId,
+            payload: savePayloadJoint,
+          });
+        }
+        await updateEvent(selectedEventId, savePayloadJoint);
+        if (__DEV__) {
+          const roundTrip = await getEvent(selectedEventId);
+          console.log("[tee-competition-holes][roundtrip]", {
+            path: "joint_save_tee_sheet",
+            eventId: selectedEventId,
+            savedNearestPinHoles: ntpHoles,
+            savedLongestDriveHoles: ldHoles,
+            persistedNearestPinHoles: roundTrip?.nearestPinHoles ?? [],
+            persistedLongestDriveHoles: roundTrip?.longestDriveHoles ?? [],
+          });
+        }
         await logPostSaveJointRead(selectedEventId, finalPlayerIds);
         setToast({ visible: true, message: "Tee sheet saved", type: "success" });
         const tsSaved = await getJointEventTeeSheet(selectedEventId);
@@ -872,9 +913,6 @@ export default function TeeSheetScreen() {
 
       const playerIds = selectedPlayerIds.filter((id) => !id.startsWith("guest-"));
       const finalPlayerIds = groupsToPlayerIdsFrom(nonEmptyGroups);
-      const ntpHoles = parseHoleNumbers(ntpHolesInput === "-" ? "" : ntpHolesInput);
-      const ldHoles = parseHoleNumbers(ldHolesInput === "-" ? "" : ldHolesInput);
-
       const teeGroupInputs = nonEmptyGroups.map((g) => ({
         group_number: g.groupNumber,
         tee_time: computeTeeTimeForGroup(g.groupNumber),
@@ -888,13 +926,32 @@ export default function TeeSheetScreen() {
       );
       await upsertTeeSheet(selectedEventId, teeGroupInputs, teePlayerInputs);
 
-      await updateEvent(selectedEventId, {
+      const savePayloadStandard = {
         playerIds,
         teeTimeStart: startTime || "08:00",
         teeTimeInterval: interval,
-        nearestPinHoles: ntpHoles.length > 0 ? ntpHoles : undefined,
-        longestDriveHoles: ldHoles.length > 0 ? ldHoles : undefined,
-      });
+        nearestPinHoles: ntpHoles,
+        longestDriveHoles: ldHoles,
+      } as const;
+      if (__DEV__) {
+        console.log("[tee-competition-holes][save]", {
+          path: "standard_save_tee_sheet",
+          eventId: selectedEventId,
+          payload: savePayloadStandard,
+        });
+      }
+      await updateEvent(selectedEventId, savePayloadStandard);
+      if (__DEV__) {
+        const roundTrip = await getEvent(selectedEventId);
+        console.log("[tee-competition-holes][roundtrip]", {
+          path: "standard_save_tee_sheet",
+          eventId: selectedEventId,
+          savedNearestPinHoles: ntpHoles,
+          savedLongestDriveHoles: ldHoles,
+          persistedNearestPinHoles: roundTrip?.nearestPinHoles ?? [],
+          persistedLongestDriveHoles: roundTrip?.longestDriveHoles ?? [],
+        });
+      }
       logSelectedPlayersDev("[teesheet] final published players", selectedEventId, playerIds);
       setToast({ visible: true, message: "Tee sheet saved", type: "success" });
       await invalidateCache(`event:${selectedEventId}:tee-sheet`);
@@ -920,10 +977,31 @@ export default function TeeSheetScreen() {
     setNotice(null);
     setSaving(true);
     try {
+      if (__DEV__) {
+        console.log("[tee-competition-holes][save]", {
+          path: "save_settings",
+          eventId: selectedEventId,
+          payload: {
+            nearestPinHoles: ntpHoles,
+            longestDriveHoles: ldHoles,
+          },
+        });
+      }
       await updateEvent(selectedEventId, {
         nearestPinHoles: ntpHoles,
         longestDriveHoles: ldHoles,
       });
+      if (__DEV__) {
+        const roundTrip = await getEvent(selectedEventId);
+        console.log("[tee-competition-holes][roundtrip]", {
+          path: "save_settings",
+          eventId: selectedEventId,
+          savedNearestPinHoles: ntpHoles,
+          savedLongestDriveHoles: ldHoles,
+          persistedNearestPinHoles: roundTrip?.nearestPinHoles ?? [],
+          persistedLongestDriveHoles: roundTrip?.longestDriveHoles ?? [],
+        });
+      }
       setToast({ visible: true, message: "Settings saved", type: "success" });
       await invalidateCache(`event:${selectedEventId}:tee-sheet`);
       await invalidateCache(`event:${selectedEventId}:detail`);
@@ -1076,6 +1154,20 @@ export default function TeeSheetScreen() {
         if (refreshed) {
           setSelectedEvent(refreshed);
         }
+        if (__DEV__) {
+          console.log("[tee-competition-holes][save]", {
+            path: "joint_publish",
+            eventId: selectedEventId,
+            payload: {
+              nearestPinHoles: ntpHoles,
+              longestDriveHoles: ldHoles,
+            },
+          });
+        }
+        await updateEvent(selectedEventId, {
+          nearestPinHoles: ntpHoles,
+          longestDriveHoles: ldHoles,
+        });
       } else {
         const mismatchPub = validateGroupsMatchSelectedIds(groupsForExport, selectedPlayerIds);
         if (mismatchPub) {
@@ -1095,8 +1187,35 @@ export default function TeeSheetScreen() {
         await upsertTeeSheet(selectedEvent.id, teeGroupInputs, teePlayerInputs);
 
         const playerIds = selectedPlayerIds.filter((id) => !id.startsWith("guest-"));
-        await updateEvent(selectedEvent.id, { playerIds });
+        if (__DEV__) {
+          console.log("[tee-competition-holes][save]", {
+            path: "standard_publish",
+            eventId: selectedEvent.id,
+            payload: {
+              playerIds,
+              nearestPinHoles: ntpHoles,
+              longestDriveHoles: ldHoles,
+            },
+          });
+        }
+        await updateEvent(selectedEvent.id, {
+          playerIds,
+          nearestPinHoles: ntpHoles,
+          longestDriveHoles: ldHoles,
+        });
         logSelectedPlayersDev("[teesheet] final published players", selectedEventId!, playerIds);
+      }
+
+      if (__DEV__) {
+        const roundTrip = await getEvent(selectedEventId!);
+        console.log("[tee-competition-holes][roundtrip]", {
+          path: isJointEventTeeSheet ? "joint_publish" : "standard_publish",
+          eventId: selectedEventId,
+          savedNearestPinHoles: ntpHoles,
+          savedLongestDriveHoles: ldHoles,
+          persistedNearestPinHoles: roundTrip?.nearestPinHoles ?? [],
+          persistedLongestDriveHoles: roundTrip?.longestDriveHoles ?? [],
+        });
       }
 
       const canonical = await loadCanonicalTeeSheet(selectedEventId!);

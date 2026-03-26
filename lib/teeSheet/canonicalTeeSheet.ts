@@ -342,18 +342,22 @@ export async function loadCanonicalTeeSheet(eventId: string): Promise<CanonicalT
   if (!eventId?.trim()) return null;
 
   const event = await getEvent(eventId);
-  console.log("[tee-debug] EVENT RAW", event === null ? null : {
-    id: event.id,
-    society_id: event.society_id,
-    tee_time_published_at: event.teeTimePublishedAt ?? null,
-    player_ids_len: event.playerIds?.length ?? 0,
-    schema_note:
-      "Joint events use event_societies (no guest_society_id on events); host is society_id.",
-  });
+  if (__DEV__) {
+    console.log("[tee-debug] EVENT RAW", event === null ? null : {
+      id: event.id,
+      society_id: event.society_id,
+      tee_time_published_at: event.teeTimePublishedAt ?? null,
+      player_ids_len: event.playerIds?.length ?? 0,
+      schema_note:
+        "Joint events use event_societies (no guest_society_id on events); host is society_id.",
+    });
+  }
   if (!event) {
-    console.log(
-      "[tee-debug] loadCanonicalTeeSheet: getEvent returned null — if user is participant society, events SELECT RLS likely blocked host row (see migration 080_events_select_joint_participants).",
-    );
+    if (__DEV__) {
+      console.log(
+        "[tee-debug] loadCanonicalTeeSheet: getEvent returned null — if user is participant society, events SELECT RLS likely blocked host row (see migration 080_events_select_joint_participants).",
+      );
+    }
     return null;
   }
 
@@ -395,7 +399,7 @@ export async function loadCanonicalTeeSheet(eventId: string): Promise<CanonicalT
      * whenever `getEventRegistrations` + joint scope did not include their rows (RLS/context),
      * even though pairings were saved and visible in the editor.
      */
-    const teeSheet = await getJointEventTeeSheet(eventId);
+    const teeSheet = await getJointEventTeeSheet(eventId, jd ?? undefined);
     if (!teeSheet) {
       const empty: CanonicalTeeSheetResult = {
         ...base,

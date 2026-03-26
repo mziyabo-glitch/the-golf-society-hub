@@ -139,6 +139,28 @@ export default function MembersScreen() {
       // Sort members by role priority, then name
       const sorted = sortMembersByRoleThenName(membersData);
       setMembers(sorted);
+      if (__DEV__) {
+        const david = sorted.find((m) =>
+          String(m.name || m.displayName || m.display_name || "")
+            .trim()
+            .toLowerCase() === "david nyoni",
+        );
+        if (david) {
+          console.log("[membership-restore-debug]", {
+            memberId: david.id,
+            profileId: david.user_id ?? null,
+            societyId,
+            restoredLinkage: david.user_id != null ? "member_row_linked_to_profile" : "member_row_present_user_link_missing",
+          });
+        } else {
+          console.log("[membership-restore-debug]", {
+            memberId: null,
+            profileId: null,
+            societyId,
+            restoredLinkage: "member_row_missing_in_scope",
+          });
+        }
+      }
 
       // Create OOM lookup map by memberId
       const oomMap = new Map<string, OrderOfMeritEntry>();
