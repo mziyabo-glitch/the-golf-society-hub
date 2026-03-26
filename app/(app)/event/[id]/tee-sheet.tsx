@@ -27,7 +27,12 @@ import {
   mapJointEventToEventDoc,
 } from "@/lib/db_supabase/jointEventRepo";
 import { buildSocietyIdToNameMap } from "@/lib/jointEventSocietyLabel";
-import { getMembersBySocietyId, getMembersByIds, type MemberDoc } from "@/lib/db_supabase/memberRepo";
+import {
+  getJointEventMemberVisibility,
+  getMembersBySocietyId,
+  getMembersByIds,
+  type MemberDoc,
+} from "@/lib/db_supabase/memberRepo";
 import {
   loadCanonicalTeeSheet,
   findMemberGroupInfoFromCanonical,
@@ -590,8 +595,10 @@ export default function EventTeeSheetScreen() {
 
       let membersMerged: MemberDoc[] = [];
       if (derivedIsJoint && participantSocietyIdsForPool.length > 0) {
-        const lists = await Promise.all(participantSocietyIdsForPool.map((sid) => getMembersBySocietyId(sid)));
-        membersMerged = lists.flat();
+        membersMerged = await getJointEventMemberVisibility(eventId);
+        if (__DEV__) {
+          console.log("[joint-hi] source=rpc count=", membersMerged.length);
+        }
       } else {
         membersMerged = await getMembersBySocietyId(hostId);
       }
@@ -605,6 +612,17 @@ export default function EventTeeSheetScreen() {
         const extra = await getMembersByIds(missing);
         for (const m of extra) {
           if (m?.id && !byId.has(m.id)) byId.set(m.id, m);
+        }
+        const stillMissing = missing.filter((id) => id && !byId.has(id));
+        if (__DEV__ && stillMissing.length > 0) {
+          console.log("[joint-hi] missing member ids", stillMissing);
+          for (const memberId of stillMissing) {
+            console.log("[HI-visibility] blocked_by_rls", {
+              memberId,
+              societyId: null,
+              viewerSocietyId: societyId ?? null,
+            });
+          }
         }
       }
       setMembers(Array.from(byId.values()));

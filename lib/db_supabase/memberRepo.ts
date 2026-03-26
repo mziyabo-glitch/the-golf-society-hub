@@ -309,6 +309,30 @@ export async function getMembersBySocietyId(
 }
 
 /**
+ * Joint-event scoped member visibility for tee-sheet hydration.
+ * Uses SECURITY DEFINER RPC to avoid cross-society members RLS recursion.
+ */
+export async function getJointEventMemberVisibility(
+  eventId: string,
+): Promise<MemberDoc[]> {
+  if (!eventId?.trim()) return [];
+  const { data, error } = await supabase.rpc("get_joint_event_member_visibility", {
+    p_event_id: eventId,
+  });
+  if (error) {
+    console.error("[memberRepo] getJointEventMemberVisibility failed:", {
+      eventId,
+      message: error.message,
+      code: error.code,
+      details: error.details,
+      hint: error.hint,
+    });
+    throw new Error(error.message || "Failed to load joint event members");
+  }
+  return (data ?? []).map(mapMember);
+}
+
+/**
  * Update member document
  * ONLY sends columns that exist in the members table
  * Note: societyId param is for API compatibility but not used
