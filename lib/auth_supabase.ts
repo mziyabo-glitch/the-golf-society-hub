@@ -30,6 +30,18 @@ async function createSupabaseSessionFromOAuthRedirectUrl(
   url: string,
 ): Promise<{ session: Session | null; error: Error | null }> {
   const { params, errorCode } = QueryParams.getQueryParams(url);
+  const hasCode = typeof params.code === "string" && params.code.length > 0;
+  const hasAccessToken =
+    typeof params.access_token === "string" && params.access_token.length > 0;
+  const hasRefreshToken =
+    typeof params.refresh_token === "string" && params.refresh_token.length > 0;
+
+  console.log("[auth][oauth] callback params", {
+    hasCode,
+    hasAccessToken,
+    hasRefreshToken,
+    hasError: !!params.error || !!errorCode,
+  });
 
   if (errorCode) {
     return { session: null, error: new Error(String(errorCode)) };
@@ -45,6 +57,7 @@ async function createSupabaseSessionFromOAuthRedirectUrl(
 
   const code = typeof params.code === "string" ? params.code : undefined;
   if (code) {
+    console.log("[auth][oauth] completion branch=exchangeCodeForSession");
     const { data, error } = await supabase.auth.exchangeCodeForSession(code);
     if (error) return { session: null, error };
     if (!data.session) {
@@ -59,6 +72,7 @@ async function createSupabaseSessionFromOAuthRedirectUrl(
     typeof params.refresh_token === "string" ? params.refresh_token : undefined;
 
   if (access_token && refresh_token) {
+    console.log("[auth][oauth] completion branch=setSession");
     const { data, error } = await supabase.auth.setSession({
       access_token,
       refresh_token,
@@ -270,6 +284,9 @@ export async function signInWithGoogle(): Promise<SignInResult> {
   console.log("[auth] signInWithGoogle");
 
   const redirectTo = getAuthRedirectUri();
+  if (Platform.OS !== "web") {
+    console.log("[auth][oauth] native redirect uri", { redirectTo });
+  }
 
   const { data, error } = await supabase.auth.signInWithOAuth({
     provider: "google",
@@ -302,17 +319,22 @@ export async function signInWithGoogle(): Promise<SignInResult> {
   }
 
   const result = await WebBrowser.openAuthSessionAsync(authUrl, redirectTo);
+  console.log("[auth][oauth] openAuthSessionAsync result", {
+    type: result.type,
+    url: "url" in result ? result.url : undefined,
+  });
 
   if (result.type === "cancel") {
     return { data: null, error: new Error("Sign in cancelled") };
   }
 
-  if (result.type !== "success" || !result.url) {
+  const callbackUrl = "url" in result ? result.url : undefined;
+  if (!callbackUrl) {
     return { data: null, error: new Error("OAuth session incomplete") };
   }
 
   const { session, error: sessionErr } = await createSupabaseSessionFromOAuthRedirectUrl(
-    result.url,
+    callbackUrl,
   );
 
   if (sessionErr || !session?.user) {

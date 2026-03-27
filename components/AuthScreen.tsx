@@ -417,6 +417,7 @@ export function AuthScreen() {
                   if (loading) return;
                   setLoading(true);
                   setError(null);
+                  setRememberMe(rememberMe);
                   try {
                     const { error } = await signInWithGoogle();
                     if (error) setError(error.message || "Google sign-in failed.");

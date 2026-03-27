@@ -17,6 +17,20 @@ const STORAGE_PREFIX = "gsh:";
 // The AuthScreen flips this BEFORE calling signIn so the adapter
 // knows whether to actually write the token to disk.
 let _rememberMe = true;
+export const hasSupabaseStorageAdapter = true;
+
+function inspectTokenPayload(value: string | null): { hasAccessToken: boolean; hasRefreshToken: boolean } {
+  if (!value) return { hasAccessToken: false, hasRefreshToken: false };
+  try {
+    const parsed = JSON.parse(value) as { access_token?: unknown; refresh_token?: unknown } | null;
+    return {
+      hasAccessToken: typeof parsed?.access_token === "string" && parsed.access_token.length > 0,
+      hasRefreshToken: typeof parsed?.refresh_token === "string" && parsed.refresh_token.length > 0,
+    };
+  } catch {
+    return { hasAccessToken: false, hasRefreshToken: false };
+  }
+}
 
 /** Call before signIn to control session persistence. */
 export function setRememberMe(value: boolean): void {
@@ -51,7 +65,17 @@ export const supabaseStorage = {
     }
 
     try {
-      return await AsyncStorage.getItem(prefixedKey);
+      const value = await AsyncStorage.getItem(prefixedKey);
+      if (key === "supabase-auth") {
+        const flags = inspectTokenPayload(value);
+        console.log("[auth-persist-storage] read", {
+          platform: Platform.OS,
+          key,
+          found: !!value,
+          refreshTokenPresent: flags.hasRefreshToken,
+        });
+      }
+      return value;
     } catch (error) {
       console.warn("[supabaseStorage] getItem error:", error);
       return null;
@@ -73,6 +97,15 @@ export const supabaseStorage = {
 
     try {
       await AsyncStorage.setItem(prefixedKey, value);
+      if (key === "supabase-auth") {
+        const flags = inspectTokenPayload(value);
+        console.log("[auth-persist-storage] write", {
+          platform: Platform.OS,
+          key,
+          accessTokenPresent: flags.hasAccessToken,
+          refreshTokenPresent: flags.hasRefreshToken,
+        });
+      }
     } catch (error) {
       console.warn("[supabaseStorage] setItem error:", error);
     }

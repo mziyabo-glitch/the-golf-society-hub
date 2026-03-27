@@ -5,9 +5,12 @@
 
 import { createContext, useContext, useCallback, useEffect, useMemo, useRef, useState, ReactNode } from "react";
 import { supabase } from "@/lib/supabase";
+import { SUPABASE_AUTH_CONFIG } from "@/lib/supabase";
 import type { User, Session } from "@supabase/supabase-js";
 import { getMySocieties, type MySocietyMembership } from "@/lib/db_supabase/mySocietiesRepo";
 import { getCache, setCache, invalidateCache } from "@/lib/cache/clientCache";
+import { Platform } from "react-native";
+import { hasSupabaseStorageAdapter } from "@/lib/supabaseStorage";
 
 // ============================================================================
 // Types
@@ -33,6 +36,7 @@ type MemberData = {
 type BootstrapState = {
   // Loading & error
   loading: boolean;
+  authRestoring: boolean;
   membershipLoading: boolean;
   error: string | null;
 
@@ -78,6 +82,7 @@ const ACTIVE_SOCIETY_CACHE_KEY = "app:activeSociety";
 
 const BOOTSTRAP_FALLBACK: BootstrapState = {
   loading: false,
+  authRestoring: false,
   membershipLoading: false,
   error: "BootstrapProvider is missing",
   userId: null,
@@ -155,6 +160,7 @@ function normalizeMemberData(memberData: any): MemberData {
 
 function useBootstrapInternal(): BootstrapState {
   const [loading, setLoading] = useState(true);
+  const [authRestoring, setAuthRestoring] = useState(true);
   const [membershipLoading, setMembershipLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [session, setSession] = useState<Session | null>(null);
@@ -168,6 +174,7 @@ function useBootstrapInternal(): BootstrapState {
   const bootstrapRunRef = useRef(false);
   const bootstrapInFlight = useRef(false);
   const hydratedFromCacheRef = useRef(false);
+  const authPersistLoggedRef = useRef(false);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -187,6 +194,9 @@ function useBootstrapInternal(): BootstrapState {
       bootstrapInFlight.current = true;
       bootstrapRunRef.current = true;
 
+      let startupSessionFound = false;
+      let startupAccessTokenPresent = false;
+      let startupRefreshTokenPresent = false;
       try {
         setLoading(true);
         setError(null);
@@ -199,6 +209,9 @@ function useBootstrapInternal(): BootstrapState {
 
         const { data: { session: existingSession }, error: sessionError } =
           await supabase.auth.getSession();
+        startupSessionFound = !!existingSession;
+        startupAccessTokenPresent = !!existingSession?.access_token;
+        startupRefreshTokenPresent = !!existingSession?.refresh_token;
 
         if (sessionError) {
           console.error("[useBootstrap] getSession error:", sessionError.message);
@@ -482,6 +495,19 @@ function useBootstrapInternal(): BootstrapState {
         if (mounted.current) setMembershipLoading(false);
         if (mounted.current) {
           setLoading(false);
+          setAuthRestoring(false);
+        }
+        if (!authPersistLoggedRef.current) {
+          authPersistLoggedRef.current = true;
+          console.log("[auth-persist]", {
+            platform: Platform.OS,
+            persistSession: SUPABASE_AUTH_CONFIG.persistSession,
+            storageAdapterPresent: hasSupabaseStorageAdapter,
+            sessionFoundOnStartup: startupSessionFound,
+            accessTokenPresent: startupAccessTokenPresent,
+            refreshTokenPresent: startupRefreshTokenPresent,
+            authRestoreComplete: true,
+          });
         }
       }
     };
@@ -687,6 +713,7 @@ function useBootstrapInternal(): BootstrapState {
   return {
     // Core state
     loading,
+    authRestoring,
     membershipLoading,
     error,
     userId,
@@ -710,8 +737,8 @@ function useBootstrapInternal(): BootstrapState {
     signOut,
 
     // Backwards compatibility aliases
-    ready: !loading,
-    bootstrapped: !loading,
+    ready: !loading && !authRestoring,
+    bootstrapped: !loading && !authRestoring,
     isSignedIn: !!userId,
     user: userId ? { uid: userId, activeSocietyId, activeMemberId } : null,
   };

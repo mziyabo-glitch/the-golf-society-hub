@@ -44,7 +44,7 @@ function isToolRoute(pathname?: string, seg0?: string): boolean {
 }
 
 function RootNavigator() {
-  const { loading, error, isSignedIn, activeSocietyId, profile, refresh } = useBootstrap();
+  const { loading, authRestoring, error, isSignedIn, activeSocietyId, profile, refresh } = useBootstrap();
   const segments = useSegments();
   const pathname = usePathname();
   const router = useRouter();
@@ -129,7 +129,7 @@ function RootNavigator() {
 
   useEffect(() => {
     // Don't route while loading or not signed in
-    if (loading || !isSignedIn) {
+    if (loading || authRestoring || !isSignedIn) {
       return;
     }
 
@@ -223,20 +223,20 @@ function RootNavigator() {
       });
     }
     // No society + not on onboarding = Personal Mode — let (app) handle it
-  }, [loading, isSignedIn, activeSocietyId, profile, segments, pathname, router, isPublicPath]);
+  }, [loading, authRestoring, isSignedIn, activeSocietyId, profile, segments, pathname, router, isPublicPath]);
 
   // Reset hasRouted only on sign-out, not on every bootstrap refresh.
   // This prevents the guard from re-routing after each refresh cycle.
   useEffect(() => {
-    if (loading && !isSignedIn) {
+    if ((loading || authRestoring) && !isSignedIn) {
       hasRouted.current = false;
       lastState.current = "";
     }
-  }, [loading, isSignedIn]);
+  }, [loading, authRestoring, isSignedIn]);
 
   // Auth-aware redirect: when session appears, ensure we're in the app (avoids staying on sign-in)
   useEffect(() => {
-    if (loading || !isSignedIn || isPublicPath) return;
+    if (loading || authRestoring || !isSignedIn || isPublicPath) return;
     const seg0 = segments[0];
     const inJoinFlow = isJoinFlowRoute(pathname, seg0);
     if (inJoinFlow || isToolRoute(pathname, seg0)) return;
@@ -245,7 +245,7 @@ function RootNavigator() {
     console.log("[_layout] Session present but not in app, redirecting");
     blurWebActiveElement();
     router.replace(APP_TABS);
-  }, [loading, isSignedIn, isPublicPath, segments, pathname, router]);
+  }, [loading, authRestoring, isSignedIn, isPublicPath, segments, pathname, router]);
 
   // Determine which overlay to show (if any).
   // The Stack ALWAYS renders so expo-router can match child routes.
@@ -254,9 +254,9 @@ function RootNavigator() {
     isPublicPath ||
     segments[0] === "reset-password" ||
     segments[0] === "privacy-policy";
-  const showLoading = loading;
-  const showAuth = !loading && !isSignedIn && !isPublicRoute;
-  const showError = !loading && !showAuth && !!error;
+  const showLoading = loading || authRestoring;
+  const showAuth = !loading && !authRestoring && !isSignedIn && !isPublicRoute;
+  const showError = !loading && !authRestoring && !showAuth && !!error;
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>

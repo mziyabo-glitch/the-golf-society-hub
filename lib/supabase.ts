@@ -5,6 +5,7 @@
 import "react-native-url-polyfill/auto";
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
 import { supabaseStorage } from "@/lib/supabaseStorage";
+import { Platform } from "react-native";
 
 const supabaseUrl =
   process.env.EXPO_PUBLIC_SUPABASE_URL ||
@@ -23,6 +24,12 @@ if (!supabaseUrl || !supabaseAnonKey) {
 
 // Singleton instance
 let supabaseInstance: SupabaseClient | null = null;
+export const SUPABASE_AUTH_CONFIG = {
+  persistSession: true,
+  autoRefreshToken: true,
+  detectSessionInUrl: Platform.OS === "web",
+  storageKey: "supabase-auth",
+} as const;
 
 function getSupabaseClient(): SupabaseClient {
   if (supabaseInstance) {
@@ -30,15 +37,14 @@ function getSupabaseClient(): SupabaseClient {
   }
 
   // On web, detect OAuth/magic-link session from URL hash after redirect
-  const isWeb = typeof window !== "undefined" && typeof document !== "undefined";
   supabaseInstance = createClient(supabaseUrl!, supabaseAnonKey!, {
     auth: {
       // AsyncStorage on native, localStorage on web (via supabaseStorage)
       storage: supabaseStorage,
-      persistSession: true,
-      autoRefreshToken: true,
-      detectSessionInUrl: isWeb,
-      storageKey: "supabase-auth",
+      persistSession: SUPABASE_AUTH_CONFIG.persistSession,
+      autoRefreshToken: SUPABASE_AUTH_CONFIG.autoRefreshToken,
+      detectSessionInUrl: SUPABASE_AUTH_CONFIG.detectSessionInUrl,
+      storageKey: SUPABASE_AUTH_CONFIG.storageKey,
     },
   });
 
