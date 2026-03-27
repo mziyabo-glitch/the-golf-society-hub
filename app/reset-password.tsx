@@ -50,8 +50,8 @@ export default function ResetPasswordScreen() {
       try {
         // Hash fragment: #access_token=xxx&refresh_token=xxx&type=recovery&...
         const hash =
-          typeof window !== "undefined"
-            ? window.location.hash.substring(1)
+          Platform.OS === "web" && typeof window !== "undefined"
+            ? window.location?.hash?.substring(1) ?? ""
             : "";
         const params = new URLSearchParams(hash);
 
@@ -101,8 +101,13 @@ export default function ResetPasswordScreen() {
 
         console.log("[ResetPassword] session established from recovery token");
 
-        // Clean the hash from the URL (cosmetic)
-        if (typeof window !== "undefined") {
+        // Clean the hash from the URL (cosmetic; web only)
+        if (
+          Platform.OS === "web" &&
+          typeof window !== "undefined" &&
+          window.location?.pathname &&
+          window.history?.replaceState
+        ) {
           window.history.replaceState(null, "", window.location.pathname);
         }
 

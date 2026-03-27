@@ -133,7 +133,9 @@ export default function OnboardingScreen() {
       router.replace(SOCIETY_HOME_ROUTE);
       setTimeout(() => {
         const afterPath =
-          typeof window !== "undefined" ? window.location.pathname : pathname;
+          typeof window !== "undefined" && window.location?.pathname
+            ? window.location.pathname
+            : pathname;
         console.log("[join] after nav pathname", afterPath);
       }, 0);
       setPendingJoinNavigation(null);
@@ -171,8 +173,10 @@ export default function OnboardingScreen() {
     router.replace(SOCIETY_HOME_ROUTE);
     setTimeout(() => {
       const afterPath =
-        typeof window !== "undefined" ? window.location.pathname : pathname;
-      console.log("[join] after nav pathname", afterPath);
+        typeof window !== "undefined" && window.location?.pathname
+          ? window.location.pathname
+          : pathname;
+        console.log("[join] after nav pathname", afterPath);
     }, 0);
     setPendingJoinNavigation(null);
     joinNavRetryCount.current = 0;

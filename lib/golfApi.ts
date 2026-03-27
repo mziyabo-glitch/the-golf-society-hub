@@ -123,7 +123,7 @@ function parseSearchPayload(payload: any): ApiCourseSearchResult[] {
 }
 
 function getApiBase(): string {
-  if (typeof window === "undefined") return "";
+  if (typeof window === "undefined" || !window.location) return "";
   const { hostname, port } = window.location;
   if (hostname === "localhost" && (port === "8081" || port === "19006")) return "http://localhost:3001";
   return "";

@@ -7,7 +7,7 @@
  */
 
 import { useEffect, useState } from "react";
-import { StyleSheet, View } from "react-native";
+import { Platform, StyleSheet, View } from "react-native";
 import { usePathname, useRouter, Stack } from "expo-router";
 import { Feather } from "@expo/vector-icons";
 
@@ -120,7 +120,12 @@ function ResetPasswordFallback() {
 
         console.log("[ResetPassword] session established from recovery token");
 
-        if (typeof window !== "undefined") {
+        if (
+          Platform.OS === "web" &&
+          typeof window !== "undefined" &&
+          window.location?.pathname &&
+          window.history?.replaceState
+        ) {
           window.history.replaceState(null, "", window.location.pathname);
         }
 
