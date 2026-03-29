@@ -121,6 +121,100 @@ export function normalizeJointSelectedMemberIds(
   return out;
 }
 
+/**
+ * For joint `event_entries` sync: one DB row per **society member id** that participates.
+ * Selection UI stores one **representative** id per real person; that id may be the host
+ * society's row while the same person also has a row in another participating society.
+ * Without expansion, Points (society-scoped) never sees the other society's `player_id`.
+ */
+/**
+ * Joint ManCo tee save/publish: each `event_entries` row must use a **society-specific** `player_id`
+ * when a person has multiple `members` rows. Duplicate pairing_group/position for each expanded id;
+ * tee-sheet read merges clusters for display.
+ */
+export function expandJointTeeSheetReplaceRowsForParticipatingSocieties<
+  T extends { player_id: string; pairing_group: number | null; pairing_position: number | null },
+>(
+  rows: T[],
+  members: MemberDoc[],
+  societyIdToName: Map<string, string>,
+  participatingSocietyIds: string[],
+): T[] {
+  const societySet = new Set(participatingSocietyIds.filter(Boolean));
+  if (rows.length === 0 || societySet.size === 0) return rows;
+
+  const deduped = dedupeJointMembers(members, societyIdToName);
+  const out: T[] = [];
+
+  for (const row of rows) {
+    const m = members.find((x) => x.id === row.player_id);
+    if (!m) {
+      out.push(row);
+      continue;
+    }
+    const k = canonicalJointPersonKey(m);
+    const cluster = deduped.find((d) => d.key === k);
+    if (!cluster) {
+      out.push(row);
+      continue;
+    }
+    const expandedIds = cluster.mergedMemberIds.filter((mid) => {
+      const mem = members.find((x) => x.id === mid);
+      return mem && societySet.has(mem.society_id);
+    });
+    if (
+      __DEV__ &&
+      societySet.size >= 2 &&
+      cluster.mergedMemberIds.length >= 2 &&
+      expandedIds.length === 1
+    ) {
+      console.warn(
+        "[joint-tee-expand] merged joint person has multiple member rows but only one resolved in the tee-sheet member pool; replace_joint_event_tee_sheet_entries may omit a society-specific player_id",
+        { basePlayerId: row.player_id, mergedMemberIds: cluster.mergedMemberIds },
+      );
+    }
+    if (expandedIds.length <= 1) {
+      out.push(row);
+      continue;
+    }
+    for (const mid of expandedIds) {
+      out.push({ ...row, player_id: mid });
+    }
+  }
+  return out;
+}
+
+export function expandJointRepresentativesToParticipatingMemberIds(
+  selectedRepresentativeIds: string[],
+  members: MemberDoc[],
+  societyIdToName: Map<string, string>,
+  participatingSocietyIds: string[],
+): string[] {
+  const societySet = new Set(participatingSocietyIds.filter(Boolean));
+  const selected = new Set(selectedRepresentativeIds.map(String).filter(Boolean));
+  if (selected.size === 0 || societySet.size === 0) {
+    return [...selected].sort((a, b) => a.localeCompare(b));
+  }
+
+  const deduped = dedupeJointMembers(members, societyIdToName);
+  const out = new Set<string>();
+
+  for (const d of deduped) {
+    const repSelected = selected.has(d.representative.id);
+    const anyMergedSelected = d.mergedMemberIds.some((id) => selected.has(id));
+    if (!repSelected && !anyMergedSelected) continue;
+
+    for (const mid of d.mergedMemberIds) {
+      const m = members.find((x) => x.id === mid);
+      if (m?.society_id && societySet.has(m.society_id)) {
+        out.add(mid);
+      }
+    }
+  }
+
+  return [...out].sort((a, b) => a.localeCompare(b));
+}
+
 export type JointAttendingDisplayRow = {
   key: string;
   primary: string;

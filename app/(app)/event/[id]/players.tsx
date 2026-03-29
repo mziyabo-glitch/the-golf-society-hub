@@ -13,6 +13,7 @@ import {
   dedupeJointMembers,
   normalizeJointSelectedMemberIds,
   representativeMemberIdForJoint,
+  expandJointRepresentativesToParticipatingMemberIds,
 } from "@/lib/jointPersonDedupe";
 import { Alert, Modal, Pressable, ScrollView, StyleSheet, View } from "react-native";
 import { Feather } from "@expo/vector-icons";
@@ -40,6 +41,13 @@ import { getPermissionsForMember } from "@/lib/rbac";
 import { getColors, spacing, radius, typography } from "@/lib/ui/theme";
 import { JOINT_EVENT_CHIP_LONG } from "@/lib/eventModuleUi";
 import { isJointEventFromMeta, isActiveSocietyParticipantForEvent } from "@/lib/jointEventAccess";
+import { getEventRegistrations } from "@/lib/db_supabase/eventRegistrationRepo";
+import {
+  logJointPlayableConsistencyDev,
+  formatJointPlayableGapWarning,
+  findEligibleRegistrationsMissingPlayableEntry,
+} from "@/lib/jointEventPlayableConsistency";
+import { InlineNotice } from "@/components/ui/InlineNotice";
 
 export default function EventPlayersScreen() {
   const router = useRouter();
@@ -63,6 +71,8 @@ export default function EventPlayersScreen() {
   const [jointParticipatingSocieties, setJointParticipatingSocieties] = useState<
     { society_id: string; society_name?: string | null }[]
   >([]);
+  /** Joint: paid + RSVP-in registration with no `event_entries.player_id` for that society member id. */
+  const [playableGapWarning, setPlayableGapWarning] = useState<string | null>(null);
 
   // Add guest modal
   const [showAddGuest, setShowAddGuest] = useState(false);
@@ -124,9 +134,10 @@ export default function EventPlayersScreen() {
         const loadAsJoint = isJointEventFromMeta(metaRow?.participantSocietyIds, metaRow?.linkedSocietyCount);
 
         if (loadAsJoint) {
-          const [jointPayload, guestList] = await Promise.all([
+          const [jointPayload, guestList, registrations] = await Promise.all([
             getJointEventDetail(eventId),
             getEventGuests(eventId),
+            getEventRegistrations(eventId),
           ]);
           if (cancelled) return;
           const evt = jointPayload ? await getEvent(eventId) : null;
@@ -159,6 +170,19 @@ export default function EventPlayersScreen() {
             );
             setSelectedPlayerIds(normalizeJointSelectedMemberIds(mergedIds, allMembers, map));
 
+            const gaps = findEligibleRegistrationsMissingPlayableEntry(
+              registrations,
+              jointPayload.entries ?? [],
+              societyIds,
+            );
+            setPlayableGapWarning(formatJointPlayableGapWarning(gaps));
+            logJointPlayableConsistencyDev({
+              eventId,
+              registrations,
+              entries: jointPayload.entries ?? [],
+              participatingSocietyIds: societyIds,
+            });
+
             if (__DEV__) {
               console.log("[players] attendee confirmation restore:", {
                 eventId,
@@ -174,6 +198,7 @@ export default function EventPlayersScreen() {
             setParticipatingSocietyIds([]);
             setJointParticipatingSocieties([]);
             setSelectedPlayerIds(new Set());
+            setPlayableGapWarning(null);
           }
         } else {
           const [evt, guestList] = await Promise.all([
@@ -190,6 +215,7 @@ export default function EventPlayersScreen() {
           setGuests(guestList);
           setParticipatingSocietyIds([]);
           setJointParticipatingSocieties([]);
+          setPlayableGapWarning(null);
 
           const existing = evt?.playerIds ?? [];
           setSelectedPlayerIds(new Set(existing.map(String)));
@@ -271,7 +297,20 @@ export default function EventPlayersScreen() {
       });
 
       if (derivedIsJointEvent && participatingSocietyIds.length >= 2) {
-        await syncJointEventEntries(event.id, ids, participatingSocietyIds);
+        const expandedIds = expandJointRepresentativesToParticipatingMemberIds(
+          ids,
+          members,
+          jointSocietyIdToName,
+          participatingSocietyIds,
+        );
+        if (__DEV__) {
+          console.log("[players] joint sync: representative ids → expanded for event_entries", {
+            eventId: event.id,
+            before: ids.length,
+            after: expandedIds.length,
+          });
+        }
+        await syncJointEventEntries(event.id, expandedIds, participatingSocietyIds);
         console.log("[players] joint save OK, synced entries");
       } else {
         await updateEvent(event.id, { playerIds: ids });
@@ -434,6 +473,15 @@ export default function EventPlayersScreen() {
           </View>
         </AppCard>
       )}
+
+      {derivedIsJointEvent && permissions?.canEditEvents && playableGapWarning ? (
+        <InlineNotice
+          variant="info"
+          message="Playable entries out of sync with confirmations"
+          detail={playableGapWarning}
+          style={{ marginBottom: spacing.md }}
+        />
+      ) : null}
 
       <ScrollView contentContainerStyle={{ paddingBottom: spacing.xl }}>
         {/* Members */}

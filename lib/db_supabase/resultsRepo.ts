@@ -1,5 +1,205 @@
 // lib/db_supabase/resultsRepo.ts
 import { supabase } from "@/lib/supabase";
+import { canonicalJointPersonKey, dedupeJointMembers } from "@/lib/jointPersonDedupe";
+import type { MemberDoc } from "@/lib/db_supabase/memberRepo";
+
+/** One row per member_id; if duplicates exist (legacy / bad data), keep latest by updated_at. */
+export function dedupeEventResultsByMemberIdPreferLatest<T extends { member_id: string; updated_at?: string }>(
+  rows: T[],
+): T[] {
+  const byMember = new Map<string, T>();
+  for (const r of rows) {
+    const mid = String(r.member_id);
+    const prev = byMember.get(mid);
+    if (!prev) {
+      byMember.set(mid, r);
+      continue;
+    }
+    const tNew = r.updated_at ? new Date(r.updated_at).getTime() : 0;
+    const tOld = prev.updated_at ? new Date(prev.updated_at).getTime() : 0;
+    if (tNew >= tOld) byMember.set(mid, r);
+  }
+  return [...byMember.values()];
+}
+
+/**
+ * Matrix / OOM log: one visible row per real person per event in a society view.
+ * Merges duplicate `event_results` that share the same joint person key (e.g. dual member ids
+ * incorrectly both scoped to one society, or legacy duplicate rows).
+ */
+function dedupeEventResultRowsByJointPersonKey<
+  T extends {
+    member_id: string;
+    updated_at?: string;
+    points?: number;
+    day_value?: number | null;
+    position?: number | null;
+  },
+>(rows: T[], membersById: Map<string, MemberDoc>): T[] {
+  const byKey = new Map<string, T>();
+  for (const r of rows) {
+    const m = membersById.get(r.member_id);
+    const stub: MemberDoc = m ?? { id: r.member_id, society_id: "" };
+    const k = canonicalJointPersonKey(stub);
+    const prev = byKey.get(k);
+    if (!prev) {
+      byKey.set(k, r);
+      continue;
+    }
+    const tNew = r.updated_at ? new Date(r.updated_at).getTime() : 0;
+    const tOld = prev.updated_at ? new Date(prev.updated_at).getTime() : 0;
+    if (tNew > tOld) {
+      byKey.set(k, r);
+    } else if (tNew === tOld && String(r.member_id).localeCompare(String(prev.member_id)) < 0) {
+      byKey.set(k, r);
+    }
+  }
+  return [...byKey.values()];
+}
+
+function logOomMatrixDebugDev(params: {
+  societyId: string;
+  eventId: string;
+  eventName: string;
+  rawRows: { member_id: string; id?: string; points?: number; day_value?: number | null; position?: number | null }[];
+  afterMemberDedupe: typeof params.rawRows;
+  finalRows: typeof params.rawRows;
+  membersById: Map<string, MemberDoc>;
+}): void {
+  if (!__DEV__) return;
+  const { societyId, eventId, eventName, rawRows, afterMemberDedupe, finalRows, membersById } = params;
+
+  const personKey = (mid: string) => {
+    const m = membersById.get(mid);
+    const stub: MemberDoc = m ?? { id: mid, society_id: "" };
+    return canonicalJointPersonKey(stub);
+  };
+
+  const keyCount = new Map<string, number>();
+  for (const r of rawRows) {
+    const k = personKey(r.member_id);
+    keyCount.set(k, (keyCount.get(k) ?? 0) + 1);
+  }
+  const duplicatePersonKeys = [...keyCount.entries()].filter(([, n]) => n > 1).map(([k, n]) => ({ key: k, count: n }));
+
+  const nameCount = new Map<string, string[]>();
+  for (const r of rawRows) {
+    const m = membersById.get(r.member_id);
+    const label = (m?.name || m?.displayName || "").trim() || r.member_id;
+    if (!nameCount.has(label)) nameCount.set(label, []);
+    nameCount.get(label)!.push(r.member_id);
+  }
+  const duplicateVisibleNames = [...nameCount.entries()]
+    .filter(([, ids]) => ids.length > 1)
+    .map(([name, memberIds]) => ({ name, memberIds: [...new Set(memberIds)] }));
+
+  const merged =
+    rawRows.length > afterMemberDedupe.length || afterMemberDedupe.length > finalRows.length;
+
+  if (merged || duplicatePersonKeys.length > 0 || duplicateVisibleNames.length > 0) {
+    console.warn("[oom-matrix-debug]", {
+      eventId,
+      societyId,
+      eventName,
+      rawFetchedCount: rawRows.length,
+      afterMemberIdDedupeCount: afterMemberDedupe.length,
+      finalRenderedCount: finalRows.length,
+      rawFetchedRows: rawRows.map((r) => ({
+        id: r.id,
+        member_id: r.member_id,
+        points: r.points,
+        day_value: r.day_value,
+        position: r.position,
+        personKey: personKey(r.member_id),
+      })),
+      duplicatePersonKeys,
+      duplicateVisibleNames,
+      finalRows: finalRows.map((r) => ({
+        id: r.id,
+        member_id: r.member_id,
+        points: r.points,
+        day_value: r.day_value,
+        position: r.position,
+      })),
+    });
+  }
+}
+
+function dedupeUpsertInputsByMemberIdLastWins(results: EventResultInput[]): EventResultInput[] {
+  const byMember = new Map<string, EventResultInput>();
+  for (const r of results) {
+    byMember.set(String(r.member_id), r);
+  }
+  return [...byMember.values()];
+}
+
+/**
+ * Dev-only: same (event, society) scope but multiple result rows map to one real person (joint dual ids).
+ * Set EXPO_PUBLIC_OOM_DEBUG_EVENT_ID to always log full detail for that event id.
+ */
+function logOomDuplicatePlayerRowsDev(params: {
+  societyId: string;
+  eventId: string;
+  rows: {
+    id: string;
+    member_id: string;
+    points: number;
+    day_value?: number | null;
+    position?: number | null;
+  }[];
+  membersById: Map<string, MemberDoc>;
+}): void {
+  if (!__DEV__) return;
+  const debugEvent = process.env.EXPO_PUBLIC_OOM_DEBUG_EVENT_ID?.trim();
+  const byKey = new Map<string, typeof params.rows>();
+  for (const r of params.rows) {
+    const m = params.membersById.get(r.member_id);
+    const stub: MemberDoc = m ?? { id: r.member_id, society_id: "" };
+    const k = canonicalJointPersonKey(stub);
+    if (!byKey.has(k)) byKey.set(k, []);
+    byKey.get(k)!.push(r);
+  }
+  for (const [, group] of byKey) {
+    if (group.length <= 1) continue;
+    const firstName =
+      params.membersById.get(group[0].member_id)?.name ||
+      params.membersById.get(group[0].member_id)?.displayName ||
+      "Unknown";
+    const payload = group.map((r) => {
+      const m = params.membersById.get(r.member_id);
+      return {
+        memberId: r.member_id,
+        playerName: m?.name || m?.displayName || firstName,
+        resultRowId: r.id,
+        score: r.day_value ?? null,
+        position: r.position ?? null,
+        points: r.points,
+      };
+    });
+    console.warn("[oom-debug] duplicate player rows", {
+      eventId: params.eventId,
+      societyId: params.societyId,
+      playerName: firstName,
+      resultRowIds: group.map((r) => r.id),
+      rows: payload,
+    });
+  }
+  if (debugEvent && debugEvent === params.eventId) {
+    console.log("[oom-debug] event results snapshot (EXPO_PUBLIC_OOM_DEBUG_EVENT_ID)", {
+      eventId: params.eventId,
+      societyId: params.societyId,
+      rowCount: params.rows.length,
+      rows: params.rows.map((r) => ({
+        id: r.id,
+        memberId: r.member_id,
+        name: params.membersById.get(r.member_id)?.name ?? "?",
+        points: r.points,
+        position: r.position,
+        day_value: r.day_value,
+      })),
+    });
+  }
+}
 
 export type EventResultDoc = {
   id: string;
@@ -61,9 +261,19 @@ export async function upsertEventResults(
     return;
   }
 
+  const dedupedInputs = dedupeUpsertInputsByMemberIdLastWins(results);
+  if (dedupedInputs.length !== results.length) {
+    console.warn("[resultsRepo] upsertEventResults: deduped duplicate member_id in batch", {
+      eventId,
+      before: results.length,
+      after: dedupedInputs.length,
+    });
+  }
+
   // Prepare rows for upsert including audit columns (day_value, position)
   // Requires migration 013 to add these columns to the database
-  const rows = results.map((r) => ({
+  // Uniqueness: DB constraint (event_id, member_id) — one OOM row per member per event.
+  const rows = dedupedInputs.map((r) => ({
     event_id: eventId,
     society_id: societyId,
     member_id: r.member_id,
@@ -158,8 +368,54 @@ export async function getEventResults(eventId: string): Promise<EventResultDoc[]
     throw new Error(error.message || "Failed to get event results");
   }
 
-  console.log("[resultsRepo] getEventResults returned:", data?.length ?? 0, "rows");
-  return data ?? [];
+  const out = dedupeEventResultsByMemberIdPreferLatest((data ?? []) as EventResultDoc[]) as EventResultDoc[];
+  console.log("[resultsRepo] getEventResults returned:", out.length, "rows");
+  return out;
+}
+
+/**
+ * Results for one event scoped to a society (joint events store one row set per participating society).
+ */
+export async function getEventResultsForSociety(
+  eventId: string,
+  societyId: string,
+): Promise<EventResultDoc[]> {
+  console.log("[resultsRepo] getEventResultsForSociety:", { eventId, societyId });
+
+  if (!eventId || !societyId) {
+    throw new Error("Missing eventId or societyId");
+  }
+
+  const { data, error } = await supabase
+    .from("event_results")
+    .select("*")
+    .eq("event_id", eventId)
+    .eq("society_id", societyId);
+
+  if (error) {
+    console.error("[resultsRepo] getEventResultsForSociety failed:", {
+      message: error.message,
+      details: error.details,
+      hint: error.hint,
+      code: error.code,
+    });
+    if (error.code === "42P01" || error.message?.includes("does not exist")) {
+      return [];
+    }
+    throw new Error(error.message || "Failed to get event results for society");
+  }
+
+  const out = dedupeEventResultsByMemberIdPreferLatest((data ?? []) as EventResultDoc[]) as EventResultDoc[];
+  if (out.length !== (data?.length ?? 0)) {
+    console.warn("[resultsRepo] getEventResultsForSociety: removed duplicate member_id rows", {
+      eventId,
+      societyId,
+      before: data?.length ?? 0,
+      after: out.length,
+    });
+  }
+  console.log("[resultsRepo] getEventResultsForSociety returned:", out.length, "rows");
+  return out;
 }
 
 /**
@@ -216,10 +472,10 @@ export async function getOrderOfMeritTotals(
     throw new Error(eventsError.message || "Failed to get events");
   }
 
-  // Fetch members for names
+  // Fetch members for names + identity fields (canonicalJointPersonKey: user_id, email; no person_id column in DB)
   const { data: membersData, error: membersError } = await supabase
     .from("members")
-    .select("id, name")
+    .select("id, name, display_name, user_id, email, society_id")
     .in("id", memberIds);
 
   if (membersError) {
@@ -227,9 +483,22 @@ export async function getOrderOfMeritTotals(
     throw new Error(membersError.message || "Failed to get members");
   }
 
-  // Build lookup maps
+  // Build lookup maps (MemberDoc-shaped for canonicalJointPersonKey)
   const eventsMap = new Map((eventsData ?? []).map((e) => [e.id, e]));
-  const membersMap = new Map((membersData ?? []).map((m) => [m.id, m]));
+  const membersMap = new Map<string, MemberDoc>(
+    (membersData ?? []).map((m: any) => [
+      m.id,
+      {
+        id: m.id,
+        society_id: m.society_id ?? "",
+        user_id: m.user_id ?? null,
+        name: m.name,
+        display_name: m.display_name,
+        displayName: m.name || m.display_name,
+        email: m.email,
+      } as MemberDoc,
+    ]),
+  );
 
   // Filter to OOM events only (check both is_oom flag and classification for backward compatibility)
   // Use case-insensitive comparison for classification
@@ -248,40 +517,50 @@ export async function getOrderOfMeritTotals(
     eventDetails: (eventsData ?? []).map((e) => ({ id: e.id, is_oom: e.is_oom, classification: e.classification })),
   });
 
-  // Aggregate points by member (OOM events only)
-  const memberTotals: Record<string, OrderOfMeritEntry> = {};
+  // Aggregate by real person key (OOM events only) — avoids duplicate society member rows
+  type PersonAgg = { totalPoints: number; eventIds: Set<string>; memberIds: Set<string> };
+  const byPersonKey: Record<string, PersonAgg> = {};
 
   resultsData.forEach((row) => {
-    // Skip non-OOM events
     if (!oomEventIds.has(row.event_id)) return;
+    if (!eventsMap.get(row.event_id)) return;
 
-    const event = eventsMap.get(row.event_id);
-    if (!event) return;
-
-    const memberId = row.member_id;
+    const memberId = String(row.member_id);
     const member = membersMap.get(memberId);
-    // Ensure memberName is always a plain string (guard against unexpected DB types)
-    const rawName = member?.name;
-    const memberName =
-      typeof rawName === "string" && rawName.length > 0 ? rawName : "Unknown";
+    const stub: MemberDoc = member ?? { id: memberId, society_id: societyId };
+    const personKey = canonicalJointPersonKey(stub);
     const points = Number(row.points) || 0;
 
-    if (!memberTotals[memberId]) {
-      memberTotals[memberId] = {
-        memberId,
-        memberName,
-        totalPoints: 0,
-        eventsPlayed: 0,
-        rank: 0, // Will be computed after sorting
-      };
+    if (!byPersonKey[personKey]) {
+      byPersonKey[personKey] = { totalPoints: 0, eventIds: new Set(), memberIds: new Set() };
     }
+    byPersonKey[personKey].totalPoints += points;
+    byPersonKey[personKey].eventIds.add(row.event_id);
+    byPersonKey[personKey].memberIds.add(memberId);
+  });
 
-    memberTotals[memberId].totalPoints += points;
-    memberTotals[memberId].eventsPlayed += 1;
+  const emptySocietyLabel = new Map<string, string>();
+  const memberTotals: OrderOfMeritEntry[] = Object.entries(byPersonKey).map(([, agg]) => {
+    const memberDocs = [...agg.memberIds]
+      .map((id) => membersMap.get(id))
+      .filter((m): m is MemberDoc => Boolean(m));
+    const deduped =
+      memberDocs.length > 0 ? dedupeJointMembers(memberDocs, emptySocietyLabel) : [];
+    const rep = deduped[0]?.representative;
+    const memberId = rep?.id ?? [...agg.memberIds][0] ?? "";
+    const memberName =
+      rep?.displayName || rep?.display_name || rep?.name || "Unknown";
+    return {
+      memberId,
+      memberName,
+      totalPoints: agg.totalPoints,
+      eventsPlayed: agg.eventIds.size,
+      rank: 0,
+    };
   });
 
   // Sort by total points descending
-  const sorted = Object.values(memberTotals)
+  const sorted = memberTotals
     .filter((entry) => entry.totalPoints > 0)
     .sort((a, b) => b.totalPoints - a.totalPoints);
 
@@ -322,6 +601,36 @@ export async function deleteEventResults(eventId: string): Promise<void> {
   }
 
   console.log("[resultsRepo] deleteEventResults success");
+}
+
+/**
+ * Remove one player's saved OOM result for this event and active society (does not touch other members' rows).
+ */
+export async function deleteEventResultForMember(
+  eventId: string,
+  societyId: string,
+  memberId: string,
+): Promise<void> {
+  if (!eventId?.trim() || !societyId?.trim() || !memberId?.trim()) {
+    throw new Error("deleteEventResultForMember: missing eventId, societyId, or memberId");
+  }
+
+  const { error } = await supabase
+    .from("event_results")
+    .delete()
+    .eq("event_id", eventId)
+    .eq("society_id", societyId)
+    .eq("member_id", memberId);
+
+  if (error) {
+    console.error("[resultsRepo] deleteEventResultForMember failed:", error);
+    if (error.code === "42501" || error.message?.includes("policy")) {
+      throw new Error("Permission denied. Only Captain or Handicapper can remove results.");
+    }
+    throw new Error(error.message || "Failed to remove result");
+  }
+
+  console.log("[resultsRepo] deleteEventResultForMember:", { eventId, societyId, memberId });
 }
 
 /**
@@ -392,12 +701,13 @@ export async function getOrderOfMeritLog(
 
   const eventIds = oomEvents.map((e) => e.id);
 
-  // Fetch event results for these events including audit columns
-  // day_value and position require migration 013
+  // Society-scoped: joint events store one result row per participating society+member.
+  // Without this filter, the log showed every society's rows under one event (duplicate names).
   const { data: resultsData, error: resultsError } = await supabase
     .from("event_results")
-    .select("event_id, member_id, points, day_value, position")
-    .in("event_id", eventIds);
+    .select("id, event_id, society_id, member_id, points, day_value, position, updated_at")
+    .in("event_id", eventIds)
+    .eq("society_id", societyId);
 
   if (resultsError) {
     console.error("[resultsRepo] getOrderOfMeritLog results query failed:", resultsError);
@@ -412,12 +722,11 @@ export async function getOrderOfMeritLog(
     return [];
   }
 
-  // Get unique member IDs and fetch members
   const memberIds = [...new Set(resultsData.map((r) => r.member_id))];
 
   const { data: membersData, error: membersError } = await supabase
     .from("members")
-    .select("id, name")
+    .select("id, name, display_name, society_id, user_id, email")
     .in("id", memberIds);
 
   if (membersError) {
@@ -425,24 +734,45 @@ export async function getOrderOfMeritLog(
     throw new Error(membersError.message || "Failed to get members");
   }
 
-  // Build lookup maps (use oomEvents for iteration)
-  const eventsMap = new Map(oomEvents.map((e) => [e.id, e]));
-  const membersMap = new Map((membersData ?? []).map((m) => [m.id, m]));
+  const membersMap = new Map<string, MemberDoc>(
+    (membersData ?? []).map((m) => [m.id, m as MemberDoc]),
+  );
 
-  // Build results log entries, maintaining event order (by date desc)
   const logEntries: ResultsLogEntry[] = [];
 
-  // Group results by event, preserving event order (OOM events only)
   for (const event of oomEvents) {
-    const eventResults = resultsData
-      .filter((r) => r.event_id === event.id)
-      .sort((a, b) => {
-        // Sort by position first (if available), then by points desc
-        const posA = (a as any).position ?? 999;
-        const posB = (b as any).position ?? 999;
-        if (posA !== posB) return posA - posB;
-        return (b.points || 0) - (a.points || 0);
-      });
+    const rawForEvent = resultsData.filter((r) => r.event_id === event.id);
+    const afterMemberDedupe = dedupeEventResultsByMemberIdPreferLatest(rawForEvent);
+    const afterPersonDedupe = dedupeEventResultRowsByJointPersonKey(afterMemberDedupe, membersMap);
+    const eventResults = afterPersonDedupe.sort((a, b) => {
+      const posA = a.position ?? 999;
+      const posB = b.position ?? 999;
+      if (posA !== posB) return posA - posB;
+      return (Number(b.points) || 0) - (Number(a.points) || 0);
+    });
+
+    logOomMatrixDebugDev({
+      societyId,
+      eventId: event.id,
+      eventName: event.name || "Unnamed Event",
+      rawRows: rawForEvent,
+      afterMemberDedupe,
+      finalRows: eventResults,
+      membersById: membersMap,
+    });
+
+    logOomDuplicatePlayerRowsDev({
+      societyId,
+      eventId: event.id,
+      rows: eventResults.map((r) => ({
+        id: r.id,
+        member_id: r.member_id,
+        points: Number(r.points) || 0,
+        day_value: r.day_value ?? null,
+        position: r.position ?? null,
+      })),
+      membersById: membersMap,
+    });
 
     for (const result of eventResults) {
       const member = membersMap.get(result.member_id);
@@ -454,8 +784,8 @@ export async function getOrderOfMeritLog(
         memberId: result.member_id,
         memberName: member?.name || "Unknown",
         points: result.points || 0,
-        dayValue: (result as any).day_value ?? null,
-        position: (result as any).position ?? null,
+        dayValue: result.day_value ?? null,
+        position: result.position ?? null,
       });
     }
   }

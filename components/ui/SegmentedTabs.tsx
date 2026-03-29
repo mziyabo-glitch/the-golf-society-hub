@@ -77,6 +77,8 @@ const styles = StyleSheet.create({
     borderRadius: CONTAINER_RADIUS,
     padding: 4,
     marginBottom: spacing.lg,
+    borderWidth: 1,
+    borderColor: "rgba(15, 23, 42, 0.06)",
   },
   tab: {
     flex: 1,

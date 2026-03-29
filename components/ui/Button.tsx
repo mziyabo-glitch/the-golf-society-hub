@@ -23,6 +23,9 @@ type ButtonProps = {
   // ✅ Preferred usage:
   children?: ReactNode;
 
+  /** Shown next to the spinner when `loading` is true (e.g. "Saving…"). */
+  loadingLabel?: string;
+
   onPress: () => void;
   disabled?: boolean;
   loading?: boolean;
@@ -50,6 +53,7 @@ function handlePress(onPress: () => void): void {
 export function PrimaryButton({
   label,
   children,
+  loadingLabel,
   onPress,
   disabled,
   loading,
@@ -80,7 +84,14 @@ export function PrimaryButton({
       ]}
     >
       {loading ? (
-        <ActivityIndicator size="small" color={colors.textInverse} />
+        <View style={styles.loadingRow}>
+          <ActivityIndicator size="small" color={colors.textInverse} />
+          {loadingLabel ? (
+            <AppText variant="button" color="inverse" style={styles.loadingLabelText}>
+              {loadingLabel}
+            </AppText>
+          ) : null}
+        </View>
       ) : (
         <View style={styles.content}>
           {icon && iconPosition === "left" ? <View style={styles.icon}>{icon}</View> : null}
@@ -199,6 +210,14 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: spacing.xs,
+  },
+  loadingRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+  },
+  loadingLabelText: {
+    ...typography.button,
   },
   icon: {
     alignItems: "center",

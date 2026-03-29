@@ -62,7 +62,7 @@ import {
 } from "@/lib/db_supabase/eventRegistrationRepo";
 import { blurWebActiveElement } from "@/lib/ui/focus";
 import { SocietySwitcherPill } from "@/components/SocietySwitcher";
-import { getCache, setCache } from "@/lib/cache/clientCache";
+import { getCache, setCache, invalidateCache } from "@/lib/cache/clientCache";
 import {
   JOINT_EVENT_CHIP_SHORT,
   JOINT_HOME_RSVP_NOTE,
@@ -495,13 +495,21 @@ export default function HomeScreen() {
       const cacheKey = `event:${nextEventId}:registrations`;
       const cached = await getCache<EventRegistration[]>(cacheKey, { maxAgeMs: 1000 * 60 * 30 });
       if (cached && !cancelled) {
-        const scopedCached = nextEventIsJoint
-          ? scopeEventRegistrations(cached.value, { kind: "joint_home", activeSocietyId: societyId })
-          : scopeEventRegistrations(cached.value, {
-              kind: "standard",
-              hostSocietyId: ev.society_id ?? societyId,
-            });
-        setNextEventRegistrations(scopedCached);
+        const raw = cached.value;
+        if (!Array.isArray(raw)) {
+          if (__DEV__) {
+            console.warn("[home] registrations cache was not an array; clearing", cacheKey);
+          }
+          await invalidateCache(cacheKey);
+        } else {
+          const scopedCached = nextEventIsJoint
+            ? scopeEventRegistrations(raw, { kind: "joint_home", activeSocietyId: societyId })
+            : scopeEventRegistrations(raw, {
+                kind: "standard",
+                hostSocietyId: ev.society_id ?? societyId,
+              });
+          setNextEventRegistrations(scopedCached);
+        }
       }
       const regs = await getEventRegistrations(nextEventId);
       if (cancelled) return;

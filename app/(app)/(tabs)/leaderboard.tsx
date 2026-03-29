@@ -187,7 +187,18 @@ export default function LeaderboardScreen() {
         });
         currentEventId = entry.eventId;
       }
-      groups[groups.length - 1].results.push({
+      const bucket = groups[groups.length - 1].results;
+      if (bucket.some((r) => r.memberId === entry.memberId)) {
+        if (__DEV__) {
+          console.warn("[oom-matrix-debug] skipped duplicate member row in UI group", {
+            eventId: entry.eventId,
+            memberId: entry.memberId,
+            memberName: entry.memberName,
+          });
+        }
+        continue;
+      }
+      bucket.push({
         memberId: entry.memberId,
         memberName: entry.memberName,
         points: entry.points,
@@ -297,7 +308,7 @@ export default function LeaderboardScreen() {
     return (
       <SafeAreaView style={[styles.container, { backgroundColor: "#F7F8FA" }]} edges={["top", "bottom"]}>
         <View style={styles.centered}>
-          <LoadingState message="Loading Order of Merit..." />
+          <LoadingState message="Loading standings and results matrix…" />
         </View>
       </SafeAreaView>
     );
@@ -386,15 +397,38 @@ export default function LeaderboardScreen() {
         <View style={styles.titleSection}>
           <AppText style={styles.mainTitle}>Order of Merit</AppText>
           <AppText style={styles.seasonText}>{seasonLabel}</AppText>
+          {!needsLicence ? (
+            <AppText style={styles.tabHint}>
+              {activeTab === "leaderboard"
+                ? "Season standings"
+                : activeTab === "resultsLog"
+                  ? "Per-event scores and OOM points"
+                  : ""}
+            </AppText>
+          ) : null}
         </View>
 
         {/* SegmentedTabs: Leaderboard / Results Matrix / Roll of Honour */}
         {!needsLicence && (
           <SegmentedTabs
             items={[
-              { id: "leaderboard" as TabType, label: "Leaders", icon: <Feather name="award" size={16} color={activeTab === "leaderboard" ? "#0B6E4F" : "#9CA3AF"} /> },
-              { id: "resultsLog" as TabType, label: "Matrix", icon: <Feather name="grid" size={16} color={activeTab === "resultsLog" ? "#0B6E4F" : "#9CA3AF"} /> },
-              { id: "honour" as TabType, label: "Honour", icon: <Feather name="award" size={16} color="#9CA3AF" /> },
+              {
+                id: "leaderboard" as TabType,
+                label: "Leaders",
+                icon: (
+                  <Feather name="bar-chart-2" size={15} color={activeTab === "leaderboard" ? "#0B6E4F" : "#9CA3AF"} />
+                ),
+              },
+              {
+                id: "resultsLog" as TabType,
+                label: "Matrix",
+                icon: <Feather name="grid" size={15} color={activeTab === "resultsLog" ? "#0B6E4F" : "#9CA3AF"} />,
+              },
+              {
+                id: "honour" as TabType,
+                label: "Honour",
+                icon: <Feather name="award" size={15} color="#9CA3AF" />,
+              },
             ]}
             selectedId={activeTab}
             onSelect={(id) => {
@@ -413,8 +447,8 @@ export default function LeaderboardScreen() {
             {standings.length === 0 ? (
               <EmptyState
                 icon={<Feather name="award" size={32} color={colors.textTertiary} />}
-                title="No Order of Merit events yet"
-                message="Create an OOM event to start tracking points."
+                title="No Order of Merit yet"
+                message="When you run OOM events and save results, standings and the matrix will appear here."
                 action={{
                   label: "Create OOM event",
                   onPress: () =>
@@ -584,8 +618,8 @@ export default function LeaderboardScreen() {
             {groupedResultsLog.length === 0 ? (
               <EmptyState
                 icon={<Feather name="calendar" size={32} color={colors.textTertiary} />}
-                title="No results yet"
-                message="Create an OOM event to see the results matrix."
+                title="No results in the matrix yet"
+                message="Saved scores from Order of Merit events will show here, grouped by round."
                 action={{
                   label: "Create OOM event",
                   onPress: () =>
@@ -638,10 +672,10 @@ export default function LeaderboardScreen() {
                         <View style={styles.accordionContent}>
                           {/* Column Headers */}
                           <View style={styles.accordionTableHeader}>
-                            <AppText style={[styles.accordionColHeader, { width: 36 }]}>Pos</AppText>
-                            <AppText style={[styles.accordionColHeader, { flex: 1 }]}>Player</AppText>
-                            <AppText style={[styles.accordionColHeader, { width: 50, textAlign: "center" }]}>Score</AppText>
-                            <AppText style={[styles.accordionColHeader, { width: 50, textAlign: "right" }]}>OOM</AppText>
+                            <AppText style={[styles.accordionColHeader, styles.accordionColPos]}>Pos</AppText>
+                            <AppText style={[styles.accordionColHeader, styles.accordionColPlayer]}>Player</AppText>
+                            <AppText style={[styles.accordionColHeader, styles.accordionColScore]}>Score</AppText>
+                            <AppText style={[styles.accordionColHeader, styles.accordionColOom]}>OOM</AppText>
                           </View>
 
                           {/* Player Rows */}
@@ -650,6 +684,7 @@ export default function LeaderboardScreen() {
                               key={result.memberId}
                               style={[
                                 styles.accordionRow,
+                                resultIdx % 2 === 1 && styles.accordionRowAlt,
                                 resultIdx === event.results.length - 1 && { borderBottomWidth: 0 },
                               ]}
                             >
@@ -750,6 +785,12 @@ const styles = StyleSheet.create({
     lineHeight: typography.small.lineHeight,
     color: "#6B7280",
     marginTop: 4,
+  },
+  tabHint: {
+    fontSize: typography.small.fontSize,
+    lineHeight: typography.small.lineHeight,
+    color: "#9CA3AF",
+    marginTop: 6,
   },
 
   // Tabs
@@ -971,10 +1012,11 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   accordionEventName: {
-    fontSize: typography.caption.fontSize,
+    fontSize: typography.body.fontSize,
     fontWeight: "600",
     color: "#111827",
     marginBottom: 2,
+    lineHeight: typography.body.lineHeight,
   },
   accordionEventMeta: {
     fontSize: typography.small.fontSize,
@@ -1009,6 +1051,22 @@ const styles = StyleSheet.create({
     textTransform: "uppercase",
     letterSpacing: 0.5,
   },
+  accordionColPos: {
+    width: 40,
+    textAlign: "center",
+  },
+  accordionColPlayer: {
+    flex: 1,
+    paddingRight: 8,
+  },
+  accordionColScore: {
+    width: 52,
+    textAlign: "center",
+  },
+  accordionColOom: {
+    width: 52,
+    textAlign: "right",
+  },
   accordionRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -1016,9 +1074,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     borderBottomWidth: 1,
     borderBottomColor: "rgba(0, 0, 0, 0.04)",
+    minHeight: 48,
+  },
+  accordionRowAlt: {
+    backgroundColor: "rgba(255, 255, 255, 0.45)",
   },
   accordionPosition: {
-    width: 36,
+    width: 40,
     alignItems: "center",
   },
   accordionPositionText: {
@@ -1035,17 +1097,19 @@ const styles = StyleSheet.create({
     fontWeight: "500",
     color: "#374151",
     paddingRight: 8,
+    lineHeight: typography.body.lineHeight,
   },
   accordionScore: {
-    width: 50,
+    width: 52,
     fontSize: typography.body.fontSize,
-    color: "#6B7280",
+    fontWeight: "600",
+    color: "#111827",
     textAlign: "center",
     fontVariant: ["tabular-nums"],
   },
   accordionPoints: {
-    width: 50,
-    fontSize: typography.caption.fontSize,
+    width: 52,
+    fontSize: typography.body.fontSize,
     fontWeight: "700",
     color: "#0B6E4F",
     textAlign: "right",

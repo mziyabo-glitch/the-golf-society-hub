@@ -67,6 +67,8 @@ import {
   DEFAULT_ALLOWANCE,
 } from "@/lib/whs";
 import { parseHoleNumbers, formatHoleNumbers, calculateGroupSizes } from "@/lib/teeSheetGrouping";
+import { buildSocietyIdToNameMap } from "@/lib/jointEventSocietyLabel";
+import { expandJointTeeSheetReplaceRowsForParticipatingSocieties } from "@/lib/jointPersonDedupe";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
 import { assertPngExportOnly } from "@/lib/share/pngExportGuard";
 import { formatError, type FormattedError } from "@/lib/ui/formatError";
@@ -133,6 +135,35 @@ function buildJointReplaceRowsFromGroups(groups: PlayerGroup[]): JointEventTeeSh
           pairing_position: g.groupNumber === 0 ? null : idx,
         })),
     );
+}
+
+/** Full replace must not collapse dual members to one id per person (same rule as Players save). */
+async function buildJointExpandedReplaceRows(
+  nonEmptyGroups: PlayerGroup[],
+  jointTeeSheetData: JointEventTeeSheet | null,
+  eventId: string,
+): Promise<JointEventTeeSheetReplaceRow[]> {
+  const base = buildJointReplaceRowsFromGroups(nonEmptyGroups);
+  const societies = jointTeeSheetData?.participating_societies ?? [];
+  const participantSocietyIds = societies.map((s) => s.society_id).filter(Boolean);
+  if (participantSocietyIds.length === 0) return base;
+  const societyMap = buildSocietyIdToNameMap(societies);
+  const lists = await Promise.all(participantSocietyIds.map((sid) => getMembersBySocietyId(sid)));
+  const pooled = lists.flat();
+  const expanded = expandJointTeeSheetReplaceRowsForParticipatingSocieties(
+    base,
+    pooled,
+    societyMap,
+    participantSocietyIds,
+  );
+  if (__DEV__) {
+    console.log("[teesheet] joint replace rows expanded for participating societies", {
+      eventId,
+      before: base.length,
+      after: expanded.length,
+    });
+  }
+  return expanded;
 }
 
 function validateGroupsMatchSelectedIds(nonEmptyGroups: PlayerGroup[], selectedIds: string[]): string | null {
@@ -852,7 +883,11 @@ export default function TeeSheetScreen() {
         if (__DEV__ && mismatch) {
           console.warn("[teesheet] save mismatch warning", { eventId: selectedEventId, mismatch });
         }
-        const replaceRows = buildJointReplaceRowsFromGroups(nonEmptyGroups);
+        const replaceRows = await buildJointExpandedReplaceRows(
+          nonEmptyGroups,
+          jointTeeSheetData,
+          selectedEventId,
+        );
         try {
           await replaceJointEventTeeSheetEntries(selectedEventId, replaceRows);
         } catch (e) {
@@ -1141,7 +1176,11 @@ export default function TeeSheetScreen() {
         if (__DEV__ && mismatch) {
           console.warn("[teesheet] publish mismatch warning", { eventId: selectedEventId, mismatch });
         }
-        const replaceRows = buildJointReplaceRowsFromGroups(nonEmptyGroups);
+        const replaceRows = await buildJointExpandedReplaceRows(
+          nonEmptyGroups,
+          jointTeeSheetData,
+          selectedEventId,
+        );
         try {
           await replaceJointEventTeeSheetEntries(selectedEventId, replaceRows);
         } catch (e) {

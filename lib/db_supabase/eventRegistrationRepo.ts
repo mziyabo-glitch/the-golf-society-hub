@@ -11,6 +11,11 @@
 
 import { supabase } from "@/lib/supabase";
 
+/** Cache or legacy callers may pass a non-array; never throw on `.filter`. */
+function ensureRegistrationArray(regs: unknown): EventRegistration[] {
+  return Array.isArray(regs) ? (regs as EventRegistration[]) : [];
+}
+
 export type EventRegistration = {
   id: string;
   society_id: string;
@@ -64,7 +69,7 @@ export async function getEventRegistrations(
     console.error("[eventRegRepo] getEventRegistrations:", error.message);
     return [];
   }
-  return (data ?? []) as EventRegistration[];
+  return ensureRegistrationArray(data ?? []);
 }
 
 /**
@@ -75,22 +80,23 @@ export async function getEventRegistrations(
  * - **joint_home**: dashboard / per-society context — only the active society's rows.
  */
 export function scopeEventRegistrations(
-  regs: EventRegistration[],
+  regs: EventRegistration[] | unknown,
   opts:
     | { kind: "standard"; hostSocietyId: string | null }
     | { kind: "joint_participants"; participantSocietyIds: string[] }
     | { kind: "joint_home"; activeSocietyId: string },
 ): EventRegistration[] {
+  const list = ensureRegistrationArray(regs);
   if (opts.kind === "standard") {
-    if (!opts.hostSocietyId) return regs;
-    return regs.filter((r) => r.society_id === opts.hostSocietyId);
+    if (!opts.hostSocietyId) return list;
+    return list.filter((r) => r.society_id === opts.hostSocietyId);
   }
   if (opts.kind === "joint_home") {
-    return regs.filter((r) => r.society_id === opts.activeSocietyId);
+    return list.filter((r) => r.society_id === opts.activeSocietyId);
   }
   const set = new Set(opts.participantSocietyIds.filter(Boolean));
   if (set.size === 0) return [];
-  return regs.filter((r) => set.has(r.society_id));
+  return list.filter((r) => set.has(r.society_id));
 }
 
 /**
@@ -101,11 +107,12 @@ export function scopeEventRegistrations(
  * Tee sheets / publish flow use `isTeeSheetEligible` (confirmed + paid) in `teeSheetEligibility.ts` — different predicate.
  */
 export function filterRegistrationsForActiveSocietyMembers(
-  regs: EventRegistration[],
+  regs: EventRegistration[] | unknown,
   activeSocietyId: string,
   activeMemberIds: Set<string>,
 ): EventRegistration[] {
-  return regs.filter(
+  const list = ensureRegistrationArray(regs);
+  return list.filter(
     (r) => r.society_id === activeSocietyId && activeMemberIds.has(String(r.member_id)),
   );
 }
@@ -178,19 +185,20 @@ export function isTeeSheetEligible(r: EventRegistration): boolean {
 }
 
 /** Standard event summaries (joint attendance uses event entries, not this). */
-export function summarizeEventRegistrations(regs: EventRegistration[]) {
-  const attending = regs.filter(isRegistrationConfirmed);
+export function summarizeEventRegistrations(regs: EventRegistration[] | unknown) {
+  const list = ensureRegistrationArray(regs);
+  const attending = list.filter(isRegistrationConfirmed);
   return {
     /** status === "in" */
     attendingCount: attending.length,
     /** Rows with paid === true (after server rule, these are also "in") */
-    paidCount: regs.filter((r) => r.paid).length,
+    paidCount: list.filter((r) => r.paid).length,
     /** Confirmed but not yet paid */
     outstandingCount: attending.filter((r) => !r.paid).length,
     /** Of those attending, how many are paid (for “X of Y paid”) */
     paidAmongAttendingCount: attending.filter((r) => r.paid).length,
     /** Confirmed + paid — only these names appear on generated / saved tee sheets */
-    teeSheetEligibleCount: regs.filter(isTeeSheetEligible).length,
+    teeSheetEligibleCount: list.filter(isTeeSheetEligible).length,
   };
 }
 

@@ -1,4 +1,4 @@
-﻿import { supabase } from "@/lib/supabase";
+import { supabase } from "@/lib/supabase";
 import { getMembersBySocietyId } from "./memberRepo";
 
 export type OomRow = {
@@ -24,7 +24,8 @@ export async function getOomLeaderboard(societyId: string): Promise<OomRow[]> {
   const { data: results, error: resultsError } = await supabase
     .from("event_results")
     .select("member_id, points")
-    .in("event_id", eventIds);
+    .in("event_id", eventIds)
+    .eq("society_id", societyId);
 
   if (resultsError) throw resultsError;
   if (!results || results.length === 0) return [];

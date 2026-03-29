@@ -142,8 +142,14 @@ function logJointClassificationDev(event: EventDoc, linkedSocietyCount: number, 
     eventId: event.id,
     title: event.name,
     hostSocietyId: event.society_id,
-    linkedSocietyCount,
+    /** Distinct `society_id` values in `event_societies` for this event. Joint = this count >= 2. */
+    distinctParticipatingSocieties: linkedSocietyCount,
     is_joint_event,
+    ...(linkedSocietyCount === 1
+      ? {
+          note: "One row in event_societies — not joint until a second participating society is linked.",
+        }
+      : {}),
   });
 }
 

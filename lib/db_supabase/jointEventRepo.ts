@@ -1,6 +1,11 @@
 /**
  * Phase 2/3 Joint Events: Read model and mutations for joint event detail.
  *
+ * **Joint playable source of truth:** `event_entries` (`player_id` = society member id), not
+ * `events.player_ids`. Tee sheet, Points, and Players save paths must keep dual members expanded
+ * to one row per participating-society member id (see `expandJointRepresentativesToParticipatingMemberIds`
+ * and `expandJointTeeSheetReplaceRowsForParticipatingSocieties`).
+ *
  * ADDITIVE: This module does NOT replace getEvent or the existing event detail flow.
  * There is always one master event row per event; event_societies is the relational
  * source of truth for which societies participate. Standard (single-society) events
@@ -723,6 +728,8 @@ export type JointEventTeeSheetReplaceRow = {
 
 /**
  * Joint tee sheet: DELETE all `event_entries` for the event, then INSERT fresh rows (SECURITY DEFINER RPC).
+ * **Dual members:** callers must pass one row per participating-society `player_id` (same pairing_group/position);
+ * do not collapse to a single representative id — use `expandJointTeeSheetReplaceRowsForParticipatingSocieties`.
  * Use instead of `updateEventEntriesPairings` when saving the full field — avoids missing `event_entry_id`
  * and RLS issues for participating-society ManCo.
  */
@@ -799,7 +806,8 @@ export async function clearJointEventPairings(eventId: string): Promise<void> {
 }
 
 /**
- * Sync event_entries for a joint event to match the given player IDs.
+ * Sync event_entries for a joint event to match the given player IDs (playable source of truth for joint events).
+ * **Dual members:** `playerIds` must list every participating-society member id (`expandJointRepresentativesToParticipatingMemberIds`).
  * Removes entries not in the list; adds entries for new players and creates
  * event_entry_society_eligibility for the member's society when in participating list.
  * Call from the Players screen when saving a joint event.
