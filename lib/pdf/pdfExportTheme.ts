@@ -97,8 +97,11 @@ export function buildPdfDocumentShell(options: {
   title: string;
   css: string;
   bodyInnerHtml: string;
+  /** Extra classes on `.pdf-root.doc` (e.g. `pdf-root--oom` for compact OOM). */
+  rootClass?: string;
 }): string {
   const t = escapePdfHtml(options.title);
+  const rootClasses = ["pdf-root", "doc", options.rootClass?.trim()].filter(Boolean).join(" ");
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -107,12 +110,159 @@ export function buildPdfDocumentShell(options: {
 <title>${t}</title>
 </head>
 <body>
-<div class="pdf-root doc">
+<div class="${rootClasses}">
 <style>${options.css}</style>
 ${options.bodyInnerHtml}
 </div>
 </body>
 </html>`;
+}
+
+/**
+ * Compact “leaderboard report” overrides for Order of Merit PDF only.
+ * Tighter header/podium/table/footer so ~40 members fit in fewer pages.
+ */
+export function buildOomCompactPrintCss(): string {
+  const t = PDF_THEME;
+  return `
+.pdf-root--oom {
+  font-size: 11px;
+  line-height: 1.32;
+}
+.pdf-root--oom .doc-header--oom {
+  page-break-inside: avoid;
+  break-inside: avoid;
+  gap: 8px;
+  padding-bottom: 6px;
+  margin-bottom: 6px;
+  align-items: center;
+  border-bottom: 1px solid ${t.dividerStrong};
+}
+.pdf-root--oom .doc-logo-wrap {
+  width: 44px;
+  height: 44px;
+}
+.pdf-root--oom .doc-logo {
+  width: 44px;
+  height: 44px;
+  border-radius: 4px;
+}
+.pdf-root--oom .doc-brand-kicker {
+  font-size: 8px;
+  margin-bottom: 2px;
+  letter-spacing: 0.1em;
+}
+.pdf-root--oom .doc-title {
+  font-size: 17px;
+  line-height: 1.15;
+  margin: 0 0 2px;
+  letter-spacing: -0.02em;
+}
+.pdf-root--oom .doc-subtitle {
+  font-size: 11px;
+  margin: 0 0 3px;
+  line-height: 1.25;
+}
+.pdf-root--oom .doc-meta {
+  font-size: 9.5px;
+  line-height: 1.35;
+  color: ${t.textSecondary};
+}
+.pdf-root--oom .doc-meta--tight {
+  margin: 3px 0 0;
+}
+.pdf-root--oom .podium {
+  page-break-inside: avoid;
+  break-inside: avoid;
+  margin: 4px 0 6px;
+  padding: 5px 6px;
+  gap: 5px;
+  border-radius: 6px;
+}
+.pdf-root--oom .podium--2 {
+  max-width: 320px;
+}
+.pdf-root--oom .podium--1 {
+  max-width: 160px;
+}
+.pdf-root--oom .podium-slot {
+  padding: 4px 5px;
+  border-radius: 5px;
+}
+.pdf-root--oom .podium-slot--first {
+  padding-bottom: 6px;
+  box-shadow: 0 1px 4px rgba(11, 110, 79, 0.1);
+}
+.pdf-root--oom .podium-rank {
+  font-size: 7px;
+  margin-bottom: 1px;
+  letter-spacing: 0.04em;
+}
+.pdf-root--oom .podium-medal {
+  font-size: 14px;
+  margin-bottom: 2px;
+  line-height: 1;
+}
+.pdf-root--oom .podium-name {
+  font-size: 10px;
+  margin-bottom: 2px;
+  line-height: 1.2;
+}
+.pdf-root--oom .podium-pts {
+  font-size: 11px;
+}
+.pdf-root--oom .table-wrap--oom {
+  margin-top: 2px;
+  page-break-inside: auto;
+}
+.pdf-root--oom table.sheet--oom {
+  table-layout: fixed;
+  width: 100%;
+  font-size: 10.5px;
+  line-height: 1.22;
+}
+.pdf-root--oom table.sheet--oom thead th {
+  padding: 4px 5px;
+  font-size: 10px;
+  line-height: 1.2;
+}
+.pdf-root--oom table.sheet--oom tbody td {
+  padding: 3px 5px;
+  line-height: 1.2;
+  vertical-align: middle;
+}
+.pdf-root--oom table.sheet--oom .col-pos {
+  width: 7%;
+}
+.pdf-root--oom table.sheet--oom .col-events {
+  width: 9%;
+}
+.pdf-root--oom table.sheet--oom .col-pts {
+  width: 11%;
+}
+.pdf-root--oom table.sheet--oom .col-player {
+  width: auto;
+  word-wrap: break-word;
+  overflow-wrap: anywhere;
+}
+.pdf-root--oom table.sheet--oom tbody tr {
+  page-break-inside: avoid;
+  break-inside: avoid;
+}
+.pdf-root--oom .doc-footer--oom {
+  margin-top: 6px;
+  padding-top: 5px;
+  border-top: 1px solid ${t.divider};
+  font-size: 8.5px;
+  line-height: 1.3;
+  text-align: center;
+  color: ${t.textSecondary};
+}
+.pdf-root--oom .doc-footer--oom .brand {
+  font-weight: 600;
+  color: ${t.navyMuted};
+}
+`;
 }
 
 /** Inline <style> for all premium exports */

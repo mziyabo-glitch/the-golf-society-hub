@@ -14,6 +14,7 @@ import { getSocietyLogoDataUri, getSocietyLogoUrl } from "@/lib/societyLogo";
 import {
   buildPdfDocumentShell,
   buildPremiumPdfCss,
+  buildOomCompactPrintCss,
   buildPdfLogoImg,
   escapePdfHtml,
   formatPdfGenerationTimestamp,
@@ -62,13 +63,16 @@ export type OomMatrixPdfPayload = {
 
 /** Build full HTML document for season Order of Merit (podium + full field table). */
 export function buildOrderOfMeritPdfHtml(p: OrderOfMeritPdfPayload): string {
-  const css = buildPremiumPdfCss();
+  const css = buildPremiumPdfCss(buildOomCompactPrintCss());
   const logo = buildPdfLogoImg(p.logoUrl, p.societyName);
-  const metaLines = [
+
+  const seasonLine = [
     escapePdfHtml(p.seasonSubtitle),
     p.oomEventCount > 0
-      ? `${p.oomEventCount} Order of Merit event${p.oomEventCount !== 1 ? "s" : ""}`
+      ? `${p.oomEventCount} OOM event${p.oomEventCount !== 1 ? "s" : ""}`
       : null,
+    `${p.totalMembers} members`,
+    `${p.membersWithPoints} with OOM points`,
     `Generated ${escapePdfHtml(p.generatedAt)}`,
   ]
     .filter(Boolean)
@@ -76,7 +80,14 @@ export function buildOrderOfMeritPdfHtml(p: OrderOfMeritPdfPayload): string {
 
   const podiumHtml = buildPodiumHtml(p.leadersTop3);
 
+  const seenMember = new Set<string>();
   const rowsHtml = p.standings
+    .filter((row) => {
+      const id = String(row.memberId);
+      if (seenMember.has(id)) return false;
+      seenMember.add(id);
+      return true;
+    })
     .map((row) => {
       const pos = row.rank;
       const pts =
@@ -87,61 +98,50 @@ export function buildOrderOfMeritPdfHtml(p: OrderOfMeritPdfPayload): string {
             : "—";
       const muted = !row.hasOomPoints && row.totalPoints === 0 ? "muted" : "";
       return `<tr${muted ? ` class="${muted}"` : ""}>
-        <td class="num">${pos}</td>
-        <td>${escapePdfHtml(row.memberName)}</td>
-        <td class="num">${row.eventsPlayed}</td>
-        <td class="num rt">${pts}</td>
+        <td class="num col-pos">${pos}</td>
+        <td class="col-player">${escapePdfHtml(row.memberName)}</td>
+        <td class="num col-events">${row.eventsPlayed}</td>
+        <td class="num rt col-pts">${pts}</td>
       </tr>`;
     })
     .join("");
 
-  const summaryHtml = `
-    <div class="field-summary block-avoid">
-      <strong>Field:</strong> ${p.totalMembers} members ·
-      <strong>With OOM points:</strong> ${p.membersWithPoints} ·
-      <strong>OOM events (season):</strong> ${p.oomEventCount}
-    </div>`;
-
   const inner = `
-  <div class="oom-lead">
-    <header class="doc-header">
-      ${logo ? `<div class="doc-logo-wrap">${logo}</div>` : ""}
-      <div class="doc-header-main">
-        <div class="doc-brand-kicker">Produced by The Golf Society Hub</div>
-        <h1 class="doc-title">Order of Merit</h1>
-        <p class="doc-subtitle">${escapePdfHtml(p.societyName)} · ${p.seasonYear}</p>
-        <p class="doc-meta">${metaLines}</p>
-      </div>
-    </header>
-    <p class="doc-meta" style="margin:0 0 10px;font-weight:600;color:#334155">Season standings</p>
-    ${podiumHtml}
-  </div>
+  <header class="doc-header doc-header--oom">
+    ${logo ? `<div class="doc-logo-wrap">${logo}</div>` : ""}
+    <div class="doc-header-main">
+      <div class="doc-brand-kicker">Produced by The Golf Society Hub</div>
+      <h1 class="doc-title">Order of Merit</h1>
+      <p class="doc-subtitle">${escapePdfHtml(p.societyName)} · ${p.seasonYear}</p>
+      <p class="doc-meta">${seasonLine}</p>
+    </div>
+  </header>
 
-  <div class="table-wrap">
-    <table class="sheet">
+  ${podiumHtml}
+
+  <div class="table-wrap table-wrap--oom">
+    <table class="sheet sheet--oom">
       <thead>
         <tr>
-          <th class="num">Pos</th>
-          <th>Player</th>
-          <th class="num">Events</th>
-          <th class="num rt">Points</th>
+          <th class="num col-pos">Pos</th>
+          <th class="col-player">Player</th>
+          <th class="num col-events">Ev</th>
+          <th class="num rt col-pts">Pts</th>
         </tr>
       </thead>
       <tbody>${rowsHtml}</tbody>
     </table>
   </div>
 
-  ${summaryHtml}
-
-  <footer class="doc-footer">
-    <span class="brand">The Golf Society Hub</span><br />
-    ${escapePdfHtml(p.generatedAt)}
+  <footer class="doc-footer doc-footer--oom">
+    <span class="brand">The Golf Society Hub</span>
   </footer>`;
 
   return buildPdfDocumentShell({
     title: `Order of Merit — ${p.societyName}`,
     css,
     bodyInnerHtml: inner,
+    rootClass: "pdf-root--oom",
   });
 }
 
