@@ -24,9 +24,6 @@ import {
 import { useRouter } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
 import { Feather } from "@expo/vector-icons";
-import * as Print from "expo-print";
-import * as Sharing from "expo-sharing";
-
 import { Screen } from "@/components/ui/Screen";
 import { AppText } from "@/components/ui/AppText";
 import { AppCard } from "@/components/ui/AppCard";
@@ -43,6 +40,8 @@ import { getPermissionsForMember } from "@/lib/rbac";
 import { getColors, spacing, radius, typography } from "@/lib/ui/theme";
 import { formatError } from "@/lib/ui/formatError";
 import { assertNoPrintAsync, wrapExportErrors } from "@/lib/pdf/exportContract";
+import { printHtmlToPdfFileAsync } from "@/lib/pdf/printHtmlToPdfFile";
+import { sharePdfAsync } from "@/lib/pdf/sharePdf";
 import { getSocietyLogoDataUri, getSocietyLogoUrl } from "@/lib/societyLogo";
 import { goBack } from "@/lib/navigation";
 
@@ -345,18 +344,14 @@ export default function TreasurerScreen() {
         currentBalancePence: summary.currentBalancePence,
       });
 
-      const { uri } = await Print.printToFileAsync({ html, base64: false });
-      const canShare = await Sharing.isAvailableAsync();
-      if (canShare) {
-        await Sharing.shareAsync(uri, {
-          mimeType: "application/pdf",
-          dialogTitle: "Society Financial Ledger",
-          UTI: "com.adobe.pdf",
-        });
-        return true;
-      }
-
-      throw new Error("Sharing is not available on this device.");
+      const { uri } = await printHtmlToPdfFileAsync({ html, base64: false });
+      await sharePdfAsync({
+        uri,
+        mimeType: "application/pdf",
+        dialogTitle: "Society Financial Ledger",
+        filename: "society-financial-ledger",
+      });
+      return true;
     });
 
     if (!exported) {

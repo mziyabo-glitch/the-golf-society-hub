@@ -12,7 +12,6 @@ import OOMShareCard, { type OOMShareRow } from "@/components/oom/OOMShareCard";
 import OOMResultsLogShareCard, { type EventLogData } from "@/components/oom/OOMResultsLogShareCard";
 import { spacing } from "@/lib/ui/theme";
 import { captureAndShare } from "@/lib/share/captureAndShare";
-import { assertPngExportOnly } from "@/lib/share/pngExportGuard";
 import { getOrderOfMeritTotals, getOrderOfMeritLog } from "@/lib/db_supabase/resultsRepo";
 import { getSociety } from "@/lib/db_supabase/societyRepo";
 import { getSocietyLogoDataUri, getSocietyLogoUrl } from "@/lib/societyLogo";
@@ -56,8 +55,6 @@ export default function OomShareScreen() {
       setError(null);
 
       try {
-        assertPngExportOnly("OOM export");
-
         const [society, totals, log] = await Promise.all([
           getSociety(societyId),
           getOrderOfMeritTotals(societyId),

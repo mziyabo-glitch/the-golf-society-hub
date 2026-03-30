@@ -54,6 +54,7 @@ import {
   deleteEventResultForMember,
   type EventResultDoc,
 } from "@/lib/db_supabase/resultsRepo";
+import { exportEventResultsPdf } from "@/lib/pdf/eventResultsPdf";
 import { invalidateCache, invalidateCachePrefix } from "@/lib/cache/clientCache";
 import { getPermissionsForMember } from "@/lib/rbac";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
@@ -280,10 +281,15 @@ export default function EventPointsScreen() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [saveNotice, setSaveNotice] = useState<{ type: "error" | "success" | "info"; message: string; detail?: string } | null>(null);
-  const [toast, setToast] = useState({ visible: false, message: "", type: "success" as const });
+  const [toast, setToast] = useState<{
+    visible: boolean;
+    message: string;
+    type: "success" | "error" | "info";
+  }>({ visible: false, message: "", type: "success" });
   const [showJointSocietyScopedCopy, setShowJointSocietyScopedCopy] = useState(false);
   const [jointPeerNamesLine, setJointPeerNamesLine] = useState<string | null>(null);
   const [editingMemberId, setEditingMemberId] = useState<string | null>(null);
+  const [exportingPdf, setExportingPdf] = useState(false);
   const saveAction = useAsyncAction();
 
   const permissions = getPermissionsForMember(currentMember);
@@ -599,6 +605,11 @@ export default function EventPointsScreen() {
     return { completed, total };
   }, [players]);
 
+  const savedResultCount = useMemo(
+    () => players.filter((p) => p.hasPersistedResult).length,
+    [players],
+  );
+
   const handleRemovePersistedResult = useCallback(
     (memberId: string, displayName: string, mergedResultMemberIds?: string[]) => {
       if (!guardPaidAction()) return;
@@ -847,6 +858,34 @@ export default function EventPointsScreen() {
     loadData,
   ]);
 
+  const handleExportPdf = useCallback(async () => {
+    if (!guardPaidAction()) return;
+    if (!eventId || !societyId) {
+      setToast({ visible: true, message: "Missing event or society — try again.", type: "error" });
+      return;
+    }
+    if (savedResultCount === 0) {
+      setToast({
+        visible: true,
+        message: "Save at least one result before exporting a PDF.",
+        type: "info",
+      });
+      return;
+    }
+    setExportingPdf(true);
+    try {
+      await exportEventResultsPdf(eventId, societyId);
+    } catch (e: any) {
+      setToast({
+        visible: true,
+        message: e?.message ?? "Could not create PDF. Try again.",
+        type: "error",
+      });
+    } finally {
+      setExportingPdf(false);
+    }
+  }, [eventId, societyId, guardPaidAction, savedResultCount]);
+
   // Loading state
   if (bootstrapLoading || loading) {
     return (
@@ -951,6 +990,17 @@ export default function EventPointsScreen() {
           {" Back"}
         </SecondaryButton>
         <View style={{ flex: 1 }} />
+        <SecondaryButton
+          onPress={() => void handleExportPdf()}
+          disabled={savedResultCount === 0 || exportingPdf}
+          loading={exportingPdf}
+          loadingLabel="PDF…"
+          size="sm"
+          style={{ marginRight: spacing.sm }}
+        >
+          <Feather name="share" size={16} color={colors.text} />
+          {" PDF"}
+        </SecondaryButton>
         <PrimaryButton
           onPress={handleSave}
           disabled={!saveReadiness.canSave}

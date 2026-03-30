@@ -7,7 +7,7 @@ import { useCallback, useContext, useEffect, useState, useMemo } from "react";
 import {
   StyleSheet,
   View,
-  Alert,
+  Modal,
   Pressable,
   ScrollView,
   useWindowDimensions,
@@ -20,7 +20,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 
 import { AppText } from "@/components/ui/AppText";
 import { SocietyLogoImage } from "@/components/ui/SocietyLogoImage";
-import { PrimaryButton } from "@/components/ui/Button";
+import { PrimaryButton, SecondaryButton } from "@/components/ui/Button";
 import { LoadingState } from "@/components/ui/LoadingState";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { SegmentedTabs } from "@/components/ui/SegmentedTabs";
@@ -36,8 +36,8 @@ import {
   type ResultsLogEntry,
 } from "@/lib/db_supabase/resultsRepo";
 import { getColors, spacing, typography } from "@/lib/ui/theme";
-import { assertPngExportOnly } from "@/lib/share/pngExportGuard";
 import { getSocietyLogoUrl } from "@/lib/societyLogo";
+import { exportOomPdf, exportOomResultsLogPdf } from "@/lib/pdf/oomPdf";
 
 
 // ============================================================================
@@ -125,7 +125,13 @@ export default function LeaderboardScreen() {
   const [loading, setLoading] = useState(true);
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
-  const [toast, setToast] = useState({ visible: false, message: "", type: "success" as const });
+  const [toast, setToast] = useState<{
+    visible: boolean;
+    message: string;
+    type: "success" | "error" | "info";
+  }>({ visible: false, message: "", type: "success" });
+  /** In-app share format picker (Alert is unreliable on web / can leave `exporting` stuck). */
+  const [shareTarget, setShareTarget] = useState<null | "leaderboard" | "matrix">(null);
 
   // Track which events are expanded in the accordion
   const [expandedEvents, setExpandedEvents] = useState<Set<string>>(new Set());
@@ -258,46 +264,64 @@ export default function LeaderboardScreen() {
     }
   };
 
-  // Share handlers
-  const handleShareLeaderboard = async () => {
+  const handleSharePress = () => {
     if (!guardPaidAction()) return;
-    if (standings.length === 0) {
-      Alert.alert("No Data", "No standings to share.");
-      return;
-    }
     if (!societyId) {
-      Alert.alert("Error", "Missing society ID.");
+      setToast({ visible: true, message: "Missing society — try again after refresh.", type: "error" });
       return;
     }
-
-    if (exporting) return;
-    setExporting(true);
-    assertPngExportOnly("OOM leaderboard");
-    console.log("[leaderboard] Export OOM leaderboard PNG");
-    router.push({
-      pathname: "/(share)/oom-share",
-      params: { societyId, view: "leaderboard" },
-    });
+    if (activeTab === "leaderboard") {
+      if (standings.length === 0) {
+        setToast({ visible: true, message: "No standings to share yet.", type: "info" });
+        return;
+      }
+      setShareTarget("leaderboard");
+      return;
+    }
+    if (activeTab === "resultsLog") {
+      if (resultsLog.length === 0) {
+        setToast({ visible: true, message: "No matrix results to share yet.", type: "info" });
+        return;
+      }
+      setShareTarget("matrix");
+    }
   };
 
-  const handleShareResultsLog = async () => {
-    if (!guardPaidAction()) return;
-    if (resultsLog.length === 0) {
-      Alert.alert("No Data", "No results to share.");
-      return;
+  const closeShareSheet = () => {
+    if (!exporting) setShareTarget(null);
+  };
+
+  const runSharePng = () => {
+    if (!societyId || !shareTarget) return;
+    const kind = shareTarget;
+    setShareTarget(null);
+    if (kind === "leaderboard") {
+      router.push({ pathname: "/(share)/oom-share", params: { societyId, view: "leaderboard" } });
+    } else {
+      router.push({ pathname: "/(share)/oom-share", params: { societyId, view: "log" } });
     }
-    if (!societyId) {
-      Alert.alert("Error", "Missing society ID.");
-      return;
-    }
-    if (exporting) return;
+  };
+
+  const runSharePdf = async () => {
+    if (!societyId || !shareTarget) return;
+    const kind = shareTarget;
+    setShareTarget(null);
     setExporting(true);
-    assertPngExportOnly("OOM results log");
-    console.log("[leaderboard] Export OOM results log PNG");
-    router.push({
-      pathname: "/(share)/oom-share",
-      params: { societyId, view: "log" },
-    });
+    try {
+      if (kind === "leaderboard") {
+        await exportOomPdf(societyId);
+      } else {
+        await exportOomResultsLogPdf(societyId);
+      }
+    } catch (e: any) {
+      setToast({
+        visible: true,
+        message: e?.message ?? "Couldn't create PDF. Try again.",
+        type: "error",
+      });
+    } finally {
+      setExporting(false);
+    }
   };
 
   // ============================================================================
@@ -385,7 +409,7 @@ export default function LeaderboardScreen() {
                 styles.shareButton,
                 { opacity: exporting ? 0.5 : pressed ? 0.7 : 1 },
               ]}
-              onPress={activeTab === "leaderboard" ? handleShareLeaderboard : handleShareResultsLog}
+              onPress={handleSharePress}
               disabled={exporting}
             >
               <Feather name="share" size={18} color="#0B6E4F" />
@@ -725,6 +749,42 @@ export default function LeaderboardScreen() {
           <AppText style={styles.footerText}>The Golf Society Hub</AppText>
         </View>
       </ScrollView>
+
+      <Modal
+        visible={shareTarget !== null}
+        transparent
+        animationType="fade"
+        onRequestClose={closeShareSheet}
+      >
+        <View style={styles.shareModalRoot}>
+          <Pressable
+            style={styles.shareModalBackdrop}
+            onPress={closeShareSheet}
+            accessibilityLabel="Dismiss"
+          />
+          <View style={styles.shareModalCard}>
+            <AppText style={styles.shareModalTitle}>
+              {shareTarget === "matrix" ? "Share results matrix" : "Share leaderboard"}
+            </AppText>
+            <AppText style={styles.shareModalBody}>
+              {shareTarget === "matrix"
+                ? "Image (PNG) shows the latest event only. PDF includes every OOM event in the matrix."
+                : "Image (PNG) works well for WhatsApp and social. PDF is best for printing and email."}
+            </AppText>
+            <View style={styles.shareModalActions}>
+              <PrimaryButton onPress={runSharePng} disabled={exporting} size="md">
+                Image (PNG)
+              </PrimaryButton>
+              <PrimaryButton onPress={runSharePdf} disabled={exporting} size="md">
+                PDF
+              </PrimaryButton>
+              <SecondaryButton onPress={closeShareSheet} disabled={exporting} size="md">
+                Cancel
+              </SecondaryButton>
+            </View>
+          </View>
+        </View>
+      </Modal>
 
       <LicenceRequiredModal visible={modalVisible} onClose={() => setModalVisible(false)} societyId={guardSocietyId} />
     </SafeAreaView>
@@ -1125,6 +1185,45 @@ const styles = StyleSheet.create({
   footerText: {
     fontSize: typography.small.fontSize,
     color: "#9CA3AF",
+  },
+
+  shareModalRoot: {
+    flex: 1,
+    justifyContent: "center",
+    padding: spacing.md,
+    backgroundColor: "rgba(17, 24, 39, 0.5)",
+  },
+  shareModalBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  shareModalCard: {
+    backgroundColor: "#FFFFFF",
+    borderRadius: 16,
+    padding: spacing.lg,
+    maxWidth: 400,
+    width: "100%",
+    alignSelf: "center",
+    zIndex: 1,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.12,
+    shadowRadius: 16,
+    elevation: 8,
+  },
+  shareModalTitle: {
+    fontSize: 18,
+    fontWeight: "700",
+    color: "#111827",
+    marginBottom: spacing.sm,
+  },
+  shareModalBody: {
+    fontSize: 14,
+    color: "#6B7280",
+    marginBottom: spacing.lg,
+    lineHeight: 20,
+  },
+  shareModalActions: {
+    gap: spacing.sm,
   },
 
 });

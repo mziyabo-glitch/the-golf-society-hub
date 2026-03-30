@@ -8,8 +8,6 @@
  * - WHS handicap calculations with gender-based tee selection
  */
 
-import * as Print from "expo-print";
-import * as Sharing from "expo-sharing";
 import { type ManCoDetails } from "./db_supabase/memberRepo";
 import {
   calcCourseHandicap,
@@ -26,6 +24,8 @@ import {
   type PlayerGroup,
 } from "./teeSheetGrouping";
 import { assertNoPrintAsync } from "./pdf/exportContract";
+import { printHtmlToPdfFileAsync } from "./pdf/printHtmlToPdfFile";
+import { sharePdfAsync } from "./pdf/sharePdf";
 import { getSocietyLogoDataUri, getSocietyLogoUrl } from "./societyLogo";
 
 export type TeeSheetPlayer = {
@@ -542,22 +542,22 @@ export async function generateTeeSheetPdf(data: TeeSheetData): Promise<boolean> 
 
     const html = generateTeeSheetHTML(data, logoSrc, jointLogoSrcs);
 
-    const { uri } = await Print.printToFileAsync({
+    const { uri } = await printHtmlToPdfFileAsync({
       html,
       base64: false,
     });
 
     console.log("[teeSheetPdf] PDF file created at:", uri);
 
-    const canShare = await Sharing.isAvailableAsync();
-    if (!canShare) {
-      throw new Error("Sharing is not available on this device.");
-    }
-
-    await Sharing.shareAsync(uri, {
+    const safeName = String(data.eventName ?? "tee-sheet")
+      .trim()
+      .replace(/[/\\?%*:|"<>]/g, "-")
+      .slice(0, 80);
+    await sharePdfAsync({
+      uri,
       mimeType: "application/pdf",
       dialogTitle: `Tee Sheet - ${data.eventName}`,
-      UTI: "com.adobe.pdf",
+      filename: `tee-sheet-${safeName || "event"}`,
     });
 
     return true;
