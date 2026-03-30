@@ -60,97 +60,179 @@ export type OomMatrixPdfPayload = {
   generatedAt: string;
 };
 
-/** Print-safe OOM report: compact header, dense table, one-line footer (no podium / UI chrome). */
+/**
+ * Order of Merit PDF — one dense A4 page for typical field sizes: logo + readable standings table.
+ * Uses table-based header (no flex) for consistent WebView / jsPDF rendering.
+ */
 export function buildOrderOfMeritPdfHtml(p: OrderOfMeritPdfPayload): string {
+  const logo = buildPdfLogoImg(p.logoUrl, p.societyName);
+
   const css = `
 @page {
   size: A4 portrait;
-  margin: 10mm;
+  margin: 8mm 10mm;
 }
 
 * {
   box-sizing: border-box;
 }
 
-body {
-  font-family: Arial, Helvetica, sans-serif;
+html, body {
   margin: 0;
   padding: 0;
-  font-size: 10.5px;
-  color: #111;
+  width: 100%;
+  max-width: 100%;
 }
 
-.header {
-  margin-bottom: 6px;
-}
-
-.title {
-  font-size: 14px;
-  font-weight: 700;
-  margin: 0;
-}
-
-.meta {
+body {
+  font-family: Arial, Helvetica, sans-serif;
   font-size: 9px;
-  color: #555;
-  margin: 2px 0 0 0;
+  line-height: 1.22;
+  color: #0f172a;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
 }
 
-table {
+.pdf-root.doc {
+  width: 100%;
+  max-width: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+.head-wrap {
+  width: 100%;
+  max-width: 100%;
+  margin: 0 0 6px 0;
+  border-bottom: 2px solid #0f172a;
+  padding-bottom: 6px;
+}
+
+.head-table {
   width: 100%;
   border-collapse: collapse;
   table-layout: fixed;
 }
 
-th, td {
-  border-bottom: 1px solid #ddd;
-  padding: 4px 4px;
-  text-align: left;
+.head-logo {
+  width: 52px;
+  vertical-align: top;
+  padding: 0 8px 0 0;
+}
+
+.head-logo img {
+  display: block;
+  width: 48px;
+  height: 48px;
+  object-fit: contain;
+  object-position: center;
+}
+
+.head-text {
+  vertical-align: top;
+}
+
+.title {
+  font-size: 15px;
+  font-weight: 700;
+  margin: 0 0 2px 0;
+  letter-spacing: -0.02em;
+  color: #0f172a;
+}
+
+.meta {
+  font-size: 8.5px;
+  color: #475569;
+  margin: 0;
+  line-height: 1.25;
+}
+
+.meta + .meta {
+  margin-top: 2px;
+}
+
+.standings {
+  width: 100%;
+  max-width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+  border: 1px solid #cbd5e1;
+  font-size: 9px;
+}
+
+.standings thead {
+  display: table-header-group;
+}
+
+.standings th,
+.standings td {
+  min-width: 0;
+  padding: 2px 6px;
+  border-bottom: 1px solid #e2e8f0;
+  vertical-align: middle;
+}
+
+.standings thead th {
+  background: #0f172a;
+  color: #ffffff;
+  font-size: 8px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  border-bottom: none;
+  padding: 4px 5px;
+}
+
+.standings tbody tr:nth-child(even) {
+  background: #f8fafc;
+}
+
+.standings .c-pos {
+  width: 10%;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
   white-space: nowrap;
+}
+
+.standings .c-player {
+  width: 58%;
+  text-align: left;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-th {
-  font-size: 9px;
-  font-weight: 600;
-  text-transform: uppercase;
-  color: #666;
-}
-
-td.num {
-  text-align: right;
-}
-
-td.pos {
-  width: 8%;
-}
-
-td.player {
-  width: 60%;
-}
-
-td.events {
+.standings .c-ev {
   width: 12%;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
-td.points {
+.standings .c-pts {
   width: 20%;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  white-space: nowrap;
+  color: #0b6e4f;
+}
+
+.standings tbody td.c-pts.muted {
+  color: #64748b;
+  font-weight: 500;
 }
 
 .footer {
-  margin-top: 6px;
-  font-size: 9px;
-  color: #666;
+  margin-top: 5px;
+  font-size: 8px;
+  color: #64748b;
+  line-height: 1.2;
 }
 `;
 
   const line2 = `${escapePdfHtml(p.societyName)} · ${p.seasonYear}`;
-  const eventBit =
-    p.oomEventCount > 0
-      ? `${p.oomEventCount} event${p.oomEventCount !== 1 ? "s" : ""}`
-      : "0 events";
-  const line3 = `${escapePdfHtml(p.seasonSubtitle)} · ${eventBit} · Generated ${escapePdfHtml(p.generatedAt)}`;
+  const line3 = `${escapePdfHtml(p.seasonSubtitle)} · Generated ${escapePdfHtml(p.generatedAt)}`;
 
   const footerLine = `${p.totalMembers} members · ${p.membersWithPoints} with OOM points · Generated ${escapePdfHtml(p.generatedAt)}`;
 
@@ -168,34 +250,37 @@ td.points {
         row.totalPoints > 0 || row.hasOomPoints
           ? formatPdfNumber(row.totalPoints)
           : "—";
+      const ptsClass =
+        !row.hasOomPoints && row.totalPoints === 0 ? "c-pts muted" : "c-pts";
       return `<tr>
-        <td class="pos">${pos}</td>
-        <td class="player">${escapePdfHtml(row.memberName)}</td>
-        <td class="events num">${row.eventsPlayed}</td>
-        <td class="points num">${pts}</td>
+        <td class="c-pos">${pos}</td>
+        <td class="c-player">${escapePdfHtml(row.memberName)}</td>
+        <td class="c-ev">${row.eventsPlayed}</td>
+        <td class="${ptsClass}">${pts}</td>
       </tr>`;
     })
     .join("");
 
   const inner = `
-<div class="header">
-  <h1 class="title">Order of Merit</h1>
-  <p class="meta">${line2}</p>
-  <p class="meta">${line3}</p>
+<div class="head-wrap">
+  <table class="head-table" role="presentation">
+    <tr>
+      <td class="head-logo">${logo ? logo : "&nbsp;"}</td>
+      <td class="head-text">
+        <h1 class="title">Order of Merit</h1>
+        <p class="meta">${line2}</p>
+        <p class="meta">${line3}</p>
+      </td>
+    </tr>
+  </table>
 </div>
-<table>
-  <colgroup>
-    <col style="width:8%" />
-    <col style="width:60%" />
-    <col style="width:12%" />
-    <col style="width:20%" />
-  </colgroup>
+<table class="standings">
   <thead>
     <tr>
-      <th>Pos</th>
-      <th>Player</th>
-      <th>Events</th>
-      <th>Points</th>
+      <th class="c-pos" style="width:10%">Pos</th>
+      <th class="c-player" style="width:58%">Player</th>
+      <th class="c-ev" style="width:12%">Ev</th>
+      <th class="c-pts" style="width:20%">Pts</th>
     </tr>
   </thead>
   <tbody>${rowsHtml}</tbody>
