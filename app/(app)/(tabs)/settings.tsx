@@ -28,6 +28,7 @@ import {
   type LogoDiagnostics,
 } from "@/lib/societyLogo";
 import { getColors, spacing, radius, typography } from "@/lib/ui/theme";
+import { TextSizeSettingsSection } from "@/components/ui/TextSizeSettingsSection";
 import { confirmDestructive, showAlert } from "@/lib/ui/alert";
 import { getSupabaseEnv, getSupabaseProjectRefSuffix } from "@/lib/supabaseEnv";
 import { isPlatformAdmin, listSocieties, reappointCaptain, type AdminSocietyRow } from "@/lib/db_supabase/adminRepo";
@@ -375,6 +376,8 @@ export default function SettingsScreen() {
           </Pressable>
         </AppCard>
 
+        <TextSizeSettingsSection />
+
         <AppText variant="h2" style={styles.sectionTitle}>Society</AppText>
         <AppCard padding="sm">
           <Pressable
@@ -474,6 +477,8 @@ export default function SettingsScreen() {
           <Feather name="chevron-right" size={18} color={colors.textTertiary} />
         </Pressable>
       </AppCard>
+
+      <TextSizeSettingsSection />
 
       <AppText variant="h2" style={styles.sectionTitle}>Legal</AppText>
       <AppCard padding="sm">

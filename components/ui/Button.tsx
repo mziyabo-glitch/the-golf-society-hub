@@ -13,7 +13,7 @@
 import { ReactNode } from "react";
 import { Pressable, StyleSheet, View, ViewStyle, ActivityIndicator } from "react-native";
 import { AppText } from "./AppText";
-import { getColors, radius, spacing, buttonHeights, typography } from "@/lib/ui/theme";
+import { getColors, radius, spacing, buttonHeights } from "@/lib/ui/theme";
 import { blurWebActiveElement } from "@/lib/ui/focus";
 
 type ButtonProps = {
@@ -216,14 +216,10 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: spacing.sm,
   },
-  loadingLabelText: {
-    ...typography.button,
-  },
+  loadingLabelText: {},
   icon: {
     alignItems: "center",
     justifyContent: "center",
   },
-  buttonText: {
-    ...typography.button,
-  },
+  buttonText: {},
 });

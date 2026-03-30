@@ -4,7 +4,8 @@
  */
 
 import { Text, TextProps, TextStyle, StyleProp } from "react-native";
-import { getColors, typography } from "@/lib/ui/theme";
+import { getColors } from "@/lib/ui/theme";
+import { useFontScale } from "@/lib/ui/fontScaleContext";
 
 export type TextVariant =
   | "title"
@@ -33,7 +34,8 @@ export function AppText({
   ...textProps
 }: AppTextProps) {
   const colors = getColors();
-  
+  const { typography } = useFontScale();
+
   const colorMap: Record<typeof color, string> = {
     primary: colors.primary,
     secondary: colors.textSecondary,
@@ -45,7 +47,7 @@ export function AppText({
   return (
     <Text
       style={[
-        typography[variant],
+        typography[variant] as TextStyle,
         { color: colorMap[color] },
         style,
       ]}

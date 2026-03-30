@@ -3,6 +3,8 @@
  * Light and dark theme support with consistent spacing, typography, and colors
  */
 
+import type { TextStyle } from "react-native";
+
 export type ThemeMode = "light" | "dark";
 
 export const colors = {
@@ -118,86 +120,95 @@ export const premiumTokens = {
   },
 } as const;
 
-// Typography — increased for 40+ readability, mobile-first premium scale
-// ~12–15% larger than previous; line heights ~1.4x for comfortable reading
+// Typography — tuned for 45+ / 50+ readability; line heights ~1.45× font size
+// Optional extra scale via Settings → Text size (fontScaleContext)
 export const typography = {
-  // pageTitle: hero headings, event names (was 20 → 24)
   title: {
-    fontSize: 24,
-    fontWeight: "700" as const,
-    lineHeight: 30,
-    letterSpacing: -0.2,
-  },
-  // h1: large section headings (was 18 → 22)
-  h1: {
-    fontSize: 22,
-    fontWeight: "700" as const,
-    lineHeight: 28,
-    letterSpacing: -0.15,
-  },
-  // h2 / sectionTitle: card headers, section labels (was 15 → 18)
-  h2: {
-    fontSize: 18,
-    fontWeight: "700" as const,
-    lineHeight: 24,
-    letterSpacing: -0.08,
-  },
-  // body: primary readable text (was 13 → 16)
-  body: {
-    fontSize: 16,
-    fontWeight: "500" as const,
-    lineHeight: 24,
-    letterSpacing: 0,
-  },
-  // bodyBold: emphasized body, member names (was 14 → 17)
-  bodyBold: {
-    fontSize: 17,
-    fontWeight: "700" as const,
-    lineHeight: 24,
-    letterSpacing: 0,
-  },
-  // caption: secondary info lines (was 12.5 → 15)
-  caption: {
-    fontSize: 15,
-    fontWeight: "500" as const,
-    lineHeight: 21,
-    letterSpacing: 0,
-  },
-  // captionBold: labels, card sub-headers (was 12.5 → 15)
-  captionBold: {
-    fontSize: 15,
-    fontWeight: "700" as const,
-    lineHeight: 21,
-    letterSpacing: 0,
-  },
-  // small / meta: helper text, timestamps, badges (was 12 → 14)
-  small: {
-    fontSize: 14,
-    fontWeight: "500" as const,
-    lineHeight: 20,
-    letterSpacing: 0,
-  },
-  // display: key numbers (tee times, OOM points) — 800 weight
-  display: {
     fontSize: 26,
-    fontWeight: "800" as const,
+    fontWeight: "700" as const,
     lineHeight: 32,
     letterSpacing: -0.2,
   },
-  // button (was 14 → 16)
-  button: {
+  h1: {
+    fontSize: 24,
+    fontWeight: "700" as const,
+    lineHeight: 30,
+    letterSpacing: -0.15,
+  },
+  h2: {
+    fontSize: 19,
+    fontWeight: "700" as const,
+    lineHeight: 26,
+    letterSpacing: -0.08,
+  },
+  body: {
+    fontSize: 17,
+    fontWeight: "500" as const,
+    lineHeight: 25,
+    letterSpacing: 0,
+  },
+  bodyBold: {
+    fontSize: 18,
+    fontWeight: "700" as const,
+    lineHeight: 26,
+    letterSpacing: 0,
+  },
+  caption: {
     fontSize: 16,
-    fontWeight: "600" as const,
+    fontWeight: "500" as const,
+    lineHeight: 23,
+    letterSpacing: 0,
+  },
+  captionBold: {
+    fontSize: 16,
+    fontWeight: "700" as const,
+    lineHeight: 23,
+    letterSpacing: 0,
+  },
+  small: {
+    fontSize: 15,
+    fontWeight: "500" as const,
     lineHeight: 22,
     letterSpacing: 0,
   },
-  buttonLarge: {
-    fontSize: 18,
-    fontWeight: "700" as const,
+  display: {
+    fontSize: 28,
+    fontWeight: "800" as const,
+    lineHeight: 34,
+    letterSpacing: -0.2,
+  },
+  button: {
+    fontSize: 17,
+    fontWeight: "600" as const,
     lineHeight: 24,
     letterSpacing: 0,
   },
+  buttonLarge: {
+    fontSize: 19,
+    fontWeight: "700" as const,
+    lineHeight: 26,
+    letterSpacing: 0,
+  },
 } as const;
+
+export type TypographyTokens = typeof typography;
+export type TypographyVariant = keyof TypographyTokens;
+
+/** Scales font sizes and line heights for accessibility (Settings → Text size). */
+export function scaleTypography(multiplier: number): TypographyTokens {
+  if (multiplier === 1) return typography;
+  const keys = Object.keys(typography) as TypographyVariant[];
+  const out = {} as Record<TypographyVariant, TextStyle>;
+  for (const key of keys) {
+    const t = typography[key];
+    out[key] = {
+      ...t,
+      fontSize: Math.round(t.fontSize * multiplier * 10) / 10,
+      lineHeight: Math.round(t.lineHeight * multiplier * 10) / 10,
+    };
+  }
+  return out as TypographyTokens;
+}
 
 // Shadows (iOS-style elevation)
 export const shadows = {

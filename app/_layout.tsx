@@ -9,6 +9,7 @@ import { AppCard } from "@/components/ui/AppCard";
 import { AppText } from "@/components/ui/AppText";
 import { PrimaryButton } from "@/components/ui/Button";
 import { getColors, spacing } from "@/lib/ui/theme";
+import { FontScaleProvider } from "@/lib/ui/fontScaleContext";
 import { consumePendingInviteToken } from "@/lib/sinbookInviteToken";
 import { consumePendingRivalryJoinCode } from "@/lib/pendingRivalryJoinCode";
 import { consumePendingSocietyJoinCode } from "@/lib/pendingSocietyJoinCode";
@@ -293,8 +294,10 @@ function RootNavigator() {
 
 export default function RootLayout() {
   return (
-    <BootstrapProvider>
-      <RootNavigator />
-    </BootstrapProvider>
+    <FontScaleProvider>
+      <BootstrapProvider>
+        <RootNavigator />
+      </BootstrapProvider>
+    </FontScaleProvider>
   );
 }

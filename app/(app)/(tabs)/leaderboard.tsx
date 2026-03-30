@@ -35,7 +35,8 @@ import {
   type OrderOfMeritEntry,
   type ResultsLogEntry,
 } from "@/lib/db_supabase/resultsRepo";
-import { getColors, spacing, typography } from "@/lib/ui/theme";
+import { getColors, spacing, type TypographyTokens } from "@/lib/ui/theme";
+import { useScaledTypography } from "@/lib/ui/fontScaleContext";
 import { getSocietyLogoUrl } from "@/lib/societyLogo";
 import { exportOomPdf, exportOomResultsLogPdf } from "@/lib/pdf/oomPdf";
 
@@ -106,6 +107,9 @@ const glassStyles = StyleSheet.create({
 type TabType = "leaderboard" | "resultsLog" | "honour";
 
 export default function LeaderboardScreen() {
+  const scaledTypography = useScaledTypography();
+  const styles = useMemo(() => makeLeaderboardStyles(scaledTypography), [scaledTypography]);
+
   const { society, societyId, loading: bootstrapLoading } = useBootstrap();
   const { needsLicence, guardPaidAction, modalVisible, setModalVisible, societyId: guardSocietyId } = usePaidAccess();
   const router = useRouter();
@@ -795,7 +799,8 @@ export default function LeaderboardScreen() {
 // STYLES
 // ============================================================================
 
-const styles = StyleSheet.create({
+function makeLeaderboardStyles(typography: TypographyTokens) {
+  return StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: "#F7F8FA",
@@ -1226,4 +1231,5 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
   },
 
-});
+  });
+}

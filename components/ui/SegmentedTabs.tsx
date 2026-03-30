@@ -4,8 +4,9 @@
  */
 
 import { StyleSheet, View, Pressable, Text } from "react-native";
-import { ReactNode } from "react";
-import { getColors, spacing, typography } from "@/lib/ui/theme";
+import { ReactNode, useMemo } from "react";
+import { getColors, spacing } from "@/lib/ui/theme";
+import { useScaledTypography } from "@/lib/ui/fontScaleContext";
 
 export type SegmentedTabItem<T extends string> = {
   id: T;
@@ -20,7 +21,7 @@ type SegmentedTabsProps<T extends string> = {
 };
 
 const CONTAINER_BG = "#EEF1F4";
-const TAB_HEIGHT = 40;
+const TAB_HEIGHT = 44;
 const TAB_PADDING_H = 10;
 const TAB_RADIUS = 14;
 const CONTAINER_RADIUS = 16;
@@ -31,6 +32,12 @@ export function SegmentedTabs<T extends string>({
   onSelect,
 }: SegmentedTabsProps<T>) {
   const colors = getColors();
+  const typo = useScaledTypography();
+
+  const tabMetrics = useMemo(() => {
+    const h = Math.max(40, typo.button.lineHeight + 16);
+    return { height: h, minHeight: h, fontSize: typo.button.fontSize, lineHeight: typo.button.lineHeight };
+  }, [typo]);
 
   return (
     <View style={styles.container}>
@@ -54,6 +61,8 @@ export function SegmentedTabs<T extends string>({
               style={[
                 styles.label,
                 {
+                  fontSize: tabMetrics.fontSize,
+                  lineHeight: tabMetrics.lineHeight,
                   color: isSelected ? colors.text : colors.textSecondary,
                   fontWeight: isSelected ? "600" : "500",
                 },
@@ -90,7 +99,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: TAB_PADDING_H,
     paddingVertical: 0,
     minHeight: TAB_HEIGHT,
-    height: TAB_HEIGHT,
     borderRadius: TAB_RADIUS,
   },
   tabSelected: {
@@ -102,7 +110,6 @@ const styles = StyleSheet.create({
     elevation: 2,
   },
   label: {
-    fontSize: typography.button.fontSize,
     textAlign: "center",
   },
 });
