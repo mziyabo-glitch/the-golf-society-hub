@@ -61,16 +61,15 @@ export type OomMatrixPdfPayload = {
 };
 
 /**
- * Order of Merit PDF — one dense A4 page for typical field sizes: logo + readable standings table.
- * Uses table-based header (no flex) for consistent WebView / jsPDF rendering.
+ * Order of Merit PDF — strict print mode: minimal header, dense table, natural page breaks.
+ * No logo, cards, or decorative chrome. `seasonSubtitle` already includes season + event count;
+ * do not append `oomEventCount` again (avoids "1 event · 1 event").
  */
 export function buildOrderOfMeritPdfHtml(p: OrderOfMeritPdfPayload): string {
-  const logo = buildPdfLogoImg(p.logoUrl, p.societyName);
   const uniqueRows = p.standings.filter((row, idx, arr) => {
     const id = String(row.memberId);
     return arr.findIndex((item) => String(item.memberId) === id) === idx;
   });
-  const isDense = uniqueRows.length >= 30;
 
   const css = `
 @page {
@@ -91,9 +90,9 @@ html, body {
 
 body {
   font-family: Arial, Helvetica, sans-serif;
-  font-size: 8.6px;
-  line-height: 1.18;
-  color: #0f172a;
+  font-size: 10px;
+  line-height: 1.2;
+  color: #111;
   -webkit-print-color-adjust: exact;
   print-color-adjust: exact;
 }
@@ -105,57 +104,27 @@ body {
   padding: 0;
 }
 
-.head-wrap {
-  width: 100%;
-  max-width: 100%;
-  margin: 0 0 5px 0;
-  border: 1px solid #dbe3ee;
-  border-left: 3px solid #0b6e4f;
-  border-radius: 4px;
-  padding: 5px 6px;
-  background: #f8fbff;
+.print-header {
+  margin: 0 0 4px 0;
+  padding: 0;
 }
 
-.head-table {
-  width: 100%;
-  border-collapse: collapse;
-  table-layout: fixed;
-}
-
-.head-logo {
-  width: 42px;
-  vertical-align: top;
-  padding: 0 6px 0 0;
-}
-
-.head-logo img {
-  display: block;
-  width: 36px;
-  height: 36px;
-  object-fit: contain;
-  object-position: center;
-}
-
-.head-text {
-  vertical-align: top;
-}
-
-.title {
+.print-header .title {
   font-size: 13px;
   font-weight: 700;
-  margin: 0 0 1px 0;
-  letter-spacing: -0.02em;
-  color: #0f172a;
+  margin: 0;
+  line-height: 1.2;
+  color: #111;
 }
 
-.meta {
-  font-size: 7.8px;
-  color: #475569;
+.print-header .meta {
+  font-size: 9px;
+  color: #555;
   margin: 0;
   line-height: 1.2;
 }
 
-.meta + .meta {
+.print-header .meta + .meta {
   margin-top: 1px;
 }
 
@@ -164,35 +133,34 @@ body {
   max-width: 100%;
   border-collapse: collapse;
   table-layout: fixed;
-  border: 1px solid #cbd5e1;
-  font-size: 8.35px;
+  font-size: 10px;
+  line-height: 1.2;
 }
 
 .standings thead {
   display: table-header-group;
 }
 
+.standings tbody tr {
+  page-break-inside: auto;
+  break-inside: auto;
+}
+
 .standings th,
 .standings td {
   min-width: 0;
-  padding: 1.8px 5px;
-  border-bottom: 1px solid #e2e8f0;
+  padding: 3px;
+  border-bottom: 1px solid #ccc;
   vertical-align: middle;
+  line-height: 1.2;
 }
 
 .standings thead th {
-  background: #0f172a;
-  color: #ffffff;
-  font-size: 7.3px;
-  font-weight: 700;
+  font-size: 9px;
+  font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 0.06em;
-  border-bottom: none;
-  padding: 3.5px 5px;
-}
-
-.standings tbody tr:nth-child(even) {
-  background: #f8fafc;
+  color: #444;
+  border-bottom: 1px solid #999;
 }
 
 .standings .c-pos {
@@ -221,42 +189,23 @@ body {
   width: 20%;
   text-align: right;
   font-variant-numeric: tabular-nums;
-  font-weight: 600;
   white-space: nowrap;
-  color: #0b6e4f;
 }
 
 .standings tbody td.c-pts.muted {
-  color: #64748b;
-  font-weight: 500;
-}
-
-.standings.dense {
-  font-size: 7.9px;
-}
-
-.standings.dense th,
-.standings.dense td {
-  padding-top: 1.2px;
-  padding-bottom: 1.2px;
-}
-
-.standings.dense thead th {
-  font-size: 7px;
-  padding-top: 3px;
-  padding-bottom: 3px;
+  color: #666;
 }
 
 .footer {
   margin-top: 4px;
-  font-size: 7.5px;
-  color: #64748b;
-  line-height: 1.15;
+  font-size: 9px;
+  color: #666;
+  line-height: 1.2;
 }
 `;
 
   const line2 = `${escapePdfHtml(p.societyName)} · ${p.seasonYear}`;
-  const line3 = `${p.oomEventCount} OOM event${p.oomEventCount !== 1 ? "s" : ""} · Generated ${escapePdfHtml(p.generatedAt)}`;
+  const line3 = `${escapePdfHtml(p.seasonSubtitle)} · Generated ${escapePdfHtml(p.generatedAt)}`;
 
   const footerLine = `${p.totalMembers} members · ${p.membersWithPoints} with OOM points · Generated ${escapePdfHtml(p.generatedAt)}`;
   const rowsHtml = uniqueRows
@@ -278,19 +227,12 @@ body {
     .join("");
 
   const inner = `
-<div class="head-wrap">
-  <table class="head-table" role="presentation">
-    <tr>
-      <td class="head-logo">${logo ? logo : "&nbsp;"}</td>
-      <td class="head-text">
-        <h1 class="title">Order of Merit</h1>
-        <p class="meta">${line2}</p>
-        <p class="meta">${line3}</p>
-      </td>
-    </tr>
-  </table>
+<div class="print-header">
+  <div class="title">Order of Merit</div>
+  <div class="meta">${line2}</div>
+  <div class="meta">${line3}</div>
 </div>
-<table class="standings${isDense ? " dense" : ""}">
+<table class="standings">
   <thead>
     <tr>
       <th class="c-pos" style="width:10%">Pos</th>
