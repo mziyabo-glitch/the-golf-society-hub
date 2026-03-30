@@ -14,7 +14,6 @@ import { getSocietyLogoDataUri, getSocietyLogoUrl } from "@/lib/societyLogo";
 import {
   buildPdfDocumentShell,
   buildPremiumPdfCss,
-  buildOomCompactPrintCss,
   buildPdfLogoImg,
   escapePdfHtml,
   formatPdfGenerationTimestamp,
@@ -61,29 +60,99 @@ export type OomMatrixPdfPayload = {
   generatedAt: string;
 };
 
-/** Build full HTML document for season Order of Merit (podium + full field table). */
+/** Print-safe OOM report: compact header, dense table, one-line footer (no podium / UI chrome). */
 export function buildOrderOfMeritPdfHtml(p: OrderOfMeritPdfPayload): string {
-  const css = buildPremiumPdfCss(buildOomCompactPrintCss());
-  const logo = buildPdfLogoImg(p.logoUrl, p.societyName);
+  const css = `
+@page {
+  size: A4 portrait;
+  margin: 10mm;
+}
 
-  const headerMetaLine = [
-    escapePdfHtml(p.societyName),
-    escapePdfHtml(p.seasonSubtitle),
+* {
+  box-sizing: border-box;
+}
+
+body {
+  font-family: Arial, Helvetica, sans-serif;
+  margin: 0;
+  padding: 0;
+  font-size: 10.5px;
+  color: #111;
+}
+
+.header {
+  margin-bottom: 6px;
+}
+
+.title {
+  font-size: 14px;
+  font-weight: 700;
+  margin: 0;
+}
+
+.meta {
+  font-size: 9px;
+  color: #555;
+  margin: 2px 0 0 0;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+th, td {
+  border-bottom: 1px solid #ddd;
+  padding: 4px 4px;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+th {
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: uppercase;
+  color: #666;
+}
+
+td.num {
+  text-align: right;
+}
+
+td.pos {
+  width: 8%;
+}
+
+td.player {
+  width: 60%;
+}
+
+td.events {
+  width: 12%;
+}
+
+td.points {
+  width: 20%;
+}
+
+.footer {
+  margin-top: 6px;
+  font-size: 9px;
+  color: #666;
+}
+`;
+
+  const line2 = `${escapePdfHtml(p.societyName)} · ${p.seasonYear}`;
+  const eventBit =
     p.oomEventCount > 0
-      ? `${p.oomEventCount} OOM event${p.oomEventCount !== 1 ? "s" : ""}`
-      : null,
-  ]
-    .filter(Boolean)
-    .join(" · ");
+      ? `${p.oomEventCount} event${p.oomEventCount !== 1 ? "s" : ""}`
+      : "0 events";
+  const line3 = `${escapePdfHtml(p.seasonSubtitle)} · ${eventBit} · Generated ${escapePdfHtml(p.generatedAt)}`;
 
-  const footerStatsLine = [
-    `${p.totalMembers} members`,
-    `${p.membersWithPoints} with OOM points`,
-    `${p.oomEventCount} OOM event${p.oomEventCount !== 1 ? "s" : ""}`,
-    `Generated ${escapePdfHtml(p.generatedAt)}`,
-  ].join(" · ");
-
-  const podiumHtml = buildPodiumHtml(p.leadersTop3);
+  const footerLine = `${p.totalMembers} members · ${p.membersWithPoints} with OOM points · Generated ${escapePdfHtml(p.generatedAt)}`;
 
   const seenMember = new Set<string>();
   const rowsHtml = p.standings
@@ -96,91 +165,48 @@ export function buildOrderOfMeritPdfHtml(p: OrderOfMeritPdfPayload): string {
     .map((row) => {
       const pos = row.rank;
       const pts =
-        row.totalPoints > 0
+        row.totalPoints > 0 || row.hasOomPoints
           ? formatPdfNumber(row.totalPoints)
-          : row.hasOomPoints
-            ? formatPdfNumber(row.totalPoints)
-            : "—";
-      const muted = !row.hasOomPoints && row.totalPoints === 0 ? "muted" : "";
-      return `<tr${muted ? ` class="${muted}"` : ""}>
-        <td class="num col-pos">${pos}</td>
-        <td class="col-player">${escapePdfHtml(row.memberName)}</td>
-        <td class="num col-events">${row.eventsPlayed}</td>
-        <td class="num rt col-pts">${pts}</td>
+          : "—";
+      return `<tr>
+        <td class="pos">${pos}</td>
+        <td class="player">${escapePdfHtml(row.memberName)}</td>
+        <td class="events num">${row.eventsPlayed}</td>
+        <td class="points num">${pts}</td>
       </tr>`;
     })
     .join("");
 
   const inner = `
-  <header class="doc-header doc-header--oom">
-    ${logo ? `<div class="doc-logo-wrap">${logo}</div>` : ""}
-    <div class="doc-header-main">
-      <div class="doc-brand-kicker">The Golf Society Hub</div>
-      <h1 class="doc-title">Order of Merit</h1>
-      <p class="doc-meta doc-meta--oom-line">${headerMetaLine}</p>
-    </div>
-  </header>
-
-  ${podiumHtml}
-
-  <div class="table-wrap table-wrap--oom">
-    <table class="sheet sheet--oom">
-      <thead>
-        <tr>
-          <th class="num col-pos">Pos</th>
-          <th class="col-player">Player</th>
-          <th class="num col-events">Ev</th>
-          <th class="num rt col-pts">Pts</th>
-        </tr>
-      </thead>
-      <tbody>${rowsHtml}</tbody>
-    </table>
-  </div>
-
-  <footer class="doc-footer doc-footer--oom">
-    ${footerStatsLine} · <span class="brand">The Golf Society Hub</span>
-  </footer>`;
+<div class="header">
+  <h1 class="title">Order of Merit</h1>
+  <p class="meta">${line2}</p>
+  <p class="meta">${line3}</p>
+</div>
+<table>
+  <colgroup>
+    <col style="width:8%" />
+    <col style="width:60%" />
+    <col style="width:12%" />
+    <col style="width:20%" />
+  </colgroup>
+  <thead>
+    <tr>
+      <th>Pos</th>
+      <th>Player</th>
+      <th>Events</th>
+      <th>Points</th>
+    </tr>
+  </thead>
+  <tbody>${rowsHtml}</tbody>
+</table>
+<p class="footer">${footerLine}</p>`;
 
   return buildPdfDocumentShell({
     title: `Order of Merit — ${p.societyName}`,
     css,
     bodyInnerHtml: inner,
-    rootClass: "pdf-root--oom",
   });
-}
-
-function buildPodiumHtml(leaders: OomLeaderPodiumSlot[]): string {
-  if (leaders.length === 0) return "";
-
-  /** DOM order left-to-right: 2nd, 1st, 3rd — no flex `order` (breaks html2canvas). */
-  const layout: { slot: OomLeaderPodiumSlot; cls: string; medal: string }[] =
-    leaders.length >= 3
-      ? [
-          { slot: leaders[1], cls: "podium-slot--second", medal: "🥈" },
-          { slot: leaders[0], cls: "podium-slot--first", medal: "🥇" },
-          { slot: leaders[2], cls: "podium-slot--third", medal: "🥉" },
-        ]
-      : leaders.length === 2
-        ? [
-            { slot: leaders[1], cls: "podium-slot--second", medal: "🥈" },
-            { slot: leaders[0], cls: "podium-slot--first", medal: "🥇" },
-          ]
-        : [{ slot: leaders[0], cls: "podium-slot--first", medal: "🥇" }];
-
-  const gridClass =
-    leaders.length >= 3 ? "podium--3" : leaders.length === 2 ? "podium--2" : "podium--1";
-
-  const cells = layout
-    .map(
-      ({ slot, cls, medal }) => `<div class="podium-slot ${cls}">
-        <div class="podium-medal">${medal}</div>
-        <div class="podium-name">${escapePdfHtml(slot.name)}</div>
-        <div class="podium-pts">${formatPdfNumber(slot.points)}</div>
-      </div>`,
-    )
-    .join("");
-
-  return `<div class="podium ${gridClass}">${cells}</div>`;
 }
 
 /** Per-event matrix (results log) — premium layout. */
