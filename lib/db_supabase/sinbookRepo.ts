@@ -60,6 +60,13 @@ export type SinbookWithParticipants = Sinbook & {
   participants: SinbookParticipant[];
 };
 
+/** Creator or accepted participant may remove the entire rivalry (matches RLS). */
+export function canDeleteSinbookAsUser(sb: SinbookWithParticipants, userId: string | undefined): boolean {
+  if (!userId) return false;
+  if (sb.created_by === userId) return true;
+  return sb.participants.some((p) => p.user_id === userId && p.status === "accepted");
+}
+
 // ============================================================================
 // Sinbooks CRUD
 // ============================================================================
@@ -71,7 +78,7 @@ export async function getMySinbooks(): Promise<SinbookWithParticipants[]> {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) throw new Error("Not authenticated");
 
-  // Get sinbook IDs where user is a participant
+  // Sinbook IDs where user is a participant (accepted or pending)
   const { data: participations, error: pErr } = await supabase
     .from("sinbook_participants")
     .select("sinbook_id")
@@ -79,9 +86,20 @@ export async function getMySinbooks(): Promise<SinbookWithParticipants[]> {
     .in("status", ["accepted", "pending"]);
 
   if (pErr) throw new Error(pErr.message);
-  if (!participations || participations.length === 0) return [];
 
-  const ids = [...new Set(participations.map((p) => p.sinbook_id))];
+  const fromParticipants = [...new Set((participations ?? []).map((p) => p.sinbook_id))];
+
+  // Sinbooks created by user but missing a participant row (recovery / legacy)
+  const { data: createdRows, error: cErr } = await supabase
+    .from("sinbooks")
+    .select("id")
+    .eq("created_by", user.id);
+
+  if (cErr) throw new Error(cErr.message);
+  const fromCreator = (createdRows ?? []).map((r) => r.id).filter(Boolean);
+  const ids = [...new Set([...fromParticipants, ...fromCreator])];
+
+  if (ids.length === 0) return [];
 
   const { data: sinbooks, error: sErr } = await supabase
     .from("sinbooks")
@@ -209,7 +227,7 @@ export async function createSinbook(input: {
 
   if (error) throw new Error(error.message);
 
-  // Add creator as accepted participant
+  // Add creator as accepted participant (required for shared RLS paths; fail closed if insert fails)
   const { error: pErr } = await supabase
     .from("sinbook_participants")
     .insert({
@@ -220,7 +238,13 @@ export async function createSinbook(input: {
       joined_at: new Date().toISOString(),
     });
 
-  if (pErr) console.error("[sinbookRepo] Failed to add creator as participant:", pErr.message);
+  if (pErr) {
+    await supabase.from("sinbooks").delete().eq("id", data.id);
+    throw new Error(
+      pErr.message ||
+        "Could not set you up as a participant in this rivalry. Nothing was saved — try again.",
+    );
+  }
 
   return data;
 }

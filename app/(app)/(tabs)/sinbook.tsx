@@ -34,12 +34,15 @@ import {
   joinByCode,
   getUnreadNotificationCount,
   getWinCountsForSinbooks,
+  deleteSinbook,
+  canDeleteSinbookAsUser,
   type SinbookWithParticipants,
 } from "@/lib/db_supabase/sinbookRepo";
 import { canCreateSinbook } from "@/lib/sinbookEntitlement";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
 import { showAlert } from "@/lib/ui/alert";
 import { formatError, type FormattedError } from "@/lib/ui/formatError";
+import { useDestructiveConfirm } from "@/components/ui/DestructiveConfirmModal";
 
 // ============================================================================
 // Helpers
@@ -77,6 +80,7 @@ export default function SinbookHomeScreen() {
   const colors = getColors();
   const tabBarHeight = useBottomTabBarHeight();
   const tabContentStyle = { paddingTop: 16, paddingBottom: tabBarHeight + 24 };
+  const { destructiveConfirmModal, askConfirm } = useDestructiveConfirm();
 
   const [sinbooks, setSinbooks] = useState<SinbookWithParticipants[]>([]);
   const [pendingInvites, setPendingInvites] = useState<SinbookWithParticipants[]>([]);
@@ -222,6 +226,22 @@ export default function SinbookHomeScreen() {
 
   const openRivalry = (id: string) => router.push({ pathname: "/(app)/sinbook/[id]", params: { id } });
   const openNotifications = () => router.push("/(app)/sinbook/notifications");
+
+  const handleDeleteSinbookFromList = async (sb: SinbookWithParticipants) => {
+    const ok = await askConfirm(
+      "Delete this rivalry?",
+      `“${sb.title?.trim() || "Rivalry"}” will be removed for everyone, including pending invites.`,
+      "Delete",
+    );
+    if (!ok) return;
+    try {
+      await deleteSinbook(sb.id);
+      await loadData();
+    } catch (err: unknown) {
+      const e = err as { message?: string };
+      showAlert("Error", e?.message || "Could not delete rivalry.");
+    }
+  };
 
   const triggerCreate = async () => {
     const gate = await canCreateSinbook();
@@ -538,6 +558,19 @@ const styles = StyleSheet.create({
   },
   rivalryCard: {
     marginBottom: spacing.xs,
+  },
+  cardRowWithAction: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.xs,
+  },
+  cardPressMain: {
+    flex: 1,
+    minWidth: 0,
+  },
+  cardTrashHit: {
+    padding: spacing.sm,
+    justifyContent: "center",
   },
   cardBody: {
     flexDirection: "row",

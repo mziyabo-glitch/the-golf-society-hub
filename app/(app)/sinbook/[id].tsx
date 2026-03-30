@@ -28,14 +28,16 @@ import {
   deleteEntry,
   deleteSinbook,
   resetSinbook,
+  canDeleteSinbookAsUser,
   type SinbookWithParticipants,
   type SinbookEntry,
   type SinbookParticipant,
 } from "@/lib/db_supabase/sinbookRepo";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
 import { formatError, type FormattedError } from "@/lib/ui/formatError";
-import { confirmDestructive, showAlert } from "@/lib/ui/alert";
+import { showAlert } from "@/lib/ui/alert";
 import { Toast } from "@/components/ui/Toast";
+import { useDestructiveConfirm } from "@/components/ui/DestructiveConfirmModal";
 import { getRivalryInviteMessage } from "@/lib/appConfig";
 
 export default function RivalryDetailScreen() {
@@ -44,6 +46,7 @@ export default function RivalryDetailScreen() {
   const sinbookId = Array.isArray(params.id) ? params.id[0] : params.id;
   const { userId } = useBootstrap();
   const colors = getColors();
+  const { destructiveConfirmModal, askConfirm } = useDestructiveConfirm();
 
   const [sinbook, setSinbook] = useState<SinbookWithParticipants | null>(null);
   const [entries, setEntries] = useState<SinbookEntry[]>([]);
@@ -135,20 +138,19 @@ export default function RivalryDetailScreen() {
     }
   };
 
-  const handleDeleteEntry = (entry: SinbookEntry) => {
-    confirmDestructive(
+  const handleDeleteEntry = async (entry: SinbookEntry) => {
+    const ok = await askConfirm(
       "Remove entry?",
       "This removes this result from your rivalry timeline. Standings update automatically.",
       "Remove",
-      async () => {
-        try {
-          await deleteEntry(entry.id, sinbookId, sinbook?.title ?? "");
-          loadData();
-        } catch (err: any) {
-          showAlert("Error", err?.message || "Failed to remove entry.");
-        }
-      },
     );
+    if (!ok) return;
+    try {
+      await deleteEntry(entry.id, sinbookId, sinbook?.title ?? "");
+      loadData();
+    } catch (err: any) {
+      showAlert("Error", err?.message || "Failed to remove entry.");
+    }
   };
 
   const startEdit = (entry: SinbookEntry) => {
@@ -195,33 +197,41 @@ export default function RivalryDetailScreen() {
   };
 
 
-  const handleDeleteSinbook = () => {
+  const handleDeleteSinbook = async () => {
     if (actionBusy) return;
-    confirmDestructive("Delete Rivalry?", "This will permanently delete the rivalry, all entries, and participants.", "Delete", async () => {
-      setActionBusy(true);
-      try {
-        await deleteSinbook(sinbookId);
-        router.replace("/(app)/(tabs)/sinbook");
-      } catch (err: any) {
-        setActionBusy(false);
-        showAlert("Error", err?.message || "Failed to delete rivalry.");
-      }
-    });
+    const ok = await askConfirm(
+      "Delete this rivalry?",
+      "This permanently deletes the rivalry, all participants, and timeline entries.",
+      "Delete",
+    );
+    if (!ok) return;
+    setActionBusy(true);
+    try {
+      await deleteSinbook(sinbookId);
+      router.replace("/(app)/(tabs)/sinbook");
+    } catch (err: any) {
+      setActionBusy(false);
+      showAlert("Error", err?.message || "Failed to delete rivalry.");
+    }
   };
 
-  const handleResetSinbook = () => {
+  const handleResetSinbook = async () => {
     if (actionBusy) return;
-    confirmDestructive("Reset all results?", "This will clear all entries and standings. Participants and settings are kept.", "Reset", async () => {
-      setActionBusy(true);
-      try {
-        await resetSinbook(sinbookId);
-        await loadData();
-      } catch (err: any) {
-        showAlert("Error", err?.message || "Failed to reset rivalry.");
-      } finally {
-        setActionBusy(false);
-      }
-    });
+    const ok = await askConfirm(
+      "Reset all results?",
+      "This clears timeline entries and standings. Participants and settings stay.",
+      "Reset",
+    );
+    if (!ok) return;
+    setActionBusy(true);
+    try {
+      await resetSinbook(sinbookId);
+      await loadData();
+    } catch (err: any) {
+      showAlert("Error", err?.message || "Failed to reset rivalry.");
+    } finally {
+      setActionBusy(false);
+    }
   };
 
   const getName = (uid: string | null): string => {
@@ -264,6 +274,8 @@ export default function RivalryDetailScreen() {
       </Screen>
     );
   }
+
+  const canDeleteRivalry = canDeleteSinbookAsUser(sinbook, userId ?? undefined);
 
   // Entry form (add or edit)
   if (showAddEntry) {
@@ -348,13 +360,15 @@ export default function RivalryDetailScreen() {
             <Feather name="share-2" size={20} color={colors.primary} />
           </Pressable>
           {sinbook.created_by === userId && (
-            <Pressable onPress={handleResetSinbook} style={styles.iconBtn} disabled={actionBusy}>
+            <Pressable onPress={() => void handleResetSinbook()} style={styles.iconBtn} disabled={actionBusy}>
               <Feather name="rotate-ccw" size={20} color={actionBusy ? colors.textTertiary : colors.text} />
             </Pressable>
           )}
-          <Pressable onPress={handleDeleteSinbook} style={styles.iconBtn} disabled={actionBusy}>
-            <Feather name="trash-2" size={20} color={actionBusy ? colors.textTertiary : colors.error} />
-          </Pressable>
+          {canDeleteRivalry ? (
+            <Pressable onPress={() => void handleDeleteSinbook()} style={styles.iconBtn} disabled={actionBusy}>
+              <Feather name="trash-2" size={20} color={actionBusy ? colors.textTertiary : colors.error} />
+            </Pressable>
+          ) : null}
         </View>
       </View>
 
@@ -499,7 +513,7 @@ export default function RivalryDetailScreen() {
                       <Feather name="edit-2" size={16} color={colors.textTertiary} />
                     </Pressable>
                     <Pressable
-                      onPress={() => handleDeleteEntry(entry)}
+                      onPress={() => void handleDeleteEntry(entry)}
                       hitSlop={8}
                       accessibilityRole="button"
                       accessibilityLabel="Remove rivalry timeline entry"
@@ -513,6 +527,19 @@ export default function RivalryDetailScreen() {
           ))}
         </View>
       )}
+
+      {canDeleteRivalry ? (
+        <View style={{ marginTop: spacing.lg, gap: spacing.sm }}>
+          <SecondaryButton onPress={() => void handleDeleteSinbook()} disabled={actionBusy} size="sm">
+            Delete this rivalry
+          </SecondaryButton>
+          <AppText variant="small" color="tertiary" style={{ textAlign: "center" }}>
+            Confirmation opens in the app (reliable in Safari — no browser popup).
+          </AppText>
+        </View>
+      ) : null}
+
+      {destructiveConfirmModal}
 
       <View style={{ height: spacing["2xl"] }} />
     </Screen>
