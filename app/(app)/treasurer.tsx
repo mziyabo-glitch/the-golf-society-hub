@@ -901,15 +901,21 @@ function generateLedgerPdfHtml(data: LedgerPdfData): string {
       <head>
         <meta charset="utf-8">
         <title>Financial Ledger - ${societyName}</title>
+      </head>
+      <body>
+        <div class="pdf-root doc">
         <style>
           * { box-sizing: border-box; margin: 0; padding: 0; }
-          body {
+          html, body { margin: 0; padding: 0; height: auto; min-height: 0; overflow: visible; }
+          .pdf-root {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
             padding: 24px;
             color: #111827;
             background: #fff;
             font-size: 12px;
             line-height: 1.4;
+            max-width: 210mm;
+            margin: 0 auto;
           }
           .container { max-width: 800px; margin: 0 auto; }
           .header {
@@ -951,8 +957,6 @@ function generateLedgerPdfHtml(data: LedgerPdfData): string {
           th:nth-child(4), th:nth-child(5) { text-align: right; }
           .footer { margin-top: 24px; padding-top: 16px; border-top: 1px solid #E5E7EB; text-align: center; font-size: 11px; color: #9CA3AF; }
         </style>
-      </head>
-      <body>
         <div class="container">
           <div class="header">
             ${logoHtml}
@@ -1007,6 +1011,7 @@ function generateLedgerPdfHtml(data: LedgerPdfData): string {
             ${entries.length} transaction${entries.length !== 1 ? "s" : ""} recorded<br/>
             Produced by The Golf Society Hub
           </div>
+        </div>
         </div>
       </body>
     </html>

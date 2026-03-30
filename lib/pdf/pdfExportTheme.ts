@@ -87,30 +87,68 @@ export function buildPdfLogoImg(logoUrl: string | null | undefined, alt: string)
   return `<img class="doc-logo" src="${escapePdfAttr(logoUrl.trim())}" alt="${escapePdfAttr(alt)}" />`;
 }
 
+/**
+ * Full HTML5 shell: styles live inside `.pdf-root` so jsPDF/html2canvas clones
+ * (which are moved into the host document) still apply — styles in `<head>` are not cloned.
+ * Also avoids passing `<body>` to jsPDF, which incorrectly sizes the canvas using the *host*
+ * document body height (blank leading pages).
+ */
+export function buildPdfDocumentShell(options: {
+  title: string;
+  css: string;
+  bodyInnerHtml: string;
+}): string {
+  const t = escapePdfHtml(options.title);
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>${t}</title>
+</head>
+<body>
+<div class="pdf-root doc">
+<style>${options.css}</style>
+${options.bodyInnerHtml}
+</div>
+</body>
+</html>`;
+}
+
 /** Inline <style> for all premium exports */
 export function buildPremiumPdfCss(extra = ""): string {
   const t = PDF_THEME;
   return `
-@page { size: A4 portrait; margin: 11mm 12mm; }
+@page { size: A4 portrait; margin: 12mm; }
 * { box-sizing: border-box; }
 html {
   -webkit-print-color-adjust: exact;
   print-color-adjust: exact;
 }
-body {
+html, body {
   margin: 0;
   padding: 0;
+  height: auto;
+  min-height: 0;
+  overflow: visible;
+}
+body {
   font-family: ${PDF_FONT_STACK};
   font-size: 13px;
   line-height: 1.45;
   color: ${t.navy};
   background: ${t.white};
 }
-.doc {
-  max-width: 100%;
+.pdf-root.doc {
+  max-width: 210mm;
+  margin: 0 auto;
+  padding: 0;
+  position: relative;
+  background: ${t.white};
 }
 .doc-header {
   page-break-inside: avoid;
+  break-inside: avoid;
   display: flex;
   align-items: flex-start;
   gap: 14px;
@@ -157,10 +195,15 @@ body {
 }
 .block-avoid {
   page-break-inside: avoid;
+  break-inside: avoid;
+}
+.oom-lead {
+  page-break-inside: avoid;
+  break-inside: avoid;
 }
 .table-wrap {
   width: 100%;
-  overflow: hidden;
+  overflow: visible;
   margin-top: 10px;
 }
 table.sheet {
@@ -202,10 +245,10 @@ table.sheet tbody tr.muted td { color: ${t.textSecondary}; }
 }
 .podium {
   page-break-inside: avoid;
-  display: flex;
-  flex-direction: row;
-  justify-content: center;
-  align-items: flex-end;
+  break-inside: avoid;
+  display: grid;
+  align-items: end;
+  justify-items: stretch;
   gap: 10px;
   margin: 14px 0 18px;
   padding: 14px 12px;
@@ -213,24 +256,36 @@ table.sheet tbody tr.muted td { color: ${t.textSecondary}; }
   border: 1px solid ${t.divider};
   border-radius: 10px;
 }
+.podium--3 {
+  grid-template-columns: 1fr 1.12fr 1fr;
+}
+.podium--2 {
+  grid-template-columns: 1fr 1fr;
+  max-width: 420px;
+  margin-left: auto;
+  margin-right: auto;
+}
+.podium--1 {
+  grid-template-columns: 1fr;
+  max-width: 220px;
+  margin-left: auto;
+  margin-right: auto;
+}
 .podium-slot {
-  flex: 1;
-  max-width: 160px;
+  min-width: 0;
   text-align: center;
   padding: 10px 8px;
   background: ${t.white};
   border: 1px solid ${t.divider};
   border-radius: 8px;
   page-break-inside: avoid;
+  break-inside: avoid;
 }
-.podium-slot.first {
-  order: 2;
+.podium-slot--first {
   padding-bottom: 14px;
   border-color: ${t.accent};
   box-shadow: 0 2px 8px rgba(11, 110, 79, 0.12);
 }
-.podium-slot.second { order: 1; }
-.podium-slot.third { order: 3; }
 .podium-medal { font-size: 20px; line-height: 1; margin-bottom: 6px; }
 .podium-name {
   font-size: 12px;

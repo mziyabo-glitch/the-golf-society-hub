@@ -361,15 +361,18 @@ function generateTeeSheetHTML(
       <head>
         <meta charset="utf-8">
         <title>Tee Sheet - ${escapeHtml(eventName)}</title>
+      </head>
+      <body>
+        <div class="pdf-root doc">
         <style>
           * { box-sizing: border-box; margin: 0; padding: 0; }
+          html, body { margin: 0; padding: 0; height: auto; min-height: 0; overflow: visible; }
           @page {
             size: A4 landscape;
             margin: 12mm;
           }
-          body {
+          .pdf-root {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
-            padding: 0;
             color: #111827;
             background: #fff;
             font-size: 11px;
@@ -378,7 +381,7 @@ function generateTeeSheetHTML(
           .page {
             page-break-after: always;
             padding: 16px 20px 12px;
-            min-height: 100%;
+            min-height: auto;
             background: #fff;
           }
           .page:last-child { page-break-after: auto; }
@@ -506,9 +509,8 @@ function generateTeeSheetHTML(
           .footer-brand { font-size: 8px; color: #9ca3af; }
           .footer-page { font-size: 8px; color: #d1d5db; }
         </style>
-      </head>
-      <body>
         ${pagesHTML || `<div class="page"><p style="text-align:center; color:#6B7280;">No players registered yet.</p></div>`}
+        </div>
       </body>
     </html>
   `;

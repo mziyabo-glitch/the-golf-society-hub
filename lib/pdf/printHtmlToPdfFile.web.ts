@@ -33,8 +33,11 @@ export async function printHtmlToPdfFileAsync(
 
   const iframe = document.createElement("iframe");
   iframe.setAttribute("title", "pdf-export");
+  /* Stay in the layout viewport so html2canvas/getBoundingClientRect math matches the clone
+     jsPDF injects into the host document (off-screen -100000px overlays break paging). */
+  /* Wide enough for layout; tall min-height so long tables get full scrollHeight (not 100vh). */
   iframe.style.cssText =
-    "position:fixed;left:-12000px;top:0;width:794px;min-height:200px;border:0;opacity:0;pointer-events:none;";
+    "position:fixed;left:0;top:0;width:794px;min-height:8000px;border:0;opacity:0;pointer-events:none;z-index:-1;";
   document.body.appendChild(iframe);
 
   try {
@@ -47,19 +50,33 @@ export async function printHtmlToPdfFileAsync(
 
     await waitForImages(idoc);
 
+    const root = idoc.querySelector(".pdf-root") as HTMLElement | null;
+    if (!root) {
+      throw new Error(
+        "PDF HTML must include a .pdf-root wrapper with embedded styles (see buildPdfDocumentShell).",
+      );
+    }
+
     const pdf = new jsPDF({ orientation: "p", unit: "mm", format: "a4" });
 
-    await pdf.html(idoc.body, {
-      x: 8,
-      y: 8,
-      width: 194,
+    /**
+     * Pass `.pdf-root` not `body`. jsPDF clones the node into the host document; if the source
+     * is `body`, container height is taken from the host app body (huge) → blank leading pages.
+     * autoPaging "slice" rasterizes consistently; "text" can mis-measure with tables.
+     */
+    await pdf.html(root, {
+      x: 10,
+      y: 10,
+      width: 190,
       windowWidth: 794,
-      autoPaging: "text",
+      autoPaging: true,
       html2canvas: {
-        scale: 0.72,
+        scale: 0.8,
         useCORS: true,
         logging: false,
         backgroundColor: "#ffffff",
+        scrollX: 0,
+        scrollY: 0,
       },
     });
 

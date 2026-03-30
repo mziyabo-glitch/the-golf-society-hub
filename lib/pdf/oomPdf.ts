@@ -12,6 +12,7 @@ import { getSociety } from "@/lib/db_supabase/societyRepo";
 import { assertNoPrintAsync, validateInputs } from "./exportContract";
 import { getSocietyLogoDataUri, getSocietyLogoUrl } from "@/lib/societyLogo";
 import {
+  buildPdfDocumentShell,
   buildPremiumPdfCss,
   buildPdfLogoImg,
   escapePdfHtml,
@@ -84,8 +85,8 @@ export function buildOrderOfMeritPdfHtml(p: OrderOfMeritPdfPayload): string {
           : row.hasOomPoints
             ? formatPdfNumber(row.totalPoints)
             : "—";
-      const muted = !row.hasOomPoints && row.totalPoints === 0 ? " muted" : "";
-      return `<tr class="${muted.trim()}">
+      const muted = !row.hasOomPoints && row.totalPoints === 0 ? "muted" : "";
+      return `<tr${muted ? ` class="${muted}"` : ""}>
         <td class="num">${pos}</td>
         <td>${escapePdfHtml(row.memberName)}</td>
         <td class="num">${row.eventsPlayed}</td>
@@ -101,29 +102,20 @@ export function buildOrderOfMeritPdfHtml(p: OrderOfMeritPdfPayload): string {
       <strong>OOM events (season):</strong> ${p.oomEventCount}
     </div>`;
 
-  return `<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Order of Merit — ${escapePdfHtml(p.societyName)}</title>
-<style>${css}</style>
-</head>
-<body>
-<div class="doc">
-  <header class="doc-header block-avoid">
-    ${logo ? `<div class="doc-logo-wrap">${logo}</div>` : ""}
-    <div class="doc-header-main">
-      <div class="doc-brand-kicker">Produced by The Golf Society Hub</div>
-      <h1 class="doc-title">Order of Merit</h1>
-      <p class="doc-subtitle">${escapePdfHtml(p.societyName)} · ${p.seasonYear}</p>
-      <p class="doc-meta">${metaLines}</p>
-    </div>
-  </header>
-
-  <p class="doc-meta" style="margin:0 0 10px;font-weight:600;color:${"#334155"}">Season standings</p>
-
-  ${podiumHtml}
+  const inner = `
+  <div class="oom-lead">
+    <header class="doc-header">
+      ${logo ? `<div class="doc-logo-wrap">${logo}</div>` : ""}
+      <div class="doc-header-main">
+        <div class="doc-brand-kicker">Produced by The Golf Society Hub</div>
+        <h1 class="doc-title">Order of Merit</h1>
+        <p class="doc-subtitle">${escapePdfHtml(p.societyName)} · ${p.seasonYear}</p>
+        <p class="doc-meta">${metaLines}</p>
+      </div>
+    </header>
+    <p class="doc-meta" style="margin:0 0 10px;font-weight:600;color:#334155">Season standings</p>
+    ${podiumHtml}
+  </div>
 
   <div class="table-wrap">
     <table class="sheet">
@@ -144,28 +136,35 @@ export function buildOrderOfMeritPdfHtml(p: OrderOfMeritPdfPayload): string {
   <footer class="doc-footer">
     <span class="brand">The Golf Society Hub</span><br />
     ${escapePdfHtml(p.generatedAt)}
-  </footer>
-</div>
-</body>
-</html>`;
+  </footer>`;
+
+  return buildPdfDocumentShell({
+    title: `Order of Merit — ${p.societyName}`,
+    css,
+    bodyInnerHtml: inner,
+  });
 }
 
 function buildPodiumHtml(leaders: OomLeaderPodiumSlot[]): string {
   if (leaders.length === 0) return "";
 
+  /** DOM order left-to-right: 2nd, 1st, 3rd — no flex `order` (breaks html2canvas). */
   const layout: { slot: OomLeaderPodiumSlot; cls: string; medal: string }[] =
     leaders.length >= 3
       ? [
-          { slot: leaders[1], cls: "second", medal: "🥈" },
-          { slot: leaders[0], cls: "first", medal: "🥇" },
-          { slot: leaders[2], cls: "third", medal: "🥉" },
+          { slot: leaders[1], cls: "podium-slot--second", medal: "🥈" },
+          { slot: leaders[0], cls: "podium-slot--first", medal: "🥇" },
+          { slot: leaders[2], cls: "podium-slot--third", medal: "🥉" },
         ]
       : leaders.length === 2
         ? [
-            { slot: leaders[1], cls: "second", medal: "🥈" },
-            { slot: leaders[0], cls: "first", medal: "🥇" },
+            { slot: leaders[1], cls: "podium-slot--second", medal: "🥈" },
+            { slot: leaders[0], cls: "podium-slot--first", medal: "🥇" },
           ]
-        : [{ slot: leaders[0], cls: "first", medal: "🥇" }];
+        : [{ slot: leaders[0], cls: "podium-slot--first", medal: "🥇" }];
+
+  const gridClass =
+    leaders.length >= 3 ? "podium--3" : leaders.length === 2 ? "podium--2" : "podium--1";
 
   const cells = layout
     .map(
@@ -178,13 +177,13 @@ function buildPodiumHtml(leaders: OomLeaderPodiumSlot[]): string {
     )
     .join("");
 
-  return `<div class="podium block-avoid">${cells}</div>`;
+  return `<div class="podium block-avoid ${gridClass}">${cells}</div>`;
 }
 
 /** Per-event matrix (results log) — premium layout. */
 export function buildOomMatrixPdfHtml(p: OomMatrixPdfPayload): string {
   const css = buildPremiumPdfCss(`
-    .matrix-event { page-break-inside: avoid; margin-bottom: 18px; border: 1px solid #e2e8f0; border-radius: 8px; overflow: hidden; }
+    .matrix-event { page-break-inside: avoid; break-inside: avoid; margin-bottom: 18px; border: 1px solid #e2e8f0; border-radius: 8px; overflow: visible; }
     .matrix-event-head { padding: 10px 12px; background: #f8fafc; border-bottom: 1px solid #e2e8f0; }
     .matrix-event-title { font-weight: 700; font-size: 14px; color: #0f172a; }
     .matrix-event-meta { font-size: 11px; color: #475569; margin-top: 4px; }
@@ -236,16 +235,7 @@ export function buildOomMatrixPdfHtml(p: OomMatrixPdfPayload): string {
           })
           .join("");
 
-  return `<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>OOM Results — ${escapePdfHtml(p.societyName)}</title>
-<style>${css}</style>
-</head>
-<body>
-<div class="doc">
+  const inner = `
   <header class="doc-header block-avoid">
     ${logo ? `<div class="doc-logo-wrap">${logo}</div>` : ""}
     <div class="doc-header-main">
@@ -260,10 +250,13 @@ export function buildOomMatrixPdfHtml(p: OomMatrixPdfPayload): string {
   <footer class="doc-footer">
     <span class="brand">The Golf Society Hub</span><br />
     ${escapePdfHtml(p.generatedAt)}
-  </footer>
-</div>
-</body>
-</html>`;
+  </footer>`;
+
+  return buildPdfDocumentShell({
+    title: `OOM Results — ${p.societyName}`,
+    css,
+    bodyInnerHtml: inner,
+  });
 }
 
 export async function exportOomPdf(societyId: string): Promise<void> {

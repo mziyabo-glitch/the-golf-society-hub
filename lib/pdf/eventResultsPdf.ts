@@ -9,6 +9,7 @@ import { getSociety } from "@/lib/db_supabase/societyRepo";
 import { assertNoPrintAsync, validateInputs } from "./exportContract";
 import { getSocietyLogoDataUri, getSocietyLogoUrl } from "@/lib/societyLogo";
 import {
+  buildPdfDocumentShell,
   buildPremiumPdfCss,
   buildPdfLogoImg,
   escapePdfHtml,
@@ -234,16 +235,7 @@ export function buildEventResultsPdfHtml(p: EventResultsPdfPayload): string {
     </div>
   </div>`;
 
-  return `<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Event Results — ${escapePdfHtml(p.eventName)}</title>
-<style>${css}</style>
-</head>
-<body>
-<div class="doc">
+  const inner = `
   <header class="doc-header block-avoid">
     ${logo ? `<div class="doc-logo-wrap">${logo}</div>` : ""}
     <div class="doc-header-main">
@@ -271,10 +263,13 @@ export function buildEventResultsPdfHtml(p: EventResultsPdfPayload): string {
   <footer class="doc-footer">
     <span class="brand">The Golf Society Hub</span><br />
     ${escapePdfHtml(p.generatedAt)}
-  </footer>
-</div>
-</body>
-</html>`;
+  </footer>`;
+
+  return buildPdfDocumentShell({
+    title: `Event Results — ${p.eventName}`,
+    css,
+    bodyInnerHtml: inner,
+  });
 }
 
 export async function buildEventResultsPdfPayload(
