@@ -249,7 +249,7 @@ export default function SinbookHomeScreen() {
     return (
       <Screen scrollable={false}>
         <View style={styles.centered}>
-          <LoadingState message="Loading Sidebets..." />
+          <LoadingState message="Loading Rivalries..." />
         </View>
       </Screen>
     );
@@ -269,8 +269,13 @@ export default function SinbookHomeScreen() {
             <AppInput placeholder="e.g. Brian vs Dave" value={formTitle} onChangeText={setFormTitle} autoCapitalize="words" />
           </View>
           <View style={styles.field}>
-            <AppText variant="captionBold" style={styles.label}>Stake (optional)</AppText>
-            <AppInput placeholder="e.g. Loser buys dinner" value={formStake} onChangeText={setFormStake} autoCapitalize="sentences" />
+            <AppText variant="captionBold" style={styles.label}>Optional treat / forfeit</AppText>
+            <AppInput
+              placeholder="e.g. Loser buys coffee (friendly only)"
+              value={formStake}
+              onChangeText={setFormStake}
+              autoCapitalize="sentences"
+            />
             <AppText variant="small" color="tertiary" style={{ marginTop: 4 }}>Tracking only — no payments.</AppText>
           </View>
           <PrimaryButton onPress={handleCreate} loading={creating} style={{ marginTop: spacing.sm }}>
@@ -316,8 +321,10 @@ export default function SinbookHomeScreen() {
       {/* Header */}
       <View style={styles.header}>
         <View>
-          <AppText variant="title">Sidebets</AppText>
-          <AppText variant="caption" color="secondary">Head-to-head rivalry hub</AppText>
+          <AppText variant="title">Rivalries</AppText>
+          <AppText variant="caption" color="secondary">
+            Head-to-head challenges between mates — not a betting or staking service.
+          </AppText>
         </View>
         <Pressable onPress={openNotifications} style={styles.bellBtn}>
           <Feather name="bell" size={20} color={colors.text} />
@@ -369,7 +376,7 @@ export default function SinbookHomeScreen() {
             const creator = inv.participants.find((p) => p.user_id === inv.created_by);
             return (
               <AppCard key={inv.id} style={{ marginBottom: spacing.xs }}>
-                <AppText variant="bodyBold" numberOfLines={1}>{inv.title?.trim() || "Sidebet"}</AppText>
+                <AppText variant="bodyBold" numberOfLines={1}>{inv.title?.trim() || "Rivalry"}</AppText>
                 <AppText variant="small" color="secondary" style={{ marginTop: 2 }}>
                   From {creator?.display_name?.trim() || "someone"}
                   {inv.stake ? ` · ${inv.stake}` : ""}
@@ -404,7 +411,7 @@ export default function SinbookHomeScreen() {
                       </View>
                     </View>
                     <View style={{ flex: 1 }}>
-                      <AppText variant="bodyBold" numberOfLines={1}>{sb.title?.trim() || "Sidebet"}</AppText>
+                      <AppText variant="bodyBold" numberOfLines={1}>{sb.title?.trim() || "Rivalry"}</AppText>
                       {sb.stake && <AppText variant="small" color="tertiary" numberOfLines={1}>{sb.stake}</AppText>}
                     </View>
                     <View style={[styles.statusChip, { backgroundColor: colors.warning + "14" }]}>
@@ -444,7 +451,7 @@ export default function SinbookHomeScreen() {
                     </View>
                     <View style={{ flex: 1 }}>
                       <AppText variant="bodyBold" numberOfLines={1}>
-                        {sb.title?.trim() || "Sidebet"}
+                        {sb.title?.trim() || "Rivalry"}
                       </AppText>
                       <AppText variant="small" color="secondary" style={{ marginTop: 2 }}>
                         {rivalName}

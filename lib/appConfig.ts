@@ -25,7 +25,7 @@ export function getRivalryInviteUrl(joinCode: string): string {
 }
 
 /**
- * Returns the app link text for Sidebets rivalry share messages.
+ * Returns the app link text for Rivalries share messages.
  * Beta: Vercel URL only (no App Store / Play Store).
  * Production: App Store and Play Store download links.
  */

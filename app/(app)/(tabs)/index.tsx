@@ -1318,11 +1318,11 @@ export default function HomeScreen() {
         <AppCard style={styles.premiumCard}>
           <View style={styles.cardTitleRow}>
             <Feather name="zap" size={16} color={colors.primary} />
-            <AppText variant="captionBold" color="primary">Sidebets</AppText>
+            <AppText variant="captionBold" color="primary">Rivalries</AppText>
           </View>
           {activeSinbook ? (
             <View style={{ marginTop: spacing.xs }}>
-              <AppText variant="bodyBold" numberOfLines={1}>{activeSinbook.title?.trim() || "Sidebet"}</AppText>
+              <AppText variant="bodyBold" numberOfLines={1}>{activeSinbook.title?.trim() || "Rivalry"}</AppText>
               <AppText variant="caption" color="secondary">
                 {(() => {
                   if (!userId) return "Awaiting opponent";
@@ -1333,7 +1333,7 @@ export default function HomeScreen() {
             </View>
           ) : (
             <AppText variant="body" color="secondary" style={{ marginTop: spacing.xs }}>
-              Start a rivalry with a mate. Track side bets all season.
+              Start a rivalry with a mate. Track head-to-head results all season — for fun, not wagers.
             </AppText>
           )}
           <View style={styles.chevronHint}>
@@ -1441,9 +1441,9 @@ function PersonalModeHome({
               <Feather name="zap" size={20} color={colors.primary} />
             </View>
             <View style={{ flex: 1 }}>
-              <AppText variant="bodyBold">Sidebets Rivalries</AppText>
+              <AppText variant="bodyBold">Rivalries</AppText>
               <AppText variant="small" color="secondary">
-                Challenge a mate to a side bet and track it all season
+                Challenge a mate and track friendly head-to-head results — not real-money betting.
               </AppText>
             </View>
             <Feather name="chevron-right" size={18} color={colors.textTertiary} />

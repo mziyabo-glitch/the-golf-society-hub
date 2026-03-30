@@ -1,5 +1,5 @@
 // lib/db_supabase/sinbookRepo.ts
-// Sinbook — Rivalry / Side-Bet Tracker
+// Sinbook — Rivalries (head-to-head challenge tracker; not a betting product)
 // Uses singleton supabase client. Per-user (auth.uid()), not per-society.
 
 import { supabase } from "@/lib/supabase";
@@ -613,7 +613,8 @@ export async function updateEntry(
   const { error } = await supabase
     .from("sinbook_entries")
     .update({ ...updates, updated_at: new Date().toISOString() })
-    .eq("id", entryId);
+    .eq("id", entryId)
+    .eq("sinbook_id", sinbookId);
 
   if (error) throw new Error(error.message);
 
@@ -646,7 +647,8 @@ export async function deleteEntry(
   const { error } = await supabase
     .from("sinbook_entries")
     .delete()
-    .eq("id", entryId);
+    .eq("id", entryId)
+    .eq("sinbook_id", sinbookId);
 
   if (error) throw new Error(error.message);
 

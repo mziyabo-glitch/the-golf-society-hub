@@ -136,14 +136,19 @@ export default function RivalryDetailScreen() {
   };
 
   const handleDeleteEntry = (entry: SinbookEntry) => {
-    confirmDestructive("Delete Entry", "Remove this entry?", "Delete", async () => {
-      try {
-        await deleteEntry(entry.id, sinbookId, sinbook?.title ?? "");
-        loadData();
-      } catch (err: any) {
-        showAlert("Error", err?.message || "Failed to delete.");
-      }
-    });
+    confirmDestructive(
+      "Remove entry?",
+      "This removes this result from your rivalry timeline. Standings update automatically.",
+      "Remove",
+      async () => {
+        try {
+          await deleteEntry(entry.id, sinbookId, sinbook?.title ?? "");
+          loadData();
+        } catch (err: any) {
+          showAlert("Error", err?.message || "Failed to remove entry.");
+        }
+      },
+    );
   };
 
   const startEdit = (entry: SinbookEntry) => {
@@ -166,7 +171,7 @@ export default function RivalryDetailScreen() {
       setToast({ visible: true, message: "Invite code not ready yet. Please try again in a moment.", type: "info" });
       return;
     }
-    const message = getRivalryInviteMessage(sinbook?.title?.trim() || "Sidebet", code.toUpperCase());
+    const message = getRivalryInviteMessage(sinbook?.title?.trim() || "Rivalry", code.toUpperCase());
     try {
       await Share.share({ message });
     } catch { /* cancelled */ }
@@ -354,10 +359,10 @@ export default function RivalryDetailScreen() {
       </View>
 
       {/* Title */}
-      <AppText variant="title" style={{ marginBottom: 2 }}>{sinbook.title?.trim() || "Sidebet"}</AppText>
+      <AppText variant="title" style={{ marginBottom: 2 }}>{sinbook.title?.trim() || "Rivalry"}</AppText>
       {sinbook.stake && (
         <AppText variant="caption" color="secondary" style={{ marginBottom: spacing.sm }}>
-          {sinbook.stake}
+          Friendly forfeit / treat: {sinbook.stake}
         </AppText>
       )}
 
@@ -493,7 +498,12 @@ export default function RivalryDetailScreen() {
                     <Pressable onPress={() => startEdit(entry)} hitSlop={8}>
                       <Feather name="edit-2" size={16} color={colors.textTertiary} />
                     </Pressable>
-                    <Pressable onPress={() => handleDeleteEntry(entry)} hitSlop={8}>
+                    <Pressable
+                      onPress={() => handleDeleteEntry(entry)}
+                      hitSlop={8}
+                      accessibilityRole="button"
+                      accessibilityLabel="Remove rivalry timeline entry"
+                    >
                       <Feather name="trash-2" size={16} color={colors.textTertiary} />
                     </Pressable>
                   </View>

@@ -116,7 +116,7 @@ export default function SinbookInviteScreen() {
           icon={<Feather name="alert-circle" size={24} color={colors.error} />}
           title="Couldn't Join"
           message={errorMsg}
-          action={{ label: "Go to Sidebets", onPress: () => router.replace("/(app)/(tabs)/sinbook") }}
+          action={{ label: "Go to Rivalries", onPress: () => router.replace("/(app)/(tabs)/sinbook") }}
         />
       </Screen>
     );
@@ -163,7 +163,7 @@ export default function SinbookInviteScreen() {
         <AppCard style={{ marginTop: spacing.lg, width: "100%" }}>
           {sinbook ? (
             <>
-              <AppText variant="h2">{sinbook.title?.trim() || "Sidebet"}</AppText>
+              <AppText variant="h2">{sinbook.title?.trim() || "Rivalry"}</AppText>
               {creator && (
                 <AppText variant="caption" color="secondary" style={{ marginTop: 2 }}>
                   Created by {creator.display_name}
@@ -171,7 +171,7 @@ export default function SinbookInviteScreen() {
               )}
               {sinbook.stake && (
                 <AppText variant="body" color="secondary" style={{ marginTop: spacing.xs }}>
-                  Stake: {sinbook.stake}
+                  Optional friendly forfeit: {sinbook.stake}
                 </AppText>
               )}
             </>
