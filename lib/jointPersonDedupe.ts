@@ -1,6 +1,10 @@
 /**
  * Joint events: deduplicate society membership rows that represent the same real person
- * (e.g. same user in two participating societies). Never merge by display name alone.
+ * (e.g. same user in two participating societies).
+ *
+ * Clustering unions rows when they share: same `user_id`, same `person_id`, same email (non-empty),
+ * or **cross-society** same display name with **exactly one** row linked to an app account (covers
+ * “claimed M4, ZGS placeholder still unlinked” when names match).
  */
 
 import type { MemberDoc } from "@/lib/db_supabase/memberRepo";
@@ -21,6 +25,76 @@ export function canonicalJointPersonKey(member: MemberDoc | null | undefined): s
   if (em && em.includes("@")) return `email:${em}`;
 
   return `mid:${member.id}`;
+}
+
+function normalizeEmailForJointMerge(member: MemberDoc): string {
+  const e = member.email?.trim().toLowerCase();
+  if (!e || !e.includes("@")) return "";
+  return e;
+}
+
+function normalizeNameForJointMerge(member: MemberDoc): string {
+  const raw = (member.displayName || member.display_name || member.name || "").trim().toLowerCase();
+  return raw.replace(/\s+/g, " ");
+}
+
+function shouldMergeJointMemberPair(a: MemberDoc, b: MemberDoc): boolean {
+  const uidA = a.user_id?.trim();
+  const uidB = b.user_id?.trim();
+  if (uidA && uidB && uidA === uidB) return true;
+
+  const pidA = a.person_id?.trim?.();
+  const pidB = b.person_id?.trim?.();
+  if (pidA && pidB && pidA === pidB) return true;
+
+  const emA = normalizeEmailForJointMerge(a);
+  const emB = normalizeEmailForJointMerge(b);
+  if (emA && emB && emA === emB) return true;
+
+  const socA = a.society_id?.trim();
+  const socB = b.society_id?.trim();
+  if (socA && socB && socA !== socB) {
+    const nameA = normalizeNameForJointMerge(a);
+    const nameB = normalizeNameForJointMerge(b);
+    if (nameA.length >= 3 && nameA === nameB) {
+      const linkedA = Boolean(uidA);
+      const linkedB = Boolean(uidB);
+      if (linkedA !== linkedB) return true;
+    }
+  }
+
+  return false;
+}
+
+/** Union–Find clusters: one component per real person across participating societies. */
+function clusterMembersByJointIdentity(members: MemberDoc[]): MemberDoc[][] {
+  const n = members.length;
+  if (n === 0) return [];
+
+  const parent = Array.from({ length: n }, (_, i) => i);
+  function find(i: number): number {
+    if (parent[i] !== i) parent[i] = find(parent[i]);
+    return parent[i];
+  }
+  function union(i: number, j: number) {
+    const ri = find(i);
+    const rj = find(j);
+    if (ri !== rj) parent[rj] = ri;
+  }
+
+  for (let i = 0; i < n; i++) {
+    for (let j = i + 1; j < n; j++) {
+      if (shouldMergeJointMemberPair(members[i], members[j])) union(i, j);
+    }
+  }
+
+  const buckets = new Map<number, MemberDoc[]>();
+  for (let i = 0; i < n; i++) {
+    const r = find(i);
+    if (!buckets.has(r)) buckets.set(r, []);
+    buckets.get(r)!.push(members[i]);
+  }
+  return [...buckets.values()];
 }
 
 function pickRepresentative(members: MemberDoc[]): MemberDoc {
@@ -68,16 +142,14 @@ export function dedupeJointMembers(
   members: MemberDoc[],
   societyIdToName: Map<string, string>,
 ): DedupedJointMember[] {
-  const byKey = new Map<string, MemberDoc[]>();
-  for (const m of members) {
-    const k = canonicalJointPersonKey(m);
-    if (!byKey.has(k)) byKey.set(k, []);
-    byKey.get(k)!.push(m);
-  }
+  const list = members.filter((m) => m?.id);
+  if (list.length === 0) return [];
 
+  const clusters = clusterMembersByJointIdentity(list);
   const out: DedupedJointMember[] = [];
-  for (const [key, group] of byKey) {
+  for (const group of clusters) {
     const representative = pickRepresentative(group);
+    const key = canonicalJointPersonKey(representative);
     const mergedMemberIds = group.map((m) => m.id).sort((a, b) => a.localeCompare(b));
     const societyLabelMerged = mergeJointSocietyLabels(group, societyIdToName);
     out.push({ key, representative, mergedMemberIds, societyLabelMerged });
@@ -101,8 +173,7 @@ export function representativeMemberIdForJoint(
   const m = members.find((x) => x.id === memberId);
   if (!m) return memberId;
   const deduped = dedupeJointMembers(members, societyIdToName);
-  const k = canonicalJointPersonKey(m);
-  const hit = deduped.find((d) => d.key === k);
+  const hit = deduped.find((d) => d.mergedMemberIds.includes(memberId));
   return hit?.representative.id ?? memberId;
 }
 
@@ -152,8 +223,7 @@ export function expandJointTeeSheetReplaceRowsForParticipatingSocieties<
       out.push(row);
       continue;
     }
-    const k = canonicalJointPersonKey(m);
-    const cluster = deduped.find((d) => d.key === k);
+    const cluster = deduped.find((d) => d.mergedMemberIds.includes(row.player_id));
     if (!cluster) {
       out.push(row);
       continue;
@@ -215,6 +285,47 @@ export function expandJointRepresentativesToParticipatingMemberIds(
   return [...out].sort((a, b) => a.localeCompare(b));
 }
 
+/**
+ * Map tee/registration/legacy player ids (any participating society) to **active society** member
+ * ids for society-scoped Points / OOM, using the same clustering as `dedupeJointMembers`.
+ * Preserves first-seen order from `candidatePlayerIds`.
+ */
+export function resolveJointCandidatePlayerIdsForActiveSociety(
+  candidatePlayerIds: string[],
+  allParticipatingMembers: MemberDoc[],
+  societyIdToName: Map<string, string>,
+  activeSocietyId: string,
+): string[] {
+  const memberById = new Map(allParticipatingMembers.map((m) => [m.id, m]));
+  const deduped = dedupeJointMembers(allParticipatingMembers, societyIdToName);
+  const out: string[] = [];
+  const seen = new Set<string>();
+
+  function addActiveFromCluster(cluster: DedupedJointMember) {
+    for (const mid of cluster.mergedMemberIds) {
+      const m = memberById.get(mid);
+      if (m?.society_id === activeSocietyId && !seen.has(mid)) {
+        seen.add(mid);
+        out.push(mid);
+      }
+    }
+  }
+
+  for (const pid of candidatePlayerIds) {
+    const cluster = deduped.find((d) => d.mergedMemberIds.includes(pid));
+    if (cluster) {
+      addActiveFromCluster(cluster);
+      continue;
+    }
+    const m = memberById.get(pid);
+    if (m?.society_id === activeSocietyId && !seen.has(pid)) {
+      seen.add(pid);
+      out.push(pid);
+    }
+  }
+  return out;
+}
+
 export type JointAttendingDisplayRow = {
   key: string;
   primary: string;
@@ -245,6 +356,7 @@ export function dedupeJointGroupedPlayers(
 
   const seenRep = new Set<string>();
   const out: GroupedPlayer[] = [];
+  const dList = dedupeJointMembers(members, societyIdToName);
 
   for (const p of playersInOrder) {
     const m = members.find((x) => x.id === p.id);
@@ -256,10 +368,7 @@ export function dedupeJointGroupedPlayers(
     if (seenRep.has(rep)) continue;
     seenRep.add(rep);
 
-    const key = canonicalJointPersonKey(m);
-    const cluster = members.filter((x) => canonicalJointPersonKey(x) === key);
-    const dList = dedupeJointMembers(cluster, societyIdToName);
-    const d = dList.find((r) => r.representative.id === rep) ?? dList[0];
+    const d = dList.find((r) => r.mergedMemberIds.includes(m.id));
     if (!d) {
       out.push(p);
       continue;

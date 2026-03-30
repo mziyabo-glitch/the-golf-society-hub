@@ -10,7 +10,12 @@
  * 4. App auto-calculates OOM points using F1 top-10: [25,18,15,12,10,8,6,4,2,1]
  * 5. Save stores ONLY the OOM points to event_results
  *
- * Joint events: confirmed playable players are **`event_entries`** (merged with `events.player_ids` for legacy).
+ * Joint events: primary list is **`event_entries`** (merged with `events.player_ids` for legacy).
+ * Also merge **RSVP in** rows from `event_registrations` for the active society so ManCos can enter OOM
+ * when a player was added via fees/attendance but Players / `event_entries` was not saved yet.
+ *
+ * Joint: load **all** participating societies’ members and map `event_entries` ids (e.g. M4 linked row) to the
+ * active society’s member row (e.g. ZGS placeholder) when they cluster as one person (email, name+claimed twin, etc.).
  */
 
 import { useCallback, useMemo, useState } from "react";
@@ -35,7 +40,11 @@ import { useAsyncAction } from "@/lib/hooks/useAsyncAction";
 import { usePaidAccess } from "@/lib/access/usePaidAccess";
 import { getEvent, getFormatSortOrder, type EventDoc } from "@/lib/db_supabase/eventRepo";
 import { getMembersBySocietyId, getMembersByIds, type MemberDoc } from "@/lib/db_supabase/memberRepo";
-import { getEventRegistrations } from "@/lib/db_supabase/eventRegistrationRepo";
+import {
+  getEventRegistrations,
+  scopeEventRegistrations,
+  isRegistrationConfirmed,
+} from "@/lib/db_supabase/eventRegistrationRepo";
 import { getJointEventDetail, getJointMetaForEventIds } from "@/lib/db_supabase/jointEventRepo";
 import { isJointEventFromMeta, isActiveSocietyParticipantForEvent } from "@/lib/jointEventAccess";
 import { logJointPlayableConsistencyDev } from "@/lib/jointEventPlayableConsistency";
@@ -49,7 +58,7 @@ import { invalidateCache, invalidateCachePrefix } from "@/lib/cache/clientCache"
 import { getPermissionsForMember } from "@/lib/rbac";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
 import { buildSocietyIdToNameMap } from "@/lib/jointEventSocietyLabel";
-import { dedupeJointMembers } from "@/lib/jointPersonDedupe";
+import { dedupeJointMembers, resolveJointCandidatePlayerIdsForActiveSociety } from "@/lib/jointPersonDedupe";
 
 /** Set `EXPO_PUBLIC_POINTS_DEBUG_EVENT_ID` to this event’s UUID to enable `[points-debug]` logs. */
 function pointsDebugEnabled(eid: string | undefined): boolean {
@@ -302,11 +311,12 @@ export default function EventPointsScreen() {
     setJointPeerNamesLine(null);
 
     try {
-      const [evt, societyMembers, existingResults, jointMetaMap] = await Promise.all([
+      const [evt, societyMembers, existingResults, jointMetaMap, eventRegs] = await Promise.all([
         getEvent(eventId),
         getMembersBySocietyId(societyId),
         getEventResultsForSociety(eventId, societyId),
         getJointMetaForEventIds([eventId]),
+        getEventRegistrations(eventId),
       ]);
 
       if (!evt) {
@@ -320,8 +330,6 @@ export default function EventPointsScreen() {
       const metaRow = jointMetaMap.get(eventId);
       const derivedIsJoint = isJointEventFromMeta(metaRow?.participantSocietyIds, metaRow?.linkedSocietyCount);
 
-      const societyMemberIds = new Set(societyMembers.map((m: MemberDoc) => m.id));
-
       let jointDetail: Awaited<ReturnType<typeof getJointEventDetail>> = null;
       if (derivedIsJoint) {
         jointDetail = await getJointEventDetail(eventId);
@@ -329,10 +337,9 @@ export default function EventPointsScreen() {
           const participantIds = (jointDetail.participating_societies ?? [])
             .map((s) => s.society_id)
             .filter(Boolean);
-          const regs = await getEventRegistrations(eventId);
           logJointPlayableConsistencyDev({
             eventId,
-            registrations: regs,
+            registrations: eventRegs,
             entries: jointDetail.entries ?? [],
             participatingSocietyIds: participantIds,
           });
@@ -353,7 +360,7 @@ export default function EventPointsScreen() {
         setJointPeerNamesLine(others.length > 0 ? others.join(" · ") : null);
       }
 
-      /** Joint events store confirmed players in `event_entries`; `events.player_ids` may lag. Match Players screen. */
+      /** Playable list + legacy host `player_ids`; registrations fill gaps when `event_entries` lags. */
       const evtPlayerIds = (evt.playerIds ?? []).map(String).filter(Boolean);
       const jointEntryPlayerIds =
         isJointWithDetail && jointDetail
@@ -362,10 +369,23 @@ export default function EventPointsScreen() {
               .filter(Boolean)
               .map(String)
           : [];
-      const mergedCandidateIds: string[] =
+      const regScoped =
+        derivedIsJoint
+          ? scopeEventRegistrations(eventRegs, { kind: "joint_home", activeSocietyId: societyId })
+          : scopeEventRegistrations(eventRegs, { kind: "standard", hostSocietyId: evt.society_id });
+      const regBoostMemberIds = [
+        ...new Set(
+          regScoped
+            .filter(isRegistrationConfirmed)
+            .map((r) => String(r.member_id))
+            .filter(Boolean),
+        ),
+      ];
+      const baseMerged: string[] =
         isJointWithDetail && jointDetail
           ? [...new Set([...jointEntryPlayerIds, ...evtPlayerIds])]
           : [...new Set(evtPlayerIds)];
+      const mergedCandidateIds: string[] = [...new Set([...baseMerged, ...regBoostMemberIds])];
 
       const playerIds: string[] = mergedCandidateIds;
 
@@ -376,12 +396,22 @@ export default function EventPointsScreen() {
           activeSocietyId: societyId,
           evtPlayerIds,
           jointEntryPlayerIds,
+          regBoostMemberIds,
           mergedCandidateIds,
         });
       }
 
       let memberDocs: MemberDoc[] = [...societyMembers];
-      if (!isJointWithDetail) {
+      if (isJointWithDetail && jointDetail) {
+        const pSocietyIds = (jointDetail.participating_societies ?? [])
+          .map((s) => s.society_id)
+          .filter(Boolean);
+        const uniqSocieties = [...new Set(pSocietyIds)];
+        if (uniqSocieties.length > 0) {
+          const lists = await Promise.all(uniqSocieties.map((sid) => getMembersBySocietyId(sid)));
+          memberDocs = lists.flat();
+        }
+      } else if (!isJointWithDetail) {
         const missingIds = playerIds.filter((id: string) => !memberDocs.some((m) => m.id === id));
         if (missingIds.length > 0) {
           const extra = await getMembersByIds(missingIds);
@@ -390,6 +420,16 @@ export default function EventPointsScreen() {
           }
         }
       }
+
+      const knownMemberIds = new Set(memberDocs.map((m) => m.id));
+      const missingFromCandidates = mergedCandidateIds.filter((id) => !knownMemberIds.has(id));
+      if (missingFromCandidates.length > 0) {
+        const extra = await getMembersByIds(missingFromCandidates);
+        for (const m of extra) {
+          if (m?.id && !memberDocs.some((x) => x.id === m.id)) memberDocs.push(m);
+        }
+      }
+
       const memberMap = new Map(memberDocs.map((m) => [m.id, m]));
 
       if (dbg && isJointWithDetail) {
@@ -402,12 +442,18 @@ export default function EventPointsScreen() {
       let playerList: PlayerEntry[];
 
       if (isJointWithDetail && jointDetail) {
-        const scopedPlayerIds = playerIds.filter((id: string) => societyMemberIds.has(id));
+        const societyIdToName = buildSocietyIdToNameMap(jointDetail.participating_societies ?? []);
+        const scopedPlayerIds = resolveJointCandidatePlayerIdsForActiveSociety(
+          mergedCandidateIds,
+          memberDocs,
+          societyIdToName,
+          societyId,
+        );
         if (dbg) {
           const visiblePlayers = scopedPlayerIds.map((id) =>
             memberRowForDebug(memberMap.get(id)),
           );
-          console.log("[points-debug] post-society-filter", {
+          console.log("[points-debug] post-society-resolve", {
             activeSocietyId: societyId,
             visiblePlayerIds: scopedPlayerIds,
             visiblePlayers,
@@ -427,7 +473,6 @@ export default function EventPointsScreen() {
             }
           }
         }
-        const societyIdToName = buildSocietyIdToNameMap(jointDetail.participating_societies ?? []);
         const scopedDocs = scopedPlayerIds
           .map((id) => memberMap.get(id))
           .filter((m): m is MemberDoc => Boolean(m));
