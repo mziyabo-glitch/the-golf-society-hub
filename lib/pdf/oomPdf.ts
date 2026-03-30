@@ -66,17 +66,22 @@ export function buildOrderOfMeritPdfHtml(p: OrderOfMeritPdfPayload): string {
   const css = buildPremiumPdfCss(buildOomCompactPrintCss());
   const logo = buildPdfLogoImg(p.logoUrl, p.societyName);
 
-  const seasonLine = [
+  const headerMetaLine = [
+    escapePdfHtml(p.societyName),
     escapePdfHtml(p.seasonSubtitle),
     p.oomEventCount > 0
       ? `${p.oomEventCount} OOM event${p.oomEventCount !== 1 ? "s" : ""}`
       : null,
-    `${p.totalMembers} members`,
-    `${p.membersWithPoints} with OOM points`,
-    `Generated ${escapePdfHtml(p.generatedAt)}`,
   ]
     .filter(Boolean)
     .join(" · ");
+
+  const footerStatsLine = [
+    `${p.totalMembers} members`,
+    `${p.membersWithPoints} with OOM points`,
+    `${p.oomEventCount} OOM event${p.oomEventCount !== 1 ? "s" : ""}`,
+    `Generated ${escapePdfHtml(p.generatedAt)}`,
+  ].join(" · ");
 
   const podiumHtml = buildPodiumHtml(p.leadersTop3);
 
@@ -110,10 +115,9 @@ export function buildOrderOfMeritPdfHtml(p: OrderOfMeritPdfPayload): string {
   <header class="doc-header doc-header--oom">
     ${logo ? `<div class="doc-logo-wrap">${logo}</div>` : ""}
     <div class="doc-header-main">
-      <div class="doc-brand-kicker">Produced by The Golf Society Hub</div>
+      <div class="doc-brand-kicker">The Golf Society Hub</div>
       <h1 class="doc-title">Order of Merit</h1>
-      <p class="doc-subtitle">${escapePdfHtml(p.societyName)} · ${p.seasonYear}</p>
-      <p class="doc-meta">${seasonLine}</p>
+      <p class="doc-meta doc-meta--oom-line">${headerMetaLine}</p>
     </div>
   </header>
 
@@ -134,7 +138,7 @@ export function buildOrderOfMeritPdfHtml(p: OrderOfMeritPdfPayload): string {
   </div>
 
   <footer class="doc-footer doc-footer--oom">
-    <span class="brand">The Golf Society Hub</span>
+    ${footerStatsLine} · <span class="brand">The Golf Society Hub</span>
   </footer>`;
 
   return buildPdfDocumentShell({
@@ -169,15 +173,14 @@ function buildPodiumHtml(leaders: OomLeaderPodiumSlot[]): string {
   const cells = layout
     .map(
       ({ slot, cls, medal }) => `<div class="podium-slot ${cls}">
-        <div class="podium-rank">Rank ${slot.rank}</div>
         <div class="podium-medal">${medal}</div>
         <div class="podium-name">${escapePdfHtml(slot.name)}</div>
-        <div class="podium-pts">${formatPdfNumber(slot.points)} pts</div>
+        <div class="podium-pts">${formatPdfNumber(slot.points)}</div>
       </div>`,
     )
     .join("");
 
-  return `<div class="podium block-avoid ${gridClass}">${cells}</div>`;
+  return `<div class="podium ${gridClass}">${cells}</div>`;
 }
 
 /** Per-event matrix (results log) — premium layout. */

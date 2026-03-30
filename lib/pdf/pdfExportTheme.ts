@@ -119,148 +119,233 @@ ${options.bodyInnerHtml}
 }
 
 /**
- * Compact “leaderboard report” overrides for Order of Merit PDF only.
- * Tighter header/podium/table/footer so ~40 members fit in fewer pages.
+ * Compact “2-page max” print layout for Order of Merit PDF only.
+ * Hard page-width safety, shallow podium, dense table, footer strip at document end.
  */
 export function buildOomCompactPrintCss(): string {
   const t = PDF_THEME;
   return `
+/* OOM: last @page wins — printable margin box; content uses width:100% of that area */
+@page { size: A4 portrait; margin: 10mm; }
+html, body {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+}
+.pdf-root--oom.doc {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 100%;
+  margin: 0;
+  padding: 0;
+}
 .pdf-root--oom {
-  font-size: 11px;
-  line-height: 1.32;
+  font-size: 10.5px;
+  line-height: 1.28;
+  box-sizing: border-box;
+  max-width: 100%;
 }
 .pdf-root--oom .doc-header--oom {
+  box-sizing: border-box;
+  max-width: 100%;
   page-break-inside: avoid;
   break-inside: avoid;
-  gap: 8px;
-  padding-bottom: 6px;
-  margin-bottom: 6px;
+  display: flex;
   align-items: center;
+  gap: 6px;
+  padding: 0 0 4px;
+  margin: 0 0 4px;
   border-bottom: 1px solid ${t.dividerStrong};
 }
 .pdf-root--oom .doc-logo-wrap {
-  width: 44px;
-  height: 44px;
+  box-sizing: border-box;
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  max-width: 32px;
 }
 .pdf-root--oom .doc-logo {
-  width: 44px;
-  height: 44px;
-  border-radius: 4px;
+  width: 32px;
+  height: 32px;
+  max-width: 100%;
+  border-radius: 3px;
+  display: block;
+}
+.pdf-root--oom .doc-header-main {
+  flex: 1;
+  min-width: 0;
+  max-width: 100%;
 }
 .pdf-root--oom .doc-brand-kicker {
-  font-size: 8px;
-  margin-bottom: 2px;
-  letter-spacing: 0.1em;
+  font-size: 6.5px;
+  font-weight: 600;
+  margin: 0 0 1px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: ${t.accent};
+  opacity: 0.9;
 }
 .pdf-root--oom .doc-title {
-  font-size: 17px;
-  line-height: 1.15;
+  font-size: 14px;
+  line-height: 1.12;
   margin: 0 0 2px;
   letter-spacing: -0.02em;
+  font-weight: 700;
+  color: ${t.navy};
 }
-.pdf-root--oom .doc-subtitle {
-  font-size: 11px;
-  margin: 0 0 3px;
+.pdf-root--oom .doc-meta--oom-line {
+  margin: 0;
+  font-size: 9px;
   line-height: 1.25;
-}
-.pdf-root--oom .doc-meta {
-  font-size: 9.5px;
-  line-height: 1.35;
   color: ${t.textSecondary};
 }
-.pdf-root--oom .doc-meta--tight {
-  margin: 3px 0 0;
-}
 .pdf-root--oom .podium {
+  box-sizing: border-box;
+  max-width: 100%;
   page-break-inside: avoid;
   break-inside: avoid;
-  margin: 4px 0 6px;
-  padding: 5px 6px;
-  gap: 5px;
-  border-radius: 6px;
+  display: grid;
+  align-items: end;
+  margin: 0 0 4px;
+  padding: 4px;
+  gap: 4px;
+  background: ${t.rowHighlight};
+  border: 1px solid ${t.divider};
+  border-radius: 4px;
+  box-shadow: none;
+}
+.pdf-root--oom .podium--3 {
+  grid-template-columns: 1fr 1.08fr 1fr;
 }
 .pdf-root--oom .podium--2 {
-  max-width: 320px;
+  grid-template-columns: 1fr 1fr;
+  max-width: 100%;
+  margin-left: 0;
+  margin-right: 0;
 }
 .pdf-root--oom .podium--1 {
-  max-width: 160px;
+  grid-template-columns: 1fr;
+  max-width: 220px;
+  margin-left: 0;
+  margin-right: 0;
 }
 .pdf-root--oom .podium-slot {
-  padding: 4px 5px;
-  border-radius: 5px;
+  box-sizing: border-box;
+  min-width: 0;
+  max-width: 100%;
+  text-align: center;
+  padding: 3px 4px 4px;
+  background: ${t.white};
+  border: 1px solid ${t.divider};
+  border-radius: 3px;
+  page-break-inside: avoid;
+  break-inside: avoid;
+  box-shadow: none;
 }
 .pdf-root--oom .podium-slot--first {
-  padding-bottom: 6px;
-  box-shadow: 0 1px 4px rgba(11, 110, 79, 0.1);
-}
-.pdf-root--oom .podium-rank {
-  font-size: 7px;
-  margin-bottom: 1px;
-  letter-spacing: 0.04em;
+  padding: 4px 4px 6px;
+  border-color: ${t.accent};
+  box-shadow: none;
 }
 .pdf-root--oom .podium-medal {
-  font-size: 14px;
-  margin-bottom: 2px;
+  font-size: 11px;
+  margin-bottom: 1px;
   line-height: 1;
 }
 .pdf-root--oom .podium-name {
-  font-size: 10px;
-  margin-bottom: 2px;
-  line-height: 1.2;
+  font-size: 9px;
+  font-weight: 700;
+  color: ${t.navy};
+  margin-bottom: 1px;
+  line-height: 1.15;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .pdf-root--oom .podium-pts {
-  font-size: 11px;
+  font-size: 10px;
+  font-weight: 700;
+  color: ${t.accent};
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
 }
 .pdf-root--oom .table-wrap--oom {
-  margin-top: 2px;
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 100%;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
   page-break-inside: auto;
 }
 .pdf-root--oom table.sheet--oom {
   table-layout: fixed;
   width: 100%;
+  max-width: 100%;
+  border-collapse: collapse;
   font-size: 10.5px;
-  line-height: 1.22;
+  line-height: 1.2;
+}
+.pdf-root--oom table.sheet--oom thead {
+  display: table-header-group;
 }
 .pdf-root--oom table.sheet--oom thead th {
-  padding: 4px 5px;
-  font-size: 10px;
-  line-height: 1.2;
+  padding: 3px 4px;
+  font-size: 9.5px;
+  line-height: 1.15;
+  border: 1px solid ${t.navy};
 }
 .pdf-root--oom table.sheet--oom tbody td {
-  padding: 3px 5px;
-  line-height: 1.2;
+  padding: 4px 4px;
+  line-height: 1.18;
   vertical-align: middle;
-}
-.pdf-root--oom table.sheet--oom .col-pos {
-  width: 7%;
-}
-.pdf-root--oom table.sheet--oom .col-events {
-  width: 9%;
-}
-.pdf-root--oom table.sheet--oom .col-pts {
-  width: 11%;
-}
-.pdf-root--oom table.sheet--oom .col-player {
-  width: auto;
-  word-wrap: break-word;
-  overflow-wrap: anywhere;
+  border-bottom: 1px solid ${t.divider};
 }
 .pdf-root--oom table.sheet--oom tbody tr {
-  page-break-inside: avoid;
-  break-inside: avoid;
+  page-break-inside: auto;
+  break-inside: auto;
+}
+.pdf-root--oom table.sheet--oom .col-pos {
+  width: 10%;
+}
+.pdf-root--oom table.sheet--oom .col-player {
+  width: 64%;
+  max-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pdf-root--oom table.sheet--oom .col-events {
+  width: 12%;
+}
+.pdf-root--oom table.sheet--oom .col-pts {
+  width: 14%;
+}
+.pdf-root--oom table.sheet--oom thead th.num,
+.pdf-root--oom table.sheet--oom td.num {
+  white-space: nowrap;
+}
+.pdf-root--oom table.sheet--oom td.num {
+  font-variant-numeric: tabular-nums;
 }
 .pdf-root--oom .doc-footer--oom {
-  margin-top: 6px;
-  padding-top: 5px;
-  border-top: 1px solid ${t.divider};
-  font-size: 8.5px;
-  line-height: 1.3;
+  box-sizing: border-box;
+  max-width: 100%;
+  margin: 4px 0 0;
+  padding: 3px 4px;
+  border: 1px solid ${t.divider};
+  border-radius: 2px;
+  background: ${t.rowAlt};
+  font-size: 8px;
+  line-height: 1.25;
   text-align: center;
   color: ${t.textSecondary};
+  page-break-before: auto;
 }
 .pdf-root--oom .doc-footer--oom .brand {
   font-weight: 600;
   color: ${t.navyMuted};
+  font-size: 7.5px;
 }
 `;
 }
