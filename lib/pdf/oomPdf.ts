@@ -66,11 +66,16 @@ export type OomMatrixPdfPayload = {
  */
 export function buildOrderOfMeritPdfHtml(p: OrderOfMeritPdfPayload): string {
   const logo = buildPdfLogoImg(p.logoUrl, p.societyName);
+  const uniqueRows = p.standings.filter((row, idx, arr) => {
+    const id = String(row.memberId);
+    return arr.findIndex((item) => String(item.memberId) === id) === idx;
+  });
+  const isDense = uniqueRows.length >= 30;
 
   const css = `
 @page {
   size: A4 portrait;
-  margin: 8mm 10mm;
+  margin: 7mm 9mm;
 }
 
 * {
@@ -86,8 +91,8 @@ html, body {
 
 body {
   font-family: Arial, Helvetica, sans-serif;
-  font-size: 9px;
-  line-height: 1.22;
+  font-size: 8.6px;
+  line-height: 1.18;
   color: #0f172a;
   -webkit-print-color-adjust: exact;
   print-color-adjust: exact;
@@ -103,9 +108,12 @@ body {
 .head-wrap {
   width: 100%;
   max-width: 100%;
-  margin: 0 0 6px 0;
-  border-bottom: 2px solid #0f172a;
-  padding-bottom: 6px;
+  margin: 0 0 5px 0;
+  border: 1px solid #dbe3ee;
+  border-left: 3px solid #0b6e4f;
+  border-radius: 4px;
+  padding: 5px 6px;
+  background: #f8fbff;
 }
 
 .head-table {
@@ -115,15 +123,15 @@ body {
 }
 
 .head-logo {
-  width: 52px;
+  width: 42px;
   vertical-align: top;
-  padding: 0 8px 0 0;
+  padding: 0 6px 0 0;
 }
 
 .head-logo img {
   display: block;
-  width: 48px;
-  height: 48px;
+  width: 36px;
+  height: 36px;
   object-fit: contain;
   object-position: center;
 }
@@ -133,22 +141,22 @@ body {
 }
 
 .title {
-  font-size: 15px;
+  font-size: 13px;
   font-weight: 700;
-  margin: 0 0 2px 0;
+  margin: 0 0 1px 0;
   letter-spacing: -0.02em;
   color: #0f172a;
 }
 
 .meta {
-  font-size: 8.5px;
+  font-size: 7.8px;
   color: #475569;
   margin: 0;
-  line-height: 1.25;
+  line-height: 1.2;
 }
 
 .meta + .meta {
-  margin-top: 2px;
+  margin-top: 1px;
 }
 
 .standings {
@@ -157,7 +165,7 @@ body {
   border-collapse: collapse;
   table-layout: fixed;
   border: 1px solid #cbd5e1;
-  font-size: 9px;
+  font-size: 8.35px;
 }
 
 .standings thead {
@@ -167,7 +175,7 @@ body {
 .standings th,
 .standings td {
   min-width: 0;
-  padding: 2px 6px;
+  padding: 1.8px 5px;
   border-bottom: 1px solid #e2e8f0;
   vertical-align: middle;
 }
@@ -175,12 +183,12 @@ body {
 .standings thead th {
   background: #0f172a;
   color: #ffffff;
-  font-size: 8px;
+  font-size: 7.3px;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.06em;
   border-bottom: none;
-  padding: 4px 5px;
+  padding: 3.5px 5px;
 }
 
 .standings tbody tr:nth-child(even) {
@@ -223,27 +231,35 @@ body {
   font-weight: 500;
 }
 
+.standings.dense {
+  font-size: 7.9px;
+}
+
+.standings.dense th,
+.standings.dense td {
+  padding-top: 1.2px;
+  padding-bottom: 1.2px;
+}
+
+.standings.dense thead th {
+  font-size: 7px;
+  padding-top: 3px;
+  padding-bottom: 3px;
+}
+
 .footer {
-  margin-top: 5px;
-  font-size: 8px;
+  margin-top: 4px;
+  font-size: 7.5px;
   color: #64748b;
-  line-height: 1.2;
+  line-height: 1.15;
 }
 `;
 
   const line2 = `${escapePdfHtml(p.societyName)} · ${p.seasonYear}`;
-  const line3 = `${escapePdfHtml(p.seasonSubtitle)} · Generated ${escapePdfHtml(p.generatedAt)}`;
+  const line3 = `${p.oomEventCount} OOM event${p.oomEventCount !== 1 ? "s" : ""} · Generated ${escapePdfHtml(p.generatedAt)}`;
 
   const footerLine = `${p.totalMembers} members · ${p.membersWithPoints} with OOM points · Generated ${escapePdfHtml(p.generatedAt)}`;
-
-  const seenMember = new Set<string>();
-  const rowsHtml = p.standings
-    .filter((row) => {
-      const id = String(row.memberId);
-      if (seenMember.has(id)) return false;
-      seenMember.add(id);
-      return true;
-    })
+  const rowsHtml = uniqueRows
     .map((row) => {
       const pos = row.rank;
       const pts =
@@ -274,7 +290,7 @@ body {
     </tr>
   </table>
 </div>
-<table class="standings">
+<table class="standings${isDense ? " dense" : ""}">
   <thead>
     <tr>
       <th class="c-pos" style="width:10%">Pos</th>
