@@ -1,4 +1,5 @@
 import { Pressable, StyleSheet, Text, ViewStyle } from "react-native";
+import { colors } from "@/lib/ui/theme";
 
 type PrimaryButtonProps = {
   label: string;
@@ -21,7 +22,7 @@ export function PrimaryButton({ label, onPress, style, disabled }: PrimaryButton
 
 const styles = StyleSheet.create({
   button: {
-    backgroundColor: "#0B6E4F",
+    backgroundColor: colors.light.primary,
     paddingVertical: 16,
     borderRadius: 12,
     alignItems: "center",

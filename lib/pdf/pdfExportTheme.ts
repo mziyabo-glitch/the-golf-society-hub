@@ -5,17 +5,20 @@
  */
 
 export const PDF_THEME = {
-  navy: "#0f172a",
-  navyMuted: "#334155",
-  textSecondary: "#475569",
-  divider: "#e2e8f0",
-  dividerStrong: "#cbd5e1",
-  accent: "#0B6E4F",
-  accentSoft: "#ecfdf5",
-  accentBorder: "#bbf7d0",
+  /** Primary text / titles (deep green-black, not navy) */
+  navy: "#15251A",
+  navyMuted: "#5C6B5F",
+  textSecondary: "#3D5344",
+  divider: "#d4ded4",
+  dividerStrong: "#c9d4c9",
+  accent: "#166534",
+  accentSoft: "#ecf4ec",
+  accentBorder: "#b8d4be",
+  /** Podium / winner emphasis */
+  highlight: "#D4AF37",
   white: "#ffffff",
-  rowAlt: "#f8fafc",
-  rowHighlight: "#f1f5f9",
+  rowAlt: "#f8faf8",
+  rowHighlight: "#f1f5f1",
 };
 
 /** Safe font stack for WebView / print engines */
@@ -379,7 +382,7 @@ body {
   margin: 0 auto;
   padding: 0;
   position: relative;
-  background: ${t.white};
+  background: ${t.rowAlt};
 }
 .doc-header {
   page-break-inside: avoid;
@@ -447,12 +450,12 @@ table.sheet {
   font-size: 12px;
 }
 table.sheet thead th {
-  background: ${t.navy};
+  background: ${t.accent};
   color: ${t.white};
   text-align: left;
   padding: 8px 10px;
   font-weight: 600;
-  border: 1px solid ${t.navy};
+  border: 1px solid ${t.accent};
 }
 table.sheet thead th.num,
 table.sheet td.num {
@@ -518,8 +521,8 @@ table.sheet tbody tr.muted td { color: ${t.textSecondary}; }
 }
 .podium-slot--first {
   padding-bottom: 14px;
-  border-color: ${t.accent};
-  box-shadow: 0 2px 8px rgba(11, 110, 79, 0.12);
+  border-color: ${t.highlight};
+  box-shadow: 0 2px 10px rgba(212, 175, 55, 0.22);
 }
 .podium-medal { font-size: 20px; line-height: 1; margin-bottom: 6px; }
 .podium-name {

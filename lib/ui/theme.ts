@@ -7,80 +7,81 @@ import type { TextStyle } from "react-native";
 
 export type ThemeMode = "light" | "dark";
 
+/**
+ * Light premium golf palette:
+ * - Soft off-white: app chrome / backgrounds (fairway-adjacent, not corporate)
+ * - White cards with subtle shadow
+ * - Deep green: primary actions & brand accents
+ * - Muted gold: highlights only (podium, top ranks)
+ */
 export const colors = {
   light: {
-    // Primary brand color (golf green)
-    primary: "#0B6E4F",
-    primaryDark: "#094937",
-    primaryLight: "#0FA578",
-    
-    // Semantic colors
+    primary: "#166534",
+    primaryDark: "#14532D",
+    primaryLight: "#15803D",
+
+    /** Muted gold — leaderboard top positions, premium emphasis only */
+    highlight: "#D4AF37",
+    highlightMuted: "rgba(212, 175, 55, 0.16)",
+
     success: "#10B981",
     error: "#EF4444",
     warning: "#F59E0B",
     info: "#3B82F6",
-    
-    // Backgrounds
-    background: "#FFFFFF",
-    backgroundSecondary: "#F7F8FA",
-    backgroundTertiary: "#F3F4F6",
-    
-    // Surfaces (cards, inputs)
+
+    background: "#F8FAF8",
+    backgroundSecondary: "#EFF3EF",
+    backgroundTertiary: "#E6EDE6",
+
     surface: "#FFFFFF",
     surfaceElevated: "#FFFFFF",
-    surfaceDisabled: "#F3F4F6",
-    
-    // Text (slate palette: 900 / 600 / 500)
-    text: "#0F172A",
-    textSecondary: "#475569",
-    textTertiary: "#64748B",
+    surfaceDisabled: "#E3EBE3",
+
+    text: "#15251A",
+    textSecondary: "#3D5344",
+    textTertiary: "#5C6B5F",
     textInverse: "#FFFFFF",
-    
-    // Borders
-    border: "#E6E8EC",
-    borderLight: "#E6E8EC",
-    divider: "#E5E7EB",
-    
-    // Interactive
-    pressOverlay: "rgba(0, 0, 0, 0.05)",
-    overlay: "rgba(0, 0, 0, 0.5)",
+
+    border: "#D4DED4",
+    borderLight: "#E2EBE2",
+    divider: "#C9D4C9",
+
+    pressOverlay: "rgba(22, 101, 52, 0.08)",
+    overlay: "rgba(0, 0, 0, 0.45)",
   },
+  /** Mirrors light — bright golf UI; no navy / dark chrome */
   dark: {
-    // Primary brand color (slightly lighter for dark mode)
-    primary: "#0FA578",
-    primaryDark: "#0B6E4F",
-    primaryLight: "#14D99F",
-    
-    // Semantic colors
+    primary: "#166534",
+    primaryDark: "#14532D",
+    primaryLight: "#16A34A",
+
+    highlight: "#D4AF37",
+    highlightMuted: "rgba(212, 175, 55, 0.18)",
+
     success: "#10B981",
     error: "#EF4444",
     warning: "#F59E0B",
     info: "#3B82F6",
-    
-    // Backgrounds
-    background: "#111827",
-    backgroundSecondary: "#1F2937",
-    backgroundTertiary: "#374151",
-    
-    // Surfaces (cards, inputs)
-    surface: "#1F2937",
-    surfaceElevated: "#374151",
-    surfaceDisabled: "#374151",
-    
-    // Text
-    text: "#F9FAFB",
-    textSecondary: "#D1D5DB",
-    textTertiary: "#9CA3AF",
-    textInverse: "#111827",
-    
-    // Borders
-    border: "#374151",
-    borderLight: "#4B5563",
-    divider: "#374151",
-    
-    // Interactive
-    pressOverlay: "rgba(255, 255, 255, 0.1)",
-    overlay: "rgba(0, 0, 0, 0.7)",
+
+    background: "#F8FAF8",
+    backgroundSecondary: "#EFF3EF",
+    backgroundTertiary: "#E6EDE6",
+
+    surface: "#FFFFFF",
+    surfaceElevated: "#FFFFFF",
+    surfaceDisabled: "#E3EBE3",
+
+    text: "#15251A",
+    textSecondary: "#3D5344",
+    textTertiary: "#5C6B5F",
+    textInverse: "#FFFFFF",
+
+    border: "#D4DED4",
+    borderLight: "#E2EBE2",
+    divider: "#C9D4C9",
+
+    pressOverlay: "rgba(22, 101, 52, 0.08)",
+    overlay: "rgba(0, 0, 0, 0.45)",
   },
 } as const;
 
@@ -105,18 +106,18 @@ export const radius = {
   full: 9999,
 } as const;
 
-// Premium design tokens
+// Premium design tokens (light golf surfaces)
 export const premiumTokens = {
-  background: "#F7F8FA",
-  cardBorder: "#E6E8EC",
-  textPrimary: "#0F172A",
-  textSecondary: "#475569",
+  background: "#F8FAF8",
+  cardBorder: "#D4DED4",
+  textPrimary: "#15251A",
+  textSecondary: "#3D5344",
   cardShadow: {
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.04,
-    shadowRadius: 4,
-    elevation: 2,
+    shadowColor: "#0F172A",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.06,
+    shadowRadius: 8,
+    elevation: 3,
   },
 } as const;
 

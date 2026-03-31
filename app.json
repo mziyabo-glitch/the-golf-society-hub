@@ -34,9 +34,9 @@
           "image": "./assets/images/app-icon.png",
           "imageWidth": 200,
           "resizeMode": "contain",
-          "backgroundColor": "#0E1A2B",
+          "backgroundColor": "#F8FAF8",
           "dark": {
-            "backgroundColor": "#0E1A2B"
+            "backgroundColor": "#F8FAF8"
           }
         }
       ],

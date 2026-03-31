@@ -5,10 +5,10 @@
  *
  * Cards (top to bottom):
  *  A) Premium Header — app bar + society identity hero
- *  B) Next Event Card — upcoming event + FairwayWeather link
- *  C) My Season Snapshot Card — events played, OOM points, rank
- *  D) Order of Merit Teaser Card — top 5 + pinned current user
- *  E) Recent Activity Card — last 3 past events with result status
+ *  B) Hero next-event card — status + CTA (see components/dashboard)
+ *  C) OOM metrics row + Your Status — rank, points; RSVP / payment
+ *  D) Compact upcoming list + top-3 leaderboard preview
+ *  E) Recent Activity — last 3 past events with result status
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -22,11 +22,13 @@ import { useBottomTabBarHeight } from "@react-navigation/bottom-tabs";
 import { Screen } from "@/components/ui/Screen";
 import { AppText } from "@/components/ui/AppText";
 import { AppCard } from "@/components/ui/AppCard";
-import { Card } from "@/components/ui/Card";
-import { StatCard } from "@/components/ui/StatCard";
-import { LinkRowCard } from "@/components/ui/LinkRowCard";
+import { DashboardFairwayWeatherCard } from "@/components/dashboard/DashboardFairwayWeatherCard";
+import { DashboardHeroEventCard } from "@/components/dashboard/DashboardHeroEventCard";
+import { DashboardOomTopMetricsRow } from "@/components/dashboard/DashboardOomTopMetricsRow";
+import { DashboardYourStatusCard } from "@/components/dashboard/DashboardYourStatusCard";
+import { DashboardUpcomingList } from "@/components/dashboard/DashboardUpcomingList";
+import { DashboardLeaderboardPreview } from "@/components/dashboard/DashboardLeaderboardPreview";
 import { SocietyHeaderCard } from "@/components/ui/SocietyHeaderCard";
-import { Chip } from "@/components/ui/Chip";
 import { PrimaryButton } from "@/components/ui/Button";
 import { InlineNotice } from "@/components/ui/InlineNotice";
 import { Toast } from "@/components/ui/Toast";
@@ -47,7 +49,7 @@ import {
   type OrderOfMeritEntry,
   type EventResultDoc,
 } from "@/lib/db_supabase/resultsRepo";
-import { getColors, spacing, radius, typography } from "@/lib/ui/theme";
+import { colors, getColors, spacing, radius, typography } from "@/lib/ui/theme";
 import { formatError, type FormattedError } from "@/lib/ui/formatError";
 import { getSocietyLogoUrl } from "@/lib/societyLogo";
 import { isActiveSocietyParticipantForEvent, isJointEventFromMeta } from "@/lib/jointEventAccess";
@@ -63,11 +65,6 @@ import {
 import { blurWebActiveElement } from "@/lib/ui/focus";
 import { SocietySwitcherPill } from "@/components/SocietySwitcher";
 import { getCache, setCache, invalidateCache } from "@/lib/cache/clientCache";
-import {
-  JOINT_EVENT_CHIP_SHORT,
-  JOINT_HOME_RSVP_NOTE,
-  PaymentStatus,
-} from "@/lib/eventModuleUi";
 
 const appIcon = require("@/assets/images/app-icon.png");
 
@@ -416,6 +413,24 @@ export default function HomeScreen() {
     return upcoming[0] ?? null;
   }, [events, todayLocalKey]);
 
+  /** Further upcoming events after the hero “next” (same ordering rules as nextEvent). */
+  const upcomingAfterNext = useMemo(() => {
+    const upcoming = events.filter(
+      (e) =>
+        !e.isCompleted &&
+        e.date &&
+        /^\d{4}-\d{2}-\d{2}$/.test(e.date.trim()) &&
+        e.date.trim() >= todayLocalKey
+    );
+    upcoming.sort((a, b) => {
+      const da = a.date!.trim();
+      const db = b.date!.trim();
+      if (da !== db) return da.localeCompare(db);
+      return (a.name || "").localeCompare(b.name || "");
+    });
+    return upcoming.slice(1, 4);
+  }, [events, todayLocalKey]);
+
   const nextEventId = nextEvent?.id ?? null;
 
   /** Joint truth from event_societies-derived fields — not raw events.is_joint_event alone. */
@@ -682,16 +697,6 @@ export default function HomeScreen() {
     userId,
   ]);
 
-  // OOM teaser: top 5 + current user pinned
-  const oomTeaser = useMemo(() => {
-    const top5 = oomStandings.slice(0, 5);
-    const isInTop5 = top5.some((s) => s.memberId === memberId);
-    const myEntry = !isInTop5
-      ? oomStandings.find((s) => s.memberId === memberId)
-      : null;
-    return { top5, isInTop5, myEntry };
-  }, [oomStandings, memberId]);
-
   // ============================================================================
   // Registration Helpers
   // ============================================================================
@@ -799,12 +804,14 @@ export default function HomeScreen() {
     ? `${memberDisplayName} • ${roleLabel} • ${memberHiText}`
     : `${memberDisplayName} • ${roleLabel}`;
   const canOpenLeaderboard = memberHasSeat || memberIsCaptain;
-  const atGlanceRank =
+  const oomTotalPoints = Number(mySnapshot?.totalPoints) || 0;
+  const oomPointsMain = formatPoints(oomTotalPoints);
+  const oomRankMain =
     mySnapshot && (mySnapshot.rank ?? 0) > 0 ? String(mySnapshot.rank) : "—";
-  const atGlancePoints =
-    mySnapshot && (mySnapshot.totalPoints ?? 0) > 0
-      ? formatPoints(Number(mySnapshot.totalPoints) || 0)
-      : "—";
+  const showUnrankedHint = !mySnapshot || (mySnapshot.rank ?? 0) <= 0;
+  const heroTeePreview = myTeeTimeInfo
+    ? { teeTime: myTeeTimeInfo.teeTime, groupNumber: myTeeTimeInfo.groupNumber }
+    : null;
   const cardPressStyle = ({ pressed }: PressableStateCallbackType) => [
     styles.cardPressable,
     pressed && styles.cardPressablePressed,
@@ -826,24 +833,6 @@ export default function HomeScreen() {
         subtitle={heroSecondaryText}
         getInitials={getInitials}
       />
-
-      {/* OOM Rank + Points compact StatCards */}
-      <View style={styles.atGlanceRow}>
-        <StatCard
-          icon="award"
-          label="OOM Rank"
-          value={atGlanceRank}
-          detail={mySnapshot && mySnapshot.rank > 0 ? `of ${String(mySnapshot.totalWithPoints)}` : "No rank yet"}
-          onPress={canOpenLeaderboard ? openLeaderboard : undefined}
-        />
-        <StatCard
-          icon="bar-chart-2"
-          label="Points"
-          value={atGlancePoints}
-          detail="Order of Merit"
-          onPress={canOpenLeaderboard ? openLeaderboard : undefined}
-        />
-      </View>
 
       {loadError && (
         <InlineNotice
@@ -961,290 +950,64 @@ export default function HomeScreen() {
         );
       })()}
 
-      {/* Course Weather — compact LinkRowCard */}
-      <LinkRowCard
-        icon="cloud"
-        title="Course Weather"
-        subtitle="Powered by FairwayWeather"
-        onPress={openFairwayWeather}
+      <DashboardHeroEventCard
+        nextEvent={nextEvent}
+        nextEventIsJoint={nextEventIsJoint}
+        myReg={myReg}
+        myTeeTimeInfo={heroTeePreview}
+        canAccessNextEventTeeSheet={canAccessNextEventTeeSheet}
+        formatEventDate={formatEventDate}
+        formatFormatLabel={formatFormatLabel}
+        formatClassification={formatClassification}
+        onOpenEvent={() => nextEvent && openEvent(nextEvent.id)}
+        onOpenTeeSheet={() =>
+          nextEvent && router.push({ pathname: "/(app)/event/[id]/tee-sheet", params: { id: nextEvent.id } })
+        }
       />
 
-      {/* Next Event — tightened card */}
+      <DashboardOomTopMetricsRow
+        oomRankMain={oomRankMain}
+        showUnrankedHint={showUnrankedHint}
+        oomPointsMain={oomPointsMain}
+        canOpenLeaderboard={canOpenLeaderboard}
+        onOpenLeaderboard={openLeaderboard}
+      />
+
       {nextEvent ? (
-        <Pressable onPress={() => openEvent(nextEvent.id)} style={cardPressStyle}>
-          <Card style={styles.nextEventCard}>
-            <View style={styles.cardTitleRow}>
-              <Feather name="calendar" size={16} color={colors.primary} />
-              <AppText variant="captionBold" color="primary">Next Event</AppText>
-            </View>
-            <AppText variant="h2" style={styles.nextEventTitle}>
-              {String(nextEvent.name ?? "Event")}
-            </AppText>
-            <AppText variant="small" color="secondary" style={styles.nextEventMeta}>
-              {formatEventDate(nextEvent.date)}
-              {nextEvent.courseName ? ` • ${String(nextEvent.courseName)}` : ""}
-            </AppText>
-            <View style={styles.nextEventDetails}>
-              {nextEvent.format && <Chip>{formatFormatLabel(nextEvent.format)}</Chip>}
-              {nextEvent.classification && <Chip>{formatClassification(nextEvent.classification)}</Chip>}
-              {nextEventIsJoint && (
-                <View style={[styles.jointChipHome, { borderColor: colors.info + "55", backgroundColor: colors.info + "12" }]}>
-                  <Feather name="link" size={10} color={colors.info} />
-                  <AppText variant="small" style={{ color: colors.info, fontWeight: "600" }}>
-                    {JOINT_EVENT_CHIP_SHORT}
-                  </AppText>
-                </View>
-              )}
-            </View>
-            {nextEvent.isOOM && (
-              <View style={styles.oomPremiumPill}>
-                <Feather name="award" size={12} color="#9A6700" />
-                <AppText variant="small" style={styles.oomPremiumPillText}>
-                  Counts toward Order of Merit
-                </AppText>
-              </View>
-            )}
-            {/* Your Tee Time — premium section when published */}
-            {nextEvent.teeTimePublishedAt && canAccessNextEventTeeSheet && (
-              <View style={[styles.yourTeeTimeCard, { borderTopColor: colors.borderLight, backgroundColor: colors.primary + "08" }]}>
-                <AppText variant="captionBold" color="primary" style={styles.yourTeeTimeLabel}>
-                  Your Tee Time
-                </AppText>
-                {myTeeTimeInfo ? (
-                  <>
-                    <View style={styles.yourTeeTimeRow}>
-                      <AppText variant="display" style={{ color: colors.text }}>
-                        {myTeeTimeInfo.teeTime}
-                      </AppText>
-                      <View style={[styles.groupPill, { backgroundColor: colors.primary + "20" }]}>
-                        <AppText variant="captionBold" color="primary">Group {myTeeTimeInfo.groupNumber}</AppText>
-                      </View>
-                    </View>
-                    {myTeeTimeInfo.groupMates.length > 0 && (
-                      <View style={styles.playingWithRow}>
-                        <AppText variant="small" color="secondary">Playing with</AppText>
-                        <AppText variant="body" style={{ color: colors.text, marginTop: 2 }}>
-                          {myTeeTimeInfo.groupMates.join(" • ")}
-                        </AppText>
-                      </View>
-                    )}
-                    <Pressable
-                      onPress={() => router.push({ pathname: "/(app)/event/[id]/tee-sheet", params: { id: nextEvent.id } })}
-                      style={({ pressed }) => [styles.viewTeeSheetBtn, pressed && { opacity: 0.8 }]}
-                    >
-                      <AppText variant="captionBold" color="primary">View Tee Sheet</AppText>
-                      <Feather name="chevron-right" size={14} color={colors.primary} />
-                    </Pressable>
-                  </>
-                ) : (
-                  <AppText variant="small" color="secondary" style={{ marginTop: 4 }}>
-                    Tee times published — you are not assigned yet.
-                  </AppText>
-                )}
-              </View>
-            )}
+        <DashboardYourStatusCard
+          nextEvent={nextEvent}
+          nextEventIsJoint={nextEventIsJoint}
+          myReg={myReg}
+          regBusy={regBusy}
+          canAdmin={canAdmin}
+          showAdmin={showAdmin}
+          onToggleAdmin={() => setShowAdmin((v) => !v)}
+          onToggleIn={() => toggleRegistration("in")}
+          onToggleOut={() => toggleRegistration("out")}
+          onMarkPaid={handleMarkPaid}
+        />
+      ) : null}
 
-            {/* Registration (+ payment for standard events only) */}
-            <View style={[styles.regRow, { borderTopColor: colors.borderLight }]}>
-              <View style={{ flex: 1, gap: spacing.xs }}>
-                {nextEventIsJoint ? (
-                  <AppText variant="small" color="tertiary" style={{ marginBottom: 2 }}>
-                    {JOINT_HOME_RSVP_NOTE}
-                  </AppText>
-                ) : null}
-                {/* Status line */}
-                <View style={styles.regStatusWrap}>
-                  <AppText variant="small" color="secondary" style={{ fontWeight: "600" }}>You:</AppText>
-                  {myReg?.status === "in" ? (
-                    <>
-                      <View style={[styles.regBadge, { backgroundColor: colors.success + "18" }]}>
-                        <Feather name="check-circle" size={12} color={colors.success} />
-                        <AppText variant="small" style={{ color: colors.success, fontWeight: "700" }}>CONFIRMED</AppText>
-                      </View>
-                      {!nextEventIsJoint ? (
-                        myReg.paid ? (
-                          <View style={[styles.paidPill, { backgroundColor: colors.success }]}>
-                            <AppText style={styles.paidPillText}>PAID</AppText>
-                          </View>
-                        ) : (
-                          <View style={[styles.paidPill, { backgroundColor: colors.warning + "40" }]}>
-                            <AppText style={[styles.paidPillText, { color: colors.warning }]}>{PaymentStatus.unpaid}</AppText>
-                          </View>
-                        )
-                      ) : null}
-                    </>
-                  ) : myReg?.status === "out" ? (
-                    <View style={[styles.regBadge, { backgroundColor: colors.textTertiary + "18" }]}>
-                      <Feather name="x-circle" size={12} color={colors.textTertiary} />
-                      <AppText variant="small" style={{ color: colors.textTertiary, fontWeight: "700" }}>OUT</AppText>
-                    </View>
-                  ) : (
-                    <AppText variant="small" color="tertiary">Not registered</AppText>
-                  )}
-                </View>
+      <DashboardFairwayWeatherCard
+        nextEvent={nextEvent}
+        formatEventDate={formatEventDate}
+        onOpenForecast={openFairwayWeather}
+      />
 
-                {/* Action buttons */}
-                <View style={styles.regActions}>
-                  {myReg?.status === "in" ? (
-                    <Pressable
-                      hitSlop={8}
-                      disabled={regBusy}
-                      onPress={(e) => { e.stopPropagation(); toggleRegistration("out"); }}
-                      style={[styles.regBtn, { borderColor: colors.border }]}
-                    >
-                      <AppText variant="small" color="secondary">Can&apos;t make it</AppText>
-                    </Pressable>
-                  ) : (
-                    <Pressable
-                      hitSlop={8}
-                      disabled={regBusy}
-                      onPress={(e) => { e.stopPropagation(); toggleRegistration("in"); }}
-                      style={[styles.regBtn, { backgroundColor: colors.primary, borderColor: colors.primary }]}
-                    >
-                      <AppText variant="small" style={{ color: "#fff", fontWeight: "600" }}>I&apos;m playing</AppText>
-                    </Pressable>
-                  )}
+      <DashboardUpcomingList
+        events={upcomingAfterNext}
+        formatShortDate={formatShortDate}
+        onOpenEvent={openEvent}
+      />
 
-                  {/* Captain / Treasurer micro-admin */}
-                  {canAdmin && (
-                    <Pressable
-                      hitSlop={8}
-                      onPress={(e) => { e.stopPropagation(); setShowAdmin((v) => !v); }}
-                      style={[styles.regBtn, { borderColor: colors.border }]}
-                    >
-                      <Feather name="shield" size={12} color={colors.textSecondary} />
-                      <AppText variant="small" color="secondary">Admin</AppText>
-                    </Pressable>
-                  )}
-                </View>
-
-                {/* Admin panel (collapsed) — standard events only */}
-                {canAdmin && showAdmin && !nextEventIsJoint && (
-                  <View style={[styles.regActions, { marginTop: 2 }]}>
-                    <Pressable
-                      hitSlop={8}
-                      disabled={regBusy}
-                      onPress={(e) => { e.stopPropagation(); handleMarkPaid(true); }}
-                      style={[styles.regBtn, { backgroundColor: colors.success, borderColor: colors.success }]}
-                    >
-                      <AppText variant="small" style={{ color: "#fff", fontWeight: "600" }}>Mark me paid (confirms me)</AppText>
-                    </Pressable>
-                    <Pressable
-                      hitSlop={8}
-                      disabled={regBusy}
-                      onPress={(e) => { e.stopPropagation(); handleMarkPaid(false); }}
-                      style={[styles.regBtn, { backgroundColor: colors.error, borderColor: colors.error }]}
-                    >
-                      <AppText variant="small" style={{ color: "#fff", fontWeight: "600" }}>Mark me unpaid</AppText>
-                    </Pressable>
-                  </View>
-                )}
-              </View>
-            </View>
-
-            <View style={[styles.teeTimeRow, { borderTopColor: colors.borderLight, marginTop: spacing.sm }]}>
-              <Feather name="flag" size={14} color={nextEvent.teeTimePublishedAt ? colors.success : colors.textSecondary} />
-              {nextEvent.teeTimePublishedAt ? (
-                <AppText variant="small" style={{ color: colors.success, fontWeight: "600", flex: 1 }}>
-                  Tee times available — First tee: {String(nextEvent.teeTimeStart || "TBC")}
-                  {nextEvent.teeTimeInterval ? `, ${String(nextEvent.teeTimeInterval)} min intervals` : ""}
-                </AppText>
-              ) : (
-                <AppText variant="small" color="secondary" style={{ flex: 1 }}>
-                  Tee times to be published
-                </AppText>
-              )}
-              <Feather name="chevron-right" size={16} color={colors.textTertiary} />
-            </View>
-          </Card>
-        </Pressable>
-      ) : (
-        <Card style={styles.nextEventCard}>
-          <View style={styles.cardTitleRow}>
-            <Feather name="calendar" size={16} color={colors.textTertiary} />
-            <AppText variant="captionBold" color="tertiary">Next Event</AppText>
-          </View>
-          <AppText variant="body" color="secondary" style={{ marginTop: spacing.sm }}>
-            No upcoming events scheduled. Check back soon!
-          </AppText>
-        </Card>
-      )}
-
-      {/* ================================================================== */}
-      {/* D) ORDER OF MERIT TEASER                                           */}
-      {/* ================================================================== */}
-      {oomStandings.length > 0 && (
-        <Pressable onPress={openLeaderboard} style={cardPressStyle}>
-          <AppCard style={styles.premiumCard}>
-            <View style={styles.cardTitleRow}>
-              <Feather name="award" size={16} color={colors.primary} />
-              <AppText variant="captionBold" color="primary">Order of Merit</AppText>
-            </View>
-
-            {oomTeaser.top5.map((entry, idx) => {
-              const isMe = entry.memberId === memberId;
-              return (
-                <View
-                  key={entry.memberId}
-                  style={[
-                    styles.oomRow,
-                    isMe && { backgroundColor: colors.primary + "10", borderRadius: radius.sm },
-                    idx === oomTeaser.top5.length - 1 && !oomTeaser.myEntry && { borderBottomWidth: 0 },
-                  ]}
-                >
-                  <AppText
-                    variant="captionBold"
-                    style={[styles.oomRank, { color: colors.textSecondary }]}
-                  >
-                    {String(entry.rank)}
-                  </AppText>
-                  <AppText
-                    variant={isMe ? "bodyBold" : "body"}
-                    style={{ flex: 1 }}
-                    numberOfLines={1}
-                  >
-                    {String(entry.memberName ?? "Unknown")}{isMe ? " (You)" : ""}
-                  </AppText>
-                  <AppText variant="captionBold" color="primary">
-                    {formatPoints(Number(entry.totalPoints) || 0)} pts
-                  </AppText>
-                </View>
-              );
-            })}
-
-            {/* Pinned current user row if not in top 5 but has points */}
-            {oomTeaser.myEntry && (
-              <>
-                <View style={[styles.pinnedSeparator, { borderColor: colors.borderLight }]} />
-                <View
-                  style={[
-                    styles.oomRow,
-                    { backgroundColor: colors.primary + "10", borderRadius: radius.sm, borderBottomWidth: 0 },
-                  ]}
-                >
-                  <AppText
-                    variant="captionBold"
-                    style={[styles.oomRank, { color: colors.textSecondary }]}
-                  >
-                    {String(oomTeaser.myEntry.rank)}
-                  </AppText>
-                  <AppText variant="bodyBold" style={{ flex: 1 }} numberOfLines={1}>
-                    You
-                  </AppText>
-                  <AppText variant="captionBold" color="primary">
-                    {formatPoints(Number(oomTeaser.myEntry.totalPoints) || 0)} pts
-                  </AppText>
-                </View>
-              </>
-            )}
-
-            <View style={styles.chevronHint}>
-              <AppText variant="small" color="tertiary">View full leaderboard</AppText>
-              <Feather name="chevron-right" size={16} color={colors.textTertiary} />
-            </View>
-          </AppCard>
-        </Pressable>
-      )}
+      {oomStandings.length > 0 && canOpenLeaderboard ? (
+        <DashboardLeaderboardPreview
+          entries={oomStandings.slice(0, 3)}
+          memberId={memberId}
+          formatPoints={(pts) => `${formatPoints(pts)} pts`}
+          onOpenLeaderboard={openLeaderboard}
+        />
+      ) : null}
 
       {/* ================================================================== */}
       {/* E) RECENT ACTIVITY                                                 */}
@@ -1637,38 +1400,17 @@ function SkeletonCards({ colors }: { colors: ReturnType<typeof getColors> }) {
         </View>
       </AppCard>
 
-      <View style={styles.atGlanceRow}>
-        <AppCard style={[styles.premiumCard, styles.skeletonStatCard]}>
-          <View style={[styles.skeletonIconCircle, { backgroundColor: shimmer }]} />
-          <View style={[styles.skeletonLine, { width: "48%", backgroundColor: shimmer, marginBottom: 8 }]} />
-          <View style={[styles.skeletonLine, { width: "34%", backgroundColor: shimmer, height: 20 }]} />
-        </AppCard>
-        <AppCard style={[styles.premiumCard, styles.skeletonStatCard]}>
-          <View style={[styles.skeletonIconCircle, { backgroundColor: shimmer }]} />
-          <View style={[styles.skeletonLine, { width: "48%", backgroundColor: shimmer, marginBottom: 8 }]} />
-          <View style={[styles.skeletonLine, { width: "34%", backgroundColor: shimmer, height: 20 }]} />
-        </AppCard>
-      </View>
-
-      {/* Next event skeleton */}
+      {/* Hero + position skeletons */}
       <AppCard style={styles.premiumCard}>
-        <View style={[styles.skeletonLine, { width: "30%", backgroundColor: shimmer }]} />
-        <View style={[styles.skeletonLine, { width: "80%", backgroundColor: shimmer, marginTop: 10 }]} />
-        <View style={[styles.skeletonLine, { width: "50%", backgroundColor: shimmer, marginTop: 6 }]} />
-        <View style={{ flexDirection: "row", gap: spacing.sm, marginTop: 12 }}>
-          <View style={[styles.skeletonBadge, { backgroundColor: shimmer }]} />
-          <View style={[styles.skeletonBadge, { backgroundColor: shimmer }]} />
-        </View>
+        <View style={[styles.skeletonLine, { width: "28%", backgroundColor: shimmer }]} />
+        <View style={[styles.skeletonLine, { width: "85%", backgroundColor: shimmer, marginTop: 12 }]} />
+        <View style={[styles.skeletonLine, { width: "55%", backgroundColor: shimmer, marginTop: 8 }]} />
+        <View style={[styles.skeletonLine, { width: "100%", height: 44, backgroundColor: shimmer, marginTop: spacing.md, borderRadius: 12 }]} />
       </AppCard>
 
-      {/* Snapshot skeleton */}
       <AppCard style={styles.premiumCard}>
         <View style={[styles.skeletonLine, { width: "40%", backgroundColor: shimmer }]} />
-        <View style={{ flexDirection: "row", justifyContent: "space-around", marginTop: 16 }}>
-          <View style={[styles.skeletonCircle, { backgroundColor: shimmer }]} />
-          <View style={[styles.skeletonCircle, { backgroundColor: shimmer }]} />
-          <View style={[styles.skeletonCircle, { backgroundColor: shimmer }]} />
-        </View>
+        <View style={[styles.skeletonLine, { width: "42%", backgroundColor: shimmer, marginTop: spacing.md, height: 48 }]} />
       </AppCard>
     </>
   );
@@ -1964,13 +1706,13 @@ const styles = StyleSheet.create({
     borderRadius: radius.full,
     paddingHorizontal: spacing.sm,
     paddingVertical: 5,
-    backgroundColor: "#FFFBEB",
+    backgroundColor: colors.light.highlightMuted,
     borderWidth: 1,
-    borderColor: "#FDE68A",
+    borderColor: `${colors.light.highlight}4D`,
     marginTop: spacing.sm,
   },
   oomPremiumPillText: {
-    color: "#9A6700",
+    color: colors.light.highlight,
     fontWeight: "600",
     marginLeft: 4,
   },

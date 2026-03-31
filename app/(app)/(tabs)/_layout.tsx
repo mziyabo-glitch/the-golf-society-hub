@@ -37,7 +37,7 @@ export default function TabsLayout() {
             height: tabBarHeight,
             paddingBottom: Math.max(insets.bottom, 8),
             paddingTop: 8,
-            backgroundColor: "#FFFFFF",
+            backgroundColor: colors.surfaceElevated,
             borderTopColor: colors.border,
           },
         ],

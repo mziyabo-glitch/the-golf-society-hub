@@ -923,13 +923,13 @@ function generateLedgerPdfHtml(data: LedgerPdfData): string {
             align-items: center;
             margin-bottom: 24px;
             padding-bottom: 16px;
-            border-bottom: 2px solid #0B6E4F;
+            border-bottom: 2px solid #166534;
           }
           .header-text { flex: 1; }
           .society-name {
             font-size: 14px;
             font-weight: 600;
-            color: #0B6E4F;
+            color: #166534;
             text-transform: uppercase;
             letter-spacing: 0.5px;
             margin-bottom: 4px;
@@ -945,7 +945,7 @@ function generateLedgerPdfHtml(data: LedgerPdfData): string {
             padding: 12px;
             text-align: center;
           }
-          .summary-card.highlight { background: #0B6E4F; border-color: #0B6E4F; }
+          .summary-card.highlight { background: #166534; border-color: #166534; }
           .summary-card.highlight .summary-label, .summary-card.highlight .summary-value { color: #fff; }
           .summary-label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; color: #6B7280; margin-bottom: 4px; }
           .summary-value { font-size: 18px; font-weight: 700; color: #111827; font-family: 'SF Mono', Consolas, monospace; }

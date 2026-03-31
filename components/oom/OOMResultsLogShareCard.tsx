@@ -9,7 +9,7 @@ import React, { forwardRef } from "react";
 import { View, Text, StyleSheet } from "react-native";
 import { SocietyLogoImage } from "@/components/ui/SocietyLogoImage";
 import { BrandingFooter } from "@/components/ui/BrandingFooter";
-import { typography } from "@/lib/ui/theme";
+import { colors, typography } from "@/lib/ui/theme";
 
 export type ResultRow = {
   memberName: string;
@@ -171,9 +171,6 @@ OOMResultsLogShareCard.displayName = "OOMResultsLogShareCard";
 
 export default OOMResultsLogShareCard;
 
-// Brand colors
-const BRAND_GREEN = "#0B6E4F";
-
 const styles = StyleSheet.create({
   container: {
     backgroundColor: "#FFFFFF",
@@ -205,7 +202,7 @@ const styles = StyleSheet.create({
   title: {
     fontSize: typography.display.fontSize,
     fontWeight: "700",
-    color: BRAND_GREEN,
+    color: colors.light.primary,
     marginBottom: 2,
   },
   subtitle: {
@@ -215,7 +212,7 @@ const styles = StyleSheet.create({
   },
   divider: {
     height: 3,
-    backgroundColor: BRAND_GREEN,
+    backgroundColor: colors.light.primary,
     marginBottom: 20,
     borderRadius: 2,
   },
@@ -260,7 +257,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     paddingVertical: 10,
     paddingHorizontal: 12,
-    backgroundColor: BRAND_GREEN,
+    backgroundColor: colors.light.primary,
   },
   headerCell: {
     fontSize: typography.small.fontSize,
@@ -297,7 +294,7 @@ const styles = StyleSheet.create({
     backgroundColor: "#FAFAFA",
   },
   tableRowTop3: {
-    backgroundColor: "#FFFBEB",
+    backgroundColor: colors.light.highlightMuted,
   },
   tableRowLast: {
     borderBottomWidth: 0,
@@ -326,13 +323,13 @@ const styles = StyleSheet.create({
   },
   posTextTop3: {
     fontWeight: "600",
-    color: "#D97706",
+    color: colors.light.highlight,
   },
   oomText: {
     width: 50,
     fontSize: typography.body.fontSize,
     fontWeight: "600",
-    color: BRAND_GREEN,
+    color: colors.light.primary,
     textAlign: "right",
   },
   oomTextTop3: {

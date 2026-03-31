@@ -5,6 +5,7 @@
 
 import { useState } from "react";
 import { Modal, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
+import { colors } from "@/lib/ui/theme";
 
 type DatePickerProps = {
   value: string; // ISO format (YYYY-MM-DD)
@@ -222,7 +223,7 @@ const styles = StyleSheet.create({
     flex: 1,
     paddingVertical: 14,
     borderRadius: 10,
-    backgroundColor: "#0B6E4F",
+    backgroundColor: colors.light.primary,
     alignItems: "center",
   },
   modalSaveText: {

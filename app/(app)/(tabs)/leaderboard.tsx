@@ -35,7 +35,7 @@ import {
   type OrderOfMeritEntry,
   type ResultsLogEntry,
 } from "@/lib/db_supabase/resultsRepo";
-import { getColors, spacing, type TypographyTokens } from "@/lib/ui/theme";
+import { getColors, premiumTokens, spacing, type TypographyTokens } from "@/lib/ui/theme";
 import { useScaledTypography } from "@/lib/ui/fontScaleContext";
 import { getSocietyLogoUrl } from "@/lib/societyLogo";
 import { exportOomPdf, exportOomResultsLogPdf } from "@/lib/pdf/oomPdf";
@@ -83,20 +83,16 @@ function GlassCard({ children, style, elevated = false }: GlassCardProps) {
 
 const glassStyles = StyleSheet.create({
   card: {
-    backgroundColor: "rgba(255, 255, 255, 0.85)",
+    backgroundColor: "#FFFFFF",
     borderRadius: 16,
     borderWidth: 1,
-    borderColor: "rgba(255, 255, 255, 0.5)",
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.08,
-    shadowRadius: 24,
-    elevation: 4,
+    borderColor: premiumTokens.cardBorder,
+    ...premiumTokens.cardShadow,
   },
   cardElevated: {
-    shadowOpacity: 0.12,
-    shadowRadius: 32,
-    elevation: 8,
+    shadowOpacity: 0.09,
+    shadowRadius: 12,
+    elevation: 5,
   },
 });
 
@@ -108,12 +104,12 @@ type TabType = "leaderboard" | "resultsLog" | "honour";
 
 export default function LeaderboardScreen() {
   const scaledTypography = useScaledTypography();
-  const styles = useMemo(() => makeLeaderboardStyles(scaledTypography), [scaledTypography]);
+  const colors = getColors();
+  const styles = useMemo(() => makeLeaderboardStyles(scaledTypography, colors), [scaledTypography, colors]);
 
   const { society, societyId, loading: bootstrapLoading } = useBootstrap();
   const { needsLicence, guardPaidAction, modalVisible, setModalVisible, societyId: guardSocietyId } = usePaidAccess();
   const router = useRouter();
-  const colors = getColors();
   const tabBarHeight = useContext(BottomTabBarHeightContext) ?? 0;
   const { width: screenWidth } = useWindowDimensions();
   const logoSize = screenWidth < 600 ? 72 : 64;
@@ -334,7 +330,7 @@ export default function LeaderboardScreen() {
 
   if (bootstrapLoading || loading) {
     return (
-      <SafeAreaView style={[styles.container, { backgroundColor: "#F7F8FA" }]} edges={["top", "bottom"]}>
+      <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]} edges={["top", "bottom"]}>
         <View style={styles.centered}>
           <LoadingState message="Loading standings and results matrix…" />
         </View>
@@ -344,7 +340,7 @@ export default function LeaderboardScreen() {
 
   if (fetchError) {
     return (
-      <SafeAreaView style={[styles.container, { backgroundColor: "#F7F8FA" }]} edges={["top", "bottom"]}>
+      <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]} edges={["top", "bottom"]}>
         <View style={styles.centered}>
           <EmptyState
             icon={<Feather name="alert-circle" size={24} color={colors.error} />}
@@ -359,7 +355,7 @@ export default function LeaderboardScreen() {
 
   if (!societyId) {
     return (
-      <SafeAreaView style={[styles.container, { backgroundColor: "#F7F8FA" }]} edges={["top", "bottom"]}>
+      <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]} edges={["top", "bottom"]}>
         <View style={styles.centered}>
           <EmptyState
             icon={<Feather name="users" size={24} color={colors.textTertiary} />}
@@ -416,7 +412,7 @@ export default function LeaderboardScreen() {
               onPress={handleSharePress}
               disabled={exporting}
             >
-              <Feather name="share" size={18} color="#0B6E4F" />
+              <Feather name="share" size={18} color={colors.primary} />
             </Pressable>
           )}
         </View>
@@ -444,18 +440,18 @@ export default function LeaderboardScreen() {
                 id: "leaderboard" as TabType,
                 label: "Leaders",
                 icon: (
-                  <Feather name="bar-chart-2" size={15} color={activeTab === "leaderboard" ? "#0B6E4F" : "#9CA3AF"} />
+                  <Feather name="bar-chart-2" size={15} color={activeTab === "leaderboard" ? colors.primary : colors.textTertiary} />
                 ),
               },
               {
                 id: "resultsLog" as TabType,
                 label: "Matrix",
-                icon: <Feather name="grid" size={15} color={activeTab === "resultsLog" ? "#0B6E4F" : "#9CA3AF"} />,
+                icon: <Feather name="grid" size={15} color={activeTab === "resultsLog" ? colors.primary : colors.textTertiary} />,
               },
               {
                 id: "honour" as TabType,
                 label: "Honour",
-                icon: <Feather name="award" size={15} color="#9CA3AF" />,
+                icon: <Feather name="award" size={15} color={colors.textTertiary} />,
               },
             ]}
             selectedId={activeTab}
@@ -548,7 +544,7 @@ export default function LeaderboardScreen() {
                 {/* ========== LICENCE CTA (unlicensed) ========== */}
                 {needsLicence && standings.length > 0 && (
                   <GlassCard style={[styles.fieldCard, { alignItems: "center", paddingVertical: 24 }]}>
-                    <Feather name="lock" size={24} color="#9CA3AF" style={{ marginBottom: 8 }} />
+                    <Feather name="lock" size={24} color={colors.textTertiary} style={{ marginBottom: 8 }} />
                     <AppText style={[styles.fieldTitle, { textAlign: "center", marginBottom: 4 }]}>
                       Full leaderboard
                     </AppText>
@@ -582,13 +578,13 @@ export default function LeaderboardScreen() {
                           {/* Trend Indicator */}
                           <View style={styles.trendContainer}>
                             {trend === "up" && (
-                              <Feather name="trending-up" size={12} color="#10B981" />
+                              <Feather name="trending-up" size={12} color={colors.success} />
                             )}
                             {trend === "down" && (
-                              <Feather name="trending-down" size={12} color="#EF4444" />
+                              <Feather name="trending-down" size={12} color={colors.error} />
                             )}
                             {trend === "same" && (
-                              <Feather name="minus" size={12} color="#D1D5DB" />
+                              <Feather name="minus" size={12} color={colors.divider} />
                             )}
                           </View>
 
@@ -622,7 +618,7 @@ export default function LeaderboardScreen() {
                       >
                         <AppText style={styles.fieldPosition}>{entry.rank}</AppText>
                         <View style={styles.trendContainer}>
-                          <Feather name="minus" size={12} color="#D1D5DB" />
+                          <Feather name="minus" size={12} color={colors.divider} />
                         </View>
                         <AppText style={styles.fieldName} numberOfLines={2}>
                           {entry.memberName}
@@ -690,7 +686,7 @@ export default function LeaderboardScreen() {
                           <Feather
                             name={isExpanded ? "chevron-up" : "chevron-down"}
                             size={20}
-                            color="#9CA3AF"
+                            color={colors.textTertiary}
                           />
                         </View>
                       </Pressable>
@@ -799,11 +795,14 @@ export default function LeaderboardScreen() {
 // STYLES
 // ============================================================================
 
-function makeLeaderboardStyles(typography: TypographyTokens) {
+function makeLeaderboardStyles(
+  typography: TypographyTokens,
+  colors: ReturnType<typeof getColors>,
+) {
   return StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#F7F8FA",
+    backgroundColor: colors.background,
   },
   scrollContent: {
     padding: spacing.md,
@@ -824,15 +823,16 @@ function makeLeaderboardStyles(typography: TypographyTokens) {
     width: 44,
     height: 44,
     borderRadius: 12,
-    backgroundColor: "rgba(255, 255, 255, 0.9)",
+    backgroundColor: colors.surfaceElevated,
     alignItems: "center",
     justifyContent: "center",
     borderWidth: 1,
-    borderColor: "rgba(0, 0, 0, 0.05)",
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.06,
-    shadowRadius: 8,
+    borderColor: colors.border,
+    shadowColor: premiumTokens.cardShadow.shadowColor,
+    shadowOffset: premiumTokens.cardShadow.shadowOffset,
+    shadowOpacity: premiumTokens.cardShadow.shadowOpacity * 0.85,
+    shadowRadius: premiumTokens.cardShadow.shadowRadius,
+    elevation: premiumTokens.cardShadow.elevation,
   },
 
   // Title
@@ -842,19 +842,19 @@ function makeLeaderboardStyles(typography: TypographyTokens) {
   mainTitle: {
     fontSize: typography.title.fontSize,
     fontWeight: "700",
-    color: "#111827",
+    color: colors.text,
     letterSpacing: -0.5,
   },
   seasonText: {
     fontSize: typography.small.fontSize,
     lineHeight: typography.small.lineHeight,
-    color: "#6B7280",
+    color: colors.textSecondary,
     marginTop: 4,
   },
   tabHint: {
     fontSize: typography.small.fontSize,
     lineHeight: typography.small.lineHeight,
-    color: "#9CA3AF",
+    color: colors.textTertiary,
     marginTop: 6,
   },
 
@@ -878,20 +878,20 @@ function makeLeaderboardStyles(typography: TypographyTokens) {
     borderRadius: 10,
   },
   tabActive: {
-    backgroundColor: "#FFFFFF",
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.06,
-    shadowRadius: 8,
-    elevation: 2,
+    backgroundColor: colors.surfaceElevated,
+    shadowColor: premiumTokens.cardShadow.shadowColor,
+    shadowOffset: premiumTokens.cardShadow.shadowOffset,
+    shadowOpacity: premiumTokens.cardShadow.shadowOpacity * 0.85,
+    shadowRadius: premiumTokens.cardShadow.shadowRadius,
+    elevation: premiumTokens.cardShadow.elevation,
   },
   tabText: {
     fontSize: typography.button.fontSize,
     fontWeight: "600",
-    color: "#9CA3AF",
+    color: colors.textTertiary,
   },
   tabTextActive: {
-    color: "#0B6E4F",
+    color: colors.primary,
   },
 
   // Empty state
@@ -937,7 +937,7 @@ function makeLeaderboardStyles(typography: TypographyTokens) {
     width: 44,
     height: 44,
     borderRadius: 22,
-    backgroundColor: "rgba(251, 191, 36, 0.15)",
+    backgroundColor: colors.highlightMuted,
   },
   podiumMedalText: {
     fontSize: typography.h1.fontSize,
@@ -945,7 +945,7 @@ function makeLeaderboardStyles(typography: TypographyTokens) {
   podiumName: {
     fontSize: typography.small.fontSize,
     fontWeight: "600",
-    color: "#374151",
+    color: colors.textSecondary,
     marginBottom: 6,
     textAlign: "center",
     lineHeight: typography.small.lineHeight,
@@ -955,34 +955,35 @@ function makeLeaderboardStyles(typography: TypographyTokens) {
   podiumPoints: {
     fontSize: typography.h1.fontSize,
     fontWeight: "800",
-    color: "#0B6E4F",
+    color: colors.primary,
     fontVariant: ["tabular-nums"],
   },
   podiumPointsGold: {
     fontSize: typography.display.fontSize,
+    color: colors.highlight,
   },
   podiumPtsLabel: {
     fontSize: typography.small.fontSize,
-    color: "#9CA3AF",
+    color: colors.textTertiary,
     textTransform: "uppercase",
     letterSpacing: 0.5,
   },
   podiumBase: {
     width: "90%",
     borderRadius: 4,
-    backgroundColor: "#E5E7EB",
+    backgroundColor: colors.border,
   },
   podiumBaseFirst: {
     height: 48,
-    backgroundColor: "#0B6E4F",
+    backgroundColor: colors.highlight,
   },
   podiumBaseSecond: {
     height: 32,
-    backgroundColor: "#9CA3AF",
+    backgroundColor: colors.divider,
   },
   podiumBaseThird: {
     height: 20,
-    backgroundColor: "#CD7F32",
+    backgroundColor: colors.textTertiary,
   },
 
   // Field
@@ -993,7 +994,7 @@ function makeLeaderboardStyles(typography: TypographyTokens) {
   fieldTitle: {
     fontSize: typography.captionBold.fontSize,
     fontWeight: "700",
-    color: "#9CA3AF",
+    color: colors.textTertiary,
     textTransform: "uppercase",
     letterSpacing: 1,
     marginBottom: 12,
@@ -1010,7 +1011,7 @@ function makeLeaderboardStyles(typography: TypographyTokens) {
     width: 28,
     fontSize: typography.button.fontSize,
     fontWeight: "600",
-    color: "#6B7280",
+    color: colors.textSecondary,
     textAlign: "center",
   },
   trendContainer: {
@@ -1022,21 +1023,21 @@ function makeLeaderboardStyles(typography: TypographyTokens) {
     flex: 1,
     fontSize: typography.body.fontSize,
     fontWeight: "500",
-    color: "#111827",
+    color: colors.text,
     lineHeight: typography.body.lineHeight,
     paddingRight: 8,
   },
   fieldEvents: {
     width: 32,
     fontSize: typography.body.fontSize,
-    color: "#9CA3AF",
+    color: colors.textTertiary,
     textAlign: "center",
   },
   fieldPoints: {
     width: 50,
     fontSize: typography.bodyBold.fontSize,
     fontWeight: "700",
-    color: "#0B6E4F",
+    color: colors.primary,
     textAlign: "right",
     fontVariant: ["tabular-nums"],
   },
@@ -1064,14 +1065,14 @@ function makeLeaderboardStyles(typography: TypographyTokens) {
     width: 40,
     height: 40,
     borderRadius: 10,
-    backgroundColor: "rgba(11, 110, 79, 0.1)",
+    backgroundColor: colors.primary + "1A",
     alignItems: "center",
     justifyContent: "center",
   },
   accordionEventNumber: {
     fontSize: typography.body.fontSize,
     fontWeight: "700",
-    color: "#0B6E4F",
+    color: colors.primary,
   },
   accordionEventDetails: {
     flex: 1,
@@ -1079,13 +1080,13 @@ function makeLeaderboardStyles(typography: TypographyTokens) {
   accordionEventName: {
     fontSize: typography.body.fontSize,
     fontWeight: "600",
-    color: "#111827",
+    color: colors.text,
     marginBottom: 2,
     lineHeight: typography.body.lineHeight,
   },
   accordionEventMeta: {
     fontSize: typography.small.fontSize,
-    color: "#9CA3AF",
+    color: colors.textTertiary,
   },
   accordionChevron: {
     width: 32,
@@ -1112,7 +1113,7 @@ function makeLeaderboardStyles(typography: TypographyTokens) {
   accordionColHeader: {
     fontSize: typography.small.fontSize,
     fontWeight: "700",
-    color: "#9CA3AF",
+    color: colors.textTertiary,
     textTransform: "uppercase",
     letterSpacing: 0.5,
   },
@@ -1151,7 +1152,7 @@ function makeLeaderboardStyles(typography: TypographyTokens) {
   accordionPositionText: {
     fontSize: typography.button.fontSize,
     fontWeight: "600",
-    color: "#6B7280",
+    color: colors.textSecondary,
   },
   accordionPositionMedal: {
     fontSize: typography.body.fontSize,
@@ -1160,7 +1161,7 @@ function makeLeaderboardStyles(typography: TypographyTokens) {
     flex: 1,
     fontSize: typography.body.fontSize,
     fontWeight: "500",
-    color: "#374151",
+    color: colors.textSecondary,
     paddingRight: 8,
     lineHeight: typography.body.lineHeight,
   },
@@ -1168,7 +1169,7 @@ function makeLeaderboardStyles(typography: TypographyTokens) {
     width: 52,
     fontSize: typography.body.fontSize,
     fontWeight: "600",
-    color: "#111827",
+    color: colors.text,
     textAlign: "center",
     fontVariant: ["tabular-nums"],
   },
@@ -1176,7 +1177,7 @@ function makeLeaderboardStyles(typography: TypographyTokens) {
     width: 52,
     fontSize: typography.body.fontSize,
     fontWeight: "700",
-    color: "#0B6E4F",
+    color: colors.primary,
     textAlign: "right",
     fontVariant: ["tabular-nums"],
   },
@@ -1189,7 +1190,7 @@ function makeLeaderboardStyles(typography: TypographyTokens) {
   },
   footerText: {
     fontSize: typography.small.fontSize,
-    color: "#9CA3AF",
+    color: colors.textTertiary,
   },
 
   shareModalRoot: {
@@ -1202,7 +1203,7 @@ function makeLeaderboardStyles(typography: TypographyTokens) {
     ...StyleSheet.absoluteFillObject,
   },
   shareModalCard: {
-    backgroundColor: "#FFFFFF",
+    backgroundColor: colors.surfaceElevated,
     borderRadius: 16,
     padding: spacing.lg,
     maxWidth: 400,
@@ -1218,12 +1219,12 @@ function makeLeaderboardStyles(typography: TypographyTokens) {
   shareModalTitle: {
     fontSize: 18,
     fontWeight: "700",
-    color: "#111827",
+    color: colors.text,
     marginBottom: spacing.sm,
   },
   shareModalBody: {
     fontSize: 14,
-    color: "#6B7280",
+    color: colors.textSecondary,
     marginBottom: spacing.lg,
     lineHeight: 20,
   },

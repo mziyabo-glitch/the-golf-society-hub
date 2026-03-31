@@ -12,7 +12,7 @@ import React, { forwardRef } from "react";
 import { View, Text, StyleSheet } from "react-native";
 import { SocietyLogoImage } from "@/components/ui/SocietyLogoImage";
 import { BrandingFooter } from "@/components/ui/BrandingFooter";
-import { typography } from "@/lib/ui/theme";
+import { colors, typography } from "@/lib/ui/theme";
 
 export type OOMShareRow = {
   position: number;
@@ -142,9 +142,6 @@ OOMShareCard.displayName = "OOMShareCard";
 
 export default OOMShareCard;
 
-// Brand colors
-const BRAND_GREEN = "#0B6E4F";
-
 const styles = StyleSheet.create({
   container: {
     backgroundColor: "#FFFFFF",
@@ -176,7 +173,7 @@ const styles = StyleSheet.create({
   title: {
     fontSize: typography.display.fontSize,
     fontWeight: "700",
-    color: BRAND_GREEN,
+    color: colors.light.primary,
     marginBottom: 2,
   },
   subtitle: {
@@ -191,7 +188,7 @@ const styles = StyleSheet.create({
   },
   divider: {
     height: 3,
-    backgroundColor: BRAND_GREEN,
+    backgroundColor: colors.light.primary,
     marginBottom: 0,
     borderRadius: 2,
   },
@@ -206,7 +203,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     paddingVertical: 12,
     paddingHorizontal: 12,
-    backgroundColor: BRAND_GREEN,
+    backgroundColor: colors.light.primary,
   },
   headerCell: {
     fontSize: typography.small.fontSize,
@@ -271,7 +268,7 @@ const styles = StyleSheet.create({
   pointsText: {
     fontSize: typography.body.fontSize,
     fontWeight: "600",
-    color: BRAND_GREEN,
+    color: colors.light.primary,
   },
   pointsTextTop3: {
     fontWeight: "700",
