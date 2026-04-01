@@ -4,6 +4,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Linking, Pressable, ScrollView, StyleSheet, View } from "react-native";
+import { useRouter } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
 import { useBottomTabBarHeight } from "@react-navigation/bottom-tabs";
 import { Feather } from "@expo/vector-icons";
@@ -37,6 +38,8 @@ import {
   rememberWeatherCourse,
   type RecentWeatherCourse,
 } from "@/lib/playability/weatherRecentCourses";
+import { HeaderSettingsPill } from "@/components/navigation/HeaderSettingsPill";
+import { blurWebActiveElement } from "@/lib/ui/focus";
 
 type WeatherMode = "next_event" | "choose_course";
 
@@ -92,6 +95,7 @@ function ModeChip({
 
 export default function WeatherScreen() {
   const colors = getColors();
+  const router = useRouter();
   const tabBarHeight = useBottomTabBarHeight();
   const tabContentStyle = { paddingTop: 16, paddingBottom: tabBarHeight + 24 };
 
@@ -286,6 +290,15 @@ export default function WeatherScreen() {
     manualName,
   );
 
+  const openSettings = useCallback(() => {
+    try {
+      blurWebActiveElement();
+    } catch {
+      /* noop */
+    }
+    router.push("/(app)/(tabs)/settings");
+  }, [router]);
+
   if (bootstrapLoading && !societyId) {
     return (
       <Screen scrollable={false} style={{ backgroundColor: colors.backgroundSecondary }}>
@@ -297,9 +310,12 @@ export default function WeatherScreen() {
   if (!societyId || !society) {
     return (
       <Screen style={{ backgroundColor: colors.backgroundSecondary }} contentStyle={tabContentStyle}>
-        <AppText variant="h2" style={{ marginBottom: spacing.xs }}>
-          Today's Playability
-        </AppText>
+        <View style={sheet.titleRow}>
+          <AppText variant="h2" style={{ flex: 1, marginRight: spacing.sm }}>
+            Today's Playability
+          </AppText>
+          <HeaderSettingsPill onPress={openSettings} />
+        </View>
         <AppText variant="body" color="secondary">
           Join or select a society to see playability for your schedule and favourite courses.
         </AppText>
@@ -310,9 +326,12 @@ export default function WeatherScreen() {
   if (needsLicence) {
     return (
       <Screen style={{ backgroundColor: colors.backgroundSecondary }} contentStyle={tabContentStyle}>
-        <AppText variant="h2" style={{ marginBottom: spacing.sm }}>
-          Today's Playability
-        </AppText>
+        <View style={sheet.titleRow}>
+          <AppText variant="h2" style={{ flex: 1, marginRight: spacing.sm }}>
+            Today's Playability
+          </AppText>
+          <HeaderSettingsPill onPress={openSettings} />
+        </View>
         <EmptyState
           icon={<Feather name="cloud" size={28} color={colors.primary} />}
           title="Playability"
@@ -335,9 +354,12 @@ export default function WeatherScreen() {
     <Screen style={{ backgroundColor: colors.backgroundSecondary }} contentStyle={tabContentStyle}>
       <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
         <View style={{ marginBottom: spacing.md }}>
-          <AppText variant="h2" style={{ marginBottom: spacing.xs }}>
-            Today's Playability
-          </AppText>
+          <View style={[sheet.titleRow, { marginBottom: spacing.xs }]}>
+            <AppText variant="h2" style={{ flex: 1, marginRight: spacing.sm }}>
+              Today's Playability
+            </AppText>
+            <HeaderSettingsPill onPress={openSettings} />
+          </View>
           <AppText variant="small" color="secondary">
             Decision-first course conditions for your next round — wind, rain, comfort, and the best window to tee off.
           </AppText>
@@ -541,6 +563,11 @@ export default function WeatherScreen() {
 }
 
 const sheet = StyleSheet.create({
+  titleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
   modeRow: {
     flexDirection: "row",
     gap: spacing.sm,

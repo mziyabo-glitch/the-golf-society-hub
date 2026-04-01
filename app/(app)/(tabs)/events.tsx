@@ -46,6 +46,8 @@ import { getColors, spacing, radius } from "@/lib/ui/theme";
 import { formatError, type FormattedError } from "@/lib/ui/formatError";
 import { JOINT_EVENT_CHIP_LONG } from "@/lib/eventModuleUi";
 import { getCache, invalidateCachePrefix, setCache } from "@/lib/cache/clientCache";
+import { HeaderSettingsPill } from "@/components/navigation/HeaderSettingsPill";
+import { blurWebActiveElement } from "@/lib/ui/focus";
 
 // Simple picker option component
 function PickerOption({
@@ -339,6 +341,15 @@ export default function EventsScreen() {
       setRefreshing(false);
     }
   }, [societyId, activeSocietyId, cacheKey]);
+
+  const openSettings = useCallback(() => {
+    try {
+      blurWebActiveElement();
+    } catch {
+      /* noop */
+    }
+    router.push("/(app)/(tabs)/settings");
+  }, [router]);
 
   useEffect(() => {
     void (async () => {
@@ -669,6 +680,7 @@ export default function EventsScreen() {
       <Screen contentStyle={tabContentStyle}>
         <View style={styles.header}>
           <AppText variant="title">Events</AppText>
+          <HeaderSettingsPill onPress={openSettings} />
         </View>
         <EmptyState
           icon={<Feather name="calendar" size={24} color={colors.textTertiary} />}
@@ -1417,6 +1429,12 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     alignItems: "center",
     marginBottom: spacing.lg,
+  },
+  headerActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+    flexShrink: 0,
   },
   section: {
     marginBottom: spacing.lg,

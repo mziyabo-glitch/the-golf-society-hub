@@ -65,6 +65,7 @@ import {
 } from "@/lib/db_supabase/eventRegistrationRepo";
 import { blurWebActiveElement } from "@/lib/ui/focus";
 import { SocietySwitcherPill } from "@/components/SocietySwitcher";
+import { HeaderSettingsPill } from "@/components/navigation/HeaderSettingsPill";
 import { getCache, setCache, invalidateCache } from "@/lib/cache/clientCache";
 
 const appIcon = require("@/assets/images/app-icon.png");
@@ -149,19 +150,7 @@ function HomeAppBar({
     <View style={[styles.appBarTier, { borderBottomColor: colors.borderLight }]}>
       <SocietySwitcherPill />
 
-      <Pressable
-        onPress={onOpenSettings}
-        hitSlop={8}
-        accessibilityRole="button"
-        accessibilityLabel="Open settings"
-        style={({ pressed }) => [
-          styles.appBarAction,
-          { backgroundColor: colors.backgroundTertiary, borderColor: colors.borderLight },
-          pressed && styles.appBarActionPressed,
-        ]}
-      >
-        <Feather name="settings" size={16} color={colors.textSecondary} />
-      </Pressable>
+      <HeaderSettingsPill onPress={onOpenSettings} />
     </View>
   );
 }
@@ -1424,7 +1413,7 @@ const styles = StyleSheet.create({
 
   // Premium two-tier header
   appBarTier: {
-    height: 44,
+    minHeight: 48,
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",

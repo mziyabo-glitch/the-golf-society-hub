@@ -358,8 +358,11 @@ export default function SettingsScreen() {
     return (
       <Screen contentStyle={tabContentStyle}>
         <AppText variant="title" style={styles.title}>Settings</AppText>
+        <AppText variant="small" color="secondary" style={styles.settingsIntro}>
+          Manage your account, society, and app preferences.
+        </AppText>
 
-        <AppText variant="h2" style={styles.sectionTitle}>Account</AppText>
+        <AppText variant="h2" style={styles.sectionTitle}>Profile</AppText>
         <AppCard padding="sm">
           <Pressable
             style={({ pressed }) => [styles.linkRow, { opacity: pressed ? 0.7 : 1 }]}
@@ -376,9 +379,7 @@ export default function SettingsScreen() {
           </Pressable>
         </AppCard>
 
-        <TextSizeSettingsSection />
-
-        <AppText variant="h2" style={styles.sectionTitle}>Society</AppText>
+        <AppText variant="h2" style={styles.sectionTitle}>Society settings</AppText>
         <AppCard padding="sm">
           <Pressable
             style={({ pressed }) => [styles.linkRow, { opacity: pressed ? 0.7 : 1 }]}
@@ -409,18 +410,9 @@ export default function SettingsScreen() {
           </Pressable>
         </AppCard>
 
-        <AppText variant="h2" style={styles.sectionTitle}>Account</AppText>
-        <AppCard>
-          <AppText variant="body" color="secondary" style={{ marginBottom: spacing.base }}>
-            Sign out of your account on this device.
-          </AppText>
-          <DestructiveButton onPress={handleSignOut} loading={signingOut}>
-            Sign Out
-          </DestructiveButton>
-        </AppCard>
-
-        <AppText variant="h2" style={styles.sectionTitle}>Legal</AppText>
-        <AppCard padding="sm">
+        <AppText variant="h2" style={styles.sectionTitle}>App settings</AppText>
+        <TextSizeSettingsSection />
+        <AppCard padding="sm" style={{ marginTop: spacing.sm }}>
           <Pressable
             style={({ pressed }) => [styles.linkRow, { opacity: pressed ? 0.7 : 1 }]}
             onPress={() => router.push("/privacy-policy")}
@@ -434,6 +426,16 @@ export default function SettingsScreen() {
             </View>
             <Feather name="chevron-right" size={18} color={colors.textTertiary} />
           </Pressable>
+        </AppCard>
+
+        <AppText variant="h2" style={styles.sectionTitle}>Session</AppText>
+        <AppCard>
+          <AppText variant="body" color="secondary" style={{ marginBottom: spacing.base }}>
+            Sign out of your account on this device.
+          </AppText>
+          <DestructiveButton onPress={handleSignOut} loading={signingOut}>
+            Sign Out
+          </DestructiveButton>
         </AppCard>
 
         <View style={styles.footer}>
@@ -451,9 +453,11 @@ export default function SettingsScreen() {
   return (
     <Screen contentStyle={tabContentStyle}>
       <AppText variant="title" style={styles.title}>Settings</AppText>
+      <AppText variant="small" color="secondary" style={styles.settingsIntro}>
+        Manage your account, society, and app preferences.
+      </AppText>
 
-      {/* Your Profile */}
-      <AppText variant="h2" style={styles.sectionTitle}>Your Profile</AppText>
+      <AppText variant="h2" style={styles.sectionTitle}>Profile</AppText>
       <AppCard padding="sm">
         <Pressable
           style={({ pressed }) => [styles.linkRow, { opacity: pressed ? 0.7 : 1 }]}
@@ -707,7 +711,7 @@ export default function SettingsScreen() {
       {/* Billing & Licences - Captain only */}
       {canRegenCode && (
         <>
-          <AppText variant="h2" style={styles.sectionTitle}>Billing</AppText>
+          <AppText variant="h2" style={styles.sectionTitle}>Payments & billing</AppText>
           <AppCard padding="sm">
             <Pressable
               style={({ pressed }) => [styles.linkRow, { opacity: pressed ? 0.7 : 1 }]}
@@ -726,47 +730,43 @@ export default function SettingsScreen() {
         </>
       )}
 
-      {/* Club Domain Review - Captain only (platform admin) */}
-      {canRegenCode && (
+      {(canRegenCode || permissions.canGenerateTeeSheet) && (
         <>
-          <AppText variant="h2" style={styles.sectionTitle}>Club Domains</AppText>
-          <AppCard padding="sm">
-            <Pressable
-              style={({ pressed }) => [styles.linkRow, { opacity: pressed ? 0.7 : 1 }]}
-              onPress={() => router.push("/(admin)/course-domains" as any)}
-            >
-              <View style={[styles.linkIcon, { backgroundColor: colors.info + "20" }]}>
-                <Feather name="globe" size={16} color={colors.info} />
-              </View>
-              <View style={{ flex: 1 }}>
-                <AppText variant="body">Domain Review</AppText>
-                <AppText variant="small" color="secondary">Approve/reject club website candidates</AppText>
-              </View>
-              <Feather name="chevron-right" size={18} color={colors.textTertiary} />
-            </Pressable>
-          </AppCard>
-        </>
-      )}
-
-      {/* ManCo Tools - Only visible to ManCo members */}
-      {permissions.canGenerateTeeSheet && (
-        <>
-          <AppText variant="h2" style={styles.sectionTitle}>ManCo Tools</AppText>
-          <AppCard padding="sm">
-            <Pressable
-              style={({ pressed }) => [styles.linkRow, { opacity: pressed ? 0.7 : 1 }]}
-              onPress={() => router.push("/(app)/tee-sheet")}
-            >
-              <View style={[styles.linkIcon, { backgroundColor: colors.warning + "20" }]}>
-                <Feather name="file-text" size={16} color={colors.warning} />
-              </View>
-              <View style={{ flex: 1 }}>
-                <AppText variant="body">Tee Sheet Generator</AppText>
-                <AppText variant="small" color="secondary">Grouped tee sheets with WHS handicaps</AppText>
-              </View>
-              <Feather name="chevron-right" size={18} color={colors.textTertiary} />
-            </Pressable>
-          </AppCard>
+          <AppText variant="h2" style={styles.sectionTitle}>Admin tools</AppText>
+          {canRegenCode ? (
+            <AppCard padding="sm">
+              <Pressable
+                style={({ pressed }) => [styles.linkRow, { opacity: pressed ? 0.7 : 1 }]}
+                onPress={() => router.push("/(admin)/course-domains" as any)}
+              >
+                <View style={[styles.linkIcon, { backgroundColor: colors.info + "20" }]}>
+                  <Feather name="globe" size={16} color={colors.info} />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <AppText variant="body">Club domain review</AppText>
+                  <AppText variant="small" color="secondary">Approve or reject club website candidates</AppText>
+                </View>
+                <Feather name="chevron-right" size={18} color={colors.textTertiary} />
+              </Pressable>
+            </AppCard>
+          ) : null}
+          {permissions.canGenerateTeeSheet ? (
+            <AppCard padding="sm" style={canRegenCode ? { marginTop: spacing.sm } : undefined}>
+              <Pressable
+                style={({ pressed }) => [styles.linkRow, { opacity: pressed ? 0.7 : 1 }]}
+                onPress={() => router.push("/(app)/tee-sheet")}
+              >
+                <View style={[styles.linkIcon, { backgroundColor: colors.warning + "20" }]}>
+                  <Feather name="file-text" size={16} color={colors.warning} />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <AppText variant="body">Tee sheet generator</AppText>
+                  <AppText variant="small" color="secondary">Grouped tee sheets with WHS handicaps</AppText>
+                </View>
+                <Feather name="chevron-right" size={18} color={colors.textTertiary} />
+              </Pressable>
+            </AppCard>
+          ) : null}
         </>
       )}
 
@@ -824,7 +824,7 @@ export default function SettingsScreen() {
       {isAdmin && (
         <>
           <AppText variant="h2" style={styles.sectionTitle}>
-            <Feather name="shield" size={16} color={colors.error} /> Platform Admin
+            <Feather name="shield" size={16} color={colors.error} /> Platform admin
           </AppText>
 
           {/* Search societies */}
@@ -998,6 +998,24 @@ export default function SettingsScreen() {
         </Pressable>
       </AppCard>
 
+      <AppText variant="h2" style={styles.sectionTitle}>App settings</AppText>
+      <TextSizeSettingsSection />
+      <AppCard padding="sm" style={{ marginTop: spacing.sm }}>
+        <Pressable
+          style={({ pressed }) => [styles.linkRow, { opacity: pressed ? 0.7 : 1 }]}
+          onPress={() => router.push("/privacy-policy")}
+        >
+          <View style={[styles.linkIcon, { backgroundColor: colors.backgroundTertiary }]}>
+            <Feather name="shield" size={16} color={colors.primary} />
+          </View>
+          <View style={{ flex: 1 }}>
+            <AppText variant="body">Privacy Policy</AppText>
+            <AppText variant="small" color="secondary">How we collect and use your data</AppText>
+          </View>
+          <Feather name="chevron-right" size={18} color={colors.textTertiary} />
+        </Pressable>
+      </AppCard>
+
       {/* Danger Zone */}
       <AppText variant="h2" style={styles.sectionTitle}>Danger Zone</AppText>
       <AppCard>
@@ -1058,7 +1076,11 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   title: {
+    marginBottom: spacing.sm,
+  },
+  settingsIntro: {
     marginBottom: spacing.lg,
+    lineHeight: 22,
   },
   sectionTitle: {
     marginBottom: spacing.sm,
