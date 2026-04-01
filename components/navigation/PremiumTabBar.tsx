@@ -14,10 +14,16 @@ function isTabHidden(descriptor: BottomTabBarProps["descriptors"][string]): bool
   return flat.display === "none";
 }
 
+/** Expo Router extends options with `href`; null = routable but hidden from tab bar */
+function isHiddenFromTabBar(descriptor: BottomTabBarProps["descriptors"][string]): boolean {
+  const href = (descriptor.options as { href?: string | null }).href;
+  return href === null;
+}
+
 export function PremiumTabBar({ state, descriptors, navigation, insets }: BottomTabBarProps) {
   const colors = getColors();
   const bottomPad = Math.max(insets.bottom, 14);
-  const tabBarPadTop = 12;
+  const tabBarPadTop = 10;
 
   return (
     <View
@@ -44,7 +50,7 @@ export function PremiumTabBar({ state, descriptors, navigation, insets }: Bottom
       <View style={styles.row}>
         {state.routes.map((route) => {
           const descriptor = descriptors[route.key];
-          if (isTabHidden(descriptor)) return null;
+          if (isTabHidden(descriptor) || isHiddenFromTabBar(descriptor)) return null;
 
           const focused = state.routes[state.index]?.key === route.key;
           const { options } = descriptor;
@@ -94,7 +100,7 @@ export function PremiumTabBar({ state, descriptors, navigation, insets }: Bottom
                 <View style={styles.iconSlot}>{icon}</View>
               </View>
               <Text
-                numberOfLines={1}
+                numberOfLines={2}
                 allowFontScaling
                 style={[
                   styles.label,
@@ -122,17 +128,19 @@ const styles = StyleSheet.create({
   row: {
     flexDirection: "row",
     alignItems: "flex-end",
-    justifyContent: "space-between",
-    paddingHorizontal: 4,
-    minHeight: 54,
+    justifyContent: "space-evenly",
+    paddingHorizontal: 10,
+    gap: 6,
+    minHeight: 58,
   },
   tab: {
     flex: 1,
     alignItems: "center",
     justifyContent: "flex-end",
-    minHeight: 52,
-    paddingBottom: 2,
+    minHeight: 54,
+    paddingBottom: 4,
     paddingTop: 4,
+    paddingHorizontal: 3,
   },
   iconStack: {
     width: 46,
@@ -150,12 +158,13 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   label: {
-    fontSize: 12,
-    lineHeight: 15,
-    letterSpacing: 0.15,
+    fontSize: 11,
+    lineHeight: 13,
+    letterSpacing: 0.12,
     textAlign: "center",
-    paddingHorizontal: 2,
+    paddingHorizontal: 0,
     maxWidth: "100%",
+    minHeight: 26,
   },
   /** Restrained 18px accent — visible but not loud */
   activeBar: {
