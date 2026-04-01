@@ -1,0 +1,260 @@
+/**
+ * Dashboard playability teaser — same usePlayabilityBundle path as Weather tab / event detail.
+ */
+
+import { ActivityIndicator, Pressable, StyleSheet, View } from "react-native";
+import { Feather } from "@expo/vector-icons";
+import { AppText } from "@/components/ui/AppText";
+import type { EventDoc } from "@/lib/db_supabase/eventRepo";
+import { usePlayabilityBundle } from "@/lib/playability/usePlayabilityBundle";
+import { getColors, spacing, radius } from "@/lib/ui/theme";
+import { dashboardShell, DASHBOARD_CARD_RADIUS } from "./dashboardCardStyles";
+import type { PlayabilityLevel } from "@/lib/playability/types";
+
+const LEVEL_WORD: Record<PlayabilityLevel, string> = {
+  excellent: "Excellent",
+  good: "Good",
+  mixed: "Mixed",
+  poor: "Challenging",
+  severe: "Very challenging",
+};
+
+type Props = {
+  nextEvent: EventDoc | null;
+  enabled: boolean;
+  onOpenWeatherTab: () => void;
+  /** Local tee time e.g. "09:10" — soft preference for best window (daylight-only) */
+  preferredTeeTimeLocal?: string | null;
+};
+
+function targetYmdFromEvent(event: EventDoc | null): string {
+  const d = event?.date?.trim();
+  if (d && /^\d{4}-\d{2}-\d{2}$/.test(d)) return d;
+  const n = new Date();
+  const y = n.getFullYear();
+  const m = String(n.getMonth() + 1).padStart(2, "0");
+  const day = String(n.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+function levelCardTint(colors: ReturnType<typeof getColors>, level: PlayabilityLevel): string {
+  switch (level) {
+    case "excellent":
+      return `${colors.success}0C`;
+    case "good":
+      return `${colors.primary}0A`;
+    case "mixed":
+      return `${colors.warning}0C`;
+    case "poor":
+      return `${colors.warning}12`;
+    case "severe":
+      return `${colors.error}0C`;
+    default:
+      return colors.surface;
+  }
+}
+
+export function DashboardPlayabilityMiniCard({
+  nextEvent,
+  enabled,
+  onOpenWeatherTab,
+  preferredTeeTimeLocal = null,
+}: Props) {
+  const colors = getColors();
+  const courseId = (nextEvent?.courseId || nextEvent?.course_id || null) as string | null | undefined;
+  const courseName = (nextEvent?.courseName || "Golf course").trim();
+  const ymd = targetYmdFromEvent(nextEvent);
+
+  const bundle = usePlayabilityBundle(!!enabled && !!nextEvent, ymd, courseId ?? null, null, courseName, {
+    preferredTeeTimeLocal,
+  });
+
+  const courseLabel = nextEvent?.courseName?.trim() || "Your next course";
+
+  const insightSurface =
+    bundle.insight != null ? levelCardTint(colors, bundle.insight.level) : colors.surface;
+
+  return (
+    <Pressable
+      onPress={onOpenWeatherTab}
+      accessibilityRole="button"
+      accessibilityLabel="Open Weather for full playability"
+      style={({ pressed }) => [pressed && styles.pressed]}
+    >
+      <View
+        style={[
+          dashboardShell.card,
+          {
+            borderColor: colors.borderLight,
+            backgroundColor: insightSurface,
+          },
+        ]}
+      >
+        <View style={dashboardShell.sectionEyebrow}>
+          <View style={[styles.iconCircle, { backgroundColor: `${colors.primary}14` }]}>
+            <Feather name="cloud" size={14} color={colors.primary} />
+          </View>
+          <AppText variant="captionBold" color="primary" numberOfLines={1}>
+            Course conditions
+          </AppText>
+        </View>
+
+        <AppText variant="small" color="secondary" numberOfLines={1} style={styles.course}>
+          {courseLabel}
+        </AppText>
+
+        {!nextEvent ? (
+          <AppText variant="small" color="tertiary" style={styles.body}>
+            No upcoming event. Open Weather to check any course.
+          </AppText>
+        ) : bundle.loading ? (
+          <View style={styles.loading}>
+            <ActivityIndicator color={colors.primary} />
+            <AppText variant="small" color="secondary" style={{ marginTop: spacing.sm }}>
+              Loading playability…
+            </AppText>
+          </View>
+        ) : bundle.error ? (
+          <AppText variant="small" style={{ color: colors.error }}>{bundle.error}</AppText>
+        ) : !bundle.insight ? (
+          <AppText variant="small" color="tertiary" style={styles.body}>
+            Add a linked course to see wind, rain, and comfort for this round.
+          </AppText>
+        ) : (
+          <>
+            <View style={styles.ratingBlock}>
+              <AppText variant="h2" style={[styles.levelWord, { color: colors.text }]} numberOfLines={1}>
+                {LEVEL_WORD[bundle.insight.level]}
+              </AppText>
+              <AppText variant="captionBold" color="secondary" style={styles.scoreLine} numberOfLines={1}>
+                {bundle.insight.rating.toFixed(1)}/10 playability · {bundle.insight.label}
+              </AppText>
+            </View>
+
+            <View style={styles.indicators}>
+              <Indicator icon="wind" text={bundle.insight.windSummary} colors={colors} />
+              <Indicator icon="cloud-rain" text={bundle.insight.rainSummary} colors={colors} />
+              <Indicator icon="thermometer" text={bundle.insight.comfortSummary} colors={colors} />
+            </View>
+
+            {bundle.insight.bestWindow ? (
+              <View style={[styles.windowPill, { backgroundColor: `${colors.primary}10`, borderColor: `${colors.primary}22` }]}>
+                <Feather name="clock" size={13} color={colors.primary} />
+                <AppText variant="captionBold" color="primary" style={{ marginLeft: spacing.xs, flex: 1 }} numberOfLines={2}>
+                  Best window · {bundle.insight.bestWindow}
+                </AppText>
+              </View>
+            ) : bundle.insight.bestWindowFallback ? (
+              <View style={[styles.windowPill, { backgroundColor: `${colors.warning}14`, borderColor: `${colors.warning}33` }]}>
+                <Feather name="sun" size={13} color={colors.warning} />
+                <AppText variant="captionBold" color="secondary" style={{ marginLeft: spacing.xs, flex: 1 }} numberOfLines={2}>
+                  {bundle.insight.bestWindowFallback}
+                </AppText>
+              </View>
+            ) : null}
+          </>
+        )}
+
+        <View style={[styles.ctaFoot, { borderTopColor: colors.borderLight, backgroundColor: `${colors.surface}E6` }]}>
+          <AppText variant="captionBold" color="primary">
+            Full weather & forecast
+          </AppText>
+          <Feather name="chevron-right" size={18} color={colors.primary} />
+        </View>
+      </View>
+    </Pressable>
+  );
+}
+
+function Indicator({
+  icon,
+  text,
+  colors,
+}: {
+  icon: keyof typeof Feather.glyphMap;
+  text: string;
+  colors: ReturnType<typeof getColors>;
+}) {
+  return (
+    <View style={styles.indicatorRow}>
+      <Feather name={icon} size={13} color={colors.primary} style={{ marginTop: 1 }} />
+      <AppText variant="small" color="secondary" style={styles.indicatorText} numberOfLines={2}>
+        {text}
+      </AppText>
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  iconCircle: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  course: {
+    marginTop: 4,
+    marginBottom: spacing.xs,
+  },
+  body: {
+    marginTop: spacing.xs,
+    lineHeight: 20,
+  },
+  loading: {
+    alignItems: "center",
+    paddingVertical: spacing.sm,
+  },
+  ratingBlock: {
+    marginTop: spacing.xs,
+  },
+  levelWord: {
+    letterSpacing: -0.35,
+    fontWeight: "800",
+  },
+  scoreLine: {
+    marginTop: 4,
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  indicators: {
+    marginTop: spacing.sm,
+    gap: 6,
+  },
+  indicatorRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: spacing.sm,
+  },
+  indicatorText: {
+    flex: 1,
+    lineHeight: 19,
+    fontSize: 14,
+  },
+  windowPill: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginTop: spacing.sm,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.sm,
+    borderRadius: radius.md,
+    borderWidth: 1,
+  },
+  ctaFoot: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginTop: spacing.md,
+    marginHorizontal: -spacing.md,
+    marginBottom: -(spacing.sm + 2),
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderBottomLeftRadius: DASHBOARD_CARD_RADIUS,
+    borderBottomRightRadius: DASHBOARD_CARD_RADIUS,
+  },
+  pressed: {
+    opacity: 0.94,
+    transform: [{ scale: 0.995 }],
+  },
+});

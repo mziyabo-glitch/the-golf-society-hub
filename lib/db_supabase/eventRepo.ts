@@ -77,6 +77,8 @@ export type EventDoc = {
   teeTimePublishedAt?: string | null;
   /** Source of tee data: 'imported' | 'manual' */
   teeSource?: "imported" | "manual" | null;
+  /** Optional label e.g. £45 or £55 incl. food */
+  entryFeeDisplay?: string | null;
   /**
    * Canonical joint flag: true when `event_societies` has 2+ distinct society_id values
    * (same rule as `get_joint_event_detail` / `isEventJoint`). Set by repo when loading lists or `getEvent`.
@@ -133,6 +135,7 @@ function mapEvent(row: any): EventDoc {
     teeTimePublishedAt: row.tee_time_published_at ?? null,
     tee_id: row.tee_id ?? null,
     teeSource: row.tee_source ?? null,
+    entryFeeDisplay: row.entry_fee_display?.trim() || null,
   };
 }
 
@@ -326,6 +329,8 @@ export async function createEvent(
     ladiesSlopeRating?: number;
     /** 'imported' when from course_tees, 'manual' when user-entered */
     teeSource?: "imported" | "manual";
+    /** Optional display e.g. £45 incl. food */
+    entryFeeDisplay?: string | null;
   }
 ): Promise<EventDoc> {
   const classification = data.classification ?? 'general';
@@ -342,6 +347,11 @@ export async function createEvent(
     is_oom: classification === 'oom',
     is_completed: false,
   };
+
+  if (data.entryFeeDisplay !== undefined) {
+    const t = typeof data.entryFeeDisplay === "string" ? data.entryFeeDisplay.trim() : "";
+    payload.entry_fee_display = t.length > 0 ? t : null;
+  }
 
   // Only add created_by if provided
   if (data.createdBy) {
@@ -445,6 +455,7 @@ export async function updateEvent(
     // Competition holes
     nearestPinHoles: number[];
     longestDriveHoles: number[];
+    entryFeeDisplay: string | null;
   }>
 ): Promise<void> {
   const payload: Record<string, unknown> = {};
@@ -484,6 +495,10 @@ export async function updateEvent(
   // Competition holes
   if (updates.nearestPinHoles !== undefined) payload.nearest_pin_holes = updates.nearestPinHoles;
   if (updates.longestDriveHoles !== undefined) payload.longest_drive_holes = updates.longestDriveHoles;
+  if (updates.entryFeeDisplay !== undefined) {
+    const t = updates.entryFeeDisplay?.trim() ?? "";
+    payload.entry_fee_display = t.length > 0 ? t : null;
+  }
 
   // Server-side: ensure tee_id exists in course_tees (FK events_tee_id_fkey)
   if (payload.tee_id != null && payload.tee_id !== "") {

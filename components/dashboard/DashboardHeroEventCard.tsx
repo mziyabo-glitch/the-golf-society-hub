@@ -1,5 +1,5 @@
 /**
- * Hero-first next-event surface: headline, compact meta, live status, primary CTA.
+ * Hero next-event: headline, meta, entry fee, playing + payment status, CTA.
  */
 
 import { View, Pressable, StyleSheet } from "react-native";
@@ -9,7 +9,7 @@ import { Chip } from "@/components/ui/Chip";
 import { PrimaryButton } from "@/components/ui/Button";
 import type { EventDoc } from "@/lib/db_supabase/eventRepo";
 import type { EventRegistration } from "@/lib/db_supabase/eventRegistrationRepo";
-import { getColors, spacing, radius, typography } from "@/lib/ui/theme";
+import { getColors, spacing, radius } from "@/lib/ui/theme";
 import { JOINT_EVENT_CHIP_SHORT } from "@/lib/eventModuleUi";
 import { dashboardShell } from "./dashboardCardStyles";
 
@@ -31,41 +31,35 @@ type Props = {
   onOpenTeeSheet: () => void;
 };
 
-function buildStatusLine(
-  nextEvent: EventDoc,
+type PlayingTone = "success" | "warning" | "muted" | "default";
+
+function playingBlock(
   nextEventIsJoint: boolean,
   myReg: EventRegistration | null,
-  myTeeTimeInfo: HeroTeeInfo,
   canAccessNextEventTeeSheet: boolean,
-  colors: ReturnType<typeof getColors>,
-): { text: string; tone: "success" | "warning" | "muted" | "default" } {
+  myTeeTimeInfo: HeroTeeInfo,
+  nextEvent: EventDoc,
+): { label: string; tone: PlayingTone; teeHint?: string } {
   if (nextEventIsJoint) {
     if (myReg?.status === "in") {
-      return { text: "Registered for joint event", tone: "success" };
+      const hint =
+        nextEvent.teeTimePublishedAt && canAccessNextEventTeeSheet && myTeeTimeInfo
+          ? `Tee ${myTeeTimeInfo.teeTime} · G${myTeeTimeInfo.groupNumber}`
+          : undefined;
+      return { label: "Playing", tone: "success", teeHint: hint };
     }
-    if (myReg?.status === "out") {
-      return { text: "Marked as not playing", tone: "muted" };
-    }
-    return { text: "RSVP with your home society", tone: "default" };
+    if (myReg?.status === "out") return { label: "Not playing", tone: "muted" };
+    return { label: "RSVP via home society", tone: "default" };
   }
   if (myReg?.status === "in") {
-    const paid = myReg.paid === true;
-    if (nextEvent.teeTimePublishedAt && canAccessNextEventTeeSheet && myTeeTimeInfo) {
-      const teeBit = `Tee ${myTeeTimeInfo.teeTime} · Group ${myTeeTimeInfo.groupNumber}`;
-      return {
-        text: paid ? `${teeBit} · Paid` : `${teeBit} · Payment due`,
-        tone: paid ? "success" : "warning",
-      };
-    }
-    return {
-      text: paid ? "Confirmed · Paid" : "Confirmed · Payment due",
-      tone: paid ? "success" : "warning",
-    };
+    const hint =
+      nextEvent.teeTimePublishedAt && canAccessNextEventTeeSheet && myTeeTimeInfo
+        ? `Tee ${myTeeTimeInfo.teeTime} · G${myTeeTimeInfo.groupNumber}`
+        : undefined;
+    return { label: "Playing", tone: "success", teeHint: hint };
   }
-  if (myReg?.status === "out") {
-    return { text: "Not playing", tone: "muted" };
-  }
-  return { text: "Not registered yet", tone: "default" };
+  if (myReg?.status === "out") return { label: "Not playing", tone: "muted" };
+  return { label: "Not registered", tone: "default" };
 }
 
 export function DashboardHeroEventCard({
@@ -81,14 +75,14 @@ export function DashboardHeroEventCard({
   onOpenTeeSheet,
 }: Props) {
   const colors = getColors();
-  const borderCol = `${colors.primary}33`;
-  const bgCol = `${colors.primary}0F`;
+  const borderCol = `${colors.primary}28`;
+  const bgCol = `${colors.primary}0A`;
 
   if (!nextEvent) {
     return (
       <View style={[dashboardShell.card, { borderColor: colors.borderLight, backgroundColor: colors.surface }]}>
         <View style={dashboardShell.sectionEyebrow}>
-      <Feather name="calendar" size={16} color={colors.textTertiary} />
+          <Feather name="calendar" size={16} color={colors.textTertiary} />
           <AppText variant="captionBold" color="tertiary">
             Next event
           </AppText>
@@ -96,32 +90,46 @@ export function DashboardHeroEventCard({
         <AppText variant="h2" style={styles.heroTitle}>
           Nothing scheduled
         </AppText>
-        <AppText variant="small" color="secondary" style={styles.heroMeta}>
+        <AppText variant="small" color="secondary" style={styles.heroCourse}>
           Check back soon for the next society day.
         </AppText>
       </View>
     );
   }
 
-  const status = buildStatusLine(
-    nextEvent,
+  const playing = playingBlock(
     nextEventIsJoint,
     myReg,
-    myTeeTimeInfo,
     canAccessNextEventTeeSheet,
-    colors,
+    myTeeTimeInfo,
+    nextEvent,
   );
-  const statusColor =
-    status.tone === "success"
-      ? colors.success
-      : status.tone === "warning"
-        ? colors.warning
-        : status.tone === "muted"
-          ? colors.textTertiary
-          : colors.textSecondary;
 
-  const showTeeCta =
-    Boolean(nextEvent.teeTimePublishedAt && canAccessNextEventTeeSheet);
+  const showPaymentRow = myReg?.status === "in";
+  const isPaid = myReg?.paid === true;
+
+  const playingPillBg =
+    playing.tone === "success"
+      ? `${colors.success}14`
+      : playing.tone === "muted"
+        ? colors.backgroundTertiary
+        : `${colors.primary}0C`;
+  const playingPillBorder =
+    playing.tone === "success"
+      ? `${colors.success}40`
+      : playing.tone === "muted"
+        ? colors.borderLight
+        : `${colors.primary}25`;
+  const playingPillText =
+    playing.tone === "success"
+      ? colors.success
+      : playing.tone === "muted"
+        ? colors.textTertiary
+        : colors.textSecondary;
+
+  const fee = nextEvent.entryFeeDisplay?.trim();
+
+  const showTeeCta = Boolean(nextEvent.teeTimePublishedAt && canAccessNextEventTeeSheet);
   const primaryLabel = showTeeCta ? "View tee sheet" : "View event";
   const primaryAction = showTeeCta ? onOpenTeeSheet : onOpenEvent;
 
@@ -135,14 +143,47 @@ export function DashboardHeroEventCard({
       </View>
 
       <Pressable onPress={onOpenEvent} accessibilityRole="button" accessibilityLabel="Open event details">
-        <AppText variant="title" style={[styles.heroTitle, { color: colors.text }]}>
+        <AppText variant="title" style={[styles.heroTitle, { color: colors.text }]} numberOfLines={3}>
           {String(nextEvent.name ?? "Event")}
         </AppText>
-        <AppText variant="small" color="secondary" style={styles.heroMeta}>
+        <AppText variant="small" color="secondary" style={styles.heroDate}>
           {formatEventDate(nextEvent.date)}
-          {nextEvent.courseName ? ` · ${String(nextEvent.courseName)}` : ""}
         </AppText>
+        {nextEvent.courseName ? (
+          <AppText variant="small" color="tertiary" style={styles.heroCourse} numberOfLines={2}>
+            {String(nextEvent.courseName)}
+          </AppText>
+        ) : null}
       </Pressable>
+
+      <View style={styles.compactStatusRow}>
+        {fee ? (
+          <View style={[styles.entryChip, { backgroundColor: colors.surface, borderColor: `${colors.primary}30` }]}>
+            <Feather name="credit-card" size={12} color={colors.primary} />
+            <AppText variant="captionBold" style={{ color: colors.text }} numberOfLines={1}>
+              Entry {fee}
+            </AppText>
+          </View>
+        ) : null}
+
+        <View
+          style={[
+            styles.playingPill,
+            { backgroundColor: playingPillBg, borderColor: playingPillBorder },
+          ]}
+        >
+          <View style={[styles.playingDot, { backgroundColor: playingPillText }]} />
+          <AppText variant="captionBold" style={{ color: playingPillText }} numberOfLines={1}>
+            {playing.label}
+          </AppText>
+        </View>
+      </View>
+
+      {playing.teeHint ? (
+        <AppText variant="caption" color="secondary" style={styles.teeHint} numberOfLines={1}>
+          {playing.teeHint}
+        </AppText>
+      ) : null}
 
       <View style={styles.chipsRow}>
         {nextEvent.format ? <Chip>{formatFormatLabel(nextEvent.format)}</Chip> : null}
@@ -171,14 +212,27 @@ export function DashboardHeroEventCard({
         </View>
       ) : null}
 
-      <View style={[styles.statusPill, { backgroundColor: colors.surface, borderColor: colors.borderLight }]}>
-        <View style={[styles.statusDot, { backgroundColor: statusColor }]} />
-        <AppText variant="small" style={[styles.statusText, { color: statusColor }]}>
-          {status.text}
-        </AppText>
-      </View>
+      {showPaymentRow ? (
+        <View style={styles.paymentWrap}>
+          {isPaid ? (
+            <View style={[styles.paymentPill, { backgroundColor: `${colors.success}18`, borderColor: `${colors.success}50` }]}>
+              <Feather name="check-circle" size={16} color={colors.success} />
+              <AppText variant="captionBold" style={{ color: colors.success, fontSize: 15 }}>
+                Paid
+              </AppText>
+            </View>
+          ) : (
+            <View style={[styles.paymentPill, { backgroundColor: `${colors.warning}22`, borderColor: `${colors.warning}55` }]}>
+              <Feather name="alert-circle" size={16} color={colors.warning} />
+              <AppText variant="captionBold" style={{ color: colors.warning, fontSize: 15 }}>
+                Not paid
+              </AppText>
+            </View>
+          )}
+        </View>
+      ) : null}
 
-      <PrimaryButton onPress={primaryAction} size="md" style={styles.cta}>
+      <PrimaryButton onPress={primaryAction} size="sm" style={styles.cta}>
         {primaryLabel}
       </PrimaryButton>
 
@@ -193,10 +247,50 @@ export function DashboardHeroEventCard({
 
 const styles = StyleSheet.create({
   heroTitle: {
-    letterSpacing: -0.3,
+    letterSpacing: -0.35,
+    fontWeight: "800",
   },
-  heroMeta: {
+  heroDate: {
+    marginTop: spacing.xs,
+    fontWeight: "600",
+  },
+  heroCourse: {
     marginTop: 4,
+  },
+  compactStatusRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    alignItems: "center",
+    gap: spacing.sm,
+    marginTop: spacing.sm + 2,
+  },
+  entryChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 6,
+    borderRadius: radius.full,
+    borderWidth: 1,
+    maxWidth: "100%",
+  },
+  playingPill: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 6,
+    borderRadius: radius.full,
+    borderWidth: 1,
+    alignSelf: "flex-start",
+  },
+  playingDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+  },
+  teeHint: {
+    marginTop: spacing.xs,
   },
   chipsRow: {
     flexDirection: "row",
@@ -228,25 +322,18 @@ const styles = StyleSheet.create({
     fontWeight: "600",
     marginLeft: 4,
   },
-  statusPill: {
+  paymentWrap: {
+    marginTop: spacing.sm + 2,
+  },
+  paymentPill: {
     flexDirection: "row",
     alignItems: "center",
+    alignSelf: "flex-start",
     gap: spacing.sm,
-    marginTop: spacing.md,
     paddingVertical: spacing.sm,
     paddingHorizontal: spacing.md,
     borderRadius: radius.md,
-    borderWidth: 1,
-  },
-  statusDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-  },
-  statusText: {
-    flex: 1,
-    fontWeight: "600",
-    fontSize: typography.small.fontSize,
+    borderWidth: 1.5,
   },
   cta: {
     marginTop: spacing.md,

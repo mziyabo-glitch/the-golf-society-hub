@@ -236,3 +236,35 @@ export async function searchCourses(
   return { data: hits, error: null };
 }
 
+/** Lat/lng + optional contact fields for playability / directions (migration 086+049). */
+export type CourseLocationRow = {
+  id: string;
+  course_name: string | null;
+  lat: number | null;
+  lng: number | null;
+  phone: string | null;
+  website_url: string | null;
+  /** GolfCourseAPI id when imported — used to resolve coordinates if lat/lng missing */
+  api_id: number | null;
+};
+
+export async function getCourseLocationById(courseId: string): Promise<CourseLocationRow | null> {
+  const { data, error } = await supabase
+    .from("courses")
+    .select("id, course_name, lat, lng, phone, website_url, api_id")
+    .eq("id", courseId)
+    .maybeSingle();
+
+  if (error || !data) return null;
+  const row = data as any;
+  return {
+    id: row.id,
+    course_name: row.course_name ?? null,
+    lat: row.lat != null && Number.isFinite(Number(row.lat)) ? Number(row.lat) : null,
+    lng: row.lng != null && Number.isFinite(Number(row.lng)) ? Number(row.lng) : null,
+    phone: row.phone ?? null,
+    website_url: row.website_url ?? null,
+    api_id: row.api_id != null && Number.isFinite(Number(row.api_id)) ? Number(row.api_id) : null,
+  };
+}
+

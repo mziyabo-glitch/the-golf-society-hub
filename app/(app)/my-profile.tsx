@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { StyleSheet, View, Pressable } from "react-native";
 import { useRouter } from "expo-router";
 import { Feather } from "@expo/vector-icons";
@@ -14,7 +14,6 @@ import { LoadingState } from "@/components/ui/LoadingState";
 import { Toast } from "@/components/ui/Toast";
 import { useBootstrap } from "@/lib/useBootstrap";
 import { getProfile, updateUserProfile } from "@/lib/db_supabase/profileRepo";
-import type { ProfileDoc } from "@/lib/db_supabase/profileRepo";
 import { updateHandicap } from "@/lib/db_supabase/memberRepo";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
 
@@ -29,6 +28,11 @@ export default function MyProfileScreen() {
   const handicapLocked = (member as any)?.handicapLock === true || (member as any)?.handicap_lock === true;
   const currentHI = (member as any)?.handicapIndex ?? (member as any)?.handicap_index ?? null;
 
+  const memberRef = useRef(member);
+  const currentHIRef = useRef(currentHI);
+  memberRef.current = member;
+  currentHIRef.current = currentHI;
+
   const [profileLoading, setProfileLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -39,12 +43,9 @@ export default function MyProfileScreen() {
   // Form fields
   const [fullName, setFullName] = useState("");
   const [sex, setSex] = useState<string>("");
-  const [whsIndex, setWhsIndex] = useState("");
+  /** Single handicap field: member HI when in a society (authoritative), else profile whs_index */
+  const [handicapIndex, setHandicapIndex] = useState("");
   const [email, setEmail] = useState("");
-
-  // Member HI (separate from profile WHS index)
-  const [memberHI, setMemberHI] = useState("");
-  const [savingHI, setSavingHI] = useState(false);
 
   // Load profile on mount
   useEffect(() => {
@@ -56,8 +57,14 @@ export default function MyProfileScreen() {
         if (p) {
           setFullName(p.full_name ?? "");
           setSex(p.sex ?? "");
-          setWhsIndex(p.whs_index != null ? String(p.whs_index) : "");
           setEmail(p.email ?? "");
+          const m = memberRef.current;
+          const hi = currentHIRef.current;
+          if (m?.id) {
+            setHandicapIndex(hi != null ? String(hi) : "");
+          } else {
+            setHandicapIndex(p.whs_index != null ? String(p.whs_index) : "");
+          }
         }
       } catch (e: any) {
         setError(e?.message || "Failed to load profile.");
@@ -68,8 +75,10 @@ export default function MyProfileScreen() {
   }, [userId]);
 
   useEffect(() => {
-    setMemberHI(currentHI != null ? String(currentHI) : "");
-  }, [currentHI]);
+    if (member?.id) {
+      setHandicapIndex(currentHI != null ? String(currentHI) : "");
+    }
+  }, [member?.id, currentHI]);
 
   const canSave = fullName.trim().length > 0 && sex.length > 0;
 
@@ -79,17 +88,28 @@ export default function MyProfileScreen() {
     setError(null);
 
     try {
-      const parsedWhs = whsIndex.trim() ? parseFloat(whsIndex.trim()) : null;
-      if (parsedWhs !== null && (isNaN(parsedWhs) || parsedWhs < -10 || parsedWhs > 54)) {
-        setError("WHS Index must be between -10 and 54.");
+      const parsedHi = handicapIndex.trim() ? parseFloat(handicapIndex.trim()) : null;
+      if (parsedHi !== null && (isNaN(parsedHi) || parsedHi < -10 || parsedHi > 54)) {
+        setError("Handicap index must be between -10 and 54.");
         setSaving(false);
         return;
+      }
+
+      const whsForProfile =
+        member?.id && handicapLocked
+          ? currentHI != null && Number.isFinite(Number(currentHI))
+            ? Number(currentHI)
+            : null
+          : parsedHi;
+
+      if (member?.id && !handicapLocked) {
+        await updateHandicap(member.id, parsedHi);
       }
 
       await updateUserProfile(userId, {
         full_name: fullName.trim(),
         sex,
-        whs_index: parsedWhs,
+        whs_index: whsForProfile,
       });
 
       refresh();
@@ -104,27 +124,6 @@ export default function MyProfileScreen() {
       setError(e?.message || "Failed to save profile.");
     } finally {
       setSaving(false);
-    }
-  };
-
-  const handleSaveHI = async () => {
-    if (!member?.id || savingHI) return;
-    setSavingHI(true);
-    setError(null);
-    try {
-      const parsed = memberHI.trim() ? parseFloat(memberHI.trim()) : null;
-      if (parsed !== null && (isNaN(parsed) || parsed < -10 || parsed > 54)) {
-        setError("Handicap Index must be between -10 and 54.");
-        setSavingHI(false);
-        return;
-      }
-      await updateHandicap(member.id, parsed);
-      refresh();
-      setToast({ visible: true, message: "Handicap saved.", type: "success" });
-    } catch (e: any) {
-      setError(e?.message || "Failed to save handicap.");
-    } finally {
-      setSavingHI(false);
     }
   };
 
@@ -222,19 +221,46 @@ export default function MyProfileScreen() {
           </AppText>
         </View>
 
-        {/* WHS Index */}
+        {/* Handicap index (WHS) — one field; member record when in a society, else profile only */}
         <View style={styles.field}>
-          <AppText variant="captionBold" style={styles.label}>WHS Handicap Index</AppText>
+          <View style={styles.handicapLabelRow}>
+            <AppText variant="captionBold" style={styles.handicapLabelText}>Handicap index (WHS)</AppText>
+            {member?.id ? (
+              handicapLocked ? (
+                <View style={[styles.lockBadge, { backgroundColor: colors.error + "14" }]}>
+                  <Feather name="lock" size={11} color={colors.error} />
+                  <AppText variant="small" style={{ color: colors.error, fontWeight: "700" }}>Locked</AppText>
+                </View>
+              ) : (
+                <View style={[styles.lockBadge, { backgroundColor: colors.success + "14" }]}>
+                  <Feather name="unlock" size={11} color={colors.success} />
+                  <AppText variant="small" style={{ color: colors.success, fontWeight: "700" }}>Editable</AppText>
+                </View>
+              )
+            ) : null}
+          </View>
           <AppInput
             placeholder="e.g. 12.4"
-            value={whsIndex}
-            onChangeText={(t) => { setWhsIndex(t); setError(null); }}
+            value={handicapIndex}
+            onChangeText={(t) => {
+              setHandicapIndex(t);
+              setError(null);
+            }}
             keyboardType="decimal-pad"
             autoCorrect={false}
+            editable={!handicapLocked}
+            style={handicapLocked ? { opacity: 0.85 } : undefined}
           />
           <AppText variant="small" color="tertiary" style={{ marginTop: 2 }}>
-            Optional. Your official World Handicap System index.
+            {handicapLocked && member?.id
+              ? "Locked by your Handicapper — contact them to change this."
+              : "Optional. Your World Handicap System index, used for society play and tee sheets."}
           </AppText>
+          {member?.id && (member as any)?.handicapUpdatedAt ? (
+            <AppText variant="small" color="tertiary" style={{ marginTop: 4 }}>
+              Last updated: {new Date((member as any).handicapUpdatedAt).toLocaleDateString("en-GB")}
+            </AppText>
+          ) : null}
         </View>
 
         {/* Save */}
@@ -247,57 +273,6 @@ export default function MyProfileScreen() {
           Save Profile
         </PrimaryButton>
       </AppCard>
-
-      {/* Handicap Index (member-level, with lock awareness) */}
-      {member?.id && !isFirstTime && (
-        <AppCard style={{ marginTop: spacing.base }}>
-          <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: spacing.sm }}>
-            <AppText variant="captionBold">Handicap Index</AppText>
-            {handicapLocked ? (
-              <View style={[styles.lockBadge, { backgroundColor: colors.error + "14" }]}>
-                <Feather name="lock" size={11} color={colors.error} />
-                <AppText variant="small" style={{ color: colors.error, fontWeight: "700" }}>Locked</AppText>
-              </View>
-            ) : (
-              <View style={[styles.lockBadge, { backgroundColor: colors.success + "14" }]}>
-                <Feather name="unlock" size={11} color={colors.success} />
-                <AppText variant="small" style={{ color: colors.success, fontWeight: "700" }}>Editable</AppText>
-              </View>
-            )}
-          </View>
-
-          {handicapLocked ? (
-            <AppText variant="body" color="secondary">
-              {currentHI != null ? String(currentHI) : "Not set"}
-              {" — Locked by Handicapper. Contact them to make changes."}
-            </AppText>
-          ) : (
-            <>
-              <AppInput
-                placeholder="e.g. 12.4"
-                value={memberHI}
-                onChangeText={setMemberHI}
-                keyboardType="decimal-pad"
-              />
-              <PrimaryButton
-                onPress={handleSaveHI}
-                loading={savingHI}
-                disabled={savingHI}
-                style={{ marginTop: spacing.sm }}
-                size="sm"
-              >
-                Save Handicap
-              </PrimaryButton>
-            </>
-          )}
-
-          {(member as any)?.handicapUpdatedAt && (
-            <AppText variant="small" color="tertiary" style={{ marginTop: spacing.xs }}>
-              Last updated: {new Date((member as any).handicapUpdatedAt).toLocaleDateString("en-GB")}
-            </AppText>
-          )}
-        </AppCard>
-      )}
 
       <Toast
         visible={toast.visible}
@@ -329,6 +304,17 @@ const styles = StyleSheet.create({
   },
   label: {
     marginBottom: spacing.xs,
+  },
+  handicapLabelRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: spacing.sm,
+    marginBottom: spacing.xs,
+  },
+  handicapLabelText: {
+    flex: 1,
+    minWidth: 0,
   },
   optionRow: {
     flexDirection: "row",

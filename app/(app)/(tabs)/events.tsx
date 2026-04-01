@@ -113,6 +113,7 @@ export default function EventsScreen() {
   const [formDate, setFormDate] = useState("");
   const [formFormat, setFormFormat] = useState<EventFormat>("stableford");
   const [formClassification, setFormClassification] = useState<EventClassification>("general");
+  const [formEntryFeeDisplay, setFormEntryFeeDisplay] = useState("");
   const [formErrors, setFormErrors] = useState<FormErrors>({});
   const [validationNotice, setValidationNotice] = useState<string | null>(null);
   const [toast, setToast] = useState({ visible: false, message: "", type: "success" as const });
@@ -614,6 +615,7 @@ export default function EventsScreen() {
     setFormDate("");
     setFormFormat("stableford");
     setFormClassification("general");
+    setFormEntryFeeDisplay("");
     setCourseSearchQuery("");
     setCourseSearchResults([]);
     setCourseSearchError(null);
@@ -803,6 +805,19 @@ export default function EventsScreen() {
               ) : null}
             </View>
 
+            <View style={styles.formField}>
+              <AppText variant="captionBold" style={styles.label}>Entry fee (optional)</AppText>
+              <AppInput
+                placeholder="e.g. £45 or £55 incl. food"
+                value={formEntryFeeDisplay}
+                onChangeText={setFormEntryFeeDisplay}
+                autoCapitalize="none"
+              />
+              <AppText variant="small" color="tertiary" style={{ marginTop: 4 }}>
+                Shown to members on the home screen and event page.
+              </AppText>
+            </View>
+
             {/* Joint Event: directly after Classification, before Course / Tee Setup */}
             <Pressable
               onPress={() => {
@@ -910,7 +925,7 @@ export default function EventsScreen() {
                           onPress={() => handleSelectCourse(c)}
                           style={({ pressed }) => [
                             styles.searchResultItem,
-                            { backgroundColor: colors.backgroundSecondary, opacity: pressed ? 0.8 : 1 },
+                            { backgroundColor: colors.backgroundSecondary, opacity: pressed ? 0.88 : 1 },
                           ]}
                         >
                           <AppText variant="body" numberOfLines={1}>{c.name}</AppText>
@@ -918,7 +933,7 @@ export default function EventsScreen() {
                             <AppText variant="small" color="secondary" numberOfLines={1}>
                               {[c.club_name, typeof c.location === "string" ? c.location : ""]
                                 .filter(Boolean)
-                                .join(" Â· ")}
+                                .join(" · ")}
                             </AppText>
                           ) : null}
                         </Pressable>
@@ -1518,8 +1533,10 @@ const styles = StyleSheet.create({
     gap: spacing.xs,
   },
   searchResultItem: {
-    padding: spacing.sm,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.sm,
     borderRadius: radius.sm,
+    gap: 2,
   },
   manualTeeContainer: {
     padding: spacing.sm,

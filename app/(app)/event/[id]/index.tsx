@@ -43,7 +43,12 @@ import {
   matchLadiesTeeFromEvent,
   hasManualLadiesTeeMinimum,
 } from "@/lib/courseTeeGender";
-import { getPermissionsForMember, canManageEventPaymentsForSociety, canManageEventRosterForSociety } from "@/lib/rbac";
+import {
+  getPermissionsForMember,
+  canManageEventPaymentsForSociety,
+  canManageEventRosterForSociety,
+  isCaptain,
+} from "@/lib/rbac";
 import {
   getEventRegistrations,
   markMePaid,
@@ -147,6 +152,7 @@ export default function EventDetailScreen() {
   const [formDate, setFormDate] = useState("");
   const [formFormat, setFormFormat] = useState<EventFormat>("stableford");
   const [formClassification, setFormClassification] = useState<EventClassification>("general");
+  const [formEntryFeeDisplay, setFormEntryFeeDisplay] = useState("");
   const [formCourseName, setFormCourseName] = useState("");
 
   // Course search (GolfCourseAPI) for edit mode
@@ -861,6 +867,7 @@ export default function EventDetailScreen() {
     setFormDate(event.date || "");
     setFormFormat(event.format || "stableford");
     setFormClassification(event.classification || "general");
+    setFormEntryFeeDisplay(event.entryFeeDisplay?.trim() || "");
     setFormCourseName(event.courseName || "");
 
     // Handicap allowance
@@ -1094,6 +1101,7 @@ export default function EventDetailScreen() {
           ladiesSlopeRating,
           handicapAllowance,
           teeSource,
+          entryFeeDisplay: formEntryFeeDisplay.trim() || null,
           is_joint_event: true,
           host_society_id: formEditHostSocietyId,
           participating_societies: formEditParticipatingSocieties,
@@ -1117,6 +1125,7 @@ export default function EventDetailScreen() {
           ladiesSlopeRating,
           handicapAllowance,
           teeSource,
+          entryFeeDisplay: formEntryFeeDisplay.trim() || null,
         });
       }
 
@@ -1294,6 +1303,19 @@ export default function EventDetailScreen() {
               </View>
             </View>
 
+            <View style={styles.formField}>
+              <AppText variant="captionBold" style={styles.label}>Entry fee (optional)</AppText>
+              <AppInput
+                placeholder="e.g. £45 or £55 incl. food"
+                value={formEntryFeeDisplay}
+                onChangeText={setFormEntryFeeDisplay}
+                autoCapitalize="none"
+              />
+              <AppText variant="small" color="tertiary" style={{ marginTop: 4 }}>
+                Shown on the home screen and here.
+              </AppText>
+            </View>
+
             {/* Joint event toggle (always visible in edit — was previously only when already joint) */}
             {canEditEvent ? (
               <Pressable
@@ -1395,7 +1417,15 @@ export default function EventDetailScreen() {
                         <Pressable
                           key={hit.id}
                           onPress={() => handleEditSelectCourse(hit)}
-                          style={({ pressed }) => [styles.searchResultItem, { backgroundColor: pressed ? colors.backgroundSecondary : "transparent" }]}
+                          style={({ pressed }) => [
+                            styles.courseSearchResultRow,
+                            {
+                              borderBottomColor: "rgba(0,0,0,0.06)",
+                              paddingVertical: spacing.sm,
+                              paddingHorizontal: spacing.sm,
+                              opacity: pressed ? 0.88 : 1,
+                            },
+                          ]}
                         >
                           <AppText variant="body" numberOfLines={1}>{hit.club_name || hit.name}</AppText>
                           {typeof hit.location === "string" && hit.location && (
@@ -1713,6 +1743,9 @@ export default function EventDetailScreen() {
         <Row icon="map-pin" label="Course" value={event.courseName ?? "TBC"} />
         <Row icon="target" label="Format" value={formatLabel} />
         <Row icon="tag" label="Classification" value={classificationLabel} />
+        {event.entryFeeDisplay?.trim() ? (
+          <Row icon="credit-card" label="Entry" value={event.entryFeeDisplay.trim()} />
+        ) : null}
       </AppCard>
 
       {/* Tee Settings - only show if configured */}
@@ -2419,6 +2452,10 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.sm,
     borderBottomWidth: 1,
     borderBottomColor: "rgba(0,0,0,0.06)",
+  },
+  courseSearchResultRow: {
+    borderBottomWidth: 1,
+    gap: 2,
   },
   manualTeeContainer: {
     padding: spacing.sm,

@@ -916,6 +916,7 @@ export async function createJointEvent(
     ladiesSlopeRating: input.ladiesSlopeRating,
     handicapAllowance: input.handicapAllowance,
     teeSource: input.teeSource,
+    entryFeeDisplay: input.entryFeeDisplay,
   });
 
   if (input.is_joint_event && (input.participating_societies?.length ?? 0) >= 2) {
@@ -989,6 +990,7 @@ export async function updateJointEvent(
     ladiesCourseRating: input.ladiesCourseRating,
     ladiesSlopeRating: input.ladiesSlopeRating,
     teeSource: input.teeSource,
+    entryFeeDisplay: input.entryFeeDisplay,
   });
 
   if (societies && societies.length >= 2) {

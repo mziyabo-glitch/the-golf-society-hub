@@ -4,31 +4,33 @@
  * Read-only, member-first experience with society context.
  *
  * Cards (top to bottom):
- *  A) Premium Header — app bar + society identity hero
- *  B) Hero next-event card — status + CTA (see components/dashboard)
- *  C) OOM metrics row + Your Status — rank, points; RSVP / payment
- *  D) Compact upcoming list + top-3 leaderboard preview
- *  E) Recent Activity — last 3 past events with result status
+ *  A) App bar + member identity (logo, name, society, role, handicap + edit)
+ *  B) Profile / licence banners (when applicable)
+ *  C) OOM rank + points (side-by-side; stack on narrow width)
+ *  D) Hero next-event — fee, payment/playing, CTA
+ *  E) Your Status — RSVP / payment admin for that event
+ *  F) Course playability mini (same bundle as Weather tab)
+ *  G) Tee-times-published banner (when fresh), then upcoming, leaderboard, activity
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { StyleSheet, View, Pressable, Image, Linking, type PressableStateCallbackType } from "react-native";
+import { StyleSheet, View, Pressable, Image, type PressableStateCallbackType } from "react-native";
 import { useRouter } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
 import { Feather } from "@expo/vector-icons";
-import * as WebBrowser from "expo-web-browser";
 import { useBottomTabBarHeight } from "@react-navigation/bottom-tabs";
 
 import { Screen } from "@/components/ui/Screen";
 import { AppText } from "@/components/ui/AppText";
 import { AppCard } from "@/components/ui/AppCard";
-import { DashboardFairwayWeatherCard } from "@/components/dashboard/DashboardFairwayWeatherCard";
+import { DashboardMemberIdentityCard } from "@/components/dashboard/DashboardMemberIdentityCard";
+import { getSocietyLogoUrl } from "@/lib/societyLogo";
 import { DashboardHeroEventCard } from "@/components/dashboard/DashboardHeroEventCard";
+import { DashboardPlayabilityMiniCard } from "@/components/dashboard/DashboardPlayabilityMiniCard";
 import { DashboardOomTopMetricsRow } from "@/components/dashboard/DashboardOomTopMetricsRow";
 import { DashboardYourStatusCard } from "@/components/dashboard/DashboardYourStatusCard";
 import { DashboardUpcomingList } from "@/components/dashboard/DashboardUpcomingList";
 import { DashboardLeaderboardPreview } from "@/components/dashboard/DashboardLeaderboardPreview";
-import { SocietyHeaderCard } from "@/components/ui/SocietyHeaderCard";
 import { PrimaryButton } from "@/components/ui/Button";
 import { InlineNotice } from "@/components/ui/InlineNotice";
 import { Toast } from "@/components/ui/Toast";
@@ -51,7 +53,6 @@ import {
 } from "@/lib/db_supabase/resultsRepo";
 import { colors, getColors, spacing, radius, typography } from "@/lib/ui/theme";
 import { formatError, type FormattedError } from "@/lib/ui/formatError";
-import { getSocietyLogoUrl } from "@/lib/societyLogo";
 import { isActiveSocietyParticipantForEvent, isJointEventFromMeta } from "@/lib/jointEventAccess";
 import { getMySinbooks, type SinbookWithParticipants } from "@/lib/db_supabase/sinbookRepo";
 import {
@@ -135,14 +136,6 @@ function formatClassification(classification?: string): string {
 function formatPoints(pts: number): string {
   if (pts === Math.floor(pts)) return pts.toString();
   return pts.toFixed(1);
-}
-
-/** Get initials from a name */
-function getInitials(name: string): string {
-  if (!name) return "GS";
-  const words = name.trim().split(/\s+/);
-  if (words.length === 1) return name.substring(0, 2).toUpperCase();
-  return words.slice(0, 2).map((w) => w[0]).join("").toUpperCase();
 }
 
 function HomeAppBar({
@@ -383,7 +376,6 @@ export default function HomeScreen() {
   // Derived Data
   // ============================================================================
 
-  const logoUrl = getSocietyLogoUrl(society);
   const memberId = member?.id;
 
   /** Local calendar date as YYYY-MM-DD (avoids UTC midnight issues with date-only strings). */
@@ -753,15 +745,9 @@ export default function HomeScreen() {
     pushWithBlur("/(app)/(tabs)/leaderboard");
   };
 
-  const openFairwayWeather = async () => {
-    const baseUrl = "https://www.fairwayweather.com";
-    try {
-      await WebBrowser.openBrowserAsync(baseUrl);
-    } catch {
-      // Fallback: open in external browser
-      Linking.openURL(baseUrl).catch(() => {});
-    }
-  };
+  const openWeatherTab = useCallback(() => {
+    router.push("/(app)/(tabs)/weather");
+  }, [router]);
 
   // ============================================================================
   // Loading / No Society States
@@ -787,22 +773,12 @@ export default function HomeScreen() {
   // Render
   // ============================================================================
 
-  // Handicap and identity meta for hero text
-  // Guard: ensure the raw value is a primitive before converting to Number
-  const _hiRaw = (member as any)?.handicap_index ?? member?.handicapIndex ?? null;
-  const _hiNum =
-    _hiRaw != null && typeof _hiRaw !== "object"
-      ? Number(_hiRaw)
-      : null;
-  const memberHiText =
-    _hiNum != null && Number.isFinite(_hiNum)
-      ? `HI ${_hiNum.toFixed(1)}`
-      : null;
   const memberDisplayName = String(member?.displayName || member?.name || "Member");
-  const roleLabel = formatRole(member?.role);
-  const heroSecondaryText = memberHiText
-    ? `${memberDisplayName} • ${roleLabel} • ${memberHiText}`
-    : `${memberDisplayName} • ${roleLabel}`;
+  const logoUrl = getSocietyLogoUrl(society);
+  const roleLabel = formatRole(member?.role ?? member?.roles?.[0]);
+  const hiRaw = member?.handicapIndex ?? member?.handicap_index;
+  const handicapIndexDisplay =
+    hiRaw != null && Number.isFinite(Number(hiRaw)) ? Number(hiRaw).toFixed(1) : null;
   const canOpenLeaderboard = memberHasSeat || memberIsCaptain;
   const oomTotalPoints = Number(mySnapshot?.totalPoints) || 0;
   const oomPointsMain = formatPoints(oomTotalPoints);
@@ -827,11 +803,13 @@ export default function HomeScreen() {
         onOpenSettings={() => pushWithBlur("/(app)/(tabs)/settings")}
       />
 
-      <SocietyHeaderCard
+      <DashboardMemberIdentityCard
         logoUrl={logoUrl}
-        societyName={String(society.name ?? "Society")}
-        subtitle={heroSecondaryText}
-        getInitials={getInitials}
+        societyName={String(society?.name ?? "Society")}
+        memberName={memberDisplayName}
+        roleLabel={roleLabel}
+        handicapIndexDisplay={handicapIndexDisplay}
+        onEditHandicap={() => pushWithBlur("/(app)/my-profile")}
       />
 
       {loadError && (
@@ -923,8 +901,52 @@ export default function HomeScreen() {
       {/* ================================================================== */}
       {(memberHasSeat || memberIsCaptain) && (<>
 
-      {/* ================================================================== */}
-      {/* NOTIFICATION: Tee times published — green badge "Tee times now available" */}
+      <DashboardOomTopMetricsRow
+        oomRankMain={oomRankMain}
+        showUnrankedHint={showUnrankedHint}
+        oomPointsMain={oomPointsMain}
+        canOpenLeaderboard={canOpenLeaderboard}
+        onOpenLeaderboard={openLeaderboard}
+      />
+
+      <DashboardHeroEventCard
+        nextEvent={nextEvent}
+        nextEventIsJoint={nextEventIsJoint}
+        myReg={myReg}
+        myTeeTimeInfo={heroTeePreview}
+        canAccessNextEventTeeSheet={canAccessNextEventTeeSheet}
+        formatEventDate={formatEventDate}
+        formatFormatLabel={formatFormatLabel}
+        formatClassification={formatClassification}
+        onOpenEvent={() => nextEvent && openEvent(nextEvent.id)}
+        onOpenTeeSheet={() =>
+          nextEvent && router.push({ pathname: "/(app)/event/[id]/tee-sheet", params: { id: nextEvent.id } })
+        }
+      />
+
+      {nextEvent ? (
+        <DashboardYourStatusCard
+          nextEvent={nextEvent}
+          nextEventIsJoint={nextEventIsJoint}
+          myReg={myReg}
+          regBusy={regBusy}
+          canAdmin={canAdmin}
+          showAdmin={showAdmin}
+          onToggleAdmin={() => setShowAdmin((v) => !v)}
+          onToggleIn={() => toggleRegistration("in")}
+          onToggleOut={() => toggleRegistration("out")}
+          onMarkPaid={handleMarkPaid}
+        />
+      ) : null}
+
+      <DashboardPlayabilityMiniCard
+        nextEvent={nextEvent}
+        enabled={!!societyId && !!memberId}
+        onOpenWeatherTab={openWeatherTab}
+        preferredTeeTimeLocal={heroTeePreview?.teeTime ?? null}
+      />
+
+      {/* Tee times published — after priority cards so OOM stays directly under identity */}
       {nextEvent?.teeTimePublishedAt && canAccessNextEventTeeSheet && (() => {
         const publishedAt = new Date(nextEvent.teeTimePublishedAt!);
         const daysSince = (Date.now() - publishedAt.getTime()) / (1000 * 60 * 60 * 24);
@@ -949,50 +971,6 @@ export default function HomeScreen() {
           </Pressable>
         );
       })()}
-
-      <DashboardHeroEventCard
-        nextEvent={nextEvent}
-        nextEventIsJoint={nextEventIsJoint}
-        myReg={myReg}
-        myTeeTimeInfo={heroTeePreview}
-        canAccessNextEventTeeSheet={canAccessNextEventTeeSheet}
-        formatEventDate={formatEventDate}
-        formatFormatLabel={formatFormatLabel}
-        formatClassification={formatClassification}
-        onOpenEvent={() => nextEvent && openEvent(nextEvent.id)}
-        onOpenTeeSheet={() =>
-          nextEvent && router.push({ pathname: "/(app)/event/[id]/tee-sheet", params: { id: nextEvent.id } })
-        }
-      />
-
-      <DashboardOomTopMetricsRow
-        oomRankMain={oomRankMain}
-        showUnrankedHint={showUnrankedHint}
-        oomPointsMain={oomPointsMain}
-        canOpenLeaderboard={canOpenLeaderboard}
-        onOpenLeaderboard={openLeaderboard}
-      />
-
-      {nextEvent ? (
-        <DashboardYourStatusCard
-          nextEvent={nextEvent}
-          nextEventIsJoint={nextEventIsJoint}
-          myReg={myReg}
-          regBusy={regBusy}
-          canAdmin={canAdmin}
-          showAdmin={showAdmin}
-          onToggleAdmin={() => setShowAdmin((v) => !v)}
-          onToggleIn={() => toggleRegistration("in")}
-          onToggleOut={() => toggleRegistration("out")}
-          onMarkPaid={handleMarkPaid}
-        />
-      ) : null}
-
-      <DashboardFairwayWeatherCard
-        nextEvent={nextEvent}
-        formatEventDate={formatEventDate}
-        onOpenForecast={openFairwayWeather}
-      />
 
       <DashboardUpcomingList
         events={upcomingAfterNext}

@@ -2,13 +2,12 @@
  * Compact OOM stat tiles under the hero — rank + points, equal width.
  */
 
-import { View, Pressable, StyleSheet, useWindowDimensions } from "react-native";
+import { View, Pressable, StyleSheet } from "react-native";
 import { AppText } from "@/components/ui/AppText";
 import { getColors, spacing } from "@/lib/ui/theme";
 import { dashboardShell } from "./dashboardCardStyles";
 
-const NARROW_BREAKPOINT = 400;
-const TILE_MIN_HEIGHT = 100;
+const TILE_MIN_HEIGHT = 78;
 
 type Props = {
   oomRankMain: string;
@@ -26,14 +25,13 @@ export function DashboardOomTopMetricsRow({
   onOpenLeaderboard,
 }: Props) {
   const colors = getColors();
-  const { width } = useWindowDimensions();
-  const stack = width < NARROW_BREAKPOINT;
-  const sh = { borderColor: colors.borderLight, backgroundColor: colors.surface };
+  const tintBg = `${colors.primary}07`;
+  const sh = { borderColor: colors.borderLight, backgroundColor: tintBg };
 
   const rankTile = (
     <MetricTile
       value={oomRankMain}
-      subtitle="OOM Rank"
+      subtitle="OOM rank"
       tertiary={showUnrankedHint ? "Unranked" : undefined}
       mutedValue={oomRankMain === "—"}
       minHeight={TILE_MIN_HEIGHT}
@@ -45,7 +43,7 @@ export function DashboardOomTopMetricsRow({
   const pointsTile = (
     <MetricTile
       value={oomPointsMain}
-      subtitle="OOM Points"
+      subtitle="OOM points"
       tertiary={undefined}
       mutedValue={false}
       minHeight={TILE_MIN_HEIGHT}
@@ -55,8 +53,8 @@ export function DashboardOomTopMetricsRow({
   );
 
   return (
-    <View style={[styles.row, stack && styles.rowStack]}>
-      <View style={stack ? styles.cellStacked : styles.cell}>
+    <View style={styles.row}>
+      <View style={styles.cell}>
         {canOpenLeaderboard ? (
           <Pressable
             onPress={onOpenLeaderboard}
@@ -71,7 +69,7 @@ export function DashboardOomTopMetricsRow({
         )}
       </View>
 
-      <View style={stack ? styles.cellStacked : styles.cell}>
+      <View style={styles.cell}>
         {canOpenLeaderboard ? (
           <Pressable
             onPress={onOpenLeaderboard}
@@ -118,11 +116,11 @@ function MetricTile({
         style={[styles.metric, { color: mutedValue ? colors.textTertiary : colors.text }]}
         numberOfLines={1}
         adjustsFontSizeToFit
-        minimumFontScale={0.72}
+        minimumFontScale={0.7}
       >
         {value}
       </AppText>
-      <AppText variant="small" color="secondary" style={styles.subtitle} numberOfLines={2}>
+      <AppText variant="caption" color="tertiary" style={styles.subtitle} numberOfLines={2}>
         {subtitle}
       </AppText>
       {tertiary ? (
@@ -139,17 +137,11 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "stretch",
     gap: spacing.sm,
-    marginBottom: spacing.md,
-  },
-  rowStack: {
-    flexDirection: "column",
+    marginBottom: spacing.sm + 2,
   },
   cell: {
     flex: 1,
     minWidth: 0,
-  },
-  cellStacked: {
-    width: "100%",
   },
   cellFill: {
     flex: 1,
@@ -157,16 +149,22 @@ const styles = StyleSheet.create({
     alignSelf: "stretch",
   },
   metric: {
-    fontSize: 22,
-    lineHeight: 26,
+    fontSize: 28,
+    lineHeight: 32,
     fontWeight: "800",
-    letterSpacing: -0.5,
+    letterSpacing: -0.6,
   },
   subtitle: {
-    marginTop: 6,
+    marginTop: 4,
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: "500",
+    opacity: 0.85,
   },
   tertiary: {
     marginTop: 2,
+    fontSize: 11,
+    opacity: 0.8,
   },
   pressed: {
     opacity: 0.94,

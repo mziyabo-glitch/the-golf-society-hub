@@ -136,6 +136,8 @@ export interface JointEventBaseInput {
   ladiesCourseRating?: number;
   ladiesSlopeRating?: number;
   teeSource?: "imported" | "manual";
+  /** Optional entry fee label for members */
+  entryFeeDisplay?: string | null;
 }
 
 /** Input for creating a joint event */
