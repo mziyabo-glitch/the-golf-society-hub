@@ -8,7 +8,16 @@ export type WindImpactLevel = "low" | "moderate" | "high" | "extreme";
 
 export type RainRiskLevel = "low" | "moderate" | "high";
 
+/** Precipitation strength from hourly codes + chance — for quick UI, not only probability */
+export type RainIntensityLevel = "none" | "light" | "moderate" | "heavy" | "storm";
+
 export type ComfortLevel = "cold" | "cool" | "mild" | "warm" | "hot";
+
+/** Golf-day snapshot: when to tee off (emoji + local time label) */
+export type PlayTimelineSlot = {
+  timeLabel: string;
+  emoji: string;
+};
 
 export type WeatherProviderId = "openweathermap" | "open-meteo";
 
@@ -29,6 +38,8 @@ export type PlayabilityInsight = {
   windImpact: WindImpactLevel;
   windSummary: string;
   rainRisk: RainRiskLevel;
+  /** Intensity of wet weather (codes + peaks), for icon-led rain row */
+  rainIntensity: RainIntensityLevel;
   rainSummary: string;
   comfort: ComfortLevel;
   comfortSummary: string;
@@ -38,6 +49,8 @@ export type PlayabilityInsight = {
   bestWindowFallback: string | null;
   /** YYYY-MM-DD this insight applies to (event day or “today”) */
   targetDate: string;
+  /** ~8am–2pm-style slots for “when to play” strip */
+  playTimeline: PlayTimelineSlot[];
 };
 
 /** Normalised hour — comparable across providers */
@@ -60,6 +73,8 @@ export type DailyForecastPoint = {
   tempMaxC: number;
   precipProbMaxPercent: number;
   windMaxKmh: number;
+  /** Dominant / worst WMO-style code for the day when known */
+  weatherCode?: number;
   /** Short human line for the day */
   summary: string;
   /** Local ISO-like time from provider (e.g. Open-Meteo daily sunrise) */

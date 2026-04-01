@@ -7,6 +7,7 @@ import { Feather } from "@expo/vector-icons";
 import { AppText } from "@/components/ui/AppText";
 import { getColors, spacing, radius, premiumTokens } from "@/lib/ui/theme";
 import type { PlayabilityInsight, PlayabilityLevel } from "@/lib/playability/types";
+import { comfortScan, rainIntensityScan, windImpactScan } from "@/lib/playability/weatherVisual";
 
 const LEVEL_LABEL: Record<PlayabilityLevel, string> = {
   excellent: "Excellent",
@@ -90,7 +91,7 @@ export function PlayabilityCard({
         <View style={styles.centerBlock}>
           <ActivityIndicator color={colors.primary} />
           <AppText variant="small" color="secondary" style={{ marginTop: spacing.sm }}>
-            Building your round picture…
+            Loading…
           </AppText>
         </View>
       ) : error ? (
@@ -113,7 +114,7 @@ export function PlayabilityCard({
               <AppText variant="captionBold" style={{ color: c }}>
                 {LEVEL_LABEL[insight.level]}
               </AppText>
-              <AppText variant="small" color="secondary" numberOfLines={3}>
+              <AppText variant="small" color="secondary" numberOfLines={2}>
                 {insight.summary}
               </AppText>
             </View>
@@ -121,9 +122,9 @@ export function PlayabilityCard({
 
           <View style={[styles.whyBlock, { borderTopColor: colors.borderLight, backgroundColor: colors.backgroundSecondary }]}>
             <AppText variant="captionBold" color="secondary" style={styles.whyEyebrow}>
-              Why this rating
+              Score
             </AppText>
-            <AppText variant="small" color="secondary" style={styles.whyBody}>
+            <AppText variant="small" color="secondary" style={styles.whyBody} numberOfLines={2}>
               {insight.ratingExplanation}
             </AppText>
           </View>
@@ -131,7 +132,7 @@ export function PlayabilityCard({
           {insight.recommendedAction ? (
             <View style={[styles.actionCallout, { backgroundColor: `${colors.primary}10` }]}>
               <Feather name="info" size={16} color={colors.primary} style={{ marginTop: 1 }} />
-              <AppText variant="small" color="secondary" style={{ flex: 1, marginLeft: spacing.sm }}>
+              <AppText variant="captionBold" color="secondary" style={{ flex: 1, marginLeft: spacing.sm }} numberOfLines={2}>
                 {insight.recommendedAction}
               </AppText>
             </View>
@@ -140,23 +141,41 @@ export function PlayabilityCard({
           {insight.bestWindow ? (
             <View style={[styles.pillRow, { backgroundColor: colors.backgroundSecondary }]}>
               <Feather name="clock" size={14} color={colors.primary} />
-              <AppText variant="captionBold" style={{ marginLeft: spacing.xs, flex: 1 }}>
-                Best window · {insight.bestWindow}
+              <AppText variant="captionBold" style={{ marginLeft: spacing.xs, flex: 1 }} numberOfLines={1}>
+                Best {insight.bestWindow}
               </AppText>
             </View>
           ) : insight.bestWindowFallback ? (
             <View style={[styles.pillRow, { backgroundColor: `${colors.warning}12` }]}>
               <Feather name="sun" size={14} color={colors.warning} />
-              <AppText variant="captionBold" color="secondary" style={{ marginLeft: spacing.xs, flex: 1 }}>
+              <AppText variant="captionBold" color="secondary" style={{ marginLeft: spacing.xs, flex: 1 }} numberOfLines={1}>
                 {insight.bestWindowFallback}
               </AppText>
             </View>
           ) : null}
 
           <View style={styles.metrics}>
-            <Metric icon="wind" label="Wind" value={insight.windSummary} colors={colors} />
-            <Metric icon="cloud-rain" label="Rain" value={insight.rainSummary} colors={colors} />
-            <Metric icon="thermometer" label="Comfort" value={insight.comfortSummary} colors={colors} />
+            <Metric
+              icon="wind"
+              label="Wind"
+              emoji={windImpactScan(insight.windImpact).emoji}
+              value={insight.windSummary}
+              colors={colors}
+            />
+            <Metric
+              icon="cloud-rain"
+              label="Rain"
+              emoji={rainIntensityScan(insight.rainIntensity).emoji}
+              value={insight.rainSummary}
+              colors={colors}
+            />
+            <Metric
+              icon="thermometer"
+              label="Comfort"
+              emoji={comfortScan(insight.comfort).emoji}
+              value={insight.comfortSummary}
+              colors={colors}
+            />
           </View>
 
           {insight.warnings.length > 0 ? (
@@ -164,14 +183,15 @@ export function PlayabilityCard({
               <AppText variant="captionBold" color="secondary" style={{ marginBottom: spacing.xs }}>
                 Heads-up
               </AppText>
-              {insight.warnings.slice(0, 4).map((w, i) => (
-                <View key={i} style={styles.warningLine}>
-                  <Feather name="alert-circle" size={14} color={colors.highlight} style={{ marginTop: 2 }} />
-                  <AppText variant="small" color="secondary" style={{ flex: 1, marginLeft: spacing.xs }}>
-                    {w}
-                  </AppText>
-                </View>
-              ))}
+              <View style={styles.warningChips}>
+                {insight.warnings.slice(0, 5).map((w, i) => (
+                  <View key={i} style={[styles.warningChip, { backgroundColor: colors.backgroundSecondary, borderColor: colors.borderLight }]}>
+                    <AppText variant="captionBold" color="secondary" numberOfLines={1}>
+                      {w}
+                    </AppText>
+                  </View>
+                ))}
+              </View>
             </View>
           ) : null}
         </>
@@ -183,21 +203,26 @@ export function PlayabilityCard({
 function Metric({
   icon,
   label,
+  emoji,
   value,
   colors,
 }: {
   icon: keyof typeof Feather.glyphMap;
   label: string;
+  emoji: string;
   value: string;
   colors: ReturnType<typeof getColors>;
 }) {
   return (
     <View style={styles.metric}>
-      <Feather name={icon} size={14} color={colors.textTertiary} />
+      <View style={styles.metricTop}>
+        <AppText style={styles.metricEmoji}>{emoji}</AppText>
+        <Feather name={icon} size={12} color={colors.textTertiary} style={{ marginLeft: 4, marginTop: 2 }} />
+      </View>
       <AppText variant="captionBold" color="tertiary" style={styles.metricLabel}>
         {label}
       </AppText>
-      <AppText variant="small" color="secondary" numberOfLines={3}>
+      <AppText variant="captionBold" color="secondary" numberOfLines={1} style={styles.metricValue}>
         {value}
       </AppText>
     </View>
@@ -275,7 +300,30 @@ const styles = StyleSheet.create({
     fontSize: 11,
   },
   whyBody: {
-    lineHeight: 20,
+    lineHeight: 18,
+  },
+  metricTop: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  metricEmoji: {
+    fontSize: 22,
+    lineHeight: 26,
+  },
+  metricValue: {
+    marginTop: 2,
+    fontSize: 13,
+  },
+  warningChips: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 6,
+  },
+  warningChip: {
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+    borderRadius: 8,
+    borderWidth: StyleSheet.hairlineWidth,
   },
   bigRating: {
     fontSize: 44,
@@ -315,10 +363,5 @@ const styles = StyleSheet.create({
     marginTop: spacing.sm,
     paddingTop: spacing.sm,
     borderTopWidth: StyleSheet.hairlineWidth,
-  },
-  warningLine: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    marginBottom: spacing.xs,
   },
 });

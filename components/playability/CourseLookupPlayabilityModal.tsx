@@ -81,7 +81,7 @@ export function CourseLookupPlayabilityModal({ visible, onClose, hit }: Props) {
 
             {!bundle.loading && !bundle.error && bundle.insight ? (
               <>
-                <HourlyForecastStrip hours={bundle.hourlyStrip} />
+                <HourlyForecastStrip slots={bundle.insight.playTimeline} hours={bundle.hourlyStrip} />
                 <DailyForecastBlock days={bundle.dailyOutlook} />
               </>
             ) : null}

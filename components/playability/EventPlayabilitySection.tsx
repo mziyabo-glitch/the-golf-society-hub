@@ -109,7 +109,7 @@ export function EventPlayabilitySection({
 
       {!bundle.loading && !bundle.error && bundle.insight ? (
         <>
-          <HourlyForecastStrip hours={bundle.hourlyStrip} title="Hourly — golf day window" />
+          <HourlyForecastStrip slots={bundle.insight.playTimeline} hours={bundle.hourlyStrip} />
           <DailyForecastBlock days={bundle.dailyOutlook} />
         </>
       ) : null}

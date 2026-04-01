@@ -521,7 +521,7 @@ export default function WeatherScreen() {
 
                 {!manualBundle.loading && !manualBundle.error && manualBundle.insight ? (
                   <>
-                    <HourlyForecastStrip hours={manualBundle.hourlyStrip} title="Hourly — golf day window" />
+                    <HourlyForecastStrip slots={manualBundle.insight.playTimeline} hours={manualBundle.hourlyStrip} />
                     <DailyForecastBlock days={manualBundle.dailyOutlook} />
                   </>
                 ) : null}

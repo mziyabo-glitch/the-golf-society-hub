@@ -63,16 +63,24 @@ function normalizeOpenWeatherMap25(lat: number, lng: number, apiKey: string): Pr
 
     const dailyMap = new Map<
       string,
-      { min: number; max: number; pmax: number; wmax: number; codes: number[] }
+      { min: number; max: number; pmax: number; wmax: number; codes: number[]; codeMax: number }
     >();
     for (const h of hourly) {
       const d = h.dateYmdLocal;
-      const cur = dailyMap.get(d) ?? { min: h.tempC, max: h.tempC, pmax: 0, wmax: 0, codes: [] };
+      const cur = dailyMap.get(d) ?? {
+        min: h.tempC,
+        max: h.tempC,
+        pmax: 0,
+        wmax: 0,
+        codes: [],
+        codeMax: 0,
+      };
       cur.min = Math.min(cur.min, h.tempC);
       cur.max = Math.max(cur.max, h.tempC);
       cur.pmax = Math.max(cur.pmax, h.precipProbPercent);
       cur.wmax = Math.max(cur.wmax, h.windKmh);
       cur.codes.push(h.weatherCode);
+      cur.codeMax = Math.max(cur.codeMax, h.weatherCode);
       dailyMap.set(d, cur);
     }
 
@@ -196,10 +204,10 @@ function normalizeOpenMeteo(lat: number, lng: number): Promise<NormalizedForecas
       const pmax = Math.min(100, Math.max(0, Number(dP[i] ?? 0)));
       const wmax = Math.max(0, Number(dW[i] ?? 0));
       const code = Math.round(Number(dCode[i] ?? 0));
-      let summary = "Typical day for golf.";
-      if (code >= 95) summary = "Storm risk — check before you travel.";
-      else if (pmax >= 55) summary = "Wet spell possible — pack waterproofs.";
-      else if (wmax >= 40) summary = "Windy — club up and manage ball flight.";
+      let summary = "Fair day.";
+      if (code >= 95) summary = "Storm risk.";
+      else if (pmax >= 55) summary = "Wet spell.";
+      else if (wmax >= 40) summary = "Very windy.";
       const sr = typeof dSunrise[i] === "string" ? dSunrise[i] : null;
       const ss = typeof dSunset[i] === "string" ? dSunset[i] : null;
       daily.push({
@@ -208,6 +216,7 @@ function normalizeOpenMeteo(lat: number, lng: number): Promise<NormalizedForecas
         tempMaxC: Math.round(Number(dMax[i] ?? 0) * 10) / 10,
         precipProbMaxPercent: pmax,
         windMaxKmh: Math.round(wmax * 10) / 10,
+        weatherCode: code,
         summary,
         sunrise: sr,
         sunset: ss,

@@ -10,6 +10,7 @@ import { usePlayabilityBundle } from "@/lib/playability/usePlayabilityBundle";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
 import { dashboardShell, DASHBOARD_CARD_RADIUS } from "./dashboardCardStyles";
 import type { PlayabilityLevel } from "@/lib/playability/types";
+import { comfortScan, rainIntensityScan, windImpactScan } from "@/lib/playability/weatherVisual";
 
 const LEVEL_WORD: Record<PlayabilityLevel, string> = {
   excellent: "Excellent",
@@ -132,16 +133,31 @@ export function DashboardPlayabilityMiniCard({
             </View>
 
             <View style={styles.indicators}>
-              <Indicator icon="wind" text={bundle.insight.windSummary} colors={colors} />
-              <Indicator icon="cloud-rain" text={bundle.insight.rainSummary} colors={colors} />
-              <Indicator icon="thermometer" text={bundle.insight.comfortSummary} colors={colors} />
+              <Indicator
+                icon="wind"
+                emoji={windImpactScan(bundle.insight.windImpact).emoji}
+                text={bundle.insight.windSummary}
+                colors={colors}
+              />
+              <Indicator
+                icon="cloud-rain"
+                emoji={rainIntensityScan(bundle.insight.rainIntensity).emoji}
+                text={bundle.insight.rainSummary}
+                colors={colors}
+              />
+              <Indicator
+                icon="thermometer"
+                emoji={comfortScan(bundle.insight.comfort).emoji}
+                text={bundle.insight.comfortSummary}
+                colors={colors}
+              />
             </View>
 
             {bundle.insight.bestWindow ? (
               <View style={[styles.windowPill, { backgroundColor: `${colors.primary}10`, borderColor: `${colors.primary}22` }]}>
                 <Feather name="clock" size={13} color={colors.primary} />
-                <AppText variant="captionBold" color="primary" style={{ marginLeft: spacing.xs, flex: 1 }} numberOfLines={2}>
-                  Best window · {bundle.insight.bestWindow}
+                <AppText variant="captionBold" color="primary" style={{ marginLeft: spacing.xs, flex: 1 }} numberOfLines={1}>
+                  Best {bundle.insight.bestWindow}
                 </AppText>
               </View>
             ) : bundle.insight.bestWindowFallback ? (
@@ -168,17 +184,20 @@ export function DashboardPlayabilityMiniCard({
 
 function Indicator({
   icon,
+  emoji,
   text,
   colors,
 }: {
   icon: keyof typeof Feather.glyphMap;
+  emoji: string;
   text: string;
   colors: ReturnType<typeof getColors>;
 }) {
   return (
     <View style={styles.indicatorRow}>
-      <Feather name={icon} size={13} color={colors.primary} style={{ marginTop: 1 }} />
-      <AppText variant="small" color="secondary" style={styles.indicatorText} numberOfLines={2}>
+      <AppText style={styles.indicatorEmoji}>{emoji}</AppText>
+      <Feather name={icon} size={12} color={colors.primary} style={{ marginTop: 3 }} />
+      <AppText variant="captionBold" color="secondary" style={styles.indicatorText} numberOfLines={1}>
         {text}
       </AppText>
     </View>
@@ -223,13 +242,19 @@ const styles = StyleSheet.create({
   },
   indicatorRow: {
     flexDirection: "row",
-    alignItems: "flex-start",
-    gap: spacing.sm,
+    alignItems: "center",
+    gap: 6,
+  },
+  indicatorEmoji: {
+    fontSize: 18,
+    lineHeight: 22,
+    width: 24,
+    textAlign: "center",
   },
   indicatorText: {
     flex: 1,
-    lineHeight: 19,
-    fontSize: 14,
+    lineHeight: 18,
+    fontSize: 13,
   },
   windowPill: {
     flexDirection: "row",

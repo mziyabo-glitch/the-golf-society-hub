@@ -16,6 +16,13 @@ import {
   golfBoundsFromSunriseSunset,
   localMinutesFromForecastTime,
 } from "./golfDaylightWindow";
+import {
+  buildPlayTimeline,
+  comfortScan,
+  rainIntensityFromHours,
+  rainIntensityScan,
+  windImpactScan,
+} from "./weatherVisual";
 
 function isThunderCode(code: number): boolean {
   return code >= 95 && code <= 99;
@@ -68,78 +75,34 @@ function filterHoursForDate(hourly: HourlyForecastPoint[], ymd: string): HourlyF
 }
 
 function headlineLabel(level: PlayabilityLevel, rainRisk: RainRiskLevel, windImpact: WindImpactLevel): string {
-  if (level === "excellent") return "Great day for golf";
+  if (level === "excellent") return "Great day";
   if (level === "good") return "Good to go";
-  if (level === "severe" || rainRisk === "high") return "High risk day";
-  if (level === "poor" || windImpact === "extreme") return "Brutal elements";
-  if (level === "mixed") return "Pick your window";
-  return "Proceed with caution";
+  if (level === "severe" || rainRisk === "high") return "High risk";
+  if (level === "poor" || windImpact === "extreme") return "Brutal weather";
+  if (level === "mixed") return "Pick a window";
+  return "Caution";
 }
 
 function buildRatingExplanation(
   rating: number,
   level: PlayabilityLevel,
-  avgProb: number,
   maxProb: number,
-  avgWind: number,
   maxWind: number,
   thunder: boolean,
-  heavyCode: boolean,
-  avgTemp: number,
 ): string {
-  const intro = `This ${rating.toFixed(
-    1,
-  )}/10 score blends average and peak rain chance, wind through the day, any storm or heavy-rain signals in the forecast hours, and temperature — then rounds to one number so you can compare days at a glance.`;
-
-  const parts: string[] = [];
-  if (thunder) {
-    parts.push("Thunder risk in the window is treated as a major penalty.");
-  } else if (heavyCode) {
-    parts.push("Heavy-rain or downpour-style weather codes in the hourly data reduce the score.");
-  }
-
-  if (maxProb >= 70) {
-    parts.push(`Peak rain chance reaches about ${Math.round(maxProb)}%.`);
-  } else if (avgProb >= 48) {
-    parts.push(`Rain chance averages near ${Math.round(avgProb)}% across the hours we looked at.`);
-  } else if (avgProb >= 28) {
-    parts.push(`A modest rain signal (around ${Math.round(avgProb)}% on average) trims the rating slightly.`);
-  }
-
-  if (maxWind >= 44) {
-    parts.push(`Peak wind near ${Math.round(maxWind)} km/h is a significant drag.`);
-  } else if (avgWind >= 28) {
-    parts.push(`Average wind near ${Math.round(avgWind)} km/h costs comfort and scoring.`);
-  } else if (avgWind >= 18) {
-    parts.push(`A steady breeze near ${Math.round(avgWind)} km/h nudges the score down a little.`);
-  }
-
-  if (avgTemp <= 4) {
-    parts.push("Cold temperatures deduct a bit for standing on exposed tees.");
-  }
-  if (avgTemp >= 30) {
-    parts.push("Very warm conditions deduct a bit for comfort over 18 holes.");
-  }
-
+  const tags: string[] = [];
+  if (thunder) tags.push("storms");
+  else if (maxProb >= 65) tags.push("wet");
+  else if (maxProb >= 38) tags.push("showers");
+  if (maxWind >= 40) tags.push("windy");
+  const tail = tags.length ? tags.join(" · ") : "mild signals";
   const band =
-    level === "excellent"
-      ? "excellent"
-      : level === "good"
-        ? "good"
-        : level === "mixed"
-          ? "mixed"
-          : level === "poor"
-            ? "difficult"
-            : "very difficult";
-
-  const middle =
-    parts.length > 0
-      ? parts.slice(0, 4).join(" ")
-      : "Right now, rain, wind, and temperature penalties are light compared with a rough-weather day, which keeps the score up.";
-
-  const outro = `Together that maps to ${band} territory (${rating.toFixed(1)}/10). The wind, rain, and comfort lines below translate this into what you will feel on the course.`;
-
-  return `${intro} ${middle} ${outro}`;
+    level === "excellent" || level === "good"
+      ? "favourable"
+      : level === "mixed"
+        ? "mixed"
+        : "tough";
+  return `${rating.toFixed(1)}/10 — ${band} (${tail}).`;
 }
 
 function recommendedActionText(
@@ -150,27 +113,15 @@ function recommendedActionText(
   bestWindow: string | null,
   bestWindowFallback: string | null,
 ): string {
-  if (thunder || rainRisk === "high") {
-    return "Call the pro shop to confirm course status, tees, and any storm policy before you travel.";
-  }
+  if (thunder || rainRisk === "high") return "Call club — confirm tees.";
   if (windImpact === "extreme") {
-    return bestWindow
-      ? `If you can shift timing, try ${bestWindow} when wind may ease slightly — otherwise club for the breeze.`
-      : "Consider a calmer day if you have flexibility — otherwise club for wind and manage expectations.";
+    return bestWindow ? `Try ${bestWindow}.` : "Club up or delay.";
   }
-  if (level === "excellent" || level === "good") {
-    return "Conditions look playable — still worth a quick call if competition or temps are marginal.";
-  }
-  if (rainRisk === "moderate") {
-    return "Pack waterproofs and check the club for trolley or path restrictions.";
-  }
-  if (bestWindow) {
-    return `Aim for ${bestWindow} if you can — that's your cleanest daytime window on the forecast.`;
-  }
-  if (bestWindowFallback) {
-    return `${bestWindowFallback} Use the hourly strip to compare slots.`;
-  }
-  return "Scan the hourly strip below and plan around the lightest wind and lowest rain chance.";
+  if (level === "excellent" || level === "good") return "Good to book.";
+  if (rainRisk === "moderate") return "Pack waterproofs.";
+  if (bestWindow) return `Best: ${bestWindow}.`;
+  if (bestWindowFallback) return "Use timeline below.";
+  return "Pick a clearer slot.";
 }
 
 export type ComputePlayabilityOptions = {
@@ -250,7 +201,7 @@ function computeBestWindowDaylight(
   if (!start || !end) {
     return {
       bestWindow: null,
-      bestWindowFallback: "No clear daytime playing window",
+      bestWindowFallback: "No clear slot",
     };
   }
 
@@ -295,63 +246,36 @@ export function computePlayability(
   const rainRisk = rainLevel(maxProb, heavyCode, thunder);
   const comfort = comfortLevel(avgTemp);
   const level = levelFromRating(rating);
+  const rainIntensity = rainIntensityFromHours(slice);
 
   const warnings: string[] = [];
   if (windImpact === "extreme" || maxWind >= 45) {
-    warnings.push("Very strong wind — expect big club and scoring variance.");
+    warnings.push("Gale wind");
   } else if (windImpact === "high") {
-    warnings.push("Breezy conditions — extra club on approaches and exposed holes.");
+    warnings.push("Strong wind");
   }
   if (rainRisk === "high") {
-    warnings.push("High rain or storm risk — confirm course status before travelling.");
+    warnings.push("Heavy rain risk");
   } else if (rainRisk === "moderate") {
-    warnings.push("Some rain likely — pack waterproofs and expect softer lies.");
+    warnings.push("Showers likely");
   }
   if (thunder) {
-    warnings.push("Thunder in forecast — be ready to stop play if storms approach.");
+    warnings.push("Thunder risk");
   }
   if (comfort === "cold") {
-    warnings.push("Cold start — allow warm-up time; ball may fly shorter.");
+    warnings.push("Cold round");
   }
   if (comfort === "hot") {
-    warnings.push("Warm round — hydrate and consider pacing.");
+    warnings.push("Heat — hydrate");
   }
 
-  const windSummary =
-    windImpact === "low"
-      ? "Light air — scoring conditions generally friendly."
-      : windImpact === "moderate"
-        ? "Moderate wind — factor into clubbing and putting."
-        : windImpact === "high"
-          ? "Strong wind — priority on ball flight and course management."
-          : "Extreme wind — marginal golf day unless you enjoy the challenge.";
+  const windSummary = windImpactScan(windImpact).label;
+  const rainSummary = rainIntensityScan(rainIntensity).label;
+  const comfortSummary = comfortScan(comfort).label;
 
-  const rainSummary =
-    rainRisk === "low"
-      ? "Limited rain signal — fair chance of a dry window."
-      : rainRisk === "moderate"
-        ? "Showers possible — watch radar and club updates."
-        : "Wet pattern — trolley bans or temp greens may apply.";
-
-  const comfortSummary =
-    comfort === "mild" || comfort === "cool"
-      ? "Comfortable temperatures for walking 18."
-      : comfort === "cold"
-        ? "Cool conditions — extra layer recommended."
-        : comfort === "warm" || comfort === "hot"
-          ? "Warm on the fairways — sun protection and fluids."
-          : "Mild playing temperatures overall.";
-
-  const summaryParts: string[] = [];
-  if (level === "excellent" || level === "good") {
-    summaryParts.push("Favourable window for golf if the course is open.");
-  } else if (level === "mixed") {
-    summaryParts.push("Playable but patchy — check wind and showers.");
-  } else {
-    summaryParts.push("Challenging conditions — worth confirming before you travel.");
-  }
-  if (rainRisk !== "low") summaryParts.push(rainSummary);
-  else if (windImpact !== "low") summaryParts.push(windSummary);
+  let summary = "Patchy — pick window.";
+  if (level === "excellent" || level === "good") summary = "Solid playing day.";
+  if (level === "poor" || level === "severe") summary = "Tough — confirm first.";
 
   const poolForWindow = dayHours.length > 0 ? dayHours : filterHoursForDate(hourly, targetDateYmd);
   const { bestWindow, bestWindowFallback } = computeBestWindowDaylight(
@@ -371,34 +295,33 @@ export function computePlayability(
     bestWindow,
     bestWindowFallback,
   );
-  const ratingExplanation = buildRatingExplanation(
-    rating,
-    level,
-    avgProb,
-    maxProb,
-    avgWind,
-    maxWind,
-    thunder,
-    heavyCode,
-    avgTemp,
+  const ratingExplanation = buildRatingExplanation(rating, level, maxProb, maxWind, thunder);
+
+  const playTimeline = buildPlayTimeline(
+    hourly,
+    targetDateYmd,
+    options?.sunriseIso,
+    options?.sunsetIso,
   );
 
   return {
     rating,
     level,
     label,
-    summary: summaryParts.join(" "),
+    summary,
     ratingExplanation,
     recommendedAction,
     warnings,
     windImpact,
     windSummary,
     rainRisk,
+    rainIntensity,
     rainSummary,
     comfort,
     comfortSummary,
     bestWindow,
     bestWindowFallback,
     targetDate: targetDateYmd,
+    playTimeline,
   };
 }
