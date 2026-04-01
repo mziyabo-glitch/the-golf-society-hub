@@ -47,9 +47,17 @@ export default function TabsLayout() {
       <Tabs.Screen
         name="leaderboard"
         options={{
-          title: "Leaderboard",
+          title: "OOM",
+          tabBarAccessibilityLabel: "Order of Merit",
           tabBarIcon: ({ color }) => <Feather name="award" color={color} size={24} />,
           href: societyTabHref,
+        }}
+      />
+      <Tabs.Screen
+        name="sinbook"
+        options={{
+          title: "Rivalries",
+          tabBarIcon: ({ color }) => <Feather name="zap" color={color} size={24} />,
         }}
       />
       <Tabs.Screen
@@ -61,7 +69,6 @@ export default function TabsLayout() {
       />
       {/* Routable from More / deep links; not shown in tab bar */}
       <Tabs.Screen name="members" options={{ href: null }} />
-      <Tabs.Screen name="sinbook" options={{ href: null }} />
       <Tabs.Screen name="settings" options={{ href: null }} />
     </Tabs>
   );

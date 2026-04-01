@@ -1,6 +1,6 @@
 /**
  * More hub — society shortcuts, account, and permission-gated admin links.
- * Replaces separate tab bar entries for Members, Rivalries, and Settings.
+ * Hub for Members, Settings, and admin shortcuts (Rivalries and OOM have their own tabs).
  */
 
 import { useCallback, useEffect, useState, type ReactNode } from "react";
@@ -209,15 +209,6 @@ export default function MoreScreen() {
               </AppText>
             </View>
           )}
-          <View style={[styles.divider, { backgroundColor: colors.borderLight }]} />
-          <MenuRow
-            icon="zap"
-            iconBg={`${colors.highlight}22`}
-            title="Rivalries"
-            subtitle="Sin books and friendly wagers"
-            colors={colors}
-            onPress={() => push("/(app)/(tabs)/sinbook")}
-          />
         </AppCard>
 
         <SectionTitle>Account</SectionTitle>
