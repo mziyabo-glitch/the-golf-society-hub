@@ -1,54 +1,18 @@
 /**
- * Button Components
- * Primary, Secondary, and Destructive button variants
+ * Button Components — Primary, Secondary, Destructive; implemented via AppButton.
  *
- * FIX:
- * - Support BOTH usages:
- *    <PrimaryButton>Save</PrimaryButton>
- *    <PrimaryButton label="Save" />
- *
- * This prevents "blank green pill" buttons on web.
+ * Supports:
+ *   <PrimaryButton>Save</PrimaryButton>
+ *   <PrimaryButton label="Save" />
  */
 
-import { ReactNode } from "react";
-import { Pressable, StyleSheet, View, ViewStyle, ActivityIndicator } from "react-native";
-import { AppText } from "./AppText";
-import { getColors, radius, spacing, buttonHeights } from "@/lib/ui/theme";
-import { blurWebActiveElement } from "@/lib/ui/focus";
+import { ViewStyle } from "react-native";
+import { AppButton, type AppButtonProps } from "./AppButton";
 
-type ButtonProps = {
-  // ✅ Back-compat support:
-  label?: string;
-
-  // ✅ Preferred usage:
-  children?: ReactNode;
-
+type ButtonProps = Omit<AppButtonProps, "variant"> & {
   /** Shown next to the spinner when `loading` is true (e.g. "Saving…"). */
   loadingLabel?: string;
-
-  onPress: () => void;
-  disabled?: boolean;
-  loading?: boolean;
-  style?: ViewStyle;
-  variant?: "primary" | "secondary" | "destructive";
-  size?: "sm" | "md" | "lg";
-  icon?: ReactNode;
-  iconPosition?: "left" | "right";
 };
-
-function resolveContent(label?: string, children?: ReactNode): ReactNode {
-  if (typeof label === "string" && label.length > 0) return label;
-  return children ?? null;
-}
-
-function handlePress(onPress: () => void): void {
-  try {
-    blurWebActiveElement();
-  } catch (error) {
-    console.warn("[Button] blurWebActiveElement failed:", error);
-  }
-  onPress();
-}
 
 export function PrimaryButton({
   label,
@@ -62,46 +26,21 @@ export function PrimaryButton({
   icon,
   iconPosition = "left",
 }: ButtonProps) {
-  const colors = getColors();
-  const height = buttonHeights[size];
-  const content = resolveContent(label, children);
-
   return (
-    <Pressable
-      onPress={() => handlePress(onPress)}
-      disabled={disabled || loading}
-      style={({ pressed }) => [
-        styles.button,
-        {
-          backgroundColor: disabled ? colors.surfaceDisabled : colors.primary,
-          minHeight: height,
-          paddingVertical: spacing.sm,
-          paddingHorizontal: spacing.lg,
-          borderRadius: radius.md,
-          opacity: pressed ? 0.8 : 1,
-        },
-        style,
-      ]}
+    <AppButton
+      variant="primary"
+      label={label}
+      onPress={onPress}
+      disabled={disabled}
+      loading={loading}
+      loadingLabel={loadingLabel}
+      style={style as ViewStyle}
+      size={size}
+      icon={icon}
+      iconPosition={iconPosition}
     >
-      {loading ? (
-        <View style={styles.loadingRow}>
-          <ActivityIndicator size="small" color={colors.textInverse} />
-          {loadingLabel ? (
-            <AppText variant="button" color="inverse" style={styles.loadingLabelText}>
-              {loadingLabel}
-            </AppText>
-          ) : null}
-        </View>
-      ) : (
-        <View style={styles.content}>
-          {icon && iconPosition === "left" ? <View style={styles.icon}>{icon}</View> : null}
-          <AppText variant="button" color="inverse" style={styles.buttonText}>
-            {content}
-          </AppText>
-          {icon && iconPosition === "right" ? <View style={styles.icon}>{icon}</View> : null}
-        </View>
-      )}
-    </Pressable>
+      {children}
+    </AppButton>
   );
 }
 
@@ -116,41 +55,20 @@ export function SecondaryButton({
   icon,
   iconPosition = "left",
 }: ButtonProps) {
-  const colors = getColors();
-  const height = buttonHeights[size];
-  const content = resolveContent(label, children);
-
   return (
-    <Pressable
-      onPress={() => handlePress(onPress)}
-      disabled={disabled || loading}
-      style={({ pressed }) => [
-        styles.button,
-        {
-          backgroundColor: "transparent",
-          borderWidth: 1,
-          borderColor: disabled ? colors.border : colors.primary,
-          minHeight: height,
-          paddingVertical: spacing.sm,
-          paddingHorizontal: spacing.lg,
-          borderRadius: radius.md,
-          opacity: pressed ? 0.8 : 1,
-        },
-        style,
-      ]}
+    <AppButton
+      variant="secondary"
+      label={label}
+      onPress={onPress}
+      disabled={disabled}
+      loading={loading}
+      style={style as ViewStyle}
+      size={size}
+      icon={icon}
+      iconPosition={iconPosition}
     >
-      {loading ? (
-        <ActivityIndicator size="small" color={colors.primary} />
-      ) : (
-        <View style={styles.content}>
-          {icon && iconPosition === "left" ? <View style={styles.icon}>{icon}</View> : null}
-          <AppText variant="button" color="primary" style={styles.buttonText}>
-            {content}
-          </AppText>
-          {icon && iconPosition === "right" ? <View style={styles.icon}>{icon}</View> : null}
-        </View>
-      )}
-    </Pressable>
+      {children}
+    </AppButton>
   );
 }
 
@@ -165,61 +83,19 @@ export function DestructiveButton({
   icon,
   iconPosition = "left",
 }: ButtonProps) {
-  const colors = getColors();
-  const height = buttonHeights[size];
-  const content = resolveContent(label, children);
-
   return (
-    <Pressable
-      onPress={() => handlePress(onPress)}
-      disabled={disabled || loading}
-      style={({ pressed }) => [
-        styles.button,
-        {
-          backgroundColor: disabled ? colors.surfaceDisabled : colors.error,
-          minHeight: height,
-          paddingVertical: spacing.sm,
-          paddingHorizontal: spacing.lg,
-          borderRadius: radius.md,
-          opacity: pressed ? 0.8 : 1,
-        },
-        style,
-      ]}
+    <AppButton
+      variant="destructive"
+      label={label}
+      onPress={onPress}
+      disabled={disabled}
+      loading={loading}
+      style={style as ViewStyle}
+      size={size}
+      icon={icon}
+      iconPosition={iconPosition}
     >
-      {loading ? (
-        <ActivityIndicator size="small" color={colors.textInverse} />
-      ) : (
-        <View style={styles.content}>
-          {icon && iconPosition === "left" ? <View style={styles.icon}>{icon}</View> : null}
-          <AppText variant="button" color="inverse" style={styles.buttonText}>
-            {content}
-          </AppText>
-          {icon && iconPosition === "right" ? <View style={styles.icon}>{icon}</View> : null}
-        </View>
-      )}
-    </Pressable>
+      {children}
+    </AppButton>
   );
 }
-
-const styles = StyleSheet.create({
-  button: {
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  content: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing.xs,
-  },
-  loadingRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing.sm,
-  },
-  loadingLabelText: {},
-  icon: {
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  buttonText: {},
-});

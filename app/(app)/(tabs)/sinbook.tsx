@@ -39,7 +39,7 @@ import {
   type SinbookWithParticipants,
 } from "@/lib/db_supabase/sinbookRepo";
 import { canCreateSinbook } from "@/lib/sinbookEntitlement";
-import { getColors, spacing, radius } from "@/lib/ui/theme";
+import { getColors, spacing, radius, iconSize } from "@/lib/ui/theme";
 import { showAlert } from "@/lib/ui/alert";
 import { formatError, type FormattedError } from "@/lib/ui/formatError";
 import { useDestructiveConfirm } from "@/components/ui/DestructiveConfirmModal";
@@ -294,7 +294,7 @@ export default function SinbookHomeScreen() {
               onChangeText={setFormStake}
               autoCapitalize="sentences"
             />
-            <AppText variant="small" color="tertiary" style={{ marginTop: 4 }}>Tracking only — no payments.</AppText>
+            <AppText variant="small" color="muted" style={{ marginTop: 4 }}>Tracking only — no payments.</AppText>
           </View>
           <PrimaryButton onPress={handleCreate} loading={creating} style={{ marginTop: spacing.sm }}>
             Create Rivalry
@@ -309,7 +309,7 @@ export default function SinbookHomeScreen() {
       <Screen contentStyle={tabContentStyle}>
         <View style={styles.formHeader}>
           <SecondaryButton onPress={() => { setShowJoin(false); setJoinCode(""); }} size="sm">Cancel</SecondaryButton>
-          <AppText variant="h2">Join Rivalry</AppText>
+          <AppText variant="heading">Join Rivalry</AppText>
           <View style={{ width: 60 }} />
         </View>
         <AppCard>
@@ -323,7 +323,7 @@ export default function SinbookHomeScreen() {
               autoCorrect={false}
               maxLength={6}
             />
-            <AppText variant="small" color="tertiary" style={{ marginTop: 4 }}>6-character code from your rival.</AppText>
+            <AppText variant="small" color="muted" style={{ marginTop: 4 }}>6-character code from your rival.</AppText>
           </View>
           <PrimaryButton onPress={handleJoin} loading={joining} style={{ marginTop: spacing.sm }}>
             Join Rivalry
@@ -348,7 +348,7 @@ export default function SinbookHomeScreen() {
           <Feather name="bell" size={20} color={colors.text} />
           {unreadCount > 0 && (
             <View style={[styles.unreadDot, { backgroundColor: colors.error }]}>
-              <AppText variant="small" color="inverse" style={{ fontWeight: "700" }}>
+              <AppText variant="captionBold" color="inverse">
                 {unreadCount > 9 ? "9+" : unreadCount}
               </AppText>
             </View>
@@ -360,11 +360,11 @@ export default function SinbookHomeScreen() {
       {sinbooks.length > 0 && (
         <View style={styles.summaryStrip}>
           <View style={[styles.summaryPill, { backgroundColor: colors.primary + "10" }]}>
-            <AppText variant="bodyBold" style={{ color: colors.primary }}>{summaryStats.live}</AppText>
+            <AppText variant="bodyBold" color="primary">{summaryStats.live}</AppText>
             <AppText variant="small" color="secondary">Live</AppText>
           </View>
           <View style={[styles.summaryPill, { backgroundColor: colors.warning + "10" }]}>
-            <AppText variant="bodyBold" style={{ color: colors.warning }}>{summaryStats.waiting}</AppText>
+            <AppText variant="bodyBold" color="warning">{summaryStats.waiting}</AppText>
             <AppText variant="small" color="secondary">Waiting</AppText>
           </View>
           <View style={[styles.summaryPill, { backgroundColor: colors.success + "10" }]}>
@@ -376,10 +376,10 @@ export default function SinbookHomeScreen() {
 
       {/* Action buttons */}
       <View style={styles.topActions}>
-        <PrimaryButton onPress={triggerCreate} icon={<Feather name="plus" size={16} color={colors.textInverse} />} style={{ flex: 1 }}>
+        <PrimaryButton onPress={triggerCreate} icon={<Feather name="plus" size={iconSize.sm} color={colors.textInverse} />} style={{ flex: 1 }}>
           New Rivalry
         </PrimaryButton>
-        <SecondaryButton onPress={() => setShowJoin(true)} icon={<Feather name="log-in" size={16} color={colors.primary} />} style={{ flex: 1 }}>
+        <SecondaryButton onPress={() => setShowJoin(true)} icon={<Feather name="log-in" size={iconSize.sm} color={colors.primary} />} style={{ flex: 1 }}>
           Join with Code
         </SecondaryButton>
       </View>
@@ -425,17 +425,17 @@ export default function SinbookHomeScreen() {
                         <View style={[styles.initialCircle, { backgroundColor: colors.primary + "14" }]}>
                           <AppText variant="captionBold" style={{ color: colors.primary }}>{getInitials(myName)}</AppText>
                         </View>
-                        <AppText variant="small" color="tertiary">vs</AppText>
+                        <AppText variant="small" color="muted">vs</AppText>
                         <View style={[styles.initialCircle, { backgroundColor: colors.backgroundTertiary }]}>
                           <Feather name="user-plus" size={12} color={colors.textTertiary} />
                         </View>
                       </View>
                       <View style={{ flex: 1 }}>
                         <AppText variant="bodyBold" numberOfLines={1}>{sb.title?.trim() || "Rivalry"}</AppText>
-                        {sb.stake && <AppText variant="small" color="tertiary" numberOfLines={1}>{sb.stake}</AppText>}
+                        {sb.stake && <AppText variant="small" color="muted" numberOfLines={1}>{sb.stake}</AppText>}
                       </View>
                       <View style={[styles.statusChip, { backgroundColor: colors.warning + "14" }]}>
-                        <AppText variant="small" style={{ color: colors.warning, fontWeight: "700" }}>Waiting</AppText>
+                        <AppText variant="captionBold" color="warning">Waiting</AppText>
                       </View>
                     </View>
                   </Pressable>
@@ -476,9 +476,9 @@ export default function SinbookHomeScreen() {
                         <View style={[styles.initialCircle, { backgroundColor: colors.primary + "14" }]}>
                           <AppText variant="captionBold" style={{ color: colors.primary }}>{getInitials(myName)}</AppText>
                         </View>
-                        <AppText variant="small" color="tertiary">vs</AppText>
+                        <AppText variant="small" color="muted">vs</AppText>
                         <View style={[styles.initialCircle, { backgroundColor: colors.error + "10" }]}>
-                          <AppText variant="captionBold" style={{ color: colors.error }}>{getInitials(rivalName)}</AppText>
+                          <AppText variant="captionBold" color="danger">{getInitials(rivalName)}</AppText>
                         </View>
                       </View>
                       <View style={{ flex: 1 }}>
@@ -488,12 +488,12 @@ export default function SinbookHomeScreen() {
                         <AppText variant="small" color="secondary" style={{ marginTop: 2 }}>
                           {rivalName}
                         </AppText>
-                        <AppText variant="small" style={{ color: chipColor, fontWeight: "700", marginTop: 1 }}>
+                        <AppText variant="captionBold" style={{ color: chipColor, marginTop: 1 }}>
                           {status.label}
                         </AppText>
-                        {sb.stake && <AppText variant="small" color="tertiary" numberOfLines={1} style={{ marginTop: 1 }}>{sb.stake}</AppText>}
+                        {sb.stake && <AppText variant="small" color="muted" numberOfLines={1} style={{ marginTop: 1 }}>{sb.stake}</AppText>}
                       </View>
-                      <Feather name="chevron-right" size={18} color={colors.textTertiary} />
+                      <Feather name="chevron-right" size={iconSize.md} color={colors.textTertiary} />
                     </View>
                   </Pressable>
                   {canDelete && (
@@ -515,7 +515,7 @@ export default function SinbookHomeScreen() {
       {/* Empty state */}
       {sinbooks.length === 0 && pendingInvites.length === 0 && !loadError && (
         <EmptyState
-          icon={<Feather name="zap" size={24} color={colors.textTertiary} />}
+          icon={<Feather name="zap" size={iconSize.lg} color={colors.textTertiary} />}
           title="No Rivalries Yet"
           message="Start a rivalry with a mate, or join one using a code."
         />

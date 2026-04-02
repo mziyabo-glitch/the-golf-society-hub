@@ -1,28 +1,64 @@
 /**
- * Premium Text Component
- * Uses typography tokens from theme for consistent text styling
+ * Typography primitive — semantic variants and theme color roles; scales with Settings → Text size.
  */
 
 import { Text, TextProps, TextStyle, StyleProp } from "react-native";
 import { getColors } from "@/lib/ui/theme";
+import type { TypographyVariant } from "@/lib/ui/theme";
 import { useFontScale } from "@/lib/ui/fontScaleContext";
 
+/** Semantic + legacy variants (legacy map to the same tokens for backward compatibility). */
 export type TextVariant =
+  | "display"
   | "title"
+  | "heading"
+  | "subheading"
+  | "body"
+  | "bodySmall"
+  | "caption"
+  | "label"
   | "h1"
   | "h2"
-  | "body"
   | "bodyBold"
-  | "caption"
   | "captionBold"
   | "small"
-  | "display"
   | "button"
   | "buttonLarge";
 
+const VARIANT_TO_TOKEN: Record<TextVariant, TypographyVariant> = {
+  display: "display",
+  title: "title",
+  heading: "heading",
+  subheading: "subheading",
+  body: "body",
+  bodySmall: "bodySmall",
+  caption: "caption",
+  label: "label",
+  h1: "h1",
+  h2: "h2",
+  bodyBold: "bodyBold",
+  captionBold: "captionBold",
+  small: "small",
+  button: "button",
+  buttonLarge: "buttonLarge",
+};
+
+export type TextColorRole =
+  | "primary"
+  | "secondary"
+  | "muted"
+  | "inverse"
+  | "success"
+  | "danger"
+  | "warning"
+  | "info"
+  | "default"
+  /** @deprecated use `muted` */
+  | "tertiary";
+
 type AppTextProps = TextProps & {
   variant?: TextVariant;
-  color?: "primary" | "secondary" | "tertiary" | "inverse" | "default";
+  color?: TextColorRole;
   style?: StyleProp<TextStyle>;
 };
 
@@ -35,26 +71,27 @@ export function AppText({
 }: AppTextProps) {
   const colors = getColors();
   const { typography } = useFontScale();
+  const token = VARIANT_TO_TOKEN[variant];
 
-  const colorMap: Record<typeof color, string> = {
+  const colorMap: Record<TextColorRole, string> = {
     primary: colors.primary,
     secondary: colors.textSecondary,
-    tertiary: colors.textTertiary,
+    muted: colors.textTertiary,
     inverse: colors.textInverse,
+    success: colors.success,
+    danger: colors.error,
+    warning: colors.warning,
+    info: colors.info,
     default: colors.text,
+    tertiary: colors.textTertiary,
   };
-  
+
   return (
     <Text
-      style={[
-        typography[variant] as TextStyle,
-        { color: colorMap[color] },
-        style,
-      ]}
+      style={[typography[token] as TextStyle, { color: colorMap[color] }, style]}
       {...textProps}
     >
       {children}
     </Text>
   );
 }
-

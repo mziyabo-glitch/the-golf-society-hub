@@ -819,7 +819,7 @@ export default function EventTeeSheetScreen() {
           )}
 
           {/* Full tee sheet */}
-          <AppText variant="h2" style={styles.sectionTitle}>
+          <AppText variant="heading" style={styles.sectionTitle}>
             Full Tee Sheet
           </AppText>
           {groupsWithTimes.length === 0 ? (

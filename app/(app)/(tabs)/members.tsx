@@ -26,7 +26,7 @@ import {
 // updateMemberRole removed: role updates handled via roles screen
 import { getOrderOfMeritTotals, type OrderOfMeritEntry } from "@/lib/db_supabase/resultsRepo";
 import { getPermissionsForMember } from "@/lib/rbac";
-import { getColors, spacing, radius } from "@/lib/ui/theme";
+import { getColors, spacing, radius, iconSize } from "@/lib/ui/theme";
 import { confirmDestructive, showAlert } from "@/lib/ui/alert";
 import { guard } from "@/lib/guards";
 import { getCache, invalidateCachePrefix, setCache } from "@/lib/cache/clientCache";
@@ -437,7 +437,7 @@ export default function MembersScreen() {
           <SecondaryButton onPress={closeModal} size="sm">
             Cancel
           </SecondaryButton>
-          <AppText variant="h2">{modalMode === "add" ? "Add member (pre-app)" : "Edit Member"}</AppText>
+          <AppText variant="heading">{modalMode === "add" ? "Add member (pre-app)" : "Edit Member"}</AppText>
           <View style={{ width: 60 }} />
         </View>
 
@@ -499,7 +499,7 @@ export default function MembersScreen() {
                 onPress={() => setFormLockHI((v) => !v)}
                 style={[styles.lockToggle, { borderColor: colors.borderLight }]}
               >
-                <Feather name={formLockHI ? "lock" : "unlock"} size={16} color={formLockHI ? colors.error : colors.success} />
+                <Feather name={formLockHI ? "lock" : "unlock"} size={iconSize.sm} color={formLockHI ? colors.error : colors.success} />
                 <View style={{ flex: 1 }}>
                   <AppText variant="body">{formLockHI ? "Self-edit locked" : "Self-edit allowed"}</AppText>
                   <AppText variant="small" color="secondary">
@@ -507,7 +507,7 @@ export default function MembersScreen() {
                   </AppText>
                 </View>
                 <View style={[styles.lockPill, { backgroundColor: formLockHI ? colors.error + "14" : colors.success + "14" }]}>
-                  <AppText variant="small" style={{ color: formLockHI ? colors.error : colors.success, fontWeight: "700" }}>
+                  <AppText variant="captionBold" color={formLockHI ? "danger" : "success"}>
                     {formLockHI ? "Locked" : "Open"}
                   </AppText>
                 </View>
@@ -554,7 +554,7 @@ export default function MembersScreen() {
 
       {/* Load error */}
       {refreshing && (
-        <AppText variant="small" color="tertiary" style={{ marginBottom: spacing.xs }}>
+        <AppText variant="small" color="muted" style={{ marginBottom: spacing.xs }}>
           Refreshing...
         </AppText>
       )}
@@ -569,7 +569,7 @@ export default function MembersScreen() {
       {/* Members List */}
       {members.length === 0 && !loadError ? (
         <EmptyState
-          icon={<Feather name="users" size={24} color={colors.textTertiary} />}
+          icon={<Feather name="users" size={iconSize.lg} color={colors.textTertiary} />}
           title="No Members Yet"
           message="Add members to your society to get started."
           action={permissions.canCreateMembers ? { label: "Add Member", onPress: openAddModal } : undefined}
@@ -630,7 +630,7 @@ export default function MembersScreen() {
                       )}
 
                       {/* Handicap index */}
-                      <AppText variant="caption" color={hiText ? "secondary" : "tertiary"} style={{ marginTop: 2 }}>
+                      <AppText variant="caption" color={hiText ? "secondary" : "muted"} style={{ marginTop: 2 }}>
                         {hiText || "Awaiting assignment"}
                       </AppText>
 
@@ -661,12 +661,12 @@ export default function MembersScreen() {
                       >
                         <Feather
                           name={member.paid ? "check-circle" : "circle"}
-                          size={16}
+                          size={iconSize.sm}
                           color={member.paid ? colors.success : colors.textTertiary}
                         />
                         <AppText
                           variant="small"
-                          style={{ color: member.paid ? colors.success : colors.textTertiary }}
+                          color={member.paid ? "success" : "muted"}
                         >
                           {member.paid ? "Paid" : "Unpaid"}
                         </AppText>
@@ -680,7 +680,7 @@ export default function MembersScreen() {
                       >
                         <Feather
                           name={member.paid ? "check-circle" : "circle"}
-                          size={16}
+                          size={iconSize.sm}
                           color={member.paid ? colors.success : colors.textTertiary}
                         />
                       </View>

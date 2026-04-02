@@ -163,7 +163,7 @@ function PoweredByFooter({
   return (
     <View style={styles.poweredByWrap}>
       <Image source={appIcon} style={styles.poweredByIcon} resizeMode="contain" />
-      <AppText style={[styles.poweredByText, { color: colors.textTertiary }]}>
+      <AppText variant="small" color="muted" style={styles.poweredByText}>
         Powered by Golf Society Hub
       </AppText>
     </View>
@@ -1449,8 +1449,6 @@ const styles = StyleSheet.create({
     opacity: 0.55,
   },
   poweredByText: {
-    fontSize: typography.small.fontSize,
-    lineHeight: typography.small.lineHeight,
     opacity: 0.8,
   },
   societyHeroCard: {

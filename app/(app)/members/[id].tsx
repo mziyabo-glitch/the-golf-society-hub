@@ -32,7 +32,7 @@ import {
   type Gender,
 } from "@/lib/db_supabase/memberRepo";
 import { getPermissionsForMember } from "@/lib/rbac";
-import { getColors, spacing, radius } from "@/lib/ui/theme";
+import { getColors, spacing, radius, iconSize } from "@/lib/ui/theme";
 import { guard } from "@/lib/guards";
 import { confirmDestructive, showAlert } from "@/lib/ui/alert";
 import { LicenceRequiredModal } from "@/components/LicenceRequiredModal";
@@ -375,7 +375,7 @@ export default function MemberDetailScreen() {
     return (
       <Screen>
         <EmptyState
-          icon={<Feather name="alert-circle" size={24} color={colors.error} />}
+          icon={<Feather name="alert-circle" size={iconSize.lg} color={colors.error} />}
           title="Error"
           message={error || "Member not found"}
           action={{ label: "Go Back", onPress: () => goBack(router, "/(app)/(tabs)/members") }}
@@ -410,7 +410,7 @@ export default function MemberDetailScreen() {
       {/* Header */}
       <View style={styles.header}>
         <SecondaryButton onPress={() => goBack(router, "/(app)/(tabs)/members")} size="sm">
-          <Feather name="arrow-left" size={16} color={colors.text} />
+          <Feather name="arrow-left" size={iconSize.sm} color={colors.text} />
           {" Back"}
         </SecondaryButton>
 
@@ -432,7 +432,7 @@ export default function MemberDetailScreen() {
         </View>
         {!isEditing && (
           <>
-            <AppText variant="h2" style={{ marginTop: spacing.sm }}>
+            <AppText variant="heading" style={{ marginTop: spacing.sm }}>
               {member.displayName || member.name || "Unknown"}
             </AppText>
             <View style={styles.badgeRow}>
@@ -536,7 +536,7 @@ export default function MemberDetailScreen() {
                   { opacity: formGender ? 1 : 0.5 },
                 ]}
               >
-                <Feather name="x" size={16} color={colors.textTertiary} />
+                <Feather name="x" size={iconSize.sm} color={colors.textTertiary} />
               </Pressable>
             </View>
           </View>
@@ -575,7 +575,7 @@ export default function MemberDetailScreen() {
                 onPress={() => setFormLockHI((v) => !v)}
                 style={[styles.lockToggle, { borderColor: colors.borderLight }]}
               >
-                <Feather name={formLockHI ? "lock" : "unlock"} size={16} color={formLockHI ? colors.error : colors.success} />
+                <Feather name={formLockHI ? "lock" : "unlock"} size={iconSize.sm} color={formLockHI ? colors.error : colors.success} />
                 <View style={{ flex: 1 }}>
                   <AppText variant="body">{formLockHI ? "Self-edit locked" : "Self-edit allowed"}</AppText>
                   <AppText variant="small" color="secondary">
@@ -592,7 +592,7 @@ export default function MemberDetailScreen() {
           ) : (
             <AppCard style={{ backgroundColor: colors.backgroundTertiary, marginTop: spacing.sm }}>
               <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
-                <Feather name="info" size={16} color={colors.textTertiary} />
+                <Feather name="info" size={iconSize.sm} color={colors.textTertiary} />
                 <AppText variant="caption" color="tertiary">
                   Only Captain or Handicapper can edit WHS and Handicap fields.
                 </AppText>
@@ -615,7 +615,7 @@ export default function MemberDetailScreen() {
           {/* Email */}
           <View style={styles.infoRow}>
             <View style={[styles.infoIcon, { backgroundColor: colors.backgroundTertiary }]}>
-              <Feather name="mail" size={16} color={colors.textSecondary} />
+              <Feather name="mail" size={iconSize.sm} color={colors.textSecondary} />
             </View>
             <View style={{ flex: 1 }}>
               <AppText variant="caption" color="tertiary">
@@ -628,7 +628,7 @@ export default function MemberDetailScreen() {
           {/* Gender */}
           <View style={styles.infoRow}>
             <View style={[styles.infoIcon, { backgroundColor: colors.backgroundTertiary }]}>
-              <Feather name="user" size={16} color={colors.textSecondary} />
+              <Feather name="user" size={iconSize.sm} color={colors.textSecondary} />
             </View>
             <View style={{ flex: 1 }}>
               <AppText variant="caption" color="tertiary">
@@ -641,7 +641,7 @@ export default function MemberDetailScreen() {
           {/* WHS Number */}
           <View style={styles.infoRow}>
             <View style={[styles.infoIcon, { backgroundColor: colors.backgroundTertiary }]}>
-              <Feather name="hash" size={16} color={colors.textSecondary} />
+              <Feather name="hash" size={iconSize.sm} color={colors.textSecondary} />
             </View>
             <View style={{ flex: 1 }}>
               <AppText variant="caption" color="tertiary">
@@ -656,7 +656,7 @@ export default function MemberDetailScreen() {
           {/* Handicap Index */}
           <View style={styles.infoRow}>
             <View style={[styles.infoIcon, { backgroundColor: colors.backgroundTertiary }]}>
-              <Feather name="trending-down" size={16} color={colors.textSecondary} />
+              <Feather name="trending-down" size={iconSize.sm} color={colors.textSecondary} />
             </View>
             <View style={{ flex: 1 }}>
               <AppText variant="caption" color="tertiary">
@@ -681,7 +681,7 @@ export default function MemberDetailScreen() {
           {/* Payment Status */}
           <View style={styles.infoRow}>
             <View style={[styles.infoIcon, { backgroundColor: colors.backgroundTertiary }]}>
-              <Feather name="credit-card" size={16} color={colors.textSecondary} />
+              <Feather name="credit-card" size={iconSize.sm} color={colors.textSecondary} />
             </View>
             <View style={{ flex: 1 }}>
               <AppText variant="caption" color="tertiary">
@@ -707,7 +707,7 @@ export default function MemberDetailScreen() {
           {!canEdit && (
             <AppCard style={{ backgroundColor: colors.backgroundTertiary, marginTop: spacing.base }}>
               <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
-                <Feather name="lock" size={16} color={colors.textTertiary} />
+                <Feather name="lock" size={iconSize.sm} color={colors.textTertiary} />
                 <AppText variant="caption" color="tertiary">
                   Only Captain or Handicapper can edit member details.
                 </AppText>
@@ -747,7 +747,7 @@ export default function MemberDetailScreen() {
           {roleLocked ? (
             <AppCard style={{ backgroundColor: colors.backgroundTertiary }}>
               <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
-                <Feather name="info" size={16} color={colors.textTertiary} />
+                <Feather name="info" size={iconSize.sm} color={colors.textTertiary} />
                 <AppText variant="caption" color="tertiary">
                   Captain role cannot be changed here.
                 </AppText>

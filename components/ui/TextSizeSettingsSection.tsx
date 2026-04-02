@@ -18,7 +18,7 @@ export function TextSizeSettingsSection() {
 
   return (
     <>
-      <AppText variant="h2" style={styles.sectionTitle}>
+      <AppText variant="heading" style={styles.sectionTitle}>
         Display
       </AppText>
       <AppCard padding="sm">

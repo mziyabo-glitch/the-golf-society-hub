@@ -141,7 +141,7 @@ export const radius = {
   full: 9999,
 } as const;
 
-// Premium design tokens (light golf surfaces)
+// Premium design tokens (light golf surfaces) — prefer `getColors()` for borders/text; shadows are shared
 export const premiumTokens = {
   background: "#F8FAF8",
   cardBorder: "#D4DED4",
@@ -153,6 +153,34 @@ export const premiumTokens = {
     shadowOpacity: 0.06,
     shadowRadius: 8,
     elevation: 3,
+  },
+} as const;
+
+/** Standard border widths */
+export const borderWidth = {
+  hairline: 1,
+} as const;
+
+/** Icon sizes for list rows, buttons, empty states */
+export const iconSize = {
+  xs: 14,
+  sm: 16,
+  md: 20,
+  lg: 24,
+  xl: 32,
+} as const;
+
+/** Card elevation presets (compose with theme surfaces in Card) */
+export const cardElevation = {
+  /** Matches legacy premium card chrome */
+  premium: premiumTokens.cardShadow,
+  /** Slightly stronger — leaderboards, modals */
+  raised: {
+    shadowColor: "#0F172A",
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.09,
+    shadowRadius: 12,
+    elevation: 5,
   },
 } as const;
 
@@ -176,6 +204,20 @@ export const typography = {
     fontWeight: "700" as const,
     lineHeight: 26,
     letterSpacing: -0.08,
+  },
+  /** Section / screen headings — same rhythm as h2; use semantic name in AppText */
+  heading: {
+    fontSize: 19,
+    fontWeight: "700" as const,
+    lineHeight: 26,
+    letterSpacing: -0.08,
+  },
+  /** Between title and body — supporting headlines */
+  subheading: {
+    fontSize: 17,
+    fontWeight: "600" as const,
+    lineHeight: 24,
+    letterSpacing: -0.05,
   },
   body: {
     fontSize: 17,
@@ -206,6 +248,20 @@ export const typography = {
     fontWeight: "500" as const,
     lineHeight: 22,
     letterSpacing: 0,
+  },
+  /** Dense body — meta, secondary lines */
+  bodySmall: {
+    fontSize: 15,
+    fontWeight: "500" as const,
+    lineHeight: 22,
+    letterSpacing: 0,
+  },
+  /** Uppercase labels, form field labels */
+  label: {
+    fontSize: 15,
+    fontWeight: "600" as const,
+    lineHeight: 21,
+    letterSpacing: 0.02,
   },
   display: {
     fontSize: 28,

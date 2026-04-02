@@ -19,6 +19,7 @@ import { BottomTabBarHeightContext } from "@react-navigation/bottom-tabs";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { AppText } from "@/components/ui/AppText";
+import { Card } from "@/components/ui/Card";
 import { SocietyLogoImage } from "@/components/ui/SocietyLogoImage";
 import { PrimaryButton, SecondaryButton } from "@/components/ui/Button";
 import { LoadingState } from "@/components/ui/LoadingState";
@@ -35,7 +36,7 @@ import {
   type OrderOfMeritEntry,
   type ResultsLogEntry,
 } from "@/lib/db_supabase/resultsRepo";
-import { getColors, premiumTokens, spacing, type TypographyTokens } from "@/lib/ui/theme";
+import { getColors, premiumTokens, spacing, iconSize, type TypographyTokens } from "@/lib/ui/theme";
 import { useScaledTypography } from "@/lib/ui/fontScaleContext";
 import { getSocietyLogoUrl } from "@/lib/societyLogo";
 import { exportOomPdf, exportOomResultsLogPdf } from "@/lib/pdf/oomPdf";
@@ -56,45 +57,6 @@ function getInitials(name: string): string {
   if (words.length === 1) return name.substring(0, 2).toUpperCase();
   return words.slice(0, 2).map((w) => w[0]).join("").toUpperCase();
 }
-
-// ============================================================================
-// GLASSMORPHIC CARD COMPONENT
-// ============================================================================
-
-type GlassCardProps = {
-  children: React.ReactNode;
-  style?: any;
-  elevated?: boolean;
-};
-
-function GlassCard({ children, style, elevated = false }: GlassCardProps) {
-  return (
-    <View
-      style={[
-        glassStyles.card,
-        elevated && glassStyles.cardElevated,
-        style,
-      ]}
-    >
-      {children}
-    </View>
-  );
-}
-
-const glassStyles = StyleSheet.create({
-  card: {
-    backgroundColor: "#FFFFFF",
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: premiumTokens.cardBorder,
-    ...premiumTokens.cardShadow,
-  },
-  cardElevated: {
-    shadowOpacity: 0.09,
-    shadowRadius: 12,
-    elevation: 5,
-  },
-});
 
 // ============================================================================
 // MAIN COMPONENT
@@ -412,17 +374,21 @@ export default function LeaderboardScreen() {
               onPress={handleSharePress}
               disabled={exporting}
             >
-              <Feather name="share" size={18} color={colors.primary} />
+              <Feather name="share" size={iconSize.md} color={colors.primary} />
             </Pressable>
           )}
         </View>
 
         {/* Header: Order of Merit 26 bold, meta 12 secondary */}
         <View style={styles.titleSection}>
-          <AppText style={styles.mainTitle}>Order of Merit</AppText>
-          <AppText style={styles.seasonText}>{seasonLabel}</AppText>
+          <AppText variant="title" color="default">
+            Order of Merit
+          </AppText>
+          <AppText variant="bodySmall" color="secondary" style={styles.seasonText}>
+            {seasonLabel}
+          </AppText>
           {!needsLicence ? (
-            <AppText style={styles.tabHint}>
+            <AppText variant="bodySmall" color="muted" style={styles.tabHint}>
               {activeTab === "leaderboard"
                 ? "Season standings"
                 : activeTab === "resultsLog"
@@ -490,7 +456,7 @@ export default function LeaderboardScreen() {
                   <View style={styles.podiumContainer}>
                     {/* 2nd Place */}
                     <View style={styles.podiumPosition}>
-                      <GlassCard style={[styles.podiumCard, styles.podiumSecond]} elevated>
+                      <Card variant="elevated" style={[styles.podiumCard, styles.podiumSecond]}>
                         <View style={styles.podiumMedal}>
                           <AppText style={styles.podiumMedalText}>🥈</AppText>
                         </View>
@@ -501,13 +467,13 @@ export default function LeaderboardScreen() {
                           {formatPoints(top3[1]?.totalPoints || 0)}
                         </AppText>
                         <AppText style={styles.podiumPtsLabel}>pts</AppText>
-                      </GlassCard>
+                      </Card>
                       <View style={[styles.podiumBase, styles.podiumBaseSecond]} />
                     </View>
 
                     {/* 1st Place */}
                     <View style={styles.podiumPosition}>
-                      <GlassCard style={[styles.podiumCard, styles.podiumFirst]} elevated>
+                      <Card variant="elevated" style={[styles.podiumCard, styles.podiumFirst]}>
                         <View style={[styles.podiumMedal, styles.podiumMedalGold]}>
                           <AppText style={styles.podiumMedalText}>🥇</AppText>
                         </View>
@@ -518,13 +484,13 @@ export default function LeaderboardScreen() {
                           {formatPoints(top3[0]?.totalPoints || 0)}
                         </AppText>
                         <AppText style={styles.podiumPtsLabel}>pts</AppText>
-                      </GlassCard>
+                      </Card>
                       <View style={[styles.podiumBase, styles.podiumBaseFirst]} />
                     </View>
 
                     {/* 3rd Place */}
                     <View style={styles.podiumPosition}>
-                      <GlassCard style={[styles.podiumCard, styles.podiumThird]} elevated>
+                      <Card variant="elevated" style={[styles.podiumCard, styles.podiumThird]}>
                         <View style={styles.podiumMedal}>
                           <AppText style={styles.podiumMedalText}>🥉</AppText>
                         </View>
@@ -535,7 +501,7 @@ export default function LeaderboardScreen() {
                           {formatPoints(top3[2]?.totalPoints || 0)}
                         </AppText>
                         <AppText style={styles.podiumPtsLabel}>pts</AppText>
-                      </GlassCard>
+                      </Card>
                       <View style={[styles.podiumBase, styles.podiumBaseThird]} />
                     </View>
                   </View>
@@ -543,7 +509,7 @@ export default function LeaderboardScreen() {
 
                 {/* ========== LICENCE CTA (unlicensed) ========== */}
                 {needsLicence && standings.length > 0 && (
-                  <GlassCard style={[styles.fieldCard, { alignItems: "center", paddingVertical: 24 }]}>
+                  <Card variant="default" style={[styles.fieldCard, { alignItems: "center", paddingVertical: 24 }]}>
                     <Feather name="lock" size={24} color={colors.textTertiary} style={{ marginBottom: 8 }} />
                     <AppText style={[styles.fieldTitle, { textAlign: "center", marginBottom: 4 }]}>
                       Full leaderboard
@@ -554,12 +520,12 @@ export default function LeaderboardScreen() {
                     <PrimaryButton onPress={() => setModalVisible(true)} size="sm">
                       Unlock full leaderboard
                     </PrimaryButton>
-                  </GlassCard>
+                  </Card>
                 )}
 
                 {/* ========== THE FIELD ========== */}
                 {!needsLicence && theField.length > 0 && (
-                  <GlassCard style={styles.fieldCard}>
+                  <Card variant="default" style={styles.fieldCard}>
                     <AppText style={styles.fieldTitle}>The Field</AppText>
                     {theField.map((entry, idx) => {
                       // Simple trend indicator (mock - would need previous data)
@@ -602,12 +568,12 @@ export default function LeaderboardScreen() {
                         </View>
                       );
                     })}
-                  </GlassCard>
+                  </Card>
                 )}
 
                 {/* Only top 3 - show full list */}
                 {!needsLicence && theField.length === 0 && top3.length < 3 && (
-                  <GlassCard style={styles.fieldCard}>
+                  <Card variant="default" style={styles.fieldCard}>
                     {standings.map((entry, idx) => (
                       <View
                         key={entry.memberId}
@@ -629,7 +595,7 @@ export default function LeaderboardScreen() {
                         </AppText>
                       </View>
                     ))}
-                  </GlassCard>
+                  </Card>
                 )}
               </>
             )}
@@ -661,7 +627,12 @@ export default function LeaderboardScreen() {
                   const eventNumber = groupedResultsLog.length - eventIdx;
 
                   return (
-                    <GlassCard key={event.eventId} style={styles.accordionCard} elevated={isExpanded}>
+                    <Card
+                      key={event.eventId}
+                      variant={isExpanded ? "elevated" : "default"}
+                      padding={0}
+                      style={styles.accordionCard}
+                    >
                       {/* Accordion Header - Tappable */}
                       <Pressable
                         style={styles.accordionHeader}
@@ -736,7 +707,7 @@ export default function LeaderboardScreen() {
                           ))}
                         </View>
                       )}
-                    </GlassCard>
+                    </Card>
                   );
                 })}
               </View>
@@ -746,7 +717,9 @@ export default function LeaderboardScreen() {
 
         {/* Subtle footer */}
         <View style={styles.footer}>
-          <AppText style={styles.footerText}>The Golf Society Hub</AppText>
+          <AppText variant="small" color="muted">
+            The Golf Society Hub
+          </AppText>
         </View>
       </ScrollView>
 
@@ -762,11 +735,11 @@ export default function LeaderboardScreen() {
             onPress={closeShareSheet}
             accessibilityLabel="Dismiss"
           />
-          <View style={styles.shareModalCard}>
-            <AppText style={styles.shareModalTitle}>
+          <Card variant="elevated" padding="lg" style={styles.shareModalCard}>
+            <AppText variant="heading" color="default">
               {shareTarget === "matrix" ? "Share results matrix" : "Share leaderboard"}
             </AppText>
-            <AppText style={styles.shareModalBody}>
+            <AppText variant="bodySmall" color="secondary" style={styles.shareModalBody}>
               {shareTarget === "matrix"
                 ? "Image (PNG) shows the latest event only. PDF includes every OOM event in the matrix."
                 : "Image (PNG) works well for WhatsApp and social. PDF is best for printing and email."}
@@ -782,7 +755,7 @@ export default function LeaderboardScreen() {
                 Cancel
               </SecondaryButton>
             </View>
-          </View>
+          </Card>
         </View>
       </Modal>
 
@@ -845,22 +818,10 @@ function makeLeaderboardStyles(
   titleSection: {
     marginBottom: spacing.lg,
   },
-  mainTitle: {
-    fontSize: typography.title.fontSize,
-    fontWeight: "700",
-    color: colors.text,
-    letterSpacing: -0.5,
-  },
   seasonText: {
-    fontSize: typography.small.fontSize,
-    lineHeight: typography.small.lineHeight,
-    color: colors.textSecondary,
     marginTop: 4,
   },
   tabHint: {
-    fontSize: typography.small.fontSize,
-    lineHeight: typography.small.lineHeight,
-    color: colors.textTertiary,
     marginTop: 6,
   },
 
@@ -1194,11 +1155,6 @@ function makeLeaderboardStyles(
     marginTop: 24,
     paddingTop: 16,
   },
-  footerText: {
-    fontSize: typography.small.fontSize,
-    color: colors.textTertiary,
-  },
-
   shareModalRoot: {
     flex: 1,
     justifyContent: "center",
@@ -1209,30 +1165,15 @@ function makeLeaderboardStyles(
     ...StyleSheet.absoluteFillObject,
   },
   shareModalCard: {
-    backgroundColor: colors.surfaceElevated,
-    borderRadius: 16,
-    padding: spacing.lg,
     maxWidth: 400,
     width: "100%",
     alignSelf: "center",
     zIndex: 1,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.12,
-    shadowRadius: 16,
-    elevation: 8,
-  },
-  shareModalTitle: {
-    fontSize: 18,
-    fontWeight: "700",
-    color: colors.text,
-    marginBottom: spacing.sm,
+    marginBottom: 0,
   },
   shareModalBody: {
-    fontSize: 14,
-    color: colors.textSecondary,
+    marginTop: spacing.sm,
     marginBottom: spacing.lg,
-    lineHeight: 20,
   },
   shareModalActions: {
     gap: spacing.sm,

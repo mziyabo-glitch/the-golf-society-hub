@@ -283,7 +283,7 @@ export default function RivalryDetailScreen() {
       <Screen>
         <View style={styles.header}>
           <SecondaryButton onPress={cancelForm} size="sm">Cancel</SecondaryButton>
-          <AppText variant="h2">{editingEntry ? "Edit Entry" : "Add Entry"}</AppText>
+          <AppText variant="heading">{editingEntry ? "Edit Entry" : "Add Entry"}</AppText>
           <View style={{ width: 60 }} />
         </View>
 
@@ -411,7 +411,7 @@ export default function RivalryDetailScreen() {
                   </Pressable>
                 </View>
               </View>
-              <AppText variant="small" color="tertiary" style={{ marginTop: spacing.xs }}>
+              <AppText variant="small" color="muted" style={{ marginTop: spacing.xs }}>
                 Share this code or the invite link so others can join the rivalry.
               </AppText>
             </>
@@ -485,7 +485,7 @@ export default function RivalryDetailScreen() {
         </AppCard>
       ) : (
         <View style={{ marginTop: spacing.sm }}>
-          <AppText variant="h2" style={{ marginBottom: spacing.sm }}>
+          <AppText variant="heading" style={{ marginBottom: spacing.sm }}>
             Timeline ({entries.length})
           </AppText>
           {entries.map((entry) => (
@@ -533,7 +533,7 @@ export default function RivalryDetailScreen() {
           <SecondaryButton onPress={() => void handleDeleteSinbook()} disabled={actionBusy} size="sm">
             Delete this rivalry
           </SecondaryButton>
-          <AppText variant="small" color="tertiary" style={{ textAlign: "center" }}>
+          <AppText variant="small" color="muted" style={{ textAlign: "center" }}>
             Confirmation opens in the app (reliable in Safari — no browser popup).
           </AppText>
         </View>

@@ -20,7 +20,7 @@ export function LinkRowCard({ icon, title, subtitle, onPress }: LinkRowCardProps
 
   return (
     <Pressable onPress={onPress} style={({ pressed }) => [styles.pressable, pressed && { opacity: 0.9 }]}>
-      <Card style={[styles.card, styles.row]} padding={spacing.md}>
+      <Card variant="elevated" style={[styles.card, styles.row]} padding={spacing.md}>
         <View style={[styles.iconCircle, { backgroundColor: colors.primary + "12" }]}>
           <Feather name={icon} size={18} color={colors.primary} />
         </View>

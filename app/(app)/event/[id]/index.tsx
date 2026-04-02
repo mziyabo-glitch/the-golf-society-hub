@@ -64,7 +64,7 @@ import {
   withdrawnRegsForDisplay,
 } from "@/lib/eventPlayerStatus";
 import { Toast } from "@/components/ui/Toast";
-import { getColors, spacing, radius, typography } from "@/lib/ui/theme";
+import { getColors, spacing, radius, iconSize } from "@/lib/ui/theme";
 import { confirmDestructive, showAlert } from "@/lib/ui/alert";
 import {
   JOINT_EVENT_CHIP_LONG,
@@ -101,10 +101,7 @@ function PickerOption({
         },
       ]}
     >
-      <AppText
-        variant="caption"
-        style={{ color: selected ? "#fff" : colors.text }}
-      >
+      <AppText variant="caption" color={selected ? "inverse" : "default"}>
         {label}
       </AppText>
     </Pressable>
@@ -1249,7 +1246,7 @@ export default function EventDetailScreen() {
                       : " Add at least one other society below, then save."}
                   </AppText>
                   {formEditParticipatingSocieties.length > 0 ? (
-                    <AppText variant="small" color="tertiary" style={{ marginTop: 6 }}>
+                    <AppText variant="small" color="muted" style={{ marginTop: 6 }}>
                       {formEditParticipatingSocieties.map((s) => s.society_name?.trim() || s.society_id).filter(Boolean).join(" · ")}
                     </AppText>
                   ) : null}
@@ -1317,7 +1314,7 @@ export default function EventDetailScreen() {
                 onChangeText={setFormEntryFeeDisplay}
                 autoCapitalize="none"
               />
-              <AppText variant="small" color="tertiary" style={{ marginTop: 4 }}>
+              <AppText variant="small" color="muted" style={{ marginTop: 4 }}>
                 Shown on the home screen and here.
               </AppText>
             </View>
@@ -1364,7 +1361,7 @@ export default function EventDetailScreen() {
                     },
                   ]}
                 >
-                  <AppText variant="caption" style={{ color: formEditIsJointEvent ? "#fff" : colors.text }}>
+                  <AppText variant="caption" color={formEditIsJointEvent ? "inverse" : "default"}>
                     {formEditIsJointEvent ? "On" : "Off"}
                   </AppText>
                 </View>
@@ -1412,7 +1409,7 @@ export default function EventDetailScreen() {
                     autoCapitalize="none"
                   />
                   {courseSearching && (
-                    <AppText variant="small" color="tertiary" style={{ marginTop: 4 }}>Searching…</AppText>
+                    <AppText variant="small" color="muted" style={{ marginTop: 4 }}>Searching…</AppText>
                   )}
                   {courseSearchError && (
                     <AppText variant="small" style={{ color: colors.error, marginTop: 4 }}>{courseSearchError}</AppText>
@@ -1435,7 +1432,7 @@ export default function EventDetailScreen() {
                         >
                           <AppText variant="body" numberOfLines={1}>{hit.club_name || hit.name}</AppText>
                           {typeof hit.location === "string" && hit.location && (
-                            <AppText variant="small" color="tertiary">{hit.location}</AppText>
+                            <AppText variant="small" color="muted">{hit.location}</AppText>
                           )}
                         </Pressable>
                       ))}
@@ -1459,7 +1456,7 @@ export default function EventDetailScreen() {
                   <View style={styles.formField}>
                     <AppText variant="captionBold" style={styles.label}>Tees</AppText>
                     {teesLoading ? (
-                      <AppText variant="small" color="tertiary">Importing course and tees…</AppText>
+                      <AppText variant="small" color="muted">Importing course and tees…</AppText>
                     ) : tees.length > 0 ? (
                       !showManualTee ? (
                         <>
@@ -1528,12 +1525,12 @@ export default function EventDetailScreen() {
                           )}
                         </>
                       ) : (
-                        <AppText variant="small" color="tertiary" style={{ marginBottom: spacing.xs }}>
+                        <AppText variant="small" color="muted" style={{ marginBottom: spacing.xs }}>
                           Using manual tee entry below.
                         </AppText>
                       )
                     ) : (
-                      <AppText variant="small" color="tertiary" style={{ marginBottom: spacing.xs }}>
+                      <AppText variant="small" color="muted" style={{ marginBottom: spacing.xs }}>
                         No tees found for this course.
                       </AppText>
                     )}
@@ -1656,7 +1653,7 @@ export default function EventDetailScreen() {
                     onChangeText={setFormHandicapAllowance}
                     keyboardType="number-pad"
                   />
-                  <AppText variant="small" color="tertiary" style={{ marginTop: 4 }}>
+                  <AppText variant="small" color="muted" style={{ marginTop: 4 }}>
                     Default 95% for individual stroke play
                   </AppText>
                 </View>
@@ -1735,7 +1732,7 @@ export default function EventDetailScreen() {
 
       {/* Title */}
       {refreshing ? (
-        <AppText variant="small" color="tertiary" style={{ marginBottom: spacing.xs }}>
+        <AppText variant="small" color="muted" style={{ marginBottom: spacing.xs }}>
           Refreshing...
         </AppText>
       ) : null}
@@ -1763,7 +1760,7 @@ export default function EventDetailScreen() {
           </AppText>
           {(event.teeName || event.par != null || event.courseRating != null || event.slopeRating != null) && (
             <>
-              <AppText variant="caption" color="tertiary" style={{ marginBottom: spacing.xs }}>Male Tee</AppText>
+              <AppText variant="caption" color="muted" style={{ marginBottom: spacing.xs }}>Male Tee</AppText>
               {event.teeName && <Row icon="flag" label="Tee" value={event.teeName} />}
               {event.par != null && <Row icon="hash" label="Par" value={String(event.par)} />}
               {event.courseRating != null && (
@@ -1776,7 +1773,7 @@ export default function EventDetailScreen() {
           )}
           {(event.ladiesTeeName || event.ladiesPar != null || event.ladiesCourseRating != null || event.ladiesSlopeRating != null) && (
             <>
-              <AppText variant="caption" color="tertiary" style={{ marginTop: spacing.sm, marginBottom: spacing.xs }}>Female Tee</AppText>
+              <AppText variant="caption" color="muted" style={{ marginTop: spacing.sm, marginBottom: spacing.xs }}>Female Tee</AppText>
               {event.ladiesTeeName && <Row icon="flag" label="Tee" value={event.ladiesTeeName} />}
               {event.ladiesPar != null && <Row icon="hash" label="Par" value={String(event.ladiesPar)} />}
               {event.ladiesCourseRating != null && (
@@ -1851,7 +1848,7 @@ export default function EventDetailScreen() {
         (canManageEventRoster && manualAddCandidates.length > 0)) && (
         <AppCard style={styles.card}>
           {registrationsRefreshing ? (
-            <AppText variant="small" color="tertiary" style={{ marginBottom: spacing.xs }}>
+            <AppText variant="small" color="muted" style={{ marginBottom: spacing.xs }}>
               Refreshing payment status...
             </AppText>
           ) : null}
@@ -1864,11 +1861,11 @@ export default function EventDetailScreen() {
                   : "Marking paid confirms the player. Tee sheet (ManCo) uses only paid & confirmed players."}
               </AppText>
               {detailIsJointEvent && societyId && hostSocietyId === societyId ? (
-                <AppText variant="small" color="tertiary" style={{ marginTop: 4 }}>
+                <AppText variant="small" color="muted" style={{ marginTop: 4 }}>
                   Host view: payment actions still apply only to members of the society selected above.
                 </AppText>
               ) : null}
-              <AppText variant="small" color="tertiary" style={{ marginTop: 4 }}>
+              <AppText variant="small" color="muted" style={{ marginTop: 4 }}>
                 {`${teeSheetEligibleCount} paid & confirmed · ${pendingPaymentCount} payment pending`}
                 {captainPickMemberIds.length > 0
                   ? ` · ${captainPickMemberIds.length} on playing list without a fee row`
@@ -1900,14 +1897,12 @@ export default function EventDetailScreen() {
                 }
               />
               <AppText
-                variant="small"
-                style={{
-                  color:
-                    buckets.pendingPayment.length === 0 && captainPickMemberIds.length === 0
-                      ? colors.success
-                      : colors.warning,
-                  fontWeight: "700",
-                }}
+                variant="captionBold"
+                color={
+                  buckets.pendingPayment.length === 0 && captainPickMemberIds.length === 0
+                    ? "success"
+                    : "warning"
+                }
               >
                 {buckets.pendingPayment.length === 0 && captainPickMemberIds.length === 0
                   ? "All paid"
@@ -1926,7 +1921,7 @@ export default function EventDetailScreen() {
                   setAddMemberModalOpen(true);
                 }}
               />
-              <AppText variant="small" color="tertiary" style={{ marginTop: spacing.xs }}>
+              <AppText variant="small" color="muted" style={{ marginTop: spacing.xs }}>
                 Includes members who have not joined the app yet. Mark them paid when ready — only paid &amp; confirmed
                 players are used for the tee sheet.
               </AppText>
@@ -1939,7 +1934,7 @@ export default function EventDetailScreen() {
             </AppText>
           ) : null}
           {buckets.confirmedPaid.map((reg) => (
-            <View key={reg.id} style={styles.paidRow}>
+            <View key={reg.id} style={[styles.paidRow, { borderBottomColor: colors.borderLight }]}>
               <View style={styles.paidLeftCol} pointerEvents="none">
                 <AppText variant="body" numberOfLines={2} style={styles.paidNameText}>
                   {registrationMemberDisplayName(reg)}
@@ -1948,7 +1943,9 @@ export default function EventDetailScreen() {
 
               <View style={styles.paidRightCol}>
                 <View style={[styles.paidPill, { backgroundColor: colors.success }]}>
-                  <AppText style={styles.paidPillText}>{PaymentPill.paid}</AppText>
+                  <AppText variant="captionBold" color="inverse">
+                    {PaymentPill.paid}
+                  </AppText>
                 </View>
                 {canManagePayments && (
                   <Pressable
@@ -1965,7 +1962,7 @@ export default function EventDetailScreen() {
                       },
                     ]}
                   >
-                    <AppText variant="small" color="primary" style={{ fontWeight: "600" }}>
+                    <AppText variant="captionBold" color="primary">
                       Mark unpaid
                     </AppText>
                   </Pressable>
@@ -1980,7 +1977,7 @@ export default function EventDetailScreen() {
             </AppText>
           ) : null}
           {buckets.pendingPayment.map((reg) => (
-            <View key={reg.id} style={styles.paidRow}>
+            <View key={reg.id} style={[styles.paidRow, { borderBottomColor: colors.borderLight }]}>
               <View style={styles.paidLeftCol} pointerEvents="none">
                 <AppText variant="body" numberOfLines={2} style={styles.paidNameText}>
                   {registrationMemberDisplayName(reg)}
@@ -1989,7 +1986,9 @@ export default function EventDetailScreen() {
 
               <View style={styles.paidRightCol}>
                 <View style={[styles.paidPill, { backgroundColor: colors.warning + "35" }]}>
-                  <AppText style={[styles.paidPillText, { color: colors.warning }]}>{PaymentPill.unpaid}</AppText>
+                  <AppText variant="captionBold" color="warning">
+                    {PaymentPill.unpaid}
+                  </AppText>
                 </View>
                 {canManagePayments && (
                   <Pressable
@@ -2006,7 +2005,7 @@ export default function EventDetailScreen() {
                       },
                     ]}
                   >
-                    <AppText variant="small" color="primary" style={{ fontWeight: "600" }}>
+                    <AppText variant="captionBold" color="primary">
                       Mark paid
                     </AppText>
                   </Pressable>
@@ -2016,14 +2015,14 @@ export default function EventDetailScreen() {
           ))}
 
           {captainPickMemberIds.map((mid) => (
-            <View key={`lineup-${mid}`} style={styles.paidRow}>
+            <View key={`lineup-${mid}`} style={[styles.paidRow, { borderBottomColor: colors.borderLight }]}>
               <View style={styles.paidLeftCol}>
                 <AppText variant="body" numberOfLines={2} style={styles.paidNameText}>
                   {memberNameForAttendeeId(mid)}
                 </AppText>
                 <AppText
                   variant="caption"
-                  color="tertiary"
+                  color="muted"
                   style={styles.paidHelperText}
                   pointerEvents="none"
                 >
@@ -2033,7 +2032,9 @@ export default function EventDetailScreen() {
 
               <View style={styles.paidRightCol}>
                 <View style={[styles.paidPill, { backgroundColor: colors.warning + "35" }]}>
-                  <AppText style={[styles.paidPillText, { color: colors.warning }]}>{PaymentPill.unpaid}</AppText>
+                  <AppText variant="captionBold" color="warning">
+                    {PaymentPill.unpaid}
+                  </AppText>
                 </View>
                 {canManagePayments && (
                   <View style={styles.paidActionsStack}>
@@ -2051,7 +2052,7 @@ export default function EventDetailScreen() {
                         },
                       ]}
                     >
-                      <AppText variant="small" color="primary" style={{ fontWeight: "600" }}>
+                      <AppText variant="captionBold" color="primary">
                         Mark paid
                       </AppText>
                     </Pressable>
@@ -2069,7 +2070,7 @@ export default function EventDetailScreen() {
                         },
                       ]}
                     >
-                      <AppText variant="small" color="secondary" style={{ fontWeight: "600" }}>
+                      <AppText variant="captionBold" color="secondary">
                         Record unpaid
                       </AppText>
                     </Pressable>
@@ -2080,10 +2081,19 @@ export default function EventDetailScreen() {
           ))}
 
           {notPlayingRegs.length > 0 && (
-            <View style={{ marginTop: spacing.sm, paddingTop: spacing.sm, borderTopWidth: 1, borderTopColor: "#F3F4F6" }}>
-              <AppText variant="captionBold" color="tertiary" style={{ marginBottom: spacing.xs }}>Not playing / withdrawn</AppText>
+            <View
+              style={{
+                marginTop: spacing.sm,
+                paddingTop: spacing.sm,
+                borderTopWidth: 1,
+                borderTopColor: colors.borderLight,
+              }}
+            >
+              <AppText variant="captionBold" color="muted" style={{ marginBottom: spacing.xs }}>
+                Not playing / withdrawn
+              </AppText>
               {notPlayingRegs.map((reg) => (
-                <AppText key={reg.id} variant="small" color="tertiary" style={{ paddingVertical: 2 }}>
+                <AppText key={reg.id} variant="small" color="muted" style={{ paddingVertical: 2 }}>
                   {registrationMemberDisplayName(reg)}
                 </AppText>
               ))}
@@ -2129,7 +2139,7 @@ export default function EventDetailScreen() {
 
       {/* Created info */}
       {event.created_at && (
-        <AppText variant="small" color="tertiary" style={styles.createdText}>
+        <AppText variant="small" color="muted" style={styles.createdText}>
           Created {new Date(event.created_at).toLocaleDateString("en-GB")}
         </AppText>
       )}
@@ -2163,7 +2173,7 @@ export default function EventDetailScreen() {
             />
             <ScrollView style={styles.searchResults} keyboardShouldPersistTaps="handled">
               {filteredManualAddCandidates.length === 0 ? (
-                <AppText variant="small" color="tertiary" style={{ padding: spacing.sm }}>
+                <AppText variant="small" color="muted" style={{ padding: spacing.sm }}>
                   {manualAddCandidates.length === 0
                     ? "All society members are already on this event."
                     : "No matching members"}
@@ -2188,7 +2198,7 @@ export default function EventDetailScreen() {
                         {label}
                       </AppText>
                       {!m.user_id ? (
-                        <AppText variant="caption" color="tertiary">
+                        <AppText variant="caption" color="muted">
                           No app account yet
                         </AppText>
                       ) : null}
@@ -2198,7 +2208,7 @@ export default function EventDetailScreen() {
               )}
             </ScrollView>
             {addMemberBusy ? (
-              <AppText variant="small" color="tertiary" style={{ marginTop: spacing.xs }}>
+              <AppText variant="small" color="muted" style={{ marginTop: spacing.xs }}>
                 Adding member to event...
               </AppText>
             ) : null}
@@ -2246,7 +2256,7 @@ function Row({
   const colors = getColors();
   return (
     <View style={styles.row}>
-      <Feather name={icon} size={16} color={colors.primary} />
+      <Feather name={icon} size={iconSize.sm} color={colors.primary} />
       <View style={{ marginLeft: spacing.sm }}>
         <AppText variant="caption">{label}</AppText>
         <AppText>{safeValue(value)}</AppText>
@@ -2267,12 +2277,12 @@ function ActionRow({
   const colors = getColors();
   return (
     <View style={styles.actionRow}>
-      <Feather name={icon} size={18} color={colors.primary} />
+      <Feather name={icon} size={iconSize.md} color={colors.primary} />
       <View style={{ flex: 1, marginLeft: spacing.sm }}>
         <AppText variant="bodyBold">{title}</AppText>
         <AppText variant="caption">{subtitle}</AppText>
       </View>
-      <Feather name="chevron-right" size={18} color={colors.textTertiary} />
+      <Feather name="chevron-right" size={iconSize.md} color={colors.textTertiary} />
     </View>
   );
 }
@@ -2341,7 +2351,6 @@ const styles = StyleSheet.create({
     gap: spacing.xs,
     paddingVertical: spacing.sm,
     borderBottomWidth: 1,
-    borderBottomColor: "#F3F4F6",
     width: "100%",
     minWidth: 0,
   },
@@ -2383,11 +2392,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.sm,
     paddingVertical: 4,
     borderRadius: radius.full,
-  },
-  paidPillText: {
-    color: "#FFFFFF",
-    fontWeight: "700",
-    fontSize: typography.small.fontSize,
   },
   paidToggleBtn: {
     paddingHorizontal: spacing.sm,

@@ -72,10 +72,7 @@ function PickerOption({
         },
       ]}
     >
-      <AppText
-        variant="caption"
-        style={{ color: selected ? "#fff" : colors.text }}
-      >
+      <AppText variant="caption" color={selected ? "inverse" : "default"}>
         {label}
       </AppText>
     </Pressable>

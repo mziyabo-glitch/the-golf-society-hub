@@ -1,99 +1,164 @@
 /**
- * Premium Button Component
- * Supports primary, secondary, and ghost variants with consistent styling
+ * Primary button primitive — sizes, variants, loading; shared by Button.tsx exports.
  */
 
-import { Pressable, StyleSheet, Text, TextStyle, ViewStyle } from "react-native";
-import { getColors, spacing, radius, typography, buttonHeights } from "@/lib/ui/theme";
+import { ReactNode } from "react";
+import {
+  Pressable,
+  StyleSheet,
+  View,
+  ViewStyle,
+  TextStyle,
+  ActivityIndicator,
+} from "react-native";
+import { AppText } from "./AppText";
+import { getColors, spacing, radius, buttonHeights, borderWidth } from "@/lib/ui/theme";
+import { blurWebActiveElement } from "@/lib/ui/focus";
 
-export type ButtonVariant = "primary" | "secondary" | "ghost";
-export type ButtonSize = "sm" | "md" | "lg";
+export type AppButtonVariant = "primary" | "secondary" | "ghost" | "destructive";
 
-type AppButtonProps = {
-  label: string;
+export type AppButtonSize = "sm" | "md" | "lg";
+
+export type AppButtonProps = {
+  label?: string;
+  children?: ReactNode;
+  loadingLabel?: string;
   onPress: () => void;
-  variant?: ButtonVariant;
-  size?: ButtonSize;
   disabled?: boolean;
+  loading?: boolean;
+  variant?: AppButtonVariant;
+  size?: AppButtonSize;
   style?: ViewStyle;
   textStyle?: TextStyle;
   fullWidth?: boolean;
+  icon?: ReactNode;
+  iconPosition?: "left" | "right";
 };
+
+function resolveContent(label?: string, children?: ReactNode): ReactNode {
+  if (typeof label === "string" && label.length > 0) return label;
+  return children ?? null;
+}
+
+function handlePress(onPress: () => void): void {
+  try {
+    blurWebActiveElement();
+  } catch {
+    /* ignore */
+  }
+  onPress();
+}
 
 export function AppButton({
   label,
+  children,
+  loadingLabel,
   onPress,
+  disabled = false,
+  loading = false,
   variant = "primary",
   size = "md",
-  disabled = false,
   style,
   textStyle,
   fullWidth = false,
+  icon,
+  iconPosition = "left",
 }: AppButtonProps) {
   const colors = getColors();
-  
   const height = buttonHeights[size];
-  const paddingHorizontal = size === "sm" ? spacing.base : size === "md" ? spacing.base : spacing.lg;
-  
-  const variantStyles = {
-    primary: {
-      backgroundColor: disabled ? colors.surfaceDisabled : colors.primary,
-      borderWidth: 0,
-      borderColor: "transparent",
-    },
+  const paddingHorizontal = size === "sm" ? spacing.base : size === "md" ? spacing.lg : spacing.lg;
+  const content = resolveContent(label, children);
+
+  const isDisabled = disabled || loading;
+
+  const bg: Record<AppButtonVariant, string> = {
+    primary: isDisabled ? colors.surfaceDisabled : colors.primary,
+    secondary: "transparent",
+    ghost: "transparent",
+    destructive: isDisabled ? colors.surfaceDisabled : colors.error,
+  };
+
+  const border: Record<AppButtonVariant, { width: number; color: string }> = {
+    primary: { width: 0, color: "transparent" },
     secondary: {
-      backgroundColor: colors.surface,
-      borderWidth: 1,
-      borderColor: colors.border,
+      width: borderWidth.hairline,
+      color: isDisabled ? colors.border : colors.primary,
     },
-    ghost: {
-      backgroundColor: "transparent",
-      borderWidth: 0,
-      borderColor: "transparent",
-    },
+    ghost: { width: 0, color: "transparent" },
+    destructive: { width: 0, color: "transparent" },
   };
-  
-  const textColors = {
-    primary: colors.textInverse,
-    secondary: colors.text,
-    ghost: colors.primary,
+
+  const textColor: Record<AppButtonVariant, TextColorForButton> = {
+    primary: "inverse",
+    secondary: "primary",
+    ghost: "primary",
+    destructive: "inverse",
   };
-  
+
+  const spinnerColor =
+    variant === "secondary" || variant === "ghost" ? colors.primary : colors.textInverse;
+
   return (
     <Pressable
-      onPress={onPress}
-      disabled={disabled}
+      onPress={() => handlePress(onPress)}
+      disabled={isDisabled}
       style={({ pressed }) => [
         styles.button,
-        variantStyles[variant],
         {
-          height,
+          backgroundColor: bg[variant],
+          borderWidth: border[variant].width,
+          borderColor: border[variant].color,
+          minHeight: height,
+          paddingVertical: spacing.sm,
           paddingHorizontal,
-          opacity: disabled ? 0.5 : pressed ? 0.8 : 1,
+          borderRadius: radius.md,
+          opacity: pressed && !isDisabled ? 0.88 : 1,
           width: fullWidth ? "100%" : undefined,
         },
         style,
       ]}
     >
-      <Text
-        style={[
-          size === "lg" ? typography.buttonLarge : typography.button,
-          { color: textColors[variant] },
-          textStyle,
-        ]}
-      >
-        {label}
-      </Text>
+      {loading ? (
+        <View style={styles.loadingRow}>
+          <ActivityIndicator size="small" color={spinnerColor} />
+          {loadingLabel ? (
+            <AppText variant="button" color={textColor[variant]} style={textStyle}>
+              {loadingLabel}
+            </AppText>
+          ) : null}
+        </View>
+      ) : (
+        <View style={styles.content}>
+          {icon && iconPosition === "left" ? <View style={styles.icon}>{icon}</View> : null}
+          <AppText variant={size === "lg" ? "buttonLarge" : "button"} color={textColor[variant]} style={textStyle}>
+            {content}
+          </AppText>
+          {icon && iconPosition === "right" ? <View style={styles.icon}>{icon}</View> : null}
+        </View>
+      )}
     </Pressable>
   );
 }
 
+type TextColorForButton = "primary" | "inverse";
+
 const styles = StyleSheet.create({
   button: {
-    borderRadius: radius.md,
     alignItems: "center",
     justifyContent: "center",
-    minHeight: buttonHeights.md,
+  },
+  content: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.xs,
+  },
+  loadingRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+  },
+  icon: {
+    alignItems: "center",
+    justifyContent: "center",
   },
 });
-

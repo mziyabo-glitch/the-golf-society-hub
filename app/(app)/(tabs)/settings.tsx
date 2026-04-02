@@ -363,7 +363,7 @@ export default function SettingsScreen() {
           Manage your account, society, and app preferences.
         </AppText>
 
-        <AppText variant="h2" style={styles.sectionTitle}>Profile</AppText>
+        <AppText variant="heading" style={styles.sectionTitle}>Profile</AppText>
         <AppCard padding="sm">
           <Pressable
             style={({ pressed }) => [styles.linkRow, { opacity: pressed ? 0.7 : 1 }]}
@@ -380,7 +380,7 @@ export default function SettingsScreen() {
           </Pressable>
         </AppCard>
 
-        <AppText variant="h2" style={styles.sectionTitle}>Society settings</AppText>
+        <AppText variant="heading" style={styles.sectionTitle}>Society settings</AppText>
         <AppCard padding="sm">
           <Pressable
             style={({ pressed }) => [styles.linkRow, { opacity: pressed ? 0.7 : 1 }]}
@@ -411,7 +411,7 @@ export default function SettingsScreen() {
           </Pressable>
         </AppCard>
 
-        <AppText variant="h2" style={styles.sectionTitle}>App settings</AppText>
+        <AppText variant="heading" style={styles.sectionTitle}>App settings</AppText>
         <TextSizeSettingsSection />
         <AppCard padding="sm" style={{ marginTop: spacing.sm }}>
           <Pressable
@@ -429,7 +429,7 @@ export default function SettingsScreen() {
           </Pressable>
         </AppCard>
 
-        <AppText variant="h2" style={styles.sectionTitle}>Session</AppText>
+        <AppText variant="heading" style={styles.sectionTitle}>Session</AppText>
         <AppCard>
           <AppText variant="body" color="secondary" style={{ marginBottom: spacing.base }}>
             Sign out of your account on this device.
@@ -440,7 +440,7 @@ export default function SettingsScreen() {
         </AppCard>
 
         <View style={styles.footer}>
-          <AppText variant="caption" color="tertiary" style={{ textAlign: "center" }}>
+          <AppText variant="caption" color="muted" style={{ textAlign: "center" }}>
             Golf Society Hub v1.0.0
           </AppText>
         </View>
@@ -458,7 +458,7 @@ export default function SettingsScreen() {
         Manage your account, society, and app preferences.
       </AppText>
 
-      <AppText variant="h2" style={styles.sectionTitle}>Profile</AppText>
+      <AppText variant="heading" style={styles.sectionTitle}>Profile</AppText>
       <AppCard padding="sm">
         <Pressable
           style={({ pressed }) => [styles.linkRow, { opacity: pressed ? 0.7 : 1 }]}
@@ -486,7 +486,7 @@ export default function SettingsScreen() {
       <ThemeSettingsSection />
       <TextSizeSettingsSection />
 
-      <AppText variant="h2" style={styles.sectionTitle}>Legal</AppText>
+      <AppText variant="heading" style={styles.sectionTitle}>Legal</AppText>
       <AppCard padding="sm">
         <Pressable
           style={({ pressed }) => [styles.linkRow, { opacity: pressed ? 0.7 : 1 }]}
@@ -504,7 +504,7 @@ export default function SettingsScreen() {
       </AppCard>
 
       {/* Society Info */}
-      <AppText variant="h2" style={styles.sectionTitle}>Society</AppText>
+      <AppText variant="heading" style={styles.sectionTitle}>Society</AppText>
       <AppCard>
         <View style={styles.settingRow}>
           <View style={[styles.settingIcon, { backgroundColor: colors.backgroundTertiary }]}>
@@ -602,7 +602,7 @@ export default function SettingsScreen() {
       {/* Society Logo - Captain/Secretary only */}
       {canManageLogo && (
         <>
-          <AppText variant="h2" style={styles.sectionTitle}>Society Logo</AppText>
+          <AppText variant="heading" style={styles.sectionTitle}>Society Logo</AppText>
           <AppCard>
             <View style={styles.logoSection}>
               {/* Logo Preview */}
@@ -612,7 +612,7 @@ export default function SettingsScreen() {
                 ) : (
                   <View style={[styles.logoPlaceholder, { backgroundColor: colors.backgroundTertiary }]}>
                     <Feather name="image" size={32} color={colors.textTertiary} />
-                    <AppText variant="caption" color="tertiary" style={{ marginTop: spacing.xs }}>
+                    <AppText variant="caption" color="muted" style={{ marginTop: spacing.xs }}>
                       No logo
                     </AppText>
                   </View>
@@ -645,7 +645,7 @@ export default function SettingsScreen() {
                 )}
               </View>
 
-              <AppText variant="small" color="tertiary" style={{ marginTop: spacing.sm }}>
+              <AppText variant="small" color="muted" style={{ marginTop: spacing.sm }}>
                 Recommended: Square image, max 2MB (JPEG, PNG, GIF, WebP)
               </AppText>
 
@@ -694,13 +694,13 @@ export default function SettingsScreen() {
                       </AppText>
                     ) : null}
                     {logoDiagnostics.error ? (
-                      <AppText variant="small" style={{ color: colors.error }}>
+                      <AppText variant="small" color="danger">
                         Error: {logoDiagnostics.error}
                       </AppText>
                     ) : null}
                   </View>
                 ) : (
-                  <AppText variant="small" color="tertiary" style={{ marginTop: spacing.xs }}>
+                  <AppText variant="small" color="muted" style={{ marginTop: spacing.xs }}>
                     No diagnostics yet.
                   </AppText>
                 )}
@@ -713,7 +713,7 @@ export default function SettingsScreen() {
       {/* Billing & Licences - Captain only */}
       {canRegenCode && (
         <>
-          <AppText variant="h2" style={styles.sectionTitle}>Payments & billing</AppText>
+          <AppText variant="heading" style={styles.sectionTitle}>Payments & billing</AppText>
           <AppCard padding="sm">
             <Pressable
               style={({ pressed }) => [styles.linkRow, { opacity: pressed ? 0.7 : 1 }]}
@@ -734,7 +734,7 @@ export default function SettingsScreen() {
 
       {(canRegenCode || permissions.canGenerateTeeSheet) && (
         <>
-          <AppText variant="h2" style={styles.sectionTitle}>Admin tools</AppText>
+          <AppText variant="heading" style={styles.sectionTitle}>Admin tools</AppText>
           {canRegenCode ? (
             <AppCard padding="sm">
               <Pressable
@@ -775,7 +775,7 @@ export default function SettingsScreen() {
       {/* Treasurer Tools - Only visible to Captain/Treasurer */}
       {permissions.canAccessFinance && (
         <>
-          <AppText variant="h2" style={styles.sectionTitle}>Treasurer</AppText>
+          <AppText variant="heading" style={styles.sectionTitle}>Treasurer</AppText>
           <AppCard padding="sm">
             <Pressable
               style={({ pressed }) => [styles.linkRow, { opacity: pressed ? 0.7 : 1 }]}
@@ -825,7 +825,7 @@ export default function SettingsScreen() {
       {/* Platform Admin */}
       {isAdmin && (
         <>
-          <AppText variant="h2" style={styles.sectionTitle}>
+          <AppText variant="heading" style={styles.sectionTitle}>
             <Feather name="shield" size={16} color={colors.error} /> Platform admin
           </AppText>
 
@@ -837,7 +837,7 @@ export default function SettingsScreen() {
               onChangeText={handleAdminSearch}
               autoCapitalize="none"
             />
-            {adminSearching && <AppText variant="small" color="tertiary" style={{ marginTop: spacing.xs }}>Searching\u2026</AppText>}
+            {adminSearching && <AppText variant="small" color="muted" style={{ marginTop: spacing.xs }}>Searching\u2026</AppText>}
             {adminSocieties.map((row) => {
               const isActive = row.id === society?.id;
               return (
@@ -964,7 +964,7 @@ export default function SettingsScreen() {
       <Toast visible={codeCopyToast} message="Join code copied" type="success" onHide={() => setCodeCopyToast(false)} />
 
       {/* Quick Links */}
-      <AppText variant="h2" style={styles.sectionTitle}>Quick Actions</AppText>
+      <AppText variant="heading" style={styles.sectionTitle}>Quick Actions</AppText>
       <AppCard padding="sm">
         <Pressable
           style={({ pressed }) => [styles.linkRow, { opacity: pressed ? 0.7 : 1 }]}
@@ -1000,7 +1000,7 @@ export default function SettingsScreen() {
         </Pressable>
       </AppCard>
 
-      <AppText variant="h2" style={styles.sectionTitle}>App settings</AppText>
+      <AppText variant="heading" style={styles.sectionTitle}>App settings</AppText>
       <ThemeSettingsSection />
       <TextSizeSettingsSection />
       <AppCard padding="sm" style={{ marginTop: spacing.sm }}>
@@ -1020,7 +1020,7 @@ export default function SettingsScreen() {
       </AppCard>
 
       {/* Danger Zone */}
-      <AppText variant="h2" style={styles.sectionTitle}>Danger Zone</AppText>
+      <AppText variant="heading" style={styles.sectionTitle}>Danger Zone</AppText>
       <AppCard>
         {permissions.canResetSociety && (
           <>
@@ -1048,10 +1048,10 @@ export default function SettingsScreen() {
 
       {/* App Info */}
       <View style={styles.footer}>
-        <AppText variant="caption" color="tertiary" style={{ textAlign: "center" }}>
+        <AppText variant="caption" color="muted" style={{ textAlign: "center" }}>
           Golf Society Hub v1.0.0
         </AppText>
-        <AppText variant="small" color="tertiary" style={{ textAlign: "center", marginTop: 4 }}>
+        <AppText variant="small" color="muted" style={{ textAlign: "center", marginTop: 4 }}>
           Environment: {getSupabaseEnv().toUpperCase()} · Backend: …{getSupabaseProjectRefSuffix()}
         </AppText>
       </View>

@@ -26,7 +26,7 @@ import { ResilientImage } from "@/components/ui/ResilientImage";
 import { useBootstrap } from "@/lib/useBootstrap";
 import { getOomChampionsBySociety, type OomChampionDoc } from "@/lib/db_supabase/oomChampionsRepo";
 import { getPermissionsForMember } from "@/lib/rbac";
-import { getColors, spacing, radius } from "@/lib/ui/theme";
+import { getColors, spacing, radius, iconSize } from "@/lib/ui/theme";
 import { goBack } from "@/lib/navigation";
 
 export default function RollOfHonourScreen() {
@@ -116,7 +116,7 @@ export default function RollOfHonourScreen() {
       <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]} edges={["top", "bottom"]}>
         <View style={styles.centered}>
           <EmptyState
-            icon={<Feather name="alert-circle" size={24} color={colors.error} />}
+            icon={<Feather name="alert-circle" size={iconSize.lg} color={colors.error} />}
             title="Failed to Load"
             message={error}
             action={{ label: "Try Again", onPress: loadData }}
@@ -145,13 +145,13 @@ export default function RollOfHonourScreen() {
               { backgroundColor: colors.backgroundTertiary, opacity: pressed ? 0.7 : 1 },
             ]}
           >
-            <Feather name="arrow-left" size={17} color={colors.text} />
-            <AppText variant="caption" style={styles.backLabel}>Back</AppText>
+            <Feather name="arrow-left" size={iconSize.md} color={colors.text} />
+            <AppText variant="captionBold">Back</AppText>
           </Pressable>
           <View style={{ flex: 1 }} />
         </View>
         <View style={styles.header}>
-          <AppText variant="h1" style={styles.title}>
+          <AppText variant="title" style={styles.title}>
             Roll of Honour
           </AppText>
           <AppText variant="body" color="secondary" style={styles.subtitle}>
@@ -161,7 +161,7 @@ export default function RollOfHonourScreen() {
 
         {champions.length === 0 ? (
           <EmptyState
-            icon={<Feather name="award" size={24} color={colors.textTertiary} />}
+            icon={<Feather name="award" size={iconSize.lg} color={colors.textTertiary} />}
             title="No champions yet"
             message="Add OOM champions for each season to build your Roll of Honour."
             action={
@@ -203,12 +203,12 @@ export default function RollOfHonourScreen() {
                       placeholderSize={64}
                     />
                     <View style={styles.cardContent}>
-                      <View style={styles.yearChip}>
-                        <AppText variant="captionBold" style={{ color: colors.primary }}>
+                      <View style={[styles.yearChip, { backgroundColor: colors.primary + "12" }]}>
+                        <AppText variant="captionBold" color="primary">
                           {champ.season_year}
                         </AppText>
                       </View>
-                      <AppText variant="h2" numberOfLines={2}>
+                      <AppText variant="heading" numberOfLines={2}>
                         {championName(champ)}
                       </AppText>
                       {champ.points_total != null && (
@@ -218,7 +218,7 @@ export default function RollOfHonourScreen() {
                       )}
                     </View>
                     <View style={styles.chevronWrap}>
-                      <Feather name="chevron-right" size={20} color={colors.textTertiary} />
+                      <Feather name="chevron-right" size={iconSize.md} color={colors.textTertiary} />
                     </View>
                   </View>
                 </AppCard>
@@ -261,9 +261,6 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     borderRadius: radius.full,
     gap: 6,
-  },
-  backLabel: {
-    fontWeight: "600",
   },
   header: {
     marginBottom: spacing.lg,
@@ -311,7 +308,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: radius.sm,
-    backgroundColor: "rgba(11, 110, 79, 0.12)",
     marginBottom: 4,
   },
 });

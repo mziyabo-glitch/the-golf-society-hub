@@ -23,7 +23,7 @@ export function ThemeSettingsSection() {
 
   return (
     <>
-      <AppText variant="h2" style={styles.sectionTitle}>
+      <AppText variant="heading" style={styles.sectionTitle}>
         Theme
       </AppText>
       <AppCard padding="sm">

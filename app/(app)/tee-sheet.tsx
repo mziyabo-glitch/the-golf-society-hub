@@ -232,7 +232,7 @@ function GroupNumInput({
 
   return (
     <View style={styles.groupNumInputWrap}>
-      <AppText variant="caption" color="tertiary" style={styles.groupNumLabel}>Grp</AppText>
+      <AppText variant="caption" color="muted" style={styles.groupNumLabel}>Grp</AppText>
       <AppInput
         style={styles.groupNumInput}
         value={value}
@@ -271,7 +271,7 @@ const GroupTableCard = React.memo(function GroupTableCard({
               {player.name}
             </AppText>
             {showSocietyBadge && (player as EditablePlayer).societyLabel ? (
-              <AppText variant="small" color="tertiary" numberOfLines={1}>
+              <AppText variant="small" color="muted" numberOfLines={1}>
                 {(player as EditablePlayer).societyLabel}
               </AppText>
             ) : null}
@@ -1376,11 +1376,11 @@ export default function TeeSheetScreen() {
       <AppText variant="body" color="secondary" style={{ marginBottom: spacing.sm }}>
         Generate grouped tee sheets with WHS handicaps for Men and Ladies.
       </AppText>
-      <AppText variant="small" color="tertiary" style={{ marginBottom: spacing.lg }}>
+      <AppText variant="small" color="muted" style={{ marginBottom: spacing.lg }}>
         Tee sheet defaults to confirmed attendees. ManCo can manually add or remove players before publishing.
       </AppText>
       {(refreshing || eventDetailsRefreshing) ? (
-        <AppText variant="small" color="tertiary" style={{ marginBottom: spacing.sm }}>
+        <AppText variant="small" color="muted" style={{ marginBottom: spacing.sm }}>
           Refreshing...
         </AppText>
       ) : null}
@@ -1413,7 +1413,7 @@ export default function TeeSheetScreen() {
       ) : (
         <ScrollView showsVerticalScrollIndicator={false}>
           {/* Event Selection */}
-          <AppText variant="h2" style={styles.sectionTitle}>Select Event</AppText>
+          <AppText variant="heading" style={styles.sectionTitle}>Select Event</AppText>
           <View style={styles.eventList}>
             {events.map((event) => {
               const isSelected = event.id === selectedEventId;
@@ -1445,7 +1445,7 @@ export default function TeeSheetScreen() {
                             : "Date TBC"}
                           {event.courseName ? ` • ${event.courseName}` : ""}
                         </AppText>
-                        <AppText variant="small" color="tertiary">
+                        <AppText variant="small" color="muted">
                           {playerCount} player{playerCount !== 1 ? "s" : ""}
                         </AppText>
                       </View>
@@ -1496,7 +1496,7 @@ export default function TeeSheetScreen() {
               )}
 
               {/* Tee Time Settings */}
-              <AppText variant="h2" style={styles.sectionTitle}>Tee Times</AppText>
+              <AppText variant="heading" style={styles.sectionTitle}>Tee Times</AppText>
               <AppCard>
                 <View style={styles.formRow}>
                   <View style={{ flex: 1 }}>
@@ -1518,14 +1518,14 @@ export default function TeeSheetScreen() {
                     />
                   </View>
                 </View>
-                <AppText variant="small" color="tertiary" style={{ marginTop: spacing.xs }}>
+                <AppText variant="small" color="muted" style={{ marginTop: spacing.xs }}>
                   {selectedPlayerCount} players → {groupCount} group{groupCount !== 1 ? "s" : ""}
                 </AppText>
               </AppCard>
 
               {/* Group Editor Toggle */}
               <View style={styles.sectionHeader}>
-                <AppText variant="h2">Player Groups</AppText>
+                <AppText variant="heading">Player Groups</AppText>
                 <SecondaryButton
                   size="sm"
                   onPress={() => setShowGroupEditor(!showGroupEditor)}
@@ -1546,7 +1546,7 @@ export default function TeeSheetScreen() {
                       ➕ Add player from event societies, or ❌ remove from current field.
                     </AppText>
                     {addablePlayers.length === 0 ? (
-                      <AppText variant="small" color="tertiary" style={{ marginTop: spacing.xs }}>
+                      <AppText variant="small" color="muted" style={{ marginTop: spacing.xs }}>
                         All available players are already selected.
                       </AppText>
                     ) : (
@@ -1565,13 +1565,13 @@ export default function TeeSheetScreen() {
                         <AppText variant="bodyBold" color="primary">
                           {group.groupNumber === 0 ? "Unassigned" : `Group ${group.groupNumber}`}
                         </AppText>
-                        <AppText variant="small" color="tertiary">
+                        <AppText variant="small" color="muted">
                           {group.players.length} player{group.players.length !== 1 ? "s" : ""}
                         </AppText>
                       </View>
 
                       {group.players.length === 0 ? (
-                        <AppText variant="small" color="tertiary" style={{ fontStyle: "italic", paddingVertical: spacing.sm }}>
+                        <AppText variant="small" color="muted" style={{ fontStyle: "italic", paddingVertical: spacing.sm }}>
                           Empty group
                         </AppText>
                       ) : (
@@ -1673,7 +1673,7 @@ export default function TeeSheetScreen() {
               )}
 
               {/* Competition Holes */}
-              <AppText variant="h2" style={styles.sectionTitle}>Competition Holes</AppText>
+              <AppText variant="heading" style={styles.sectionTitle}>Competition Holes</AppText>
               <AppCard>
                 <View style={styles.formField}>
                   <AppText variant="caption" style={styles.label}>
@@ -1685,7 +1685,7 @@ export default function TeeSheetScreen() {
                     onChangeText={setNtpHolesInput}
                     keyboardType="numbers-and-punctuation"
                   />
-                  <AppText variant="small" color="tertiary">Comma-separated hole numbers</AppText>
+                  <AppText variant="small" color="muted">Comma-separated hole numbers</AppText>
                 </View>
 
                 <View style={styles.formField}>
@@ -1713,7 +1713,7 @@ export default function TeeSheetScreen() {
               {/* Course Setup Info */}
               {(hasMenTees || hasLadiesTees) && (
                 <>
-                  <AppText variant="h2" style={styles.sectionTitle}>Course Setup</AppText>
+                  <AppText variant="heading" style={styles.sectionTitle}>Course Setup</AppText>
                   <AppCard>
                     {hasMenTees && (
                       <View style={styles.teeRow}>
@@ -1738,11 +1738,11 @@ export default function TeeSheetScreen() {
                       </View>
                     )}
                     {selectedEvent.handicapAllowance != null && (
-                      <AppText variant="small" color="tertiary" style={{ marginTop: spacing.sm }}>
+                      <AppText variant="small" color="muted" style={{ marginTop: spacing.sm }}>
                         Handicap Allowance: {Math.round(selectedEvent.handicapAllowance * 100)}%
                       </AppText>
                     )}
-                    <AppText variant="small" color="tertiary" style={{ marginTop: spacing.xs }}>
+                    <AppText variant="small" color="muted" style={{ marginTop: spacing.xs }}>
                       WHS handicaps (HI, CH, PH) calculated per player&apos;s gender
                     </AppText>
                   </AppCard>
