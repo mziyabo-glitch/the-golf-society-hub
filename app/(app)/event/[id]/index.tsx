@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import debounce from "lodash.debounce";
 import { StyleSheet, View, Pressable, ScrollView, Modal } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
@@ -47,7 +47,6 @@ import {
   getPermissionsForMember,
   canManageEventPaymentsForSociety,
   canManageEventRosterForSociety,
-  isCaptain,
 } from "@/lib/rbac";
 import {
   getEventRegistrations,
@@ -138,10 +137,18 @@ export default function EventDetailScreen() {
 
   const [event, setEvent] = useState<EventDoc | null>(null);
   const [jointParticipatingSocieties, setJointParticipatingSocieties] = useState<EventSocietyInput[]>([]);
-  const [jointEntries, setJointEntries] = useState<JointEventEntry[]>([]);
+  const [, setJointEntries] = useState<JointEventEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const loadingRef = useRef(loading);
+  const eventRef = useRef(event);
+  useEffect(() => {
+    loadingRef.current = loading;
+  }, [loading]);
+  useEffect(() => {
+    eventRef.current = event;
+  }, [event]);
 
   // Edit mode state
   const [isEditing, setIsEditing] = useState(false);
@@ -167,8 +174,8 @@ export default function EventDetailScreen() {
   const [teesLoading, setTeesLoading] = useState(false);
   const [selectedTee, setSelectedTee] = useState<CourseTee | null>(null);
   const [selectedLadiesTee, setSelectedLadiesTee] = useState<CourseTee | null>(null);
-  const [teeStatus, setTeeStatus] = useState<"synced" | "manual" | "import_failed" | "pending_sync" | null>(null);
-  const [teeStatusMessage, setTeeStatusMessage] = useState<string | null>(null);
+  const [, setTeeStatus] = useState<"synced" | "manual" | "import_failed" | "pending_sync" | null>(null);
+  const [, setTeeStatusMessage] = useState<string | null>(null);
 
   // Manual tee entry (fallback when no tees from API)
   const [manualTeeName, setManualTeeName] = useState("");
@@ -237,8 +244,8 @@ export default function EventDetailScreen() {
     }
 
     try {
-      setRefreshing(!loading && !!event);
-      if (!event) setLoading(true);
+      setRefreshing(!loadingRef.current && !!eventRef.current);
+      if (!eventRef.current) setLoading(true);
       setError(null);
 
       // (a) Fetch base event — enrich from event_societies so is_joint / participant ids are not raw-row lies.
@@ -755,7 +762,7 @@ export default function EventDetailScreen() {
           setShowManualTee(false);
         }
       }
-    } catch (e: any) {
+    } catch (_e: unknown) {
       setSelectedCourseEdit({ id: "", name: hit.name });
       setFormCourseName(hit.name);
       setTees([]);
@@ -903,7 +910,6 @@ export default function EventDetailScreen() {
         : null
     );
 
-    const hasSavedTeeData = !!(event.teeName || event.par != null || event.courseRating != null || event.slopeRating != null);
     if (event.course_id) {
       setShowManualTee(!!(event.teeName || event.par != null || event.courseRating != null || event.slopeRating != null));
       loadTeesForEvent(event.course_id, event.tee_id ?? undefined, event);

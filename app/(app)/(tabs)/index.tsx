@@ -197,7 +197,7 @@ export default function HomeScreen() {
 
   // Event registration state
   const [myReg, setMyReg] = useState<EventRegistration | null>(null);
-  const [nextEventRegistrations, setNextEventRegistrations] = useState<EventRegistration[]>([]);
+  const [, setNextEventRegistrations] = useState<EventRegistration[]>([]);
   const [canonicalNextEventTee, setCanonicalNextEventTee] = useState<CanonicalTeeSheetResult | null>(null);
   /** Joint events: member rows for all societies in canonical groups (home only loads active society by default). */
   const [jointTeeMemberAugment, setJointTeeMemberAugment] = useState<MemberDoc[]>([]);

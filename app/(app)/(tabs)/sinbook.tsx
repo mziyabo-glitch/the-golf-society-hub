@@ -43,7 +43,6 @@ import { getColors, spacing, radius } from "@/lib/ui/theme";
 import { showAlert } from "@/lib/ui/alert";
 import { formatError, type FormattedError } from "@/lib/ui/formatError";
 import { useDestructiveConfirm } from "@/components/ui/DestructiveConfirmModal";
-
 // ============================================================================
 // Helpers
 // ============================================================================
@@ -77,11 +76,10 @@ function getStatusInfo(
 export default function SinbookHomeScreen() {
   const router = useRouter();
   const { member, userId, loading: bootstrapLoading } = useBootstrap();
+  const { destructiveConfirmModal, askConfirm } = useDestructiveConfirm();
   const colors = getColors();
   const tabBarHeight = useBottomTabBarHeight();
   const tabContentStyle = { paddingTop: 16, paddingBottom: tabBarHeight + 24 };
-  const { destructiveConfirmModal, askConfirm } = useDestructiveConfirm();
-
   const [sinbooks, setSinbooks] = useState<SinbookWithParticipants[]>([]);
   const [pendingInvites, setPendingInvites] = useState<SinbookWithParticipants[]>([]);
   const [winCounts, setWinCounts] = useState<Map<string, Map<string, number>>>(new Map());
@@ -417,29 +415,41 @@ export default function SinbookHomeScreen() {
           <AppText variant="captionBold" color="secondary" style={styles.sectionLabel}>AWAITING OPPONENT</AppText>
           {waitingList.map((sb) => {
             const myName = getMyName(sb);
+            const canDelete = canDeleteSinbookAsUser(sb, userId ?? undefined);
             return (
-              <Pressable key={sb.id} onPress={() => openRivalry(sb.id)}>
-                <AppCard style={styles.rivalryCard}>
-                  <View style={styles.cardBody}>
-                    <View style={styles.initialsRow}>
-                      <View style={[styles.initialCircle, { backgroundColor: colors.primary + "14" }]}>
-                        <AppText variant="captionBold" style={{ color: colors.primary }}>{getInitials(myName)}</AppText>
+              <AppCard key={sb.id} style={styles.rivalryCard}>
+                <View style={styles.cardRowWithAction}>
+                  <Pressable style={styles.cardPressMain} onPress={() => openRivalry(sb.id)}>
+                    <View style={styles.cardBody}>
+                      <View style={styles.initialsRow}>
+                        <View style={[styles.initialCircle, { backgroundColor: colors.primary + "14" }]}>
+                          <AppText variant="captionBold" style={{ color: colors.primary }}>{getInitials(myName)}</AppText>
+                        </View>
+                        <AppText variant="small" color="tertiary">vs</AppText>
+                        <View style={[styles.initialCircle, { backgroundColor: colors.backgroundTertiary }]}>
+                          <Feather name="user-plus" size={12} color={colors.textTertiary} />
+                        </View>
                       </View>
-                      <AppText variant="small" color="tertiary">vs</AppText>
-                      <View style={[styles.initialCircle, { backgroundColor: colors.backgroundTertiary }]}>
-                        <Feather name="user-plus" size={12} color={colors.textTertiary} />
+                      <View style={{ flex: 1 }}>
+                        <AppText variant="bodyBold" numberOfLines={1}>{sb.title?.trim() || "Rivalry"}</AppText>
+                        {sb.stake && <AppText variant="small" color="tertiary" numberOfLines={1}>{sb.stake}</AppText>}
+                      </View>
+                      <View style={[styles.statusChip, { backgroundColor: colors.warning + "14" }]}>
+                        <AppText variant="small" style={{ color: colors.warning, fontWeight: "700" }}>Waiting</AppText>
                       </View>
                     </View>
-                    <View style={{ flex: 1 }}>
-                      <AppText variant="bodyBold" numberOfLines={1}>{sb.title?.trim() || "Rivalry"}</AppText>
-                      {sb.stake && <AppText variant="small" color="tertiary" numberOfLines={1}>{sb.stake}</AppText>}
-                    </View>
-                    <View style={[styles.statusChip, { backgroundColor: colors.warning + "14" }]}>
-                      <AppText variant="small" style={{ color: colors.warning, fontWeight: "700" }}>Waiting</AppText>
-                    </View>
-                  </View>
-                </AppCard>
-              </Pressable>
+                  </Pressable>
+                  {canDelete && (
+                    <Pressable
+                      style={styles.cardTrashHit}
+                      onPress={() => void handleDeleteSinbookFromList(sb)}
+                      accessibilityLabel="Delete rivalry"
+                    >
+                      <Feather name="trash-2" size={18} color={colors.error} />
+                    </Pressable>
+                  )}
+                </View>
+              </AppCard>
             );
           })}
         </View>
@@ -455,36 +465,48 @@ export default function SinbookHomeScreen() {
             const rivalName = rival.hasRival ? (rival.name ?? "Opponent") : "Awaiting opponent";
             const status = getStatusInfo(myWins, rivalWins, rival.hasRival);
             const chipColor = statusColor[status.kind];
+            const canDelete = canDeleteSinbookAsUser(sb, userId ?? undefined);
 
             return (
-              <Pressable key={sb.id} onPress={() => openRivalry(sb.id)}>
-                <AppCard style={styles.rivalryCard}>
-                  <View style={styles.cardBody}>
-                    <View style={styles.initialsRow}>
-                      <View style={[styles.initialCircle, { backgroundColor: colors.primary + "14" }]}>
-                        <AppText variant="captionBold" style={{ color: colors.primary }}>{getInitials(myName)}</AppText>
+              <AppCard key={sb.id} style={styles.rivalryCard}>
+                <View style={styles.cardRowWithAction}>
+                  <Pressable style={styles.cardPressMain} onPress={() => openRivalry(sb.id)}>
+                    <View style={styles.cardBody}>
+                      <View style={styles.initialsRow}>
+                        <View style={[styles.initialCircle, { backgroundColor: colors.primary + "14" }]}>
+                          <AppText variant="captionBold" style={{ color: colors.primary }}>{getInitials(myName)}</AppText>
+                        </View>
+                        <AppText variant="small" color="tertiary">vs</AppText>
+                        <View style={[styles.initialCircle, { backgroundColor: colors.error + "10" }]}>
+                          <AppText variant="captionBold" style={{ color: colors.error }}>{getInitials(rivalName)}</AppText>
+                        </View>
                       </View>
-                      <AppText variant="small" color="tertiary">vs</AppText>
-                      <View style={[styles.initialCircle, { backgroundColor: colors.error + "10" }]}>
-                        <AppText variant="captionBold" style={{ color: colors.error }}>{getInitials(rivalName)}</AppText>
+                      <View style={{ flex: 1 }}>
+                        <AppText variant="bodyBold" numberOfLines={1}>
+                          {sb.title?.trim() || "Rivalry"}
+                        </AppText>
+                        <AppText variant="small" color="secondary" style={{ marginTop: 2 }}>
+                          {rivalName}
+                        </AppText>
+                        <AppText variant="small" style={{ color: chipColor, fontWeight: "700", marginTop: 1 }}>
+                          {status.label}
+                        </AppText>
+                        {sb.stake && <AppText variant="small" color="tertiary" numberOfLines={1} style={{ marginTop: 1 }}>{sb.stake}</AppText>}
                       </View>
+                      <Feather name="chevron-right" size={18} color={colors.textTertiary} />
                     </View>
-                    <View style={{ flex: 1 }}>
-                      <AppText variant="bodyBold" numberOfLines={1}>
-                        {sb.title?.trim() || "Rivalry"}
-                      </AppText>
-                      <AppText variant="small" color="secondary" style={{ marginTop: 2 }}>
-                        {rivalName}
-                      </AppText>
-                      <AppText variant="small" style={{ color: chipColor, fontWeight: "700", marginTop: 1 }}>
-                        {status.label}
-                      </AppText>
-                      {sb.stake && <AppText variant="small" color="tertiary" numberOfLines={1} style={{ marginTop: 1 }}>{sb.stake}</AppText>}
-                    </View>
-                    <Feather name="chevron-right" size={18} color={colors.textTertiary} />
-                  </View>
-                </AppCard>
-              </Pressable>
+                  </Pressable>
+                  {canDelete && (
+                    <Pressable
+                      style={styles.cardTrashHit}
+                      onPress={() => void handleDeleteSinbookFromList(sb)}
+                      accessibilityLabel="Delete rivalry"
+                    >
+                      <Feather name="trash-2" size={18} color={colors.error} />
+                    </Pressable>
+                  )}
+                </View>
+              </AppCard>
             );
           })}
         </View>
@@ -498,6 +520,7 @@ export default function SinbookHomeScreen() {
           message="Start a rivalry with a mate, or join one using a code."
         />
       )}
+      {destructiveConfirmModal}
     </Screen>
   );
 }

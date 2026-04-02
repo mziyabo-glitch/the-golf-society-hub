@@ -16,9 +16,6 @@ import {
   Pressable,
 } from "react-native";
 import { Feather } from "@expo/vector-icons";
-
-const masterLogo = require("@/assets/images/master-logo.png");
-
 import { Screen } from "@/components/ui/Screen";
 import { AppText } from "@/components/ui/AppText";
 import { AppCard } from "@/components/ui/AppCard";
@@ -37,6 +34,8 @@ import { useBootstrap } from "@/lib/useBootstrap";
 import { useRouter } from "expo-router";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
 import { blurWebActiveElement } from "@/lib/ui/focus";
+
+const masterLogo = require("@/assets/images/master-logo.png");
 
 type Mode = "signIn" | "signUp" | "forgotPassword" | "magicLink";
 
@@ -180,7 +179,7 @@ export function AuthScreen() {
               Sign in with magic link
             </AppText>
             <AppText variant="body" color="secondary" style={styles.brandSubtitle}>
-              Enter your email and we'll send you a sign-in link.
+              Enter your email and we’ll send you a sign-in link.
             </AppText>
           </View>
 
@@ -244,7 +243,7 @@ export function AuthScreen() {
               Reset Password
             </AppText>
             <AppText variant="body" color="secondary" style={styles.brandSubtitle}>
-              Enter your email and we'll send you a reset link.
+              Enter your email and we’ll send you a reset link.
             </AppText>
           </View>
 

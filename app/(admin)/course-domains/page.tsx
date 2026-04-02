@@ -5,7 +5,7 @@
  * Shows course, domain, confidence, status; approve/reject actions.
  */
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { View, StyleSheet, Pressable, Linking, ActivityIndicator } from "react-native";
 
 import { Screen } from "@/components/ui/Screen";
@@ -43,7 +43,7 @@ export default function CourseDomainsPage() {
   const [offset, setOffset] = useState(0);
   const [acting, setActing] = useState<string | null>(null);
 
-  const load = async () => {
+  const load = useCallback(async () => {
     setLoading(true);
     try {
       const { data: courseRows, error: e1 } = await supabase
@@ -86,11 +86,11 @@ export default function CourseDomainsPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [offset]);
 
   useEffect(() => {
     load();
-  }, [offset]);
+  }, [load]);
 
   const handleApprove = async (domain: CourseDomain, courseId: string) => {
     const key = `${domain.id}-approve`;

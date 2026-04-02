@@ -312,7 +312,7 @@ export default function WeatherScreen() {
       <Screen style={{ backgroundColor: colors.backgroundSecondary }} contentStyle={tabContentStyle}>
         <View style={sheet.titleRow}>
           <AppText variant="h2" style={{ flex: 1, marginRight: spacing.sm }}>
-            Today's Playability
+            Today’s Playability
           </AppText>
           <HeaderSettingsPill onPress={openSettings} />
         </View>
@@ -328,7 +328,7 @@ export default function WeatherScreen() {
       <Screen style={{ backgroundColor: colors.backgroundSecondary }} contentStyle={tabContentStyle}>
         <View style={sheet.titleRow}>
           <AppText variant="h2" style={{ flex: 1, marginRight: spacing.sm }}>
-            Today's Playability
+            Today’s Playability
           </AppText>
           <HeaderSettingsPill onPress={openSettings} />
         </View>
@@ -356,7 +356,7 @@ export default function WeatherScreen() {
         <View style={{ marginBottom: spacing.md }}>
           <View style={[sheet.titleRow, { marginBottom: spacing.xs }]}>
             <AppText variant="h2" style={{ flex: 1, marginRight: spacing.sm }}>
-              Today's Playability
+              Today’s Playability
             </AppText>
             <HeaderSettingsPill onPress={openSettings} />
           </View>

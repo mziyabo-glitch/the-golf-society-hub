@@ -39,8 +39,6 @@ import { getColors, premiumTokens, spacing, type TypographyTokens } from "@/lib/
 import { useScaledTypography } from "@/lib/ui/fontScaleContext";
 import { getSocietyLogoUrl } from "@/lib/societyLogo";
 import { exportOomPdf, exportOomResultsLogPdf } from "@/lib/pdf/oomPdf";
-import { HeaderSettingsPill } from "@/components/navigation/HeaderSettingsPill";
-import { blurWebActiveElement } from "@/lib/ui/focus";
 
 
 // ============================================================================
@@ -233,15 +231,6 @@ export default function LeaderboardScreen() {
       setExporting(false);
     }, [societyId, loadData])
   );
-
-  const openSettings = useCallback(() => {
-    try {
-      blurWebActiveElement();
-    } catch {
-      /* noop */
-    }
-    router.push("/(app)/(tabs)/settings");
-  }, [router]);
 
   const uniqueOOMEventIds = new Set(resultsLog.map((r) => r.eventId));
   const oomEventCount = uniqueOOMEventIds.size;

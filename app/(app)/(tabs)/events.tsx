@@ -33,7 +33,7 @@ import { isJointEventFromMeta } from "@/lib/jointEventAccess";
 import { getMySocieties } from "@/lib/db_supabase/mySocietiesRepo";
 import { ParticipatingSocietiesSection } from "@/components/event/ParticipatingSocietiesSection";
 import type { EventSocietyInput } from "@/lib/db_supabase/jointEventTypes";
-import { type CourseTee, getCourseByApiId, getCourseMetaById, getTeesByCourseId, upsertTeesFromApi } from "@/lib/db_supabase/courseRepo";
+import { type CourseTee, getCourseByApiId, getTeesByCourseId } from "@/lib/db_supabase/courseRepo";
 import { searchCourses as searchCoursesApi, getCourseById, type ApiCourseSearchResult } from "@/lib/golfApi";
 import { importCourse, type ImportedCourse } from "@/lib/importCourse";
 import { CourseTeeSelector } from "@/components/CourseTeeSelector";
@@ -178,7 +178,7 @@ export default function EventsScreen() {
         ]);
       }
     }
-  }, [isJointEvent, societyId, mySocieties]);
+  }, [isJointEvent, societyId, mySocieties, participatingSocieties.length]);
 
   useEffect(() => {
     if (paramsHandledRef.current) return;
