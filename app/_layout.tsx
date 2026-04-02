@@ -1,3 +1,4 @@
+import "@/lib/ui/themeSplash";
 import { useEffect, useRef } from "react";
 import { Stack, usePathname, useRouter, useSegments } from "expo-router";
 import { StyleSheet, View } from "react-native";
@@ -9,6 +10,7 @@ import { AppCard } from "@/components/ui/AppCard";
 import { AppText } from "@/components/ui/AppText";
 import { PrimaryButton } from "@/components/ui/Button";
 import { getColors, spacing } from "@/lib/ui/theme";
+import { ThemeProvider, useTheme } from "@/lib/ui/themeContext";
 import { FontScaleProvider } from "@/lib/ui/fontScaleContext";
 import { consumePendingInviteToken } from "@/lib/sinbookInviteToken";
 import { consumePendingRivalryJoinCode } from "@/lib/pendingRivalryJoinCode";
@@ -46,6 +48,7 @@ function isToolRoute(pathname?: string, seg0?: string): boolean {
 
 function RootNavigator() {
   const { loading, authRestoring, error, isSignedIn, activeSocietyId, profile, refresh } = useBootstrap();
+  const { ready: themeReady } = useTheme();
   const segments = useSegments();
   const pathname = usePathname();
   const router = useRouter();
@@ -255,7 +258,7 @@ function RootNavigator() {
     isPublicPath ||
     segments[0] === "reset-password" ||
     segments[0] === "privacy-policy";
-  const showLoading = loading || authRestoring;
+  const showLoading = loading || authRestoring || !themeReady;
   const showAuth = !loading && !authRestoring && !isSignedIn && !isPublicRoute;
   const showError = !loading && !authRestoring && !showAuth && !!error;
 
@@ -294,10 +297,12 @@ function RootNavigator() {
 
 export default function RootLayout() {
   return (
-    <FontScaleProvider>
-      <BootstrapProvider>
-        <RootNavigator />
-      </BootstrapProvider>
-    </FontScaleProvider>
+    <ThemeProvider>
+      <FontScaleProvider>
+        <BootstrapProvider>
+          <RootNavigator />
+        </BootstrapProvider>
+      </FontScaleProvider>
+    </ThemeProvider>
   );
 }

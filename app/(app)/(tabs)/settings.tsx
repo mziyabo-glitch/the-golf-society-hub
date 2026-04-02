@@ -29,6 +29,7 @@ import {
 } from "@/lib/societyLogo";
 import { getColors, spacing, radius, typography } from "@/lib/ui/theme";
 import { TextSizeSettingsSection } from "@/components/ui/TextSizeSettingsSection";
+import { ThemeSettingsSection } from "@/components/ui/ThemeSettingsSection";
 import { confirmDestructive, showAlert } from "@/lib/ui/alert";
 import { getSupabaseEnv, getSupabaseProjectRefSuffix } from "@/lib/supabaseEnv";
 import { isPlatformAdmin, listSocieties, reappointCaptain, type AdminSocietyRow } from "@/lib/db_supabase/adminRepo";
@@ -482,6 +483,7 @@ export default function SettingsScreen() {
         </Pressable>
       </AppCard>
 
+      <ThemeSettingsSection />
       <TextSizeSettingsSection />
 
       <AppText variant="h2" style={styles.sectionTitle}>Legal</AppText>
@@ -999,6 +1001,7 @@ export default function SettingsScreen() {
       </AppCard>
 
       <AppText variant="h2" style={styles.sectionTitle}>App settings</AppText>
+      <ThemeSettingsSection />
       <TextSizeSettingsSection />
       <AppCard padding="sm" style={{ marginTop: spacing.sm }}>
         <Pressable

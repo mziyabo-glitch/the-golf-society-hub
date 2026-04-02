@@ -4,8 +4,43 @@
  */
 
 import type { TextStyle } from "react-native";
+import { Appearance } from "react-native";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 
-export type ThemeMode = "light" | "dark";
+/** Stored user choice — may follow the OS when `system`. */
+export type ThemePreference = "light" | "dark" | "system";
+
+/** Keys into `colors` (resolved palette). */
+export type ThemePaletteMode = "light" | "dark";
+
+/** @deprecated Use `ThemePreference` — kept for older call sites. */
+export type ThemeMode = ThemePreference;
+
+const THEME_STORAGE_KEY = "@golf_society_hub_theme_preference";
+
+export const DEFAULT_THEME_PREFERENCE: ThemePreference = "light";
+
+/** Validate a stored string; returns null if unknown. */
+export function parseThemePreference(raw: string | null | undefined): ThemePreference | null {
+  if (raw === "light" || raw === "dark" || raw === "system") return raw;
+  return null;
+}
+
+/**
+ * Web: read the same `localStorage` key `@react-native-async-storage/async-storage` uses on web,
+ * synchronously before the first paint. Removes light→dark flash on reload when a theme is saved.
+ * Native: returns null (AsyncStorage has no sync API — use native splash hold instead).
+ */
+export function peekStoredThemePreferenceSync(): ThemePreference | null {
+  if (typeof globalThis === "undefined") return null;
+  const win = globalThis as { window?: { localStorage?: Storage } };
+  if (typeof win.window === "undefined" || !win.window?.localStorage) return null;
+  try {
+    return parseThemePreference(win.window.localStorage.getItem(THEME_STORAGE_KEY));
+  } catch {
+    return null;
+  }
+}
 
 /**
  * Light premium golf palette:
@@ -243,49 +278,173 @@ export const buttonHeights = {
   lg: 52,
 } as const;
 
-// Default theme (can be changed by user preference)
-let currentTheme: ThemeMode = "light";
+// ---------------------------------------------------------------------------
+// Runtime preference + persistence (AsyncStorage, same pattern as text size)
+// ---------------------------------------------------------------------------
+
+let themePreference: ThemePreference = DEFAULT_THEME_PREFERENCE;
 
 /**
- * Get current theme mode
+ * Apply preference from `peekStoredThemePreferenceSync` without notifying subscribers, so the first
+ * `getColors()` matches storage. Call once during `ThemeProvider` mount (before paint).
  */
-export function getThemeMode(): ThemeMode {
-  return currentTheme;
+export function runSyncThemeHydration(): ThemePreference | null {
+  const peeked = peekStoredThemePreferenceSync();
+  if (peeked) {
+    themePreference = peeked;
+  }
+  return peeked;
+}
+
+const themePreferenceListeners = new Set<() => void>();
+
+export function subscribeThemePreference(listener: () => void): () => void {
+  themePreferenceListeners.add(listener);
+  return () => {
+    themePreferenceListeners.delete(listener);
+  };
+}
+
+function notifyThemePreferenceListeners(): void {
+  themePreferenceListeners.forEach((fn) => {
+    try {
+      fn();
+    } catch {
+      /* ignore subscriber errors */
+    }
+  });
+}
+
+function getSystemColorScheme(): ThemePaletteMode {
+  const s = Appearance.getColorScheme();
+  return s === "dark" ? "dark" : "light";
 }
 
 /**
- * Set theme mode (does not persist - use storage for persistence)
+ * Map preference (+ optional explicit system scheme) to a palette mode.
  */
-export function setThemeMode(mode: ThemeMode): void {
-  currentTheme = mode;
+export function resolvePaletteMode(
+  preference: ThemePreference,
+  systemScheme: ThemePaletteMode = getSystemColorScheme(),
+): ThemePaletteMode {
+  if (preference === "system") return systemScheme;
+  return preference;
+}
+
+/** Current in-memory preference (light / dark / system). */
+export function getThemePreference(): ThemePreference {
+  return themePreference;
+}
+
+/** Resolved `light` | `dark` for tokens and `getColors()`. */
+export function getResolvedPaletteMode(): ThemePaletteMode {
+  return resolvePaletteMode(themePreference);
+}
+
+function applyInMemoryThemePreference(next: ThemePreference): void {
+  themePreference = next;
+  notifyThemePreferenceListeners();
 }
 
 /**
- * Get colors for current theme
+ * Update preference in memory only (no storage). Triggers UI subscribers.
+ * Prefer `setStoredTheme` from settings / bootstrap.
+ */
+export function setThemePreference(next: ThemePreference): void {
+  const p = parseThemePreference(next);
+  if (!p) return;
+  applyInMemoryThemePreference(p);
+}
+
+/**
+ * Read validated preference from storage without changing in-memory state.
+ * On failure or invalid value, returns `DEFAULT_THEME_PREFERENCE`.
+ */
+export async function getStoredTheme(): Promise<ThemePreference> {
+  try {
+    const raw = await AsyncStorage.getItem(THEME_STORAGE_KEY);
+    const parsed = parseThemePreference(raw);
+    if (parsed) return parsed;
+  } catch {
+    /* ignore */
+  }
+  return DEFAULT_THEME_PREFERENCE;
+}
+
+/**
+ * Apply preference from storage and notify listeners. Call once at startup (see `ThemeProvider`).
+ */
+export async function resolveInitialTheme(): Promise<{
+  preference: ThemePreference;
+  resolved: ThemePaletteMode;
+}> {
+  try {
+    const preference = await getStoredTheme();
+    applyInMemoryThemePreference(preference);
+    return { preference, resolved: getResolvedPaletteMode() };
+  } catch {
+    applyInMemoryThemePreference(DEFAULT_THEME_PREFERENCE);
+    return {
+      preference: DEFAULT_THEME_PREFERENCE,
+      resolved: getResolvedPaletteMode(),
+    };
+  }
+}
+
+/**
+ * Apply immediately, then persist asynchronously (memory first for snappy UI).
+ */
+export async function setStoredTheme(next: ThemePreference): Promise<void> {
+  const p = parseThemePreference(next);
+  if (!p) return;
+  applyInMemoryThemePreference(p);
+  try {
+    await AsyncStorage.setItem(THEME_STORAGE_KEY, next);
+  } catch {
+    /* keep in-memory value; persistence best-effort */
+  }
+}
+
+/**
+ * @deprecated Use `getThemePreference()` for the full choice, or `getResolvedPaletteMode()` for palette keys.
+ */
+export function getThemeMode(): ThemePreference {
+  return getThemePreference();
+}
+
+/**
+ * @deprecated Use `setThemePreference` (memory) or `setStoredTheme` (persist).
+ */
+export function setThemeMode(mode: ThemePreference): void {
+  setThemePreference(mode);
+}
+
+/**
+ * Get colors for the resolved palette (light or dark).
  */
 export function getColors() {
-  return colors[currentTheme];
+  return colors[getResolvedPaletteMode()];
 }
 
 /**
- * Get color value by key for current theme
+ * Get color value by key for the resolved palette.
  */
 export function getColor(key: keyof typeof colors.light): string {
-  return colors[currentTheme][key];
+  return colors[getResolvedPaletteMode()][key];
 }
 
 /**
- * Load theme from storage (use in screens with useFocusEffect)
+ * Load theme from storage into memory (startup / focus refresh).
  */
-export async function loadThemeFromStorage(): Promise<ThemeMode> {
-  setThemeMode("light");
-  return "light";
+export async function loadThemeFromStorage(): Promise<ThemePreference> {
+  const { preference } = await resolveInitialTheme();
+  return preference;
 }
 
 /**
- * Save theme to storage
+ * Persist theme and apply in memory.
  */
-export async function saveThemeToStorage(mode: ThemeMode): Promise<void> {
-  setThemeMode(mode);
+export async function saveThemeToStorage(mode: ThemePreference): Promise<void> {
+  await setStoredTheme(mode);
 }
 
