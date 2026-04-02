@@ -251,6 +251,7 @@ export default function EventPlayersScreen() {
       renderedTick: selectedPlayerIds.has(String(m.id)),
     }));
     console.log("[players] tick status sample:", { eventId, societyId, memberCount: members.length, selectedCount: selectedPlayerIds.size, sample });
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- dev-only: avoid members/Set identity churn spam
   }, [eventId, societyId, members.length, selectedPlayerIds.size]);
 
   useEffect(() => {

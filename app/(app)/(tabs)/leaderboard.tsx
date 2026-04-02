@@ -349,7 +349,7 @@ export default function LeaderboardScreen() {
         style={styles.container}
         contentContainerStyle={[
           styles.scrollContent,
-          { paddingTop: 16, paddingBottom: tabBarHeight + 24 },
+          { paddingTop: spacing.md, paddingBottom: tabBarHeight + spacing.lg },
         ]}
         showsVerticalScrollIndicator={false}
       >
@@ -384,7 +384,7 @@ export default function LeaderboardScreen() {
           <AppText variant="title" color="default">
             Order of Merit
           </AppText>
-          <AppText variant="bodySmall" color="secondary" style={styles.seasonText}>
+          <AppText variant="subheading" color="secondary" style={styles.seasonText}>
             {seasonLabel}
           </AppText>
           {!needsLicence ? (
@@ -819,10 +819,10 @@ function makeLeaderboardStyles(
     marginBottom: spacing.lg,
   },
   seasonText: {
-    marginTop: 4,
+    marginTop: spacing.xs,
   },
   tabHint: {
-    marginTop: 6,
+    marginTop: spacing.sm,
   },
 
   // Tabs

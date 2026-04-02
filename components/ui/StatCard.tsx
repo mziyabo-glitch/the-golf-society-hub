@@ -4,7 +4,7 @@
 
 import { StyleSheet, View, Pressable, type PressableStateCallbackType } from "react-native";
 import { Feather } from "@expo/vector-icons";
-import { AppText } from "./AppText";
+import { AppText, type TextColorRole } from "./AppText";
 import { Card } from "./Card";
 import { getColors, spacing, iconSize } from "@/lib/ui/theme";
 
@@ -12,11 +12,13 @@ type StatCardProps = {
   icon: keyof typeof Feather.glyphMap;
   label: string;
   value: string;
+  /** Emphasise the value (e.g. positive/negative balance). */
+  valueColor?: TextColorRole;
   detail?: string;
   onPress?: () => void;
 };
 
-export function StatCard({ icon, label, value, detail, onPress }: StatCardProps) {
+export function StatCard({ icon, label, value, valueColor = "default", detail, onPress }: StatCardProps) {
   const colors = getColors();
   const pressStyle = ({ pressed }: PressableStateCallbackType) => [
     styles.pressable,
@@ -31,11 +33,11 @@ export function StatCard({ icon, label, value, detail, onPress }: StatCardProps)
       <AppText variant="small" color="secondary" numberOfLines={1}>
         {label}
       </AppText>
-      <AppText variant="heading" style={styles.value}>
+      <AppText variant="heading" color={valueColor} style={styles.value}>
         {value}
       </AppText>
       {detail && (
-        <AppText variant="small" color="tertiary" numberOfLines={1}>
+        <AppText variant="small" color="muted" numberOfLines={1}>
           {detail}
         </AppText>
       )}

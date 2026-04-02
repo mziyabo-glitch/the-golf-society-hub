@@ -5,6 +5,7 @@
 import { Pressable, StyleSheet, View, useWindowDimensions } from "react-native";
 import { Feather } from "@expo/vector-icons";
 import { AppText } from "@/components/ui/AppText";
+import { StatusBadge } from "@/components/ui/StatusBadge";
 import { SocietyLogoImage } from "@/components/ui/SocietyLogoImage";
 import { getColors, spacing, premiumTokens, radius } from "@/lib/ui/theme";
 
@@ -82,11 +83,7 @@ export function DashboardMemberIdentityCard({
       </View>
 
       <View style={[styles.metaRow, narrow && styles.metaRowStack]}>
-        <View style={[styles.rolePill, { backgroundColor: `${colors.primary}10`, borderColor: `${colors.primary}30` }]}>
-          <AppText variant="captionBold" style={{ color: colors.primary }} numberOfLines={1}>
-            {roleLabel}
-          </AppText>
-        </View>
+        <StatusBadge label={roleLabel} tone="primary" />
 
         <View style={[styles.hiChip, { backgroundColor: `${colors.primary}0C`, borderColor: `${colors.primary}22` }]}>
           <AppText variant="captionBold" style={[styles.hiChipText, { color: colors.text }]} numberOfLines={1}>
@@ -121,7 +118,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm + 2,
-    marginBottom: spacing.sm + 2,
+    marginBottom: spacing.md,
   },
   topRow: {
     flexDirection: "row",
@@ -163,12 +160,6 @@ const styles = StyleSheet.create({
   },
   metaRowStack: {
     alignItems: "flex-start",
-  },
-  rolePill: {
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 6,
-    borderRadius: radius.full,
-    borderWidth: 1,
   },
   hiChip: {
     paddingHorizontal: spacing.sm,

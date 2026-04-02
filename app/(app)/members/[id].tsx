@@ -21,6 +21,7 @@ import { AppInput } from "@/components/ui/AppInput";
 import { PrimaryButton, SecondaryButton, DestructiveButton } from "@/components/ui/Button";
 import { LoadingState } from "@/components/ui/LoadingState";
 import { EmptyState } from "@/components/ui/EmptyState";
+import { StatusBadge } from "@/components/ui/StatusBadge";
 import { useBootstrap } from "@/lib/useBootstrap";
 import {
   getMember,
@@ -436,11 +437,7 @@ export default function MemberDetailScreen() {
               {member.displayName || member.name || "Unknown"}
             </AppText>
             <View style={styles.badgeRow}>
-              <View style={[styles.roleBadge, { backgroundColor: colors.backgroundTertiary }]}>
-                <AppText variant="caption" color="secondary">
-                  {formatRole(member.role)}
-                </AppText>
-              </View>
+              <StatusBadge label={formatRole(member.role)} tone="neutral" />
               {member.gender && (
                 <View
                   style={[
@@ -459,16 +456,10 @@ export default function MemberDetailScreen() {
                   </AppText>
                 </View>
               )}
-              {!member.user_id && (
-                <View style={[styles.roleBadge, { backgroundColor: colors.warning + "22" }]}>
-                  <AppText variant="caption" style={{ color: colors.warning }}>
-                    App not linked
-                  </AppText>
-                </View>
-              )}
+              {!member.user_id && <StatusBadge label="App not linked" tone="warning" />}
             </View>
             {!member.user_id && (
-              <AppText variant="small" color="tertiary" style={{ marginTop: spacing.xs, textAlign: "center", paddingHorizontal: spacing.md }}>
+              <AppText variant="small" color="muted" style={{ marginTop: spacing.xs, textAlign: "center", paddingHorizontal: spacing.md }}>
                 ManCo added this member before they had an account. When they join with the society code (use the same name or email you saved), their login attaches here and all history stays on this record.
               </AppText>
             )}
@@ -511,7 +502,7 @@ export default function MemberDetailScreen() {
             <AppText variant="captionBold" style={styles.label}>
               Gender
             </AppText>
-            <AppText variant="small" color="tertiary" style={{ marginBottom: spacing.xs }}>
+            <AppText variant="small" color="muted" style={{ marginBottom: spacing.xs }}>
               Required for WHS handicap calculations with different tees
             </AppText>
             <View style={styles.genderRow}>

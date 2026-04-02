@@ -851,6 +851,7 @@ export default function EventPointsScreen() {
     eventId,
     societyId,
     event,
+    players.length,
     playersWithDayPoints,
     saveAction,
     router,

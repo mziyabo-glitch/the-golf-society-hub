@@ -181,8 +181,8 @@ export default function HomeScreen() {
   const colors = getColors();
   const tabBarHeight = useBottomTabBarHeight();
   const tabContentStyle = {
-    paddingTop: 16,
-    paddingBottom: tabBarHeight + 24,
+    paddingTop: spacing.lg,
+    paddingBottom: tabBarHeight + spacing.lg,
   };
 
   // Data state
@@ -1095,8 +1095,8 @@ function PersonalModeHome({
 }) {
   const tabBarHeight = useBottomTabBarHeight();
   const tabContentStyle = {
-    paddingTop: 16,
-    paddingBottom: tabBarHeight + 24,
+    paddingTop: spacing.lg,
+    paddingBottom: tabBarHeight + spacing.lg,
   };
   const [nudgeDismissed, setNudgeDismissed] = useState(false);
   const { profile: pmProfile } = useBootstrap();

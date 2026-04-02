@@ -28,7 +28,7 @@ import {
   type EventFinanceSummary,
 } from "@/lib/db_supabase/eventRepo";
 import { getPermissionsForMember } from "@/lib/rbac";
-import { getColors, spacing } from "@/lib/ui/theme";
+import { getColors, iconSize, spacing } from "@/lib/ui/theme";
 import { guard } from "@/lib/guards";
 
 // Format pence to pounds string (e.g., 5000 -> "£50.00")
@@ -165,11 +165,11 @@ export default function EventFinanceScreen() {
       <Screen>
         <View style={styles.header}>
           <SecondaryButton onPress={() => goBack(router, "/(app)/(tabs)/settings")} size="sm">
-            <Feather name="arrow-left" size={16} color={colors.text} /> Back
+            <Feather name="arrow-left" size={iconSize.sm} color={colors.text} /> Back
           </SecondaryButton>
         </View>
         <EmptyState
-          icon={<Feather name="lock" size={32} color={colors.textTertiary} />}
+          icon={<Feather name="lock" size={iconSize.xl} color={colors.textTertiary} />}
           title="Access Restricted"
           message="Only Captain or Treasurer can manage event finances."
         />
@@ -182,18 +182,18 @@ export default function EventFinanceScreen() {
       {/* Header */}
       <View style={styles.header}>
         <SecondaryButton onPress={() => goBack(router, "/(app)/(tabs)/settings")} size="sm">
-          <Feather name="arrow-left" size={16} color={colors.text} /> Back
+          <Feather name="arrow-left" size={iconSize.sm} color={colors.text} /> Back
         </SecondaryButton>
       </View>
 
       <AppText variant="title" style={styles.title}>
-        <Feather name="bar-chart-2" size={24} color={colors.primary} /> Event Finances
+        <Feather name="bar-chart-2" size={iconSize.lg} color={colors.primary} /> Event Finances
       </AppText>
 
       <ScrollView showsVerticalScrollIndicator={false}>
         {/* Totals Summary */}
         <AppCard style={styles.summaryCard}>
-          <AppText variant="h2" style={{ marginBottom: spacing.sm }}>
+          <AppText variant="heading" style={{ marginBottom: spacing.sm }}>
             Overall Summary
           </AppText>
           <View style={styles.summaryGrid}>
@@ -201,7 +201,7 @@ export default function EventFinanceScreen() {
               <AppText variant="caption" color="secondary">
                 Total Income
               </AppText>
-              <AppText variant="h1" style={{ color: colors.success }}>
+              <AppText variant="h1" color="success">
                 {formatPence(totalIncome)}
               </AppText>
             </View>
@@ -209,7 +209,7 @@ export default function EventFinanceScreen() {
               <AppText variant="caption" color="secondary">
                 Total Costs
               </AppText>
-              <AppText variant="h1" style={{ color: colors.error }}>
+              <AppText variant="h1" color="danger">
                 {formatPence(totalCosts)}
               </AppText>
             </View>
@@ -217,10 +217,7 @@ export default function EventFinanceScreen() {
               <AppText variant="caption" color="secondary">
                 Net
               </AppText>
-              <AppText
-                variant="h1"
-                style={{ color: totalNet >= 0 ? colors.success : colors.error }}
-              >
+              <AppText variant="h1" color={totalNet >= 0 ? "success" : "danger"}>
                 {formatPenceWithSign(totalNet)}
               </AppText>
             </View>
@@ -229,7 +226,7 @@ export default function EventFinanceScreen() {
 
         {/* Events List */}
         <View style={styles.eventsHeader}>
-          <AppText variant="h2">Events</AppText>
+          <AppText variant="heading">Events</AppText>
           <AppText variant="caption" color="secondary">
             {events.length} event{events.length !== 1 ? "s" : ""}
           </AppText>
@@ -267,13 +264,13 @@ export default function EventFinanceScreen() {
                   </View>
                   {!isEditing && (
                     <SecondaryButton onPress={() => handleEdit(event)} size="sm">
-                      <Feather name="edit-2" size={14} color={colors.text} />
+                      <Feather name="edit-2" size={iconSize.xs} color={colors.text} />
                     </SecondaryButton>
                   )}
                 </View>
 
                 {isEditing ? (
-                  <View style={styles.editForm}>
+                  <View style={[styles.editForm, { borderTopColor: colors.borderLight }]}>
                     <View style={styles.inputRow}>
                       <View style={styles.inputGroup}>
                         <AppText variant="caption" color="secondary">
@@ -331,12 +328,12 @@ export default function EventFinanceScreen() {
                     </View>
                   </View>
                 ) : (
-                  <View style={styles.financeRow}>
+                  <View style={[styles.financeRow, { borderTopColor: colors.borderLight }]}>
                     <View style={styles.financeItem}>
                       <AppText variant="small" color="secondary">
                         Income
                       </AppText>
-                      <AppText variant="body" style={{ color: colors.success }}>
+                      <AppText variant="body" color={hasFinance ? "success" : "muted"}>
                         {hasFinance ? formatPence(event.incomePence) : "-"}
                       </AppText>
                     </View>
@@ -345,7 +342,7 @@ export default function EventFinanceScreen() {
                       <AppText variant="small" color="secondary">
                         Costs
                       </AppText>
-                      <AppText variant="body" style={{ color: colors.error }}>
+                      <AppText variant="body" color={hasFinance ? "danger" : "muted"}>
                         {hasFinance ? formatPence(event.costsPence) : "-"}
                       </AppText>
                     </View>
@@ -356,13 +353,13 @@ export default function EventFinanceScreen() {
                       </AppText>
                       <AppText
                         variant="bodyBold"
-                        style={{
-                          color: hasFinance
-                            ? net >= 0
-                              ? colors.success
-                              : colors.error
-                            : colors.textTertiary,
-                        }}
+                        color={
+                          !hasFinance
+                            ? "muted"
+                            : net >= 0
+                              ? "success"
+                              : "danger"
+                        }
                       >
                         {hasFinance ? formatPenceWithSign(net) : "-"}
                       </AppText>
@@ -425,7 +422,6 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     paddingTop: spacing.sm,
     borderTopWidth: 1,
-    borderTopColor: "#F3F4F6",
   },
   financeItem: {
     flex: 1,
@@ -434,7 +430,6 @@ const styles = StyleSheet.create({
   editForm: {
     paddingTop: spacing.sm,
     borderTopWidth: 1,
-    borderTopColor: "#F3F4F6",
   },
   inputRow: {
     flexDirection: "row",

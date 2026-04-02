@@ -135,8 +135,7 @@ function duplicateMemberRowsBySociety(
 export default function EventTeeSheetScreen() {
   const router = useRouter();
   const { id: eventId } = useLocalSearchParams<{ id: string }>();
-  const { societyId, member, userId, activeSocietyId, memberships, profile, switchSociety } =
-    useBootstrap();
+  const { societyId, member, userId, memberships, profile, switchSociety } = useBootstrap();
   const colors = getColors();
 
   const [canonical, setCanonical] = useState<CanonicalTeeSheetResult | null>(null);
@@ -468,7 +467,7 @@ export default function EventTeeSheetScreen() {
         );
         const roleForActiveSociety =
           memberships.find((m) => String(m.societyId) === String(societyId))?.role ??
-          (member as { role?: string })?.role ??
+          member?.role ??
           null;
         let reason: string;
         if (canView) {
@@ -693,7 +692,7 @@ export default function EventTeeSheetScreen() {
       loadInFlightRef.current = false;
       setLoading(false);
     }
-  }, [eventId, societyId, userId, profile, memberships, switchSociety]);
+  }, [eventId, societyId, userId, profile, memberships, switchSociety, member]);
 
   useEffect(() => {
     loadData();

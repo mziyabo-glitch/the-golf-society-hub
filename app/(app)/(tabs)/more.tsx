@@ -59,9 +59,8 @@ function MenuRow({ icon, iconBg, title, subtitle, onPress, colors }: RowProps) {
 }
 
 function SectionTitle({ children }: { children: string }) {
-  const colors = getColors();
   return (
-    <AppText variant="captionBold" color="tertiary" style={styles.sectionTitle}>
+    <AppText variant="captionBold" color="muted" style={styles.sectionTitle}>
       {children}
     </AppText>
   );

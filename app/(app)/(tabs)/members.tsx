@@ -12,6 +12,7 @@ import { AppInput } from "@/components/ui/AppInput";
 import { PrimaryButton, SecondaryButton, DestructiveButton } from "@/components/ui/Button";
 import { LoadingState } from "@/components/ui/LoadingState";
 import { EmptyState } from "@/components/ui/EmptyState";
+import { StatusBadge } from "@/components/ui/StatusBadge";
 import { InlineNotice } from "@/components/ui/InlineNotice";
 import { useBootstrap } from "@/lib/useBootstrap";
 import {
@@ -83,7 +84,7 @@ export default function MembersScreen() {
   const router = useRouter();
   const colors = getColors();
   const tabBarHeight = useBottomTabBarHeight();
-  const tabContentStyle = { paddingTop: 16, paddingBottom: tabBarHeight + 24 };
+  const tabContentStyle = { paddingTop: spacing.lg, paddingBottom: tabBarHeight + spacing.lg };
 
   const [members, setMembers] = useState<MemberDoc[]>([]);
   const [oomStandings, setOomStandings] = useState<Map<string, OrderOfMeritEntry>>(new Map());
@@ -543,7 +544,9 @@ export default function MembersScreen() {
       <View style={styles.header}>
         <View>
           <AppText variant="title">Members</AppText>
-          <AppText variant="caption" color="secondary">{members.length} member{members.length !== 1 ? "s" : ""}</AppText>
+          <AppText variant="subheading" color="muted" style={{ marginTop: spacing.xs }}>
+            {members.length} member{members.length !== 1 ? "s" : ""}
+          </AppText>
         </View>
         {permissions.canCreateMembers && (
           <PrimaryButton onPress={openAddModal} size="sm">
@@ -603,30 +606,20 @@ export default function MembersScreen() {
                         <AppText variant="bodyBold">
                           {member.displayName || member.name || "Unknown"}
                         </AppText>
-                        {isCurrentUser && (
-                          <View style={[styles.badge, { backgroundColor: colors.primary + "20" }]}>
-                            <AppText variant="small" color="primary">You</AppText>
-                          </View>
-                        )}
-                        {!member.user_id && (
-                          <View style={[styles.badge, { backgroundColor: colors.warning + "22" }]}>
-                            <AppText variant="small" style={{ color: colors.warning }}>No app yet</AppText>
-                          </View>
-                        )}
+                        {isCurrentUser && <StatusBadge label="You" tone="primary" />}
+                        {!member.user_id && <StatusBadge label="No app yet" tone="warning" />}
                       </View>
 
                       {roleBadges.length > 0 && (
                         <View style={styles.rolesRow}>
                           {roleBadges.map((role) => (
-                            <View key={role} style={[styles.badge, { backgroundColor: colors.backgroundTertiary }]}>
-                              <AppText variant="small" color="secondary">{role}</AppText>
-                            </View>
+                            <StatusBadge key={role} label={role} tone="neutral" />
                           ))}
                         </View>
                       )}
 
                       {member.email && (
-                        <AppText variant="caption" color="tertiary">{member.email}</AppText>
+                        <AppText variant="caption" color="muted">{member.email}</AppText>
                       )}
 
                       {/* Handicap index */}
@@ -643,7 +636,7 @@ export default function MembersScreen() {
                               #{oomEntry.rank}
                             </AppText>
                           </View>
-                          <AppText variant="caption" color="tertiary">
+                          <AppText variant="caption" color="muted">
                             {formatPoints(oomEntry.totalPoints)} pts ({oomEntry.eventsPlayed} event{oomEntry.eventsPlayed !== 1 ? "s" : ""})
                           </AppText>
                         </View>
@@ -654,36 +647,14 @@ export default function MembersScreen() {
                     {permissions.canManageMembershipFees ? (
                       <Pressable
                         onPress={() => handleTogglePaid(member)}
-                        style={[
-                          styles.paidBadge,
-                          { backgroundColor: member.paid ? colors.success + "20" : colors.backgroundTertiary },
-                        ]}
+                        style={styles.paidBadgePressable}
+                        accessibilityRole="button"
+                        accessibilityLabel={member.paid ? "Annual fee paid, tap to mark unpaid" : "Annual fee unpaid, tap to mark paid"}
                       >
-                        <Feather
-                          name={member.paid ? "check-circle" : "circle"}
-                          size={iconSize.sm}
-                          color={member.paid ? colors.success : colors.textTertiary}
-                        />
-                        <AppText
-                          variant="small"
-                          color={member.paid ? "success" : "muted"}
-                        >
-                          {member.paid ? "Paid" : "Unpaid"}
-                        </AppText>
+                        <StatusBadge label={member.paid ? "Paid" : "Unpaid"} tone={member.paid ? "success" : "warning"} />
                       </Pressable>
                     ) : (
-                      <View
-                        style={[
-                          styles.paidBadge,
-                          { backgroundColor: member.paid ? colors.success + "20" : colors.backgroundTertiary },
-                        ]}
-                      >
-                        <Feather
-                          name={member.paid ? "check-circle" : "circle"}
-                          size={iconSize.sm}
-                          color={member.paid ? colors.success : colors.textTertiary}
-                        />
-                      </View>
+                      <StatusBadge label={member.paid ? "Paid" : "Unpaid"} tone={member.paid ? "success" : "warning"} />
                     )}
                   </View>
                 </AppCard>
@@ -709,7 +680,7 @@ const styles = StyleSheet.create({
     marginBottom: spacing.lg,
   },
   list: {
-    gap: spacing.xs,
+    gap: spacing.sm,
   },
   memberCard: {
     marginBottom: 0,
@@ -740,11 +711,6 @@ const styles = StyleSheet.create({
     gap: spacing.xs,
     marginTop: 2,
   },
-  badge: {
-    paddingHorizontal: spacing.xs,
-    paddingVertical: 2,
-    borderRadius: radius.sm,
-  },
   oomRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -759,13 +725,9 @@ const styles = StyleSheet.create({
     paddingVertical: 2,
     borderRadius: radius.sm,
   },
-  paidBadge: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 4,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: spacing.xs,
-    borderRadius: radius.sm,
+  paidBadgePressable: {
+    alignSelf: "flex-start",
+    paddingVertical: 2,
   },
   modalHeader: {
     flexDirection: "row",

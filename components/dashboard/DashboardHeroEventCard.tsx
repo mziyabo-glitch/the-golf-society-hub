@@ -5,6 +5,7 @@
 import { View, Pressable, StyleSheet } from "react-native";
 import { Feather } from "@expo/vector-icons";
 import { AppText } from "@/components/ui/AppText";
+import { StatusBadge } from "@/components/ui/StatusBadge";
 import { Chip } from "@/components/ui/Chip";
 import { PrimaryButton } from "@/components/ui/Button";
 import type { EventDoc } from "@/lib/db_supabase/eventRepo";
@@ -83,7 +84,7 @@ export function DashboardHeroEventCard({
       <View style={[dashboardShell.card, { borderColor: colors.borderLight, backgroundColor: colors.surface }]}>
         <View style={dashboardShell.sectionEyebrow}>
           <Feather name="calendar" size={16} color={colors.textTertiary} />
-          <AppText variant="captionBold" color="tertiary">
+          <AppText variant="captionBold" color="muted">
             Next event
           </AppText>
         </View>
@@ -150,7 +151,7 @@ export function DashboardHeroEventCard({
           {formatEventDate(nextEvent.date)}
         </AppText>
         {nextEvent.courseName ? (
-          <AppText variant="small" color="tertiary" style={styles.heroCourse} numberOfLines={2}>
+          <AppText variant="small" color="muted" style={styles.heroCourse} numberOfLines={2}>
             {String(nextEvent.courseName)}
           </AppText>
         ) : null}
@@ -214,21 +215,7 @@ export function DashboardHeroEventCard({
 
       {showPaymentRow ? (
         <View style={styles.paymentWrap}>
-          {isPaid ? (
-            <View style={[styles.paymentPill, { backgroundColor: `${colors.success}18`, borderColor: `${colors.success}50` }]}>
-              <Feather name="check-circle" size={16} color={colors.success} />
-              <AppText variant="captionBold" style={{ color: colors.success, fontSize: 15 }}>
-                Paid
-              </AppText>
-            </View>
-          ) : (
-            <View style={[styles.paymentPill, { backgroundColor: `${colors.warning}22`, borderColor: `${colors.warning}55` }]}>
-              <Feather name="alert-circle" size={16} color={colors.warning} />
-              <AppText variant="captionBold" style={{ color: colors.warning, fontSize: 15 }}>
-                Not paid
-              </AppText>
-            </View>
-          )}
+          <StatusBadge label={isPaid ? "Paid" : "Not paid"} tone={isPaid ? "success" : "warning"} />
         </View>
       ) : null}
 
@@ -237,7 +224,7 @@ export function DashboardHeroEventCard({
       </PrimaryButton>
 
       {!showTeeCta && nextEvent.teeTimePublishedAt && !canAccessNextEventTeeSheet ? (
-        <AppText variant="small" color="tertiary" style={styles.hint}>
+        <AppText variant="small" color="muted" style={styles.hint}>
           Tee sheet is available to participating societies.
         </AppText>
       ) : null}
@@ -324,16 +311,6 @@ const styles = StyleSheet.create({
   },
   paymentWrap: {
     marginTop: spacing.sm + 2,
-  },
-  paymentPill: {
-    flexDirection: "row",
-    alignItems: "center",
-    alignSelf: "flex-start",
-    gap: spacing.sm,
-    paddingVertical: spacing.sm,
-    paddingHorizontal: spacing.md,
-    borderRadius: radius.md,
-    borderWidth: 1.5,
   },
   cta: {
     marginTop: spacing.md,

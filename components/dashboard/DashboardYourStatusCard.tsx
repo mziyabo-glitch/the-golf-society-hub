@@ -6,9 +6,10 @@
 import { View, Pressable, StyleSheet } from "react-native";
 import { Feather } from "@expo/vector-icons";
 import { AppText } from "@/components/ui/AppText";
+import { StatusBadge } from "@/components/ui/StatusBadge";
 import type { EventDoc } from "@/lib/db_supabase/eventRepo";
 import type { EventRegistration } from "@/lib/db_supabase/eventRegistrationRepo";
-import { getColors, spacing, radius, typography } from "@/lib/ui/theme";
+import { getColors, iconSize, spacing, radius } from "@/lib/ui/theme";
 import { PaymentStatus, JOINT_HOME_RSVP_NOTE } from "@/lib/eventModuleUi";
 import { dashboardShell } from "./dashboardCardStyles";
 
@@ -55,7 +56,7 @@ export function DashboardYourStatusCard({
       <View style={[styles.block, { borderTopColor: colors.borderLight }]}>
         <View style={{ flex: 1, gap: spacing.xs }}>
           {nextEventIsJoint ? (
-            <AppText variant="small" color="tertiary" style={{ marginBottom: 2 }}>
+            <AppText variant="small" color="muted" style={{ marginBottom: 2 }}>
               {JOINT_HOME_RSVP_NOTE}
             </AppText>
           ) : null}
@@ -65,33 +66,19 @@ export function DashboardYourStatusCard({
             </AppText>
             {myReg?.status === "in" ? (
               <>
-                <View style={[styles.regBadge, { backgroundColor: `${colors.success}18` }]}>
-                  <Feather name="check-circle" size={12} color={colors.success} />
-                  <AppText variant="small" style={{ color: colors.success, fontWeight: "700" }}>
-                    CONFIRMED
-                  </AppText>
-                </View>
+                <StatusBadge label="Confirmed" tone="success" />
                 {!nextEventIsJoint ? (
                   myReg.paid ? (
-                    <View style={[styles.paidPill, { backgroundColor: colors.success }]}>
-                      <AppText style={styles.paidPillText}>PAID</AppText>
-                    </View>
+                    <StatusBadge label={PaymentStatus.paid} tone="success" />
                   ) : (
-                    <View style={[styles.paidPill, { backgroundColor: `${colors.warning}40` }]}>
-                      <AppText style={[styles.paidPillText, { color: colors.warning }]}>{PaymentStatus.unpaid}</AppText>
-                    </View>
+                    <StatusBadge label={PaymentStatus.unpaid} tone="warning" />
                   )
                 ) : null}
               </>
             ) : myReg?.status === "out" ? (
-              <View style={[styles.regBadge, { backgroundColor: `${colors.textTertiary}18` }]}>
-                <Feather name="x-circle" size={12} color={colors.textTertiary} />
-                <AppText variant="small" style={{ color: colors.textTertiary, fontWeight: "700" }}>
-                  OUT
-                </AppText>
-              </View>
+              <StatusBadge label="Out" tone="neutral" />
             ) : (
-              <AppText variant="small" color="tertiary">
+              <AppText variant="small" color="muted">
                 Not registered
               </AppText>
             )}
@@ -116,7 +103,7 @@ export function DashboardYourStatusCard({
                 onPress={onToggleIn}
                 style={[styles.regBtn, { backgroundColor: colors.primary, borderColor: colors.primary }]}
               >
-                <AppText variant="small" style={{ color: "#fff", fontWeight: "600" }}>
+                <AppText variant="small" color="inverse" style={{ fontWeight: "600" }}>
                   I&apos;m playing
                 </AppText>
               </Pressable>
@@ -124,7 +111,7 @@ export function DashboardYourStatusCard({
 
             {canAdmin ? (
               <Pressable hitSlop={8} onPress={onToggleAdmin} style={[styles.regBtn, { borderColor: colors.border }]}>
-                <Feather name="shield" size={12} color={colors.textSecondary} />
+                <Feather name="shield" size={iconSize.xs} color={colors.textSecondary} />
                 <AppText variant="small" color="secondary">
                   Admin
                 </AppText>
@@ -140,7 +127,7 @@ export function DashboardYourStatusCard({
                 onPress={() => onMarkPaid(true)}
                 style={[styles.regBtn, { backgroundColor: colors.success, borderColor: colors.success }]}
               >
-                <AppText variant="small" style={{ color: "#fff", fontWeight: "600" }}>
+                <AppText variant="small" color="inverse" style={{ fontWeight: "600" }}>
                   Mark me paid (confirms me)
                 </AppText>
               </Pressable>
@@ -150,7 +137,7 @@ export function DashboardYourStatusCard({
                 onPress={() => onMarkPaid(false)}
                 style={[styles.regBtn, { backgroundColor: colors.error, borderColor: colors.error }]}
               >
-                <AppText variant="small" style={{ color: "#fff", fontWeight: "600" }}>
+                <AppText variant="small" color="inverse" style={{ fontWeight: "600" }}>
                   Mark me unpaid
                 </AppText>
               </Pressable>
@@ -160,7 +147,7 @@ export function DashboardYourStatusCard({
       </View>
 
       <View style={[styles.teeRow, { borderTopColor: colors.borderLight }]}>
-        <Feather name="clock" size={14} color={nextEvent.teeTimePublishedAt ? colors.success : colors.textSecondary} />
+        <Feather name="clock" size={iconSize.xs} color={nextEvent.teeTimePublishedAt ? colors.success : colors.textSecondary} />
         {nextEvent.teeTimePublishedAt ? (
           <AppText variant="small" style={{ color: colors.success, fontWeight: "600", flex: 1 }}>
             Tee times live — first tee {String(nextEvent.teeTimeStart || "TBC")}
@@ -191,14 +178,6 @@ const styles = StyleSheet.create({
     gap: spacing.xs,
     flexWrap: "wrap",
   },
-  regBadge: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 3,
-    paddingHorizontal: spacing.xs,
-    paddingVertical: 2,
-    borderRadius: radius.full,
-  },
   regActions: {
     flexDirection: "row",
     gap: spacing.xs,
@@ -212,16 +191,6 @@ const styles = StyleSheet.create({
     paddingVertical: 5,
     borderRadius: radius.sm,
     borderWidth: 1,
-  },
-  paidPill: {
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 2,
-    borderRadius: radius.full,
-  },
-  paidPillText: {
-    color: "#FFFFFF",
-    fontWeight: "700",
-    fontSize: typography.small.fontSize,
   },
   teeRow: {
     flexDirection: "row",

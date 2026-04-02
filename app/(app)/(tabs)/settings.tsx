@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { StyleSheet, View, Pressable, Image, Platform, Share } from "react-native";
+import { StyleSheet, View, Pressable, Platform, Share } from "react-native";
 import * as Clipboard from "expo-clipboard";
 import { useRouter } from "expo-router";
 import { Feather } from "@expo/vector-icons";
@@ -41,7 +41,7 @@ export default function SettingsScreen() {
   const { user, society, member, loading, refresh, signOut } = useBootstrap();
   const colors = getColors();
   const tabBarHeight = useBottomTabBarHeight();
-  const tabContentStyle = { paddingTop: 16, paddingBottom: tabBarHeight + 24 };
+  const tabContentStyle = { paddingTop: spacing.lg, paddingBottom: tabBarHeight + spacing.lg };
 
   const [signingOut, setSigningOut] = useState(false);
   const [leaving, setLeaving] = useState(false);
@@ -359,11 +359,14 @@ export default function SettingsScreen() {
     return (
       <Screen contentStyle={tabContentStyle}>
         <AppText variant="title" style={styles.title}>Settings</AppText>
+        <AppText variant="subheading" color="muted" style={styles.settingsTagline}>
+          Your account, society, and preferences
+        </AppText>
         <AppText variant="small" color="secondary" style={styles.settingsIntro}>
-          Manage your account, society, and app preferences.
+          Manage membership, appearance, legal, and session options.
         </AppText>
 
-        <AppText variant="heading" style={styles.sectionTitle}>Profile</AppText>
+        <AppText variant="heading" style={[styles.sectionTitle, styles.sectionTitleFirst]}>Profile</AppText>
         <AppCard padding="sm">
           <Pressable
             style={({ pressed }) => [styles.linkRow, { opacity: pressed ? 0.7 : 1 }]}
@@ -454,11 +457,14 @@ export default function SettingsScreen() {
   return (
     <Screen contentStyle={tabContentStyle}>
       <AppText variant="title" style={styles.title}>Settings</AppText>
+      <AppText variant="subheading" color="muted" style={styles.settingsTagline}>
+        Your account, society, and preferences
+      </AppText>
       <AppText variant="small" color="secondary" style={styles.settingsIntro}>
-        Manage your account, society, and app preferences.
+        Manage membership, appearance, legal, and session options.
       </AppText>
 
-      <AppText variant="heading" style={styles.sectionTitle}>Profile</AppText>
+      <AppText variant="heading" style={[styles.sectionTitle, styles.sectionTitleFirst]}>Profile</AppText>
       <AppCard padding="sm">
         <Pressable
           style={({ pressed }) => [styles.linkRow, { opacity: pressed ? 0.7 : 1 }]}
@@ -1081,13 +1087,19 @@ const styles = StyleSheet.create({
   title: {
     marginBottom: spacing.sm,
   },
+  settingsTagline: {
+    marginBottom: spacing.xs,
+  },
   settingsIntro: {
     marginBottom: spacing.lg,
     lineHeight: 22,
   },
   sectionTitle: {
     marginBottom: spacing.sm,
-    marginTop: spacing.base,
+    marginTop: spacing.lg,
+  },
+  sectionTitleFirst: {
+    marginTop: spacing.md,
   },
   profileRow: {
     flexDirection: "row",

@@ -467,6 +467,7 @@ export default function TreasurerScreen() {
             icon="dollar-sign"
             label="Current Balance"
             value={formatPenceToGBP(currentBalance)}
+            valueColor={balanceVariant === "success" ? "success" : balanceVariant === "error" ? "danger" : "muted"}
           />
         </View>
 

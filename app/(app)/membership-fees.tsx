@@ -34,7 +34,7 @@ import {
 } from "@/lib/db_supabase/memberRepo";
 import { updateSociety, getSociety } from "@/lib/db_supabase/societyRepo";
 import { getPermissionsForMember } from "@/lib/rbac";
-import { getColors, spacing, radius } from "@/lib/ui/theme";
+import { getColors, iconSize, spacing, radius } from "@/lib/ui/theme";
 
 import { guard } from "@/lib/guards";
 // Format pence to pounds string (e.g., 5000 -> "£50.00")
@@ -225,7 +225,7 @@ export default function MembershipFeesScreen() {
           </SecondaryButton>
         </View>
         <EmptyState
-          icon={<Feather name="lock" size={32} color={colors.textTertiary} />}
+          icon={<Feather name="lock" size={iconSize.xl} color={colors.textTertiary} />}
           title="Access Restricted"
           message="Only Captain or Treasurer can manage membership fees."
         />
@@ -250,31 +250,34 @@ export default function MembershipFeesScreen() {
         {/* Summary Card */}
         {feeSummary && annualFeePence > 0 && (
           <AppCard style={styles.summaryCard}>
-            <AppText variant="h2" style={{ marginBottom: spacing.sm }}>Fee Summary</AppText>
+            <AppText variant="heading" style={{ marginBottom: spacing.sm }}>Fee Summary</AppText>
             <View style={styles.summaryGrid}>
               <View style={styles.summaryItem}>
                 <AppText variant="caption" color="secondary">Expected</AppText>
                 <AppText variant="h1" color="primary">{formatPence(feeSummary.expectedPence)}</AppText>
-                <AppText variant="small" color="tertiary">{feeSummary.totalMembers} members</AppText>
+                <AppText variant="small" color="muted">{feeSummary.totalMembers} members</AppText>
               </View>
               <View style={styles.summaryItem}>
                 <AppText variant="caption" color="secondary">Received</AppText>
-                <AppText variant="h1" style={{ color: colors.success }}>{formatPence(feeSummary.receivedPence)}</AppText>
-                <AppText variant="small" color="tertiary">{feeSummary.paidCount} paid</AppText>
+                <AppText variant="h1" color="success">{formatPence(feeSummary.receivedPence)}</AppText>
+                <AppText variant="small" color="muted">{feeSummary.paidCount} paid</AppText>
               </View>
               <View style={styles.summaryItem}>
                 <AppText variant="caption" color="secondary">Outstanding</AppText>
-                <AppText variant="h1" style={{ color: feeSummary.outstandingPence > 0 ? colors.error : colors.success }}>
+                <AppText
+                  variant="h1"
+                  color={feeSummary.outstandingPence > 0 ? "danger" : "success"}
+                >
                   {formatPence(feeSummary.outstandingPence)}
                 </AppText>
-                <AppText variant="small" color="tertiary">{feeSummary.unpaidCount} unpaid</AppText>
+                <AppText variant="small" color="muted">{feeSummary.unpaidCount} unpaid</AppText>
               </View>
             </View>
           </AppCard>
         )}
 
         {/* Annual Fee Setting */}
-        <AppText variant="h2" style={styles.sectionTitle}>Annual Fee Amount</AppText>
+        <AppText variant="heading" style={styles.sectionTitle}>Annual Fee Amount</AppText>
         <AppCard>
           <View style={styles.feeInputRow}>
             <AppText variant="body" style={{ marginRight: spacing.xs }}>£</AppText>
@@ -296,7 +299,7 @@ export default function MembershipFeesScreen() {
 
         {/* Members List */}
         <View style={styles.membersHeader}>
-          <AppText variant="h2">Members</AppText>
+          <AppText variant="heading">Members</AppText>
           <AppText variant="caption" color="secondary">
             {feeSummary?.paidCount || 0} of {feeSummary?.totalMembers || 0} paid
           </AppText>
@@ -326,7 +329,7 @@ export default function MembershipFeesScreen() {
                   <View style={styles.memberInfo}>
                     <AppText variant="body" numberOfLines={1}>{m.name || m.displayName || "Unknown"}</AppText>
                     {isPaid && paidAt && (
-                      <AppText variant="small" color="tertiary">
+                      <AppText variant="small" color="muted">
                         Paid {new Date(paidAt).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}
                       </AppText>
                     )}
@@ -362,13 +365,13 @@ export default function MembershipFeesScreen() {
         )}
 
         {/* Reset All Button */}
-        <AppText variant="h2" style={styles.sectionTitle}>New Year Reset</AppText>
+        <AppText variant="heading" style={styles.sectionTitle}>New Year Reset</AppText>
         <AppCard>
           <AppText variant="body" color="secondary" style={{ marginBottom: spacing.base }}>
             Reset all members to unpaid status at the start of a new membership year.
           </AppText>
           <DestructiveButton onPress={handleResetAll} loading={resetting}>
-            <Feather name="refresh-cw" size={16} color={colors.textInverse} /> Reset All Fees
+            <Feather name="refresh-cw" size={iconSize.sm} color={colors.textInverse} /> Reset All Fees
           </DestructiveButton>
         </AppCard>
 

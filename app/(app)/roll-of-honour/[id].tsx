@@ -24,7 +24,7 @@ import {
   type OomChampionDoc,
 } from "@/lib/db_supabase/oomChampionsRepo";
 import { getPermissionsForMember } from "@/lib/rbac";
-import { getColors, spacing } from "@/lib/ui/theme";
+import { getColors, iconSize, radius, spacing } from "@/lib/ui/theme";
 import { confirmDestructive } from "@/lib/ui/alert";
 
 export default function ChampionDetailScreen() {
@@ -87,7 +87,7 @@ export default function ChampionDetailScreen() {
     return (
       <Screen>
         <EmptyState
-          icon={<Feather name="alert-circle" size={24} color={colors.error} />}
+          icon={<Feather name="alert-circle" size={iconSize.lg} color={colors.error} />}
           title="Invalid Champion"
           message="This champion could not be found."
         />
@@ -109,7 +109,7 @@ export default function ChampionDetailScreen() {
     return (
       <Screen>
         <EmptyState
-          icon={<Feather name="alert-circle" size={24} color={colors.error} />}
+          icon={<Feather name="alert-circle" size={iconSize.lg} color={colors.error} />}
           title="Failed to Load"
           message={error}
           action={{ label: "Try Again", onPress: loadData }}
@@ -122,7 +122,7 @@ export default function ChampionDetailScreen() {
     return (
       <Screen>
         <EmptyState
-          icon={<Feather name="user-x" size={24} color={colors.textTertiary} />}
+          icon={<Feather name="user-x" size={iconSize.lg} color={colors.textTertiary} />}
           title="Champion Not Found"
           message="This champion may have been removed."
           action={{ label: "Back", onPress: () => goBack(router, "/(app)/(tabs)/leaderboard") }}
@@ -154,7 +154,7 @@ export default function ChampionDetailScreen() {
               }
               style={({ pressed }) => ({ opacity: pressed ? 0.7 : 1 })}
             >
-              <Feather name="edit-2" size={20} color={colors.primary} />
+              <Feather name="edit-2" size={iconSize.md} color={colors.primary} />
             </Pressable>
           )}
         </View>
@@ -198,8 +198,8 @@ export default function ChampionDetailScreen() {
               { opacity: pressed ? 0.7 : 1 },
             ]}
           >
-            <Feather name="trash-2" size={18} color={colors.error} />
-            <AppText variant="caption" style={{ color: colors.error, marginLeft: 8 }}>
+            <Feather name="trash-2" size={iconSize.md} color={colors.error} />
+            <AppText variant="caption" color="danger" style={{ marginLeft: spacing.sm }}>
               Remove from Roll of Honour
             </AppText>
           </Pressable>
@@ -230,7 +230,7 @@ const styles = StyleSheet.create({
   photo: {
     width: 200,
     height: 200,
-    borderRadius: 12,
+    borderRadius: radius.md,
   },
   yearBadge: {
     marginBottom: spacing.base,

@@ -22,7 +22,7 @@ import { InlineNotice } from "@/components/ui/InlineNotice";
 import { useBootstrap } from "@/lib/useBootstrap";
 import { joinByCode } from "@/lib/db_supabase/sinbookRepo";
 import { storePendingRivalryJoinCode } from "@/lib/pendingRivalryJoinCode";
-import { getColors, spacing } from "@/lib/ui/theme";
+import { getColors, iconSize, spacing } from "@/lib/ui/theme";
 import { Toast } from "@/components/ui/Toast";
 import { showAlert } from "@/lib/ui/alert";
 
@@ -104,7 +104,7 @@ export default function JoinRivalryScreen() {
       <Screen scrollable={false}>
         <View style={styles.centered}>
           <View style={[styles.iconCircle, { backgroundColor: colors.primary + "15" }]}>
-            <Feather name="zap" size={32} color={colors.primary} />
+            <Feather name="zap" size={iconSize.xl} color={colors.primary} />
           </View>
           <AppText variant="title" style={{ marginTop: spacing.lg, textAlign: "center" }}>
             Join Rivalry
@@ -148,7 +148,7 @@ export default function JoinRivalryScreen() {
       )}
 
       <AppCard>
-        <AppText variant="captionBold" style={{ marginBottom: spacing.xs }}>
+        <AppText variant="label" color="secondary" style={{ marginBottom: spacing.xs }}>
           Join Code
         </AppText>
         <AppInput
@@ -159,7 +159,7 @@ export default function JoinRivalryScreen() {
           autoCorrect={false}
           maxLength={6}
         />
-        <AppText variant="small" color="tertiary" style={{ marginTop: 4 }}>
+        <AppText variant="small" color="muted" style={{ marginTop: spacing.xs }}>
           Enter the 6-character rivalry code shared with you.
         </AppText>
 

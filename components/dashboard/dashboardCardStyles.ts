@@ -24,14 +24,14 @@ export const dashboardShell = StyleSheet.create({
     borderRadius: DASHBOARD_CARD_RADIUS,
     borderWidth: 1,
     paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm + 2,
-    marginBottom: spacing.sm + 2,
+    paddingVertical: spacing.sm + 4,
+    marginBottom: spacing.md,
     ...shadow,
   },
   sectionEyebrow: {
     flexDirection: "row",
     alignItems: "center",
     gap: spacing.sm,
-    marginBottom: spacing.xs,
+    marginBottom: spacing.sm,
   },
 });

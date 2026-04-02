@@ -64,6 +64,7 @@ import {
   withdrawnRegsForDisplay,
 } from "@/lib/eventPlayerStatus";
 import { Toast } from "@/components/ui/Toast";
+import { StatusBadge } from "@/components/ui/StatusBadge";
 import { getColors, spacing, radius, iconSize } from "@/lib/ui/theme";
 import { confirmDestructive, showAlert } from "@/lib/ui/alert";
 import {
@@ -320,7 +321,7 @@ export default function EventDetailScreen() {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [eventId, societyId]);
+  }, [eventId]);
 
   useFocusEffect(
     useCallback(() => {
@@ -759,7 +760,7 @@ export default function EventDetailScreen() {
           setShowManualTee(false);
         }
       }
-    } catch (_e: unknown) {
+    } catch {
       setSelectedCourseEdit({ id: "", name: hit.name });
       setFormCourseName(hit.name);
       setTees([]);
@@ -1872,43 +1873,16 @@ export default function EventDetailScreen() {
                   : ""}
               </AppText>
             </View>
-            <View
-              style={[
-                styles.paidSummaryPill,
-                {
-                  backgroundColor:
-                    buckets.pendingPayment.length === 0 && captainPickMemberIds.length === 0
-                      ? colors.success + "14"
-                      : colors.warning + "14",
-                },
-              ]}
-            >
-              <Feather
-                name={
-                  buckets.pendingPayment.length === 0 && captainPickMemberIds.length === 0
-                    ? "check-circle"
-                    : "alert-circle"
-                }
-                size={14}
-                color={
-                  buckets.pendingPayment.length === 0 && captainPickMemberIds.length === 0
-                    ? colors.success
-                    : colors.warning
-                }
-              />
-              <AppText
-                variant="captionBold"
-                color={
-                  buckets.pendingPayment.length === 0 && captainPickMemberIds.length === 0
-                    ? "success"
-                    : "warning"
-                }
-              >
-                {buckets.pendingPayment.length === 0 && captainPickMemberIds.length === 0
+            <StatusBadge
+              label={
+                buckets.pendingPayment.length === 0 && captainPickMemberIds.length === 0
                   ? "All paid"
-                  : `${pendingPaymentCount} pending`}
-              </AppText>
-            </View>
+                  : `${pendingPaymentCount} pending`
+              }
+              tone={
+                buckets.pendingPayment.length === 0 && captainPickMemberIds.length === 0 ? "success" : "warning"
+              }
+            />
           </View>
 
           {canManageEventRoster && manualAddCandidates.length > 0 ? (
@@ -1929,7 +1903,7 @@ export default function EventDetailScreen() {
           ) : null}
 
           {buckets.confirmedPaid.length > 0 ? (
-            <AppText variant="captionBold" color="secondary" style={{ marginTop: spacing.sm, marginBottom: spacing.xs }}>
+            <AppText variant="subheading" color="secondary" style={{ marginTop: spacing.sm, marginBottom: spacing.xs }}>
               Confirmed &amp; paid (tee sheet)
             </AppText>
           ) : null}
@@ -1942,11 +1916,7 @@ export default function EventDetailScreen() {
               </View>
 
               <View style={styles.paidRightCol}>
-                <View style={[styles.paidPill, { backgroundColor: colors.success }]}>
-                  <AppText variant="captionBold" color="inverse">
-                    {PaymentPill.paid}
-                  </AppText>
-                </View>
+                <StatusBadge label={PaymentPill.paid} tone="success" />
                 {canManagePayments && (
                   <Pressable
                     disabled={payBusy === reg.member_id}
@@ -1972,7 +1942,7 @@ export default function EventDetailScreen() {
           ))}
 
           {(buckets.pendingPayment.length > 0 || captainPickMemberIds.length > 0) ? (
-            <AppText variant="captionBold" color="secondary" style={{ marginTop: spacing.sm, marginBottom: spacing.xs }}>
+            <AppText variant="subheading" color="secondary" style={{ marginTop: spacing.sm, marginBottom: spacing.xs }}>
               Pending payment
             </AppText>
           ) : null}
@@ -1985,11 +1955,7 @@ export default function EventDetailScreen() {
               </View>
 
               <View style={styles.paidRightCol}>
-                <View style={[styles.paidPill, { backgroundColor: colors.warning + "35" }]}>
-                  <AppText variant="captionBold" color="warning">
-                    {PaymentPill.unpaid}
-                  </AppText>
-                </View>
+                <StatusBadge label={PaymentPill.unpaid} tone="warning" />
                 {canManagePayments && (
                   <Pressable
                     disabled={payBusy === reg.member_id}
@@ -2031,11 +1997,7 @@ export default function EventDetailScreen() {
               </View>
 
               <View style={styles.paidRightCol}>
-                <View style={[styles.paidPill, { backgroundColor: colors.warning + "35" }]}>
-                  <AppText variant="captionBold" color="warning">
-                    {PaymentPill.unpaid}
-                  </AppText>
-                </View>
+                <StatusBadge label={PaymentPill.unpaid} tone="warning" />
                 {canManagePayments && (
                   <View style={styles.paidActionsStack}>
                     <Pressable
@@ -2089,7 +2051,7 @@ export default function EventDetailScreen() {
                 borderTopColor: colors.borderLight,
               }}
             >
-              <AppText variant="captionBold" color="muted" style={{ marginBottom: spacing.xs }}>
+              <AppText variant="subheading" color="muted" style={{ marginBottom: spacing.xs }}>
                 Not playing / withdrawn
               </AppText>
               {notPlayingRegs.map((reg) => (
@@ -2333,16 +2295,9 @@ const styles = StyleSheet.create({
   },
   paidHeader: {
     flexDirection: "row",
-    alignItems: "center",
-    marginBottom: spacing.sm,
-  },
-  paidSummaryPill: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 4,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 4,
-    borderRadius: radius.full,
+    alignItems: "flex-start",
+    gap: spacing.sm,
+    marginBottom: spacing.md,
   },
   paidRow: {
     flexDirection: "row",
@@ -2387,11 +2342,6 @@ const styles = StyleSheet.create({
     flexShrink: 1,
     minWidth: 0,
     maxWidth: "100%",
-  },
-  paidPill: {
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 4,
-    borderRadius: radius.full,
   },
   paidToggleBtn: {
     paddingHorizontal: spacing.sm,

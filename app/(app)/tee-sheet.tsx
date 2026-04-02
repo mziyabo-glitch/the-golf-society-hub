@@ -178,25 +178,6 @@ function validateGroupsMatchSelectedIds(nonEmptyGroups: PlayerGroup[], selectedI
   return null;
 }
 
-function summarizeGroupsForDev(groups: PlayerGroup[], computeTeeTime: (groupNumber: number) => string) {
-  const normalizedGroups = groups
-    .filter((g) => g.players.length > 0)
-    .map((g) => ({
-      groupNumber: g.groupNumber,
-      teeTime: computeTeeTime(g.groupNumber),
-      playerIds: g.players.map((p) => String(p.id)),
-      displayNames: g.players.map((p) => p.name),
-      societies: [...new Set(g.players.map((p) => p.societyLabel).filter(Boolean))],
-    }));
-  return {
-    groupCount: normalizedGroups.length,
-    groups: normalizedGroups,
-    playerIdsInOrder: normalizedGroups.flatMap((g) => g.playerIds),
-    displayNamesInOrder: normalizedGroups.flatMap((g) => g.displayNames),
-    societiesRepresented: [...new Set(normalizedGroups.flatMap((g) => g.societies))],
-  };
-}
-
 function normalizeGroups(groups: PlayerGroup[]): PlayerGroup[] {
   return groups
     .filter((g) => g.players.length > 0)
@@ -316,7 +297,7 @@ export default function TeeSheetScreen() {
   const [groups, setGroups] = useState<PlayerGroup[]>([]);
   const [selectedPlayerIds, setSelectedPlayerIds] = useState<string[]>([]);
   const [eventMemberPool, setEventMemberPool] = useState<MemberDoc[]>([]);
-  const [selectedEventRegistrations, setSelectedEventRegistrations] = useState<EventRegistration[]>([]);
+  const [, setSelectedEventRegistrations] = useState<EventRegistration[]>([]);
   const [showGroupEditor, setShowGroupEditor] = useState(false);
   const [manCo, setManCo] = useState<ManCoDetails>({ captain: null, secretary: null, treasurer: null, handicapper: null });
   const [isJointEventTeeSheet, setIsJointEventTeeSheet] = useState(false);
@@ -330,8 +311,6 @@ export default function TeeSheetScreen() {
 
   // Get logo URL from society
   const logoUrl = getSocietyLogoUrl(society);
-  const indexCacheKey = societyId ? `society:${societyId}:tee-sheet:index` : null;
-
   // Load events (host + joint where society participates) and members
   const loadData = useCallback(async () => {
     if (!societyId) return;
@@ -694,9 +673,6 @@ export default function TeeSheetScreen() {
   }, [selectedEventId, selectedPlayerIds, logSelectedPlayersDev]);
 
   // Flatten groups to playerIds (member IDs only)
-  const groupsToPlayerIds = (): string[] =>
-    groups.flatMap((g) => g.players).map((p) => p.id).filter((id) => !id.startsWith("guest-"));
-
   const groupsToPlayerIdsFrom = (groupsArg: PlayerGroup[]): string[] =>
     groupsArg.flatMap((g) => g.players).map((p) => p.id).filter((id) => !id.startsWith("guest-"));
 
@@ -947,7 +923,6 @@ export default function TeeSheetScreen() {
       }
 
       const playerIds = selectedPlayerIds.filter((id) => !id.startsWith("guest-"));
-      const finalPlayerIds = groupsToPlayerIdsFrom(nonEmptyGroups);
       const teeGroupInputs = nonEmptyGroups.map((g) => ({
         group_number: g.groupNumber,
         tee_time: computeTeeTimeForGroup(g.groupNumber),
