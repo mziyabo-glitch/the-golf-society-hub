@@ -2,11 +2,13 @@
  * LinkRowCard — icon, title, subtitle, chevron (compact row)
  */
 
-import { StyleSheet, View, Pressable } from "react-native";
+import { Platform, StyleSheet, View, Pressable } from "react-native";
 import { Feather } from "@expo/vector-icons";
 import { AppText } from "./AppText";
 import { Card } from "./Card";
 import { getColors, spacing } from "@/lib/ui/theme";
+import { pressableSurfaceStyle, webFocusRingStyle, webHoverSurfaceStyle, webPointerStyle } from "@/lib/ui/interaction";
+import { useReducedMotion } from "@/hooks/useReducedMotion";
 
 type LinkRowCardProps = {
   icon: keyof typeof Feather.glyphMap;
@@ -17,9 +19,26 @@ type LinkRowCardProps = {
 
 export function LinkRowCard({ icon, title, subtitle, onPress }: LinkRowCardProps) {
   const colors = getColors();
+  const reduceMotion = useReducedMotion();
 
   return (
-    <Pressable onPress={onPress} style={({ pressed }) => [styles.pressable, pressed && { opacity: 0.9 }]}>
+    <Pressable
+      accessibilityRole="button"
+      onPress={onPress}
+      style={(state) => {
+        const st = state as { pressed: boolean; hovered?: boolean };
+        const { pressed, hovered } = st;
+        return [
+          styles.pressable,
+          pressableSurfaceStyle({ pressed }, { reduceMotion, scale: "card" }),
+          Platform.OS === "web" && hovered && !pressed
+            ? webHoverSurfaceStyle(hovered, pressed, colors.backgroundSecondary)
+            : null,
+          webPointerStyle(),
+          webFocusRingStyle(colors.primary),
+        ];
+      }}
+    >
       <Card variant="elevated" style={[styles.card, styles.row]} padding={spacing.md}>
         <View style={[styles.iconCircle, { backgroundColor: colors.primary + "12" }]}>
           <Feather name={icon} size={18} color={colors.primary} />

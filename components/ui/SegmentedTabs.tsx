@@ -3,9 +3,10 @@
  * Short labels recommended for narrow devices (e.g. Leaders, Matrix, Honour).
  */
 
-import { StyleSheet, View, Pressable, Text } from "react-native";
+import { Platform, StyleSheet, View, Pressable, Text, type StyleProp, type ViewStyle } from "react-native";
 import { ReactNode, useMemo } from "react";
 import { getColors, spacing } from "@/lib/ui/theme";
+import { interaction, webFocusRingStyle, webPointerStyle } from "@/lib/ui/interaction";
 import { useScaledTypography } from "@/lib/ui/fontScaleContext";
 
 export type SegmentedTabItem<T extends string> = {
@@ -18,6 +19,8 @@ type SegmentedTabsProps<T extends string> = {
   items: SegmentedTabItem<T>[];
   selectedId: T;
   onSelect: (id: T) => void;
+  /** Merged with the outer container (e.g. to clear bottom margin when laid out in a row). */
+  style?: StyleProp<ViewStyle>;
 };
 
 const CONTAINER_BG = "#EEF1F4";
@@ -30,6 +33,7 @@ export function SegmentedTabs<T extends string>({
   items,
   selectedId,
   onSelect,
+  style,
 }: SegmentedTabsProps<T>) {
   const colors = getColors();
   const typo = useScaledTypography();
@@ -40,21 +44,33 @@ export function SegmentedTabs<T extends string>({
   }, [typo]);
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, style]}>
       {items.map((item) => {
         const isSelected = item.id === selectedId;
         return (
           <Pressable
             key={item.id}
+            accessibilityRole="button"
+            accessibilityState={{ selected: isSelected }}
             onPress={() => onSelect(item.id)}
-            style={({ pressed }) => [
-              styles.tab,
-              {
-                backgroundColor: isSelected ? colors.surface : "transparent",
-                opacity: pressed ? 0.85 : 1,
-              },
-              isSelected && styles.tabSelected,
-            ]}
+            style={(state) => {
+              const st = state as { pressed: boolean; hovered?: boolean };
+              const { pressed, hovered } = st;
+              const hoverBg =
+                Platform.OS === "web" && hovered && !pressed && !isSelected
+                  ? "rgba(255,255,255,0.45)"
+                  : undefined;
+              return [
+                styles.tab,
+                {
+                  backgroundColor: isSelected ? colors.surface : hoverBg ?? "transparent",
+                  opacity: pressed ? interaction.pressOpacity : 1,
+                },
+                isSelected && styles.tabSelected,
+                webPointerStyle(),
+                webFocusRingStyle(colors.primary),
+              ];
+            }}
           >
             {item.icon}
             <Text

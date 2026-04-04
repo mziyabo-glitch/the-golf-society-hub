@@ -14,6 +14,8 @@ import {
 import { AppText } from "./AppText";
 import { getColors, spacing, radius, buttonHeights, borderWidth } from "@/lib/ui/theme";
 import { blurWebActiveElement } from "@/lib/ui/focus";
+import { pressableSurfaceStyle, webPointerStyle } from "@/lib/ui/interaction";
+import { useReducedMotion } from "@/hooks/useReducedMotion";
 
 export type AppButtonVariant = "primary" | "secondary" | "ghost" | "destructive";
 
@@ -65,6 +67,7 @@ export function AppButton({
   iconPosition = "left",
 }: AppButtonProps) {
   const colors = getColors();
+  const reduceMotion = useReducedMotion();
   const height = buttonHeights[size];
   const paddingHorizontal = size === "sm" ? spacing.base : size === "md" ? spacing.lg : spacing.lg;
   const content = resolveContent(label, children);
@@ -102,21 +105,28 @@ export function AppButton({
     <Pressable
       onPress={() => handlePress(onPress)}
       disabled={isDisabled}
-      style={({ pressed }) => [
-        styles.button,
-        {
-          backgroundColor: bg[variant],
-          borderWidth: border[variant].width,
-          borderColor: border[variant].color,
-          minHeight: height,
-          paddingVertical: spacing.sm,
-          paddingHorizontal,
-          borderRadius: radius.md,
-          opacity: pressed && !isDisabled ? 0.88 : 1,
-          width: fullWidth ? "100%" : undefined,
-        },
-        style,
-      ]}
+      style={(state) => {
+        const pressed = state.pressed;
+        const pressFeedback = !isDisabled
+          ? pressableSurfaceStyle({ pressed }, { reduceMotion, scale: "button" })
+          : null;
+        return [
+          styles.button,
+          {
+            backgroundColor: bg[variant],
+            borderWidth: border[variant].width,
+            borderColor: border[variant].color,
+            minHeight: height,
+            paddingVertical: spacing.sm,
+            paddingHorizontal,
+            borderRadius: radius.md,
+            width: fullWidth ? "100%" : undefined,
+          },
+          pressFeedback,
+          webPointerStyle(),
+          style,
+        ];
+      }}
     >
       {loading ? (
         <View style={styles.loadingRow}>

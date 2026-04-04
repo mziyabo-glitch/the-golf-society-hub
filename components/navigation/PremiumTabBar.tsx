@@ -6,6 +6,7 @@
 import type { BottomTabBarProps } from "@react-navigation/bottom-tabs";
 import { Platform, Pressable, StyleSheet, Text, View } from "react-native";
 import { getColors } from "@/lib/ui/theme";
+import { interaction } from "@/lib/ui/interaction";
 
 function isTabHidden(descriptor: BottomTabBarProps["descriptors"][string]): boolean {
   const raw = descriptor.options.tabBarItemStyle;
@@ -91,7 +92,7 @@ export function PremiumTabBar({ state, descriptors, navigation, insets }: Bottom
               accessibilityLabel={typeof options.tabBarAccessibilityLabel === "string" ? options.tabBarAccessibilityLabel : title}
               onPress={onPress}
               onLongPress={onLongPress}
-              style={({ pressed }) => [styles.tab, { opacity: pressed ? 0.88 : 1 }]}
+              style={({ pressed }) => [styles.tab, { opacity: pressed ? interaction.pressOpacitySoft : 1 }]}
             >
               <View style={styles.iconStack}>
                 {focused ? (

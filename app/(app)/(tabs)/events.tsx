@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, memo } from "react";
 import debounce from "lodash.debounce";
-import { StyleSheet, View, Pressable, ScrollView } from "react-native";
+import { StyleSheet, View, Pressable, ScrollView, SectionList } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
 import { Feather } from "@expo/vector-icons";
@@ -11,7 +11,6 @@ import { AppText } from "@/components/ui/AppText";
 import { AppCard } from "@/components/ui/AppCard";
 import { AppInput } from "@/components/ui/AppInput";
 import { PrimaryButton, SecondaryButton } from "@/components/ui/Button";
-import { LoadingState } from "@/components/ui/LoadingState";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { InlineNotice } from "@/components/ui/InlineNotice";
 import { Toast } from "@/components/ui/Toast";
@@ -43,14 +42,18 @@ import {
 } from "@/lib/courseTeeGender";
 import { getPermissionsForMember } from "@/lib/rbac";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
+import { pressableSurfaceStyle, pressOpacityStyle } from "@/lib/ui/interaction";
+import { useReducedMotion } from "@/hooks/useReducedMotion";
+import { EventsListSkeleton } from "@/components/ui/Skeleton";
 import { formatError, type FormattedError } from "@/lib/ui/formatError";
 import { JOINT_EVENT_CHIP_LONG } from "@/lib/eventModuleUi";
 import { getCache, invalidateCachePrefix, setCache } from "@/lib/cache/clientCache";
 import { HeaderSettingsPill } from "@/components/navigation/HeaderSettingsPill";
 import { blurWebActiveElement } from "@/lib/ui/focus";
+import { measureAsync, useSlowCommitLog } from "@/lib/perf/perf";
 
 // Simple picker option component
-function PickerOption({
+const PickerOption = memo(function PickerOption({
   label,
   selected,
   onPress,
@@ -64,12 +67,13 @@ function PickerOption({
   return (
     <Pressable
       onPress={onPress}
-      style={[
+      style={({ pressed }) => [
         styles.pickerOption,
         {
           backgroundColor: selected ? colors.primary : colors.backgroundSecondary,
           borderColor: selected ? colors.primary : colors.border,
         },
+        pressOpacityStyle(pressed, false),
       ]}
     >
       <AppText variant="caption" color={selected ? "inverse" : "default"}>
@@ -77,7 +81,7 @@ function PickerOption({
       </AppText>
     </Pressable>
   );
-}
+});
 
 type FormErrors = {
   name?: string;
@@ -92,6 +96,7 @@ type FormErrors = {
 };
 
 export default function EventsScreen() {
+  useSlowCommitLog("EventsScreen", 96);
   const router = useRouter();
   const params = useLocalSearchParams<{ create?: string; classification?: string }>();
   const { societyId, activeSocietyId, member, user, loading: bootstrapLoading } = useBootstrap();
@@ -100,6 +105,7 @@ export default function EventsScreen() {
   const tabBarHeight = useBottomTabBarHeight();
   const tabContentStyle = { paddingTop: 16, paddingBottom: tabBarHeight + 24 };
   const createAction = useAsyncAction();
+  const reduceMotion = useReducedMotion();
   const paramsHandledRef = useRef(false);
   const lastLoadAtRef = useRef(0);
 
@@ -308,7 +314,7 @@ export default function EventsScreen() {
     else setLoading(true);
     setLoadError(null);
     try {
-      const data = await getEventsForSociety(sid);
+      const data = await measureAsync("events.load", () => getEventsForSociety(sid));
       console.log("[events] Loaded", data.length, "events. Upcoming:", data.filter((e) => !e.isCompleted).length, "Completed:", data.filter((e) => e.isCompleted).length);
       if (__DEV__) {
         for (const ev of data) {
@@ -652,21 +658,157 @@ export default function EventsScreen() {
     createAction.reset();
   };
 
-  const handleOpenEvent = (event: EventDoc) => {
+  const handleOpenEvent = useCallback((event: EventDoc) => {
     if (!event?.id) {
       console.error("[Events] Cannot open event: event.id is undefined");
       return;
     }
     console.log("[Events] opening event:", event.id);
     router.push({ pathname: "/(app)/event/[id]", params: { id: event.id } });
+  }, [router]);
+
+  const toDateMs = (value?: string) => {
+    if (!value) return Number.MAX_SAFE_INTEGER;
+    const ms = new Date(value).getTime();
+    return Number.isFinite(ms) ? ms : Number.MAX_SAFE_INTEGER;
   };
+
+  const toPastDateMs = (value?: string) => {
+    if (!value) return Number.MIN_SAFE_INTEGER;
+    const ms = new Date(value).getTime();
+    return Number.isFinite(ms) ? ms : Number.MIN_SAFE_INTEGER;
+  };
+
+  const upcomingEvents = events
+    .filter((e) => !e.isCompleted)
+    .sort((a, b) => toDateMs(a.date) - toDateMs(b.date));
+  const completedEvents = events
+    .filter((e) => e.isCompleted)
+    .sort((a, b) => toPastDateMs(b.date) - toPastDateMs(a.date));
+
+  const getStatusColor = useCallback((event: EventDoc) => {
+    if (event.isCompleted) return colors.success;
+    if (event.status === "cancelled") return colors.error;
+    return colors.primary;
+  }, [colors]);
+
+  const getStatusLabel = useCallback((event: EventDoc) => {
+    if (event.isCompleted) return "Completed";
+    if (event.status === "cancelled") return "Cancelled";
+    if (event.status === "in_progress") return "In Progress";
+    return "Scheduled";
+  }, []);
+
+  const eventSections = useMemo(
+    () => {
+      const sections: { title: string; data: EventDoc[] }[] = [];
+      if (upcomingEvents.length > 0) {
+        sections.push({ title: `Upcoming (${upcomingEvents.length})`, data: upcomingEvents });
+      }
+      if (completedEvents.length > 0) {
+        sections.push({ title: `Completed (${completedEvents.length})`, data: completedEvents });
+      }
+      return sections;
+    },
+    [upcomingEvents, completedEvents],
+  );
+
+  const renderSectionHeader = useCallback(
+    ({ section }: { section: { title: string } }) => (
+      <AppText variant="h2" style={[styles.sectionTitle, styles.eventsSectionHeader]}>
+        {section.title}
+      </AppText>
+    ),
+    [],
+  );
+
+  const renderEventCard = useCallback(
+    (event: EventDoc) => (
+    <Pressable
+      onPress={() => handleOpenEvent(event)}
+      style={({ pressed }) => [pressableSurfaceStyle({ pressed }, { reduceMotion, scale: "card" })]}
+    >
+      <AppCard style={styles.eventCard}>
+        <View style={styles.eventRow}>
+          <View style={[styles.dateBadge, { backgroundColor: colors.backgroundTertiary }]}>
+            {event.date ? (
+              <>
+                <AppText variant="captionBold" color="primary">
+                  {new Date(event.date).toLocaleDateString("en-GB", { day: "numeric" })}
+                </AppText>
+                <AppText variant="small" color="secondary">
+                  {new Date(event.date).toLocaleDateString("en-GB", { month: "short" })}
+                </AppText>
+              </>
+            ) : (
+              <AppText variant="caption" color="tertiary">TBD</AppText>
+            )}
+          </View>
+
+          <View style={styles.eventInfo}>
+            <AppText variant="bodyBold" numberOfLines={2} style={styles.eventTitle}>
+              {event.name}
+            </AppText>
+            {event.courseName && (
+              <AppText variant="caption" color="secondary" numberOfLines={2} style={styles.eventCourse}>
+                {event.courseName}
+              </AppText>
+            )}
+            <View style={styles.eventMeta}>
+              <View style={[styles.statusBadge, { backgroundColor: getStatusColor(event) + "20" }]}>
+                <AppText variant="small" style={{ color: getStatusColor(event) }}>
+                  {getStatusLabel(event)}
+                </AppText>
+              </View>
+              {event.format && (
+                <AppText variant="small" color="tertiary">
+                  {EVENT_FORMATS.find((f) => f.value === event.format)?.label ?? event.format}
+                </AppText>
+              )}
+              {event.classification === "oom" && (
+                <View style={[styles.oomBadge, { backgroundColor: colors.warning + "20" }]}>
+                  <Feather name="award" size={10} color={colors.warning} />
+                  <AppText variant="small" style={{ color: colors.warning }}>OOM</AppText>
+                </View>
+              )}
+              {event.classification === "major" && (
+                <View style={[styles.oomBadge, { backgroundColor: colors.info + "20" }]}>
+                  <Feather name="star" size={10} color={colors.info} />
+                  <AppText variant="small" style={{ color: colors.info }}>Major</AppText>
+                </View>
+              )}
+              {event.is_joint_event === true && (
+                <View style={[styles.jointBadge, { backgroundColor: colors.info + "16", borderColor: colors.info + "40" }]}>
+                  <Feather name="link" size={10} color={colors.info} />
+                  <AppText
+                    variant="small"
+                    style={{ color: colors.info }}
+                    numberOfLines={1}
+                  >
+                    {JOINT_EVENT_CHIP_LONG}
+                  </AppText>
+                </View>
+              )}
+            </View>
+          </View>
+
+          <View style={styles.chevronWrap}>
+            <Feather name="chevron-right" size={20} color={colors.textTertiary} />
+          </View>
+        </View>
+      </AppCard>
+    </Pressable>
+    ),
+    [colors, reduceMotion, handleOpenEvent, getStatusColor, getStatusLabel],
+  );
 
   if (bootstrapLoading && loading) {
     return (
-      <Screen scrollable={false} contentStyle={tabContentStyle}>
-        <View style={styles.centered}>
-          <LoadingState message="Loading events..." />
+      <Screen contentStyle={tabContentStyle}>
+        <View style={styles.header}>
+          <AppText variant="title">Events</AppText>
         </View>
+        <EventsListSkeleton count={6} />
       </Screen>
     );
   }
@@ -1233,184 +1375,72 @@ export default function EventsScreen() {
     );
   }
 
-  const toDateMs = (value?: string) => {
-    if (!value) return Number.MAX_SAFE_INTEGER;
-    const ms = new Date(value).getTime();
-    return Number.isFinite(ms) ? ms : Number.MAX_SAFE_INTEGER;
-  };
-
-  const toPastDateMs = (value?: string) => {
-    if (!value) return Number.MIN_SAFE_INTEGER;
-    const ms = new Date(value).getTime();
-    return Number.isFinite(ms) ? ms : Number.MIN_SAFE_INTEGER;
-  };
-
-  const upcomingEvents = events
-    .filter((e) => !e.isCompleted)
-    .sort((a, b) => toDateMs(a.date) - toDateMs(b.date));
-  const completedEvents = events
-    .filter((e) => e.isCompleted)
-    .sort((a, b) => toPastDateMs(b.date) - toPastDateMs(a.date));
-
-  const getStatusColor = (event: EventDoc) => {
-    if (event.isCompleted) return colors.success;
-    if (event.status === "cancelled") return colors.error;
-    return colors.primary;
-  };
-
-  const getStatusLabel = (event: EventDoc) => {
-    if (event.isCompleted) return "Completed";
-    if (event.status === "cancelled") return "Cancelled";
-    if (event.status === "in_progress") return "In Progress";
-    return "Scheduled";
-  };
-
-  const renderEventCard = (event: EventDoc) => (
-    <Pressable
-      key={event.id}
-      onPress={() => handleOpenEvent(event)}
-    >
-      <AppCard style={styles.eventCard}>
-        <View style={styles.eventRow}>
-          <View style={[styles.dateBadge, { backgroundColor: colors.backgroundTertiary }]}>
-            {event.date ? (
-              <>
-                <AppText variant="captionBold" color="primary">
-                  {new Date(event.date).toLocaleDateString("en-GB", { day: "numeric" })}
-                </AppText>
-                <AppText variant="small" color="secondary">
-                  {new Date(event.date).toLocaleDateString("en-GB", { month: "short" })}
-                </AppText>
-              </>
-            ) : (
-              <AppText variant="caption" color="tertiary">TBD</AppText>
-            )}
-          </View>
-
-          <View style={styles.eventInfo}>
-            <AppText variant="bodyBold" numberOfLines={2} style={styles.eventTitle}>
-              {event.name}
-            </AppText>
-            {event.courseName && (
-              <AppText variant="caption" color="secondary" numberOfLines={2} style={styles.eventCourse}>
-                {event.courseName}
-              </AppText>
-            )}
-            <View style={styles.eventMeta}>
-              <View style={[styles.statusBadge, { backgroundColor: getStatusColor(event) + "20" }]}>
-                <AppText variant="small" style={{ color: getStatusColor(event) }}>
-                  {getStatusLabel(event)}
-                </AppText>
-              </View>
-              {event.format && (
-                <AppText variant="small" color="tertiary">
-                  {EVENT_FORMATS.find((f) => f.value === event.format)?.label ?? event.format}
-                </AppText>
-              )}
-              {event.classification === "oom" && (
-                <View style={[styles.oomBadge, { backgroundColor: colors.warning + "20" }]}>
-                  <Feather name="award" size={10} color={colors.warning} />
-                  <AppText variant="small" style={{ color: colors.warning }}>OOM</AppText>
-                </View>
-              )}
-              {event.classification === "major" && (
-                <View style={[styles.oomBadge, { backgroundColor: colors.info + "20" }]}>
-                  <Feather name="star" size={10} color={colors.info} />
-                  <AppText variant="small" style={{ color: colors.info }}>Major</AppText>
-                </View>
-              )}
-              {event.is_joint_event === true && (
-                <View style={[styles.jointBadge, { backgroundColor: colors.info + "16", borderColor: colors.info + "40" }]}>
-                  <Feather name="link" size={10} color={colors.info} />
-                  <AppText
-                    variant="small"
-                    style={{ color: colors.info }}
-                    numberOfLines={1}
-                  >
-                    {JOINT_EVENT_CHIP_LONG}
-                  </AppText>
-                </View>
-              )}
-            </View>
-          </View>
-
-          <View style={styles.chevronWrap}>
-            <Feather name="chevron-right" size={20} color={colors.textTertiary} />
-          </View>
-        </View>
-      </AppCard>
-    </Pressable>
-  );
-
   return (
-    <Screen contentStyle={tabContentStyle}>
+    <Screen scrollable={false} contentStyle={[tabContentStyle, { flex: 1 }]}>
       <Toast
         visible={toast.visible}
         message={toast.message}
         type={toast.type}
         onHide={() => setToast((t) => ({ ...t, visible: false }))}
       />
-      <View style={styles.header}>
-        <View>
-          <AppText variant="title">Events</AppText>
-          <AppText variant="caption" color="secondary">
-            {events.length} event{events.length !== 1 ? "s" : ""}
-          </AppText>
+      <View style={{ flex: 1 }}>
+        <View style={styles.header}>
+          <View>
+            <AppText variant="title">Events</AppText>
+            <AppText variant="caption" color="secondary">
+              {events.length} event{events.length !== 1 ? "s" : ""}
+            </AppText>
+          </View>
+          {permissions.canCreateEvents && (
+            <PrimaryButton onPress={() => setShowCreateForm(true)} size="sm">
+              Create Event
+            </PrimaryButton>
+          )}
         </View>
-        {permissions.canCreateEvents && (
-          <PrimaryButton onPress={() => setShowCreateForm(true)} size="sm">
-            Create Event
-          </PrimaryButton>
-        )}
+        {refreshing ? (
+          <AppText variant="small" color="tertiary" style={{ marginBottom: spacing.xs }}>
+            Refreshing...
+          </AppText>
+        ) : null}
+
+        {loadError ? (
+          <InlineNotice
+            variant="error"
+            message={loadError.message}
+            detail={loadError.detail}
+            style={{ marginBottom: spacing.sm }}
+          />
+        ) : null}
+
+        {events.length === 0 && !loadError ? (
+          <EmptyState
+            icon={<Feather name="calendar" size={24} color={colors.textTertiary} />}
+            title="No events yet"
+            message={permissions.canCreateEvents
+              ? "Create your first event to start tracking results and scores."
+              : "No events yet. Ask the Captain to create one."}
+            action={permissions.canCreateEvents ? {
+              label: "Create event",
+              onPress: () => setShowCreateForm(true),
+            } : undefined}
+          />
+        ) : events.length > 0 ? (
+          <SectionList
+            style={styles.eventsSectionList}
+            sections={eventSections}
+            keyExtractor={(item) => item.id}
+            renderItem={({ item }) => renderEventCard(item)}
+            renderSectionHeader={renderSectionHeader}
+            stickySectionHeadersEnabled={false}
+            initialNumToRender={10}
+            maxToRenderPerBatch={10}
+            windowSize={8}
+            removeClippedSubviews
+            keyboardShouldPersistTaps="handled"
+            contentContainerStyle={styles.eventsListContent}
+          />
+        ) : null}
       </View>
-      {refreshing ? (
-        <AppText variant="small" color="tertiary" style={{ marginBottom: spacing.xs }}>
-          Refreshing...
-        </AppText>
-      ) : null}
-
-      {loadError ? (
-        <InlineNotice
-          variant="error"
-          message={loadError.message}
-          detail={loadError.detail}
-          style={{ marginBottom: spacing.sm }}
-        />
-      ) : null}
-
-      {events.length === 0 && !loadError ? (
-        <EmptyState
-          icon={<Feather name="calendar" size={24} color={colors.textTertiary} />}
-          title="No events yet"
-          message={permissions.canCreateEvents
-            ? "Create your first event to start tracking results and scores."
-            : "No events yet. Ask the Captain to create one."}
-          action={permissions.canCreateEvents ? {
-            label: "Create event",
-            onPress: () => setShowCreateForm(true),
-          } : undefined}
-        />
-      ) : events.length > 0 ? (
-        <>
-          {upcomingEvents.length > 0 && (
-            <View style={styles.section}>
-              <AppText variant="h2" style={styles.sectionTitle}>
-                Upcoming ({upcomingEvents.length})
-              </AppText>
-              {upcomingEvents.map(renderEventCard)}
-            </View>
-          )}
-
-          {completedEvents.length > 0 && (
-            <View style={styles.section}>
-              <AppText variant="h2" style={styles.sectionTitle}>
-                Completed ({completedEvents.length})
-              </AppText>
-              {completedEvents.map(renderEventCard)}
-            </View>
-          )}
-        </>
-      ) : null}
     </Screen>
   );
 }
@@ -1435,6 +1465,18 @@ const styles = StyleSheet.create({
   },
   section: {
     marginBottom: spacing.lg,
+  },
+  eventsSectionList: {
+    flex: 1,
+  },
+  eventsListContent: {
+    flexGrow: 1,
+    paddingBottom: spacing.sm,
+  },
+  eventsSectionHeader: {
+    marginTop: spacing.md,
+    marginBottom: spacing.sm,
+    letterSpacing: 0.2,
   },
   sectionTitle: {
     marginBottom: spacing.sm,

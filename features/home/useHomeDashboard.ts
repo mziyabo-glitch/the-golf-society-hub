@@ -1,0 +1,705 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "expo-router";
+import { useFocusEffect } from "@react-navigation/native";
+import { useBottomTabBarHeight } from "@react-navigation/bottom-tabs";
+
+import { isCaptain, canManageEventPaymentsForSociety } from "@/lib/rbac";
+import { supabase } from "@/lib/supabase";
+import { getEventsForSociety, type EventDoc } from "@/lib/db_supabase/eventRepo";
+import { getMembersBySocietyId, getMembersByIds, type MemberDoc } from "@/lib/db_supabase/memberRepo";
+import { buildSocietyIdToNameMap } from "@/lib/jointEventSocietyLabel";
+import {
+  loadCanonicalTeeSheet,
+  findMemberGroupInfoFromCanonical,
+  type CanonicalTeeSheetResult,
+} from "@/lib/teeSheet/canonicalTeeSheet";
+import {
+  getOrderOfMeritTotals,
+  getEventResults,
+  type OrderOfMeritEntry,
+  type EventResultDoc,
+} from "@/lib/db_supabase/resultsRepo";
+import { getColors, spacing } from "@/lib/ui/theme";
+import { formatError, type FormattedError } from "@/lib/ui/formatError";
+import { isActiveSocietyParticipantForEvent, isJointEventFromMeta } from "@/lib/jointEventAccess";
+import { getMySinbooks, type SinbookWithParticipants } from "@/lib/db_supabase/sinbookRepo";
+import {
+  getMyRegistration,
+  getEventRegistrations,
+  scopeEventRegistrations,
+  setMyStatus,
+  markMePaid,
+  type EventRegistration,
+} from "@/lib/db_supabase/eventRegistrationRepo";
+import { blurWebActiveElement } from "@/lib/ui/focus";
+import { getCache, setCache, invalidateCache } from "@/lib/cache/clientCache";
+import { useBootstrap } from "@/lib/useBootstrap";
+import { useReducedMotion } from "@/hooks/useReducedMotion";
+import { getSocietyLogoUrl } from "@/lib/societyLogo";
+import { measureAsync } from "@/lib/perf/perf";
+import { buildRecentActivityRows } from "./homeRecentActivityVm";
+import {
+  formatRole,
+  formatPoints,
+  formatEventDate,
+  formatShortDate,
+  formatFormatLabel,
+  formatClassification,
+} from "./homeFormatters";
+
+export function useHomeDashboard() {
+  const router = useRouter();
+  const { society, member, societyId, memberships, profile, userId, loading: bootstrapLoading } =
+    useBootstrap();
+  const colors = getColors();
+  const tabBarHeight = useBottomTabBarHeight();
+  const reduceMotion = useReducedMotion();
+  const tabContentStyle = {
+    paddingTop: spacing.lg,
+    paddingBottom: tabBarHeight + spacing.lg,
+  };
+
+  // Data state
+  const [events, setEvents] = useState<EventDoc[]>([]);
+  const [members, setMembers] = useState<MemberDoc[]>([]);
+  const [oomStandings, setOomStandings] = useState<OrderOfMeritEntry[]>([]);
+  const [recentResultsMap, setRecentResultsMap] = useState<Record<string, EventResultDoc[]>>({});
+  const [dataLoading, setDataLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [loadError, setLoadError] = useState<FormattedError | null>(null);
+  const [activeSinbook, setActiveSinbook] = useState<SinbookWithParticipants | null>(null);
+
+  // Event registration state
+  const [myReg, setMyReg] = useState<EventRegistration | null>(null);
+  const [, setNextEventRegistrations] = useState<EventRegistration[]>([]);
+  const [canonicalNextEventTee, setCanonicalNextEventTee] = useState<CanonicalTeeSheetResult | null>(null);
+  /** Joint events: member rows for all societies in canonical groups (home only loads active society by default). */
+  const [jointTeeMemberAugment, setJointTeeMemberAugment] = useState<MemberDoc[]>([]);
+  const [regBusy, setRegBusy] = useState(false);
+
+  // Licence banner state
+  const [requestSending, setRequestSending] = useState(false);
+  const [requestAlreadySent, setRequestAlreadySent] = useState(false);
+  const [licenceToast, setLicenceToast] = useState<{ visible: boolean; message: string; type: "success" | "error" | "info" }>({
+    visible: false, message: "", type: "success",
+  });
+
+  const profileComplete = profile?.profile_complete === true;
+
+  const memberHasSeat = (member as any)?.has_seat === true;
+  const memberIsCaptain = isCaptain(member as any);
+  const showLicenceBanner = !!societyId && !!member && !memberHasSeat && !memberIsCaptain;
+
+  // Check for existing pending request on mount
+  useEffect(() => {
+    if (!societyId || !member || memberHasSeat || memberIsCaptain) return;
+    supabase
+      .from("licence_requests")
+      .select("id")
+      .eq("society_id", societyId)
+      .eq("requester_user_id", (member as any)?.user_id)
+      .eq("status", "pending")
+      .maybeSingle()
+      .then(({ data }) => {
+        if (data) setRequestAlreadySent(true);
+      });
+  }, [societyId, member, memberHasSeat, memberIsCaptain]);
+
+  const handleRequestAccess = async () => {
+    if (!societyId || requestSending) return;
+    setRequestSending(true);
+    try {
+      const { error } = await supabase.rpc("create_licence_request", {
+        p_society_id: societyId,
+      });
+      if (error) {
+        if (error.message?.includes("already have a licence")) {
+          setLicenceToast({ visible: true, message: "You already have a licence!", type: "info" });
+        } else {
+          setLicenceToast({ visible: true, message: error.message || "Failed to send request.", type: "error" });
+        }
+        return;
+      }
+      setRequestAlreadySent(true);
+      setLicenceToast({ visible: true, message: "Request sent to your Captain.", type: "success" });
+    } catch (e: any) {
+      setLicenceToast({ visible: true, message: e?.message || "Something went wrong.", type: "error" });
+    } finally {
+      setRequestSending(false);
+    }
+  };
+
+  // ============================================================================
+  // Data Loading
+  // ============================================================================
+
+  const cacheKey = societyId ? `society:${societyId}:home-summary` : null;
+  const lastLoadAtRef = useRef(0);
+
+  const loadData = useCallback(async () => {
+    if (!societyId || (!memberHasSeat && !memberIsCaptain)) {
+      setDataLoading(false);
+      return;
+    }
+
+    if (Date.now() - lastLoadAtRef.current < 5000) return;
+    lastLoadAtRef.current = Date.now();
+    setRefreshing(events.length > 0 || members.length > 0 || oomStandings.length > 0);
+    setDataLoading(!(events.length > 0 || members.length > 0 || oomStandings.length > 0));
+    setLoadError(null);
+    try {
+      const [eventsData, standingsData, membersData] = await measureAsync("home.load", () =>
+        Promise.all([
+          getEventsForSociety(societyId),
+          getOrderOfMeritTotals(societyId),
+          getMembersBySocietyId(societyId),
+        ]),
+      );
+      setEvents(eventsData);
+      setOomStandings(standingsData);
+      setMembers(membersData);
+
+      // Fetch results for the last 3 completed events (for Recent Activity card)
+      const pastEvents = eventsData
+        .filter((e) => e.isCompleted)
+        .slice(0, 3);
+
+      const resultsFetches = await Promise.all(
+        pastEvents.map(async (event) => {
+          try {
+            const results = await getEventResults(event.id);
+            return { eventId: event.id, results };
+          } catch {
+            return { eventId: event.id, results: [] as EventResultDoc[] };
+          }
+        })
+      );
+
+      const resultsMap: Record<string, EventResultDoc[]> = {};
+      for (const { eventId, results } of resultsFetches) {
+        resultsMap[eventId] = results;
+      }
+      setRecentResultsMap(resultsMap);
+
+      // Load first active sinbook for teaser card (non-blocking)
+      try {
+        const sbs = await getMySinbooks();
+        const active = sbs.find((s) =>
+          s.participants.some((p) => p.status === "accepted")
+        );
+        setActiveSinbook(active ?? null);
+      } catch {
+        // Non-critical — silently ignore
+      }
+      if (cacheKey) {
+        await setCache(cacheKey, {
+          events: eventsData,
+          members: membersData,
+          oomStandings: standingsData,
+          recentResultsMap: resultsMap,
+        }, { ttlMs: 1000 * 60 * 5 });
+      }
+    } catch (err) {
+      console.error("[Home] Failed to load data:", err);
+      setLoadError(formatError(err));
+    } finally {
+      setDataLoading(false);
+      setRefreshing(false);
+    }
+  }, [societyId, memberHasSeat, memberIsCaptain, cacheKey, events.length, members.length, oomStandings.length]);
+
+  useEffect(() => {
+    void (async () => {
+      if (cacheKey) {
+        const cached = await getCache<{
+          events: EventDoc[];
+          members: MemberDoc[];
+          oomStandings: OrderOfMeritEntry[];
+          recentResultsMap: Record<string, EventResultDoc[]>;
+        }>(cacheKey, { maxAgeMs: 1000 * 60 * 60 });
+        if (cached) {
+          setEvents(cached.value.events ?? []);
+          setMembers(cached.value.members ?? []);
+          setOomStandings(cached.value.oomStandings ?? []);
+          setRecentResultsMap(cached.value.recentResultsMap ?? {});
+          setDataLoading(false);
+        }
+      }
+      loadData();
+    })();
+  }, [loadData, cacheKey]);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (societyId && (memberHasSeat || memberIsCaptain)) {
+        loadData();
+      }
+    }, [societyId, memberHasSeat, memberIsCaptain, loadData])
+  );
+
+  // ============================================================================
+  // Derived Data
+  // ============================================================================
+
+  const memberId = member?.id;
+
+  /** Local calendar date as YYYY-MM-DD (avoids UTC midnight issues with date-only strings). */
+  const todayLocalKey = useMemo(() => {
+    const d = new Date();
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return `${y}-${m}-${day}`;
+  }, []);
+
+  // Next upcoming event (date >= today in local calendar, not completed, sorted ascending)
+  const nextEvent = useMemo(() => {
+    const upcoming = events.filter(
+      (e) =>
+        !e.isCompleted &&
+        e.date &&
+        /^\d{4}-\d{2}-\d{2}$/.test(e.date.trim()) &&
+        e.date.trim() >= todayLocalKey
+    );
+    upcoming.sort((a, b) => {
+      const da = a.date!.trim();
+      const db = b.date!.trim();
+      if (da !== db) return da.localeCompare(db);
+      return (a.name || "").localeCompare(b.name || "");
+    });
+    return upcoming[0] ?? null;
+  }, [events, todayLocalKey]);
+
+  /** Further upcoming events after the hero “next” (same ordering rules as nextEvent). */
+  const upcomingAfterNext = useMemo(() => {
+    const upcoming = events.filter(
+      (e) =>
+        !e.isCompleted &&
+        e.date &&
+        /^\d{4}-\d{2}-\d{2}$/.test(e.date.trim()) &&
+        e.date.trim() >= todayLocalKey
+    );
+    upcoming.sort((a, b) => {
+      const da = a.date!.trim();
+      const db = b.date!.trim();
+      if (da !== db) return da.localeCompare(db);
+      return (a.name || "").localeCompare(b.name || "");
+    });
+    return upcoming.slice(1, 4);
+  }, [events, todayLocalKey]);
+
+  const nextEventId = nextEvent?.id ?? null;
+
+  /** Joint truth from event_societies-derived fields — not raw events.is_joint_event alone. */
+  const nextEventIsJoint = useMemo(
+    () =>
+      isJointEventFromMeta(nextEvent?.participant_society_ids, nextEvent?.linked_society_count) ||
+      nextEvent?.is_joint_event === true,
+    [
+      nextEvent?.participant_society_ids,
+      nextEvent?.linked_society_count,
+      nextEvent?.is_joint_event,
+    ],
+  );
+
+  const canAccessNextEventTeeSheet = useMemo(() => {
+    if (!nextEvent?.society_id || !societyId) return false;
+    return isActiveSocietyParticipantForEvent(
+      societyId,
+      nextEvent.society_id,
+      nextEvent.participant_society_ids ?? [],
+    );
+  }, [nextEvent, societyId]);
+
+  useEffect(() => {
+    if (!nextEventId) return;
+    if (!__DEV__) return;
+    console.log("[dashboard] joint mode decision", {
+      source: "app/(app)/(tabs)/index.tsx::nextEventDerived",
+      eventId: nextEventId,
+      event_is_joint_event: nextEvent?.is_joint_event ?? null,
+      linkedSocietiesCount: nextEvent?.linked_society_count ?? null,
+      participantSocietiesCount: canonicalNextEventTee?.jointParticipatingSocieties?.length ?? null,
+      jointDecision: nextEventIsJoint,
+    });
+  }, [
+    nextEventId,
+    nextEvent?.is_joint_event,
+    nextEvent?.linked_society_count,
+    nextEventIsJoint,
+    canonicalNextEventTee?.jointParticipatingSocieties,
+  ]);
+
+  useEffect(() => {
+    if (!nextEvent?.id || !societyId || !__DEV__) return;
+    console.log("[joint-access] home next-event tee gate", {
+      eventId: nextEvent.id,
+      activeSocietyId: societyId,
+      hostSocietyId: nextEvent.society_id,
+      participantSocietyIds: nextEvent.participant_society_ids ?? [],
+      nextEventIsJoint,
+      canViewTeeNav: canAccessNextEventTeeSheet,
+    });
+  }, [nextEvent, societyId, nextEventIsJoint, canAccessNextEventTeeSheet]);
+
+  // Load registration for the next event whenever it changes
+  useEffect(() => {
+    if (!nextEventId || !memberId) {
+      setMyReg(null);
+      return;
+    }
+    let cancelled = false;
+    getMyRegistration(nextEventId, memberId).then((reg) => {
+      if (!cancelled) setMyReg(reg);
+    });
+    return () => { cancelled = true; };
+  }, [nextEventId, memberId]);
+
+  // Load all registrations for next event when tee times published (for societies using In/Out)
+  useEffect(() => {
+    if (!nextEventId || !nextEvent?.teeTimePublishedAt || !societyId || !nextEvent) {
+      setNextEventRegistrations([]);
+      return;
+    }
+    const ev = nextEvent;
+    let cancelled = false;
+    void (async () => {
+      const cacheKey = `event:${nextEventId}:registrations`;
+      const cached = await getCache<EventRegistration[]>(cacheKey, { maxAgeMs: 1000 * 60 * 30 });
+      if (cached && !cancelled) {
+        const raw = cached.value;
+        if (!Array.isArray(raw)) {
+          if (__DEV__) {
+            console.warn("[home] registrations cache was not an array; clearing", cacheKey);
+          }
+          await invalidateCache(cacheKey);
+        } else {
+          const scopedCached = nextEventIsJoint
+            ? scopeEventRegistrations(raw, { kind: "joint_home", activeSocietyId: societyId })
+            : scopeEventRegistrations(raw, {
+                kind: "standard",
+                hostSocietyId: ev.society_id ?? societyId,
+              });
+          setNextEventRegistrations(scopedCached);
+        }
+      }
+      const regs = await getEventRegistrations(nextEventId);
+      if (cancelled) return;
+      await setCache(cacheKey, regs, { ttlMs: 1000 * 60 * 2 });
+      const scoped = nextEventIsJoint
+        ? scopeEventRegistrations(regs, { kind: "joint_home", activeSocietyId: societyId })
+        : scopeEventRegistrations(regs, {
+            kind: "standard",
+            hostSocietyId: ev.society_id ?? societyId,
+          });
+      setNextEventRegistrations(scoped);
+    })();
+    return () => { cancelled = true; };
+  }, [
+    nextEventId,
+    nextEvent,
+    nextEvent?.teeTimePublishedAt,
+    nextEvent?.society_id,
+    nextEventIsJoint,
+    societyId,
+  ]);
+
+  // Canonical tee sheet for next event (joint entries, tee_groups snapshot, or computed fallback)
+  useEffect(() => {
+    if (!nextEventId || !nextEvent?.teeTimePublishedAt) {
+      setCanonicalNextEventTee(null);
+      setJointTeeMemberAugment([]);
+      return;
+    }
+    let cancelled = false;
+    loadCanonicalTeeSheet(nextEventId).then((c) => {
+      if (!cancelled) setCanonicalNextEventTee(c);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [nextEventId, nextEvent?.teeTimePublishedAt]);
+
+  // Hydrate members from all participant societies for joint "my tee time" (representative / dual membership)
+  useEffect(() => {
+    if (!canonicalNextEventTee?.isJoint || !canonicalNextEventTee.groups.length) {
+      setJointTeeMemberAugment([]);
+      return;
+    }
+    const ids = [
+      ...new Set(
+        canonicalNextEventTee.groups.flatMap((g) => g.players.map((p) => p.id)),
+      ),
+    ].filter((id) => id && !String(id).startsWith("guest-"));
+    const need = ids.filter((id) => !members.some((m) => m.id === id));
+    if (need.length === 0) {
+      setJointTeeMemberAugment([]);
+      return;
+    }
+    let cancelled = false;
+    getMembersByIds(need).then((extra) => {
+      if (cancelled) return;
+      setJointTeeMemberAugment((prev) => {
+        const byId = new Map(prev.map((m) => [m.id, m]));
+        for (const m of extra) {
+          if (m?.id) byId.set(m.id, m);
+        }
+        return Array.from(byId.values());
+      });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [canonicalNextEventTee, members]);
+
+  // Past events (completed, sorted desc) — last 3
+  const recentEvents = useMemo(() => {
+    return events
+      .filter((e) => e.isCompleted)
+      .slice(0, 3);
+  }, [events]);
+
+  const recentActivityRows = useMemo(
+    () => buildRecentActivityRows(recentEvents, recentResultsMap, memberId, colors),
+    [recentEvents, recentResultsMap, memberId, colors],
+  );
+
+  // My season snapshot (year-based)
+  const mySnapshot = useMemo(() => {
+    if (!memberId) return null;
+
+    // Find current user in OOM standings
+    const myOomEntry = oomStandings.find((s) => s.memberId === memberId);
+    const membersWithPoints = oomStandings.filter((s) => s.totalPoints > 0);
+
+    return {
+      totalPoints: myOomEntry?.totalPoints ?? 0,
+      rank: myOomEntry?.rank ?? 0,
+      totalWithPoints: membersWithPoints.length,
+    };
+  }, [memberId, oomStandings]);
+
+  const nextEventJointSocietyMap = useMemo(() => {
+    if (!canonicalNextEventTee?.isJoint || !canonicalNextEventTee.jointParticipatingSocieties?.length) {
+      return undefined;
+    }
+    return buildSocietyIdToNameMap(canonicalNextEventTee.jointParticipatingSocieties);
+  }, [canonicalNextEventTee?.isJoint, canonicalNextEventTee?.jointParticipatingSocieties]);
+
+  const membersForJointTeeCanonical = useMemo(() => {
+    if (jointTeeMemberAugment.length === 0) return members;
+    const byId = new Map(members.map((m) => [m.id, m]));
+    for (const m of jointTeeMemberAugment) byId.set(m.id, m);
+    return Array.from(byId.values());
+  }, [members, jointTeeMemberAugment]);
+
+  /**
+   * HARD RULE:
+   * For joint events, tee sheets are event-scoped. Do not filter by society.
+   * Always read canonical published groups for dashboard slot lookup.
+   */
+  // My tee time for next event (when published) — same canonical payload as member tee sheet / ManCo
+  const myTeeTimeInfo = useMemo(() => {
+    if (!memberId || !nextEvent?.teeTimePublishedAt || !nextEvent || !canonicalNextEventTee) return null;
+    const linkedMemberIds =
+      canonicalNextEventTee.isJoint && userId
+        ? [
+            ...new Set(
+              membersForJointTeeCanonical
+                .filter((m) => String(m.user_id ?? "") === String(userId))
+                .map((m) => String(m.id)),
+            ),
+          ]
+        : [memberId];
+    const idsToCheck = linkedMemberIds.length > 0 ? linkedMemberIds : [memberId];
+
+    const found = idsToCheck
+      .map((id) =>
+        findMemberGroupInfoFromCanonical(
+          id,
+          canonicalNextEventTee,
+          membersForJointTeeCanonical,
+          nextEventJointSocietyMap,
+        ),
+      )
+      .find(Boolean) ?? null;
+
+    if (__DEV__) {
+      console.log("[dashboard] published teesheet snapshot", {
+        eventId: canonicalNextEventTee.eventId,
+        isJoint: canonicalNextEventTee.isJoint,
+        source: `canonical:${canonicalNextEventTee.source}`,
+        playerIds: canonicalNextEventTee.groups.flatMap((g) => g.players.map((p) => p.id)),
+        societiesRepresented: [
+          ...new Set(
+            canonicalNextEventTee.groups.flatMap((g) => g.players.map((p) => p.societyLabel).filter(Boolean)),
+          ),
+        ],
+      });
+      console.log("[dashboard] player lookup", {
+        userId,
+        signedInUserId: userId,
+        memberIdsChecked: idsToCheck,
+        matchedMemberId: found
+          ? idsToCheck.find((id) =>
+              canonicalNextEventTee.groups.some((g) => g.players.some((p) => p.id === id)),
+            ) ?? null
+          : null,
+        found: !!found,
+        eventId: canonicalNextEventTee.eventId,
+      });
+    }
+    return found;
+  }, [
+    memberId,
+    nextEvent,
+    membersForJointTeeCanonical,
+    canonicalNextEventTee,
+    nextEventJointSocietyMap,
+    userId,
+  ]);
+
+  // ============================================================================
+  // Registration Helpers
+  // ============================================================================
+
+  /** Cap/Treas in active society (memberships), not a random multi-society row */
+  const canAdmin = useMemo(
+    () => canManageEventPaymentsForSociety(memberships, societyId),
+    [memberships, societyId],
+  );
+  const [showAdmin, setShowAdmin] = useState(false);
+
+  const toggleRegistration = async (newStatus: "in" | "out") => {
+    if (!nextEvent || !societyId || !memberId || regBusy) return;
+    setRegBusy(true);
+    try {
+      const updated = await setMyStatus({ eventId: nextEvent.id, societyId, memberId, status: newStatus });
+      setMyReg(updated);
+    } catch {
+      // silently degrade — user can retry
+    } finally {
+      setRegBusy(false);
+    }
+  };
+
+  const handleMarkPaid = async (paid: boolean) => {
+    if (!nextEvent || !memberId || !societyId || regBusy) return;
+    setRegBusy(true);
+    try {
+      await markMePaid(nextEvent.id, memberId, paid, societyId);
+      const refreshed = await getMyRegistration(nextEvent.id, memberId);
+      setMyReg(refreshed);
+    } catch {
+      // silently degrade
+    } finally {
+      setRegBusy(false);
+    }
+  };
+
+  // ============================================================================
+  // Navigation Helpers
+  // ============================================================================
+
+  const pushWithBlur = (href: Parameters<typeof router.push>[0]) => {
+    blurWebActiveElement();
+    router.push(href);
+  };
+
+  const openEvent = (eventId: string) => {
+    if (!eventId) return;
+    pushWithBlur({ pathname: "/(app)/event/[id]", params: { id: eventId } });
+  };
+
+  const openLeaderboard = () => {
+    pushWithBlur("/(app)/(tabs)/leaderboard");
+  };
+
+  const openWeatherTab = useCallback(() => {
+    router.push("/(app)/(tabs)/weather");
+  }, [router]);
+
+  if (bootstrapLoading && dataLoading) {
+    return { phase: "loading" as const, tabContentStyle, colors };
+  }
+  if (!societyId || !society) {
+    return { phase: "personal" as const, colors, router, tabContentStyle };
+  }
+
+  const memberDisplayName = String(member?.displayName || member?.name || "Member");
+  const logoUrl = getSocietyLogoUrl(society);
+  const roleLabel = formatRole(member?.role ?? member?.roles?.[0]);
+  const hiRaw = member?.handicapIndex ?? member?.handicap_index;
+  const handicapIndexDisplay =
+    hiRaw != null && Number.isFinite(Number(hiRaw)) ? Number(hiRaw).toFixed(1) : null;
+  const canOpenLeaderboard = memberHasSeat || memberIsCaptain;
+  const oomTotalPoints = Number(mySnapshot?.totalPoints) || 0;
+  const oomPointsMain = formatPoints(oomTotalPoints);
+  const oomRankMain =
+    mySnapshot && (mySnapshot.rank ?? 0) > 0 ? String(mySnapshot.rank) : "—";
+  const showUnrankedHint = !mySnapshot || (mySnapshot.rank ?? 0) <= 0;
+  const heroTeePreview = myTeeTimeInfo
+    ? { teeTime: myTeeTimeInfo.teeTime, groupNumber: myTeeTimeInfo.groupNumber }
+    : null;
+
+  return {
+    phase: "society" as const,
+    tabContentStyle,
+    colors,
+    reduceMotion,
+    router,
+    society,
+    memberId,
+    userId,
+    events,
+    nextEvent,
+    upcomingAfterNext,
+    recentActivityRows,
+    oomStandings,
+    loadError,
+    refreshing,
+    profileComplete,
+    licenceToast,
+    setLicenceToast,
+    showLicenceBanner,
+    requestAlreadySent,
+    requestSending,
+    handleRequestAccess,
+    memberHasSeat,
+    memberIsCaptain,
+    memberDisplayName,
+    logoUrl,
+    roleLabel,
+    handicapIndexDisplay,
+    canOpenLeaderboard,
+    oomPointsMain,
+    oomRankMain,
+    showUnrankedHint,
+    heroTeePreview,
+    myReg,
+    regBusy,
+    canAdmin,
+    showAdmin,
+    setShowAdmin,
+    toggleRegistration,
+    handleMarkPaid,
+    pushWithBlur,
+    openEvent,
+    openLeaderboard,
+    openWeatherTab,
+    nextEventIsJoint,
+    canAccessNextEventTeeSheet,
+    societyId,
+    activeSinbook,
+    formatEventDate,
+    formatFormatLabel,
+    formatClassification,
+    formatShortDate,
+    formatPoints,
+  };
+}
+
+export type HomeSocietyDashboardVm = Omit<
+  Extract<ReturnType<typeof useHomeDashboard>, { phase: "society" }>,
+  "phase"
+>;
