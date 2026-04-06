@@ -4,7 +4,7 @@
  * Both participants have full edit rights.
  */
 
-import { useCallback, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { Pressable, Share, StyleSheet, View } from "react-native";
 import * as Clipboard from "expo-clipboard";
 import { useLocalSearchParams, useRouter } from "expo-router";
@@ -31,7 +31,6 @@ import {
   canDeleteSinbookAsUser,
   type SinbookWithParticipants,
   type SinbookEntry,
-  type SinbookParticipant,
 } from "@/lib/db_supabase/sinbookRepo";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
 import { formatError, type FormattedError } from "@/lib/ui/formatError";
@@ -39,6 +38,7 @@ import { showAlert } from "@/lib/ui/alert";
 import { Toast } from "@/components/ui/Toast";
 import { useDestructiveConfirm } from "@/components/ui/DestructiveConfirmModal";
 import { getRivalryInviteMessage } from "@/lib/appConfig";
+import { createRivalryParticipantDisplayResolver, resolvePersonDisplayName } from "@/lib/rivalryPersonName";
 
 export default function RivalryDetailScreen() {
   const router = useRouter();
@@ -82,11 +82,14 @@ export default function RivalryDetailScreen() {
 
   useFocusEffect(useCallback(() => { loadData(); }, [loadData]));
 
-  // Derived data — map ALL participants by user_id for name resolution
+  // Derived data
   const allParticipants = sinbook?.participants ?? [];
   const acceptedParticipants = allParticipants.filter((p) => p.status === "accepted");
-  const participantMap = new Map<string, SinbookParticipant>();
-  for (const p of allParticipants) participantMap.set(p.user_id, p);
+
+  const displayForParticipant = useMemo(() => {
+    if (!sinbook) return (_uid: string | null | undefined) => "—";
+    return createRivalryParticipantDisplayResolver(sinbook, userId ?? null);
+  }, [sinbook, userId]);
 
   // Standings: count wins per participant
   const standings = new Map<string, number>();
@@ -173,7 +176,22 @@ export default function RivalryDetailScreen() {
       setToast({ visible: true, message: "Invite code not ready yet. Please try again in a moment.", type: "info" });
       return;
     }
-    const message = getRivalryInviteMessage(sinbook?.title?.trim() || "Rivalry", code.toUpperCase());
+    const meP = sinbook?.participants.find((p) => p.user_id === userId);
+    const sharerName =
+      userId && sinbook
+        ? resolvePersonDisplayName(
+            {
+              ...sinbook.rivalryNameHintsByUserId?.[userId],
+              participantDisplayName: meP?.display_name,
+            },
+            { lastResort: "Your rival" },
+          ).name
+        : undefined;
+    const message = getRivalryInviteMessage(
+      sinbook?.title?.trim() || "Rivalry",
+      code.toUpperCase(),
+      sharerName,
+    );
     try {
       await Share.share({ message });
     } catch { /* cancelled */ }
@@ -232,14 +250,6 @@ export default function RivalryDetailScreen() {
     } finally {
       setActionBusy(false);
     }
-  };
-
-  const getName = (uid: string | null): string => {
-    if (!uid) return "No winner";
-    const p = participantMap.get(uid);
-    const name = p?.display_name?.trim();
-    if (name && name !== "Player") return name;
-    return uid === userId ? "You" : "Opponent";
   };
 
   const formatDate = (dateStr: string) => {
@@ -329,7 +339,7 @@ export default function RivalryDetailScreen() {
                   ]}
                 >
                   <AppText variant="caption" style={{ color: entryWinner === p.user_id ? colors.primary : colors.text }}>
-                    {getName(p.user_id)}
+                    {displayForParticipant(p.user_id)}
                   </AppText>
                 </Pressable>
               ))}
@@ -446,7 +456,7 @@ export default function RivalryDetailScreen() {
                     {wins}
                   </AppText>
                   <AppText variant="bodyBold" numberOfLines={1}>
-                    {getName(p.user_id)}
+                    {displayForParticipant(p.user_id)}
                   </AppText>
                 </View>
               );
@@ -503,7 +513,7 @@ export default function RivalryDetailScreen() {
                       </AppText>
                       {entry.winner_id && (
                         <AppText variant="small" color="primary" style={{ fontWeight: "600" }}>
-                          Won by {getName(entry.winner_id)}
+                          Won by {displayForParticipant(entry.winner_id)}
                         </AppText>
                       )}
                     </View>

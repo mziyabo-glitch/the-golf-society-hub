@@ -20,6 +20,7 @@ import { pressableSurfaceStyle } from "@/lib/ui/interaction";
 import { HomeAppBar, PoweredByFooter } from "./HomeChrome";
 import { homeDashboardStyles as styles } from "../homeDashboardStyles";
 import type { HomeSocietyDashboardVm } from "../useHomeDashboard";
+import { resolvePersonDisplayName } from "@/lib/rivalryPersonName";
 
 export function HomeSocietyDashboardView(vm: HomeSocietyDashboardVm) {
   const cardPressStyle = ({ pressed }: PressableStateCallbackType) => [
@@ -332,7 +333,11 @@ export function HomeSocietyDashboardView(vm: HomeSocietyDashboardVm) {
                 {(() => {
                   if (!userId) return "Awaiting opponent";
                   const opp = activeSinbook.participants.find((p) => p.user_id !== userId && p.status === "accepted");
-                  return opp ? (opp.display_name?.trim() || "Opponent") : "Awaiting opponent";
+                  if (!opp) return "Awaiting opponent";
+                  return resolvePersonDisplayName({
+                    ...activeSinbook.rivalryNameHintsByUserId?.[opp.user_id],
+                    participantDisplayName: opp.display_name,
+                  }).name;
                 })()}
               </AppText>
             </View>

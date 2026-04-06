@@ -39,6 +39,7 @@ import {
   type SinbookWithParticipants,
 } from "@/lib/db_supabase/sinbookRepo";
 import { canCreateSinbook } from "@/lib/sinbookEntitlement";
+import { joinRivalrySelfDisplayName, resolvePersonDisplayName } from "@/lib/rivalryPersonName";
 import { getColors, spacing, radius, iconSize } from "@/lib/ui/theme";
 import { showAlert } from "@/lib/ui/alert";
 import { formatError, type FormattedError } from "@/lib/ui/formatError";
@@ -75,7 +76,7 @@ function getStatusInfo(
 
 export default function SinbookHomeScreen() {
   const router = useRouter();
-  const { member, userId, loading: bootstrapLoading } = useBootstrap();
+  const { member, userId, profile, session, loading: bootstrapLoading } = useBootstrap();
   const { destructiveConfirmModal, askConfirm } = useDestructiveConfirm();
   const colors = getColors();
   const tabBarHeight = useBottomTabBarHeight();
@@ -134,16 +135,24 @@ export default function SinbookHomeScreen() {
 
   const getRival = useCallback((sb: SinbookWithParticipants) => {
     const opponent = sb.participants.find((p) => p.user_id !== userId && p.status === "accepted");
-    const rawName = opponent?.display_name?.trim();
-    // When opponent exists: use their name; "Opponent" only if empty/placeholder
-    const name = rawName ? (rawName !== "Player" ? rawName : "Opponent") : (opponent ? "Opponent" : null);
-    return { name, id: opponent?.user_id ?? null, hasRival: !!opponent };
+    if (!opponent) return { name: null, id: null, hasRival: false };
+    const name = resolvePersonDisplayName({
+      ...sb.rivalryNameHintsByUserId?.[opponent.user_id],
+      participantDisplayName: opponent.display_name,
+    }).name;
+    return { name, id: opponent.user_id, hasRival: true };
   }, [userId]);
 
   const getMyName = useCallback((sb: SinbookWithParticipants) => {
+    if (!userId) return "You";
     const me = sb.participants.find((p) => p.user_id === userId);
-    const raw = me?.display_name?.trim();
-    return raw && raw !== "Player" ? raw : "You";
+    return resolvePersonDisplayName(
+      {
+        ...sb.rivalryNameHintsByUserId?.[userId],
+        participantDisplayName: me?.display_name,
+      },
+      { lastResort: "You" },
+    ).name;
   }, [userId]);
 
   const getStandings = useCallback((sb: SinbookWithParticipants) => {
@@ -189,7 +198,13 @@ export default function SinbookHomeScreen() {
       await createSinbook({
         title: formTitle.trim(),
         stake: formStake.trim() || undefined,
-        creatorDisplayName: member?.displayName || member?.name || "You",
+        creatorDisplayName: joinRivalrySelfDisplayName({
+          memberDisplayName: member?.displayName,
+          memberName: member?.name,
+          profileFullName: profile?.full_name,
+          authEmail: session?.user?.email,
+          authMetadata: session?.user?.user_metadata,
+        }),
       });
       setFormTitle(""); setFormStake(""); setShowCreate(false);
       loadData();
@@ -203,7 +218,13 @@ export default function SinbookHomeScreen() {
     if (!code || code.length !== 6) { showAlert("Invalid Code", "Enter the 6-character rivalry code."); return; }
     setJoining(true);
     try {
-      const displayName = member?.displayName || member?.name || "You";
+      const displayName = joinRivalrySelfDisplayName({
+        memberDisplayName: member?.displayName,
+        memberName: member?.name,
+        profileFullName: profile?.full_name,
+        authEmail: session?.user?.email,
+        authMetadata: session?.user?.user_metadata,
+      });
       const result = await joinByCode(code, displayName);
       setJoinCode(""); setShowJoin(false);
       showAlert("Joined!", `You're now part of "${result.title}".`);
@@ -392,11 +413,17 @@ export default function SinbookHomeScreen() {
           <AppText variant="captionBold" color="secondary" style={styles.sectionLabel}>INVITES</AppText>
           {pendingInvites.map((inv) => {
             const creator = inv.participants.find((p) => p.user_id === inv.created_by);
+            const creatorLabel = creator
+              ? resolvePersonDisplayName({
+                  ...inv.rivalryNameHintsByUserId?.[creator.user_id],
+                  participantDisplayName: creator.display_name,
+                }, { lastResort: "someone" }).name
+              : "someone";
             return (
               <AppCard key={inv.id} style={{ marginBottom: spacing.xs }}>
                 <AppText variant="bodyBold" numberOfLines={1}>{inv.title?.trim() || "Rivalry"}</AppText>
                 <AppText variant="small" color="secondary" style={{ marginTop: 2 }}>
-                  From {creator?.display_name?.trim() || "someone"}
+                  From {creatorLabel}
                   {inv.stake ? ` · ${inv.stake}` : ""}
                 </AppText>
                 <View style={styles.inviteActions}>
@@ -462,7 +489,7 @@ export default function SinbookHomeScreen() {
           {liveList.map((sb) => {
             const { myWins, rivalWins, rival } = getStandings(sb);
             const myName = getMyName(sb);
-            const rivalName = rival.hasRival ? (rival.name ?? "Opponent") : "Awaiting opponent";
+            const rivalName = rival.hasRival ? rival.name! : "Awaiting opponent";
             const status = getStatusInfo(myWins, rivalWins, rival.hasRival);
             const chipColor = statusColor[status.kind];
             const canDelete = canDeleteSinbookAsUser(sb, userId ?? undefined);

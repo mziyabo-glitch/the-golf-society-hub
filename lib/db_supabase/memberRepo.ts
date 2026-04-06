@@ -253,6 +253,31 @@ export async function getMembersByIds(memberIds: string[]): Promise<MemberDoc[]>
 }
 
 /**
+ * Members visible to the current user in any of the given societies, restricted to the given user_ids.
+ * Used to enrich rivalry participant names when co-members share a society.
+ */
+export async function getMembersByUserIdsInSocieties(
+  userIds: string[],
+  societyIds: string[],
+): Promise<MemberDoc[]> {
+  const uids = [...new Set(userIds.map((id) => id?.trim()).filter(Boolean) as string[])];
+  const sids = [...new Set(societyIds.map((id) => id?.trim()).filter(Boolean) as string[])];
+  if (uids.length === 0 || sids.length === 0) return [];
+
+  const { data, error } = await supabase
+    .from("members")
+    .select("*")
+    .in("society_id", sids)
+    .in("user_id", uids);
+
+  if (error) {
+    console.error("[memberRepo] getMembersByUserIdsInSocieties failed:", error.message);
+    return [];
+  }
+  return (data ?? []).map(mapMember);
+}
+
+/**
  * Get members for a society (RLS: rows visible if society is in the user's memberships
  * `my_society_ids()` or the row is `user_id = auth.uid()`). Querying a society the user
  * does not belong to returns **zero rows** — unlike bootstrap, which selects **your** row

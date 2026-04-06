@@ -8,6 +8,7 @@ import { supabase } from "@/lib/supabase";
 import { SUPABASE_AUTH_CONFIG } from "@/lib/supabase";
 import type { User, Session } from "@supabase/supabase-js";
 import { getMySocieties, type MySocietyMembership } from "@/lib/db_supabase/mySocietiesRepo";
+import { maybeBackfillProfileFullNameFromSignals } from "@/lib/db_supabase/profileRepo";
 import { getCache, setCache, invalidateCache } from "@/lib/cache/clientCache";
 import { Platform } from "react-native";
 import { hasSupabaseStorageAdapter } from "@/lib/supabaseStorage";
@@ -403,6 +404,7 @@ function useBootstrapInternal(): BootstrapState {
         // ----------------------------------------------------------------
         // Step 5: Load membership by active society + current auth user
         // ----------------------------------------------------------------
+        let memberRowForProfileBackfill: { name?: string | null; email?: string | null } | null = null;
         if (finalProfile?.active_society_id) {
           const targetSocietyId = finalProfile.active_society_id as string;
           const targetUserId = currentUser.id;
@@ -435,6 +437,7 @@ function useBootstrapInternal(): BootstrapState {
             // Keep current member state during transient query issues.
             setMembershipLoading(false);
           } else if (firstMember) {
+            memberRowForProfileBackfill = firstMember;
             setMemberState(normalizeMemberData(firstMember));
 
             if (finalProfile.active_member_id !== firstMember.id) {
@@ -454,6 +457,15 @@ function useBootstrapInternal(): BootstrapState {
         } else {
           setMemberState(null);
           setMembershipLoading(false);
+        }
+
+        if (currentUser && finalProfile) {
+          void maybeBackfillProfileFullNameFromSignals({
+            userId: currentUser.id,
+            profile: finalProfile,
+            member: memberRowForProfileBackfill,
+            authUser: currentUser,
+          });
         }
 
         // ----------------------------------------------------------------

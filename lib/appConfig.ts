@@ -38,9 +38,17 @@ export function getRivalryShareLinkText(joinCode: string): string {
 }
 
 /** Beta invite message format — always uses Vercel link, never store links. */
-export function getRivalryInviteMessage(title: string, joinCode: string): string {
+export function getRivalryInviteMessage(
+  title: string,
+  joinCode: string,
+  inviterDisplayName?: string | null,
+): string {
   const code = String(joinCode).trim().toUpperCase();
-  return `Join my rivalry "${title}" on The Golf Society Hub!\n\nOpen here:\n${getRivalryInviteUrl(code)}\n\nOr use join code: ${code}`;
+  const who = inviterDisplayName?.trim();
+  const lead = who
+    ? `Join my rivalry "${title}" on The Golf Society Hub! — from ${who}`
+    : `Join my rivalry "${title}" on The Golf Society Hub!`;
+  return `${lead}\n\nOpen here:\n${getRivalryInviteUrl(code)}\n\nOr use join code: ${code}`;
 }
 
 /**

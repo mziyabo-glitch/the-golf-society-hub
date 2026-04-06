@@ -3,6 +3,7 @@
 // NO .select().single() after upsert to avoid 406 errors
 
 import { supabase } from "@/lib/supabase";
+import { emailLocalPart } from "@/lib/rivalryPersonName";
 
 export type ProfileDoc = {
   id: string;
@@ -168,4 +169,44 @@ export async function clearActiveSociety(userId: string): Promise<void> {
     active_society_id: null,
     active_member_id: null,
   });
+}
+
+function pickNameFromAuthMetadata(meta: Record<string, unknown> | null | undefined): string | null {
+  if (!meta || typeof meta !== "object") return null;
+  const full = meta.full_name;
+  const name = meta.name;
+  if (typeof full === "string" && full.trim()) return full.trim();
+  if (typeof name === "string" && name.trim()) return name.trim();
+  return null;
+}
+
+/**
+ * When `profiles.full_name` is empty (common after Apple sign-in), copy a usable name from
+ * member row, auth metadata, or email — helps the rest of the app and rivalry joins.
+ */
+export async function maybeBackfillProfileFullNameFromSignals(args: {
+  userId: string;
+  profile: { full_name?: string | null; email?: string | null } | null | undefined;
+  member: { name?: string | null; email?: string | null } | null | undefined;
+  authUser: { email?: string | null; user_metadata?: Record<string, unknown> | null };
+}): Promise<void> {
+  const { userId, profile, member, authUser } = args;
+  if (!userId) return;
+  if (profile?.full_name?.trim()) return;
+
+  const memName = member?.name?.trim();
+  const metaName = pickNameFromAuthMetadata(authUser.user_metadata ?? undefined);
+  const fromEmail =
+    emailLocalPart(member?.email) ??
+    emailLocalPart(profile?.email) ??
+    emailLocalPart(authUser.email);
+
+  const candidate = memName || metaName || fromEmail;
+  if (!candidate) return;
+
+  try {
+    await updateProfile(userId, { full_name: candidate });
+  } catch (e) {
+    console.warn("[profileRepo] maybeBackfillProfileFullNameFromSignals:", e);
+  }
 }

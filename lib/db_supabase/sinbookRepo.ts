@@ -3,6 +3,13 @@
 // Uses singleton supabase client. Per-user (auth.uid()), not per-society.
 
 import { supabase } from "@/lib/supabase";
+import {
+  resolvePersonDisplayName,
+  type RivalryPersonNameHints,
+  memberDocToRivalryHints,
+} from "@/lib/rivalryPersonName";
+import { getMembersByUserIdsInSocieties, type MemberDoc } from "@/lib/db_supabase/memberRepo";
+import { getMySocieties } from "@/lib/db_supabase/mySocietiesRepo";
 
 // ============================================================================
 // Types
@@ -58,7 +65,115 @@ export type SinbookNotification = {
 
 export type SinbookWithParticipants = Sinbook & {
   participants: SinbookParticipant[];
+  /** Runtime hints from `hydrateSinbooksParticipantDisplayHints` (not a DB column). */
+  rivalryNameHintsByUserId?: Record<string, RivalryPersonNameHints>;
 };
+
+function pickRicherMember(a: MemberDoc | undefined, b: MemberDoc): MemberDoc {
+  if (!a) return b;
+  const score = (m: MemberDoc) => {
+    const n = (m.name ?? "").trim().length;
+    const d = (m.display_name ?? "").trim().length;
+    const e = (m.email ?? "").trim().length ? 1 : 0;
+    return n * 4 + d * 2 + e;
+  };
+  return score(b) > score(a) ? b : a;
+}
+
+type RpcDisplayContextRow = {
+  sinbook_id: string;
+  user_id: string;
+  participant_display_name: string | null;
+  profile_full_name: string | null;
+  profile_email: string | null;
+  auth_meta_full_name: string | null;
+  auth_meta_name: string | null;
+};
+
+/**
+ * Loads profile + auth metadata (via RPC) and co-member rows to resolve rivalry display names.
+ * Mutates each sinbook in place.
+ */
+export async function hydrateSinbooksParticipantDisplayHints(
+  sinbooks: SinbookWithParticipants[],
+): Promise<void> {
+  if (sinbooks.length === 0) return;
+
+  const ids = [...new Set(sinbooks.map((s) => s.id).filter(Boolean))];
+  const allUserIds = [...new Set(sinbooks.flatMap((s) => s.participants.map((p) => p.user_id)))];
+
+  const societies = await getMySocieties();
+  const societyIds = [...new Set(societies.map((s) => s.societyId).filter(Boolean))];
+
+  let rpcRows: RpcDisplayContextRow[] = [];
+  try {
+    const { data, error } = await supabase.rpc("get_sinbook_participant_display_context_batch", {
+      p_sinbook_ids: ids,
+    });
+    if (error) {
+      console.warn("[sinbookRepo] get_sinbook_participant_display_context_batch:", error.message);
+    } else {
+      rpcRows = (data ?? []) as RpcDisplayContextRow[];
+    }
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.warn("[sinbookRepo] display context RPC failed:", msg);
+  }
+
+  const rpcMap = new Map<string, RpcDisplayContextRow>();
+  for (const row of rpcRows) {
+    rpcMap.set(`${row.sinbook_id}:${row.user_id}`, row);
+  }
+
+  const memberByUserId = new Map<string, MemberDoc>();
+  if (allUserIds.length > 0 && societyIds.length > 0) {
+    const mems = await getMembersByUserIdsInSocieties(allUserIds, societyIds);
+    for (const m of mems) {
+      const uid = m.user_id;
+      if (!uid) continue;
+      memberByUserId.set(uid, pickRicherMember(memberByUserId.get(uid), m));
+    }
+  }
+
+  for (const sb of sinbooks) {
+    const hints: Record<string, RivalryPersonNameHints> = {};
+    for (const p of sb.participants) {
+      const rpcRow = rpcMap.get(`${sb.id}:${p.user_id}`);
+      const mem = memberByUserId.get(p.user_id);
+      const memHints = mem ? memberDocToRivalryHints(mem) : {};
+
+      const merged: RivalryPersonNameHints = {
+        ...memHints,
+        participantDisplayName: p.display_name,
+        profileDisplayName: rpcRow?.profile_full_name ?? null,
+        profileEmail: rpcRow?.profile_email ?? null,
+        authFullName: rpcRow?.auth_meta_full_name ?? null,
+        authName: rpcRow?.auth_meta_name ?? null,
+        userId: p.user_id,
+        memberId: mem?.id ?? null,
+        personId: mem?.person_id ?? null,
+        email: rpcRow?.profile_email ?? mem?.email ?? null,
+      };
+
+      hints[p.user_id] = merged;
+
+      if (__DEV__) {
+        const resolved = resolvePersonDisplayName(merged);
+        console.log("[rivalry-names] map", {
+          sinbook_id: sb.id,
+          user_id: merged.userId ?? null,
+          member_id: merged.memberId ?? null,
+          person_id: merged.personId ?? null,
+          email: merged.email ?? null,
+          resolvedName: resolved.name,
+          source: resolved.source,
+          usedOpponentFallback: resolved.usedOpponentFallback,
+        });
+      }
+    }
+    sb.rivalryNameHintsByUserId = hints;
+  }
+}
 
 /** Creator or accepted participant may remove the entire rivalry (matches RLS). */
 export function canDeleteSinbookAsUser(sb: SinbookWithParticipants, userId: string | undefined): boolean {
@@ -124,10 +239,12 @@ export async function getMySinbooks(): Promise<SinbookWithParticipants[]> {
     participantMap.set(p.sinbook_id, arr);
   }
 
-  return (sinbooks ?? []).map((s) => ({
+  const out = (sinbooks ?? []).map((s) => ({
     ...s,
     participants: participantMap.get(s.id) ?? [],
   }));
+  await hydrateSinbooksParticipantDisplayHints(out);
+  return out;
 }
 
 /**
@@ -169,10 +286,12 @@ export async function getMyPendingInvites(): Promise<SinbookWithParticipants[]> 
     participantMap.set(p.sinbook_id, arr);
   }
 
-  return (sinbooks ?? []).map((s) => ({
+  const out = (sinbooks ?? []).map((s) => ({
     ...s,
     participants: participantMap.get(s.id) ?? [],
   }));
+  await hydrateSinbooksParticipantDisplayHints(out);
+  return out;
 }
 
 /**
@@ -195,7 +314,9 @@ export async function getSinbook(sinbookId: string): Promise<SinbookWithParticip
 
   if (pErr) throw new Error(pErr.message);
 
-  return { ...data, participants: participants ?? [] };
+  const out: SinbookWithParticipants = { ...data, participants: participants ?? [] };
+  await hydrateSinbooksParticipantDisplayHints([out]);
+  return out;
 }
 
 /**

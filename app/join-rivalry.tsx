@@ -22,6 +22,7 @@ import { InlineNotice } from "@/components/ui/InlineNotice";
 import { useBootstrap } from "@/lib/useBootstrap";
 import { joinByCode } from "@/lib/db_supabase/sinbookRepo";
 import { storePendingRivalryJoinCode } from "@/lib/pendingRivalryJoinCode";
+import { joinRivalrySelfDisplayName } from "@/lib/rivalryPersonName";
 import { getColors, iconSize, spacing } from "@/lib/ui/theme";
 import { Toast } from "@/components/ui/Toast";
 import { showAlert } from "@/lib/ui/alert";
@@ -40,7 +41,7 @@ export default function JoinRivalryScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ code?: string }>();
   const codeParam = Array.isArray(params.code) ? params.code[0] : params.code;
-  const { loading: bootstrapLoading, isSignedIn, member } = useBootstrap();
+  const { loading: bootstrapLoading, isSignedIn, member, profile, session } = useBootstrap();
   const colors = getColors();
 
   const [joinCode, setJoinCode] = useState("");
@@ -79,7 +80,13 @@ export default function JoinRivalryScreen() {
     }
     setErrorMsg("");
     setJoining(true);
-    const displayName = member?.displayName || member?.name || "Player";
+    const displayName = joinRivalrySelfDisplayName({
+      memberDisplayName: member?.displayName,
+      memberName: member?.name,
+      profileFullName: profile?.full_name,
+      authEmail: session?.user?.email,
+      authMetadata: session?.user?.user_metadata,
+    });
     try {
       const result = await joinByCode(code, displayName);
       setJoinCode("");
