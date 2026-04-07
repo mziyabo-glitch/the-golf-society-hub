@@ -466,6 +466,8 @@ function normalizeJointEventPayload(raw: unknown): JointEventDetail | null {
       costs_pence: typeof event.costs_pence === "number" ? event.costs_pence : null,
       is_completed: typeof event.is_completed === "boolean" ? event.is_completed : null,
       is_oom: typeof event.is_oom === "boolean" ? event.is_oom : null,
+      rsvp_deadline_at:
+        event.rsvp_deadline_at != null ? String(event.rsvp_deadline_at) : null,
     },
     participating_societies: participating_societies.map(normalizeSociety),
     entries: entries.map(normalizeEntry),
@@ -560,6 +562,8 @@ export function mapJointEventToEventDoc(
     created_at: ev.created_at ?? undefined,
     is_completed: ev.is_completed ?? false,
     is_oom: ev.is_oom ?? false,
+    rsvp_deadline_at: ev.rsvp_deadline_at ?? null,
+    rsvpDeadlineAt: ev.rsvp_deadline_at ?? null,
   };
 }
 
@@ -596,6 +600,8 @@ export interface EventDocLike {
   created_at?: string;
   is_completed?: boolean;
   is_oom?: boolean;
+  rsvp_deadline_at?: string | null;
+  rsvpDeadlineAt?: string | null;
 }
 
 // =============================================================================
@@ -991,6 +997,7 @@ export async function updateJointEvent(
     ladiesSlopeRating: input.ladiesSlopeRating,
     teeSource: input.teeSource,
     entryFeeDisplay: input.entryFeeDisplay,
+    rsvpDeadlineAt: input.rsvpDeadlineAt,
   });
 
   if (societies && societies.length >= 2) {

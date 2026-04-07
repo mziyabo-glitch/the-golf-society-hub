@@ -77,7 +77,7 @@ export default function EventPlayersScreen() {
   // Add guest modal
   const [showAddGuest, setShowAddGuest] = useState(false);
   const [guestName, setGuestName] = useState("");
-  const [guestSex, setGuestSex] = useState<"male" | "female">("male");
+  const [guestSex, setGuestSex] = useState<"male" | "female" | null>(null);
   const [guestHandicap, setGuestHandicap] = useState("");
   const [addingGuest, setAddingGuest] = useState(false);
 
@@ -353,7 +353,7 @@ export default function EventPlayersScreen() {
       await loadGuests();
       setShowAddGuest(false);
       setGuestName("");
-      setGuestSex("male");
+      setGuestSex(null);
       setGuestHandicap("");
     } catch (e: any) {
       Alert.alert("Failed", e?.message ?? "Could not add guest.");
@@ -596,7 +596,7 @@ export default function EventPlayersScreen() {
                 <View style={{ flex: 1 }}>
                   <AppText style={styles.name}>{g.name}</AppText>
                   <AppText style={styles.subtle}>
-                    {g.sex === "male" ? "Male" : "Female"}
+                    {g.sex === "male" ? "Male" : g.sex === "female" ? "Female" : "Sex not set"}
                     {g.handicap_index != null ? ` · HI ${g.handicap_index}` : ""}
                   </AppText>
                 </View>
@@ -631,6 +631,16 @@ export default function EventPlayersScreen() {
             <View style={styles.formField}>
               <AppText variant="caption" style={styles.label}>Sex</AppText>
               <View style={styles.sexRow}>
+                <Pressable
+                  onPress={() => setGuestSex(null)}
+                  style={[
+                    styles.sexOption,
+                    { borderColor: guestSex == null ? colors.primary : colors.border },
+                    guestSex == null && { backgroundColor: colors.primary + "14" },
+                  ]}
+                >
+                  <AppText style={guestSex == null ? { color: colors.primary, fontWeight: "600" } : {}}>Not set</AppText>
+                </Pressable>
                 <Pressable
                   onPress={() => setGuestSex("male")}
                   style={[

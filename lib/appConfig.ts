@@ -13,6 +13,31 @@ export const APP_STAGE: AppStage =
 export const APP_MODE = APP_STAGE;
 
 const VERCEL_WEB_URL = "https://the-golf-society-hub.vercel.app";
+
+function getPublicWebBaseUrl(): string {
+  const fromEnv =
+    typeof process !== "undefined" && typeof process.env.EXPO_PUBLIC_WEB_BASE_URL === "string"
+      ? process.env.EXPO_PUBLIC_WEB_BASE_URL.trim()
+      : "";
+  return (fromEnv || VERCEL_WEB_URL).replace(/\/$/, "");
+}
+
+/** Web link for lightweight event RSVP (/invite/{eventUuid}). */
+export function getEventRsvpInviteUrl(eventId: string): string {
+  const id = String(eventId).trim();
+  return `${getPublicWebBaseUrl()}/invite/${encodeURIComponent(id)}`;
+}
+
+export function getEventRsvpInviteShareMessage(opts: {
+  eventId: string;
+  eventName: string;
+  date?: string;
+  societyName?: string;
+}): string {
+  const when = opts.date?.trim() ? ` — ${opts.date.trim()}` : "";
+  const soc = opts.societyName?.trim() ? ` (${opts.societyName.trim()})` : "";
+  return `You're invited: ${opts.eventName}${when}${soc}\n\nRSVP here (member or guest):\n${getEventRsvpInviteUrl(opts.eventId)}`;
+}
 const PLAY_STORE_URL = "https://play.google.com/store/apps/details?id=com.thegolfsocietyhub.app";
 const APP_STORE_URL = "https://apps.apple.com/app/the-golf-society-hub/id6740041032";
 

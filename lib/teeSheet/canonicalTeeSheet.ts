@@ -219,7 +219,7 @@ function standardDbToCanonical(
   teeGroups: TeeGroupRow[],
   teeGroupPlayers: TeeGroupPlayerRow[],
   members: MemberDoc[],
-  guests: { id: string; name: string; sex: "male" | "female"; handicap_index: number | null }[],
+  guests: { id: string; name: string; sex: "male" | "female" | null; handicap_index: number | null }[],
   eligible: Set<string>,
   isJoint: boolean,
   societyIdToName?: Map<string, string>,
@@ -295,7 +295,7 @@ function standardComputedToCanonical(
   event: EventDoc,
   members: MemberDoc[],
   eligibleMemberIds: string[],
-  guests: { id: string; name: string; sex: "male" | "female"; handicap_index: number | null }[],
+  guests: { id: string; name: string; sex: "male" | "female" | null; handicap_index: number | null }[],
 ): CanonicalGroupRow[] {
   const playerIds = event.playerIds?.length ? event.playerIds : eligibleMemberIds;
   const subset = members.filter((m) => playerIds.includes(m.id));

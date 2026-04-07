@@ -79,6 +79,9 @@ export type EventDoc = {
   teeSource?: "imported" | "manual" | null;
   /** Optional label e.g. £45 or £55 incl. food */
   entryFeeDisplay?: string | null;
+  /** When set, public invite link stops accepting new RSVPs after this instant (timestamptz). */
+  rsvp_deadline_at?: string | null;
+  rsvpDeadlineAt?: string | null;
   /**
    * Canonical joint flag: true when `event_societies` has 2+ distinct society_id values
    * (same rule as `get_joint_event_detail` / `isEventJoint`). Set by repo when loading lists or `getEvent`.
@@ -136,6 +139,8 @@ function mapEvent(row: any): EventDoc {
     tee_id: row.tee_id ?? null,
     teeSource: row.tee_source ?? null,
     entryFeeDisplay: row.entry_fee_display?.trim() || null,
+    rsvp_deadline_at: row.rsvp_deadline_at ?? null,
+    rsvpDeadlineAt: row.rsvp_deadline_at ?? null,
   };
 }
 
@@ -456,6 +461,7 @@ export async function updateEvent(
     nearestPinHoles: number[];
     longestDriveHoles: number[];
     entryFeeDisplay: string | null;
+    rsvpDeadlineAt: string | null;
   }>
 ): Promise<void> {
   const payload: Record<string, unknown> = {};
@@ -498,6 +504,9 @@ export async function updateEvent(
   if (updates.entryFeeDisplay !== undefined) {
     const t = updates.entryFeeDisplay?.trim() ?? "";
     payload.entry_fee_display = t.length > 0 ? t : null;
+  }
+  if (updates.rsvpDeadlineAt !== undefined) {
+    payload.rsvp_deadline_at = updates.rsvpDeadlineAt;
   }
 
   // Server-side: ensure tee_id exists in course_tees (FK events_tee_id_fkey)

@@ -8,7 +8,7 @@ export type EventGuest = {
   society_id: string;
   event_id: string;
   name: string;
-  sex: "male" | "female";
+  sex: "male" | "female" | null;
   handicap_index: number | null;
   created_at: string;
   updated_at: string;
@@ -32,7 +32,7 @@ export async function addEventGuest(opts: {
   eventId: string;
   societyId: string;
   name: string;
-  sex: "male" | "female";
+  sex: "male" | "female" | null;
   handicapIndex?: number | null;
 }): Promise<EventGuest | null> {
   const { data, error } = await supabase
@@ -56,7 +56,7 @@ export async function addEventGuest(opts: {
 
 export async function updateEventGuest(
   guestId: string,
-  updates: { name?: string; sex?: "male" | "female"; handicapIndex?: number | null }
+  updates: { name?: string; sex?: "male" | "female" | null; handicapIndex?: number | null }
 ): Promise<EventGuest | null> {
   const payload: Record<string, unknown> = {};
   if (updates.name !== undefined) payload.name = updates.name.trim();

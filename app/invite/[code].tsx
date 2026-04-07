@@ -1,12 +1,8 @@
 /**
- * Society Invite Handler (captain's link)
+ * Invite handler: society join code OR event RSVP (UUID).
  *
- * URL: /invite/:code  (code = society join code)
- *
- * Flow:
- *   1. If user has a session → redirect to onboarding with code + invite=1 (extended form)
- *   2. If no session → store code, show auth overlay (layout handles this)
- *      After login → layout resumes via consumePendingSocietyJoinCode → onboarding with invite=1
+ * - /invite/{uuid}  → public event RSVP (no sign-in required for guests).
+ * - /invite/{code}  → society join (captain link); auth + onboarding.
  */
 
 import { useEffect } from "react";
@@ -16,6 +12,8 @@ import { View, StyleSheet } from "react-native";
 import { useBootstrap } from "@/lib/useBootstrap";
 import { storePendingSocietyJoinCode } from "@/lib/pendingSocietyJoinCode";
 import { getColors } from "@/lib/ui/theme";
+import { isEventInviteUuid } from "@/lib/eventInviteLink";
+import { EventRsvpInviteScreen } from "./EventRsvpInviteScreen";
 
 function normalizeCode(raw: string | string[] | undefined): string {
   if (!raw) return "";
@@ -26,10 +24,15 @@ function normalizeCode(raw: string | string[] | undefined): string {
 export default function SocietyInviteScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ code: string }>();
+  const rawSegment = Array.isArray(params.code) ? params.code[0] : params.code;
+  const trimmed = String(rawSegment || "").trim();
+  const isEventInvite = isEventInviteUuid(trimmed);
+
   const code = normalizeCode(params.code);
   const { loading: bootstrapLoading, isSignedIn } = useBootstrap();
 
   useEffect(() => {
+    if (isEventInvite) return;
     if (bootstrapLoading || !code) return;
 
     if (isSignedIn) {
@@ -38,7 +41,11 @@ export default function SocietyInviteScreen() {
     }
 
     storePendingSocietyJoinCode(code);
-  }, [bootstrapLoading, isSignedIn, code, router]);
+  }, [isEventInvite, bootstrapLoading, isSignedIn, code, router]);
+
+  if (isEventInvite) {
+    return <EventRsvpInviteScreen eventId={trimmed} />;
+  }
 
   const colors = getColors();
   return (

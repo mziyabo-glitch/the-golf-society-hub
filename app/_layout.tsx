@@ -16,12 +16,14 @@ import { consumePendingInviteToken } from "@/lib/sinbookInviteToken";
 import { consumePendingRivalryJoinCode } from "@/lib/pendingRivalryJoinCode";
 import { consumePendingSocietyJoinCode } from "@/lib/pendingSocietyJoinCode";
 import { blurWebActiveElement } from "@/lib/ui/focus";
+import { isEventRsvpInvitePath } from "@/lib/eventInviteLink";
 
 const APP_TABS = "/(app)/(tabs)";
 const JOIN_FLOW_SEGMENTS = new Set(["onboarding", "join", "join-society", "invite"]);
 const JOIN_RIVALRY_SEGMENT = "join-rivalry";
 
 function isJoinFlowRoute(pathname?: string, seg0?: string): boolean {
+  if (isEventRsvpInvitePath(pathname)) return false;
   if (typeof seg0 === "string" && (JOIN_FLOW_SEGMENTS.has(seg0) || seg0 === JOIN_RIVALRY_SEGMENT)) return true;
   if (typeof pathname !== "string") return false;
   return (
@@ -91,7 +93,8 @@ function RootNavigator() {
         seg0 === "reset-password" ||
         seg0 === "privacy-policy";
       const inJoinFlow = isJoinFlowRoute(p, seg0);
-      if (inPublic || inJoinFlow || isToolRoute(p, seg0)) return;
+      const onEventRsvpInvite = isEventRsvpInvitePath(p);
+      if (inPublic || inJoinFlow || onEventRsvpInvite || isToolRoute(p, seg0)) return;
 
       if (session && !inApp) {
         const pendingRivalryCode = await consumePendingRivalryJoinCode();
@@ -243,7 +246,7 @@ function RootNavigator() {
     if (loading || authRestoring || !isSignedIn || isPublicPath) return;
     const seg0 = segments[0];
     const inJoinFlow = isJoinFlowRoute(pathname, seg0);
-    if (inJoinFlow || isToolRoute(pathname, seg0)) return;
+    if (inJoinFlow || isToolRoute(pathname, seg0) || isEventRsvpInvitePath(pathname)) return;
     const inApp = seg0 === "(app)" || (typeof pathname === "string" && pathname.startsWith("/(app)"));
     if (inApp) return;
     console.log("[_layout] Session present but not in app, redirecting");
@@ -257,7 +260,8 @@ function RootNavigator() {
   const isPublicRoute =
     isPublicPath ||
     segments[0] === "reset-password" ||
-    segments[0] === "privacy-policy";
+    segments[0] === "privacy-policy" ||
+    isEventRsvpInvitePath(pathname);
   const showLoading = loading || authRestoring || !themeReady;
   const showAuth = !loading && !authRestoring && !isSignedIn && !isPublicRoute;
   const showError = !loading && !authRestoring && !showAuth && !!error;

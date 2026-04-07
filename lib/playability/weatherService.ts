@@ -5,6 +5,7 @@
  */
 
 import { getWeatherProviderId, WEATHER_API_KEY } from "@/lib/env";
+import { buildOpenMeteoForecastUrl } from "./openMeteoWebProxy";
 import type { DailyForecastPoint, HourlyForecastPoint, NormalizedForecast, WeatherProviderId } from "./types";
 
 /** Map OpenWeather condition id → WMO-like code for shared playability heuristics */
@@ -120,6 +121,9 @@ type OpenMeteoHourly = {
   time?: string[];
   temperature_2m?: number[];
   precipitation_probability?: number[];
+  /** Current API name (km/h with default units). */
+  wind_speed_10m?: number[];
+  /** Legacy alias — keep while parsing old responses. */
   windspeed_10m?: number[];
   weathercode?: number[];
   relative_humidity_2m?: number[];
@@ -130,6 +134,7 @@ type OpenMeteoDaily = {
   temperature_2m_max?: number[];
   temperature_2m_min?: number[];
   precipitation_probability_max?: number[];
+  wind_speed_10m_max?: number[];
   windspeed_10m_max?: number[];
   weathercode?: number[];
   sunrise?: string[];
@@ -140,10 +145,11 @@ function normalizeOpenMeteo(lat: number, lng: number): Promise<NormalizedForecas
   const params = new URLSearchParams({
     latitude: String(lat),
     longitude: String(lng),
+    wind_speed_unit: "kmh",
     hourly: [
       "temperature_2m",
       "precipitation_probability",
-      "windspeed_10m",
+      "wind_speed_10m",
       "weathercode",
       "relative_humidity_2m",
     ].join(","),
@@ -152,7 +158,7 @@ function normalizeOpenMeteo(lat: number, lng: number): Promise<NormalizedForecas
       "temperature_2m_max",
       "temperature_2m_min",
       "precipitation_probability_max",
-      "windspeed_10m_max",
+      "wind_speed_10m_max",
       "sunrise",
       "sunset",
     ].join(","),
@@ -160,17 +166,34 @@ function normalizeOpenMeteo(lat: number, lng: number): Promise<NormalizedForecas
     timezone: "auto",
   });
 
-  const url = `https://api.open-meteo.com/v1/forecast?${params.toString()}`;
+  const url = buildOpenMeteoForecastUrl(params);
   return fetch(url).then(async (res) => {
-    if (!res.ok) throw new Error(`Weather request failed (${res.status})`);
-    return res.json();
+    const json = (await res.json().catch(() => null)) as Record<string, unknown> | null;
+    if (!res.ok) {
+      const reason =
+        json && typeof json.reason === "string"
+          ? json.reason
+          : typeof json?.error === "string"
+            ? json.error
+            : "";
+      throw new Error(
+        reason
+          ? `Open-Meteo error (${res.status}): ${reason}`
+          : `Weather request failed (${res.status})`,
+      );
+    }
+    return json;
   }).then((json: any) => {
+    if (json?.error === true) {
+      const reason = typeof json?.reason === "string" ? json.reason : "Unknown API error";
+      throw new Error(`Open-Meteo: ${reason}`);
+    }
     const hourlyRaw = json?.hourly as OpenMeteoHourly | undefined;
     const dailyRaw = json?.daily as OpenMeteoDaily | undefined;
     const times = hourlyRaw?.time ?? [];
     const temps = hourlyRaw?.temperature_2m ?? [];
     const pprob = hourlyRaw?.precipitation_probability ?? [];
-    const wind = hourlyRaw?.windspeed_10m ?? [];
+    const wind = hourlyRaw?.wind_speed_10m ?? hourlyRaw?.windspeed_10m ?? [];
     const codes = hourlyRaw?.weathercode ?? [];
     const hum = hourlyRaw?.relative_humidity_2m ?? [];
 
@@ -193,7 +216,7 @@ function normalizeOpenMeteo(lat: number, lng: number): Promise<NormalizedForecas
     const dMax = dailyRaw?.temperature_2m_max ?? [];
     const dMin = dailyRaw?.temperature_2m_min ?? [];
     const dP = dailyRaw?.precipitation_probability_max ?? [];
-    const dW = dailyRaw?.windspeed_10m_max ?? [];
+    const dW = dailyRaw?.wind_speed_10m_max ?? dailyRaw?.windspeed_10m_max ?? [];
     const dCode = dailyRaw?.weathercode ?? [];
     const dSunrise = dailyRaw?.sunrise ?? [];
     const dSunset = dailyRaw?.sunset ?? [];
@@ -266,7 +289,7 @@ export async function fetchSunriseSunsetForYmd(
     start_date: ymd,
     end_date: ymd,
   });
-  const url = `https://api.open-meteo.com/v1/forecast?${params.toString()}`;
+  const url = buildOpenMeteoForecastUrl(params);
   try {
     const res = await fetch(url);
     if (!res.ok) return null;

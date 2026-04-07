@@ -1,12 +1,21 @@
 /**
  * Open-Meteo geocoding (no API key). Used when DB/API lack coordinates.
+ * On web, requests go through /api/weather/geocoding to avoid CORS.
  */
+
+import { buildOpenMeteoGeocodingUrl } from "./openMeteoWebProxy";
 
 export async function geocodePlaceName(query: string): Promise<{ lat: number; lng: number; label: string } | null> {
   const q = query.trim();
   if (q.length < 2) return null;
 
-  const url = `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(q)}&count=3&language=en&format=json`;
+  const params = new URLSearchParams({
+    name: q,
+    count: "3",
+    language: "en",
+    format: "json",
+  });
+  const url = buildOpenMeteoGeocodingUrl(params);
 
   try {
     const res = await fetch(url);

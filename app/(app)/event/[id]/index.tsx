@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import debounce from "lodash.debounce";
-import { StyleSheet, View, Pressable, ScrollView, Modal } from "react-native";
+import { StyleSheet, View, Pressable, ScrollView, Modal, Share } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
 import { Feather } from "@expo/vector-icons";
@@ -78,6 +78,19 @@ import {
   isActiveSocietyParticipantForEvent,
   isJointEventFromMeta,
 } from "@/lib/jointEventAccess";
+import { getEventRsvpInviteShareMessage } from "@/lib/appConfig";
+import { shareViaWhatsAppOrFallback } from "@/lib/eventInviteLink";
+import { getEventGuests } from "@/lib/db_supabase/eventGuestRepo";
+import {
+  formatRsvpDeadlineDisplay,
+  getRsvpDeadlineDisplayTimeZone,
+  rsvpDeadlineDateTimePartsFromIso,
+  combineLocalDateTimeToRsvpIso,
+} from "@/lib/eventInvitePublic";
+import {
+  countMembersWithNoSocietyRsvpRow,
+  countExtraGuestRowsBeyondUniqueNames,
+} from "@/lib/eventRsvpStats";
 
 // Picker option component
 function PickerOption({
@@ -158,6 +171,8 @@ export default function EventDetailScreen() {
   const [formFormat, setFormFormat] = useState<EventFormat>("stableford");
   const [formClassification, setFormClassification] = useState<EventClassification>("general");
   const [formEntryFeeDisplay, setFormEntryFeeDisplay] = useState("");
+  const [formRsvpDeadlineDate, setFormRsvpDeadlineDate] = useState("");
+  const [formRsvpDeadlineTime, setFormRsvpDeadlineTime] = useState("");
   const [formCourseName, setFormCourseName] = useState("");
 
   // Course search (GolfCourseAPI) for edit mode
@@ -365,6 +380,8 @@ export default function EventDetailScreen() {
   const [addMemberSearch, setAddMemberSearch] = useState("");
   const [addMemberBusy, setAddMemberBusy] = useState<string | null>(null);
   const [registrationsRefreshing, setRegistrationsRefreshing] = useState(false);
+  const [societyGuestCount, setSocietyGuestCount] = useState(0);
+  const [guestDuplicateExtraRows, setGuestDuplicateExtraRows] = useState(0);
 
   const hostSocietyId = event?.society_id ?? societyId ?? null;
 
@@ -416,12 +433,16 @@ export default function EventDetailScreen() {
     if (!eventId || !societyId) return;
     try {
       setRegistrationsRefreshing(true);
-      const [regs, mems] = await Promise.all([
+      const [regs, mems, guests] = await Promise.all([
         getEventRegistrations(eventId),
         getMembersBySocietyId(societyId),
+        getEventGuests(eventId),
       ]);
       setRegistrations(regs);
       setActiveSocietyMembers(mems);
+      const sg = guests.filter((g) => String(g.society_id) === String(societyId));
+      setSocietyGuestCount(sg.length);
+      setGuestDuplicateExtraRows(countExtraGuestRowsBeyondUniqueNames(sg));
       await setCache(`event:${eventId}:registrations`, {
         registrations: regs,
         members: mems,
@@ -568,6 +589,21 @@ export default function EventDetailScreen() {
       ),
     [societyPageRegistrations, activeMemberIdSet, regInMemberIds, captainPickMemberIds],
   );
+
+  const rsvpSummary = useMemo(() => {
+    const inCount = societyPageRegistrations.filter((r) => r.status === "in").length;
+    const outCount = societyPageRegistrations.filter((r) => r.status === "out").length;
+    const noResponseCount = countMembersWithNoSocietyRsvpRow(
+      activeSocietyMembers,
+      societyPageRegistrations,
+    );
+    return {
+      inCount,
+      outCount,
+      guestCount: societyGuestCount,
+      noResponseCount,
+    };
+  }, [societyPageRegistrations, activeSocietyMembers, societyGuestCount]);
 
   const teeSheetEligibleCount = buckets.confirmedPaid.length;
   const pendingPaymentCount = buckets.pendingPayment.length + captainPickMemberIds.length;
@@ -873,6 +909,9 @@ export default function EventDetailScreen() {
     setFormFormat(event.format || "stableford");
     setFormClassification(event.classification || "general");
     setFormEntryFeeDisplay(event.entryFeeDisplay?.trim() || "");
+    const rsvpParts = rsvpDeadlineDateTimePartsFromIso(event.rsvpDeadlineAt ?? event.rsvp_deadline_at);
+    setFormRsvpDeadlineDate(rsvpParts.date);
+    setFormRsvpDeadlineTime(rsvpParts.time);
     setFormCourseName(event.courseName || "");
 
     // Handicap allowance
@@ -969,6 +1008,19 @@ export default function EventDetailScreen() {
         showAlert("Invalid Date", "Please enter date in YYYY-MM-DD format.");
         return;
       }
+    }
+
+    let rsvpDeadlineAt: string | null = null;
+    if (formRsvpDeadlineDate.trim()) {
+      const iso = combineLocalDateTimeToRsvpIso(formRsvpDeadlineDate, formRsvpDeadlineTime);
+      if (!iso) {
+        showAlert(
+          "RSVP deadline",
+          "Use date YYYY-MM-DD and optional time HH:MM (24h). Leave the date empty to clear the deadline.",
+        );
+        return;
+      }
+      rsvpDeadlineAt = iso;
     }
 
     const courseForTee = selectedCourseEdit?.id ?? event?.course_id;
@@ -1106,6 +1158,7 @@ export default function EventDetailScreen() {
           handicapAllowance,
           teeSource,
           entryFeeDisplay: formEntryFeeDisplay.trim() || null,
+          rsvpDeadlineAt,
           is_joint_event: true,
           host_society_id: formEditHostSocietyId,
           participating_societies: formEditParticipatingSocieties,
@@ -1130,6 +1183,7 @@ export default function EventDetailScreen() {
           handicapAllowance,
           teeSource,
           entryFeeDisplay: formEntryFeeDisplay.trim() || null,
+          rsvpDeadlineAt,
         });
       }
 
@@ -1212,6 +1266,25 @@ export default function EventDetailScreen() {
       return;
     }
     router.push({ pathname: "/(app)/event/[id]/points", params: { id: eventId } });
+  };
+
+  const inviteShareMessage = getEventRsvpInviteShareMessage({
+    eventId: event.id,
+    eventName: event.name,
+    date: event.date ?? undefined,
+    societyName: society?.name ? String(society.name) : undefined,
+  });
+
+  const handleShareEventInvite = async () => {
+    try {
+      await Share.share({ message: inviteShareMessage });
+    } catch {
+      /* dismissed */
+    }
+  };
+
+  const handleWhatsAppEventInvite = async () => {
+    await shareViaWhatsAppOrFallback(inviteShareMessage);
   };
 
   // Edit mode view
@@ -1317,6 +1390,30 @@ export default function EventDetailScreen() {
               />
               <AppText variant="small" color="muted" style={{ marginTop: 4 }}>
                 Shown on the home screen and here.
+              </AppText>
+            </View>
+
+            <View style={styles.formField}>
+              <AppText variant="captionBold" style={styles.label}>Public RSVP deadline (optional)</AppText>
+              <AppInput
+                placeholder="YYYY-MM-DD"
+                value={formRsvpDeadlineDate}
+                onChangeText={setFormRsvpDeadlineDate}
+                keyboardType="numbers-and-punctuation"
+                autoCapitalize="none"
+              />
+              <View style={{ marginTop: spacing.xs }}>
+                <AppInput
+                  placeholder="Time HH:MM (24h), optional"
+                  value={formRsvpDeadlineTime}
+                  onChangeText={setFormRsvpDeadlineTime}
+                  keyboardType="numbers-and-punctuation"
+                  autoCapitalize="none"
+                />
+              </View>
+              <AppText variant="small" color="muted" style={{ marginTop: 4 }}>
+                Empty date keeps the invite open. Date and time are saved using your device local timezone
+                (not EXPO_PUBLIC_RSVP_DEADLINE_DISPLAY_TZ). Time defaults to 23:59 local if omitted.
               </AppText>
             </View>
 
@@ -1750,7 +1847,68 @@ export default function EventDetailScreen() {
         {event.entryFeeDisplay?.trim() ? (
           <Row icon="credit-card" label="Entry" value={event.entryFeeDisplay.trim()} />
         ) : null}
+        {formatRsvpDeadlineDisplay(event.rsvpDeadlineAt ?? event.rsvp_deadline_at) ? (
+          <>
+            <Row
+              icon="clock"
+              label="RSVP closes"
+              value={formatRsvpDeadlineDisplay(event.rsvpDeadlineAt ?? event.rsvp_deadline_at) ?? ""}
+            />
+            <AppText variant="small" color="muted" style={{ marginTop: 4 }}>
+              {getRsvpDeadlineDisplayTimeZone()
+                ? `Shown in ${getRsvpDeadlineDisplayTimeZone()} (set EXPO_PUBLIC_RSVP_DEADLINE_DISPLAY_TZ). Open/closed on the invite uses server UTC vs stored instant.`
+                : "Shown in your device local timezone. Open/closed on the invite uses server time vs stored instant."}
+            </AppText>
+          </>
+        ) : null}
       </AppCard>
+
+      <AppCard style={styles.card}>
+        <AppText variant="captionBold" color="secondary" style={{ marginBottom: spacing.xs }}>
+          RSVP invite
+        </AppText>
+        <AppText variant="small" color="muted" style={{ marginBottom: spacing.sm }}>
+          Share a link — members or guests can respond in two taps (no app required for guests).
+        </AppText>
+        <View style={{ flexDirection: "row", gap: spacing.sm, flexWrap: "wrap" }}>
+          <SecondaryButton
+            onPress={() => void handleShareEventInvite()}
+            size="sm"
+            style={{ flex: 1, minWidth: 120 }}
+            icon={<Feather name="share-2" size={iconSize.sm} color={colors.primary} />}
+          >
+            Share link
+          </SecondaryButton>
+          <SecondaryButton
+            onPress={() => void handleWhatsAppEventInvite()}
+            size="sm"
+            style={{ flex: 1, minWidth: 120 }}
+            icon={<Feather name="message-circle" size={iconSize.sm} color={colors.primary} />}
+          >
+            WhatsApp
+          </SecondaryButton>
+        </View>
+      </AppCard>
+
+      {(canManageEventRoster || canEditEvent) && (
+        <AppCard style={styles.card}>
+          <AppText variant="captionBold" color="secondary" style={{ marginBottom: spacing.xs }}>
+            RSVP snapshot (this society)
+          </AppText>
+          <AppText variant="body" color="secondary">
+            {`${rsvpSummary.inCount} in · ${rsvpSummary.outCount} out · ${rsvpSummary.guestCount} guests · ${rsvpSummary.noResponseCount} no reply`}
+          </AppText>
+          <AppText variant="small" color="muted" style={{ marginTop: spacing.xs }}>
+            No reply = society members with no fee/RSVP row for this society on this event. Guests are counted
+            separately.
+          </AppText>
+          {guestDuplicateExtraRows > 0 ? (
+            <AppText variant="small" color="muted" style={{ marginTop: spacing.xs }}>
+              {`${guestDuplicateExtraRows} guest row(s) share a name with another row (after normalising spaces and case). Remove extras on Players if needed.`}
+            </AppText>
+          ) : null}
+        </AppCard>
+      )}
 
       {/* Tee Settings - only show if configured */}
       {(event.teeName || event.par != null || event.slopeRating != null ||

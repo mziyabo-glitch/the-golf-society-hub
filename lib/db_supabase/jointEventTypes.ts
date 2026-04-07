@@ -42,6 +42,8 @@ export interface JointEventDetailEvent {
   costs_pence: number | null;
   is_completed: boolean | null;
   is_oom: boolean | null;
+  /** Public invite RSVP cutoff (timestamptz ISO from API) */
+  rsvp_deadline_at: string | null;
 }
 
 /** Participating society in a joint event */
@@ -138,6 +140,8 @@ export interface JointEventBaseInput {
   teeSource?: "imported" | "manual";
   /** Optional entry fee label for members */
   entryFeeDisplay?: string | null;
+  /** Public invite RSVP cutoff (ISO timestamptz); null clears */
+  rsvpDeadlineAt?: string | null;
 }
 
 /** Input for creating a joint event */

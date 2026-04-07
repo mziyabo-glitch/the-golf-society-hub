@@ -574,7 +574,7 @@ export default function TeeSheetScreen() {
     event: EventDoc,
     selectedIds: string[],
     membersList: MemberDoc[],
-    guests: { id: string; name: string; sex: "male" | "female"; handicap_index: number | null }[] = []
+    guests: { id: string; name: string; sex: "male" | "female" | null; handicap_index: number | null }[] = []
   ) => {
     const playerIds = [...new Set(selectedIds.map(String).filter(Boolean))];
     const eventMembers = playerIds
@@ -587,7 +587,8 @@ export default function TeeSheetScreen() {
       name: g.name,
       handicapIndex: g.handicap_index ?? null,
       handicap_index: g.handicap_index ?? null,
-      gender: g.sex as Gender,
+      // null sex → men's tee block via selectTeeByGender (same as members with unknown gender)
+      gender: (g.sex ?? null) as Gender,
       displayName: g.name,
     }));
 

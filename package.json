@@ -10,6 +10,7 @@
     "dev:api": "node scripts/dev-api-server.js",
     "dev:web": "concurrently \"expo start --web\" \"npm run dev:api\"",
     "lint": "expo lint -- --cache --cache-location .cache/eslint/.eslintcache",
+    "test:rsvp": "node scripts/rsvp-qa-smoke.cjs",
     "build": "expo export -p web",
     "vercel-build": "npm run build",
     "build-pilot": "node scripts/build-pilot-course-list.js",
