@@ -47,6 +47,7 @@ import {
   getPermissionsForMember,
   canManageEventPaymentsForSociety,
   canManageEventRosterForSociety,
+  canShareEventPaymentListsForSociety,
 } from "@/lib/rbac";
 import {
   getEventRegistrations,
@@ -91,6 +92,14 @@ import {
   countMembersWithNoSocietyRsvpRow,
   countExtraGuestRowsBeyondUniqueNames,
 } from "@/lib/eventRsvpStats";
+import {
+  buildPaymentShareNameLists,
+  formatSharePaymentHeader,
+  formatWhatsAppFullPaymentStatus,
+  formatWhatsAppPaidList,
+  formatWhatsAppUnpaidList,
+} from "@/lib/eventPaymentShare";
+import { exportEventPaymentPdf } from "@/lib/pdf/eventPaymentPdf";
 
 // Picker option component
 function PickerOption({
@@ -371,10 +380,15 @@ export default function EventDetailScreen() {
     () => canManageEventRosterForSociety(memberships, societyId),
     [memberships, societyId],
   );
+  const canSharePaymentLists = useMemo(
+    () => canShareEventPaymentListsForSociety(memberships, societyId),
+    [memberships, societyId],
+  );
   const [registrations, setRegistrations] = useState<EventRegistration[]>([]);
   /** Members of the active society only — sole source for society-scoped attendance / payment / confirmed lists. */
   const [activeSocietyMembers, setActiveSocietyMembers] = useState<MemberDoc[]>([]);
   const [payBusy, setPayBusy] = useState<string | null>(null);
+  const [paymentPdfBusy, setPaymentPdfBusy] = useState(false);
   const [payToast, setPayToast] = useState<{ visible: boolean; message: string; type: "success" | "error" }>({ visible: false, message: "", type: "success" });
   const [addMemberModalOpen, setAddMemberModalOpen] = useState(false);
   const [addMemberSearch, setAddMemberSearch] = useState("");
@@ -397,6 +411,25 @@ export default function EventDetailScreen() {
       jointParticipatingSocieties.length >= 2,
     [participantSocietyIdsForAccess, event?.linked_society_count, jointParticipatingSocieties.length],
   );
+
+  const sharePaymentHeader = useMemo(() => {
+    let dateShort = "";
+    if (event?.date?.trim()) {
+      try {
+        dateShort = new Date(event.date).toLocaleDateString("en-GB", {
+          day: "numeric",
+          month: "short",
+        });
+      } catch {
+        dateShort = event.date.trim();
+      }
+    }
+    return formatSharePaymentHeader({
+      eventName: event?.name ?? "Event",
+      dateShort,
+      jointThisSocietyOnly: detailIsJointEvent,
+    });
+  }, [event?.name, event?.date, detailIsJointEvent]);
 
   const canShowMemberTeeSheetCta = useMemo(() => {
     if (!event?.society_id || !societyId) return false;
@@ -553,6 +586,85 @@ export default function EventDetailScreen() {
       }),
     [event?.playerIds, activeMemberIdSet, regInMemberIds],
   );
+
+  const paymentShareLists = useMemo(
+    () =>
+      buildPaymentShareNameLists({
+        confirmedPaidRegs: buckets.confirmedPaid,
+        pendingPaymentRegs: buckets.pendingPayment,
+        captainPickMemberIds,
+        nameForReg: registrationMemberDisplayName,
+        nameForMemberId: memberNameForAttendeeId,
+      }),
+    [
+      buckets.confirmedPaid,
+      buckets.pendingPayment,
+      captainPickMemberIds,
+      registrationMemberDisplayName,
+      memberNameForAttendeeId,
+    ],
+  );
+
+  const handleSharePaidList = useCallback(async () => {
+    try {
+      await shareViaWhatsAppOrFallback(
+        formatWhatsAppPaidList(sharePaymentHeader, paymentShareLists.paidNames),
+      );
+    } catch {
+      /* share cancelled */
+    }
+  }, [sharePaymentHeader, paymentShareLists.paidNames]);
+
+  const handleShareUnpaidList = useCallback(async () => {
+    try {
+      await shareViaWhatsAppOrFallback(
+        formatWhatsAppUnpaidList(sharePaymentHeader, paymentShareLists.unpaidNames),
+      );
+    } catch {
+      /* share cancelled */
+    }
+  }, [sharePaymentHeader, paymentShareLists.unpaidNames]);
+
+  const handleShareFullPaymentStatus = useCallback(async () => {
+    try {
+      await shareViaWhatsAppOrFallback(
+        formatWhatsAppFullPaymentStatus(
+          sharePaymentHeader,
+          paymentShareLists.paidNames,
+          paymentShareLists.unpaidNames,
+        ),
+      );
+    } catch {
+      /* share cancelled */
+    }
+  }, [sharePaymentHeader, paymentShareLists.paidNames, paymentShareLists.unpaidNames]);
+
+  const handleExportPaymentPdf = useCallback(async () => {
+    if (!societyId || !event) return;
+    setPaymentPdfBusy(true);
+    try {
+      await exportEventPaymentPdf({
+        eventName: event.name ?? "Event",
+        eventDate: event.date ?? null,
+        societyId,
+        society,
+        paidNames: paymentShareLists.paidNames,
+        unpaidNames: paymentShareLists.unpaidNames,
+        isJointEvent: detailIsJointEvent,
+      });
+    } catch (e: unknown) {
+      showAlert("Could not export PDF", e instanceof Error ? e.message : "Try again.");
+    } finally {
+      setPaymentPdfBusy(false);
+    }
+  }, [
+    societyId,
+    event,
+    society,
+    paymentShareLists.paidNames,
+    paymentShareLists.unpaidNames,
+    detailIsJointEvent,
+  ]);
 
   /** Playing list is handled separately; these members are not yet on the event (incl. placeholders with no app account). */
   const playerIdSet = useMemo(
@@ -1972,6 +2084,61 @@ export default function EventDetailScreen() {
           />
         </AppCard>
       </Pressable>
+
+      {canSharePaymentLists && societyId && event ? (
+        <AppCard style={styles.card}>
+          <AppText variant="h2" style={{ marginBottom: spacing.xs }}>
+            Payments &amp; Share
+          </AppText>
+          <AppText variant="small" color="secondary" style={{ marginBottom: spacing.sm }}>
+            Lists are for this society only (no other club on joint events). Paid = confirmed &amp; paid — same as
+            the tee sheet. Unpaid = payment still due or playing list without a fee row.
+            {detailIsJointEvent ? ` ${JOINT_EVENT_CHIP_SHORT}` : ""}
+          </AppText>
+          <View
+            style={{
+              flexDirection: "row",
+              flexWrap: "wrap",
+              gap: spacing.md,
+              marginBottom: spacing.base,
+            }}
+          >
+            <AppText variant="bodyBold" style={{ color: colors.success }}>
+              Paid {paymentShareLists.paidNames.length}
+            </AppText>
+            <AppText variant="bodyBold" style={{ color: colors.warning }}>
+              Unpaid {paymentShareLists.unpaidNames.length}
+            </AppText>
+          </View>
+          <SecondaryButton
+            icon={<Feather name="share-2" size={16} color={colors.text} />}
+            label="Share paid list"
+            onPress={handleSharePaidList}
+            style={{ marginBottom: spacing.sm }}
+          />
+          <SecondaryButton
+            icon={<Feather name="share-2" size={16} color={colors.text} />}
+            label="Share unpaid list"
+            onPress={handleShareUnpaidList}
+            style={{ marginBottom: spacing.sm }}
+          />
+          <SecondaryButton
+            icon={<Feather name="share-2" size={16} color={colors.text} />}
+            label="Share full status"
+            onPress={handleShareFullPaymentStatus}
+            style={{ marginBottom: spacing.sm }}
+          />
+          <SecondaryButton
+            icon={<Feather name="file-text" size={16} color={colors.text} />}
+            label="Export PDF"
+            onPress={() => {
+              void handleExportPaymentPdf();
+            }}
+            loading={paymentPdfBusy}
+            disabled={paymentPdfBusy}
+          />
+        </AppCard>
+      ) : null}
 
       {/* View Tee Sheet — published + active society is host or event_societies participant */}
       {event.teeTimePublishedAt && canShowMemberTeeSheetCta && (

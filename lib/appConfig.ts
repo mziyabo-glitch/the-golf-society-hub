@@ -22,6 +22,28 @@ function getPublicWebBaseUrl(): string {
   return (fromEnv || VERCEL_WEB_URL).replace(/\/$/, "");
 }
 
+function isExpoWebDevLocalApiHost(): boolean {
+  if (typeof window === "undefined" || !window.location) return false;
+  const { hostname, port } = window.location;
+  return hostname === "localhost" && (port === "8081" || port === "19006");
+}
+
+/**
+ * Base URL for subscribed calendar feeds (.ics). On Expo web dev, points at dev-api-server
+ * so the same Supabase project as the app can serve the feed locally.
+ */
+export function getCalendarSubscribeFeedBaseUrl(): string {
+  if (isExpoWebDevLocalApiHost()) return "http://localhost:3001";
+  return getPublicWebBaseUrl();
+}
+
+/** Full subscribe URL for Apple/Google calendar (opaque token from ensure_calendar_feed_token). */
+export function getCalendarSubscribeUrl(feedToken: string): string {
+  const base = getCalendarSubscribeFeedBaseUrl().replace(/\/$/, "");
+  const t = encodeURIComponent(String(feedToken).trim());
+  return `${base}/api/calendar/${t}.ics`;
+}
+
 /** Web link for lightweight event RSVP (/invite/{eventUuid}). */
 export function getEventRsvpInviteUrl(eventId: string): string {
   const id = String(eventId).trim();

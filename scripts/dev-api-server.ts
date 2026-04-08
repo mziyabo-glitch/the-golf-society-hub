@@ -1,18 +1,18 @@
 /**
- * Local dev server for Golf + weather proxy routes.
- * Run alongside `expo start --web` so /api/golf/* and /api/weather/* work (Expo web cannot call some third-party APIs from the browser due to CORS).
+ * Local dev server for Golf + weather proxy routes and calendar .ics feed.
+ * Run alongside `expo start --web` so /api/* works from the browser.
  *
- * Usage: node scripts/dev-api-server.js
- * Or: npm run dev:web (runs this + Expo)
- * Set GOLF_API_KEY or NEXT_PUBLIC_GOLF_API_KEY in .env
+ * Usage: npm run dev:api
+ * Set GOLF_API_KEY, SUPABASE_SERVICE_ROLE_KEY, EXPO_PUBLIC_SUPABASE_URL in .env
  */
-require("dotenv").config();
-const http = require("http");
+import "dotenv/config";
+import http from "node:http";
+import { getCalendarIcsForToken } from "../lib/calendarIcsFeed";
 
 const PORT = 3001;
 const apiKey = process.env.GOLF_API_KEY ?? process.env.NEXT_PUBLIC_GOLF_API_KEY;
 
-const routes = {
+const routes: Record<string, (url: URL, pathname?: string) => Promise<{ status: number; body: unknown }>> = {
   "GET /api/golf/search": async (url) => {
     const q = url.searchParams.get("q");
     if (!q) return { status: 400, body: { error: "Missing query parameter" } };
@@ -25,14 +25,14 @@ const routes = {
           Authorization: `Key ${apiKey}`,
           "Content-Type": "application/json",
         },
-      }
+      },
     );
     const data = await res.json();
     if (res.status === 401) return { status: 401, body: { error: "Golf API authentication failed" } };
     return { status: res.status, body: data };
   },
-  "GET /api/golf/course": async (url, pathname) => {
-    const id = pathname.split("/").pop();
+  "GET /api/golf/course": async (_url, pathname) => {
+    const id = pathname?.split("/").pop();
     if (!id) return { status: 400, body: { error: "Missing course id" } };
     if (!apiKey) return { status: 500, body: { error: "Golf API key missing in environment variables" } };
 
@@ -43,14 +43,18 @@ const routes = {
       },
     });
     const text = await res.text();
-    let data;
+    let data: unknown;
     try {
       data = text ? JSON.parse(text) : {};
     } catch {
       data = { raw: text?.slice(0, 500) };
     }
     if (res.status === 401) return { status: 401, body: { error: "Golf API authentication failed" } };
-    if (!res.ok) return { status: res.status, body: { error: data?.error || text || `Golf API error (${res.status})` } };
+    if (!res.ok)
+      return {
+        status: res.status,
+        body: { error: (data as { error?: string })?.error || text || `Golf API error (${res.status})` },
+      };
     return { status: 200, body: data };
   },
 
@@ -78,7 +82,7 @@ const routes = {
     const upstream = `https://api.open-meteo.com/v1/forecast?${out.toString()}`;
     const res = await fetch(upstream);
     const text = await res.text();
-    let data;
+    let data: unknown;
     try {
       data = text ? JSON.parse(text) : {};
     } catch {
@@ -99,7 +103,7 @@ const routes = {
     const upstream = `https://geocoding-api.open-meteo.com/v1/search?${out.toString()}`;
     const res = await fetch(upstream);
     const text = await res.text();
-    let data;
+    let data: unknown;
     try {
       data = text ? JSON.parse(text) : {};
     } catch {
@@ -109,7 +113,7 @@ const routes = {
   },
 };
 
-const corsHeaders = {
+const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, OPTIONS",
   "Access-Control-Allow-Headers": "Content-Type",
@@ -125,7 +129,26 @@ const server = http.createServer(async (req, res) => {
   const url = new URL(req.url || "/", `http://localhost:${PORT}`);
   const pathname = url.pathname;
 
-  let handler;
+  if (pathname.startsWith("/api/calendar/") && pathname.endsWith(".ics")) {
+    if (req.method !== "GET") {
+      res.writeHead(405, { ...corsHeaders, Allow: "GET, OPTIONS" });
+      res.end();
+      return;
+    }
+    const last = pathname.split("/").pop() ?? "";
+    try {
+      const result = await getCalendarIcsForToken(last);
+      res.writeHead(result.status, { ...corsHeaders, ...result.headers });
+      res.end(result.body);
+    } catch (err) {
+      console.error("[dev-api-server] Calendar error:", err);
+      res.writeHead(500, { ...corsHeaders, "Content-Type": "text/plain; charset=utf-8" });
+      res.end("Calendar feed failed");
+    }
+    return;
+  }
+
+  let handler: ((url: URL, pathname?: string) => Promise<{ status: number; body: unknown }>) | undefined;
   if (pathname === "/api/weather/forecast") {
     handler = routes["GET /api/weather/forecast"];
   } else if (pathname === "/api/weather/geocoding") {
@@ -156,6 +179,8 @@ const server = http.createServer(async (req, res) => {
 });
 
 server.listen(PORT, () => {
-  console.log(`[dev-api-server] API proxy at http://localhost:${PORT} (golf + /api/weather/* for Open-Meteo)`);
+  console.log(
+    `[dev-api-server] http://localhost:${PORT} (golf, /api/weather/*, /api/calendar/*.ics)`,
+  );
   if (!apiKey) console.warn("[dev-api-server] GOLF_API_KEY not set - golf calls will fail");
 });

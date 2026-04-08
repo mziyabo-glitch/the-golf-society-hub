@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { StyleSheet, View, Pressable, Platform, Share } from "react-native";
+import { StyleSheet, View, Pressable, Platform, Share, Modal, ScrollView } from "react-native";
 import * as Clipboard from "expo-clipboard";
 import { useRouter } from "expo-router";
 import { Feather } from "@expo/vector-icons";
@@ -19,7 +19,8 @@ import { supabase } from "@/lib/supabase";
 import { clearActiveSociety } from "@/lib/db_supabase/profileRepo";
 import { regenerateJoinCode, uploadSocietyLogo, removeSocietyLogo, resetSocietyData } from "@/lib/db_supabase/societyRepo";
 import { isCaptain, getPermissionsForMember } from "@/lib/rbac";
-import { getSocietyInviteUrl, getSocietyInviteMessage } from "@/lib/appConfig";
+import { getSocietyInviteUrl, getSocietyInviteMessage, getCalendarSubscribeUrl } from "@/lib/appConfig";
+import { ensureCalendarFeedToken, rotateCalendarFeedToken } from "@/lib/db_supabase/calendarFeedRepo";
 import {
   getSocietyLogoUrl,
   getSocietyLogoDataUri,
@@ -70,10 +71,34 @@ export default function SettingsScreen() {
   const [adminToast, setAdminToast] = useState<{ visible: boolean; message: string; type: "success" | "error" | "info" }>({ visible: false, message: "", type: "success" });
   const [inviteLinkToast, setInviteLinkToast] = useState(false);
   const [codeCopyToast, setCodeCopyToast] = useState(false);
+  const [calendarModalVisible, setCalendarModalVisible] = useState(false);
+  const [calendarUrl, setCalendarUrl] = useState<string | null>(null);
+  const [calendarLoading, setCalendarLoading] = useState(false);
+  const [calendarError, setCalendarError] = useState<string | null>(null);
+  const [calendarCopiedToast, setCalendarCopiedToast] = useState(false);
+  const [calendarRotating, setCalendarRotating] = useState(false);
+  const [calendarResetToast, setCalendarResetToast] = useState(false);
 
   useEffect(() => {
     isPlatformAdmin().then(setIsAdmin);
   }, []);
+
+  const openCalendarSubscribeModal = useCallback(async () => {
+    if (!society?.id) return;
+    setCalendarModalVisible(true);
+    setCalendarUrl(null);
+    setCalendarError(null);
+    setCalendarLoading(true);
+    try {
+      const token = await ensureCalendarFeedToken(society.id);
+      setCalendarUrl(getCalendarSubscribeUrl(token));
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : "Could not create calendar link";
+      setCalendarError(msg);
+    } finally {
+      setCalendarLoading(false);
+    }
+  }, [society?.id]);
 
   const handleAdminSearch = useCallback(async (term: string) => {
     setAdminSearch(term);
@@ -603,7 +628,125 @@ export default function SettingsScreen() {
             )}
           </>
         )}
+
+        <Pressable
+          onPress={openCalendarSubscribeModal}
+          style={({ pressed }) => [styles.linkRow, { opacity: pressed ? 0.7 : 1, marginTop: spacing.sm }]}
+        >
+          <View style={[styles.linkIcon, { backgroundColor: colors.primary + "14" }]}>
+            <Feather name="calendar" size={18} color={colors.primary} />
+          </View>
+          <View style={styles.settingInfo}>
+            <AppText variant="bodyBold">Subscribe to calendar</AppText>
+            <AppText variant="small" color="secondary">
+              iPhone or Google Calendar — events where your RSVP is In
+            </AppText>
+          </View>
+        </Pressable>
       </AppCard>
+
+      <Modal
+        visible={calendarModalVisible}
+        animationType="slide"
+        transparent
+        onRequestClose={() => setCalendarModalVisible(false)}
+      >
+        <Pressable
+          style={[styles.calendarModalOverlay, { backgroundColor: "rgba(0,0,0,0.45)" }]}
+          onPress={() => setCalendarModalVisible(false)}
+        >
+          <View style={[styles.calendarModalCard, { backgroundColor: colors.background }]}>
+            <AppText variant="title" style={{ marginBottom: spacing.sm }}>
+              Subscribe to calendar
+            </AppText>
+            <AppText variant="small" color="secondary" style={{ marginBottom: spacing.base }}>
+              Subscribe using your app’s “from URL” option (not a one-off file import) so the list can update. Apple,
+              Google, and Outlook all refresh subscribed calendars on their own timing — often every few hours, not
+              instantly.
+            </AppText>
+
+            {calendarLoading ? (
+              <LoadingState message="Preparing link…" />
+            ) : calendarError ? (
+              <InlineNotice variant="error" message={calendarError} style={{ marginBottom: spacing.sm }} />
+            ) : calendarUrl ? (
+              <>
+                <SecondaryButton
+                  onPress={async () => {
+                    await Clipboard.setStringAsync(calendarUrl);
+                    setCalendarCopiedToast(true);
+                  }}
+                  style={{ marginBottom: spacing.base }}
+                >
+                  Copy calendar URL
+                </SecondaryButton>
+                <AppText variant="caption" color="muted" selectable style={{ marginBottom: spacing.base }}>
+                  {calendarUrl}
+                </AppText>
+                <DestructiveButton
+                  loading={calendarRotating}
+                  disabled={calendarRotating || calendarLoading || !society?.id}
+                  onPress={() => {
+                    if (!society?.id) return;
+                    confirmDestructive(
+                      "Reset calendar link?",
+                      "The old link stops working immediately. If you already added this calendar, remove it in your calendar app, then subscribe again with the new link.",
+                      "Reset",
+                      async () => {
+                        setCalendarRotating(true);
+                        setCalendarError(null);
+                        try {
+                          const token = await rotateCalendarFeedToken(society.id);
+                          setCalendarUrl(getCalendarSubscribeUrl(token));
+                          setCalendarResetToast(true);
+                        } catch (e: unknown) {
+                          setCalendarError(e instanceof Error ? e.message : "Could not reset link");
+                        } finally {
+                          setCalendarRotating(false);
+                        }
+                      },
+                    );
+                  }}
+                  style={{ marginBottom: spacing.base }}
+                >
+                  Reset calendar link
+                </DestructiveButton>
+              </>
+            ) : null}
+
+            <ScrollView style={{ maxHeight: 280 }} showsVerticalScrollIndicator={false}>
+              <AppText variant="heading" style={{ marginBottom: spacing.xs }}>
+                iPhone / iPad
+              </AppText>
+              <AppText variant="small" color="secondary" style={{ marginBottom: spacing.base }}>
+                Settings → Calendar → Accounts → Add Subscribed Calendar → paste the URL → Save.
+              </AppText>
+              <AppText variant="heading" style={{ marginBottom: spacing.xs }}>
+                Google Calendar (web)
+              </AppText>
+              <AppText variant="small" color="secondary" style={{ marginBottom: spacing.base }}>
+                Google Calendar → Settings (gear) → Add calendar → From URL → paste the link → Add calendar.
+              </AppText>
+              <AppText variant="heading" style={{ marginBottom: spacing.xs }}>
+                Google Calendar (Android)
+              </AppText>
+              <AppText variant="small" color="secondary" style={{ marginBottom: spacing.base }}>
+                Add the calendar from the Google Calendar website using “From URL”, then ensure sync is on for that
+                account on your phone.
+              </AppText>
+              <AppText variant="heading" style={{ marginBottom: spacing.xs }}>
+                Outlook
+              </AppText>
+              <AppText variant="small" color="secondary" style={{ marginBottom: spacing.lg }}>
+                Outlook on the web: Add calendar → Subscribe from web → paste the link. Desktop Outlook: Internet
+                Calendars in account settings.
+              </AppText>
+            </ScrollView>
+
+            <SecondaryButton onPress={() => setCalendarModalVisible(false)}>Close</SecondaryButton>
+          </View>
+        </Pressable>
+      </Modal>
 
       {/* Society Logo - Captain/Secretary only */}
       {canManageLogo && (
@@ -968,6 +1111,18 @@ export default function SettingsScreen() {
 
       <Toast visible={inviteLinkToast} message="Invite link copied to clipboard" type="success" onHide={() => setInviteLinkToast(false)} />
       <Toast visible={codeCopyToast} message="Join code copied" type="success" onHide={() => setCodeCopyToast(false)} />
+      <Toast
+        visible={calendarCopiedToast}
+        message="Calendar URL copied"
+        type="success"
+        onHide={() => setCalendarCopiedToast(false)}
+      />
+      <Toast
+        visible={calendarResetToast}
+        message="Calendar link reset — use the new URL"
+        type="success"
+        onHide={() => setCalendarResetToast(false)}
+      />
 
       {/* Quick Links */}
       <AppText variant="heading" style={styles.sectionTitle}>Quick Actions</AppText>
@@ -1141,6 +1296,18 @@ const styles = StyleSheet.create({
   },
   settingInfo: {
     flex: 1,
+  },
+  calendarModalOverlay: {
+    flex: 1,
+    justifyContent: "center",
+    padding: spacing.lg,
+  },
+  calendarModalCard: {
+    borderRadius: radius.lg,
+    padding: spacing.lg,
+    maxWidth: 520,
+    width: "100%",
+    alignSelf: "center",
   },
   logoSection: {
     alignItems: "center",

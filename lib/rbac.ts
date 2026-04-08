@@ -39,6 +39,8 @@ export type Permissions = {
   canAccessFinance: boolean;
   canManageMembershipFees: boolean;
   canManageEventPayments: boolean;
+  /** Captain / Treasurer / Secretary only — payment list share & PDF (not Handicapper). */
+  canShareEventPaymentLists: boolean;
   canManageEventExpenses: boolean;
 
   // Handicaps
@@ -98,7 +100,6 @@ export const getPermissionsForMember = (
   const treasurer = isTreasurer(currentMember);
   const secretary = isSecretary(currentMember);
   const handicapper = isHandicapper(currentMember);
-  const manco = isManCo(currentMember);
 
   return {
     // Society-level
@@ -125,6 +126,7 @@ export const getPermissionsForMember = (
     canAccessFinance: captain || treasurer,
     canManageMembershipFees: captain || treasurer,
     canManageEventPayments: captain || treasurer || secretary || handicapper,
+    canShareEventPaymentLists: captain || treasurer || secretary,
     canManageEventExpenses: captain || treasurer,
 
     // Handicaps
@@ -153,6 +155,18 @@ export function canManageEventPaymentsForSociety(
     r === "SECRETARY" ||
     r === "HANDICAPPER"
   );
+}
+
+/** Captain / Treasurer / Secretary in the active society — payment share / PDF only. */
+export function canShareEventPaymentListsForSociety(
+  memberships: { societyId: string; role: string }[] | null | undefined,
+  activeSocietyId: string | null | undefined,
+): boolean {
+  if (!activeSocietyId || !memberships?.length) return false;
+  const m = memberships.find((x) => x.societyId === activeSocietyId);
+  if (!m) return false;
+  const r = String(m.role || "").toUpperCase();
+  return r === "CAPTAIN" || r === "TREASURER" || r === "SECRETARY";
 }
 
 /** Same roles as `mark_event_paid` / `admin_add_member_to_event` (per active society membership). */
