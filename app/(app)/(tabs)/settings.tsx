@@ -21,6 +21,7 @@ import { regenerateJoinCode, uploadSocietyLogo, removeSocietyLogo, resetSocietyD
 import { isCaptain, getPermissionsForMember } from "@/lib/rbac";
 import { getSocietyInviteUrl, getSocietyInviteMessage, getCalendarSubscribeUrl } from "@/lib/appConfig";
 import { ensureCalendarFeedToken, rotateCalendarFeedToken } from "@/lib/db_supabase/calendarFeedRepo";
+import { explainCalendarFeedRpcError } from "@/lib/calendarFeedErrors";
 import {
   getSocietyLogoUrl,
   getSocietyLogoDataUri,
@@ -88,17 +89,22 @@ export default function SettingsScreen() {
     setCalendarModalVisible(true);
     setCalendarUrl(null);
     setCalendarError(null);
+    if (!member?.id) {
+      setCalendarError(
+        "You need an active member profile in this society to create a calendar link (switch society or finish joining).",
+      );
+      return;
+    }
     setCalendarLoading(true);
     try {
-      const token = await ensureCalendarFeedToken(society.id);
+      const token = await ensureCalendarFeedToken(society.id, member.id);
       setCalendarUrl(getCalendarSubscribeUrl(token));
     } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : "Could not create calendar link";
-      setCalendarError(msg);
+      setCalendarError(explainCalendarFeedRpcError(e, "Could not create calendar link"));
     } finally {
       setCalendarLoading(false);
     }
-  }, [society?.id]);
+  }, [society?.id, member?.id]);
 
   const handleAdminSearch = useCallback(async (term: string) => {
     setAdminSearch(term);
@@ -687,7 +693,9 @@ export default function SettingsScreen() {
                   loading={calendarRotating}
                   disabled={calendarRotating || calendarLoading || !society?.id}
                   onPress={() => {
-                    if (!society?.id) return;
+                    if (!society?.id || !member?.id) return;
+                    const societyId = society.id;
+                    const memberId = member.id;
                     confirmDestructive(
                       "Reset calendar link?",
                       "The old link stops working immediately. If you already added this calendar, remove it in your calendar app, then subscribe again with the new link.",
@@ -696,11 +704,11 @@ export default function SettingsScreen() {
                         setCalendarRotating(true);
                         setCalendarError(null);
                         try {
-                          const token = await rotateCalendarFeedToken(society.id);
+                          const token = await rotateCalendarFeedToken(societyId, memberId);
                           setCalendarUrl(getCalendarSubscribeUrl(token));
                           setCalendarResetToast(true);
                         } catch (e: unknown) {
-                          setCalendarError(e instanceof Error ? e.message : "Could not reset link");
+                          setCalendarError(explainCalendarFeedRpcError(e, "Could not reset link"));
                         } finally {
                           setCalendarRotating(false);
                         }
