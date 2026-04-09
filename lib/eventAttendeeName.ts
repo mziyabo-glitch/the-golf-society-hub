@@ -15,7 +15,7 @@ export type AttendeeNameSource =
 export type ResolveAttendeeNameOptions = {
   registrationId?: string;
   memberId?: string;
-  /** If event_registrations (or similar) ever stores a snapshot name */
+  /** Optional historical freeze name (only pass when intentionally using a snapshot). */
   snapshotName?: string | null;
 };
 
@@ -29,7 +29,7 @@ type MemberWithNames = MemberDoc & {
  * 1. members.name (full name)
  * 2. first_name + last_name
  * 3. display_name / displayName (profile)
- * 4. registration snapshot name (if provided)
+ * 4. registration snapshot name (if intentionally provided)
  * 5. email (last resort before generic fallback)
  * 6. "Member"
  */

@@ -14,14 +14,19 @@ import { LoadingState } from "@/components/ui/LoadingState";
 import { Toast } from "@/components/ui/Toast";
 import { useBootstrap } from "@/lib/useBootstrap";
 import { getProfile, updateUserProfile } from "@/lib/db_supabase/profileRepo";
-import { updateHandicap } from "@/lib/db_supabase/memberRepo";
+import {
+  syncMemberIdentityFromProfile,
+  syncMyMembershipNamesFromProfile,
+  updateHandicap,
+} from "@/lib/db_supabase/memberRepo";
+import { invalidatePersonRelatedCaches } from "@/lib/personCaches";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
 
 const SEX_OPTIONS = ["Male", "Female"] as const;
 
 export default function MyProfileScreen() {
   const router = useRouter();
-  const { userId, profile, member, refresh } = useBootstrap();
+  const { userId, profile, member, refresh, activeSocietyId, setMember } = useBootstrap();
   const isFirstTime = !profile?.profile_complete;
   const colors = getColors();
 
@@ -106,11 +111,45 @@ export default function MyProfileScreen() {
         await updateHandicap(member.id, parsedHi);
       }
 
+      const trimmedName = fullName.trim();
+
       await updateUserProfile(userId, {
-        full_name: fullName.trim(),
+        full_name: trimmedName,
         sex,
         whs_index: whsForProfile,
       });
+
+      try {
+        await syncMyMembershipNamesFromProfile();
+      } catch (syncAllErr: any) {
+        // Keep a fallback path for environments missing migration 095.
+        console.warn("[my-profile] syncMyMembershipNamesFromProfile:", syncAllErr?.message ?? syncAllErr);
+      }
+
+      if (member?.id && activeSocietyId) {
+        try {
+          await syncMemberIdentityFromProfile({
+            societyId: activeSocietyId,
+            memberId: member.id,
+            fullName: trimmedName,
+          });
+        } catch (syncErr: any) {
+          console.warn("[my-profile] syncMemberIdentityFromProfile:", syncErr?.message ?? syncErr);
+        }
+      }
+
+      await invalidatePersonRelatedCaches({
+        activeSocietyId: activeSocietyId ?? null,
+        includeAllSocieties: true,
+      });
+
+      if (member?.id) {
+        setMember({
+          ...member,
+          name: trimmedName,
+          display_name: trimmedName,
+        });
+      }
 
       refresh();
 

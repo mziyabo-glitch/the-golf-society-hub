@@ -32,6 +32,8 @@ import {
   type MemberDoc,
   type Gender,
 } from "@/lib/db_supabase/memberRepo";
+import { updateProfile } from "@/lib/db_supabase/profileRepo";
+import { invalidatePersonRelatedCaches } from "@/lib/personCaches";
 import { getPermissionsForMember } from "@/lib/rbac";
 import { getColors, spacing, radius, iconSize } from "@/lib/ui/theme";
 import { guard } from "@/lib/guards";
@@ -137,7 +139,14 @@ function RoleOption({
 export default function MemberDetailScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ id: string }>();
-  const { member: currentMember, loading: bootstrapLoading } = useBootstrap();
+  const {
+    member: currentMember,
+    loading: bootstrapLoading,
+    userId,
+    setMember: setBootstrapMember,
+    activeSocietyId,
+    refresh: refreshBootstrap,
+  } = useBootstrap();
   const { guardPaidAction, modalVisible, setModalVisible, societyId: guardSocietyId } = usePaidAccess();
   const colors = getColors();
 
@@ -281,7 +290,27 @@ export default function MemberDetailScreen() {
         await updateHandicap(member.id, newHI, lockChanged ? formLockHI : undefined);
       }
 
-      setMember(updated);
+      if (isOwnProfile && userId && canEditBasic && patch.name !== undefined) {
+        try {
+          await updateProfile(userId, { full_name: formName.trim() });
+        } catch (syncErr: any) {
+          console.warn("[MemberDetail] sync profile full_name:", syncErr?.message ?? syncErr);
+        }
+      }
+
+      await invalidatePersonRelatedCaches({
+        activeSocietyId: member.society_id ?? activeSocietyId ?? null,
+      });
+
+      const latest = await getMember(member.id);
+      const row = latest ?? updated;
+      setMember(row);
+
+      if (isOwnProfile && currentMember?.id === member.id) {
+        setBootstrapMember({ ...currentMember, ...row });
+      }
+      refreshBootstrap();
+
       setIsEditing(false);
       showAlert("Saved", "Member updated successfully.");
     } catch (err: any) {

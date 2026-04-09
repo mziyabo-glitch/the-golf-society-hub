@@ -483,6 +483,14 @@ function useBootstrapInternal(): BootstrapState {
           if (!mounted.current) return;
           if (!pollError && data) {
             setProfile(data);
+            setMemberState((prev) => {
+              if (!prev || !data?.full_name) return prev;
+              const rowUid = prev.user_id != null ? String(prev.user_id) : null;
+              if (!rowUid || rowUid !== currentUser.id) return prev;
+              const fn = String(data.full_name).trim();
+              if (!fn || prev.name === fn) return prev;
+              return normalizeMemberData({ ...prev, name: fn, display_name: fn });
+            });
           }
         }, 5000);
 

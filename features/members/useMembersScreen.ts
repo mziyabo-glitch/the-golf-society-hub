@@ -20,6 +20,7 @@ import { useReducedMotion } from "@/hooks/useReducedMotion";
 import { confirmDestructive, showAlert } from "@/lib/ui/alert";
 import { guard } from "@/lib/guards";
 import { getCache, invalidateCachePrefix, setCache } from "@/lib/cache/clientCache";
+import { invalidatePersonRelatedCaches } from "@/lib/personCaches";
 import { measureAsync } from "@/lib/perf/perf";
 
 import { sortMembersByRoleThenName } from "./membersDomain";
@@ -241,7 +242,7 @@ export function useMembersScreen() {
       );
       console.log("[members] Member added successfully, id:", newMember.id);
       closeModal();
-      await invalidateCachePrefix(`society:${societyId}:`);
+      await invalidatePersonRelatedCaches({ activeSocietyId: societyId });
       loadMembers();
     } catch (e: any) {
       console.error("[members] Add member RPC error:", e?.message);
@@ -301,7 +302,7 @@ export function useMembersScreen() {
       }
 
       closeModal();
-      await invalidateCachePrefix(`society:${societyId}:`);
+      await invalidatePersonRelatedCaches({ activeSocietyId: societyId });
       loadMembers();
     } catch (e: any) {
       showAlert("Error", e?.message || "Failed to update member.");
@@ -326,7 +327,7 @@ export function useMembersScreen() {
         try {
           await deleteMember(member.id);
           closeModal();
-          await invalidateCachePrefix(`society:${societyId}:`);
+          await invalidatePersonRelatedCaches({ activeSocietyId: societyId });
           await loadMembers();
         } catch (e: any) {
           showAlert("Error", e?.message || "Failed to delete member.");

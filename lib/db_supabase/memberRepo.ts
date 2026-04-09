@@ -411,6 +411,34 @@ export async function updateMemberDoc(
 }
 
 /**
+ * Mirror `profiles.full_name` onto the active society `members.name` after the user saves "My Profile".
+ * Event/tee/RSVP UIs resolve display names from `members` first; without this, those surfaces stay stale.
+ */
+export async function syncMemberIdentityFromProfile(opts: {
+  societyId: string;
+  memberId: string;
+  fullName: string;
+}): Promise<void> {
+  const name = opts.fullName.trim();
+  if (!name) return;
+  await updateMemberDoc(opts.societyId, opts.memberId, { name });
+}
+
+/**
+ * Server-side sync path: mirror `profiles.full_name` to ALL `members.name` rows for auth.uid().
+ * Returns number of member rows updated.
+ */
+export async function syncMyMembershipNamesFromProfile(): Promise<number> {
+  const { data, error } = await supabase.rpc("sync_my_membership_names_from_profile");
+  if (error) {
+    console.error("[memberRepo] syncMyMembershipNamesFromProfile RPC:", error.message);
+    throw new Error(error.message || "Failed to sync membership names");
+  }
+  const n = typeof data === "number" ? data : Number(data ?? 0);
+  return Number.isFinite(n) ? n : 0;
+}
+
+/**
  * Delete a member
  */
 export async function deleteMember(memberId: string): Promise<void> {
