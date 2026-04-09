@@ -33,6 +33,7 @@ export type TeeSheetPlayer = {
   name: string;
   handicapIndex?: number | null;
   gender?: "male" | "female" | null;
+  status?: string | null;
   teeTime?: string | null;
   group?: number | null;
 };
@@ -78,6 +79,7 @@ export type TeeSheetData = {
 type PlayerWithCalcs = GroupedPlayer & {
   gender: "male" | "female" | null;
   playingHandicap: number | null;
+  status?: string | null;
 };
 
 type GroupWithTime = PlayerGroup & { teeTime: string };
@@ -105,8 +107,8 @@ function buildTeeTime(startTime: string, intervalMinutes: number, index: number)
  */
 function generateTeeSheetHTML(
   data: TeeSheetData,
-  logoSrc?: string | null,
-  jointLogoSrcs?: { src: string | null; name: string }[],
+  _logoSrc?: string | null,
+  _jointLogoSrcs?: { src: string | null; name: string }[],
 ): string {
   const {
     societyName,
@@ -172,6 +174,7 @@ function generateTeeSheetHTML(
       courseHandicap,
       playingHandicap,
       gender,
+      status: player.status ?? null,
     };
   });
 
@@ -207,22 +210,25 @@ function generateTeeSheetHTML(
   const intervalMinutes =
     Number.isFinite(teeTimeInterval) && teeTimeInterval > 0 ? teeTimeInterval : 8;
 
-  // Cap to 12 groups and pad blank slots so every page is a full 6+6 grid.
+  // Cap to 12 groups (48 players max on a single compact A4 page).
   const capped = groups.slice(0, 12);
   const groupsWithTimes: GroupWithTime[] = capped.map((group, index) => ({
     ...group,
     teeTime: buildTeeTime(baseStartTime, intervalMinutes, index),
   }));
-  while (groupsWithTimes.length < 12) {
-    const idx = groupsWithTimes.length;
-    groupsWithTimes.push({
-      groupNumber: idx + 1,
-      players: [],
-      teeTime: buildTeeTime(baseStartTime, intervalMinutes, idx),
-    });
-  }
-
-  const pages = [groupsWithTimes];
+  const rows = groupsWithTimes.flatMap((group) =>
+    group.players.map((player) => {
+      const p = player as PlayerWithCalcs;
+      return {
+        group: String(group.groupNumber),
+        teeTime: group.teeTime,
+        name: p.name,
+        hi: formatHandicap(p.handicapIndex, 1),
+        status: shortStatusLabel(p.status),
+      };
+    }),
+  );
+  const useFallback11 = rows.length > 44;
 
   const jointMatch = societyName.match(/^Joint:\s*(.+)$/i);
   const jointLine = jointMatch ? jointMatch[1].trim() : null;
@@ -246,113 +252,26 @@ function generateTeeSheetHTML(
     });
   }
 
-  const teeInfoLines = [
-    teeSettings
-      ? `Men: ${teeName || "White"} — Par ${teeSettings.par} | CR ${teeSettings.courseRating} | SR ${teeSettings.slopeRating}`
-      : "Men: tee not set",
-    ladiesTeeSettings
-      ? `Ladies: ${ladiesTeeName || "Red"} — Par ${ladiesTeeSettings.par} | CR ${ladiesTeeSettings.courseRating} | SR ${ladiesTeeSettings.slopeRating}`
-      : "Ladies: tee not set",
-    `Allowance: ${Math.round(allowance * 100)}%`,
-  ];
-
-  const renderGroupTable = (group: GroupWithTime) => {
-    const rows = Array.from({ length: 4 }).map((_, idx) => {
-      const player = group.players[idx];
-      const name = player?.name ? escapeHtml(player.name) : "&nbsp;";
-      const hiDisplay = player ? formatHandicap(player.handicapIndex, 1) : "&nbsp;";
-      const phDisplay = player ? formatHandicap(player.playingHandicap) : "&nbsp;";
-      const rowClass = idx === 3 ? "player-row player-row-last" : "player-row";
-      const emptyClass = !player ? " row-empty" : "";
-
-      return `
-        <tr class="${rowClass}${emptyClass}">
-          <td class="col-name">${name}</td>
-          <td class="col-hi">${hiDisplay}</td>
-          <td class="col-ph">${phDisplay}</td>
+  const sublineBits = [
+    societyName,
+    formatLabel || null,
+    teeSettings ? `${teeName || "Men"} Par ${teeSettings.par}` : null,
+    ladiesTeeSettings ? `${ladiesTeeName || "Ladies"} Par ${ladiesTeeSettings.par}` : null,
+    `Allowance ${Math.round(allowance * 100)}%`,
+  ].filter((v): v is string => Boolean(v));
+  const competitionLine = hasCompetitions ? competitionLines.join("  |  ") : null;
+  const tableRowsHtml = rows
+    .map(
+      (row) => `
+        <tr>
+          <td class="col-group">${escapeHtml(row.group)}</td>
+          <td class="col-time">${escapeHtml(row.teeTime)}</td>
+          <td class="col-name">${escapeHtml(row.name)}</td>
+          <td class="col-hi">${escapeHtml(row.hi)}</td>
+          <td class="col-status">${escapeHtml(row.status)}</td>
         </tr>
-      `;
-    });
-
-    return `
-      <div class="group-wrap">
-        <div class="time-col">${escapeHtml(group.teeTime)}</div>
-        <table class="group-table">
-          <thead>
-            <tr>
-              <th class="col-name">NAME</th>
-              <th class="col-hi">HI</th>
-              <th class="col-ph">PH</th>
-            </tr>
-          </thead>
-          <tbody>${rows.join("")}</tbody>
-        </table>
-      </div>
-    `;
-  };
-
-  const pagesHTML = pages
-    .map((pageGroups, pageIndex) => {
-      const leftGroups = pageGroups.slice(0, 6);
-      const rightGroups = pageGroups.slice(6, 12);
-
-      const leftHtml = leftGroups.map(renderGroupTable).join("");
-      const rightHtml = rightGroups.map(renderGroupTable).join("");
-
-      return `
-        <div class="page">
-          <div class="header-row">
-            <div class="header-left">
-              ${
-                jointLogoSrcs && jointLogoSrcs.length > 1
-                  ? `<div class="joint-logo-stack">${
-                      jointLogoSrcs.slice(0, 2).map((l) =>
-                        l.src
-                          ? `<img class="logo logo-joint" src="${escapeAttribute(l.src)}" alt="${escapeAttribute(l.name)}" />`
-                          : `<div class="logo-placeholder logo-joint">${escapeHtml(l.name.slice(0, 2).toUpperCase())}</div>`
-                      ).join("")
-                    }</div>`
-                  : (
-                    logoSrc
-                      ? `<img class="logo" src="${escapeAttribute(logoSrc)}" alt="" />`
-                      : `<div class="logo-placeholder">${escapeHtml(societyName.slice(0, 2).toUpperCase())}</div>`
-                  )
-              }
-            </div>
-            <div class="header-center">
-              <div class="event-title">${escapeHtml(eventName)}</div>
-              <div class="event-meta">${escapeHtml(dateStr)}${courseName ? ` · ${escapeHtml(courseName)}` : ""}${formatLabel ? ` · ${escapeHtml(formatLabel)}` : ""}</div>
-              ${jointLine ? `<div class="joint-line">JOINT · ${escapeHtml(jointLine)}</div>` : ""}
-            </div>
-            <div class="header-right">
-              <div class="tee-box">
-                ${teeInfoLines.map((line) => `<div class="tee-line">${escapeHtml(line)}</div>`).join("")}
-              </div>
-            </div>
-          </div>
-
-          <div class="grid">
-            <div class="column">${leftHtml || "<div class='empty-column'>No groups</div>"}</div>
-            <div class="column">${rightHtml || "<div class='empty-column'> </div>"}</div>
-          </div>
-
-          <div class="special-info">
-            ${
-              hasCompetitions
-                ? `<div class="special-body">
-                    ${competitionLines.map((line) => `<div class="competition-line">${escapeHtml(line)}</div>`).join("")}
-                   </div>`
-                : `<div class="special-body special-body-muted">Competition holes: not set</div>`
-            }
-          </div>
-
-          <div class="footer">
-            <div class="footer-brand">Produced by The Golf Society Hub</div>
-            <div class="footer-page">Page ${pageIndex + 1} of ${pages.length}</div>
-          </div>
-        </div>
-      `;
-    })
+      `,
+    )
     .join("");
 
   return `
@@ -363,153 +282,126 @@ function generateTeeSheetHTML(
         <title>Tee Sheet - ${escapeHtml(eventName)}</title>
       </head>
       <body>
-        <div class="pdf-root doc">
+        <div class="pdf-root ${useFallback11 ? "fallback-11" : ""}">
         <style>
           * { box-sizing: border-box; margin: 0; padding: 0; }
-          html, body { margin: 0; padding: 0; height: auto; min-height: 0; overflow: visible; }
+          html, body { margin: 0; padding: 0; width: 100%; max-width: 100%; overflow: hidden; }
           @page {
-            size: A4 landscape;
-            margin: 12mm;
+            size: A4;
+            margin: 10mm;
           }
           .pdf-root {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
-            color: #111827;
+            color: #111;
             background: #fff;
-            font-size: 11px;
-            line-height: 1.35;
-          }
-          .page {
-            page-break-after: always;
-            padding: 16px 20px 12px;
-            min-height: auto;
-            background: #fff;
-          }
-          .page:last-child { page-break-after: auto; }
-          .header-row {
-            display: flex;
-            align-items: flex-start;
-            margin-bottom: 14px;
-            min-height: 88px;
-          }
-          .header-left {
-            width: 88px;
-            flex-shrink: 0;
-          }
-          .logo { width: 56px; height: 56px; object-fit: contain; object-position: left top; display: block; }
-          .joint-logo-stack { display: flex; flex-direction: row; gap: 6px; align-items: flex-start; }
-          .logo-joint { width: 42px; height: 42px; }
-          .logo-placeholder {
-            width: 56px;
-            height: 56px;
-            border: 1px solid #e5e7eb;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 11px;
-            font-weight: 700;
-            color: #6b7280;
-            background: #fafafa;
-          }
-          .header-center { flex: 1; text-align: center; padding: 0 12px; }
-          .event-title { font-size: 22px; font-weight: 700; letter-spacing: -0.02em; margin-bottom: 4px; color: #111827; }
-          .event-meta { font-size: 11px; color: #6b7280; }
-          .joint-line { margin-top: 10px; font-size: 8px; letter-spacing: 0.09em; color: #c4c4c4; font-weight: 500; }
-          .header-right { width: 268px; flex-shrink: 0; }
-          .tee-box {
-            border: 1px solid #e5e7eb;
-            padding: 10px 12px;
-            background: #fafafa;
-          }
-          .tee-line { font-size: 9px; color: #374151; line-height: 14px; margin-bottom: 4px; }
-
-          .grid {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 16px;
-            margin-bottom: 8px;
-          }
-          .column {
-            display: flex;
-            flex-direction: column;
-            gap: 6px;
-          }
-          .group-wrap {
-            display: flex;
-            align-items: flex-start;
-            margin-bottom: 8px;
-            padding-bottom: 6px;
-            border-bottom: 1px solid #e8e8e8;
-          }
-          .time-col {
-            width: 44px;
-            flex-shrink: 0;
-            padding-top: 22px;
-            padding-right: 8px;
-            text-align: right;
-            font-size: 13px;
-            font-weight: 600;
-            color: #111827;
-            border-right: 1px solid #ececec;
-          }
-          .group-table {
-            flex: 1;
-            width: 100%;
-            border-collapse: collapse;
-            margin-left: 8px;
-          }
-          .group-table thead th {
-            font-size: 8px;
-            letter-spacing: 0.085em;
-            color: #4b5563;
-            font-weight: 700;
-            padding: 4px 0;
-            border-bottom: 1px solid #e8e8e8;
-            text-align: left;
-          }
-          .group-table thead .col-hi,
-          .group-table thead .col-ph { text-align: right; }
-          .group-table .col-name { width: auto; }
-          .group-table .col-hi,
-          .group-table .col-ph {
-            width: 40px;
-            text-align: right;
-            font-variant-numeric: tabular-nums;
-            font-family: ui-monospace, 'SF Mono', Consolas, monospace;
-          }
-          .group-table .col-hi { color: #374151; font-weight: 500; }
-          .group-table .col-ph { color: #374151; font-weight: 600; }
-          .group-table tbody td {
             font-size: 12px;
-            padding: 4px 0;
-            line-height: 15px;
-            border-bottom: 1px solid #f0f0f0;
+            line-height: 1.2;
+            width: 100%;
+            max-width: 100%;
+            overflow: hidden;
+          }
+          .sheet-page {
+            width: 100%;
+            max-width: 100%;
+            page-break-inside: avoid;
+            break-inside: avoid;
+          }
+          .sheet-header {
+            border: 1px solid #bbb;
+            padding: 6px 8px;
+            margin-bottom: 6px;
+            page-break-inside: avoid;
+          }
+          .header-line {
+            font-size: 14px;
+            font-weight: 700;
+            line-height: 1.2;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+          }
+          .header-subline {
+            margin-top: 2px;
+            font-size: 11px;
+            color: #333;
+            line-height: 1.2;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+          }
+          .sheet-table {
+            width: 100%;
+            max-width: 100%;
+            table-layout: fixed;
+            border-collapse: collapse;
+            font-size: 12px;
+            border: 1px solid #bbb;
+            page-break-inside: avoid;
+          }
+          .sheet-table thead th {
+            background: #f4f4f4;
+            font-weight: 700;
+            padding: 4px 6px;
+            border: 1px solid #bbb;
+            text-align: left;
+            white-space: nowrap;
+          }
+          .sheet-table tbody td {
+            padding: 4px 6px;
+            border: 1px solid #bbb;
             vertical-align: middle;
+            line-height: 1.15;
+            page-break-inside: avoid;
           }
-          .player-row-last td { border-bottom: none; }
-          .row-empty td { color: #e8e8e8; opacity: 0.85; }
-
-          .special-info {
-            border-top: 1px solid #e5e7eb;
-            padding-top: 8px;
-            margin-top: 4px;
+          .sheet-table tr {
+            page-break-inside: avoid;
+            break-inside: avoid;
           }
-          .special-body { font-size: 9px; color: #6b7280; line-height: 13px; }
-          .competition-line { margin-bottom: 2px; }
-          .competition-line:last-child { margin-bottom: 0; }
-          .special-body-muted { font-size: 8px; color: #c4c4c4; line-height: 12px; letter-spacing: 0.02em; }
-
-          .footer {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            border-top: 1px solid #e5e7eb;
-            padding-top: 8px;
-            margin-top: 6px;
+          .col-group { width: 8%; white-space: nowrap; }
+          .col-time { width: 14%; white-space: nowrap; }
+          .col-name {
+            width: 52%;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
           }
-          .footer-brand { font-size: 8px; color: #9ca3af; }
-          .footer-page { font-size: 8px; color: #d1d5db; }
+          .col-hi {
+            width: 10%;
+            text-align: right;
+            white-space: nowrap;
+            font-variant-numeric: tabular-nums;
+          }
+          .col-status { width: 16%; white-space: nowrap; }
+          .fallback-11 .sheet-table,
+          .fallback-11 .sheet-table thead th,
+          .fallback-11 .sheet-table tbody td,
+          .fallback-11 .header-subline { font-size: 11px; }
+          .fallback-11 .sheet-table tbody td,
+          .fallback-11 .sheet-table thead th { padding: 3px 5px; }
         </style>
-        ${pagesHTML || `<div class="page"><p style="text-align:center; color:#6B7280;">No players registered yet.</p></div>`}
+        <div class="sheet-page">
+          <div class="sheet-header">
+            <div class="header-line">${escapeHtml(eventName)} | ${escapeHtml(dateStr)} | ${escapeHtml(courseName || "Course TBC")}</div>
+            <div class="header-subline">${escapeHtml(sublineBits.join(" | "))}${jointLine ? ` | ${escapeHtml(`Joint: ${jointLine}`)}` : ""}${competitionLine ? ` | ${escapeHtml(competitionLine)}` : ""}</div>
+          </div>
+          <table class="sheet-table">
+            <thead>
+              <tr>
+                <th class="col-group">Group</th>
+                <th class="col-time">Tee time</th>
+                <th class="col-name">Name</th>
+                <th class="col-hi">Handicap</th>
+                <th class="col-status">Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${
+                tableRowsHtml ||
+                `<tr><td colspan="5" style="text-align:center; color:#666;">No players registered yet.</td></tr>`
+              }
+            </tbody>
+          </table>
+        </div>
         </div>
       </body>
     </html>
@@ -580,4 +472,16 @@ function escapeHtml(input: string): string {
 
 function escapeAttribute(input: string): string {
   return escapeHtml(input).replace(/"/g, "&quot;");
+}
+
+function shortStatusLabel(status: string | null | undefined): string {
+  if (!status) return "";
+  const s = status.trim().toLowerCase();
+  if (!s) return "";
+  if (s.includes("paid")) return "Paid";
+  if (s.includes("confirmed")) return "Conf";
+  if (s.includes("wait")) return "Wait";
+  if (s.includes("cancel")) return "Cancel";
+  if (s.includes("guest")) return "Guest";
+  return status.trim().slice(0, 8);
 }
