@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import debounce from "lodash.debounce";
-import { StyleSheet, View, Pressable, ScrollView, Modal, Share } from "react-native";
+import { StyleSheet, View, Pressable, ScrollView, Modal, Share, Platform } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
 import { Feather } from "@expo/vector-icons";
@@ -653,7 +653,8 @@ export default function EventDetailScreen() {
         isJointEvent: detailIsJointEvent,
       });
     } catch (e: unknown) {
-      showAlert("Could not export PDF", e instanceof Error ? e.message : "Try again.");
+      const label = Platform.OS === "web" ? "PNG" : "PDF";
+      showAlert(`Could not export ${label}`, e instanceof Error ? e.message : "Try again.");
     } finally {
       setPaymentPdfBusy(false);
     }
@@ -2130,7 +2131,7 @@ export default function EventDetailScreen() {
           />
           <SecondaryButton
             icon={<Feather name="file-text" size={16} color={colors.text} />}
-            label="Export PDF"
+            label={Platform.OS === "web" ? "Export PNG" : "Export PDF"}
             onPress={() => {
               void handleExportPaymentPdf();
             }}

@@ -228,7 +228,7 @@ function generateTeeSheetHTML(
       };
     }),
   );
-  const useFallback11 = rows.length > 44;
+  const useFallback11 = rows.length >= 40;
 
   const jointMatch = societyName.match(/^Joint:\s*(.+)$/i);
   const jointLine = jointMatch ? jointMatch[1].trim() : null;
@@ -303,6 +303,9 @@ function generateTeeSheetHTML(
           .sheet-page {
             width: 100%;
             max-width: 100%;
+            height: 277mm;
+            max-height: 277mm;
+            overflow: hidden;
             page-break-inside: avoid;
             break-inside: avoid;
           }
