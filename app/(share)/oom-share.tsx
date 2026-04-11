@@ -130,6 +130,8 @@ export default function OomShareScreen() {
 
         await captureAndShare(shareRef, {
           dialogTitle: view === "log" ? "OOM Results Log" : "Order of Merit",
+          width: 1240,
+          height: 1754,
         });
 
         if (!mounted) return;

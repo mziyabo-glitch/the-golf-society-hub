@@ -11,8 +11,7 @@
 import React, { forwardRef } from "react";
 import { View, Text, StyleSheet } from "react-native";
 import { SocietyLogoImage } from "@/components/ui/SocietyLogoImage";
-import { BrandingFooter } from "@/components/ui/BrandingFooter";
-import { colors, typography } from "@/lib/ui/theme";
+import { colors } from "@/lib/ui/theme";
 
 export type OOMShareRow = {
   position: number;
@@ -28,6 +27,10 @@ type OOMShareCardProps = {
   logoUrl?: string | null;
 };
 
+const A4_EXPORT_WIDTH = 1240;
+const A4_EXPORT_HEIGHT = 1754;
+const MAX_ROWS = 30;
+
 /**
  * Format points for display (handles decimals from tie averaging)
  */
@@ -38,14 +41,17 @@ function formatPoints(pts: number): string {
   return pts.toFixed(1);
 }
 
+type PositionTone = "gold" | "silver" | "bronze" | "default";
+
 /**
- * Get position display - medal emoji for top 3, number for rest
+ * Position badges are rendered as deterministic chips (instead of emoji)
+ * so exports look consistent across devices/platform fonts.
  */
-function getPositionDisplay(position: number): { text: string; isMedal: boolean } {
-  if (position === 1) return { text: "🥇", isMedal: true };
-  if (position === 2) return { text: "🥈", isMedal: true };
-  if (position === 3) return { text: "🥉", isMedal: true };
-  return { text: position.toString(), isMedal: false };
+function getPositionMeta(position: number): { text: string; tone: PositionTone } {
+  if (position === 1) return { text: "1", tone: "gold" };
+  if (position === 2) return { text: "2", tone: "silver" };
+  if (position === 3) return { text: "3", tone: "bronze" };
+  return { text: position.toString(), tone: "default" };
 }
 
 function getInitials(name: string): string {
@@ -57,82 +63,88 @@ function getInitials(name: string): string {
 
 const OOMShareCard = forwardRef<View, OOMShareCardProps>(
   ({ societyName, seasonLabel, rows, logoUrl }, ref) => {
+    const displayRows = rows.slice(0, MAX_ROWS);
+    const rowDensityStyle =
+      displayRows.length >= 28
+        ? styles.rowDense
+        : displayRows.length >= 24
+          ? styles.rowMid
+          : styles.rowComfortable;
+
     return (
       <View ref={ref} style={styles.container} collapsable={false}>
-        {/* Society header — society branding is primary */}
-        <View style={styles.header}>
-          <SocietyLogoImage
-            logoUrl={logoUrl ?? null}
-            size="hero"
-            variant="hero"
-            placeholderText={getInitials(societyName)}
-            style={{ marginBottom: 8 }}
-          />
-          <Text style={styles.societyName}>{societyName}</Text>
-          <Text style={styles.title}>Order of Merit</Text>
-          <Text style={styles.subtitle}>Season Leaderboard</Text>
-          <Text style={styles.seasonLabel}>{seasonLabel}</Text>
-        </View>
-
-        {/* Divider */}
-        <View style={styles.divider} />
-
-        {/* Table */}
-        <View style={styles.table}>
-          {/* Table Header */}
-          <View style={styles.tableHeader}>
-            <Text style={[styles.headerCell, styles.posCol]}>Pos</Text>
-            <Text style={[styles.headerCell, styles.nameCol]}>Player</Text>
-            <Text style={[styles.headerCell, styles.pointsCol]}>Points</Text>
+        <View style={styles.sheet}>
+          <View style={styles.header}>
+            <SocietyLogoImage
+              logoUrl={logoUrl ?? null}
+              size="medium"
+              variant="default"
+              placeholderText={getInitials(societyName)}
+            />
+            <View style={styles.headerTextBlock}>
+              <Text style={styles.title}>Order of Merit</Text>
+              <Text style={styles.societyName} numberOfLines={1}>
+                {societyName}
+              </Text>
+              <Text style={styles.seasonLabel} numberOfLines={1}>
+                {seasonLabel}
+              </Text>
+            </View>
           </View>
 
-          {/* Table Rows */}
-          {rows.map((row, index) => {
-            const isTop3 = row.position <= 3;
-            const pos = getPositionDisplay(row.position);
+          <View style={styles.table}>
+            <View style={styles.tableHeader}>
+              <Text style={[styles.headerCell, styles.rankCol]}>Rank</Text>
+              <Text style={[styles.headerCell, styles.nameCol]}>Name</Text>
+              <Text style={[styles.headerCell, styles.eventsCol]}>Events</Text>
+              <Text style={[styles.headerCell, styles.pointsCol]}>Points</Text>
+            </View>
 
-            return (
-              <View
-                key={`${row.name}-${index}`}
-                style={[
-                  styles.tableRow,
-                  index % 2 === 1 && styles.tableRowAlt,
-                  isTop3 && styles.tableRowTop3,
-                  index === rows.length - 1 && styles.tableRowLast,
-                ]}
-              >
-                <View style={styles.posCol}>
-                  {pos.isMedal ? (
-                    <Text style={styles.medal}>{pos.text}</Text>
-                  ) : (
-                    <Text style={styles.posText}>{pos.text}</Text>
-                  )}
-                </View>
-                <View style={styles.nameCol}>
-                  <Text
-                    style={[styles.nameText, isTop3 && styles.nameTextTop3]}
-                    numberOfLines={1}
-                  >
+            {displayRows.map((row, index) => {
+              const pos = getPositionMeta(row.position);
+              return (
+                <View
+                  key={`${row.name}-${index}`}
+                  style={[
+                    styles.tableRow,
+                    rowDensityStyle,
+                    index % 2 === 1 && styles.tableRowAlt,
+                    index === displayRows.length - 1 && styles.tableRowLast,
+                  ]}
+                >
+                  <View style={styles.rankCol}>
+                    <View
+                      style={[
+                        styles.positionBadge,
+                        pos.tone === "gold" && styles.positionBadgeGold,
+                        pos.tone === "silver" && styles.positionBadgeSilver,
+                        pos.tone === "bronze" && styles.positionBadgeBronze,
+                      ]}
+                    >
+                      <Text style={styles.positionBadgeText}>{pos.text}</Text>
+                    </View>
+                  </View>
+
+                  <Text style={styles.nameText} numberOfLines={1}>
                     {row.name}
                   </Text>
-                  {row.eventsPlayed !== undefined && (
-                    <Text style={styles.eventsText}>
-                      {row.eventsPlayed} event{row.eventsPlayed !== 1 ? "s" : ""}
-                    </Text>
-                  )}
-                </View>
-                <View style={styles.pointsCol}>
-                  <Text style={[styles.pointsText, isTop3 && styles.pointsTextTop3]}>
+
+                  <Text style={styles.eventsText} numberOfLines={1}>
+                    {row.eventsPlayed ?? 0}
+                  </Text>
+
+                  <Text style={styles.pointsText} numberOfLines={1}>
                     {formatPoints(row.points)}
                   </Text>
                 </View>
-              </View>
-            );
-          })}
-        </View>
+              );
+            })}
+          </View>
 
-        {/* App branding footer — subtle, bottom */}
-        <BrandingFooter />
+          <View style={styles.footer}>
+            <Text style={styles.footerText}>Produced by The Golf Society Hub</Text>
+          </View>
+        </View>
       </View>
     );
   }
@@ -144,134 +156,168 @@ export default OOMShareCard;
 
 const styles = StyleSheet.create({
   container: {
+    width: A4_EXPORT_WIDTH,
+    height: A4_EXPORT_HEIGHT,
     backgroundColor: "#FFFFFF",
-    width: 380,
-    paddingTop: 28,
-    paddingBottom: 20,
-    paddingHorizontal: 24,
-    borderRadius: 16,
-    overflow: "hidden",
-    // Subtle shadow for depth
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 8,
-    elevation: 4,
+    paddingHorizontal: 52,
+    paddingTop: 44,
+    paddingBottom: 30,
+  },
+  sheet: {
+    flex: 1,
+    width: "100%",
+    maxWidth: 1136,
+    alignSelf: "center",
   },
   header: {
+    height: 170,
+    flexDirection: "row",
     alignItems: "center",
-    marginBottom: 20,
+    gap: 18,
+    borderBottomWidth: 1,
+    borderBottomColor: "#D1D5DB",
+    paddingBottom: 16,
+    marginBottom: 14,
+  },
+  headerTextBlock: {
+    flex: 1,
   },
   societyName: {
-    fontSize: typography.caption.fontSize,
-    fontWeight: "500",
-    color: "#6B7280",
-    textTransform: "uppercase",
-    letterSpacing: 1,
-    marginBottom: 4,
+    fontSize: 22,
+    lineHeight: 24,
+    color: "#4B5563",
   },
   title: {
-    fontSize: typography.display.fontSize,
+    fontSize: 56,
+    lineHeight: 58,
     fontWeight: "700",
     color: colors.light.primary,
-    marginBottom: 2,
-  },
-  subtitle: {
-    fontSize: typography.body.fontSize,
-    fontWeight: "500",
-    color: "#374151",
-    marginBottom: 4,
+    marginBottom: 6,
   },
   seasonLabel: {
-    fontSize: typography.body.fontSize,
-    color: "#9CA3AF",
-  },
-  divider: {
-    height: 3,
-    backgroundColor: colors.light.primary,
-    marginBottom: 0,
-    borderRadius: 2,
+    fontSize: 18,
+    lineHeight: 20,
+    color: "#6B7280",
+    marginTop: 2,
   },
   table: {
-    borderRadius: 8,
-    overflow: "hidden",
+    flex: 1,
     borderWidth: 1,
-    borderColor: "#E5E7EB",
-    borderTopWidth: 0,
+    borderColor: "#D1D5DB",
+    borderRadius: 0,
+    overflow: "hidden",
   },
   tableHeader: {
     flexDirection: "row",
-    paddingVertical: 12,
-    paddingHorizontal: 12,
-    backgroundColor: colors.light.primary,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    backgroundColor: "#F3F4F6",
+    borderBottomWidth: 1,
+    borderBottomColor: "#D1D5DB",
   },
   headerCell: {
-    fontSize: typography.small.fontSize,
+    fontSize: 16,
+    lineHeight: 18,
     fontWeight: "600",
-    color: "#FFFFFF",
+    color: "#374151",
     textTransform: "uppercase",
-    letterSpacing: 0.5,
+    letterSpacing: 0.2,
   },
-  posCol: {
-    width: 50,
+  rankCol: {
+    width: 80,
     alignItems: "center",
     justifyContent: "center",
   },
   nameCol: {
     flex: 1,
-    justifyContent: "center",
+  },
+  eventsCol: {
+    width: 90,
+    textAlign: "center",
   },
   pointsCol: {
-    width: 70,
-    alignItems: "flex-end",
-    justifyContent: "center",
+    width: 120,
+    textAlign: "right",
   },
   tableRow: {
     flexDirection: "row",
     alignItems: "center",
-    paddingVertical: 14,
-    paddingHorizontal: 12,
+    paddingHorizontal: 10,
     backgroundColor: "#FFFFFF",
     borderBottomWidth: 1,
-    borderBottomColor: "#F3F4F6",
+    borderBottomColor: "#E5E7EB",
+  },
+  rowComfortable: {
+    minHeight: 56,
+    paddingVertical: 8,
+  },
+  rowMid: {
+    minHeight: 50,
+    paddingVertical: 7,
+  },
+  rowDense: {
+    minHeight: 44,
+    paddingVertical: 6,
   },
   tableRowAlt: {
-    backgroundColor: "#FAFAFA",
-  },
-  tableRowTop3: {
-    backgroundColor: "#FFFBEB",
+    backgroundColor: "#FCFCFD",
   },
   tableRowLast: {
     borderBottomWidth: 0,
   },
-  medal: {
-    fontSize: typography.h1.fontSize,
+  positionBadge: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: "#F3F4F6",
+    alignItems: "center",
+    justifyContent: "center",
   },
-  posText: {
-    fontSize: typography.caption.fontSize,
-    fontWeight: "600",
-    color: "#6B7280",
+  positionBadgeGold: {
+    backgroundColor: "#FDE68A",
+  },
+  positionBadgeSilver: {
+    backgroundColor: "#E5E7EB",
+  },
+  positionBadgeBronze: {
+    backgroundColor: "#FCD9B6",
+  },
+  positionBadgeText: {
+    fontSize: 16,
+    lineHeight: 18,
+    fontWeight: "700",
+    color: "#374151",
   },
   nameText: {
-    fontSize: typography.caption.fontSize,
+    flex: 1,
+    fontSize: 18,
+    lineHeight: 20,
     fontWeight: "500",
     color: "#111827",
-  },
-  nameTextTop3: {
-    fontWeight: "600",
+    paddingRight: 8,
   },
   eventsText: {
-    fontSize: typography.small.fontSize,
-    color: "#9CA3AF",
-    marginTop: 1,
+    width: 90,
+    textAlign: "center",
+    fontSize: 16,
+    lineHeight: 18,
+    color: "#4B5563",
   },
   pointsText: {
-    fontSize: typography.body.fontSize,
-    fontWeight: "600",
-    color: colors.light.primary,
-  },
-  pointsTextTop3: {
+    width: 120,
+    textAlign: "right",
+    fontSize: 20,
+    lineHeight: 22,
     fontWeight: "700",
-    fontSize: typography.bodyBold.fontSize,
+    color: "#111827",
+  },
+  footer: {
+    paddingTop: 10,
+    alignItems: "center",
+  },
+  footerText: {
+    fontSize: 14,
+    lineHeight: 16,
+    color: "#9CA3AF",
   },
 });

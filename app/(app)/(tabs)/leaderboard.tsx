@@ -36,7 +36,6 @@ import { getColors, spacing, iconSize } from "@/lib/ui/theme";
 import { interaction, webFocusRingStyle, webPointerStyle } from "@/lib/ui/interaction";
 import { useScaledTypography } from "@/lib/ui/fontScaleContext";
 import { getSocietyLogoUrl } from "@/lib/societyLogo";
-import { exportOomPdf, exportOomResultsLogPdf } from "@/lib/pdf/oomPdf";
 import { measureAsync, useSlowCommitLog } from "@/lib/perf/perf";
 
 
@@ -286,28 +285,6 @@ export default function LeaderboardScreen() {
     }
   };
 
-  const runSharePdf = async () => {
-    if (!societyId || !shareTarget) return;
-    const kind = shareTarget;
-    setShareTarget(null);
-    setExporting(true);
-    try {
-      if (kind === "leaderboard") {
-        await exportOomPdf(societyId);
-      } else {
-        await exportOomResultsLogPdf(societyId);
-      }
-    } catch (e: any) {
-      setToast({
-        visible: true,
-        message: e?.message ?? "Couldn't create PDF. Try again.",
-        type: "error",
-      });
-    } finally {
-      setExporting(false);
-    }
-  };
-
   // ============================================================================
   // LOADING / ERROR / EMPTY STATES
   // ============================================================================
@@ -498,15 +475,12 @@ export default function LeaderboardScreen() {
             </AppText>
             <AppText variant="bodySmall" color="secondary" style={styles.shareModalBody}>
               {shareTarget === "matrix"
-                ? "Image (PNG) shows the latest event only. PDF includes every OOM event in the matrix."
-                : "Image (PNG) works well for WhatsApp and social. PDF is best for printing and email."}
+                ? "Image (PNG) shares the latest event in a mobile-friendly card."
+                : "Image (PNG) works well for WhatsApp and social."}
             </AppText>
             <View style={styles.shareModalActions}>
               <PrimaryButton onPress={runSharePng} disabled={exporting} size="md">
                 Image (PNG)
-              </PrimaryButton>
-              <PrimaryButton onPress={runSharePdf} disabled={exporting} size="md">
-                PDF
               </PrimaryButton>
               <SecondaryButton onPress={closeShareSheet} disabled={exporting} size="md">
                 Cancel

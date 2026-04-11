@@ -46,7 +46,7 @@ export function buildEventPaymentPdfHtml(p: EventPaymentPdfPayload): string {
     ...paidDetailed.map((x) => ({ ...x, status: "Paid" as const })),
     ...unpaidDetailed.map((x) => ({ ...x, status: "Unpaid" as const })),
   ];
-  const useFallback11 = rows.length >= 40;
+  const useFallback12 = rows.length >= 42;
   const logoTag = p.logoUrl
     ? `<img class="mini-logo" src="${escapePdfAttr(p.logoUrl)}" alt="${escapePdfAttr(p.societyName)}" />`
     : "";
@@ -82,8 +82,8 @@ export function buildEventPaymentPdfHtml(p: EventPaymentPdfPayload): string {
   .pdf-root {
     width: 100%;
     max-width: 100%;
-    font-size: 12px;
-    line-height: 1.2;
+    font-size: 14px;
+    line-height: 1.15;
     color: #111;
     background: #fff;
     overflow: hidden;
@@ -106,7 +106,7 @@ export function buildEventPaymentPdfHtml(p: EventPaymentPdfPayload): string {
   .sheet-header {
     border: 1px solid #d0d7de;
     border-bottom: none;
-    padding: 6px 8px;
+    padding: 10px 12px;
     margin-bottom: 0;
     page-break-inside: avoid;
     break-inside: avoid;
@@ -115,36 +115,36 @@ export function buildEventPaymentPdfHtml(p: EventPaymentPdfPayload): string {
   .header-line {
     display: flex;
     align-items: center;
-    gap: 7px;
-    font-size: 14px;
+    gap: 10px;
+    font-size: 24px;
     font-weight: 700;
-    line-height: 1.2;
+    line-height: 1.1;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
   }
   .mini-logo {
-    width: 22px;
-    height: 22px;
+    width: 34px;
+    height: 34px;
     object-fit: contain;
     flex: 0 0 auto;
   }
   .brand-chip {
     margin-left: auto;
-    padding: 1px 6px;
+    padding: 3px 9px;
     border: 1px solid #d0d7de;
     border-radius: 999px;
     background: #ffffff;
     color: #334155;
-    font-size: 9px;
+    font-size: 10px;
     font-weight: 700;
     letter-spacing: 0.02em;
     white-space: nowrap;
   }
   .header-subline {
-    margin-top: 2px;
-    font-size: 11px;
-    line-height: 1.2;
+    margin-top: 4px;
+    font-size: 14px;
+    line-height: 1.15;
     color: #333;
     white-space: nowrap;
     overflow: hidden;
@@ -156,7 +156,7 @@ export function buildEventPaymentPdfHtml(p: EventPaymentPdfPayload): string {
     border-collapse: collapse;
     table-layout: fixed;
     border: 1px solid #d0d7de;
-    font-size: 12px;
+    font-size: 14px;
     page-break-inside: avoid;
     break-inside: avoid;
   }
@@ -165,17 +165,19 @@ export function buildEventPaymentPdfHtml(p: EventPaymentPdfPayload): string {
     color: #1f2937;
     border-right: 1px solid #d0d7de;
     border-bottom: 1px solid #d0d7de;
-    padding: 4px 5px;
+    padding: 7px 8px;
     text-align: left;
     font-weight: 700;
     white-space: nowrap;
+    font-size: 13px;
+    line-height: 1.1;
   }
   .sheet-table thead th:last-child { border-right: none; }
   .sheet-table tbody td {
     border-right: 1px solid #e5e7eb;
     border-bottom: 1px solid #e5e7eb;
-    padding: 4px 5px;
-    line-height: 1.15;
+    padding: 6px 8px;
+    line-height: 1.12;
     vertical-align: middle;
     page-break-inside: avoid;
     break-inside: avoid;
@@ -185,7 +187,7 @@ export function buildEventPaymentPdfHtml(p: EventPaymentPdfPayload): string {
   .status-paid { color: #166534; font-weight: 600; }
   .status-unpaid { color: #b45309; font-weight: 600; }
   .sheet-table tr { page-break-inside: avoid; break-inside: avoid; }
-  .col-no { width: 10%; white-space: nowrap; }
+  .col-no { width: 10%; white-space: nowrap; font-weight: 700; }
   .col-name {
     width: 56%;
     white-space: nowrap;
@@ -199,24 +201,24 @@ export function buildEventPaymentPdfHtml(p: EventPaymentPdfPayload): string {
     color: #666;
   }
   .sheet-note {
-    margin-top: 4px;
-    font-size: 10px;
+    margin-top: 6px;
+    font-size: 12px;
     line-height: 1.2;
     color: #555;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
   }
-  .fallback-11 .sheet-table,
-  .fallback-11 .sheet-table thead th,
-  .fallback-11 .sheet-table tbody td,
-  .fallback-11 .header-subline { font-size: 11px; }
-  .fallback-11 .sheet-table thead th,
-  .fallback-11 .sheet-table tbody td { padding: 3px 4px; }
+  .fallback-12 .sheet-table,
+  .fallback-12 .sheet-table thead th,
+  .fallback-12 .sheet-table tbody td,
+  .fallback-12 .header-subline { font-size: 12px; }
+  .fallback-12 .sheet-table thead th,
+  .fallback-12 .sheet-table tbody td { padding: 4px 6px; }
   `;
 
   const inner = `
-  <div class="sheet-page ${useFallback11 ? "fallback-11" : ""}">
+  <div class="sheet-page ${useFallback12 ? "fallback-12" : ""}">
     <div class="sheet-header">
       <div class="header-line">${logoTag}<span>${escapePdfHtml(p.eventName)} Payments</span><span class="brand-chip">GOLF SOCIETY HUB</span></div>
       <div class="header-subline">${escapePdfHtml(headerMeta)}</div>
@@ -291,7 +293,7 @@ async function sharePaymentPngWeb(opts: {
       useCORS: true,
       allowTaint: false,
       backgroundColor: "#ffffff",
-      scale: 2,
+      scale: 3,
       logging: false,
       scrollX: 0,
       scrollY: 0,

@@ -105,7 +105,7 @@ async function captureElement(
 
 export async function captureAndShare(
   ref: React.RefObject<any>,
-  options?: { dialogTitle?: string }
+  options?: { dialogTitle?: string; width?: number; height?: number }
 ): Promise<void> {
   if (Platform.OS === "web") {
     return captureAndShareWeb(ref, options);
@@ -115,12 +115,16 @@ export async function captureAndShare(
     throw new Error("View not ready for capture.");
   }
 
-  const uri = await captureRef(ref, {
+  const captureOptions: Record<string, unknown> = {
     format: "png",
     quality: 1,
     result: "tmpfile",
     snapshotContentContainer: true,
-  });
+  };
+  if (options?.width != null) captureOptions.width = options.width;
+  if (options?.height != null) captureOptions.height = options.height;
+
+  const uri = await captureRef(ref, captureOptions);
 
   const canShare = await Sharing.isAvailableAsync();
   if (!canShare) {

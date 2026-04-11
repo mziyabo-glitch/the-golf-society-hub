@@ -54,7 +54,6 @@ import {
   deleteEventResultForMember,
   type EventResultDoc,
 } from "@/lib/db_supabase/resultsRepo";
-import { exportEventResultsPdf } from "@/lib/pdf/eventResultsPdf";
 import { invalidateCache, invalidateCachePrefix } from "@/lib/cache/clientCache";
 import { getPermissionsForMember } from "@/lib/rbac";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
@@ -892,24 +891,27 @@ export default function EventPointsScreen() {
     if (savedResultCount === 0) {
       setToast({
         visible: true,
-        message: "Save at least one result before exporting a PDF.",
+        message: "Save at least one result before exporting an image.",
         type: "info",
       });
       return;
     }
     setExportingPdf(true);
     try {
-      await exportEventResultsPdf(eventId, societyId);
+      router.push({
+        pathname: "/(share)/event-results-share",
+        params: { eventId, societyId },
+      });
     } catch (e: any) {
       setToast({
         visible: true,
-        message: e?.message ?? "Could not create PDF. Try again.",
+        message: e?.message ?? "Could not create image. Try again.",
         type: "error",
       });
     } finally {
       setExportingPdf(false);
     }
-  }, [eventId, societyId, guardPaidAction, savedResultCount]);
+  }, [eventId, societyId, guardPaidAction, savedResultCount, router]);
 
   // Loading state
   if (bootstrapLoading || loading) {
@@ -1019,12 +1021,12 @@ export default function EventPointsScreen() {
           onPress={() => void handleExportPdf()}
           disabled={savedResultCount === 0 || exportingPdf}
           loading={exportingPdf}
-          loadingLabel="PDF…"
+          loadingLabel="PNG…"
           size="sm"
           style={{ marginRight: spacing.sm }}
         >
           <Feather name="share" size={16} color={colors.text} />
-          {" PDF"}
+          {" PNG"}
         </SecondaryButton>
         <PrimaryButton
           onPress={handleSave}

@@ -119,7 +119,65 @@ function sortResultsRows(
 }
 
 export function buildEventResultsPdfHtml(p: EventResultsPdfPayload): string {
-  const css = buildPremiumPdfCss();
+  const css = buildPremiumPdfCss(`
+    .doc-header { margin-bottom: 14px; }
+    .doc-title { font-size: 32px; line-height: 1.05; }
+    .doc-subtitle { font-size: 18px; line-height: 1.2; margin-top: 4px; }
+    .doc-meta { font-size: 13px; line-height: 1.25; }
+    .doc-brand-kicker { font-size: 11px; letter-spacing: 0.02em; }
+
+    .summary-strip {
+      font-size: 13px;
+      line-height: 1.2;
+      padding: 8px 10px;
+      margin-bottom: 12px;
+      border-radius: 8px;
+    }
+
+    .winners-card {
+      margin-bottom: 12px;
+      padding: 10px 12px;
+    }
+    .winners-card .label { font-size: 12px; }
+    .winners-card .line { font-size: 13px; line-height: 1.25; }
+
+    .table-wrap { border-radius: 8px; overflow: hidden; }
+    .sheet { font-size: 14px; line-height: 1.15; }
+    .sheet thead th {
+      font-size: 13px;
+      line-height: 1.1;
+      padding: 8px 10px;
+    }
+    .sheet tbody td {
+      font-size: 14px;
+      line-height: 1.15;
+      padding: 7px 10px;
+      border-bottom-color: #e5e7eb;
+    }
+    .sheet tbody tr:nth-child(even) { background: #fafafa; }
+    .sheet td.num { font-weight: 700; white-space: nowrap; }
+    .sheet td.rt { text-align: right; }
+    .sheet tbody td:nth-child(2) {
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .comp-block {
+      margin-top: 12px;
+      padding: 10px 12px;
+      border-radius: 8px;
+    }
+    .comp-block h3 { font-size: 14px; margin-bottom: 6px; }
+    .comp-block div { font-size: 13px; line-height: 1.25; }
+
+    .doc-footer {
+      margin-top: 12px;
+      padding-top: 8px;
+      font-size: 11px;
+      line-height: 1.25;
+    }
+  `);
   const logo = buildPdfLogoImg(p.logoUrl, p.societyName);
 
   const metaBits = [
