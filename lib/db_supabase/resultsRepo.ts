@@ -133,6 +133,14 @@ function dedupeUpsertInputsByMemberIdLastWins(results: EventResultInput[]): Even
   return [...byMember.values()];
 }
 
+/** OOM must only include real member rows; drop guest/unknown ids from event_results. */
+function filterRowsWithKnownMembers<T extends { member_id: string }>(
+  rows: T[],
+  membersMap: Map<string, MemberDoc>,
+): T[] {
+  return rows.filter((r) => membersMap.has(String(r.member_id)));
+}
+
 /**
  * Dev-only: same (event, society) scope but multiple result rows map to one real person (joint dual ids).
  * Set EXPO_PUBLIC_OOM_DEBUG_EVENT_ID to always log full detail for that event id.
@@ -344,10 +352,12 @@ export async function getOrderOfMeritFullFieldExport(
     ]),
   );
 
+  const oomRows = filterRowsWithKnownMembers(rows, membersMap);
+
   type PersonAgg = { totalPoints: number; eventIds: Set<string>; memberIds: Set<string> };
   const byPersonKey: Record<string, PersonAgg> = {};
 
-  rows.forEach((row: any) => {
+  oomRows.forEach((row: any) => {
     if (!oomEventIds.has(row.event_id)) return;
     if (!eventsMap.get(row.event_id)) return;
 
@@ -763,6 +773,8 @@ export async function getOrderOfMeritTotals(
     ]),
   );
 
+  const oomRows = filterRowsWithKnownMembers(resultsData, membersMap);
+
   // Filter to OOM events only (check both is_oom flag and classification for backward compatibility)
   // Use case-insensitive comparison for classification
   const oomEventIds = new Set(
@@ -784,7 +796,7 @@ export async function getOrderOfMeritTotals(
   type PersonAgg = { totalPoints: number; eventIds: Set<string>; memberIds: Set<string> };
   const byPersonKey: Record<string, PersonAgg> = {};
 
-  resultsData.forEach((row) => {
+  oomRows.forEach((row) => {
     if (!oomEventIds.has(row.event_id)) return;
     if (!eventsMap.get(row.event_id)) return;
 
@@ -1014,10 +1026,12 @@ export async function getOrderOfMeritLog(
     (membersData ?? []).map((m) => [m.id, m as MemberDoc]),
   );
 
+  const resultsForOomWithKnownMembers = filterRowsWithKnownMembers(resultsForOomOnly, membersMap);
+
   const logEntries: ResultsLogEntry[] = [];
 
   for (const event of oomEvents) {
-    const rawForEvent = resultsForOomOnly.filter((r) => r.event_id === event.id);
+    const rawForEvent = resultsForOomWithKnownMembers.filter((r) => r.event_id === event.id);
     const afterMemberDedupe = dedupeEventResultsByMemberIdPreferLatest(rawForEvent);
     const afterPersonDedupe = dedupeEventResultRowsByJointPersonKey(afterMemberDedupe, membersMap);
     const eventResults = afterPersonDedupe.sort((a, b) => {

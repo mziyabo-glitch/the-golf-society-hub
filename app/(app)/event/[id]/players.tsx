@@ -15,7 +15,7 @@ import {
   representativeMemberIdForJoint,
   expandJointRepresentativesToParticipatingMemberIds,
 } from "@/lib/jointPersonDedupe";
-import { Alert, Modal, Pressable, ScrollView, StyleSheet, View } from "react-native";
+import { Alert, Modal, Platform, Pressable, ScrollView, StyleSheet, View } from "react-native";
 import { Feather } from "@expo/vector-icons";
 import { goBack } from "@/lib/navigation";
 
@@ -34,10 +34,11 @@ import { getJointMetaForEventIds, getJointEventDetail, syncJointEventEntries } f
 import {
   getEventGuests,
   addEventGuest,
-  deleteEventGuest,
+  deleteEventGuestForEvent,
+  updateEventGuest,
   type EventGuest,
 } from "@/lib/db_supabase/eventGuestRepo";
-import { getPermissionsForMember } from "@/lib/rbac";
+import { canManageEventRosterForSociety } from "@/lib/rbac";
 import { getColors, spacing, radius, typography } from "@/lib/ui/theme";
 import { JOINT_EVENT_CHIP_LONG } from "@/lib/eventModuleUi";
 import { isJointEventFromMeta, isActiveSocietyParticipantForEvent } from "@/lib/jointEventAccess";
@@ -48,11 +49,12 @@ import {
   findEligibleRegistrationsMissingPlayableEntry,
 } from "@/lib/jointEventPlayableConsistency";
 import { InlineNotice } from "@/components/ui/InlineNotice";
+import { invalidateCache, invalidateCachePrefix } from "@/lib/cache/clientCache";
 
 export default function EventPlayersScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ id: string }>();
-  const { societyId, member, loading: bootstrapLoading } = useBootstrap();
+  const { societyId, memberships, loading: bootstrapLoading } = useBootstrap();
   const colors = getColors();
 
   const eventId = useMemo(() => {
@@ -80,8 +82,14 @@ export default function EventPlayersScreen() {
   const [guestSex, setGuestSex] = useState<"male" | "female" | null>(null);
   const [guestHandicap, setGuestHandicap] = useState("");
   const [addingGuest, setAddingGuest] = useState(false);
+  const [showEditGuest, setShowEditGuest] = useState(false);
+  const [editingGuest, setEditingGuest] = useState<EventGuest | null>(null);
+  const [editGuestName, setEditGuestName] = useState("");
+  const [editGuestSex, setEditGuestSex] = useState<"male" | "female" | null>(null);
+  const [editGuestHandicap, setEditGuestHandicap] = useState("");
+  const [savingGuestEdit, setSavingGuestEdit] = useState(false);
 
-  const permissions = getPermissionsForMember(member);
+  const canManageGuests = canManageEventRosterForSociety(memberships, societyId);
 
   const jointSocietyIdToName = useMemo(
     () => buildSocietyIdToNameMap(jointParticipatingSocieties),
@@ -104,6 +112,13 @@ export default function EventPlayersScreen() {
     setGuests(list);
     return list;
   }, [eventId]);
+
+  const refreshGuestDependentViews = useCallback(async () => {
+    if (!eventId || !societyId) return;
+    await invalidateCache(`event:${eventId}:detail`);
+    await invalidateCache(`event:${eventId}:registrations`);
+    await invalidateCachePrefix(`society:${societyId}:`);
+  }, [eventId, societyId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -351,6 +366,7 @@ export default function EventPlayersScreen() {
         handicapIndex: handicap != null && !isNaN(handicap) ? handicap : null,
       });
       await loadGuests();
+      await refreshGuestDependentViews();
       setShowAddGuest(false);
       setGuestName("");
       setGuestSex(null);
@@ -363,25 +379,71 @@ export default function EventPlayersScreen() {
   }
 
   async function handleDeleteGuest(g: EventGuest) {
-    Alert.alert(
-      "Remove Guest",
-      `Remove ${g.name} from this event?`,
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Remove",
-          style: "destructive",
-          onPress: async () => {
-            try {
-              await deleteEventGuest(g.id);
-              await loadGuests();
-            } catch (e: any) {
-              Alert.alert("Failed", e?.message ?? "Could not remove guest.");
-            }
-          },
+    const runDelete = async () => {
+      try {
+        if (!eventId) return;
+        await deleteEventGuestForEvent(g.id, eventId);
+        await loadGuests();
+        await refreshGuestDependentViews();
+      } catch (e: any) {
+        Alert.alert("Failed", e?.message ?? "Could not remove guest.");
+      }
+    };
+
+    const msg = `Remove ${g.name} from this event?`;
+    if (Platform.OS === "web") {
+      const ok =
+        typeof globalThis !== "undefined" &&
+        typeof (globalThis as unknown as { confirm?: (s: string) => boolean }).confirm === "function" &&
+        (globalThis as unknown as { confirm: (s: string) => boolean }).confirm(msg);
+      if (ok) await runDelete();
+      return;
+    }
+
+    Alert.alert("Remove Guest", msg, [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Remove",
+        style: "destructive",
+        onPress: () => {
+          void runDelete();
         },
-      ]
-    );
+      },
+    ]);
+  }
+
+  function openEditGuest(g: EventGuest) {
+    setEditingGuest(g);
+    setEditGuestName(g.name ?? "");
+    setEditGuestSex(g.sex ?? null);
+    setEditGuestHandicap(g.handicap_index != null ? String(g.handicap_index) : "");
+    setShowEditGuest(true);
+  }
+
+  async function handleSaveGuestEdit() {
+    if (!editingGuest) return;
+    const name = editGuestName.trim();
+    if (!name) {
+      Alert.alert("Name required", "Please enter the guest's name.");
+      return;
+    }
+    setSavingGuestEdit(true);
+    try {
+      const handicap = editGuestHandicap.trim() ? Number(editGuestHandicap.trim()) : null;
+      await updateEventGuest(editingGuest.id, {
+        name,
+        sex: editGuestSex,
+        handicapIndex: handicap != null && Number.isFinite(handicap) ? handicap : null,
+      });
+      await loadGuests();
+      await refreshGuestDependentViews();
+      setShowEditGuest(false);
+      setEditingGuest(null);
+    } catch (e: any) {
+      Alert.alert("Failed", e?.message ?? "Could not update guest.");
+    } finally {
+      setSavingGuestEdit(false);
+    }
   }
 
   if (bootstrapLoading || loading) {
@@ -430,7 +492,7 @@ export default function EventPlayersScreen() {
 
         <PrimaryButton
           onPress={save}
-          disabled={saving || !permissions?.canEditEvents}
+          disabled={saving || !canManageGuests}
           size="sm"
         >
           {saving ? "Saving..." : "Save"}
@@ -475,7 +537,7 @@ export default function EventPlayersScreen() {
         </AppCard>
       )}
 
-      {derivedIsJointEvent && permissions?.canEditEvents && playableGapWarning ? (
+      {derivedIsJointEvent && canManageGuests && playableGapWarning ? (
         <InlineNotice
           variant="info"
           message="Playable entries out of sync with confirmations"
@@ -575,7 +637,7 @@ export default function EventPlayersScreen() {
         <AppText variant="small" color="tertiary" style={{ marginBottom: spacing.sm }}>
           Add guests to include them in the tee sheet. They will appear alongside members.
         </AppText>
-        {permissions?.canEditEvents && (
+        {canManageGuests && (
           <SecondaryButton
             onPress={() => setShowAddGuest(true)}
             size="sm"
@@ -593,15 +655,30 @@ export default function EventPlayersScreen() {
           <View style={{ gap: spacing.sm }}>
             {guests.map((g) => (
               <AppCard key={g.id} style={styles.row}>
-                <View style={{ flex: 1 }}>
+                <Pressable
+                  style={{ flex: 1 }}
+                  onPress={() => canManageGuests && openEditGuest(g)}
+                >
                   <AppText style={styles.name}>{g.name}</AppText>
                   <AppText style={styles.subtle}>
                     {g.sex === "male" ? "Male" : g.sex === "female" ? "Female" : "Sex not set"}
-                    {g.handicap_index != null ? ` · HI ${g.handicap_index}` : ""}
+                    {" · "}
+                    {g.handicap_index != null ? `HI ${g.handicap_index}` : "HI not set"}
                   </AppText>
-                </View>
-                {permissions?.canEditEvents && (
-                  <Pressable onPress={() => handleDeleteGuest(g)} hitSlop={8}>
+                  {canManageGuests ? (
+                    <AppText variant="small" color="tertiary" style={{ marginTop: 2 }}>
+                      Tap to edit guest
+                    </AppText>
+                  ) : null}
+                </Pressable>
+                {canManageGuests && (
+                  <Pressable
+                    onPress={() => {
+                      void handleDeleteGuest(g);
+                    }}
+                    hitSlop={10}
+                    style={{ marginLeft: spacing.sm, padding: 4 }}
+                  >
                     <Feather name="trash-2" size={18} color={colors.error} />
                   </Pressable>
                 )}
@@ -678,6 +755,79 @@ export default function EventPlayersScreen() {
               </SecondaryButton>
               <PrimaryButton onPress={handleAddGuest} loading={addingGuest} style={{ flex: 1 }}>
                 Add
+              </PrimaryButton>
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      {/* Edit Guest Modal */}
+      <Modal visible={showEditGuest} transparent animationType="fade">
+        <Pressable
+          style={styles.modalOverlay}
+          onPress={() => !savingGuestEdit && setShowEditGuest(false)}
+        >
+          <Pressable style={[styles.modalContent, { backgroundColor: colors.surface }]} onPress={(e) => e.stopPropagation()}>
+            <AppText variant="h2" style={{ marginBottom: spacing.md }}>Edit Guest</AppText>
+            <View style={styles.formField}>
+              <AppText variant="caption" style={styles.label}>Name</AppText>
+              <AppInput
+                placeholder="Guest name"
+                value={editGuestName}
+                onChangeText={setEditGuestName}
+                autoCapitalize="words"
+              />
+            </View>
+            <View style={styles.formField}>
+              <AppText variant="caption" style={styles.label}>Sex</AppText>
+              <View style={styles.sexRow}>
+                <Pressable
+                  onPress={() => setEditGuestSex(null)}
+                  style={[
+                    styles.sexOption,
+                    { borderColor: editGuestSex == null ? colors.primary : colors.border },
+                    editGuestSex == null && { backgroundColor: colors.primary + "14" },
+                  ]}
+                >
+                  <AppText style={editGuestSex == null ? { color: colors.primary, fontWeight: "600" } : {}}>Not set</AppText>
+                </Pressable>
+                <Pressable
+                  onPress={() => setEditGuestSex("male")}
+                  style={[
+                    styles.sexOption,
+                    { borderColor: editGuestSex === "male" ? colors.primary : colors.border },
+                    editGuestSex === "male" && { backgroundColor: colors.primary + "14" },
+                  ]}
+                >
+                  <AppText style={editGuestSex === "male" ? { color: colors.primary, fontWeight: "600" } : {}}>Male</AppText>
+                </Pressable>
+                <Pressable
+                  onPress={() => setEditGuestSex("female")}
+                  style={[
+                    styles.sexOption,
+                    { borderColor: editGuestSex === "female" ? colors.primary : colors.border },
+                    editGuestSex === "female" && { backgroundColor: colors.primary + "14" },
+                  ]}
+                >
+                  <AppText style={editGuestSex === "female" ? { color: colors.primary, fontWeight: "600" } : {}}>Female</AppText>
+                </Pressable>
+              </View>
+            </View>
+            <View style={styles.formField}>
+              <AppText variant="caption" style={styles.label}>Handicap Index</AppText>
+              <AppInput
+                placeholder="e.g. 18.5"
+                value={editGuestHandicap}
+                onChangeText={setEditGuestHandicap}
+                keyboardType="decimal-pad"
+              />
+            </View>
+            <View style={{ flexDirection: "row", gap: spacing.sm, marginTop: spacing.md }}>
+              <SecondaryButton onPress={() => setShowEditGuest(false)} disabled={savingGuestEdit} style={{ flex: 1 }}>
+                Cancel
+              </SecondaryButton>
+              <PrimaryButton onPress={handleSaveGuestEdit} loading={savingGuestEdit} style={{ flex: 1 }}>
+                Save
               </PrimaryButton>
             </View>
           </Pressable>

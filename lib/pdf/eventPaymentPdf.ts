@@ -28,19 +28,30 @@ export type EventPaymentPdfPayload = {
   unpaidNames: string[];
   generatedAt: string;
   jointThisSocietyNote: string | null;
+  paidEntries?: { name: string; type: "member" | "guest" }[];
+  unpaidEntries?: { name: string; type: "member" | "guest" }[];
 };
 
 export function buildEventPaymentPdfHtml(p: EventPaymentPdfPayload): string {
   const dateLine = p.eventDate ? formatPdfDate(p.eventDate) : "—";
+  const paidDetailed =
+    p.paidEntries && p.paidEntries.length > 0
+      ? p.paidEntries
+      : p.paidNames.map((name) => ({ name, type: "member" as const }));
+  const unpaidDetailed =
+    p.unpaidEntries && p.unpaidEntries.length > 0
+      ? p.unpaidEntries
+      : p.unpaidNames.map((name) => ({ name, type: "member" as const }));
   const rows = [
-    ...p.paidNames.map((name) => ({ name, status: "Paid" })),
-    ...p.unpaidNames.map((name) => ({ name, status: "Unpaid" })),
+    ...paidDetailed.map((x) => ({ ...x, status: "Paid" as const })),
+    ...unpaidDetailed.map((x) => ({ ...x, status: "Unpaid" as const })),
   ];
   const useFallback11 = rows.length >= 40;
   const logoTag = p.logoUrl
     ? `<img class="mini-logo" src="${escapePdfAttr(p.logoUrl)}" alt="${escapePdfAttr(p.societyName)}" />`
     : "";
-  const headerMeta = `The Golf Society Hub | ${dateLine} | ${p.societyName} | Paid ${p.paidNames.length} | Unpaid ${p.unpaidNames.length}`;
+  const guestCount = rows.filter((r) => r.type === "guest").length;
+  const headerMeta = `The Golf Society Hub | ${dateLine} | ${p.societyName} | Paid ${p.paidNames.length} | Unpaid ${p.unpaidNames.length} | Guests ${guestCount}`;
   const rowHtml =
     rows.length > 0
       ? rows
@@ -49,12 +60,13 @@ export function buildEventPaymentPdfHtml(p: EventPaymentPdfPayload): string {
             <tr>
               <td class="col-no">${i + 1}</td>
               <td class="col-name">${escapePdfHtml(row.name)}</td>
+              <td class="col-type">${row.type === "guest" ? "Guest" : "Member"}</td>
               <td class="col-status ${row.status === "Paid" ? "status-paid" : "status-unpaid"}">${row.status}</td>
             </tr>
           `,
           )
           .join("")
-      : `<tr><td colspan="3" class="empty">No players found for this event.</td></tr>`;
+      : `<tr><td colspan="4" class="empty">No players found for this event.</td></tr>`;
 
   const css = `
   * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -175,11 +187,12 @@ export function buildEventPaymentPdfHtml(p: EventPaymentPdfPayload): string {
   .sheet-table tr { page-break-inside: avoid; break-inside: avoid; }
   .col-no { width: 10%; white-space: nowrap; }
   .col-name {
-    width: 68%;
+    width: 56%;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
   }
+  .col-type { width: 12%; white-space: nowrap; }
   .col-status { width: 22%; white-space: nowrap; }
   .empty {
     text-align: center;
@@ -213,6 +226,7 @@ export function buildEventPaymentPdfHtml(p: EventPaymentPdfPayload): string {
         <tr>
           <th class="col-no">#</th>
           <th class="col-name">Name</th>
+          <th class="col-type">Type</th>
           <th class="col-status">Status</th>
         </tr>
       </thead>
@@ -317,6 +331,8 @@ export async function exportEventPaymentPdf(opts: {
   society: unknown;
   paidNames: string[];
   unpaidNames: string[];
+  paidEntries?: { name: string; type: "member" | "guest" }[];
+  unpaidEntries?: { name: string; type: "member" | "guest" }[];
   isJointEvent: boolean;
 }): Promise<void> {
   assertNoPrintAsync();
@@ -337,6 +353,8 @@ export async function exportEventPaymentPdf(opts: {
     eventDate: opts.eventDate,
     paidNames: opts.paidNames,
     unpaidNames: opts.unpaidNames,
+    paidEntries: opts.paidEntries,
+    unpaidEntries: opts.unpaidEntries,
     generatedAt: formatPdfGenerationTimestamp(),
     jointThisSocietyNote: opts.isJointEvent
       ? "Joint event: other participating societies are not listed here."

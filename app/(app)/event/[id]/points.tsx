@@ -130,6 +130,12 @@ type PlayerEntry = {
    * Used to load/remove results saved under any of those ids.
    */
   mergedResultMemberIds?: string[];
+  isKnownMember?: boolean;
+};
+
+type OrphanResultRow = {
+  memberId: string;
+  label: string;
 };
 
 function pickExistingResultForMergedMemberIds(
@@ -290,6 +296,7 @@ export default function EventPointsScreen() {
   const [jointPeerNamesLine, setJointPeerNamesLine] = useState<string | null>(null);
   const [editingMemberId, setEditingMemberId] = useState<string | null>(null);
   const [exportingPdf, setExportingPdf] = useState(false);
+  const [orphanResults, setOrphanResults] = useState<OrphanResultRow[]>([]);
   const saveAction = useAsyncAction();
 
   const permissions = getPermissionsForMember(currentMember);
@@ -493,6 +500,7 @@ export default function EventPointsScreen() {
             oomPoints: 0,
             hasPersistedResult: false,
             mergedResultMemberIds: d.mergedMemberIds,
+            isKnownMember: true,
           };
         });
       } else {
@@ -505,6 +513,7 @@ export default function EventPointsScreen() {
             position: null,
             oomPoints: 0,
             hasPersistedResult: false,
+            isKnownMember: Boolean(member),
           };
         });
       }
@@ -546,6 +555,20 @@ export default function EventPointsScreen() {
         playerList = calculatePositionsAndOOM(playerList, sortOrder);
       }
       playerList = applyPointsDisplayOrder(playerList);
+      const resolvedResultIds = new Set(
+        playerList.flatMap((p) =>
+          p.mergedResultMemberIds && p.mergedResultMemberIds.length > 0
+            ? p.mergedResultMemberIds.map(String)
+            : [String(p.memberId)],
+        ),
+      );
+      const orphanRows = existingResults
+        .filter((r) => !resolvedResultIds.has(String(r.member_id)))
+        .map((r) => ({
+          memberId: String(r.member_id),
+          label: `Guest/unknown result · ${String(r.member_id).slice(0, 8)}`,
+        }));
+      setOrphanResults(orphanRows);
 
       if (dbg && isJointWithDetail && jointDetail) {
         const finalPointsRows = playerList.map((p) => {
@@ -725,6 +748,7 @@ export default function EventPointsScreen() {
 
     const results: { member_id: string; points: number; day_value?: number; position?: number }[] = [];
     for (const p of playersToSave) {
+      if (String(p.memberId).startsWith("guest-") || p.isKnownMember === false) continue;
       const dayValue = parseInt(p.dayPoints.trim(), 10);
       results.push({
         member_id: p.memberId,
@@ -1096,6 +1120,29 @@ export default function EventPointsScreen() {
           style={{ marginBottom: spacing.md }}
         />
       ) : null}
+      {orphanResults.length > 0 ? (
+        <AppCard style={{ marginBottom: spacing.md }}>
+          <AppText variant="captionBold" color="warning" style={{ marginBottom: spacing.xs }}>
+            Guest/unknown result rows (excluded from OOM)
+          </AppText>
+          {orphanResults.map((r) => (
+            <View key={`orphan-${r.memberId}`} style={styles.orphanRow}>
+              <AppText variant="small" color="secondary" style={{ flex: 1 }}>
+                {r.label}
+              </AppText>
+              <Pressable
+                onPress={() => handleRemovePersistedResult(r.memberId, r.label, [r.memberId])}
+                style={[styles.removeResultHit, { borderColor: colors.border }]}
+              >
+                <Feather name="trash-2" size={12} color={colors.textTertiary} />
+                <AppText variant="small" color="tertiary">
+                  Remove
+                </AppText>
+              </Pressable>
+            </View>
+          ))}
+        </AppCard>
+      ) : null}
 
       {/* Column Headers */}
       <View style={styles.columnHeaders}>
@@ -1257,6 +1304,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.xs,
     borderRadius: radius.sm,
     borderWidth: 1,
+  },
+  orphanRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+    paddingVertical: spacing.xs,
   },
   columnHeaders: {
     flexDirection: "row",

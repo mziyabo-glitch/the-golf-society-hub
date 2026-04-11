@@ -81,7 +81,7 @@ import {
 } from "@/lib/jointEventAccess";
 import { getEventRsvpInviteShareMessage } from "@/lib/appConfig";
 import { shareViaWhatsAppOrFallback } from "@/lib/eventInviteLink";
-import { getEventGuests } from "@/lib/db_supabase/eventGuestRepo";
+import { getEventGuests, setEventGuestPaid, type EventGuest } from "@/lib/db_supabase/eventGuestRepo";
 import {
   formatRsvpDeadlineDisplay,
   getRsvpDeadlineDisplayTimeZone,
@@ -395,6 +395,7 @@ export default function EventDetailScreen() {
   const [addMemberBusy, setAddMemberBusy] = useState<string | null>(null);
   const [registrationsRefreshing, setRegistrationsRefreshing] = useState(false);
   const [societyGuestCount, setSocietyGuestCount] = useState(0);
+  const [societyGuests, setSocietyGuests] = useState<EventGuest[]>([]);
   const [guestDuplicateExtraRows, setGuestDuplicateExtraRows] = useState(0);
 
   const hostSocietyId = event?.society_id ?? societyId ?? null;
@@ -474,6 +475,7 @@ export default function EventDetailScreen() {
       setRegistrations(regs);
       setActiveSocietyMembers(mems);
       const sg = guests.filter((g) => String(g.society_id) === String(societyId));
+      setSocietyGuests(sg);
       setSocietyGuestCount(sg.length);
       setGuestDuplicateExtraRows(countExtraGuestRowsBeyondUniqueNames(sg));
       await setCache(`event:${eventId}:registrations`, {
@@ -587,12 +589,23 @@ export default function EventDetailScreen() {
     [event?.playerIds, activeMemberIdSet, regInMemberIds],
   );
 
+  const guestConfirmedPaid = useMemo(
+    () => societyGuests.filter((g) => g.paid === true),
+    [societyGuests],
+  );
+  const guestPendingPayment = useMemo(
+    () => societyGuests.filter((g) => g.paid !== true),
+    [societyGuests],
+  );
+
   const paymentShareLists = useMemo(
     () =>
       buildPaymentShareNameLists({
         confirmedPaidRegs: buckets.confirmedPaid,
         pendingPaymentRegs: buckets.pendingPayment,
         captainPickMemberIds,
+        paidGuestNames: guestConfirmedPaid.map((g) => g.name),
+        unpaidGuestNames: guestPendingPayment.map((g) => g.name),
         nameForReg: registrationMemberDisplayName,
         nameForMemberId: memberNameForAttendeeId,
       }),
@@ -600,6 +613,8 @@ export default function EventDetailScreen() {
       buckets.confirmedPaid,
       buckets.pendingPayment,
       captainPickMemberIds,
+      guestConfirmedPaid,
+      guestPendingPayment,
       registrationMemberDisplayName,
       memberNameForAttendeeId,
     ],
@@ -650,6 +665,12 @@ export default function EventDetailScreen() {
         society,
         paidNames: paymentShareLists.paidNames,
         unpaidNames: paymentShareLists.unpaidNames,
+        paidEntries: paymentShareLists.entries
+          .filter((e) => e.status === "paid")
+          .map((e) => ({ name: e.name, type: e.type })),
+        unpaidEntries: paymentShareLists.entries
+          .filter((e) => e.status === "unpaid")
+          .map((e) => ({ name: e.name, type: e.type })),
         isJointEvent: detailIsJointEvent,
       });
     } catch (e: unknown) {
@@ -664,6 +685,7 @@ export default function EventDetailScreen() {
     society,
     paymentShareLists.paidNames,
     paymentShareLists.unpaidNames,
+    paymentShareLists.entries,
     detailIsJointEvent,
   ]);
 
@@ -718,10 +740,14 @@ export default function EventDetailScreen() {
     };
   }, [societyPageRegistrations, activeSocietyMembers, societyGuestCount]);
 
-  const teeSheetEligibleCount = buckets.confirmedPaid.length;
-  const pendingPaymentCount = buckets.pendingPayment.length + captainPickMemberIds.length;
+  const teeSheetEligibleCount = buckets.confirmedPaid.length + guestConfirmedPaid.length;
+  const pendingPaymentCount =
+    buckets.pendingPayment.length + captainPickMemberIds.length + guestPendingPayment.length;
   const activeRosterCount =
-    buckets.confirmedPaid.length + buckets.pendingPayment.length + captainPickMemberIds.length;
+    buckets.confirmedPaid.length +
+    buckets.pendingPayment.length +
+    captainPickMemberIds.length +
+    societyGuests.length;
 
   useEffect(() => {
     if (!paymentsCacheKey || !confirmedCacheKey || !societyId) return;
@@ -757,6 +783,28 @@ export default function EventDetailScreen() {
       setPayToast({
         visible: true,
         message: reg.paid ? "Marked unpaid" : "Marked paid (also confirmed as attending)",
+        type: "success",
+      });
+      await loadRegistrations();
+      await invalidateCache(`event:${eventId}:detail`);
+      if (societyId) await invalidateCachePrefix(`society:${societyId}:`);
+    } catch (e: any) {
+      setPayToast({ visible: true, message: e?.message || "Failed", type: "error" });
+    } finally {
+      setPayBusy(null);
+    }
+  };
+
+  const handleToggleGuestPaid = async (guest: EventGuest) => {
+    if (payBusy || !societyId) return;
+    setPayBusy(`guest:${guest.id}`);
+    try {
+      await setEventGuestPaid(guest.id, !guest.paid);
+      setPayToast({
+        visible: true,
+        message: guest.paid
+          ? "Guest marked unpaid"
+          : "Guest marked paid (confirmed attendee)",
         type: "success",
       });
       await loadRegistrations();
@@ -2170,6 +2218,7 @@ export default function EventDetailScreen() {
 
       {/* Society-scoped payment: paid = confirmed; tee sheet = paid + confirmed */}
       {(societyPageRegistrations.length > 0 ||
+        societyGuests.length > 0 ||
         captainPickMemberIds.length > 0 ||
         notPlayingRegs.length > 0 ||
         (canManageEventRoster && manualAddCandidates.length > 0)) && (
@@ -2184,8 +2233,8 @@ export default function EventDetailScreen() {
               <AppText variant="h2">Payment &amp; status</AppText>
               <AppText variant="small" color="secondary">
                 {detailIsJointEvent
-                  ? "This list is only your society’s members and fee rows. Switch society in the header to manage the other club. Marking paid confirms the player for this event."
-                  : "Marking paid confirms the player. Tee sheet (ManCo) uses only paid & confirmed players."}
+                  ? "This list is only your society’s members/guests and fee rows. Switch society in the header to manage the other club. Marking paid confirms attendance."
+                  : "Marking paid confirms attendance. Tee sheet (ManCo) uses only paid & confirmed players (including paid guests)."}
               </AppText>
               {detailIsJointEvent && societyId && hostSocietyId === societyId ? (
                 <AppText variant="small" color="muted" style={{ marginTop: 4 }}>
@@ -2201,12 +2250,18 @@ export default function EventDetailScreen() {
             </View>
             <StatusBadge
               label={
-                buckets.pendingPayment.length === 0 && captainPickMemberIds.length === 0
+                buckets.pendingPayment.length === 0 &&
+                captainPickMemberIds.length === 0 &&
+                guestPendingPayment.length === 0
                   ? "All paid"
                   : `${pendingPaymentCount} pending`
               }
               tone={
-                buckets.pendingPayment.length === 0 && captainPickMemberIds.length === 0 ? "success" : "warning"
+                buckets.pendingPayment.length === 0 &&
+                captainPickMemberIds.length === 0 &&
+                guestPendingPayment.length === 0
+                  ? "success"
+                  : "warning"
               }
             />
           </View>
@@ -2266,8 +2321,46 @@ export default function EventDetailScreen() {
               </View>
             </View>
           ))}
+          {guestConfirmedPaid.map((g) => (
+            <View key={`guest-paid-${g.id}`} style={[styles.paidRow, { borderBottomColor: colors.borderLight }]}>
+              <View style={styles.paidLeftCol} pointerEvents="none">
+                <AppText variant="body" numberOfLines={2} style={styles.paidNameText}>
+                  {g.name}
+                </AppText>
+                <View style={[styles.paidBadgeRow, { marginTop: 4 }]}>
+                  <StatusBadge label="Guest" tone="info" />
+                </View>
+              </View>
 
-          {(buckets.pendingPayment.length > 0 || captainPickMemberIds.length > 0) ? (
+              <View style={styles.paidRightCol}>
+                <StatusBadge label={PaymentPill.paid} tone="success" />
+                {canManagePayments && (
+                  <Pressable
+                    disabled={payBusy === `guest:${g.id}`}
+                    onPress={() => {
+                      void handleToggleGuestPaid(g);
+                    }}
+                    hitSlop={10}
+                    style={({ pressed }) => [
+                      styles.paidToggleBtn,
+                      {
+                        borderColor: colors.border,
+                        opacity: pressed ? 0.6 : payBusy === `guest:${g.id}` ? 0.4 : 1,
+                      },
+                    ]}
+                  >
+                    <AppText variant="captionBold" color="primary">
+                      Mark unpaid
+                    </AppText>
+                  </Pressable>
+                )}
+              </View>
+            </View>
+          ))}
+
+          {(buckets.pendingPayment.length > 0 ||
+            captainPickMemberIds.length > 0 ||
+            guestPendingPayment.length > 0) ? (
             <AppText variant="subheading" color="secondary" style={{ marginTop: spacing.sm, marginBottom: spacing.xs }}>
               Pending payment
             </AppText>
@@ -2294,6 +2387,42 @@ export default function EventDetailScreen() {
                       {
                         borderColor: colors.border,
                         opacity: pressed ? 0.6 : payBusy === reg.member_id ? 0.4 : 1,
+                      },
+                    ]}
+                  >
+                    <AppText variant="captionBold" color="primary">
+                      Mark paid
+                    </AppText>
+                  </Pressable>
+                )}
+              </View>
+            </View>
+          ))}
+          {guestPendingPayment.map((g) => (
+            <View key={`guest-unpaid-${g.id}`} style={[styles.paidRow, { borderBottomColor: colors.borderLight }]}>
+              <View style={styles.paidLeftCol} pointerEvents="none">
+                <AppText variant="body" numberOfLines={2} style={styles.paidNameText}>
+                  {g.name}
+                </AppText>
+                <View style={[styles.paidBadgeRow, { marginTop: 4 }]}>
+                  <StatusBadge label="Guest" tone="info" />
+                </View>
+              </View>
+
+              <View style={styles.paidRightCol}>
+                <StatusBadge label={PaymentPill.unpaid} tone="warning" />
+                {canManagePayments && (
+                  <Pressable
+                    disabled={payBusy === `guest:${g.id}`}
+                    onPress={() => {
+                      void handleToggleGuestPaid(g);
+                    }}
+                    hitSlop={10}
+                    style={({ pressed }) => [
+                      styles.paidToggleBtn,
+                      {
+                        borderColor: colors.border,
+                        opacity: pressed ? 0.6 : payBusy === `guest:${g.id}` ? 0.4 : 1,
                       },
                     ]}
                   >
@@ -2668,6 +2797,11 @@ const styles = StyleSheet.create({
     flexShrink: 1,
     minWidth: 0,
     maxWidth: "100%",
+  },
+  paidBadgeRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.xs,
   },
   paidToggleBtn: {
     paddingHorizontal: spacing.sm,
