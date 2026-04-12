@@ -3,10 +3,10 @@
 // - Web: uses localStorage with "gsh:" prefix
 // - Native (iOS/Android): uses AsyncStorage for reliable session persistence
 //
-// "Remember me" toggle:
-//   When rememberMe is false the adapter silently no-ops writes.
-//   The session lives only in Supabase's in-memory state and is lost on
-//   page reload / app restart.
+// "Remember me" (web only):
+//   When rememberMe is false, writes are skipped and any stored session is cleared
+//   so the next visit is not auto-signed-in. Native apps always persist the session
+//   to disk (store policy); users sign out only via explicit sign-out.
 
 import { Platform } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
@@ -32,13 +32,13 @@ function inspectTokenPayload(value: string | null): { hasAccessToken: boolean; h
   }
 }
 
-/** Call before signIn to control session persistence. */
+/** Call before signIn to control session persistence (web only for clearing). */
 export function setRememberMe(value: boolean): void {
   _rememberMe = value;
 
-  // If the user unchecks "remember me", clear any previously stored
-  // session so a stale token doesn't auto-sign them in next time.
-  if (!value) {
+  // Native: never strip persisted tokens here — that caused "logged out on reopen"
+  // when the toggle was off. Clear stored session on web only.
+  if (!value && Platform.OS === "web") {
     supabaseStorage.removeItem("supabase-auth").catch(() => {});
   }
 }
@@ -83,8 +83,9 @@ export const supabaseStorage = {
   },
 
   async setItem(key: string, value: string): Promise<void> {
-    // When "remember me" is off, skip persisting the session token.
-    if (!_rememberMe) return;
+    // Web: optional non-persistent sign-in when "remember me" is off.
+    // Native: always persist (Play/App Store expectation; toggle is web-only semantics).
+    if (Platform.OS === "web" && !_rememberMe) return;
 
     const prefixedKey = STORAGE_PREFIX + key;
 

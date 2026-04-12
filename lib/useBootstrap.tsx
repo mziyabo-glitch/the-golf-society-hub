@@ -172,7 +172,6 @@ function useBootstrapInternal(): BootstrapState {
   const [refreshKey, setRefreshKey] = useState(0);
 
   const mounted = useRef(true);
-  const bootstrapRunRef = useRef(false);
   const bootstrapInFlight = useRef(false);
   const hydratedFromCacheRef = useRef(false);
   const authPersistLoggedRef = useRef(false);
@@ -193,12 +192,11 @@ function useBootstrapInternal(): BootstrapState {
   // Main bootstrap effect
   useEffect(() => {
     let profilePollTimer: ReturnType<typeof setInterval> | null = null;
+    let alive = true;
 
     const bootstrap = async () => {
       if (bootstrapInFlight.current) return;
-      if (bootstrapRunRef.current && refreshKey === 0) return;
       bootstrapInFlight.current = true;
-      bootstrapRunRef.current = true;
 
       let startupSessionFound = false;
       let startupAccessTokenPresent = false;
@@ -209,7 +207,7 @@ function useBootstrapInternal(): BootstrapState {
 
         // ----------------------------------------------------------------
         // Step 1: Get existing session (persisted from previous sign-in)
-        // Session persistence: localStorage on web, SecureStore on native
+        // Session persistence: localStorage on web, AsyncStorage on native
         // ----------------------------------------------------------------
         console.log("[useBootstrap] === SESSION CHECK ===");
 
@@ -249,7 +247,7 @@ function useBootstrapInternal(): BootstrapState {
           if (lateData.session?.user) {
             currentSession = lateData.session;
             currentUser = lateData.session.user;
-            if (!mounted.current) return;
+            if (!alive || !mounted.current) return;
             setSession(currentSession);
           }
         }
@@ -257,7 +255,7 @@ function useBootstrapInternal(): BootstrapState {
         if (!currentSession || !currentUser) {
           // No session — user needs to sign in via the auth screen.
           console.log("[useBootstrap] No session — awaiting sign-in.");
-          if (!mounted.current) return;
+          if (!alive || !mounted.current) return;
           setSession(null);
           setProfile(null);
           setSociety(null);
@@ -269,7 +267,7 @@ function useBootstrapInternal(): BootstrapState {
 
         console.log("[useBootstrap] Existing session found:", currentUser.id);
 
-        if (!mounted.current) return;
+        if (!alive || !mounted.current) return;
         setSession(currentSession);
 
         // ----------------------------------------------------------------
@@ -316,7 +314,7 @@ function useBootstrapInternal(): BootstrapState {
           throw new Error("Failed to load profile");
         }
 
-        if (!mounted.current) return;
+        if (!alive || !mounted.current) return;
 
         let finalProfile = profileData;
         setProfile(finalProfile);
@@ -326,7 +324,7 @@ function useBootstrapInternal(): BootstrapState {
         // Step 2c: Load all memberships (multi-society support)
         // ----------------------------------------------------------------
         const allMemberships = await getMySocieties();
-        if (!mounted.current) return;
+        if (!alive || !mounted.current) return;
         setMemberships(allMemberships);
 
         // ----------------------------------------------------------------
@@ -363,7 +361,7 @@ function useBootstrapInternal(): BootstrapState {
             })
             .eq("id", currentUser.id);
 
-          if (!mounted.current) return;
+          if (!alive || !mounted.current) return;
 
           if (!healErr) {
             finalProfile = {
@@ -418,7 +416,7 @@ function useBootstrapInternal(): BootstrapState {
             console.warn("[useBootstrap] Society load error:", societyError.message);
           }
 
-          if (!mounted.current) return;
+          if (!alive || !mounted.current) return;
           if (societyData) {
             const safeSocietyName =
               typeof societyData.name === "string"
@@ -454,7 +452,7 @@ function useBootstrapInternal(): BootstrapState {
             .order("created_at", { ascending: false })
             .limit(1);
 
-          if (!mounted.current) return;
+          if (!alive || !mounted.current) return;
 
           const firstMember = Array.isArray(memberData) ? memberData[0] : null;
           console.log("[useBootstrap] Membership lookup result:", {
@@ -504,7 +502,7 @@ function useBootstrapInternal(): BootstrapState {
         // Step 5: Poll profile for updates (handles external changes)
         // ----------------------------------------------------------------
         profilePollTimer = setInterval(async () => {
-          if (!currentUser) return;
+          if (!currentUser || !alive) return;
 
           const { data, error: pollError } = await supabase
             .from("profiles")
@@ -512,7 +510,7 @@ function useBootstrapInternal(): BootstrapState {
             .eq("id", currentUser.id)
             .maybeSingle();
 
-          if (!mounted.current) return;
+          if (!alive || !mounted.current) return;
           if (!pollError && data) {
             setProfile(data);
             setMemberState((prev) => {
@@ -533,7 +531,7 @@ function useBootstrapInternal(): BootstrapState {
 
       } catch (e: any) {
         console.error("[useBootstrap] Bootstrap error:", e);
-        if (mounted.current) {
+        if (alive && mounted.current) {
           // Ensure error is always a plain string (guard against structured error objects)
           const rawMsg = e?.message;
           const errStr =
@@ -544,6 +542,9 @@ function useBootstrapInternal(): BootstrapState {
         }
       } finally {
         bootstrapInFlight.current = false;
+        // Ignore teardown of this effect (e.g. React Strict Mode) so a stale run
+        // does not clear loading while a new bootstrap is in flight.
+        if (!alive) return;
         if (mounted.current) setMembershipLoading(false);
         if (mounted.current) {
           setLoading(false);
@@ -599,6 +600,8 @@ function useBootstrapInternal(): BootstrapState {
     );
 
     return () => {
+      alive = false;
+      bootstrapInFlight.current = false;
       if (profilePollTimer) clearInterval(profilePollTimer);
       subscription.unsubscribe();
     };
