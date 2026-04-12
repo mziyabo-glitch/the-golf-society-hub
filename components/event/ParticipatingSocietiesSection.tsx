@@ -95,9 +95,11 @@ export function ParticipatingSocietiesSection({
         >
           <View style={styles.rowMain}>
             <View style={styles.rowHeader}>
-              <AppText variant="bodyBold" numberOfLines={1}>
-                {s.society_name || "Society"}
-              </AppText>
+              <View style={styles.societyNameWrap}>
+                <AppText variant="bodyBold">
+                  {s.society_name || "Society"}
+                </AppText>
+              </View>
               {s.role === "host" && (
                 <View style={[styles.hostBadge, { backgroundColor: colors.primary + "20" }]}>
                   <AppText variant="small" style={{ color: colors.primary, fontWeight: "600" }}>
@@ -159,6 +161,7 @@ export function ParticipatingSocietiesSection({
             disabled={participatingSocieties.length <= 2}
             style={({ pressed }) => ({
               opacity: pressed ? 0.6 : participatingSocieties.length <= 2 ? 0.4 : 1,
+              flexShrink: 0,
             })}
           >
             <Feather name="x-circle" size={20} color={colors.error} />
@@ -181,7 +184,9 @@ export function ParticipatingSocietiesSection({
               ]}
             >
               <Feather name="plus" size={16} color={colors.primary} />
-              <AppText variant="body" style={{ marginLeft: spacing.xs }}>{soc.societyName}</AppText>
+              <AppText variant="body" style={styles.addItemLabel}>
+                {soc.societyName}
+              </AppText>
             </Pressable>
           ))}
         </View>
@@ -211,12 +216,18 @@ const styles = StyleSheet.create({
     borderRadius: radius.sm,
     borderWidth: 1,
     marginBottom: spacing.sm,
+    width: "100%",
+    maxWidth: "100%",
+    minWidth: 0,
   },
   rowMain: {
     flex: 1,
+    minWidth: 0,
+    flexShrink: 1,
   },
   rowHeader: {
     flexDirection: "row",
+    flexWrap: "wrap",
     alignItems: "center",
     gap: spacing.xs,
     marginBottom: spacing.xs,
@@ -246,5 +257,18 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.sm,
     paddingHorizontal: spacing.xs,
     borderRadius: radius.sm,
+    width: "100%",
+    minWidth: 0,
+  },
+  societyNameWrap: {
+    flex: 1,
+    minWidth: 0,
+    flexShrink: 1,
+  },
+  addItemLabel: {
+    marginLeft: spacing.xs,
+    flex: 1,
+    minWidth: 0,
+    flexShrink: 1,
   },
 });

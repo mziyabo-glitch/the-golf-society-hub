@@ -80,6 +80,7 @@ function RootNavigator() {
   segmentsRef.current = segments;
 
   useEffect(() => {
+    if (loading || authRestoring) return;
     let mounted = true;
 
     const applyAuthRedirect = async (session: { user: { id: string } } | null) => {
@@ -132,7 +133,7 @@ function RootNavigator() {
       mounted = false;
       subscription.unsubscribe();
     };
-  }, [router]);
+  }, [router, loading, authRestoring]);
 
   useEffect(() => {
     // Don't route while loading or not signed in

@@ -176,6 +176,7 @@ function useBootstrapInternal(): BootstrapState {
   const bootstrapInFlight = useRef(false);
   const hydratedFromCacheRef = useRef(false);
   const authPersistLoggedRef = useRef(false);
+  const sessionUserIdRef = useRef<string | null>(null);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -184,6 +185,10 @@ function useBootstrapInternal(): BootstrapState {
       mounted.current = false;
     };
   }, []);
+
+  useEffect(() => {
+    sessionUserIdRef.current = session?.user?.id ?? null;
+  }, [session]);
 
   // Main bootstrap effect
   useEffect(() => {
@@ -223,6 +228,32 @@ function useBootstrapInternal(): BootstrapState {
         let currentSession = existingSession ?? null;
         let currentUser: User | null = existingSession?.user ?? null;
 
+        // Validate/refresh the auth user before issuing data queries.
+        // On native cold starts, access tokens may be stale until refresh runs.
+        if (currentSession) {
+          const { data: authUserData, error: authUserError } = await supabase.auth.getUser();
+          if (authUserError) {
+            console.warn("[useBootstrap] getUser warning during restore:", authUserError.message);
+          } else if (authUserData.user) {
+            currentUser = authUserData.user;
+            const { data: refreshedSession } = await supabase.auth.getSession();
+            currentSession = refreshedSession.session ?? currentSession;
+          }
+        }
+
+        if (!currentSession || !currentUser) {
+          // Give Supabase one extra chance to hydrate persisted native storage
+          // before concluding the user is signed out.
+          await new Promise((resolve) => setTimeout(resolve, 120));
+          const { data: lateData } = await supabase.auth.getSession();
+          if (lateData.session?.user) {
+            currentSession = lateData.session;
+            currentUser = lateData.session.user;
+            if (!mounted.current) return;
+            setSession(currentSession);
+          }
+        }
+
         if (!currentSession || !currentUser) {
           // No session — user needs to sign in via the auth screen.
           console.log("[useBootstrap] No session — awaiting sign-in.");
@@ -231,6 +262,7 @@ function useBootstrapInternal(): BootstrapState {
           setProfile(null);
           setSociety(null);
           setMemberState(null);
+          setMemberships([]);
           setMembershipLoading(false);
           return;
         }
@@ -553,7 +585,12 @@ function useBootstrapInternal(): BootstrapState {
           // there is a render frame where isSignedIn=true but profile/
           // society/member are still null, causing the Home screen to
           // flash PersonalModeHome ("old state") before bootstrap reloads.
-          if (event === "SIGNED_IN" || event === "SIGNED_OUT" || event === "PASSWORD_RECOVERY") {
+          if (
+            event === "SIGNED_IN" ||
+            event === "SIGNED_OUT" ||
+            event === "PASSWORD_RECOVERY" ||
+            (event === "INITIAL_SESSION" && !!newSession && !sessionUserIdRef.current)
+          ) {
             setLoading(true);
             setRefreshKey((k) => k + 1);
           }

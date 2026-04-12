@@ -80,6 +80,8 @@ const styles = StyleSheet.create({
   root: {
     marginBottom: spacing.base,
     alignSelf: "stretch",
+    width: "100%",
+    maxWidth: "100%",
   },
   shell: {
     borderRadius: radius.md,

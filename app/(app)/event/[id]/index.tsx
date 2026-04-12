@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import debounce from "lodash.debounce";
-import { StyleSheet, View, Pressable, ScrollView, Modal, Share, Platform } from "react-native";
+import { StyleSheet, View, Pressable, ScrollView, Modal, Share, Platform, useWindowDimensions } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
 import { Feather } from "@expo/vector-icons";
@@ -1470,9 +1470,9 @@ export default function EventDetailScreen() {
                 backgroundColor: colors.primary + "0D",
               }}
             >
-              <View style={{ flexDirection: "row", alignItems: "flex-start", gap: spacing.sm }}>
+              <View style={styles.jointBannerRow}>
                 <Feather name="link" size={20} color={colors.primary} />
-                <View style={{ flex: 1 }}>
+                <View style={styles.jointBannerTextCol}>
                   <AppText variant="captionBold" color="primary">{JOINT_EVENT_CHIP_LONG}</AppText>
                   <AppText variant="small" color="secondary" style={{ marginTop: 4 }}>
                     Fees are per society; shared attendance uses the Players screen.
@@ -1572,7 +1572,7 @@ export default function EventDetailScreen() {
                   autoCapitalize="none"
                 />
               </View>
-              <AppText variant="small" color="muted" style={{ marginTop: 4 }}>
+              <AppText variant="small" color="muted" style={[styles.cardBodyText, { marginTop: 4 }]}>
                 Empty date keeps the invite open. Date and time are saved using your device local timezone
                 (not EXPO_PUBLIC_RSVP_DEADLINE_DISPLAY_TZ). Time defaults to 23:59 local if omitted.
               </AppText>
@@ -1599,7 +1599,7 @@ export default function EventDetailScreen() {
                   },
                 ]}
               >
-                <View style={{ flex: 1 }}>
+                <View style={styles.jointEventToggleText}>
                   <AppText variant="captionBold">{JOINT_EVENT_CHIP_LONG}</AppText>
                   <AppText variant="small" color="secondary">
                     {detailIsJointEvent
@@ -1614,6 +1614,7 @@ export default function EventDetailScreen() {
                 <View
                   style={[
                     styles.pickerOption,
+                    styles.jointEventTogglePill,
                     {
                       backgroundColor: formEditIsJointEvent ? colors.primary : colors.backgroundSecondary,
                       borderColor: formEditIsJointEvent ? colors.primary : colors.border,
@@ -1642,7 +1643,7 @@ export default function EventDetailScreen() {
               onPress={() => setShowTeeSettings(!showTeeSettings)}
               style={styles.teeSettingsToggle}
             >
-              <View style={{ flex: 1 }}>
+              <View style={styles.teeSettingsToggleText}>
                 <AppText variant="captionBold">Course / Tee Setup</AppText>
                 <AppText variant="small" color="secondary">
                   For WHS handicap calculations
@@ -1652,6 +1653,7 @@ export default function EventDetailScreen() {
                 name={showTeeSettings ? "chevron-up" : "chevron-down"}
                 size={20}
                 color={colors.textTertiary}
+                style={styles.teeSettingsToggleChevron}
               />
             </Pressable>
 
@@ -1815,13 +1817,17 @@ export default function EventDetailScreen() {
                 {/* Manual tee entry fallback */}
                 {showManualTee && (
                   <View style={styles.manualTeeContainer}>
-                    <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: spacing.sm }}>
-                      <AppText variant="captionBold">Manual Tee Entry</AppText>
-                      {selectedTee && (
-                        <Pressable onPress={() => setShowManualTee(false)}>
-                          <AppText variant="small" color="primary">Use selected tee instead</AppText>
+                    <View style={styles.manualTeeHeaderRow}>
+                      <AppText variant="captionBold" style={styles.manualTeeHeaderTitle}>
+                        Manual Tee Entry
+                      </AppText>
+                      {selectedTee ? (
+                        <Pressable onPress={() => setShowManualTee(false)} style={styles.manualTeeHeaderLink}>
+                          <AppText variant="small" color="primary">
+                            Use selected tee instead
+                          </AppText>
                         </Pressable>
-                      )}
+                      ) : null}
                     </View>
 
                     <AppText variant="captionBold" color="secondary" style={{ marginBottom: spacing.xs }}>Male Tee</AppText>
@@ -1975,9 +1981,9 @@ export default function EventDetailScreen() {
             backgroundColor: colors.primary + "0C",
           }}
         >
-          <View style={{ flexDirection: "row", alignItems: "flex-start", gap: spacing.sm }}>
+          <View style={styles.jointBannerRow}>
             <Feather name="link" size={22} color={colors.primary} />
-            <View style={{ flex: 1 }}>
+            <View style={styles.jointBannerTextCol}>
               <AppText variant="captionBold" color="primary">{JOINT_EVENT_CHIP_LONG}</AppText>
               <AppText variant="small" color="secondary" style={{ marginTop: 4 }}>
                 {jointParticipatingSocieties.length > 0
@@ -1995,7 +2001,7 @@ export default function EventDetailScreen() {
           Refreshing...
         </AppText>
       ) : null}
-      <AppText variant="title" style={{ marginBottom: spacing.sm }}>
+      <AppText variant="title" style={[styles.eventDetailTitle, { marginBottom: spacing.sm }]}>
         {event.name}
       </AppText>
 
@@ -2015,7 +2021,7 @@ export default function EventDetailScreen() {
               label="RSVP closes"
               value={formatRsvpDeadlineDisplay(event.rsvpDeadlineAt ?? event.rsvp_deadline_at) ?? ""}
             />
-            <AppText variant="small" color="muted" style={{ marginTop: 4 }}>
+            <AppText variant="small" color="muted" style={[styles.cardBodyText, { marginTop: 4 }]}>
               {getRsvpDeadlineDisplayTimeZone()
                 ? `Shown in ${getRsvpDeadlineDisplayTimeZone()} (set EXPO_PUBLIC_RSVP_DEADLINE_DISPLAY_TZ). Open/closed on the invite uses server UTC vs stored instant.`
                 : "Shown in your device local timezone. Open/closed on the invite uses server time vs stored instant."}
@@ -2028,7 +2034,7 @@ export default function EventDetailScreen() {
         <AppText variant="captionBold" color="secondary" style={{ marginBottom: spacing.xs }}>
           RSVP invite
         </AppText>
-        <AppText variant="small" color="muted" style={{ marginBottom: spacing.sm }}>
+        <AppText variant="small" color="muted" style={[styles.cardBodyText, { marginBottom: spacing.sm }]}>
           Share a link — members or guests can respond in two taps (no app required for guests).
         </AppText>
         <View style={{ flexDirection: "row", gap: spacing.sm, flexWrap: "wrap" }}>
@@ -2059,7 +2065,7 @@ export default function EventDetailScreen() {
           <AppText variant="body" color="secondary">
             {`${rsvpSummary.inCount} in · ${rsvpSummary.outCount} out · ${rsvpSummary.guestCount} guests · ${rsvpSummary.noResponseCount} no reply`}
           </AppText>
-          <AppText variant="small" color="muted" style={{ marginTop: spacing.xs }}>
+          <AppText variant="small" color="muted" style={[styles.cardBodyText, { marginTop: spacing.xs }]}>
             No reply = society members with no fee/RSVP row for this society on this event. Guests are counted
             separately.
           </AppText>
@@ -2139,7 +2145,7 @@ export default function EventDetailScreen() {
           <AppText variant="h2" style={{ marginBottom: spacing.xs }}>
             Payments &amp; Share
           </AppText>
-          <AppText variant="small" color="secondary" style={{ marginBottom: spacing.sm }}>
+          <AppText variant="small" color="secondary" style={[styles.cardBodyText, { marginBottom: spacing.sm }]}>
             Lists are for this society only (no other club on joint events). Paid = confirmed &amp; paid — same as
             the tee sheet. Unpaid = payment still due or playing list without a fee row.
             {detailIsJointEvent ? ` ${JOINT_EVENT_CHIP_SHORT}` : ""}
@@ -2205,12 +2211,12 @@ export default function EventDetailScreen() {
                 <Feather name="flag" size={18} color={colors.success} />
               </View>
               <View style={styles.actionContent}>
-                <AppText variant="bodyBold">View Tee Sheet</AppText>
-                <AppText variant="caption" color="secondary">
+                <AppText variant="bodyBold" style={styles.actionRowTitle}>View Tee Sheet</AppText>
+                <AppText variant="caption" color="secondary" style={styles.actionRowSubtitle}>
                   Your tee time and full tee sheet
                 </AppText>
               </View>
-              <Feather name="chevron-right" size={20} color={colors.textTertiary} />
+              <Feather name="chevron-right" size={20} color={colors.textTertiary} style={styles.actionRowChevron} />
             </View>
           </AppCard>
         </Pressable>
@@ -2229,41 +2235,43 @@ export default function EventDetailScreen() {
             </AppText>
           ) : null}
           <View style={styles.paidHeader}>
-            <View style={{ flex: 1 }}>
+            <View style={styles.paidHeaderMain}>
               <AppText variant="h2">Payment &amp; status</AppText>
-              <AppText variant="small" color="secondary">
+              <AppText variant="small" color="secondary" style={styles.cardBodyText}>
                 {detailIsJointEvent
                   ? "This list is only your society’s members/guests and fee rows. Switch society in the header to manage the other club. Marking paid confirms attendance."
                   : "Marking paid confirms attendance. Tee sheet (ManCo) uses only paid & confirmed players (including paid guests)."}
               </AppText>
               {detailIsJointEvent && societyId && hostSocietyId === societyId ? (
-                <AppText variant="small" color="muted" style={{ marginTop: 4 }}>
+                <AppText variant="small" color="muted" style={[styles.cardBodyText, { marginTop: 4 }]}>
                   Host view: payment actions still apply only to members of the society selected above.
                 </AppText>
               ) : null}
-              <AppText variant="small" color="muted" style={{ marginTop: 4 }}>
+              <AppText variant="small" color="muted" style={[styles.cardBodyText, { marginTop: 4 }]}>
                 {`${teeSheetEligibleCount} paid & confirmed · ${pendingPaymentCount} payment pending`}
                 {captainPickMemberIds.length > 0
                   ? ` · ${captainPickMemberIds.length} on playing list without a fee row`
                   : ""}
               </AppText>
             </View>
-            <StatusBadge
-              label={
-                buckets.pendingPayment.length === 0 &&
-                captainPickMemberIds.length === 0 &&
-                guestPendingPayment.length === 0
-                  ? "All paid"
-                  : `${pendingPaymentCount} pending`
-              }
-              tone={
-                buckets.pendingPayment.length === 0 &&
-                captainPickMemberIds.length === 0 &&
-                guestPendingPayment.length === 0
-                  ? "success"
-                  : "warning"
-              }
-            />
+            <View style={styles.paidHeaderBadgeWrap}>
+              <StatusBadge
+                label={
+                  buckets.pendingPayment.length === 0 &&
+                  captainPickMemberIds.length === 0 &&
+                  guestPendingPayment.length === 0
+                    ? "All paid"
+                    : `${pendingPaymentCount} pending`
+                }
+                tone={
+                  buckets.pendingPayment.length === 0 &&
+                  captainPickMemberIds.length === 0 &&
+                  guestPendingPayment.length === 0
+                    ? "success"
+                    : "warning"
+                }
+              />
+            </View>
           </View>
 
           {canManageEventRoster && manualAddCandidates.length > 0 ? (
@@ -2671,12 +2679,20 @@ function Row({
   value: string | unknown;
 }) {
   const colors = getColors();
+  const { width: windowWidth } = useWindowDimensions();
+  const stackIcon = windowWidth < 360;
+
+  const valueStr = safeValue(value);
   return (
-    <View style={styles.row}>
-      <Feather name={icon} size={iconSize.sm} color={colors.primary} />
-      <View style={{ marginLeft: spacing.sm }}>
-        <AppText variant="caption">{label}</AppText>
-        <AppText>{safeValue(value)}</AppText>
+    <View style={[styles.row, stackIcon && styles.rowStacked]}>
+      <View style={styles.rowIconWrap}>
+        <Feather name={icon} size={iconSize.sm} color={colors.primary} />
+      </View>
+      <View style={[styles.rowTextCol, stackIcon && styles.rowTextColWhenStacked]}>
+        <AppText variant="caption" style={styles.rowLabel}>
+          {label}
+        </AppText>
+        <AppText style={styles.rowValue}>{valueStr}</AppText>
       </View>
     </View>
   );
@@ -2694,12 +2710,18 @@ function ActionRow({
   const colors = getColors();
   return (
     <View style={styles.actionRow}>
-      <Feather name={icon} size={iconSize.md} color={colors.primary} />
-      <View style={{ flex: 1, marginLeft: spacing.sm }}>
-        <AppText variant="bodyBold">{title}</AppText>
-        <AppText variant="caption">{subtitle}</AppText>
+      <View style={styles.actionRowIconWrap}>
+        <Feather name={icon} size={iconSize.md} color={colors.primary} />
       </View>
-      <Feather name="chevron-right" size={iconSize.md} color={colors.textTertiary} />
+      <View style={styles.actionRowTextCol}>
+        <AppText variant="bodyBold" style={styles.actionRowTitle}>
+          {title}
+        </AppText>
+        <AppText variant="caption" style={styles.actionRowSubtitle}>
+          {subtitle}
+        </AppText>
+      </View>
+      <Feather name="chevron-right" size={iconSize.md} color={colors.textTertiary} style={styles.actionRowChevron} />
     </View>
   );
 }
@@ -2724,18 +2746,78 @@ const styles = StyleSheet.create({
   },
   card: {
     marginBottom: spacing.lg,
+    width: "100%",
+    maxWidth: "100%",
+    alignSelf: "stretch",
   },
   row: {
     flexDirection: "row",
-    alignItems: "center",
+    alignItems: "flex-start",
+    width: "100%",
+    minWidth: 0,
     marginBottom: spacing.md,
+  },
+  rowStacked: {
+    flexDirection: "column",
+    alignItems: "stretch",
+  },
+  rowIconWrap: {
+    width: 24,
+    alignItems: "center",
+    paddingTop: 2,
+    flexShrink: 0,
+  },
+  rowTextCol: {
+    flex: 1,
+    minWidth: 0,
+    flexShrink: 1,
+    marginLeft: spacing.sm,
+  },
+  rowTextColWhenStacked: {
+    marginLeft: 0,
+    marginTop: spacing.xs,
+    width: "100%",
+  },
+  rowLabel: {
+    flexShrink: 1,
+  },
+  rowValue: {
+    marginTop: 2,
+    flexShrink: 1,
   },
   actionCard: {
     marginBottom: spacing.sm,
+    width: "100%",
+    maxWidth: "100%",
+    alignSelf: "stretch",
   },
   actionRow: {
     flexDirection: "row",
-    alignItems: "center",
+    alignItems: "flex-start",
+    width: "100%",
+    minWidth: 0,
+  },
+  actionRowIconWrap: {
+    paddingTop: 2,
+    flexShrink: 0,
+  },
+  actionRowTextCol: {
+    flex: 1,
+    minWidth: 0,
+    flexShrink: 1,
+    marginLeft: spacing.sm,
+    marginRight: spacing.xs,
+  },
+  actionRowTitle: {
+    flexShrink: 1,
+  },
+  actionRowSubtitle: {
+    marginTop: 2,
+    flexShrink: 1,
+  },
+  actionRowChevron: {
+    flexShrink: 0,
+    marginTop: 2,
   },
   iconContainer: {
     width: 36,
@@ -2744,15 +2826,46 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     marginRight: spacing.sm,
+    flexShrink: 0,
   },
   actionContent: {
     flex: 1,
+    minWidth: 0,
+    flexShrink: 1,
   },
   paidHeader: {
     flexDirection: "row",
     alignItems: "flex-start",
     gap: spacing.sm,
     marginBottom: spacing.md,
+    width: "100%",
+    minWidth: 0,
+  },
+  paidHeaderMain: {
+    flex: 1,
+    minWidth: 0,
+    flexShrink: 1,
+  },
+  paidHeaderBadgeWrap: {
+    flexShrink: 0,
+    alignSelf: "flex-start",
+  },
+  cardBodyText: {
+    width: "100%",
+    maxWidth: "100%",
+    flexShrink: 1,
+  },
+  jointBannerRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: spacing.sm,
+    width: "100%",
+    minWidth: 0,
+  },
+  jointBannerTextCol: {
+    flex: 1,
+    minWidth: 0,
+    flexShrink: 1,
   },
   paidRow: {
     flexDirection: "row",
@@ -2848,6 +2961,18 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: "rgba(0,0,0,0.06)",
     marginTop: spacing.sm,
+    width: "100%",
+    minWidth: 0,
+    gap: spacing.sm,
+  },
+  teeSettingsToggleText: {
+    flex: 1,
+    minWidth: 0,
+    flexShrink: 1,
+    paddingRight: spacing.xs,
+  },
+  teeSettingsToggleChevron: {
+    flexShrink: 0,
   },
   teeSettingsContainer: {
     paddingTop: spacing.sm,
@@ -2884,6 +3009,26 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "rgba(0,0,0,0.06)",
     marginBottom: spacing.base,
+    width: "100%",
+    maxWidth: "100%",
+    minWidth: 0,
+  },
+  manualTeeHeaderRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    marginBottom: spacing.sm,
+    width: "100%",
+    minWidth: 0,
+    gap: spacing.sm,
+  },
+  manualTeeHeaderTitle: {
+    flex: 1,
+    minWidth: 0,
+    flexShrink: 1,
+  },
+  manualTeeHeaderLink: {
+    flexShrink: 0,
   },
   jointEventToggle: {
     flexDirection: "row",
@@ -2894,6 +3039,24 @@ const styles = StyleSheet.create({
     marginBottom: spacing.sm,
     borderTopWidth: 1,
     borderTopColor: "rgba(0,0,0,0.06)",
+    width: "100%",
+    minWidth: 0,
+    gap: spacing.sm,
+  },
+  jointEventToggleText: {
+    flex: 1,
+    minWidth: 0,
+    flexShrink: 1,
+    paddingRight: spacing.xs,
+  },
+  jointEventTogglePill: {
+    flexShrink: 0,
+    alignSelf: "flex-start",
+  },
+  eventDetailTitle: {
+    width: "100%",
+    maxWidth: "100%",
+    flexShrink: 1,
   },
   addMemberModalBackdrop: {
     flex: 1,
