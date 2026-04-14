@@ -73,7 +73,11 @@ import { getColors, spacing, radius } from "@/lib/ui/theme";
 import { assertPngExportOnly } from "@/lib/share/pngExportGuard";
 import { formatError, type FormattedError } from "@/lib/ui/formatError";
 import type { TeeSheetData } from "@/lib/teeSheetPdf";
-import { loadCanonicalTeeSheet, buildTeeSheetDataFromCanonical } from "@/lib/teeSheet/canonicalTeeSheet";
+import {
+  loadCanonicalTeeSheet,
+  buildTeeSheetDataFromCanonical,
+  type CanonicalTeeSheetResult,
+} from "@/lib/teeSheet/canonicalTeeSheet";
 import { getSocietyLogoUrl } from "@/lib/societyLogo";
 import { getCache, invalidateCache, invalidateCachePrefix, setCache } from "@/lib/cache/clientCache";
 
@@ -447,9 +451,28 @@ export default function TeeSheetScreen() {
           if (persistedIds.length > 0) {
             setGroups(persistedGroups);
             setSelectedPlayerIds(persistedIds);
+            if (__DEV__) {
+              console.log("[teesheet] reload source", {
+                eventId: selectedEventId,
+                source: "joint_event_entries",
+                groupCount: persistedGroups.length,
+                rowCount: persistedGroups.flatMap((g) => g.players).length,
+                fallbackUsed: false,
+              });
+            }
             logSelectedPlayersDev("[teesheet] selected players (after ManCo edits)", selectedEventId, persistedIds);
           } else {
             initializeGroups(mapJointEventToEventDoc(teeSheet.event) as EventDoc, candidate.memberIds, candidateMembers, []);
+            if (__DEV__) {
+              console.log("[teesheet] reload source", {
+                eventId: selectedEventId,
+                source: "joint_event_entries",
+                groupCount: 0,
+                rowCount: 0,
+                fallbackUsed: true,
+                fallback: "candidate_member_pool_generated_groups",
+              });
+            }
             logSelectedPlayersDev("[teesheet] selected players (after ManCo edits)", selectedEventId, candidate.memberIds);
           }
           if (eventLoadSeqRef.current === seq) {
@@ -504,14 +527,52 @@ export default function TeeSheetScreen() {
         const eligibleIds = await getTeeSheetEligibleMemberIdsForEvent(selectedEventId);
         setSelectedPlayerIds(eligibleIds);
         logSelectedPlayersDev("[teesheet] tee-sheet eligible (paid + in)", selectedEventId, eligibleIds);
-        initializeGroups(event, eligibleIds, membersStd, guests ?? []);
-        logSelectedPlayersDev("[teesheet] selected players (after ManCo edits)", selectedEventId, eligibleIds);
+        const canonical = await loadCanonicalTeeSheet(selectedEventId);
+        const hasPersistedGroups =
+          canonical != null &&
+          canonical.source === "tee_groups" &&
+          canonical.groups.length > 0;
+        let groupsForCache: PlayerGroup[] = [];
+        let selectedIdsForCache = eligibleIds;
+        if (hasPersistedGroups) {
+          const persistedGroups = groupsFromCanonical(event, canonical, membersStd);
+          const persistedIds = groupsToPlayerIdsFrom(persistedGroups);
+          setGroups(persistedGroups);
+          setSelectedPlayerIds(persistedIds);
+          groupsForCache = persistedGroups;
+          selectedIdsForCache = persistedIds;
+          if (__DEV__) {
+            console.log("[teesheet] reload source", {
+              eventId: selectedEventId,
+              source: canonical.source,
+              published: canonical.published,
+              groupCount: canonical.groups.length,
+              rowCount: canonical.groups.flatMap((g) => g.players).length,
+              fallbackUsed: false,
+            });
+          }
+          logSelectedPlayersDev("[teesheet] selected players (after ManCo edits)", selectedEventId, persistedIds);
+        } else {
+          initializeGroups(event, eligibleIds, membersStd, guests ?? []);
+          if (__DEV__) {
+            console.log("[teesheet] reload source", {
+              eventId: selectedEventId,
+              source: canonical?.source ?? "none",
+              published: canonical?.published ?? false,
+              groupCount: canonical?.groups.length ?? 0,
+              rowCount: canonical?.groups.flatMap((g) => g.players).length ?? 0,
+              fallbackUsed: true,
+              fallback: "eligible_registrations_generated_groups",
+            });
+          }
+          logSelectedPlayersDev("[teesheet] selected players (after ManCo edits)", selectedEventId, eligibleIds);
+        }
         if (eventLoadSeqRef.current === seq) {
           await setCache(`event:${selectedEventId}:tee-sheet`, {
             selectedEvent: event,
             selectedEventRegistrations: registrations ?? [],
-            groups: [],
-            selectedPlayerIds: eligibleIds,
+            groups: groupsForCache,
+            selectedPlayerIds: selectedIdsForCache,
             eventMemberPool: membersStd,
             isJointEventTeeSheet: false,
             jointTeeSheetData: null,
@@ -568,6 +629,45 @@ export default function TeeSheetScreen() {
       setLoading(false);
     })();
   }, [selectedEventId]);
+
+  const groupsFromCanonical = (
+    event: EventDoc,
+    canonical: CanonicalTeeSheetResult,
+    membersList: MemberDoc[],
+  ): PlayerGroup[] => {
+    const menTee: TeeBlock | null =
+      event.par != null && event.courseRating != null && event.slopeRating != null
+        ? { par: event.par, courseRating: event.courseRating, slopeRating: event.slopeRating }
+        : null;
+    const ladiesTee: TeeBlock | null =
+      event.ladiesPar != null && event.ladiesCourseRating != null && event.ladiesSlopeRating != null
+        ? { par: event.ladiesPar, courseRating: event.ladiesCourseRating, slopeRating: event.ladiesSlopeRating }
+        : null;
+    const allowance = event.handicapAllowance ?? DEFAULT_ALLOWANCE;
+
+    return normalizeGroups(
+      canonical.groups.map((g, groupIdx) => ({
+        groupNumber: g.groupNumber,
+        players: g.players.map((p) => {
+          const member = membersList.find((m) => m.id === p.id);
+          const gender = member?.gender ?? null;
+          const hi = member?.handicapIndex ?? member?.handicap_index ?? p.handicapIndex ?? null;
+          const playerTee = selectTeeByGender(gender, menTee, ladiesTee);
+          const courseHandicap = calcCourseHandicap(hi, playerTee);
+          const playingHandicap = calcPlayingHandicap(courseHandicap, allowance);
+          return {
+            id: p.id,
+            name: p.name || member?.name || member?.displayName || "Member",
+            handicapIndex: hi,
+            playingHandicap,
+            gender,
+            groupIndex: groupIdx,
+            societyLabel: p.societyLabel ?? null,
+          } as EditablePlayer;
+        }),
+      })),
+    );
+  };
 
   // Initialize groups from selected member ids + guests
   const initializeGroups = (
@@ -664,9 +764,37 @@ export default function TeeSheetScreen() {
     }, [societyId, loadData])
   );
 
-  const logSelectedPlayersDev = useCallback((_label: string, _eventId: string, _ids: string[]) => {}, []);
+  const logSelectedPlayersDev = useCallback((label: string, eventId: string, ids: string[]) => {
+    if (!__DEV__) return;
+    const uniq = [...new Set(ids.map(String))];
+    console.log(label, {
+      eventId,
+      count: uniq.length,
+      ids: uniq,
+    });
+  }, []);
 
-  const logPostSaveJointRead = useCallback(async (_eventId: string, _expectedMemberIds: string[]) => {}, []);
+  const logPostSaveJointRead = useCallback(async (eventId: string, expectedMemberIds: string[]) => {
+    if (!__DEV__) return;
+    try {
+      const ts = await getJointEventTeeSheet(eventId);
+      const readIds = [...new Set(
+        (ts?.groups ?? [])
+          .flatMap((g) => g.entries ?? [])
+          .map((e) => String(e.player_id))
+      )];
+      console.log("[teesheet] save readback", {
+        eventId,
+        source: "joint_event_entries",
+        expectedCount: [...new Set(expectedMemberIds.map(String))].length,
+        readCount: readIds.length,
+        groups: ts?.groups?.length ?? 0,
+        readIds,
+      });
+    } catch (err) {
+      console.warn("[teesheet] save readback failed", { eventId, error: err });
+    }
+  }, []);
 
   useEffect(() => {
     if (!selectedEventId) return;
@@ -853,6 +981,17 @@ export default function TeeSheetScreen() {
       const interval = parseInt(teeInterval, 10) || 10;
       const ntpHoles = parseHoleNumbers(ntpHolesInput === "-" ? "" : ntpHolesInput);
       const ldHoles = parseHoleNumbers(ldHolesInput === "-" ? "" : ldHolesInput);
+      if (__DEV__) {
+        console.log("[teesheet] save start", {
+          eventId: selectedEventId,
+          societyId: selectedEvent.society_id ?? societyId ?? null,
+          isJointEvent: isJointEventTeeSheet,
+          groups: nonEmptyGroups.length,
+          rowCount: nonEmptyGroups.flatMap((g) => g.players).length,
+          teeTimeStart: startTime || "08:00",
+          teeTimeInterval: interval,
+        });
+      }
 
       if (isJointEventTeeSheet) {
         const finalPlayerIds = groupsToPlayerIdsFrom(nonEmptyGroups);
@@ -865,11 +1004,27 @@ export default function TeeSheetScreen() {
           jointTeeSheetData,
           selectedEventId,
         );
+        if (__DEV__) {
+          console.log("[teesheet] payload write", {
+            eventId: selectedEventId,
+            source: "joint_event_entries",
+            participatingSocieties: jointTeeSheetData?.participating_societies?.map((s) => s.society_id) ?? [],
+            rowCount: replaceRows.length,
+            rows: replaceRows,
+          });
+        }
         try {
           await replaceJointEventTeeSheetEntries(selectedEventId, replaceRows);
         } catch (e) {
           console.error("[teesheet] replaceJointEventTeeSheetEntries failed", e);
           throw e;
+        }
+        if (__DEV__) {
+          console.log("[teesheet] save db response", {
+            eventId: selectedEventId,
+            source: "joint_event_entries",
+            rowsWritten: replaceRows.length,
+          });
         }
         const savePayloadJoint = {
           teeTimeStart: startTime || "08:00",
@@ -935,7 +1090,23 @@ export default function TeeSheetScreen() {
           position: idx,
         }))
       );
-      await upsertTeeSheet(selectedEventId, teeGroupInputs, teePlayerInputs);
+      if (__DEV__) {
+        console.log("[teesheet] payload write", {
+          eventId: selectedEventId,
+          source: "tee_groups",
+          payload: {
+            teeGroups: teeGroupInputs,
+            teeGroupPlayers: teePlayerInputs,
+          },
+        });
+      }
+      const upsertResult = await upsertTeeSheet(selectedEventId, teeGroupInputs, teePlayerInputs);
+      if (__DEV__) {
+        console.log("[teesheet] save db response", {
+          source: "tee_groups",
+          ...upsertResult,
+        });
+      }
 
       const savePayloadStandard = {
         playerIds,
@@ -964,6 +1135,15 @@ export default function TeeSheetScreen() {
         });
       }
       logSelectedPlayersDev("[teesheet] final published players", selectedEventId, playerIds);
+      const canonicalAfterSave = await loadCanonicalTeeSheet(selectedEventId);
+      if (__DEV__) {
+        console.log("[teesheet] row count after reload", {
+          eventId: selectedEventId,
+          source: canonicalAfterSave?.source ?? "none",
+          rowCount: canonicalAfterSave?.groups.flatMap((g) => g.players).length ?? 0,
+          groupCount: canonicalAfterSave?.groups.length ?? 0,
+        });
+      }
       setToast({ visible: true, message: "Tee sheet saved", type: "success" });
       await invalidateCache(`event:${selectedEventId}:tee-sheet`);
       await invalidateCache(`event:${selectedEventId}:detail`);
@@ -1145,6 +1325,17 @@ export default function TeeSheetScreen() {
       const interval = parseInt(teeInterval, 10) || 10;
       const ntpHoles = parseHoleNumbers(ntpHolesInput === "-" ? "" : ntpHolesInput);
       const ldHoles = parseHoleNumbers(ldHolesInput === "-" ? "" : ldHolesInput);
+      if (__DEV__) {
+        console.log("[teesheet] publish start", {
+          eventId: selectedEvent.id,
+          societyId: selectedEvent.society_id ?? societyId ?? null,
+          isJointEvent: isJointEventTeeSheet,
+          groups: nonEmptyGroups.length,
+          rowCount: nonEmptyGroups.flatMap((g) => g.players).length,
+          teeTimeStart: startTime || "08:00",
+          teeTimeInterval: interval,
+        });
+      }
 
       if (isJointEventTeeSheet && selectedEventId) {
         const finalPlayerIds = groupsToPlayerIdsFrom(nonEmptyGroups);
@@ -1157,11 +1348,28 @@ export default function TeeSheetScreen() {
           jointTeeSheetData,
           selectedEventId,
         );
+        if (__DEV__) {
+          console.log("[teesheet] payload write", {
+            eventId: selectedEventId,
+            source: "joint_event_entries",
+            action: "publish",
+            rowCount: replaceRows.length,
+            rows: replaceRows,
+          });
+        }
         try {
           await replaceJointEventTeeSheetEntries(selectedEventId, replaceRows);
         } catch (e) {
           console.error("[teesheet] replaceJointEventTeeSheetEntries failed", e);
           throw e;
+        }
+        if (__DEV__) {
+          console.log("[teesheet] save db response", {
+            eventId: selectedEventId,
+            source: "joint_event_entries",
+            action: "publish",
+            rowsWritten: replaceRows.length,
+          });
         }
         await logPostSaveJointRead(selectedEventId, finalPlayerIds);
         logSelectedPlayersDev("[teesheet] final published players", selectedEventId, finalPlayerIds);
@@ -1199,7 +1407,25 @@ export default function TeeSheetScreen() {
         const teePlayerInputs = groupsForExport.flatMap((g) =>
           g.players.map((p, idx) => ({ player_id: p.id, group_number: g.groupNumber, position: idx }))
         );
-        await upsertTeeSheet(selectedEvent.id, teeGroupInputs, teePlayerInputs);
+        if (__DEV__) {
+          console.log("[teesheet] payload write", {
+            eventId: selectedEvent.id,
+            source: "tee_groups",
+            action: "publish",
+            payload: {
+              teeGroups: teeGroupInputs,
+              teeGroupPlayers: teePlayerInputs,
+            },
+          });
+        }
+        const upsertResult = await upsertTeeSheet(selectedEvent.id, teeGroupInputs, teePlayerInputs);
+        if (__DEV__) {
+          console.log("[teesheet] save db response", {
+            source: "tee_groups",
+            action: "publish",
+            ...upsertResult,
+          });
+        }
 
         const playerIds = selectedPlayerIds.filter((id) => !id.startsWith("guest-"));
         if (__DEV__) {
@@ -1236,6 +1462,16 @@ export default function TeeSheetScreen() {
       const canonical = await loadCanonicalTeeSheet(selectedEventId!);
       if (!canonical) {
         throw new Error("Could not load tee sheet after publish");
+      }
+      if (__DEV__) {
+        console.log("[teesheet] row count after reload", {
+          eventId: selectedEventId!,
+          source: canonical.source,
+          rowCount: canonical.groups.flatMap((g) => g.players).length,
+          groupCount: canonical.groups.length,
+          published: canonical.published,
+          fallbackUsed: canonical.source === "computed_fallback",
+        });
       }
 
       const societyNameExport =

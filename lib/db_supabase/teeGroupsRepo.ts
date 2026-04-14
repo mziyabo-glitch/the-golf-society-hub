@@ -124,6 +124,14 @@ export type TeeGroupPlayerInput = {
   position: number;
 };
 
+export type UpsertTeeSheetResult = {
+  eventId: string;
+  groupsRequested: number;
+  playersRequested: number;
+  groupsInserted: number;
+  playersInserted: number;
+};
+
 /**
  * Remove all tee_groups / tee_group_players rows for an event (via RPC).
  * Use before rebuilding from scratch or when clearing the tee sheet.
@@ -147,10 +155,27 @@ export async function upsertTeeSheet(
   eventId: string,
   groups: TeeGroupInput[],
   players: TeeGroupPlayerInput[]
-): Promise<void> {
+): Promise<UpsertTeeSheetResult> {
+  if (__DEV__) {
+    console.log("[teesheet] save start", {
+      source: "teeGroupsRepo.upsertTeeSheet",
+      eventId,
+      groupsRequested: groups.length,
+      playersRequested: players.length,
+    });
+  }
+
   await clearPersistedTeeSheet(eventId);
 
-  if (groups.length === 0 && players.length === 0) return;
+  if (groups.length === 0 && players.length === 0) {
+    return {
+      eventId,
+      groupsRequested: 0,
+      playersRequested: 0,
+      groupsInserted: 0,
+      playersInserted: 0,
+    };
+  }
 
   const groupRows = groups.map((g) => ({
     event_id: eventId,
@@ -165,19 +190,47 @@ export async function upsertTeeSheet(
     position: p.position,
   }));
 
+  let groupsInserted = 0;
+  let playersInserted = 0;
+
   if (groupRows.length > 0) {
-    const { error: groupsErr } = await supabase.from("tee_groups").insert(groupRows);
+    const { data: insertedGroups, error: groupsErr } = await supabase
+      .from("tee_groups")
+      .insert(groupRows)
+      .select("id");
     if (groupsErr) {
       console.error("[teeGroupsRepo] insert tee_groups error:", groupsErr);
       throw new Error(groupsErr.message || "Failed to save tee groups");
     }
+    groupsInserted = insertedGroups?.length ?? 0;
   }
 
   if (playerRows.length > 0) {
-    const { error: playersErr } = await supabase.from("tee_group_players").insert(playerRows);
+    const { data: insertedPlayers, error: playersErr } = await supabase
+      .from("tee_group_players")
+      .insert(playerRows)
+      .select("id");
     if (playersErr) {
       console.error("[teeGroupsRepo] insert tee_group_players error:", playersErr);
       throw new Error(playersErr.message || "Failed to save tee group players");
     }
+    playersInserted = insertedPlayers?.length ?? 0;
   }
+
+  if (__DEV__) {
+    console.log("[teesheet] save db response", {
+      source: "teeGroupsRepo.upsertTeeSheet",
+      eventId,
+      groupsInserted,
+      playersInserted,
+    });
+  }
+
+  return {
+    eventId,
+    groupsRequested: groups.length,
+    playersRequested: players.length,
+    groupsInserted,
+    playersInserted,
+  };
 }
