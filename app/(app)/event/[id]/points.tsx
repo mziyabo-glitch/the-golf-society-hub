@@ -52,13 +52,20 @@ import {
   upsertEventResults,
   getEventResultsForSociety,
   deleteEventResultForMember,
+  deleteEventResultForGuest,
   type EventResultDoc,
+  type EventResultInput,
 } from "@/lib/db_supabase/resultsRepo";
+import { getEventGuests } from "@/lib/db_supabase/eventGuestRepo";
 import { invalidateCache, invalidateCachePrefix } from "@/lib/cache/clientCache";
 import { getPermissionsForMember } from "@/lib/rbac";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
 import { buildSocietyIdToNameMap } from "@/lib/jointEventSocietyLabel";
 import { dedupeJointMembers, resolveJointCandidatePlayerIdsForActiveSociety } from "@/lib/jointPersonDedupe";
+import {
+  calculateFieldPositionsAndMemberOomPoints,
+  isGuestEntrantKey,
+} from "@/lib/oomMemberOnlyScoring";
 
 /** Set `EXPO_PUBLIC_POINTS_DEBUG_EVENT_ID` to this event’s UUID to enable `[points-debug]` logs. */
 function pointsDebugEnabled(eid: string | undefined): boolean {
@@ -76,31 +83,6 @@ function memberRowForDebug(m: MemberDoc | undefined): {
     name: String(m?.displayName || m?.name || ""),
     society_id: String(m?.society_id ?? ""),
   };
-}
-
-// F1-style OOM points: positions 1-10 get points, rest get 0
-const F1_OOM_POINTS = [25, 18, 15, 12, 10, 8, 6, 4, 2, 1];
-
-function getOOMPointsForPosition(position: number): number {
-  if (position >= 1 && position <= 10) {
-    return F1_OOM_POINTS[position - 1];
-  }
-  return 0;
-}
-
-/**
- * Calculate averaged OOM points for a tie block
- * Example: Two players tied for 2nd place occupy positions 2 and 3
- * They share: (18 + 15) / 2 = 16.5 points each
- */
-function getAveragedOOMPoints(startPosition: number, tieCount: number): number {
-  if (tieCount <= 0) return 0;
-
-  let totalPoints = 0;
-  for (let i = 0; i < tieCount; i++) {
-    totalPoints += getOOMPointsForPosition(startPosition + i);
-  }
-  return totalPoints / tieCount;
 }
 
 /**
@@ -142,7 +124,7 @@ function pickExistingResultForMergedMemberIds(
   mergedMemberIds: string[],
 ): EventResultDoc | undefined {
   const idSet = new Set(mergedMemberIds);
-  const hits = existingResults.filter((r) => idSet.has(r.member_id));
+  const hits = existingResults.filter((r) => r.member_id != null && idSet.has(String(r.member_id)));
   if (hits.length === 0) return undefined;
   if (hits.length === 1) return hits[0];
   hits.sort((a, b) => {
@@ -152,6 +134,33 @@ function pickExistingResultForMergedMemberIds(
     return String(a.member_id).localeCompare(String(b.member_id));
   });
   return hits[0];
+}
+
+function pickExistingResultForPlayer(
+  player: PlayerEntry,
+  existingResults: EventResultDoc[],
+  activeSocietyId: string,
+): EventResultDoc | undefined {
+  if (String(player.memberId).startsWith("guest-")) {
+    const gid = String(player.memberId).slice("guest-".length);
+    const hits = existingResults.filter(
+      (r) => r.event_guest_id != null && String(r.event_guest_id) === gid && r.society_id === activeSocietyId,
+    );
+    if (hits.length === 0) return undefined;
+    if (hits.length === 1) return hits[0];
+    hits.sort((a, b) => {
+      const ta = a.updated_at ? new Date(a.updated_at).getTime() : 0;
+      const tb = b.updated_at ? new Date(b.updated_at).getTime() : 0;
+      if (tb !== ta) return tb - ta;
+      return String(a.id).localeCompare(String(b.id));
+    });
+    return hits[0];
+  }
+  const idCandidates =
+    player.mergedResultMemberIds && player.mergedResultMemberIds.length > 0
+      ? player.mergedResultMemberIds
+      : [player.memberId];
+  return pickExistingResultForMergedMemberIds(existingResults, idCandidates);
 }
 
 function hasValidDayPoints(p: PlayerEntry): boolean {
@@ -209,66 +218,6 @@ function pointsRowChrome(visual: PointsRowVisual, colors: ReturnType<typeof getC
   };
 }
 
-type FormatSortOrder = ReturnType<typeof getFormatSortOrder>;
-
-function calculatePositionsAndOOM(
-  playerList: PlayerEntry[],
-  sortOrder: FormatSortOrder,
-): PlayerEntry[] {
-  const withPoints: PlayerEntry[] = [];
-  const withoutPoints: PlayerEntry[] = [];
-
-  for (const p of playerList) {
-    const dayPts = parseInt(p.dayPoints.trim(), 10);
-    if (!isNaN(dayPts) && p.dayPoints.trim() !== "") {
-      withPoints.push({ ...p, position: null, oomPoints: 0 });
-    } else {
-      withoutPoints.push({ ...p, position: null, oomPoints: 0 });
-    }
-  }
-
-  withPoints.sort((a, b) => {
-    const aPts = parseInt(a.dayPoints.trim(), 10);
-    const bPts = parseInt(b.dayPoints.trim(), 10);
-
-    if (sortOrder === "low_wins") {
-      return aPts - bPts;
-    }
-    return bPts - aPts;
-  });
-
-  const positioned: PlayerEntry[] = [];
-  let currentPosition = 1;
-  let i = 0;
-
-  while (i < withPoints.length) {
-    const currentDayValue = parseInt(withPoints[i].dayPoints.trim(), 10);
-    let tieCount = 1;
-
-    while (
-      i + tieCount < withPoints.length &&
-      parseInt(withPoints[i + tieCount].dayPoints.trim(), 10) === currentDayValue
-    ) {
-      tieCount++;
-    }
-
-    const averagedOOM = getAveragedOOMPoints(currentPosition, tieCount);
-
-    for (let j = 0; j < tieCount; j++) {
-      positioned.push({
-        ...withPoints[i + j],
-        position: currentPosition,
-        oomPoints: averagedOOM,
-      });
-    }
-
-    currentPosition += tieCount;
-    i += tieCount;
-  }
-
-  return [...positioned, ...withoutPoints];
-}
-
 export default function EventPointsScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ id: string }>();
@@ -323,13 +272,15 @@ export default function EventPointsScreen() {
     setJointPeerNamesLine(null);
 
     try {
-      const [evt, societyMembers, existingResults, jointMetaMap, eventRegs] = await Promise.all([
+      const [evt, societyMembers, existingResults, jointMetaMap, eventRegs, eventGuests] = await Promise.all([
         getEvent(eventId),
         getMembersBySocietyId(societyId),
         getEventResultsForSociety(eventId, societyId),
         getJointMetaForEventIds([eventId]),
         getEventRegistrations(eventId),
+        getEventGuests(eventId),
       ]);
+      const guestById = new Map(eventGuests.map((g) => [g.id, g]));
 
       if (!evt) {
         setError("Event not found");
@@ -502,8 +453,38 @@ export default function EventPointsScreen() {
             isKnownMember: true,
           };
         });
+        const inJointList = new Set(playerList.map((p) => p.memberId));
+        for (const pid of mergedCandidateIds) {
+          const ps = String(pid);
+          if (!ps.startsWith("guest-") || inJointList.has(ps)) continue;
+          const gid = ps.slice("guest-".length);
+          const g = guestById.get(gid);
+          playerList.push({
+            memberId: ps,
+            memberName: (g?.name ?? "Guest").trim(),
+            dayPoints: "",
+            position: null,
+            oomPoints: 0,
+            hasPersistedResult: false,
+            isKnownMember: Boolean(g),
+          });
+        }
       } else {
         playerList = playerIds.map((pid: string) => {
+          const ps = String(pid);
+          if (ps.startsWith("guest-")) {
+            const gid = ps.slice("guest-".length);
+            const g = guestById.get(gid);
+            return {
+              memberId: ps,
+              memberName: (g?.name ?? "Guest").trim(),
+              dayPoints: "",
+              position: null,
+              oomPoints: 0,
+              hasPersistedResult: false,
+              isKnownMember: Boolean(g),
+            };
+          }
           const member = memberMap.get(pid);
           return {
             memberId: pid,
@@ -536,11 +517,7 @@ export default function EventPointsScreen() {
       const sortOrder = getFormatSortOrder(evt.format);
       if (existingResults.length > 0) {
         playerList = playerList.map((p) => {
-          const idCandidates =
-            p.mergedResultMemberIds && p.mergedResultMemberIds.length > 0
-              ? p.mergedResultMemberIds
-              : [p.memberId];
-          const hit = pickExistingResultForMergedMemberIds(existingResults, idCandidates);
+          const hit = pickExistingResultForPlayer(p, existingResults, societyId);
           if (!hit) return { ...p, hasPersistedResult: false };
           const dv = hit.day_value != null ? String(hit.day_value) : "";
           return {
@@ -551,22 +528,41 @@ export default function EventPointsScreen() {
             hasPersistedResult: true,
           };
         });
-        playerList = calculatePositionsAndOOM(playerList, sortOrder);
+        playerList = calculateFieldPositionsAndMemberOomPoints(playerList, sortOrder);
       }
       playerList = applyPointsDisplayOrder(playerList);
-      const resolvedResultIds = new Set(
+      const resolvedMemberIds = new Set(
         playerList.flatMap((p) =>
-          p.mergedResultMemberIds && p.mergedResultMemberIds.length > 0
-            ? p.mergedResultMemberIds.map(String)
-            : [String(p.memberId)],
+          String(p.memberId).startsWith("guest-")
+            ? []
+            : p.mergedResultMemberIds && p.mergedResultMemberIds.length > 0
+              ? p.mergedResultMemberIds.map(String)
+              : [String(p.memberId)],
         ),
       );
-      const orphanRows = existingResults
-        .filter((r) => !resolvedResultIds.has(String(r.member_id)))
-        .map((r) => ({
-          memberId: String(r.member_id),
-          label: `Guest/unknown result · ${String(r.member_id).slice(0, 8)}`,
-        }));
+      const resolvedGuestIds = new Set(
+        playerList
+          .filter((p) => String(p.memberId).startsWith("guest-"))
+          .map((p) => String(p.memberId).slice("guest-".length)),
+      );
+      const orphanRows: OrphanResultRow[] = [];
+      for (const r of existingResults) {
+        if (r.member_id != null && String(r.member_id).length > 0) {
+          if (!resolvedMemberIds.has(String(r.member_id))) {
+            orphanRows.push({
+              memberId: String(r.member_id),
+              label: `Unknown member result · ${String(r.member_id).slice(0, 8)}`,
+            });
+          }
+        } else if (r.event_guest_id != null && String(r.event_guest_id).length > 0) {
+          if (!resolvedGuestIds.has(String(r.event_guest_id))) {
+            orphanRows.push({
+              memberId: `guest-${r.event_guest_id}`,
+              label: `Guest result · ${String(r.event_guest_id).slice(0, 8)}`,
+            });
+          }
+        }
+      }
       setOrphanResults(orphanRows);
 
       if (dbg && isJointWithDetail && jointDetail) {
@@ -607,7 +603,7 @@ export default function EventPointsScreen() {
       );
 
       // Recalculate positions and OOM points, then apply stable display order
-      return applyPointsDisplayOrder(calculatePositionsAndOOM(updated, sortOrder));
+      return applyPointsDisplayOrder(calculateFieldPositionsAndMemberOomPoints(updated, sortOrder));
     });
   };
 
@@ -639,12 +635,17 @@ export default function EventPointsScreen() {
 
       const run = async () => {
         try {
-          const idsToClear =
-            mergedResultMemberIds && mergedResultMemberIds.length > 0
-              ? [...new Set(mergedResultMemberIds)]
-              : [memberId];
-          for (const mid of idsToClear) {
-            await deleteEventResultForMember(eventId, societyId, mid);
+          if (String(memberId).startsWith("guest-")) {
+            const gid = String(memberId).slice("guest-".length);
+            await deleteEventResultForGuest(eventId, societyId, gid);
+          } else {
+            const idsToClear =
+              mergedResultMemberIds && mergedResultMemberIds.length > 0
+                ? [...new Set(mergedResultMemberIds)]
+                : [memberId];
+            for (const mid of idsToClear) {
+              await deleteEventResultForMember(eventId, societyId, mid);
+            }
           }
           if (societyId) await invalidateCachePrefix(`society:${societyId}:`);
           await invalidateCache(`event:${eventId}:detail`);
@@ -745,16 +746,26 @@ export default function EventPointsScreen() {
       players: playersToSave,
     });
 
-    const results: { member_id: string; points: number; day_value?: number; position?: number }[] = [];
+    const results: EventResultInput[] = [];
     for (const p of playersToSave) {
-      if (String(p.memberId).startsWith("guest-") || p.isKnownMember === false) continue;
+      if (!String(p.memberId).startsWith("guest-") && p.isKnownMember === false) continue;
       const dayValue = parseInt(p.dayPoints.trim(), 10);
-      results.push({
-        member_id: p.memberId,
-        points: p.oomPoints,
-        day_value: !isNaN(dayValue) ? dayValue : undefined,
-        position: p.position ?? undefined,
-      });
+      if (String(p.memberId).startsWith("guest-")) {
+        const gid = String(p.memberId).slice("guest-".length);
+        results.push({
+          event_guest_id: gid,
+          points: 0,
+          day_value: !isNaN(dayValue) ? dayValue : undefined,
+          position: p.position ?? undefined,
+        });
+      } else {
+        results.push({
+          member_id: p.memberId,
+          points: p.oomPoints,
+          day_value: !isNaN(dayValue) ? dayValue : undefined,
+          position: p.position ?? undefined,
+        });
+      }
     }
 
     console.log("[points] results array:", {
@@ -769,14 +780,18 @@ export default function EventPointsScreen() {
       return;
     }
 
-    const payloadMemberIds = new Set(results.map((r) => r.member_id));
+    const payloadKeys = new Set<string>();
+    for (const r of results) {
+      if (r.member_id) payloadKeys.add(`m:${String(r.member_id)}`);
+      if (r.event_guest_id) payloadKeys.add(`g:${String(r.event_guest_id)}`);
+    }
 
     // Only DB write + cache busting inside useAsyncAction (must return a value — undefined was treated as failure).
     const dbOutcome = await saveAction.run(async () => {
       await upsertEventResults(event.id, societyId, results);
       if (societyId) await invalidateCachePrefix(`society:${societyId}:`);
       await invalidateCache(`event:${eventId}:detail`);
-      return { payloadCount: results.length, memberIds: [...payloadMemberIds] };
+      return { payloadCount: results.length, payloadKeys: [...payloadKeys] };
     });
 
     if (!dbOutcome) {
@@ -788,7 +803,7 @@ export default function EventPointsScreen() {
       console.log("[points] Save DB success", {
         eventId,
         societyId,
-        payloadMemberCount: dbOutcome.payloadCount,
+        payloadRowCount: dbOutcome.payloadCount,
       });
     }
 
@@ -805,23 +820,29 @@ export default function EventPointsScreen() {
     if (__DEV__) {
       try {
         const verify = await getEventResultsForSociety(eventId, societyId);
-        const notInPayload = verify.filter((r) => !payloadMemberIds.has(r.member_id));
+        const keySet = new Set(dbOutcome.payloadKeys);
+        const notInPayload = verify.filter((r) => {
+          if (r.member_id) return !keySet.has(`m:${String(r.member_id)}`);
+          if (r.event_guest_id) return !keySet.has(`g:${String(r.event_guest_id)}`);
+          return true;
+        });
         console.log("[points] post-save fetch vs payload", {
           eventId,
           societyId,
-          /** Rows written/updated in this save (upsert batch size). */
-          thisSavePayloadMemberCount: dbOutcome.payloadCount,
-          /** All persisted rows for event + society (includes players not in this save). */
+          thisSavePayloadRowCount: dbOutcome.payloadCount,
           totalPersistedRowsForEventSociety: verify.length,
           persistedRowsNotInThisSavePayload: notInPayload.length,
           explanation:
             notInPayload.length > 0
-              ? "Fetch count can exceed upsert count because only players with scores in this screen are saved; other members may already have result rows from earlier saves."
-              : "All persisted rows match this save payload member set.",
-          memberIdsNotInThisSavePayload: notInPayload.map((r) => r.member_id).slice(0, 20),
+              ? "Fetch count can exceed upsert count because only players with scores in this screen are saved; others may already have result rows from earlier saves."
+              : "All persisted rows match this save payload.",
+          keysNotInThisSavePayload: notInPayload
+            .map((r) => (r.member_id ? `m:${r.member_id}` : r.event_guest_id ? `g:${r.event_guest_id}` : "?"))
+            .slice(0, 20),
           snapshot: verify.map((r) => ({
             id: r.id,
             member_id: r.member_id,
+            event_guest_id: r.event_guest_id,
             day_value: r.day_value,
             position: r.position,
             points: r.points,
@@ -1081,9 +1102,9 @@ export default function EventPointsScreen() {
         <View style={styles.instructionContent}>
           <Feather name="info" size={16} color={colors.primary} />
           <AppText variant="caption" color="secondary" style={{ flex: 1 }}>
-            {sortOrder === 'low_wins'
-              ? "Lower is better. Top 10 earn F1 points (25, 18, 15...). Ties share averaged points."
-              : "Higher is better. Top 10 earn F1 points (25, 18, 15...). Ties share averaged points."}
+            {sortOrder === "low_wins"
+              ? "Lower is better in the full field (members and guests). Pos is overall standing. Order of Merit points are for society members only — guests never earn OOM; members are ranked among members for OOM (e.g. if a guest wins the day, the top member still earns 1st-place member OOM points)."
+              : "Higher is better in the full field (members and guests). Pos is overall standing. Order of Merit points are for society members only — guests never earn OOM; members are ranked among members for OOM (e.g. if a guest leads the day, the top member still earns 1st-place member OOM points)."}
           </AppText>
         </View>
       </AppCard>
@@ -1125,7 +1146,7 @@ export default function EventPointsScreen() {
       {orphanResults.length > 0 ? (
         <AppCard style={{ marginBottom: spacing.md }}>
           <AppText variant="captionBold" color="warning" style={{ marginBottom: spacing.xs }}>
-            Guest/unknown result rows (excluded from OOM)
+            Saved result rows not in the current field list
           </AppText>
           {orphanResults.map((r) => (
             <View key={`orphan-${r.memberId}`} style={styles.orphanRow}>
@@ -1177,6 +1198,18 @@ export default function EventPointsScreen() {
                   <AppText variant="body" numberOfLines={1} style={{ flex: 1, minWidth: 0 }}>
                     {player.memberName}
                   </AppText>
+                  {isGuestEntrantKey(player.memberId) ? (
+                    <View
+                      style={[
+                        styles.guestBadge,
+                        { borderColor: colors.border, backgroundColor: colors.backgroundSecondary },
+                      ]}
+                    >
+                      <AppText variant="captionBold" color="secondary">
+                        Guest
+                      </AppText>
+                    </View>
+                  ) : null}
                   {visual === "saved" ? (
                     <Feather name="check" size={16} color={colors.success} style={styles.savedTick} />
                   ) : null}
@@ -1292,6 +1325,13 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: spacing.xs,
+    flexWrap: "wrap",
+  },
+  guestBadge: {
+    paddingHorizontal: spacing.xs,
+    paddingVertical: 2,
+    borderRadius: radius.sm,
+    borderWidth: 1,
   },
   savedTick: {
     marginTop: 1,

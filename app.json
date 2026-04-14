@@ -15,6 +15,13 @@
     "android": {
       "package": "com.godskid.golfsocietyhub",
       "versionCode": 12,
+      "intentFilters": [
+        {
+          "action": "VIEW",
+          "category": ["BROWSABLE", "DEFAULT"],
+          "data": [{ "scheme": "thegolfsocietyhub" }]
+        }
+      ],
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/app-icon.png",
         "backgroundColor": "#FFFFFF"

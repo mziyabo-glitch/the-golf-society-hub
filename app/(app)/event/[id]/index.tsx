@@ -1,6 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import debounce from "lodash.debounce";
-import { StyleSheet, View, Pressable, ScrollView, Modal, Share, Platform, useWindowDimensions } from "react-native";
+import {
+  StyleSheet,
+  View,
+  Pressable,
+  ScrollView,
+  Modal,
+  Share,
+  Platform,
+  useWindowDimensions,
+  Switch,
+} from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
 import { Feather } from "@expo/vector-icons";
@@ -48,6 +58,7 @@ import {
   canManageEventPaymentsForSociety,
   canManageEventRosterForSociety,
   canShareEventPaymentListsForSociety,
+  isCaptainInLinkedSocietiesForEvent,
 } from "@/lib/rbac";
 import {
   getEventRegistrations,
@@ -100,6 +111,13 @@ import {
   formatWhatsAppUnpaidList,
 } from "@/lib/eventPaymentShare";
 import { exportEventPaymentPdf } from "@/lib/pdf/eventPaymentPdf";
+import {
+  assignEventPrizePoolManager,
+  getEventPrizePoolManagerInfo,
+  isMemberTheEventPrizePoolManager,
+  removeEventPrizePoolManager,
+  setEventPrizePoolEnabled,
+} from "@/lib/db_supabase/eventPrizePoolRepo";
 
 // Picker option component
 function PickerOption({
@@ -151,6 +169,7 @@ export default function EventDetailScreen() {
   const permissions = getPermissionsForMember(currentMember);
   const canEnterPoints = permissions.canManageHandicaps;
   const canEditEvent = permissions.canCreateEvents;
+  const canManagePrizePools = canManageEventPaymentsForSociety(memberships, societyId);
 
   // Safely extract eventId (could be string or array from URL params)
   const eventId = Array.isArray(params.id) ? params.id[0] : params.id;
@@ -393,6 +412,16 @@ export default function EventDetailScreen() {
   const [addMemberModalOpen, setAddMemberModalOpen] = useState(false);
   const [addMemberSearch, setAddMemberSearch] = useState("");
   const [addMemberBusy, setAddMemberBusy] = useState<string | null>(null);
+  const [isPrizePoolMgrForEvent, setIsPrizePoolMgrForEvent] = useState(false);
+  const [prizePoolMgrInfo, setPrizePoolMgrInfo] = useState<{ memberId: string; displayName: string } | null>(
+    null,
+  );
+  const [poolMgrModalOpen, setPoolMgrModalOpen] = useState(false);
+  const [poolMgrSearch, setPoolMgrSearch] = useState("");
+  const [poolMgrAssignBusy, setPoolMgrAssignBusy] = useState<string | null>(null);
+  const [poolMgrRemoveBusy, setPoolMgrRemoveBusy] = useState(false);
+  const [prizePoolEnableBusy, setPrizePoolEnableBusy] = useState(false);
+  const [prizePoolMgrCandidates, setPrizePoolMgrCandidates] = useState<MemberDoc[]>([]);
   const [registrationsRefreshing, setRegistrationsRefreshing] = useState(false);
   const [societyGuestCount, setSocietyGuestCount] = useState(0);
   const [societyGuests, setSocietyGuests] = useState<EventGuest[]>([]);
@@ -405,6 +434,23 @@ export default function EventDetailScreen() {
     if (fromJoint.length > 0) return [...new Set(fromJoint)];
     return [...new Set(event?.participant_society_ids ?? [])];
   }, [jointParticipatingSocieties, event?.participant_society_ids]);
+
+  const linkedSocietyIdsForPrizePool = useMemo(() => {
+    const fromParticipants = [...new Set(participantSocietyIdsForAccess.filter(Boolean))];
+    if (fromParticipants.length > 0) return fromParticipants;
+    return [...new Set([hostSocietyId, societyId].filter(Boolean) as string[])];
+  }, [participantSocietyIdsForAccess, hostSocietyId, societyId]);
+
+  const canAssignPrizePoolSettings = useMemo(
+    () =>
+      isCaptainInLinkedSocietiesForEvent(
+        memberships,
+        participantSocietyIdsForAccess,
+        hostSocietyId,
+        societyId,
+      ),
+    [memberships, participantSocietyIdsForAccess, hostSocietyId, societyId],
+  );
 
   const detailIsJointEvent = useMemo(
     () =>
@@ -459,6 +505,85 @@ export default function EventDetailScreen() {
     canShowMemberTeeSheetCta,
     detailIsJointEvent,
   ]);
+
+  useEffect(() => {
+    if (!eventId || !currentMember?.id) {
+      setIsPrizePoolMgrForEvent(false);
+      return;
+    }
+    let cancelled = false;
+    void isMemberTheEventPrizePoolManager(eventId, currentMember.id).then((v) => {
+      if (!cancelled) setIsPrizePoolMgrForEvent(v);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [eventId, currentMember?.id]);
+
+  useEffect(() => {
+    if (!eventId) {
+      setPrizePoolMgrInfo(null);
+      return;
+    }
+    let cancelled = false;
+    void getEventPrizePoolManagerInfo(eventId).then((info) => {
+      if (!cancelled) setPrizePoolMgrInfo(info);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [eventId]);
+
+  useEffect(() => {
+    if (!poolMgrModalOpen) {
+      setPoolMgrSearch("");
+      return;
+    }
+    if (!linkedSocietyIdsForPrizePool.length) {
+      setPrizePoolMgrCandidates([]);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const lists = await Promise.all(
+          linkedSocietyIdsForPrizePool.map((id) => getMembersBySocietyId(id)),
+        );
+        if (cancelled) return;
+        const byId = new Map<string, MemberDoc>();
+        for (const list of lists) {
+          for (const m of list) {
+            byId.set(m.id, m);
+          }
+        }
+        const merged = [...byId.values()].sort((a, b) => {
+          const na = resolveAttendeeDisplayName(a, { memberId: a.id }).name.toLowerCase();
+          const nb = resolveAttendeeDisplayName(b, { memberId: b.id }).name.toLowerCase();
+          return na.localeCompare(nb);
+        });
+        setPrizePoolMgrCandidates(merged);
+      } catch {
+        if (!cancelled) setPrizePoolMgrCandidates([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [poolMgrModalOpen, linkedSocietyIdsForPrizePool]);
+
+  const filteredPrizePoolMgrCandidates = useMemo(() => {
+    const q = poolMgrSearch.trim().toLowerCase();
+    if (!q) return prizePoolMgrCandidates;
+    return prizePoolMgrCandidates.filter((m) => {
+      const { name } = resolveAttendeeDisplayName(m, { memberId: m.id });
+      const email = (m as { email?: string | null }).email;
+      return (
+        name.toLowerCase().includes(q) || (!!email && String(email).toLowerCase().includes(q))
+      );
+    });
+  }, [prizePoolMgrCandidates, poolMgrSearch]);
+
+  const canOpenPrizePoolsScreen = canManagePrizePools || isPrizePoolMgrForEvent;
 
   const paymentsCacheKey = eventId && societyId ? `event:${eventId}:payments:${societyId}` : null;
   const confirmedCacheKey = eventId && societyId ? `event:${eventId}:confirmed-players:${societyId}` : null;
@@ -2550,6 +2675,126 @@ export default function EventDetailScreen() {
         </Pressable>
       )}
 
+      {canAssignPrizePoolSettings && event && eventId ? (
+        <AppCard style={{ borderRadius: radius.md, marginTop: spacing.sm }}>
+          <AppText variant="subheading" style={{ marginBottom: spacing.xs }}>
+            Prize Pool
+          </AppText>
+          <AppText variant="caption" color="secondary" style={{ marginBottom: spacing.sm }}>
+            Allow members to request entry to the prize pool on their home screen and appoint a Pot Master to confirm
+            entrants and run pools. This does not change main event fees or attendance.
+          </AppText>
+          <View
+            style={{
+              flexDirection: "row",
+              alignItems: "center",
+              justifyContent: "space-between",
+              marginBottom: spacing.md,
+              gap: spacing.sm,
+            }}
+          >
+            <AppText variant="body" style={{ flex: 1 }}>
+              Enable Prize Pool
+            </AppText>
+            <Switch
+              value={!!event.prizePoolEnabled}
+              disabled={prizePoolEnableBusy}
+              onValueChange={(v) => {
+                void (async () => {
+                  if (!eventId || prizePoolEnableBusy) return;
+                  setPrizePoolEnableBusy(true);
+                  try {
+                    await setEventPrizePoolEnabled(eventId, v);
+                    await loadEvent();
+                    setPrizePoolMgrInfo(await getEventPrizePoolManagerInfo(eventId));
+                  } catch (err: unknown) {
+                    showAlert(
+                      "Could not update",
+                      err instanceof Error ? err.message : "Unknown error",
+                    );
+                  } finally {
+                    setPrizePoolEnableBusy(false);
+                  }
+                })();
+              }}
+            />
+          </View>
+          <AppText variant="caption" color="secondary" style={{ marginBottom: spacing.xs }}>
+            Pot Master
+          </AppText>
+          <AppText variant="bodyBold" style={{ marginBottom: spacing.sm }}>
+            {prizePoolMgrInfo?.displayName ?? "Not assigned"}
+          </AppText>
+          <PrimaryButton
+            onPress={() => setPoolMgrModalOpen(true)}
+            style={{ marginBottom: prizePoolMgrInfo ? spacing.xs : 0 }}
+          >
+            Choose Pot Master
+          </PrimaryButton>
+          {prizePoolMgrInfo ? (
+            <SecondaryButton
+              loading={poolMgrRemoveBusy}
+              onPress={() => {
+                if (!eventId || poolMgrRemoveBusy) return;
+                confirmDestructive(
+                  "Remove Pot Master?",
+                  "They will lose access to prize pool administration for this event.",
+                  "Remove",
+                  () => {
+                    void (async () => {
+                      setPoolMgrRemoveBusy(true);
+                      try {
+                        const removedId = prizePoolMgrInfo?.memberId;
+                        await removeEventPrizePoolManager(eventId);
+                        setPrizePoolMgrInfo(null);
+                        if (removedId && currentMember?.id === removedId) {
+                          setIsPrizePoolMgrForEvent(false);
+                        }
+                        await loadEvent();
+                      } catch (err: unknown) {
+                        showAlert(
+                          "Could not remove",
+                          err instanceof Error ? err.message : "Unknown error",
+                        );
+                      } finally {
+                        setPoolMgrRemoveBusy(false);
+                      }
+                    })();
+                  },
+                );
+              }}
+            >
+              Remove Pot Master
+            </SecondaryButton>
+          ) : null}
+        </AppCard>
+      ) : null}
+
+      {/* Prize Pool — ManCo or appointed Pot Master */}
+      {canOpenPrizePoolsScreen && eventId && (
+        <Pressable
+          onPress={() =>
+            router.push({ pathname: "/(app)/event/[id]/prize-pools" as any, params: { id: eventId } })
+          }
+          style={({ pressed }) => ({ opacity: pressed ? 0.8 : 1, marginTop: spacing.sm })}
+        >
+          <AppCard style={styles.actionCard}>
+            <View style={styles.actionRow}>
+              <View style={[styles.iconContainer, { backgroundColor: colors.primary + "18" }]}>
+                <Feather name="award" size={18} color={colors.primary} />
+              </View>
+              <View style={styles.actionContent}>
+                <AppText variant="bodyBold">Prize Pool</AppText>
+                <AppText variant="caption" color="secondary">
+                  Payout summary, divisions, and Pot Master entrants
+                </AppText>
+              </View>
+              <Feather name="chevron-right" size={20} color={colors.textTertiary} />
+            </View>
+          </AppCard>
+        </Pressable>
+      )}
+
       {/* Delete Event - Captain/Secretary/Treasurer */}
       {permissions.canDeleteEvents && (
         <SecondaryButton
@@ -2643,6 +2888,114 @@ export default function EventDetailScreen() {
               onPress={() => {
                 setAddMemberModalOpen(false);
                 setAddMemberSearch("");
+              }}
+            >
+              Cancel
+            </SecondaryButton>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      <Modal
+        visible={poolMgrModalOpen}
+        animationType="slide"
+        transparent
+        onRequestClose={() => {
+          if (!poolMgrAssignBusy) setPoolMgrModalOpen(false);
+        }}
+      >
+        <Pressable
+          style={styles.addMemberModalBackdrop}
+          onPress={() => {
+            if (!poolMgrAssignBusy) setPoolMgrModalOpen(false);
+          }}
+        >
+          <Pressable
+            style={[styles.addMemberModalCard, { backgroundColor: colors.background }]}
+            onPress={(e) => e.stopPropagation()}
+          >
+            <AppText variant="h2" style={{ marginBottom: spacing.sm }}>
+              Choose Pot Master
+            </AppText>
+            <AppText variant="small" color="secondary" style={{ marginBottom: spacing.sm }}>
+              Pick a member linked to this event. They can confirm entrants, add guests to the pool list, set optional
+              notes for entrants, and run prize pools.
+            </AppText>
+            <AppInput
+              placeholder="Search name or email"
+              value={poolMgrSearch}
+              onChangeText={setPoolMgrSearch}
+              autoCapitalize="none"
+              autoCorrect={false}
+            />
+            <ScrollView style={styles.searchResults} keyboardShouldPersistTaps="handled">
+              {filteredPrizePoolMgrCandidates.length === 0 ? (
+                <AppText variant="small" color="muted" style={{ padding: spacing.sm }}>
+                  {prizePoolMgrCandidates.length === 0
+                    ? "No members loaded for linked societies."
+                    : "No matching members"}
+                </AppText>
+              ) : (
+                filteredPrizePoolMgrCandidates.map((m) => {
+                  const label = resolveAttendeeDisplayName(m, { memberId: m.id }).name;
+                  const busy = poolMgrAssignBusy === m.id;
+                  return (
+                    <Pressable
+                      key={m.id}
+                      disabled={!!poolMgrAssignBusy || !eventId}
+                      onPress={() => {
+                        void (async () => {
+                          if (!eventId) return;
+                          setPoolMgrAssignBusy(m.id);
+                          try {
+                            await assignEventPrizePoolManager(eventId, m.id);
+                            setPoolMgrModalOpen(false);
+                            setPrizePoolMgrInfo(await getEventPrizePoolManagerInfo(eventId));
+                            if (currentMember?.id) {
+                              setIsPrizePoolMgrForEvent(
+                                await isMemberTheEventPrizePoolManager(eventId, currentMember.id),
+                              );
+                            }
+                            await loadEvent();
+                          } catch (err: unknown) {
+                            showAlert(
+                              "Could not assign",
+                              err instanceof Error ? err.message : "Unknown error",
+                            );
+                          } finally {
+                            setPoolMgrAssignBusy(null);
+                          }
+                        })();
+                      }}
+                      style={({ pressed }) => [
+                        styles.searchResultItem,
+                        { opacity: pressed || busy ? 0.55 : 1 },
+                      ]}
+                    >
+                      <AppText variant="body" numberOfLines={2}>
+                        {label}
+                      </AppText>
+                      {!m.user_id ? (
+                        <AppText variant="caption" color="muted">
+                          No app account yet
+                        </AppText>
+                      ) : null}
+                    </Pressable>
+                  );
+                })
+              )}
+            </ScrollView>
+            {poolMgrAssignBusy ? (
+              <AppText variant="small" color="muted" style={{ marginTop: spacing.xs }}>
+                Assigning…
+              </AppText>
+            ) : null}
+            <SecondaryButton
+              disabled={!!poolMgrAssignBusy}
+              style={{ marginTop: spacing.sm }}
+              onPress={() => {
+                setPoolMgrModalOpen(false);
+                setPoolMgrSearch("");
               }}
             >
               Cancel

@@ -31,6 +31,11 @@ import {
   markMePaid,
   type EventRegistration,
 } from "@/lib/db_supabase/eventRegistrationRepo";
+import {
+  getEventPrizePoolManagerInfo,
+  getMyEventPrizePoolEntry,
+} from "@/lib/db_supabase/eventPrizePoolRepo";
+import type { EventPrizePoolEntryRow } from "@/lib/event-prize-pools-types";
 import { blurWebActiveElement } from "@/lib/ui/focus";
 import { getCache, setCache, invalidateCache } from "@/lib/cache/clientCache";
 import { useBootstrap } from "@/lib/useBootstrap";
@@ -310,6 +315,69 @@ export function useHomeDashboard() {
       nextEvent.participant_society_ids ?? [],
     );
   }, [nextEvent, societyId]);
+
+  const [prizePoolReloadNonce, setPrizePoolReloadNonce] = useState(0);
+  const [prizePoolCard, setPrizePoolCard] = useState<{
+    managerName: string | null;
+    entry: EventPrizePoolEntryRow | null;
+    loading: boolean;
+  } | null>(null);
+
+  const bumpPrizePoolHomeCard = useCallback(() => {
+    setPrizePoolReloadNonce((n) => n + 1);
+  }, []);
+
+  useEffect(() => {
+    if (!nextEvent?.prizePoolEnabled || !memberId || !societyId || !nextEvent.id) {
+      setPrizePoolCard(null);
+      return;
+    }
+    if (
+      !isActiveSocietyParticipantForEvent(
+        societyId,
+        nextEvent.society_id,
+        nextEvent.participant_society_ids ?? [],
+      )
+    ) {
+      setPrizePoolCard(null);
+      return;
+    }
+    let cancelled = false;
+    setPrizePoolCard((p) => ({
+      managerName: p?.managerName ?? null,
+      entry: p?.entry ?? null,
+      loading: true,
+    }));
+    void (async () => {
+      try {
+        const [mgr, entry] = await Promise.all([
+          getEventPrizePoolManagerInfo(nextEvent.id),
+          getMyEventPrizePoolEntry(nextEvent.id, memberId),
+        ]);
+        if (cancelled) return;
+        setPrizePoolCard({
+          managerName: mgr?.displayName ?? null,
+          entry,
+          loading: false,
+        });
+      } catch {
+        if (!cancelled) {
+          setPrizePoolCard({ managerName: null, entry: null, loading: false });
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    nextEvent?.id,
+    nextEvent?.prizePoolEnabled,
+    nextEvent?.society_id,
+    nextEvent?.participant_society_ids,
+    societyId,
+    memberId,
+    prizePoolReloadNonce,
+  ]);
 
   useEffect(() => {
     if (!nextEventId) return;
@@ -696,6 +764,8 @@ export function useHomeDashboard() {
     formatClassification,
     formatShortDate,
     formatPoints,
+    prizePoolCard,
+    bumpPrizePoolHomeCard,
   };
 }
 

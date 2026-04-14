@@ -36,10 +36,12 @@ export async function getOomLeaderboard(societyId: string): Promise<OomRow[]> {
   const totals = new Map<string, { totalPoints: number; eventsPlayed: number }>();
 
   for (const r of results) {
-    if (!totals.has(r.member_id)) {
-      totals.set(r.member_id, { totalPoints: 0, eventsPlayed: 0 });
+    if (r.member_id == null || String(r.member_id).length === 0) continue;
+    const mid = String(r.member_id);
+    if (!totals.has(mid)) {
+      totals.set(mid, { totalPoints: 0, eventsPlayed: 0 });
     }
-    const row = totals.get(r.member_id)!;
+    const row = totals.get(mid)!;
     row.totalPoints += r.points ?? 0;
     row.eventsPlayed += 1;
   }

@@ -6,6 +6,7 @@ import { AppText } from "@/components/ui/AppText";
 import { AppCard } from "@/components/ui/AppCard";
 import { DashboardMemberIdentityCard } from "@/components/dashboard/DashboardMemberIdentityCard";
 import { DashboardHeroEventCard } from "@/components/dashboard/DashboardHeroEventCard";
+import { DashboardPrizePoolHomeCard } from "@/components/dashboard/DashboardPrizePoolHomeCard";
 import { DashboardPlayabilityMiniCard } from "@/components/dashboard/DashboardPlayabilityMiniCard";
 import { DashboardOomTopMetricsRow } from "@/components/dashboard/DashboardOomTopMetricsRow";
 import { DashboardYourStatusCard } from "@/components/dashboard/DashboardYourStatusCard";
@@ -79,6 +80,8 @@ export function HomeSocietyDashboardView(vm: HomeSocietyDashboardVm) {
     formatShortDate,
     formatPoints,
     router,
+    prizePoolCard,
+    bumpPrizePoolHomeCard,
   } = vm;
 
   return (
@@ -211,6 +214,18 @@ export function HomeSocietyDashboardView(vm: HomeSocietyDashboardVm) {
           nextEvent && router.push({ pathname: "/(app)/event/[id]/tee-sheet", params: { id: nextEvent.id } })
         }
       />
+
+      {nextEvent?.prizePoolEnabled && prizePoolCard && memberId ? (
+        <DashboardPrizePoolHomeCard
+          eventId={nextEvent.id}
+          myMemberId={memberId}
+          managerName={prizePoolCard.managerName}
+          paymentInstructions={nextEvent.prizePoolPaymentInstructions}
+          entry={prizePoolCard.entry}
+          loading={prizePoolCard.loading}
+          onChanged={bumpPrizePoolHomeCard}
+        />
+      ) : null}
 
       {nextEvent ? (
         <DashboardYourStatusCard

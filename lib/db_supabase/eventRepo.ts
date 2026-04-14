@@ -82,6 +82,11 @@ export type EventDoc = {
   /** When set, public invite link stops accepting new RSVPs after this instant (timestamptz). */
   rsvp_deadline_at?: string | null;
   rsvpDeadlineAt?: string | null;
+  /** Optional society prize pool alongside the main event (member opt-in is separate from main fees). */
+  prize_pool_enabled?: boolean;
+  prizePoolEnabled?: boolean;
+  prize_pool_payment_instructions?: string | null;
+  prizePoolPaymentInstructions?: string | null;
   /**
    * Canonical joint flag: true when `event_societies` has 2+ distinct society_id values
    * (same rule as `get_joint_event_detail` / `isEventJoint`). Set by repo when loading lists or `getEvent`.
@@ -141,6 +146,10 @@ function mapEvent(row: any): EventDoc {
     entryFeeDisplay: row.entry_fee_display?.trim() || null,
     rsvp_deadline_at: row.rsvp_deadline_at ?? null,
     rsvpDeadlineAt: row.rsvp_deadline_at ?? null,
+    prize_pool_enabled: row.prize_pool_enabled ?? false,
+    prizePoolEnabled: row.prize_pool_enabled ?? false,
+    prize_pool_payment_instructions: row.prize_pool_payment_instructions?.trim() || null,
+    prizePoolPaymentInstructions: row.prize_pool_payment_instructions?.trim() || null,
   };
 }
 

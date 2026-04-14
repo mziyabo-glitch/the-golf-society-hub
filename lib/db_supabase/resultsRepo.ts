@@ -22,6 +22,41 @@ export function dedupeEventResultsByMemberIdPreferLatest<T extends { member_id: 
   return [...byMember.values()];
 }
 
+/** Guest rows: one per (society_id, event_guest_id); keep latest by updated_at. */
+export function dedupeEventResultsBySocietyGuestPreferLatest<
+  T extends { society_id: string; event_guest_id: string; updated_at?: string },
+>(rows: T[]): T[] {
+  const byKey = new Map<string, T>();
+  for (const r of rows) {
+    const key = `${r.society_id}:${r.event_guest_id}`;
+    const prev = byKey.get(key);
+    if (!prev) {
+      byKey.set(key, r);
+      continue;
+    }
+    const tNew = r.updated_at ? new Date(r.updated_at).getTime() : 0;
+    const tOld = prev.updated_at ? new Date(prev.updated_at).getTime() : 0;
+    if (tNew >= tOld) byKey.set(key, r);
+  }
+  return [...byKey.values()];
+}
+
+/** Member rows (deduped per member) plus guest rows (deduped per society + guest). */
+export function dedupeEventResultsPreferLatest(rows: EventResultDoc[]): EventResultDoc[] {
+  const memberRows = rows.filter(
+    (r): r is EventResultDoc & { member_id: string } =>
+      r.member_id != null && String(r.member_id).length > 0,
+  );
+  const guestRows = rows.filter(
+    (r): r is EventResultDoc & { event_guest_id: string } =>
+      r.event_guest_id != null && String(r.event_guest_id).length > 0,
+  );
+  return [
+    ...dedupeEventResultsByMemberIdPreferLatest(memberRows),
+    ...dedupeEventResultsBySocietyGuestPreferLatest(guestRows),
+  ];
+}
+
 /**
  * Matrix / OOM log: one visible row per real person per event in a society view.
  * Merges duplicate `event_results` that share the same joint person key (e.g. dual member ids
@@ -125,20 +160,28 @@ function logOomMatrixDebugDev(params: {
   }
 }
 
-function dedupeUpsertInputsByMemberIdLastWins(results: EventResultInput[]): EventResultInput[] {
+function dedupeUpsertInputsLastWins(results: EventResultInput[], societyId: string): EventResultInput[] {
   const byMember = new Map<string, EventResultInput>();
+  const byGuest = new Map<string, EventResultInput>();
   for (const r of results) {
-    byMember.set(String(r.member_id), r);
+    if (r.event_guest_id) {
+      const k = `${societyId}:${r.event_guest_id}`;
+      byGuest.set(k, r);
+    } else if (r.member_id) {
+      byMember.set(String(r.member_id), r);
+    }
   }
-  return [...byMember.values()];
+  return [...byMember.values(), ...byGuest.values()];
 }
 
-/** OOM must only include real member rows; drop guest/unknown ids from event_results. */
-function filterRowsWithKnownMembers<T extends { member_id: string }>(
+/** OOM must only include real member rows; guest `event_results` (member_id null) are excluded — no OOM points for guests. */
+function filterRowsWithKnownMembers<T extends { member_id: string | null }>(
   rows: T[],
   membersMap: Map<string, MemberDoc>,
 ): T[] {
-  return rows.filter((r) => membersMap.has(String(r.member_id)));
+  return rows.filter(
+    (r) => r.member_id != null && String(r.member_id).length > 0 && membersMap.has(String(r.member_id)),
+  );
 }
 
 /**
@@ -213,19 +256,22 @@ export type EventResultDoc = {
   id: string;
   society_id: string;
   event_id: string;
-  member_id: string;
-  points: number;  // OOM points (can be decimal for tie averaging, e.g., 16.5)
-  day_value?: number | null;  // Raw score: stableford pts or net score
-  position?: number | null;   // Finishing position (1, 2, 3...)
+  member_id: string | null;
+  event_guest_id: string | null;
+  points: number; // OOM points (can be decimal for tie averaging, e.g., 16.5)
+  day_value?: number | null; // Raw score: stableford pts or net score
+  position?: number | null; // Finishing position (1, 2, 3...)
   created_at: string;
   updated_at: string;
 };
 
+/** Exactly one of member_id or event_guest_id must be set (DB XOR). Society comes from upsertEventResults. */
 export type EventResultInput = {
-  member_id: string;
-  points: number;  // OOM points (can be decimal for tie averaging)
-  day_value?: number;  // Raw score for audit trail
-  position?: number;   // Finishing position for audit trail
+  member_id?: string | null;
+  event_guest_id?: string | null;
+  points: number; // OOM points (can be decimal for tie averaging)
+  day_value?: number; // Raw score for audit trail
+  position?: number; // Finishing position for audit trail
 };
 
 export type OrderOfMeritEntry = {
@@ -323,7 +369,9 @@ export async function getOrderOfMeritFullFieldExport(
 
   const oomEventCount = oomEventIds.size;
 
-  const memberIdsFromResults = [...new Set(rows.map((r: any) => String(r.member_id)))];
+  const memberIdsFromResults = [
+    ...new Set(rows.map((r: any) => r.member_id).filter(Boolean).map((id: string) => String(id))),
+  ];
   let membersData: any[] | null = null;
   if (memberIdsFromResults.length > 0) {
     const mem = await supabase
@@ -534,85 +582,104 @@ export async function upsertEventResults(
     return;
   }
 
-  const dedupedInputs = dedupeUpsertInputsByMemberIdLastWins(results);
+  for (const r of results) {
+    const hasM = r.member_id != null && String(r.member_id).length > 0;
+    const hasG = r.event_guest_id != null && String(r.event_guest_id).length > 0;
+    if (hasM === hasG) {
+      throw new Error("Each result row must set exactly one of member_id or event_guest_id.");
+    }
+  }
+
+  const dedupedInputs = dedupeUpsertInputsLastWins(results, societyId);
   if (dedupedInputs.length !== results.length) {
-    console.warn("[resultsRepo] upsertEventResults: deduped duplicate member_id in batch", {
+    console.warn("[resultsRepo] upsertEventResults: deduped duplicate keys in batch", {
       eventId,
       before: results.length,
       after: dedupedInputs.length,
     });
   }
 
-  // Prepare rows for upsert including audit columns (day_value, position)
-  // Requires migration 013 to add these columns to the database
-  // Uniqueness: DB constraint (event_id, member_id) — one OOM row per member per event.
-  const rows = dedupedInputs.map((r) => ({
-    event_id: eventId,
-    society_id: societyId,
-    member_id: r.member_id,
-    points: r.points,
-    day_value: r.day_value ?? null,
-    position: r.position ?? null,
-  }));
+  const memberRows = dedupedInputs.filter(
+    (r) => r.member_id != null && String(r.member_id).length > 0,
+  );
+  const guestRows = dedupedInputs.filter(
+    (r) => r.event_guest_id != null && String(r.event_guest_id).length > 0,
+  );
 
-  console.log("[resultsRepo] upserting rows:", JSON.stringify(rows, null, 2));
-
-  // Use .select() to verify rows were actually inserted/updated
-  const { data, error } = await supabase
-    .from("event_results")
-    .upsert(rows, {
-      onConflict: "event_id,member_id",
-      ignoreDuplicates: false,
-    })
-    .select();
-
-  if (error) {
-    console.error("[resultsRepo] upsertEventResults failed:", {
-      message: error.message,
-      details: error.details,
-      hint: error.hint,
-      code: error.code,
-    });
-
-    // PGRST204: Schema mismatch - column doesn't exist in PostgREST cache
+  const mapUpsertError = (error: { message?: string; details?: string; hint?: string; code?: string }) => {
     if (error.code === "PGRST204" || error.message?.includes("PGRST204") || error.message?.includes("schema cache")) {
       throw new Error(
-        "Database schema mismatch (PGRST204). The event_results table may be missing the society_id column. " +
-        "Please run migration 011 and refresh the API schema in Supabase Dashboard → Settings → API → Reload schema."
+        "Database schema mismatch (PGRST204). The event_results table may be out of date. " +
+          "Please run migrations and reload the API schema in Supabase Dashboard → Settings → API → Reload schema.",
       );
     }
-
-    // 42501: RLS permission denied
     if (error.code === "42501" || error.message?.includes("policy")) {
       throw new Error("Permission denied. Only Captain, Handicapper, or Secretary can save points.");
     }
-
-    // 42P01: Table doesn't exist
     if (error.code === "42P01" || error.message?.includes("does not exist")) {
-      throw new Error("Results table not found. Please run migration 011 in Supabase.");
+      throw new Error("Results table not found. Please run migrations in Supabase.");
     }
-
-    // 23503: Foreign key violation
     if (error.code === "23503") {
-      throw new Error("Invalid event or member reference. Please refresh and try again.");
+      throw new Error("Invalid event, member, or guest reference. Please refresh and try again.");
     }
-
     throw new Error(error.message || "Failed to save event results");
+  };
+
+  const allReturned: EventResultDoc[] = [];
+
+  if (memberRows.length > 0) {
+    const rows = memberRows.map((r) => ({
+      event_id: eventId,
+      society_id: societyId,
+      member_id: r.member_id as string,
+      event_guest_id: null,
+      points: r.points,
+      day_value: r.day_value ?? null,
+      position: r.position ?? null,
+    }));
+    console.log("[resultsRepo] upserting member rows:", rows.length);
+    const { data, error } = await supabase
+      .from("event_results")
+      .upsert(rows, { onConflict: "event_id,member_id", ignoreDuplicates: false })
+      .select();
+    if (error) {
+      console.error("[resultsRepo] upsertEventResults (members) failed:", error);
+      mapUpsertError(error);
+    }
+    if (!data?.length) {
+      console.error("[resultsRepo] upsert members returned no data - RLS may be blocking");
+      throw new Error("Failed to save points. You may not have permission.");
+    }
+    allReturned.push(...(data as EventResultDoc[]));
   }
 
-  // Verify data was actually saved (RLS can silently block without error)
-  console.log("[resultsRepo] upsert returned:", data?.length ?? 0, "rows");
-
-  if (!data || data.length === 0) {
-    console.error("[resultsRepo] upsert returned no data - RLS may be blocking");
-    throw new Error("Failed to save points. You may not have permission.");
+  if (guestRows.length > 0) {
+    const rows = guestRows.map((r) => ({
+      event_id: eventId,
+      society_id: societyId,
+      member_id: null,
+      event_guest_id: r.event_guest_id as string,
+      points: r.points,
+      day_value: r.day_value ?? null,
+      position: r.position ?? null,
+    }));
+    console.log("[resultsRepo] upserting guest rows:", rows.length);
+    const { data, error } = await supabase
+      .from("event_results")
+      .upsert(rows, { onConflict: "event_id,society_id,event_guest_id", ignoreDuplicates: false })
+      .select();
+    if (error) {
+      console.error("[resultsRepo] upsertEventResults (guests) failed:", error);
+      mapUpsertError(error);
+    }
+    if (!data?.length) {
+      console.error("[resultsRepo] upsert guests returned no data - RLS may be blocking");
+      throw new Error("Failed to save guest results. You may not have permission.");
+    }
+    allReturned.push(...(data as EventResultDoc[]));
   }
 
-  if (data.length !== rows.length) {
-    console.warn("[resultsRepo] Expected", rows.length, "rows but got", data.length);
-  }
-
-  console.log("[resultsRepo] upsertEventResults success, saved", data.length, "rows");
+  console.log("[resultsRepo] upsertEventResults success, saved", allReturned.length, "rows");
 }
 
 /**
@@ -641,7 +708,12 @@ export async function getEventResults(eventId: string): Promise<EventResultDoc[]
     throw new Error(error.message || "Failed to get event results");
   }
 
-  const out = dedupeEventResultsByMemberIdPreferLatest((data ?? []) as EventResultDoc[]) as EventResultDoc[];
+  const raw = (data ?? []).map((r: any) => ({
+    ...r,
+    member_id: r.member_id ?? null,
+    event_guest_id: r.event_guest_id ?? null,
+  })) as EventResultDoc[];
+  const out = dedupeEventResultsPreferLatest(raw);
   console.log("[resultsRepo] getEventResults returned:", out.length, "rows");
   return out;
 }
@@ -678,9 +750,14 @@ export async function getEventResultsForSociety(
     throw new Error(error.message || "Failed to get event results for society");
   }
 
-  const out = dedupeEventResultsByMemberIdPreferLatest((data ?? []) as EventResultDoc[]) as EventResultDoc[];
+  const raw = (data ?? []).map((r: any) => ({
+    ...r,
+    member_id: r.member_id ?? null,
+    event_guest_id: r.event_guest_id ?? null,
+  })) as EventResultDoc[];
+  const out = dedupeEventResultsPreferLatest(raw);
   if (out.length !== (data?.length ?? 0)) {
-    console.warn("[resultsRepo] getEventResultsForSociety: removed duplicate member_id rows", {
+    console.warn("[resultsRepo] getEventResultsForSociety: removed duplicate rows", {
       eventId,
       societyId,
       before: data?.length ?? 0,
@@ -732,7 +809,7 @@ export async function getOrderOfMeritTotals(
 
   // Get unique event IDs and member IDs
   const eventIds = [...new Set(resultsData.map((r) => r.event_id))];
-  const memberIds = [...new Set(resultsData.map((r) => r.member_id))];
+  const memberIds = [...new Set(resultsData.map((r) => r.member_id).filter(Boolean).map((id) => String(id)))];
 
   // Fetch events to filter OOM only
   const { data: eventsData, error: eventsError } = await supabase
@@ -908,6 +985,34 @@ export async function deleteEventResultForMember(
   console.log("[resultsRepo] deleteEventResultForMember:", { eventId, societyId, memberId });
 }
 
+/** Remove one guest’s official result for this event and society. */
+export async function deleteEventResultForGuest(
+  eventId: string,
+  societyId: string,
+  eventGuestId: string,
+): Promise<void> {
+  if (!eventId?.trim() || !societyId?.trim() || !eventGuestId?.trim()) {
+    throw new Error("deleteEventResultForGuest: missing eventId, societyId, or eventGuestId");
+  }
+
+  const { error } = await supabase
+    .from("event_results")
+    .delete()
+    .eq("event_id", eventId)
+    .eq("society_id", societyId)
+    .eq("event_guest_id", eventGuestId);
+
+  if (error) {
+    console.error("[resultsRepo] deleteEventResultForGuest failed:", error);
+    if (error.code === "42501" || error.message?.includes("policy")) {
+      throw new Error("Permission denied. Only Captain or Handicapper can remove results.");
+    }
+    throw new Error(error.message || "Failed to remove guest result");
+  }
+
+  console.log("[resultsRepo] deleteEventResultForGuest:", { eventId, societyId, eventGuestId });
+}
+
 /**
  * Results Log entry for audit trail view
  */
@@ -1008,9 +1113,11 @@ export async function getOrderOfMeritLog(
   });
 
   const oomEventIdSet = new Set(oomEvents.map((e) => e.id));
-  const resultsForOomOnly = resultsData.filter((r) => oomEventIdSet.has(r.event_id));
+  const resultsForOomOnly = resultsData
+    .filter((r) => oomEventIdSet.has(r.event_id))
+    .filter((r) => r.member_id != null && String(r.member_id).length > 0);
 
-  const memberIds = [...new Set(resultsForOomOnly.map((r) => r.member_id))];
+  const memberIds = [...new Set(resultsForOomOnly.map((r) => String(r.member_id)))];
 
   const { data: membersData, error: membersError } = await supabase
     .from("members")

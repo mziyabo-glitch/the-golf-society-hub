@@ -334,16 +334,19 @@ export async function buildEventResultsPdfPayload(
   eventId: string,
   societyId: string,
 ): Promise<EventResultsPdfPayload> {
-  const [event, society, rawResults, members] = await Promise.all([
+  const { getEventGuests } = await import("@/lib/db_supabase/eventGuestRepo");
+  const [event, society, rawResults, members, eventGuests] = await Promise.all([
     getEvent(eventId),
     getSociety(societyId),
     getEventResultsForSociety(eventId, societyId),
     getMembersBySocietyId(societyId),
+    getEventGuests(eventId),
   ]);
 
   if (!event) throw new Error("Event not found");
 
   const memberById = new Map(members.map((m) => [m.id, m]));
+  const guestById = new Map(eventGuests.map((g) => [g.id, g]));
   const sortOrder = getFormatSortOrder(event.format);
   const sorted = sortResultsRows(rawResults as EventResultDoc[], sortOrder);
   const fmtKind = normalizeFormatKind(event);
@@ -352,7 +355,8 @@ export async function buildEventResultsPdfPayload(
   const isOomEvent = !!(event.isOOM || event.classification === "oom");
 
   const results: EventResultsPdfResultRow[] = sorted.map((r) => {
-    const m = memberById.get(r.member_id);
+    const guest = r.event_guest_id ? guestById.get(String(r.event_guest_id)) : undefined;
+    const m = r.member_id ? memberById.get(String(r.member_id)) : undefined;
     const dv =
       r.day_value != null && !Number.isNaN(Number(r.day_value)) ? Number(r.day_value) : null;
     const pts = Number(r.points) || 0;
@@ -362,10 +366,16 @@ export async function buildEventResultsPdfPayload(
     if (isStableford) stableford = dv;
     else if (event.format === "strokeplay_gross") gross = dv;
     else net = dv;
+    const guestHi =
+      guest?.handicap_index != null && !Number.isNaN(Number(guest.handicap_index))
+        ? Number(guest.handicap_index).toFixed(1)
+        : null;
     return {
       position: r.position ?? null,
-      playerName: memberName(m, r.member_id),
-      playingHandicap: playingHandicapLabel(m),
+      playerName: guest
+        ? (guest.name || "Guest").trim()
+        : memberName(m, String(r.member_id ?? "")),
+      playingHandicap: guest ? guestHi : playingHandicapLabel(m),
       stableford,
       gross,
       net,

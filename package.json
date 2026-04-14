@@ -10,6 +10,7 @@
     "dev:api": "tsx scripts/dev-api-server.ts",
     "dev:web": "concurrently \"expo start --web\" \"npm run dev:api\"",
     "lint": "expo lint -- --cache --cache-location .cache/eslint/.eslintcache",
+    "test": "vitest run",
     "test:rsvp": "node scripts/rsvp-qa-smoke.cjs",
     "build": "expo export -p web",
     "vercel-build": "npm run build",
@@ -75,7 +76,8 @@
     "eslint-config-expo": "~10.0.0",
     "serve": "^14.2.5",
     "tsx": "^4.21.0",
-    "typescript": "~5.9.2"
+    "typescript": "~5.9.2",
+    "vitest": "^3.2.4"
   },
   "private": true,
   "description": "**Everything Golf Society**",

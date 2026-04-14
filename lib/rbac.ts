@@ -177,6 +177,32 @@ export function canManageEventRosterForSociety(
   return canManageEventPaymentsForSociety(memberships, activeSocietyId);
 }
 
+/**
+ * Captain in at least one society linked to the event (participant list, else host, else active society).
+ * Matches server checks for prize pool availability and manager assignment.
+ */
+export function isCaptainInLinkedSocietiesForEvent(
+  memberships: { societyId: string; role: string }[] | null | undefined,
+  participantSocietyIds: string[],
+  hostSocietyId: string | null | undefined,
+  activeSocietyFallback: string | null | undefined,
+): boolean {
+  const fromParticipants = [...new Set(participantSocietyIds.filter(Boolean))];
+  const linked =
+    fromParticipants.length > 0
+      ? fromParticipants
+      : hostSocietyId
+        ? [hostSocietyId]
+        : activeSocietyFallback
+          ? [activeSocietyFallback]
+          : [];
+  if (!memberships?.length || !linked.length) return false;
+  const set = new Set(linked);
+  return memberships.some(
+    (m) => set.has(m.societyId) && String(m.role || "").toUpperCase() === "CAPTAIN",
+  );
+}
+
 export const can = {
   resetSociety: (currentMember: MemberLike | null | undefined) =>
     getPermissionsForMember(currentMember).canResetSociety,
