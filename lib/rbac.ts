@@ -203,6 +203,33 @@ export function isCaptainInLinkedSocietiesForEvent(
   );
 }
 
+/**
+ * Captain or Secretary in at least one society linked to the event.
+ * Used for invite sharing and prize-pool manager assignment visibility on event detail.
+ */
+export function isCaptainOrSecretaryInLinkedSocietiesForEvent(
+  memberships: { societyId: string; role: string }[] | null | undefined,
+  participantSocietyIds: string[],
+  hostSocietyId: string | null | undefined,
+  activeSocietyFallback: string | null | undefined,
+): boolean {
+  const fromParticipants = [...new Set(participantSocietyIds.filter(Boolean))];
+  const linked =
+    fromParticipants.length > 0
+      ? fromParticipants
+      : hostSocietyId
+        ? [hostSocietyId]
+        : activeSocietyFallback
+          ? [activeSocietyFallback]
+          : [];
+  if (!memberships?.length || !linked.length) return false;
+  const set = new Set(linked);
+  return memberships.some((m) => {
+    const role = String(m.role || "").toUpperCase();
+    return set.has(m.societyId) && (role === "CAPTAIN" || role === "SECRETARY");
+  });
+}
+
 export const can = {
   resetSociety: (currentMember: MemberLike | null | undefined) =>
     getPermissionsForMember(currentMember).canResetSociety,

@@ -6,8 +6,8 @@ import { AppText } from "@/components/ui/AppText";
 import { AppCard } from "@/components/ui/AppCard";
 import { SecondaryButton } from "@/components/ui/Button";
 import { InlineNotice } from "@/components/ui/InlineNotice";
-import type { EventPrizePoolEntryRow } from "@/lib/event-prize-pools-types";
-import { upsertMyPrizePoolOptIn } from "@/lib/db_supabase/eventPrizePoolRepo";
+import type { EventPrizePoolEntryRow, EventPrizePoolResultRow, EventPrizePoolRow } from "@/lib/event-prize-pools-types";
+import { formatPenceGbp, upsertMyPrizePoolOptIn } from "@/lib/db_supabase/eventPrizePoolRepo";
 import { getColors, radius, spacing } from "@/lib/ui/theme";
 
 type Props = {
@@ -16,6 +16,11 @@ type Props = {
   managerName: string | null;
   paymentInstructions: string | null | undefined;
   entry: EventPrizePoolEntryRow | null;
+  summary: {
+    pool: EventPrizePoolRow;
+    hasPublishedResults: boolean;
+    myResult: EventPrizePoolResultRow | null;
+  } | null;
   loading: boolean;
   onChanged: () => void;
 };
@@ -26,6 +31,7 @@ export function DashboardPrizePoolHomeCard({
   managerName,
   paymentInstructions,
   entry,
+  summary,
   loading,
   onChanged,
 }: Props) {
@@ -80,6 +86,28 @@ export function DashboardPrizePoolHomeCard({
             </AppText>
             <AppText variant="captionBold">{managerName ?? "—"}</AppText>
           </View>
+
+          {summary ? (
+            <View style={{ marginTop: spacing.sm, gap: 2 }}>
+              <AppText variant="small" color="secondary">
+                {`Total: ${formatPenceGbp(summary.pool.total_amount_pence)}`}
+              </AppText>
+              <AppText variant="small" color="secondary">
+                {`Positions paying: ${summary.pool.places_paid}`}
+              </AppText>
+              {summary.hasPublishedResults ? (
+                summary.myResult ? (
+                  <AppText variant="small" color="primary">
+                    {`Your result: Position ${summary.myResult.finishing_position} • ${formatPenceGbp(summary.myResult.payout_amount_pence)}`}
+                  </AppText>
+                ) : (
+                  <AppText variant="small" color="secondary">
+                    Your result: not in paying positions
+                  </AppText>
+                )
+              ) : null}
+            </View>
+          ) : null}
 
           {optedIn && entry?.confirmed_by_pot_master === false ? (
             <InlineNotice

@@ -2,7 +2,7 @@ import { StyleSheet } from "react-native";
 import { AppCard } from "@/components/ui/AppCard";
 import { AppText } from "@/components/ui/AppText";
 import { DashboardPrizePoolHomeCard } from "@/components/dashboard/DashboardPrizePoolHomeCard";
-import type { EventPrizePoolEntryRow } from "@/lib/event-prize-pools-types";
+import type { EventPrizePoolEntryRow, EventPrizePoolResultRow, EventPrizePoolRow } from "@/lib/event-prize-pools-types";
 import { getColors, radius, spacing } from "@/lib/ui/theme";
 
 type Props = {
@@ -11,6 +11,11 @@ type Props = {
   managerName: string | null;
   paymentInstructions: string | null | undefined;
   entry: EventPrizePoolEntryRow | null;
+  summary: {
+    pool: EventPrizePoolRow;
+    hasPublishedResults: boolean;
+    myResult: EventPrizePoolResultRow | null;
+  } | null;
   loading: boolean;
   onChanged: () => void;
 };
@@ -21,6 +26,7 @@ export function HomePrizePoolCard({
   managerName,
   paymentInstructions,
   entry,
+  summary,
   loading,
   onChanged,
 }: Props) {
@@ -49,6 +55,7 @@ export function HomePrizePoolCard({
       managerName={managerName}
       paymentInstructions={paymentInstructions}
       entry={entry}
+      summary={summary}
       loading={loading}
       onChanged={onChanged}
     />

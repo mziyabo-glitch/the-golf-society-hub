@@ -308,6 +308,7 @@ export function HomeSocietyDashboardView(vm: HomeSocietyDashboardVm) {
         managerName={prizePoolCard?.managerName ?? null}
         paymentInstructions={nextEvent?.prizePoolPaymentInstructions}
         entry={prizePoolCard?.entry ?? null}
+        summary={prizePoolCard?.summary ?? null}
         loading={prizePoolCard?.loading ?? false}
         onChanged={bumpPrizePoolHomeCard}
       />

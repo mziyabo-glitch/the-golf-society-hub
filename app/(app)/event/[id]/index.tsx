@@ -58,7 +58,7 @@ import {
   canManageEventPaymentsForSociety,
   canManageEventRosterForSociety,
   canShareEventPaymentListsForSociety,
-  isCaptainInLinkedSocietiesForEvent,
+  isCaptainOrSecretaryInLinkedSocietiesForEvent,
 } from "@/lib/rbac";
 import {
   getEventRegistrations,
@@ -113,11 +113,15 @@ import {
 import { exportEventPaymentPdf } from "@/lib/pdf/eventPaymentPdf";
 import {
   assignEventPrizePoolManager,
+  formatPenceGbp,
   getEventPrizePoolManagerInfo,
   isMemberTheEventPrizePoolManager,
+  listEventPrizePoolResults,
+  listEventPrizePools,
   removeEventPrizePoolManager,
   setEventPrizePoolEnabled,
 } from "@/lib/db_supabase/eventPrizePoolRepo";
+import type { EventPrizePoolResultRow, EventPrizePoolRow } from "@/lib/event-prize-pools-types";
 
 // Picker option component
 function PickerOption({
@@ -422,6 +426,12 @@ export default function EventDetailScreen() {
   const [poolMgrRemoveBusy, setPoolMgrRemoveBusy] = useState(false);
   const [prizePoolEnableBusy, setPrizePoolEnableBusy] = useState(false);
   const [prizePoolMgrCandidates, setPrizePoolMgrCandidates] = useState<MemberDoc[]>([]);
+  const [prizePoolEventCardSummary, setPrizePoolEventCardSummary] = useState<{
+    pool: EventPrizePoolRow;
+    hasPublishedResults: boolean;
+    myResult: EventPrizePoolResultRow | null;
+    shareMessage: string | null;
+  } | null>(null);
   const [registrationsRefreshing, setRegistrationsRefreshing] = useState(false);
   const [societyGuestCount, setSocietyGuestCount] = useState(0);
   const [societyGuests, setSocietyGuests] = useState<EventGuest[]>([]);
@@ -443,7 +453,7 @@ export default function EventDetailScreen() {
 
   const canAssignPrizePoolSettings = useMemo(
     () =>
-      isCaptainInLinkedSocietiesForEvent(
+      isCaptainOrSecretaryInLinkedSocietiesForEvent(
         memberships,
         participantSocietyIdsForAccess,
         hostSocietyId,
@@ -451,6 +461,8 @@ export default function EventDetailScreen() {
       ),
     [memberships, participantSocietyIdsForAccess, hostSocietyId, societyId],
   );
+
+  const canSendEventInvites = canAssignPrizePoolSettings;
 
   const detailIsJointEvent = useMemo(
     () =>
@@ -535,6 +547,98 @@ export default function EventDetailScreen() {
   }, [eventId]);
 
   useEffect(() => {
+    if (!eventId) {
+      setPrizePoolEventCardSummary(null);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const pools = await listEventPrizePools(eventId);
+        if (cancelled || pools.length === 0) {
+          if (!cancelled) setPrizePoolEventCardSummary(null);
+          return;
+        }
+        const picked =
+          pools.find((p) => p.status === "finalised") ??
+          pools.find((p) => p.status === "calculated") ??
+          pools[0];
+        const hasPublishedResults = picked.status === "calculated" || picked.status === "finalised";
+        if (!hasPublishedResults) {
+          if (!cancelled) {
+            setPrizePoolEventCardSummary({
+              pool: picked,
+              hasPublishedResults: false,
+              myResult: null,
+              shareMessage: null,
+            });
+          }
+          return;
+        }
+
+        const results = await listEventPrizePoolResults(picked.id);
+        if (cancelled) return;
+
+        const myResult = currentMember?.id
+          ? results.find((r) => String(r.member_id ?? "") === String(currentMember.id)) ?? null
+          : null;
+
+        const memberIds = [...new Set(results.map((r) => r.member_id).filter(Boolean).map(String))];
+        const guestIds = [...new Set(results.map((r) => r.event_guest_id).filter(Boolean).map(String))];
+        const [members, guests] = await Promise.all([
+          memberIds.length ? getMembersByIds(memberIds) : Promise.resolve([]),
+          guestIds.length ? getEventGuests(eventId) : Promise.resolve([]),
+        ]);
+        if (cancelled) return;
+
+        const memberNameById = new Map(
+          members.map((m) => [String(m.id), (m.displayName || m.display_name || m.name || "Member").trim()]),
+        );
+        const guestNameById = new Map(
+          guests.map((g) => [String(g.id), (g.name || "Guest").trim()]),
+        );
+
+        const winners = [...results]
+          .filter((r) => r.payout_amount_pence > 0)
+          .sort((a, b) => {
+            if (a.finishing_position !== b.finishing_position) return a.finishing_position - b.finishing_position;
+            return b.payout_amount_pence - a.payout_amount_pence;
+          });
+        const winnerLines = winners.map((r) => {
+          const name = r.member_id
+            ? memberNameById.get(String(r.member_id)) ?? "Member"
+            : r.event_guest_id
+              ? guestNameById.get(String(r.event_guest_id)) ?? "Guest"
+              : "Player";
+          return `${r.finishing_position}. ${name} — ${formatPenceGbp(r.payout_amount_pence)}`;
+        });
+
+        const shareMessage = winnerLines.length
+          ? [
+              `${event?.name || "Event"} — Prize Pool Results`,
+              `${picked.name}`,
+              `Total: ${formatPenceGbp(picked.total_amount_pence)} • Places paid: ${picked.places_paid}`,
+              "",
+              ...winnerLines,
+            ].join("\n")
+          : null;
+
+        setPrizePoolEventCardSummary({
+          pool: picked,
+          hasPublishedResults: true,
+          myResult,
+          shareMessage,
+        });
+      } catch {
+        if (!cancelled) setPrizePoolEventCardSummary(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [eventId, currentMember?.id, event?.name]);
+
+  useEffect(() => {
     if (!poolMgrModalOpen) {
       setPoolMgrSearch("");
       return;
@@ -584,6 +688,18 @@ export default function EventDetailScreen() {
   }, [prizePoolMgrCandidates, poolMgrSearch]);
 
   const canOpenPrizePoolsScreen = canManagePrizePools || isPrizePoolMgrForEvent;
+  const canSharePrizePoolResults = useMemo(() => {
+    if (isPrizePoolMgrForEvent) return true;
+    const linked = new Set(linkedSocietyIdsForPrizePool.map(String));
+    return (memberships ?? []).some((m) => {
+      const role = String(m.role || "").toUpperCase();
+      return linked.has(String(m.societyId)) && (role === "CAPTAIN" || role === "SECRETARY");
+    });
+  }, [isPrizePoolMgrForEvent, linkedSocietyIdsForPrizePool, memberships]);
+  const canSharePrizePoolInvite = canSharePrizePoolResults;
+  const showPrizePoolEventCard = Boolean(
+    eventId && (event?.prizePoolEnabled || canOpenPrizePoolsScreen || prizePoolEventCardSummary),
+  );
 
   const paymentsCacheKey = eventId && societyId ? `event:${eventId}:payments:${societyId}` : null;
   const confirmedCacheKey = eventId && societyId ? `event:${eventId}:confirmed-players:${societyId}` : null;
@@ -2155,32 +2271,34 @@ export default function EventDetailScreen() {
         ) : null}
       </AppCard>
 
-      <AppCard style={styles.card}>
-        <AppText variant="captionBold" color="secondary" style={{ marginBottom: spacing.xs }}>
-          RSVP invite
-        </AppText>
-        <AppText variant="small" color="muted" style={[styles.cardBodyText, { marginBottom: spacing.sm }]}>
-          Share a link — members or guests can respond in two taps (no app required for guests).
-        </AppText>
-        <View style={{ flexDirection: "row", gap: spacing.sm, flexWrap: "wrap" }}>
-          <SecondaryButton
-            onPress={() => void handleShareEventInvite()}
-            size="sm"
-            style={{ flex: 1, minWidth: 120 }}
-            icon={<Feather name="share-2" size={iconSize.sm} color={colors.primary} />}
-          >
-            Share link
-          </SecondaryButton>
-          <SecondaryButton
-            onPress={() => void handleWhatsAppEventInvite()}
-            size="sm"
-            style={{ flex: 1, minWidth: 120 }}
-            icon={<Feather name="message-circle" size={iconSize.sm} color={colors.primary} />}
-          >
-            WhatsApp
-          </SecondaryButton>
-        </View>
-      </AppCard>
+      {canSendEventInvites ? (
+        <AppCard style={styles.card}>
+          <AppText variant="captionBold" color="secondary" style={{ marginBottom: spacing.xs }}>
+            RSVP invite
+          </AppText>
+          <AppText variant="small" color="muted" style={[styles.cardBodyText, { marginBottom: spacing.sm }]}>
+            Share a link — members or guests can respond in two taps (no app required for guests).
+          </AppText>
+          <View style={{ flexDirection: "row", gap: spacing.sm, flexWrap: "wrap" }}>
+            <SecondaryButton
+              onPress={() => void handleShareEventInvite()}
+              size="sm"
+              style={{ flex: 1, minWidth: 120 }}
+              icon={<Feather name="share-2" size={iconSize.sm} color={colors.primary} />}
+            >
+              Share link
+            </SecondaryButton>
+            <SecondaryButton
+              onPress={() => void handleWhatsAppEventInvite()}
+              size="sm"
+              style={{ flex: 1, minWidth: 120 }}
+              icon={<Feather name="message-circle" size={iconSize.sm} color={colors.primary} />}
+            >
+              WhatsApp
+            </SecondaryButton>
+          </View>
+        </AppCard>
+      ) : null}
 
       {(canManageEventRoster || canEditEvent) && (
         <AppCard style={styles.card}>
@@ -2770,13 +2888,16 @@ export default function EventDetailScreen() {
         </AppCard>
       ) : null}
 
-      {/* Prize Pool — ManCo or appointed Pot Master */}
-      {canOpenPrizePoolsScreen && eventId && (
+      {/* Prize Pool event card */}
+      {showPrizePoolEventCard && eventId ? (
         <Pressable
+          disabled={!canOpenPrizePoolsScreen}
           onPress={() =>
-            router.push({ pathname: "/(app)/event/[id]/prize-pools" as any, params: { id: eventId } })
+            canOpenPrizePoolsScreen
+              ? router.push({ pathname: "/(app)/event/[id]/prize-pools" as any, params: { id: eventId } })
+              : undefined
           }
-          style={({ pressed }) => ({ opacity: pressed ? 0.8 : 1, marginTop: spacing.sm })}
+          style={({ pressed }) => ({ opacity: pressed && canOpenPrizePoolsScreen ? 0.8 : 1, marginTop: spacing.sm })}
         >
           <AppCard style={styles.actionCard}>
             <View style={styles.actionRow}>
@@ -2786,14 +2907,77 @@ export default function EventDetailScreen() {
               <View style={styles.actionContent}>
                 <AppText variant="bodyBold">Prize Pool</AppText>
                 <AppText variant="caption" color="secondary">
-                  Payout summary, divisions, and Pot Master entrants
+                  {prizePoolEventCardSummary?.hasPublishedResults
+                    ? "Calculated payout summary"
+                    : "Awaiting payout calculation"}
                 </AppText>
               </View>
-              <Feather name="chevron-right" size={20} color={colors.textTertiary} />
+              {canOpenPrizePoolsScreen ? (
+                <Feather name="chevron-right" size={20} color={colors.textTertiary} />
+              ) : null}
             </View>
+
+            {prizePoolEventCardSummary ? (
+              <View style={{ marginTop: spacing.sm, gap: 4 }}>
+                <AppText variant="small" color="secondary">
+                  {`Total: ${formatPenceGbp(prizePoolEventCardSummary.pool.total_amount_pence)}`}
+                </AppText>
+                <AppText variant="small" color="secondary">
+                  {`Positions paying: ${prizePoolEventCardSummary.pool.places_paid}`}
+                </AppText>
+                {prizePoolEventCardSummary.hasPublishedResults ? (
+                  prizePoolEventCardSummary.myResult ? (
+                    <AppText variant="small" color="primary">
+                      {`Your result: Position ${prizePoolEventCardSummary.myResult.finishing_position} • ${formatPenceGbp(prizePoolEventCardSummary.myResult.payout_amount_pence)}`}
+                    </AppText>
+                  ) : (
+                    <AppText variant="small" color="secondary">
+                      Results published.
+                    </AppText>
+                  )
+                ) : null}
+              </View>
+            ) : null}
+
+            {canSharePrizePoolResults &&
+            prizePoolEventCardSummary?.hasPublishedResults &&
+            prizePoolEventCardSummary.shareMessage ? (
+              <SecondaryButton
+                size="sm"
+                style={{ marginTop: spacing.sm, alignSelf: "flex-start" }}
+                onPress={() => {
+                  void Share.share({ message: prizePoolEventCardSummary.shareMessage! });
+                }}
+              >
+                Share prize pool results
+              </SecondaryButton>
+            ) : null}
+
+            {canSharePrizePoolInvite && event?.prizePoolEnabled ? (
+              <SecondaryButton
+                size="sm"
+                style={{ marginTop: spacing.xs, alignSelf: "flex-start" }}
+                onPress={() => {
+                  const msg = [
+                    `${event?.name || "Event"} — Prize Pool Invite`,
+                    "You are invited to join the Prize Pool for this event.",
+                    "Open the event and select Prize Pool → Yes to request entry.",
+                    prizePoolMgrInfo?.displayName ? `Pot Master: ${prizePoolMgrInfo.displayName}` : "",
+                    event?.prizePoolPaymentInstructions
+                      ? `Notes: ${event.prizePoolPaymentInstructions}`
+                      : "",
+                  ]
+                    .filter(Boolean)
+                    .join("\n");
+                  void Share.share({ message: msg });
+                }}
+              >
+                Share invite to join pot
+              </SecondaryButton>
+            ) : null}
           </AppCard>
         </Pressable>
-      )}
+      ) : null}
 
       {/* Delete Event - Captain/Secretary/Treasurer */}
       {permissions.canDeleteEvents && (

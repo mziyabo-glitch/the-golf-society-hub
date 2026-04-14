@@ -34,10 +34,12 @@ import {
 } from "@/lib/db_supabase/eventRegistrationRepo";
 import { getEventGuests } from "@/lib/db_supabase/eventGuestRepo";
 import {
+  listEventPrizePoolResults,
+  listEventPrizePools,
   getEventPrizePoolManagerInfo,
   getMyEventPrizePoolEntry,
 } from "@/lib/db_supabase/eventPrizePoolRepo";
-import type { EventPrizePoolEntryRow } from "@/lib/event-prize-pools-types";
+import type { EventPrizePoolEntryRow, EventPrizePoolResultRow, EventPrizePoolRow } from "@/lib/event-prize-pools-types";
 import { blurWebActiveElement } from "@/lib/ui/focus";
 import { getCache, setCache } from "@/lib/cache/clientCache";
 import { useBootstrap } from "@/lib/useBootstrap";
@@ -327,6 +329,11 @@ export function useHomeDashboard() {
   const [prizePoolCard, setPrizePoolCard] = useState<{
     managerName: string | null;
     entry: EventPrizePoolEntryRow | null;
+    summary: {
+      pool: EventPrizePoolRow;
+      hasPublishedResults: boolean;
+      myResult: EventPrizePoolResultRow | null;
+    } | null;
     loading: boolean;
   } | null>(null);
 
@@ -353,23 +360,46 @@ export function useHomeDashboard() {
     setPrizePoolCard((p) => ({
       managerName: p?.managerName ?? null,
       entry: p?.entry ?? null,
+      summary: p?.summary ?? null,
       loading: true,
     }));
     void (async () => {
       try {
-        const [mgr, entry] = await Promise.all([
+        const [mgr, entry, pools] = await Promise.all([
           getEventPrizePoolManagerInfo(nextEvent.id),
           getMyEventPrizePoolEntry(nextEvent.id, memberId),
+          listEventPrizePools(nextEvent.id),
         ]);
+        const pickedPool =
+          pools.find((p) => p.status === "finalised") ??
+          pools.find((p) => p.status === "calculated") ??
+          pools[0] ??
+          null;
+        const hasPublishedResults =
+          pickedPool?.status === "finalised" || pickedPool?.status === "calculated";
+        const results = pickedPool && hasPublishedResults
+          ? await listEventPrizePoolResults(pickedPool.id)
+          : [];
+        const myResult =
+          pickedPool && hasPublishedResults
+            ? results.find((r) => String(r.member_id ?? "") === String(memberId)) ?? null
+            : null;
         if (cancelled) return;
         setPrizePoolCard({
           managerName: mgr?.displayName ?? null,
           entry,
+          summary: pickedPool
+            ? {
+                pool: pickedPool,
+                hasPublishedResults,
+                myResult,
+              }
+            : null,
           loading: false,
         });
       } catch {
         if (!cancelled) {
-          setPrizePoolCard({ managerName: null, entry: null, loading: false });
+          setPrizePoolCard({ managerName: null, entry: null, summary: null, loading: false });
         }
       }
     })();
