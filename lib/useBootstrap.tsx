@@ -175,7 +175,6 @@ function useBootstrapInternal(): BootstrapState {
   const bootstrapInFlight = useRef(false);
   const hydratedFromCacheRef = useRef(false);
   const authPersistLoggedRef = useRef(false);
-  const sessionUserIdRef = useRef<string | null>(null);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -184,10 +183,6 @@ function useBootstrapInternal(): BootstrapState {
       mounted.current = false;
     };
   }, []);
-
-  useEffect(() => {
-    sessionUserIdRef.current = session?.user?.id ?? null;
-  }, [session]);
 
   // Main bootstrap effect
   useEffect(() => {
@@ -206,13 +201,12 @@ function useBootstrapInternal(): BootstrapState {
         setError(null);
 
         // ----------------------------------------------------------------
-        // Step 1: Get existing session (persisted from previous sign-in)
-        // Session persistence: localStorage on web, AsyncStorage on native
+        // Step 1: Hydrate auth session from persisted storage
+        // (single startup getSession read, then derive user from it)
         // ----------------------------------------------------------------
-        console.log("[useBootstrap] === SESSION CHECK ===");
+        console.log("[useBootstrap] === SESSION HYDRATION START ===");
 
-        const { data: { session: existingSession }, error: sessionError } =
-          await supabase.auth.getSession();
+        const { data: { session: existingSession }, error: sessionError } = await supabase.auth.getSession();
         startupSessionFound = !!existingSession;
         startupAccessTokenPresent = !!existingSession?.access_token;
         startupRefreshTokenPresent = !!existingSession?.refresh_token;
@@ -221,34 +215,23 @@ function useBootstrapInternal(): BootstrapState {
           console.error("[useBootstrap] getSession error:", sessionError.message);
         }
 
-        console.log("[useBootstrap] Session from storage:", existingSession ? "FOUND" : "NOT FOUND");
+        console.log("[useBootstrap] Boot getSession result:", {
+          hasSession: !!existingSession,
+          userId: existingSession?.user?.id ?? null,
+          hasAccessToken: !!existingSession?.access_token,
+          hasRefreshToken: !!existingSession?.refresh_token,
+        });
 
         let currentSession = existingSession ?? null;
         let currentUser: User | null = existingSession?.user ?? null;
 
-        // Validate/refresh the auth user before issuing data queries.
-        // On native cold starts, access tokens may be stale until refresh runs.
+        // Validate current auth user before issuing data queries.
         if (currentSession) {
           const { data: authUserData, error: authUserError } = await supabase.auth.getUser();
           if (authUserError) {
             console.warn("[useBootstrap] getUser warning during restore:", authUserError.message);
           } else if (authUserData.user) {
             currentUser = authUserData.user;
-            const { data: refreshedSession } = await supabase.auth.getSession();
-            currentSession = refreshedSession.session ?? currentSession;
-          }
-        }
-
-        if (!currentSession || !currentUser) {
-          // Give Supabase one extra chance to hydrate persisted native storage
-          // before concluding the user is signed out.
-          await new Promise((resolve) => setTimeout(resolve, 120));
-          const { data: lateData } = await supabase.auth.getSession();
-          if (lateData.session?.user) {
-            currentSession = lateData.session;
-            currentUser = lateData.session.user;
-            if (!alive || !mounted.current) return;
-            setSession(currentSession);
           }
         }
 
@@ -568,36 +551,22 @@ function useBootstrapInternal(): BootstrapState {
     bootstrap();
 
     // Listen for auth state changes
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (event, newSession) => {
-        // Temporary debug log for auth state change events
-        console.log("[useBootstrap] Auth state change:", {
-          event,
-          hasSession: !!newSession,
-          userId: newSession?.user?.id ?? null,
-        });
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, newSession) => {
+      console.log("[useBootstrap] onAuthStateChange", {
+        event, // INITIAL_SESSION | SIGNED_IN | TOKEN_REFRESHED | SIGNED_OUT | etc
+        hasSession: !!newSession,
+        userId: newSession?.user?.id ?? null,
+      });
 
-        if (mounted.current) {
-          setSession(newSession);
+      if (!mounted.current) return;
+      setSession(newSession);
 
-          // Refresh bootstrap on sign in/out/recovery.
-          // IMPORTANT: set loading=true in the SAME synchronous batch as
-          // setRefreshKey so the loading overlay stays up. Without this,
-          // there is a render frame where isSignedIn=true but profile/
-          // society/member are still null, causing the Home screen to
-          // flash PersonalModeHome ("old state") before bootstrap reloads.
-          if (
-            event === "SIGNED_IN" ||
-            event === "SIGNED_OUT" ||
-            event === "PASSWORD_RECOVERY" ||
-            (event === "INITIAL_SESSION" && !!newSession && !sessionUserIdRef.current)
-          ) {
-            setLoading(true);
-            setRefreshKey((k) => k + 1);
-          }
-        }
+      // Re-bootstrap app profile/membership state only when auth identity changes.
+      if (event === "SIGNED_IN" || event === "SIGNED_OUT" || event === "PASSWORD_RECOVERY") {
+        setLoading(true);
+        setRefreshKey((k) => k + 1);
       }
-    );
+    });
 
     return () => {
       alive = false;

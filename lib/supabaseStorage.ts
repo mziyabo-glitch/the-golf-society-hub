@@ -59,7 +59,17 @@ export const supabaseStorage = {
 
     if (Platform.OS === "web") {
       if (typeof window !== "undefined" && window.localStorage) {
-        return window.localStorage.getItem(prefixedKey);
+        const value = window.localStorage.getItem(prefixedKey);
+        if (key === "supabase-auth") {
+          const flags = inspectTokenPayload(value);
+          console.log("[auth-persist-storage] read", {
+            platform: Platform.OS,
+            key,
+            found: !!value,
+            refreshTokenPresent: flags.hasRefreshToken,
+          });
+        }
+        return value;
       }
       return null;
     }
@@ -92,6 +102,15 @@ export const supabaseStorage = {
     if (Platform.OS === "web") {
       if (typeof window !== "undefined" && window.localStorage) {
         window.localStorage.setItem(prefixedKey, value);
+        if (key === "supabase-auth") {
+          const flags = inspectTokenPayload(value);
+          console.log("[auth-persist-storage] write", {
+            platform: Platform.OS,
+            key,
+            accessTokenPresent: flags.hasAccessToken,
+            refreshTokenPresent: flags.hasRefreshToken,
+          });
+        }
       }
       return;
     }
@@ -118,12 +137,24 @@ export const supabaseStorage = {
     if (Platform.OS === "web") {
       if (typeof window !== "undefined" && window.localStorage) {
         window.localStorage.removeItem(prefixedKey);
+        if (key === "supabase-auth") {
+          console.log("[auth-persist-storage] remove", {
+            platform: Platform.OS,
+            key,
+          });
+        }
       }
       return;
     }
 
     try {
       await AsyncStorage.removeItem(prefixedKey);
+      if (key === "supabase-auth") {
+        console.log("[auth-persist-storage] remove", {
+          platform: Platform.OS,
+          key,
+        });
+      }
     } catch (error) {
       console.warn("[supabaseStorage] removeItem error:", error);
     }

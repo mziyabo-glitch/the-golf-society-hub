@@ -2,7 +2,6 @@ import "@/lib/ui/themeSplash";
 import { useEffect, useRef } from "react";
 import { Stack, usePathname, useRouter, useSegments } from "expo-router";
 import { StyleSheet, View } from "react-native";
-import { supabase } from "@/lib/supabase";
 import { BootstrapProvider, useBootstrap } from "@/lib/useBootstrap";
 import { LoadingState } from "@/components/ui/LoadingState";
 import { AuthScreen } from "@/components/AuthScreen";
@@ -71,69 +70,6 @@ function RootNavigator() {
   if (activeSocietyId) {
     lastHadSocietyAt.current = Date.now();
   }
-
-  // Global auth gate: getSession on mount + onAuthStateChange
-  // Redirects immediately when session appears (avoids staying on sign-in)
-  const pathnameRef = useRef(pathname);
-  const segmentsRef = useRef(segments);
-  pathnameRef.current = pathname;
-  segmentsRef.current = segments;
-
-  useEffect(() => {
-    if (loading || authRestoring) return;
-    let mounted = true;
-
-    const applyAuthRedirect = async (session: { user: { id: string } } | null) => {
-      if (!mounted) return;
-      const seg0 = segmentsRef.current[0];
-      const p = pathnameRef.current;
-      const inApp = seg0 === "(app)" || (typeof p === "string" && p?.startsWith("/(app)"));
-      const inPublic =
-        p === "/reset-password" ||
-        p === "/privacy-policy" ||
-        seg0 === "reset-password" ||
-        seg0 === "privacy-policy";
-      const inJoinFlow = isJoinFlowRoute(p, seg0);
-      const onEventRsvpInvite = isEventRsvpInvitePath(p);
-      if (inPublic || inJoinFlow || onEventRsvpInvite || isToolRoute(p, seg0)) return;
-
-      if (session && !inApp) {
-        const pendingRivalryCode = await consumePendingRivalryJoinCode();
-        if (!mounted) return;
-        if (pendingRivalryCode) {
-          console.log("[_layout] Auth gate: resuming rivalry join with code");
-          blurWebActiveElement();
-          router.replace({ pathname: "/join-rivalry", params: { code: pendingRivalryCode } });
-          return;
-        }
-        const pendingSocietyCode = await consumePendingSocietyJoinCode();
-        if (!mounted) return;
-        if (pendingSocietyCode) {
-          console.log("[_layout] Auth gate: resuming society join with code");
-          blurWebActiveElement();
-          router.replace({ pathname: "/onboarding", params: { mode: "join", code: pendingSocietyCode, invite: "1" } });
-          return;
-        }
-        console.log("[_layout] Auth gate: session present, redirecting to", APP_TABS);
-        blurWebActiveElement();
-        router.replace(APP_TABS);
-      }
-    };
-
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      void applyAuthRedirect(session);
-    });
-
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
-      console.log("[_layout] Auth state change:", event, session ? "has session" : "no session");
-      void applyAuthRedirect(session);
-    });
-
-    return () => {
-      mounted = false;
-      subscription.unsubscribe();
-    };
-  }, [router, loading, authRestoring]);
 
   useEffect(() => {
     // Don't route while loading or not signed in
@@ -242,17 +178,45 @@ function RootNavigator() {
     }
   }, [loading, authRestoring, isSignedIn]);
 
-  // Auth-aware redirect: when session appears, ensure we're in the app (avoids staying on sign-in)
+  // Auth-aware redirect: once hydrated and signed in, enter correct flow.
   useEffect(() => {
     if (loading || authRestoring || !isSignedIn || isPublicPath) return;
-    const seg0 = segments[0];
-    const inJoinFlow = isJoinFlowRoute(pathname, seg0);
-    if (inJoinFlow || isToolRoute(pathname, seg0) || isEventRsvpInvitePath(pathname)) return;
-    const inApp = seg0 === "(app)" || (typeof pathname === "string" && pathname.startsWith("/(app)"));
-    if (inApp) return;
-    console.log("[_layout] Session present but not in app, redirecting");
-    blurWebActiveElement();
-    router.replace(APP_TABS);
+    let active = true;
+
+    const routeSignedInUser = async () => {
+      const seg0 = segments[0];
+      const inJoinFlow = isJoinFlowRoute(pathname, seg0);
+      if (inJoinFlow || isToolRoute(pathname, seg0) || isEventRsvpInvitePath(pathname)) return;
+      const inApp = seg0 === "(app)" || (typeof pathname === "string" && pathname.startsWith("/(app)"));
+      if (inApp) return;
+
+      const pendingRivalryCode = await consumePendingRivalryJoinCode();
+      if (!active) return;
+      if (pendingRivalryCode) {
+        console.log("[_layout] Signed-in redirect: resuming rivalry join");
+        blurWebActiveElement();
+        router.replace({ pathname: "/join-rivalry", params: { code: pendingRivalryCode } });
+        return;
+      }
+
+      const pendingSocietyCode = await consumePendingSocietyJoinCode();
+      if (!active) return;
+      if (pendingSocietyCode) {
+        console.log("[_layout] Signed-in redirect: resuming society join");
+        blurWebActiveElement();
+        router.replace({ pathname: "/onboarding", params: { mode: "join", code: pendingSocietyCode, invite: "1" } });
+        return;
+      }
+
+      console.log("[_layout] Signed-in redirect: entering app tabs");
+      blurWebActiveElement();
+      router.replace(APP_TABS);
+    };
+
+    void routeSignedInUser();
+    return () => {
+      active = false;
+    };
   }, [loading, authRestoring, isSignedIn, isPublicPath, segments, pathname, router]);
 
   // Determine which overlay to show (if any).

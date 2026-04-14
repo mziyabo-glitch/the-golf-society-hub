@@ -27,7 +27,7 @@ let supabaseInstance: SupabaseClient | null = null;
 export const SUPABASE_AUTH_CONFIG = {
   persistSession: true,
   autoRefreshToken: true,
-  detectSessionInUrl: Platform.OS === "web",
+  detectSessionInUrl: Platform.OS === "web" ? true : false,
   storageKey: "supabase-auth",
 } as const;
 
@@ -49,6 +49,15 @@ function getSupabaseClient(): SupabaseClient {
   if (supabaseInstance) {
     return supabaseInstance;
   }
+
+  console.log("[supabase] creating singleton client", {
+    platform: Platform.OS,
+    storage: Platform.OS === "web" ? "localStorage adapter" : "AsyncStorage adapter",
+    persistSession: SUPABASE_AUTH_CONFIG.persistSession,
+    autoRefreshToken: SUPABASE_AUTH_CONFIG.autoRefreshToken,
+    detectSessionInUrl: SUPABASE_AUTH_CONFIG.detectSessionInUrl,
+    storageKey: SUPABASE_AUTH_CONFIG.storageKey,
+  });
 
   // On web, detect OAuth/magic-link session from URL hash after redirect
   supabaseInstance = createClient(supabaseUrl!, supabaseAnonKey!, {

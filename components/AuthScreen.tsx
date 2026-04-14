@@ -2,8 +2,7 @@
  * AuthScreen — email / password sign-in, sign-up, and forgot password.
  * Rendered by the root layout when no session exists.
  *
- * "Remember me" controls whether the session is persisted in storage.
- * When unchecked the session lives only in memory and is lost on reload.
+ * "Remember me" is web-only. Native always persists auth until explicit sign-out.
  */
 
 import { useCallback, useState } from "react";
@@ -119,9 +118,10 @@ export function AuthScreen() {
     setError(null);
     setSuccess(null);
 
-    // Persist the remember-me preference BEFORE signing in so the
-    // storage adapter knows whether to actually write the session.
-    setRememberMe(rememberMe);
+    // Remember-me semantics are web-only; native always persists session.
+    if (Platform.OS === "web") {
+      setRememberMe(rememberMe);
+    }
 
     let skipLoadingReset = false;
 
@@ -345,8 +345,8 @@ export function AuthScreen() {
             />
           </View>
 
-          {/* Remember me + Forgot password row */}
-          {isSignIn && (
+          {/* Remember me (web-only) + Forgot password row */}
+          {isSignIn && Platform.OS === "web" && (
             <View style={styles.optionsRow}>
               <Pressable
                 style={styles.rememberRow}
@@ -416,7 +416,9 @@ export function AuthScreen() {
                   if (loading) return;
                   setLoading(true);
                   setError(null);
-                  setRememberMe(rememberMe);
+                  if (Platform.OS === "web") {
+                    setRememberMe(rememberMe);
+                  }
                   try {
                     const { error } = await signInWithGoogle();
                     if (error) setError(error.message || "Google sign-in failed.");
