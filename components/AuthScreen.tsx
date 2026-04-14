@@ -33,6 +33,11 @@ import { useBootstrap } from "@/lib/useBootstrap";
 import { useRouter } from "expo-router";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
 import { blurWebActiveElement } from "@/lib/ui/focus";
+import {
+  getInAppBrowserInfo,
+  isDomNotAllowedError,
+  webPermissionBlockedMessage,
+} from "@/lib/web/browserEnvironment";
 
 const masterLogo = require("@/assets/images/master-logo.png");
 
@@ -42,6 +47,9 @@ export function AuthScreen() {
   const colors = getColors();
   const { refresh } = useBootstrap();
   const router = useRouter();
+
+  const inAppBrowser =
+    Platform.OS === "web" ? getInAppBrowserInfo() : { inApp: false as const, label: null as string | null };
 
   const [mode, setMode] = useState<Mode>("signIn");
   const [email, setEmail] = useState("");
@@ -190,6 +198,18 @@ export function AuthScreen() {
             {success && (
               <InlineNotice variant="success" message={success} style={styles.notice} />
             )}
+            {Platform.OS === "web" && inAppBrowser.inApp && (
+              <InlineNotice
+                variant="info"
+                message="Open in Safari for best results"
+                detail={
+                  inAppBrowser.label
+                    ? `The ${inAppBrowser.label} browser often blocks sign-in. Use the menu (⋯ or Share) and choose “Open in Safari” or “Open in Browser”.`
+                    : "In-app browsers often block sign-in. Open this link in Safari instead."
+                }
+                style={styles.notice}
+              />
+            )}
 
             <View style={styles.field}>
               <AppText variant="captionBold" style={styles.label}>Email</AppText>
@@ -254,6 +274,18 @@ export function AuthScreen() {
             {success && (
               <InlineNotice variant="success" message={success} style={styles.notice} />
             )}
+            {Platform.OS === "web" && inAppBrowser.inApp && (
+              <InlineNotice
+                variant="info"
+                message="Open in Safari for best results"
+                detail={
+                  inAppBrowser.label
+                    ? `The ${inAppBrowser.label} browser often blocks sign-in. Use the menu (⋯ or Share) and choose “Open in Safari” or “Open in Browser”.`
+                    : "In-app browsers often block sign-in. Open this link in Safari instead."
+                }
+                style={styles.notice}
+              />
+            )}
 
             <View style={styles.field}>
               <AppText variant="captionBold" style={styles.label}>Email</AppText>
@@ -315,6 +347,18 @@ export function AuthScreen() {
           )}
           {success && (
             <InlineNotice variant="success" message={success} style={styles.notice} />
+          )}
+          {Platform.OS === "web" && inAppBrowser.inApp && (
+            <InlineNotice
+              variant="info"
+              message="Open in Safari for best results"
+              detail={
+                inAppBrowser.label
+                  ? `The ${inAppBrowser.label} browser often blocks sign-in. Use the menu (⋯ or Share) and choose “Open in Safari” or “Open in Browser”.`
+                  : "In-app browsers often block sign-in. Open this link in Safari instead."
+              }
+              style={styles.notice}
+            />
           )}
 
           <View style={styles.field}>
@@ -421,9 +465,21 @@ export function AuthScreen() {
                   }
                   try {
                     const { error } = await signInWithGoogle();
-                    if (error) setError(error.message || "Google sign-in failed.");
-                  } catch (e: any) {
-                    setError(e?.message || "Something went wrong.");
+                    if (error) {
+                      setError(
+                        Platform.OS === "web" && isDomNotAllowedError(error)
+                          ? webPermissionBlockedMessage()
+                          : error.message || "Google sign-in failed.",
+                      );
+                    }
+                  } catch (e: unknown) {
+                    setError(
+                      Platform.OS === "web" && isDomNotAllowedError(e)
+                        ? webPermissionBlockedMessage()
+                        : e instanceof Error
+                          ? e.message
+                          : "Something went wrong.",
+                    );
                   } finally {
                     setLoading(false);
                   }

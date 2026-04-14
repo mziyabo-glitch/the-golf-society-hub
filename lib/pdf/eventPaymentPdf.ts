@@ -307,9 +307,17 @@ async function sharePaymentPngWeb(opts: {
     const safeName = opts.filename.replace(/[/\\?%*:|"<>]/g, "-") || "event-payments";
     const file = new File([blob], `${safeName}.png`, { type: "image/png" });
 
-    if (typeof navigator !== "undefined" && navigator.share && navigator.canShare?.({ files: [file] })) {
-      await navigator.share({ title: opts.title, files: [file] });
-      return;
+    if (
+      typeof navigator !== "undefined" &&
+      navigator.share &&
+      navigator.canShare?.({ files: [file] })
+    ) {
+      try {
+        await navigator.share({ title: opts.title, files: [file] });
+        return;
+      } catch {
+        // iOS Safari and other WebKit builds reject file share without user gesture (async export path).
+      }
     }
 
     const url = URL.createObjectURL(blob);

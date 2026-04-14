@@ -37,6 +37,11 @@ import { getSupabaseEnv, getSupabaseProjectRefSuffix } from "@/lib/supabaseEnv";
 import { isPlatformAdmin, listSocieties, reappointCaptain, type AdminSocietyRow } from "@/lib/db_supabase/adminRepo";
 import { getMembersBySocietyId, type MemberDoc } from "@/lib/db_supabase/memberRepo";
 import { Toast } from "@/components/ui/Toast";
+import {
+  getInAppBrowserInfo,
+  isDomNotAllowedError,
+  webPermissionBlockedMessage,
+} from "@/lib/web/browserEnvironment";
 
 export default function SettingsScreen() {
   const router = useRouter();
@@ -484,6 +489,7 @@ export default function SettingsScreen() {
 
   // Get logo URL from society (single source of truth)
   const logoUrl = getSocietyLogoUrl(society);
+  const webInAppBrowser = Platform.OS === "web" ? getInAppBrowserInfo() : null;
 
   return (
     <Screen contentStyle={tabContentStyle}>
@@ -494,6 +500,19 @@ export default function SettingsScreen() {
       <AppText variant="small" color="secondary" style={styles.settingsIntro}>
         Manage membership, appearance, legal, and session options.
       </AppText>
+
+      {webInAppBrowser?.inApp && (
+        <InlineNotice
+          variant="info"
+          message="Open in Safari for sharing and copy"
+          detail={
+            webInAppBrowser.label
+              ? `The ${webInAppBrowser.label} browser often blocks the share sheet and clipboard. Use ⋯ or Share, then “Open in Safari”.`
+              : "This in-app browser often blocks sharing and clipboard. Open the site in Safari instead."
+          }
+          style={{ marginBottom: spacing.base }}
+        />
+      )}
 
       <AppText variant="heading" style={[styles.sectionTitle, styles.sectionTitleFirst]}>Profile</AppText>
       <AppCard padding="sm">
@@ -564,8 +583,23 @@ export default function SettingsScreen() {
                 {canRegenCode ? (
                   <Pressable
                     onPress={async () => {
-                      await Clipboard.setStringAsync(society.joinCode!);
-                      setCodeCopyToast(true);
+                      try {
+                        const ok = await Clipboard.setStringAsync(society.joinCode!);
+                        if (Platform.OS === "web" && ok === false) {
+                          showAlert("Could not copy", webPermissionBlockedMessage());
+                          return;
+                        }
+                        setCodeCopyToast(true);
+                      } catch (e: unknown) {
+                        if (Platform.OS === "web" && isDomNotAllowedError(e)) {
+                          showAlert("Could not copy", webPermissionBlockedMessage());
+                          return;
+                        }
+                        showAlert(
+                          "Could not copy",
+                          e instanceof Error ? e.message : "Please try again.",
+                        );
+                      }
                     }}
                     style={({ pressed }) => ({ opacity: pressed ? 0.7 : 1 })}
                   >
@@ -590,8 +624,23 @@ export default function SettingsScreen() {
                 <Pressable
                   onPress={async () => {
                     const url = getSocietyInviteUrl(society.joinCode!);
-                    await Clipboard.setStringAsync(url);
-                    setInviteLinkToast(true);
+                    try {
+                      const ok = await Clipboard.setStringAsync(url);
+                      if (Platform.OS === "web" && ok === false) {
+                        showAlert("Could not copy", webPermissionBlockedMessage());
+                        return;
+                      }
+                      setInviteLinkToast(true);
+                    } catch (e: unknown) {
+                      if (Platform.OS === "web" && isDomNotAllowedError(e)) {
+                        showAlert("Could not copy", webPermissionBlockedMessage());
+                        return;
+                      }
+                      showAlert(
+                        "Could not copy",
+                        e instanceof Error ? e.message : "Please try again.",
+                      );
+                    }
                   }}
                   style={({ pressed }) => [styles.linkRow, { opacity: pressed ? 0.7 : 1, marginTop: spacing.sm }]}
                 >
@@ -613,12 +662,25 @@ export default function SettingsScreen() {
                           text: message,
                         });
                       } else if (Platform.OS === "web") {
-                        await Clipboard.setStringAsync(message);
+                        const ok = await Clipboard.setStringAsync(message);
+                        if (!ok) {
+                          showAlert("Could not copy", webPermissionBlockedMessage());
+                          return;
+                        }
                         setInviteLinkToast(true);
                       } else {
                         await Share.share({ message });
                       }
-                    } catch { /* cancelled or unsupported */ }
+                    } catch (e: unknown) {
+                      if (Platform.OS === "web" && isDomNotAllowedError(e)) {
+                        const ok = await Clipboard.setStringAsync(message);
+                        if (ok) {
+                          setInviteLinkToast(true);
+                        } else {
+                          showAlert("Sharing blocked", webPermissionBlockedMessage());
+                        }
+                      }
+                    }
                   }}
                   style={({ pressed }) => [styles.linkRow, { opacity: pressed ? 0.7 : 1, marginTop: spacing.xs }]}
                 >
@@ -679,8 +741,23 @@ export default function SettingsScreen() {
               <>
                 <SecondaryButton
                   onPress={async () => {
-                    await Clipboard.setStringAsync(calendarUrl);
-                    setCalendarCopiedToast(true);
+                    try {
+                      const ok = await Clipboard.setStringAsync(calendarUrl);
+                      if (Platform.OS === "web" && ok === false) {
+                        showAlert("Could not copy", webPermissionBlockedMessage());
+                        return;
+                      }
+                      setCalendarCopiedToast(true);
+                    } catch (e: unknown) {
+                      if (Platform.OS === "web" && isDomNotAllowedError(e)) {
+                        showAlert("Could not copy", webPermissionBlockedMessage());
+                        return;
+                      }
+                      showAlert(
+                        "Could not copy",
+                        e instanceof Error ? e.message : "Please try again.",
+                      );
+                    }
                   }}
                   style={{ marginBottom: spacing.base }}
                 >

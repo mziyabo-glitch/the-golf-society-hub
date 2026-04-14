@@ -9,6 +9,7 @@
 
 import { Platform } from "react-native";
 import * as Sharing from "expo-sharing";
+import { isWebShareLikelyBlockedWithoutGesture } from "@/lib/web/browserEnvironment";
 
 const captureRef =
   Platform.OS !== "web" ? require("react-native-view-shot").captureRef : null;
@@ -20,6 +21,10 @@ const captureRef =
 type WebCaptureOptions = {
   dialogTitle?: string;
   fallbackSelector?: string;
+};
+
+export type CaptureShareResult = {
+  completedVia: "share" | "download";
 };
 
 async function resolveWebElement(
@@ -48,8 +53,8 @@ async function resolveWebElement(
 async function captureAndShareWeb(
   ref: React.RefObject<any>,
   options?: WebCaptureOptions
-): Promise<void> {
-  if (typeof window === "undefined") return;
+): Promise<CaptureShareResult> {
+  if (typeof window === "undefined") return { completedVia: "download" };
 
   // html2canvas is a web-only dependency; dynamic import keeps the native bundle clean
   const html2canvas = (await import("html2canvas")).default;
@@ -62,7 +67,7 @@ async function captureElement(
   el: HTMLElement,
   html2canvas: any,
   options?: { dialogTitle?: string }
-): Promise<void> {
+): Promise<CaptureShareResult> {
   const canvas = await html2canvas(el, {
     useCORS: true,
     allowTaint: false,
@@ -79,16 +84,26 @@ async function captureElement(
 
   const title = options?.dialogTitle || "Share";
 
-  // Try the Web Share API first (mobile browsers, some desktop)
-  if (navigator.share && navigator.canShare) {
+  // Web Share with File requires transient user activation on iOS Safari. This path runs after
+  // async html2canvas work (often from useEffect), so share() throws NotAllowedError — use download.
+  const skipFileShare =
+    isWebShareLikelyBlockedWithoutGesture() ||
+    typeof navigator.share !== "function" ||
+    typeof navigator.canShare !== "function";
+
+  if (!skipFileShare) {
     const file = new File([blob], `${title.replace(/\s+/g, "-")}.png`, {
       type: "image/png",
     });
-    const shareData = { files: [file], title };
+    const shareData: ShareData = { files: [file], title };
 
     if (navigator.canShare(shareData)) {
-      await navigator.share(shareData);
-      return;
+      try {
+        await navigator.share(shareData);
+        return { completedVia: "share" };
+      } catch {
+        // User cancelled, or non-iOS browser without activation — fall through to download
+      }
     }
   }
 
@@ -101,12 +116,13 @@ async function captureElement(
   a.click();
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
+  return { completedVia: "download" };
 }
 
 export async function captureAndShare(
   ref: React.RefObject<any>,
   options?: { dialogTitle?: string; width?: number; height?: number }
-): Promise<void> {
+): Promise<CaptureShareResult> {
   if (Platform.OS === "web") {
     return captureAndShareWeb(ref, options);
   }
@@ -135,6 +151,7 @@ export async function captureAndShare(
     mimeType: "image/png",
     dialogTitle: options?.dialogTitle || "Share",
   });
+  return { completedVia: "share" };
 }
 
 export type ShareTarget = {
@@ -150,20 +167,22 @@ export type ShareTarget = {
 export async function captureAndShareMultiple(
   targets: ShareTarget[],
   options?: { dialogTitle?: string }
-): Promise<void> {
+): Promise<CaptureShareResult> {
   if (targets.length === 0) {
     throw new Error("No views to capture.");
   }
 
   if (Platform.OS === "web") {
+    let downloaded = false;
     for (let i = 0; i < targets.length; i += 1) {
       const target = targets[i];
-      await captureAndShareWeb(target.ref, {
+      const result = await captureAndShareWeb(target.ref, {
         dialogTitle: target.title || options?.dialogTitle || `Share ${i + 1}`,
         fallbackSelector: target.fallbackSelector,
       });
+      if (result.completedVia === "download") downloaded = true;
     }
-    return;
+    return { completedVia: downloaded ? "download" : "share" };
   }
 
   const canShare = await Sharing.isAvailableAsync();
@@ -192,4 +211,5 @@ export async function captureAndShareMultiple(
       dialogTitle: target.title || options?.dialogTitle || `Share ${i + 1}`,
     });
   }
+  return { completedVia: "share" };
 }

@@ -5,7 +5,7 @@
  */
 
 import { useCallback, useMemo, useState } from "react";
-import { Pressable, Share, StyleSheet, View } from "react-native";
+import { Platform, Pressable, Share, StyleSheet, View } from "react-native";
 import * as Clipboard from "expo-clipboard";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
@@ -207,7 +207,14 @@ export default function RivalryDetailScreen() {
       return;
     }
     try {
-      await Clipboard.setStringAsync(code.toUpperCase());
+      const ok = await Clipboard.setStringAsync(code.toUpperCase());
+      if (Platform.OS === "web" && ok === false) {
+        showAlert(
+          "Copy blocked",
+          "Clipboard access is blocked in this browser. Please open in Safari and try again.",
+        );
+        return;
+      }
       setToast({ visible: true, message: "Join code copied", type: "success" });
     } catch {
       showAlert("Copy failed", "Could not copy to clipboard.");

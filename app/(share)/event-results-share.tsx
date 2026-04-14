@@ -16,6 +16,7 @@ import {
   type EventResultsPdfPayload,
 } from "@/lib/pdf/eventResultsPdf";
 import { formatError, type FormattedError } from "@/lib/ui/formatError";
+import { showAlert } from "@/lib/ui/alert";
 
 type ExportStatus = "loading" | "ready" | "error" | "success";
 
@@ -68,11 +69,17 @@ export default function EventResultsShareScreen() {
         await new Promise((resolve) => setTimeout(resolve, 200));
         if (!mounted) return;
 
-        await captureAndShare(shareRef, {
+        const shareResult = await captureAndShare(shareRef, {
           dialogTitle: "Event Results",
           width: PAGE_WIDTH,
           height: PAGE_HEIGHT,
         });
+        if (shareResult.completedVia === "download") {
+          showAlert(
+            "Download complete",
+            "On iPhone Safari, automatic file sharing may be blocked. Your image has been downloaded instead.",
+          );
+        }
 
         if (!mounted) return;
         setStatus("success");

@@ -1,3 +1,5 @@
+import { isDomNotAllowedError, webPermissionBlockedMessage } from "@/lib/web/browserEnvironment";
+
 export type FormattedError = {
   message: string;
   detail?: string;
@@ -24,6 +26,13 @@ export function formatError(
 ): FormattedError {
   if (!error) {
     return { message: fallbackMessage };
+  }
+
+  if (isDomNotAllowedError(error)) {
+    return {
+      message: "This action was blocked by your browser.",
+      detail: webPermissionBlockedMessage(),
+    };
   }
 
   if (typeof error === "string") {

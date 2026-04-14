@@ -29,6 +29,7 @@ import {
 } from "@/lib/teeSheetGrouping";
 import type { TeeSheetData } from "@/lib/teeSheetPdf";
 import { useBootstrap } from "@/lib/useBootstrap";
+import { showAlert } from "@/lib/ui/alert";
 
 type ExportStatus = "loading" | "ready" | "error" | "success";
 
@@ -155,9 +156,15 @@ export default function TeeSheetShareScreen() {
           height: PAGE_HEIGHT * 3,
         }));
 
-        await captureAndShareMultiple(targets, {
+        const shareResult = await captureAndShareMultiple(targets, {
           dialogTitle: `Tee Sheet - ${payload.eventName || "Event"}`,
         });
+        if (shareResult.completedVia === "download") {
+          showAlert(
+            "Download complete",
+            "On iPhone Safari, automatic file sharing may be blocked. Your image has been downloaded instead.",
+          );
+        }
 
         if (!mounted) return;
         setStatus("success");

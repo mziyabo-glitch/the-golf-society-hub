@@ -16,6 +16,7 @@ import { getOrderOfMeritTotals, getOrderOfMeritLog } from "@/lib/db_supabase/res
 import { getSociety } from "@/lib/db_supabase/societyRepo";
 import { getSocietyLogoDataUri, getSocietyLogoUrl } from "@/lib/societyLogo";
 import { formatError, type FormattedError } from "@/lib/ui/formatError";
+import { showAlert } from "@/lib/ui/alert";
 
 type ExportStatus = "loading" | "ready" | "error" | "success";
 
@@ -128,11 +129,17 @@ export default function OomShareScreen() {
         await new Promise((resolve) => setTimeout(resolve, 200));
         if (!mounted) return;
 
-        await captureAndShare(shareRef, {
+        const shareResult = await captureAndShare(shareRef, {
           dialogTitle: view === "log" ? "OOM Results Log" : "Order of Merit",
           width: 1240,
           height: 1754,
         });
+        if (shareResult.completedVia === "download") {
+          showAlert(
+            "Download complete",
+            "On iPhone Safari, automatic file sharing may be blocked. Your image has been downloaded instead.",
+          );
+        }
 
         if (!mounted) return;
         setStatus("success");
