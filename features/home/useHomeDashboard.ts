@@ -25,19 +25,18 @@ import { isActiveSocietyParticipantForEvent, isJointEventFromMeta } from "@/lib/
 import { getMySinbooks, type SinbookWithParticipants } from "@/lib/db_supabase/sinbookRepo";
 import {
   getMyRegistration,
-  getEventRegistrations,
-  scopeEventRegistrations,
   setMyStatus,
   markMePaid,
   type EventRegistration,
 } from "@/lib/db_supabase/eventRegistrationRepo";
+import { getEventGuests } from "@/lib/db_supabase/eventGuestRepo";
 import {
   getEventPrizePoolManagerInfo,
   getMyEventPrizePoolEntry,
 } from "@/lib/db_supabase/eventPrizePoolRepo";
 import type { EventPrizePoolEntryRow } from "@/lib/event-prize-pools-types";
 import { blurWebActiveElement } from "@/lib/ui/focus";
-import { getCache, setCache, invalidateCache } from "@/lib/cache/clientCache";
+import { getCache, setCache } from "@/lib/cache/clientCache";
 import { useBootstrap } from "@/lib/useBootstrap";
 import { useReducedMotion } from "@/hooks/useReducedMotion";
 import { getSocietyLogoUrl } from "@/lib/societyLogo";
@@ -51,6 +50,7 @@ import {
   formatFormatLabel,
   formatClassification,
 } from "./homeFormatters";
+import type { LatestResultsSnapshot } from "./components/HomeLatestResultsCard";
 
 export function useHomeDashboard() {
   const router = useRouter();
@@ -76,11 +76,11 @@ export function useHomeDashboard() {
 
   // Event registration state
   const [myReg, setMyReg] = useState<EventRegistration | null>(null);
-  const [, setNextEventRegistrations] = useState<EventRegistration[]>([]);
   const [canonicalNextEventTee, setCanonicalNextEventTee] = useState<CanonicalTeeSheetResult | null>(null);
   /** Joint events: member rows for all societies in canonical groups (home only loads active society by default). */
   const [jointTeeMemberAugment, setJointTeeMemberAugment] = useState<MemberDoc[]>([]);
   const [regBusy, setRegBusy] = useState(false);
+  const [latestGuestNameMap, setLatestGuestNameMap] = useState<Record<string, string>>({});
 
   // Licence banner state
   const [requestSending, setRequestSending] = useState(false);
@@ -423,55 +423,6 @@ export function useHomeDashboard() {
     return () => { cancelled = true; };
   }, [nextEventId, memberId]);
 
-  // Load all registrations for next event when tee times published (for societies using In/Out)
-  useEffect(() => {
-    if (!nextEventId || !nextEvent?.teeTimePublishedAt || !societyId || !nextEvent) {
-      setNextEventRegistrations([]);
-      return;
-    }
-    const ev = nextEvent;
-    let cancelled = false;
-    void (async () => {
-      const cacheKey = `event:${nextEventId}:registrations`;
-      const cached = await getCache<EventRegistration[]>(cacheKey, { maxAgeMs: 1000 * 60 * 30 });
-      if (cached && !cancelled) {
-        const raw = cached.value;
-        if (!Array.isArray(raw)) {
-          if (__DEV__) {
-            console.warn("[home] registrations cache was not an array; clearing", cacheKey);
-          }
-          await invalidateCache(cacheKey);
-        } else {
-          const scopedCached = nextEventIsJoint
-            ? scopeEventRegistrations(raw, { kind: "joint_home", activeSocietyId: societyId })
-            : scopeEventRegistrations(raw, {
-                kind: "standard",
-                hostSocietyId: ev.society_id ?? societyId,
-              });
-          setNextEventRegistrations(scopedCached);
-        }
-      }
-      const regs = await getEventRegistrations(nextEventId);
-      if (cancelled) return;
-      await setCache(cacheKey, regs, { ttlMs: 1000 * 60 * 2 });
-      const scoped = nextEventIsJoint
-        ? scopeEventRegistrations(regs, { kind: "joint_home", activeSocietyId: societyId })
-        : scopeEventRegistrations(regs, {
-            kind: "standard",
-            hostSocietyId: ev.society_id ?? societyId,
-          });
-      setNextEventRegistrations(scoped);
-    })();
-    return () => { cancelled = true; };
-  }, [
-    nextEventId,
-    nextEvent,
-    nextEvent?.teeTimePublishedAt,
-    nextEvent?.society_id,
-    nextEventIsJoint,
-    societyId,
-  ]);
-
   // Canonical tee sheet for next event (joint entries, tee_groups snapshot, or computed fallback)
   useEffect(() => {
     if (!nextEventId || !nextEvent?.teeTimePublishedAt) {
@@ -522,10 +473,84 @@ export function useHomeDashboard() {
 
   // Past events (completed, sorted desc) — last 3
   const recentEvents = useMemo(() => {
-    return events
+    return [...events]
       .filter((e) => e.isCompleted)
+      .sort((a, b) => {
+        const da = (a.date ?? "").trim();
+        const db = (b.date ?? "").trim();
+        if (da && db && da !== db) return db.localeCompare(da);
+        return (b.updated_at ?? "").localeCompare(a.updated_at ?? "");
+      })
       .slice(0, 3);
   }, [events]);
+
+  const latestResultsEvent = useMemo(
+    () => recentEvents.find((event) => (recentResultsMap[event.id]?.length ?? 0) > 0) ?? null,
+    [recentEvents, recentResultsMap],
+  );
+
+  useEffect(() => {
+    if (!latestResultsEvent?.id) {
+      setLatestGuestNameMap({});
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const guests = await getEventGuests(latestResultsEvent.id);
+        if (cancelled) return;
+        const map: Record<string, string> = {};
+        for (const g of guests) {
+          if (g.id) map[String(g.id)] = g.name || "Guest";
+        }
+        setLatestGuestNameMap(map);
+      } catch {
+        if (!cancelled) setLatestGuestNameMap({});
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [latestResultsEvent?.id]);
+
+  const latestResultsSnapshot: LatestResultsSnapshot = useMemo(() => {
+    if (!latestResultsEvent) return null;
+    const raw = (recentResultsMap[latestResultsEvent.id] ?? []).slice();
+    if (raw.length === 0) return null;
+    raw.sort((a, b) => {
+      const pa = Number.isFinite(Number(a.position)) ? Number(a.position) : Number.MAX_SAFE_INTEGER;
+      const pb = Number.isFinite(Number(b.position)) ? Number(b.position) : Number.MAX_SAFE_INTEGER;
+      if (pa !== pb) return pa - pb;
+      const va = Number.isFinite(Number(a.day_value)) ? Number(a.day_value) : Number(a.points);
+      const vb = Number.isFinite(Number(b.day_value)) ? Number(b.day_value) : Number(b.points);
+      return vb - va;
+    });
+
+    const topRows = raw.slice(0, 3).map((r, idx) => {
+      const isGuest = !!r.event_guest_id;
+      const memberName =
+        !isGuest && r.member_id
+          ? members.find((m) => m.id === r.member_id)?.displayName ??
+            members.find((m) => m.id === r.member_id)?.name ??
+            "Member"
+          : null;
+      const guestName = isGuest ? latestGuestNameMap[String(r.event_guest_id)] ?? "Guest" : null;
+      const valueNum =
+        Number.isFinite(Number(r.day_value)) && r.day_value != null ? Number(r.day_value) : Number(r.points) || 0;
+      return {
+        rank: Number.isFinite(Number(r.position)) && (Number(r.position) || 0) > 0 ? Number(r.position) : idx + 1,
+        name: (memberName ?? guestName ?? "Player").trim(),
+        value: `${valueNum % 1 === 0 ? valueNum.toFixed(0) : valueNum.toFixed(1)} pts`,
+        isGuest,
+      };
+    });
+
+    return {
+      eventId: latestResultsEvent.id,
+      eventName: latestResultsEvent.name || "Event",
+      rows: topRows,
+    };
+  }, [latestResultsEvent, recentResultsMap, members, latestGuestNameMap]);
 
   const recentActivityRows = useMemo(
     () => buildRecentActivityRows(recentEvents, recentResultsMap, memberId, colors),
@@ -722,6 +747,7 @@ export function useHomeDashboard() {
     events,
     nextEvent,
     upcomingAfterNext,
+    latestResultsSnapshot,
     recentActivityRows,
     oomStandings,
     loadError,

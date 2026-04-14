@@ -1,33 +1,26 @@
-import { View, Pressable, type PressableStateCallbackType } from "react-native";
+import { View, Pressable } from "react-native";
 import { Feather } from "@expo/vector-icons";
 
 import { Screen } from "@/components/ui/Screen";
 import { AppText } from "@/components/ui/AppText";
 import { AppCard } from "@/components/ui/AppCard";
-import { DashboardMemberIdentityCard } from "@/components/dashboard/DashboardMemberIdentityCard";
-import { DashboardHeroEventCard } from "@/components/dashboard/DashboardHeroEventCard";
-import { DashboardPrizePoolHomeCard } from "@/components/dashboard/DashboardPrizePoolHomeCard";
-import { DashboardPlayabilityMiniCard } from "@/components/dashboard/DashboardPlayabilityMiniCard";
-import { DashboardOomTopMetricsRow } from "@/components/dashboard/DashboardOomTopMetricsRow";
-import { DashboardYourStatusCard } from "@/components/dashboard/DashboardYourStatusCard";
-import { DashboardUpcomingList } from "@/components/dashboard/DashboardUpcomingList";
-import { DashboardLeaderboardPreview } from "@/components/dashboard/DashboardLeaderboardPreview";
 import { PrimaryButton } from "@/components/ui/Button";
 import { InlineNotice } from "@/components/ui/InlineNotice";
 import { Toast } from "@/components/ui/Toast";
 import { spacing } from "@/lib/ui/theme";
-import { pressableSurfaceStyle } from "@/lib/ui/interaction";
 
 import { HomeAppBar, PoweredByFooter } from "./HomeChrome";
 import { homeDashboardStyles as styles } from "../homeDashboardStyles";
 import type { HomeSocietyDashboardVm } from "../useHomeDashboard";
-import { resolvePersonDisplayName } from "@/lib/rivalryPersonName";
+import { HomeIdentityHeroCard } from "./HomeIdentityHeroCard";
+import { HomeNextEventCard } from "./HomeNextEventCard";
+import { HomePrizePoolCard } from "./HomePrizePoolCard";
+import { HomeLatestResultsCard } from "./HomeLatestResultsCard";
+import { HomeOomSnapshotCard } from "./HomeOomSnapshotCard";
+import { HomeWeatherSnapshotCard } from "./HomeWeatherSnapshotCard";
+import { HomeQuickLinksSection } from "./HomeQuickLinksSection";
 
 export function HomeSocietyDashboardView(vm: HomeSocietyDashboardVm) {
-  const cardPressStyle = ({ pressed }: PressableStateCallbackType) => [
-    styles.cardPressable,
-    pressableSurfaceStyle({ pressed }, { reduceMotion: vm.reduceMotion, scale: "card" }),
-  ];
   const {
     tabContentStyle,
     colors,
@@ -47,7 +40,6 @@ export function HomeSocietyDashboardView(vm: HomeSocietyDashboardVm) {
     logoUrl,
     roleLabel,
     handicapIndexDisplay,
-    canOpenLeaderboard,
     oomPointsMain,
     oomRankMain,
     showUnrankedHint,
@@ -68,21 +60,54 @@ export function HomeSocietyDashboardView(vm: HomeSocietyDashboardVm) {
     canAccessNextEventTeeSheet,
     societyId,
     memberId,
-    userId,
     events,
-    upcomingAfterNext,
-    recentActivityRows,
+    latestResultsSnapshot,
     oomStandings,
-    activeSinbook,
+    canOpenLeaderboard,
     formatEventDate,
     formatFormatLabel,
     formatClassification,
-    formatShortDate,
     formatPoints,
-    router,
     prizePoolCard,
     bumpPrizePoolHomeCard,
   } = vm;
+
+  const quickLinks = [
+    {
+      key: "events",
+      label: "Events",
+      icon: "calendar" as const,
+      onPress: () => pushWithBlur("/(app)/(tabs)/events"),
+    },
+    {
+      key: "members",
+      label: "Members",
+      icon: "users" as const,
+      onPress: () => pushWithBlur("/(app)/(tabs)/members"),
+    },
+    ...(canOpenLeaderboard
+      ? [{
+          key: "oom",
+          label: "OOM",
+          icon: "award" as const,
+          onPress: () => pushWithBlur("/(app)/(tabs)/leaderboard"),
+        }]
+      : []),
+    {
+      key: "rivalries",
+      label: "Rivalries",
+      icon: "zap" as const,
+      onPress: () => pushWithBlur("/(app)/(tabs)/sinbook"),
+    },
+    ...(canAdmin
+      ? [{
+          key: "treasurer",
+          label: "Finance",
+          icon: "credit-card" as const,
+          onPress: () => pushWithBlur("/(app)/treasurer"),
+        }]
+      : []),
+  ];
 
   return (
     <Screen
@@ -94,14 +119,21 @@ export function HomeSocietyDashboardView(vm: HomeSocietyDashboardVm) {
         onOpenSettings={() => pushWithBlur("/(app)/(tabs)/settings")}
       />
 
-      <DashboardMemberIdentityCard
+      <HomeIdentityHeroCard
         logoUrl={logoUrl}
         societyName={String(society?.name ?? "Society")}
         memberName={memberDisplayName}
         roleLabel={roleLabel}
         handicapIndexDisplay={handicapIndexDisplay}
+        oomRankMain={oomRankMain}
+        oomPointsMain={oomPointsMain}
+        showUnrankedHint={showUnrankedHint}
         onEditHandicap={() => pushWithBlur("/(app)/my-profile")}
       />
+
+      <AppText variant="small" color="secondary" style={{ marginTop: -spacing.xs }}>
+        Event Results, Prize Pools, and Season Standings — all in one place.
+      </AppText>
 
       {loadError && (
         <InlineNotice
@@ -121,7 +153,7 @@ export function HomeSocietyDashboardView(vm: HomeSocietyDashboardVm) {
       {/* COMPLETE PROFILE BANNER                                            */}
       {/* ================================================================== */}
       {!profileComplete && (
-        <Pressable onPress={() => pushWithBlur("/(app)/my-profile")} style={cardPressStyle}>
+        <Pressable onPress={() => pushWithBlur("/(app)/my-profile")}>
           <AppCard style={[styles.premiumCard, styles.profileBanner, { borderColor: colors.info + "40" }]}>
             <View style={styles.profileBannerRow}>
               <View style={[styles.profileBannerIcon, { backgroundColor: colors.info + "18" }]}>
@@ -192,15 +224,7 @@ export function HomeSocietyDashboardView(vm: HomeSocietyDashboardVm) {
       {/* ================================================================== */}
       {(memberHasSeat || memberIsCaptain) && (<>
 
-      <DashboardOomTopMetricsRow
-        oomRankMain={oomRankMain}
-        showUnrankedHint={showUnrankedHint}
-        oomPointsMain={oomPointsMain}
-        canOpenLeaderboard={canOpenLeaderboard}
-        onOpenLeaderboard={openLeaderboard}
-      />
-
-      <DashboardHeroEventCard
+      <HomeNextEventCard
         nextEvent={nextEvent}
         nextEventIsJoint={nextEventIsJoint}
         myReg={myReg}
@@ -211,160 +235,164 @@ export function HomeSocietyDashboardView(vm: HomeSocietyDashboardVm) {
         formatClassification={formatClassification}
         onOpenEvent={() => nextEvent && openEvent(nextEvent.id)}
         onOpenTeeSheet={() =>
-          nextEvent && router.push({ pathname: "/(app)/event/[id]/tee-sheet", params: { id: nextEvent.id } })
+          nextEvent && pushWithBlur({ pathname: "/(app)/event/[id]/tee-sheet", params: { id: nextEvent.id } })
         }
+        canManage={canAdmin}
       />
 
-      {nextEvent?.prizePoolEnabled && prizePoolCard && memberId ? (
-        <DashboardPrizePoolHomeCard
-          eventId={nextEvent.id}
-          myMemberId={memberId}
-          managerName={prizePoolCard.managerName}
-          paymentInstructions={nextEvent.prizePoolPaymentInstructions}
-          entry={prizePoolCard.entry}
-          loading={prizePoolCard.loading}
-          onChanged={bumpPrizePoolHomeCard}
-        />
-      ) : null}
-
+      {/* Event attendance stays directly beneath Next Event */}
       {nextEvent ? (
-        <DashboardYourStatusCard
-          nextEvent={nextEvent}
-          nextEventIsJoint={nextEventIsJoint}
-          myReg={myReg}
-          regBusy={regBusy}
-          canAdmin={canAdmin}
-          showAdmin={showAdmin}
-          onToggleAdmin={() => setShowAdmin((v) => !v)}
-          onToggleIn={() => toggleRegistration("in")}
-          onToggleOut={() => toggleRegistration("out")}
-          onMarkPaid={handleMarkPaid}
-        />
+        <AppCard style={[styles.premiumCard, { borderColor: colors.borderLight }]}>
+          <AppText variant="captionBold" color="secondary" style={{ marginBottom: spacing.xs }}>
+            Event attendance
+          </AppText>
+          <AppText variant="small" color="secondary">
+            Status: {myReg?.status === "in" ? "Playing" : myReg?.status === "out" ? "Not Playing" : "Not set"}
+          </AppText>
+          <AppText variant="small" color="secondary">
+            Event Fee: {nextEvent.entryFeeDisplay?.trim() || "—"}
+          </AppText>
+          <AppText variant="small" color="secondary" style={{ marginBottom: spacing.sm }}>
+            Paid: {myReg?.paid ? "Yes" : "No"}
+          </AppText>
+          <View style={{ flexDirection: "row", gap: spacing.sm }}>
+            <PrimaryButton
+              size="sm"
+              onPress={() => toggleRegistration("in")}
+              loading={regBusy}
+              disabled={regBusy}
+              style={{ flex: 1 }}
+            >
+              Playing
+            </PrimaryButton>
+            <PrimaryButton
+              size="sm"
+              onPress={() => toggleRegistration("out")}
+              loading={regBusy}
+              disabled={regBusy}
+              style={{ flex: 1 }}
+            >
+              Not Playing
+            </PrimaryButton>
+          </View>
+          {canAdmin ? (
+            <Pressable
+              onPress={() => setShowAdmin((v) => !v)}
+              style={({ pressed }) => ({ opacity: pressed ? 0.7 : 1, marginTop: spacing.sm })}
+            >
+              <AppText variant="small" color="primary">
+                {showAdmin ? "Hide admin actions" : "Show admin actions"}
+              </AppText>
+            </Pressable>
+          ) : null}
+          {canAdmin && showAdmin ? (
+            <View style={{ flexDirection: "row", gap: spacing.sm, marginTop: spacing.sm }}>
+              <PrimaryButton
+                size="sm"
+                onPress={() => handleMarkPaid(true)}
+                loading={regBusy}
+                disabled={regBusy}
+                style={{ flex: 1 }}
+              >
+                Mark Paid
+              </PrimaryButton>
+              <PrimaryButton
+                size="sm"
+                onPress={() => handleMarkPaid(false)}
+                loading={regBusy}
+                disabled={regBusy}
+                style={{ flex: 1 }}
+              >
+                Mark Unpaid
+              </PrimaryButton>
+            </View>
+          ) : null}
+        </AppCard>
       ) : null}
 
-      <DashboardPlayabilityMiniCard
+      <HomePrizePoolCard
+        eventId={nextEvent?.prizePoolEnabled || prizePoolCard?.managerName ? nextEvent?.id ?? null : null}
+        myMemberId={memberId}
+        managerName={prizePoolCard?.managerName ?? null}
+        paymentInstructions={nextEvent?.prizePoolPaymentInstructions}
+        entry={prizePoolCard?.entry ?? null}
+        loading={prizePoolCard?.loading ?? false}
+        onChanged={bumpPrizePoolHomeCard}
+      />
+
+      <HomeLatestResultsCard
+        snapshot={latestResultsSnapshot}
+        onOpenEvent={openEvent}
+      />
+
+      <HomeOomSnapshotCard
+        rank={oomRankMain}
+        points={oomPointsMain}
+        unranked={showUnrankedHint}
+        entries={oomStandings}
+        memberId={memberId}
+        onOpenLeaderboard={openLeaderboard}
+        formatPoints={formatPoints}
+      />
+
+      <HomeWeatherSnapshotCard
         nextEvent={nextEvent}
         enabled={!!societyId && !!memberId}
         onOpenWeatherTab={openWeatherTab}
         preferredTeeTimeLocal={heroTeePreview?.teeTime ?? null}
       />
 
-      {/* Tee times published — after priority cards so OOM stays directly under identity */}
-      {nextEvent?.teeTimePublishedAt && canAccessNextEventTeeSheet && (() => {
-        const publishedAt = new Date(nextEvent.teeTimePublishedAt!);
-        const daysSince = (Date.now() - publishedAt.getTime()) / (1000 * 60 * 60 * 24);
-        if (daysSince > 7) return null;
-        return (
-          <Pressable
-            onPress={() => router.push({ pathname: "/(app)/event/[id]/tee-sheet", params: { id: nextEvent.id } })}
-            style={cardPressStyle}
-          >
-            <View style={[styles.notificationBanner, { backgroundColor: colors.success + "15", borderColor: colors.success + "30" }]}>
-              <Feather name="bell" size={16} color={colors.success} />
-              <View style={{ flex: 1 }}>
-                <AppText variant="bodyBold" style={{ color: colors.success }}>
-                  Tee times now available for this event
-                </AppText>
-                <AppText variant="small" color="secondary">
-                  Tap to view your tee time and full tee sheet
-                </AppText>
-              </View>
-              <Feather name="chevron-right" size={16} color={colors.success} />
-            </View>
-          </Pressable>
-        );
-      })()}
+      <HomeQuickLinksSection links={quickLinks} />
 
-      <DashboardUpcomingList
-        events={upcomingAfterNext}
-        formatShortDate={formatShortDate}
-        onOpenEvent={openEvent}
-      />
-
-      {oomStandings.length > 0 && canOpenLeaderboard ? (
-        <DashboardLeaderboardPreview
-          entries={oomStandings.slice(0, 3)}
-          memberId={memberId}
-          formatPoints={(pts) => `${formatPoints(pts)} pts`}
-          onOpenLeaderboard={openLeaderboard}
-        />
-      ) : null}
-
-      {/* ================================================================== */}
-      {/* E) RECENT ACTIVITY                                                 */}
-      {/* ================================================================== */}
-      {recentActivityRows.length > 0 && (
-        <View>
-          <AppText variant="h2" style={styles.sectionTitle}>Recent Activity</AppText>
-
-          {recentActivityRows.map((row) => (
-            <Pressable key={row.eventId} onPress={() => openEvent(row.eventId)} style={cardPressStyle}>
-              <AppCard style={[styles.recentCard, styles.premiumCard]}>
-                <View style={styles.recentRow}>
-                  <View style={[styles.recentDateBadge, { backgroundColor: colors.backgroundTertiary }]}>
-                    <AppText variant="captionBold" color="primary">
-                      {row.dateShort}
-                    </AppText>
-                  </View>
-                  <View style={{ flex: 1 }}>
-                    <AppText variant="bodyBold" numberOfLines={1}>{row.name}</AppText>
-                    <AppText variant="small" style={{ color: row.statusColor }}>{row.statusText}</AppText>
-                  </View>
-                  <Feather name="chevron-right" size={18} color={colors.textTertiary} />
-                </View>
-              </AppCard>
-            </Pressable>
-          ))}
-        </View>
-      )}
-
-      {/* Empty state if absolutely no events */}
-      {events.length === 0 && !nextEvent && recentActivityRows.length === 0 && (
+      {/* Secondary list kept compact below primary cards */}
+      {events.length === 0 && !nextEvent ? (
         <AppCard style={[styles.premiumCard, { marginTop: spacing.sm }]}>
           <View style={styles.emptyState}>
             <View style={[styles.emptyIcon, { backgroundColor: colors.backgroundTertiary }]}>
               <Feather name="calendar" size={24} color={colors.textTertiary} />
             </View>
-            <AppText variant="body" color="secondary" style={{ textAlign: "center" }}>
-              No events yet. Your society captain will create events soon.
+            <AppText variant="bodyBold" style={{ textAlign: "center" }}>
+              No upcoming event
+            </AppText>
+            <AppText variant="body" color="secondary" style={{ textAlign: "center", marginTop: spacing.xs }}>
+              Your next society event will appear here.
             </AppText>
           </View>
         </AppCard>
-      )}
+      ) : null}
 
-      {/* ================================================================== */}
-      {/* F) SINBOOK TEASER CARD                                             */}
-      {/* ================================================================== */}
-      <Pressable onPress={() => pushWithBlur("/(app)/(tabs)/sinbook")} style={cardPressStyle}>
+      {/* Tee times published notice remains contextual */}
+      {nextEvent?.teeTimePublishedAt && canAccessNextEventTeeSheet ? (
+        <Pressable
+          onPress={() => pushWithBlur({ pathname: "/(app)/event/[id]/tee-sheet", params: { id: nextEvent.id } })}
+        >
+          <View style={[styles.notificationBanner, { backgroundColor: colors.success + "15", borderColor: colors.success + "30" }]}>
+            <Feather name="bell" size={16} color={colors.success} />
+            <View style={{ flex: 1 }}>
+              <AppText variant="bodyBold" style={{ color: colors.success }}>
+                Tee times now available
+              </AppText>
+              <AppText variant="small" color="secondary">
+                Tap to view your tee time and full tee sheet.
+              </AppText>
+            </View>
+            <Feather name="chevron-right" size={16} color={colors.success} />
+          </View>
+        </Pressable>
+      ) : null}
+
+      {/* Legacy Rivalries card kept as utility action */}
+      <Pressable onPress={() => pushWithBlur("/(app)/(tabs)/sinbook")}>
         <AppCard style={styles.premiumCard}>
           <View style={styles.cardTitleRow}>
             <Feather name="zap" size={16} color={colors.primary} />
             <AppText variant="captionBold" color="primary">Rivalries</AppText>
           </View>
-          {activeSinbook ? (
-            <View style={{ marginTop: spacing.xs }}>
-              <AppText variant="bodyBold" numberOfLines={1}>{activeSinbook.title?.trim() || "Rivalry"}</AppText>
-              <AppText variant="caption" color="secondary">
-                {(() => {
-                  if (!userId) return "Awaiting opponent";
-                  const opp = activeSinbook.participants.find((p) => p.user_id !== userId && p.status === "accepted");
-                  if (!opp) return "Awaiting opponent";
-                  return resolvePersonDisplayName({
-                    ...activeSinbook.rivalryNameHintsByUserId?.[opp.user_id],
-                    participantDisplayName: opp.display_name,
-                  }).name;
-                })()}
-              </AppText>
-            </View>
-          ) : (
-            <AppText variant="body" color="secondary" style={{ marginTop: spacing.xs }}>
-              Start a rivalry with a mate. Track head-to-head results all season — for fun, not wagers.
-            </AppText>
-          )}
+          <AppText variant="body" color="secondary" style={{ marginTop: spacing.xs }}>
+            Track your season head-to-head matchups.
+          </AppText>
           <View style={styles.chevronHint}>
-            <AppText variant="small" color="tertiary">
-              {activeSinbook ? "View rivalry" : "Get started"}
-            </AppText>
+            <AppText variant="small" color="tertiary">Open Rivalries</AppText>
             <Feather name="chevron-right" size={16} color={colors.textTertiary} />
           </View>
         </AppCard>
