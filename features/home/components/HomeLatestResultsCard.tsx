@@ -42,7 +42,7 @@ export function HomeLatestResultsCard({ snapshot, onOpenEvent }: Props) {
 
         <View style={styles.rows}>
           {snapshot.rows.map((row) => (
-            <View key={`${row.rank}-${row.name}`} style={styles.row}>
+            <View key={`${row.rank}-${row.name}`} style={[styles.row, { borderBottomColor: colors.borderLight }]}>
               <AppText variant="captionBold" color="primary" style={styles.rank}>
                 {row.rank}.
               </AppText>
@@ -84,6 +84,8 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: spacing.xs,
+    paddingBottom: spacing.xs,
+    borderBottomWidth: StyleSheet.hairlineWidth,
   },
   rank: {
     width: 20,

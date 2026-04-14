@@ -39,7 +39,12 @@ export function HomeOomSnapshotCard({
 
   return (
     <View style={styles.wrap}>
-      <AppCard style={[styles.summaryCard, { borderColor: colors.borderLight }]}>
+      <AppCard
+        style={[
+          styles.summaryCard,
+          { borderColor: colors.borderLight, backgroundColor: colors.backgroundTertiary },
+        ]}
+      >
         <AppText variant="bodyBold">Order of Merit</AppText>
         <AppText variant="caption" color="secondary" style={{ marginTop: 2 }}>
           Members Only

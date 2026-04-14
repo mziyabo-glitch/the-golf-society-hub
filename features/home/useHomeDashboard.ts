@@ -25,6 +25,9 @@ import { isActiveSocietyParticipantForEvent, isJointEventFromMeta } from "@/lib/
 import { getMySinbooks, type SinbookWithParticipants } from "@/lib/db_supabase/sinbookRepo";
 import {
   getMyRegistration,
+  getEventRegistrations,
+  scopeEventRegistrations,
+  summarizeEventRegistrations,
   setMyStatus,
   markMePaid,
   type EventRegistration,
@@ -76,6 +79,10 @@ export function useHomeDashboard() {
 
   // Event registration state
   const [myReg, setMyReg] = useState<EventRegistration | null>(null);
+  const [nextEventAttendance, setNextEventAttendance] = useState<{
+    attendingCount: number;
+    guestCount: number;
+  }>({ attendingCount: 0, guestCount: 0 });
   const [canonicalNextEventTee, setCanonicalNextEventTee] = useState<CanonicalTeeSheetResult | null>(null);
   /** Joint events: member rows for all societies in canonical groups (home only loads active society by default). */
   const [jointTeeMemberAugment, setJointTeeMemberAugment] = useState<MemberDoc[]>([]);
@@ -422,6 +429,40 @@ export function useHomeDashboard() {
     });
     return () => { cancelled = true; };
   }, [nextEventId, memberId]);
+
+  // Attendance snapshot for next event (status=in), plus guest count if available.
+  useEffect(() => {
+    if (!nextEventId || !nextEvent || !societyId) {
+      setNextEventAttendance({ attendingCount: 0, guestCount: 0 });
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const [regs, guests] = await Promise.all([
+          getEventRegistrations(nextEventId),
+          getEventGuests(nextEventId),
+        ]);
+        if (cancelled) return;
+        const scopedRegs = nextEventIsJoint
+          ? scopeEventRegistrations(regs, { kind: "joint_home", activeSocietyId: societyId })
+          : scopeEventRegistrations(regs, {
+              kind: "standard",
+              hostSocietyId: nextEvent.society_id ?? societyId,
+            });
+        const summary = summarizeEventRegistrations(scopedRegs);
+        setNextEventAttendance({
+          attendingCount: summary.attendingCount,
+          guestCount: Array.isArray(guests) ? guests.length : 0,
+        });
+      } catch {
+        if (!cancelled) setNextEventAttendance({ attendingCount: 0, guestCount: 0 });
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [nextEventId, nextEvent, nextEventIsJoint, societyId]);
 
   // Canonical tee sheet for next event (joint entries, tee_groups snapshot, or computed fallback)
   useEffect(() => {
@@ -770,6 +811,7 @@ export function useHomeDashboard() {
     oomRankMain,
     showUnrankedHint,
     heroTeePreview,
+    nextEventAttendance,
     myReg,
     regBusy,
     canAdmin,

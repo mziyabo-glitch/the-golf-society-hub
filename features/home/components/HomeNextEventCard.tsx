@@ -6,20 +6,16 @@ import { SecondaryButton } from "@/components/ui/Button";
 import { DashboardHeroEventCard } from "@/components/dashboard/DashboardHeroEventCard";
 import type { EventDoc } from "@/lib/db_supabase/eventRepo";
 import type { EventRegistration } from "@/lib/db_supabase/eventRegistrationRepo";
-import type { HeroTeeInfo } from "@/components/dashboard/DashboardHeroEventCard";
 import { getColors, radius, spacing } from "@/lib/ui/theme";
 
 type Props = {
   nextEvent: EventDoc | null;
   nextEventIsJoint: boolean;
   myReg: EventRegistration | null;
-  myTeeTimeInfo: HeroTeeInfo;
-  canAccessNextEventTeeSheet: boolean;
   formatEventDate: (dateStr?: string) => string;
   formatFormatLabel: (format?: string) => string;
   formatClassification: (classification?: string) => string;
   onOpenEvent: () => void;
-  onOpenTeeSheet: () => void;
   canManage: boolean;
 };
 
@@ -41,18 +37,15 @@ export function HomeNextEventCard(props: Props) {
   }
 
   return (
-    <View>
+    <View style={styles.wrap}>
       <DashboardHeroEventCard
         nextEvent={props.nextEvent}
         nextEventIsJoint={props.nextEventIsJoint}
         myReg={props.myReg}
-        myTeeTimeInfo={props.myTeeTimeInfo}
-        canAccessNextEventTeeSheet={props.canAccessNextEventTeeSheet}
         formatEventDate={props.formatEventDate}
         formatFormatLabel={props.formatFormatLabel}
         formatClassification={props.formatClassification}
         onOpenEvent={props.onOpenEvent}
-        onOpenTeeSheet={props.onOpenTeeSheet}
       />
       {props.canManage ? (
         <SecondaryButton size="sm" onPress={props.onOpenEvent} style={styles.manageBtn}>
@@ -64,6 +57,9 @@ export function HomeNextEventCard(props: Props) {
 }
 
 const styles = StyleSheet.create({
+  wrap: {
+    gap: spacing.xs,
+  },
   emptyCard: {
     borderRadius: radius.lg,
     borderWidth: 1,
@@ -75,7 +71,8 @@ const styles = StyleSheet.create({
     marginBottom: spacing.sm,
   },
   manageBtn: {
-    marginTop: spacing.xs,
+    marginTop: 2,
+    alignSelf: "flex-start",
   },
 });
 

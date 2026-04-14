@@ -56,7 +56,7 @@ export function HomeIdentityHeroCard({
         styles.card,
         {
           backgroundColor: colors.surfaceElevated,
-          borderColor: colors.borderLight,
+          borderColor: `${colors.primary}28`,
         },
       ]}
     >
@@ -116,7 +116,12 @@ const styles = StyleSheet.create({
   card: {
     borderRadius: radius.lg,
     borderWidth: 1,
-    padding: spacing.base,
+    padding: spacing.base + 2,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.08,
+    shadowRadius: 14,
+    elevation: 3,
   },
   topRow: {
     flexDirection: "row",

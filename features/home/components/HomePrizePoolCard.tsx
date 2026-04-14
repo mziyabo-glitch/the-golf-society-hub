@@ -28,7 +28,12 @@ export function HomePrizePoolCard({
 
   if (!eventId || !myMemberId) {
     return (
-      <AppCard style={[styles.emptyCard, { borderColor: colors.borderLight }]}>
+      <AppCard
+        style={[
+          styles.emptyCard,
+          { borderColor: colors.borderLight, backgroundColor: colors.backgroundTertiary },
+        ]}
+      >
         <AppText variant="bodyBold">Prize Pool</AppText>
         <AppText variant="small" color="secondary" style={{ marginTop: 4 }}>
           No Prize Pool for this event.

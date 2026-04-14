@@ -31,7 +31,7 @@ export function HomeQuickLinksSection({ links }: Props) {
             onPress={link.onPress}
             style={({ pressed }) => [{ opacity: pressed ? 0.72 : 1 }, styles.cell]}
           >
-            <AppCard style={[styles.card, { borderColor: colors.borderLight }]}>
+            <AppCard style={[styles.card, { borderColor: colors.borderLight, backgroundColor: colors.surface }]}>
               <Feather name={link.icon} size={16} color={colors.primary} />
               <AppText variant="small" numberOfLines={1} style={{ marginTop: 6 }}>
                 {link.label}
@@ -56,8 +56,8 @@ const styles = StyleSheet.create({
   card: {
     borderRadius: radius.md,
     borderWidth: 1,
-    padding: spacing.base,
-    minHeight: 68,
+    padding: spacing.sm + 2,
+    minHeight: 60,
   },
 });
 

@@ -1,4 +1,4 @@
-import { View, Pressable } from "react-native";
+import { View, Pressable, StyleSheet } from "react-native";
 import { Feather } from "@expo/vector-icons";
 
 import { Screen } from "@/components/ui/Screen";
@@ -18,7 +18,6 @@ import { HomePrizePoolCard } from "./HomePrizePoolCard";
 import { HomeLatestResultsCard } from "./HomeLatestResultsCard";
 import { HomeOomSnapshotCard } from "./HomeOomSnapshotCard";
 import { HomeWeatherSnapshotCard } from "./HomeWeatherSnapshotCard";
-import { HomeQuickLinksSection } from "./HomeQuickLinksSection";
 
 export function HomeSocietyDashboardView(vm: HomeSocietyDashboardVm) {
   const {
@@ -44,6 +43,7 @@ export function HomeSocietyDashboardView(vm: HomeSocietyDashboardVm) {
     oomRankMain,
     showUnrankedHint,
     heroTeePreview,
+    nextEventAttendance,
     myReg,
     regBusy,
     canAdmin,
@@ -72,43 +72,6 @@ export function HomeSocietyDashboardView(vm: HomeSocietyDashboardVm) {
     bumpPrizePoolHomeCard,
   } = vm;
 
-  const quickLinks = [
-    {
-      key: "events",
-      label: "Events",
-      icon: "calendar" as const,
-      onPress: () => pushWithBlur("/(app)/(tabs)/events"),
-    },
-    {
-      key: "members",
-      label: "Members",
-      icon: "users" as const,
-      onPress: () => pushWithBlur("/(app)/(tabs)/members"),
-    },
-    ...(canOpenLeaderboard
-      ? [{
-          key: "oom",
-          label: "OOM",
-          icon: "award" as const,
-          onPress: () => pushWithBlur("/(app)/(tabs)/leaderboard"),
-        }]
-      : []),
-    {
-      key: "rivalries",
-      label: "Rivalries",
-      icon: "zap" as const,
-      onPress: () => pushWithBlur("/(app)/(tabs)/sinbook"),
-    },
-    ...(canAdmin
-      ? [{
-          key: "treasurer",
-          label: "Finance",
-          icon: "credit-card" as const,
-          onPress: () => pushWithBlur("/(app)/treasurer"),
-        }]
-      : []),
-  ];
-
   return (
     <Screen
       style={{ backgroundColor: colors.backgroundSecondary }}
@@ -131,7 +94,7 @@ export function HomeSocietyDashboardView(vm: HomeSocietyDashboardVm) {
         onEditHandicap={() => pushWithBlur("/(app)/my-profile")}
       />
 
-      <AppText variant="small" color="secondary" style={{ marginTop: -spacing.xs }}>
+      <AppText variant="small" color="secondary" style={rhythmStyles.brandLine}>
         Event Results, Prize Pools, and Season Standings — all in one place.
       </AppText>
 
@@ -224,33 +187,38 @@ export function HomeSocietyDashboardView(vm: HomeSocietyDashboardVm) {
       {/* ================================================================== */}
       {(memberHasSeat || memberIsCaptain) && (<>
 
+      <AppText variant="captionBold" color="secondary" style={rhythmStyles.sectionEyebrow}>
+        NEXT EVENT
+      </AppText>
       <HomeNextEventCard
         nextEvent={nextEvent}
         nextEventIsJoint={nextEventIsJoint}
         myReg={myReg}
-        myTeeTimeInfo={heroTeePreview}
-        canAccessNextEventTeeSheet={canAccessNextEventTeeSheet}
         formatEventDate={formatEventDate}
         formatFormatLabel={formatFormatLabel}
         formatClassification={formatClassification}
         onOpenEvent={() => nextEvent && openEvent(nextEvent.id)}
-        onOpenTeeSheet={() =>
-          nextEvent && pushWithBlur({ pathname: "/(app)/event/[id]/tee-sheet", params: { id: nextEvent.id } })
-        }
         canManage={canAdmin}
       />
 
-      {/* Event attendance stays directly beneath Next Event */}
+      {/* Event RSVP + payment status summary directly below Next Event */}
       {nextEvent ? (
-        <AppCard style={[styles.premiumCard, { borderColor: colors.borderLight }]}>
+        <AppCard
+          style={[
+            rhythmStyles.secondaryCard,
+            { borderColor: colors.borderLight, backgroundColor: colors.surface },
+          ]}
+        >
           <AppText variant="captionBold" color="secondary" style={{ marginBottom: spacing.xs }}>
             Event attendance
           </AppText>
           <AppText variant="small" color="secondary">
-            Status: {myReg?.status === "in" ? "Playing" : myReg?.status === "out" ? "Not Playing" : "Not set"}
+            {nextEventAttendance.guestCount > 0
+              ? `${nextEventAttendance.attendingCount} attending • ${nextEventAttendance.guestCount} guests`
+              : `${nextEventAttendance.attendingCount} attending`}
           </AppText>
           <AppText variant="small" color="secondary">
-            Event Fee: {nextEvent.entryFeeDisplay?.trim() || "—"}
+            Cost: {nextEvent.entryFeeDisplay?.trim() || "—"}
           </AppText>
           <AppText variant="small" color="secondary" style={{ marginBottom: spacing.sm }}>
             Paid: {myReg?.paid ? "Yes" : "No"}
@@ -275,6 +243,27 @@ export function HomeSocietyDashboardView(vm: HomeSocietyDashboardVm) {
               Not Playing
             </PrimaryButton>
           </View>
+
+          {nextEvent.teeTimePublishedAt && canAccessNextEventTeeSheet ? (
+            <Pressable
+              onPress={() => pushWithBlur({ pathname: "/(app)/event/[id]/tee-sheet", params: { id: nextEvent.id } })}
+              style={({ pressed }) => ({ opacity: pressed ? 0.8 : 1, marginTop: spacing.sm })}
+            >
+              <View style={[styles.notificationBanner, { backgroundColor: colors.success + "15", borderColor: colors.success + "30", marginBottom: 0 }]}>
+                <Feather name="bell" size={16} color={colors.success} />
+                <View style={{ flex: 1 }}>
+                  <AppText variant="bodyBold" style={{ color: colors.success }}>
+                    Tee times now available
+                  </AppText>
+                  <AppText variant="small" color="secondary">
+                    Tap to view your tee time and full tee sheet.
+                  </AppText>
+                </View>
+                <Feather name="chevron-right" size={16} color={colors.success} />
+              </View>
+            </Pressable>
+          ) : null}
+
           {canAdmin ? (
             <Pressable
               onPress={() => setShowAdmin((v) => !v)}
@@ -310,6 +299,9 @@ export function HomeSocietyDashboardView(vm: HomeSocietyDashboardVm) {
         </AppCard>
       ) : null}
 
+      <AppText variant="captionBold" color="secondary" style={rhythmStyles.sectionEyebrow}>
+        PRIZE POOL
+      </AppText>
       <HomePrizePoolCard
         eventId={nextEvent?.prizePoolEnabled || prizePoolCard?.managerName ? nextEvent?.id ?? null : null}
         myMemberId={memberId}
@@ -320,11 +312,17 @@ export function HomeSocietyDashboardView(vm: HomeSocietyDashboardVm) {
         onChanged={bumpPrizePoolHomeCard}
       />
 
+      <AppText variant="captionBold" color="secondary" style={rhythmStyles.sectionEyebrow}>
+        LATEST RESULTS
+      </AppText>
       <HomeLatestResultsCard
         snapshot={latestResultsSnapshot}
         onOpenEvent={openEvent}
       />
 
+      <AppText variant="captionBold" color="secondary" style={rhythmStyles.sectionEyebrow}>
+        ORDER OF MERIT
+      </AppText>
       <HomeOomSnapshotCard
         rank={oomRankMain}
         points={oomPointsMain}
@@ -335,14 +333,15 @@ export function HomeSocietyDashboardView(vm: HomeSocietyDashboardVm) {
         formatPoints={formatPoints}
       />
 
+      <AppText variant="captionBold" color="secondary" style={rhythmStyles.sectionEyebrow}>
+        WEATHER
+      </AppText>
       <HomeWeatherSnapshotCard
         nextEvent={nextEvent}
         enabled={!!societyId && !!memberId}
         onOpenWeatherTab={openWeatherTab}
         preferredTeeTimeLocal={heroTeePreview?.teeTime ?? null}
       />
-
-      <HomeQuickLinksSection links={quickLinks} />
 
       {/* Secondary list kept compact below primary cards */}
       {events.length === 0 && !nextEvent ? (
@@ -361,29 +360,14 @@ export function HomeSocietyDashboardView(vm: HomeSocietyDashboardVm) {
         </AppCard>
       ) : null}
 
-      {/* Tee times published notice remains contextual */}
-      {nextEvent?.teeTimePublishedAt && canAccessNextEventTeeSheet ? (
-        <Pressable
-          onPress={() => pushWithBlur({ pathname: "/(app)/event/[id]/tee-sheet", params: { id: nextEvent.id } })}
-        >
-          <View style={[styles.notificationBanner, { backgroundColor: colors.success + "15", borderColor: colors.success + "30" }]}>
-            <Feather name="bell" size={16} color={colors.success} />
-            <View style={{ flex: 1 }}>
-              <AppText variant="bodyBold" style={{ color: colors.success }}>
-                Tee times now available
-              </AppText>
-              <AppText variant="small" color="secondary">
-                Tap to view your tee time and full tee sheet.
-              </AppText>
-            </View>
-            <Feather name="chevron-right" size={16} color={colors.success} />
-          </View>
-        </Pressable>
-      ) : null}
-
       {/* Legacy Rivalries card kept as utility action */}
       <Pressable onPress={() => pushWithBlur("/(app)/(tabs)/sinbook")}>
-        <AppCard style={styles.premiumCard}>
+        <AppCard
+          style={[
+            rhythmStyles.secondaryCard,
+            { borderColor: colors.borderLight, backgroundColor: colors.surface },
+          ]}
+        >
           <View style={styles.cardTitleRow}>
             <Feather name="zap" size={16} color={colors.primary} />
             <AppText variant="captionBold" color="primary">Rivalries</AppText>
@@ -403,3 +387,20 @@ export function HomeSocietyDashboardView(vm: HomeSocietyDashboardVm) {
       <PoweredByFooter colors={colors} />
     </Screen>  );
 }
+
+const rhythmStyles = StyleSheet.create({
+  brandLine: {
+    marginTop: -2,
+    marginBottom: spacing.xs,
+  },
+  sectionEyebrow: {
+    marginTop: 2,
+    marginBottom: -6,
+    letterSpacing: 0.5,
+  },
+  secondaryCard: {
+    borderRadius: 18,
+    borderWidth: 1,
+    padding: spacing.base,
+  },
+});

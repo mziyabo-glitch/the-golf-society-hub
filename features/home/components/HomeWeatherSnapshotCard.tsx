@@ -31,9 +31,6 @@ export function HomeWeatherSnapshotCard({
   }
   return (
     <View>
-      <AppText variant="captionBold" color="secondary" style={styles.label}>
-        Weather
-      </AppText>
       <DashboardPlayabilityMiniCard
         nextEvent={nextEvent}
         enabled={enabled}
@@ -45,9 +42,6 @@ export function HomeWeatherSnapshotCard({
 }
 
 const styles = StyleSheet.create({
-  label: {
-    marginBottom: spacing.xs,
-  },
   emptyCard: {
     borderRadius: radius.md,
     borderWidth: 1,
