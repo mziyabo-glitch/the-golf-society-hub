@@ -57,6 +57,19 @@ export type EventPrizePoolResultRow = {
   created_at: string;
 };
 
+export type EventPrizePoolSplitterScoreRow = {
+  id: string;
+  pool_id: string;
+  event_id: string;
+  member_id: string | null;
+  guest_id: string | null;
+  front9_score: number;
+  back9_score: number;
+  birdies: number;
+  created_at: string;
+  updated_at: string;
+};
+
 export type EventDivisionRow = {
   id: string;
   event_id: string;

@@ -620,7 +620,7 @@ export async function upsertEventResults(
       );
     }
     if (error.code === "42501" || error.message?.includes("policy")) {
-      throw new Error("Permission denied. Only Captain, Handicapper, or Secretary can save points.");
+      throw new Error("Permission denied. Only Captain or Handicapper can save points.");
     }
     if (error.code === "42P01" || error.message?.includes("does not exist")) {
       throw new Error("Results table not found. Please run migrations in Supabase.");

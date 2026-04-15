@@ -318,6 +318,10 @@ export default function NewPrizePoolScreen() {
             />
             <InlineNotice
               variant="info"
+              message="Pot Master enters only Front 9, Back 9, and Birdies. Full scores come from official event results."
+            />
+            <InlineNotice
+              variant="info"
               message="If no birdies are recorded, the birdie prize is added to Best Overall Score."
             />
           </>

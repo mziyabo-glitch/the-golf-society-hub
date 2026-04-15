@@ -21,7 +21,10 @@ import {
   finaliseEventPrizePool,
   getPotMasterConfirmedPrizePoolEntrantCount,
   getEventPrizePoolWithRules,
+  listEventPrizePoolSplitterScores,
+  listPrizePoolOptInEntrants,
   listEventPrizePoolResults,
+  replaceEventPrizePoolSplitterScores,
   updateEventPrizePool,
   replaceEventPrizePoolRules,
 } from "@/lib/db_supabase/eventPrizePoolRepo";
@@ -30,7 +33,7 @@ import { PRIZE_POOL_PAYOUT_TEMPLATES } from "@/lib/event-prize-pools-types";
 import { validateRuleBasisPointsTotal } from "@/lib/event-prize-pools-calc";
 import { PrizePoolStatusBadge } from "@/components/event-prize-pools/PrizePoolStatusBadge";
 import { PrizePoolSummary } from "@/components/event-prize-pools/PrizePoolSummary";
-import { getColors, spacing, iconSize } from "@/lib/ui/theme";
+import { getColors, spacing, iconSize, radius } from "@/lib/ui/theme";
 
 function parseGbpToPence(raw: string): number | null {
   const t = raw.replace(/[£,\s]/g, "").trim();
@@ -75,15 +78,24 @@ export default function PrizePoolDetailScreen() {
   const [nameByMemberId, setNameByMemberId] = useState<Map<string, string>>(new Map());
   const [nameByGuestId, setNameByGuestId] = useState<Map<string, string>>(new Map());
   const [confirmedEntrants, setConfirmedEntrants] = useState(0);
+  const [splitterInputRows, setSplitterInputRows] = useState<
+    { participantKey: string; memberId: string | null; guestId: string | null; name: string }[]
+  >([]);
+  const [splitterInputsByParticipant, setSplitterInputsByParticipant] = useState<
+    Record<string, { front9Score: string; back9Score: string; birdies: string }>
+  >({});
+  const [splitterBusy, setSplitterBusy] = useState(false);
 
   const load = useCallback(async () => {
     if (!eventId || !poolId) return;
     setLoading(true);
     try {
-      const [ev, full, resRows] = await Promise.all([
+      const [ev, full, resRows, entrantRows, splitterScores] = await Promise.all([
         getEvent(eventId),
         getEventPrizePoolWithRules(poolId),
         listEventPrizePoolResults(poolId),
+        listPrizePoolOptInEntrants(poolId),
+        listEventPrizePoolSplitterScores(poolId),
       ]);
       setEvent(ev);
       if (!full) {
@@ -124,6 +136,50 @@ export default function PrizePoolDetailScreen() {
       setNameByGuestId(gmap);
       const count = await getPotMasterConfirmedPrizePoolEntrantCount(poolId);
       setConfirmedEntrants(count);
+
+      const splitterScoreByKey = new Map<
+        string,
+        { front9Score: string; back9Score: string; birdies: string }
+      >();
+      for (const row of splitterScores) {
+        if (row.member_id) {
+          splitterScoreByKey.set(`member:${String(row.member_id)}`, {
+            front9Score: String(row.front9_score),
+            back9Score: String(row.back9_score),
+            birdies: String(row.birdies),
+          });
+        } else if (row.guest_id) {
+          splitterScoreByKey.set(`guest:${String(row.guest_id)}`, {
+            front9Score: String(row.front9_score),
+            back9Score: String(row.back9_score),
+            birdies: String(row.birdies),
+          });
+        }
+      }
+
+      const confirmedRows = entrantRows
+        .filter((r) => r.confirmed_by_pot_master)
+        .map((r) => ({
+          participantKey:
+            r.participant_type === "guest"
+              ? `guest:${String(r.guest_id)}`
+              : `member:${String(r.member_id)}`,
+          memberId: r.member_id ? String(r.member_id) : null,
+          guestId: r.guest_id ? String(r.guest_id) : null,
+          name: (r.displayName || "Entrant").trim(),
+        }))
+        .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
+      setSplitterInputRows(confirmedRows);
+
+      const initialInputs: Record<string, { front9Score: string; back9Score: string; birdies: string }> = {};
+      for (const row of confirmedRows) {
+        initialInputs[row.participantKey] = splitterScoreByKey.get(row.participantKey) ?? {
+          front9Score: "",
+          back9Score: "",
+          birdies: "",
+        };
+      }
+      setSplitterInputsByParticipant(initialInputs);
     } finally {
       setLoading(false);
     }
@@ -229,7 +285,9 @@ export default function PrizePoolDetailScreen() {
     if (!poolId || locked) return;
     Alert.alert(
       "Calculate payouts",
-      "Calculate payouts from official event results?",
+      competitionType === "splitter"
+        ? "Calculate splitter payouts using official event scores (Best Overall) and Pot Master Front 9 / Back 9 / Birdies inputs?"
+        : "Calculate payouts from official event results?",
       [
         { text: "Cancel", style: "cancel" },
         {
@@ -302,6 +360,66 @@ export default function PrizePoolDetailScreen() {
         },
       },
     ]);
+  };
+
+  const updateSplitterInputField = (
+    participantKey: string,
+    field: "front9Score" | "back9Score" | "birdies",
+    value: string,
+  ) => {
+    if (locked) return;
+    setSplitterInputsByParticipant((prev) => ({
+      ...prev,
+      [participantKey]: {
+        front9Score: prev[participantKey]?.front9Score ?? "",
+        back9Score: prev[participantKey]?.back9Score ?? "",
+        birdies: prev[participantKey]?.birdies ?? "",
+        [field]: value,
+      },
+    }));
+  };
+
+  const saveSplitterInputs = async () => {
+    if (!pool || pool.competition_type !== "splitter" || !eventId || !poolId || locked || !canManage) return;
+    const payload: Array<{
+      memberId: string | null;
+      guestId: string | null;
+      front9Score: number;
+      back9Score: number;
+      birdies: number;
+    }> = [];
+    for (const row of splitterInputRows) {
+      const input = splitterInputsByParticipant[row.participantKey] ?? {
+        front9Score: "",
+        back9Score: "",
+        birdies: "",
+      };
+      const f9 = parseInt(String(input.front9Score).trim(), 10);
+      const b9 = parseInt(String(input.back9Score).trim(), 10);
+      const bd = parseInt(String(input.birdies).trim(), 10);
+      if (Number.isNaN(f9) || Number.isNaN(b9) || Number.isNaN(bd) || f9 < 0 || b9 < 0 || bd < 0) {
+        Alert.alert("Splitter inputs", `Enter valid Front 9, Back 9, and Birdies for ${row.name}.`);
+        return;
+      }
+      payload.push({
+        memberId: row.memberId,
+        guestId: row.guestId,
+        front9Score: f9,
+        back9Score: b9,
+        birdies: bd,
+      });
+    }
+
+    setSplitterBusy(true);
+    try {
+      await replaceEventPrizePoolSplitterScores(poolId, eventId, payload);
+      await load();
+      Alert.alert("Saved", "Splitter inputs saved.");
+    } catch (e: unknown) {
+      Alert.alert("Save failed", e instanceof Error ? e.message : "Unknown error");
+    } finally {
+      setSplitterBusy(false);
+    }
   };
 
   if (!canManage) {
@@ -491,6 +609,97 @@ export default function PrizePoolDetailScreen() {
               variant="info"
               message="If no birdies are recorded, the birdie prize is added to Best Overall Score."
             />
+            <AppText variant="subheading">Splitter inputs</AppText>
+            <InlineNotice
+              variant="info"
+              message="Full scores are taken from official event results."
+            />
+            <AppText variant="caption" color="secondary">
+              Pot Master enters Front 9, Back 9, and Birdies only.
+            </AppText>
+            {splitterInputRows.length === 0 ? (
+              <InlineNotice
+                variant="info"
+                message="No confirmed entrants yet. Confirm entrants on the prize pools list first."
+              />
+            ) : (
+              <View style={[styles.splitterTableWrap, { borderColor: colors.borderLight }]}>
+                <View
+                  style={[
+                    styles.splitterHeadRow,
+                    {
+                      borderBottomColor: colors.borderLight,
+                      backgroundColor: colors.backgroundSecondary,
+                    },
+                  ]}
+                >
+                  <AppText variant="captionBold" color="secondary" style={styles.splitterNameCol}>
+                    Player
+                  </AppText>
+                  <AppText variant="captionBold" color="secondary" style={styles.splitterNumCol}>
+                    F9
+                  </AppText>
+                  <AppText variant="captionBold" color="secondary" style={styles.splitterNumCol}>
+                    B9
+                  </AppText>
+                  <AppText variant="captionBold" color="secondary" style={styles.splitterNumCol}>
+                    Birdies
+                  </AppText>
+                </View>
+                {splitterInputRows.map((row) => {
+                  const input = splitterInputsByParticipant[row.participantKey] ?? {
+                    front9Score: "",
+                    back9Score: "",
+                    birdies: "",
+                  };
+                  return (
+                    <View
+                      key={row.participantKey}
+                      style={[styles.splitterDataRow, { borderBottomColor: colors.borderLight }]}
+                    >
+                      <AppText variant="body" numberOfLines={1} style={styles.splitterNameCol}>
+                        {row.name}
+                      </AppText>
+                      <View style={styles.splitterNumCol}>
+                        <AppInput
+                          value={input.front9Score}
+                          onChangeText={(t) => updateSplitterInputField(row.participantKey, "front9Score", t)}
+                          keyboardType="number-pad"
+                          editable={!locked}
+                          placeholder="-"
+                          style={styles.splitterInput}
+                        />
+                      </View>
+                      <View style={styles.splitterNumCol}>
+                        <AppInput
+                          value={input.back9Score}
+                          onChangeText={(t) => updateSplitterInputField(row.participantKey, "back9Score", t)}
+                          keyboardType="number-pad"
+                          editable={!locked}
+                          placeholder="-"
+                          style={styles.splitterInput}
+                        />
+                      </View>
+                      <View style={styles.splitterNumCol}>
+                        <AppInput
+                          value={input.birdies}
+                          onChangeText={(t) => updateSplitterInputField(row.participantKey, "birdies", t)}
+                          keyboardType="number-pad"
+                          editable={!locked}
+                          placeholder="-"
+                          style={styles.splitterInput}
+                        />
+                      </View>
+                    </View>
+                  );
+                })}
+              </View>
+            )}
+            {!locked ? (
+              <SecondaryButton loading={splitterBusy} onPress={() => void saveSplitterInputs()}>
+                Save splitter inputs
+              </SecondaryButton>
+            ) : null}
           </>
         ) : (
           <>
@@ -576,4 +785,36 @@ const styles = StyleSheet.create({
   backBtn: { padding: spacing.xs },
   modeRow: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm },
   tplRow: { flexDirection: "row", flexWrap: "wrap", gap: spacing.xs, marginBottom: spacing.sm },
+  splitterTableWrap: {
+    borderWidth: 1,
+    borderRadius: radius.sm,
+    overflow: "hidden",
+  },
+  splitterHeadRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  splitterDataRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.xs,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  splitterNameCol: {
+    flex: 1,
+    minWidth: 0,
+  },
+  splitterNumCol: {
+    width: 64,
+  },
+  splitterInput: {
+    minHeight: 36,
+    textAlign: "center",
+    paddingHorizontal: spacing.xs,
+  },
 });

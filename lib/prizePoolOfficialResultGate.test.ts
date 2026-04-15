@@ -100,7 +100,7 @@ describe("confirmedPrizePoolEntryHasOfficialScoredResult", () => {
     ).toBe(true);
   });
 
-  it("splitter mode requires front/back/birdie details", () => {
+  it("only requires official scored day value", () => {
     const entry = {
       pool_id: "pool-1",
       participant_type: "member",
@@ -114,28 +114,7 @@ describe("confirmedPrizePoolEntryHasOfficialScoredResult", () => {
     ]);
 
     expect(
-      confirmedPrizePoolEntryHasOfficialScoredResult(entry, resultByMemberId, new Map(), societyScope, {
-        requireDetailedSplitterFields: true,
-      }),
-    ).toBe(false);
-
-    resultByMemberId.set(
-      "m1",
-      row({
-        society_id: societyScope,
-        member_id: "m1",
-        event_guest_id: null,
-        day_value: 36,
-        front_9_value: 18,
-        back_9_value: 18,
-        birdie_count: 2,
-      }),
-    );
-
-    expect(
-      confirmedPrizePoolEntryHasOfficialScoredResult(entry, resultByMemberId, new Map(), societyScope, {
-        requireDetailedSplitterFields: true,
-      }),
+      confirmedPrizePoolEntryHasOfficialScoredResult(entry, resultByMemberId, new Map(), societyScope),
     ).toBe(true);
   });
 });

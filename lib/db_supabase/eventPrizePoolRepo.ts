@@ -16,6 +16,7 @@ import {
   type EventPrizePoolResultRow,
   type EventPrizePoolRuleRow,
   type EventPrizePoolRow,
+  type EventPrizePoolSplitterScoreRow,
   type PrizePoolCalculationResultRow,
   type PrizePoolEntrant,
   type PrizePoolRuleInput,
@@ -40,7 +41,7 @@ export const PRIZE_POOL_ERR_RULES_COUNT = "Payout rules must match places paid."
 export const PRIZE_POOL_ERR_NO_DIVISIONS = "This pool requires event divisions, but none were found.";
 export const PRIZE_POOL_ERR_NO_ELIGIBLE = "No eligible players matched the pool rules.";
 export const PRIZE_POOL_ERR_SPLITTER_DETAIL_REQUIRED =
-  "Prize Pool (Pot) Splitter requires front 9, back 9, and birdie count for official results.";
+  "Prize Pool (Pot) Splitter requires Front 9, Back 9, and Birdies for each confirmed entrant.";
 export const PRIZE_POOL_ERR_FINALISED = "Finalised pools can no longer be edited.";
 export const PRIZE_POOL_ERR_SUM_MISMATCH =
   "Payout allocation did not match the event pool total. Please try again.";
@@ -196,6 +197,83 @@ export async function getPotMasterConfirmedPrizePoolEntrantCount(poolId: string)
   return rows.length;
 }
 
+export async function listEventPrizePoolSplitterScores(
+  poolId: string,
+): Promise<EventPrizePoolSplitterScoreRow[]> {
+  const { data, error } = await supabase
+    .from("event_prize_pool_splitter_scores")
+    .select("*")
+    .eq("pool_id", poolId)
+    .order("created_at", { ascending: true });
+  if (error) {
+    console.error("[eventPrizePoolRepo] listEventPrizePoolSplitterScores:", error.message);
+    throw new Error(error.message || "Failed to load splitter scores.");
+  }
+  return (data ?? []) as EventPrizePoolSplitterScoreRow[];
+}
+
+export async function replaceEventPrizePoolSplitterScores(
+  poolId: string,
+  eventId: string,
+  rows: Array<{
+    memberId: string | null;
+    guestId: string | null;
+    front9Score: number;
+    back9Score: number;
+    birdies: number;
+  }>,
+): Promise<void> {
+  const existing = await getEventPrizePool(poolId);
+  if (!existing) throw new Error("Prize pool not found.");
+  if (existing.status === "finalised") throw new Error(PRIZE_POOL_ERR_FINALISED);
+
+  const cleanRows = rows
+    .map((r) => ({
+      memberId: r.memberId ? String(r.memberId) : null,
+      guestId: r.guestId ? String(r.guestId) : null,
+      front9Score: Number(r.front9Score),
+      back9Score: Number(r.back9Score),
+      birdies: Number(r.birdies),
+    }))
+    .filter((r) => (r.memberId ? !r.guestId : !!r.guestId))
+    .filter(
+      (r) =>
+        Number.isFinite(r.front9Score) &&
+        Number.isFinite(r.back9Score) &&
+        Number.isFinite(r.birdies) &&
+        r.front9Score >= 0 &&
+        r.back9Score >= 0 &&
+        r.birdies >= 0,
+    );
+
+  const { error: delErr } = await supabase
+    .from("event_prize_pool_splitter_scores")
+    .delete()
+    .eq("pool_id", poolId);
+  if (delErr) {
+    console.error("[eventPrizePoolRepo] replaceEventPrizePoolSplitterScores(delete):", delErr.message);
+    throw new Error(delErr.message || "Failed to reset splitter scores.");
+  }
+
+  if (cleanRows.length === 0) return;
+
+  const payload = cleanRows.map((r) => ({
+    pool_id: poolId,
+    event_id: eventId,
+    member_id: r.memberId,
+    guest_id: r.guestId,
+    front9_score: Math.round(r.front9Score),
+    back9_score: Math.round(r.back9Score),
+    birdies: Math.max(0, Math.round(r.birdies)),
+  }));
+
+  const { error: insErr } = await supabase.from("event_prize_pool_splitter_scores").insert(payload);
+  if (insErr) {
+    console.error("[eventPrizePoolRepo] replaceEventPrizePoolSplitterScores(insert):", insErr.message);
+    throw new Error(insErr.message || "Failed to save splitter scores.");
+  }
+}
+
 async function buildPrizePoolEntrants(params: {
   pool: EventPrizePoolRow;
   event: EventDoc;
@@ -234,15 +312,9 @@ async function buildPrizePoolEntrants(params: {
 
   const fmtSort = prizePoolSortOrderForEventFormat(event.format);
   const entrants: PrizePoolEntrant[] = [];
-  const requireDetailedSplitterFields = pool.competition_type === "splitter";
-
   for (const en of entries) {
     if (en.participant_type === "member" && en.member_id) {
-      if (
-        !confirmedPrizePoolEntryHasOfficialScoredResult(en, resultByMemberId, resultByGuestKey, societyScope, {
-          requireDetailedSplitterFields,
-        })
-      ) {
+      if (!confirmedPrizePoolEntryHasOfficialScoredResult(en, resultByMemberId, resultByGuestKey, societyScope)) {
         continue;
       }
       const mid = String(en.member_id);
@@ -272,11 +344,7 @@ async function buildPrizePoolEntrants(params: {
     }
 
     if (en.participant_type === "guest" && en.guest_id) {
-      if (
-        !confirmedPrizePoolEntryHasOfficialScoredResult(en, resultByMemberId, resultByGuestKey, societyScope, {
-          requireDetailedSplitterFields,
-        })
-      ) {
+      if (!confirmedPrizePoolEntryHasOfficialScoredResult(en, resultByMemberId, resultByGuestKey, societyScope)) {
         continue;
       }
       const gid = String(en.guest_id);
@@ -514,14 +582,6 @@ export async function calculateEventPrizePool(poolId: string): Promise<void> {
   if (rawResults.filter((r) => r.day_value != null).length === 0) {
     throw new Error(PRIZE_POOL_ERR_NO_RESULTS);
   }
-  if (
-    pool.competition_type === "splitter" &&
-    rawResults.some((r) => r.day_value != null) &&
-    rawResults.every((r) => r.front_9_value == null || r.back_9_value == null || r.birdie_count == null)
-  ) {
-    throw new Error(PRIZE_POOL_ERR_SPLITTER_DETAIL_REQUIRED);
-  }
-
   const confirmedEntrants = await listPotMasterConfirmedPrizePoolEntries(poolId);
   const effectiveTotalPence = derivePrizePoolTotalAmountPence({
     totalAmountMode: pool.total_amount_mode,
@@ -536,8 +596,39 @@ export async function calculateEventPrizePool(poolId: string): Promise<void> {
 
   let resultRows: PrizePoolCalculationResultRow[] = [];
   if (pool.competition_type === "splitter") {
+    const splitterRows = await listEventPrizePoolSplitterScores(poolId);
+    const splitterByParticipantKey = new Map<string, EventPrizePoolSplitterScoreRow>();
+    for (const row of splitterRows) {
+      if (row.member_id) {
+        splitterByParticipantKey.set(`member:${String(row.member_id)}`, row);
+      } else if (row.guest_id) {
+        splitterByParticipantKey.set(`guest:${String(row.guest_id)}`, row);
+      }
+    }
+    const entrantsWithSplitter = filtered.map((entrant) => {
+      const split = splitterByParticipantKey.get(entrant.participantKey);
+      return {
+        ...entrant,
+        front9Value: split ? Number(split.front9_score) : null,
+        back9Value: split ? Number(split.back9_score) : null,
+        birdieCount: split ? Number(split.birdies) : null,
+      };
+    });
+    if (
+      entrantsWithSplitter.some(
+        (e) =>
+          e.front9Value == null ||
+          Number.isNaN(Number(e.front9Value)) ||
+          e.back9Value == null ||
+          Number.isNaN(Number(e.back9Value)) ||
+          e.birdieCount == null ||
+          Number.isNaN(Number(e.birdieCount)),
+      )
+    ) {
+      throw new Error(PRIZE_POOL_ERR_SPLITTER_DETAIL_REQUIRED);
+    }
     resultRows = allocateSplitterPotPence({
-      entrants: filtered,
+      entrants: entrantsWithSplitter,
       totalPotPence: effectiveTotalPence,
       eventFormat: String(event.format),
       birdieFallbackToOverall: pool.birdie_fallback_to_overall,
