@@ -228,7 +228,7 @@ export function EventRsvpInviteScreen({ eventId }: { eventId: string }) {
       <Screen contentStyle={styles.pad}>
         <AppCard style={styles.card}>
           <AppText variant="h2" style={{ marginBottom: spacing.sm }}>
-            {guestSuccess ? "Thanks!" : "You're set"}
+            {guestSuccess ? "Thanks!" : "You&apos;re set"}
           </AppText>
           <AppText variant="bodyBold" style={{ marginBottom: spacing.xs }}>
             {summary.name}
@@ -239,7 +239,7 @@ export function EventRsvpInviteScreen({ eventId }: { eventId: string }) {
           </AppText>
           {guestSuccess ? (
             <AppText variant="body" color="secondary" style={{ marginTop: spacing.sm }}>
-              You're on the guest list. The organiser will see you in the app.
+              You&apos;re on the guest list. The organiser will see you in the app.
             </AppText>
           ) : (
             <AppText variant="body" color="secondary" style={{ marginTop: spacing.sm }}>
@@ -320,13 +320,13 @@ export function EventRsvpInviteScreen({ eventId }: { eventId: string }) {
                 Member or guest?
               </AppText>
               <PrimaryButton onPress={() => setStep("member")} style={{ marginBottom: spacing.sm }}>
-                I'm a member
+                I&apos;m a member
               </PrimaryButton>
-              <SecondaryButton onPress={() => setStep("guest")}>I'm a guest</SecondaryButton>
+              <SecondaryButton onPress={() => setStep("guest")}>I&apos;m a guest</SecondaryButton>
             </>
           ) : (
             <AppText variant="body" color="secondary">
-              New responses aren't accepted anymore. Contact the organiser if you need help.
+              New responses aren&apos;t accepted anymore. Contact the organiser if you need help.
             </AppText>
           )}
         </AppCard>
@@ -435,7 +435,7 @@ export function EventRsvpInviteScreen({ eventId }: { eventId: string }) {
           ) : (
             <>
               <AppText variant="body" color="secondary" style={{ marginBottom: spacing.sm }}>
-                We can't match your signed-in account to this event's societies. Use your society email
+                We can&apos;t match your signed-in account to this event&apos;s societies. Use your society email
                 below, or open the app, switch society, and try again.
               </AppText>
               <AppInput
@@ -511,7 +511,7 @@ export function EventRsvpInviteScreen({ eventId }: { eventId: string }) {
                 autoCapitalize="words"
               />
               <PrimaryButton onPress={() => void onGuestIn()} loading={busy} style={{ marginTop: spacing.base }}>
-                I'm playing
+                I&apos;m playing
               </PrimaryButton>
             </>
           )}

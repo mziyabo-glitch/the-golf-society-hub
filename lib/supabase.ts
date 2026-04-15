@@ -50,9 +50,9 @@ function getSupabaseClient(): SupabaseClient {
     return supabaseInstance;
   }
 
-  console.log("[supabase] creating singleton client", {
+  console.log("[auth-client] creating singleton Supabase client", {
     platform: Platform.OS,
-    storage: Platform.OS === "web" ? "localStorage adapter" : "AsyncStorage adapter",
+    storage: Platform.OS === "web" ? "localStorage (gsh: prefix)" : "AsyncStorage (gsh: prefix)",
     persistSession: SUPABASE_AUTH_CONFIG.persistSession,
     autoRefreshToken: SUPABASE_AUTH_CONFIG.autoRefreshToken,
     detectSessionInUrl: SUPABASE_AUTH_CONFIG.detectSessionInUrl,

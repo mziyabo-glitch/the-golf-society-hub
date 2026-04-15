@@ -192,7 +192,7 @@ const styles = StyleSheet.create({
     marginBottom: 20,
   },
   societyName: {
-    fontSize: typography.caption.fontSize,
+    fontSize: typography.caption.fontSize + 2,
     fontWeight: "500",
     color: "#6B7280",
     textTransform: "uppercase",
@@ -200,13 +200,13 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   title: {
-    fontSize: typography.display.fontSize,
+    fontSize: typography.display.fontSize + 4,
     fontWeight: "700",
     color: colors.light.primary,
     marginBottom: 2,
   },
   subtitle: {
-    fontSize: typography.body.fontSize,
+    fontSize: typography.body.fontSize + 2,
     fontWeight: "500",
     color: "#374151",
   },
@@ -229,7 +229,7 @@ const styles = StyleSheet.create({
     borderBottomColor: "#E5E7EB",
   },
   eventName: {
-    fontSize: typography.body.fontSize,
+    fontSize: typography.body.fontSize + 2,
     fontWeight: "600",
     color: "#111827",
     marginBottom: 4,
@@ -239,15 +239,15 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   eventDate: {
-    fontSize: typography.body.fontSize,
+    fontSize: typography.body.fontSize + 1,
     color: "#6B7280",
   },
   eventDateDot: {
-    fontSize: typography.body.fontSize,
+    fontSize: typography.body.fontSize + 1,
     color: "#9CA3AF",
   },
   eventFormat: {
-    fontSize: typography.body.fontSize,
+    fontSize: typography.body.fontSize + 1,
     color: "#6B7280",
   },
   table: {
@@ -260,7 +260,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.light.primary,
   },
   headerCell: {
-    fontSize: typography.small.fontSize,
+    fontSize: typography.small.fontSize + 1,
     fontWeight: "600",
     color: "#FFFFFF",
     textTransform: "uppercase",
@@ -301,7 +301,7 @@ const styles = StyleSheet.create({
   },
   nameText: {
     flex: 1,
-    fontSize: typography.body.fontSize,
+    fontSize: typography.body.fontSize + 2,
     fontWeight: "500",
     color: "#111827",
   },
@@ -310,13 +310,13 @@ const styles = StyleSheet.create({
   },
   valueText: {
     width: 50,
-    fontSize: typography.body.fontSize,
+    fontSize: typography.body.fontSize + 1,
     color: "#6B7280",
     textAlign: "center",
   },
   posText: {
     width: 40,
-    fontSize: typography.body.fontSize,
+    fontSize: typography.body.fontSize + 1,
     fontWeight: "500",
     color: "#6B7280",
     textAlign: "center",
@@ -327,13 +327,13 @@ const styles = StyleSheet.create({
   },
   oomText: {
     width: 50,
-    fontSize: typography.body.fontSize,
+    fontSize: typography.body.fontSize + 2,
     fontWeight: "600",
     color: colors.light.primary,
     textAlign: "right",
   },
   oomTextTop3: {
     fontWeight: "700",
-    fontSize: typography.caption.fontSize,
+    fontSize: typography.caption.fontSize + 2,
   },
 });

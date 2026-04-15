@@ -15,7 +15,7 @@ import { getSession } from "@/lib/auth_supabase";
 import { createEventPrizePool, listEventDivisions } from "@/lib/db_supabase/eventPrizePoolRepo";
 import { PRIZE_POOL_PAYOUT_TEMPLATES } from "@/lib/event-prize-pools-types";
 import { validateRuleBasisPointsTotal } from "@/lib/event-prize-pools-calc";
-import { getColors, spacing, radius, iconSize } from "@/lib/ui/theme";
+import { getColors, spacing, iconSize } from "@/lib/ui/theme";
 
 function parseGbpToPence(raw: string): number | null {
   const t = raw.replace(/[£,\s]/g, "").trim();

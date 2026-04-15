@@ -106,6 +106,10 @@ export function AuthScreen() {
       setError(null);
       setSuccess(null);
 
+      if (Platform.OS === "web") {
+        setRememberMe(rememberMe);
+      }
+
       try {
         const { error } = await signInWithMagicLink(submitEmail);
         if (error) {

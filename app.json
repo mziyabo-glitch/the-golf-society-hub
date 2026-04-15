@@ -31,7 +31,15 @@
     },
     "web": {
       "output": "single",
-      "favicon": "./assets/images/app-icon.png"
+      "bundler": "metro",
+      "favicon": "./assets/images/app-icon.png",
+      "name": "The Golf Society Hub",
+      "shortName": "Golf Society Hub",
+      "lang": "en",
+      "description": "Everything Golf Society",
+      "backgroundColor": "#F8FAF8",
+      "display": "standalone",
+      "orientation": "portrait"
     },
     "plugins": [
       "expo-router",

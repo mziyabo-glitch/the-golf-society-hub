@@ -1,0 +1,19 @@
+{
+  "name": "The Golf Society Hub",
+  "short_name": "Golf Society Hub",
+  "description": "Everything Golf Society",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "theme_color": "#166534",
+  "background_color": "#F8FAF8",
+  "icons": [
+    {
+      "src": "/pwa-icon.png",
+      "sizes": "1024x1024",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

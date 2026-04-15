@@ -9,7 +9,7 @@ import { StatusBadge } from "@/components/ui/StatusBadge";
 import { PrimaryButton } from "@/components/ui/Button";
 import type { EventDoc } from "@/lib/db_supabase/eventRepo";
 import type { EventRegistration } from "@/lib/db_supabase/eventRegistrationRepo";
-import { getColors, spacing, radius } from "@/lib/ui/theme";
+import { getColors, spacing } from "@/lib/ui/theme";
 import { dashboardShell } from "./dashboardCardStyles";
 
 type Props = {

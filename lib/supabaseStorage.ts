@@ -1,7 +1,9 @@
 // lib/supabaseStorage.ts
 // Cross-platform storage adapter for Supabase auth
 // - Web: uses localStorage with "gsh:" prefix
-// - Native (iOS/Android): uses AsyncStorage for reliable session persistence
+// - Native (iOS/Android): uses AsyncStorage for the full Supabase session JSON.
+//   (expo-secure-store is unsuitable as the default: single-key size limits are far
+//   below a typical JWT pair; encrypting the blob is a separate hardening step.)
 //
 // "Remember me" (web only):
 //   When rememberMe is false, writes are skipped and any stored session is cleared
@@ -66,6 +68,8 @@ export const supabaseStorage = {
             platform: Platform.OS,
             key,
             found: !!value,
+            result: value ? "present" : "empty",
+            medium: "localStorage",
             refreshTokenPresent: flags.hasRefreshToken,
           });
         }
@@ -82,6 +86,8 @@ export const supabaseStorage = {
           platform: Platform.OS,
           key,
           found: !!value,
+          result: value ? "present" : "empty",
+          medium: "AsyncStorage",
           refreshTokenPresent: flags.hasRefreshToken,
         });
       }

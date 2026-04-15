@@ -29,7 +29,7 @@ import { PRIZE_POOL_PAYOUT_TEMPLATES } from "@/lib/event-prize-pools-types";
 import { validateRuleBasisPointsTotal } from "@/lib/event-prize-pools-calc";
 import { PrizePoolStatusBadge } from "@/components/event-prize-pools/PrizePoolStatusBadge";
 import { PrizePoolSummary } from "@/components/event-prize-pools/PrizePoolSummary";
-import { getColors, spacing, radius, iconSize } from "@/lib/ui/theme";
+import { getColors, spacing, iconSize } from "@/lib/ui/theme";
 
 function parseGbpToPence(raw: string): number | null {
   const t = raw.replace(/[£,\s]/g, "").trim();

@@ -16,6 +16,7 @@ import { consumePendingRivalryJoinCode } from "@/lib/pendingRivalryJoinCode";
 import { consumePendingSocietyJoinCode } from "@/lib/pendingSocietyJoinCode";
 import { blurWebActiveElement } from "@/lib/ui/focus";
 import { isEventRsvpInvitePath } from "@/lib/eventInviteLink";
+import { StatusBar } from "expo-status-bar";
 
 const APP_TABS = "/(app)/(tabs)";
 const JOIN_FLOW_SEGMENTS = new Set(["onboarding", "join", "join-society", "invite"]);
@@ -72,8 +73,8 @@ function RootNavigator() {
   }
 
   useEffect(() => {
-    // Don't route while loading or not signed in
-    if (loading || authRestoring || !isSignedIn) {
+    // Route as soon as auth is known; profile/membership loading can continue in-app.
+    if (authRestoring || !isSignedIn) {
       return;
     }
 
@@ -105,7 +106,7 @@ function RootNavigator() {
 
     if (stateKey !== lastState.current) {
       lastState.current = stateKey;
-      console.log("[_layout] Route guard:", {
+      console.log("[_layout:redirect] route-guard state", {
         hasSociety,
         activeSocietyId,
         inJoinFlow,
@@ -132,7 +133,7 @@ function RootNavigator() {
 
     // Force profile completion before anything else
     if (needsProfileCompletion && !inMyProfile && hasSociety) {
-      console.log("[_layout] Profile incomplete, redirecting to /my-profile");
+      console.log("[_layout:redirect] decision=profile_incomplete → /(app)/my-profile");
       hasRouted.current = true;
       blurWebActiveElement();
       router.replace("/(app)/my-profile");
@@ -145,21 +146,22 @@ function RootNavigator() {
     }
 
     if (hasSociety && inJoinFlow) {
-      console.log("[_layout] Has society + in join flow, redirecting to dashboard");
+      console.log("[_layout:redirect] decision=has_society_in_join_flow → dashboard or pending deep link");
       hasRouted.current = true;
       consumePendingRivalryJoinCode().then((code) => {
         if (code) {
-          console.log("[_layout] Resuming rivalry join with code");
+          console.log("[_layout:redirect] decision=resume_pending_rivalry_code_in_join_flow");
           blurWebActiveElement();
           router.replace({ pathname: "/join-rivalry", params: { code } });
           return;
         }
         consumePendingInviteToken().then((token) => {
           if (token) {
-            console.log("[_layout] Resuming sinbook invite:", token);
+            console.log("[_layout:redirect] decision=resume_pending_sinbook_invite_in_join_flow", { token });
             blurWebActiveElement();
             router.replace({ pathname: "/sinbook/invite/[token]", params: { token } });
           } else {
+            console.log("[_layout:redirect] decision=join_flow_default_to_tabs");
             blurWebActiveElement();
             router.replace(APP_TABS);
           }
@@ -167,7 +169,7 @@ function RootNavigator() {
       });
     }
     // No society + not on onboarding = Personal Mode — let (app) handle it
-  }, [loading, authRestoring, isSignedIn, activeSocietyId, profile, segments, pathname, router, isPublicPath]);
+  }, [authRestoring, isSignedIn, activeSocietyId, profile, segments, pathname, router, isPublicPath]);
 
   // Reset hasRouted only on sign-out, not on every bootstrap refresh.
   // This prevents the guard from re-routing after each refresh cycle.
@@ -180,7 +182,7 @@ function RootNavigator() {
 
   // Auth-aware redirect: once hydrated and signed in, enter correct flow.
   useEffect(() => {
-    if (loading || authRestoring || !isSignedIn || isPublicPath) return;
+    if (authRestoring || !isSignedIn || isPublicPath) return;
     let active = true;
 
     const routeSignedInUser = async () => {
@@ -193,7 +195,7 @@ function RootNavigator() {
       const pendingRivalryCode = await consumePendingRivalryJoinCode();
       if (!active) return;
       if (pendingRivalryCode) {
-        console.log("[_layout] Signed-in redirect: resuming rivalry join");
+        console.log("[_layout:redirect] decision=pending_rivalry_code → /join-rivalry");
         blurWebActiveElement();
         router.replace({ pathname: "/join-rivalry", params: { code: pendingRivalryCode } });
         return;
@@ -202,13 +204,13 @@ function RootNavigator() {
       const pendingSocietyCode = await consumePendingSocietyJoinCode();
       if (!active) return;
       if (pendingSocietyCode) {
-        console.log("[_layout] Signed-in redirect: resuming society join");
+        console.log("[_layout:redirect] decision=pending_society_code → /onboarding join");
         blurWebActiveElement();
         router.replace({ pathname: "/onboarding", params: { mode: "join", code: pendingSocietyCode, invite: "1" } });
         return;
       }
 
-      console.log("[_layout] Signed-in redirect: entering app tabs");
+      console.log("[_layout:redirect] decision=signed_in_default → /(app)/(tabs)");
       blurWebActiveElement();
       router.replace(APP_TABS);
     };
@@ -217,7 +219,7 @@ function RootNavigator() {
     return () => {
       active = false;
     };
-  }, [loading, authRestoring, isSignedIn, isPublicPath, segments, pathname, router]);
+  }, [authRestoring, isSignedIn, isPublicPath, segments, pathname, router]);
 
   // Determine which overlay to show (if any).
   // The Stack ALWAYS renders so expo-router can match child routes.
@@ -227,9 +229,27 @@ function RootNavigator() {
     segments[0] === "reset-password" ||
     segments[0] === "privacy-policy" ||
     isEventRsvpInvitePath(pathname);
-  const showLoading = loading || authRestoring || !themeReady;
-  const showAuth = !loading && !authRestoring && !isSignedIn && !isPublicRoute;
-  const showError = !loading && !authRestoring && !showAuth && !!error;
+  // Keep auth gate blocked only while auth session is unknown; once known,
+  // the app can render immediately while profile/membership continues loading.
+  const showLoading = authRestoring || !themeReady;
+  const showAuth = !authRestoring && !isSignedIn && !isPublicRoute;
+  const showError = !authRestoring && !showAuth && !!error;
+
+  useEffect(() => {
+    console.log("[_layout:redirect] guard inputs", {
+      authRestoring,
+      loading,
+      isSignedIn,
+      activeSocietyId,
+      hasProfile: !!profile,
+      pathname,
+      segments: segments.join("/"),
+      isPublicRoute,
+      showLoading,
+      showAuth,
+      showError,
+    });
+  }, [authRestoring, loading, isSignedIn, activeSocietyId, profile, pathname, segments, isPublicRoute, showLoading, showAuth, showError]);
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>
@@ -268,6 +288,7 @@ export default function RootLayout() {
   return (
     <ThemeProvider>
       <FontScaleProvider>
+        <StatusBar style="auto" />
         <BootstrapProvider>
           <RootNavigator />
         </BootstrapProvider>

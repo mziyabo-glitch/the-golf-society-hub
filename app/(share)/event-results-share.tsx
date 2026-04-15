@@ -257,21 +257,21 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   title: {
-    fontSize: 50,
-    lineHeight: 52,
+    fontSize: 56,
+    lineHeight: 58,
     fontWeight: "700",
     color: "#166534",
   },
   eventName: {
-    fontSize: 20,
-    lineHeight: 22,
+    fontSize: 24,
+    lineHeight: 26,
     color: "#111827",
     fontWeight: "600",
     marginTop: 2,
   },
   meta: {
-    fontSize: 15,
-    lineHeight: 18,
+    fontSize: 18,
+    lineHeight: 21,
     color: "#6B7280",
     marginTop: 4,
   },
@@ -291,8 +291,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
   },
   headerCell: {
-    fontSize: 14,
-    lineHeight: 16,
+    fontSize: 16,
+    lineHeight: 18,
     textTransform: "uppercase",
     fontWeight: "700",
     color: "#374151",
@@ -320,8 +320,8 @@ const styles = StyleSheet.create({
     backgroundColor: "#FAFAFA",
   },
   cell: {
-    fontSize: 16,
-    lineHeight: 18,
+    fontSize: 19,
+    lineHeight: 21,
     color: "#111827",
   },
   posCol: {
@@ -353,8 +353,8 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   footerText: {
-    fontSize: 12,
-    lineHeight: 14,
+    fontSize: 14,
+    lineHeight: 16,
     color: "#9CA3AF",
   },
 });
