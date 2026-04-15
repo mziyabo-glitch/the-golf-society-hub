@@ -102,6 +102,9 @@ type PlayerEntry = {
   memberId: string;
   memberName: string;
   dayPoints: string; // User input - the competition/stableford score
+  front9Value: string; // Official front 9 value for splitter payouts
+  back9Value: string; // Official back 9 value for splitter payouts
+  birdieCount: string; // Official birdie count for splitter payouts
   position: number | null; // Auto-calculated
   oomPoints: number; // Auto-calculated F1 points
   /** Saved row exists in event_results for this event + active society */
@@ -446,6 +449,9 @@ export default function EventPointsScreen() {
             memberId: rep.id,
             memberName: rep.displayName || rep.display_name || rep.name || "Unknown",
             dayPoints: "",
+            front9Value: "",
+            back9Value: "",
+            birdieCount: "",
             position: null,
             oomPoints: 0,
             hasPersistedResult: false,
@@ -463,6 +469,9 @@ export default function EventPointsScreen() {
             memberId: ps,
             memberName: (g?.name ?? "Guest").trim(),
             dayPoints: "",
+            front9Value: "",
+            back9Value: "",
+            birdieCount: "",
             position: null,
             oomPoints: 0,
             hasPersistedResult: false,
@@ -479,6 +488,9 @@ export default function EventPointsScreen() {
               memberId: ps,
               memberName: (g?.name ?? "Guest").trim(),
               dayPoints: "",
+              front9Value: "",
+              back9Value: "",
+              birdieCount: "",
               position: null,
               oomPoints: 0,
               hasPersistedResult: false,
@@ -490,6 +502,9 @@ export default function EventPointsScreen() {
             memberId: pid,
             memberName: member?.displayName || member?.name || "Unknown",
             dayPoints: "",
+            front9Value: "",
+            back9Value: "",
+            birdieCount: "",
             position: null,
             oomPoints: 0,
             hasPersistedResult: false,
@@ -520,9 +535,15 @@ export default function EventPointsScreen() {
           const hit = pickExistingResultForPlayer(p, existingResults, societyId);
           if (!hit) return { ...p, hasPersistedResult: false };
           const dv = hit.day_value != null ? String(hit.day_value) : "";
+          const fv = hit.front_9_value != null ? String(hit.front_9_value) : "";
+          const bv = hit.back_9_value != null ? String(hit.back_9_value) : "";
+          const bc = hit.birdie_count != null ? String(hit.birdie_count) : "";
           return {
             ...p,
             dayPoints: dv,
+            front9Value: fv,
+            back9Value: bv,
+            birdieCount: bc,
             position: null,
             oomPoints: 0,
             hasPersistedResult: true,
@@ -605,6 +626,24 @@ export default function EventPointsScreen() {
       // Recalculate positions and OOM points, then apply stable display order
       return applyPointsDisplayOrder(calculateFieldPositionsAndMemberOomPoints(updated, sortOrder));
     });
+  };
+
+  const updateFront9Value = (memberId: string, value: string) => {
+    setSaveNotice(null);
+    saveAction.reset();
+    setPlayers((prev) => prev.map((p) => (p.memberId === memberId ? { ...p, front9Value: value } : p)));
+  };
+
+  const updateBack9Value = (memberId: string, value: string) => {
+    setSaveNotice(null);
+    saveAction.reset();
+    setPlayers((prev) => prev.map((p) => (p.memberId === memberId ? { ...p, back9Value: value } : p)));
+  };
+
+  const updateBirdieCount = (memberId: string, value: string) => {
+    setSaveNotice(null);
+    saveAction.reset();
+    setPlayers((prev) => prev.map((p) => (p.memberId === memberId ? { ...p, birdieCount: value } : p)));
   };
 
   // Get sort order based on event format
@@ -750,12 +789,18 @@ export default function EventPointsScreen() {
     for (const p of playersToSave) {
       if (!String(p.memberId).startsWith("guest-") && p.isKnownMember === false) continue;
       const dayValue = parseInt(p.dayPoints.trim(), 10);
+      const front9Value = parseInt(p.front9Value.trim(), 10);
+      const back9Value = parseInt(p.back9Value.trim(), 10);
+      const birdieCount = parseInt(p.birdieCount.trim(), 10);
       if (String(p.memberId).startsWith("guest-")) {
         const gid = String(p.memberId).slice("guest-".length);
         results.push({
           event_guest_id: gid,
           points: 0,
           day_value: !isNaN(dayValue) ? dayValue : undefined,
+          front_9_value: !isNaN(front9Value) ? front9Value : null,
+          back_9_value: !isNaN(back9Value) ? back9Value : null,
+          birdie_count: !isNaN(birdieCount) ? Math.max(0, birdieCount) : null,
           position: p.position ?? undefined,
         });
       } else {
@@ -763,6 +808,9 @@ export default function EventPointsScreen() {
           member_id: p.memberId,
           points: p.oomPoints,
           day_value: !isNaN(dayValue) ? dayValue : undefined,
+          front_9_value: !isNaN(front9Value) ? front9Value : null,
+          back_9_value: !isNaN(back9Value) ? back9Value : null,
+          birdie_count: !isNaN(birdieCount) ? Math.max(0, birdieCount) : null,
           position: p.position ?? undefined,
         });
       }
@@ -1103,8 +1151,8 @@ export default function EventPointsScreen() {
           <Feather name="info" size={16} color={colors.primary} />
           <AppText variant="caption" color="secondary" style={{ flex: 1 }}>
             {sortOrder === "low_wins"
-              ? "Lower is better in the full field (members and guests). Pos is overall standing. Order of Merit points are for society members only — guests never earn OOM; members are ranked among members for OOM (e.g. if a guest wins the day, the top member still earns 1st-place member OOM points)."
-              : "Higher is better in the full field (members and guests). Pos is overall standing. Order of Merit points are for society members only — guests never earn OOM; members are ranked among members for OOM (e.g. if a guest leads the day, the top member still earns 1st-place member OOM points)."}
+              ? "Lower is better in the full field (members and guests). Pos is overall standing. Enter F9/B9/Birdies for Prize Pool (Pot) Splitter calculations. Order of Merit points are for society members only — guests never earn OOM; members are ranked among members for OOM (e.g. if a guest wins the day, the top member still earns 1st-place member OOM points)."
+              : "Higher is better in the full field (members and guests). Pos is overall standing. Enter F9/B9/Birdies for Prize Pool (Pot) Splitter calculations. Order of Merit points are for society members only — guests never earn OOM; members are ranked among members for OOM (e.g. if a guest leads the day, the top member still earns 1st-place member OOM points)."}
           </AppText>
         </View>
       </AppCard>
@@ -1174,6 +1222,15 @@ export default function EventPointsScreen() {
         </AppText>
         <AppText variant="captionBold" color="tertiary" style={styles.colDayPoints}>
           {sortOrder === 'low_wins' ? "Score" : "Pts"}
+        </AppText>
+        <AppText variant="captionBold" color="tertiary" style={styles.colDetail}>
+          F9
+        </AppText>
+        <AppText variant="captionBold" color="tertiary" style={styles.colDetail}>
+          B9
+        </AppText>
+        <AppText variant="captionBold" color="tertiary" style={styles.colDetail}>
+          Bird
         </AppText>
         <AppText variant="captionBold" color="tertiary" style={styles.colPos}>
           Pos
@@ -1247,6 +1304,36 @@ export default function EventPointsScreen() {
                   onBlur={() =>
                     setEditingMemberId((cur) => (cur === player.memberId ? null : cur))
                   }
+                  keyboardType="number-pad"
+                  style={styles.inputBox}
+                />
+              </View>
+
+              <View style={styles.colDetail}>
+                <AppInput
+                  placeholder="-"
+                  value={player.front9Value}
+                  onChangeText={(v) => updateFront9Value(player.memberId, v)}
+                  keyboardType="number-pad"
+                  style={styles.inputBox}
+                />
+              </View>
+
+              <View style={styles.colDetail}>
+                <AppInput
+                  placeholder="-"
+                  value={player.back9Value}
+                  onChangeText={(v) => updateBack9Value(player.memberId, v)}
+                  keyboardType="number-pad"
+                  style={styles.inputBox}
+                />
+              </View>
+
+              <View style={styles.colDetail}>
+                <AppInput
+                  placeholder="-"
+                  value={player.birdieCount}
+                  onChangeText={(v) => updateBirdieCount(player.memberId, v)}
                   keyboardType="number-pad"
                   style={styles.inputBox}
                 />
@@ -1361,7 +1448,11 @@ const styles = StyleSheet.create({
     marginBottom: spacing.xs,
   },
   colDayPoints: {
-    width: 70,
+    width: 60,
+    alignItems: "center",
+  },
+  colDetail: {
+    width: 52,
     alignItems: "center",
   },
   colPos: {
@@ -1381,7 +1472,7 @@ const styles = StyleSheet.create({
   },
   inputBox: {
     textAlign: "center",
-    width: 60,
+    width: 44,
     paddingHorizontal: spacing.xs,
   },
 });

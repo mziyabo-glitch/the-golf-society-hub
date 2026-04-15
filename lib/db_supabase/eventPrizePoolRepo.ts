@@ -23,6 +23,8 @@ import {
 } from "@/lib/event-prize-pools-types";
 import {
   allocateDivisionPotPence,
+  derivePrizePoolTotalAmountPence,
+  allocateSplitterPotPence,
   filterEligiblePrizePoolEntrants,
   isPrizePoolSupportedEventFormat,
   PRIZE_POOL_UNSUPPORTED_FORMAT_MESSAGE,
@@ -37,6 +39,8 @@ export const PRIZE_POOL_ERR_RULES_SUM = "Payout percentages must total 100%.";
 export const PRIZE_POOL_ERR_RULES_COUNT = "Payout rules must match places paid.";
 export const PRIZE_POOL_ERR_NO_DIVISIONS = "This pool requires event divisions, but none were found.";
 export const PRIZE_POOL_ERR_NO_ELIGIBLE = "No eligible players matched the pool rules.";
+export const PRIZE_POOL_ERR_SPLITTER_DETAIL_REQUIRED =
+  "Prize Pool (Pot) Splitter requires front 9, back 9, and birdie count for official results.";
 export const PRIZE_POOL_ERR_FINALISED = "Finalised pools can no longer be edited.";
 export const PRIZE_POOL_ERR_SUM_MISMATCH =
   "Payout allocation did not match the event pool total. Please try again.";
@@ -173,11 +177,11 @@ async function clearPoolResultsAndDraft(poolId: string): Promise<void> {
   }
 }
 
-async function listPotMasterConfirmedPrizePoolEntries(eventId: string): Promise<EventPrizePoolEntryRow[]> {
+async function listPotMasterConfirmedPrizePoolEntries(poolId: string): Promise<EventPrizePoolEntryRow[]> {
   const { data, error } = await supabase
     .from("event_prize_pool_entries")
     .select(EVENT_PRIZE_POOL_ENTRY_COLUMNS)
-    .eq("event_id", eventId)
+    .eq("pool_id", poolId)
     .eq("confirmed_by_pot_master", true);
 
   if (error) {
@@ -185,6 +189,11 @@ async function listPotMasterConfirmedPrizePoolEntries(eventId: string): Promise<
     throw new Error(error.message || "Failed to load prize pool entrants");
   }
   return (data ?? []) as EventPrizePoolEntryRow[];
+}
+
+export async function getPotMasterConfirmedPrizePoolEntrantCount(poolId: string): Promise<number> {
+  const rows = await listPotMasterConfirmedPrizePoolEntries(poolId);
+  return rows.length;
 }
 
 async function buildPrizePoolEntrants(params: {
@@ -199,7 +208,7 @@ async function buildPrizePoolEntrants(params: {
 
   const societyScope = String(pool.host_society_id ?? event.society_id ?? "");
 
-  const entries = await listPotMasterConfirmedPrizePoolEntries(pool.event_id);
+  const entries = await listPotMasterConfirmedPrizePoolEntries(pool.id);
   if (entries.length === 0) return [];
 
   const memberEntryIds = [...new Set(entries.map((e) => e.member_id).filter(Boolean).map(String))];
@@ -225,10 +234,15 @@ async function buildPrizePoolEntrants(params: {
 
   const fmtSort = prizePoolSortOrderForEventFormat(event.format);
   const entrants: PrizePoolEntrant[] = [];
+  const requireDetailedSplitterFields = pool.competition_type === "splitter";
 
   for (const en of entries) {
     if (en.participant_type === "member" && en.member_id) {
-      if (!confirmedPrizePoolEntryHasOfficialScoredResult(en, resultByMemberId, resultByGuestKey, societyScope)) {
+      if (
+        !confirmedPrizePoolEntryHasOfficialScoredResult(en, resultByMemberId, resultByGuestKey, societyScope, {
+          requireDetailedSplitterFields,
+        })
+      ) {
         continue;
       }
       const mid = String(en.member_id);
@@ -249,13 +263,20 @@ async function buildPrizePoolEntrants(params: {
         registrationId: null,
         divisionName,
         dayValue: dv,
+        front9Value: pick.front_9_value ?? null,
+        back9Value: pick.back_9_value ?? null,
+        birdieCount: pick.birdie_count ?? null,
         sortOrder: fmtSort,
       });
       continue;
     }
 
     if (en.participant_type === "guest" && en.guest_id) {
-      if (!confirmedPrizePoolEntryHasOfficialScoredResult(en, resultByMemberId, resultByGuestKey, societyScope)) {
+      if (
+        !confirmedPrizePoolEntryHasOfficialScoredResult(en, resultByMemberId, resultByGuestKey, societyScope, {
+          requireDetailedSplitterFields,
+        })
+      ) {
         continue;
       }
       const gid = String(en.guest_id);
@@ -275,6 +296,9 @@ async function buildPrizePoolEntrants(params: {
         registrationId: null,
         divisionName,
         dayValue: pick.day_value ?? 0,
+        front9Value: pick.front_9_value ?? null,
+        back9Value: pick.back_9_value ?? null,
+        birdieCount: pick.birdie_count ?? null,
         sortOrder: fmtSort,
       });
     }
@@ -291,14 +315,29 @@ export async function createEventPrizePool(
   if (!v.ok) throw new Error(PRIZE_POOL_ERR_RULES_SUM);
   if (input.rules.length !== input.placesPaid) throw new Error(PRIZE_POOL_ERR_RULES_COUNT);
 
+  let totalAmountPence = input.totalAmountPence;
+  if (input.totalAmountMode === "per_entrant") {
+    totalAmountPence = derivePrizePoolTotalAmountPence({
+      totalAmountMode: "per_entrant",
+      manualTotalAmountPence: input.totalAmountPence,
+      potEntryValuePence: input.potEntryValuePence ?? null,
+      confirmedEntrantCount: 0,
+    });
+  }
+
   const { data: poolRow, error: poolErr } = await supabase
     .from("event_prize_pools")
     .insert({
       event_id: input.eventId,
       host_society_id: input.hostSocietyId,
       name: input.name.trim(),
+      competition_name: input.competitionName,
+      competition_type: input.competitionType,
       description: input.description ?? null,
-      total_amount_pence: input.totalAmountPence,
+      total_amount_pence: totalAmountPence,
+      total_amount_mode: input.totalAmountMode,
+      pot_entry_value_pence: input.potEntryValuePence ?? null,
+      birdie_fallback_to_overall: input.birdieFallbackToOverall,
       payout_mode: input.payoutMode,
       division_source: input.divisionSource,
       places_paid: input.placesPaid,
@@ -340,8 +379,13 @@ export async function updateEventPrizePool(poolId: string, patch: UpdateEventPri
 
   const configKeys = [
     "name",
+    "competitionName",
+    "competitionType",
     "description",
     "totalAmountPence",
+    "totalAmountMode",
+    "potEntryValuePence",
+    "birdieFallbackToOverall",
     "payoutMode",
     "divisionSource",
     "placesPaid",
@@ -358,8 +402,15 @@ export async function updateEventPrizePool(poolId: string, patch: UpdateEventPri
 
   const payload: Record<string, unknown> = {};
   if (patch.name !== undefined) payload.name = patch.name.trim();
+  if (patch.competitionName !== undefined) payload.competition_name = patch.competitionName;
+  if (patch.competitionType !== undefined) payload.competition_type = patch.competitionType;
   if (patch.description !== undefined) payload.description = patch.description;
   if (patch.totalAmountPence !== undefined) payload.total_amount_pence = patch.totalAmountPence;
+  if (patch.totalAmountMode !== undefined) payload.total_amount_mode = patch.totalAmountMode;
+  if (patch.potEntryValuePence !== undefined) payload.pot_entry_value_pence = patch.potEntryValuePence;
+  if (patch.birdieFallbackToOverall !== undefined) {
+    payload.birdie_fallback_to_overall = patch.birdieFallbackToOverall;
+  }
   if (patch.payoutMode !== undefined) payload.payout_mode = patch.payoutMode;
   if (patch.divisionSource !== undefined) payload.division_source = patch.divisionSource;
   if (patch.placesPaid !== undefined) payload.places_paid = patch.placesPaid;
@@ -367,6 +418,18 @@ export async function updateEventPrizePool(poolId: string, patch: UpdateEventPri
   if (patch.requirePaid !== undefined) payload.require_paid = patch.requirePaid;
   if (patch.requireConfirmed !== undefined) payload.require_confirmed = patch.requireConfirmed;
   if (patch.notes !== undefined) payload.notes = patch.notes;
+
+  const nextMode = patch.totalAmountMode ?? existing.total_amount_mode;
+  const nextPotEntryValue = patch.potEntryValuePence ?? existing.pot_entry_value_pence;
+  if (nextMode === "per_entrant") {
+    const confirmedCount = await getPotMasterConfirmedPrizePoolEntrantCount(poolId);
+    payload.total_amount_pence = derivePrizePoolTotalAmountPence({
+      totalAmountMode: "per_entrant",
+      manualTotalAmountPence: existing.total_amount_pence,
+      potEntryValuePence: nextPotEntryValue ?? null,
+      confirmedEntrantCount: confirmedCount,
+    });
+  }
 
   if (Object.keys(payload).length === 0) return;
 
@@ -433,9 +496,11 @@ export async function calculateEventPrizePool(poolId: string): Promise<void> {
     throw new Error(PRIZE_POOL_UNSUPPORTED_FORMAT_MESSAGE);
   }
 
-  const v = validateRuleBasisPointsTotal(rules);
-  if (!v.ok) throw new Error(PRIZE_POOL_ERR_RULES_SUM);
-  if (rules.length !== pool.places_paid) throw new Error(PRIZE_POOL_ERR_RULES_COUNT);
+  if (pool.competition_type !== "splitter") {
+    const v = validateRuleBasisPointsTotal(rules);
+    if (!v.ok) throw new Error(PRIZE_POOL_ERR_RULES_SUM);
+    if (rules.length !== pool.places_paid) throw new Error(PRIZE_POOL_ERR_RULES_COUNT);
+  }
 
   const sortOrder = prizePoolSortOrderForEventFormat(event.format);
   const divisions =
@@ -449,62 +514,84 @@ export async function calculateEventPrizePool(poolId: string): Promise<void> {
   if (rawResults.filter((r) => r.day_value != null).length === 0) {
     throw new Error(PRIZE_POOL_ERR_NO_RESULTS);
   }
+  if (
+    pool.competition_type === "splitter" &&
+    rawResults.some((r) => r.day_value != null) &&
+    rawResults.every((r) => r.front_9_value == null || r.back_9_value == null || r.birdie_count == null)
+  ) {
+    throw new Error(PRIZE_POOL_ERR_SPLITTER_DETAIL_REQUIRED);
+  }
+
+  const confirmedEntrants = await listPotMasterConfirmedPrizePoolEntries(poolId);
+  const effectiveTotalPence = derivePrizePoolTotalAmountPence({
+    totalAmountMode: pool.total_amount_mode,
+    manualTotalAmountPence: pool.total_amount_pence,
+    potEntryValuePence: pool.pot_entry_value_pence,
+    confirmedEntrantCount: confirmedEntrants.length,
+  });
 
   const entrants = await buildPrizePoolEntrants({ pool, event, divisions });
   const filtered = filterEligiblePrizePoolEntrants(pool, entrants);
   if (filtered.length === 0) throw new Error(PRIZE_POOL_ERR_NO_ELIGIBLE);
 
-  const rulesBps = sortRules(rules).map((r) => r.percentage_basis_points);
-
   let resultRows: PrizePoolCalculationResultRow[] = [];
-
-  if (pool.payout_mode === "overall") {
-    resultRows = allocateDivisionPotPence({
+  if (pool.competition_type === "splitter") {
+    resultRows = allocateSplitterPotPence({
       entrants: filtered,
-      rulesBps,
-      divisionPotPence: pool.total_amount_pence,
-      divisionName: null,
+      totalPotPence: effectiveTotalPence,
       eventFormat: String(event.format),
+      birdieFallbackToOverall: pool.birdie_fallback_to_overall,
     });
   } else {
-    const byDiv = new Map<string, PrizePoolEntrant[]>();
-    for (const e of filtered) {
-      const d = e.divisionName;
-      if (!d) continue;
-      if (!byDiv.has(d)) byDiv.set(d, []);
-      byDiv.get(d)!.push(e);
+    const rulesBps = sortRules(rules).map((r) => r.percentage_basis_points);
+    if (pool.payout_mode === "overall") {
+      resultRows = allocateDivisionPotPence({
+        entrants: filtered,
+        rulesBps,
+        divisionPotPence: effectiveTotalPence,
+        divisionName: null,
+        eventFormat: String(event.format),
+      });
+    } else {
+      const byDiv = new Map<string, PrizePoolEntrant[]>();
+      for (const e of filtered) {
+        const d = e.divisionName;
+        if (!d) continue;
+        if (!byDiv.has(d)) byDiv.set(d, []);
+        byDiv.get(d)!.push(e);
+      }
+
+      const activeDivKeys = [...byDiv.keys()].sort((a, b) => {
+        const da = divisions.find((x) => x.name === a);
+        const db = divisions.find((x) => x.name === b);
+        const sa = da?.sort_order ?? 0;
+        const sb = db?.sort_order ?? 0;
+        if (sa !== sb) return sa - sb;
+        return a.localeCompare(b);
+      });
+
+      if (activeDivKeys.length === 0) throw new Error(PRIZE_POOL_ERR_NO_ELIGIBLE);
+
+      const shares = splitPotEvenlyAcrossDivisions(effectiveTotalPence, activeDivKeys.length);
+      activeDivKeys.forEach((divName, i) => {
+        const chunk = byDiv.get(divName)!;
+        const pot = shares[i] ?? 0;
+        resultRows.push(
+          ...allocateDivisionPotPence({
+            entrants: chunk,
+            rulesBps,
+            divisionPotPence: pot,
+            divisionName: divName,
+            eventFormat: String(event.format),
+          }),
+        );
+      });
     }
-
-    const activeDivKeys = [...byDiv.keys()].sort((a, b) => {
-      const da = divisions.find((x) => x.name === a);
-      const db = divisions.find((x) => x.name === b);
-      const sa = da?.sort_order ?? 0;
-      const sb = db?.sort_order ?? 0;
-      if (sa !== sb) return sa - sb;
-      return a.localeCompare(b);
-    });
-
-    if (activeDivKeys.length === 0) throw new Error(PRIZE_POOL_ERR_NO_ELIGIBLE);
-
-    const shares = splitPotEvenlyAcrossDivisions(pool.total_amount_pence, activeDivKeys.length);
-    activeDivKeys.forEach((divName, i) => {
-      const chunk = byDiv.get(divName)!;
-      const pot = shares[i] ?? 0;
-      resultRows.push(
-        ...allocateDivisionPotPence({
-          entrants: chunk,
-          rulesBps,
-          divisionPotPence: pot,
-          divisionName: divName,
-          eventFormat: String(event.format),
-        }),
-      );
-    });
   }
 
   const sum = resultRows.reduce((a, r) => a + r.payoutAmountPence, 0);
-  if (sum !== pool.total_amount_pence) {
-    console.error("[eventPrizePoolRepo] payout sum mismatch", { sum, expected: pool.total_amount_pence });
+  if (sum !== effectiveTotalPence) {
+    console.error("[eventPrizePoolRepo] payout sum mismatch", { sum, expected: effectiveTotalPence });
     throw new Error(PRIZE_POOL_ERR_SUM_MISMATCH);
   }
 
@@ -528,16 +615,19 @@ export async function calculateEventPrizePool(poolId: string): Promise<void> {
     score_display: r.scoreDisplay,
   }));
 
-  const { error: insErr } = await supabase.from("event_prize_pool_results").insert(inserts);
-  if (insErr) {
-    console.error("[eventPrizePoolRepo] insert results:", insErr.message);
-    throw new Error(insErr.message || "Failed to save payout summary");
+  if (inserts.length > 0) {
+    const { error: insErr } = await supabase.from("event_prize_pool_results").insert(inserts);
+    if (insErr) {
+      console.error("[eventPrizePoolRepo] insert results:", insErr.message);
+      throw new Error(insErr.message || "Failed to save payout summary");
+    }
   }
 
   const { error: upErr } = await supabase
     .from("event_prize_pools")
     .update({
       status: "calculated",
+      total_amount_pence: effectiveTotalPence,
       last_calculated_at: new Date().toISOString(),
     })
     .eq("id", poolId);
@@ -597,31 +687,31 @@ export async function getEventPrizePoolManagerInfo(
   return { memberId: mid, displayName };
 }
 
-export async function getMyEventPrizePoolEntry(
-  eventId: string,
+export async function getMyPrizePoolEntry(
+  poolId: string,
   memberId: string,
 ): Promise<EventPrizePoolEntryRow | null> {
   const { data, error } = await supabase
     .from("event_prize_pool_entries")
     .select(EVENT_PRIZE_POOL_ENTRY_COLUMNS)
-    .eq("event_id", eventId)
+    .eq("pool_id", poolId)
     .eq("member_id", memberId)
     .maybeSingle();
 
   if (error) {
-    console.error("[eventPrizePoolRepo] getMyEventPrizePoolEntry:", error.message);
+    console.error("[eventPrizePoolRepo] getMyPrizePoolEntry:", error.message);
     return null;
   }
   return (data as EventPrizePoolEntryRow) ?? null;
 }
 
 export async function upsertMyPrizePoolOptIn(
-  eventId: string,
+  poolId: string,
   memberId: string,
   optedIn: boolean,
 ): Promise<void> {
-  const { error } = await supabase.rpc("upsert_my_event_prize_pool_entry", {
-    p_event_id: eventId,
+  const { error } = await supabase.rpc("upsert_my_prize_pool_entry", {
+    p_pool_id: poolId,
     p_member_id: memberId,
     p_opted_in: optedIn,
   });
@@ -632,12 +722,12 @@ export async function upsertMyPrizePoolOptIn(
 }
 
 export async function listPrizePoolOptInEntrants(
-  eventId: string,
+  poolId: string,
 ): Promise<(EventPrizePoolEntryRow & { displayName: string })[]> {
   const { data, error } = await supabase
     .from("event_prize_pool_entries")
     .select(EVENT_PRIZE_POOL_ENTRY_COLUMNS)
-    .eq("event_id", eventId)
+    .eq("pool_id", poolId)
     .order("created_at", { ascending: true });
 
   if (error) {
@@ -675,9 +765,9 @@ export async function setPrizePoolEntryPotMasterConfirmation(
   }
 }
 
-export async function insertPrizePoolGuestEntrant(eventId: string, guestId: string): Promise<string> {
+export async function insertPrizePoolGuestEntrant(poolId: string, guestId: string): Promise<string> {
   const { data, error } = await supabase.rpc("insert_event_prize_pool_guest_entrant", {
-    p_event_id: eventId,
+    p_pool_id: poolId,
     p_guest_id: guestId,
   });
   if (error) {

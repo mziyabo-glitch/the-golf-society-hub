@@ -52,9 +52,9 @@ export default function EventPrizePoolsListScreen() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [isPoolMgr, setIsPoolMgr] = useState(false);
-  const [entrants, setEntrants] = useState<
-    Awaited<ReturnType<typeof listPrizePoolOptInEntrants>>
-  >([]);
+  const [entrantsByPoolId, setEntrantsByPoolId] = useState<
+    Record<string, Awaited<ReturnType<typeof listPrizePoolOptInEntrants>>>
+  >({});
   const [eventGuests, setEventGuests] = useState<EventGuest[]>([]);
   const [payInstr, setPayInstr] = useState("");
   const [instrBusy, setInstrBusy] = useState(false);
@@ -89,19 +89,21 @@ export default function EventPrizePoolsListScreen() {
       const allow = isManco || mgr;
       if (allow) {
         try {
-          const [list, guests] = await Promise.all([
-            listPrizePoolOptInEntrants(eventId),
-            getEventGuests(eventId),
-          ]);
-          setEntrants(list);
+          const guests = await getEventGuests(eventId);
           setEventGuests(guests);
+          const lists = await Promise.all(pls.map((p) => listPrizePoolOptInEntrants(p.id)));
+          const next: Record<string, Awaited<ReturnType<typeof listPrizePoolOptInEntrants>>> = {};
+          pls.forEach((p, i) => {
+            next[p.id] = lists[i] ?? [];
+          });
+          setEntrantsByPoolId(next);
         } catch (entErr: unknown) {
           console.error("[prize-pools] entrants/guests load failed:", entErr);
-          setEntrants([]);
+          setEntrantsByPoolId({});
           setEventGuests([]);
         }
       } else {
-        setEntrants([]);
+        setEntrantsByPoolId({});
         setEventGuests([]);
       }
     } catch (e: unknown) {
@@ -210,7 +212,7 @@ export default function EventPrizePoolsListScreen() {
 
         <InlineNotice
           variant="info"
-          message="Configure post-event prize allocation from official results. Division pools split the total prize amount evenly across active divisions, then apply the chosen payout percentages within each division."
+          message="Configure Prize Pool (Pot) and Prize Pool (Pot) Splitter allocation from official results. Division pools split the total prize amount evenly across active divisions, then apply the chosen payout percentages within each division."
         />
 
       {loading ? (
@@ -257,146 +259,166 @@ export default function EventPrizePoolsListScreen() {
             </AppCard>
 
           <AppCard style={{ borderRadius: radius.md }}>
-            <AppText variant="subheading" style={{ marginBottom: spacing.xs }}>
+            <AppText variant="subheading" style={{ marginBottom: spacing.sm }}>
               Pot Master entrants
             </AppText>
             <AppText variant="caption" color="secondary" style={{ marginBottom: spacing.sm }}>
-              Members who opt in on the home card, plus guests you add. Only Pot Master–confirmed entrants are used
-              when a pool is calculated (with official event results).
+              Opt-in and confirmation are per prize pool. Only confirmed entrants for that pool are used when it is
+              calculated.
             </AppText>
             {!event?.prizePoolEnabled ? (
               <AppText variant="caption" color="secondary">
                 Prize pool opt-in is off for this event. A Captain can enable it from the event screen.
               </AppText>
-            ) : entrants.length === 0 ? (
+            ) : pools.length === 0 ? (
               <AppText variant="caption" color="secondary">
-                No opt-in requests or guest entrants yet.
+                Create a prize pool below, then manage entrants for each pool here.
               </AppText>
             ) : (
-              entrants.map((en) => (
-                <View
-                  key={en.id}
-                  style={{
-                    paddingVertical: spacing.sm,
-                    borderBottomWidth: StyleSheet.hairlineWidth,
-                    borderBottomColor: colors.borderLight,
-                    gap: spacing.xs,
-                  }}
-                >
-                  <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
-                    <View style={{ flex: 1 }}>
-                      <AppText variant="bodyBold" numberOfLines={1}>
-                        {en.displayName}
-                      </AppText>
-                      <AppText variant="caption" color="secondary">
-                        {en.participant_type === "guest"
-                          ? "Guest"
-                          : en.opted_in
-                            ? "Member · requested entry"
-                            : "Member"}
-                      </AppText>
-                    </View>
-                    <AppText variant="captionBold" color={en.confirmed_by_pot_master ? "primary" : "secondary"}>
-                      {en.confirmed_by_pot_master ? "Confirmed" : "Not confirmed"}
+              pools.map((p) => {
+                const entrants = entrantsByPoolId[p.id] ?? [];
+                return (
+                  <View
+                    key={p.id}
+                    style={{
+                      marginBottom: spacing.md,
+                      paddingBottom: spacing.sm,
+                      borderBottomWidth: StyleSheet.hairlineWidth,
+                      borderBottomColor: colors.borderLight,
+                      gap: spacing.xs,
+                    }}
+                  >
+                    <AppText variant="bodyBold" numberOfLines={2}>
+                      {(p.competition_name || p.name).trim()}
                     </AppText>
-                  </View>
-                  <View style={{ flexDirection: "row", flexWrap: "wrap", gap: spacing.sm }}>
-                    <SecondaryButton
-                      size="sm"
-                      onPress={() => {
-                        void (async () => {
-                          try {
-                            await setPrizePoolEntryPotMasterConfirmation(en.id, !en.confirmed_by_pot_master);
-                            await load();
-                          } catch (e: unknown) {
-                            Alert.alert("Update failed", e instanceof Error ? e.message : "Unknown error");
-                          }
-                        })();
-                      }}
-                    >
-                      {en.confirmed_by_pot_master ? "Unconfirm" : "Confirm"}
-                    </SecondaryButton>
-                    <SecondaryButton
-                      size="sm"
-                      onPress={() => {
-                        Alert.alert(
-                          "Remove entrant?",
-                          `Remove ${en.displayName} from the prize pool list?`,
-                          [
-                            { text: "Cancel", style: "cancel" },
-                            {
-                              text: "Remove",
-                              style: "destructive",
-                              onPress: () => {
+                    {entrants.length === 0 ? (
+                      <AppText variant="caption" color="secondary">
+                        No opt-in requests or guest entrants yet.
+                      </AppText>
+                    ) : (
+                      entrants.map((en) => (
+                        <View
+                          key={en.id}
+                          style={{
+                            paddingVertical: spacing.sm,
+                            borderBottomWidth: StyleSheet.hairlineWidth,
+                            borderBottomColor: colors.borderLight,
+                            gap: spacing.xs,
+                          }}
+                        >
+                          <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+                            <View style={{ flex: 1 }}>
+                              <AppText variant="bodyBold" numberOfLines={1}>
+                                {en.displayName}
+                              </AppText>
+                              <AppText variant="caption" color="secondary">
+                                {en.participant_type === "guest"
+                                  ? "Guest"
+                                  : en.opted_in
+                                    ? "Member · requested entry"
+                                    : "Member"}
+                              </AppText>
+                            </View>
+                            <AppText variant="captionBold" color={en.confirmed_by_pot_master ? "primary" : "secondary"}>
+                              {en.confirmed_by_pot_master ? "Confirmed" : "Not confirmed"}
+                            </AppText>
+                          </View>
+                          <View style={{ flexDirection: "row", flexWrap: "wrap", gap: spacing.sm }}>
+                            <SecondaryButton
+                              size="sm"
+                              onPress={() => {
                                 void (async () => {
                                   try {
-                                    await deletePrizePoolEntry(en.id);
+                                    await setPrizePoolEntryPotMasterConfirmation(en.id, !en.confirmed_by_pot_master);
                                     await load();
                                   } catch (e: unknown) {
-                                    Alert.alert("Error", e instanceof Error ? e.message : "Failed to remove");
+                                    Alert.alert("Update failed", e instanceof Error ? e.message : "Unknown error");
                                   }
                                 })();
-                              },
-                            },
-                          ],
-                        );
-                      }}
-                    >
-                      Remove
-                    </SecondaryButton>
-                  </View>
-                </View>
-              ))
-            )}
+                              }}
+                            >
+                              {en.confirmed_by_pot_master ? "Unconfirm" : "Confirm"}
+                            </SecondaryButton>
+                            <SecondaryButton
+                              size="sm"
+                              onPress={() => {
+                                Alert.alert("Remove entrant?", `Remove ${en.displayName} from this pool?`, [
+                                  { text: "Cancel", style: "cancel" },
+                                  {
+                                    text: "Remove",
+                                    style: "destructive",
+                                    onPress: () => {
+                                      void (async () => {
+                                        try {
+                                          await deletePrizePoolEntry(en.id);
+                                          await load();
+                                        } catch (e: unknown) {
+                                          Alert.alert("Error", e instanceof Error ? e.message : "Failed to remove");
+                                        }
+                                      })();
+                                    },
+                                  },
+                                ]);
+                              }}
+                            >
+                              Remove
+                            </SecondaryButton>
+                          </View>
+                        </View>
+                      ))
+                    )}
 
-            {event?.prizePoolEnabled ? (
-              <View style={{ marginTop: spacing.md }}>
-                <AppText variant="captionBold" color="secondary" style={{ marginBottom: spacing.xs }}>
-                  Add guest
-                </AppText>
-                <AppText variant="caption" color="secondary" style={{ marginBottom: spacing.sm }}>
-                  Guests must have official results saved on the points screen to count in a pool.
-                </AppText>
-                {eventGuests
-                  .filter((g) => !entrants.some((e) => e.guest_id === g.id))
-                  .map((g) => (
-                    <View
-                      key={g.id}
-                      style={{
-                        flexDirection: "row",
-                        alignItems: "center",
-                        paddingVertical: spacing.xs,
-                        gap: spacing.sm,
-                      }}
-                    >
-                      <AppText variant="body" style={{ flex: 1 }} numberOfLines={1}>
-                        {g.name}
-                      </AppText>
-                      <SecondaryButton
-                        size="sm"
-                        onPress={() => {
-                          void (async () => {
-                            if (!eventId) return;
-                            try {
-                              await insertPrizePoolGuestEntrant(eventId, g.id);
-                              await load();
-                            } catch (e: unknown) {
-                              Alert.alert("Could not add guest", e instanceof Error ? e.message : "Unknown error");
-                            }
-                          })();
-                        }}
-                      >
-                        Add
-                      </SecondaryButton>
-                    </View>
-                  ))}
-                {eventGuests.filter((g) => !entrants.some((e) => e.guest_id === g.id)).length === 0 ? (
-                  <AppText variant="caption" color="secondary">
-                    No guests to add, or every event guest is already on this list.
-                  </AppText>
-                ) : null}
-              </View>
-            ) : null}
+                    {event?.prizePoolEnabled ? (
+                      <View style={{ marginTop: spacing.sm }}>
+                        <AppText variant="captionBold" color="secondary" style={{ marginBottom: spacing.xs }}>
+                          Add guest to this pool
+                        </AppText>
+                        {eventGuests
+                          .filter((g) => !entrants.some((e) => e.guest_id === g.id))
+                          .map((g) => (
+                            <View
+                              key={g.id}
+                              style={{
+                                flexDirection: "row",
+                                alignItems: "center",
+                                paddingVertical: spacing.xs,
+                                gap: spacing.sm,
+                              }}
+                            >
+                              <AppText variant="body" style={{ flex: 1 }} numberOfLines={1}>
+                                {g.name}
+                              </AppText>
+                              <SecondaryButton
+                                size="sm"
+                                onPress={() => {
+                                  void (async () => {
+                                    try {
+                                      await insertPrizePoolGuestEntrant(p.id, g.id);
+                                      await load();
+                                    } catch (e: unknown) {
+                                      Alert.alert(
+                                        "Could not add guest",
+                                        e instanceof Error ? e.message : "Unknown error",
+                                      );
+                                    }
+                                  })();
+                                }}
+                              >
+                                Add
+                              </SecondaryButton>
+                            </View>
+                          ))}
+                        {eventGuests.filter((g) => !entrants.some((e) => e.guest_id === g.id)).length === 0 ? (
+                          <AppText variant="caption" color="secondary">
+                            No guests to add for this pool, or every event guest is already listed.
+                          </AppText>
+                        ) : null}
+                      </View>
+                    ) : null}
+                  </View>
+                );
+              })
+            )}
           </AppCard>
 
           <AppCard style={{ borderRadius: radius.md }}>

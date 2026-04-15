@@ -37,9 +37,10 @@ import {
   listEventPrizePoolResults,
   listEventPrizePools,
   getEventPrizePoolManagerInfo,
-  getMyEventPrizePoolEntry,
+  getMyPrizePoolEntry,
+  getEventPrizePoolRules,
 } from "@/lib/db_supabase/eventPrizePoolRepo";
-import type { EventPrizePoolEntryRow, EventPrizePoolResultRow, EventPrizePoolRow } from "@/lib/event-prize-pools-types";
+import type { HomePrizePoolRowVm } from "@/lib/event-prize-pools-types";
 import { blurWebActiveElement } from "@/lib/ui/focus";
 import { getCache, setCache } from "@/lib/cache/clientCache";
 import { useBootstrap } from "@/lib/useBootstrap";
@@ -328,12 +329,7 @@ export function useHomeDashboard() {
   const [prizePoolReloadNonce, setPrizePoolReloadNonce] = useState(0);
   const [prizePoolCard, setPrizePoolCard] = useState<{
     managerName: string | null;
-    entry: EventPrizePoolEntryRow | null;
-    summary: {
-      pool: EventPrizePoolRow;
-      hasPublishedResults: boolean;
-      myResult: EventPrizePoolResultRow | null;
-    } | null;
+    poolRows: HomePrizePoolRowVm[];
     loading: boolean;
   } | null>(null);
 
@@ -359,47 +355,48 @@ export function useHomeDashboard() {
     let cancelled = false;
     setPrizePoolCard((p) => ({
       managerName: p?.managerName ?? null,
-      entry: p?.entry ?? null,
-      summary: p?.summary ?? null,
+      poolRows: p?.poolRows ?? [],
       loading: true,
     }));
     void (async () => {
       try {
-        const [mgr, entry, pools] = await Promise.all([
+        const [mgr, pools] = await Promise.all([
           getEventPrizePoolManagerInfo(nextEvent.id),
-          getMyEventPrizePoolEntry(nextEvent.id, memberId),
           listEventPrizePools(nextEvent.id),
         ]);
-        const pickedPool =
-          pools.find((p) => p.status === "finalised") ??
-          pools.find((p) => p.status === "calculated") ??
-          pools[0] ??
-          null;
-        const hasPublishedResults =
-          pickedPool?.status === "finalised" || pickedPool?.status === "calculated";
-        const results = pickedPool && hasPublishedResults
-          ? await listEventPrizePoolResults(pickedPool.id)
-          : [];
-        const myResult =
-          pickedPool && hasPublishedResults
-            ? results.find((r) => String(r.member_id ?? "") === String(memberId)) ?? null
-            : null;
+        const poolRows: HomePrizePoolRowVm[] = await Promise.all(
+          pools.map(async (pool) => {
+            const [entry, rules, results] = await Promise.all([
+              getMyPrizePoolEntry(pool.id, memberId),
+              getEventPrizePoolRules(pool.id),
+              pool.status === "finalised" || pool.status === "calculated"
+                ? listEventPrizePoolResults(pool.id)
+                : Promise.resolve([]),
+            ]);
+            const sortedRules = [...rules].sort((a, b) => a.position - b.position);
+            const hasPublishedResults = pool.status === "finalised" || pool.status === "calculated";
+            return {
+              pool,
+              entry,
+              rules: sortedRules,
+              hasPublishedResults,
+              myResult: results.find((r) => String(r.member_id ?? "") === String(memberId)) ?? null,
+            };
+          }),
+        );
         if (cancelled) return;
         setPrizePoolCard({
           managerName: mgr?.displayName ?? null,
-          entry,
-          summary: pickedPool
-            ? {
-                pool: pickedPool,
-                hasPublishedResults,
-                myResult,
-              }
-            : null,
+          poolRows,
           loading: false,
         });
       } catch {
         if (!cancelled) {
-          setPrizePoolCard({ managerName: null, entry: null, summary: null, loading: false });
+          setPrizePoolCard({
+            managerName: null,
+            poolRows: [],
+            loading: false,
+          });
         }
       }
     })();

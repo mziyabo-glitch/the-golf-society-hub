@@ -30,7 +30,7 @@ export function PrizePoolCard(props: {
               {pool.name}
             </AppText>
             <AppText variant="caption" color="secondary" style={{ marginTop: 4 }}>
-              {formatPenceGbp(pool.total_amount_pence)} · {pool.places_paid} places paid
+              {formatPenceGbp(pool.total_amount_pence)} · {pool.competition_name}
             </AppText>
           </View>
           <PrizePoolStatusBadge status={pool.status} />
@@ -38,9 +38,18 @@ export function PrizePoolCard(props: {
         <View style={styles.badges}>
           <View style={[styles.miniBadge, { borderColor: colors.border, backgroundColor: colors.backgroundSecondary }]}>
             <AppText variant="caption">
-              {pool.payout_mode === "overall" ? "Overall payout" : "Division payout"}
+              {pool.competition_type === "splitter"
+                ? "Prize Pool (Pot) Splitter"
+                : pool.payout_mode === "overall"
+                  ? "Prize Pool (Pot) · Overall payout"
+                  : "Prize Pool (Pot) · Division payout"}
             </AppText>
           </View>
+          {pool.total_amount_mode === "per_entrant" ? (
+            <View style={[styles.miniBadge, { borderColor: colors.border, backgroundColor: colors.backgroundSecondary }]}>
+              <AppText variant="caption">Per entrant mode</AppText>
+            </View>
+          ) : null}
         </View>
         {eligibility ? (
           <AppText variant="small" color="muted" style={{ marginTop: spacing.xs }}>

@@ -3,14 +3,21 @@
 export type PrizePoolPayoutMode = "overall" | "division";
 export type PrizePoolDivisionSource = "none" | "event";
 export type PrizePoolStatus = "draft" | "calculated" | "finalised";
+export type PrizePoolCompetitionType = "standard" | "splitter";
+export type PrizePoolTotalAmountMode = "manual" | "per_entrant";
 
 export type EventPrizePoolRow = {
   id: string;
   event_id: string;
   host_society_id: string | null;
   name: string;
+  competition_name: string;
+  competition_type: PrizePoolCompetitionType;
   description: string | null;
   total_amount_pence: number;
+  total_amount_mode: PrizePoolTotalAmountMode;
+  pot_entry_value_pence: number | null;
+  birdie_fallback_to_overall: boolean;
   payout_mode: PrizePoolPayoutMode;
   division_source: PrizePoolDivisionSource;
   places_paid: number;
@@ -69,8 +76,13 @@ export type CreateEventPrizePoolInput = {
   eventId: string;
   hostSocietyId: string | null;
   name: string;
+  competitionName: string;
+  competitionType: PrizePoolCompetitionType;
   description?: string | null;
   totalAmountPence: number;
+  totalAmountMode: PrizePoolTotalAmountMode;
+  potEntryValuePence?: number | null;
+  birdieFallbackToOverall: boolean;
   payoutMode: PrizePoolPayoutMode;
   divisionSource: PrizePoolDivisionSource;
   placesPaid: number;
@@ -83,8 +95,13 @@ export type CreateEventPrizePoolInput = {
 
 export type UpdateEventPrizePoolPatch = Partial<{
   name: string;
+  competitionName: string;
+  competitionType: PrizePoolCompetitionType;
   description: string | null;
   totalAmountPence: number;
+  totalAmountMode: PrizePoolTotalAmountMode;
+  potEntryValuePence: number | null;
+  birdieFallbackToOverall: boolean;
   payoutMode: PrizePoolPayoutMode;
   divisionSource: PrizePoolDivisionSource;
   placesPaid: number;
@@ -106,6 +123,10 @@ export type PrizePoolEntrant = {
   divisionName: string | null;
   /** stableford points or net/gross strokes from official results */
   dayValue: number;
+  /** Detailed official result fields required for splitter calculation. */
+  front9Value: number | null;
+  back9Value: number | null;
+  birdieCount: number | null;
   /** Sort helper: lower is better for stroke formats */
   sortOrder: "high_wins" | "low_wins";
 };
@@ -134,19 +155,20 @@ export const PRIZE_POOL_PAYOUT_TEMPLATES: Record<number, number[]> = {
 export type PrizePoolParticipantType = "member" | "guest";
 
 /**
- * Row shape for `public.event_prize_pool_entries` after migration 100.
+ * Row shape for `public.event_prize_pool_entries`.
  *
- * Canonical entrant state (v1):
+ * Canonical entrant state:
  * - **Member:** `participant_type = 'member'`, `member_id` set, `guest_id` null.
  *   `opted_in` = home-card request; `confirmed_by_pot_master` = Pot Master confirmed for pool math.
  * - **Guest:** `participant_type = 'guest'`, `guest_id` set, `member_id` null.
  *   Guests are added by Pot Master (`opted_in` is typically true from RPC).
  *
- * Removed in 100 (do not use in app): `wants_to_enter`, `payment_status`, `entered_at`, `paid_at`, `notes`.
+ * `pool_id` scopes opt-in and confirmation to one prize pool (competition) on the event.
  */
 export type EventPrizePoolEntryRow = {
   id: string;
   event_id: string;
+  pool_id: string;
   member_id: string | null;
   guest_id: string | null;
   participant_name: string | null;
@@ -158,6 +180,15 @@ export type EventPrizePoolEntryRow = {
   updated_at: string;
 };
 
-/** PostgREST `select=` fragment — only columns that exist after migration 100. */
+/** PostgREST `select=` fragment — columns after migration 104. */
 export const EVENT_PRIZE_POOL_ENTRY_COLUMNS =
-  "id,event_id,member_id,guest_id,participant_name,participant_type,opted_in,confirmed_by_pot_master,confirmed_at,created_at,updated_at" as const;
+  "id,event_id,pool_id,member_id,guest_id,participant_name,participant_type,opted_in,confirmed_by_pot_master,confirmed_at,created_at,updated_at" as const;
+
+/** Home dashboard: one prize pool with the signed-in member’s entry, rules, and optional published result. */
+export type HomePrizePoolRowVm = {
+  pool: EventPrizePoolRow;
+  entry: EventPrizePoolEntryRow | null;
+  rules: EventPrizePoolRuleRow[];
+  hasPublishedResults: boolean;
+  myResult: EventPrizePoolResultRow | null;
+};

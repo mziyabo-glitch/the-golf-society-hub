@@ -14,6 +14,9 @@ function row(
     event_guest_id: partial.event_guest_id,
     points: partial.points ?? 0,
     day_value: partial.day_value,
+    front_9_value: partial.front_9_value ?? null,
+    back_9_value: partial.back_9_value ?? null,
+    birdie_count: partial.birdie_count ?? null,
     position: partial.position ?? null,
     created_at: partial.created_at ?? "",
     updated_at: partial.updated_at ?? "",
@@ -25,6 +28,7 @@ describe("confirmedPrizePoolEntryHasOfficialScoredResult", () => {
 
   it("guest confirmed + official guest result → eligible", () => {
     const entry = {
+      pool_id: "pool-1",
       participant_type: "guest",
       guest_id: "g1",
       member_id: null,
@@ -43,6 +47,7 @@ describe("confirmedPrizePoolEntryHasOfficialScoredResult", () => {
 
   it("guest in results but not a confirmed prize pool entrant row → gate is false when unconfirmed", () => {
     const entry = {
+      pool_id: "pool-1",
       participant_type: "guest",
       guest_id: "g1",
       member_id: null,
@@ -65,6 +70,7 @@ describe("confirmedPrizePoolEntryHasOfficialScoredResult", () => {
 
   it("confirmed guest but no matching official result → false", () => {
     const entry = {
+      pool_id: "pool-1",
       participant_type: "guest",
       guest_id: "g1",
       member_id: null,
@@ -78,6 +84,7 @@ describe("confirmedPrizePoolEntryHasOfficialScoredResult", () => {
 
   it("confirmed member with official result → true", () => {
     const entry = {
+      pool_id: "pool-1",
       participant_type: "member",
       member_id: "m1",
       guest_id: null,
@@ -90,6 +97,45 @@ describe("confirmedPrizePoolEntryHasOfficialScoredResult", () => {
 
     expect(
       confirmedPrizePoolEntryHasOfficialScoredResult(entry, resultByMemberId, new Map(), societyScope),
+    ).toBe(true);
+  });
+
+  it("splitter mode requires front/back/birdie details", () => {
+    const entry = {
+      pool_id: "pool-1",
+      participant_type: "member",
+      member_id: "m1",
+      guest_id: null,
+      confirmed_by_pot_master: true,
+    } as EventPrizePoolEntryRow;
+
+    const resultByMemberId = new Map<string, EventResultDoc>([
+      ["m1", row({ society_id: societyScope, member_id: "m1", event_guest_id: null, day_value: 36 })],
+    ]);
+
+    expect(
+      confirmedPrizePoolEntryHasOfficialScoredResult(entry, resultByMemberId, new Map(), societyScope, {
+        requireDetailedSplitterFields: true,
+      }),
+    ).toBe(false);
+
+    resultByMemberId.set(
+      "m1",
+      row({
+        society_id: societyScope,
+        member_id: "m1",
+        event_guest_id: null,
+        day_value: 36,
+        front_9_value: 18,
+        back_9_value: 18,
+        birdie_count: 2,
+      }),
+    );
+
+    expect(
+      confirmedPrizePoolEntryHasOfficialScoredResult(entry, resultByMemberId, new Map(), societyScope, {
+        requireDetailedSplitterFields: true,
+      }),
     ).toBe(true);
   });
 });

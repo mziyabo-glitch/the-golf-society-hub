@@ -260,6 +260,9 @@ export type EventResultDoc = {
   event_guest_id: string | null;
   points: number; // OOM points (can be decimal for tie averaging, e.g., 16.5)
   day_value?: number | null; // Raw score: stableford pts or net score
+  front_9_value?: number | null; // Front 9 score for splitter category payouts
+  back_9_value?: number | null; // Back 9 score for splitter category payouts
+  birdie_count?: number | null; // Birdie count for splitter category payouts
   position?: number | null; // Finishing position (1, 2, 3...)
   created_at: string;
   updated_at: string;
@@ -271,6 +274,9 @@ export type EventResultInput = {
   event_guest_id?: string | null;
   points: number; // OOM points (can be decimal for tie averaging)
   day_value?: number; // Raw score for audit trail
+  front_9_value?: number | null;
+  back_9_value?: number | null;
+  birdie_count?: number | null;
   position?: number; // Finishing position for audit trail
 };
 
@@ -635,6 +641,9 @@ export async function upsertEventResults(
       event_guest_id: null,
       points: r.points,
       day_value: r.day_value ?? null,
+      front_9_value: r.front_9_value ?? null,
+      back_9_value: r.back_9_value ?? null,
+      birdie_count: r.birdie_count ?? null,
       position: r.position ?? null,
     }));
     console.log("[resultsRepo] upserting member rows:", rows.length);
@@ -661,6 +670,9 @@ export async function upsertEventResults(
       event_guest_id: r.event_guest_id as string,
       points: r.points,
       day_value: r.day_value ?? null,
+      front_9_value: r.front_9_value ?? null,
+      back_9_value: r.back_9_value ?? null,
+      birdie_count: r.birdie_count ?? null,
       position: r.position ?? null,
     }));
     console.log("[resultsRepo] upserting guest rows:", rows.length);

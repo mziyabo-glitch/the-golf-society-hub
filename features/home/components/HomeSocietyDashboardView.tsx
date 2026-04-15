@@ -300,15 +300,14 @@ export function HomeSocietyDashboardView(vm: HomeSocietyDashboardVm) {
       ) : null}
 
       <AppText variant="captionBold" color="secondary" style={rhythmStyles.sectionEyebrow}>
-        PRIZE POOL
+        PRIZE POOLS
       </AppText>
       <HomePrizePoolCard
         eventId={nextEvent?.prizePoolEnabled || prizePoolCard?.managerName ? nextEvent?.id ?? null : null}
         myMemberId={memberId}
         managerName={prizePoolCard?.managerName ?? null}
         paymentInstructions={nextEvent?.prizePoolPaymentInstructions}
-        entry={prizePoolCard?.entry ?? null}
-        summary={prizePoolCard?.summary ?? null}
+        poolRows={prizePoolCard?.poolRows ?? []}
         loading={prizePoolCard?.loading ?? false}
         onChanged={bumpPrizePoolHomeCard}
       />

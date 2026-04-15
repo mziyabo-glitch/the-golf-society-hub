@@ -59,6 +59,22 @@ describe("calculateFieldPositionsAndMemberOomPoints (stableford / high_wins)", (
     expect(out.find((p) => p.memberId === "m1")!.oomPoints).toBe(25);
   });
 
+  it("guests in event results flow never gain OOM points even when they place above members", () => {
+    const out = calculateFieldPositionsAndMemberOomPoints(
+      [
+        { memberId: "guest-g1", memberName: "Guest One", dayPoints: "44" },
+        { memberId: "guest-g2", memberName: "Guest Two", dayPoints: "43" },
+        { memberId: "m1", memberName: "Member A", dayPoints: "41" },
+        { memberId: "m2", memberName: "Member B", dayPoints: "39" },
+      ],
+      "high_wins",
+    );
+    expect(out.find((p) => p.memberId === "guest-g1")!.oomPoints).toBe(0);
+    expect(out.find((p) => p.memberId === "guest-g2")!.oomPoints).toBe(0);
+    expect(out.find((p) => p.memberId === "m1")!.oomPoints).toBe(25);
+    expect(out.find((p) => p.memberId === "m2")!.oomPoints).toBe(18);
+  });
+
   it("member tie block shares averaged OOM among members only", () => {
     const out = calculateFieldPositionsAndMemberOomPoints(
       [

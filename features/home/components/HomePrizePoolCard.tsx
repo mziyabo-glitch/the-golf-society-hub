@@ -2,7 +2,7 @@ import { StyleSheet } from "react-native";
 import { AppCard } from "@/components/ui/AppCard";
 import { AppText } from "@/components/ui/AppText";
 import { DashboardPrizePoolHomeCard } from "@/components/dashboard/DashboardPrizePoolHomeCard";
-import type { EventPrizePoolEntryRow, EventPrizePoolResultRow, EventPrizePoolRow } from "@/lib/event-prize-pools-types";
+import type { HomePrizePoolRowVm } from "@/lib/event-prize-pools-types";
 import { getColors, radius, spacing } from "@/lib/ui/theme";
 
 type Props = {
@@ -10,12 +10,7 @@ type Props = {
   myMemberId: string | undefined;
   managerName: string | null;
   paymentInstructions: string | null | undefined;
-  entry: EventPrizePoolEntryRow | null;
-  summary: {
-    pool: EventPrizePoolRow;
-    hasPublishedResults: boolean;
-    myResult: EventPrizePoolResultRow | null;
-  } | null;
+  poolRows: HomePrizePoolRowVm[];
   loading: boolean;
   onChanged: () => void;
 };
@@ -25,8 +20,7 @@ export function HomePrizePoolCard({
   myMemberId,
   managerName,
   paymentInstructions,
-  entry,
-  summary,
+  poolRows,
   loading,
   onChanged,
 }: Props) {
@@ -40,9 +34,9 @@ export function HomePrizePoolCard({
           { borderColor: colors.borderLight, backgroundColor: colors.backgroundTertiary },
         ]}
       >
-        <AppText variant="bodyBold">Prize Pool</AppText>
+        <AppText variant="bodyBold">Prize Pools</AppText>
         <AppText variant="small" color="secondary" style={{ marginTop: 4 }}>
-          No Prize Pool for this event.
+          No prize pools for this event.
         </AppText>
       </AppCard>
     );
@@ -54,8 +48,7 @@ export function HomePrizePoolCard({
       myMemberId={myMemberId}
       managerName={managerName}
       paymentInstructions={paymentInstructions}
-      entry={entry}
-      summary={summary}
+      poolRows={poolRows}
       loading={loading}
       onChanged={onChanged}
     />
@@ -69,4 +62,3 @@ const styles = StyleSheet.create({
     padding: spacing.base,
   },
 });
-

@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   allocateDivisionPotPence,
+  allocateSplitterPotPence,
+  derivePrizePoolTotalAmountPence,
   filterEligiblePrizePoolEntrants,
   isPrizePoolSupportedEventFormat,
   prizePoolSortOrderForEventFormat,
@@ -25,6 +27,9 @@ function entrant(
     divisionName: p.divisionName ?? null,
     sortOrder: p.sortOrder ?? "high_wins",
     dayValue: p.dayValue,
+    front9Value: p.front9Value ?? null,
+    back9Value: p.back9Value ?? null,
+    birdieCount: p.birdieCount ?? null,
   };
 }
 
@@ -54,6 +59,30 @@ describe("splitPotEvenlyAcrossDivisions", () => {
   it("splits remainder deterministically", () => {
     expect(splitPotEvenlyAcrossDivisions(100, 3)).toEqual([34, 33, 33]);
     expect(splitPotEvenlyAcrossDivisions(60, 2)).toEqual([30, 30]);
+  });
+});
+
+describe("derivePrizePoolTotalAmountPence", () => {
+  it("manual mode keeps entered total", () => {
+    expect(
+      derivePrizePoolTotalAmountPence({
+        totalAmountMode: "manual",
+        manualTotalAmountPence: 12_345,
+        potEntryValuePence: 1_000,
+        confirmedEntrantCount: 9,
+      }),
+    ).toBe(12_345);
+  });
+
+  it("per-entrant mode derives total from confirmed entrants", () => {
+    expect(
+      derivePrizePoolTotalAmountPence({
+        totalAmountMode: "per_entrant",
+        manualTotalAmountPence: 0,
+        potEntryValuePence: 1_000,
+        confirmedEntrantCount: 12,
+      }),
+    ).toBe(12_000);
   });
 });
 
@@ -220,5 +249,181 @@ describe("allocateDivisionPotPence", () => {
     const guestRow = rows.find((r) => r.guestId === "g99");
     expect(guestRow?.finishingPosition).toBe(1);
     expect(guestRow?.payoutAmountPence).toBe(5000);
+  });
+});
+
+describe("allocateSplitterPotPence", () => {
+  it("splitter stableford with unique winners", () => {
+    const rows = allocateSplitterPotPence({
+      entrants: [
+        entrant({
+          memberId: "a",
+          dayValue: 41,
+          front9Value: 20,
+          back9Value: 21,
+          birdieCount: 3,
+          sortOrder: "high_wins",
+        }),
+        entrant({
+          memberId: "b",
+          dayValue: 39,
+          front9Value: 22,
+          back9Value: 17,
+          birdieCount: 1,
+          sortOrder: "high_wins",
+        }),
+        entrant({
+          memberId: "c",
+          dayValue: 40,
+          front9Value: 18,
+          back9Value: 23,
+          birdieCount: 2,
+          sortOrder: "high_wins",
+        }),
+      ],
+      totalPotPence: 12_000,
+      eventFormat: "stableford",
+      birdieFallbackToOverall: true,
+    });
+
+    const sum = rows.reduce((s, r) => s + r.payoutAmountPence, 0);
+    expect(sum).toBe(12_000);
+    expect(rows.find((r) => r.divisionName === "Best Front 9")?.memberId).toBe("b");
+    expect(rows.find((r) => r.divisionName === "Best Back 9")?.memberId).toBe("c");
+    expect(rows.find((r) => r.divisionName === "Most Birdies")?.memberId).toBe("a");
+    expect(rows.find((r) => r.divisionName === "Best Overall Score")?.memberId).toBe("a");
+    expect(rows.find((r) => r.divisionName === "Best Overall Score")?.payoutAmountPence).toBe(4800);
+  });
+
+  it("splitter strokeplay with unique winners", () => {
+    const rows = allocateSplitterPotPence({
+      entrants: [
+        entrant({
+          memberId: "a",
+          dayValue: 71,
+          front9Value: 35,
+          back9Value: 36,
+          birdieCount: 2,
+          sortOrder: "low_wins",
+        }),
+        entrant({
+          memberId: "b",
+          dayValue: 70,
+          front9Value: 34,
+          back9Value: 39,
+          birdieCount: 1,
+          sortOrder: "low_wins",
+        }),
+        entrant({
+          memberId: "c",
+          dayValue: 73,
+          front9Value: 36,
+          back9Value: 34,
+          birdieCount: 3,
+          sortOrder: "low_wins",
+        }),
+      ],
+      totalPotPence: 10_000,
+      eventFormat: "strokeplay_net",
+      birdieFallbackToOverall: true,
+    });
+    expect(rows.find((r) => r.divisionName === "Best Front 9")?.memberId).toBe("b");
+    expect(rows.find((r) => r.divisionName === "Best Back 9")?.memberId).toBe("c");
+    expect(rows.find((r) => r.divisionName === "Most Birdies")?.memberId).toBe("c");
+    expect(rows.find((r) => r.divisionName === "Best Overall Score")?.memberId).toBe("b");
+  });
+
+  it("tie on front 9 splits payout", () => {
+    const rows = allocateSplitterPotPence({
+      entrants: [
+        entrant({ memberId: "a", dayValue: 39, front9Value: 20, back9Value: 19, birdieCount: 1 }),
+        entrant({ memberId: "b", dayValue: 38, front9Value: 20, back9Value: 18, birdieCount: 2 }),
+      ],
+      totalPotPence: 1_000,
+      eventFormat: "stableford",
+      birdieFallbackToOverall: true,
+    }).filter((r) => r.divisionName === "Best Front 9");
+    expect(rows.length).toBe(2);
+    expect(rows[0].payoutAmountPence).toBe(rows[1].payoutAmountPence);
+    expect(rows[0].payoutAmountPence + rows[1].payoutAmountPence).toBe(200);
+  });
+
+  it("tie on back 9 splits payout", () => {
+    const rows = allocateSplitterPotPence({
+      entrants: [
+        entrant({ memberId: "a", dayValue: 39, front9Value: 18, back9Value: 21, birdieCount: 1 }),
+        entrant({ memberId: "b", dayValue: 38, front9Value: 19, back9Value: 21, birdieCount: 2 }),
+      ],
+      totalPotPence: 1_000,
+      eventFormat: "stableford",
+      birdieFallbackToOverall: true,
+    }).filter((r) => r.divisionName === "Best Back 9");
+    expect(rows.length).toBe(2);
+    expect(rows[0].payoutAmountPence + rows[1].payoutAmountPence).toBe(200);
+  });
+
+  it("tie on most birdies splits payout", () => {
+    const rows = allocateSplitterPotPence({
+      entrants: [
+        entrant({ memberId: "a", dayValue: 39, front9Value: 18, back9Value: 21, birdieCount: 3 }),
+        entrant({ memberId: "b", dayValue: 38, front9Value: 19, back9Value: 20, birdieCount: 3 }),
+      ],
+      totalPotPence: 1_000,
+      eventFormat: "stableford",
+      birdieFallbackToOverall: true,
+    }).filter((r) => r.divisionName === "Most Birdies");
+    expect(rows.length).toBe(2);
+    expect(rows[0].payoutAmountPence + rows[1].payoutAmountPence).toBe(200);
+  });
+
+  it("tie on best overall splits payout", () => {
+    const rows = allocateSplitterPotPence({
+      entrants: [
+        entrant({ memberId: "a", dayValue: 40, front9Value: 18, back9Value: 22, birdieCount: 1 }),
+        entrant({ memberId: "b", dayValue: 40, front9Value: 20, back9Value: 20, birdieCount: 2 }),
+      ],
+      totalPotPence: 1_000,
+      eventFormat: "stableford",
+      birdieFallbackToOverall: true,
+    }).filter((r) => r.divisionName === "Best Overall Score");
+    expect(rows.length).toBe(2);
+    expect(rows[0].payoutAmountPence + rows[1].payoutAmountPence).toBe(400);
+  });
+
+  it("no birdies rolls birdie payout into overall", () => {
+    const rows = allocateSplitterPotPence({
+      entrants: [
+        entrant({ memberId: "a", dayValue: 42, front9Value: 21, back9Value: 21, birdieCount: 0 }),
+        entrant({ memberId: "b", dayValue: 40, front9Value: 20, back9Value: 20, birdieCount: 0 }),
+      ],
+      totalPotPence: 1_000,
+      eventFormat: "stableford",
+      birdieFallbackToOverall: true,
+    });
+    const birdieRows = rows.filter((r) => r.divisionName === "Most Birdies");
+    const overallRows = rows.filter((r) => r.divisionName === "Best Overall Score");
+    expect(birdieRows.length).toBe(0);
+    expect(overallRows.reduce((s, r) => s + r.payoutAmountPence, 0)).toBe(600);
+    expect(rows.some((r) => String(r.calculationNote ?? "").includes("birdie prize rolled"))).toBe(true);
+  });
+
+  it("guest can win splitter category", () => {
+    const rows = allocateSplitterPotPence({
+      entrants: [
+        entrant({ memberId: "m1", dayValue: 38, front9Value: 19, back9Value: 19, birdieCount: 1 }),
+        entrant({
+          guestId: "g1",
+          dayValue: 40,
+          front9Value: 20,
+          back9Value: 20,
+          birdieCount: 2,
+          sortOrder: "high_wins",
+        }),
+      ],
+      totalPotPence: 1_000,
+      eventFormat: "stableford",
+      birdieFallbackToOverall: true,
+    });
+    expect(rows.some((r) => r.divisionName === "Best Overall Score" && r.guestId === "g1")).toBe(true);
   });
 });

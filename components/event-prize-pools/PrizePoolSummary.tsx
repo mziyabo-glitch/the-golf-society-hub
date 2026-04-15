@@ -6,6 +6,13 @@ import { formatPenceGbp } from "@/lib/db_supabase/eventPrizePoolRepo";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
 import { EVENT_FORMATS, type EventFormat } from "@/lib/db_supabase/eventRepo";
 
+const SPLITTER_CATEGORY_ORDER = [
+  "Best Front 9",
+  "Best Back 9",
+  "Most Birdies",
+  "Best Overall Score",
+] as const;
+
 function formatLabelForEvent(format: string | undefined): string {
   const f = (format ?? "stableford").toLowerCase();
   if (f === "medal") return "Medal";
@@ -23,6 +30,10 @@ export function PrizePoolSummary(props: {
   const { pool, results, eventFormat, nameByMemberId, nameByGuestId } = props;
   const colors = getColors();
   const winners = results.filter((r) => r.payout_amount_pence > 0);
+  const splitterRollNoteVisible = results.some((r) =>
+    String(r.calculation_note ?? "").includes("birdie prize rolled into Best Overall Score"),
+  );
+  const isSplitter = pool.competition_type === "splitter";
 
   const byDivision = new Map<string | null, EventPrizePoolResultRow[]>();
   for (const r of results) {
@@ -32,6 +43,15 @@ export function PrizePoolSummary(props: {
   }
 
   const sections = [...byDivision.entries()].sort(([a], [b]) => {
+    if (isSplitter) {
+      const ai = SPLITTER_CATEGORY_ORDER.indexOf((a ?? "") as (typeof SPLITTER_CATEGORY_ORDER)[number]);
+      const bi = SPLITTER_CATEGORY_ORDER.indexOf((b ?? "") as (typeof SPLITTER_CATEGORY_ORDER)[number]);
+      if (ai !== -1 || bi !== -1) {
+        const aa = ai === -1 ? 999 : ai;
+        const bb = bi === -1 ? 999 : bi;
+        return aa - bb;
+      }
+    }
     if (a == null && b == null) return 0;
     if (a == null) return -1;
     if (b == null) return 1;
@@ -55,9 +75,25 @@ export function PrizePoolSummary(props: {
         </View>
         <View style={styles.row}>
           <AppText variant="caption" color="secondary">
+            Competition
+          </AppText>
+          <AppText variant="bodyBold">{pool.competition_name}</AppText>
+        </View>
+        <View style={styles.row}>
+          <AppText variant="caption" color="secondary">
             Payout mode
           </AppText>
-          <AppText variant="bodyBold">{pool.payout_mode === "overall" ? "Overall" : "Division"}</AppText>
+          <AppText variant="bodyBold">
+            {isSplitter ? "Fixed Splitter categories" : pool.payout_mode === "overall" ? "Overall" : "Division"}
+          </AppText>
+        </View>
+        <View style={styles.row}>
+          <AppText variant="caption" color="secondary">
+            Total mode
+          </AppText>
+          <AppText variant="bodyBold">
+            {pool.total_amount_mode === "per_entrant" ? "Per entrant" : "Manual total"}
+          </AppText>
         </View>
         <View style={styles.row}>
           <AppText variant="caption" color="secondary">
@@ -65,6 +101,11 @@ export function PrizePoolSummary(props: {
           </AppText>
           <AppText variant="bodyBold">{winners.length}</AppText>
         </View>
+        {splitterRollNoteVisible ? (
+          <AppText variant="small" color="muted" style={{ marginTop: spacing.xs }}>
+            Most Birdies rolled into Best Overall Score because no birdies were recorded.
+          </AppText>
+        ) : null}
       </AppCard>
 
       {sections.map(([divName, rows]) => (

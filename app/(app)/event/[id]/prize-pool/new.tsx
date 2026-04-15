@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Alert, Pressable, ScrollView, StyleSheet, View } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { Feather } from "@expo/vector-icons";
@@ -50,10 +50,22 @@ export default function NewPrizePoolScreen() {
   const [description, setDescription] = useState("");
   const [notes, setNotes] = useState("");
   const [totalGbp, setTotalGbp] = useState("50");
+  const [competitionType, setCompetitionType] = useState<"standard" | "splitter">("standard");
+  const [totalAmountMode, setTotalAmountMode] = useState<"manual" | "per_entrant">("manual");
+  const [potEntryValueGbp, setPotEntryValueGbp] = useState("10");
   const [payoutMode, setPayoutMode] = useState<"overall" | "division">("overall");
   const [placesPaid, setPlacesPaid] = useState(3);
   const [percents, setPercents] = useState<number[]>([50, 30, 20]);
   const [busy, setBusy] = useState(false);
+  const confirmedEntrants = 0;
+
+  useEffect(() => {
+    if (competitionType === "splitter") {
+      setPlacesPaid(4);
+      setPercents([20, 20, 20, 40]);
+      setPayoutMode("overall");
+    }
+  }, [competitionType]);
 
   const applyTemplate = (n: number) => {
     const t = PRIZE_POOL_PAYOUT_TEMPLATES[n];
@@ -71,17 +83,23 @@ export default function NewPrizePoolScreen() {
 
   const save = async () => {
     if (!eventId || !canManage) return;
-    const pence = parseGbpToPence(totalGbp);
+    const manualPence = parseGbpToPence(totalGbp);
+    const perEntrantPence = parseGbpToPence(potEntryValueGbp);
+    const computedPerEntrantTotal = (perEntrantPence ?? 0) * confirmedEntrants;
+    const effectivePence = totalAmountMode === "per_entrant" ? computedPerEntrantTotal : manualPence;
     if (!name.trim()) {
       Alert.alert("Name required", "Enter a pool name.");
       return;
     }
-    if (pence == null) {
+    if (effectivePence == null) {
       Alert.alert("Amount", "Enter a valid total amount in GBP.");
       return;
     }
-
-    if (payoutMode === "division") {
+    if (totalAmountMode === "per_entrant" && perEntrantPence == null) {
+      Alert.alert("Pot entry value", "Enter a valid per-entrant value in GBP.");
+      return;
+    }
+    if (competitionType !== "splitter" && payoutMode === "division") {
       const divs = await listEventDivisions(eventId);
       if (divs.length === 0) {
         Alert.alert(
@@ -92,7 +110,10 @@ export default function NewPrizePoolScreen() {
       }
     }
 
-    const rules = percentsToRules(percents, placesPaid);
+    const rules =
+      competitionType === "splitter"
+        ? percentsToRules([20, 20, 20, 40], 4)
+        : percentsToRules(percents, placesPaid);
     const v = validateRuleBasisPointsTotal(rules);
     if (!v.ok) {
       Alert.alert("Payout rules", "Payout percentages must total 100%.");
@@ -108,11 +129,16 @@ export default function NewPrizePoolScreen() {
           eventId,
           hostSocietyId: societyId ?? null,
           name: name.trim(),
+          competitionName: competitionType === "splitter" ? "Prize Pool (Pot) Splitter" : "Prize Pool (Pot)",
+          competitionType,
           description: description.trim() || null,
-          totalAmountPence: pence,
-          payoutMode,
-          divisionSource: payoutMode === "division" ? "event" : "none",
-          placesPaid,
+          totalAmountPence: effectivePence,
+          totalAmountMode,
+          potEntryValuePence: totalAmountMode === "per_entrant" ? perEntrantPence : null,
+          birdieFallbackToOverall: true,
+          payoutMode: competitionType === "splitter" ? "overall" : payoutMode,
+          divisionSource: competitionType === "splitter" ? "none" : payoutMode === "division" ? "event" : "none",
+          placesPaid: competitionType === "splitter" ? 4 : placesPaid,
           includeGuests: false,
           requirePaid: false,
           requireConfirmed: false,
@@ -152,7 +178,7 @@ export default function NewPrizePoolScreen() {
       </View>
 
       <ScrollView contentContainerStyle={{ paddingBottom: spacing.xl, gap: spacing.md }}>
-        {payoutMode === "division" ? (
+        {competitionType !== "splitter" && payoutMode === "division" ? (
           <InlineNotice
             variant="info"
             message="Division pools split the total prize amount evenly across active divisions, then apply the chosen payout percentages within each division."
@@ -169,70 +195,156 @@ export default function NewPrizePoolScreen() {
         </AppText>
         <AppInput value={description} onChangeText={setDescription} placeholder="Shown to prize managers" />
 
-        <AppText variant="caption" color="secondary">
-          Total amount (£)
-        </AppText>
-        <AppInput value={totalGbp} onChangeText={setTotalGbp} keyboardType="decimal-pad" placeholder="50.00" />
-
         <AppText variant="subheading" style={{ marginTop: spacing.sm }}>
-          Payout mode
+          Competition type
         </AppText>
         <View style={styles.modeRow}>
           <SecondaryButton
             size="sm"
-            onPress={() => setPayoutMode("overall")}
-            style={payoutMode === "overall" ? { borderWidth: 2, borderColor: colors.primary } : undefined}
+            onPress={() => setCompetitionType("standard")}
+            style={competitionType === "standard" ? { borderWidth: 2, borderColor: colors.primary } : undefined}
           >
-            Overall
+            Prize Pool (Pot)
           </SecondaryButton>
           <SecondaryButton
             size="sm"
-            onPress={() => setPayoutMode("division")}
-            style={payoutMode === "division" ? { borderWidth: 2, borderColor: colors.primary } : undefined}
+            onPress={() => setCompetitionType("splitter")}
+            style={competitionType === "splitter" ? { borderWidth: 2, borderColor: colors.primary } : undefined}
           >
-            Division
+            Prize Pool (Pot) Splitter
           </SecondaryButton>
         </View>
 
-        <AppText variant="caption" color="secondary">
-          Places paid (1–10)
-        </AppText>
-        <AppInput
-          value={String(placesPaid)}
-          onChangeText={(t) => {
-            const n = parseInt(t, 10);
-            if (!Number.isNaN(n) && n >= 1 && n <= 10) {
-              setPlacesPaid(n);
-              setPercents((prev) => {
-                const next = prev.slice(0, n);
-                while (next.length < n) next.push(0);
-                return next;
-              });
-            }
-          }}
-          keyboardType="number-pad"
-        />
-
-        <AppText variant="subheading">Payout rules (%)</AppText>
-        <View style={styles.tplRow}>
-          {([1, 2, 3, 4, 5] as const).map((n) => (
-            <SecondaryButton key={n} size="sm" onPress={() => applyTemplate(n)}>
-              {n} place{n > 1 ? "s" : ""}
-            </SecondaryButton>
-          ))}
+        <AppText variant="subheading">Total mode</AppText>
+        <View style={styles.modeRow}>
+          <SecondaryButton
+            size="sm"
+            onPress={() => setTotalAmountMode("manual")}
+            style={totalAmountMode === "manual" ? { borderWidth: 2, borderColor: colors.primary } : undefined}
+          >
+            Manual total
+          </SecondaryButton>
+          <SecondaryButton
+            size="sm"
+            onPress={() => setTotalAmountMode("per_entrant")}
+            style={totalAmountMode === "per_entrant" ? { borderWidth: 2, borderColor: colors.primary } : undefined}
+          >
+            Per entrant
+          </SecondaryButton>
         </View>
-        {Array.from({ length: placesPaid }).map((_, i) => (
-          <View key={i} style={{ marginBottom: spacing.xs }}>
+
+        {totalAmountMode === "manual" ? (
+          <>
             <AppText variant="caption" color="secondary">
-              Position {i + 1}
+              Total Prize Pool (£)
+            </AppText>
+            <AppInput value={totalGbp} onChangeText={setTotalGbp} keyboardType="decimal-pad" placeholder="50.00" />
+          </>
+        ) : (
+          <>
+            <AppText variant="caption" color="secondary">
+              Pot entry value (£)
             </AppText>
             <AppInput
-              value={String(percents[i] ?? 0)}
-              onChangeText={(t) => setPercentAt(i, t)}
+              value={potEntryValueGbp}
+              onChangeText={setPotEntryValueGbp}
               keyboardType="decimal-pad"
+              placeholder="10.00"
             />
-          </View>
-        ))}
+          </>
+        )}
+
+        <InlineNotice
+          variant="info"
+          message={`Confirmed entrants: ${confirmedEntrants} · Total Prize Pool: £${(
+            ((totalAmountMode === "per_entrant" ? (parseGbpToPence(potEntryValueGbp) ?? 0) * confirmedEntrants : parseGbpToPence(totalGbp) ?? 0) || 0) /
+            100
+          ).toFixed(2)}`}
+        />
+
+        {competitionType !== "splitter" ? (
+          <>
+            <AppText variant="subheading" style={{ marginTop: spacing.sm }}>
+              Payout mode
+            </AppText>
+            <View style={styles.modeRow}>
+              <SecondaryButton
+                size="sm"
+                onPress={() => setPayoutMode("overall")}
+                style={payoutMode === "overall" ? { borderWidth: 2, borderColor: colors.primary } : undefined}
+              >
+                Overall
+              </SecondaryButton>
+              <SecondaryButton
+                size="sm"
+                onPress={() => setPayoutMode("division")}
+                style={payoutMode === "division" ? { borderWidth: 2, borderColor: colors.primary } : undefined}
+              >
+                Division
+              </SecondaryButton>
+            </View>
+          </>
+        ) : null}
+
+        {competitionType !== "splitter" ? (
+          <>
+            <AppText variant="caption" color="secondary">
+              Places paid (1–10)
+            </AppText>
+            <AppInput
+              value={String(placesPaid)}
+              onChangeText={(t) => {
+                const n = parseInt(t, 10);
+                if (!Number.isNaN(n) && n >= 1 && n <= 10) {
+                  setPlacesPaid(n);
+                  setPercents((prev) => {
+                    const next = prev.slice(0, n);
+                    while (next.length < n) next.push(0);
+                    return next;
+                  });
+                }
+              }}
+              keyboardType="number-pad"
+            />
+          </>
+        ) : null}
+
+        {competitionType === "splitter" ? (
+          <>
+            <AppText variant="subheading">Fixed Splitter breakdown</AppText>
+            <InlineNotice
+              variant="info"
+              message="Best Front 9 — 20% · Best Back 9 — 20% · Most Birdies — 20% · Best Overall Score — 40%"
+            />
+            <InlineNotice
+              variant="info"
+              message="If no birdies are recorded, the birdie prize is added to Best Overall Score."
+            />
+          </>
+        ) : (
+          <>
+            <AppText variant="subheading">Payout rules (%)</AppText>
+            <View style={styles.tplRow}>
+              {([1, 2, 3, 4, 5] as const).map((n) => (
+                <SecondaryButton key={n} size="sm" onPress={() => applyTemplate(n)}>
+                  {n} place{n > 1 ? "s" : ""}
+                </SecondaryButton>
+              ))}
+            </View>
+            {Array.from({ length: placesPaid }).map((_, i) => (
+              <View key={i} style={{ marginBottom: spacing.xs }}>
+                <AppText variant="caption" color="secondary">
+                  Position {i + 1}
+                </AppText>
+                <AppInput
+                  value={String(percents[i] ?? 0)}
+                  onChangeText={(t) => setPercentAt(i, t)}
+                  keyboardType="decimal-pad"
+                />
+              </View>
+            ))}
+          </>
+        )}
 
         <InlineNotice
           variant="info"
