@@ -300,6 +300,7 @@ export default function TeeSheetScreen() {
   // Editable groups state
   const [groups, setGroups] = useState<PlayerGroup[]>([]);
   const [selectedPlayerIds, setSelectedPlayerIds] = useState<string[]>([]);
+  const [eligibleMemberIds, setEligibleMemberIds] = useState<string[]>([]);
   const [eventMemberPool, setEventMemberPool] = useState<MemberDoc[]>([]);
   const [, setSelectedEventRegistrations] = useState<EventRegistration[]>([]);
   const [showGroupEditor, setShowGroupEditor] = useState(false);
@@ -380,6 +381,7 @@ export default function TeeSheetScreen() {
         setSelectedEventRegistrations([]);
         setGroups([]);
         setSelectedPlayerIds([]);
+        setEligibleMemberIds([]);
         setEventMemberPool([]);
         setIsJointEventTeeSheet(false);
         setJointTeeSheetData(null);
@@ -440,6 +442,7 @@ export default function TeeSheetScreen() {
           const candidateMembers = pooled.filter((m) => candidateIdSet.has(String(m.id)));
           setEventMemberPool(candidateMembers);
           setSelectedPlayerIds(candidate.memberIds);
+          setEligibleMemberIds(candidate.memberIds);
           setSelectedEventRegistrations(candidate.registrations);
           const persistedGroups: PlayerGroup[] = normalizeGroups(
             (teeSheet.groups ?? []).map((g, groupIdx) => ({
@@ -481,6 +484,7 @@ export default function TeeSheetScreen() {
               selectedEventRegistrations: regs,
               groups: persistedIds.length > 0 ? persistedGroups : [],
               selectedPlayerIds: persistedIds.length > 0 ? persistedIds : candidate.memberIds,
+              eligibleMemberIds: candidate.memberIds,
               eventMemberPool: candidateMembers,
               isJointEventTeeSheet: true,
               jointTeeSheetData: teeSheet,
@@ -526,6 +530,7 @@ export default function TeeSheetScreen() {
         setEventMemberPool(membersStd);
         const eligibleIds = await getTeeSheetEligibleMemberIdsForEvent(selectedEventId);
         setSelectedPlayerIds(eligibleIds);
+        setEligibleMemberIds(eligibleIds);
         logSelectedPlayersDev("[teesheet] tee-sheet eligible (paid + in)", selectedEventId, eligibleIds);
         const canonical = await loadCanonicalTeeSheet(selectedEventId);
         const hasPersistedGroups =
@@ -573,6 +578,7 @@ export default function TeeSheetScreen() {
             selectedEventRegistrations: registrations ?? [],
             groups: groupsForCache,
             selectedPlayerIds: selectedIdsForCache,
+            eligibleMemberIds: eligibleIds,
             eventMemberPool: membersStd,
             isJointEventTeeSheet: false,
             jointTeeSheetData: null,
@@ -604,6 +610,7 @@ export default function TeeSheetScreen() {
         selectedEventRegistrations: EventRegistration[];
         groups: PlayerGroup[];
         selectedPlayerIds: string[];
+        eligibleMemberIds: string[];
         eventMemberPool: MemberDoc[];
         isJointEventTeeSheet: boolean;
         jointTeeSheetData: JointEventTeeSheet | null;
@@ -619,6 +626,7 @@ export default function TeeSheetScreen() {
       setSelectedEventRegistrations(cached.value.selectedEventRegistrations ?? []);
       setGroups(cached.value.groups ?? []);
       setSelectedPlayerIds(cached.value.selectedPlayerIds ?? []);
+      setEligibleMemberIds(cached.value.eligibleMemberIds ?? []);
       setEventMemberPool(cached.value.eventMemberPool ?? []);
       setIsJointEventTeeSheet(cached.value.isJointEventTeeSheet ?? false);
       setJointTeeSheetData(cached.value.jointTeeSheetData ?? null);
@@ -860,6 +868,7 @@ export default function TeeSheetScreen() {
           setSelectedEvent(evt);
           const eligibleIds = await getTeeSheetEligibleMemberIdsForEvent(selectedEventId);
           setSelectedPlayerIds(eligibleIds);
+          setEligibleMemberIds(eligibleIds);
           logSelectedPlayersDev("[teesheet] tee-sheet eligible (paid + in)", selectedEventId, eligibleIds);
           initializeGroups(evt, eligibleIds, eventMemberPool.length > 0 ? eventMemberPool : members, guestList ?? []);
         }
@@ -1276,6 +1285,14 @@ export default function TeeSheetScreen() {
   const addPlayerToField = (m: MemberDoc) => {
     const id = String(m.id);
     if (!id || selectedPlayerIds.includes(id)) return;
+    if (!isJointEventTeeSheet && !new Set(eligibleMemberIds.map(String)).has(id)) {
+      setNotice({
+        type: "error",
+        message: "Player is not tee-sheet eligible",
+        detail: "Only players with status 'in' and paid can be added to this tee sheet.",
+      });
+      return;
+    }
     setSelectedPlayerIds((prev) => {
       const next = [...prev, id];
       if (selectedEventId) logSelectedPlayersDev("[teesheet] selected players (after ManCo edits)", selectedEventId, next);
@@ -1560,7 +1577,13 @@ export default function TeeSheetScreen() {
   const groupCount = groups.filter((g) => g.players.length > 0).length;
   const womenCount = groups.reduce((sum, g) => sum + g.players.filter((p) => p.gender === "female").length, 0);
   const selectedIdSet = new Set(selectedPlayerIds);
-  const addablePlayers = eventMemberPool.filter((m) => !selectedIdSet.has(String(m.id)));
+  const eligibleIdSet = new Set(eligibleMemberIds.map(String));
+  const addablePlayers = eventMemberPool.filter((m) => {
+    const id = String(m.id);
+    if (selectedIdSet.has(id)) return false;
+    if (!isJointEventTeeSheet && !eligibleIdSet.has(id)) return false;
+    return true;
+  });
 
   // Check if we have tee settings configured
   const hasMenTees = selectedEvent?.par != null && selectedEvent?.slopeRating != null;
@@ -1589,7 +1612,7 @@ export default function TeeSheetScreen() {
         Generate grouped tee sheets with WHS handicaps for Men and Ladies.
       </AppText>
       <AppText variant="small" color="muted" style={{ marginBottom: spacing.lg }}>
-        Tee sheet defaults to confirmed attendees. ManCo can manually add or remove players before publishing.
+        Tee sheet includes confirmed + paid players. ManCo can remove players, and can add only tee-sheet-eligible players.
       </AppText>
       {(refreshing || eventDetailsRefreshing) ? (
         <AppText variant="small" color="muted" style={{ marginBottom: spacing.sm }}>
