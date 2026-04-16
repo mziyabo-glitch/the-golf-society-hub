@@ -12,6 +12,7 @@ import { LoadingState } from "@/components/ui/LoadingState";
 import { InlineNotice } from "@/components/ui/InlineNotice";
 import { useBootstrap } from "@/lib/useBootstrap";
 import { canManageEventPaymentsForSociety } from "@/lib/rbac";
+import { confirmDestructive, showAlert } from "@/lib/ui/alert";
 import { getEvent, type EventDoc } from "@/lib/db_supabase/eventRepo";
 import { getMembersByIds } from "@/lib/db_supabase/memberRepo";
 import { getEventGuests } from "@/lib/db_supabase/eventGuestRepo";
@@ -400,26 +401,22 @@ export default function PrizePoolDetailScreen() {
 
   const runDelete = () => {
     if (!poolId || locked) return;
-    Alert.alert("Delete prize pool", "Delete this pool and all payout rows?", [
-      { text: "Cancel", style: "cancel" },
-      {
-        text: "Delete",
-        style: "destructive",
-        onPress: () => {
-          void (async () => {
-            setBusy(true);
-            try {
-              await deleteEventPrizePool(poolId);
-              router.replace({ pathname: "/(app)/event/[id]/prize-pools" as any, params: { id: eventId! } });
-            } catch (e: unknown) {
-              Alert.alert("Delete failed", e instanceof Error ? e.message : "Unknown error");
-            } finally {
-              setBusy(false);
-            }
-          })();
-        },
+    confirmDestructive(
+      "Delete prize pool",
+      "Delete this pool and all payout rows?",
+      "Delete",
+      async () => {
+        setBusy(true);
+        try {
+          await deleteEventPrizePool(poolId);
+          router.replace({ pathname: "/(app)/event/[id]/prize-pools" as any, params: { id: eventId! } });
+        } catch (e: unknown) {
+          showAlert("Delete failed", e instanceof Error ? e.message : "Unknown error");
+        } finally {
+          setBusy(false);
+        }
       },
-    ]);
+    );
   };
 
   const updateSplitterInputField = (
