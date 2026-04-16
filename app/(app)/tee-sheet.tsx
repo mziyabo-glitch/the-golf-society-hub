@@ -9,7 +9,7 @@
  * - Generate grouped tee sheet PDF with gender-based tee settings
  */
 
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Alert, Platform, StyleSheet, View, Pressable, ScrollView } from "react-native";
 import { useRouter } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
@@ -80,6 +80,15 @@ import {
 } from "@/lib/teeSheet/canonicalTeeSheet";
 import { getSocietyLogoUrl } from "@/lib/societyLogo";
 import { getCache, invalidateCache, invalidateCachePrefix, setCache } from "@/lib/cache/clientCache";
+import {
+  isEventPastForList,
+  partitionUpcomingPast,
+  sortPastMostRecentFirst,
+  sortUpcomingNearestFirst,
+} from "@/lib/eventListGrouping";
+
+const UPCOMING_EVENTS_TITLE = "Upcoming Events";
+const PAST_EVENTS_TITLE = "Past Events";
 
 type EditablePlayer = {
   id: string;
@@ -314,6 +323,16 @@ export default function TeeSheetScreen() {
   const permissions = getPermissionsForMember(member);
   const canGenerateTeeSheet = permissions.canGenerateTeeSheet;
 
+  const { upcomingEvents, pastEvents } = useMemo(() => {
+    const { upcoming, past } = partitionUpcomingPast(events);
+    return {
+      upcomingEvents: sortUpcomingNearestFirst(upcoming),
+      pastEvents: sortPastMostRecentFirst(past),
+    };
+  }, [events]);
+
+  const isPastEventSelected = !!(selectedEvent && isEventPastForList(selectedEvent));
+
   // Get logo URL from society
   const logoUrl = getSocietyLogoUrl(society);
   // Load events (host + joint where society participates) and members
@@ -330,20 +349,23 @@ export default function TeeSheetScreen() {
         getManCoRoleHolders(societyId),
       ]);
 
-      const upcomingEvents = eventsData.filter((e) => !e.isCompleted);
-      setEvents(upcomingEvents);
+      const { upcoming, past } = partitionUpcomingPast(eventsData);
+      const upcomingSorted = sortUpcomingNearestFirst(upcoming);
+      const pastSorted = sortPastMostRecentFirst(past);
+      const mergedForList = [...upcomingSorted, ...pastSorted];
+      setEvents(mergedForList);
       setMembers(membersData);
       setManCo(manCoData);
       await setCache(`society:${societyId}:tee-sheet:index`, {
-        events: upcomingEvents,
+        events: mergedForList,
         members: membersData,
         manCo: manCoData,
       }, { ttlMs: 1000 * 60 * 5 });
 
-      // Keep selection if still in this society’s list; otherwise first upcoming (fixes stale id after society switch)
+      // Prefer keeping selection if still listed; otherwise default to nearest upcoming (then any event).
       setSelectedEventId((prev) => {
-        if (prev && upcomingEvents.some((e) => e.id === prev)) return prev;
-        return upcomingEvents[0]?.id ?? null;
+        if (prev && mergedForList.some((e) => e.id === prev)) return prev;
+        return upcomingSorted[0]?.id ?? mergedForList[0]?.id ?? null;
       });
     } catch (err) {
       console.error("[TeeSheet] loadData error:", err);
@@ -1641,62 +1663,168 @@ export default function TeeSheetScreen() {
       {events.length === 0 ? (
         <EmptyState
           icon={<Feather name="calendar" size={32} color={colors.textTertiary} />}
-          title="No Upcoming Events"
+          title="No Events"
           message="Create an event first to generate a tee sheet."
           action={{ label: "Go to Events", onPress: () => router.push("/(app)/(tabs)/events") }}
         />
       ) : (
         <ScrollView showsVerticalScrollIndicator={false}>
           {/* Event Selection */}
-          <AppText variant="heading" style={styles.sectionTitle}>Select Event</AppText>
-          <View style={styles.eventList}>
-            {events.map((event) => {
-              const isSelected = event.id === selectedEventId;
-              const playerCount = event.playerIds?.length || 0;
+          <AppText variant="heading" style={styles.sectionTitle}>Select event</AppText>
+          <AppText variant="small" color="muted" style={{ marginBottom: spacing.sm }}>
+            Upcoming events are for generation and publishing. Past events are read-only here unless a tee sheet was published.
+          </AppText>
 
-              return (
-                <Pressable
-                  key={event.id}
-                  onPress={() => setSelectedEventId(event.id)}
-                >
-                  <AppCard
-                    style={[
-                      styles.eventCard,
-                      isSelected && { borderWidth: 2, borderColor: colors.primary },
-                    ]}
+          <AppText variant="subheading" color="primary" style={styles.eventGroupHeading}>
+            {UPCOMING_EVENTS_TITLE}
+          </AppText>
+          {upcomingEvents.length === 0 ? (
+            <AppText variant="small" color="muted" style={styles.eventsInlineEmpty}>
+              No upcoming events — open Events to schedule one.
+            </AppText>
+          ) : (
+            <View style={styles.eventList}>
+              {upcomingEvents.map((event, index) => {
+                const isSelected = event.id === selectedEventId;
+                const playerCount = event.playerIds?.length || 0;
+                const isNextUp = index === 0;
+                return (
+                  <Pressable
+                    key={event.id}
+                    onPress={() => setSelectedEventId(event.id)}
                   >
-                    <View style={styles.eventRow}>
-                      <View style={styles.eventInfo}>
-                        <AppText variant="bodyBold" numberOfLines={1}>
-                          {event.name}
-                        </AppText>
-                        <AppText variant="caption" color="secondary">
-                          {event.date
-                            ? new Date(event.date).toLocaleDateString("en-GB", {
-                                day: "numeric",
-                                month: "short",
-                                year: "numeric",
-                              })
-                            : "Date TBC"}
-                          {event.courseName ? ` • ${event.courseName}` : ""}
-                        </AppText>
-                        <AppText variant="small" color="muted">
-                          {playerCount} player{playerCount !== 1 ? "s" : ""}
-                        </AppText>
+                    <AppCard
+                      style={[
+                        styles.eventCard,
+                        isNextUp && { borderWidth: 1, borderColor: colors.primary + "66", backgroundColor: colors.primary + "0A" },
+                        isSelected && { borderWidth: 2, borderColor: colors.primary },
+                      ]}
+                    >
+                      {isNextUp ? (
+                        <View style={[styles.teeSheetNextBadge, { backgroundColor: colors.primary + "22" }]}>
+                          <Feather name="flag" size={12} color={colors.primary} />
+                          <AppText variant="captionBold" color="primary" style={{ marginLeft: 4 }}>
+                            Next up
+                          </AppText>
+                        </View>
+                      ) : null}
+                      <View style={styles.eventRow}>
+                        <View style={styles.eventInfo}>
+                          <AppText variant="bodyBold" numberOfLines={1}>
+                            {event.name}
+                          </AppText>
+                          <AppText variant="caption" color="secondary">
+                            {event.date
+                              ? new Date(event.date).toLocaleDateString("en-GB", {
+                                  day: "numeric",
+                                  month: "short",
+                                  year: "numeric",
+                                })
+                              : "Date TBC"}
+                            {event.courseName ? ` • ${event.courseName}` : ""}
+                          </AppText>
+                          <AppText variant="small" color="muted">
+                            {playerCount} player{playerCount !== 1 ? "s" : ""}
+                          </AppText>
+                        </View>
+                        <Feather
+                          name={isSelected ? "check-circle" : "circle"}
+                          size={22}
+                          color={isSelected ? colors.primary : colors.textTertiary}
+                        />
                       </View>
-                      <Feather
-                        name={isSelected ? "check-circle" : "circle"}
-                        size={22}
-                        color={isSelected ? colors.primary : colors.textTertiary}
-                      />
-                    </View>
-                  </AppCard>
-                </Pressable>
-              );
-            })}
-          </View>
+                    </AppCard>
+                  </Pressable>
+                );
+              })}
+            </View>
+          )}
 
-          {selectedEvent && (
+          <AppText variant="subheading" color="secondary" style={[styles.eventGroupHeading, { marginTop: spacing.lg }]}>
+            {PAST_EVENTS_TITLE}
+          </AppText>
+          {pastEvents.length === 0 ? (
+            <AppText variant="small" color="muted" style={styles.eventsInlineEmpty}>
+              No past events.
+            </AppText>
+          ) : (
+            <View style={styles.eventList}>
+              {pastEvents.map((event) => {
+                const isSelected = event.id === selectedEventId;
+                const playerCount = event.playerIds?.length || 0;
+                return (
+                  <Pressable
+                    key={event.id}
+                    onPress={() => setSelectedEventId(event.id)}
+                  >
+                    <AppCard
+                      style={[
+                        styles.eventCard,
+                        { opacity: 0.88, backgroundColor: colors.backgroundTertiary },
+                        isSelected && { borderWidth: 1, borderColor: colors.border },
+                      ]}
+                    >
+                      <View style={styles.eventRow}>
+                        <View style={[styles.eventInfo, { opacity: 0.92 }]}>
+                          <AppText variant="bodyBold" numberOfLines={1} color="secondary">
+                            {event.name}
+                          </AppText>
+                          <AppText variant="caption" color="secondary">
+                            {event.date
+                              ? new Date(event.date).toLocaleDateString("en-GB", {
+                                  day: "numeric",
+                                  month: "short",
+                                  year: "numeric",
+                                })
+                              : "Date TBC"}
+                            {event.courseName ? ` • ${event.courseName}` : ""}
+                          </AppText>
+                          <AppText variant="small" color="muted">
+                            {playerCount} player{playerCount !== 1 ? "s" : ""}
+                            {event.teeTimePublishedAt ? " · Tee sheet published" : ""}
+                          </AppText>
+                        </View>
+                        <Feather
+                          name={isSelected ? "check-circle" : "circle"}
+                          size={20}
+                          color={isSelected ? colors.textSecondary : colors.textTertiary}
+                        />
+                      </View>
+                    </AppCard>
+                  </Pressable>
+                );
+              })}
+            </View>
+          )}
+
+          {selectedEvent && isPastEventSelected && (
+            <View style={{ marginTop: spacing.lg }}>
+              <InlineNotice
+                variant="info"
+                message="This event is in the past. Generation, save, publish, and clear are disabled — use upcoming events for tee sheet work."
+                style={{ marginBottom: spacing.sm }}
+              />
+              {selectedEvent.teeTimePublishedAt ? (
+                <SecondaryButton
+                  onPress={() =>
+                    router.push({
+                      pathname: "/(app)/event/[id]/tee-sheet",
+                      params: { id: selectedEvent.id },
+                    })
+                  }
+                  icon={<Feather name="eye" size={18} color={colors.primary} />}
+                >
+                  View published tee sheet
+                </SecondaryButton>
+              ) : (
+                <AppText variant="small" color="muted">
+                  No published tee sheet for this event.
+                </AppText>
+              )}
+            </View>
+          )}
+
+          {selectedEvent && !isPastEventSelected && (
             selectedPlayerCount === 0 ? (
               <EmptyState
                 icon={<Feather name="users" size={32} color={colors.textTertiary} />}
@@ -2041,8 +2169,7 @@ export default function TeeSheetScreen() {
               </SecondaryButton>
 
             </>
-            )
-          )}
+          ))}
         </ScrollView>
       )}
       <LicenceRequiredModal visible={modalVisible} onClose={() => setModalVisible(false)} societyId={guardSocietyId} />
@@ -2072,6 +2199,23 @@ const styles = StyleSheet.create({
   },
   eventList: {
     gap: spacing.xs,
+  },
+  eventGroupHeading: {
+    marginBottom: spacing.xs,
+    letterSpacing: 0.15,
+  },
+  eventsInlineEmpty: {
+    marginBottom: spacing.sm,
+    lineHeight: 20,
+  },
+  teeSheetNextBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    alignSelf: "flex-start",
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 4,
+    borderRadius: radius.sm,
+    marginBottom: spacing.xs,
   },
   eventCard: {
     marginBottom: 0,

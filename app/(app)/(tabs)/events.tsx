@@ -51,6 +51,14 @@ import { getCache, invalidateCachePrefix, setCache } from "@/lib/cache/clientCac
 import { HeaderSettingsPill } from "@/components/navigation/HeaderSettingsPill";
 import { blurWebActiveElement } from "@/lib/ui/focus";
 import { measureAsync, useSlowCommitLog } from "@/lib/perf/perf";
+import {
+  partitionUpcomingPast,
+  sortPastMostRecentFirst,
+  sortUpcomingNearestFirst,
+} from "@/lib/eventListGrouping";
+
+const UPCOMING_SECTION_TITLE = "Upcoming Events";
+const PAST_SECTION_TITLE = "Past Events";
 
 // Simple picker option component
 const PickerOption = memo(function PickerOption({
@@ -667,24 +675,15 @@ export default function EventsScreen() {
     router.push({ pathname: "/(app)/event/[id]", params: { id: event.id } });
   }, [router]);
 
-  const toDateMs = (value?: string) => {
-    if (!value) return Number.MAX_SAFE_INTEGER;
-    const ms = new Date(value).getTime();
-    return Number.isFinite(ms) ? ms : Number.MAX_SAFE_INTEGER;
-  };
-
-  const toPastDateMs = (value?: string) => {
-    if (!value) return Number.MIN_SAFE_INTEGER;
-    const ms = new Date(value).getTime();
-    return Number.isFinite(ms) ? ms : Number.MIN_SAFE_INTEGER;
-  };
-
-  const upcomingEvents = events
-    .filter((e) => !e.isCompleted)
-    .sort((a, b) => toDateMs(a.date) - toDateMs(b.date));
-  const completedEvents = events
-    .filter((e) => e.isCompleted)
-    .sort((a, b) => toPastDateMs(b.date) - toPastDateMs(a.date));
+  const { upcoming: upcomingRaw, past: pastRaw } = useMemo(
+    () => partitionUpcomingPast(events),
+    [events],
+  );
+  const upcomingEvents = useMemo(
+    () => sortUpcomingNearestFirst(upcomingRaw),
+    [upcomingRaw],
+  );
+  const pastEvents = useMemo(() => sortPastMostRecentFirst(pastRaw), [pastRaw]);
 
   const getStatusColor = useCallback((event: EventDoc) => {
     if (event.isCompleted) return colors.success;
@@ -699,41 +698,78 @@ export default function EventsScreen() {
     return "Scheduled";
   }, []);
 
-  const eventSections = useMemo(
-    () => {
-      const sections: { title: string; data: EventDoc[] }[] = [];
-      if (upcomingEvents.length > 0) {
-        sections.push({ title: `Upcoming (${upcomingEvents.length})`, data: upcomingEvents });
-      }
-      if (completedEvents.length > 0) {
-        sections.push({ title: `Completed (${completedEvents.length})`, data: completedEvents });
-      }
-      return sections;
-    },
-    [upcomingEvents, completedEvents],
-  );
+  const eventSections = useMemo(() => {
+    if (events.length === 0) return [];
+    return [
+      { title: UPCOMING_SECTION_TITLE, data: upcomingEvents },
+      { title: PAST_SECTION_TITLE, data: pastEvents },
+    ];
+  }, [events.length, upcomingEvents, pastEvents]);
 
   const renderSectionHeader = useCallback(
-    ({ section }: { section: { title: string } }) => (
-      <AppText variant="h2" style={[styles.sectionTitle, styles.eventsSectionHeader]}>
-        {section.title}
-      </AppText>
+    ({ section }: { section: { title: string; data: EventDoc[] } }) => (
+      <View style={styles.eventsSectionHeaderWrap}>
+        <AppText variant="h2" style={[styles.sectionTitle, styles.eventsSectionHeader]}>
+          {section.title}
+        </AppText>
+        <AppText variant="caption" color="muted">
+          {section.data.length} event{section.data.length !== 1 ? "s" : ""}
+        </AppText>
+      </View>
     ),
     [],
   );
 
+  const renderSectionFooter = useCallback(
+    ({ section }: { section: { title: string; data: EventDoc[] } }) => {
+      if (section.data.length > 0) return null;
+      return (
+        <AppText variant="small" color="muted" style={styles.eventsSectionEmpty}>
+          {section.title === UPCOMING_SECTION_TITLE
+            ? "No upcoming events — create one or wait for the Captain to schedule."
+            : "No past events yet."}
+        </AppText>
+      );
+    },
+    [],
+  );
+
   const renderEventCard = useCallback(
-    (event: EventDoc) => (
+    (event: EventDoc, opts?: { isHero?: boolean; isPast?: boolean }) => {
+      const isHero = opts?.isHero ?? false;
+      const isPast = opts?.isPast ?? false;
+      return (
     <Pressable
       onPress={() => handleOpenEvent(event)}
       style={({ pressed }) => [pressableSurfaceStyle({ pressed }, { reduceMotion, scale: "card" })]}
     >
-      <AppCard style={styles.eventCard}>
+      <AppCard
+        style={[
+          styles.eventCard,
+          isHero && { borderWidth: 2, borderColor: colors.primary, backgroundColor: colors.primary + "0C" },
+          isPast && { opacity: 0.92, backgroundColor: colors.backgroundTertiary },
+        ]}
+      >
+        {isHero ? (
+          <View style={[styles.nextUpBadge, { backgroundColor: colors.primary + "22" }]}>
+            <Feather name="flag" size={12} color={colors.primary} />
+            <AppText variant="captionBold" color="primary" style={{ marginLeft: 4 }}>
+              Next up
+            </AppText>
+          </View>
+        ) : null}
         <View style={styles.eventRow}>
-          <View style={[styles.dateBadge, { backgroundColor: colors.backgroundTertiary }]}>
+          <View
+            style={[
+              styles.dateBadge,
+              {
+                backgroundColor: isPast ? colors.borderLight : colors.backgroundTertiary,
+              },
+            ]}
+          >
             {event.date ? (
               <>
-                <AppText variant="captionBold" color="primary">
+                <AppText variant="captionBold" color={isPast ? "secondary" : "primary"}>
                   {new Date(event.date).toLocaleDateString("en-GB", { day: "numeric" })}
                 </AppText>
                 <AppText variant="small" color="secondary">
@@ -746,7 +782,11 @@ export default function EventsScreen() {
           </View>
 
           <View style={styles.eventInfo}>
-            <AppText variant="bodyBold" numberOfLines={2} style={styles.eventTitle}>
+            <AppText
+              variant="bodyBold"
+              numberOfLines={2}
+              style={[styles.eventTitle, isPast && { color: colors.textSecondary }]}
+            >
               {event.name}
             </AppText>
             {event.courseName && (
@@ -798,7 +838,8 @@ export default function EventsScreen() {
         </View>
       </AppCard>
     </Pressable>
-    ),
+      );
+    },
     [colors, reduceMotion, handleOpenEvent, getStatusColor, getStatusLabel],
   );
 
@@ -1429,8 +1470,13 @@ export default function EventsScreen() {
             style={styles.eventsSectionList}
             sections={eventSections}
             keyExtractor={(item) => item.id}
-            renderItem={({ item }) => renderEventCard(item)}
+            renderItem={({ item, index, section }) =>
+              renderEventCard(item, {
+                isHero: index === 0 && section.title === UPCOMING_SECTION_TITLE,
+                isPast: section.title === PAST_SECTION_TITLE,
+              })}
             renderSectionHeader={renderSectionHeader}
+            renderSectionFooter={renderSectionFooter}
             stickySectionHeadersEnabled={false}
             initialNumToRender={10}
             maxToRenderPerBatch={10}
@@ -1473,10 +1519,27 @@ const styles = StyleSheet.create({
     flexGrow: 1,
     paddingBottom: spacing.sm,
   },
-  eventsSectionHeader: {
+  eventsSectionHeaderWrap: {
     marginTop: spacing.md,
-    marginBottom: spacing.sm,
+    marginBottom: spacing.xs,
+  },
+  eventsSectionHeader: {
+    marginBottom: 2,
     letterSpacing: 0.2,
+  },
+  eventsSectionEmpty: {
+    marginBottom: spacing.lg,
+    paddingHorizontal: spacing.xs,
+    lineHeight: 20,
+  },
+  nextUpBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    alignSelf: "flex-start",
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 4,
+    borderRadius: radius.sm,
+    marginBottom: spacing.xs,
   },
   sectionTitle: {
     marginBottom: spacing.sm,
