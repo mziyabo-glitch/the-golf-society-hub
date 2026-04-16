@@ -218,6 +218,22 @@ export async function getPotMasterConfirmedPrizePoolEntrantCount(poolId: string)
   return rows.length;
 }
 
+/**
+ * Confirmed entrant count for Home / any linked-society member.
+ * Uses RPC so counts are correct under RLS (members cannot SELECT other entrants' rows).
+ */
+export async function getConfirmedPrizePoolEntrantCountForDisplay(poolId: string): Promise<number> {
+  const { data, error } = await supabase.rpc("count_confirmed_prize_pool_entrants", {
+    p_pool_id: poolId,
+  });
+  if (error) {
+    console.error("[eventPrizePoolRepo] count_confirmed_prize_pool_entrants:", error.message);
+    return getPotMasterConfirmedPrizePoolEntrantCount(poolId);
+  }
+  const n = typeof data === "number" ? data : Number.parseInt(String(data ?? "0"), 10);
+  return Number.isFinite(n) ? Math.max(0, n) : 0;
+}
+
 export async function listEventPrizePoolSplitterScores(
   poolId: string,
 ): Promise<ListEventPrizePoolSplitterScoresResult> {

@@ -39,7 +39,7 @@ import {
   getEventPrizePoolManagerInfo,
   getMyPrizePoolEntry,
   getEventPrizePoolRules,
-  getPotMasterConfirmedPrizePoolEntrantCount,
+  getConfirmedPrizePoolEntrantCountForDisplay,
 } from "@/lib/db_supabase/eventPrizePoolRepo";
 import type { HomePrizePoolRowVm } from "@/lib/event-prize-pools-types";
 import { derivePrizePoolTotalAmountPence } from "@/lib/event-prize-pools-calc";
@@ -376,7 +376,7 @@ export function useHomeDashboard() {
               pool.status === "finalised" || pool.status === "calculated"
                 ? listEventPrizePoolResults(pool.id)
                 : Promise.resolve([]),
-              getPotMasterConfirmedPrizePoolEntrantCount(pool.id),
+              getConfirmedPrizePoolEntrantCountForDisplay(pool.id),
             ]);
             const sortedRules = [...rules].sort((a, b) => a.position - b.position);
             const hasPublishedResults = pool.status === "finalised" || pool.status === "calculated";
@@ -403,7 +403,8 @@ export function useHomeDashboard() {
           poolRows,
           loading: false,
         });
-      } catch {
+      } catch (err: unknown) {
+        console.error("[useHomeDashboard] prize pool card load failed:", err);
         if (!cancelled) {
           setPrizePoolCard({
             managerName: null,
