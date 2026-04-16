@@ -204,4 +204,10 @@ export type HomePrizePoolRowVm = {
   rules: EventPrizePoolRuleRow[];
   hasPublishedResults: boolean;
   myResult: EventPrizePoolResultRow | null;
+  /** `confirmed_by_pot_master` rows for this pool only (`pool_id` scoped). */
+  confirmedEntrantCount: number;
+  /**
+   * Pot shown on Home: `per_entrant` ⇒ pot entry × confirmed count; `manual` ⇒ configured pool total.
+   */
+  effectiveDisplayPotPence: number;
 };

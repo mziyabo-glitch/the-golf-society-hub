@@ -7,7 +7,6 @@ import { AppCard } from "@/components/ui/AppCard";
 import { SecondaryButton } from "@/components/ui/Button";
 import type {
   EventPrizePoolEntryRow,
-  EventPrizePoolResultRow,
   EventPrizePoolRow,
   EventPrizePoolRuleRow,
   HomePrizePoolRowVm,
@@ -118,11 +117,12 @@ export function DashboardPrizePoolHomeCard({
         </AppText>
       ) : (
         <>
-          {poolRows.map(({ pool, entry, rules, hasPublishedResults, myResult }) => {
+          {poolRows.map(({ pool, entry, rules, hasPublishedResults, myResult, confirmedEntrantCount, effectiveDisplayPotPence }) => {
             const compName = (pool.competition_name || pool.name || "Prize pool").trim();
             const status = entryStatusLabel(entry);
             const optedIn = entry?.opted_in === true;
             const isOpen = expanded[pool.id] === true;
+            const isPerEntrant = pool.total_amount_mode === "per_entrant";
 
             return (
               <View
@@ -163,9 +163,17 @@ export function DashboardPrizePoolHomeCard({
                 </View>
 
                 <View style={styles.compactRow}>
-                  <AppText variant="caption" color="secondary">
-                    {entryValueLine(pool)}
-                  </AppText>
+                  <View style={{ flex: 1, minWidth: 0, gap: 2 }}>
+                    <AppText variant="caption" color="secondary">
+                      {entryValueLine(pool)}
+                    </AppText>
+                    <AppText variant="caption" color="secondary">
+                      {confirmedEntrantCount} Pot Master–confirmed
+                    </AppText>
+                    <AppText variant="captionBold" color="secondary">
+                      Total pot: {formatPenceGbp(effectiveDisplayPotPence)}
+                    </AppText>
+                  </View>
                   <View style={styles.actions}>
                     <SecondaryButton
                       size="sm"
@@ -181,9 +189,7 @@ export function DashboardPrizePoolHomeCard({
                       loading={busy}
                       disabled={busy}
                       onPress={() => void setOptIn(pool.id, false)}
-                      style={
-                        entry && !entry.opted_in ? { borderWidth: 2, borderColor: colors.primary } : undefined
-                      }
+                      style={!optedIn ? { borderWidth: 2, borderColor: colors.primary } : undefined}
                     >
                       No
                     </SecondaryButton>
@@ -215,8 +221,9 @@ export function DashboardPrizePoolHomeCard({
                     ) : null}
 
                     <AppText variant="caption" color="secondary">
-                      Total pot: {formatPenceGbp(pool.total_amount_pence)}
-                      {pool.total_amount_mode === "per_entrant" ? " (updates when entrants are confirmed)" : ""}
+                      {isPerEntrant
+                        ? `Total pot: ${formatPenceGbp(effectiveDisplayPotPence)} (${formatPenceGbp(pool.pot_entry_value_pence ?? 0)} × ${confirmedEntrantCount} confirmed)`
+                        : `Total pot: ${formatPenceGbp(effectiveDisplayPotPence)} (manual fixed total)`}
                     </AppText>
 
                     {pool.competition_type === "splitter" ? (

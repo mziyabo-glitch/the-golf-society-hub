@@ -39,8 +39,10 @@ import {
   getEventPrizePoolManagerInfo,
   getMyPrizePoolEntry,
   getEventPrizePoolRules,
+  getPotMasterConfirmedPrizePoolEntrantCount,
 } from "@/lib/db_supabase/eventPrizePoolRepo";
 import type { HomePrizePoolRowVm } from "@/lib/event-prize-pools-types";
+import { derivePrizePoolTotalAmountPence } from "@/lib/event-prize-pools-calc";
 import { blurWebActiveElement } from "@/lib/ui/focus";
 import { getCache, setCache } from "@/lib/cache/clientCache";
 import { useBootstrap } from "@/lib/useBootstrap";
@@ -249,6 +251,8 @@ export function useHomeDashboard() {
       if (societyId && (memberHasSeat || memberIsCaptain)) {
         loadData();
       }
+      // Refetch per-pool confirmed counts / effective pot when returning to Home (e.g. after Pot Master changes).
+      setPrizePoolReloadNonce((n) => n + 1);
     }, [societyId, memberHasSeat, memberIsCaptain, loadData])
   );
 
@@ -366,21 +370,30 @@ export function useHomeDashboard() {
         ]);
         const poolRows: HomePrizePoolRowVm[] = await Promise.all(
           pools.map(async (pool) => {
-            const [entry, rules, results] = await Promise.all([
+            const [entry, rules, results, confirmedEntrantCount] = await Promise.all([
               getMyPrizePoolEntry(pool.id, memberId),
               getEventPrizePoolRules(pool.id),
               pool.status === "finalised" || pool.status === "calculated"
                 ? listEventPrizePoolResults(pool.id)
                 : Promise.resolve([]),
+              getPotMasterConfirmedPrizePoolEntrantCount(pool.id),
             ]);
             const sortedRules = [...rules].sort((a, b) => a.position - b.position);
             const hasPublishedResults = pool.status === "finalised" || pool.status === "calculated";
+            const effectiveDisplayPotPence = derivePrizePoolTotalAmountPence({
+              totalAmountMode: pool.total_amount_mode ?? "manual",
+              manualTotalAmountPence: pool.total_amount_pence,
+              potEntryValuePence: pool.pot_entry_value_pence ?? null,
+              confirmedEntrantCount,
+            });
             return {
               pool,
               entry,
               rules: sortedRules,
               hasPublishedResults,
               myResult: results.find((r) => String(r.member_id ?? "") === String(memberId)) ?? null,
+              confirmedEntrantCount,
+              effectiveDisplayPotPence,
             };
           }),
         );
