@@ -15,12 +15,13 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { InlineNotice } from "@/components/ui/InlineNotice";
 import { useBootstrap } from "@/lib/useBootstrap";
 import { canManageEventPaymentsForSociety } from "@/lib/rbac";
-import { getEvent, type EventDoc } from "@/lib/db_supabase/eventRepo";
+import { enrichEventsWithJointClassification, getEvent, type EventDoc } from "@/lib/db_supabase/eventRepo";
 import {
   createEventDivision,
   deleteEventDivision,
   deletePrizePoolEntry,
   insertPrizePoolGuestEntrant,
+  insertPrizePoolMemberEntrant,
   isMemberTheEventPrizePoolManager,
   listEventDivisions,
   listEventPrizePools,
@@ -29,9 +30,26 @@ import {
   setPrizePoolEntryPotMasterConfirmation,
 } from "@/lib/db_supabase/eventPrizePoolRepo";
 import { getEventGuests, type EventGuest } from "@/lib/db_supabase/eventGuestRepo";
+import {
+  getEventRegistrations,
+  isRegistrationConfirmed,
+  scopeEventRegistrations,
+  type EventRegistration,
+} from "@/lib/db_supabase/eventRegistrationRepo";
+import { getMembersByIds, type MemberDoc } from "@/lib/db_supabase/memberRepo";
+import { showAlert } from "@/lib/ui/alert";
 import type { EventDivisionRow, EventPrizePoolRow } from "@/lib/event-prize-pools-types";
 import { PrizePoolCard } from "@/components/event-prize-pools/PrizePoolCard";
 import { getColors, spacing, radius, iconSize } from "@/lib/ui/theme";
+
+function registrationsInPrizePoolScope(regs: EventRegistration[], ev: EventDoc | null): EventRegistration[] {
+  if (!ev) return [];
+  const participantIds = ev.participant_society_ids ?? [];
+  if (ev.is_joint_event && participantIds.length > 0) {
+    return scopeEventRegistrations(regs, { kind: "joint_participants", participantSocietyIds: participantIds });
+  }
+  return scopeEventRegistrations(regs, { kind: "standard", hostSocietyId: ev.society_id ?? null });
+}
 
 export default function EventPrizePoolsListScreen() {
   const router = useRouter();
@@ -56,6 +74,8 @@ export default function EventPrizePoolsListScreen() {
     Record<string, Awaited<ReturnType<typeof listPrizePoolOptInEntrants>>>
   >({});
   const [eventGuests, setEventGuests] = useState<EventGuest[]>([]);
+  /** Members with RSVP "in" for this event (scoped); Pot Master can add them to a pool without app opt-in. */
+  const [attendingMembers, setAttendingMembers] = useState<MemberDoc[]>([]);
   const [payInstr, setPayInstr] = useState("");
   const [instrBusy, setInstrBusy] = useState(false);
 
@@ -70,15 +90,18 @@ export default function EventPrizePoolsListScreen() {
     setError(null);
     setLoading(true);
     try {
-      const [ev, pls, divs] = await Promise.all([
+      const [ev, pls, divs, regs] = await Promise.all([
         getEvent(eventId),
         listEventPrizePools(eventId),
         listEventDivisions(eventId),
+        getEventRegistrations(eventId),
       ]);
-      setEvent(ev);
+      const [enrichedEv] = await enrichEventsWithJointClassification(ev ? [ev] : []);
+      const evDoc = enrichedEv ?? ev;
+      setEvent(evDoc);
       setPools(pls);
       setDivisions(divs);
-      setPayInstr(ev?.prizePoolPaymentInstructions ?? "");
+      setPayInstr(evDoc?.prizePoolPaymentInstructions ?? "");
 
       let mgr = false;
       if (memberId) {
@@ -91,6 +114,19 @@ export default function EventPrizePoolsListScreen() {
         try {
           const guests = await getEventGuests(eventId);
           setEventGuests(guests);
+          const scopedRegs = registrationsInPrizePoolScope(regs, evDoc);
+          const attendingIds = [
+            ...new Set(
+              scopedRegs.filter(isRegistrationConfirmed).map((r) => String(r.member_id)).filter(Boolean),
+            ),
+          ];
+          const memberRows = attendingIds.length ? await getMembersByIds(attendingIds) : [];
+          memberRows.sort((a, b) =>
+            (a.displayName || a.name || "").localeCompare(b.displayName || b.name || "", undefined, {
+              sensitivity: "base",
+            }),
+          );
+          setAttendingMembers(memberRows);
           const lists = await Promise.all(pls.map((p) => listPrizePoolOptInEntrants(p.id)));
           const next: Record<string, Awaited<ReturnType<typeof listPrizePoolOptInEntrants>>> = {};
           pls.forEach((p, i) => {
@@ -101,10 +137,12 @@ export default function EventPrizePoolsListScreen() {
           console.error("[prize-pools] entrants/guests load failed:", entErr);
           setEntrantsByPoolId({});
           setEventGuests([]);
+          setAttendingMembers([]);
         }
       } else {
         setEntrantsByPoolId({});
         setEventGuests([]);
+        setAttendingMembers([]);
       }
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Failed to load prize pools.");
@@ -371,6 +409,75 @@ export default function EventPrizePoolsListScreen() {
                     {event?.prizePoolEnabled ? (
                       <View style={{ marginTop: spacing.sm }}>
                         <AppText variant="captionBold" color="secondary" style={{ marginBottom: spacing.xs }}>
+                          Add member to this pool
+                        </AppText>
+                        <AppText variant="caption" color="secondary" style={{ marginBottom: spacing.xs }}>
+                          For members who will not use the app: add anyone with RSVP “in” for this event. They still
+                          need Pot Master confirmation below before payouts.
+                        </AppText>
+                        {attendingMembers
+                          .filter(
+                            (m) =>
+                              !entrants.some(
+                                (e) =>
+                                  e.participant_type === "member" && String(e.member_id) === String(m.id),
+                              ),
+                          )
+                          .map((m) => {
+                            const label = (m.displayName || m.name || "Member").trim();
+                            return (
+                              <View
+                                key={m.id}
+                                style={{
+                                  flexDirection: "row",
+                                  alignItems: "center",
+                                  paddingVertical: spacing.xs,
+                                  gap: spacing.sm,
+                                }}
+                              >
+                                <AppText variant="body" style={{ flex: 1 }} numberOfLines={1}>
+                                  {label}
+                                </AppText>
+                                <SecondaryButton
+                                  size="sm"
+                                  onPress={() => {
+                                    void (async () => {
+                                      try {
+                                        await insertPrizePoolMemberEntrant(p.id, m.id);
+                                        await load();
+                                      } catch (e: unknown) {
+                                        showAlert(
+                                          "Could not add member",
+                                          e instanceof Error ? e.message : "Unknown error",
+                                        );
+                                      }
+                                    })();
+                                  }}
+                                >
+                                  Add
+                                </SecondaryButton>
+                              </View>
+                            );
+                          })}
+                        {attendingMembers.filter(
+                          (m) =>
+                            !entrants.some(
+                              (e) =>
+                                e.participant_type === "member" && String(e.member_id) === String(m.id),
+                            ),
+                        ).length === 0 ? (
+                          <AppText variant="caption" color="secondary">
+                            {attendingMembers.length === 0
+                              ? "No members with RSVP “in” yet for this event (in the societies linked to it)."
+                              : "Every playing member is already listed for this pool."}
+                          </AppText>
+                        ) : null}
+
+                        <AppText
+                          variant="captionBold"
+                          color="secondary"
+                          style={{ marginBottom: spacing.xs, marginTop: spacing.md }}
+                        >
                           Add guest to this pool
                         </AppText>
                         {eventGuests

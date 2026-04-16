@@ -907,6 +907,22 @@ export async function insertPrizePoolGuestEntrant(poolId: string, guestId: strin
   return String(data);
 }
 
+/** Pot Master / ManCo: add a playing member who has not (or cannot) opt in via the app. */
+export async function insertPrizePoolMemberEntrant(poolId: string, memberId: string): Promise<string> {
+  const { data, error } = await supabase.rpc("insert_event_prize_pool_member_entrant", {
+    p_pool_id: poolId,
+    p_member_id: memberId,
+  });
+  if (error) {
+    console.error("[eventPrizePoolRepo] insertPrizePoolMemberEntrant:", error.message);
+    throw new Error(error.message || "Could not add member to pool.");
+  }
+  if (data == null || String(data).length === 0) {
+    throw new Error("Could not add member to pool.");
+  }
+  return String(data);
+}
+
 export async function deletePrizePoolEntry(entryId: string): Promise<void> {
   const { error } = await supabase.rpc("delete_event_prize_pool_entry", {
     p_entry_id: entryId,
