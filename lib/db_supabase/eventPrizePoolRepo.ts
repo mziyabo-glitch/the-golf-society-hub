@@ -42,6 +42,9 @@ export const PRIZE_POOL_ERR_NO_DIVISIONS = "This pool requires event divisions, 
 export const PRIZE_POOL_ERR_NO_ELIGIBLE = "No eligible players matched the pool rules.";
 export const PRIZE_POOL_ERR_SPLITTER_DETAIL_REQUIRED =
   "Prize Pool (Pot) Splitter requires Front 9, Back 9, and Birdies for each confirmed entrant.";
+/** Shown when the DB has not applied the migration that creates `event_prize_pool_splitter_scores`. */
+export const PRIZE_POOL_ERR_SPLITTER_TABLE_SCHEMA =
+  "The prize pool splitter table is not available on this database. Ask an admin to apply the latest Supabase migrations (including event_prize_pool_splitter_scores), then try again.";
 export const PRIZE_POOL_ERR_FINALISED = "Finalised pools can no longer be edited.";
 export const PRIZE_POOL_ERR_SUM_MISMATCH =
   "Payout allocation did not match the event pool total. Please try again.";
@@ -49,6 +52,24 @@ export const PRIZE_POOL_ERR_SUM_MISMATCH =
 function sortRules(rows: EventPrizePoolRuleRow[]): EventPrizePoolRuleRow[] {
   return [...rows].sort((a, b) => a.position - b.position);
 }
+
+function isMissingSplitterScoresTableError(error: { message?: string | null; code?: string | null }): boolean {
+  const msg = String(error.message ?? "");
+  if (!msg.includes("event_prize_pool_splitter_scores")) return false;
+  return (
+    msg.includes("schema cache") ||
+    msg.includes("Could not find the") ||
+    msg.includes("does not exist") ||
+    msg.includes("Not found") ||
+    error.code === "42P01"
+  );
+}
+
+export type ListEventPrizePoolSplitterScoresResult = {
+  rows: EventPrizePoolSplitterScoreRow[];
+  /** PostgREST / schema cache: table missing until migrations are applied. */
+  tableMissingInSchema: boolean;
+};
 
 export async function listEventDivisions(eventId: string): Promise<EventDivisionRow[]> {
   const { data, error } = await supabase
@@ -199,17 +220,23 @@ export async function getPotMasterConfirmedPrizePoolEntrantCount(poolId: string)
 
 export async function listEventPrizePoolSplitterScores(
   poolId: string,
-): Promise<EventPrizePoolSplitterScoreRow[]> {
+): Promise<ListEventPrizePoolSplitterScoresResult> {
   const { data, error } = await supabase
     .from("event_prize_pool_splitter_scores")
     .select("*")
     .eq("pool_id", poolId)
     .order("created_at", { ascending: true });
   if (error) {
+    if (isMissingSplitterScoresTableError(error)) {
+      console.warn(
+        "[eventPrizePoolRepo] listEventPrizePoolSplitterScores: splitter scores table missing from schema; continuing with no saved rows.",
+      );
+      return { rows: [], tableMissingInSchema: true };
+    }
     console.error("[eventPrizePoolRepo] listEventPrizePoolSplitterScores:", error.message);
     throw new Error(error.message || "Failed to load splitter scores.");
   }
-  return (data ?? []) as EventPrizePoolSplitterScoreRow[];
+  return { rows: (data ?? []) as EventPrizePoolSplitterScoreRow[], tableMissingInSchema: false };
 }
 
 export async function replaceEventPrizePoolSplitterScores(
@@ -252,6 +279,9 @@ export async function replaceEventPrizePoolSplitterScores(
     .eq("pool_id", poolId);
   if (delErr) {
     console.error("[eventPrizePoolRepo] replaceEventPrizePoolSplitterScores(delete):", delErr.message);
+    if (isMissingSplitterScoresTableError(delErr)) {
+      throw new Error(PRIZE_POOL_ERR_SPLITTER_TABLE_SCHEMA);
+    }
     throw new Error(delErr.message || "Failed to reset splitter scores.");
   }
 
@@ -270,6 +300,9 @@ export async function replaceEventPrizePoolSplitterScores(
   const { error: insErr } = await supabase.from("event_prize_pool_splitter_scores").insert(payload);
   if (insErr) {
     console.error("[eventPrizePoolRepo] replaceEventPrizePoolSplitterScores(insert):", insErr.message);
+    if (isMissingSplitterScoresTableError(insErr)) {
+      throw new Error(PRIZE_POOL_ERR_SPLITTER_TABLE_SCHEMA);
+    }
     throw new Error(insErr.message || "Failed to save splitter scores.");
   }
 }
@@ -596,7 +629,10 @@ export async function calculateEventPrizePool(poolId: string): Promise<void> {
 
   let resultRows: PrizePoolCalculationResultRow[] = [];
   if (pool.competition_type === "splitter") {
-    const splitterRows = await listEventPrizePoolSplitterScores(poolId);
+    const { rows: splitterRows, tableMissingInSchema } = await listEventPrizePoolSplitterScores(poolId);
+    if (tableMissingInSchema) {
+      throw new Error(PRIZE_POOL_ERR_SPLITTER_TABLE_SCHEMA);
+    }
     const splitterByParticipantKey = new Map<string, EventPrizePoolSplitterScoreRow>();
     for (const row of splitterRows) {
       if (row.member_id) {

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Alert, Pressable, ScrollView, StyleSheet, View } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { Feather } from "@expo/vector-icons";
@@ -19,6 +19,7 @@ import {
   calculateEventPrizePool,
   deleteEventPrizePool,
   finaliseEventPrizePool,
+  formatPenceGbp,
   getPotMasterConfirmedPrizePoolEntrantCount,
   getEventPrizePoolWithRules,
   listEventPrizePoolSplitterScores,
@@ -30,9 +31,12 @@ import {
 } from "@/lib/db_supabase/eventPrizePoolRepo";
 import type { EventPrizePoolResultRow, EventPrizePoolRow } from "@/lib/event-prize-pools-types";
 import { PRIZE_POOL_PAYOUT_TEMPLATES } from "@/lib/event-prize-pools-types";
-import { validateRuleBasisPointsTotal } from "@/lib/event-prize-pools-calc";
+import { derivePrizePoolTotalAmountPence, validateRuleBasisPointsTotal } from "@/lib/event-prize-pools-calc";
 import { PrizePoolStatusBadge } from "@/components/event-prize-pools/PrizePoolStatusBadge";
 import { PrizePoolSummary } from "@/components/event-prize-pools/PrizePoolSummary";
+import PrizePoolEntrantsShareCard from "@/components/event-prize-pools/PrizePoolEntrantsShareCard";
+import { captureAndShare } from "@/lib/share/captureAndShare";
+import { assertPngExportOnly } from "@/lib/share/pngExportGuard";
 import { getColors, spacing, iconSize, radius } from "@/lib/ui/theme";
 
 function parseGbpToPence(raw: string): number | null {
@@ -85,18 +89,23 @@ export default function PrizePoolDetailScreen() {
     Record<string, { front9Score: string; back9Score: string; birdies: string }>
   >({});
   const [splitterBusy, setSplitterBusy] = useState(false);
+  const [splitterScoresTableMissing, setSplitterScoresTableMissing] = useState(false);
+  const [sharePngBusy, setSharePngBusy] = useState(false);
+  const entrantsShareRef = useRef<View>(null);
 
   const load = useCallback(async () => {
     if (!eventId || !poolId) return;
     setLoading(true);
     try {
-      const [ev, full, resRows, entrantRows, splitterScores] = await Promise.all([
+      const [ev, full, resRows, entrantRows, splitterScoresRes] = await Promise.all([
         getEvent(eventId),
         getEventPrizePoolWithRules(poolId),
         listEventPrizePoolResults(poolId),
         listPrizePoolOptInEntrants(poolId),
         listEventPrizePoolSplitterScores(poolId),
       ]);
+      const splitterScores = splitterScoresRes.rows;
+      setSplitterScoresTableMissing(splitterScoresRes.tableMissingInSchema);
       setEvent(ev);
       if (!full) {
         setPool(null);
@@ -212,6 +221,57 @@ export default function PrizePoolDetailScreen() {
   }, [competitionType]);
 
   const locked = pool?.status === "finalised";
+
+  const sharePotPence = useMemo(() => {
+    if (!pool) return 0;
+    return derivePrizePoolTotalAmountPence({
+      totalAmountMode: pool.total_amount_mode,
+      manualTotalAmountPence: parseGbpToPence(totalGbp) ?? pool.total_amount_pence,
+      potEntryValuePence: parseGbpToPence(potEntryValueGbp) ?? pool.pot_entry_value_pence,
+      confirmedEntrantCount: confirmedEntrants,
+    });
+  }, [pool, totalGbp, potEntryValueGbp, confirmedEntrants]);
+
+  const shareEntrantRows = useMemo(() => {
+    const showScores = competitionType === "splitter";
+    return splitterInputRows.map((row) => {
+      const input = splitterInputsByParticipant[row.participantKey];
+      if (!showScores) {
+        return { name: row.name };
+      }
+      return {
+        name: row.name,
+        front9: input?.front9Score?.trim() ? String(input.front9Score) : "—",
+        back9: input?.back9Score?.trim() ? String(input.back9Score) : "—",
+        birdies: input?.birdies?.trim() ? String(input.birdies) : "—",
+      };
+    });
+  }, [splitterInputRows, splitterInputsByParticipant, competitionType]);
+
+  const shareEntrantsPotPng = async () => {
+    if (!pool || !event || splitterInputRows.length === 0) return;
+    assertPngExportOnly("Prize pool entrants");
+    setSharePngBusy(true);
+    try {
+      await new Promise((r) => setTimeout(r, 200));
+      const estHeight = Math.min(2400, 420 + shareEntrantRows.length * 52);
+      const shareResult = await captureAndShare(entrantsShareRef, {
+        dialogTitle: `${pool.name} entrants`,
+        width: 1080,
+        height: estHeight,
+      });
+      if (shareResult.completedVia === "download") {
+        Alert.alert(
+          "Download complete",
+          "Your image was saved. On some browsers you may need to open Downloads to share it.",
+        );
+      }
+    } catch (e: unknown) {
+      Alert.alert("Share failed", e instanceof Error ? e.message : "Unknown error");
+    } finally {
+      setSharePngBusy(false);
+    }
+  };
 
   const saveConfig = async () => {
     if (!poolId || !pool || locked || !canManage) return;
@@ -381,13 +441,13 @@ export default function PrizePoolDetailScreen() {
 
   const saveSplitterInputs = async () => {
     if (!pool || pool.competition_type !== "splitter" || !eventId || !poolId || locked || !canManage) return;
-    const payload: Array<{
+    const payload: {
       memberId: string | null;
       guestId: string | null;
       front9Score: number;
       back9Score: number;
       birdies: number;
-    }> = [];
+    }[] = [];
     for (const row of splitterInputRows) {
       const input = splitterInputsByParticipant[row.participantKey] ?? {
         front9Score: "",
@@ -441,6 +501,7 @@ export default function PrizePoolDetailScreen() {
 
   return (
     <Screen>
+      <>
       <View style={styles.headerRow}>
         <Pressable onPress={() => goBack(router, "/(app)/(tabs)/events")} hitSlop={12} style={styles.backBtn}>
           <Feather name="arrow-left" size={iconSize.md} color={colors.text} />
@@ -550,6 +611,17 @@ export default function PrizePoolDetailScreen() {
           ).toFixed(2)}`}
         />
 
+        <SecondaryButton
+          loading={sharePngBusy}
+          disabled={locked || splitterInputRows.length === 0}
+          onPress={() => void shareEntrantsPotPng()}
+        >
+          Share entrants & pot (PNG)
+        </SecondaryButton>
+        <AppText variant="caption" color="secondary">
+          Image lists Pot Master–confirmed entrants and the pot total from the amounts above (including fields you have not saved yet).
+        </AppText>
+
         {competitionType !== "splitter" ? (
           <>
             <AppText variant="subheading">Payout mode</AppText>
@@ -600,6 +672,12 @@ export default function PrizePoolDetailScreen() {
 
         {competitionType === "splitter" ? (
           <>
+            {splitterScoresTableMissing ? (
+              <InlineNotice
+                variant="info"
+                message="Important: splitter scores cannot be saved until the database has the splitter scores table (apply the latest Supabase migration). You can still enter values locally and share a PNG; calculating payouts needs the migration."
+              />
+            ) : null}
             <AppText variant="subheading">Fixed Splitter breakdown</AppText>
             <InlineNotice
               variant="info"
@@ -771,6 +849,19 @@ export default function PrizePoolDetailScreen() {
           </DestructiveButton>
         ) : null}
       </ScrollView>
+
+      <View style={styles.captureRoot} pointerEvents="none">
+        <PrizePoolEntrantsShareCard
+          ref={entrantsShareRef}
+          eventTitle={(event?.name || "Event").trim()}
+          poolName={pool.name}
+          potLabel={formatPenceGbp(sharePotPence)}
+          confirmedCount={confirmedEntrants}
+          entrants={shareEntrantRows}
+          showSplitterScores={competitionType === "splitter"}
+        />
+      </View>
+      </>
     </Screen>
   );
 }
@@ -816,5 +907,10 @@ const styles = StyleSheet.create({
     minHeight: 36,
     textAlign: "center",
     paddingHorizontal: spacing.xs,
+  },
+  captureRoot: {
+    position: "absolute",
+    left: -12000,
+    top: 0,
   },
 });
