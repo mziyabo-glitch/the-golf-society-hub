@@ -577,9 +577,9 @@ export async function deleteEventPrizePool(poolId: string): Promise<void> {
   if (!existing) return;
   if (existing.status === "finalised") throw new Error("Finalised pools cannot be deleted.");
 
-  const { error } = await supabase.from("event_prize_pools").delete().eq("id", poolId);
+  const { error } = await supabase.rpc("delete_event_prize_pool", { p_pool_id: poolId });
   if (error) {
-    console.error("[eventPrizePoolRepo] delete:", error.message);
+    console.error("[eventPrizePoolRepo] delete_event_prize_pool:", error.message);
     throw new Error(error.message || "Failed to delete prize pool");
   }
 }
