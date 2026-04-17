@@ -82,7 +82,8 @@ function levelFromEngineStatus(status: PlayabilityStatus, score: number | null):
   return "severe";
 }
 
-function hourlyForecastToRoundSamples(hours: HourlyForecastPoint[]): RoundHourSample[] {
+/** Map normalised forecast hours to the shape consumed by `lib/weather` evaluateRoundWindow. */
+export function mapHourlyForecastPointsToRoundSamples(hours: HourlyForecastPoint[]): RoundHourSample[] {
   return hours.map((h) => ({
     timeIso: typeof h.time === "string" ? h.time : String(h.time ?? ""),
     windKmh: Number.isFinite(h.windKmh) ? h.windKmh : null,
@@ -268,7 +269,7 @@ export function computePlayability(
   const dayHours = filterHoursForDate(hourly, targetDateYmd);
   const slice = dayHours.length > 0 ? dayHours : hourly;
 
-  const roundSamples = filterLocalDaytimeHours(hourlyForecastToRoundSamples(slice));
+  const roundSamples = filterLocalDaytimeHours(mapHourlyForecastPointsToRoundSamples(slice));
   const engineOut = evaluateWeatherRoundWindow({ countryCode: "GB", hourly: roundSamples });
 
   return mapEngineToInsight(engineOut, targetDateYmd, slice, hourly, options);

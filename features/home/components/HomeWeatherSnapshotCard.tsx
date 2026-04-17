@@ -37,6 +37,9 @@ export function HomeWeatherSnapshotCard({
         onOpenWeatherTab={onOpenWeatherTab}
         preferredTeeTimeLocal={preferredTeeTimeLocal}
       />
+      <AppText variant="caption" color="tertiary" style={{ marginTop: 6, paddingHorizontal: 2 }}>
+        Open Weather for hourly detail — the card pairs your tee-day read with a five-day window plan.
+      </AppText>
     </View>
   );
 }

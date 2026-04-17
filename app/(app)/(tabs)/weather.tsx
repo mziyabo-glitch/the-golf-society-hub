@@ -25,6 +25,7 @@ import { PlayabilityCard } from "@/components/playability/PlayabilityCard";
 import { HourlyForecastStrip } from "@/components/playability/HourlyForecastStrip";
 import { DailyForecastBlock } from "@/components/playability/DailyForecastBlock";
 import { CourseActionRow } from "@/components/playability/CourseActionRow";
+import { FiveDayPlayabilityPlanCard } from "@/components/playability/FiveDayPlayabilityPlanCard";
 import { useBootstrap } from "@/lib/useBootstrap";
 import { usePaidAccess } from "@/lib/access/usePaidAccess";
 import { isCaptain } from "@/lib/rbac";
@@ -525,6 +526,12 @@ export default function WeatherScreen() {
                     <DailyForecastBlock days={manualBundle.dailyOutlook} />
                   </>
                 ) : null}
+
+                <FiveDayPlayabilityPlanCard
+                  loading={manualBundle.loading}
+                  forecast={manualBundle.forecast}
+                  startDateYmd={todayYmd()}
+                />
 
                 <CourseActionRow
                   contact={

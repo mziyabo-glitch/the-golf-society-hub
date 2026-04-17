@@ -40,6 +40,8 @@ type Props = {
   onRefresh?: () => void;
   /** When coordinates could not be resolved */
   noLocationMessage?: string;
+  /** Explains how this verdict relates to multi-day planner blocks (e.g. event screen). */
+  linkedPlannerNote?: string | null;
 };
 
 export function PlayabilityCard({
@@ -49,6 +51,7 @@ export function PlayabilityCard({
   coordsHint,
   onRefresh,
   noLocationMessage = "Link an imported course or add a searchable name to see playability for this venue.",
+  linkedPlannerNote = null,
 }: Props) {
   const colors = getColors();
   const c = levelColor(insight?.level ?? "mixed", colors);
@@ -86,6 +89,12 @@ export function PlayabilityCard({
           </Pressable>
         ) : null}
       </View>
+
+      {linkedPlannerNote ? (
+        <AppText variant="caption" color="tertiary" numberOfLines={2} style={{ marginTop: spacing.xs }}>
+          {linkedPlannerNote}
+        </AppText>
+      ) : null}
 
       {loading ? (
         <View style={styles.centerBlock}>
@@ -153,7 +162,7 @@ export function PlayabilityCard({
             <View style={[styles.pillRow, { backgroundColor: colors.backgroundSecondary }]}>
               <Feather name="clock" size={14} color={colors.primary} />
               <AppText variant="captionBold" style={{ marginLeft: spacing.xs, flex: 1 }} numberOfLines={1}>
-                Best {insight.bestWindow}
+                Best window · {insight.bestWindow}
               </AppText>
             </View>
           ) : insight.bestWindowFallback ? (

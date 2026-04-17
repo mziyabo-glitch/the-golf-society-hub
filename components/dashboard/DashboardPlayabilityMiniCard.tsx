@@ -2,6 +2,7 @@
  * Dashboard playability teaser — same usePlayabilityBundle path as Weather tab / event detail.
  */
 
+import { useMemo } from "react";
 import { ActivityIndicator, Pressable, StyleSheet, View } from "react-native";
 import { Feather } from "@expo/vector-icons";
 import { AppText } from "@/components/ui/AppText";
@@ -11,6 +12,8 @@ import { getColors, spacing, radius } from "@/lib/ui/theme";
 import { dashboardShell, DASHBOARD_CARD_RADIUS } from "./dashboardCardStyles";
 import type { PlayabilityLevel } from "@/lib/playability/types";
 import { comfortScan, rainIntensityScan, windImpactScan } from "@/lib/playability/weatherVisual";
+import { mapHourlyForecastPointsToRoundSamples } from "@/lib/playability/playabilityEngine";
+import { evaluateFiveDayPlayabilityPlan, formatDashboardFiveDayPlanning } from "@/lib/weather/playabilityPlanner";
 
 const LEVEL_WORD: Record<PlayabilityLevel, string> = {
   excellent: "Excellent",
@@ -27,6 +30,14 @@ type Props = {
   /** Local tee time e.g. "09:10" — soft preference for best window (daylight-only) */
   preferredTeeTimeLocal?: string | null;
 };
+
+function todayYmd(): string {
+  const n = new Date();
+  const y = n.getFullYear();
+  const m = String(n.getMonth() + 1).padStart(2, "0");
+  const day = String(n.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
 
 function targetYmdFromEvent(event: EventDoc | null): string {
   const d = event?.date?.trim();
@@ -69,6 +80,23 @@ export function DashboardPlayabilityMiniCard({
   const bundle = usePlayabilityBundle(!!enabled && !!nextEvent, ymd, courseId ?? null, null, courseName, {
     preferredTeeTimeLocal,
   });
+
+  const fiveDayPlanning = useMemo(() => {
+    if (!bundle.forecast?.hourly?.length) return null;
+    const hourly = mapHourlyForecastPointsToRoundSamples(bundle.forecast.hourly);
+    const daySunlight = bundle.forecast.daily.map((d) => ({
+      dateYmd: d.dateYmd,
+      sunriseIso: d.sunrise ?? null,
+      sunsetIso: d.sunset ?? null,
+    }));
+    const plan = evaluateFiveDayPlayabilityPlan({
+      countryCode: "GB",
+      startDateYmd: todayYmd(),
+      hourly,
+      daySunlight,
+    });
+    return formatDashboardFiveDayPlanning(plan);
+  }, [bundle.forecast]);
 
   const courseLabel = nextEvent?.courseName?.trim() || "Your next course";
 
@@ -124,6 +152,9 @@ export function DashboardPlayabilityMiniCard({
         ) : (
           <>
             <View style={styles.ratingBlock}>
+              <AppText variant="captionBold" color="muted" style={{ marginBottom: 2 }} numberOfLines={1}>
+                Next round
+              </AppText>
               <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.xs }}>
                 {bundle.insight.engineSnapshot?.icon ? (
                   <Feather
@@ -144,6 +175,38 @@ export function DashboardPlayabilityMiniCard({
                 {bundle.insight.engineSnapshot?.message ?? bundle.insight.label}
               </AppText>
             </View>
+
+            {fiveDayPlanning ? (
+              <View
+                style={[
+                  styles.planningBlock,
+                  { backgroundColor: `${colors.primary}08`, borderColor: `${colors.primary}22` },
+                ]}
+              >
+                <View style={styles.planningEyebrow}>
+                  <Feather name="calendar" size={12} color={colors.primary} />
+                  <AppText variant="captionBold" color="primary" style={{ marginLeft: 6 }} numberOfLines={1}>
+                    Next 5 days
+                  </AppText>
+                </View>
+                {fiveDayPlanning.bestNextSlot ? (
+                  <AppText variant="bodyBold" color="primary" style={styles.slotLine} numberOfLines={2}>
+                    {fiveDayPlanning.bestNextSlot}
+                  </AppText>
+                ) : null}
+                <AppText
+                  variant="caption"
+                  color="muted"
+                  style={[
+                    styles.weekOutlook,
+                    fiveDayPlanning.bestNextSlot ? { marginTop: 6 } : { marginTop: 2 },
+                  ]}
+                  numberOfLines={2}
+                >
+                  {fiveDayPlanning.weekOutlook}
+                </AppText>
+              </View>
+            ) : null}
 
             <View style={styles.indicators}>
               <Indicator
@@ -170,7 +233,7 @@ export function DashboardPlayabilityMiniCard({
               <View style={[styles.windowPill, { backgroundColor: `${colors.primary}10`, borderColor: `${colors.primary}22` }]}>
                 <Feather name="clock" size={13} color={colors.primary} />
                 <AppText variant="captionBold" color="primary" style={{ marginLeft: spacing.xs, flex: 1 }} numberOfLines={1}>
-                  Best {bundle.insight.bestWindow}
+                  Best window · {bundle.insight.bestWindow}
                 </AppText>
               </View>
             ) : bundle.insight.bestWindowFallback ? (
@@ -248,6 +311,28 @@ const styles = StyleSheet.create({
     marginTop: 4,
     fontSize: 13,
     lineHeight: 18,
+  },
+  planningBlock: {
+    marginTop: spacing.sm,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.sm,
+    borderRadius: radius.md,
+    borderWidth: 1,
+  },
+  planningEyebrow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 4,
+  },
+  slotLine: {
+    marginTop: 2,
+    fontSize: 15,
+    lineHeight: 20,
+    letterSpacing: -0.2,
+  },
+  weekOutlook: {
+    marginTop: 6,
+    lineHeight: 17,
   },
   indicators: {
     marginTop: spacing.sm,

@@ -16,6 +16,7 @@ import { CourseStatusLogModal } from "./CourseStatusLogModal";
 import { CourseStatusLatestBanner } from "./CourseStatusLatestBanner";
 import { HourlyForecastStrip } from "./HourlyForecastStrip";
 import { DailyForecastBlock } from "./DailyForecastBlock";
+import { FiveDayPlayabilityPlanCard } from "./FiveDayPlayabilityPlanCard";
 
 type Props = {
   event: EventDoc;
@@ -105,6 +106,7 @@ export function EventPlayabilitySection({
         insight={bundle.insight}
         coordsHint={coordsHint}
         onRefresh={bundle.refetch}
+        linkedPlannerNote="Verdict: your event day. Planner: five full local days in four-hour blocks."
       />
 
       {!bundle.loading && !bundle.error && bundle.insight ? (
@@ -113,6 +115,12 @@ export function EventPlayabilitySection({
           <DailyForecastBlock days={bundle.dailyOutlook} />
         </>
       ) : null}
+
+      <FiveDayPlayabilityPlanCard
+        loading={bundle.loading}
+        forecast={bundle.forecast}
+        startDateYmd={todayYmd()}
+      />
 
       <CourseActionRow
         contact={contact}
