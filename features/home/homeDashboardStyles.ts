@@ -84,7 +84,8 @@ export const homeDashboardStyles = StyleSheet.create({
   screenContent: {
     backgroundColor: "transparent",
     paddingTop: spacing.md,
-    gap: spacing.base,
+    /** Clearer vertical rhythm between major dashboard sections */
+    gap: spacing.lg,
   },
   premiumCard: {
     borderRadius: 22,

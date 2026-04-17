@@ -60,6 +60,30 @@ function standardPayoutLines(rules: EventPrizePoolRuleRow[]): string[] {
   });
 }
 
+function StatusBadgePill({
+  text,
+  tone,
+}: {
+  text: string;
+  tone: "muted" | "primary" | "secondary";
+}) {
+  const colors = getColors();
+  const borderColor =
+    tone === "primary" ? colors.primary : tone === "secondary" ? `${colors.textSecondary}55` : `${colors.textTertiary}45`;
+  const bg =
+    tone === "primary" ? `${colors.primary}16` : tone === "secondary" ? `${colors.textSecondary}0D` : `${colors.textTertiary}0A`;
+  const textColor: "secondary" | "primary" | "muted" =
+    tone === "muted" ? "muted" : tone === "primary" ? "primary" : "secondary";
+
+  return (
+    <View style={[styles.statusPill, { borderColor, backgroundColor: bg }]}>
+      <AppText variant="captionBold" color={textColor} numberOfLines={1}>
+        {text}
+      </AppText>
+    </View>
+  );
+}
+
 export function DashboardPrizePoolHomeCard({
   eventId,
   myMemberId,
@@ -92,17 +116,17 @@ export function DashboardPrizePoolHomeCard({
   };
 
   return (
-    <AppCard style={[styles.card, { borderColor: `${colors.primary}30`, backgroundColor: `${colors.primary}06` }]}>
+    <AppCard style={[styles.shellCard, { borderColor: `${colors.primary}34`, backgroundColor: `${colors.primary}07` }]}>
       <View style={styles.headerRow}>
-        <View style={[styles.iconWrap, { backgroundColor: `${colors.primary}18` }]}>
-          <Feather name="award" size={18} color={colors.primary} />
+        <View style={[styles.iconWrap, { backgroundColor: `${colors.primary}1A` }]}>
+          <Feather name="award" size={20} color={colors.primary} />
         </View>
-        <View style={{ flex: 1 }}>
-          <AppText variant="captionBold" color="primary">
-            Prize Pools
+        <View style={{ flex: 1, minWidth: 0 }}>
+          <AppText variant="bodyBold" style={{ color: colors.text }}>
+            Pool entries
           </AppText>
-          <AppText variant="small" color="secondary" style={{ marginTop: 2 }}>
-            Optional extras for this event
+          <AppText variant="small" color="secondary" style={{ marginTop: 4 }}>
+            Tap Yes or No on each card; expand details for notes and payouts.
           </AppText>
         </View>
       </View>
@@ -117,10 +141,12 @@ export function DashboardPrizePoolHomeCard({
         </AppText>
       ) : (
         <>
-          {poolRows.map(({ pool, entry, rules, hasPublishedResults, myResult, confirmedEntrantCount, effectiveDisplayPotPence }) => {
+          {poolRows.map(({ pool, entry, rules, hasPublishedResults, myResult, confirmedEntrantCount, effectiveDisplayPotPence }, idx) => {
             const compName = (pool.competition_name || pool.name || "Prize pool").trim();
             const status = entryStatusLabel(entry);
-            const optedIn = entry?.opted_in === true;
+            const hasEntry = entry != null;
+            const selectedYes = entry?.opted_in === true;
+            const selectedNo = hasEntry && entry.opted_in === false;
             const isOpen = expanded[pool.id] === true;
             const isPerEntrant = pool.total_amount_mode === "per_entrant";
 
@@ -128,83 +154,121 @@ export function DashboardPrizePoolHomeCard({
               <View
                 key={pool.id}
                 style={[
-                  styles.poolBlock,
-                  { borderColor: colors.borderLight, backgroundColor: colors.background },
+                  styles.poolCard,
+                  {
+                    borderColor: selectedYes ? `${colors.primary}55` : colors.borderLight,
+                    backgroundColor: colors.surface,
+                    marginTop: idx === 0 ? spacing.sm : spacing.md,
+                  },
                 ]}
               >
-                <View style={styles.compactRow}>
+                <View style={styles.poolHeaderRow}>
+                  <AppText variant="bodyBold" style={{ color: colors.text, flex: 1, minWidth: 0 }} numberOfLines={2}>
+                    {compName}
+                  </AppText>
+                  <StatusBadgePill text={status.text} tone={status.tone} />
+                </View>
+
+                <View style={styles.metaRow}>
                   <View style={{ flex: 1, minWidth: 0 }}>
-                    <AppText variant="captionBold" numberOfLines={2}>
-                      {compName}
+                    <AppText variant="captionBold" color="muted">
+                      Pot master
                     </AppText>
-                    <AppText variant="caption" color="secondary" numberOfLines={1} style={{ marginTop: 2 }}>
-                      Pot Master: {managerName ?? "—"}
+                    <AppText variant="small" color="secondary" numberOfLines={1} style={{ marginTop: 2 }}>
+                      {managerName ?? "—"}
                     </AppText>
                   </View>
-                  <View
-                    style={[
-                      styles.badge,
-                      {
-                        borderColor:
-                          status.tone === "primary" ? colors.primary : `${colors.textSecondary}40`,
-                        backgroundColor:
-                          status.tone === "primary" ? `${colors.primary}14` : `${colors.textSecondary}08`,
-                      },
-                    ]}
-                  >
-                    <AppText
-                      variant="caption"
-                      color={status.tone === "muted" ? "secondary" : status.tone === "primary" ? "primary" : "secondary"}
-                      numberOfLines={1}
-                    >
-                      {status.text}
+                  <View style={{ alignItems: "flex-end", maxWidth: "48%" }}>
+                    <AppText variant="captionBold" color="muted">
+                      Entry
+                    </AppText>
+                    <AppText variant="small" color="secondary" numberOfLines={1} style={{ marginTop: 2, fontWeight: "600" }}>
+                      {entryValueLine(pool)}
                     </AppText>
                   </View>
                 </View>
 
-                <View style={styles.compactRow}>
-                  <View style={{ flex: 1, minWidth: 0, gap: 2 }}>
-                    <AppText variant="caption" color="secondary">
-                      {entryValueLine(pool)}
+                <View style={styles.statsGrid}>
+                  <View style={[styles.statBox, { borderColor: colors.borderLight, backgroundColor: colors.backgroundSecondary }]}>
+                    <AppText variant="captionBold" color="muted">
+                      PM confirmed
                     </AppText>
-                    <AppText variant="caption" color="secondary">
-                      {confirmedEntrantCount} Pot Master–confirmed
+                    <AppText variant="title" style={{ color: colors.text, marginTop: 4 }}>
+                      {confirmedEntrantCount}
                     </AppText>
-                    <AppText variant="captionBold" color="secondary">
-                      Total pot: {formatPenceGbp(effectiveDisplayPotPence)}
+                    <AppText variant="caption" color="secondary" style={{ marginTop: 2 }}>
+                      entrants
                     </AppText>
                   </View>
-                  <View style={styles.actions}>
-                    <SecondaryButton
-                      size="sm"
-                      loading={busy}
-                      disabled={busy}
-                      onPress={() => void setOptIn(pool.id, true)}
-                      style={optedIn ? { borderWidth: 2, borderColor: colors.primary } : undefined}
-                    >
-                      Yes
-                    </SecondaryButton>
-                    <SecondaryButton
-                      size="sm"
-                      loading={busy}
-                      disabled={busy}
-                      onPress={() => void setOptIn(pool.id, false)}
-                      style={!optedIn ? { borderWidth: 2, borderColor: colors.primary } : undefined}
-                    >
-                      No
-                    </SecondaryButton>
+                  <View style={[styles.statBox, { borderColor: colors.borderLight, backgroundColor: colors.backgroundSecondary }]}>
+                    <AppText variant="captionBold" color="muted">
+                      Total pot
+                    </AppText>
+                    <AppText variant="title" style={{ color: colors.primary, marginTop: 4 }} numberOfLines={1}>
+                      {formatPenceGbp(effectiveDisplayPotPence)}
+                    </AppText>
+                    <AppText variant="caption" color="secondary" style={{ marginTop: 2 }} numberOfLines={1}>
+                      {isPerEntrant ? "from entries" : "fixed pot"}
+                    </AppText>
                   </View>
+                </View>
+
+                <AppText variant="captionBold" color="muted" style={{ marginTop: spacing.md, marginBottom: spacing.xs }}>
+                  Your entry
+                </AppText>
+                <View style={styles.actionRow}>
+                  <SecondaryButton
+                    size="md"
+                    loading={busy}
+                    disabled={busy}
+                    onPress={() => void setOptIn(pool.id, true)}
+                    style={{
+                      ...styles.yesNoBtn,
+                      ...(selectedYes
+                        ? { borderWidth: 2, borderColor: colors.primary, backgroundColor: `${colors.primary}10` }
+                        : {}),
+                    }}
+                  >
+                    Yes
+                  </SecondaryButton>
+                  <SecondaryButton
+                    size="md"
+                    loading={busy}
+                    disabled={busy}
+                    onPress={() => void setOptIn(pool.id, false)}
+                    style={{
+                      ...styles.yesNoBtn,
+                      ...(selectedNo
+                        ? {
+                            borderWidth: 2,
+                            borderColor: colors.textSecondary,
+                            backgroundColor: `${colors.textSecondary}12`,
+                          }
+                        : {}),
+                    }}
+                  >
+                    No
+                  </SecondaryButton>
                 </View>
 
                 <Pressable
                   onPress={() => toggleExpanded(pool.id)}
-                  style={styles.detailsToggle}
-                  hitSlop={8}
+                  style={({ pressed }) => [
+                    styles.detailsBar,
+                    {
+                      borderTopColor: colors.borderLight,
+                      backgroundColor: `${colors.primary}06`,
+                      opacity: pressed ? 0.85 : 1,
+                    },
+                  ]}
+                  hitSlop={6}
+                  accessibilityRole="button"
+                  accessibilityLabel={isOpen ? "Hide pool details" : "Show pool details"}
                 >
                   <AppText variant="captionBold" color="primary">
                     {isOpen ? "Hide details" : "Show details"}
                   </AppText>
-                  <Feather name={isOpen ? "chevron-up" : "chevron-down"} size={16} color={colors.primary} />
+                  <Feather name={isOpen ? "chevron-up" : "chevron-down"} size={18} color={colors.primary} />
                 </Pressable>
 
                 {isOpen ? (
@@ -273,11 +337,10 @@ export function DashboardPrizePoolHomeCard({
 }
 
 const styles = StyleSheet.create({
-  card: {
-    borderRadius: radius.md,
+  shellCard: {
+    borderRadius: radius.lg,
     borderWidth: 1,
-    padding: spacing.base,
-    gap: spacing.sm,
+    padding: spacing.base + 2,
   },
   headerRow: {
     flexDirection: "row",
@@ -285,47 +348,76 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
   },
   iconWrap: {
-    width: 40,
-    height: 40,
+    width: 44,
+    height: 44,
     borderRadius: radius.md,
     alignItems: "center",
     justifyContent: "center",
   },
-  poolBlock: {
-    borderRadius: radius.sm,
-    borderWidth: StyleSheet.hairlineWidth,
-    padding: spacing.sm,
-    marginTop: spacing.xs,
+  poolCard: {
+    borderRadius: radius.md,
+    borderWidth: 1,
+    padding: spacing.base,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.06,
+    shadowRadius: 8,
+    elevation: 2,
   },
-  compactRow: {
+  poolHeaderRow: {
     flexDirection: "row",
-    alignItems: "center",
+    alignItems: "flex-start",
     justifyContent: "space-between",
     gap: spacing.sm,
-    marginTop: spacing.xs,
   },
-  badge: {
+  statusPill: {
     paddingHorizontal: spacing.sm,
-    paddingVertical: 4,
+    paddingVertical: 5,
+    borderRadius: radius.full,
+    borderWidth: 1,
+    maxWidth: "40%",
+  },
+  metaRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    gap: spacing.md,
+    marginTop: spacing.md,
+    paddingBottom: spacing.sm,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: "rgba(128,128,128,0.2)",
+  },
+  statsGrid: {
+    flexDirection: "row",
+    gap: spacing.sm,
+    marginTop: spacing.sm,
+  },
+  statBox: {
+    flex: 1,
     borderRadius: radius.sm,
     borderWidth: 1,
-    maxWidth: "42%",
+    padding: spacing.sm,
+    minHeight: 88,
   },
-  actions: {
+  actionRow: {
     flexDirection: "row",
-    gap: spacing.xs,
+    gap: spacing.sm,
   },
-  detailsToggle: {
+  yesNoBtn: {
+    flex: 1,
+    minHeight: 48,
+  },
+  detailsBar: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 4,
-    marginTop: spacing.sm,
-    alignSelf: "flex-start",
+    justifyContent: "center",
+    gap: spacing.xs,
+    marginTop: spacing.md,
+    paddingVertical: spacing.sm,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderRadius: radius.sm,
   },
   detailsBody: {
     marginTop: spacing.sm,
     paddingTop: spacing.sm,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: "rgba(128,128,128,0.25)",
   },
 });

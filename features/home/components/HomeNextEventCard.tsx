@@ -48,8 +48,8 @@ export function HomeNextEventCard(props: Props) {
         onOpenEvent={props.onOpenEvent}
       />
       {props.canManage ? (
-        <SecondaryButton size="sm" onPress={props.onOpenEvent} style={styles.manageBtn}>
-          Manage Event
+        <SecondaryButton size="md" onPress={props.onOpenEvent} style={styles.manageBtn}>
+          Manage event
         </SecondaryButton>
       ) : null}
     </View>
@@ -58,12 +58,12 @@ export function HomeNextEventCard(props: Props) {
 
 const styles = StyleSheet.create({
   wrap: {
-    gap: spacing.xs,
+    gap: spacing.sm,
   },
   emptyCard: {
     borderRadius: radius.lg,
     borderWidth: 1,
-    padding: spacing.lg,
+    padding: spacing.lg + 4,
     alignItems: "center",
     justifyContent: "center",
   },
@@ -71,8 +71,9 @@ const styles = StyleSheet.create({
     marginBottom: spacing.sm,
   },
   manageBtn: {
-    marginTop: 2,
-    alignSelf: "flex-start",
+    marginTop: spacing.xs,
+    alignSelf: "stretch",
+    minHeight: 48,
   },
 });
 

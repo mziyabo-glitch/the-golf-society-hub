@@ -13,6 +13,7 @@ import { HomeAppBar, PoweredByFooter } from "./HomeChrome";
 import { homeDashboardStyles as styles } from "../homeDashboardStyles";
 import type { HomeSocietyDashboardVm } from "../useHomeDashboard";
 import { HomeIdentityHeroCard } from "./HomeIdentityHeroCard";
+import { HomeEventAttendanceCard } from "./HomeEventAttendanceCard";
 import { HomeNextEventCard } from "./HomeNextEventCard";
 import { HomePrizePoolCard } from "./HomePrizePoolCard";
 import { HomeLatestResultsCard } from "./HomeLatestResultsCard";
@@ -187,8 +188,8 @@ export function HomeSocietyDashboardView(vm: HomeSocietyDashboardVm) {
       {/* ================================================================== */}
       {(memberHasSeat || memberIsCaptain) && (<>
 
-      <AppText variant="captionBold" color="secondary" style={rhythmStyles.sectionEyebrow}>
-        NEXT EVENT
+      <AppText variant="captionBold" color="primary" style={rhythmStyles.sectionEyebrow}>
+        Next event
       </AppText>
       <HomeNextEventCard
         nextEvent={nextEvent}
@@ -203,104 +204,25 @@ export function HomeSocietyDashboardView(vm: HomeSocietyDashboardVm) {
 
       {/* Event RSVP + payment status summary directly below Next Event */}
       {nextEvent ? (
-        <AppCard
-          style={[
-            rhythmStyles.secondaryCard,
-            { borderColor: colors.borderLight, backgroundColor: colors.surface },
-          ]}
-        >
-          <AppText variant="captionBold" color="secondary" style={{ marginBottom: spacing.xs }}>
-            Event attendance
-          </AppText>
-          <AppText variant="small" color="secondary">
-            {nextEventAttendance.guestCount > 0
-              ? `${nextEventAttendance.attendingCount} attending • ${nextEventAttendance.guestCount} guests`
-              : `${nextEventAttendance.attendingCount} attending`}
-          </AppText>
-          <AppText variant="small" color="secondary">
-            Cost: {nextEvent.entryFeeDisplay?.trim() || "—"}
-          </AppText>
-          <AppText variant="small" color="secondary" style={{ marginBottom: spacing.sm }}>
-            Paid: {myReg?.paid ? "Yes" : "No"}
-          </AppText>
-          <View style={{ flexDirection: "row", gap: spacing.sm }}>
-            <PrimaryButton
-              size="sm"
-              onPress={() => toggleRegistration("in")}
-              loading={regBusy}
-              disabled={regBusy}
-              style={{ flex: 1 }}
-            >
-              Playing
-            </PrimaryButton>
-            <PrimaryButton
-              size="sm"
-              onPress={() => toggleRegistration("out")}
-              loading={regBusy}
-              disabled={regBusy}
-              style={{ flex: 1 }}
-            >
-              Not Playing
-            </PrimaryButton>
-          </View>
-
-          {nextEvent.teeTimePublishedAt && canAccessNextEventTeeSheet ? (
-            <Pressable
-              onPress={() => pushWithBlur({ pathname: "/(app)/event/[id]/tee-sheet", params: { id: nextEvent.id } })}
-              style={({ pressed }) => ({ opacity: pressed ? 0.8 : 1, marginTop: spacing.sm })}
-            >
-              <View style={[styles.notificationBanner, { backgroundColor: colors.success + "15", borderColor: colors.success + "30", marginBottom: 0 }]}>
-                <Feather name="bell" size={16} color={colors.success} />
-                <View style={{ flex: 1 }}>
-                  <AppText variant="bodyBold" style={{ color: colors.success }}>
-                    Tee times now available
-                  </AppText>
-                  <AppText variant="small" color="secondary">
-                    Tap to view your tee time and full tee sheet.
-                  </AppText>
-                </View>
-                <Feather name="chevron-right" size={16} color={colors.success} />
-              </View>
-            </Pressable>
-          ) : null}
-
-          {canAdmin ? (
-            <Pressable
-              onPress={() => setShowAdmin((v) => !v)}
-              style={({ pressed }) => ({ opacity: pressed ? 0.7 : 1, marginTop: spacing.sm })}
-            >
-              <AppText variant="small" color="primary">
-                {showAdmin ? "Hide admin actions" : "Show admin actions"}
-              </AppText>
-            </Pressable>
-          ) : null}
-          {canAdmin && showAdmin ? (
-            <View style={{ flexDirection: "row", gap: spacing.sm, marginTop: spacing.sm }}>
-              <PrimaryButton
-                size="sm"
-                onPress={() => handleMarkPaid(true)}
-                loading={regBusy}
-                disabled={regBusy}
-                style={{ flex: 1 }}
-              >
-                Mark Paid
-              </PrimaryButton>
-              <PrimaryButton
-                size="sm"
-                onPress={() => handleMarkPaid(false)}
-                loading={regBusy}
-                disabled={regBusy}
-                style={{ flex: 1 }}
-              >
-                Mark Unpaid
-              </PrimaryButton>
-            </View>
-          ) : null}
-        </AppCard>
+        <HomeEventAttendanceCard
+          nextEvent={nextEvent}
+          nextEventAttendance={nextEventAttendance}
+          myReg={myReg}
+          regBusy={regBusy}
+          canAccessNextEventTeeSheet={canAccessNextEventTeeSheet}
+          canAdmin={canAdmin}
+          showAdmin={showAdmin}
+          onToggleAdmin={() => setShowAdmin((v) => !v)}
+          onToggleRegistration={toggleRegistration}
+          onMarkPaid={handleMarkPaid}
+          onOpenTeeSheet={() =>
+            pushWithBlur({ pathname: "/(app)/event/[id]/tee-sheet", params: { id: nextEvent.id } })
+          }
+        />
       ) : null}
 
-      <AppText variant="captionBold" color="secondary" style={rhythmStyles.sectionEyebrow}>
-        PRIZE POOLS
+      <AppText variant="captionBold" color="primary" style={rhythmStyles.sectionEyebrow}>
+        Prize pools
       </AppText>
       <HomePrizePoolCard
         eventId={nextEvent?.prizePoolEnabled || prizePoolCard?.managerName ? nextEvent?.id ?? null : null}
@@ -312,16 +234,16 @@ export function HomeSocietyDashboardView(vm: HomeSocietyDashboardVm) {
         onChanged={bumpPrizePoolHomeCard}
       />
 
-      <AppText variant="captionBold" color="secondary" style={rhythmStyles.sectionEyebrow}>
-        LATEST RESULTS
+      <AppText variant="captionBold" color="primary" style={rhythmStyles.sectionEyebrow}>
+        Latest results
       </AppText>
       <HomeLatestResultsCard
         snapshot={latestResultsSnapshot}
         onOpenEvent={openEvent}
       />
 
-      <AppText variant="captionBold" color="secondary" style={rhythmStyles.sectionEyebrow}>
-        ORDER OF MERIT
+      <AppText variant="captionBold" color="primary" style={rhythmStyles.sectionEyebrow}>
+        Order of merit
       </AppText>
       <HomeOomSnapshotCard
         rank={oomRankMain}
@@ -333,8 +255,8 @@ export function HomeSocietyDashboardView(vm: HomeSocietyDashboardVm) {
         formatPoints={formatPoints}
       />
 
-      <AppText variant="captionBold" color="secondary" style={rhythmStyles.sectionEyebrow}>
-        WEATHER
+      <AppText variant="captionBold" color="primary" style={rhythmStyles.sectionEyebrow}>
+        Weather
       </AppText>
       <HomeWeatherSnapshotCard
         nextEvent={nextEvent}
@@ -391,12 +313,14 @@ export function HomeSocietyDashboardView(vm: HomeSocietyDashboardVm) {
 const rhythmStyles = StyleSheet.create({
   brandLine: {
     marginTop: -2,
-    marginBottom: spacing.xs,
+    marginBottom: spacing.sm,
   },
   sectionEyebrow: {
-    marginTop: 2,
-    marginBottom: -6,
-    letterSpacing: 0.5,
+    marginTop: spacing.xs,
+    marginBottom: spacing.sm,
+    letterSpacing: 1.2,
+    fontSize: 11,
+    opacity: 0.92,
   },
   secondaryCard: {
     borderRadius: 18,

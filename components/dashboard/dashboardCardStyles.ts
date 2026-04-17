@@ -23,8 +23,8 @@ export const dashboardShell = StyleSheet.create({
   card: {
     borderRadius: DASHBOARD_CARD_RADIUS,
     borderWidth: 1,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm + 4,
+    paddingHorizontal: spacing.base,
+    paddingVertical: spacing.base,
     marginBottom: spacing.md,
     ...shadow,
   },

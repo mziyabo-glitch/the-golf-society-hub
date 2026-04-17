@@ -49,6 +49,7 @@ export function HomeIdentityHeroCard({
   onEditHandicap,
 }: Props) {
   const colors = getColors();
+  const hi = handicapIndexDisplay != null ? handicapIndexDisplay : "—";
 
   return (
     <AppCard
@@ -64,16 +65,16 @@ export function HomeIdentityHeroCard({
         <View style={[styles.logoShell, { borderColor: `${colors.primary}2E`, backgroundColor: `${colors.primary}0C` }]}>
           <SocietyLogoImage
             logoUrl={logoUrl}
-            size={86}
+            size={76}
             variant="hero"
             placeholderText={initialsFromSociety(societyName)}
           />
         </View>
         <View style={styles.identityCol}>
-          <AppText variant="title" style={styles.name} numberOfLines={2}>
+          <AppText variant="heading" style={styles.name} numberOfLines={2}>
             {memberName}
           </AppText>
-          <AppText variant="small" color="secondary" numberOfLines={2}>
+          <AppText variant="small" color="secondary" numberOfLines={2} style={styles.societyLine}>
             {societyName}
           </AppText>
           <View style={styles.roleWrap}>
@@ -82,30 +83,68 @@ export function HomeIdentityHeroCard({
         </View>
       </View>
 
-      <View style={[styles.metaRow, { borderTopColor: colors.borderLight }]}>
-        <View style={styles.metaItem}>
-          <AppText variant="caption" color="secondary">
-            Handicap Index
-          </AppText>
-          <View style={styles.inlineRow}>
-            <AppText variant="bodyBold">
-              {handicapIndexDisplay != null ? handicapIndexDisplay : "—"}
+      <View style={styles.statGrid}>
+        <Pressable
+          onPress={onEditHandicap}
+          accessibilityRole="button"
+          accessibilityLabel="Edit handicap index"
+          style={({ pressed }) => [
+            styles.statTile,
+            {
+              borderColor: colors.borderLight,
+              backgroundColor: colors.backgroundSecondary,
+              opacity: pressed ? 0.92 : 1,
+            },
+          ]}
+        >
+          <View style={styles.statTileHeader}>
+            <Feather name="activity" size={14} color={colors.primary} />
+            <AppText variant="captionBold" color="secondary">
+              Handicap Index
             </AppText>
-            <Pressable onPress={onEditHandicap} hitSlop={8} style={({ pressed }) => ({ opacity: pressed ? 0.65 : 1 })}>
-              <Feather name="edit-2" size={13} color={colors.textTertiary} />
-            </Pressable>
           </View>
-        </View>
-        <View style={styles.metaItem}>
-          <AppText variant="caption" color="secondary">
-            OOM Rank
+          <View style={styles.statTileValueRow}>
+            <AppText variant="title" style={{ color: colors.text }}>
+              {hi}
+            </AppText>
+            <Feather name="chevron-right" size={16} color={colors.textTertiary} />
+          </View>
+          <AppText variant="caption" color="muted" style={{ marginTop: 2 }}>
+            Tap to update
           </AppText>
-          <AppText variant="bodyBold">
-            {showUnrankedHint ? "Not ranked yet" : ordinalLabel(oomRankMain)}
-          </AppText>
-          <AppText variant="small" color="secondary">
-            {oomPointsMain} pts
-          </AppText>
+        </Pressable>
+
+        <View
+          style={[
+            styles.statTile,
+            { borderColor: colors.borderLight, backgroundColor: colors.backgroundSecondary },
+          ]}
+        >
+          <View style={styles.statTileHeader}>
+            <Feather name="award" size={14} color={colors.highlight} />
+            <AppText variant="captionBold" color="secondary">
+              Order of Merit
+            </AppText>
+          </View>
+          {showUnrankedHint ? (
+            <>
+              <AppText variant="bodyBold" color="muted" style={{ marginTop: 2 }}>
+                Not ranked yet
+              </AppText>
+              <AppText variant="caption" color="muted" style={{ marginTop: 4 }}>
+                Play counting events to appear on the leaderboard.
+              </AppText>
+            </>
+          ) : (
+            <>
+              <AppText variant="title" style={{ color: colors.text, marginTop: 2 }}>
+                {ordinalLabel(oomRankMain)}
+              </AppText>
+              <AppText variant="captionBold" color="secondary" style={{ marginTop: 4 }}>
+                {oomPointsMain} pts
+              </AppText>
+            </>
+          )}
         </View>
       </View>
     </AppCard>
@@ -116,7 +155,7 @@ const styles = StyleSheet.create({
   card: {
     borderRadius: radius.lg,
     borderWidth: 1,
-    padding: spacing.base + 2,
+    padding: spacing.base + 4,
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 6 },
     shadowOpacity: 0.08,
@@ -125,41 +164,52 @@ const styles = StyleSheet.create({
   },
   topRow: {
     flexDirection: "row",
-    alignItems: "center",
+    alignItems: "flex-start",
     gap: spacing.base,
   },
   logoShell: {
     borderRadius: radius.md,
     borderWidth: 1,
-    padding: spacing.xs,
+    padding: spacing.xs + 2,
   },
   identityCol: {
     flex: 1,
     minWidth: 0,
+    paddingTop: 2,
   },
   name: {
     fontWeight: "800",
+    letterSpacing: -0.2,
+  },
+  societyLine: {
+    marginTop: 4,
   },
   roleWrap: {
-    marginTop: spacing.xs,
+    marginTop: spacing.sm,
     alignSelf: "flex-start",
   },
-  metaRow: {
-    marginTop: spacing.base,
-    paddingTop: spacing.base,
-    borderTopWidth: StyleSheet.hairlineWidth,
+  statGrid: {
+    marginTop: spacing.base + 2,
     flexDirection: "row",
-    gap: spacing.base,
+    gap: spacing.sm,
   },
-  metaItem: {
+  statTile: {
     flex: 1,
     minWidth: 0,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    padding: spacing.sm + 2,
+    minHeight: 112,
   },
-  inlineRow: {
+  statTileHeader: {
     flexDirection: "row",
     alignItems: "center",
-    gap: spacing.xs,
-    marginTop: 2,
+    gap: 6,
+  },
+  statTileValueRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginTop: spacing.xs,
   },
 });
-
