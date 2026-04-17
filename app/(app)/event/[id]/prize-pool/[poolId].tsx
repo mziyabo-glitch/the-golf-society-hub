@@ -16,12 +16,14 @@ import { confirmDestructive, showAlert } from "@/lib/ui/alert";
 import { getEvent, type EventDoc } from "@/lib/db_supabase/eventRepo";
 import { getMembersByIds } from "@/lib/db_supabase/memberRepo";
 import { getEventGuests } from "@/lib/db_supabase/eventGuestRepo";
+import { getSociety } from "@/lib/db_supabase/societyRepo";
 import {
   calculateEventPrizePool,
   deleteEventPrizePool,
   finaliseEventPrizePool,
   formatPenceGbp,
   getPotMasterConfirmedPrizePoolEntrantCount,
+  getEventPrizePoolManagerInfo,
   getEventPrizePoolWithRules,
   listEventPrizePoolSplitterScores,
   listPrizePoolOptInEntrants,
@@ -33,6 +35,12 @@ import {
 import type { EventPrizePoolResultRow, EventPrizePoolRow } from "@/lib/event-prize-pools-types";
 import { PRIZE_POOL_PAYOUT_TEMPLATES } from "@/lib/event-prize-pools-types";
 import { derivePrizePoolTotalAmountPence, validateRuleBasisPointsTotal } from "@/lib/event-prize-pools-calc";
+import {
+  buildStandardPoolRuleLines,
+  eventFormatDisplayLabel,
+  prizePoolRankingPolicyLine,
+  splitterPoolRuleLines,
+} from "@/lib/event-prize-pool-share";
 import { PrizePoolStatusBadge } from "@/components/event-prize-pools/PrizePoolStatusBadge";
 import { PrizePoolSummary } from "@/components/event-prize-pools/PrizePoolSummary";
 import PrizePoolEntrantsShareCard from "@/components/event-prize-pools/PrizePoolEntrantsShareCard";
@@ -50,6 +58,20 @@ function parseGbpToPence(raw: string): number | null {
 
 function penceToGbpInput(p: number): string {
   return (p / 100).toFixed(2);
+}
+
+function formatEventDateForShare(ev: EventDoc | null): string {
+  if (!ev?.date) return "Date TBC";
+  try {
+    return new Date(ev.date).toLocaleDateString("en-GB", {
+      weekday: "short",
+      day: "numeric",
+      month: "short",
+      year: "numeric",
+    });
+  } catch {
+    return String(ev.date);
+  }
 }
 
 export default function PrizePoolDetailScreen() {
@@ -93,6 +115,11 @@ export default function PrizePoolDetailScreen() {
   const [splitterScoresTableMissing, setSplitterScoresTableMissing] = useState(false);
   const [sharePngBusy, setSharePngBusy] = useState(false);
   const entrantsShareRef = useRef<View>(null);
+  const [shareExtras, setShareExtras] = useState<{
+    societyName: string;
+    societyLogoUrl: string | null;
+    potMasterName: string | null;
+  }>({ societyName: "", societyLogoUrl: null, potMasterName: null });
 
   const load = useCallback(async () => {
     if (!eventId || !poolId) return;
@@ -108,6 +135,24 @@ export default function PrizePoolDetailScreen() {
       const splitterScores = splitterScoresRes.rows;
       setSplitterScoresTableMissing(splitterScoresRes.tableMissingInSchema);
       setEvent(ev);
+      let societyName = "";
+      let societyLogoUrl: string | null = null;
+      if (ev?.society_id) {
+        const soc = await getSociety(String(ev.society_id));
+        if (soc) {
+          societyName = (soc.name ?? "").trim();
+          societyLogoUrl = soc.logoUrl ?? soc.logo_url ?? null;
+        }
+      }
+      let potMasterName: string | null = null;
+      try {
+        const pm = await getEventPrizePoolManagerInfo(eventId);
+        potMasterName = pm?.displayName ?? null;
+      } catch {
+        potMasterName = null;
+      }
+      setShareExtras({ societyName, societyLogoUrl, potMasterName });
+
       if (!full) {
         setPool(null);
         return;
@@ -249,15 +294,53 @@ export default function PrizePoolDetailScreen() {
     });
   }, [splitterInputRows, splitterInputsByParticipant, competitionType]);
 
+  const shareRulesLines = useMemo(() => {
+    if (competitionType === "splitter") return splitterPoolRuleLines();
+    return buildStandardPoolRuleLines({ placesPaid, percents, payoutMode });
+  }, [competitionType, placesPaid, percents, payoutMode]);
+
+  const entryShareLabel = useMemo(() => {
+    if (!pool) return "—";
+    if (totalAmountMode === "per_entrant") {
+      const p = parseGbpToPence(potEntryValueGbp) ?? pool.pot_entry_value_pence ?? 0;
+      return `${formatPenceGbp(p)} per confirmed entrant`;
+    }
+    return "Manual pool total (no per-entrant entry)";
+  }, [pool, totalAmountMode, potEntryValueGbp]);
+
   const shareEntrantsPotPng = async () => {
-    if (!pool || !event || splitterInputRows.length === 0) return;
-    assertPngExportOnly("Prize pool entrants");
+    if (!pool || !event) return;
+    assertPngExportOnly("Prize pool share");
+    const payInstr = (event.prizePoolPaymentInstructions ?? "").trim();
+    const notesTrim = notes.trim();
+    console.log("[prize-pool-png-share]", {
+      poolId: pool.id,
+      poolName: pool.name,
+      rulesCount: shareRulesLines.length,
+      potMasterMessageLen: notesTrim.length,
+      eventPaymentInstructionsLen: payInstr.length,
+      entryLabel: entryShareLabel,
+      confirmedCount: confirmedEntrants,
+      totalPotPence: sharePotPence,
+      totalPotLabel: formatPenceGbp(sharePotPence),
+      eventId: event.id,
+      eventName: event.name,
+      eventFormat: event.format,
+      eventClassification: event.classification,
+      entrantRows: shareEntrantRows.length,
+    });
     setSharePngBusy(true);
     try {
-      await new Promise((r) => setTimeout(r, 200));
-      const estHeight = Math.min(2400, 420 + shareEntrantRows.length * 52);
+      await new Promise((r) => setTimeout(r, 450));
+      const rulesBlock = 120 + shareRulesLines.length * 30;
+      const notesBlock = notesTrim ? 160 : 40;
+      const payBlock = payInstr ? 130 : 0;
+      const estHeight = Math.min(
+        4800,
+        1280 + shareEntrantRows.length * 50 + rulesBlock + notesBlock + payBlock,
+      );
       const shareResult = await captureAndShare(entrantsShareRef, {
-        dialogTitle: `${pool.name} entrants`,
+        dialogTitle: `${pool.name} — prize pool`,
         width: 1080,
         height: estHeight,
       });
@@ -610,13 +693,14 @@ export default function PrizePoolDetailScreen() {
 
         <SecondaryButton
           loading={sharePngBusy}
-          disabled={locked || splitterInputRows.length === 0}
+          disabled={locked || sharePngBusy || !event}
           onPress={() => void shareEntrantsPotPng()}
         >
-          Share entrants & pot (PNG)
+          Share pool card (PNG)
         </SecondaryButton>
         <AppText variant="caption" color="secondary">
-          Image lists Pot Master–confirmed entrants and the pot total from the amounts above (including fields you have not saved yet).
+          PNG includes society & event details, pot, rules, Pot Master notes, payment notes, confirmed entrants, and
+          scoring context for this event{"'"}s format ({eventFormatDisplayLabel(event?.format)}).
         </AppText>
 
         {competitionType !== "splitter" ? (
@@ -850,10 +934,22 @@ export default function PrizePoolDetailScreen() {
       <View style={styles.captureRoot} pointerEvents="none">
         <PrizePoolEntrantsShareCard
           ref={entrantsShareRef}
-          eventTitle={(event?.name || "Event").trim()}
+          societyName={shareExtras.societyName || "Society"}
+          societyLogoUrl={shareExtras.societyLogoUrl}
+          eventName={(event?.name || "Event").trim()}
+          eventDateLine={formatEventDateForShare(event)}
+          venueLine={(event?.courseName || "").trim() || null}
+          eventFormatRaw={event?.format}
+          eventFormatLabel={eventFormatDisplayLabel(event?.format)}
+          rankingPolicyLine={prizePoolRankingPolicyLine(event?.format)}
           poolName={pool.name}
-          potLabel={formatPenceGbp(sharePotPence)}
+          potMasterName={shareExtras.potMasterName}
+          entryAmountLabel={entryShareLabel}
           confirmedCount={confirmedEntrants}
+          totalPotLabel={formatPenceGbp(sharePotPence)}
+          rulesLines={shareRulesLines}
+          potMasterNotes={notes.trim() || null}
+          eventPaymentInstructions={event?.prizePoolPaymentInstructions?.trim() || null}
           entrants={shareEntrantRows}
           showSplitterScores={competitionType === "splitter"}
         />
