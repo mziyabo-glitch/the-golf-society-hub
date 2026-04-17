@@ -5,7 +5,7 @@
  */
 
 import { useCallback, useMemo, useState } from "react";
-import { Platform, Pressable, Share, StyleSheet, View } from "react-native";
+import { ActionSheetIOS, Alert, Platform, Pressable, Share, StyleSheet, View } from "react-native";
 import * as Clipboard from "expo-clipboard";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
@@ -28,7 +28,7 @@ import {
   deleteEntry,
   deleteSinbook,
   resetSinbook,
-  canDeleteSinbookAsUser,
+  canEditSinbookAsUser,
   type SinbookWithParticipants,
   type SinbookEntry,
 } from "@/lib/db_supabase/sinbookRepo";
@@ -37,6 +37,7 @@ import { formatError, type FormattedError } from "@/lib/ui/formatError";
 import { showAlert } from "@/lib/ui/alert";
 import { Toast } from "@/components/ui/Toast";
 import { useDestructiveConfirm } from "@/components/ui/DestructiveConfirmModal";
+import { EditRivalryModal } from "@/components/sinbook/EditRivalryModal";
 import { getRivalryInviteMessage } from "@/lib/appConfig";
 import { createRivalryParticipantDisplayResolver, resolvePersonDisplayName } from "@/lib/rivalryPersonName";
 
@@ -199,6 +200,7 @@ export default function RivalryDetailScreen() {
 
   const [actionBusy, setActionBusy] = useState(false);
   const [toast, setToast] = useState({ visible: false, message: "", type: "success" as "success" | "error" | "info" });
+  const [editRivalryOpen, setEditRivalryOpen] = useState(false);
 
   const handleCopyCode = async () => {
     const code = sinbook?.join_code?.trim();
@@ -237,6 +239,28 @@ export default function RivalryDetailScreen() {
     } catch (err: any) {
       setActionBusy(false);
       showAlert("Error", err?.message || "Failed to delete rivalry.");
+    }
+  };
+
+  const openDeleteOverflow = () => {
+    const label = sinbook?.title?.trim() || "Rivalry";
+    if (Platform.OS === "ios") {
+      ActionSheetIOS.showActionSheetWithOptions(
+        {
+          title: label,
+          options: ["Delete Rivalry", "Cancel"],
+          destructiveButtonIndex: 0,
+          cancelButtonIndex: 1,
+        },
+        (buttonIndex) => {
+          if (buttonIndex === 0) void handleDeleteSinbook();
+        },
+      );
+    } else {
+      Alert.alert(label, undefined, [
+        { text: "Delete Rivalry", style: "destructive", onPress: () => void handleDeleteSinbook() },
+        { text: "Cancel", style: "cancel" },
+      ]);
     }
   };
 
@@ -292,7 +316,7 @@ export default function RivalryDetailScreen() {
     );
   }
 
-  const canDeleteRivalry = canDeleteSinbookAsUser(sinbook, userId ?? undefined);
+  const canManageRivalry = canEditSinbookAsUser(sinbook, userId ?? undefined);
 
   // Entry form (add or edit)
   if (showAddEntry) {
@@ -372,7 +396,7 @@ export default function RivalryDetailScreen() {
         <SecondaryButton onPress={() => goBack(router, "/(app)/(tabs)/sinbook")} size="sm">
           <Feather name="arrow-left" size={16} color={colors.text} /> Back
         </SecondaryButton>
-        <View style={{ flexDirection: "row", gap: spacing.xs }}>
+        <View style={{ flexDirection: "row", gap: spacing.xs, alignItems: "center" }}>
           <Pressable onPress={handleShare} style={styles.iconBtn}>
             <Feather name="share-2" size={20} color={colors.primary} />
           </Pressable>
@@ -381,9 +405,14 @@ export default function RivalryDetailScreen() {
               <Feather name="rotate-ccw" size={20} color={actionBusy ? colors.textTertiary : colors.text} />
             </Pressable>
           )}
-          {canDeleteRivalry ? (
-            <Pressable onPress={() => void handleDeleteSinbook()} style={styles.iconBtn} disabled={actionBusy}>
-              <Feather name="trash-2" size={20} color={actionBusy ? colors.textTertiary : colors.error} />
+          {canManageRivalry ? (
+            <Pressable onPress={() => setEditRivalryOpen(true)} style={styles.iconBtn} accessibilityLabel="Edit rivalry">
+              <Feather name="edit-3" size={20} color={colors.primary} />
+            </Pressable>
+          ) : null}
+          {canManageRivalry ? (
+            <Pressable onPress={openDeleteOverflow} style={styles.iconBtn} disabled={actionBusy} accessibilityLabel="More options">
+              <Feather name="more-horizontal" size={20} color={actionBusy ? colors.textTertiary : colors.textSecondary} />
             </Pressable>
           ) : null}
         </View>
@@ -391,10 +420,27 @@ export default function RivalryDetailScreen() {
 
       {/* Title */}
       <AppText variant="title" style={{ marginBottom: 2 }}>{sinbook.title?.trim() || "Rivalry"}</AppText>
-      {sinbook.stake && (
-        <AppText variant="caption" color="secondary" style={{ marginBottom: spacing.sm }}>
+      {sinbook.stake ? (
+        <AppText variant="caption" color="secondary" style={{ marginBottom: 4 }}>
           Friendly forfeit / treat: {sinbook.stake}
         </AppText>
+      ) : null}
+      {sinbook.scoring_format?.trim() || sinbook.ends_on ? (
+        <AppText variant="caption" color="muted" style={{ marginBottom: 4 }}>
+          {[
+            sinbook.scoring_format?.trim(),
+            sinbook.ends_on ? `Ends ${String(sinbook.ends_on).slice(0, 10)}` : null,
+          ]
+            .filter(Boolean)
+            .join(" · ")}
+        </AppText>
+      ) : null}
+      {sinbook.description?.trim() ? (
+        <AppText variant="small" color="secondary" style={{ marginBottom: spacing.sm }}>
+          {sinbook.description.trim()}
+        </AppText>
+      ) : (
+        <View style={{ height: spacing.sm }} />
       )}
 
       {/* Join Code Card — always show when rivalry is inviteable or user is owner */}
@@ -545,16 +591,15 @@ export default function RivalryDetailScreen() {
         </View>
       )}
 
-      {canDeleteRivalry ? (
-        <View style={{ marginTop: spacing.lg, gap: spacing.sm }}>
-          <SecondaryButton onPress={() => void handleDeleteSinbook()} disabled={actionBusy} size="sm">
-            Delete this rivalry
-          </SecondaryButton>
-          <AppText variant="small" color="muted" style={{ textAlign: "center" }}>
-            Confirmation opens in the app (reliable in Safari — no browser popup).
-          </AppText>
-        </View>
-      ) : null}
+      <EditRivalryModal
+        visible={editRivalryOpen && !!sinbook}
+        sinbook={sinbook}
+        onClose={() => setEditRivalryOpen(false)}
+        onSaved={() => {
+          setEditRivalryOpen(false);
+          void loadData();
+        }}
+      />
 
       {destructiveConfirmModal}
 

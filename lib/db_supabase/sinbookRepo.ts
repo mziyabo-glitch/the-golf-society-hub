@@ -28,6 +28,10 @@ export type Sinbook = {
   created_at: string;
   updated_at: string;
   join_code: string | null;
+  /** Optional scoring label (e.g. matchplay, gross) — migration 110. */
+  scoring_format?: string | null;
+  /** Optional end date (YYYY-MM-DD) — migration 110. */
+  ends_on?: string | null;
 };
 
 export type SinbookParticipant = {
@@ -180,6 +184,11 @@ export function canDeleteSinbookAsUser(sb: SinbookWithParticipants, userId: stri
   if (!userId) return false;
   if (sb.created_by === userId) return true;
   return sb.participants.some((p) => p.user_id === userId && p.status === "accepted");
+}
+
+/** Same gate as delete: creator or accepted participant may edit rivalry metadata (matches sinbooks_update RLS). */
+export function canEditSinbookAsUser(sb: SinbookWithParticipants, userId: string | undefined): boolean {
+  return canDeleteSinbookAsUser(sb, userId);
 }
 
 // ============================================================================
@@ -370,17 +379,17 @@ export async function createSinbook(input: {
   return data;
 }
 
+export type SinbookMetadataUpdate = Partial<
+  Pick<Sinbook, "title" | "description" | "stake" | "season" | "is_private" | "scoring_format" | "ends_on">
+>;
+
 /**
- * Update sinbook metadata
+ * Update sinbook metadata (title, stake, notes, format, end date, etc.).
+ * RLS: creator or accepted participant only.
  */
-export async function updateSinbook(
-  sinbookId: string,
-  updates: Partial<Pick<Sinbook, "title" | "description" | "stake" | "season" | "is_private">>
-): Promise<void> {
-  const { error } = await supabase
-    .from("sinbooks")
-    .update({ ...updates, updated_at: new Date().toISOString() })
-    .eq("id", sinbookId);
+export async function updateSinbook(sinbookId: string, updates: SinbookMetadataUpdate): Promise<void> {
+  const payload: Record<string, unknown> = { ...updates, updated_at: new Date().toISOString() };
+  const { error } = await supabase.from("sinbooks").update(payload).eq("id", sinbookId);
 
   if (error) throw new Error(error.message);
 }
