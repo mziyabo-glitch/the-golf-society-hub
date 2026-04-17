@@ -77,6 +77,8 @@ export type CourseMeta = {
   id: string;
   course_name: string | null;
   api_id: number | null;
+  lat: number | null;
+  lng: number | null;
 };
 
 /**
@@ -108,15 +110,21 @@ export async function getCourseByApiId(apiId: number): Promise<CourseWithTees | 
 export async function getCourseMetaById(courseId: string): Promise<CourseMeta | null> {
   const { data, error } = await supabase
     .from("courses")
-    .select("id, course_name, api_id")
+    .select("id, course_name, api_id, lat, lng")
     .eq("id", courseId)
     .maybeSingle();
 
   if (error || !data) return null;
+  const latRaw = data.lat;
+  const lngRaw = data.lng;
+  const lat = latRaw != null && Number.isFinite(Number(latRaw)) ? Number(latRaw) : null;
+  const lng = lngRaw != null && Number.isFinite(Number(lngRaw)) ? Number(lngRaw) : null;
   return {
     id: data.id,
     course_name: data.course_name ?? null,
     api_id: data.api_id != null ? Number(data.api_id) : null,
+    lat,
+    lng,
   };
 }
 

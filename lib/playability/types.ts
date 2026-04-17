@@ -2,6 +2,8 @@
  * Golf playability — decision-focused outputs derived from forecast + course context.
  */
 
+import type { PlayabilityEngineOutput } from "@/lib/weather/playabilityEngine";
+
 export type PlayabilityLevel = "excellent" | "good" | "mixed" | "poor" | "severe";
 
 export type WindImpactLevel = "low" | "moderate" | "high" | "extreme";
@@ -51,6 +53,8 @@ export type PlayabilityInsight = {
   targetDate: string;
   /** ~8am–2pm-style slots for “when to play” strip */
   playTimeline: PlayTimelineSlot[];
+  /** Present when insight was produced by `lib/weather` evaluateRoundWindow (debug / richer UI). */
+  engineSnapshot?: PlayabilityEngineOutput;
 };
 
 /** Normalised hour — comparable across providers */
@@ -62,6 +66,12 @@ export type HourlyForecastPoint = {
   tempC: number;
   precipProbPercent: number;
   windKmh: number;
+  /** Present when the provider supplies gusts (Open-Meteo); optional on OWM path */
+  gustKmh?: number | null;
+  /** Hourly liquid equivalent mm/h when available (Open-Meteo `precipitation`) */
+  precipMmPerH?: number | null;
+  /** Feels-like / apparent temperature when available */
+  apparentTempC?: number | null;
   /** WMO-style or mapped code for playability heuristics */
   weatherCode: number;
   humidityPercent: number;

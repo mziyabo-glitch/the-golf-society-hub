@@ -12,6 +12,7 @@ import { LoadingState } from "@/components/ui/LoadingState";
 import { SecondaryButton } from "@/components/ui/Button";
 import { SocietyBadge } from "@/components/ui/SocietyHeader";
 import { StatusBadge } from "@/components/ui/StatusBadge";
+import { EventPlayabilitySection } from "@/components/playability/EventPlayabilitySection";
 import { EVENT_CLASSIFICATIONS, EVENT_FORMATS, getEvent, type EventDoc } from "@/lib/db_supabase/eventRepo";
 import { getEventGuests } from "@/lib/db_supabase/eventGuestRepo";
 import { getEventRegistrations, type EventRegistration } from "@/lib/db_supabase/eventRegistrationRepo";
@@ -161,6 +162,15 @@ export default function EventOverviewScreen() {
     );
   }, [event?.teeTimePublishedAt, event?.society_id, participantSocietyIds, societyId]);
 
+  const canShowPlayability = useMemo(() => {
+    if (!event?.society_id || !societyId) return false;
+    return isActiveSocietyParticipantForEvent(
+      societyId,
+      event.society_id,
+      participantSocietyIds,
+    );
+  }, [event?.society_id, participantSocietyIds, societyId]);
+
   const formatLabel =
     EVENT_FORMATS.find((f) => f.value === event?.format)?.label ?? event?.format ?? "Format TBD";
   const classificationLabel =
@@ -254,6 +264,15 @@ export default function EventOverviewScreen() {
             </AppText>
           </View>
         </AppCard>
+
+        {canShowPlayability ? (
+          <EventPlayabilitySection
+            event={event}
+            societyId={societyId}
+            memberId={currentMember?.id ?? null}
+            enabled
+          />
+        ) : null}
 
         <AppCard>
           <AppText variant="subheading" style={styles.cardTitle}>

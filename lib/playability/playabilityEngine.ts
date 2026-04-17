@@ -3,6 +3,13 @@
  * WMO weather codes (Open-Meteo): https://open-meteo.com/en/docs
  */
 
+import {
+  evaluateRoundWindow as evaluateWeatherRoundWindow,
+  type PlayabilityEngineOutput,
+  type PlayabilityStatus,
+  type RoundHourSample,
+} from "@/lib/weather/playabilityEngine";
+import { filterLocalDaytimeHours } from "@/lib/weather/playabilityPresentation";
 import type {
   ComfortLevel,
   HourlyForecastPoint,
@@ -24,23 +31,11 @@ import {
   windImpactScan,
 } from "./weatherVisual";
 
-function isThunderCode(code: number): boolean {
-  return code >= 95 && code <= 99;
-}
-
 function isHeavyPrecipCode(code: number): boolean {
   if (code >= 95) return true;
   if (code >= 80 && code <= 82) return true;
   if (code >= 65 && code <= 67) return true;
   return false;
-}
-
-function levelFromRating(r: number): PlayabilityLevel {
-  if (r >= 8.2) return "excellent";
-  if (r >= 6.8) return "good";
-  if (r >= 5.2) return "mixed";
-  if (r >= 3.5) return "poor";
-  return "severe";
 }
 
 function windLevel(maxW: number, avgW: number): WindImpactLevel {
@@ -74,54 +69,106 @@ function filterHoursForDate(hourly: HourlyForecastPoint[], ymd: string): HourlyF
   return day.length > 0 ? day : hourly;
 }
 
-function headlineLabel(level: PlayabilityLevel, rainRisk: RainRiskLevel, windImpact: WindImpactLevel): string {
-  if (level === "excellent") return "Great day";
-  if (level === "good") return "Good to go";
-  if (level === "severe" || rainRisk === "high") return "High risk";
-  if (level === "poor" || windImpact === "extreme") return "Brutal weather";
-  if (level === "mixed") return "Pick a window";
-  return "Caution";
+function levelFromEngineStatus(status: PlayabilityStatus, score: number | null): PlayabilityLevel {
+  if (status === "NO_PLAY") return "severe";
+  if (status === "CAUTION") return "poor";
+  if (status === "MARGINAL") return "mixed";
+  if (status === "UNKNOWN") return "mixed";
+  const s = score ?? 72;
+  if (s >= 82) return "excellent";
+  if (s >= 68) return "good";
+  if (s >= 52) return "mixed";
+  if (s >= 38) return "poor";
+  return "severe";
 }
 
-function buildRatingExplanation(
-  rating: number,
-  level: PlayabilityLevel,
-  maxProb: number,
-  maxWind: number,
-  thunder: boolean,
-): string {
-  const tags: string[] = [];
-  if (thunder) tags.push("storms");
-  else if (maxProb >= 65) tags.push("wet");
-  else if (maxProb >= 38) tags.push("showers");
-  if (maxWind >= 40) tags.push("windy");
-  const tail = tags.length ? tags.join(" · ") : "mild signals";
-  const band =
-    level === "excellent" || level === "good"
-      ? "favourable"
-      : level === "mixed"
-        ? "mixed"
-        : "tough";
-  return `${rating.toFixed(1)}/10 — ${band} (${tail}).`;
+function hourlyForecastToRoundSamples(hours: HourlyForecastPoint[]): RoundHourSample[] {
+  return hours.map((h) => ({
+    timeIso: typeof h.time === "string" ? h.time : String(h.time ?? ""),
+    windKmh: Number.isFinite(h.windKmh) ? h.windKmh : null,
+    gustKmh: h.gustKmh != null && Number.isFinite(h.gustKmh) ? h.gustKmh : null,
+    precipMmPerH: h.precipMmPerH != null && Number.isFinite(h.precipMmPerH) ? h.precipMmPerH : null,
+    precipProbabilityPct: Number.isFinite(h.precipProbPercent) ? h.precipProbPercent : null,
+    tempC: Number.isFinite(h.tempC) ? h.tempC : null,
+    apparentTempC: h.apparentTempC != null && Number.isFinite(h.apparentTempC) ? h.apparentTempC : null,
+    weatherCode: Number.isFinite(h.weatherCode) ? h.weatherCode : null,
+  }));
 }
 
-function recommendedActionText(
-  level: PlayabilityLevel,
-  rainRisk: RainRiskLevel,
-  windImpact: WindImpactLevel,
-  thunder: boolean,
-  bestWindow: string | null,
-  bestWindowFallback: string | null,
-): string {
-  if (thunder || rainRisk === "high") return "Call club — confirm tees.";
-  if (windImpact === "extreme") {
-    return bestWindow ? `Try ${bestWindow}.` : "Club up or delay.";
-  }
-  if (level === "excellent" || level === "good") return "Good to book.";
-  if (rainRisk === "moderate") return "Pack waterproofs.";
-  if (bestWindow) return `Best: ${bestWindow}.`;
-  if (bestWindowFallback) return "Use timeline below.";
-  return "Pick a clearer slot.";
+function mapEngineToInsight(
+  out: PlayabilityEngineOutput,
+  targetDateYmd: string,
+  slice: HourlyForecastPoint[],
+  hourly: HourlyForecastPoint[],
+  options?: ComputePlayabilityOptions,
+): PlayabilityInsight {
+  const playTimeline = buildPlayTimeline(
+    hourly,
+    targetDateYmd,
+    options?.sunriseIso,
+    options?.sunsetIso,
+  );
+
+  const poolForWindow = slice.length > 0 ? slice : filterHoursForDate(hourly, targetDateYmd);
+  const { bestWindow, bestWindowFallback } = computeBestWindowDaylight(
+    poolForWindow,
+    targetDateYmd,
+    options?.sunriseIso,
+    options?.sunsetIso,
+    options?.preferredTeeMinutesLocal ?? null,
+  );
+
+  const maxWind = slice.length > 0 ? Math.max(...slice.map((h) => h.windKmh)) : out.metrics.windKmh ?? 0;
+  const avgWind = slice.length > 0 ? slice.reduce((s, h) => s + h.windKmh, 0) / slice.length : maxWind;
+  const windImpact = windLevel(maxWind, avgWind);
+
+  const thunder = out.debug.signals.thunder;
+  const maxProb =
+    out.metrics.rainProbabilityPct ??
+    (slice.length > 0 ? Math.max(...slice.map((h) => h.precipProbPercent)) : 0);
+  const heavyCode = slice.some((h) => isHeavyPrecipCode(h.weatherCode));
+  const rainRisk = rainLevel(maxProb, heavyCode, thunder);
+  const rainIntensity = rainIntensityFromHours(slice);
+
+  const avgTemp =
+    slice.length > 0 ? slice.reduce((s, h) => s + h.tempC, 0) / slice.length : out.metrics.tempC ?? 10;
+  const comfort = comfortLevel(avgTemp);
+
+  const rating =
+    out.score != null ? Math.max(1, Math.min(10, Math.round((out.score / 10) * 10) / 10)) : 5;
+  const level = levelFromEngineStatus(out.status, out.score);
+
+  const windSummary = windImpactScan(windImpact).label;
+  const rainSummary = rainIntensityScan(rainIntensity).label;
+  const comfortSummary = comfortScan(comfort).label;
+
+  const warnings = out.reasons.length > 0 ? [...out.reasons] : [];
+
+  const ratingExplanation = `${rating.toFixed(1)}/10 · ${out.windRainSummary}`.trim();
+  const recommendedAction =
+    out.reasons.filter(Boolean).slice(0, 2).join(" ") || out.message || "Review conditions before you travel.";
+
+  return {
+    rating,
+    level,
+    label: out.statusLabel,
+    summary: out.message,
+    ratingExplanation,
+    recommendedAction,
+    warnings,
+    windImpact,
+    windSummary,
+    rainRisk,
+    rainIntensity,
+    rainSummary,
+    comfort,
+    comfortSummary,
+    bestWindow,
+    bestWindowFallback,
+    targetDate: targetDateYmd,
+    playTimeline,
+    engineSnapshot: out,
+  };
 }
 
 export type ComputePlayabilityOptions = {
@@ -221,107 +268,8 @@ export function computePlayability(
   const dayHours = filterHoursForDate(hourly, targetDateYmd);
   const slice = dayHours.length > 0 ? dayHours : hourly;
 
-  const avgTemp = slice.reduce((s, h) => s + h.tempC, 0) / slice.length;
-  const avgProb = slice.reduce((s, h) => s + h.precipProbPercent, 0) / slice.length;
-  const avgWind = slice.reduce((s, h) => s + h.windKmh, 0) / slice.length;
-  const maxWind = Math.max(...slice.map((h) => h.windKmh));
-  const maxProb = Math.max(...slice.map((h) => h.precipProbPercent));
-  const thunder = slice.some((h) => isThunderCode(h.weatherCode));
-  const heavyCode = slice.some((h) => isHeavyPrecipCode(h.weatherCode));
+  const roundSamples = filterLocalDaytimeHours(hourlyForecastToRoundSamples(slice));
+  const engineOut = evaluateWeatherRoundWindow({ countryCode: "GB", hourly: roundSamples });
 
-  let rating = 7.5;
-  rating -= Math.min(3, avgProb * 0.035);
-  if (avgWind >= 35) rating -= 1.8;
-  else if (avgWind >= 28) rating -= 1.1;
-  else if (avgWind >= 20) rating -= 0.55;
-  if (thunder) rating -= 2.2;
-  else if (heavyCode) rating -= 1.1;
-  if (maxProb >= 70) rating -= 0.9;
-  if (avgTemp < 3) rating -= 0.8;
-  if (avgTemp > 30) rating -= 0.7;
-
-  rating = Math.max(1, Math.min(10, Math.round(rating * 10) / 10));
-
-  const windImpact = windLevel(maxWind, avgWind);
-  const rainRisk = rainLevel(maxProb, heavyCode, thunder);
-  const comfort = comfortLevel(avgTemp);
-  const level = levelFromRating(rating);
-  const rainIntensity = rainIntensityFromHours(slice);
-
-  const warnings: string[] = [];
-  if (windImpact === "extreme" || maxWind >= 45) {
-    warnings.push("Gale wind");
-  } else if (windImpact === "high") {
-    warnings.push("Strong wind");
-  }
-  if (rainRisk === "high") {
-    warnings.push("Heavy rain risk");
-  } else if (rainRisk === "moderate") {
-    warnings.push("Showers likely");
-  }
-  if (thunder) {
-    warnings.push("Thunder risk");
-  }
-  if (comfort === "cold") {
-    warnings.push("Cold round");
-  }
-  if (comfort === "hot") {
-    warnings.push("Heat — hydrate");
-  }
-
-  const windSummary = windImpactScan(windImpact).label;
-  const rainSummary = rainIntensityScan(rainIntensity).label;
-  const comfortSummary = comfortScan(comfort).label;
-
-  let summary = "Patchy — pick window.";
-  if (level === "excellent" || level === "good") summary = "Solid playing day.";
-  if (level === "poor" || level === "severe") summary = "Tough — confirm first.";
-
-  const poolForWindow = dayHours.length > 0 ? dayHours : filterHoursForDate(hourly, targetDateYmd);
-  const { bestWindow, bestWindowFallback } = computeBestWindowDaylight(
-    poolForWindow,
-    targetDateYmd,
-    options?.sunriseIso,
-    options?.sunsetIso,
-    options?.preferredTeeMinutesLocal ?? null,
-  );
-
-  const label = headlineLabel(level, rainRisk, windImpact);
-  const recommendedAction = recommendedActionText(
-    level,
-    rainRisk,
-    windImpact,
-    thunder,
-    bestWindow,
-    bestWindowFallback,
-  );
-  const ratingExplanation = buildRatingExplanation(rating, level, maxProb, maxWind, thunder);
-
-  const playTimeline = buildPlayTimeline(
-    hourly,
-    targetDateYmd,
-    options?.sunriseIso,
-    options?.sunsetIso,
-  );
-
-  return {
-    rating,
-    level,
-    label,
-    summary,
-    ratingExplanation,
-    recommendedAction,
-    warnings,
-    windImpact,
-    windSummary,
-    rainRisk,
-    rainIntensity,
-    rainSummary,
-    comfort,
-    comfortSummary,
-    bestWindow,
-    bestWindowFallback,
-    targetDate: targetDateYmd,
-    playTimeline,
-  };
+  return mapEngineToInsight(engineOut, targetDateYmd, slice, hourly, options);
 }

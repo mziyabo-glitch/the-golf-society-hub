@@ -120,6 +120,17 @@ export function PlayabilityCard({
             </View>
           </View>
 
+          {insight.engineSnapshot?.windRainSummary ? (
+            <AppText variant="caption" color="tertiary" numberOfLines={2} style={{ marginBottom: spacing.sm }}>
+              {insight.engineSnapshot.windRainSummary}
+            </AppText>
+          ) : null}
+          {insight.engineSnapshot?.score != null ? (
+            <AppText variant="captionBold" color="secondary" style={{ marginBottom: spacing.sm }}>
+              Conditions score {insight.engineSnapshot.score}/100
+            </AppText>
+          ) : null}
+
           <View style={[styles.whyBlock, { borderTopColor: colors.borderLight, backgroundColor: colors.backgroundSecondary }]}>
             <AppText variant="captionBold" color="secondary" style={styles.whyEyebrow}>
               Score
@@ -159,7 +170,7 @@ export function PlayabilityCard({
               icon="wind"
               label="Wind"
               emoji={windImpactScan(insight.windImpact).emoji}
-              value={insight.windSummary}
+              value={insight.engineSnapshot?.windRainSummary ?? insight.windSummary}
               colors={colors}
             />
             <Metric

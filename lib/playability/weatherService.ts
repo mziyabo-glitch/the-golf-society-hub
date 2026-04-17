@@ -120,9 +120,12 @@ function normalizeOpenWeatherMap25(lat: number, lng: number, apiKey: string): Pr
 type OpenMeteoHourly = {
   time?: string[];
   temperature_2m?: number[];
+  apparent_temperature?: number[];
+  precipitation?: number[];
   precipitation_probability?: number[];
   /** Current API name (km/h with default units). */
   wind_speed_10m?: number[];
+  wind_gusts_10m?: number[];
   /** Legacy alias — keep while parsing old responses. */
   windspeed_10m?: number[];
   weathercode?: number[];
@@ -148,8 +151,11 @@ function normalizeOpenMeteo(lat: number, lng: number): Promise<NormalizedForecas
     wind_speed_unit: "kmh",
     hourly: [
       "temperature_2m",
+      "apparent_temperature",
+      "precipitation",
       "precipitation_probability",
       "wind_speed_10m",
+      "wind_gusts_10m",
       "weathercode",
       "relative_humidity_2m",
     ].join(","),
@@ -192,8 +198,11 @@ function normalizeOpenMeteo(lat: number, lng: number): Promise<NormalizedForecas
     const dailyRaw = json?.daily as OpenMeteoDaily | undefined;
     const times = hourlyRaw?.time ?? [];
     const temps = hourlyRaw?.temperature_2m ?? [];
+    const apparent = hourlyRaw?.apparent_temperature ?? [];
+    const precipMm = hourlyRaw?.precipitation ?? [];
     const pprob = hourlyRaw?.precipitation_probability ?? [];
     const wind = hourlyRaw?.wind_speed_10m ?? hourlyRaw?.windspeed_10m ?? [];
+    const gust = hourlyRaw?.wind_gusts_10m ?? [];
     const codes = hourlyRaw?.weathercode ?? [];
     const hum = hourlyRaw?.relative_humidity_2m ?? [];
 
@@ -201,12 +210,18 @@ function normalizeOpenMeteo(lat: number, lng: number): Promise<NormalizedForecas
     for (let i = 0; i < times.length; i++) {
       const time = times[i];
       const dateYmdLocal = typeof time === "string" && time.length >= 10 ? time.slice(0, 10) : "";
+      const gRaw = gust[i];
+      const pRaw = precipMm[i];
+      const apRaw = apparent[i];
       hourly.push({
         time,
         dateYmdLocal,
         tempC: Number(temps[i] ?? 0),
         precipProbPercent: Math.min(100, Math.max(0, Number(pprob[i] ?? 0))),
         windKmh: Math.max(0, Number(wind[i] ?? 0)),
+        gustKmh: gRaw != null && Number.isFinite(Number(gRaw)) ? Math.max(0, Number(gRaw)) : null,
+        precipMmPerH: pRaw != null && Number.isFinite(Number(pRaw)) ? Math.max(0, Number(pRaw)) : null,
+        apparentTempC: apRaw != null && Number.isFinite(Number(apRaw)) ? Number(apRaw) : null,
         weatherCode: Math.round(Number(codes[i] ?? 0)),
         humidityPercent: Math.min(100, Math.max(0, Number(hum[i] ?? 50))),
       });

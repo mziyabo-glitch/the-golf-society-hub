@@ -124,11 +124,24 @@ export function DashboardPlayabilityMiniCard({
         ) : (
           <>
             <View style={styles.ratingBlock}>
-              <AppText variant="h2" style={[styles.levelWord, { color: colors.text }]} numberOfLines={1}>
-                {LEVEL_WORD[bundle.insight.level]}
-              </AppText>
-              <AppText variant="captionBold" color="secondary" style={styles.scoreLine} numberOfLines={1}>
-                {bundle.insight.rating.toFixed(1)}/10 playability · {bundle.insight.label}
+              <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.xs }}>
+                {bundle.insight.engineSnapshot?.icon ? (
+                  <Feather
+                    name={bundle.insight.engineSnapshot.icon as keyof typeof Feather.glyphMap}
+                    size={22}
+                    color={colors.primary}
+                  />
+                ) : null}
+                <AppText variant="h2" style={[styles.levelWord, { color: colors.text, flex: 1 }]} numberOfLines={1}>
+                  {bundle.insight.engineSnapshot?.statusLabel ?? LEVEL_WORD[bundle.insight.level]}
+                </AppText>
+              </View>
+              <AppText variant="captionBold" color="secondary" style={styles.scoreLine} numberOfLines={2}>
+                {bundle.insight.engineSnapshot?.score != null
+                  ? `Score ${bundle.insight.engineSnapshot.score}/100`
+                  : `${bundle.insight.rating.toFixed(1)}/10 playability`}
+                {" · "}
+                {bundle.insight.engineSnapshot?.message ?? bundle.insight.label}
               </AppText>
             </View>
 
@@ -136,7 +149,7 @@ export function DashboardPlayabilityMiniCard({
               <Indicator
                 icon="wind"
                 emoji={windImpactScan(bundle.insight.windImpact).emoji}
-                text={bundle.insight.windSummary}
+                text={bundle.insight.engineSnapshot?.windRainSummary ?? bundle.insight.windSummary}
                 colors={colors}
               />
               <Indicator
