@@ -12,7 +12,7 @@ import { LoadingState } from "@/components/ui/LoadingState";
 import { InlineNotice } from "@/components/ui/InlineNotice";
 import { useBootstrap } from "@/lib/useBootstrap";
 import { canManageEventPaymentsForSociety } from "@/lib/rbac";
-import { confirmDestructive, showAlert } from "@/lib/ui/alert";
+import { confirmAction, confirmDestructive, showAlert } from "@/lib/ui/alert";
 import { getEvent, type EventDoc } from "@/lib/db_supabase/eventRepo";
 import { getMembersByIds } from "@/lib/db_supabase/memberRepo";
 import { getEventGuests } from "@/lib/db_supabase/eventGuestRepo";
@@ -36,6 +36,7 @@ import type { EventPrizePoolResultRow, EventPrizePoolRow } from "@/lib/event-pri
 import { PRIZE_POOL_PAYOUT_TEMPLATES } from "@/lib/event-prize-pools-types";
 import { derivePrizePoolTotalAmountPence, validateRuleBasisPointsTotal } from "@/lib/event-prize-pools-calc";
 import {
+  buildPrizePoolResultsShareSections,
   buildStandardPoolRuleLines,
   eventFormatDisplayLabel,
   prizePoolRankingPolicyLine,
@@ -44,6 +45,7 @@ import {
 import { PrizePoolStatusBadge } from "@/components/event-prize-pools/PrizePoolStatusBadge";
 import { PrizePoolSummary } from "@/components/event-prize-pools/PrizePoolSummary";
 import PrizePoolEntrantsShareCard from "@/components/event-prize-pools/PrizePoolEntrantsShareCard";
+import PrizePoolResultsShareCard from "@/components/event-prize-pools/PrizePoolResultsShareCard";
 import { captureAndShare } from "@/lib/share/captureAndShare";
 import { assertPngExportOnly } from "@/lib/share/pngExportGuard";
 import { getColors, spacing, iconSize, radius } from "@/lib/ui/theme";
@@ -114,7 +116,9 @@ export default function PrizePoolDetailScreen() {
   const [splitterBusy, setSplitterBusy] = useState(false);
   const [splitterScoresTableMissing, setSplitterScoresTableMissing] = useState(false);
   const [sharePngBusy, setSharePngBusy] = useState(false);
+  const [shareResultsPngBusy, setShareResultsPngBusy] = useState(false);
   const entrantsShareRef = useRef<View>(null);
+  const resultsShareRef = useRef<View>(null);
   const [shareExtras, setShareExtras] = useState<{
     societyName: string;
     societyLogoUrl: string | null;
@@ -299,6 +303,69 @@ export default function PrizePoolDetailScreen() {
     return buildStandardPoolRuleLines({ placesPaid, percents, payoutMode });
   }, [competitionType, placesPaid, percents, payoutMode]);
 
+  const resultsShareSections = useMemo(() => {
+    if (!pool || results.length === 0) return [];
+    return buildPrizePoolResultsShareSections({
+      pool,
+      results,
+      nameByMemberId,
+      nameByGuestId,
+    });
+  }, [pool, results, nameByMemberId, nameByGuestId]);
+
+  const resultsShareMetaLines = useMemo(() => {
+    if (!pool) return [];
+    const winners = results.filter((r) => r.payout_amount_pence > 0).length;
+    const lines: string[] = [
+      `Event pool: ${formatPenceGbp(pool.total_amount_pence)}`,
+      `Payout mode: ${
+        pool.competition_type === "splitter"
+          ? "Fixed Splitter categories (Front 9 / Back 9 / Birdies / Overall)"
+          : pool.payout_mode === "overall"
+            ? "Overall field"
+            : "Per division"
+      }`,
+      `Total mode: ${pool.total_amount_mode === "per_entrant" ? "Per confirmed entrant" : "Manual total"}`,
+      `Winners with a payout: ${winners}`,
+    ];
+    return lines;
+  }, [pool, results]);
+
+  const resultsSplitterRollNote = useMemo(() => {
+    if (!pool || pool.competition_type !== "splitter") return null;
+    if (
+      results.some((r) =>
+        String(r.calculation_note ?? "").includes("birdie prize rolled into Best Overall Score"),
+      )
+    ) {
+      return "Most Birdies rolled into Best Overall Score because no birdies were recorded.";
+    }
+    return null;
+  }, [pool, results]);
+
+  const poolStatusDisplay = useMemo(() => {
+    if (!pool) return "";
+    if (pool.status === "calculated") return "Calculated";
+    if (pool.status === "finalised") return "Finalised";
+    if (pool.status === "draft") return "Draft";
+    return pool.status;
+  }, [pool]);
+
+  const lastCalculatedDisplay = useMemo(() => {
+    if (!pool?.last_calculated_at) return null;
+    try {
+      return new Date(pool.last_calculated_at).toLocaleString("en-GB", {
+        day: "numeric",
+        month: "short",
+        year: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+      });
+    } catch {
+      return pool.last_calculated_at;
+    }
+  }, [pool?.last_calculated_at]);
+
   const entryShareLabel = useMemo(() => {
     if (!pool) return "—";
     if (totalAmountMode === "per_entrant") {
@@ -354,6 +421,38 @@ export default function PrizePoolDetailScreen() {
       Alert.alert("Share failed", e instanceof Error ? e.message : "Unknown error");
     } finally {
       setSharePngBusy(false);
+    }
+  };
+
+  const shareResultsPng = async () => {
+    if (!pool || !event || results.length === 0) return;
+    assertPngExportOnly("Prize pool results");
+    setShareResultsPngBusy(true);
+    try {
+      await new Promise((r) => setTimeout(r, 450));
+      let est = 1280;
+      for (const sec of resultsShareSections) {
+        est += 100 + Math.min(sec.rows.length, 36) * 56;
+      }
+      const payBlock = (event.prizePoolPaymentInstructions ?? "").trim() ? 140 : 0;
+      const rollBlock = resultsSplitterRollNote ? 100 : 0;
+      const metaBlock = 48 + resultsShareMetaLines.length * 28;
+      est = Math.min(5600, est + payBlock + rollBlock + metaBlock);
+      const shareResult = await captureAndShare(resultsShareRef, {
+        dialogTitle: `${pool.name} — payout results`,
+        width: 1080,
+        height: est,
+      });
+      if (shareResult.completedVia === "download") {
+        showAlert(
+          "Download complete",
+          "Your image was saved. On some browsers you may need to open Downloads to share it.",
+        );
+      }
+    } catch (e: unknown) {
+      showAlert("Share failed", e instanceof Error ? e.message : "Unknown error");
+    } finally {
+      setShareResultsPngBusy(false);
     }
   };
 
@@ -427,58 +526,52 @@ export default function PrizePoolDetailScreen() {
 
   const runCalculate = () => {
     if (!poolId || locked) return;
-    Alert.alert(
-      "Calculate payouts",
+    console.log("[prize-pool-ui] calculate button pressed", {
+      poolId,
+      eventId,
+      competitionType,
+      poolStatus: pool?.status,
+    });
+    const message =
       competitionType === "splitter"
         ? "Calculate splitter payouts using official event scores (Best Overall) and Pot Master Front 9 / Back 9 / Birdies inputs?"
-        : "Calculate payouts from official event results?",
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Calculate",
-          onPress: () => {
-            void (async () => {
-              setBusy(true);
-              try {
-                await calculateEventPrizePool(poolId);
-                await load();
-              } catch (e: unknown) {
-                Alert.alert("Calculation failed", e instanceof Error ? e.message : "Unknown error");
-              } finally {
-                setBusy(false);
-              }
-            })();
-          },
-        },
-      ],
-    );
+        : "Calculate payouts from official event results?";
+    confirmAction("Calculate payouts", message, "Calculate", async () => {
+      setBusy(true);
+      try {
+        await calculateEventPrizePool(poolId);
+        await load();
+        showAlert("Payouts calculated", "The payout summary has been updated.");
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : "Calculation failed.";
+        console.warn("[prize-pool-ui] calculate failed", { poolId, message: msg });
+        showAlert("Calculation failed", msg);
+      } finally {
+        setBusy(false);
+      }
+    });
   };
 
   const runFinalise = () => {
     if (!poolId || locked) return;
-    Alert.alert(
+    confirmDestructive(
       "Finalise pool",
       "Finalise this prize pool? Finalised pools can no longer be edited.",
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Finalise",
-          style: "destructive",
-          onPress: () => {
-            void (async () => {
-              setBusy(true);
-              try {
-                await finaliseEventPrizePool(poolId);
-                await load();
-              } catch (e: unknown) {
-                Alert.alert("Could not finalise", e instanceof Error ? e.message : "Unknown error");
-              } finally {
-                setBusy(false);
-              }
-            })();
-          },
-        },
-      ],
+      "Finalise",
+      async () => {
+        setBusy(true);
+        try {
+          await finaliseEventPrizePool(poolId);
+          await load();
+          showAlert("Pool finalised", "This prize pool is now locked.");
+        } catch (e: unknown) {
+          const msg = e instanceof Error ? e.message : "Could not finalise.";
+          console.warn("[prize-pool-ui] finalise failed", { poolId, message: msg });
+          showAlert("Could not finalise", msg);
+        } finally {
+          setBusy(false);
+        }
+      },
     );
   };
 
@@ -924,6 +1017,22 @@ export default function PrizePoolDetailScreen() {
           />
         ) : null}
 
+        {results.length > 0 && pool.status !== "draft" ? (
+          <>
+            <SecondaryButton
+              loading={shareResultsPngBusy}
+              disabled={sharePngBusy || shareResultsPngBusy || !event}
+              onPress={() => void shareResultsPng()}
+            >
+              Share payout results (PNG)
+            </SecondaryButton>
+            <AppText variant="caption" color="secondary">
+              Works for Prize Pool (Pot) and Prize Pool (Pot) Splitter — includes calculated placings, scores, payouts per
+              category or division, and event payment notes when set.
+            </AppText>
+          </>
+        ) : null}
+
         {pool.status !== "finalised" ? (
           <DestructiveButton loading={busy} onPress={runDelete} style={{ marginTop: spacing.lg }}>
             Delete pool
@@ -952,6 +1061,27 @@ export default function PrizePoolDetailScreen() {
           eventPaymentInstructions={event?.prizePoolPaymentInstructions?.trim() || null}
           entrants={shareEntrantRows}
           showSplitterScores={competitionType === "splitter"}
+        />
+        <PrizePoolResultsShareCard
+          ref={resultsShareRef}
+          societyName={shareExtras.societyName || "Society"}
+          societyLogoUrl={shareExtras.societyLogoUrl}
+          eventName={(event?.name || "Event").trim()}
+          eventDateLine={formatEventDateForShare(event)}
+          venueLine={(event?.courseName || "").trim() || null}
+          poolName={pool.name}
+          potMasterName={shareExtras.potMasterName}
+          poolKindLabel={
+            pool.competition_type === "splitter" ? "Prize Pool (Pot) Splitter" : "Prize Pool (Pot)"
+          }
+          eventFormatLabel={eventFormatDisplayLabel(event?.format)}
+          rankingPolicyLine={prizePoolRankingPolicyLine(event?.format)}
+          metaLines={resultsShareMetaLines}
+          splitterRollNote={resultsSplitterRollNote}
+          sections={resultsShareSections}
+          poolStatusLabel={poolStatusDisplay}
+          lastCalculatedLabel={lastCalculatedDisplay}
+          paymentInstructions={event?.prizePoolPaymentInstructions?.trim() || null}
         />
       </View>
       </>
