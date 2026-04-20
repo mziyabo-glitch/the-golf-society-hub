@@ -29,6 +29,10 @@ import {
   signInWithMagicLink,
 } from "@/lib/auth_supabase";
 import { setRememberMe } from "@/lib/supabaseStorage";
+import {
+  consumePendingPostAuthRedirect,
+  storePendingPostAuthRedirect,
+} from "@/lib/pendingPostAuthRedirect";
 import { useBootstrap } from "@/lib/useBootstrap";
 import { useRouter } from "expo-router";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
@@ -43,7 +47,12 @@ const masterLogo = require("@/assets/images/master-logo.png");
 
 type Mode = "signIn" | "signUp" | "forgotPassword" | "magicLink";
 
-export function AuthScreen() {
+export type AuthScreenProps = {
+  /** In-app path after successful email/password sign-in (e.g. `/invite/{eventUuid}`). */
+  redirectAfterSignIn?: string | null;
+};
+
+export function AuthScreen({ redirectAfterSignIn = null }: AuthScreenProps) {
   const colors = getColors();
   const { refresh } = useBootstrap();
   const router = useRouter();
@@ -111,6 +120,9 @@ export function AuthScreen() {
       }
 
       try {
+        if (redirectAfterSignIn && redirectAfterSignIn.startsWith("/")) {
+          await storePendingPostAuthRedirect(redirectAfterSignIn);
+        }
         const { error } = await signInWithMagicLink(submitEmail);
         if (error) {
           setError(error.message || "Failed to send magic link.");
@@ -147,7 +159,12 @@ export function AuthScreen() {
         if (data?.session) {
           refresh();
           blurWebActiveElement();
-          router.replace("/(app)/(tabs)");
+          const pending = await consumePendingPostAuthRedirect();
+          const dest =
+            (pending && pending.startsWith("/") ? pending : null) ??
+            (redirectAfterSignIn && redirectAfterSignIn.startsWith("/") ? redirectAfterSignIn : null) ??
+            "/(app)/(tabs)";
+          router.replace(dest as never);
           skipLoadingReset = true;
           return;
         }
@@ -468,6 +485,9 @@ export function AuthScreen() {
                     setRememberMe(rememberMe);
                   }
                   try {
+                    if (redirectAfterSignIn && redirectAfterSignIn.startsWith("/")) {
+                      await storePendingPostAuthRedirect(redirectAfterSignIn);
+                    }
                     const { error } = await signInWithGoogle();
                     if (error) {
                       setError(

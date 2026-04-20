@@ -12,6 +12,7 @@
     "lint": "expo lint -- --cache --cache-location .cache/eslint/.eslintcache",
     "test": "vitest run",
     "test:rsvp": "node scripts/rsvp-qa-smoke.cjs",
+    "verify:invite-rsvp": "node scripts/verify-public-invite-rsvp-e2e.mjs",
     "build": "expo export -p web",
     "vercel-build": "npm run build",
     "build-pilot": "node scripts/build-pilot-course-list.js",

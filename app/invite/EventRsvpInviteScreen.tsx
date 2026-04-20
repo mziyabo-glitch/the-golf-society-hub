@@ -19,8 +19,8 @@ import { getColors, spacing, radius } from "@/lib/ui/theme";
 import {
   fetchPublicEventInviteSummary,
   findMemberContextForEventInvite,
+  resolvePublicMemberRsvpEmailStatus,
   submitPublicGuestRsvp,
-  submitPublicMemberRsvpByEmail,
   type PublicEventInviteSummary,
 } from "@/lib/db_supabase/eventInviteRepo";
 import { setMyStatus } from "@/lib/db_supabase/eventRegistrationRepo";
@@ -29,9 +29,23 @@ import {
   getRsvpDeadlineDisplayTimeZone,
   mapPublicRsvpError,
 } from "@/lib/eventInvitePublic";
+import { blurWebActiveElement } from "@/lib/ui/focus";
+import {
+  EventRsvpError,
+  mapRsvpErrorCodeToInlineMessage,
+  RSVP_AMBIGUOUS_EMAIL_BODY,
+  RSVP_AMBIGUOUS_EMAIL_TITLE,
+  RSVP_UNLINKED_MEMBER_BODY,
+  RSVP_UNLINKED_MEMBER_TITLE,
+} from "@/lib/events/eventRsvpDomain";
+import {
+  clearPendingPostAuthRedirectIfMatches,
+  storePendingPostAuthRedirect,
+} from "@/lib/pendingPostAuthRedirect";
 
 type Step = "pick" | "member" | "guest" | "done";
 type DonePath = "member" | "guest" | null;
+type MemberGateKind = "unlinked" | "needs_auth" | "ambiguous";
 
 export function EventRsvpInviteScreen({ eventId }: { eventId: string }) {
   const router = useRouter();
@@ -47,6 +61,7 @@ export function EventRsvpInviteScreen({ eventId }: { eventId: string }) {
   const [guestName, setGuestName] = useState("");
   const [busy, setBusy] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
+  const [memberGate, setMemberGate] = useState<MemberGateKind | null>(null);
 
   const [memberCtx, setMemberCtx] = useState<{ memberId: string; societyId: string } | null>(null);
   const [ctxResolved, setCtxResolved] = useState(false);
@@ -75,6 +90,11 @@ export function EventRsvpInviteScreen({ eventId }: { eventId: string }) {
   }, [load]);
 
   useEffect(() => {
+    if (!isSignedIn) return;
+    void clearPendingPostAuthRedirectIfMatches(`/invite/${eventId}`);
+  }, [eventId, isSignedIn]);
+
+  useEffect(() => {
     if (!summary || !userId || ctxResolved) return;
     const parts =
       summary.participant_society_ids.length > 0
@@ -87,6 +107,11 @@ export function EventRsvpInviteScreen({ eventId }: { eventId: string }) {
     })();
   }, [summary, userId, ctxResolved]);
 
+  useEffect(() => {
+    setMemberGate(null);
+    setFormError(null);
+  }, [email]);
+
   const resetFormError = () => setFormError(null);
 
   const assertRsvpOpen = (): boolean => {
@@ -97,11 +122,66 @@ export function EventRsvpInviteScreen({ eventId }: { eventId: string }) {
     return true;
   };
 
+  const invitePath = summary ? `/invite/${summary.event_id}` : `/invite/${eventId}`;
+
+  const openJoinSociety = useCallback(() => {
+    if (!summary) return;
+    const code = summary.host_society_join_code?.trim();
+    blurWebActiveElement();
+    router.replace({
+      pathname: "/onboarding",
+      params: {
+        mode: "join",
+        invite: "1",
+        ...(code ? { code } : {}),
+      },
+    });
+  }, [router, summary]);
+
+  const openSignIn = useCallback(() => {
+    void storePendingPostAuthRedirect(invitePath);
+    blurWebActiveElement();
+    router.push("/sign-in");
+  }, [invitePath, router]);
+
   const mapSubmitError = (e: unknown): string => {
+    if (e instanceof EventRsvpError) {
+      const msg = mapRsvpErrorCodeToInlineMessage(e.code);
+      return msg || e.message || "Something went wrong. Please try again.";
+    }
     if (e instanceof Error) {
       return mapPublicRsvpError(e.message);
     }
     return mapPublicRsvpError("");
+  };
+
+  const resolveAnonymousMemberGate = async (): Promise<void> => {
+    if (!summary) return;
+    const norm = email.trim();
+    if (!norm) {
+      setFormError("Enter the email on your society record.");
+      return;
+    }
+    setMemberGate(null);
+    setFormError(null);
+    try {
+      const r = await resolvePublicMemberRsvpEmailStatus(summary.event_id, norm);
+      if (r.status === "not_found") {
+        setFormError(mapRsvpErrorCodeToInlineMessage("RSVP_MEMBER_NOT_FOUND"));
+        return;
+      }
+      if (r.status === "ambiguous") {
+        setMemberGate("ambiguous");
+        return;
+      }
+      if (r.status === "unlinked") {
+        setMemberGate("unlinked");
+        return;
+      }
+      setMemberGate("needs_auth");
+    } catch (e: unknown) {
+      setFormError(mapSubmitError(e));
+    }
   };
 
   const onMemberIn = async () => {
@@ -117,19 +197,25 @@ export function EventRsvpInviteScreen({ eventId }: { eventId: string }) {
           memberId: memberCtx.memberId,
           status: "in",
         });
-      } else {
-        await submitPublicMemberRsvpByEmail(summary.event_id, email, "in");
+        setDonePath("member");
+        if (typeof __DEV__ !== "undefined" && __DEV__) {
+          console.log("[rsvp-qa] public submit ok", {
+            kind: "member",
+            status: "in",
+            eventId: summary.event_id,
+            via: "signed_in",
+          });
+        }
+        setStep("done");
+        return;
       }
-      setDonePath("member");
-      if (typeof __DEV__ !== "undefined" && __DEV__) {
-        console.log("[rsvp-qa] public submit ok", {
-          kind: "member",
-          status: "in",
-          eventId: summary.event_id,
-          via: userId && memberCtx ? "signed_in" : "email",
-        });
+      if (userId && !memberCtx) {
+        setFormError(
+          "Use “Open app to join society” so this account is linked to the roster, then return here to RSVP.",
+        );
+        return;
       }
-      setStep("done");
+      await resolveAnonymousMemberGate();
     } catch (e: unknown) {
       setFormError(mapSubmitError(e));
     } finally {
@@ -150,19 +236,25 @@ export function EventRsvpInviteScreen({ eventId }: { eventId: string }) {
           memberId: memberCtx.memberId,
           status: "out",
         });
-      } else {
-        await submitPublicMemberRsvpByEmail(summary.event_id, email, "out");
+        setDonePath("member");
+        if (typeof __DEV__ !== "undefined" && __DEV__) {
+          console.log("[rsvp-qa] public submit ok", {
+            kind: "member",
+            status: "out",
+            eventId: summary.event_id,
+            via: "signed_in",
+          });
+        }
+        setStep("done");
+        return;
       }
-      setDonePath("member");
-      if (typeof __DEV__ !== "undefined" && __DEV__) {
-        console.log("[rsvp-qa] public submit ok", {
-          kind: "member",
-          status: "out",
-          eventId: summary.event_id,
-          via: userId && memberCtx ? "signed_in" : "email",
-        });
+      if (userId && !memberCtx) {
+        setFormError(
+          "Use “Open app to join society” so this account is linked to the roster, then return here to RSVP.",
+        );
+        return;
       }
-      setStep("done");
+      await resolveAnonymousMemberGate();
     } catch (e: unknown) {
       setFormError(mapSubmitError(e));
     } finally {
@@ -228,7 +320,7 @@ export function EventRsvpInviteScreen({ eventId }: { eventId: string }) {
       <Screen contentStyle={styles.pad}>
         <AppCard style={styles.card}>
           <AppText variant="h2" style={{ marginBottom: spacing.sm }}>
-            {guestSuccess ? "Thanks!" : "You&apos;re set"}
+            {guestSuccess ? "Thanks!" : "You're set"}
           </AppText>
           <AppText variant="bodyBold" style={{ marginBottom: spacing.xs }}>
             {summary.name}
@@ -339,6 +431,7 @@ export function EventRsvpInviteScreen({ eventId }: { eventId: string }) {
             onPress={() => {
               setStep("pick");
               resetFormError();
+              setMemberGate(null);
             }}
             style={{ alignSelf: "flex-start", marginBottom: spacing.sm }}
           >
@@ -355,7 +448,7 @@ export function EventRsvpInviteScreen({ eventId }: { eventId: string }) {
           ) : !userId ? (
             <>
               <AppText variant="small" color="secondary" style={{ marginBottom: spacing.sm }}>
-                Email on your society record.
+                Enter the email on your society record. You&apos;ll need a linked app account to save an RSVP.
               </AppText>
               <AppInput
                 value={email}
@@ -365,35 +458,76 @@ export function EventRsvpInviteScreen({ eventId }: { eventId: string }) {
                 autoCapitalize="none"
                 autoCorrect={false}
               />
-              <View style={[styles.row, { marginTop: spacing.base }]}>
-                <Pressable
-                  onPress={() => void onMemberIn()}
-                  disabled={busy}
-                  style={({ pressed }) => [
-                    styles.halfBtn,
-                    { backgroundColor: colors.primary, opacity: pressed ? 0.9 : 1 },
-                  ]}
-                >
-                  <AppText variant="bodyBold" color="inverse">
-                    In
+              {memberGate === "unlinked" ? (
+                <View style={{ marginTop: spacing.base }}>
+                  <AppText variant="h2" style={{ marginBottom: spacing.sm }}>
+                    {RSVP_UNLINKED_MEMBER_TITLE}
                   </AppText>
-                </Pressable>
-                <Pressable
-                  onPress={() => void onMemberOut()}
-                  disabled={busy}
-                  style={({ pressed }) => [
-                    styles.halfBtn,
-                    {
-                      backgroundColor: colors.backgroundTertiary,
-                      borderWidth: 1,
-                      borderColor: colors.border,
-                      opacity: pressed ? 0.9 : 1,
-                    },
-                  ]}
-                >
-                  <AppText variant="bodyBold">Out</AppText>
-                </Pressable>
-              </View>
+                  <AppText variant="body" color="secondary" style={{ marginBottom: spacing.lg }}>
+                    {RSVP_UNLINKED_MEMBER_BODY}
+                  </AppText>
+                  <PrimaryButton onPress={openJoinSociety} style={{ marginBottom: spacing.sm }}>
+                    Open app to join society
+                  </PrimaryButton>
+                  <SecondaryButton onPress={openSignIn}>Sign in</SecondaryButton>
+                </View>
+              ) : memberGate === "ambiguous" ? (
+                <View style={{ marginTop: spacing.base }}>
+                  <AppText variant="h2" style={{ marginBottom: spacing.sm }}>
+                    {RSVP_AMBIGUOUS_EMAIL_TITLE}
+                  </AppText>
+                  <AppText variant="body" color="secondary" style={{ marginBottom: spacing.lg }}>
+                    {RSVP_AMBIGUOUS_EMAIL_BODY}
+                  </AppText>
+                  <PrimaryButton onPress={openSignIn} style={{ marginBottom: spacing.sm }}>
+                    Sign in
+                  </PrimaryButton>
+                  <SecondaryButton onPress={openJoinSociety}>Open app to join society</SecondaryButton>
+                </View>
+              ) : memberGate === "needs_auth" ? (
+                <View style={{ marginTop: spacing.base }}>
+                  <AppText variant="h2" style={{ marginBottom: spacing.sm }}>
+                    Sign in to respond
+                  </AppText>
+                  <AppText variant="body" color="secondary" style={{ marginBottom: spacing.lg }}>
+                    {mapRsvpErrorCodeToInlineMessage("RSVP_AUTH_REQUIRED")}
+                  </AppText>
+                  <PrimaryButton onPress={openSignIn} style={{ marginBottom: spacing.sm }}>
+                    Sign in
+                  </PrimaryButton>
+                  <SecondaryButton onPress={openJoinSociety}>Open app to join society</SecondaryButton>
+                </View>
+              ) : (
+                <View style={[styles.row, { marginTop: spacing.base }]}>
+                  <Pressable
+                    onPress={() => void onMemberIn()}
+                    disabled={busy}
+                    style={({ pressed }) => [
+                      styles.halfBtn,
+                      { backgroundColor: colors.primary, opacity: pressed ? 0.9 : 1 },
+                    ]}
+                  >
+                    <AppText variant="bodyBold" color="inverse">
+                      In
+                    </AppText>
+                  </Pressable>
+                  <Pressable
+                    onPress={() => void onMemberOut()}
+                    disabled={busy}
+                    style={({ pressed }) => [
+                      styles.halfBtn,
+                      {
+                        backgroundColor: colors.backgroundTertiary,
+                        borderWidth: 1,
+                        borderColor: colors.border,
+                        opacity: pressed ? 0.9 : 1,
+                      },
+                    ]}
+                  >
+                    <AppText variant="bodyBold">Out</AppText>
+                  </Pressable>
+                </View>
+              )}
             </>
           ) : !ctxResolved ? (
             <LoadingState message="Checking membership…" />
@@ -435,46 +569,13 @@ export function EventRsvpInviteScreen({ eventId }: { eventId: string }) {
           ) : (
             <>
               <AppText variant="body" color="secondary" style={{ marginBottom: spacing.sm }}>
-                We can&apos;t match your signed-in account to this event&apos;s societies. Use your society email
-                below, or open the app, switch society, and try again.
+                Your signed-in account isn&apos;t linked to a membership in any society on this event yet. Join the
+                society in the app, then return to this invite to RSVP.
               </AppText>
-              <AppInput
-                value={email}
-                onChangeText={setEmail}
-                placeholder="you@email.com"
-                keyboardType="email-address"
-                autoCapitalize="none"
-                autoCorrect={false}
-              />
-              <View style={[styles.row, { marginTop: spacing.base }]}>
-                <Pressable
-                  onPress={() => void onMemberIn()}
-                  disabled={busy}
-                  style={({ pressed }) => [
-                    styles.halfBtn,
-                    { backgroundColor: colors.primary, opacity: pressed ? 0.9 : 1 },
-                  ]}
-                >
-                  <AppText variant="bodyBold" color="inverse">
-                    In
-                  </AppText>
-                </Pressable>
-                <Pressable
-                  onPress={() => void onMemberOut()}
-                  disabled={busy}
-                  style={({ pressed }) => [
-                    styles.halfBtn,
-                    {
-                      backgroundColor: colors.backgroundTertiary,
-                      borderWidth: 1,
-                      borderColor: colors.border,
-                      opacity: pressed ? 0.9 : 1,
-                    },
-                  ]}
-                >
-                  <AppText variant="bodyBold">Out</AppText>
-                </Pressable>
-              </View>
+              <PrimaryButton onPress={openJoinSociety} style={{ marginBottom: spacing.sm }}>
+                Open app to join society
+              </PrimaryButton>
+              <SecondaryButton onPress={openSignIn}>Sign in</SecondaryButton>
             </>
           )}
         </AppCard>

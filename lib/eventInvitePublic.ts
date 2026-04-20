@@ -1,3 +1,5 @@
+import { mapRsvpErrorCodeToInlineMessage, parsePostgresRsvpMessage } from "@/lib/events/eventRsvpDomain";
+
 /**
  * User-facing copy for public RSVP RPC errors (Postgres RAISE messages).
  *
@@ -89,15 +91,9 @@ export function combineLocalDateTimeToRsvpIso(dateStr: string, timeStr: string):
 }
 
 export function mapPublicRsvpError(raw: string): string {
+  const code = parsePostgresRsvpMessage(raw);
+  const mapped = mapRsvpErrorCodeToInlineMessage(code);
+  if (mapped) return mapped;
   const m = raw || "";
-  if (m.includes("multiple_members_found")) {
-    return "That email matches more than one member for this event. Open the app, sign in, and RSVP there.";
-  }
-  if (m.includes("rsvp_closed")) {
-    return "RSVP is closed for this event.";
-  }
-  if (m.includes("No member found with that email")) {
-    return "No member found with that email for this event. Check the address or sign in with the app.";
-  }
   return m || "Something went wrong. Please try again.";
 }

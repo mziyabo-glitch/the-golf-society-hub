@@ -1,7 +1,12 @@
-// Public event invite: RPCs work for anon key (migrations 089 + 090).
+// Public event invite: RPCs work for anon key (migrations 089 + 090 + 121).
 
 import { supabase } from "@/lib/supabase";
 import { mapPublicRsvpError } from "@/lib/eventInvitePublic";
+import {
+  EventRsvpError,
+  parsePostgresRsvpMessage,
+  type PublicRsvpMemberEmailResolve,
+} from "@/lib/events/eventRsvpDomain";
 
 export type PublicEventInviteSummary = {
   event_id: string;
@@ -13,12 +18,32 @@ export type PublicEventInviteSummary = {
   participant_society_ids: string[];
   rsvp_deadline_at: string | null;
   rsvp_open: boolean;
+  /** Host society join code when set — used for “join in app” deep links from the public invite. */
+  host_society_join_code: string | null;
 };
 
 function firstRpcRow<T extends Record<string, unknown>>(data: unknown): T | null {
   if (data == null) return null;
   if (Array.isArray(data)) return (data[0] as T) ?? null;
   return data as T;
+}
+
+function normalizeResolveRow(row: {
+  status: string;
+  member_id?: string | null;
+  society_id?: string | null;
+  user_id?: string | null;
+}): PublicRsvpMemberEmailResolve {
+  const s = String(row.status || "").trim();
+  if (s !== "not_found" && s !== "unlinked" && s !== "linked" && s !== "ambiguous") {
+    throw new Error("Unexpected resolve status from server");
+  }
+  return {
+    status: s,
+    memberId: row.member_id ? String(row.member_id) : undefined,
+    societyId: row.society_id ? String(row.society_id) : undefined,
+    userId: row.user_id ? String(row.user_id) : undefined,
+  };
 }
 
 export async function fetchPublicEventInviteSummary(
@@ -41,6 +66,7 @@ export async function fetchPublicEventInviteSummary(
     participant_society_ids: string[] | null;
     rsvp_deadline_at: string | null;
     rsvp_open: boolean;
+    host_society_join_code?: string | null;
   }>(data);
   if (!row?.event_id) return null;
 
@@ -65,6 +91,7 @@ export async function fetchPublicEventInviteSummary(
     }
   }
 
+  const joinCode = row.host_society_join_code;
   return {
     event_id: row.event_id,
     name: row.name ?? "",
@@ -77,6 +104,8 @@ export async function fetchPublicEventInviteSummary(
       : [],
     rsvp_deadline_at: row.rsvp_deadline_at ?? null,
     rsvp_open: Boolean(row.rsvp_open),
+    host_society_join_code:
+      joinCode != null && String(joinCode).trim() !== "" ? String(joinCode).trim() : null,
   };
 }
 
@@ -88,6 +117,37 @@ export async function submitPublicGuestRsvp(eventId: string, name: string): Prom
   if (error) throw new Error(mapPublicRsvpError(error.message || ""));
 }
 
+/**
+ * Read-only: how an email maps to a roster row for this event’s participating societies.
+ * Safe for anon — performs no writes.
+ */
+export async function resolvePublicMemberRsvpEmailStatus(
+  eventId: string,
+  email: string,
+): Promise<PublicRsvpMemberEmailResolve> {
+  const { data, error } = await supabase.rpc("resolve_public_event_rsvp_member_email_status", {
+    p_event_id: eventId,
+    p_email: email.trim(),
+  });
+  if (error) {
+    throw new Error(mapPublicRsvpError(error.message || ""));
+  }
+  const row = firstRpcRow<{
+    status: string;
+    member_id?: string | null;
+    society_id?: string | null;
+    user_id?: string | null;
+  }>(data);
+  if (!row?.status) {
+    throw new Error("Could not look up member for this event.");
+  }
+  return normalizeResolveRow(row);
+}
+
+/**
+ * Authenticated-only member RSVP by email + event context. Server requires `members.user_id = auth.uid()`.
+ * Prefer `setMyStatus` when the app already knows `memberId` / `societyId`.
+ */
 export async function submitPublicMemberRsvpByEmail(
   eventId: string,
   email: string,
@@ -98,7 +158,10 @@ export async function submitPublicMemberRsvpByEmail(
     p_email: email.trim(),
     p_status: status,
   });
-  if (error) throw new Error(mapPublicRsvpError(error.message || ""));
+  if (error) {
+    const code = parsePostgresRsvpMessage(error.message || "");
+    throw new EventRsvpError(code, error.message || undefined);
+  }
 }
 
 /**

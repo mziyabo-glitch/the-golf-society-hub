@@ -14,6 +14,7 @@ import { FontScaleProvider } from "@/lib/ui/fontScaleContext";
 import { consumePendingInviteToken } from "@/lib/sinbookInviteToken";
 import { consumePendingRivalryJoinCode } from "@/lib/pendingRivalryJoinCode";
 import { consumePendingSocietyJoinCode } from "@/lib/pendingSocietyJoinCode";
+import { consumePendingPostAuthRedirect } from "@/lib/pendingPostAuthRedirect";
 import { blurWebActiveElement } from "@/lib/ui/focus";
 import { isEventRsvpInvitePath } from "@/lib/eventInviteLink";
 import { StatusBar } from "expo-status-bar";
@@ -58,7 +59,9 @@ function RootNavigator() {
 
   const isPublicPath =
     pathname === "/reset-password" ||
-    pathname === "/privacy-policy";
+    pathname === "/privacy-policy" ||
+    pathname === "/sign-in" ||
+    (typeof pathname === "string" && pathname.startsWith("/sign-in"));
 
   // Track if we've already routed to prevent loops
   const hasRouted = useRef(false);
@@ -88,7 +91,9 @@ function RootNavigator() {
     const inPublicRoute =
       isPublicPath ||
       segments[0] === "reset-password" ||
-      segments[0] === "privacy-policy";
+      segments[0] === "privacy-policy" ||
+      segments[0] === "sign-in" ||
+      isEventRsvpInvitePath(pathname);
     const inJoinFlow = isJoinFlowRoute(pathname, segments[0]);
     const inMyProfile = pathname === "/(app)/my-profile";
     const hasSociety = !!activeSocietyId;
@@ -182,13 +187,24 @@ function RootNavigator() {
 
   // Auth-aware redirect: once hydrated and signed in, enter correct flow.
   useEffect(() => {
-    if (authRestoring || !isSignedIn || isPublicPath) return;
+    if (authRestoring || !isSignedIn) return;
+    if (pathname === "/reset-password" || pathname === "/privacy-policy") return;
     let active = true;
 
     const routeSignedInUser = async () => {
+      const pendingPostAuth = await consumePendingPostAuthRedirect();
+      if (!active) return;
+      if (pendingPostAuth && pendingPostAuth.startsWith("/")) {
+        console.log("[_layout:redirect] decision=pending_post_auth_redirect", { pendingPostAuth });
+        blurWebActiveElement();
+        router.replace(pendingPostAuth as never);
+        return;
+      }
+
       const seg0 = segments[0];
       const inJoinFlow = isJoinFlowRoute(pathname, seg0);
-      if (inJoinFlow || isToolRoute(pathname, seg0) || isEventRsvpInvitePath(pathname)) return;
+      const onSignIn = pathname === "/sign-in" || (typeof pathname === "string" && pathname.startsWith("/sign-in"));
+      if (inJoinFlow || isToolRoute(pathname, seg0) || isEventRsvpInvitePath(pathname) || onSignIn) return;
       const inApp = seg0 === "(app)" || (typeof pathname === "string" && pathname.startsWith("/(app)"));
       if (inApp) return;
 
@@ -219,7 +235,7 @@ function RootNavigator() {
     return () => {
       active = false;
     };
-  }, [authRestoring, isSignedIn, isPublicPath, segments, pathname, router]);
+  }, [authRestoring, isSignedIn, segments, pathname, router]);
 
   // Determine which overlay to show (if any).
   // The Stack ALWAYS renders so expo-router can match child routes.
@@ -228,6 +244,7 @@ function RootNavigator() {
     isPublicPath ||
     segments[0] === "reset-password" ||
     segments[0] === "privacy-policy" ||
+    segments[0] === "sign-in" ||
     isEventRsvpInvitePath(pathname);
   // Keep auth gate blocked only while auth session is unknown; once known,
   // the app can render immediately while profile/membership continues loading.
