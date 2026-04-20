@@ -206,6 +206,10 @@ export function summarizeEventRegistrations(regs: EventRegistration[] | unknown)
  * Upsert the current member's attendance status ('in' or 'out').
  * Uses the (event_id, member_id) unique constraint for idempotency.
  * Only sends {status} — payment columns are untouched (RLS safe).
+ *
+ * Server enforcement: `event_registrations` RLS requires a `members` row with
+ * `user_id = auth.uid()` for the same `member_id` / `society_id` (see migration 041).
+ * Unlinked roster placeholders cannot satisfy this and therefore cannot write.
  */
 export async function setMyStatus(opts: {
   eventId: string;
