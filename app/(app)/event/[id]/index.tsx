@@ -9,10 +9,9 @@ import { AppCard } from "@/components/ui/AppCard";
 import { AppText } from "@/components/ui/AppText";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { LoadingState } from "@/components/ui/LoadingState";
-import { SecondaryButton } from "@/components/ui/Button";
+import { PrimaryButton, SecondaryButton } from "@/components/ui/Button";
 import { SocietyBadge } from "@/components/ui/SocietyHeader";
 import { StatusBadge } from "@/components/ui/StatusBadge";
-import { EventPlayabilitySection } from "@/components/playability/EventPlayabilitySection";
 import { EVENT_CLASSIFICATIONS, EVENT_FORMATS, getEvent, type EventDoc } from "@/lib/db_supabase/eventRepo";
 import { getEventGuests } from "@/lib/db_supabase/eventGuestRepo";
 import { getEventRegistrations, type EventRegistration } from "@/lib/db_supabase/eventRegistrationRepo";
@@ -162,7 +161,7 @@ export default function EventOverviewScreen() {
     );
   }, [event?.teeTimePublishedAt, event?.society_id, participantSocietyIds, societyId]);
 
-  const canShowPlayability = useMemo(() => {
+  const canOpenWeatherFromEvent = useMemo(() => {
     if (!event?.society_id || !societyId) return false;
     return isActiveSocietyParticipantForEvent(
       societyId,
@@ -170,6 +169,29 @@ export default function EventOverviewScreen() {
       participantSocietyIds,
     );
   }, [event?.society_id, participantSocietyIds, societyId]);
+
+  const openEventWeatherForecast = useCallback(() => {
+    if (!event) return;
+    const courseId = (event.courseId ?? event.course_id ?? null) as string | null | undefined;
+    const rawApi = (event as { api_course_id?: string | number | null }).api_course_id;
+    const apiCourseId =
+      typeof rawApi === "number" && Number.isFinite(rawApi)
+        ? String(rawApi)
+        : typeof rawApi === "string" && /^\d+$/.test(rawApi.trim())
+          ? rawApi.trim()
+          : undefined;
+    const eventDate = event.date?.trim();
+    const courseName = event.courseName?.trim();
+    router.push({
+      pathname: "/(app)/(tabs)/weather",
+      params: {
+        ...(courseId ? { courseId: String(courseId) } : {}),
+        ...(apiCourseId && !courseId ? { apiCourseId } : {}),
+        ...(eventDate && /^\d{4}-\d{2}-\d{2}$/.test(eventDate) ? { eventDate } : {}),
+        ...(courseName ? { courseName } : {}),
+      },
+    } as never);
+  }, [event, router]);
 
   const formatLabel =
     EVENT_FORMATS.find((f) => f.value === event?.format)?.label ?? event?.format ?? "Format TBD";
@@ -265,13 +287,17 @@ export default function EventOverviewScreen() {
           </View>
         </AppCard>
 
-        {canShowPlayability ? (
-          <EventPlayabilitySection
-            event={event}
-            societyId={societyId}
-            memberId={currentMember?.id ?? null}
-            enabled
-          />
+        {canOpenWeatherFromEvent ? (
+          <AppCard style={{ borderRadius: radius.md }}>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm, marginBottom: spacing.xs }}>
+              <Feather name="cloud" size={20} color={colors.primary} />
+              <AppText variant="subheading">Playability</AppText>
+            </View>
+            <AppText variant="small" color="secondary" style={{ marginBottom: spacing.md }}>
+              Check the 5-day forecast and best playing windows.
+            </AppText>
+            <PrimaryButton onPress={openEventWeatherForecast}>View forecast</PrimaryButton>
+          </AppCard>
         ) : null}
 
         <AppCard>

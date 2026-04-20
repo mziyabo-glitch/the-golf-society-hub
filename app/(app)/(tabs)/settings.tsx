@@ -1244,6 +1244,17 @@ export default function SettingsScreen() {
           <AppText variant="body" style={{ flex: 1 }}>Order of Merit</AppText>
           <Feather name="chevron-right" size={18} color={colors.textTertiary} />
         </Pressable>
+
+        <Pressable
+          style={({ pressed }) => [styles.linkRow, { opacity: pressed ? 0.7 : 1 }]}
+          onPress={() => router.push("/(app)/birdies-league" as never)}
+        >
+          <View style={[styles.linkIcon, { backgroundColor: colors.backgroundTertiary }]}>
+            <Feather name="target" size={16} color={colors.primary} />
+          </View>
+          <AppText variant="body" style={{ flex: 1 }}>Birdies League</AppText>
+          <Feather name="chevron-right" size={18} color={colors.textTertiary} />
+        </Pressable>
       </AppCard>
 
       <AppText variant="heading" style={styles.sectionTitle}>App settings</AppText>

@@ -19,6 +19,13 @@ import {
   type OrderOfMeritEntry,
   type EventResultDoc,
 } from "@/lib/db_supabase/resultsRepo";
+import {
+  getActiveBirdiesLeague,
+  getBirdiesLeagueStandings,
+  pickBirdiesStandingForMember,
+  type BirdiesLeagueRow,
+  type BirdiesLeagueStandingRow,
+} from "@/lib/db_supabase/birdiesLeagueRepo";
 import { getColors, spacing } from "@/lib/ui/theme";
 import { formatError, type FormattedError } from "@/lib/ui/formatError";
 import { isActiveSocietyParticipantForEvent, isJointEventFromMeta } from "@/lib/jointEventAccess";
@@ -76,6 +83,8 @@ export function useHomeDashboard() {
   const [events, setEvents] = useState<EventDoc[]>([]);
   const [members, setMembers] = useState<MemberDoc[]>([]);
   const [oomStandings, setOomStandings] = useState<OrderOfMeritEntry[]>([]);
+  const [birdiesLeague, setBirdiesLeague] = useState<BirdiesLeagueRow | null>(null);
+  const [birdiesStandings, setBirdiesStandings] = useState<BirdiesLeagueStandingRow[]>([]);
   const [recentResultsMap, setRecentResultsMap] = useState<Record<string, EventResultDoc[]>>({});
   const [dataLoading, setDataLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -175,6 +184,21 @@ export function useHomeDashboard() {
       setEvents(eventsData);
       setOomStandings(standingsData);
       setMembers(membersData);
+
+      try {
+        const bl = await getActiveBirdiesLeague(societyId);
+        setBirdiesLeague(bl);
+        if (bl) {
+          const st = await getBirdiesLeagueStandings(societyId, bl, eventsData);
+          setBirdiesStandings(st);
+        } else {
+          setBirdiesStandings([]);
+        }
+      } catch (blErr) {
+        console.warn("[Home] Birdies League load skipped:", blErr);
+        setBirdiesLeague(null);
+        setBirdiesStandings([]);
+      }
 
       // Fetch results for the last 3 completed events (for Recent Activity card)
       const pastEvents = eventsData
@@ -654,6 +678,15 @@ export function useHomeDashboard() {
     };
   }, [memberId, oomStandings]);
 
+  const birdiesMy = useMemo(() => {
+    if (!memberId) return { rank: null as number | null, total: null as number | null, events: null as number | null };
+    const hit = pickBirdiesStandingForMember(birdiesStandings, memberId, members);
+    if (!hit) return { rank: null, total: null, events: null };
+    return { rank: hit.rank, total: hit.totalBirdies, events: hit.eventsCounted };
+  }, [memberId, birdiesStandings, members]);
+
+  const birdiesPreviewRows = useMemo(() => birdiesStandings.slice(0, 3), [birdiesStandings]);
+
   const nextEventJointSocietyMap = useMemo(() => {
     if (!canonicalNextEventTee?.isJoint || !canonicalNextEventTee.jointParticipatingSocieties?.length) {
       return undefined;
@@ -790,6 +823,10 @@ export function useHomeDashboard() {
     pushWithBlur("/(app)/(tabs)/leaderboard");
   };
 
+  const openBirdiesLeague = () => {
+    pushWithBlur("/(app)/birdies-league" as never);
+  };
+
   const openWeatherTab = useCallback(() => {
     router.push("/(app)/(tabs)/weather");
   }, [router]);
@@ -875,6 +912,12 @@ export function useHomeDashboard() {
     formatPoints,
     prizePoolCard,
     bumpPrizePoolHomeCard,
+    birdiesLeague,
+    birdiesMyRank: birdiesMy.rank,
+    birdiesMyTotal: birdiesMy.total,
+    birdiesMyEvents: birdiesMy.events,
+    birdiesPreviewRows,
+    openBirdiesLeague,
   };
 }
 

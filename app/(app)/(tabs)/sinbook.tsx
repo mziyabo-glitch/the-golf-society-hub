@@ -2,11 +2,8 @@
  * Sinbook Home Screen — Rivalry Hub
  *
  * Sections:
- *   1) Summary strip (live / waiting / leading counts)
- *   2) Pending invites
- *   3) Live rivalries (scoreline rows)
- *   4) Quiet rivalries (awaiting opponent or 0–0) — collapsible
- *   5) Action buttons (New / Join)
+ *   1) Society competitions (e.g. Birdies League) — society-wide
+ *   2) Your rivalries — summary strip, actions, invites, live/quiet lists
  */
 
 import { useCallback, useMemo, useState } from "react";
@@ -46,6 +43,17 @@ import { showAlert } from "@/lib/ui/alert";
 import { formatError, type FormattedError } from "@/lib/ui/formatError";
 import { useDestructiveConfirm } from "@/components/ui/DestructiveConfirmModal";
 import { EditRivalryModal } from "@/components/sinbook/EditRivalryModal";
+import { RivalriesSocietyCompetitionsSection } from "@/components/sinbook/RivalriesSocietyCompetitionsSection";
+import {
+  getActiveBirdiesLeague,
+  getBirdiesLeagueStandings,
+  pickBirdiesStandingForMember,
+  scopeLabel,
+  type BirdiesLeagueRow,
+  type BirdiesLeagueStandingRow,
+} from "@/lib/db_supabase/birdiesLeagueRepo";
+import { getMembersBySocietyId, type MemberDoc } from "@/lib/db_supabase/memberRepo";
+import { getPermissionsForMember } from "@/lib/rbac";
 // ============================================================================
 // Helpers
 // ============================================================================
@@ -230,7 +238,7 @@ function RivalryScorelineRow({
 
 export default function SinbookHomeScreen() {
   const router = useRouter();
-  const { member, userId, profile, session, loading: bootstrapLoading } = useBootstrap();
+  const { member, userId, profile, session, loading: bootstrapLoading, societyId, society } = useBootstrap();
   const { destructiveConfirmModal, askConfirm } = useDestructiveConfirm();
   const colors = getColors();
   const tabBarHeight = useBottomTabBarHeight();
@@ -252,6 +260,9 @@ export default function SinbookHomeScreen() {
   const [joining, setJoining] = useState(false);
   const [quietExpanded, setQuietExpanded] = useState(true);
   const [editTarget, setEditTarget] = useState<SinbookWithParticipants | null>(null);
+  const [birdiesLeague, setBirdiesLeague] = useState<BirdiesLeagueRow | null>(null);
+  const [birdiesStandings, setBirdiesStandings] = useState<BirdiesLeagueStandingRow[]>([]);
+  const [birdiesMembers, setBirdiesMembers] = useState<MemberDoc[]>([]);
 
   // ============================================================================
   // Data
@@ -277,12 +288,38 @@ export default function SinbookHomeScreen() {
       setPendingInvites(invites);
       setWinCounts(wins);
       setUnreadCount(unread);
+
+      if (societyId) {
+        try {
+          const league = await getActiveBirdiesLeague(societyId);
+          setBirdiesLeague(league);
+          if (league) {
+            const [st, mem] = await Promise.all([
+              getBirdiesLeagueStandings(societyId, league),
+              getMembersBySocietyId(societyId),
+            ]);
+            setBirdiesStandings(st);
+            setBirdiesMembers(mem);
+          } else {
+            setBirdiesStandings([]);
+            setBirdiesMembers([]);
+          }
+        } catch {
+          setBirdiesLeague(null);
+          setBirdiesStandings([]);
+          setBirdiesMembers([]);
+        }
+      } else {
+        setBirdiesLeague(null);
+        setBirdiesStandings([]);
+        setBirdiesMembers([]);
+      }
     } catch (err) {
       setLoadError(formatError(err));
     } finally {
       setLoading(false);
     }
-  }, [userId]);
+  }, [userId, societyId]);
 
   useFocusEffect(
     useCallback(() => {
@@ -455,6 +492,19 @@ export default function SinbookHomeScreen() {
 
   const openRivalry = (id: string) => router.push({ pathname: "/(app)/sinbook/[id]", params: { id } });
   const openNotifications = () => router.push("/(app)/sinbook/notifications");
+  const openBirdiesLeague = () => router.push("/(app)/birdies-league" as never);
+
+  const birdiesMy = useMemo(() => {
+    const mid = member?.id != null ? String(member.id) : undefined;
+    const hit = pickBirdiesStandingForMember(birdiesStandings, mid, birdiesMembers);
+    if (!hit) return { rank: null as number | null, total: null as number | null, events: null as number | null };
+    return { rank: hit.rank, total: hit.totalBirdies, events: hit.eventsCounted };
+  }, [birdiesStandings, birdiesMembers, member?.id]);
+
+  const canManageBirdiesLeague = useMemo(
+    () => getPermissionsForMember(member).canManageBirdiesLeague,
+    [member],
+  );
 
   const handleDeleteSinbookFromList = useCallback(
     async (sb: SinbookWithParticipants) => {
@@ -641,7 +691,7 @@ export default function SinbookHomeScreen() {
         <View>
           <AppText variant="title">Rivalries</AppText>
           <AppText variant="caption" color="secondary">
-            Head-to-head challenges between mates — not a betting or staking service.
+            Society competitions first, then your head-to-head challenges — friendly tracking only, not staking.
           </AppText>
         </View>
         <Pressable onPress={openNotifications} style={styles.bellBtn}>
@@ -655,6 +705,27 @@ export default function SinbookHomeScreen() {
           )}
         </Pressable>
       </View>
+
+      {societyId ? (
+        <RivalriesSocietyCompetitionsSection
+          colors={colors}
+          societyName={society?.name}
+          hasActiveLeague={birdiesLeague != null}
+          scopeDescription={birdiesLeague ? scopeLabel(birdiesLeague.event_scope) : null}
+          myRank={birdiesMy.rank}
+          myTotalBirdies={birdiesMy.total}
+          myEventsCounted={birdiesMy.events}
+          canManageBirdiesLeague={canManageBirdiesLeague}
+          onOpenBirdiesLeague={openBirdiesLeague}
+        />
+      ) : null}
+
+      <AppText variant="captionBold" color="muted" style={styles.rivalriesGroupEyebrow}>
+        Your rivalries
+      </AppText>
+      <AppText variant="small" color="secondary" style={{ marginBottom: spacing.sm }}>
+        One-on-one scorelines with a single opponent. Use New or Join with code below.
+      </AppText>
 
       {/* Summary strip — compact pills */}
       {sinbooks.length > 0 && (
@@ -874,6 +945,12 @@ const styles = StyleSheet.create({
     letterSpacing: 0.8,
     marginBottom: 4,
     marginTop: 2,
+  },
+  rivalriesGroupEyebrow: {
+    letterSpacing: 0.6,
+    marginBottom: 4,
+    marginTop: 2,
+    textTransform: "uppercase",
   },
   formHeader: {
     flexDirection: "row",

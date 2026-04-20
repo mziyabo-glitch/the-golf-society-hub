@@ -9,6 +9,7 @@ import { useFocusEffect } from "@react-navigation/native";
 import type { EventDoc } from "@/lib/db_supabase/eventRepo";
 import { listEventCourseStatusUpdates, type EventCourseStatusRow } from "@/lib/db_supabase/eventCourseStatusRepo";
 import { usePlayabilityBundle } from "@/lib/playability/usePlayabilityBundle";
+import { planStartForFiveDayWindow } from "@/lib/playability/weatherPlanAnchor";
 import { PlayabilityCard } from "./PlayabilityCard";
 import { CourseActionRow } from "./CourseActionRow";
 import { CourseStatusStrip } from "./CourseStatusStrip";
@@ -119,7 +120,8 @@ export function EventPlayabilitySection({
       <FiveDayPlayabilityPlanCard
         loading={bundle.loading}
         forecast={bundle.forecast}
-        startDateYmd={todayYmd()}
+        startDateYmd={planStartForFiveDayWindow(todayYmd(), targetDateYmd)}
+        highlightDateYmd={event.date?.trim() && /^\d{4}-\d{2}-\d{2}$/.test(event.date.trim()) ? event.date.trim() : null}
       />
 
       <CourseActionRow

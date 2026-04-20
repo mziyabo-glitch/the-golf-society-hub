@@ -48,6 +48,9 @@ export type Permissions = {
 
   // OOM Roll of Honour
   canManageOomChampions: boolean;
+
+  /** Birdies League (Captain / Handicapper — same authority as official results). */
+  canManageBirdiesLeague: boolean;
 };
 
 export type MemberLike = {
@@ -134,6 +137,8 @@ export const getPermissionsForMember = (
 
     // OOM Roll of Honour (Captain/Secretary)
     canManageOomChampions: captain || secretary,
+
+    canManageBirdiesLeague: captain || handicapper,
   };
 };
 

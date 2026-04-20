@@ -18,6 +18,7 @@ import { HomeNextEventCard } from "./HomeNextEventCard";
 import { HomePrizePoolCard } from "./HomePrizePoolCard";
 import { HomeLatestResultsCard } from "./HomeLatestResultsCard";
 import { HomeOomSnapshotCard } from "./HomeOomSnapshotCard";
+import { HomeBirdiesLeagueCard } from "./HomeBirdiesLeagueCard";
 import { HomeWeatherSnapshotCard } from "./HomeWeatherSnapshotCard";
 
 export function HomeSocietyDashboardView(vm: HomeSocietyDashboardVm) {
@@ -71,6 +72,12 @@ export function HomeSocietyDashboardView(vm: HomeSocietyDashboardVm) {
     formatPoints,
     prizePoolCard,
     bumpPrizePoolHomeCard,
+    birdiesLeague,
+    birdiesMyRank,
+    birdiesMyTotal,
+    birdiesMyEvents,
+    birdiesPreviewRows,
+    openBirdiesLeague,
   } = vm;
 
   return (
@@ -254,6 +261,21 @@ export function HomeSocietyDashboardView(vm: HomeSocietyDashboardVm) {
         onOpenLeaderboard={openLeaderboard}
         formatPoints={formatPoints}
       />
+
+      {birdiesLeague ? (
+        <>
+          <AppText variant="captionBold" color="primary" style={rhythmStyles.sectionEyebrow}>
+            Birdies league
+          </AppText>
+          <HomeBirdiesLeagueCard
+            myRank={birdiesMyRank}
+            myTotalBirdies={birdiesMyTotal}
+            myEventsCounted={birdiesMyEvents}
+            previewRows={birdiesPreviewRows}
+            onOpen={openBirdiesLeague}
+          />
+        </>
+      ) : null}
 
       <AppText variant="captionBold" color="primary" style={rhythmStyles.sectionEyebrow}>
         Weather

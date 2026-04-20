@@ -2,9 +2,9 @@
  * Weather tab — in-app golf playability: next event or any course.
  */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Linking, Pressable, ScrollView, StyleSheet, View } from "react-native";
-import { useRouter } from "expo-router";
+import { useLocalSearchParams, useRouter } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
 import { useBottomTabBarHeight } from "@react-navigation/bottom-tabs";
 import { Feather } from "@expo/vector-icons";
@@ -39,6 +39,7 @@ import {
   rememberWeatherCourse,
   type RecentWeatherCourse,
 } from "@/lib/playability/weatherRecentCourses";
+import { planStartForFiveDayWindow } from "@/lib/playability/weatherPlanAnchor";
 import { HeaderSettingsPill } from "@/components/navigation/HeaderSettingsPill";
 import { blurWebActiveElement } from "@/lib/ui/focus";
 
@@ -64,6 +65,13 @@ function todayYmd(): string {
   const m = String(d.getMonth() + 1).padStart(2, "0");
   const day = String(d.getDate()).padStart(2, "0");
   return `${y}-${m}-${day}`;
+}
+
+function firstRouteParam(v: string | string[] | undefined): string | undefined {
+  if (v == null) return undefined;
+  const s = Array.isArray(v) ? v[0] : v;
+  const t = typeof s === "string" ? s.trim() : "";
+  return t.length ? t : undefined;
 }
 
 function ModeChip({
@@ -97,6 +105,14 @@ function ModeChip({
 export default function WeatherScreen() {
   const colors = getColors();
   const router = useRouter();
+  const weatherLinkParams = useLocalSearchParams<{
+    courseId?: string;
+    apiCourseId?: string;
+    eventDate?: string;
+    courseName?: string;
+  }>();
+  const appliedWeatherLinkKey = useRef<string | null>(null);
+  const [forecastTargetYmd, setForecastTargetYmd] = useState<string | null>(null);
   const tabBarHeight = useBottomTabBarHeight();
   const tabContentStyle = { paddingTop: 16, paddingBottom: tabBarHeight + 24 };
 
@@ -142,6 +158,48 @@ export default function WeatherScreen() {
     useCallback(() => {
       void loadEvents();
     }, [loadEvents]),
+  );
+
+  useFocusEffect(
+    useCallback(() => {
+      const courseId = firstRouteParam(weatherLinkParams.courseId);
+      const apiCourseId = firstRouteParam(weatherLinkParams.apiCourseId);
+      const eventDate = firstRouteParam(weatherLinkParams.eventDate);
+      const courseName = firstRouteParam(weatherLinkParams.courseName);
+      if (!courseId && !apiCourseId) return;
+      const key = `${courseId ?? ""}|${apiCourseId ?? ""}|${eventDate ?? ""}|${courseName ?? ""}`;
+      if (appliedWeatherLinkKey.current === key) return;
+      appliedWeatherLinkKey.current = key;
+      setMode("choose_course");
+      const displayName = (courseName || "Golf course").trim();
+      if (courseId) {
+        setManualPick({
+          source: "db",
+          courseId,
+          name: displayName,
+          location: null,
+        });
+        void rememberWeatherCourse({ courseDbId: courseId, apiCourseId: null, name: displayName });
+      } else if (apiCourseId && /^\d+$/.test(apiCourseId)) {
+        const n = Number(apiCourseId);
+        if (Number.isFinite(n)) {
+          setManualPick({
+            source: "api",
+            apiCourseId: n,
+            name: displayName,
+            location: null,
+          });
+          void rememberWeatherCourse({ courseDbId: null, apiCourseId: n, name: displayName });
+        }
+      }
+      if (eventDate && /^\d{4}-\d{2}-\d{2}$/.test(eventDate)) setForecastTargetYmd(eventDate);
+      else setForecastTargetYmd(null);
+    }, [
+      weatherLinkParams.courseId,
+      weatherLinkParams.apiCourseId,
+      weatherLinkParams.eventDate,
+      weatherLinkParams.courseName,
+    ]),
   );
 
   useEffect(() => {
@@ -283,9 +341,19 @@ export default function WeatherScreen() {
   const manualApiId = manualPick?.source === "api" ? manualPick.apiCourseId : null;
   const manualName = manualPick?.name ?? "Golf course";
 
+  const bundleTargetYmd = useMemo(() => {
+    if (forecastTargetYmd && /^\d{4}-\d{2}-\d{2}$/.test(forecastTargetYmd)) return forecastTargetYmd;
+    return todayYmd();
+  }, [forecastTargetYmd]);
+
+  const fiveDayPlanStartYmd = useMemo(
+    () => planStartForFiveDayWindow(todayYmd(), bundleTargetYmd),
+    [bundleTargetYmd],
+  );
+
   const manualBundle = usePlayabilityBundle(
     mode === "choose_course" && !!manualPick,
-    todayYmd(),
+    bundleTargetYmd,
     manualCourseId,
     manualApiId,
     manualName,
@@ -487,7 +555,11 @@ export default function WeatherScreen() {
             {manualPick ? (
               <>
                 <Pressable
-                  onPress={() => setManualPick(null)}
+                  onPress={() => {
+                    appliedWeatherLinkKey.current = null;
+                    setManualPick(null);
+                    setForecastTargetYmd(null);
+                  }}
                   style={{ flexDirection: "row", alignItems: "center", marginTop: spacing.md, marginBottom: spacing.sm }}
                 >
                   <Feather name="arrow-left" size={18} color={colors.primary} />
@@ -530,7 +602,8 @@ export default function WeatherScreen() {
                 <FiveDayPlayabilityPlanCard
                   loading={manualBundle.loading}
                   forecast={manualBundle.forecast}
-                  startDateYmd={todayYmd()}
+                  startDateYmd={fiveDayPlanStartYmd}
+                  highlightDateYmd={forecastTargetYmd}
                 />
 
                 <CourseActionRow

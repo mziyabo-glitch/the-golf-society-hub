@@ -24,6 +24,8 @@ type Props = {
   forecast: NormalizedForecast | null;
   /** First plan day YYYY-MM-DD (typically today at venue / device calendar) */
   startDateYmd: string;
+  /** When set and it appears in the current 5-day window, that day block is visually highlighted. */
+  highlightDateYmd?: string | null;
   countryCode?: string | null;
 };
 
@@ -42,7 +44,13 @@ function statusChipColors(status: PlayabilityStatus, colors: ReturnType<typeof g
   }
 }
 
-export function FiveDayPlayabilityPlanCard({ loading, forecast, startDateYmd, countryCode = "GB" }: Props) {
+export function FiveDayPlayabilityPlanCard({
+  loading,
+  forecast,
+  startDateYmd,
+  highlightDateYmd = null,
+  countryCode = "GB",
+}: Props) {
   const colors = getColors();
 
   const plan: FiveDayPlayabilityPlan | null = useMemo(() => {
@@ -108,6 +116,10 @@ export function FiveDayPlayabilityPlanCard({ loading, forecast, startDateYmd, co
       {plan.days.map((day, index) => {
         const dayTone = statusChipColors(day.overallStatus, colors);
         const kindHead = dailySummaryKindHeadline(day.dailySummaryKind);
+        const isHighlight =
+          !!highlightDateYmd &&
+          highlightDateYmd.trim() === day.date &&
+          /^\d{4}-\d{2}-\d{2}$/.test(highlightDateYmd.trim());
         return (
           <View
             key={day.date}
@@ -115,6 +127,7 @@ export function FiveDayPlayabilityPlanCard({ loading, forecast, startDateYmd, co
               styles.dayBlock,
               { borderTopColor: colors.borderLight },
               index === 0 && styles.dayBlockFirst,
+              isHighlight && { borderWidth: 2, borderColor: colors.primary, borderRadius: radius.md, padding: spacing.xs },
             ]}
           >
             <View style={styles.dayHeader}>
