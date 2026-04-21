@@ -397,6 +397,8 @@ export default function OnboardingScreen() {
       // Fetch memberships from source-of-truth before leaving join flow.
       const refreshedMemberships = await refreshMemberships({ preferSocietyId: joinedSocietyId });
       const joinedPresent = refreshedMemberships.some((m) => m.societyId === joinedSocietyId);
+      const joinedMembership =
+        refreshedMemberships.find((m) => m.societyId === joinedSocietyId) ?? null;
       if (!joinedPresent) {
         // One final short retry for eventual consistency on mobile.
         await new Promise((r) => setTimeout(r, 250));
@@ -417,7 +419,14 @@ export default function OnboardingScreen() {
       setToast({ visible: true, message: "Joined society ✅", type: "success" });
       // Navigate only after pointer + membership refresh are complete.
       blurWebActiveElement();
-      router.replace(SOCIETY_HOME_ROUTE);
+      router.replace({
+        pathname: SOCIETY_HOME_ROUTE,
+        params: {
+          joined: "1",
+          joinedSocietyId: joinedSocietyId,
+          joinedSocietyName: joinedMembership?.societyName ?? "Society",
+        },
+      });
     } catch (e: any) {
       const msg = e?.message || "Something went wrong. Please try again.";
       showJoinFailure(msg);
@@ -500,7 +509,14 @@ export default function OnboardingScreen() {
       // Step 5: Navigate to app home
       console.log("[onboarding] === CREATE SOCIETY COMPLETE ===");
       blurWebActiveElement();
-      router.replace("/(app)/(tabs)");
+      router.replace({
+        pathname: "/(app)/(tabs)",
+        params: {
+          joined: "1",
+          joinedSocietyId: society.id,
+          joinedSocietyName: society.name ?? "Society",
+        },
+      });
     } catch (e: any) {
       console.error("[onboarding] Create society error:", e);
       showRlsError(e);

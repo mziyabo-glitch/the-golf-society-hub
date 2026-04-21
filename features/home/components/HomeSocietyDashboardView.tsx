@@ -13,6 +13,7 @@ import { HomeAppBar, PoweredByFooter } from "./HomeChrome";
 import { homeDashboardStyles as styles } from "../homeDashboardStyles";
 import type { HomeSocietyDashboardVm } from "../useHomeDashboard";
 import { HomeIdentityHeroCard } from "./HomeIdentityHeroCard";
+import { HomeCurrentSocietySwitcherCard } from "@/components/SocietySwitcher";
 import { HomeEventAttendanceCard } from "./HomeEventAttendanceCard";
 import { HomeNextEventCard } from "./HomeNextEventCard";
 import { HomePrizePoolCard } from "./HomePrizePoolCard";
@@ -29,6 +30,7 @@ export function HomeSocietyDashboardView(vm: HomeSocietyDashboardVm) {
     loadError,
     refreshing,
     profileComplete,
+    postJoinMessage,
     licenceToast,
     setLicenceToast,
     showLicenceBanner,
@@ -89,6 +91,16 @@ export function HomeSocietyDashboardView(vm: HomeSocietyDashboardVm) {
         colors={colors}
         onOpenSettings={() => pushWithBlur("/(app)/(tabs)/settings")}
       />
+
+      <HomeCurrentSocietySwitcherCard />
+
+      {postJoinMessage ? (
+        <InlineNotice
+          variant="success"
+          message={postJoinMessage}
+          style={{ marginBottom: spacing.sm }}
+        />
+      ) : null}
 
       <HomeIdentityHeroCard
         logoUrl={logoUrl}

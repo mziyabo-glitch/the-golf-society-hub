@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useRouter } from "expo-router";
+import { useLocalSearchParams, useRouter } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
 import { useBottomTabBarHeight } from "@react-navigation/bottom-tabs";
 
@@ -69,6 +69,11 @@ import type { LatestResultsSnapshot } from "./components/HomeLatestResultsCard";
 
 export function useHomeDashboard() {
   const router = useRouter();
+  const routeParams = useLocalSearchParams<{
+    joined?: string | string[];
+    joinedSocietyId?: string | string[];
+    joinedSocietyName?: string | string[];
+  }>();
   const { society, member, societyId, memberships, profile, userId, loading: bootstrapLoading } =
     useBootstrap();
   const colors = getColors();
@@ -109,8 +114,43 @@ export function useHomeDashboard() {
   const [licenceToast, setLicenceToast] = useState<{ visible: boolean; message: string; type: "success" | "error" | "info" }>({
     visible: false, message: "", type: "success",
   });
+  const [postJoinMessage, setPostJoinMessage] = useState<string | null>(null);
+  const consumedJoinCueRef = useRef(false);
 
   const profileComplete = profile?.profile_complete === true;
+  const joinedSocietyIdParam = useMemo(() => {
+    const v = routeParams.joinedSocietyId;
+    return Array.isArray(v) ? v[0] : v;
+  }, [routeParams.joinedSocietyId]);
+  const joinedSocietyNameParam = useMemo(() => {
+    const v = routeParams.joinedSocietyName;
+    return Array.isArray(v) ? v[0] : v;
+  }, [routeParams.joinedSocietyName]);
+  const joinedFlagParam = useMemo(() => {
+    const v = routeParams.joined;
+    return (Array.isArray(v) ? v[0] : v) === "1";
+  }, [routeParams.joined]);
+
+  useEffect(() => {
+    if (consumedJoinCueRef.current) return;
+    if (!joinedFlagParam) return;
+    if (!societyId || !society) return;
+    if (joinedSocietyIdParam && joinedSocietyIdParam !== societyId) return;
+
+    const name = joinedSocietyNameParam?.trim() || String(society.name ?? "Society");
+    setPostJoinMessage(`You're now viewing ${name}. You can switch societies anytime from Home.`);
+    consumedJoinCueRef.current = true;
+
+    // Remove transient cue params so notice doesn't replay forever.
+    router.replace("/(app)/(tabs)");
+  }, [joinedFlagParam, joinedSocietyIdParam, joinedSocietyNameParam, societyId, society, router]);
+
+  useEffect(() => {
+    if (!postJoinMessage) return;
+    const t = setTimeout(() => setPostJoinMessage(null), 7000);
+    return () => clearTimeout(t);
+  }, [postJoinMessage]);
+
 
   const memberHasSeat = (member as any)?.has_seat === true;
   const memberIsCaptain = isCaptain(member as any);
@@ -872,6 +912,7 @@ export function useHomeDashboard() {
     loadError,
     refreshing,
     profileComplete,
+    postJoinMessage,
     licenceToast,
     setLicenceToast,
     showLicenceBanner,
