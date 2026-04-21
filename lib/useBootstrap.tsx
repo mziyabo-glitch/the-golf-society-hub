@@ -63,6 +63,7 @@ type BootstrapState = {
   // Multi-society
   memberships: MySocietyMembership[];
   switchSociety: (societyId: string) => Promise<void>;
+  refreshMemberships: (opts?: { preferSocietyId?: string | null }) => Promise<MySocietyMembership[]>;
 
   // Actions
   setActiveSociety: (societyId: string | null, memberId: string | null) => Promise<void>;
@@ -104,6 +105,7 @@ const BOOTSTRAP_FALLBACK: BootstrapState = {
   member: null,
   memberships: [],
   switchSociety: async () => {},
+  refreshMemberships: async () => [],
   setActiveSociety: async () => {},
   setActiveSocietyId: () => {},
   setMember: () => {},
@@ -183,6 +185,13 @@ function useBootstrapInternal(): BootstrapState {
   const bootstrapInFlight = useRef(false);
   const hydratedFromCacheRef = useRef(false);
   const authPersistLoggedRef = useRef(false);
+  const activeSocietySessionPinRef = useRef<{
+    societyId: string | null;
+    memberId: string | null;
+    source: string;
+    atMs: number;
+  } | null>(null);
+  const ACTIVE_SOCIETY_SESSION_PIN_TTL_MS = 60_000;
 
   // Cleanup on unmount
   useEffect(() => {
@@ -570,7 +579,34 @@ function useBootstrapInternal(): BootstrapState {
 
           if (!alive || !mounted.current) return;
           if (!pollError && data) {
-            setProfile(data);
+            setProfile((prev: any) => {
+              const pin = activeSocietySessionPinRef.current;
+              const pinFresh =
+                !!pin && Date.now() - pin.atMs <= ACTIVE_SOCIETY_SESSION_PIN_TTL_MS;
+              if (!pinFresh || !pin?.societyId) {
+                return data;
+              }
+              const incomingActiveSocietyId = data?.active_society_id ?? null;
+              const currentActiveSocietyId = prev?.active_society_id ?? null;
+              if (
+                incomingActiveSocietyId &&
+                incomingActiveSocietyId !== pin.societyId &&
+                currentActiveSocietyId === pin.societyId
+              ) {
+                console.log("[useBootstrap] active_society_change: ignore polled profile pointer (session pin)", {
+                  source: "profile-poll",
+                  pinnedSocietyId: pin.societyId,
+                  pinnedMemberId: pin.memberId ?? null,
+                  incomingSocietyId: incomingActiveSocietyId,
+                });
+                return {
+                  ...data,
+                  active_society_id: pin.societyId,
+                  active_member_id: pin.memberId ?? prev?.active_member_id ?? data?.active_member_id ?? null,
+                };
+              }
+              return data;
+            });
             setMemberState((prev) => {
               if (!prev || !data?.full_name) return prev;
               const rowUid = prev.user_id != null ? String(prev.user_id) : null;
@@ -722,6 +758,25 @@ function useBootstrapInternal(): BootstrapState {
     [profile]
   );
 
+  const pinActiveSocietyForSession = useCallback(
+    (societyId: string | null, memberId: string | null, source: string) => {
+      activeSocietySessionPinRef.current = {
+        societyId,
+        memberId,
+        source,
+        atMs: Date.now(),
+      };
+      if (__DEV__) {
+        console.log("[useBootstrap] active_society_change: session pin", {
+          source,
+          nextSocietyId: societyId,
+          nextMemberId: memberId,
+        });
+      }
+    },
+    [],
+  );
+
   // ============================================================================
   // Actions
   // ============================================================================
@@ -754,6 +809,7 @@ function useBootstrapInternal(): BootstrapState {
       active_society_id: societyId,
       active_member_id: memberId,
     }));
+    pinActiveSocietyForSession(societyId, memberId, "set-active-society");
     if (memberId === null) {
       setMemberState(null);
       setMembershipLoading(false);
@@ -773,6 +829,7 @@ function useBootstrapInternal(): BootstrapState {
       id: userId,
       active_society_id: societyId,
     }));
+    pinActiveSocietyForSession(societyId, null, "set-active-society-id");
   };
 
   const setMember = (memberData: MemberData | null) => {
@@ -796,6 +853,18 @@ function useBootstrapInternal(): BootstrapState {
     console.log("[useBootstrap] Manual refresh triggered");
     setRefreshKey((k) => k + 1);
   }, []);
+
+  const refreshMemberships = useCallback(
+    async (opts?: { preferSocietyId?: string | null }): Promise<MySocietyMembership[]> => {
+      const preferSocietyId = opts?.preferSocietyId ?? profile?.active_society_id ?? null;
+      const list = await getMySocietiesEnsuringActive(preferSocietyId);
+      if (mounted.current) {
+        setMemberships(list);
+      }
+      return list;
+    },
+    [profile?.active_society_id],
+  );
 
   const switchSociety = useCallback(async (targetSocietyId: string) => {
     if (!userId) return;
@@ -821,11 +890,12 @@ function useBootstrapInternal(): BootstrapState {
       active_society_id: target.societyId,
       active_member_id: target.memberId,
     }));
+    pinActiveSocietyForSession(target.societyId, target.memberId, "manual-switch");
     setSociety(null);
     setMemberState(null);
     setLoading(true);
     setRefreshKey((k) => k + 1);
-  }, [userId, memberships]);
+  }, [userId, memberships, pinActiveSocietyForSession]);
 
   const signOut = async () => {
     console.log("[useBootstrap] Signing out...");
@@ -860,6 +930,7 @@ function useBootstrapInternal(): BootstrapState {
     // Multi-society
     memberships,
     switchSociety,
+    refreshMemberships,
 
     // Actions
     setActiveSociety,
