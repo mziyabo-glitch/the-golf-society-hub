@@ -53,8 +53,9 @@ export default function OnboardingScreen() {
     activeSocietyId,
     member,
     membershipLoading,
-    setActiveSocietyId,
+    setActiveSociety,
     setMember,
+    refreshMemberships,
     refresh,
   } = useBootstrap();
   const colors = getColors();
@@ -368,31 +369,55 @@ export default function OnboardingScreen() {
         }
       }
 
-      // Persist profile pointers to DB (defense-in-depth: the RPC also
-      // writes these, but an explicit client-side write guarantees the
-      // profile is correct before bootstrap re-reads it).
-      try {
-        await setActiveSocietyAndMember(uid, joinedSocietyId, joinedMemberId);
-      } catch (profileErr) {
-        console.warn("[join] setActiveSocietyAndMember failed (RPC already wrote it):", profileErr);
+      // Persist profile pointers deterministically. Do not continue if we cannot
+      // commit active society/member in DB + local state.
+      let pointerCommitted = false;
+      for (let attempt = 1; attempt <= 3; attempt += 1) {
+        try {
+          await setActiveSocietyAndMember(uid, joinedSocietyId, joinedMemberId);
+          pointerCommitted = true;
+          break;
+        } catch (profileErr) {
+          console.warn("[join] setActiveSocietyAndMember retry", { attempt, profileErr });
+          if (attempt < 3) {
+            await new Promise((r) => setTimeout(r, 120 * attempt));
+          }
+        }
+      }
+      if (!pointerCommitted) {
+        showJoinFailure("Joined society, but could not switch active society. Please try again.");
+        return;
       }
 
+      // Local + DB active society should now be in sync.
+      await setActiveSociety(joinedSocietyId, joinedMemberId);
+      setMember(joinedMemberRecord as any);
       await invalidateCache(ACTIVE_SOCIETY_CLIENT_CACHE_KEY);
+
+      // Fetch memberships from source-of-truth before leaving join flow.
+      const refreshedMemberships = await refreshMemberships({ preferSocietyId: joinedSocietyId });
+      const joinedPresent = refreshedMemberships.some((m) => m.societyId === joinedSocietyId);
+      if (!joinedPresent) {
+        // One final short retry for eventual consistency on mobile.
+        await new Promise((r) => setTimeout(r, 250));
+        const retryMemberships = await refreshMemberships({ preferSocietyId: joinedSocietyId });
+        if (!retryMemberships.some((m) => m.societyId === joinedSocietyId)) {
+          showJoinFailure("Joined society, but membership sync is delayed. Please reopen the app.");
+          return;
+        }
+      }
+
       console.log("[join] active_society_change", {
         source: "join-flow",
         nextSocietyId: joinedSocietyId,
         nextMemberId: joinedMemberId,
+        membershipCount: refreshedMemberships.length,
       });
 
-      // Set local state so the UI can react immediately (member first so pointers stay aligned).
-      setMember(joinedMemberRecord as any);
-      setActiveSocietyId(joinedSocietyId);
-      refresh();
       setToast({ visible: true, message: "Joined society ✅", type: "success" });
-      setPendingJoinNavigation({
-        societyId: joinedSocietyId,
-        memberId: joinedMemberId,
-      });
+      // Navigate only after pointer + membership refresh are complete.
+      blurWebActiveElement();
+      router.replace(SOCIETY_HOME_ROUTE);
     } catch (e: any) {
       const msg = e?.message || "Something went wrong. Please try again.";
       showJoinFailure(msg);
@@ -460,7 +485,9 @@ export default function OnboardingScreen() {
       await setActiveSocietyAndMember(uid, society.id, memberId);
       console.log("[onboarding] updateProfile success");
 
+      await setActiveSociety(society.id, memberId);
       await invalidateCache(ACTIVE_SOCIETY_CLIENT_CACHE_KEY);
+      await refreshMemberships({ preferSocietyId: society.id });
       console.log("[onboarding] active_society_change", {
         source: "create-society-flow",
         nextSocietyId: society.id,
