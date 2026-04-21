@@ -84,6 +84,58 @@ export async function getMySocieties(): Promise<MySocietyMembership[]> {
 }
 
 /**
+ * Same as {@link getMySocieties}, but when `profiles.active_society_id` already points at a society,
+ * retries briefly if that society is missing from the membership list.
+ *
+ * Post-join, `getMySocieties()` can briefly omit the new row (client/storage timing on iOS). Bootstrap
+ * used to treat that as “stale active” and self-heal back to `memberships[0]` — the wrong society.
+ */
+export async function getMySocietiesEnsuringActive(
+  profileActiveSocietyId: string | null | undefined,
+): Promise<MySocietyMembership[]> {
+  let list = await getMySocieties();
+  const want = typeof profileActiveSocietyId === "string" ? profileActiveSocietyId.trim() : "";
+  if (!want) return list;
+
+  const contains = () => list.some((m) => m.societyId === want);
+  if (contains()) return list;
+
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
+  const uid = session?.user?.id;
+  if (!uid) return list;
+
+  const delaysMs = [0, 80, 160, 240, 320, 450];
+  for (const d of delaysMs) {
+    if (d > 0) {
+      await new Promise((r) => setTimeout(r, d));
+    }
+    list = await getMySocieties();
+    if (contains()) return list;
+  }
+
+  const { data: direct, error: directErr } = await supabase
+    .from("members")
+    .select("id")
+    .eq("user_id", uid)
+    .eq("society_id", want)
+    .maybeSingle();
+
+  if (directErr || !direct) {
+    return list;
+  }
+
+  console.log("[mySocietiesRepo] getMySocietiesEnsuringActive: member row exists for active society but list still missing it — final refetch", {
+    profileActiveSocietyId: want,
+    listedCount: list.length,
+  });
+  await new Promise((r) => setTimeout(r, 350));
+  list = await getMySocieties();
+  return list;
+}
+
+/**
  * Fetch the member row for the current user in a specific society.
  */
 export async function getMyMemberForSociety(societyId: string) {
