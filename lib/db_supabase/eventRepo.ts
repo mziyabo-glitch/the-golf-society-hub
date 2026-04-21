@@ -1,5 +1,17 @@
 // lib/db_supabase/eventRepo.ts
-import { supabase } from "@/lib/supabase";
+import type { SupabaseClient } from "@supabase/supabase-js";
+import { supabase as defaultSupabase } from "@/lib/supabase";
+
+let eventSupabase: SupabaseClient = defaultSupabase;
+
+/** Pair with {@link resetEventRepoSupabaseClient} after integration / E2E runs. */
+export function setEventRepoSupabaseClient(client: SupabaseClient): void {
+  eventSupabase = client;
+}
+
+export function resetEventRepoSupabaseClient(): void {
+  eventSupabase = defaultSupabase;
+}
 
 // Event format types - simplified to core formats
 // 'medal' kept as alias for backwards compatibility with existing data
@@ -96,6 +108,13 @@ export type EventDoc = {
   linked_society_count?: number;
   /** society_id values from event_societies (set by enrichEventsWithJointClassification). */
   participant_society_ids?: string[];
+  /** Gross scoring publish lifecycle (migration 120). */
+  scoring_results_status?: string;
+  scoringResultsStatus?: "draft" | "published" | "reopened";
+  scoring_published_at?: string | null;
+  scoringPublishedAt?: string | null;
+  scoring_publish_version?: number;
+  scoringPublishVersion?: number;
   [key: string]: unknown;
 };
 
@@ -150,6 +169,12 @@ function mapEvent(row: any): EventDoc {
     prizePoolEnabled: row.prize_pool_enabled ?? false,
     prize_pool_payment_instructions: row.prize_pool_payment_instructions?.trim() || null,
     prizePoolPaymentInstructions: row.prize_pool_payment_instructions?.trim() || null,
+    scoring_results_status: row.scoring_results_status ?? "draft",
+    scoringResultsStatus: (row.scoring_results_status ?? "draft") as EventDoc["scoringResultsStatus"],
+    scoring_published_at: row.scoring_published_at ?? null,
+    scoringPublishedAt: row.scoring_published_at ?? null,
+    scoring_publish_version: row.scoring_publish_version ?? 0,
+    scoringPublishVersion: row.scoring_publish_version ?? 0,
   };
 }
 
@@ -195,7 +220,7 @@ export async function enrichEventsWithJointClassification(events: EventDoc[]): P
 
 /** Raw `events` rows for a society, mapped to EventDoc without joint enrichment. */
 async function fetchMappedEventsForSociety(societyId: string): Promise<EventDoc[]> {
-  const { data, error } = await supabase
+  const { data, error } = await eventSupabase
     .from("events")
     .select("*")
     .eq("society_id", societyId)
@@ -216,7 +241,7 @@ async function fetchMappedEventsForSociety(societyId: string): Promise<EventDoc[
 
 /** Single event by id, mapped only (no joint enrichment). */
 async function getEventMappedById(eventId: string): Promise<EventDoc | null> {
-  const { data, error } = await supabase
+  const { data, error } = await eventSupabase
     .from("events")
     .select("*")
     .eq("id", eventId)
@@ -297,7 +322,7 @@ export async function getEventsForTeeSheet(societyId: string): Promise<EventDoc[
  * Get a single event by ID
  */
 export async function getEvent(eventId: string): Promise<EventDoc | null> {
-  const { data, error } = await supabase
+  const { data, error } = await eventSupabase
     .from("events")
     .select("*")
     .eq("id", eventId)
@@ -388,7 +413,7 @@ export async function createEvent(
 
   // Server-side: ensure tee_id exists in course_tees (FK events_tee_id_fkey)
   if (payload.tee_id != null && payload.tee_id !== "") {
-    const { data: teeRow } = await supabase
+    const { data: teeRow } = await eventSupabase
       .from("course_tees")
       .select("id")
       .eq("id", payload.tee_id)
@@ -401,7 +426,7 @@ export async function createEvent(
 
   console.log("[eventRepo] createEvent payload:", JSON.stringify(payload, null, 2));
 
-  let { data: row, error } = await supabase
+  let { data: row, error } = await eventSupabase
     .from("events")
     .insert(payload)
     .select()
@@ -411,7 +436,7 @@ export async function createEvent(
     if ((error as any).code === "23503" && payload.tee_id != null) {
       console.warn("[eventRepo] createEvent: FK violation on tee_id, retrying with tee_id=null:", payload.tee_id);
       payload.tee_id = null;
-      const retry = await supabase.from("events").insert(payload).select().single();
+      const retry = await eventSupabase.from("events").insert(payload).select().single();
       if (retry.error) {
         console.error("[eventRepo] createEvent retry failed:", retry.error.message);
         throw new Error(retry.error.message || "Failed to create event");
@@ -471,6 +496,9 @@ export async function updateEvent(
     longestDriveHoles: number[];
     entryFeeDisplay: string | null;
     rsvpDeadlineAt: string | null;
+    scoringResultsStatus: "draft" | "published" | "reopened";
+    scoringPublishedAt: string | null;
+    scoringPublishVersion: number;
   }>
 ): Promise<void> {
   const payload: Record<string, unknown> = {};
@@ -517,10 +545,19 @@ export async function updateEvent(
   if (updates.rsvpDeadlineAt !== undefined) {
     payload.rsvp_deadline_at = updates.rsvpDeadlineAt;
   }
+  if (updates.scoringResultsStatus !== undefined) {
+    payload.scoring_results_status = updates.scoringResultsStatus;
+  }
+  if (updates.scoringPublishedAt !== undefined) {
+    payload.scoring_published_at = updates.scoringPublishedAt;
+  }
+  if (updates.scoringPublishVersion !== undefined) {
+    payload.scoring_publish_version = updates.scoringPublishVersion;
+  }
 
   // Server-side: ensure tee_id exists in course_tees (FK events_tee_id_fkey)
   if (payload.tee_id != null && payload.tee_id !== "") {
-    const { data: teeRow } = await supabase
+    const { data: teeRow } = await eventSupabase
       .from("course_tees")
       .select("id")
       .eq("id", payload.tee_id)
@@ -533,7 +570,7 @@ export async function updateEvent(
 
   console.log("[eventRepo] updateEvent:", { eventId, payload });
 
-  let { data, error } = await supabase
+  let { data, error } = await eventSupabase
     .from("events")
     .update(payload)
     .eq("id", eventId)
@@ -543,7 +580,7 @@ export async function updateEvent(
     if ((error as any).code === "23503" && payload.tee_id != null) {
       console.warn("[eventRepo] updateEvent: FK violation on tee_id, retrying with tee_id=null:", payload.tee_id);
       payload.tee_id = null;
-      const retry = await supabase
+      const retry = await eventSupabase
         .from("events")
         .update(payload)
         .eq("id", eventId)
@@ -577,7 +614,7 @@ export async function updateEvent(
  * Delete an event
  */
 export async function deleteEvent(eventId: string): Promise<void> {
-  const { error } = await supabase.from("events").delete().eq("id", eventId);
+  const { error } = await eventSupabase.from("events").delete().eq("id", eventId);
 
   if (error) {
     console.error("[eventRepo] deleteEvent failed:", {
@@ -629,7 +666,7 @@ export async function publishTeeTime(
   }
 
   // Try RPC first (migrations 038/039)
-  const { error: rpcError } = await supabase.rpc("publish_tee_times", {
+  const { error: rpcError } = await eventSupabase.rpc("publish_tee_times", {
     p_event_id: eventId,
     p_start: start,
     p_interval: interval,
@@ -641,7 +678,7 @@ export async function publishTeeTime(
 
   // Fallback: direct UPDATE (works when RPC doesn't exist)
   console.warn("[eventRepo] publishTeeTime RPC failed, trying direct update:", rpcError.message);
-  const { error: updateError } = await supabase
+  const { error: updateError } = await eventSupabase
     .from("events")
     .update({
       tee_time_start: start,
@@ -666,14 +703,14 @@ export async function publishTeeTime(
 export async function unpublishTeeTimes(eventId: string): Promise<void> {
   if (!eventId) throw new Error("unpublishTeeTimes: missing eventId");
 
-  const { error: rpcError } = await supabase.rpc("unpublish_tee_times", {
+  const { error: rpcError } = await eventSupabase.rpc("unpublish_tee_times", {
     p_event_id: eventId,
   });
 
   if (!rpcError) return;
 
   console.warn("[eventRepo] unpublishTeeTimes RPC failed, trying direct update:", rpcError.message);
-  const { error: updateError } = await supabase
+  const { error: updateError } = await eventSupabase
     .from("events")
     .update({
       tee_time_published_at: null,
@@ -714,7 +751,7 @@ export async function updateEventFinance(
     costs_pence: costsPence,
   };
 
-  const { error } = await supabase
+  const { error } = await eventSupabase
     .from("events")
     .update(payload)
     .eq("id", eventId);
@@ -772,7 +809,7 @@ export async function getEventsFinanceSummary(societyId: string): Promise<{
 }> {
   console.log("[eventRepo] getEventsFinanceSummary:", societyId);
 
-  const { data, error } = await supabase
+  const { data, error } = await eventSupabase
     .from("events")
     .select("id, name, date, income_pence, costs_pence")
     .eq("society_id", societyId)

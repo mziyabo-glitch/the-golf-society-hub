@@ -77,11 +77,12 @@ export function PremiumTabBar({ state, descriptors, navigation, insets }: Bottom
 
           const iconColor = focused ? colors.primary : colors.textSecondary;
           const labelColor = focused ? colors.primary : colors.textSecondary;
+          const isScorecard = route.name === "scorecard";
 
           const icon = options.tabBarIcon?.({
             focused,
             color: iconColor,
-            size: 24,
+            size: isScorecard ? (focused ? 26 : 24) : 24,
           });
 
           return (
@@ -105,9 +106,10 @@ export function PremiumTabBar({ state, descriptors, navigation, insets }: Bottom
                 allowFontScaling
                 style={[
                   styles.label,
+                  isScorecard ? styles.labelPrimary : null,
                   {
                     color: labelColor,
-                    fontWeight: focused ? "600" : "500",
+                    fontWeight: focused ? "600" : isScorecard ? "600" : "500",
                   },
                 ]}
               >
@@ -157,6 +159,10 @@ const styles = StyleSheet.create({
   iconSlot: {
     alignItems: "center",
     justifyContent: "center",
+  },
+  labelPrimary: {
+    fontSize: 12,
+    lineHeight: 14,
   },
   label: {
     fontSize: 11,

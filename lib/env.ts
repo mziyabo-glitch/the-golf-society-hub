@@ -1,4 +1,10 @@
+/**
+ * GolfCourseAPI key (`Authorization: Key <value>`).
+ * Prefer explicit GOLFCOURSE_* names; keep legacy GOLF_* for existing .env files.
+ */
 export const GOLF_API_KEY =
+  process.env.EXPO_PUBLIC_GOLFCOURSE_API_KEY ||
+  process.env.GOLFCOURSE_API_KEY ||
   process.env.EXPO_PUBLIC_GOLF_API_KEY ||
   process.env.NEXT_PUBLIC_GOLF_API_KEY ||
   "";

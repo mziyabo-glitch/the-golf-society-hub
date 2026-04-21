@@ -1,48 +1,34 @@
+/**
+ * GolfCourseAPI HTTP client (importer / enrichment only — not runtime gameplay source of truth).
+ *
+ * Env: `EXPO_PUBLIC_GOLFCOURSE_API_KEY`, `GOLFCOURSE_API_KEY`, `EXPO_PUBLIC_GOLF_API_KEY`, `NEXT_PUBLIC_GOLF_API_KEY`
+ * (see `lib/env.ts`). Header: `Authorization: Key <key>`.
+ *
+ * Web dev: requests go via `npm run dev:api` proxy when origin is localhost:8081|19006.
+ */
+
 import { GOLF_API_KEY } from "@/lib/env";
+import { getCache, setCache } from "@/lib/cache/clientCache";
+import type {
+  GolfCourseApiCourse,
+  GolfCourseApiHole,
+  GolfCourseApiSearchHit,
+  GolfCourseApiSearchResponse,
+  GolfCourseApiTee,
+} from "@/types/course";
+
+export type { GolfCourseApiCourse, GolfCourseApiHole, GolfCourseApiTee } from "@/types/course";
 
 const API_BASE = "https://api.golfcourseapi.com/v1";
+const SEARCH_CACHE_PREFIX = "gca:search:";
+const SEARCH_TTL_MS = 90_000;
 
-export type ApiHole = {
-  hole_number?: number;
-  number?: number;
-  par?: number;
-  yardage?: number;
-  handicap?: number;
-  stroke_index?: number;
-  hcp?: number;
-};
-
-export type ApiTee = {
-  id?: number | string;
-  name?: string;
-  tee_name?: string;
-  course_rating?: number;
-  slope_rating?: number;
-  par_total?: number;
-  total_yards?: number;
-  yards?: number;
-  gender?: "M" | "F" | "male" | "female";
-  holes?: ApiHole[];
-};
-
-export type ApiCourse = {
-  id: number;
-  name: string;
-  club_name?: string;
-  lat?: number;
-  lng?: number;
-  latitude?: number;
-  longitude?: number;
-  tees?:
-    | {
-        male?: ApiTee[];
-        female?: ApiTee[];
-        men?: ApiTee[];
-        women?: ApiTee[];
-        ladies?: ApiTee[];
-      }
-    | ApiTee[];
-};
+/** @deprecated Prefer `GolfCourseApiCourse` */
+export type ApiCourse = GolfCourseApiCourse;
+/** @deprecated Prefer `GolfCourseApiTee` */
+export type ApiTee = GolfCourseApiTee;
+/** @deprecated Prefer `GolfCourseApiHole` */
+export type ApiHole = GolfCourseApiHole;
 
 export type ApiCourseSearchResult = {
   id: number;
@@ -51,75 +37,18 @@ export type ApiCourseSearchResult = {
   location?: string;
 };
 
-async function request<T>(path: string): Promise<T> {
-  if (!GOLF_API_KEY) {
-    throw new Error("Golf API authentication failed.");
-  }
+const inflightCourseDetail = new Map<number, Promise<GolfCourseApiCourse>>();
 
-  const headers: Record<string, string> = {
-    Accept: "application/json",
-    "Content-Type": "application/json",
-    Authorization: `Key ${GOLF_API_KEY}`,
-  };
-
-  const res = await fetch(`${API_BASE}${path}`, { method: "GET", headers });
-
-  if (res.status === 429) {
-    throw new Error("GolfCourseAPI rate limit reached. Please try again shortly.");
-  }
-
-  if (!res.ok) {
-    const text = await res.text();
-    const msg = text || "Unknown error";
-    console.error("[golfApi] Request failed:", res.status, path, msg);
-    if (res.status === 400) {
-      throw new Error(`GolfCourseAPI 400: ${msg}. Check API key (GOLFCOURSE_API_KEY) and endpoint.`);
-    }
-    if (res.status === 401) {
-      console.error("GolfCourseAPI authorization failed. Check API key format.");
-      throw new Error("Golf API authentication failed.");
-    }
-    throw new Error(`GolfCourseAPI error (${res.status}): ${msg}`);
-  }
-
-  return res.json() as Promise<T>;
+export function getGolfCourseApiKey(): string {
+  return GOLF_API_KEY?.trim() ?? "";
 }
 
-function parseSearchPayload(payload: any): ApiCourseSearchResult[] {
-  const list: any[] = Array.isArray(payload)
-    ? payload
-    : Array.isArray(payload?.courses)
-      ? payload.courses
-      : Array.isArray(payload?.data)
-        ? payload.data
-        : [];
-
-  const toLocationString = (v: unknown): string | undefined => {
-    if (typeof v === "string" && v.trim()) return v.trim();
-    if (v && typeof v === "object" && !Array.isArray(v)) {
-      const o = v as Record<string, unknown>;
-      const parts = [o.address, o.city, o.region, o.country].filter(
-        (x) => typeof x === "string" && (x as string).trim()
-      ) as string[];
-      return parts.length > 0 ? parts.join(", ") : undefined;
-    }
-    return undefined;
-  };
-
-  return list
-    .map((row) => {
-      const loc =
-        toLocationString(row.location) ||
-        toLocationString(row.region) ||
-        toLocationString(row.country);
-      return {
-        id: Number(row.id),
-        name: row.name || row.course_name || "",
-        club_name: row.club_name || row.club || undefined,
-        location: loc,
-      };
-    })
-    .filter((row) => Number.isFinite(row.id) && !!row.name);
+export function assertGolfCourseApiKeyConfigured(): void {
+  if (!getGolfCourseApiKey()) {
+    throw new Error(
+      "GolfCourseAPI key is not configured. Set EXPO_PUBLIC_GOLFCOURSE_API_KEY or EXPO_PUBLIC_GOLF_API_KEY (see lib/env.ts).",
+    );
+  }
 }
 
 function getApiBase(): string {
@@ -129,6 +58,106 @@ function getApiBase(): string {
   return "";
 }
 
+async function safeReadJson(res: Response): Promise<unknown> {
+  const text = await res.text();
+  if (!text?.trim()) return null;
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    throw new Error(`GolfCourseAPI returned non-JSON body (HTTP ${res.status}). First bytes: ${text.slice(0, 120)}`);
+  }
+}
+
+/**
+ * Low-level GET against GolfCourseAPI (native / server). Not used from web browser (CORS) — use proxy there.
+ */
+export async function golfCourseApiGetJson(path: string): Promise<unknown> {
+  assertGolfCourseApiKeyConfigured();
+  const headers: Record<string, string> = {
+    Accept: "application/json",
+    "Content-Type": "application/json",
+    Authorization: `Key ${getGolfCourseApiKey()}`,
+  };
+  const url = `${API_BASE}${path.startsWith("/") ? path : `/${path}`}`;
+  if (__DEV__) console.log("[golfApi] GET", url);
+  const res = await fetch(url, { method: "GET", headers });
+
+  if (res.status === 429) {
+    throw new Error("GolfCourseAPI rate limit reached. Please try again shortly.");
+  }
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    const msg = text || "Unknown error";
+    if (__DEV__) console.error("[golfApi] HTTP error", res.status, path, msg.slice(0, 400));
+    if (res.status === 400) {
+      throw new Error(`GolfCourseAPI 400: ${msg.slice(0, 280)}. Check query and API key.`);
+    }
+    if (res.status === 401) {
+      throw new Error("GolfCourseAPI authentication failed (401). Check Authorization: Key <API_KEY> format.");
+    }
+    throw new Error(`GolfCourseAPI error (${res.status}): ${msg.slice(0, 280)}`);
+  }
+  return safeReadJson(res);
+}
+
+function extractSearchList(payload: GolfCourseApiSearchResponse): unknown[] {
+  if (Array.isArray(payload)) return payload;
+  if (payload && typeof payload === "object") {
+    const o = payload as Record<string, unknown>;
+    if (Array.isArray(o.courses)) return o.courses;
+    if (Array.isArray(o.data)) return o.data;
+    if (Array.isArray(o.results)) return o.results;
+  }
+  return [];
+}
+
+function locationStringFromHit(row: Record<string, unknown>): string | undefined {
+  const pick = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim() : undefined);
+  const direct = pick(row.location);
+  if (direct) return direct;
+  const loc = row.location;
+  if (loc && typeof loc === "object" && !Array.isArray(loc)) {
+    const o = loc as Record<string, unknown>;
+    const parts = [o.address, o.city, o.region, o.country].filter(
+      (x) => typeof x === "string" && (x as string).trim(),
+    ) as string[];
+    if (parts.length) return parts.join(", ");
+  }
+  return pick(row.city) || pick(row.country) || pick(row.region);
+}
+
+export function parseSearchResponse(payload: GolfCourseApiSearchResponse): GolfCourseApiSearchHit[] {
+  const list = extractSearchList(payload);
+  return list
+    .map((row) => {
+      const r = row as Record<string, unknown>;
+      const id = Number(r.id);
+      const name = (typeof r.name === "string" && r.name.trim()
+        ? r.name
+        : typeof r.course_name === "string" && r.course_name.trim()
+          ? r.course_name
+          : "") as string;
+      const club_name =
+        (typeof r.club_name === "string" && r.club_name.trim()
+          ? r.club_name
+          : typeof r.club === "string" && r.club.trim()
+            ? r.club
+            : undefined) as string | undefined;
+      return {
+        id,
+        name,
+        course_name: typeof r.course_name === "string" ? r.course_name : undefined,
+        club_name,
+        location: locationStringFromHit(r),
+      } as GolfCourseApiSearchHit;
+    })
+    .filter((row) => Number.isFinite(row.id) && (row as GolfCourseApiSearchHit).id > 0 && !!(row as GolfCourseApiSearchHit).name);
+}
+
+/**
+ * Search courses (typed). Web uses local proxy; native calls API directly with cache.
+ */
 export async function searchCourses(query: string): Promise<ApiCourseSearchResult[]> {
   const trimmed = query.trim();
   if (!trimmed) return [];
@@ -138,94 +167,169 @@ export async function searchCourses(query: string): Promise<ApiCourseSearchResul
       const base = getApiBase();
       const res = await fetch(`${base}/api/golf/search?q=${encodeURIComponent(trimmed)}`);
       if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err?.error || `Search failed (${res.status})`);
+        const err = (await safeReadJson(res).catch(() => ({}))) as { error?: string };
+        throw new Error(typeof err?.error === "string" ? err.error : `Search failed (${res.status})`);
       }
-      const payload = await res.json();
-      return parseSearchPayload(payload);
-    } catch (e: any) {
-      throw e;
+      const payload = (await safeReadJson(res)) as GolfCourseApiSearchResponse;
+      return parseSearchResponse(payload).map((h) => ({
+        id: h.id,
+        name: h.name || h.course_name || "",
+        club_name: h.club_name,
+        location: typeof h.location === "string" ? h.location : undefined,
+      }));
+    } catch (e) {
+      throw e instanceof Error ? e : new Error(String(e));
     }
   }
 
-  if (!GOLF_API_KEY) {
-    console.warn("Skipping GolfCourseAPI request: key missing");
+  if (!getGolfCourseApiKey()) {
+    if (__DEV__) console.warn("[golfApi] searchCourses: API key missing, returning []");
     return [];
   }
 
-  const payload: any = await request(`/search?search_query=${encodeURIComponent(trimmed)}`);
-  return parseSearchPayload(payload);
-}
-
-function extractCourseRow(payload: any): any {
-  const course = payload?.courses?.[0] ?? payload?.course ?? payload?.data ?? payload;
-  return course;
-}
-
-export async function getCourseById(id: number): Promise<ApiCourse> {
-  const url = typeof window !== "undefined" ? `/api/golf/course/${id}` : `https://api.golfcourseapi.com/v1/courses/${id}`;
-  console.log("[golfApi] getCourseById:", { id, url });
-
-  let payload: any;
-
-  if (typeof window !== "undefined") {
-    const base = getApiBase();
-    const res = await fetch(`${base}/api/golf/course/${id}`);
-    const body = await res.text();
-    if (!res.ok) {
-      let err: any = {};
-      try {
-        err = body ? JSON.parse(body) : {};
-      } catch {
-        err = { error: body?.slice(0, 200) };
-      }
-      console.error("[golfApi] getCourseById failed:", { url, status: res.status, body: body?.slice(0, 500) });
-      throw new Error(err?.error || `Failed to fetch course (${res.status})`);
-    }
-    try {
-      payload = body ? JSON.parse(body) : {};
-    } catch {
-      payload = {};
-    }
-  } else {
-    payload = await request(`/courses/${id}`);
+  const cacheKey = `${SEARCH_CACHE_PREFIX}${trimmed.toLowerCase()}`;
+  const cached = await getCache<ApiCourseSearchResult[]>(cacheKey, { maxAgeMs: SEARCH_TTL_MS });
+  if (cached?.value?.length) {
+    if (__DEV__) console.log("[golfApi] searchCourses cache hit", trimmed);
+    return cached.value;
   }
 
-  const row = extractCourseRow(payload);
-  console.log("[golfApi] getCourseById raw API row:", JSON.stringify(row, null, 2).slice(0, 2000));
+  const payload = (await golfCourseApiGetJson(
+    `/search?search_query=${encodeURIComponent(trimmed)}`,
+  )) as GolfCourseApiSearchResponse;
+  const parsed = parseSearchResponse(payload).map((h) => ({
+    id: h.id,
+    name: h.name || h.course_name || "",
+    club_name: h.club_name,
+    location: typeof h.location === "string" ? h.location : undefined,
+  }));
+  await setCache(cacheKey, parsed, { ttlMs: SEARCH_TTL_MS });
+  return parsed;
+}
 
-  // Parse tees: API returns { male: [...], female: [...] } or flat array
-  // Support alternate keys: men/women, ladies (for female)
-  let tees: ApiTee[] | { male: ApiTee[]; female: ApiTee[] };
-  if (Array.isArray(row.tees)) {
-    tees = row.tees.map((t: any) => ({
-      ...t,
-      total_yards: t.total_yards ?? t.yards ?? t.yardage,
-    }));
+function extractCourseRow(payload: unknown): Record<string, unknown> {
+  if (!payload || typeof payload !== "object") return {};
+  const o = payload as Record<string, unknown>;
+  const nested =
+    (Array.isArray(o.courses) ? (o.courses[0] as unknown) : null) ??
+    o.course ??
+    o.data ??
+    payload;
+  return typeof nested === "object" && nested !== null ? (nested as Record<string, unknown>) : {};
+}
+
+function coerceCourseFromRow(row: Record<string, unknown>): GolfCourseApiCourse {
+  const id = Number(row.id);
+  const teesRaw = row.tees;
+  let tees: GolfCourseApiCourse["tees"];
+  if (Array.isArray(teesRaw)) {
+    tees = teesRaw.map((t) => {
+      const x = t as Record<string, unknown>;
+      return {
+        ...x,
+        total_yards: x.total_yards ?? x.yards ?? x.yardage,
+      } as GolfCourseApiTee;
+    });
+  } else if (teesRaw && typeof teesRaw === "object") {
+    const t = teesRaw as Record<string, unknown>;
+    const mapList = (arr: unknown, gender: string) =>
+      (Array.isArray(arr) ? arr : []).map((item) => ({
+        ...(item as Record<string, unknown>),
+        gender,
+        total_yards:
+          (item as Record<string, unknown>).total_yards ??
+          (item as Record<string, unknown>).yards ??
+          (item as Record<string, unknown>).yardage,
+      }));
+    tees = {
+      male: mapList(t.male ?? t.men, "M") as GolfCourseApiTee[],
+      female: mapList(t.female ?? t.women ?? t.ladies, "F") as GolfCourseApiTee[],
+    };
   } else {
-    const maleRaw = row?.tees?.male ?? row?.tees?.men ?? [];
-    const femaleRaw = row?.tees?.female ?? row?.tees?.women ?? row?.tees?.ladies ?? [];
-    const male = (Array.isArray(maleRaw) ? maleRaw : []).map((t: any) => ({
-      ...t,
-      gender: "M" as const,
-      total_yards: t.total_yards ?? t.yards ?? t.yardage,
-    }));
-    const female = (Array.isArray(femaleRaw) ? femaleRaw : []).map((t: any) => ({
-      ...t,
-      gender: "F" as const,
-      total_yards: t.total_yards ?? t.yards ?? t.yardage,
-    }));
-    tees = { male, female };
+    tees = undefined;
   }
 
   return {
-    id: Number(row.id),
-    name: row.name || row.course_name || "Unknown course",
-    club_name: row.club_name || row.club || undefined,
-    lat: row.lat ?? row.latitude ?? undefined,
-    lng: row.lng ?? row.longitude ?? undefined,
-    latitude: row.latitude ?? row.lat ?? undefined,
-    longitude: row.longitude ?? row.lng ?? undefined,
+    id: Number.isFinite(id) ? id : NaN,
+    name: (row.name || row.course_name) as string | undefined,
+    course_name: row.course_name as string | undefined,
+    club_name: (row.club_name || row.club) as string | undefined,
+    club: row.club as string | undefined,
+    lat: safeNum(row.lat ?? row.latitude),
+    lng: safeNum(row.lng ?? row.longitude),
+    latitude: safeNum(row.latitude ?? row.lat),
+    longitude: safeNum(row.longitude ?? row.lng),
+    address: row.address as GolfCourseApiCourse["address"],
+    city: row.city as string | undefined,
+    country: row.country as string | undefined,
+    location: row.location as GolfCourseApiCourse["location"],
     tees,
   };
+}
+
+function safeNum(v: unknown): number | undefined {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : undefined;
+}
+
+/**
+ * GET /courses/{id} — typed course payload. Web: dev proxy. Native: direct API + in-flight dedupe.
+ */
+export async function getCourseById(id: number): Promise<GolfCourseApiCourse> {
+  if (!Number.isFinite(id) || id <= 0) {
+    throw new Error("getCourseById: invalid course id");
+  }
+
+  const run = async (): Promise<GolfCourseApiCourse> => {
+    if (typeof window !== "undefined") {
+      const base = getApiBase();
+      const res = await fetch(`${base}/api/golf/course/${id}`);
+      const bodyText = await res.text();
+      if (!res.ok) {
+        let err: { error?: string } = {};
+        try {
+          err = bodyText ? (JSON.parse(bodyText) as { error?: string }) : {};
+        } catch {
+          err = { error: bodyText?.slice(0, 200) };
+        }
+        if (__DEV__) console.error("[golfApi] getCourseById proxy failed", res.status, err);
+        throw new Error(err?.error || `Failed to fetch course (${res.status})`);
+      }
+      let payload: unknown = {};
+      try {
+        payload = bodyText ? JSON.parse(bodyText) : {};
+      } catch {
+        throw new Error("Golf course proxy returned invalid JSON.");
+      }
+      const row = extractCourseRow(payload);
+      const course = coerceCourseFromRow(row);
+      if (!Number.isFinite(course.id) || course.id <= 0) {
+        throw new Error("GolfCourseAPI course payload missing valid id.");
+      }
+      if (__DEV__) console.log("[golfApi] getCourseById (web) raw slice:", JSON.stringify(row).slice(0, 1800));
+      return course;
+    }
+
+    assertGolfCourseApiKeyConfigured();
+    const payload = await golfCourseApiGetJson(`/courses/${id}`);
+    const row = extractCourseRow(payload);
+    if (__DEV__) console.log("[golfApi] getCourseById (native) raw slice:", JSON.stringify(row).slice(0, 1800));
+    const course = coerceCourseFromRow(row);
+    if (!Number.isFinite(course.id) || course.id <= 0) {
+      throw new Error("GolfCourseAPI course payload missing valid id.");
+    }
+    return course;
+  };
+
+  if (typeof window === "undefined") {
+    const existing = inflightCourseDetail.get(id);
+    if (existing) return existing;
+    const p = run().finally(() => {
+      inflightCourseDetail.delete(id);
+    });
+    inflightCourseDetail.set(id, p);
+    return p;
+  }
+
+  return run();
 }

@@ -8,14 +8,14 @@ import { getColors, radius, spacing } from "@/lib/ui/theme";
 type Props = {
   nextEvent: EventDoc | null;
   enabled: boolean;
-  onOpenWeatherTab: () => void;
+  onOpenWeatherDetail: () => void;
   preferredTeeTimeLocal: string | null | undefined;
 };
 
 export function HomeWeatherSnapshotCard({
   nextEvent,
   enabled,
-  onOpenWeatherTab,
+  onOpenWeatherDetail,
   preferredTeeTimeLocal,
 }: Props) {
   const colors = getColors();
@@ -34,11 +34,11 @@ export function HomeWeatherSnapshotCard({
       <DashboardPlayabilityMiniCard
         nextEvent={nextEvent}
         enabled={enabled}
-        onOpenWeatherTab={onOpenWeatherTab}
+        onOpenWeatherTab={onOpenWeatherDetail}
         preferredTeeTimeLocal={preferredTeeTimeLocal}
       />
       <AppText variant="caption" color="tertiary" style={{ marginTop: 6, paddingHorizontal: 2 }}>
-        Open Weather for hourly detail — the card pairs your tee-day read with a five-day window plan.
+        Powered by FairwayWeather. Tap for full detail, course switching, and the complete forecast.
       </AppText>
     </View>
   );

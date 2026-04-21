@@ -87,12 +87,23 @@ export function HomeSocietyDashboardView(vm: HomeSocietyDashboardVm) {
       style={{ backgroundColor: colors.backgroundSecondary }}
       contentStyle={[styles.screenContent, tabContentStyle]}
     >
-      <HomeAppBar
-        colors={colors}
-        onOpenSettings={() => pushWithBlur("/(app)/(tabs)/settings")}
-      />
+      <HomeAppBar colors={colors} onOpenMore={() => pushWithBlur("/(app)/(tabs)/more")} />
 
       <HomeCurrentSocietySwitcherCard />
+
+      <AppText variant="captionBold" color="primary" style={rhythmStyles.sectionEyebrow}>
+        Next event
+      </AppText>
+      <HomeNextEventCard
+        nextEvent={nextEvent}
+        nextEventIsJoint={nextEventIsJoint}
+        myReg={myReg}
+        formatEventDate={formatEventDate}
+        formatFormatLabel={formatFormatLabel}
+        formatClassification={formatClassification}
+        onOpenEvent={() => nextEvent && openEvent(nextEvent.id)}
+        canManage={Boolean((memberHasSeat || memberIsCaptain) && canAdmin)}
+      />
 
       {postJoinMessage ? (
         <InlineNotice
@@ -207,20 +218,6 @@ export function HomeSocietyDashboardView(vm: HomeSocietyDashboardVm) {
       {/* ================================================================== */}
       {(memberHasSeat || memberIsCaptain) && (<>
 
-      <AppText variant="captionBold" color="primary" style={rhythmStyles.sectionEyebrow}>
-        Next event
-      </AppText>
-      <HomeNextEventCard
-        nextEvent={nextEvent}
-        nextEventIsJoint={nextEventIsJoint}
-        myReg={myReg}
-        formatEventDate={formatEventDate}
-        formatFormatLabel={formatFormatLabel}
-        formatClassification={formatClassification}
-        onOpenEvent={() => nextEvent && openEvent(nextEvent.id)}
-        canManage={canAdmin}
-      />
-
       {/* Event RSVP + payment status summary directly below Next Event */}
       {nextEvent ? (
         <HomeEventAttendanceCard
@@ -239,6 +236,16 @@ export function HomeSocietyDashboardView(vm: HomeSocietyDashboardVm) {
           }
         />
       ) : null}
+
+      <AppText variant="captionBold" color="primary" style={rhythmStyles.sectionEyebrow}>
+        FairwayWeather
+      </AppText>
+      <HomeWeatherSnapshotCard
+        nextEvent={nextEvent}
+        enabled
+        onOpenWeatherDetail={openWeatherTab}
+        preferredTeeTimeLocal={heroTeePreview?.teeTime ?? null}
+      />
 
       <AppText variant="captionBold" color="primary" style={rhythmStyles.sectionEyebrow}>
         Prize pools
@@ -289,16 +296,6 @@ export function HomeSocietyDashboardView(vm: HomeSocietyDashboardVm) {
         </>
       ) : null}
 
-      <AppText variant="captionBold" color="primary" style={rhythmStyles.sectionEyebrow}>
-        Weather
-      </AppText>
-      <HomeWeatherSnapshotCard
-        nextEvent={nextEvent}
-        enabled={!!societyId && !!memberId}
-        onOpenWeatherTab={openWeatherTab}
-        preferredTeeTimeLocal={heroTeePreview?.teeTime ?? null}
-      />
-
       {/* Secondary list kept compact below primary cards */}
       {events.length === 0 && !nextEvent ? (
         <AppCard style={[styles.premiumCard, { marginTop: spacing.sm }]}>
@@ -315,28 +312,6 @@ export function HomeSocietyDashboardView(vm: HomeSocietyDashboardVm) {
           </View>
         </AppCard>
       ) : null}
-
-      {/* Legacy Rivalries card kept as utility action */}
-      <Pressable onPress={() => pushWithBlur("/(app)/(tabs)/sinbook")}>
-        <AppCard
-          style={[
-            rhythmStyles.secondaryCard,
-            { borderColor: colors.borderLight, backgroundColor: colors.surface },
-          ]}
-        >
-          <View style={styles.cardTitleRow}>
-            <Feather name="zap" size={16} color={colors.primary} />
-            <AppText variant="captionBold" color="primary">Rivalries</AppText>
-          </View>
-          <AppText variant="body" color="secondary" style={{ marginTop: spacing.xs }}>
-            Track your season head-to-head matchups.
-          </AppText>
-          <View style={styles.chevronHint}>
-            <AppText variant="small" color="tertiary">Open Rivalries</AppText>
-            <Feather name="chevron-right" size={16} color={colors.textTertiary} />
-          </View>
-        </AppCard>
-      </Pressable>
 
       </>)}
 

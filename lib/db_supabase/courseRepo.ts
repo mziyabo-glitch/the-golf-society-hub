@@ -1,5 +1,26 @@
 // Course and course_tees for event setup (search course → select tee)
-import { supabase } from "@/lib/supabase";
+import type { SupabaseClient } from "@supabase/supabase-js";
+import { supabase as defaultSupabase } from "@/lib/supabase";
+import { updateEvent } from "@/lib/db_supabase/eventRepo";
+import { assertLiveTeeHolesValidForEventAttach } from "@/lib/course/courseTeeHoleValidation";
+import { listStaleTeeRows, partitionStaleTeesForImportReconciliation } from "@/lib/course/teeReconciliation";
+import type { NormalizedCourseImport, PersistedCourseImport, TeeImportReconciliationStats } from "@/types/course";
+import type { EventCourseContext, EventHoleSnapshotRow, EventTeeRatingSnapshot } from "@/types/eventCourseScoring";
+
+export type { EventCourseContext, EventCourseLiveTee, EventHoleSnapshotRow, EventTeeRatingSnapshot } from "@/types/eventCourseScoring";
+
+let courseSupabase: SupabaseClient = defaultSupabase;
+
+/**
+ * Integration / E2E scripts (e.g. service-role client). Call {@link resetCourseRepoSupabase} in `finally`.
+ */
+export function setCourseRepoSupabase(client: SupabaseClient): void {
+  courseSupabase = client;
+}
+
+export function resetCourseRepoSupabase(): void {
+  courseSupabase = defaultSupabase;
+}
 
 export type CourseTee = {
   id: string;
@@ -11,6 +32,55 @@ export type CourseTee = {
   par_total: number;
   gender?: string | null;
   yards?: number | null;
+  bogey_rating?: number | null;
+  total_meters?: number | null;
+  is_default?: boolean;
+  display_order?: number;
+  /** false = archived by import reconciliation; omitted when unknown (pre-migration). */
+  is_active?: boolean;
+  deactivated_at?: string | null;
+};
+
+export type ListCourseTeesOptions = {
+  /** When true, include inactive (archived) tees — default false for pickers and scoring prep. */
+  includeInactive?: boolean;
+};
+
+function mapCourseTeeRow(row: Record<string, unknown>): CourseTee {
+  const cr = row.course_rating;
+  const sr = row.slope_rating;
+  const pt = row.par_total;
+  const br = row.bogey_rating;
+  const tm = row.total_meters;
+  const isActive = row.is_active;
+  return {
+    id: String(row.id),
+    course_id: String(row.course_id),
+    tee_name: (row.tee_name as string) ?? "",
+    tee_color: (row.tee_color as string | null) ?? null,
+    course_rating: cr != null && Number.isFinite(Number(cr)) ? Number(cr) : 0,
+    slope_rating: sr != null && Number.isFinite(Number(sr)) ? Number(sr) : 0,
+    par_total: pt != null && Number.isFinite(Number(pt)) ? Number(pt) : 0,
+    gender: (row.gender as string | null) ?? null,
+    yards: (row.yards as number | null) ?? null,
+    bogey_rating: br != null && Number.isFinite(Number(br)) ? Number(br) : null,
+    total_meters: tm != null && Number.isFinite(Number(tm)) ? Math.round(Number(tm)) : null,
+    is_default: row.is_default === true,
+    display_order: row.display_order != null && Number.isFinite(Number(row.display_order)) ? Number(row.display_order) : 0,
+    is_active: typeof isActive === "boolean" ? isActive : undefined,
+    deactivated_at: row.deactivated_at != null ? String(row.deactivated_at) : null,
+  };
+}
+
+/** One hole row from `course_holes` (WHS / Stableford / stroke index). */
+export type CourseHoleRow = {
+  id: string;
+  course_id: string;
+  tee_id: string;
+  hole_number: number;
+  par: number | null;
+  yardage: number | null;
+  stroke_index: number | null;
 };
 
 export type CourseSearchHit = {
@@ -21,16 +91,26 @@ export type CourseSearchHit = {
 
 /**
  * Fetch tees for a course (from course_tees table).
+ * By default returns **active** tees only (`is_active = true`, migration 118) so pickers and scoring
+ * do not see stale rows left from older imports. Use {@link ListCourseTeesOptions.includeInactive} for audits.
  * Gracefully handles table-not-found (migration 048 not applied).
  */
-export async function getTeesByCourseId(courseId: string): Promise<CourseTee[]> {
-  console.log("[courseRepo] getTeesByCourseId:", courseId);
+export async function getTeesByCourseId(courseId: string, options?: ListCourseTeesOptions): Promise<CourseTee[]> {
+  const includeInactive = options?.includeInactive === true;
+  console.log("[courseRepo] getTeesByCourseId:", courseId, includeInactive ? "(includeInactive)" : "(active only)");
 
-  const { data, error } = await supabase
+  let q = courseSupabase
     .from("course_tees")
     .select("*")
     .eq("course_id", courseId)
-    .order("tee_name");
+    .order("display_order", { ascending: true })
+    .order("tee_name", { ascending: true });
+
+  if (!includeInactive) {
+    q = q.eq("is_active", true);
+  }
+
+  const { data, error } = await q;
 
   if (error) {
     console.error("[courseRepo] getTeesByCourseId failed:", error.message, error.code, error.details);
@@ -38,28 +118,43 @@ export async function getTeesByCourseId(courseId: string): Promise<CourseTee[]> 
       console.warn("[courseRepo] course_tees table does not exist — run migration 048");
       return [];
     }
+    if (error.message?.includes("is_active") || (error as { code?: string }).code === "42703") {
+      console.warn(
+        "[courseRepo] getTeesByCourseId: is_active filter failed — run migration 118_course_tees_import_reconciliation.sql",
+      );
+      const { data: d2, error: e2 } = await courseSupabase
+        .from("course_tees")
+        .select("*")
+        .eq("course_id", courseId)
+        .order("display_order", { ascending: true })
+        .order("tee_name", { ascending: true });
+      if (e2) {
+        if (e2.code === "42P01" || e2.message?.includes("does not exist")) return [];
+        throw new Error(e2.message || "Failed to load tees");
+      }
+      const teesLegacy = (d2 ?? []).map((row: Record<string, unknown>) => mapCourseTeeRow(row));
+      console.log("[courseRepo] getTeesByCourseId returned", teesLegacy.length, "tees (legacy, no is_active)");
+      return teesLegacy;
+    }
     throw new Error(error.message || "Failed to load tees");
   }
 
-  const tees = (data ?? []).map((row: any) => {
-    const cr = row.course_rating;
-    const sr = row.slope_rating;
-    const pt = row.par_total;
-    return {
-      id: row.id,
-      course_id: row.course_id,
-      tee_name: row.tee_name ?? "",
-      tee_color: row.tee_color ?? null,
-      course_rating: cr != null && Number.isFinite(Number(cr)) ? Number(cr) : 0,
-      slope_rating: sr != null && Number.isFinite(Number(sr)) ? Number(sr) : 0,
-      par_total: pt != null && Number.isFinite(Number(pt)) ? Number(pt) : 0,
-      gender: row.gender ?? null,
-      yards: row.yards ?? null,
-    };
-  });
+  const tees = (data ?? []).map((row: Record<string, unknown>) => mapCourseTeeRow(row));
 
   console.log("[courseRepo] getTeesByCourseId returned", tees.length, "tees");
   return tees;
+}
+
+/** Single tee row (includes inactive) for event context / historical FK resolution. */
+export async function getCourseTeeById(teeId: string): Promise<CourseTee | null> {
+  if (!teeId) return null;
+  const { data, error } = await courseSupabase.from("course_tees").select("*").eq("id", teeId).maybeSingle();
+  if (error) {
+    if (error.code === "42P01" || error.message?.includes("does not exist")) return null;
+    throw new Error(error.message || "Failed to load tee");
+  }
+  if (!data) return null;
+  return mapCourseTeeRow(data as Record<string, unknown>);
 }
 export type SearchCoursesResult = {
   data: CourseSearchHit[];
@@ -86,7 +181,7 @@ export type CourseMeta = {
  * Returns null if course not found or has 0 tees (so caller fetches from API).
  */
 export async function getCourseByApiId(apiId: number): Promise<CourseWithTees | null> {
-  const { data: course, error: courseErr } = await supabase
+  const { data: course, error: courseErr } = await courseSupabase
     .from("courses")
     .select("id, course_name")
     .eq("api_id", apiId)
@@ -108,7 +203,7 @@ export async function getCourseByApiId(apiId: number): Promise<CourseWithTees | 
 }
 
 export async function getCourseMetaById(courseId: string): Promise<CourseMeta | null> {
-  const { data, error } = await supabase
+  const { data, error } = await courseSupabase
     .from("courses")
     .select("id, course_name, api_id, lat, lng")
     .eq("id", courseId)
@@ -187,7 +282,7 @@ export async function upsertTeesFromApi(
     .filter((r): r is NonNullable<typeof r> => r !== null);
 
   for (const row of rows) {
-    const { error } = await supabase.from("course_tees").insert(row);
+    const { error } = await courseSupabase.from("course_tees").insert(row);
 
     if (error) {
       if ((error as any).code === "23505") {
@@ -216,7 +311,7 @@ export async function searchCourses(
   console.log("[courseRepo] searchCourses:", q);
 
   // Select all columns (*) so we can pick location from whatever exists
-  const { data, error } = await supabase
+  const { data, error } = await courseSupabase
     .from("courses")
     .select("*")
     .ilike("course_name", `%${q}%`)
@@ -257,7 +352,7 @@ export type CourseLocationRow = {
 };
 
 export async function getCourseLocationById(courseId: string): Promise<CourseLocationRow | null> {
-  const { data, error } = await supabase
+  const { data, error } = await courseSupabase
     .from("courses")
     .select("id, course_name, lat, lng, phone, website_url, api_id")
     .eq("id", courseId)
@@ -273,6 +368,590 @@ export async function getCourseLocationById(courseId: string): Promise<CourseLoc
     phone: row.phone ?? null,
     website_url: row.website_url ?? null,
     api_id: row.api_id != null && Number.isFinite(Number(row.api_id)) ? Number(row.api_id) : null,
+  };
+}
+
+// =============================================================================
+// GolfCourseAPI import persistence (normalized payload → courses / course_tees / course_holes)
+//
+// Re-import safety (production-critical):
+// 1. `courses` — UPSERT on `dedupe_key` (stable per GolfCourseAPI id). No duplicate course rows.
+// 2. `course_tees` — UPSERT on `(course_id, tee_name)` so tee UUIDs stay stable; `events.tee_id` and
+//    `event_courses.tee_id` keep pointing at the same row after re-import.
+// 3. `course_holes` — DELETE every hole row for this `course_id`, verify count is zero, then INSERT
+//    fresh rows per tee. This avoids orphan holes from renamed tees and guarantees one hole set per
+//    tee per import pass (no duplicate hole_number rows left behind).
+// 4. Tee reconciliation (migration 118 `is_active`) — after each import, `course_tees` rows whose
+//    `tee_name` is not in the normalized set are soft-deactivated if still referenced by events /
+//    event_courses / event_entries, else hard-deleted. Active pickers use {@link getTeesByCourseId} default.
+// =============================================================================
+
+function chunkIds(ids: string[], size: number): string[][] {
+  const out: string[][] = [];
+  for (let i = 0; i < ids.length; i += size) out.push(ids.slice(i, i + size));
+  return out;
+}
+
+async function collectReferencedStaleTeeIds(staleIds: string[]): Promise<Set<string>> {
+  const refs = new Set<string>();
+  if (staleIds.length === 0) return refs;
+  for (const part of chunkIds(staleIds, 80)) {
+    const [ev, ec, ee] = await Promise.all([
+      courseSupabase.from("events").select("tee_id").in("tee_id", part),
+      courseSupabase.from("event_courses").select("tee_id").in("tee_id", part),
+      courseSupabase.from("event_entries").select("tee_id").in("tee_id", part),
+    ]);
+    if (ev.error && ev.error.code !== "42P01" && !ev.error.message?.includes("does not exist")) {
+      throw new Error(ev.error.message || "reconcile: failed to scan events for tee references");
+    }
+    if (ec.error && ec.error.code !== "42P01" && !ec.error.message?.includes("does not exist")) {
+      throw new Error(ec.error.message || "reconcile: failed to scan event_courses for tee references");
+    }
+    if (ee.error && ee.error.code !== "42P01" && !ee.error.message?.includes("does not exist")) {
+      throw new Error(ee.error.message || "reconcile: failed to scan event_entries for tee references");
+    }
+    for (const r of ev.data ?? []) {
+      const id = (r as { tee_id?: string | null }).tee_id;
+      if (id) refs.add(String(id));
+    }
+    for (const r of ec.data ?? []) {
+      const id = (r as { tee_id?: string | null }).tee_id;
+      if (id) refs.add(String(id));
+    }
+    for (const r of ee.data ?? []) {
+      const id = (r as { tee_id?: string | null }).tee_id;
+      if (id) refs.add(String(id));
+    }
+  }
+  return refs;
+}
+
+/**
+ * Align `course_tees` with the normalized importer set: stale rows are deleted or soft-deactivated.
+ * Requires migration 118 (`is_active`, `deactivated_at` on `course_tees`).
+ */
+export async function reconcileCourseTeesAfterNormalizedImport(
+  courseId: string,
+  normalizedTeeNames: readonly string[],
+): Promise<TeeImportReconciliationStats> {
+  const { data: allRows, error: readErr } = await courseSupabase
+    .from("course_tees")
+    .select("id, tee_name")
+    .eq("course_id", courseId);
+
+  if (readErr) {
+    if (readErr.code === "42P01" || readErr.message?.includes("does not exist")) {
+      return {
+        normalizedTeeCount: normalizedTeeNames.length,
+        dbTeeCountBeforeReconciliation: 0,
+        staleDeactivatedCount: 0,
+        staleDeletedCount: 0,
+        historicalReferencedStaleCount: 0,
+        dbActiveTeeCountAfter: 0,
+      };
+    }
+    throw new Error(readErr.message || "reconcile: failed to list course_tees");
+  }
+
+  const rows = (allRows ?? []).map((r: { id: unknown; tee_name: unknown }) => ({
+    id: String(r.id),
+    tee_name: String(r.tee_name ?? ""),
+  }));
+  const dbTeeCountBeforeReconciliation = rows.length;
+
+  if (normalizedTeeNames.length === 0) {
+    const { count: activeOnly, error: actCountErr } = await courseSupabase
+      .from("course_tees")
+      .select("id", { count: "exact", head: true })
+      .eq("course_id", courseId)
+      .eq("is_active", true);
+    let activeAfter = activeOnly ?? 0;
+    if (actCountErr) {
+      const missingCol =
+        actCountErr.message?.includes("is_active") || (actCountErr as { code?: string }).code === "42703";
+      if (missingCol) {
+        const { count: allC, error: allErr } = await courseSupabase
+          .from("course_tees")
+          .select("id", { count: "exact", head: true })
+          .eq("course_id", courseId);
+        if (allErr) throw new Error(allErr.message || "reconcile: failed to count tees");
+        activeAfter = allC ?? dbTeeCountBeforeReconciliation;
+      } else {
+        throw new Error(actCountErr.message || "reconcile: failed to count active tees");
+      }
+    }
+    return {
+      normalizedTeeCount: 0,
+      dbTeeCountBeforeReconciliation,
+      staleDeactivatedCount: 0,
+      staleDeletedCount: 0,
+      historicalReferencedStaleCount: 0,
+      dbActiveTeeCountAfter: activeAfter,
+    };
+  }
+
+  const staleRows = listStaleTeeRows(rows, normalizedTeeNames);
+  const staleIds = staleRows.map((r) => r.id);
+  const referenced = await collectReferencedStaleTeeIds(staleIds);
+  const { deactivateIds, deleteIds } = partitionStaleTeesForImportReconciliation(staleRows, referenced);
+
+  const nowIso = new Date().toISOString();
+  for (const part of chunkIds(deactivateIds, 80)) {
+    const { error: uErr } = await courseSupabase
+      .from("course_tees")
+      .update({ is_active: false, deactivated_at: nowIso })
+      .eq("course_id", courseId)
+      .in("id", part);
+    if (uErr) throw new Error(uErr.message || "reconcile: failed to deactivate stale tees");
+  }
+
+  for (const part of chunkIds(deleteIds, 80)) {
+    const { error: dErr } = await courseSupabase.from("course_tees").delete().eq("course_id", courseId).in("id", part);
+    if (dErr) throw new Error(dErr.message || "reconcile: failed to delete unreferenced stale tees");
+  }
+
+  const names = [...normalizedTeeNames];
+  for (const part of chunkIds(names, 80)) {
+    const { error: actErr } = await courseSupabase
+      .from("course_tees")
+      .update({ is_active: true, deactivated_at: null })
+      .eq("course_id", courseId)
+      .in("tee_name", part);
+    if (actErr) throw new Error(actErr.message || "reconcile: failed to reactivate current import tees");
+  }
+
+  const { count: activeAfter, error: cErr } = await courseSupabase
+    .from("course_tees")
+    .select("id", { count: "exact", head: true })
+    .eq("course_id", courseId)
+    .eq("is_active", true);
+
+  if (cErr) throw new Error(cErr.message || "reconcile: failed to count active tees");
+
+  return {
+    normalizedTeeCount: normalizedTeeNames.length,
+    dbTeeCountBeforeReconciliation,
+    staleDeactivatedCount: deactivateIds.length,
+    staleDeletedCount: deleteIds.length,
+    historicalReferencedStaleCount: deactivateIds.length,
+    dbActiveTeeCountAfter: activeAfter ?? 0,
+  };
+}
+
+/**
+ * Remove all hole rows for a course (before re-import). Safe with FK: child rows first.
+ */
+export async function deleteHolesForCourse(courseId: string): Promise<void> {
+  const { error } = await courseSupabase.from("course_holes").delete().eq("course_id", courseId);
+  if (error && error.code !== "42P01" && !error.message?.includes("does not exist")) {
+    throw new Error(error.message || "Failed to delete course_holes");
+  }
+}
+
+export async function getHolesByTeeId(teeId: string): Promise<CourseHoleRow[]> {
+  const { data, error } = await courseSupabase
+    .from("course_holes")
+    .select("id, course_id, tee_id, hole_number, par, yardage, stroke_index")
+    .eq("tee_id", teeId)
+    .order("hole_number", { ascending: true });
+
+  if (error) {
+    if (error.code === "42P01" || error.message?.includes("does not exist")) return [];
+    throw new Error(error.message || "Failed to load holes");
+  }
+  return (data ?? []).map((row: any) => ({
+    id: String(row.id),
+    course_id: String(row.course_id),
+    tee_id: String(row.tee_id),
+    hole_number: Number(row.hole_number),
+    par: row.par != null ? Number(row.par) : null,
+    yardage: row.yardage != null ? Number(row.yardage) : null,
+    stroke_index: row.stroke_index != null ? Number(row.stroke_index) : null,
+  }));
+}
+
+export async function getHolesByCourseId(courseId: string): Promise<CourseHoleRow[]> {
+  const { data, error } = await courseSupabase
+    .from("course_holes")
+    .select("id, course_id, tee_id, hole_number, par, yardage, stroke_index")
+    .eq("course_id", courseId)
+    .order("hole_number", { ascending: true });
+
+  if (error) {
+    if (error.code === "42P01" || error.message?.includes("does not exist")) return [];
+    throw new Error(error.message || "Failed to load holes for course");
+  }
+  return (data ?? []).map((row: any) => ({
+    id: String(row.id),
+    course_id: String(row.course_id),
+    tee_id: String(row.tee_id),
+    hole_number: Number(row.hole_number),
+    par: row.par != null ? Number(row.par) : null,
+    yardage: row.yardage != null ? Number(row.yardage) : null,
+    stroke_index: row.stroke_index != null ? Number(row.stroke_index) : null,
+  }));
+}
+
+export type CourseWithTeesAndHoles = {
+  courseId: string;
+  courseName: string;
+  tees: CourseTee[];
+  holesByTeeId: Record<string, CourseHoleRow[]>;
+};
+
+export async function getCourseWithTeesAndHoles(courseId: string): Promise<CourseWithTeesAndHoles | null> {
+  const { data: c, error } = await courseSupabase.from("courses").select("id, course_name").eq("id", courseId).maybeSingle();
+  if (error || !c) return null;
+  const tees = await getTeesByCourseId(courseId);
+  const holesByTeeId: Record<string, CourseHoleRow[]> = {};
+  for (const t of tees) {
+    holesByTeeId[t.id] = await getHolesByTeeId(t.id);
+  }
+  return {
+    courseId: c.id,
+    courseName: (c as any).course_name ?? "",
+    tees,
+    holesByTeeId,
+  };
+}
+
+/**
+ * Persist a normalized import package (idempotent on `courses.dedupe_key`).
+ * See file header for full re-import strategy.
+ */
+export async function persistNormalizedCourseImport(n: NormalizedCourseImport): Promise<PersistedCourseImport> {
+  const coursePayload: Record<string, unknown> = {
+    dedupe_key: n.course.dedupeKey,
+    course_name: n.course.courseName,
+    club_name: n.course.clubName,
+    api_id: n.course.apiId,
+    full_name: n.course.fullName,
+    address: n.course.address,
+    city: n.course.city,
+    country: n.course.country,
+    lat: n.course.latitude,
+    lng: n.course.longitude,
+    normalized_name: n.course.normalizedNameKey,
+    source: n.course.source,
+    source_country_code: "gb",
+    enrichment_status: "imported",
+    raw_row: {},
+  };
+
+  const { data: saved, error: upErr } = await courseSupabase
+    .from("courses")
+    .upsert(coursePayload, { onConflict: "dedupe_key" })
+    .select("id, course_name")
+    .single();
+
+  if (upErr || !saved) {
+    throw new Error(upErr?.message || "persistNormalizedCourseImport: course upsert failed");
+  }
+
+  const courseId = String((saved as any).id);
+  await deleteHolesForCourse(courseId);
+
+  const { count: remainingHoles, error: holeVerifyErr } = await courseSupabase
+    .from("course_holes")
+    .select("id", { count: "exact", head: true })
+    .eq("course_id", courseId);
+
+  if (holeVerifyErr && holeVerifyErr.code !== "42P01" && !holeVerifyErr.message?.includes("does not exist")) {
+    throw new Error(holeVerifyErr.message || "persistNormalizedCourseImport: could not verify hole delete");
+  }
+  if ((remainingHoles ?? 0) > 0) {
+    throw new Error(
+      `persistNormalizedCourseImport: ${remainingHoles} course_holes rows still exist for course ${courseId} after delete — aborting.`,
+    );
+  }
+
+  let holeTotal = 0;
+  const teeOut: PersistedCourseImport["tees"] = [];
+
+  for (const { tee, holes } of n.tees) {
+    const teeRow: Record<string, unknown> = {
+      course_id: courseId,
+      tee_name: tee.teeName,
+      course_rating: tee.courseRating,
+      bogey_rating: tee.bogeyRating,
+      slope_rating: tee.slopeRating,
+      par_total: tee.parTotal,
+      yards: tee.totalYards,
+      total_meters: tee.totalMeters,
+      gender: tee.gender,
+      tee_color: tee.teeColor,
+      is_default: tee.isDefault,
+      display_order: tee.displayOrder,
+      is_active: true,
+      deactivated_at: null,
+    };
+
+    const { data: teeSaved, error: teeErr } = await courseSupabase
+      .from("course_tees")
+      .upsert(teeRow, { onConflict: "course_id,tee_name" })
+      .select("id")
+      .single();
+
+    if (teeErr || !teeSaved) {
+      throw new Error(teeErr?.message || `persistNormalizedCourseImport: tee upsert failed (${tee.teeName})`);
+    }
+
+    const teeId = String((teeSaved as any).id);
+    const holeRows = holes.map((h) => ({
+      course_id: courseId,
+      tee_id: teeId,
+      hole_number: h.holeNumber,
+      par: h.par,
+      yardage: h.yardage,
+      stroke_index: h.strokeIndex,
+    }));
+
+    if (holeRows.length > 0) {
+      const { error: hErr } = await courseSupabase.from("course_holes").insert(holeRows);
+      if (hErr) {
+        throw new Error(hErr.message || `persistNormalizedCourseImport: hole insert failed (${tee.teeName})`);
+      }
+    }
+
+    holeTotal += holes.length;
+    teeOut.push({
+      id: teeId,
+      teeName: tee.teeName,
+      holeCount: holes.length,
+      courseRating: tee.courseRating,
+      slopeRating: tee.slopeRating,
+      parTotal: tee.parTotal,
+      gender: tee.gender,
+      yards: tee.totalYards,
+    });
+  }
+
+  const normalizedTeeNames = n.tees.map(({ tee }) => tee.teeName);
+  const teeReconciliation =
+    normalizedTeeNames.length > 0
+      ? await reconcileCourseTeesAfterNormalizedImport(courseId, normalizedTeeNames)
+      : undefined;
+
+  return {
+    courseId,
+    apiId: n.course.apiId,
+    courseName: (saved as any).course_name ?? n.course.courseName,
+    teeCount: teeOut.length,
+    holeCount: holeTotal,
+    tees: teeOut,
+    teeReconciliation,
+  };
+}
+
+/** DB-backed course picker (already-imported courses). */
+export function getCourseOptionsForPicker(query: string, limit = 20): Promise<SearchCoursesResult> {
+  return searchCourses(query, limit);
+}
+
+/** Tee picker for an imported course UUID (active tees only unless options say otherwise). */
+export function getTeeOptionsForCourse(courseId: string, options?: ListCourseTeesOptions): Promise<CourseTee[]> {
+  return getTeesByCourseId(courseId, options);
+}
+
+/**
+ * Lock event to imported course + tee: updates `events` FKs and upserts `event_courses` with an
+ * immutable tee metric snapshot (WHS / historical scoring). Re-importing the course must not change
+ * past competitions — scoring should prefer {@link EventCourseContext.teeRatingSnapshot}.
+ */
+export async function attachCourseAndTeeToEvent(
+  eventId: string,
+  courseId: string,
+  teeId: string,
+  courseNameDisplay: string,
+): Promise<void> {
+  if (!eventId || !courseId || !teeId) {
+    throw new Error("attachCourseAndTeeToEvent: eventId, courseId, and teeId are required.");
+  }
+
+  const { data: teeRow, error: teeReadErr } = await courseSupabase
+    .from("course_tees")
+    .select("id, course_id, tee_name, course_rating, slope_rating, par_total")
+    .eq("id", teeId)
+    .maybeSingle();
+
+  if (teeReadErr) {
+    console.error("[courseRepo] attachCourseAndTeeToEvent: tee read failed", teeReadErr.message);
+    throw new Error(teeReadErr.message || "attachCourseAndTeeToEvent: could not load tee");
+  }
+  if (!teeRow) {
+    throw new Error(`attachCourseAndTeeToEvent: tee ${teeId} not found in course_tees.`);
+  }
+  if (String((teeRow as { course_id: string }).course_id) !== courseId) {
+    throw new Error("attachCourseAndTeeToEvent: tee does not belong to the given course_id.");
+  }
+
+  const tr = teeRow as {
+    tee_name: string | null;
+    course_rating: number | null;
+    slope_rating: number | null;
+    par_total: number | null;
+  };
+
+  const parTotal = tr.par_total != null && Number.isFinite(Number(tr.par_total)) ? Math.round(Number(tr.par_total)) : undefined;
+  const courseRating =
+    tr.course_rating != null && Number.isFinite(Number(tr.course_rating)) ? Number(tr.course_rating) : undefined;
+  const slopeRating =
+    tr.slope_rating != null && Number.isFinite(Number(tr.slope_rating)) ? Math.round(Number(tr.slope_rating)) : undefined;
+
+  await updateEvent(eventId, {
+    courseId,
+    teeId,
+    courseName: courseNameDisplay,
+    teeName: tr.tee_name?.trim() || undefined,
+    par: parTotal,
+    courseRating,
+    slopeRating,
+    teeSource: "imported",
+  });
+
+  const { error: delEcErr } = await courseSupabase.from("event_courses").delete().eq("event_id", eventId);
+  if (delEcErr && delEcErr.code !== "42P01" && !delEcErr.message?.includes("does not exist")) {
+    throw new Error(delEcErr.message || "attachCourseAndTeeToEvent: failed to clear event_courses");
+  }
+
+  const { error } = await courseSupabase.from("event_courses").insert({
+    event_id: eventId,
+    course_id: courseId,
+    tee_id: teeId,
+    tee_name: tr.tee_name ?? null,
+    course_rating: courseRating ?? null,
+    slope_rating: slopeRating ?? null,
+    par_total: parTotal ?? null,
+  });
+  if (error && error.code !== "42P01" && !error.message?.includes("does not exist")) {
+    console.error("[courseRepo] event_courses insert failed:", error.message);
+    throw new Error(error.message || "event_courses insert failed");
+  }
+
+  const liveHoles = await getHolesByTeeId(teeId);
+  assertLiveTeeHolesValidForEventAttach(liveHoles);
+
+  const { error: delHoleErr } = await courseSupabase.from("event_course_holes").delete().eq("event_id", eventId);
+  if (delHoleErr && delHoleErr.code !== "42P01" && !delHoleErr.message?.includes("does not exist")) {
+    throw new Error(delHoleErr.message || "attachCourseAndTeeToEvent: failed to clear prior hole snapshot");
+  }
+
+  const holePayload = liveHoles.map((h) => ({
+    event_id: eventId,
+    hole_number: h.hole_number,
+    par: Math.round(Number(h.par)),
+    yardage: Math.round(Number(h.yardage)),
+    stroke_index: Math.round(Number(h.stroke_index)),
+  }));
+
+  const { error: insHoleErr } = await courseSupabase.from("event_course_holes").insert(holePayload);
+  if (insHoleErr && insHoleErr.code !== "42P01" && !insHoleErr.message?.includes("does not exist")) {
+    throw new Error(insHoleErr.message || "attachCourseAndTeeToEvent: failed to insert hole snapshot");
+  }
+}
+
+export type { TeeHoleRowLike } from "@/lib/course/courseTeeHoleValidation";
+export { assertLiveTeeHolesValidForEventAttach } from "@/lib/course/courseTeeHoleValidation";
+
+export type GetEventCourseContextOptions = {
+  /**
+   * When false, omit live `course_tees` lookup — use only `event_courses` + `event_course_holes` (scoring engine).
+   * @default true (UI / pickers may show current tee block from DB).
+   */
+  includeLiveTee?: boolean;
+};
+
+/**
+ * Snapshot of what an event is using for slope/rating + per-hole data (for future score entry).
+ */
+export async function getEventCourseContext(
+  eventId: string,
+  options?: GetEventCourseContextOptions,
+): Promise<EventCourseContext | null> {
+  const includeLiveTee = options?.includeLiveTee !== false;
+
+  const { data: ev, error } = await courseSupabase
+    .from("events")
+    .select("id, course_id, tee_id, course_name")
+    .eq("id", eventId)
+    .maybeSingle();
+
+  if (error || !ev) return null;
+
+  const courseId = (ev as any).course_id != null ? String((ev as any).course_id) : null;
+  const teeId = (ev as any).tee_id != null ? String((ev as any).tee_id) : null;
+  const courseName = (ev as any).course_name != null ? String((ev as any).course_name) : null;
+
+  let tee: CourseTee | null = null;
+  if (includeLiveTee && teeId) {
+    tee = await getCourseTeeById(teeId);
+    if (tee && courseId && tee.course_id !== courseId) {
+      tee = null;
+    }
+  }
+
+  const { data: holeRows, error: holeErr } = await courseSupabase
+    .from("event_course_holes")
+    .select("id, event_id, hole_number, par, yardage, stroke_index")
+    .eq("event_id", eventId)
+    .order("hole_number", { ascending: true });
+
+  if (holeErr && holeErr.code !== "42P01" && !holeErr.message?.includes("does not exist")) {
+    throw new Error(holeErr.message || "getEventCourseContext: failed to load event_course_holes");
+  }
+
+  const holes: EventHoleSnapshotRow[] = (holeRows ?? []).map((r: Record<string, unknown>) => ({
+    id: String(r.id),
+    event_id: String(r.event_id),
+    hole_number: Number(r.hole_number),
+    par: Number(r.par),
+    yardage: Number(r.yardage),
+    stroke_index: Number(r.stroke_index),
+  }));
+
+  const { data: ec } = await courseSupabase
+    .from("event_courses")
+    .select("course_id, tee_id, tee_name, course_rating, slope_rating, par_total")
+    .eq("event_id", eventId)
+    .maybeSingle();
+
+  const lockRow =
+    ec && (ec as any).course_id && (ec as any).tee_id
+      ? { course_id: String((ec as any).course_id), tee_id: String((ec as any).tee_id) }
+      : null;
+
+  const teeRatingSnapshot: EventTeeRatingSnapshot | null =
+    ec &&
+    ((ec as any).tee_name != null ||
+      (ec as any).course_rating != null ||
+      (ec as any).slope_rating != null ||
+      (ec as any).par_total != null)
+      ? {
+          teeName: (ec as any).tee_name != null ? String((ec as any).tee_name) : null,
+          courseRating:
+            (ec as any).course_rating != null && Number.isFinite(Number((ec as any).course_rating))
+              ? Number((ec as any).course_rating)
+              : null,
+          slopeRating:
+            (ec as any).slope_rating != null && Number.isFinite(Number((ec as any).slope_rating))
+              ? Math.round(Number((ec as any).slope_rating))
+              : null,
+          parTotal:
+            (ec as any).par_total != null && Number.isFinite(Number((ec as any).par_total))
+              ? Math.round(Number((ec as any).par_total))
+              : null,
+        }
+      : null;
+
+  return {
+    eventId,
+    courseId,
+    teeId,
+    courseName,
+    tee,
+    teeRatingSnapshot,
+    holes,
+    lockRow,
   };
 }
 

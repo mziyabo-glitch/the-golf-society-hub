@@ -55,10 +55,7 @@ export function PersonalModeHome({
       style={{ backgroundColor: colors.backgroundSecondary }}
       contentStyle={[styles.screenContent, tabContentStyle]}
     >
-      <HomeAppBar
-        colors={colors}
-        onOpenSettings={() => pushWithBlur("/(app)/(tabs)/settings")}
-      />
+      <HomeAppBar colors={colors} onOpenMore={() => pushWithBlur("/(app)/(tabs)/more")} />
 
       {/* Welcome header */}
       <AppCard style={[styles.premiumCard, personalHomeStyles.welcomeSection, { borderColor: colors.borderLight }]}>

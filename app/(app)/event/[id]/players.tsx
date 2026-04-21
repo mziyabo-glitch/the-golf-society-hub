@@ -38,7 +38,7 @@ import {
   updateEventGuest,
   type EventGuest,
 } from "@/lib/db_supabase/eventGuestRepo";
-import { canManageEventRosterForSociety } from "@/lib/rbac";
+import { canManageEventRosterForSociety, getPermissionsForMember, isSecretary } from "@/lib/rbac";
 import { getColors, spacing, radius, typography } from "@/lib/ui/theme";
 import { JOINT_EVENT_CHIP_LONG } from "@/lib/eventModuleUi";
 import { isJointEventFromMeta, isActiveSocietyParticipantForEvent } from "@/lib/jointEventAccess";
@@ -54,7 +54,7 @@ import { invalidateCache, invalidateCachePrefix } from "@/lib/cache/clientCache"
 export default function EventPlayersScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ id: string }>();
-  const { societyId, memberships, loading: bootstrapLoading } = useBootstrap();
+  const { societyId, memberships, member: currentMember, loading: bootstrapLoading } = useBootstrap();
   const colors = getColors();
 
   const eventId = useMemo(() => {
@@ -90,6 +90,8 @@ export default function EventPlayersScreen() {
   const [savingGuestEdit, setSavingGuestEdit] = useState(false);
 
   const canManageGuests = canManageEventRosterForSociety(memberships, societyId);
+  const canEnterGrossScores =
+    getPermissionsForMember(currentMember).canManageHandicaps || isSecretary(currentMember);
 
   const jointSocietyIdToName = useMemo(
     () => buildSocietyIdToNameMap(jointParticipatingSocieties),
@@ -571,31 +573,47 @@ export default function EventPlayersScreen() {
                       : societyLabelFromMember(d.representative, jointSocietyIdToName) ??
                         d.representative.society_id;
                   return (
-                    <Pressable key={d.key} onPress={() => togglePlayer(id)}>
-                      <AppCard style={selected ? { ...styles.row, ...styles.rowSelected } : styles.row}>
-                        <View style={{ flex: 1 }}>
-                          <AppText style={styles.name}>
-                            {resolveAttendeeDisplayName(d.representative, { memberId: d.representative.id }).name}
-                          </AppText>
-                          <AppText variant="caption" color="secondary" style={{ marginTop: 4 }}>
-                            {societyLine}
-                            {d.mergedMemberIds.length > 1 ? " · Dual membership" : ""}
-                          </AppText>
-
-                          {handicap != null && (
-                            <AppText style={styles.subtle}>
-                              HCP: {handicap}
+                    <AppCard key={d.key} style={selected ? { ...styles.row, ...styles.rowSelected } : styles.row}>
+                      <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+                        <Pressable style={{ flex: 1, flexDirection: "row", alignItems: "center" }} onPress={() => togglePlayer(id)}>
+                          <View style={{ flex: 1 }}>
+                            <AppText style={styles.name}>
+                              {resolveAttendeeDisplayName(d.representative, { memberId: d.representative.id }).name}
                             </AppText>
-                          )}
-                        </View>
+                            <AppText variant="caption" color="secondary" style={{ marginTop: 4 }}>
+                              {societyLine}
+                              {d.mergedMemberIds.length > 1 ? " · Dual membership" : ""}
+                            </AppText>
 
-                        <Feather
-                          name={selected ? "check-circle" : "circle"}
-                          size={22}
-                          color={selected ? colors.primary : colors.textTertiary}
-                        />
-                      </AppCard>
-                    </Pressable>
+                            {handicap != null && (
+                              <AppText style={styles.subtle}>
+                                HCP: {handicap}
+                              </AppText>
+                            )}
+                          </View>
+
+                          <Feather
+                            name={selected ? "check-circle" : "circle"}
+                            size={22}
+                            color={selected ? colors.primary : colors.textTertiary}
+                          />
+                        </Pressable>
+                        {canEnterGrossScores && eventId ? (
+                          <Pressable
+                            accessibilityLabel="Enter gross scores"
+                            hitSlop={10}
+                            onPress={() =>
+                              router.push({
+                                pathname: "/(app)/event/[id]/gross-scores/[playerId]",
+                                params: { id: eventId, playerId: id },
+                              } as never)
+                            }
+                          >
+                            <Feather name="edit-3" size={20} color={colors.primary} />
+                          </Pressable>
+                        ) : null}
+                      </View>
+                    </AppCard>
                   );
                 })
               : members.map((m) => {
@@ -604,27 +622,43 @@ export default function EventPlayersScreen() {
                   const handicap = m.handicapIndex ?? (m as any).handicap_index;
 
                   return (
-                    <Pressable key={id} onPress={() => togglePlayer(id)}>
-                      <AppCard style={selected ? { ...styles.row, ...styles.rowSelected } : styles.row}>
-                        <View style={{ flex: 1 }}>
-                          <AppText style={styles.name}>
-                            {resolveAttendeeDisplayName(m, { memberId: m.id }).name}
-                          </AppText>
-
-                          {handicap != null && (
-                            <AppText style={styles.subtle}>
-                              HCP: {handicap}
+                    <AppCard key={id} style={selected ? { ...styles.row, ...styles.rowSelected } : styles.row}>
+                      <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+                        <Pressable style={{ flex: 1, flexDirection: "row", alignItems: "center" }} onPress={() => togglePlayer(id)}>
+                          <View style={{ flex: 1 }}>
+                            <AppText style={styles.name}>
+                              {resolveAttendeeDisplayName(m, { memberId: m.id }).name}
                             </AppText>
-                          )}
-                        </View>
 
-                        <Feather
-                          name={selected ? "check-circle" : "circle"}
-                          size={22}
-                          color={selected ? colors.primary : colors.textTertiary}
-                        />
-                      </AppCard>
-                    </Pressable>
+                            {handicap != null && (
+                              <AppText style={styles.subtle}>
+                                HCP: {handicap}
+                              </AppText>
+                            )}
+                          </View>
+
+                          <Feather
+                            name={selected ? "check-circle" : "circle"}
+                            size={22}
+                            color={selected ? colors.primary : colors.textTertiary}
+                          />
+                        </Pressable>
+                        {canEnterGrossScores && eventId ? (
+                          <Pressable
+                            accessibilityLabel="Enter gross scores"
+                            hitSlop={10}
+                            onPress={() =>
+                              router.push({
+                                pathname: "/(app)/event/[id]/gross-scores/[playerId]",
+                                params: { id: eventId, playerId: id },
+                              } as never)
+                            }
+                          >
+                            <Feather name="edit-3" size={20} color={colors.primary} />
+                          </Pressable>
+                        ) : null}
+                      </View>
+                    </AppCard>
                   );
                 })}
           </View>

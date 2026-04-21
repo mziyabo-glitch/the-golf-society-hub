@@ -1,9 +1,11 @@
 /**
- * Weather tab — in-app golf playability: next event or any course.
+ * FairwayWeather detail screen — premium in-app weather flow:
+ * event/default/recent course switching, search, and embedded browser launch.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Linking, Pressable, ScrollView, StyleSheet, View } from "react-native";
+import { Pressable, ScrollView, StyleSheet, View } from "react-native";
+import * as WebBrowser from "expo-web-browser";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
 import { useBottomTabBarHeight } from "@react-navigation/bottom-tabs";
@@ -35,8 +37,10 @@ import { searchCourses as searchCoursesApi } from "@/lib/golfApi";
 import { getColors, spacing, radius, premiumTokens } from "@/lib/ui/theme";
 import { usePlayabilityBundle } from "@/lib/playability/usePlayabilityBundle";
 import {
+  loadDefaultWeatherCourse,
   loadRecentWeatherCourses,
   rememberWeatherCourse,
+  setDefaultWeatherCourse,
   type RecentWeatherCourse,
 } from "@/lib/playability/weatherRecentCourses";
 import { planStartForFiveDayWindow } from "@/lib/playability/weatherPlanAnchor";
@@ -72,6 +76,12 @@ function firstRouteParam(v: string | string[] | undefined): string | undefined {
   const s = Array.isArray(v) ? v[0] : v;
   const t = typeof s === "string" ? s.trim() : "";
   return t.length ? t : undefined;
+}
+
+function buildFairwayWeatherUrl(courseName: string): string {
+  const q = courseName.trim();
+  if (!q) return "https://www.fairwayweather.com";
+  return `https://www.fairwayweather.com/?q=${encodeURIComponent(q)}`;
 }
 
 function ModeChip({
@@ -135,6 +145,7 @@ export default function WeatherScreen() {
   const [apiLoading, setApiLoading] = useState(false);
   const [manualPick, setManualPick] = useState<ManualPick | null>(null);
   const [recent, setRecent] = useState<RecentWeatherCourse[]>([]);
+  const [defaultCourse, setDefaultCourse] = useState<RecentWeatherCourse | null>(null);
 
   const loadEvents = useCallback(async () => {
     if (!canLoadSocietyWeather || !societyId) {
@@ -209,6 +220,7 @@ export default function WeatherScreen() {
 
   useEffect(() => {
     void loadRecentWeatherCourses().then(setRecent);
+    void loadDefaultWeatherCourse().then(setDefaultCourse);
   }, []);
 
   const todayLocalKey = useMemo(() => todayYmd(), []);
@@ -275,6 +287,41 @@ export default function WeatherScreen() {
     }
   }, [debouncedQuery]);
 
+  const setManualPickAndRemember = useCallback(
+    (next: ManualPick) => {
+      setManualPick(next);
+      const recentEntry: RecentWeatherCourse =
+        next.source === "db"
+          ? { courseDbId: next.courseId, apiCourseId: null, name: next.name }
+          : { courseDbId: null, apiCourseId: next.apiCourseId, name: next.name };
+      void rememberWeatherCourse(recentEntry).then(() => loadRecentWeatherCourses().then(setRecent));
+    },
+    [],
+  );
+
+  const pickDefaultCourse = useCallback(
+    (entry: RecentWeatherCourse | null) => {
+      if (!entry) return;
+      if (entry.courseDbId) {
+        setManualPick({
+          source: "db",
+          courseId: entry.courseDbId,
+          name: entry.name,
+          location: null,
+        });
+      } else if (entry.apiCourseId != null) {
+        setManualPick({
+          source: "api",
+          apiCourseId: entry.apiCourseId,
+          name: entry.name,
+          location: null,
+        });
+      }
+      setMode("choose_course");
+    },
+    [],
+  );
+
   const listItems = useMemo((): CourseSearchListItem[] => {
     const dbItems: CourseSearchListItem[] = dbHits.map((h) => ({
       key: `db:${h.id}`,
@@ -295,51 +342,53 @@ export default function WeatherScreen() {
     (item: CourseSearchListItem) => {
       if (item.key.startsWith("db:")) {
         const id = item.key.slice(3);
-        setManualPick({
+        setManualPickAndRemember({
           source: "db",
           courseId: id,
           name: item.title,
           location: item.subtitle ?? null,
         });
-        void rememberWeatherCourse({ courseDbId: id, apiCourseId: null, name: item.title });
       } else if (item.key.startsWith("api:")) {
         const id = Number(item.key.slice(4));
         if (!Number.isFinite(id)) return;
-        setManualPick({
+        setManualPickAndRemember({
           source: "api",
           apiCourseId: id,
           name: item.title,
           location: item.subtitle ?? null,
         });
-        void rememberWeatherCourse({ courseDbId: null, apiCourseId: id, name: item.title });
       }
       setSearchQuery("");
-      void loadRecentWeatherCourses().then(setRecent);
     },
-    [],
+    [setManualPickAndRemember],
   );
 
   const onSelectRecent = useCallback((r: RecentWeatherCourse) => {
     if (r.courseDbId) {
-      setManualPick({
+      setManualPickAndRemember({
         source: "db",
         courseId: r.courseDbId,
         name: r.name,
         location: null,
       });
     } else if (r.apiCourseId != null) {
-      setManualPick({
+      setManualPickAndRemember({
         source: "api",
         apiCourseId: r.apiCourseId,
         name: r.name,
         location: null,
       });
     }
-  }, []);
+  }, [setManualPickAndRemember]);
 
   const manualCourseId = manualPick?.source === "db" ? manualPick.courseId : null;
   const manualApiId = manualPick?.source === "api" ? manualPick.apiCourseId : null;
   const manualName = manualPick?.name ?? "Golf course";
+  const selectedCourseName = useMemo(() => {
+    if (mode === "choose_course" && manualPick?.name) return manualPick.name;
+    if (nextEvent?.courseName?.trim()) return nextEvent.courseName.trim();
+    return "Golf course";
+  }, [mode, manualPick?.name, nextEvent?.courseName]);
 
   const bundleTargetYmd = useMemo(() => {
     if (forecastTargetYmd && /^\d{4}-\d{2}-\d{2}$/.test(forecastTargetYmd)) return forecastTargetYmd;
@@ -368,6 +417,25 @@ export default function WeatherScreen() {
     router.push("/(app)/(tabs)/settings");
   }, [router]);
 
+  const openFairwayWeatherBrowser = useCallback(async () => {
+    const url = buildFairwayWeatherUrl(selectedCourseName);
+    await WebBrowser.openBrowserAsync(url, {
+      controlsColor: colors.primary,
+      toolbarColor: colors.background,
+      showTitle: true,
+    });
+  }, [colors.background, colors.primary, selectedCourseName]);
+
+  const makeManualPickDefault = useCallback(async () => {
+    if (!manualPick) return;
+    const entry: RecentWeatherCourse =
+      manualPick.source === "db"
+        ? { courseDbId: manualPick.courseId, apiCourseId: null, name: manualPick.name }
+        : { courseDbId: null, apiCourseId: manualPick.apiCourseId, name: manualPick.name };
+    await setDefaultWeatherCourse(entry);
+    setDefaultCourse(entry);
+  }, [manualPick]);
+
   if (bootstrapLoading && !societyId) {
     return (
       <Screen scrollable={false} style={{ backgroundColor: colors.backgroundSecondary }}>
@@ -381,12 +449,12 @@ export default function WeatherScreen() {
       <Screen style={{ backgroundColor: colors.backgroundSecondary }} contentStyle={tabContentStyle}>
         <View style={sheet.titleRow}>
           <AppText variant="h2" style={{ flex: 1, marginRight: spacing.sm }}>
-            Today’s Playability
+            FairwayWeather
           </AppText>
           <HeaderSettingsPill onPress={openSettings} />
         </View>
         <AppText variant="body" color="secondary">
-          Join or select a society to see playability for your schedule and favourite courses.
+          Join or select a society to use the in-app FairwayWeather experience for your schedule and favourite courses.
         </AppText>
       </Screen>
     );
@@ -397,14 +465,14 @@ export default function WeatherScreen() {
       <Screen style={{ backgroundColor: colors.backgroundSecondary }} contentStyle={tabContentStyle}>
         <View style={sheet.titleRow}>
           <AppText variant="h2" style={{ flex: 1, marginRight: spacing.sm }}>
-            Today’s Playability
+            FairwayWeather
           </AppText>
           <HeaderSettingsPill onPress={openSettings} />
         </View>
         <EmptyState
           icon={<Feather name="cloud" size={28} color={colors.primary} />}
-          title="Playability"
-          message="Get a society licence for forecast-driven insights tied to your events and courses."
+          title="Premium weather"
+          message="Get a society licence to unlock live playability, full FairwayWeather detail, and course tracking."
           action={{
             label: "How to get access",
             onPress: () => setModalVisible(true),
@@ -425,18 +493,39 @@ export default function WeatherScreen() {
         <View style={{ marginBottom: spacing.md }}>
           <View style={[sheet.titleRow, { marginBottom: spacing.xs }]}>
             <AppText variant="h2" style={{ flex: 1, marginRight: spacing.sm }}>
-              Today’s Playability
+              FairwayWeather
             </AppText>
             <HeaderSettingsPill onPress={openSettings} />
           </View>
           <AppText variant="small" color="secondary">
-            Decision-first course conditions for your next round — wind, rain, comfort, and the best window to tee off.
+            Powered by FairwayWeather. Compare event/default courses, then open the full forecast in an embedded browser.
           </AppText>
         </View>
 
         <View style={sheet.modeRow}>
-          <ModeChip active={mode === "next_event"} label="Next event" onPress={() => setMode("next_event")} />
-          <ModeChip active={mode === "choose_course"} label="Choose course" onPress={() => setMode("choose_course")} />
+          <ModeChip active={mode === "next_event"} label="Event course" onPress={() => setMode("next_event")} />
+          <ModeChip active={mode === "choose_course"} label="Search courses" onPress={() => setMode("choose_course")} />
+        </View>
+
+        <View style={[sheet.browserCtaCard, { borderColor: colors.borderLight, backgroundColor: colors.surfaceElevated }]}>
+          <View style={sheet.browserCtaHead}>
+            <Feather name="globe" size={15} color={colors.primary} />
+            <AppText variant="captionBold" color="primary">
+              View full forecast
+            </AppText>
+          </View>
+          <AppText variant="small" color="secondary" numberOfLines={2} style={{ flex: 1 }}>
+            Open FairwayWeather for {selectedCourseName}
+          </AppText>
+          <Pressable
+            onPress={() => void openFairwayWeatherBrowser()}
+            style={({ pressed }) => [sheet.browserCtaBtn, { backgroundColor: `${colors.primary}12`, opacity: pressed ? 0.85 : 1 }]}
+          >
+            <AppText variant="captionBold" color="primary">
+              Open
+            </AppText>
+            <Feather name="external-link" size={14} color={colors.primary} />
+          </Pressable>
         </View>
 
         {mode === "next_event" ? (
@@ -485,6 +574,53 @@ export default function WeatherScreen() {
           <>
             {!manualPick ? (
               <>
+                <View style={{ marginBottom: spacing.md }}>
+                  <AppText variant="captionBold" color="secondary" style={sheet.sectionEyebrow}>
+                    Quick picks
+                  </AppText>
+                  {nextEvent?.courseName?.trim() ? (
+                    <Pressable
+                      onPress={() => {
+                        setMode("next_event");
+                        setForecastTargetYmd(nextEvent?.date ?? null);
+                      }}
+                      style={({ pressed }) => [
+                        sheet.recentRow,
+                        {
+                          backgroundColor: colors.surfaceElevated,
+                          borderColor: colors.border,
+                          opacity: pressed ? 0.9 : 1,
+                        },
+                      ]}
+                    >
+                      <Feather name="calendar" size={16} color={colors.textTertiary} />
+                      <AppText variant="body" style={{ flex: 1, marginLeft: spacing.sm }} numberOfLines={2}>
+                        Event course · {nextEvent.courseName}
+                      </AppText>
+                      <Feather name="chevron-right" size={18} color={colors.textTertiary} />
+                    </Pressable>
+                  ) : null}
+                  {defaultCourse ? (
+                    <Pressable
+                      onPress={() => pickDefaultCourse(defaultCourse)}
+                      style={({ pressed }) => [
+                        sheet.recentRow,
+                        {
+                          backgroundColor: colors.surfaceElevated,
+                          borderColor: colors.border,
+                          opacity: pressed ? 0.9 : 1,
+                        },
+                      ]}
+                    >
+                      <Feather name="star" size={16} color={colors.textTertiary} />
+                      <AppText variant="body" style={{ flex: 1, marginLeft: spacing.sm }} numberOfLines={2}>
+                        Default course · {defaultCourse.name}
+                      </AppText>
+                      <Feather name="chevron-right" size={18} color={colors.textTertiary} />
+                    </Pressable>
+                  ) : null}
+                </View>
+
                 <CourseSelector value={searchQuery} onChangeText={setSearchQuery} />
 
                 {recent.length > 0 && debouncedQuery.length < 2 ? (
@@ -573,6 +709,15 @@ export default function WeatherScreen() {
                   subtitle={manualPick.location}
                   sourceHint={manualPick.source === "db" ? "Society course" : "Directory listing"}
                 />
+                <Pressable
+                  onPress={() => void makeManualPickDefault()}
+                  style={({ pressed }) => [sheet.defaultBtn, { borderColor: colors.primary, opacity: pressed ? 0.85 : 1 }]}
+                >
+                  <Feather name="star" size={14} color={colors.primary} />
+                  <AppText variant="captionBold" color="primary" style={{ marginLeft: spacing.xs }}>
+                    Set as default course
+                  </AppText>
+                </Pressable>
 
                 <PlayabilityCard
                   loading={manualBundle.loading}
@@ -628,14 +773,9 @@ export default function WeatherScreen() {
         )}
 
         <View style={{ marginTop: spacing.xl, paddingBottom: spacing.md }}>
-          <Pressable
-            onPress={() => Linking.openURL("https://www.fairwayweather.com").catch(() => {})}
-            hitSlop={8}
-          >
-            <AppText variant="small" color="tertiary">
-              Open fairwayweather.com — extra live context
-            </AppText>
-          </Pressable>
+          <AppText variant="small" color="tertiary">
+            Powered by FairwayWeather.
+          </AppText>
         </View>
       </ScrollView>
     </Screen>
@@ -652,6 +792,27 @@ const sheet = StyleSheet.create({
     flexDirection: "row",
     gap: spacing.sm,
     marginBottom: spacing.lg,
+  },
+  browserCtaCard: {
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    padding: spacing.md,
+    marginBottom: spacing.md,
+    gap: spacing.sm,
+  },
+  browserCtaHead: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.xs,
+  },
+  browserCtaBtn: {
+    alignSelf: "flex-start",
+    borderRadius: radius.md,
+    paddingVertical: spacing.xs,
+    paddingHorizontal: spacing.sm,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.xs,
   },
   modeChip: {
     paddingVertical: 10,
@@ -696,5 +857,15 @@ const sheet = StyleSheet.create({
     borderRadius: radius.lg,
     borderWidth: 1,
     marginBottom: spacing.md,
+  },
+  defaultBtn: {
+    marginTop: spacing.sm,
+    borderWidth: 1,
+    borderRadius: radius.md,
+    paddingVertical: spacing.xs,
+    paddingHorizontal: spacing.sm,
+    flexDirection: "row",
+    alignItems: "center",
+    alignSelf: "flex-start",
   },
 });
