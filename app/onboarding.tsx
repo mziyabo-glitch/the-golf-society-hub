@@ -11,7 +11,8 @@ import { InlineNotice } from "@/components/ui/InlineNotice";
 import { Toast } from "@/components/ui/Toast";
 import { PrimaryButton, SecondaryButton } from "@/components/ui/Button";
 import { LoadingState } from "@/components/ui/LoadingState";
-import { useBootstrap } from "@/lib/useBootstrap";
+import { invalidateCache } from "@/lib/cache/clientCache";
+import { useBootstrap, ACTIVE_SOCIETY_CLIENT_CACHE_KEY } from "@/lib/useBootstrap";
 import { ensureSignedIn } from "@/lib/auth_supabase";
 import { createSociety, joinSociety } from "@/lib/db_supabase/societyRepo";
 import { createMember } from "@/lib/db_supabase/memberRepo";
@@ -376,9 +377,16 @@ export default function OnboardingScreen() {
         console.warn("[join] setActiveSocietyAndMember failed (RPC already wrote it):", profileErr);
       }
 
-      // Set local state so the UI can react immediately.
-      setActiveSocietyId(joinedSocietyId);
+      await invalidateCache(ACTIVE_SOCIETY_CLIENT_CACHE_KEY);
+      console.log("[join] active_society_change", {
+        source: "join-flow",
+        nextSocietyId: joinedSocietyId,
+        nextMemberId: joinedMemberId,
+      });
+
+      // Set local state so the UI can react immediately (member first so pointers stay aligned).
       setMember(joinedMemberRecord as any);
+      setActiveSocietyId(joinedSocietyId);
       refresh();
       setToast({ visible: true, message: "Joined society ✅", type: "success" });
       setPendingJoinNavigation({
@@ -451,6 +459,13 @@ export default function OnboardingScreen() {
       console.log("[onboarding] updateProfile start");
       await setActiveSocietyAndMember(uid, society.id, memberId);
       console.log("[onboarding] updateProfile success");
+
+      await invalidateCache(ACTIVE_SOCIETY_CLIENT_CACHE_KEY);
+      console.log("[onboarding] active_society_change", {
+        source: "create-society-flow",
+        nextSocietyId: society.id,
+        nextMemberId: memberId,
+      });
 
       // Refresh bootstrap state to pick up the new active society
       refresh();

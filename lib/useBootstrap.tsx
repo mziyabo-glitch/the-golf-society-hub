@@ -7,7 +7,12 @@ import { createContext, useContext, useCallback, useEffect, useMemo, useRef, use
 import { supabase } from "@/lib/supabase";
 import { SUPABASE_AUTH_CONFIG } from "@/lib/supabase";
 import type { User, Session } from "@supabase/supabase-js";
-import { getMySocieties, type MySocietyMembership } from "@/lib/db_supabase/mySocietiesRepo";
+import { shouldBootstrapSelfHealActiveSociety } from "@/lib/bootstrapMembershipHeal";
+import {
+  getMySocieties,
+  getMySocietiesEnsuringActive,
+  type MySocietyMembership,
+} from "@/lib/db_supabase/mySocietiesRepo";
 import { maybeBackfillProfileFullNameFromSignals } from "@/lib/db_supabase/profileRepo";
 import { getCache, setCache, invalidateCache } from "@/lib/cache/clientCache";
 import { Platform } from "react-native";
@@ -79,7 +84,10 @@ type BootstrapState = {
 
 const BootstrapContext = createContext<BootstrapState | null>(null);
 let warnedMissingBootstrapProvider = false;
-const ACTIVE_SOCIETY_CACHE_KEY = "app:activeSociety";
+
+/** AsyncStorage cache key for last active society snapshot (join + bootstrap must invalidate together). */
+export const ACTIVE_SOCIETY_CLIENT_CACHE_KEY = "app:activeSociety";
+const ACTIVE_SOCIETY_CACHE_KEY = ACTIVE_SOCIETY_CLIENT_CACHE_KEY;
 
 const BOOTSTRAP_FALLBACK: BootstrapState = {
   loading: false,
@@ -323,7 +331,7 @@ function useBootstrapInternal(): BootstrapState {
         // ----------------------------------------------------------------
         // Step 2c: Load all memberships (multi-society support)
         // ----------------------------------------------------------------
-        const allMemberships = await getMySocieties();
+        const allMemberships = await getMySocietiesEnsuringActive(finalProfile?.active_society_id);
         if (!alive || !mounted.current) return;
         setMemberships(allMemberships);
 
@@ -332,26 +340,62 @@ function useBootstrapInternal(): BootstrapState {
         // - Missing active_society_id → first membership (existing behaviour).
         // - active_society_id not in user's members rows (stale/joined wrong org) → same heal.
         //   Otherwise tee-sheet and gates run under a society the user is not linked to.
+        //
+        // IMPORTANT: After joining a *second* society, `getMySocieties()` can briefly omit the new row
+        // while `profiles.active_society_id` already points at it. Never heal to memberships[0] in
+        // that case — iOS would “snap back” to the old society (see getMySocietiesEnsuringActive).
         // ----------------------------------------------------------------
-        const membershipSocietyIds = new Set(allMemberships.map((m) => m.societyId));
+        let membershipSocietyIds = new Set(allMemberships.map((m) => m.societyId));
         const profileActiveBeforeStep3 = finalProfile?.active_society_id ?? null;
         const activePointer = finalProfile?.active_society_id as string | undefined;
         const activeMissing = !activePointer;
-        const activeStale =
+        let activeStale =
           !!activePointer &&
           allMemberships.length > 0 &&
           !membershipSocietyIds.has(activePointer);
 
+        let userHasDirectMemberForActive = false;
+        if (activePointer && currentUser) {
+          const { data: proofRow } = await supabase
+            .from("members")
+            .select("id")
+            .eq("user_id", currentUser.id)
+            .eq("society_id", activePointer)
+            .maybeSingle();
+          userHasDirectMemberForActive = !!proofRow;
+        }
+
+        if (activeStale && userHasDirectMemberForActive) {
+          console.log("[useBootstrap] active_society_change: skip self-heal — profile active society valid, membership list lag", {
+            source: "bootstrap-membership-list-lag",
+            previousSocietyId: profileActiveBeforeStep3,
+            nextSocietyId: activePointer,
+            membershipCount: allMemberships.length,
+          });
+          activeStale = false;
+        }
+
         let healReasonApplied: string | null = null;
 
-        if (currentUser && allMemberships.length > 0 && (activeMissing || activeStale)) {
+        if (
+          currentUser &&
+          allMemberships.length > 0 &&
+          shouldBootstrapSelfHealActiveSociety({
+            membershipCount: allMemberships.length,
+            activeMissing,
+            activeStaleInList: activeStale,
+            userHasDirectMemberForActive,
+          })
+        ) {
           const healRow = allMemberships[0];
           healReasonApplied = activeMissing ? "recover_missing_active_pointer" : "recover_stale_active_not_in_memberships";
-          console.log("[useBootstrap] Self-heal: active society pointer", {
+          console.log("[useBootstrap] active_society_change: self-heal active society pointer", {
+            source: "bootstrap-self-heal",
             reason: healReasonApplied,
             stale_or_missing_active: activePointer ?? null,
             new_society_id: healRow.societyId,
             new_member_id: healRow.memberId,
+            membershipCount: allMemberships.length,
           });
           const { error: healErr } = await supabase
             .from("profiles")
@@ -376,6 +420,20 @@ function useBootstrapInternal(): BootstrapState {
             console.warn("[useBootstrap] Self-heal DB update failed:", healErr.message);
             healReasonApplied = null;
           }
+        }
+
+        // If we skipped self-heal because a members row exists but the list was stale, try once more
+        // so SocietySwitcher and other UIs see the new society without waiting for another refresh.
+        if (
+          activePointer &&
+          userHasDirectMemberForActive &&
+          !membershipSocietyIds.has(activePointer) &&
+          !healReasonApplied
+        ) {
+          const recovered = await getMySocieties();
+          if (!alive || !mounted.current) return;
+          setMemberships(recovered);
+          membershipSocietyIds = new Set(recovered.map((m) => m.societyId));
         }
 
         if (__DEV__ && currentUser) {
@@ -613,7 +671,26 @@ function useBootstrapInternal(): BootstrapState {
       }>(ACTIVE_SOCIETY_CACHE_KEY, { maxAgeMs: 1000 * 60 * 60 * 24 });
       if (!cached || !mounted.current) return;
       if (cached.value.profile?.active_society_id) {
-        setProfile((prev: any) => prev ?? cached.value.profile);
+        setProfile((prev: any) => {
+          const inc = cached.value.profile;
+          if (!inc) return prev;
+          if (!prev) return inc;
+          if (String(prev.id || "") === String(inc.id || "")) {
+            if (__DEV__) {
+              const keptAct = prev.active_society_id ?? null;
+              const cachedAct = inc.active_society_id ?? null;
+              if (keptAct !== cachedAct) {
+                console.log("[useBootstrap] active_society_change: cache hydrate skipped (in-memory profile wins)", {
+                  source: "bootstrap-cache-hydrate",
+                  keptActiveSocietyId: keptAct,
+                  cachedActiveSocietyId: cachedAct,
+                });
+              }
+            }
+            return prev;
+          }
+          return inc;
+        });
       }
       if (cached.value.society) {
         setSociety((prev) => prev ?? cached.value.society);
