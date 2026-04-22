@@ -80,6 +80,20 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Seed candidate queue from GB dataset
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! -f "gb.json" ]]; then
+            echo "gb.json not found in repository root; cannot seed nightly candidates from GB dataset."
+            exit 1
+          fi
+          SEED_ARGS="--input=gb.json"
+          if [[ "${{ github.event.inputs.dry_run || '' }}" == "true" ]]; then
+            SEED_ARGS="$SEED_ARGS --dry-run"
+          fi
+          npm run course-import:seed-gb -- $SEED_ARGS
+
       - name: Run nightly import
         shell: bash
         run: |
