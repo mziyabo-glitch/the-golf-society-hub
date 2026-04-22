@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
 import { useBottomTabBarHeight } from "@react-navigation/bottom-tabs";
+import * as WebBrowser from "expo-web-browser";
 
 import { isCaptain, canManageEventPaymentsForSociety } from "@/lib/rbac";
 import { supabase } from "@/lib/supabase";
@@ -317,8 +318,24 @@ export function useHomeDashboard() {
       }
       // Refetch per-pool confirmed counts / effective pot when returning to Home (e.g. after Pot Master changes).
       setPrizePoolReloadNonce((n) => n + 1);
-    }, [societyId, memberHasSeat, memberIsCaptain, loadData])
+    }, [societyId, memberHasSeat, memberIsCaptain, loadData]),
   );
+
+  /** Next-event strip on Home for members still waiting on a seat (read-only). */
+  useEffect(() => {
+    if (!societyId || memberHasSeat || memberIsCaptain) return;
+    let cancelled = false;
+    void getEventsForSociety(societyId)
+      .then((list) => {
+        if (!cancelled) setEvents(list);
+      })
+      .catch(() => {
+        if (!cancelled) setEvents([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [societyId, memberHasSeat, memberIsCaptain]);
 
   // ============================================================================
   // Derived Data
@@ -868,8 +885,12 @@ export function useHomeDashboard() {
   };
 
   const openWeatherTab = useCallback(() => {
-    router.push("/(app)/(tabs)/weather");
-  }, [router]);
+    void WebBrowser.openBrowserAsync("https://www.fairwayweather.com", {
+      showTitle: true,
+      controlsColor: colors.primary,
+      toolbarColor: colors.background,
+    });
+  }, [colors.background, colors.primary]);
 
   if (bootstrapLoading && dataLoading) {
     return { phase: "loading" as const, tabContentStyle, colors };

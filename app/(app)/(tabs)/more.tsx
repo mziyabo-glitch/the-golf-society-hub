@@ -1,6 +1,6 @@
 /**
- * More hub — society shortcuts, account, and permission-gated admin links.
- * Hub for Members, Settings, and admin shortcuts (Rivalries and OOM have their own tabs).
+ * More hub — secondary society features (members, rivalries), account,
+ * finance (treasurer), and permission-gated admin tools.
  */
 
 import { useCallback, useEffect, useState, type ReactNode } from "react";
@@ -13,7 +13,7 @@ import { Screen } from "@/components/ui/Screen";
 import { AppText } from "@/components/ui/AppText";
 import { AppCard } from "@/components/ui/AppCard";
 import { useBootstrap } from "@/lib/useBootstrap";
-import { getPermissionsForMember, isCaptain } from "@/lib/rbac";
+import { getPermissionsForMember, isCaptain, isSecretary } from "@/lib/rbac";
 import { isPlatformAdmin } from "@/lib/db_supabase/adminRepo";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
 import { blurWebActiveElement } from "@/lib/ui/focus";
@@ -79,6 +79,7 @@ export default function MoreScreen() {
 
   const permissions = getPermissionsForMember(member);
   const captain = isCaptain(member as any);
+  const secretary = isSecretary(member as any);
   const [isAdmin, setIsAdmin] = useState(false);
 
   useEffect(() => {
@@ -92,10 +93,52 @@ export default function MoreScreen() {
     [router],
   );
 
-  const adminEntries: { key: string; row: ReactNode }[] = [];
+  const financeEntries: { key: string; row: ReactNode }[] = [];
+  if (permissions.canAccessFinance) {
+    financeEntries.push(
+      {
+        key: "ledger",
+        row: (
+          <MenuRow
+            icon="book"
+            iconBg={`${colors.primary}18`}
+            title="Society ledger"
+            subtitle="Treasurer ledger and balances"
+            colors={colors}
+            onPress={() => push("/(app)/treasurer")}
+          />
+        ),
+      },
+      {
+        key: "fees",
+        row: (
+          <MenuRow
+            icon="percent"
+            iconBg={`${colors.success}20`}
+            title="Membership fees"
+            colors={colors}
+            onPress={() => push("/(app)/membership-fees")}
+          />
+        ),
+      },
+      {
+        key: "eventfin",
+        row: (
+          <MenuRow
+            icon="bar-chart-2"
+            iconBg={`${colors.info}20`}
+            title="Event finances"
+            colors={colors}
+            onPress={() => push("/(app)/event-finance")}
+          />
+        ),
+      },
+    );
+  }
 
+  const adminToolEntries: { key: string; row: ReactNode }[] = [];
   if (permissions.canGenerateTeeSheet) {
-    adminEntries.push({
+    adminToolEntries.push({
       key: "tee",
       row: (
         <MenuRow
@@ -109,75 +152,54 @@ export default function MoreScreen() {
       ),
     });
   }
-  if (permissions.canAccessFinance) {
-    adminEntries.push({
-      key: "ledger",
+  if (captain || secretary || permissions.canManageHandicaps) {
+    adminToolEntries.push({
+      key: "courseData",
       row: (
         <MenuRow
-          icon="book"
-          iconBg={`${colors.primary}18`}
-          title="Society ledger"
-          subtitle="Treasurer ledger and balances"
-          colors={colors}
-          onPress={() => push("/(app)/treasurer")}
-        />
-      ),
-    });
-    adminEntries.push({
-      key: "fees",
-      row: (
-        <MenuRow
-          icon="percent"
-          iconBg={`${colors.success}20`}
-          title="Membership fees"
-          colors={colors}
-          onPress={() => push("/(app)/membership-fees")}
-        />
-      ),
-    });
-    adminEntries.push({
-      key: "eventfin",
-      row: (
-        <MenuRow
-          icon="bar-chart-2"
+          icon="database"
           iconBg={`${colors.info}20`}
-          title="Event finances"
+          title="Course data review"
+          subtitle="Import quality, SI checks, and manual overrides"
           colors={colors}
-          onPress={() => push("/(app)/event-finance")}
+          onPress={() => push("/(app)/course-data")}
         />
       ),
     });
   }
   if (captain) {
-    adminEntries.push({
-      key: "billing",
-      row: (
-        <MenuRow
-          icon="shopping-bag"
-          iconBg={`${colors.primary}16`}
-          title="Billing & licences"
-          subtitle="Purchase seats for your society"
-          colors={colors}
-          onPress={() => push("/(app)/billing")}
-        />
-      ),
-    });
-    adminEntries.push({
-      key: "domains",
-      row: (
-        <MenuRow
-          icon="globe"
-          iconBg={`${colors.info}20`}
-          title="Club domain review"
-          subtitle="Approve club website candidates"
-          colors={colors}
-          onPress={() => push("/(admin)/course-domains" as any)}
-        />
-      ),
-    });
+    adminToolEntries.push(
+      {
+        key: "billing",
+        row: (
+          <MenuRow
+            icon="shopping-bag"
+            iconBg={`${colors.primary}16`}
+            title="Billing & licences"
+            subtitle="Purchase seats for your society"
+            colors={colors}
+            onPress={() => push("/(app)/billing")}
+          />
+        ),
+      },
+      {
+        key: "domains",
+        row: (
+          <MenuRow
+            icon="globe"
+            iconBg={`${colors.info}20`}
+            title="Club domain review"
+            subtitle="Approve club website candidates"
+            colors={colors}
+            onPress={() => push("/(admin)/course-domains" as any)}
+          />
+        ),
+      },
+    );
   }
 
-  const showAdminShortcuts = adminEntries.length > 0;
+  const showFinance = financeEntries.length > 0;
+  const showAdminTools = adminToolEntries.length > 0;
 
   return (
     <Screen scrollable={false} style={{ backgroundColor: colors.backgroundSecondary }}>
@@ -186,7 +208,7 @@ export default function MoreScreen() {
           More
         </AppText>
         <AppText variant="small" color="secondary" style={styles.pageSub}>
-          Society tools, account, and admin shortcuts
+          Members, settings, finance, and admin tools
         </AppText>
 
         <SectionTitle>Society</SectionTitle>
@@ -204,7 +226,27 @@ export default function MoreScreen() {
             <View style={styles.mutedBlock}>
               <Feather name="info" size={16} color={colors.textTertiary} />
               <AppText variant="small" color="tertiary" style={{ flex: 1, marginLeft: spacing.sm }}>
-                Join a society with a seat to access the member directory.
+                {hasSociety
+                  ? "A society seat is required for the member directory."
+                  : "Join a society with a seat to access the member directory."}
+              </AppText>
+            </View>
+          )}
+          <View style={[styles.divider, { backgroundColor: colors.borderLight }]} />
+          {hasSociety ? (
+            <MenuRow
+              icon="zap"
+              iconBg={`${colors.warning}20`}
+              title="Rivalries"
+              subtitle="Sinbook challenges and head-to-heads"
+              colors={colors}
+              onPress={() => push("/(app)/(tabs)/sinbook")}
+            />
+          ) : (
+            <View style={styles.mutedBlock}>
+              <Feather name="info" size={16} color={colors.textTertiary} />
+              <AppText variant="small" color="tertiary" style={{ flex: 1, marginLeft: spacing.sm }}>
+                Join a society to use rivalries.
               </AppText>
             </View>
           )}
@@ -231,11 +273,25 @@ export default function MoreScreen() {
           />
         </AppCard>
 
-        {showAdminShortcuts ? (
+        {showFinance ? (
           <>
-            <SectionTitle>Admin & tools</SectionTitle>
+            <SectionTitle>Finance</SectionTitle>
             <AppCard style={styles.card}>
-              {adminEntries.map((e, i) => (
+              {financeEntries.map((e, i) => (
+                <View key={e.key}>
+                  {i > 0 ? <View style={[styles.divider, { backgroundColor: colors.borderLight }]} /> : null}
+                  {e.row}
+                </View>
+              ))}
+            </AppCard>
+          </>
+        ) : null}
+
+        {showAdminTools ? (
+          <>
+            <SectionTitle>Admin tools</SectionTitle>
+            <AppCard style={styles.card}>
+              {adminToolEntries.map((e, i) => (
                 <View key={e.key}>
                   {i > 0 ? <View style={[styles.divider, { backgroundColor: colors.borderLight }]} /> : null}
                   {e.row}

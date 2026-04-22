@@ -11,12 +11,15 @@
     "dev:web": "concurrently \"expo start --web\" \"npm run dev:api\"",
     "lint": "expo lint -- --cache --cache-location .cache/eslint/.eslintcache",
     "test": "vitest run",
+    "course-import:e2e": "vitest run --config vitest.e2e.config.ts",
     "test:rsvp": "node scripts/rsvp-qa-smoke.cjs",
     "verify:invite-rsvp": "node scripts/verify-public-invite-rsvp-e2e.mjs",
     "build": "expo export -p web",
     "vercel-build": "npm run build",
     "build-pilot": "node scripts/build-pilot-course-list.js",
-    "discover-domains": "node scripts/discover-club-domains.js"
+    "discover-domains": "node scripts/discover-club-domains.js",
+    "course-import:nightly": "tsx scripts/nightly-course-import.ts",
+    "course-import:nightly:dry": "tsx scripts/nightly-course-import.ts --dry-run"
   },
   "engines": {
     "node": ">=18.x"

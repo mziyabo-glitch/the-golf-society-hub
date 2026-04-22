@@ -1,7 +1,8 @@
-import { View, Image } from "react-native";
+import { View, Image, Pressable } from "react-native";
+import { Feather } from "@expo/vector-icons";
+
 import { AppText } from "@/components/ui/AppText";
 import { SocietySwitcherPill } from "@/components/SocietySwitcher";
-import { HeaderSettingsPill } from "@/components/navigation/HeaderSettingsPill";
 
 import { homeDashboardStyles as styles } from "../homeDashboardStyles";
 
@@ -11,15 +12,33 @@ type Colors = ReturnType<typeof import("@/lib/ui/theme").getColors>;
 
 export function HomeAppBar({
   colors,
-  onOpenSettings,
+  onOpenMore,
 }: {
   colors: Colors;
-  onOpenSettings: () => void;
+  onOpenMore: () => void;
 }) {
   return (
     <View style={[styles.appBarTier, { borderBottomColor: colors.borderLight }]}>
       <SocietySwitcherPill />
-      <HeaderSettingsPill onPress={onOpenSettings} />
+      <Pressable
+        onPress={onOpenMore}
+        hitSlop={12}
+        style={({ pressed }) => ({
+          flexDirection: "row",
+          alignItems: "center",
+          gap: 6,
+          paddingVertical: 8,
+          paddingHorizontal: 10,
+          borderRadius: 20,
+          opacity: pressed ? 0.75 : 1,
+          backgroundColor: colors.backgroundTertiary,
+        })}
+      >
+        <Feather name="menu" size={18} color={colors.textSecondary} />
+        <AppText variant="captionBold" color="secondary">
+          More
+        </AppText>
+      </Pressable>
     </View>
   );
 }

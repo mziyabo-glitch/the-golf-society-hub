@@ -12,6 +12,7 @@ import { LoadingState } from "@/components/ui/LoadingState";
 import { PrimaryButton, SecondaryButton } from "@/components/ui/Button";
 import { SocietyBadge } from "@/components/ui/SocietyHeader";
 import { StatusBadge } from "@/components/ui/StatusBadge";
+import { scoringOfficialBadgeLabel, scoringOfficialUiKind } from "@/lib/scoring/scoringOfficialUi";
 import { EVENT_CLASSIFICATIONS, EVENT_FORMATS, getEvent, type EventDoc } from "@/lib/db_supabase/eventRepo";
 import { getEventGuests } from "@/lib/db_supabase/eventGuestRepo";
 import { getEventRegistrations, type EventRegistration } from "@/lib/db_supabase/eventRegistrationRepo";
@@ -23,6 +24,7 @@ import {
   canManageEventPaymentsForSociety,
   canManageEventRosterForSociety,
   getPermissionsForMember,
+  isSecretary,
 } from "@/lib/rbac";
 import { isActiveSocietyParticipantForEvent } from "@/lib/jointEventAccess";
 import { getJointEventDetail, mapJointEventToEventDoc } from "@/lib/db_supabase/jointEventRepo";
@@ -59,6 +61,11 @@ export default function EventOverviewScreen() {
   } = useBootstrap();
 
   const permissions = getPermissionsForMember(currentMember);
+  const canEnterGrossScores = useMemo(
+    () => permissions.canManageHandicaps || isSecretary(currentMember),
+    [currentMember, permissions.canManageHandicaps],
+  );
+  const canAccessScorecardUi = canEnterGrossScores;
   const canManagePayments = canManageEventPaymentsForSociety(memberships, societyId);
   const canManageRoster = canManageEventRosterForSociety(memberships, societyId);
   const canManageEvent =
@@ -199,6 +206,23 @@ export default function EventOverviewScreen() {
     EVENT_CLASSIFICATIONS.find((c) => c.value === event?.classification)?.label ??
     event?.classification ??
     "General";
+
+  const scoringOfficialKind = useMemo(
+    () => scoringOfficialUiKind(event?.scoring_results_status ?? event?.scoringResultsStatus),
+    [event?.scoring_results_status, event?.scoringResultsStatus],
+  );
+  const scoringOverviewLine = useMemo(() => {
+    const isOom = Boolean(event?.isOOM ?? event?.classification === "oom");
+    if (scoringOfficialKind === "published") {
+      return isOom
+        ? "Gross-based results are official for your society on this event. Order of Merit includes this round."
+        : "Gross-based results are official for your society on this event.";
+    }
+    if (scoringOfficialKind === "reopened") {
+      return "Scoring is draft again (reopened). Official rows for your society were cleared; republish when the card is correct.";
+    }
+    return "Gross leaderboard is draft until Captain / Secretary / Handicapper publishes official results.";
+  }, [event, scoringOfficialKind]);
 
   if (bootstrapLoading || loading) {
     return (
@@ -348,6 +372,21 @@ export default function EventOverviewScreen() {
         </AppCard>
 
         <AppCard>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm, flexWrap: "wrap", marginBottom: spacing.xs }}>
+            <AppText variant="subheading" style={{ marginBottom: 0 }}>
+              Scoring status
+            </AppText>
+            <StatusBadge
+              label={scoringOfficialBadgeLabel(scoringOfficialKind)}
+              tone={scoringOfficialKind === "published" ? "success" : "warning"}
+            />
+          </View>
+          <AppText variant="small" color="secondary">
+            {scoringOverviewLine}
+          </AppText>
+        </AppCard>
+
+        <AppCard>
           <AppText variant="subheading" style={styles.cardTitle}>
             Quick actions
           </AppText>
@@ -372,6 +411,75 @@ export default function EventOverviewScreen() {
               </View>
               <Feather name="chevron-right" size={18} color={colors.textTertiary} />
             </Pressable>
+
+            {canAccessScorecardUi ? (
+              <Pressable
+                style={styles.quickAction}
+                onPress={() =>
+                  router.push({
+                    pathname: "/(app)/event/[id]/gross-scores/leaderboard",
+                    params: { id: event.id },
+                  } as never)
+                }
+              >
+                <View style={styles.quickActionLeft}>
+                  <Feather name="list" size={18} color={colors.primary} />
+                  <View>
+                    <AppText variant="bodyBold">Scoring leaderboard</AppText>
+                    <AppText variant="small" color="secondary">
+                      Gross-based order (Draft vs Official shown on screen)
+                    </AppText>
+                  </View>
+                </View>
+                <Feather name="chevron-right" size={18} color={colors.textTertiary} />
+              </Pressable>
+            ) : null}
+
+            {canEnterGrossScores ? (
+              <Pressable
+                style={styles.quickAction}
+                onPress={() =>
+                  router.push({
+                    pathname: "/(app)/event/[id]/gross-scores",
+                    params: { id: event.id },
+                  } as never)
+                }
+              >
+                <View style={styles.quickActionLeft}>
+                  <Feather name="edit-3" size={18} color={colors.success} />
+                  <View>
+                    <AppText variant="bodyBold">Gross score entry</AppText>
+                    <AppText variant="small" color="secondary">
+                      Enter or edit per-hole gross scores
+                    </AppText>
+                  </View>
+                </View>
+                <Feather name="chevron-right" size={18} color={colors.textTertiary} />
+              </Pressable>
+            ) : null}
+
+            {canEnterGrossScores ? (
+              <Pressable
+                style={styles.quickAction}
+                onPress={() =>
+                  router.push({
+                    pathname: "/(app)/event/[id]/gross-scores/publish",
+                    params: { id: event.id },
+                  } as never)
+                }
+              >
+                <View style={styles.quickActionLeft}>
+                  <Feather name="check-circle" size={18} color={colors.primary} />
+                  <View>
+                    <AppText variant="bodyBold">Publish scoring results</AppText>
+                    <AppText variant="small" color="secondary">
+                      Write official placings from the gross leaderboard
+                    </AppText>
+                  </View>
+                </View>
+                <Feather name="chevron-right" size={18} color={colors.textTertiary} />
+              </Pressable>
+            ) : null}
 
             {canViewTeeSheet ? (
               <Pressable

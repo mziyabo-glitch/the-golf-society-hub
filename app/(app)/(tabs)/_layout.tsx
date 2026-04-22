@@ -1,5 +1,6 @@
 import { Tabs } from "expo-router";
 import { Feather } from "@expo/vector-icons";
+
 import { useBootstrap } from "@/lib/useBootstrap";
 import { isCaptain } from "@/lib/rbac";
 import { PremiumTabBar } from "@/components/navigation/PremiumTabBar";
@@ -9,12 +10,11 @@ export default function TabsLayout() {
 
   const hasSociety = !!activeSocietyId && !!member;
 
-  // Captains always have full access; regular members need a licence (seat)
   const hasFullAccess =
     hasSociety && (isCaptain(member as any) || (member as any)?.has_seat === true);
 
-  // Society-only tabs are hidden in Personal Mode or when unlicensed
   const societyTabHref = hasFullAccess ? undefined : null;
+  const rivalriesTabHref = hasSociety ? undefined : null;
 
   return (
     <Tabs
@@ -36,12 +36,15 @@ export default function TabsLayout() {
           href: societyTabHref,
         }}
       />
+      {/* Temporarily hidden from navigation; screen remains routable for guarded direct access */}
+      <Tabs.Screen name="scorecard" options={{ href: null }} />
       <Tabs.Screen
-        name="weather"
+        name="sinbook"
         options={{
-          title: "Weather",
-          tabBarIcon: ({ color }) => <Feather name="cloud" color={color} size={24} />,
-          href: societyTabHref,
+          title: "Rivalries",
+          tabBarAccessibilityLabel: "Rivalries",
+          tabBarIcon: ({ color }) => <Feather name="zap" color={color} size={24} />,
+          href: rivalriesTabHref,
         }}
       />
       <Tabs.Screen
@@ -54,13 +57,6 @@ export default function TabsLayout() {
         }}
       />
       <Tabs.Screen
-        name="sinbook"
-        options={{
-          title: "Rivalries",
-          tabBarIcon: ({ color }) => <Feather name="zap" color={color} size={24} />,
-        }}
-      />
-      <Tabs.Screen
         name="more"
         options={{
           title: "More",
@@ -68,6 +64,7 @@ export default function TabsLayout() {
         }}
       />
       {/* Routable from More / deep links; not shown in tab bar */}
+      <Tabs.Screen name="weather" options={{ href: null }} />
       <Tabs.Screen name="members" options={{ href: null }} />
       <Tabs.Screen name="settings" options={{ href: null }} />
     </Tabs>

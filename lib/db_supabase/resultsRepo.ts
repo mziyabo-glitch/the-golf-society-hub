@@ -1,6 +1,8 @@
 // lib/db_supabase/resultsRepo.ts
 import { supabase } from "@/lib/supabase";
+import { fetchEventIdsWithAnyPlayerRound } from "@/lib/db_supabase/eventPlayerScoringRepo";
 import { canonicalJointPersonKey, dedupeJointMembers } from "@/lib/jointPersonDedupe";
+import { buildOomEligibleEventIdSet } from "@/lib/scoring/oomAggregateEligibility";
 import type { MemberDoc } from "@/lib/db_supabase/memberRepo";
 
 /** One row per member_id; if duplicates exist (legacy / bad data), keep latest by updated_at. */
@@ -826,13 +828,16 @@ export async function getOrderOfMeritTotals(
   // Fetch events to filter OOM only
   const { data: eventsData, error: eventsError } = await supabase
     .from("events")
-    .select("id, classification, is_oom")
+    .select("id, classification, is_oom, scoring_results_status")
     .in("id", eventIds);
 
   if (eventsError) {
     console.error("[resultsRepo] events query failed:", eventsError);
     throw new Error(eventsError.message || "Failed to get events");
   }
+
+  const grossRoundEventIds = await fetchEventIdsWithAnyPlayerRound(supabase, eventIds);
+  const oomEligibleEventIds = buildOomEligibleEventIdSet(eventsData ?? [], grossRoundEventIds);
 
   // Fetch members for names + identity fields (canonicalJointPersonKey: user_id, email; no person_id column in DB)
   const { data: membersData, error: membersError } = await supabase
@@ -887,6 +892,7 @@ export async function getOrderOfMeritTotals(
 
   oomRows.forEach((row) => {
     if (!oomEventIds.has(row.event_id)) return;
+    if (!oomEligibleEventIds.has(row.event_id)) return;
     if (!eventsMap.get(row.event_id)) return;
 
     const memberId = String(row.member_id);
@@ -965,6 +971,23 @@ export async function deleteEventResults(eventId: string): Promise<void> {
   }
 
   console.log("[resultsRepo] deleteEventResults success");
+}
+
+/** Delete official results for one society on an event (joint-safe reopen / republish prep). */
+export async function deleteEventResultsForSociety(eventId: string, societyId: string): Promise<void> {
+  if (!eventId?.trim() || !societyId?.trim()) {
+    throw new Error("deleteEventResultsForSociety: missing eventId or societyId");
+  }
+  const { error } = await supabase
+    .from("event_results")
+    .delete()
+    .eq("event_id", eventId)
+    .eq("society_id", societyId);
+
+  if (error) {
+    console.error("[resultsRepo] deleteEventResultsForSociety failed:", error.message);
+    throw new Error(error.message || "Failed to delete event results for society");
+  }
 }
 
 /**
@@ -1080,7 +1103,7 @@ export async function getOrderOfMeritLog(
 
   const { data: eventsData, error: eventsError } = await supabase
     .from("events")
-    .select("id, name, date, format, classification, is_oom")
+    .select("id, name, date, format, classification, is_oom, scoring_results_status")
     .in("id", candidateEventIds);
 
   if (eventsError) {
@@ -1092,6 +1115,9 @@ export async function getOrderOfMeritLog(
   }
 
   const eventsById = new Map((eventsData ?? []).map((e) => [e.id, e]));
+
+  const grossRoundEventIds = await fetchEventIdsWithAnyPlayerRound(supabase, candidateEventIds);
+  const oomEligibleEventIds = buildOomEligibleEventIdSet(eventsData ?? [], grossRoundEventIds);
 
   const oomEvents = candidateEventIds
     .map((id) => eventsById.get(id))
@@ -1150,6 +1176,7 @@ export async function getOrderOfMeritLog(
   const logEntries: ResultsLogEntry[] = [];
 
   for (const event of oomEvents) {
+    if (!oomEligibleEventIds.has(event.id)) continue;
     const rawForEvent = resultsForOomWithKnownMembers.filter((r) => r.event_id === event.id);
     const afterMemberDedupe = dedupeEventResultsByMemberIdPreferLatest(rawForEvent);
     const afterPersonDedupe = dedupeEventResultRowsByJointPersonKey(afterMemberDedupe, membersMap);
