@@ -1342,10 +1342,14 @@ function parsePositiveIntEnv(name: string, fallback: number): number {
   return Number.isFinite(n) && n > 0 ? Math.round(n) : fallback;
 }
 
-function getNightlyExitPolicyFromEnv(): { maxUnresolvedOk: number } {
-  return {
-    maxUnresolvedOk: parsePositiveIntEnv("COURSE_IMPORT_EXIT_OK_MAX_UNRESOLVED", 5),
-  };
+/**
+ * `COURSE_IMPORT_EXIT_OK_MAX_UNRESOLVED` overrides the default. Seeding mode allows more
+ * API-resolution skips per batch (ambiguous / no search hit) so backlog runs do not spuriously fail
+ * CI; maintenance stays strict.
+ */
+function getNightlyExitPolicyFromEnv(importRunMode: CourseImportRunMode): { maxUnresolvedOk: number } {
+  const defaultMax = importRunMode === "seeding" ? 100 : 5;
+  return { maxUnresolvedOk: parsePositiveIntEnv("COURSE_IMPORT_EXIT_OK_MAX_UNRESOLVED", defaultMax) };
 }
 
 function computeNightlyImportRunExitSummary(
@@ -2582,7 +2586,7 @@ export async function runTerritoryScaleNightlyImport(
     skipped: refreshResults.filter((r) => r.status === "skipped").length,
   };
 
-  const nightlyRunExit = computeNightlyImportRunExitSummary(results, getNightlyExitPolicyFromEnv());
+  const nightlyRunExit = computeNightlyImportRunExitSummary(results, getNightlyExitPolicyFromEnv(importRunMode));
   console.log(
     `[course-import] Nightly exit policy: code=${nightlyRunExit.exitCode} reason=${nightlyRunExit.exitReason} hardFailures=${nightlyRunExit.hardFailureCount} unresolved=${nightlyRunExit.unresolvedCandidateCount}/${nightlyRunExit.maxUnresolvedOk} downgraded=${nightlyRunExit.exitDowngradedToSuccess}`,
   );
