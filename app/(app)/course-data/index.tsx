@@ -19,12 +19,18 @@ import { usePaidAccess } from "@/lib/access/usePaidAccess";
 import {
   canManageCourseDataUI,
   clearCourseManualOverrideByScope,
+  getLatestCourseImportBatch,
+  getTerritoryProgressSummary,
   getEditableCourseOverrideFields,
+  listImportCandidatesByStatus,
   listCourseReviewSummaries,
   saveCourseManualOverride,
   triggerCourseReimportPreservingManual,
+  type CourseImportBatchSummary,
+  type CourseImportCandidateQueueItem,
   type CourseOverrideFieldName,
   type CourseReviewSummary,
+  type TerritoryProgressSummary,
 } from "@/lib/db_supabase/courseAdminRepo";
 import { getColors, radius, spacing } from "@/lib/ui/theme";
 
@@ -38,6 +44,10 @@ export default function CourseDataReviewScreen() {
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [courses, setCourses] = useState<CourseReviewSummary[]>([]);
+  const [latestBatch, setLatestBatch] = useState<CourseImportBatchSummary | null>(null);
+  const [failedCandidates, setFailedCandidates] = useState<CourseImportCandidateQueueItem[]>([]);
+  const [queuedCandidates, setQueuedCandidates] = useState<CourseImportCandidateQueueItem[]>([]);
+  const [territoryProgress, setTerritoryProgress] = useState<TerritoryProgressSummary[]>([]);
 
   const [selectedCourseId, setSelectedCourseId] = useState<string | null>(null);
   const [selectedTeeId, setSelectedTeeId] = useState<string | null>(null);
@@ -66,8 +76,18 @@ export default function CourseDataReviewScreen() {
   const load = useCallback(async () => {
     try {
       setError(null);
-      const rows = await listCourseReviewSummaries({ query, limit: 40 });
+      const [rows, batch, failed, queued, progress] = await Promise.all([
+        listCourseReviewSummaries({ query, limit: 40 }),
+        getLatestCourseImportBatch(),
+        listImportCandidatesByStatus(["failed"], 8),
+        listImportCandidatesByStatus(["queued"], 8),
+        getTerritoryProgressSummary(),
+      ]);
       setCourses(rows);
+      setLatestBatch(batch);
+      setFailedCandidates(failed);
+      setQueuedCandidates(queued);
+      setTerritoryProgress(progress);
       if (!selectedCourseId && rows[0]) {
         setSelectedCourseId(rows[0].id);
         setSelectedTeeId(rows[0].tees[0]?.id ?? null);
@@ -175,6 +195,63 @@ export default function CourseDataReviewScreen() {
         </AppText>
 
         {error ? <InlineNotice variant="error" message={error} style={{ marginBottom: spacing.base }} /> : null}
+
+        {latestBatch ? (
+          <AppCard style={styles.card}>
+            <AppText variant="captionBold" color="muted">Latest nightly batch</AppText>
+            <AppText variant="bodyBold" style={{ marginTop: spacing.xs }}>
+              {latestBatch.seed_phase} · {latestBatch.status}
+            </AppText>
+            <AppText variant="small" color="secondary" style={{ marginTop: spacing.xs }}>
+              Start: {latestBatch.started_at} · Finish: {latestBatch.finished_at ?? "running"}
+            </AppText>
+            <AppText variant="small" color="secondary" style={{ marginTop: spacing.xs }}>
+              Discovered {latestBatch.total_candidates} · Attempted {latestBatch.total_attempted} · OK {latestBatch.total_ok} · Partial {latestBatch.total_partial} · Failed {latestBatch.total_failed}
+            </AppText>
+            <AppText variant="small" color="secondary" style={{ marginTop: spacing.xs }}>
+              Inserted {latestBatch.total_inserted} · Updated {latestBatch.total_updated} · Skipped {latestBatch.total_skipped}
+            </AppText>
+          </AppCard>
+        ) : null}
+
+        {territoryProgress.length > 0 ? (
+          <AppCard style={styles.card}>
+            <AppText variant="captionBold" color="muted">Territory progress</AppText>
+            <View style={{ marginTop: spacing.sm, gap: spacing.xs }}>
+              {territoryProgress.map((row) => (
+                <AppText key={`${row.territory}-${row.seed_phase}`} variant="small" color="secondary">
+                  {row.seed_phase}: total {row.total} · seeded {row.seeded} · failed {row.failed} · refresh due {row.refresh_due}
+                </AppText>
+              ))}
+            </View>
+          </AppCard>
+        ) : null}
+
+        {failedCandidates.length > 0 ? (
+          <AppCard style={styles.card}>
+            <AppText variant="captionBold" color="muted">Failed candidates (manual review)</AppText>
+            <View style={{ marginTop: spacing.sm, gap: spacing.xs }}>
+              {failedCandidates.map((row) => (
+                <AppText key={row.id} variant="small" color="secondary">
+                  {row.candidate_name} · p{row.import_priority} · {row.last_error ?? "failed"}
+                </AppText>
+              ))}
+            </View>
+          </AppCard>
+        ) : null}
+
+        {queuedCandidates.length > 0 ? (
+          <AppCard style={styles.card}>
+            <AppText variant="captionBold" color="muted">Candidate queue snapshot</AppText>
+            <View style={{ marginTop: spacing.sm, gap: spacing.xs }}>
+              {queuedCandidates.map((row) => (
+                <AppText key={row.id} variant="small" color="secondary">
+                  {row.candidate_name} · {row.seed_phase} · p{row.import_priority} · {row.discovery_source}
+                </AppText>
+              ))}
+            </View>
+          </AppCard>
+        ) : null}
 
         <AppCard style={styles.card}>
           <AppText variant="captionBold" color="muted">Search courses</AppText>

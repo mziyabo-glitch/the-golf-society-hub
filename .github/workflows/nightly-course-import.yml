@@ -2,6 +2,39 @@ name: Nightly Course Import
 
 on:
   workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Run without writing course/tee/hole rows"
+        required: false
+        default: "false"
+      phase:
+        description: "Override phase (england_wales|scotland|ireland)"
+        required: false
+        default: ""
+      territory:
+        description: "Override territory code"
+        required: false
+        default: "uk"
+      max_new_seeds:
+        description: "Max new seeds in this run"
+        required: false
+        default: ""
+      max_retries:
+        description: "Max retries in this run"
+        required: false
+        default: ""
+      max_refreshes:
+        description: "Max refreshes in this run"
+        required: false
+        default: ""
+      max_priority:
+        description: "Max priority courses in this run"
+        required: false
+        default: ""
+      force_catalog_full_refresh:
+        description: "If true, always run post-batch stale catalog sweep (same as CLI --force-catalog-full-refresh)"
+        required: false
+        default: "false"
   schedule:
     - cron: "15 2 * * *"
 
@@ -23,8 +56,44 @@ jobs:
         run: npm ci
 
       - name: Run nightly import
-        run: npm run course-import:nightly
+        shell: bash
+        run: |
+          set -euo pipefail
+          ARGS=""
+          if [[ "${{ github.event.inputs.dry_run || '' }}" == "true" ]]; then
+            ARGS="$ARGS --dry-run"
+          fi
+          if [[ -n "${{ github.event.inputs.phase || '' }}" ]]; then
+            ARGS="$ARGS --phase=${{ github.event.inputs.phase }}"
+          fi
+          if [[ -n "${{ github.event.inputs.territory || '' }}" ]]; then
+            ARGS="$ARGS --territory=${{ github.event.inputs.territory }}"
+          fi
+          if [[ -n "${{ github.event.inputs.max_new_seeds || '' }}" ]]; then
+            ARGS="$ARGS --max-new-seeds=${{ github.event.inputs.max_new_seeds }}"
+          fi
+          if [[ -n "${{ github.event.inputs.max_retries || '' }}" ]]; then
+            ARGS="$ARGS --max-retries=${{ github.event.inputs.max_retries }}"
+          fi
+          if [[ -n "${{ github.event.inputs.max_refreshes || '' }}" ]]; then
+            ARGS="$ARGS --max-refreshes=${{ github.event.inputs.max_refreshes }}"
+          fi
+          if [[ -n "${{ github.event.inputs.max_priority || '' }}" ]]; then
+            ARGS="$ARGS --max-priority=${{ github.event.inputs.max_priority }}"
+          fi
+          if [[ "${{ github.event.inputs.force_catalog_full_refresh || '' }}" == "true" ]]; then
+            ARGS="$ARGS --force-catalog-full-refresh"
+          fi
+          npm run course-import:nightly -- $ARGS
         env:
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           GOLFCOURSE_API_KEY: ${{ secrets.GOLFCOURSE_API_KEY }}
+
+      - name: Upload morning report artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-course-import-report-${{ github.run_id }}
+          path: reports/nightly-course-import/*
+          if-no-files-found: warn

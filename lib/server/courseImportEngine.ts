@@ -2,6 +2,15 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { randomUUID } from "node:crypto";
 import { normalizeGolfCourseApiCourse } from "@/lib/courseNormalizer";
 import type { GolfCourseApiCourse, NormalizedCourseImport } from "@/types/course";
+import { loadTerritoryDiscoveryDataset } from "@/lib/server/courseImportDiscoveryAdapter";
+import {
+  evaluateCourseCatalogFreshness,
+  fetchStaleCatalogCoursesForSweep,
+  getCourseCatalogFreshnessThresholdsFromEnv,
+  type CourseCatalogFreshnessReport,
+  type CourseCatalogFreshnessThresholds,
+  type StaleCatalogCourseRow,
+} from "@/lib/server/courseCatalogFreshness";
 
 export type ImportSourceType = "golfcourseapi" | "club_official" | "manual_seed";
 export type ImportSyncStatus = "ok" | "partial" | "failed" | "skipped";
@@ -24,7 +33,7 @@ export type NightlyImportOptions = {
   dryRun?: boolean;
   overwriteManualOverrides?: boolean;
   includeSocietySeeds?: boolean;
-  triggerType?: "manual" | "nightly";
+  triggerType?: "manual" | "nightly" | "territory_nightly";
 };
 
 export type NightlyImportCourseResult = {
@@ -34,6 +43,62 @@ export type NightlyImportCourseResult = {
   validationIssues: ValidationIssue[];
   error?: string;
   courseId?: string;
+};
+
+export type TerritorySeedPhase = "england_wales" | "scotland" | "ireland";
+
+export type TerritoryImportMode = "nightly" | "manual";
+
+export type TerritoryImportCaps = {
+  maxPriorityCourses: number;
+  maxNewSeeds: number;
+  maxRetries: number;
+  maxRefreshes: number;
+  maxDiscoveryPerRun: number;
+  maxTotalAttempts: number;
+};
+
+export type TerritoryNightlyImportOptions = {
+  dryRun?: boolean;
+  overwriteManualOverrides?: boolean;
+  includeSocietySeeds?: boolean;
+  triggerType?: TerritoryImportMode;
+  phaseOverride?: TerritorySeedPhase;
+  territoryOverride?: string;
+  caps?: Partial<TerritoryImportCaps>;
+  /** Overrides env-based defaults from `getCourseCatalogFreshnessThresholdsFromEnv`. */
+  catalogFreshnessThresholds?: Partial<CourseCatalogFreshnessThresholds>;
+  /** When true, always run the post-batch stale-catalog sweep (for tests / ops). */
+  forceCatalogFullRefresh?: boolean;
+};
+
+export type TerritoryCandidateStatus = "queued" | "resolved" | "imported" | "rejected" | "failed" | "skipped";
+
+export type StaleCatalogSweepSummary = {
+  attempted: number;
+  skippedDuplicateApiInBatch: number;
+  ok: number;
+  partial: number;
+  failed: number;
+  results: NightlyImportCourseResult[];
+};
+
+export type TerritoryImportOutcome = {
+  batchId: string;
+  batchRunId: string;
+  phase: TerritorySeedPhase;
+  territory: string;
+  results: NightlyImportCourseResult[];
+  discoveredCandidates: number;
+  attemptedCandidates: number;
+  insertedCourses: number;
+  updatedCourses: number;
+  missingSiCount: number;
+  topFailureReasons: Array<{ reason: string; count: number }>;
+  manualReviewItems: Array<{ courseName: string; status: ImportSyncStatus; reason: string }>;
+  report: Record<string, unknown>;
+  catalogFreshness: CourseCatalogFreshnessReport;
+  staleCatalogSweep?: StaleCatalogSweepSummary;
 };
 
 const GOLF_API_BASE = "https://api.golfcourseapi.com/v1";
@@ -67,6 +132,10 @@ function asFinite(value: unknown): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 function toConfidence(issues: ValidationIssue[]): number {
   const weighted = issues.reduce((sum, issue) => {
     if (issue.code === "HOLE_COUNT") return sum + 20;
@@ -80,19 +149,41 @@ function toConfidence(issues: ValidationIssue[]): number {
 async function golfApiGet(path: string): Promise<unknown> {
   const key = process.env.GOLFCOURSE_API_KEY || process.env.EXPO_PUBLIC_GOLFCOURSE_API_KEY || process.env.NEXT_PUBLIC_GOLF_API_KEY;
   if (!key) throw new Error("Missing GOLFCOURSE_API_KEY");
-  const res = await fetch(`${GOLF_API_BASE}${path}`, {
-    method: "GET",
-    headers: {
-      Accept: "application/json",
-      "Content-Type": "application/json",
-      Authorization: `Key ${key}`,
-    },
-  });
-  if (!res.ok) {
+  const maxRetriesRaw = Number(process.env.COURSE_IMPORT_HTTP_MAX_RETRIES ?? "4");
+  const maxRetries = Number.isFinite(maxRetriesRaw) && maxRetriesRaw >= 0 ? Math.round(maxRetriesRaw) : 4;
+  const baseDelayRaw = Number(process.env.COURSE_IMPORT_HTTP_BASE_DELAY_MS ?? "1200");
+  const baseDelayMs = Number.isFinite(baseDelayRaw) && baseDelayRaw > 0 ? Math.round(baseDelayRaw) : 1200;
+
+  let attempt = 0;
+  for (;;) {
+    const res = await fetch(`${GOLF_API_BASE}${path}`, {
+      method: "GET",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        Authorization: `Key ${key}`,
+      },
+    });
+    if (res.ok) {
+      return (await res.json()) as unknown;
+    }
+
     const body = await res.text().catch(() => "");
-    throw new Error(`GolfCourseAPI ${res.status}: ${body.slice(0, 240)}`);
+    const retriable = res.status === 429 || (res.status >= 500 && res.status <= 599);
+    if (!retriable || attempt >= maxRetries) {
+      throw new Error(`GolfCourseAPI ${res.status}: ${body.slice(0, 240)}`);
+    }
+
+    const retryAfterHeader = res.headers.get("retry-after");
+    const retryAfterSeconds = retryAfterHeader != null ? Number(retryAfterHeader) : NaN;
+    const retryAfterMs =
+      Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0
+        ? Math.round(retryAfterSeconds * 1000)
+        : baseDelayMs * Math.pow(2, attempt);
+    const jitter = Math.floor(Math.random() * 300);
+    await sleep(retryAfterMs + jitter);
+    attempt += 1;
   }
-  return (await res.json()) as unknown;
 }
 
 function extractCourseRow(payload: unknown): Record<string, unknown> {
@@ -199,11 +290,16 @@ async function insertJobStart(
   supabase: SupabaseClient,
   payload: {
     batchId: string;
-    triggerType: "manual" | "nightly";
+    triggerType: "manual" | "nightly" | "territory_nightly";
     courseName: string;
     apiId: number | null;
     sourceType: ImportSourceType;
     sourceUrl: string | null;
+    batchRunId?: string | null;
+    candidateId?: string | null;
+    seedPhase?: TerritorySeedPhase | null;
+    territory?: string | null;
+    mode?: "legacy_nightly" | "territory_nightly" | "manual";
   },
 ): Promise<string | null> {
   const { data, error } = await supabase
@@ -217,6 +313,11 @@ async function insertJobStart(
       source_url: payload.sourceUrl,
       sync_status: "running",
       started_at: new Date().toISOString(),
+      batch_run_id: payload.batchRunId ?? null,
+      candidate_id: payload.candidateId ?? null,
+      seed_phase: payload.seedPhase ?? null,
+      territory: payload.territory ?? null,
+      mode: payload.mode ?? (payload.triggerType === "territory_nightly" ? "territory_nightly" : "legacy_nightly"),
     })
     .select("id")
     .single();
@@ -243,6 +344,16 @@ async function upsertNormalizedImport(
     confidence: number;
     importedAtIso: string;
     rawRow: Record<string, unknown>;
+    territory?: string | null;
+    seedPhase?: TerritorySeedPhase | null;
+    discoverySource?: string | null;
+    importPriority?: number | null;
+    refreshDueAt?: string | null;
+    firstDiscoveredAt?: string | null;
+    lastDiscoveredAt?: string | null;
+    canonicalApiId?: number | null;
+    seededStatus?: "unseeded" | "seeded" | "refresh_due" | "retired";
+    discoveryStatus?: "unknown" | "discovered" | "queued" | "resolved" | "rejected";
   },
 ): Promise<{ courseId: string }> {
   const coursePayload: Record<string, unknown> = {
@@ -266,6 +377,16 @@ async function upsertNormalizedImport(
     last_synced_at: metadata.importedAtIso,
     enrichment_status: metadata.syncStatus === "ok" ? "imported" : "partial",
     raw_row: metadata.rawRow,
+    territory: metadata.territory ?? null,
+    seed_phase: metadata.seedPhase ?? null,
+    discovery_source: metadata.discoverySource ?? null,
+    import_priority: metadata.importPriority ?? 0,
+    refresh_due_at: metadata.refreshDueAt ?? null,
+    first_discovered_at: metadata.firstDiscoveredAt ?? null,
+    last_discovered_at: metadata.lastDiscoveredAt ?? null,
+    canonical_api_id: metadata.canonicalApiId ?? normalized.course.apiId,
+    seeded_status: metadata.seededStatus ?? "seeded",
+    discovery_status: metadata.discoveryStatus ?? "resolved",
   };
 
   const { data: savedCourse, error: courseError } = await supabase
@@ -548,6 +669,1122 @@ export async function runNightlyCourseImport(
   }
 
   return { batchId, results };
+}
+
+type TerritoryCandidateRow = {
+  id: string;
+  candidate_name: string;
+  normalized_name: string;
+  country: string | null;
+  territory: string;
+  seed_phase: TerritorySeedPhase;
+  discovery_source: string;
+  status: TerritoryCandidateStatus;
+  canonical_api_id: number | null;
+  import_priority: number;
+  refresh_due_at: string | null;
+  last_synced_at: string | null;
+  sync_status: string;
+  confidence_score: number | null;
+  retry_count: number;
+  next_retry_at: string | null;
+  first_discovered_at: string | null;
+  last_discovered_at: string | null;
+  last_error: string | null;
+  metadata: Record<string, unknown>;
+};
+
+const PHASE_ORDER: TerritorySeedPhase[] = ["england_wales", "scotland", "ireland"];
+const DEFAULT_TERRITORY = "uk";
+
+function normalizeCandidateName(name: string): string {
+  return name.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+function isPostgresUniqueViolation(error: unknown): boolean {
+  const e = error as { code?: string; message?: string };
+  if (e.code === "23505") return true;
+  const m = (e.message ?? "").toLowerCase();
+  return m.includes("duplicate key") || m.includes("unique constraint");
+}
+
+type CandidateMergeRow = {
+  id: string;
+  candidate_name: string;
+  normalized_name: string;
+  import_priority: number;
+  metadata: Record<string, unknown>;
+};
+
+async function selectCandidateByCanonicalApi(
+  supabase: SupabaseClient,
+  territory: string,
+  canonicalApiId: number,
+): Promise<CandidateMergeRow | null> {
+  const { data, error } = await supabase
+    .from("course_import_candidates")
+    .select("id, candidate_name, normalized_name, import_priority, metadata")
+    .eq("territory", territory)
+    .eq("canonical_api_id", canonicalApiId)
+    .limit(1);
+  if (error) throw new Error(error.message || "Failed to read candidate by canonical API id.");
+  const row = (data ?? [])[0] as Record<string, unknown> | undefined;
+  if (!row) return null;
+  return {
+    id: String(row.id),
+    candidate_name: String(row.candidate_name ?? ""),
+    normalized_name: String(row.normalized_name ?? ""),
+    import_priority: Number(row.import_priority ?? 0),
+    metadata: (row.metadata as Record<string, unknown>) ?? {},
+  };
+}
+
+async function selectCandidateByNormalizedName(
+  supabase: SupabaseClient,
+  territory: string,
+  normalizedName: string,
+): Promise<(CandidateMergeRow & { canonical_api_id: number | null }) | null> {
+  const { data, error } = await supabase
+    .from("course_import_candidates")
+    .select("id, candidate_name, normalized_name, import_priority, metadata, canonical_api_id")
+    .eq("territory", territory)
+    .eq("normalized_name", normalizedName)
+    .limit(1);
+  if (error) throw new Error(error.message || "Failed to read candidate by normalized name.");
+  const row = (data ?? [])[0] as Record<string, unknown> | undefined;
+  if (!row) return null;
+  const api = row.canonical_api_id;
+  return {
+    id: String(row.id),
+    candidate_name: String(row.candidate_name ?? ""),
+    normalized_name: String(row.normalized_name ?? ""),
+    import_priority: Number(row.import_priority ?? 0),
+    metadata: (row.metadata as Record<string, unknown>) ?? {},
+    canonical_api_id: api != null && Number.isFinite(Number(api)) ? Number(api) : null,
+  };
+}
+
+async function mergeDiscoveryIntoCandidate(
+  supabase: SupabaseClient,
+  existing: CandidateMergeRow,
+  params: {
+    name: string;
+    country: string | null;
+    phase: TerritorySeedPhase;
+    discoverySource: string;
+    priority: number;
+    status?: TerritoryCandidateStatus;
+    metadata?: Record<string, unknown>;
+  },
+  options: { nowIso: string; canonicalApiId?: number | null },
+): Promise<void> {
+  const existingMeta = existing.metadata ?? {};
+  const existingAliases = Array.isArray(existingMeta.aliases)
+    ? existingMeta.aliases.map((v) => String(v))
+    : [];
+  const aliasSet = new Set<string>([existing.candidate_name.trim(), ...existingAliases]);
+  aliasSet.add(params.name.trim());
+  const mergedMetadata: Record<string, unknown> = {
+    ...existingMeta,
+    ...(params.metadata ?? {}),
+    aliases: [...aliasSet].filter((v) => v.length > 0),
+  };
+  const nextPriority = Math.max(existing.import_priority, params.priority);
+  const patch: Record<string, unknown> = {
+    candidate_name: existing.candidate_name.trim() || params.name,
+    normalized_name: existing.normalized_name,
+    country: params.country,
+    seed_phase: params.phase,
+    discovery_source: params.discoverySource,
+    status: params.status ?? "queued",
+    import_priority: nextPriority,
+    last_discovered_at: options.nowIso,
+    metadata: mergedMetadata,
+  };
+  if (options.canonicalApiId != null && options.canonicalApiId > 0) {
+    patch.canonical_api_id = options.canonicalApiId;
+  }
+  const { error: updateErr } = await supabase.from("course_import_candidates").update(patch).eq("id", existing.id);
+  if (updateErr) throw new Error(updateErr.message || "Failed to merge discovery into candidate.");
+}
+
+function parsePositiveIntEnv(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (!raw) return fallback;
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? Math.round(n) : fallback;
+}
+
+function getTerritoryImportCaps(overrides?: Partial<TerritoryImportCaps>): TerritoryImportCaps {
+  return {
+    maxPriorityCourses: overrides?.maxPriorityCourses ?? parsePositiveIntEnv("COURSE_IMPORT_MAX_PRIORITY", 12),
+    maxNewSeeds: overrides?.maxNewSeeds ?? parsePositiveIntEnv("COURSE_IMPORT_MAX_NEW_SEEDS", 20),
+    maxRetries: overrides?.maxRetries ?? parsePositiveIntEnv("COURSE_IMPORT_MAX_RETRIES", 12),
+    maxRefreshes: overrides?.maxRefreshes ?? parsePositiveIntEnv("COURSE_IMPORT_MAX_REFRESHES", 25),
+    maxDiscoveryPerRun: overrides?.maxDiscoveryPerRun ?? parsePositiveIntEnv("COURSE_IMPORT_MAX_DISCOVERY", 120),
+    maxTotalAttempts: overrides?.maxTotalAttempts ?? parsePositiveIntEnv("COURSE_IMPORT_MAX_TOTAL_ATTEMPTS", 60),
+  };
+}
+
+function computeRefreshDueIso(now: Date): string {
+  const days = parsePositiveIntEnv("COURSE_IMPORT_REFRESH_DAYS", 30);
+  const due = new Date(now.getTime() + days * 24 * 60 * 60 * 1000);
+  return due.toISOString();
+}
+
+function computeRetryDueIso(now: Date, retryCount: number): string {
+  const hours = parsePositiveIntEnv("COURSE_IMPORT_RETRY_BASE_HOURS", 6);
+  const factor = Math.max(1, retryCount);
+  const due = new Date(now.getTime() + hours * factor * 60 * 60 * 1000);
+  return due.toISOString();
+}
+
+async function resolveActivePhase(
+  supabase: SupabaseClient,
+  phaseOverride?: TerritorySeedPhase,
+): Promise<TerritorySeedPhase> {
+  if (phaseOverride) return phaseOverride;
+  const envPhase = process.env.COURSE_IMPORT_ACTIVE_PHASE;
+  if (envPhase === "england_wales" || envPhase === "scotland" || envPhase === "ireland") return envPhase;
+
+  for (const phase of PHASE_ORDER) {
+    const { count, error } = await supabase
+      .from("course_import_candidates")
+      .select("id", { count: "exact", head: true })
+      .eq("seed_phase", phase)
+      .in("status", ["queued", "failed"]);
+    if (!error && (count ?? 0) > 0) return phase;
+  }
+  return "england_wales";
+}
+
+function asCandidateRow(row: Record<string, unknown>): TerritoryCandidateRow {
+  return {
+    id: String(row.id),
+    candidate_name: String(row.candidate_name ?? ""),
+    normalized_name: String(row.normalized_name ?? ""),
+    country: row.country != null ? String(row.country) : null,
+    territory: String(row.territory ?? DEFAULT_TERRITORY),
+    seed_phase: (row.seed_phase as TerritorySeedPhase) ?? "england_wales",
+    discovery_source: String(row.discovery_source ?? "unknown"),
+    status: (row.status as TerritoryCandidateStatus) ?? "queued",
+    canonical_api_id: row.canonical_api_id != null ? Number(row.canonical_api_id) : null,
+    import_priority: Number.isFinite(Number(row.import_priority)) ? Number(row.import_priority) : 0,
+    refresh_due_at: row.refresh_due_at != null ? String(row.refresh_due_at) : null,
+    last_synced_at: row.last_synced_at != null ? String(row.last_synced_at) : null,
+    sync_status: String(row.sync_status ?? "queued"),
+    confidence_score: row.confidence_score != null ? Number(row.confidence_score) : null,
+    retry_count: Number.isFinite(Number(row.retry_count)) ? Number(row.retry_count) : 0,
+    next_retry_at: row.next_retry_at != null ? String(row.next_retry_at) : null,
+    first_discovered_at: row.first_discovered_at != null ? String(row.first_discovered_at) : null,
+    last_discovered_at: row.last_discovered_at != null ? String(row.last_discovered_at) : null,
+    last_error: row.last_error != null ? String(row.last_error) : null,
+    metadata: (row.metadata as Record<string, unknown>) ?? {},
+  };
+}
+
+async function upsertCandidate(
+  supabase: SupabaseClient,
+  params: {
+    name: string;
+    country: string | null;
+    territory: string;
+    phase: TerritorySeedPhase;
+    discoverySource: string;
+    priority: number;
+    canonicalApiId?: number | null;
+    status?: TerritoryCandidateStatus;
+    metadata?: Record<string, unknown>;
+  },
+): Promise<void> {
+  const nowIso = new Date().toISOString();
+  const normalizedName = normalizeCandidateName(params.name);
+  const pinnedApiId =
+    params.canonicalApiId != null && Number.isFinite(Number(params.canonicalApiId)) && Number(params.canonicalApiId) > 0
+      ? Math.round(Number(params.canonicalApiId))
+      : null;
+
+  if (pinnedApiId != null) {
+    const byApi = await selectCandidateByCanonicalApi(supabase, params.territory, pinnedApiId);
+    if (byApi) {
+      await mergeDiscoveryIntoCandidate(supabase, byApi, params, { nowIso, canonicalApiId: pinnedApiId });
+      return;
+    }
+  }
+
+  if (pinnedApiId == null) {
+    const byName = await selectCandidateByNormalizedName(supabase, params.territory, normalizedName);
+    if (byName) {
+      const { error: upErr } = await supabase
+        .from("course_import_candidates")
+        .update({
+          country: params.country,
+          seed_phase: params.phase,
+          discovery_source: params.discoverySource,
+          status: params.status ?? "queued",
+          import_priority: Math.max(byName.import_priority, params.priority),
+          last_discovered_at: nowIso,
+          metadata: { ...byName.metadata, ...(params.metadata ?? {}) },
+        })
+        .eq("id", byName.id);
+      if (upErr) throw new Error(upErr.message || "Failed to update candidate by normalized name.");
+      return;
+    }
+  }
+
+  const payload = {
+    candidate_name: params.name,
+    normalized_name: normalizedName,
+    country: params.country,
+    territory: params.territory,
+    seed_phase: params.phase,
+    discovery_source: params.discoverySource,
+    import_priority: params.priority,
+    canonical_api_id: pinnedApiId ?? null,
+    status: params.status ?? "queued",
+    sync_status: "queued" as const,
+    first_discovered_at: nowIso,
+    last_discovered_at: nowIso,
+    metadata: params.metadata ?? {},
+  };
+
+  const { error } = await supabase
+    .from("course_import_candidates")
+    .upsert(payload, { onConflict: "territory,normalized_name" });
+  if (!error) return;
+
+  if (isPostgresUniqueViolation(error) && pinnedApiId != null) {
+    const recovered = await selectCandidateByCanonicalApi(supabase, params.territory, pinnedApiId);
+    if (recovered) {
+      await mergeDiscoveryIntoCandidate(supabase, recovered, params, { nowIso, canonicalApiId: pinnedApiId });
+      return;
+    }
+    const fallback = { ...payload, canonical_api_id: null };
+    const { error: retryErr } = await supabase
+      .from("course_import_candidates")
+      .upsert(fallback, { onConflict: "territory,normalized_name" });
+    if (!retryErr) return;
+    throw new Error(retryErr.message || "Failed to upsert candidate after duplicate canonical fallback.");
+  }
+  throw new Error((error as { message?: string }).message || "Failed to upsert candidate");
+}
+
+async function discoverCandidatesBounded(
+  supabase: SupabaseClient,
+  phase: TerritorySeedPhase,
+  territory: string,
+  caps: TerritoryImportCaps,
+  includeSocietySeeds: boolean,
+): Promise<number> {
+  let discovered = 0;
+  const dataset = await loadTerritoryDiscoveryDataset(phase);
+  for (const item of dataset.slice(0, caps.maxDiscoveryPerRun)) {
+    await upsertCandidate(supabase, {
+      name: item.name,
+      country: item.country,
+      territory,
+      phase,
+      discoverySource: item.source,
+      priority: item.priority,
+      status: "queued",
+    });
+    discovered += 1;
+  }
+
+  for (const pinned of DEFAULT_PRIORITY_SEEDS) {
+    await upsertCandidate(supabase, {
+      name: pinned.name,
+      country: null,
+      territory,
+      phase,
+      discoverySource: "pinned_seed",
+      priority: 900,
+      canonicalApiId: pinned.preferredApiId ?? null,
+      metadata: {
+        sourceType: pinned.sourceType ?? "manual_seed",
+        sourceUrl: pinned.sourceUrl ?? null,
+      },
+    });
+    discovered += 1;
+  }
+
+  if (includeSocietySeeds) {
+    const societySeeds = await discoverSocietyCourseSeeds(supabase);
+    for (const seed of societySeeds.slice(0, caps.maxDiscoveryPerRun)) {
+      await upsertCandidate(supabase, {
+        name: seed.name,
+        country: null,
+        territory,
+        phase,
+        discoverySource: "society_seed",
+        priority: 850,
+        canonicalApiId: seed.preferredApiId ?? null,
+        metadata: {
+          sourceType: seed.sourceType ?? "golfcourseapi",
+          sourceUrl: seed.sourceUrl ?? null,
+        },
+      });
+      discovered += 1;
+    }
+  }
+  return discovered;
+}
+
+async function listCandidateBucket(
+  supabase: SupabaseClient,
+  params: {
+    phase: TerritorySeedPhase;
+    territory: string;
+    statuses?: TerritoryCandidateStatus[];
+    minPriority?: number;
+    retryDueOnly?: boolean;
+    refreshDueOnly?: boolean;
+    limit: number;
+  },
+): Promise<TerritoryCandidateRow[]> {
+  let q = supabase
+    .from("course_import_candidates")
+    .select("*")
+    .eq("seed_phase", params.phase)
+    .eq("territory", params.territory)
+    .order("import_priority", { ascending: false })
+    .order("last_discovered_at", { ascending: false })
+    .limit(Math.max(1, params.limit));
+
+  if (params.statuses && params.statuses.length > 0) q = q.in("status", params.statuses);
+  if (params.minPriority != null) q = q.gte("import_priority", params.minPriority);
+  if (params.retryDueOnly) q = q.lte("next_retry_at", new Date().toISOString());
+  if (params.refreshDueOnly) q = q.lte("refresh_due_at", new Date().toISOString());
+
+  const { data, error } = await q;
+  if (error) throw new Error(error.message || "Failed to list candidate bucket");
+  return ((data ?? []) as Record<string, unknown>[]).map(asCandidateRow);
+}
+
+function pickCandidates(
+  caps: TerritoryImportCaps,
+  priorityCandidates: TerritoryCandidateRow[],
+  retryCandidates: TerritoryCandidateRow[],
+  newCandidates: TerritoryCandidateRow[],
+  refreshCandidates: TerritoryCandidateRow[],
+): TerritoryCandidateRow[] {
+  const seen = new Set<string>();
+  const picked: TerritoryCandidateRow[] = [];
+  const addMany = (rows: TerritoryCandidateRow[], cap: number): void => {
+    for (const row of rows) {
+      if (picked.length >= caps.maxTotalAttempts) return;
+      if (cap <= 0) return;
+      if (seen.has(row.id)) continue;
+      seen.add(row.id);
+      picked.push(row);
+      cap -= 1;
+      if (cap <= 0) return;
+    }
+  };
+  addMany(priorityCandidates, caps.maxPriorityCourses);
+  addMany(retryCandidates, caps.maxRetries);
+  addMany(newCandidates, caps.maxNewSeeds);
+  addMany(refreshCandidates, caps.maxRefreshes);
+  return picked.slice(0, caps.maxTotalAttempts);
+}
+
+export function planTerritoryCandidateOrder(
+  caps: TerritoryImportCaps,
+  buckets: {
+    priority: Array<{ id: string }>;
+    retries: Array<{ id: string }>;
+    fresh: Array<{ id: string }>;
+    refresh: Array<{ id: string }>;
+  },
+): string[] {
+  const asRow = (items: Array<{ id: string }>): TerritoryCandidateRow[] =>
+    items.map((item) => ({
+      id: item.id,
+      candidate_name: item.id,
+      normalized_name: item.id,
+      country: null,
+      territory: DEFAULT_TERRITORY,
+      seed_phase: "england_wales",
+      discovery_source: "test",
+      status: "queued",
+      canonical_api_id: null,
+      import_priority: 0,
+      refresh_due_at: null,
+      last_synced_at: null,
+      sync_status: "queued",
+      confidence_score: null,
+      retry_count: 0,
+      next_retry_at: null,
+      first_discovered_at: null,
+      last_discovered_at: null,
+      last_error: null,
+      metadata: {},
+    }));
+  return pickCandidates(
+    caps,
+    asRow(buckets.priority),
+    asRow(buckets.retries),
+    asRow(buckets.fresh),
+    asRow(buckets.refresh),
+  ).map((row) => row.id);
+}
+
+async function insertBatchRun(
+  supabase: SupabaseClient,
+  payload: {
+    phase: TerritorySeedPhase;
+    territory: string;
+    mode: TerritoryImportMode;
+    caps: TerritoryImportCaps;
+    triggerType: "manual" | "nightly" | "territory_nightly";
+    catalogFreshness?: CourseCatalogFreshnessReport;
+  },
+): Promise<string> {
+  const { data, error } = await supabase
+    .from("course_import_batches")
+    .insert({
+      status: "running",
+      mode: "territory_nightly",
+      territory: payload.territory,
+      seed_phase: payload.phase,
+      trigger_type: payload.triggerType,
+      max_priority: payload.caps.maxPriorityCourses,
+      max_new_seeds: payload.caps.maxNewSeeds,
+      max_retries: payload.caps.maxRetries,
+      max_refreshes: payload.caps.maxRefreshes,
+      summary_json: {
+        mode: payload.mode,
+        ...(payload.catalogFreshness ? { catalogFreshness: payload.catalogFreshness } : {}),
+      },
+    })
+    .select("id")
+    .single();
+  if (error || !data) throw new Error(error?.message || "Failed to create batch run");
+  return String((data as { id: string }).id);
+}
+
+async function clearCanonicalApiIdFromOtherCandidates(
+  supabase: SupabaseClient,
+  territory: string,
+  apiId: number,
+  keepCandidateId: string,
+): Promise<void> {
+  if (!Number.isFinite(apiId) || apiId <= 0) return;
+  const { error } = await supabase
+    .from("course_import_candidates")
+    .update({ canonical_api_id: null })
+    .eq("territory", territory)
+    .eq("canonical_api_id", apiId)
+    .neq("id", keepCandidateId);
+  if (error) throw new Error(error.message || "Failed to clear duplicate canonical_api_id on peer candidates.");
+}
+
+async function updateCandidateAfterAttempt(
+  supabase: SupabaseClient,
+  candidate: TerritoryCandidateRow,
+  payload: {
+    status: TerritoryCandidateStatus;
+    syncStatus: ImportSyncStatus | "failed" | "queued";
+    apiId?: number | null;
+    courseId?: string | null;
+    confidence?: number | null;
+    error?: string | null;
+    refreshDueAt?: string | null;
+  },
+): Promise<void> {
+  const nowIso = new Date().toISOString();
+  const retryCount = payload.status === "failed" ? candidate.retry_count + 1 : 0;
+  const nextApiId = payload.apiId ?? candidate.canonical_api_id;
+  if (nextApiId != null && Number.isFinite(Number(nextApiId)) && Number(nextApiId) > 0) {
+    await clearCanonicalApiIdFromOtherCandidates(
+      supabase,
+      candidate.territory,
+      Math.round(Number(nextApiId)),
+      candidate.id,
+    );
+  }
+  const { error } = await supabase
+    .from("course_import_candidates")
+    .update({
+      status: payload.status,
+      sync_status: payload.syncStatus,
+      canonical_api_id: payload.apiId ?? candidate.canonical_api_id,
+      canonical_course_id: payload.courseId ?? null,
+      confidence_score: payload.confidence ?? null,
+      last_synced_at: payload.status === "imported" ? nowIso : candidate.last_synced_at,
+      refresh_due_at: payload.status === "imported" ? payload.refreshDueAt ?? null : candidate.refresh_due_at,
+      retry_count: retryCount,
+      next_retry_at: payload.status === "failed" ? computeRetryDueIso(new Date(), retryCount) : null,
+      last_error: payload.error ?? null,
+      last_discovered_at: nowIso,
+    })
+    .eq("id", candidate.id);
+  if (error) throw new Error(error.message || "Failed to update candidate");
+}
+
+type CourseDetailBindings = {
+  candidate: TerritoryCandidateRow | null;
+  displayCourseName: string;
+  discoverySource: string;
+  importPriority: number;
+  firstDiscoveredAt: string | null;
+  lastDiscoveredAt: string | null;
+};
+
+/**
+ * Fetches from GolfCourseAPI and persists tees + holes (full detail refresh via `upsertNormalizedImport`).
+ */
+async function runCourseDetailImportFromApi(
+  supabase: SupabaseClient,
+  params: {
+    batchId: string;
+    batchRunId: string;
+    phase: TerritorySeedPhase;
+    territory: string;
+    dryRun: boolean;
+    overwriteManualOverrides: boolean;
+    triggerType: "manual" | "nightly" | "territory_nightly";
+    apiId: number;
+    jobId: string | null;
+    bindings: CourseDetailBindings;
+    catalogStaleSweep?: boolean;
+  },
+): Promise<{
+  result: NightlyImportCourseResult;
+  inserted: boolean;
+  updated: boolean;
+  missingSiCount: number;
+}> {
+  const sourceType: ImportSourceType = "golfcourseapi";
+  const sourceUrl = null;
+  const b = params.bindings;
+  const seedName = b.displayCourseName;
+
+  try {
+    const fetched = await fetchCourseByApiId(params.apiId);
+    const normalized = normalizeGolfCourseApiCourse(fetched.course);
+    const validationIssues = validateNormalizedImport(normalized);
+    const status: "ok" | "partial" = validationIssues.length === 0 ? "ok" : "partial";
+    const importedAtIso = new Date().toISOString();
+    const confidence = toConfidence(validationIssues);
+    const missingSiCount = validationIssues.filter(
+      (issue) => issue.code === "SI_OUT_OF_RANGE" || issue.code === "SI_DUPLICATE",
+    ).length;
+
+    const { data: existing } = await supabase
+      .from("courses")
+      .select("id")
+      .eq("dedupe_key", normalized.course.dedupeKey)
+      .maybeSingle();
+    const existedBefore = !!existing;
+
+    let courseId: string | undefined;
+    if (!params.dryRun) {
+      const persisted = await upsertNormalizedImport(supabase, normalized, {
+        sourceType,
+        sourceUrl,
+        syncStatus: status,
+        confidence,
+        importedAtIso,
+        rawRow: fetched.raw,
+        territory: params.territory,
+        seedPhase: params.phase,
+        discoverySource: b.discoverySource,
+        importPriority: b.importPriority,
+        refreshDueAt: computeRefreshDueIso(new Date()),
+        firstDiscoveredAt: b.firstDiscoveredAt,
+        lastDiscoveredAt: b.lastDiscoveredAt ?? importedAtIso,
+        canonicalApiId: params.apiId,
+        seededStatus: status === "failed" ? "refresh_due" : "seeded",
+        discoveryStatus: "resolved",
+      });
+      courseId = persisted.courseId;
+      await applyManualOverrides(supabase, persisted.courseId, params.overwriteManualOverrides);
+      if (b.candidate) {
+        await updateCandidateAfterAttempt(supabase, b.candidate, {
+          status: "imported",
+          syncStatus: status,
+          apiId: params.apiId,
+          courseId,
+          confidence,
+          refreshDueAt: computeRefreshDueIso(new Date()),
+        });
+      }
+    }
+
+    await updateJob(supabase, params.jobId, {
+      target_course_id: courseId ?? null,
+      sync_status: status,
+      finished_at: new Date().toISOString(),
+      imported_at: params.dryRun ? null : importedAtIso,
+      confidence_score: confidence,
+      validation_errors: validationIssues,
+      raw_source_payload: fetched.raw,
+      summary: {
+        dryRun: params.dryRun,
+        teeCount: normalized.tees.length,
+        holeCount: normalized.tees.reduce((sum, tee) => sum + tee.holes.length, 0),
+        overwriteManualOverrides: params.overwriteManualOverrides,
+        candidateId: b.candidate?.id ?? null,
+        phase: params.phase,
+        territory: params.territory,
+        catalogStaleSweep: params.catalogStaleSweep === true,
+        detailPersistence: "full",
+      },
+    });
+
+    return {
+      result: {
+        courseName: seedName,
+        apiId: params.apiId,
+        status,
+        validationIssues,
+        courseId,
+      },
+      inserted: !existedBefore,
+      updated: existedBefore,
+      missingSiCount,
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (b.candidate) {
+      await updateCandidateAfterAttempt(supabase, b.candidate, {
+        status: "failed",
+        syncStatus: "failed",
+        apiId: params.apiId,
+        error: message,
+      });
+    }
+    await updateJob(supabase, params.jobId, {
+      sync_status: "failed",
+      finished_at: new Date().toISOString(),
+      error_message: message,
+    });
+    return {
+      result: {
+        courseName: seedName,
+        apiId: params.apiId,
+        status: "failed",
+        validationIssues: [],
+        error: message,
+      },
+      inserted: false,
+      updated: false,
+      missingSiCount: 0,
+    };
+  }
+}
+
+async function importCatalogStaleCourse(
+  supabase: SupabaseClient,
+  params: {
+    row: StaleCatalogCourseRow;
+    batchId: string;
+    batchRunId: string;
+    phase: TerritorySeedPhase;
+    territory: string;
+    dryRun: boolean;
+    overwriteManualOverrides: boolean;
+    triggerType: "manual" | "nightly" | "territory_nightly";
+  },
+): Promise<{
+  result: NightlyImportCourseResult;
+  inserted: boolean;
+  updated: boolean;
+  missingSiCount: number;
+}> {
+  const sourceType: ImportSourceType = "golfcourseapi";
+  const sourceUrl = null;
+  const jobId = await insertJobStart(supabase, {
+    batchId: params.batchId,
+    triggerType: params.triggerType,
+    courseName: params.row.courseName,
+    apiId: params.row.apiId,
+    sourceType,
+    sourceUrl,
+    batchRunId: params.batchRunId,
+    candidateId: null,
+    seedPhase: params.phase,
+    territory: params.territory,
+    mode: "territory_nightly",
+  });
+  const nowIso = new Date().toISOString();
+  return runCourseDetailImportFromApi(supabase, {
+    batchId: params.batchId,
+    batchRunId: params.batchRunId,
+    phase: params.phase,
+    territory: params.territory,
+    dryRun: params.dryRun,
+    overwriteManualOverrides: params.overwriteManualOverrides,
+    triggerType: params.triggerType,
+    apiId: params.row.apiId,
+    jobId,
+    bindings: {
+      candidate: null,
+      displayCourseName: params.row.courseName,
+      discoverySource: "catalog_stale_sweep",
+      importPriority: 0,
+      firstDiscoveredAt: null,
+      lastDiscoveredAt: nowIso,
+    },
+    catalogStaleSweep: true,
+  });
+}
+
+async function importCandidateCourse(
+  supabase: SupabaseClient,
+  params: {
+    candidate: TerritoryCandidateRow;
+    batchId: string;
+    batchRunId: string;
+    phase: TerritorySeedPhase;
+    territory: string;
+    dryRun: boolean;
+    overwriteManualOverrides: boolean;
+    triggerType: "manual" | "nightly" | "territory_nightly";
+  },
+): Promise<{
+  result: NightlyImportCourseResult;
+  inserted: boolean;
+  updated: boolean;
+  missingSiCount: number;
+}> {
+  const candidate = params.candidate;
+  const seed: CourseSeed = {
+    name: candidate.candidate_name,
+    preferredApiId: candidate.canonical_api_id ?? undefined,
+    sourceType: "golfcourseapi",
+  };
+  const sourceType: ImportSourceType = "golfcourseapi";
+  const sourceUrl = null;
+  const apiId = await resolveApiId(supabase, seed);
+  const jobId = await insertJobStart(supabase, {
+    batchId: params.batchId,
+    triggerType: params.triggerType,
+    courseName: seed.name,
+    apiId,
+    sourceType,
+    sourceUrl,
+    batchRunId: params.batchRunId,
+    candidateId: candidate.id,
+    seedPhase: params.phase,
+    territory: params.territory,
+    mode: "territory_nightly",
+  });
+
+  if (!apiId) {
+    const errorMessage = "Unable to resolve GolfCourseAPI id from candidate";
+    await updateCandidateAfterAttempt(supabase, candidate, {
+      status: "failed",
+      syncStatus: "failed",
+      error: errorMessage,
+    });
+    await updateJob(supabase, jobId, {
+      sync_status: "failed",
+      finished_at: new Date().toISOString(),
+      error_message: errorMessage,
+    });
+    return {
+      result: {
+        courseName: seed.name,
+        apiId: null,
+        status: "failed",
+        validationIssues: [],
+        error: errorMessage,
+      },
+      inserted: false,
+      updated: false,
+      missingSiCount: 0,
+    };
+  }
+
+  return runCourseDetailImportFromApi(supabase, {
+    batchId: params.batchId,
+    batchRunId: params.batchRunId,
+    phase: params.phase,
+    territory: params.territory,
+    dryRun: params.dryRun,
+    overwriteManualOverrides: params.overwriteManualOverrides,
+    triggerType: params.triggerType,
+    apiId,
+    jobId,
+    bindings: {
+      candidate,
+      displayCourseName: seed.name,
+      discoverySource: candidate.discovery_source,
+      importPriority: candidate.import_priority,
+      firstDiscoveredAt: candidate.first_discovered_at,
+      lastDiscoveredAt: candidate.last_discovered_at,
+    },
+    catalogStaleSweep: false,
+  });
+}
+
+function buildTopFailureReasons(results: NightlyImportCourseResult[]): Array<{ reason: string; count: number }> {
+  const byReason = new Map<string, number>();
+  for (const row of results) {
+    if (row.status !== "failed") continue;
+    const reason = (row.error ?? "unknown").slice(0, 180);
+    byReason.set(reason, (byReason.get(reason) ?? 0) + 1);
+  }
+  return [...byReason.entries()]
+    .map(([reason, count]) => ({ reason, count }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 8);
+}
+
+function buildManualReviewItems(
+  candidates: TerritoryCandidateRow[],
+  results: NightlyImportCourseResult[],
+): Array<{ courseName: string; status: ImportSyncStatus; reason: string }> {
+  const resultByName = new Map(results.map((row) => [row.courseName.toLowerCase(), row]));
+  const ranked = [...candidates].sort((a, b) => b.import_priority - a.import_priority);
+  const out: Array<{ courseName: string; status: ImportSyncStatus; reason: string }> = [];
+  for (const candidate of ranked) {
+    const row = resultByName.get(candidate.candidate_name.toLowerCase());
+    if (!row) continue;
+    if (row.status === "ok") continue;
+    out.push({
+      courseName: candidate.candidate_name,
+      status: row.status,
+      reason: row.error ?? `${row.validationIssues.length} validation issue(s)`,
+    });
+    if (out.length >= 10) break;
+  }
+  return out;
+}
+
+export async function runTerritoryScaleNightlyImport(
+  options?: TerritoryNightlyImportOptions,
+): Promise<TerritoryImportOutcome> {
+  const supabaseUrl = requireEnv("NEXT_PUBLIC_SUPABASE_URL");
+  const serviceKey = requireEnv("SUPABASE_SERVICE_ROLE_KEY");
+  const supabase = createClient(supabaseUrl, serviceKey);
+  const caps = getTerritoryImportCaps(options?.caps);
+  const dryRun = options?.dryRun === true;
+  const overwriteManualOverrides = options?.overwriteManualOverrides === true;
+  const includeSocietySeeds = options?.includeSocietySeeds !== false;
+  const triggerType: "manual" | "nightly" | "territory_nightly" =
+    options?.triggerType === "manual" ? "manual" : "territory_nightly";
+  const territory = options?.territoryOverride?.trim() || DEFAULT_TERRITORY;
+  const phase = await resolveActivePhase(supabase, options?.phaseOverride);
+  const batchId = randomUUID();
+  const freshnessThresholds = getCourseCatalogFreshnessThresholdsFromEnv(options?.catalogFreshnessThresholds);
+  const catalogFreshness = await evaluateCourseCatalogFreshness(supabase, freshnessThresholds, {
+    force: options?.forceCatalogFullRefresh === true,
+  });
+
+  console.log(
+    `[course-import] Catalog freshness @ ${catalogFreshness.metrics.evaluatedAtIso} | api_courses=${catalogFreshness.metrics.coursesWithApiId} | stale(last_sync<cutoff)=${catalogFreshness.metrics.staleByLastSyncedCount} | missing_SI_courses≈${catalogFreshness.metrics.coursesWithMissingStrokeIndex} | incomplete_tee_courses≈${catalogFreshness.metrics.coursesWithIncompleteTeeBlock} | cutoff=${catalogFreshness.metrics.staleAgeCutoffIso}`,
+  );
+  if (catalogFreshness.triggeredFullRefresh) {
+    console.log(
+      `[course-import] FULL catalog stale sweep ENABLED for this run. Reasons: ${catalogFreshness.reasons.join(" | ")}`,
+    );
+  } else {
+    console.log(
+      "[course-import] Catalog freshness within thresholds: standard incremental candidate scheduling only (no catalog-wide stale sweep).",
+    );
+  }
+  console.log(
+    "[course-import] Large-catalog note: stale-SI and incomplete-tee metrics use bounded scans; tune COURSE_IMPORT_STALE_SWEEP_MAX_COURSES, COURSE_IMPORT_STALE_AGE_DAYS, and scan caps in courseCatalogFreshness if needed.",
+  );
+
+  const batchRunId = await insertBatchRun(supabase, {
+    phase,
+    territory,
+    mode: options?.triggerType ?? "nightly",
+    caps,
+    triggerType,
+    catalogFreshness,
+  });
+
+  const discoveredCandidates = await discoverCandidatesBounded(
+    supabase,
+    phase,
+    territory,
+    caps,
+    includeSocietySeeds,
+  );
+
+  const [priorityCandidates, retryCandidates, newCandidates, refreshCandidates] = await Promise.all([
+    listCandidateBucket(supabase, {
+      phase,
+      territory,
+      statuses: ["queued", "resolved", "failed", "imported"],
+      minPriority: 500,
+      limit: Math.max(caps.maxPriorityCourses * 4, 40),
+    }),
+    listCandidateBucket(supabase, {
+      phase,
+      territory,
+      statuses: ["failed"],
+      retryDueOnly: true,
+      limit: Math.max(caps.maxRetries * 4, 40),
+    }),
+    listCandidateBucket(supabase, {
+      phase,
+      territory,
+      statuses: ["queued"],
+      limit: Math.max(caps.maxNewSeeds * 5, 80),
+    }),
+    listCandidateBucket(supabase, {
+      phase,
+      territory,
+      statuses: ["imported"],
+      refreshDueOnly: true,
+      limit: Math.max(caps.maxRefreshes * 4, 80),
+    }),
+  ]);
+
+  const pickedCandidates = pickCandidates(caps, priorityCandidates, retryCandidates, newCandidates, refreshCandidates);
+  const results: NightlyImportCourseResult[] = [];
+  let insertedCourses = 0;
+  let updatedCourses = 0;
+  let missingSiCount = 0;
+
+  for (const candidate of pickedCandidates) {
+    const imported = await importCandidateCourse(supabase, {
+      candidate,
+      batchId,
+      batchRunId,
+      phase,
+      territory,
+      dryRun,
+      overwriteManualOverrides,
+      triggerType,
+    });
+    results.push(imported.result);
+    if (imported.inserted) insertedCourses += 1;
+    if (imported.updated) updatedCourses += 1;
+    missingSiCount += imported.missingSiCount;
+  }
+
+  let staleCatalogSweep: StaleCatalogSweepSummary | undefined;
+  if (catalogFreshness.triggeredFullRefresh) {
+    const pickedApiIds = new Set<number>();
+    for (const c of pickedCandidates) {
+      if (c.canonical_api_id != null && c.canonical_api_id > 0) pickedApiIds.add(c.canonical_api_id);
+    }
+    for (const r of results) {
+      if (r.apiId != null) pickedApiIds.add(r.apiId);
+    }
+    const sweepRows = await fetchStaleCatalogCoursesForSweep(supabase, {
+      maxRows: catalogFreshness.thresholds.staleSweepMaxCourses,
+      staleAgeDays: catalogFreshness.thresholds.staleAgeDays,
+    });
+    let skippedDuplicateApiInBatch = 0;
+    const sweepResults: NightlyImportCourseResult[] = [];
+    console.log(
+      `[course-import] Stale catalog sweep: selected ${sweepRows.length} course(s) from DB (cap=${catalogFreshness.thresholds.staleSweepMaxCourses}); batch already touched ${pickedApiIds.size} distinct api_id(s).`,
+    );
+    const sweepStarted = Date.now();
+    for (const row of sweepRows) {
+      if (pickedApiIds.has(row.apiId)) {
+        skippedDuplicateApiInBatch += 1;
+        continue;
+      }
+      pickedApiIds.add(row.apiId);
+      const sweepOutcome = await importCatalogStaleCourse(supabase, {
+        row,
+        batchId,
+        batchRunId,
+        phase,
+        territory,
+        dryRun,
+        overwriteManualOverrides,
+        triggerType,
+      });
+      sweepResults.push(sweepOutcome.result);
+      if (sweepOutcome.inserted) insertedCourses += 1;
+      if (sweepOutcome.updated) updatedCourses += 1;
+      missingSiCount += sweepOutcome.missingSiCount;
+    }
+    staleCatalogSweep = {
+      attempted: sweepResults.length,
+      skippedDuplicateApiInBatch,
+      ok: sweepResults.filter((r) => r.status === "ok").length,
+      partial: sweepResults.filter((r) => r.status === "partial").length,
+      failed: sweepResults.filter((r) => r.status === "failed").length,
+      results: sweepResults,
+    };
+    console.log(
+      `[course-import] Stale catalog sweep finished in ${Date.now() - sweepStarted}ms: attempted=${staleCatalogSweep.attempted} ok=${staleCatalogSweep.ok} partial=${staleCatalogSweep.partial} failed=${staleCatalogSweep.failed} skippedDupApi=${staleCatalogSweep.skippedDuplicateApiInBatch}`,
+    );
+  } else {
+    console.log("[course-import] Stale catalog sweep skipped (freshness thresholds not met).");
+  }
+
+  const ok = results.filter((r) => r.status === "ok").length;
+  const partial = results.filter((r) => r.status === "partial").length;
+  const failed = results.filter((r) => r.status === "failed").length;
+  const skipped = results.filter((r) => r.status === "skipped").length;
+  const staleFailed = staleCatalogSweep?.failed ?? 0;
+  const staleOk = staleCatalogSweep?.ok ?? 0;
+  const stalePartial = staleCatalogSweep?.partial ?? 0;
+  const combinedForFailures = [...results, ...(staleCatalogSweep?.results ?? [])];
+  const topFailureReasons = buildTopFailureReasons(combinedForFailures);
+  const manualReviewItems = buildManualReviewItems(pickedCandidates, results);
+  const report: Record<string, unknown> = {
+    batchId,
+    batchRunId,
+    phase,
+    territory,
+    catalogFreshness,
+    staleCatalogSweep: staleCatalogSweep ?? null,
+    discoveredCandidates,
+    attemptedCandidates: pickedCandidates.length,
+    staleCatalogSweepAttempted: staleCatalogSweep?.attempted ?? 0,
+    insertedCourses,
+    updatedCourses,
+    ok,
+    partial,
+    failed,
+    skipped,
+    staleSweepOk: staleOk,
+    staleSweepPartial: stalePartial,
+    staleSweepFailed: staleFailed,
+    missingSiCount,
+    topFailureReasons,
+    manualReviewItems,
+    generatedAt: new Date().toISOString(),
+  };
+
+  await supabase
+    .from("course_import_batches")
+    .update({
+      finished_at: new Date().toISOString(),
+      status: failed + staleFailed > 0 ? "failed" : "completed",
+      total_candidates: discoveredCandidates,
+      total_attempted: pickedCandidates.length + (staleCatalogSweep?.attempted ?? 0),
+      total_inserted: insertedCourses,
+      total_updated: updatedCourses,
+      total_ok: ok + staleOk,
+      total_partial: partial + stalePartial,
+      total_failed: failed + staleFailed,
+      total_skipped: skipped,
+      summary_json: report,
+      report_json: report,
+    })
+    .eq("id", batchRunId);
+
+  return {
+    batchId,
+    batchRunId,
+    phase,
+    territory,
+    results,
+    discoveredCandidates,
+    attemptedCandidates: pickedCandidates.length,
+    insertedCourses,
+    updatedCourses,
+    missingSiCount,
+    topFailureReasons,
+    manualReviewItems,
+    report,
+    catalogFreshness,
+    staleCatalogSweep,
+  };
 }
 
 export { DEFAULT_PRIORITY_SEEDS };

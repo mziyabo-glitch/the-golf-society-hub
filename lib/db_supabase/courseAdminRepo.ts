@@ -115,6 +115,50 @@ export type TeeEditorBundle = {
   activeOverrides: CourseOverrideRow[];
 };
 
+export type CourseImportBatchSummary = {
+  id: string;
+  started_at: string;
+  finished_at: string | null;
+  status: string;
+  territory: string;
+  seed_phase: string;
+  trigger_type: string;
+  total_candidates: number;
+  total_attempted: number;
+  total_inserted: number;
+  total_updated: number;
+  total_ok: number;
+  total_partial: number;
+  total_failed: number;
+  total_skipped: number;
+  summary_json: Record<string, unknown>;
+};
+
+export type CourseImportCandidateQueueItem = {
+  id: string;
+  candidate_name: string;
+  territory: string;
+  seed_phase: string;
+  status: string;
+  import_priority: number;
+  canonical_api_id: number | null;
+  sync_status: string;
+  last_error: string | null;
+  next_retry_at: string | null;
+  refresh_due_at: string | null;
+  last_synced_at: string | null;
+  discovery_source: string;
+};
+
+export type TerritoryProgressSummary = {
+  territory: string;
+  seed_phase: string;
+  total: number;
+  seeded: number;
+  refresh_due: number;
+  failed: number;
+};
+
 export type SaveCourseOverrideInput = {
   courseId: string;
   teeId: string;
@@ -513,4 +557,94 @@ export async function triggerCourseReimportPreservingManual(courseId: string): P
     }
     throw e;
   }
+}
+
+export async function getLatestCourseImportBatch(): Promise<CourseImportBatchSummary | null> {
+  const { data, error } = await supabase
+    .from("course_import_batches")
+    .select("*")
+    .order("started_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error || !data) return null;
+  const row = data as Record<string, unknown>;
+  return {
+    id: String(row.id),
+    started_at: String(row.started_at),
+    finished_at: row.finished_at != null ? String(row.finished_at) : null,
+    status: String(row.status ?? "unknown"),
+    territory: String(row.territory ?? "uk"),
+    seed_phase: String(row.seed_phase ?? "england_wales"),
+    trigger_type: String(row.trigger_type ?? "nightly"),
+    total_candidates: Number(row.total_candidates ?? 0),
+    total_attempted: Number(row.total_attempted ?? 0),
+    total_inserted: Number(row.total_inserted ?? 0),
+    total_updated: Number(row.total_updated ?? 0),
+    total_ok: Number(row.total_ok ?? 0),
+    total_partial: Number(row.total_partial ?? 0),
+    total_failed: Number(row.total_failed ?? 0),
+    total_skipped: Number(row.total_skipped ?? 0),
+    summary_json: (row.summary_json as Record<string, unknown>) ?? {},
+  };
+}
+
+export async function listImportCandidatesByStatus(
+  statuses: string[],
+  limit = 50,
+): Promise<CourseImportCandidateQueueItem[]> {
+  const capped = Math.max(1, Math.min(200, limit));
+  let q = supabase
+    .from("course_import_candidates")
+    .select(
+      "id, candidate_name, territory, seed_phase, status, import_priority, canonical_api_id, sync_status, last_error, next_retry_at, refresh_due_at, last_synced_at, discovery_source",
+    )
+    .order("import_priority", { ascending: false })
+    .order("updated_at", { ascending: false })
+    .limit(capped);
+  if (statuses.length > 0) q = q.in("status", statuses);
+  const { data, error } = await q;
+  if (error) throw new Error(error.message || "Could not load candidate queue.");
+  return ((data ?? []) as Record<string, unknown>[]).map((row) => ({
+    id: String(row.id),
+    candidate_name: String(row.candidate_name ?? ""),
+    territory: String(row.territory ?? "uk"),
+    seed_phase: String(row.seed_phase ?? "england_wales"),
+    status: String(row.status ?? "queued"),
+    import_priority: Number(row.import_priority ?? 0),
+    canonical_api_id: row.canonical_api_id != null ? Number(row.canonical_api_id) : null,
+    sync_status: String(row.sync_status ?? "queued"),
+    last_error: row.last_error != null ? String(row.last_error) : null,
+    next_retry_at: row.next_retry_at != null ? String(row.next_retry_at) : null,
+    refresh_due_at: row.refresh_due_at != null ? String(row.refresh_due_at) : null,
+    last_synced_at: row.last_synced_at != null ? String(row.last_synced_at) : null,
+    discovery_source: String(row.discovery_source ?? "unknown"),
+  }));
+}
+
+export async function getTerritoryProgressSummary(): Promise<TerritoryProgressSummary[]> {
+  const { data, error } = await supabase
+    .from("course_import_candidates")
+    .select("territory, seed_phase, status");
+  if (error) throw new Error(error.message || "Could not load territory progress.");
+  const grouped = new Map<string, TerritoryProgressSummary>();
+  for (const row of (data ?? []) as Record<string, unknown>[]) {
+    const territory = String(row.territory ?? "uk");
+    const seedPhase = String(row.seed_phase ?? "england_wales");
+    const key = `${territory}::${seedPhase}`;
+    const current = grouped.get(key) ?? {
+      territory,
+      seed_phase: seedPhase,
+      total: 0,
+      seeded: 0,
+      refresh_due: 0,
+      failed: 0,
+    };
+    current.total += 1;
+    const status = String(row.status ?? "queued");
+    if (status === "imported") current.seeded += 1;
+    if (status === "failed") current.failed += 1;
+    if (status === "resolved") current.refresh_due += 1;
+    grouped.set(key, current);
+  }
+  return [...grouped.values()].sort((a, b) => a.seed_phase.localeCompare(b.seed_phase));
 }

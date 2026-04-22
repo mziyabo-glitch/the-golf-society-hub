@@ -1,5 +1,7 @@
 import dotenv from "dotenv";
-import { runNightlyCourseImport } from "../lib/server/courseImportEngine";
+import { mkdir, writeFile } from "node:fs/promises";
+import { resolve as resolvePath } from "node:path";
+import { runTerritoryScaleNightlyImport, type TerritorySeedPhase } from "../lib/server/courseImportEngine";
 
 dotenv.config();
 
@@ -7,18 +9,43 @@ function hasArg(flag: string): boolean {
   return process.argv.includes(flag);
 }
 
+function parseNumericArg(raw: string | undefined): number | undefined {
+  if (!raw) return undefined;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0) return undefined;
+  return Math.round(n);
+}
+
 async function main(): Promise<void> {
   const dryRun = hasArg("--dry-run");
   const overwriteManualOverrides = hasArg("--overwrite-manual");
   const skipSocietySeeds = hasArg("--skip-society-seeds");
+  const territoryArg = process.argv.find((arg) => arg.startsWith("--territory="));
+  const phaseArg = process.argv.find((arg) => arg.startsWith("--phase="));
+  const maxNewSeedsArg = process.argv.find((arg) => arg.startsWith("--max-new-seeds="));
+  const maxRetriesArg = process.argv.find((arg) => arg.startsWith("--max-retries="));
+  const maxRefreshesArg = process.argv.find((arg) => arg.startsWith("--max-refreshes="));
+  const maxPriorityArg = process.argv.find((arg) => arg.startsWith("--max-priority="));
+  const triggerType = hasArg("--manual") ? "manual" : "nightly";
+  const forceCatalogFullRefresh = hasArg("--force-catalog-full-refresh");
 
   const startedAt = Date.now();
-  const { batchId, results } = await runNightlyCourseImport({
+  const outcome = await runTerritoryScaleNightlyImport({
     dryRun,
     overwriteManualOverrides,
     includeSocietySeeds: !skipSocietySeeds,
-    triggerType: "nightly",
+    triggerType,
+    territoryOverride: territoryArg?.split("=")[1]?.trim(),
+    phaseOverride: (phaseArg?.split("=")[1]?.trim() as TerritorySeedPhase | undefined) ?? undefined,
+    forceCatalogFullRefresh,
+    caps: {
+      maxPriorityCourses: parseNumericArg(maxPriorityArg?.split("=")[1]),
+      maxNewSeeds: parseNumericArg(maxNewSeedsArg?.split("=")[1]),
+      maxRetries: parseNumericArg(maxRetriesArg?.split("=")[1]),
+      maxRefreshes: parseNumericArg(maxRefreshesArg?.split("=")[1]),
+    },
   });
+  const { batchId, results } = outcome;
 
   const ok = results.filter((r) => r.status === "ok").length;
   const partial = results.filter((r) => r.status === "partial").length;
@@ -26,8 +53,28 @@ async function main(): Promise<void> {
   const elapsedMs = Date.now() - startedAt;
 
   console.log("[course-import-nightly] batch:", batchId);
+  console.log("[course-import-nightly] batchRun:", outcome.batchRunId);
+  console.log("[course-import-nightly] phase:", outcome.phase, "| territory:", outcome.territory);
   console.log("[course-import-nightly] dryRun:", dryRun);
   console.log("[course-import-nightly] totals:", { ok, partial, failed, total: results.length, elapsedMs });
+  console.log("[course-import-nightly] discovered:", outcome.discoveredCandidates, "| attempted:", outcome.attemptedCandidates);
+  console.log("[course-import-nightly] inserted:", outcome.insertedCourses, "| updated:", outcome.updatedCourses);
+  console.log("[course-import-nightly] missing-si:", outcome.missingSiCount);
+  console.log(
+    "[course-import-nightly] catalogFreshness:",
+    outcome.catalogFreshness.triggeredFullRefresh ? "FULL_SWEEP" : "incremental_only",
+    "| reasons:",
+    outcome.catalogFreshness.reasons.join("; ") || "none",
+  );
+  if (outcome.staleCatalogSweep) {
+    console.log("[course-import-nightly] staleCatalogSweep:", {
+      attempted: outcome.staleCatalogSweep.attempted,
+      ok: outcome.staleCatalogSweep.ok,
+      partial: outcome.staleCatalogSweep.partial,
+      failed: outcome.staleCatalogSweep.failed,
+      skippedDupApi: outcome.staleCatalogSweep.skippedDuplicateApiInBatch,
+    });
+  }
 
   for (const item of results) {
     const issues = item.validationIssues.length;
@@ -37,7 +84,52 @@ async function main(): Promise<void> {
     );
   }
 
-  if (failed > 0) {
+  const reportsDir = resolvePath(process.cwd(), "reports", "nightly-course-import");
+  await mkdir(reportsDir, { recursive: true });
+  const dateKey = new Date().toISOString().slice(0, 10);
+  const jsonPath = resolvePath(reportsDir, `${dateKey}-${outcome.batchRunId}.json`);
+  const mdPath = resolvePath(reportsDir, `${dateKey}-${outcome.batchRunId}.md`);
+  await writeFile(jsonPath, JSON.stringify(outcome.report, null, 2), "utf8");
+
+  const mdLines = [
+    "# Nightly Course Import Report",
+    "",
+    `- Batch ID: \`${outcome.batchId}\``,
+    `- Batch Run ID: \`${outcome.batchRunId}\``,
+    `- Phase: \`${outcome.phase}\``,
+    `- Territory: \`${outcome.territory}\``,
+    `- Dry run: \`${dryRun}\``,
+    `- Discovered candidates: \`${outcome.discoveredCandidates}\``,
+    `- Attempted candidates: \`${outcome.attemptedCandidates}\``,
+    `- Inserted courses: \`${outcome.insertedCourses}\``,
+    `- Updated courses: \`${outcome.updatedCourses}\``,
+    `- OK: \`${ok}\``,
+    `- Partial: \`${partial}\``,
+    `- Failed: \`${failed}\``,
+    `- Missing SI issue count: \`${outcome.missingSiCount}\``,
+    "",
+    "## Catalog freshness",
+    `- Full stale sweep: \`${outcome.catalogFreshness.triggeredFullRefresh}\``,
+    `- Reasons: ${outcome.catalogFreshness.reasons.map((r) => r.replace(/`/g, "'")).join("; ") || "none"}`,
+    `- Stale sweep attempted: \`${outcome.staleCatalogSweep?.attempted ?? 0}\` (ok \`${outcome.staleCatalogSweep?.ok ?? 0}\`, partial \`${outcome.staleCatalogSweep?.partial ?? 0}\`, failed \`${outcome.staleCatalogSweep?.failed ?? 0}\`)`,
+    "",
+    "## Top Failure Reasons",
+    ...(outcome.topFailureReasons.length
+      ? outcome.topFailureReasons.map((row) => `- ${row.reason} (\`${row.count}\`)`)
+      : ["- none"]),
+    "",
+    "## Manual Review Items",
+    ...(outcome.manualReviewItems.length
+      ? outcome.manualReviewItems.map((row) => `- ${row.courseName}: ${row.status} - ${row.reason}`)
+      : ["- none"]),
+    "",
+  ];
+  await writeFile(mdPath, mdLines.join("\n"), "utf8");
+  console.log("[course-import-nightly] report-json:", jsonPath);
+  console.log("[course-import-nightly] report-md:", mdPath);
+
+  const staleFailed = outcome.staleCatalogSweep?.failed ?? 0;
+  if (failed > 0 || staleFailed > 0) {
     process.exitCode = 1;
   }
 }
