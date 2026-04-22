@@ -2,17 +2,18 @@ import { describe, expect, it } from "vitest";
 
 import { planTerritoryCandidateOrder, type TerritoryImportCaps } from "@/lib/server/courseImportEngine";
 
-const caps: TerritoryImportCaps = {
-  maxPriorityCourses: 2,
-  maxNewSeeds: 2,
-  maxRetries: 1,
-  maxRefreshes: 1,
-  maxDiscoveryPerRun: 50,
-  maxTotalAttempts: 5,
-};
-
 describe("planTerritoryCandidateOrder", () => {
-  it("applies bucket priority and per-bucket caps", () => {
+  it("applies bucket priority and per-bucket caps (growth ceiling, refresh sub-cap)", () => {
+    const caps: TerritoryImportCaps = {
+      maxPriorityCourses: 2,
+      maxNewSeeds: 2,
+      maxRetries: 1,
+      maxRefreshes: 1,
+      maxDiscoveryPerRun: 50,
+      maxNewCourseImportAttempts: 5,
+      maxStaleCandidateRefreshAttempts: 0,
+      maxStaleCatalogSweepCourses: 10,
+    };
     const ordered = planTerritoryCandidateOrder(caps, {
       priority: [{ id: "p1" }, { id: "p2" }, { id: "p3" }],
       retries: [{ id: "r1" }, { id: "r2" }],
@@ -23,6 +24,16 @@ describe("planTerritoryCandidateOrder", () => {
   });
 
   it("de-duplicates ids across buckets", () => {
+    const caps: TerritoryImportCaps = {
+      maxPriorityCourses: 2,
+      maxNewSeeds: 2,
+      maxRetries: 1,
+      maxRefreshes: 1,
+      maxDiscoveryPerRun: 50,
+      maxNewCourseImportAttempts: 4,
+      maxStaleCandidateRefreshAttempts: 1,
+      maxStaleCatalogSweepCourses: 10,
+    };
     const ordered = planTerritoryCandidateOrder(caps, {
       priority: [{ id: "shared" }, { id: "p2" }],
       retries: [{ id: "shared" }, { id: "r2" }],

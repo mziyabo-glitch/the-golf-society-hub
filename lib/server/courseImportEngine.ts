@@ -53,9 +53,22 @@ export type TerritoryImportCaps = {
   maxPriorityCourses: number;
   maxNewSeeds: number;
   maxRetries: number;
+  /** Sub-cap for how many imported refresh-due rows to fetch into the refresh bucket (refresh phase only). */
   maxRefreshes: number;
   maxDiscoveryPerRun: number;
-  maxTotalAttempts: number;
+  /**
+   * Max GolfCourseAPI imports in the growth phase (high-priority + retries + queued new seeds only).
+   * Does not include imported refresh or catalog stale sweep.
+   */
+  maxNewCourseImportAttempts: number;
+  /** Max imports for candidates already imported but due for refresh. Separate API budget from growth. */
+  maxStaleCandidateRefreshAttempts: number;
+  /** Max rows processed in the optional catalog stale sweep (separate from candidate budgets). */
+  maxStaleCatalogSweepCourses: number;
+  /**
+   * @deprecated Legacy single ceiling; when set via env/CLI partial caps, seeds maxNewCourseImportAttempts if the new field is omitted.
+   */
+  maxTotalAttempts?: number;
 };
 
 export type TerritoryNightlyImportOptions = {
@@ -83,6 +96,15 @@ export type StaleCatalogSweepSummary = {
   results: NightlyImportCourseResult[];
 };
 
+export type CandidateImportPhaseSummary = {
+  attempted: number;
+  inserted: number;
+  updated: number;
+  ok: number;
+  partial: number;
+  failed: number;
+};
+
 export type TerritoryImportOutcome = {
   batchId: string;
   batchRunId: string;
@@ -99,6 +121,12 @@ export type TerritoryImportOutcome = {
   report: Record<string, unknown>;
   catalogFreshness: CourseCatalogFreshnessReport;
   staleCatalogSweep?: StaleCatalogSweepSummary;
+  newCourseGrowthSummary: CandidateImportPhaseSummary;
+  staleCandidateRefreshSummary: CandidateImportPhaseSummary;
+  /** When non-null, catalog stale sweep did not run (or not fully) for this reason. */
+  skippedStaleCatalogSweepReason: string | null;
+  /** Queued candidates remaining after growth + refresh phases (same phase/territory). */
+  queuedCandidatesAfterCandidatePhases: number;
 };
 
 const GOLF_API_BASE = "https://api.golfcourseapi.com/v1";
@@ -816,14 +844,49 @@ function parsePositiveIntEnv(name: string, fallback: number): number {
 }
 
 function getTerritoryImportCaps(overrides?: Partial<TerritoryImportCaps>): TerritoryImportCaps {
+  const legacyTotal = overrides?.maxTotalAttempts;
+  const maxNewCourseImportAttempts =
+    overrides?.maxNewCourseImportAttempts ??
+    (legacyTotal != null ? legacyTotal : parsePositiveIntEnv("COURSE_IMPORT_MAX_NEW_COURSE_IMPORT_ATTEMPTS", 42));
+  const maxStaleCandidateRefreshAttempts =
+    overrides?.maxStaleCandidateRefreshAttempts ??
+    parsePositiveIntEnv("COURSE_IMPORT_MAX_STALE_CANDIDATE_REFRESH", 8);
+  const maxStaleCatalogSweepCourses =
+    overrides?.maxStaleCatalogSweepCourses ?? parsePositiveIntEnv("COURSE_IMPORT_STALE_SWEEP_MAX_COURSES", 12);
   return {
     maxPriorityCourses: overrides?.maxPriorityCourses ?? parsePositiveIntEnv("COURSE_IMPORT_MAX_PRIORITY", 12),
     maxNewSeeds: overrides?.maxNewSeeds ?? parsePositiveIntEnv("COURSE_IMPORT_MAX_NEW_SEEDS", 20),
     maxRetries: overrides?.maxRetries ?? parsePositiveIntEnv("COURSE_IMPORT_MAX_RETRIES", 12),
     maxRefreshes: overrides?.maxRefreshes ?? parsePositiveIntEnv("COURSE_IMPORT_MAX_REFRESHES", 25),
     maxDiscoveryPerRun: overrides?.maxDiscoveryPerRun ?? parsePositiveIntEnv("COURSE_IMPORT_MAX_DISCOVERY", 120),
-    maxTotalAttempts: overrides?.maxTotalAttempts ?? parsePositiveIntEnv("COURSE_IMPORT_MAX_TOTAL_ATTEMPTS", 60),
+    maxNewCourseImportAttempts,
+    maxStaleCandidateRefreshAttempts,
+    maxStaleCatalogSweepCourses,
+    ...(legacyTotal != null ? { maxTotalAttempts: legacyTotal } : {}),
   };
+}
+
+type CandidatePickLimits = {
+  maxTotalAttempts: number;
+  maxPriorityCourses: number;
+  maxNewSeeds: number;
+  maxRetries: number;
+  maxRefreshes: number;
+};
+
+async function countQueuedCandidatesForPhase(
+  supabase: SupabaseClient,
+  phase: TerritorySeedPhase,
+  territory: string,
+): Promise<number> {
+  const { count, error } = await supabase
+    .from("course_import_candidates")
+    .select("id", { count: "exact", head: true })
+    .eq("seed_phase", phase)
+    .eq("territory", territory)
+    .eq("status", "queued");
+  if (error) throw new Error(error.message || "Failed to count queued candidates.");
+  return count ?? 0;
 }
 
 function computeRefreshDueIso(now: Date): string {
@@ -1062,17 +1125,18 @@ async function listCandidateBucket(
 }
 
 function pickCandidates(
-  caps: TerritoryImportCaps,
+  limits: CandidatePickLimits,
   priorityCandidates: TerritoryCandidateRow[],
   retryCandidates: TerritoryCandidateRow[],
   newCandidates: TerritoryCandidateRow[],
   refreshCandidates: TerritoryCandidateRow[],
 ): TerritoryCandidateRow[] {
+  if (limits.maxTotalAttempts <= 0) return [];
   const seen = new Set<string>();
   const picked: TerritoryCandidateRow[] = [];
   const addMany = (rows: TerritoryCandidateRow[], cap: number): void => {
     for (const row of rows) {
-      if (picked.length >= caps.maxTotalAttempts) return;
+      if (picked.length >= limits.maxTotalAttempts) return;
       if (cap <= 0) return;
       if (seen.has(row.id)) continue;
       seen.add(row.id);
@@ -1081,11 +1145,11 @@ function pickCandidates(
       if (cap <= 0) return;
     }
   };
-  addMany(priorityCandidates, caps.maxPriorityCourses);
-  addMany(retryCandidates, caps.maxRetries);
-  addMany(newCandidates, caps.maxNewSeeds);
-  addMany(refreshCandidates, caps.maxRefreshes);
-  return picked.slice(0, caps.maxTotalAttempts);
+  addMany(priorityCandidates, limits.maxPriorityCourses);
+  addMany(retryCandidates, limits.maxRetries);
+  addMany(newCandidates, limits.maxNewSeeds);
+  addMany(refreshCandidates, limits.maxRefreshes);
+  return picked.slice(0, limits.maxTotalAttempts);
 }
 
 export function planTerritoryCandidateOrder(
@@ -1120,13 +1184,17 @@ export function planTerritoryCandidateOrder(
       last_error: null,
       metadata: {},
     }));
-  return pickCandidates(
-    caps,
-    asRow(buckets.priority),
-    asRow(buckets.retries),
-    asRow(buckets.fresh),
-    asRow(buckets.refresh),
-  ).map((row) => row.id);
+  const combinedCeiling = caps.maxNewCourseImportAttempts + caps.maxStaleCandidateRefreshAttempts;
+  const limits: CandidatePickLimits = {
+    maxTotalAttempts: combinedCeiling,
+    maxPriorityCourses: caps.maxPriorityCourses,
+    maxNewSeeds: caps.maxNewSeeds,
+    maxRetries: caps.maxRetries,
+    maxRefreshes: caps.maxStaleCandidateRefreshAttempts,
+  };
+  return pickCandidates(limits, asRow(buckets.priority), asRow(buckets.retries), asRow(buckets.fresh), asRow(buckets.refresh)).map(
+    (row) => row.id,
+  );
 }
 
 async function insertBatchRun(
@@ -1569,7 +1637,11 @@ export async function runTerritoryScaleNightlyImport(
   const territory = options?.territoryOverride?.trim() || DEFAULT_TERRITORY;
   const phase = await resolveActivePhase(supabase, options?.phaseOverride);
   const batchId = randomUUID();
-  const freshnessThresholds = getCourseCatalogFreshnessThresholdsFromEnv(options?.catalogFreshnessThresholds);
+  const freshnessThresholds = getCourseCatalogFreshnessThresholdsFromEnv({
+    ...options?.catalogFreshnessThresholds,
+    staleSweepMaxCourses:
+      options?.catalogFreshnessThresholds?.staleSweepMaxCourses ?? caps.maxStaleCatalogSweepCourses,
+  });
   const catalogFreshness = await evaluateCourseCatalogFreshness(supabase, freshnessThresholds, {
     force: options?.forceCatalogFullRefresh === true,
   });
@@ -1577,15 +1649,22 @@ export async function runTerritoryScaleNightlyImport(
   console.log(
     `[course-import] Catalog freshness @ ${catalogFreshness.metrics.evaluatedAtIso} | api_courses=${catalogFreshness.metrics.coursesWithApiId} | stale(last_sync<cutoff)=${catalogFreshness.metrics.staleByLastSyncedCount} | missing_SI_courses≈${catalogFreshness.metrics.coursesWithMissingStrokeIndex} | incomplete_tee_courses≈${catalogFreshness.metrics.coursesWithIncompleteTeeBlock} | cutoff=${catalogFreshness.metrics.staleAgeCutoffIso}`,
   );
-  if (catalogFreshness.triggeredFullRefresh) {
+  if (catalogFreshness.triggeredFullRefresh && options?.forceCatalogFullRefresh === true) {
     console.log(
-      `[course-import] FULL catalog stale sweep ENABLED for this run. Reasons: ${catalogFreshness.reasons.join(" | ")}`,
+      `[course-import] Catalog stale sweep FORCED for this run. Reasons: ${catalogFreshness.reasons.join(" | ")}`,
+    );
+  } else if (catalogFreshness.triggeredFullRefresh) {
+    console.log(
+      `[course-import] Freshness thresholds crossed (catalog sweep eligible if no queued growth backlog after candidate phases). Reasons: ${catalogFreshness.reasons.join(" | ")}`,
     );
   } else {
     console.log(
-      "[course-import] Catalog freshness within thresholds: standard incremental candidate scheduling only (no catalog-wide stale sweep).",
+      "[course-import] Catalog freshness within thresholds: no catalog-wide stale sweep eligibility from metrics alone.",
     );
   }
+  console.log(
+    `[course-import] Budgets: newCourseImports<=${caps.maxNewCourseImportAttempts} | staleCandidateRefresh<=${caps.maxStaleCandidateRefreshAttempts} | staleCatalogSweep<=${caps.maxStaleCatalogSweepCourses} (sweep is subordinate to growth unless forced).`,
+  );
   console.log(
     "[course-import] Large-catalog note: stale-SI and incomplete-tee metrics use bounded scans; tune COURSE_IMPORT_STALE_SWEEP_MAX_COURSES, COURSE_IMPORT_STALE_AGE_DAYS, and scan caps in courseCatalogFreshness if needed.",
   );
@@ -1607,11 +1686,11 @@ export async function runTerritoryScaleNightlyImport(
     includeSocietySeeds,
   );
 
-  const [priorityCandidates, retryCandidates, newCandidates, refreshCandidates] = await Promise.all([
+  const [priorityGrowthCandidates, retryCandidates, newCandidates, refreshCandidates] = await Promise.all([
     listCandidateBucket(supabase, {
       phase,
       territory,
-      statuses: ["queued", "resolved", "failed", "imported"],
+      statuses: ["queued", "resolved", "failed"],
       minPriority: 500,
       limit: Math.max(caps.maxPriorityCourses * 4, 40),
     }),
@@ -1637,13 +1716,26 @@ export async function runTerritoryScaleNightlyImport(
     }),
   ]);
 
-  const pickedCandidates = pickCandidates(caps, priorityCandidates, retryCandidates, newCandidates, refreshCandidates);
-  const results: NightlyImportCourseResult[] = [];
-  let insertedCourses = 0;
-  let updatedCourses = 0;
-  let missingSiCount = 0;
+  const growthLimits: CandidatePickLimits = {
+    maxTotalAttempts: caps.maxNewCourseImportAttempts,
+    maxPriorityCourses: caps.maxPriorityCourses,
+    maxNewSeeds: caps.maxNewSeeds,
+    maxRetries: caps.maxRetries,
+    maxRefreshes: 0,
+  };
+  const growthPicked = pickCandidates(
+    growthLimits,
+    priorityGrowthCandidates,
+    retryCandidates,
+    newCandidates,
+    [],
+  );
 
-  for (const candidate of pickedCandidates) {
+  const growthResults: NightlyImportCourseResult[] = [];
+  let growthInserted = 0;
+  let growthUpdated = 0;
+  let missingSiCount = 0;
+  for (const candidate of growthPicked) {
     const imported = await importCandidateCourse(supabase, {
       candidate,
       batchId,
@@ -1654,29 +1746,80 @@ export async function runTerritoryScaleNightlyImport(
       overwriteManualOverrides,
       triggerType,
     });
-    results.push(imported.result);
-    if (imported.inserted) insertedCourses += 1;
-    if (imported.updated) updatedCourses += 1;
+    growthResults.push(imported.result);
+    if (imported.inserted) growthInserted += 1;
+    if (imported.updated) growthUpdated += 1;
     missingSiCount += imported.missingSiCount;
   }
 
+  const refreshLimits: CandidatePickLimits = {
+    maxTotalAttempts: caps.maxStaleCandidateRefreshAttempts,
+    maxPriorityCourses: 0,
+    maxNewSeeds: 0,
+    maxRetries: 0,
+    maxRefreshes: caps.maxStaleCandidateRefreshAttempts,
+  };
+  const refreshPicked = pickCandidates(refreshLimits, [], [], [], refreshCandidates);
+  const refreshResults: NightlyImportCourseResult[] = [];
+  let refreshInserted = 0;
+  let refreshUpdated = 0;
+  for (const candidate of refreshPicked) {
+    const imported = await importCandidateCourse(supabase, {
+      candidate,
+      batchId,
+      batchRunId,
+      phase,
+      territory,
+      dryRun,
+      overwriteManualOverrides,
+      triggerType,
+    });
+    refreshResults.push(imported.result);
+    if (imported.inserted) refreshInserted += 1;
+    if (imported.updated) refreshUpdated += 1;
+    missingSiCount += imported.missingSiCount;
+  }
+
+  const queuedCandidatesAfterCandidatePhases = await countQueuedCandidatesForPhase(supabase, phase, territory);
+  const forceSweep = options?.forceCatalogFullRefresh === true;
+  const shouldConsiderCatalogSweep = catalogFreshness.triggeredFullRefresh;
+  let skippedStaleCatalogSweepReason: string | null = null;
+  if (!shouldConsiderCatalogSweep) {
+    skippedStaleCatalogSweepReason = "freshness_thresholds_not_met";
+  } else if (!forceSweep && queuedCandidatesAfterCandidatePhases > 0) {
+    skippedStaleCatalogSweepReason = "deferred_growth_queued_backlog";
+    console.log(
+      `[course-import] Stale catalog sweep skipped: ${queuedCandidatesAfterCandidatePhases} queued candidate(s) remain for this phase (growth-first policy). Use force flag to sweep anyway.`,
+    );
+  }
+
   let staleCatalogSweep: StaleCatalogSweepSummary | undefined;
-  if (catalogFreshness.triggeredFullRefresh) {
-    const pickedApiIds = new Set<number>();
-    for (const c of pickedCandidates) {
-      if (c.canonical_api_id != null && c.canonical_api_id > 0) pickedApiIds.add(c.canonical_api_id);
-    }
-    for (const r of results) {
-      if (r.apiId != null) pickedApiIds.add(r.apiId);
-    }
+  let sweepInserted = 0;
+  let sweepUpdated = 0;
+  const pickedApiIds = new Set<number>();
+  for (const c of growthPicked) {
+    if (c.canonical_api_id != null && c.canonical_api_id > 0) pickedApiIds.add(c.canonical_api_id);
+  }
+  for (const c of refreshPicked) {
+    if (c.canonical_api_id != null && c.canonical_api_id > 0) pickedApiIds.add(c.canonical_api_id);
+  }
+  for (const r of growthResults) {
+    if (r.apiId != null) pickedApiIds.add(r.apiId);
+  }
+  for (const r of refreshResults) {
+    if (r.apiId != null) pickedApiIds.add(r.apiId);
+  }
+
+  if (shouldConsiderCatalogSweep && (forceSweep || queuedCandidatesAfterCandidatePhases === 0)) {
+    skippedStaleCatalogSweepReason = null;
     const sweepRows = await fetchStaleCatalogCoursesForSweep(supabase, {
-      maxRows: catalogFreshness.thresholds.staleSweepMaxCourses,
+      maxRows: caps.maxStaleCatalogSweepCourses,
       staleAgeDays: catalogFreshness.thresholds.staleAgeDays,
     });
     let skippedDuplicateApiInBatch = 0;
     const sweepResults: NightlyImportCourseResult[] = [];
     console.log(
-      `[course-import] Stale catalog sweep: selected ${sweepRows.length} course(s) from DB (cap=${catalogFreshness.thresholds.staleSweepMaxCourses}); batch already touched ${pickedApiIds.size} distinct api_id(s).`,
+      `[course-import] Stale catalog sweep: selected ${sweepRows.length} course(s) from DB (cap=${caps.maxStaleCatalogSweepCourses}); batch already touched ${pickedApiIds.size} distinct api_id(s).`,
     );
     const sweepStarted = Date.now();
     for (const row of sweepRows) {
@@ -1696,8 +1839,8 @@ export async function runTerritoryScaleNightlyImport(
         triggerType,
       });
       sweepResults.push(sweepOutcome.result);
-      if (sweepOutcome.inserted) insertedCourses += 1;
-      if (sweepOutcome.updated) updatedCourses += 1;
+      if (sweepOutcome.inserted) sweepInserted += 1;
+      if (sweepOutcome.updated) sweepUpdated += 1;
       missingSiCount += sweepOutcome.missingSiCount;
     }
     staleCatalogSweep = {
@@ -1711,10 +1854,16 @@ export async function runTerritoryScaleNightlyImport(
     console.log(
       `[course-import] Stale catalog sweep finished in ${Date.now() - sweepStarted}ms: attempted=${staleCatalogSweep.attempted} ok=${staleCatalogSweep.ok} partial=${staleCatalogSweep.partial} failed=${staleCatalogSweep.failed} skippedDupApi=${staleCatalogSweep.skippedDuplicateApiInBatch}`,
     );
+  } else if (shouldConsiderCatalogSweep) {
+    console.log("[course-import] Stale catalog sweep skipped (see skippedStaleCatalogSweepReason in report).");
   } else {
     console.log("[course-import] Stale catalog sweep skipped (freshness thresholds not met).");
   }
 
+  const insertedCoursesFinal = growthInserted + refreshInserted + (staleCatalogSweep ? sweepInserted : 0);
+  const updatedCoursesFinal = growthUpdated + refreshUpdated + (staleCatalogSweep ? sweepUpdated : 0);
+
+  const results = [...growthResults, ...refreshResults, ...(staleCatalogSweep?.results ?? [])];
   const ok = results.filter((r) => r.status === "ok").length;
   const partial = results.filter((r) => r.status === "partial").length;
   const failed = results.filter((r) => r.status === "failed").length;
@@ -1722,9 +1871,27 @@ export async function runTerritoryScaleNightlyImport(
   const staleFailed = staleCatalogSweep?.failed ?? 0;
   const staleOk = staleCatalogSweep?.ok ?? 0;
   const stalePartial = staleCatalogSweep?.partial ?? 0;
-  const combinedForFailures = [...results, ...(staleCatalogSweep?.results ?? [])];
+  const combinedForFailures = [...results];
   const topFailureReasons = buildTopFailureReasons(combinedForFailures);
-  const manualReviewItems = buildManualReviewItems(pickedCandidates, results);
+  const manualReviewItems = buildManualReviewItems([...growthPicked, ...refreshPicked], [...growthResults, ...refreshResults]);
+
+  const newCourseGrowthSummary: CandidateImportPhaseSummary = {
+    attempted: growthResults.length,
+    inserted: growthInserted,
+    updated: growthUpdated,
+    ok: growthResults.filter((r) => r.status === "ok").length,
+    partial: growthResults.filter((r) => r.status === "partial").length,
+    failed: growthResults.filter((r) => r.status === "failed").length,
+  };
+  const staleCandidateRefreshSummary: CandidateImportPhaseSummary = {
+    attempted: refreshResults.length,
+    inserted: refreshInserted,
+    updated: refreshUpdated,
+    ok: refreshResults.filter((r) => r.status === "ok").length,
+    partial: refreshResults.filter((r) => r.status === "partial").length,
+    failed: refreshResults.filter((r) => r.status === "failed").length,
+  };
+
   const report: Record<string, unknown> = {
     batchId,
     batchRunId,
@@ -1732,11 +1899,19 @@ export async function runTerritoryScaleNightlyImport(
     territory,
     catalogFreshness,
     staleCatalogSweep: staleCatalogSweep ?? null,
+    skippedStaleCatalogSweepReason,
+    queuedCandidatesAfterCandidatePhases,
     discoveredCandidates,
-    attemptedCandidates: pickedCandidates.length,
+    newCourseGrowthPicked: growthPicked.length,
+    staleCandidateRefreshPicked: refreshPicked.length,
+    attemptedCandidates: growthPicked.length + refreshPicked.length,
+    newCourseGrowthSummary,
+    staleCandidateRefreshSummary,
     staleCatalogSweepAttempted: staleCatalogSweep?.attempted ?? 0,
-    insertedCourses,
-    updatedCourses,
+    staleCatalogSweepInserted: sweepInserted,
+    staleCatalogSweepUpdated: sweepUpdated,
+    insertedCourses: insertedCoursesFinal,
+    updatedCourses: updatedCoursesFinal,
     ok,
     partial,
     failed,
@@ -1754,14 +1929,14 @@ export async function runTerritoryScaleNightlyImport(
     .from("course_import_batches")
     .update({
       finished_at: new Date().toISOString(),
-      status: failed + staleFailed > 0 ? "failed" : "completed",
+      status: failed > 0 ? "failed" : "completed",
       total_candidates: discoveredCandidates,
-      total_attempted: pickedCandidates.length + (staleCatalogSweep?.attempted ?? 0),
-      total_inserted: insertedCourses,
-      total_updated: updatedCourses,
-      total_ok: ok + staleOk,
-      total_partial: partial + stalePartial,
-      total_failed: failed + staleFailed,
+      total_attempted: growthPicked.length + refreshPicked.length + (staleCatalogSweep?.attempted ?? 0),
+      total_inserted: insertedCoursesFinal,
+      total_updated: updatedCoursesFinal,
+      total_ok: ok,
+      total_partial: partial,
+      total_failed: failed,
       total_skipped: skipped,
       summary_json: report,
       report_json: report,
@@ -1775,15 +1950,19 @@ export async function runTerritoryScaleNightlyImport(
     territory,
     results,
     discoveredCandidates,
-    attemptedCandidates: pickedCandidates.length,
-    insertedCourses,
-    updatedCourses,
+    attemptedCandidates: growthPicked.length + refreshPicked.length,
+    insertedCourses: insertedCoursesFinal,
+    updatedCourses: updatedCoursesFinal,
     missingSiCount,
     topFailureReasons,
     manualReviewItems,
     report,
     catalogFreshness,
     staleCatalogSweep,
+    newCourseGrowthSummary,
+    staleCandidateRefreshSummary,
+    skippedStaleCatalogSweepReason,
+    queuedCandidatesAfterCandidatePhases,
   };
 }
 

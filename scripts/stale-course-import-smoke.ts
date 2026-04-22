@@ -75,7 +75,9 @@ async function main(): Promise<void> {
           }
         : undefined,
       caps: {
-        maxTotalAttempts: 0,
+        maxNewCourseImportAttempts: 0,
+        maxStaleCandidateRefreshAttempts: 0,
+        maxStaleCatalogSweepCourses: mutate ? 3 : 12,
         maxPriorityCourses: 0,
         maxNewSeeds: 0,
         maxRetries: 0,

@@ -26,6 +26,9 @@ async function main(): Promise<void> {
   const maxRetriesArg = process.argv.find((arg) => arg.startsWith("--max-retries="));
   const maxRefreshesArg = process.argv.find((arg) => arg.startsWith("--max-refreshes="));
   const maxPriorityArg = process.argv.find((arg) => arg.startsWith("--max-priority="));
+  const maxNewGrowthArg = process.argv.find((arg) => arg.startsWith("--max-new-growth="));
+  const maxStaleRefreshArg = process.argv.find((arg) => arg.startsWith("--max-stale-candidate-refresh="));
+  const maxStaleSweepArg = process.argv.find((arg) => arg.startsWith("--max-stale-sweep="));
   const triggerType = hasArg("--manual") ? "manual" : "nightly";
   const forceCatalogFullRefresh = hasArg("--force-catalog-full-refresh");
 
@@ -43,6 +46,9 @@ async function main(): Promise<void> {
       maxNewSeeds: parseNumericArg(maxNewSeedsArg?.split("=")[1]),
       maxRetries: parseNumericArg(maxRetriesArg?.split("=")[1]),
       maxRefreshes: parseNumericArg(maxRefreshesArg?.split("=")[1]),
+      maxNewCourseImportAttempts: parseNumericArg(maxNewGrowthArg?.split("=")[1]),
+      maxStaleCandidateRefreshAttempts: parseNumericArg(maxStaleRefreshArg?.split("=")[1]),
+      maxStaleCatalogSweepCourses: parseNumericArg(maxStaleSweepArg?.split("=")[1]),
     },
   });
   const { batchId, results } = outcome;
@@ -58,8 +64,15 @@ async function main(): Promise<void> {
   console.log("[course-import-nightly] dryRun:", dryRun);
   console.log("[course-import-nightly] totals:", { ok, partial, failed, total: results.length, elapsedMs });
   console.log("[course-import-nightly] discovered:", outcome.discoveredCandidates, "| attempted:", outcome.attemptedCandidates);
+  console.log("[course-import-nightly] growth:", outcome.newCourseGrowthSummary, "| stale-refresh:", outcome.staleCandidateRefreshSummary);
   console.log("[course-import-nightly] inserted:", outcome.insertedCourses, "| updated:", outcome.updatedCourses);
   console.log("[course-import-nightly] missing-si:", outcome.missingSiCount);
+  console.log(
+    "[course-import-nightly] staleSweepSkipReason:",
+    outcome.skippedStaleCatalogSweepReason ?? "(sweep ran or not eligible)",
+    "| queuedAfterPhases:",
+    outcome.queuedCandidatesAfterCandidatePhases,
+  );
   console.log(
     "[course-import-nightly] catalogFreshness:",
     outcome.catalogFreshness.triggeredFullRefresh ? "FULL_SWEEP" : "incremental_only",
@@ -111,7 +124,10 @@ async function main(): Promise<void> {
     "## Catalog freshness",
     `- Full stale sweep: \`${outcome.catalogFreshness.triggeredFullRefresh}\``,
     `- Reasons: ${outcome.catalogFreshness.reasons.map((r) => r.replace(/`/g, "'")).join("; ") || "none"}`,
-    `- Stale sweep attempted: \`${outcome.staleCatalogSweep?.attempted ?? 0}\` (ok \`${outcome.staleCatalogSweep?.ok ?? 0}\`, partial \`${outcome.staleCatalogSweep?.partial ?? 0}\`, failed \`${outcome.staleCatalogSweep?.failed ?? 0}\`)`,
+    `- Stale sweep skip reason: \`${outcome.skippedStaleCatalogSweepReason ?? "none"}\` | queued after phases: \`${outcome.queuedCandidatesAfterCandidatePhases}\``,
+    `- New growth phase: attempted \`${outcome.newCourseGrowthSummary.attempted}\`, inserted \`${outcome.newCourseGrowthSummary.inserted}\`, updated \`${outcome.newCourseGrowthSummary.updated}\``,
+    `- Stale candidate refresh: attempted \`${outcome.staleCandidateRefreshSummary.attempted}\`, inserted \`${outcome.staleCandidateRefreshSummary.inserted}\`, updated \`${outcome.staleCandidateRefreshSummary.updated}\``,
+    `- Stale catalog sweep: attempted \`${outcome.staleCatalogSweep?.attempted ?? 0}\` (ok \`${outcome.staleCatalogSweep?.ok ?? 0}\`, partial \`${outcome.staleCatalogSweep?.partial ?? 0}\`, failed \`${outcome.staleCatalogSweep?.failed ?? 0}\`)`,
     "",
     "## Top Failure Reasons",
     ...(outcome.topFailureReasons.length
