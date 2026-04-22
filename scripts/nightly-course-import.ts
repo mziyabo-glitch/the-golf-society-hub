@@ -56,13 +56,15 @@ async function main(): Promise<void> {
   const ok = results.filter((r) => r.status === "ok").length;
   const partial = results.filter((r) => r.status === "partial").length;
   const failed = results.filter((r) => r.status === "failed").length;
+  const skipped = results.filter((r) => r.status === "skipped").length;
   const elapsedMs = Date.now() - startedAt;
 
   console.log("[course-import-nightly] batch:", batchId);
   console.log("[course-import-nightly] batchRun:", outcome.batchRunId);
   console.log("[course-import-nightly] phase:", outcome.phase, "| territory:", outcome.territory);
   console.log("[course-import-nightly] dryRun:", dryRun);
-  console.log("[course-import-nightly] totals:", { ok, partial, failed, total: results.length, elapsedMs });
+  console.log("[course-import-nightly] totals:", { ok, partial, failed, skipped, total: results.length, elapsedMs });
+  console.log("[course-import-nightly] nightlyRunExit:", outcome.nightlyRunExit);
   console.log("[course-import-nightly] discovered:", outcome.discoveredCandidates, "| attempted:", outcome.attemptedCandidates);
   console.log("[course-import-nightly] growth:", outcome.newCourseGrowthSummary, "| stale-refresh:", outcome.staleCandidateRefreshSummary);
   console.log("[course-import-nightly] inserted:", outcome.insertedCourses, "| updated:", outcome.updatedCourses);
@@ -118,8 +120,16 @@ async function main(): Promise<void> {
     `- Updated courses: \`${outcome.updatedCourses}\``,
     `- OK: \`${ok}\``,
     `- Partial: \`${partial}\``,
-    `- Failed: \`${failed}\``,
+    `- Failed (hard): \`${failed}\``,
+    `- Skipped: \`${skipped}\``,
     `- Missing SI issue count: \`${outcome.missingSiCount}\``,
+    "",
+    "## Nightly exit policy",
+    `- Process exit code: \`${outcome.nightlyRunExit.exitCode}\` (${outcome.nightlyRunExit.exitReason})`,
+    `- Hard failure count: \`${outcome.nightlyRunExit.hardFailureCount}\``,
+    `- Unresolved candidate count: \`${outcome.nightlyRunExit.unresolvedCandidateCount}\` (cap \`${outcome.nightlyRunExit.maxUnresolvedOk}\`)`,
+    `- Unresolved names: ${outcome.nightlyRunExit.unresolvedCandidateNames.length ? outcome.nightlyRunExit.unresolvedCandidateNames.map((n) => `\`${n}\``).join(", ") : "none"}`,
+    `- Exit downgraded to success (bounded unresolved only): \`${outcome.nightlyRunExit.exitDowngradedToSuccess}\``,
     "",
     "## Catalog freshness",
     `- Full stale sweep: \`${outcome.catalogFreshness.triggeredFullRefresh}\``,
@@ -144,10 +154,7 @@ async function main(): Promise<void> {
   console.log("[course-import-nightly] report-json:", jsonPath);
   console.log("[course-import-nightly] report-md:", mdPath);
 
-  const staleFailed = outcome.staleCatalogSweep?.failed ?? 0;
-  if (failed > 0 || staleFailed > 0) {
-    process.exitCode = 1;
-  }
+  process.exitCode = outcome.nightlyRunExit.exitCode;
 }
 
 main().catch((error) => {

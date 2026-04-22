@@ -103,6 +103,19 @@ export type CandidateImportPhaseSummary = {
   ok: number;
   partial: number;
   failed: number;
+  skipped: number;
+};
+
+/** Nightly / CI exit policy derived from import results (see scripts/nightly-course-import.ts). */
+export type NightlyImportRunExitSummary = {
+  exitCode: 0 | 1;
+  exitReason: string;
+  hardFailureCount: number;
+  unresolvedCandidateCount: number;
+  unresolvedCandidateNames: string[];
+  /** True when the run exited 0 but had bounded unresolved API matches (would fail legacy strict CI). */
+  exitDowngradedToSuccess: boolean;
+  maxUnresolvedOk: number;
 };
 
 export type TerritoryImportOutcome = {
@@ -127,6 +140,7 @@ export type TerritoryImportOutcome = {
   skippedStaleCatalogSweepReason: string | null;
   /** Queued candidates remaining after growth + refresh phases (same phase/territory). */
   queuedCandidatesAfterCandidatePhases: number;
+  nightlyRunExit: NightlyImportRunExitSummary;
 };
 
 const GOLF_API_BASE = "https://api.golfcourseapi.com/v1";
@@ -240,11 +254,175 @@ function coerceCourse(row: Record<string, unknown>): GolfCourseApiCourse {
   };
 }
 
+function escapeForILikeFragment(value: string): string {
+  return value.replace(/\\/g, "\\\\").replace(/%/g, "\\%").replace(/_/g, "\\_");
+}
+
+/** Exported for unit tests — builds search_query variants for GolfCourseAPI /v1/search. */
+export function buildSearchQueryVariantsForImport(candidateName: string, normalizedName: string): string[] {
+  const humanNorm = normalizedName.trim().replace(/\s+/g, " ");
+  const seeds = [candidateName.trim(), humanNorm].filter((s) => s.length >= 3);
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const add = (q: string) => {
+    const t = q.trim();
+    if (t.length < 3 || seen.has(t.toLowerCase())) return;
+    seen.add(t.toLowerCase());
+    out.push(t);
+  };
+  for (const s of seeds) add(s);
+  for (const s of [...out]) {
+    add(s.replace(/\s+Resort\s*$/i, "").trim());
+    add(s.replace(/\s+Golf Club\s*$/i, "").trim());
+    add(s.replace(/\s+Golf Centre\s*$/i, "").trim());
+    add(s.replace(/\s+Golf Course\s*$/i, "").trim());
+  }
+  const tokens = normalizeCandidateName(candidateName).split(" ").filter((t) => t.length > 1);
+  if (tokens.length >= 3) add(tokens.slice(0, 2).join(" "));
+  if (tokens.length >= 4) add(tokens.slice(0, 3).join(" "));
+  return out.slice(0, 8);
+}
+
+function extractCoursesFromSearchPayload(payload: unknown): Record<string, unknown>[] {
+  if (!payload || typeof payload !== "object") return [];
+  const p = payload as Record<string, unknown>;
+  if (Array.isArray(p.courses)) return p.courses as Record<string, unknown>[];
+  if (Array.isArray(payload)) return payload as Record<string, unknown>[];
+  if (Array.isArray(p.data)) return p.data as Record<string, unknown>[];
+  const inner = p.data;
+  if (inner && typeof inner === "object" && Array.isArray((inner as Record<string, unknown>).courses)) {
+    return (inner as Record<string, unknown>).courses as Record<string, unknown>[];
+  }
+  return [];
+}
+
+function searchRowDisplayName(row: Record<string, unknown>): string {
+  const club = typeof row.club_name === "string" ? row.club_name.trim() : "";
+  const course = typeof row.course_name === "string" ? row.course_name.trim() : "";
+  const combined = `${club} ${course}`.trim();
+  if (combined) return combined;
+  if (typeof row.name === "string") return String(row.name).trim();
+  return "";
+}
+
+/** Exported for unit tests — scores how well a search row matches the candidate display name. */
+export function scoreGolfApiSearchRowAgainstTarget(targetDisplayName: string, apiRow: Record<string, unknown>): number {
+  const apiText = searchRowDisplayName(apiRow);
+  if (!apiText) return 0;
+  const tgtTokens = new Set(
+    normalizeCandidateName(targetDisplayName)
+      .split(" ")
+      .filter((t) => t.length > 1),
+  );
+  const apiTokens = new Set(
+    normalizeCandidateName(apiText)
+      .split(" ")
+      .filter((t) => t.length > 1),
+  );
+  if (tgtTokens.size === 0) return 0;
+  let inter = 0;
+  for (const t of tgtTokens) if (apiTokens.has(t)) inter += 1;
+  const recall = inter / tgtTokens.size;
+  const tgtN = normalizeCandidateName(targetDisplayName);
+  const apiN = normalizeCandidateName(apiText);
+  let substringBoost = 0;
+  if (tgtN.length >= 6 && apiN.includes(tgtN)) substringBoost = 0.22;
+  else if (tgtN.length >= 6) {
+    for (const t of tgtTokens) {
+      if (t.length >= 6 && apiN.includes(t)) substringBoost = Math.max(substringBoost, 0.08);
+    }
+  }
+  return Math.min(1, recall + substringBoost);
+}
+
+function pickBestApiIdFromScoredRows(
+  ranked: Array<{ id: number; score: number }>,
+  minScore: number,
+  ambiguityGap: number,
+): { apiId: number | null; reason: string } {
+  if (ranked.length === 0) return { apiId: null, reason: "no_search_rows" };
+  const [top, second] = ranked;
+  if (top.score < minScore) return { apiId: null, reason: `best_score_below_min(${top.score.toFixed(3)}<${minScore})` };
+  if (second && second.score > 0 && top.score - second.score < ambiguityGap) {
+    return { apiId: null, reason: `ambiguous_top_scores(${top.score.toFixed(3)}vs${second.score.toFixed(3)})` };
+  }
+  return { apiId: top.id, reason: `match_score=${top.score.toFixed(3)}` };
+}
+
+function getSearchMatchThresholdsFromEnv(): { minScore: number; ambiguityGap: number; maxQueries: number } {
+  const minRaw = Number(process.env.COURSE_IMPORT_SEARCH_MIN_MATCH_SCORE ?? "0.48");
+  const gapRaw = Number(process.env.COURSE_IMPORT_SEARCH_AMBIGUITY_GAP ?? "0.11");
+  const qRaw = Number(process.env.COURSE_IMPORT_SEARCH_MAX_QUERIES ?? "6");
+  const minScore = Number.isFinite(minRaw) && minRaw > 0 && minRaw < 1 ? minRaw : 0.48;
+  const ambiguityGap = Number.isFinite(gapRaw) && gapRaw > 0 && gapRaw < 0.5 ? gapRaw : 0.11;
+  const maxQueries = Number.isFinite(qRaw) && qRaw >= 1 && qRaw <= 12 ? Math.round(qRaw) : 6;
+  return { minScore, ambiguityGap, maxQueries };
+}
+
+async function searchCourseApiIdFromVariants(
+  displayName: string,
+  normalizedName: string,
+): Promise<{ apiId: number | null; diagnostic: string }> {
+  const { minScore, ambiguityGap, maxQueries } = getSearchMatchThresholdsFromEnv();
+  const queries = buildSearchQueryVariantsForImport(displayName, normalizedName).slice(0, maxQueries);
+  const scoreById = new Map<number, number>();
+  const diag: string[] = [];
+  for (const q of queries) {
+    const payload = (await golfApiGet(`/search?search_query=${encodeURIComponent(q)}`)) as unknown;
+    const rows = extractCoursesFromSearchPayload(payload);
+    diag.push(`${q}→${rows.length}`);
+    for (const row of rows) {
+      const id = Number(row.id);
+      if (!Number.isFinite(id) || id <= 0) continue;
+      const s = scoreGolfApiSearchRowAgainstTarget(displayName, row);
+      const prev = scoreById.get(id) ?? 0;
+      if (s > prev) scoreById.set(id, s);
+    }
+  }
+  const ranked = [...scoreById.entries()]
+    .map(([id, score]) => ({ id, score }))
+    .sort((a, b) => b.score - a.score);
+  const picked = pickBestApiIdFromScoredRows(ranked, minScore, ambiguityGap);
+  const diagnostic = `${picked.reason} | queries:[${diag.join("; ")}] | top:${ranked
+    .slice(0, 3)
+    .map((r) => `${r.id}:${r.score.toFixed(2)}`)
+    .join(",")}`;
+  return { apiId: picked.apiId, diagnostic };
+}
+
+async function findExistingCourseApiIdByLooseDbName(
+  supabase: SupabaseClient,
+  displayName: string,
+  normalizedName: string,
+): Promise<number | null> {
+  const { minScore } = getSearchMatchThresholdsFromEnv();
+  const patterns = [...new Set([displayName.trim(), normalizedName.trim().replace(/\s+/g, " ")].filter((p) => p.length >= 3))];
+  let best: { id: number; score: number } | null = null;
+  for (const p of patterns) {
+    const pat = `%${escapeForILikeFragment(p)}%`;
+    const { data, error } = await supabase
+      .from("courses")
+      .select("api_id, course_name")
+      .ilike("course_name", pat)
+      .not("api_id", "is", null)
+      .limit(8);
+    if (error) continue;
+    for (const row of (data ?? []) as { api_id?: unknown; course_name?: unknown }[]) {
+      const api = Number(row.api_id);
+      if (!Number.isFinite(api) || api <= 0) continue;
+      const cn = String(row.course_name ?? "");
+      const sc = scoreGolfApiSearchRowAgainstTarget(displayName, { course_name: cn, club_name: "" });
+      if (!best || sc > best.score) best = { id: api, score: sc };
+    }
+  }
+  if (best && best.score >= minScore) return best.id;
+  return null;
+}
+
 async function searchCourseApiIdByName(query: string): Promise<number | null> {
-  const payload = (await golfApiGet(`/search?search_query=${encodeURIComponent(query)}`)) as Record<string, unknown>;
-  const rows = Array.isArray(payload) ? payload : Array.isArray(payload.courses) ? payload.courses : Array.isArray(payload.data) ? payload.data : [];
-  const hit = (rows as Record<string, unknown>[]).find((r) => Number.isFinite(Number(r.id)));
-  return hit ? Number(hit.id) : null;
+  const nm = normalizeCandidateName(query);
+  const { apiId } = await searchCourseApiIdFromVariants(query, nm);
+  return apiId;
 }
 
 async function fetchCourseByApiId(apiId: number): Promise<{ raw: Record<string, unknown>; course: GolfCourseApiCourse }> {
@@ -572,8 +750,15 @@ function mergeSeeds(priority: CourseSeed[], additional: CourseSeed[]): CourseSee
   return out;
 }
 
-async function resolveApiId(supabase: SupabaseClient, seed: CourseSeed): Promise<number | null> {
-  if (seed.preferredApiId && seed.preferredApiId > 0) return seed.preferredApiId;
+async function resolveApiIdDetail(
+  supabase: SupabaseClient,
+  seed: CourseSeed,
+  opts?: { normalizedName?: string },
+): Promise<{ apiId: number | null; diagnostic?: string }> {
+  if (seed.preferredApiId && seed.preferredApiId > 0) {
+    return { apiId: seed.preferredApiId, diagnostic: "preferred_api_id" };
+  }
+  const normalized = opts?.normalizedName?.trim() || normalizeCandidateName(seed.name);
   const { data: existing } = await supabase
     .from("courses")
     .select("api_id")
@@ -582,8 +767,22 @@ async function resolveApiId(supabase: SupabaseClient, seed: CourseSeed): Promise
     .limit(1)
     .maybeSingle();
   const existingApi = existing ? Number((existing as { api_id?: number }).api_id) : null;
-  if (existingApi != null && Number.isFinite(existingApi) && existingApi > 0) return existingApi;
-  return searchCourseApiIdByName(seed.name);
+  if (existingApi != null && Number.isFinite(existingApi) && existingApi > 0) {
+    return { apiId: existingApi, diagnostic: "db_case_insensitive_name_match" };
+  }
+  const loose = await findExistingCourseApiIdByLooseDbName(supabase, seed.name, normalized);
+  if (loose != null) return { apiId: loose, diagnostic: "db_substring_ilike_scored" };
+  const searched = await searchCourseApiIdFromVariants(seed.name, normalized);
+  return { apiId: searched.apiId, diagnostic: searched.diagnostic };
+}
+
+async function resolveApiId(
+  supabase: SupabaseClient,
+  seed: CourseSeed,
+  opts?: { normalizedName?: string },
+): Promise<number | null> {
+  const { apiId } = await resolveApiIdDetail(supabase, seed, opts);
+  return apiId;
 }
 
 export async function runNightlyCourseImport(
@@ -841,6 +1040,45 @@ function parsePositiveIntEnv(name: string, fallback: number): number {
   if (!raw) return fallback;
   const n = Number(raw);
   return Number.isFinite(n) && n > 0 ? Math.round(n) : fallback;
+}
+
+function getNightlyExitPolicyFromEnv(): { maxUnresolvedOk: number } {
+  return {
+    maxUnresolvedOk: parsePositiveIntEnv("COURSE_IMPORT_EXIT_OK_MAX_UNRESOLVED", 5),
+  };
+}
+
+function computeNightlyImportRunExitSummary(
+  results: NightlyImportCourseResult[],
+  policy: { maxUnresolvedOk: number },
+): NightlyImportRunExitSummary {
+  const UNRESOLVED_PREFIX = "Unresolved candidate:";
+  const hardFailureCount = results.filter((r) => r.status === "failed").length;
+  const unresolvedCandidateNames = results
+    .filter((r) => r.status === "skipped" && (r.error ?? "").includes(UNRESOLVED_PREFIX))
+    .map((r) => r.courseName);
+  const unresolvedCandidateCount = unresolvedCandidateNames.length;
+  let exitCode: 0 | 1 = 0;
+  let exitReason = "ok";
+  if (hardFailureCount > 0) {
+    exitCode = 1;
+    exitReason = "hard_failures_present";
+  } else if (unresolvedCandidateCount > policy.maxUnresolvedOk) {
+    exitCode = 1;
+    exitReason = "unresolved_candidates_exceed_cap";
+  } else if (unresolvedCandidateCount > 0) {
+    exitReason = "ok_with_bounded_unresolved_api_matches";
+  }
+  const exitDowngradedToSuccess = exitCode === 0 && unresolvedCandidateCount > 0;
+  return {
+    exitCode,
+    exitReason,
+    hardFailureCount,
+    unresolvedCandidateCount,
+    unresolvedCandidateNames,
+    exitDowngradedToSuccess,
+    maxUnresolvedOk: policy.maxUnresolvedOk,
+  };
 }
 
 function getTerritoryImportCaps(overrides?: Partial<TerritoryImportCaps>): TerritoryImportCaps {
@@ -1525,7 +1763,9 @@ async function importCandidateCourse(
   };
   const sourceType: ImportSourceType = "golfcourseapi";
   const sourceUrl = null;
-  const apiId = await resolveApiId(supabase, seed);
+  const { apiId, diagnostic } = await resolveApiIdDetail(supabase, seed, {
+    normalizedName: candidate.normalized_name,
+  });
   const jobId = await insertJobStart(supabase, {
     batchId: params.batchId,
     triggerType: params.triggerType,
@@ -1541,14 +1781,17 @@ async function importCandidateCourse(
   });
 
   if (!apiId) {
-    const errorMessage = "Unable to resolve GolfCourseAPI id from candidate";
+    const errorMessage = `Unresolved candidate: no confident GolfCourseAPI id after DB + scored search. ${diagnostic ?? ""}`.slice(
+      0,
+      480,
+    );
     await updateCandidateAfterAttempt(supabase, candidate, {
-      status: "failed",
-      syncStatus: "failed",
+      status: "skipped",
+      syncStatus: "skipped",
       error: errorMessage,
     });
     await updateJob(supabase, jobId, {
-      sync_status: "failed",
+      sync_status: "skipped",
       finished_at: new Date().toISOString(),
       error_message: errorMessage,
     });
@@ -1556,7 +1799,7 @@ async function importCandidateCourse(
       result: {
         courseName: seed.name,
         apiId: null,
-        status: "failed",
+        status: "skipped",
         validationIssues: [],
         error: errorMessage,
       },
@@ -1882,6 +2125,7 @@ export async function runTerritoryScaleNightlyImport(
     ok: growthResults.filter((r) => r.status === "ok").length,
     partial: growthResults.filter((r) => r.status === "partial").length,
     failed: growthResults.filter((r) => r.status === "failed").length,
+    skipped: growthResults.filter((r) => r.status === "skipped").length,
   };
   const staleCandidateRefreshSummary: CandidateImportPhaseSummary = {
     attempted: refreshResults.length,
@@ -1890,7 +2134,13 @@ export async function runTerritoryScaleNightlyImport(
     ok: refreshResults.filter((r) => r.status === "ok").length,
     partial: refreshResults.filter((r) => r.status === "partial").length,
     failed: refreshResults.filter((r) => r.status === "failed").length,
+    skipped: refreshResults.filter((r) => r.status === "skipped").length,
   };
+
+  const nightlyRunExit = computeNightlyImportRunExitSummary(results, getNightlyExitPolicyFromEnv());
+  console.log(
+    `[course-import] Nightly exit policy: code=${nightlyRunExit.exitCode} reason=${nightlyRunExit.exitReason} hardFailures=${nightlyRunExit.hardFailureCount} unresolved=${nightlyRunExit.unresolvedCandidateCount}/${nightlyRunExit.maxUnresolvedOk} downgraded=${nightlyRunExit.exitDowngradedToSuccess}`,
+  );
 
   const report: Record<string, unknown> = {
     batchId,
@@ -1922,6 +2172,7 @@ export async function runTerritoryScaleNightlyImport(
     missingSiCount,
     topFailureReasons,
     manualReviewItems,
+    nightlyRunExit,
     generatedAt: new Date().toISOString(),
   };
 
@@ -1929,7 +2180,7 @@ export async function runTerritoryScaleNightlyImport(
     .from("course_import_batches")
     .update({
       finished_at: new Date().toISOString(),
-      status: failed > 0 ? "failed" : "completed",
+      status: nightlyRunExit.hardFailureCount > 0 ? "failed" : "completed",
       total_candidates: discoveredCandidates,
       total_attempted: growthPicked.length + refreshPicked.length + (staleCatalogSweep?.attempted ?? 0),
       total_inserted: insertedCoursesFinal,
@@ -1963,6 +2214,7 @@ export async function runTerritoryScaleNightlyImport(
     staleCandidateRefreshSummary,
     skippedStaleCatalogSweepReason,
     queuedCandidatesAfterCandidatePhases,
+    nightlyRunExit,
   };
 }
 

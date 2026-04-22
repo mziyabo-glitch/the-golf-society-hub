@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { validateNormalizedImport } from "@/lib/server/courseImportEngine";
+import {
+  buildSearchQueryVariantsForImport,
+  scoreGolfApiSearchRowAgainstTarget,
+  validateNormalizedImport,
+} from "@/lib/server/courseImportEngine";
 import type { NormalizedCourseImport } from "@/types/course";
 
 function baseImport(): NormalizedCourseImport {
@@ -45,6 +49,21 @@ function baseImport(): NormalizedCourseImport {
     ],
   };
 }
+
+describe("GolfCourseAPI search helpers", () => {
+  it("buildSearchQueryVariantsForImport adds shorter venue tokens for long club names", () => {
+    const v = buildSearchQueryVariantsForImport("Woodhall Spa Golf Club", "woodhall spa golf club");
+    expect(v[0]).toBe("Woodhall Spa Golf Club");
+    expect(v).toContain("Woodhall Spa");
+  });
+
+  it("scores API club+course rows against marketing-style candidate names", () => {
+    const target = "Celtic Manor Resort";
+    const row = { club_name: "Celtic Manor Resort", course_name: "Roman Road Course" };
+    const s = scoreGolfApiSearchRowAgainstTarget(target, row);
+    expect(s).toBeGreaterThan(0.45);
+  });
+});
 
 describe("validateNormalizedImport", () => {
   it("returns no issues for valid 18-hole import", () => {
