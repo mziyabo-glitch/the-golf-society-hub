@@ -49,6 +49,12 @@ export type TerritorySeedPhase = "england_wales" | "scotland" | "ireland";
 
 export type TerritoryImportMode = "nightly" | "manual";
 
+/**
+ * `seeding` — grow queued candidates fast: high growth API budget, tiny refresh, catalog sweep off unless `--force-catalog-full-refresh`.
+ * `maintenance` — conservative nightly behaviour (default). Controlled by `COURSE_IMPORT_RUN_MODE` or `runTerritoryScaleNightlyImport({ runMode })`.
+ */
+export type CourseImportRunMode = "seeding" | "maintenance";
+
 export type TerritoryImportCaps = {
   maxPriorityCourses: number;
   maxNewSeeds: number;
@@ -79,6 +85,8 @@ export type TerritoryNightlyImportOptions = {
   phaseOverride?: TerritorySeedPhase;
   territoryOverride?: string;
   caps?: Partial<TerritoryImportCaps>;
+  /** Overrides `COURSE_IMPORT_RUN_MODE` for this run only. */
+  runMode?: CourseImportRunMode;
   /** Overrides env-based defaults from `getCourseCatalogFreshnessThresholdsFromEnv`. */
   catalogFreshnessThresholds?: Partial<CourseCatalogFreshnessThresholds>;
   /** When true, always run the post-batch stale-catalog sweep (for tests / ops). */
@@ -141,6 +149,7 @@ export type TerritoryImportOutcome = {
   /** Queued candidates remaining after growth + refresh phases (same phase/territory). */
   queuedCandidatesAfterCandidatePhases: number;
   nightlyRunExit: NightlyImportRunExitSummary;
+  importRunMode: CourseImportRunMode;
 };
 
 const GOLF_API_BASE = "https://api.golfcourseapi.com/v1";
@@ -1200,22 +1209,63 @@ function computeNightlyImportRunExitSummary(
   };
 }
 
-function getTerritoryImportCaps(overrides?: Partial<TerritoryImportCaps>): TerritoryImportCaps {
+/**
+ * Tier-1 seeding preset (~75 growth API calls/night before per-field `caps` overrides).
+ * Ramp when stable: raise `maxNewCourseImportAttempts` via CLI `--max-new-growth=` or env `COURSE_IMPORT_MAX_NEW_COURSE_IMPORT_ATTEMPTS` while `COURSE_IMPORT_RUN_MODE=seeding`.
+ */
+export const COURSE_IMPORT_SEEDING_PRESET_CAPS: TerritoryImportCaps = {
+  maxPriorityCourses: 28,
+  maxNewSeeds: 64,
+  maxRetries: 14,
+  maxRefreshes: 8,
+  maxDiscoveryPerRun: 500,
+  maxNewCourseImportAttempts: 75,
+  maxStaleCandidateRefreshAttempts: 2,
+  maxStaleCatalogSweepCourses: 0,
+};
+
+export function resolveCourseImportRunMode(options?: TerritoryNightlyImportOptions): CourseImportRunMode {
+  const o = options?.runMode?.trim().toLowerCase();
+  if (o === "seeding" || o === "maintenance") return o;
+  const e = process.env.COURSE_IMPORT_RUN_MODE?.trim().toLowerCase();
+  if (e === "seeding" || e === "maintenance") return e;
+  return "maintenance";
+}
+
+function getTerritoryImportCaps(overrides?: Partial<TerritoryImportCaps>, runMode: CourseImportRunMode = "maintenance"): TerritoryImportCaps {
+  const seed = runMode === "seeding";
+  const s = COURSE_IMPORT_SEEDING_PRESET_CAPS;
   const legacyTotal = overrides?.maxTotalAttempts;
   const maxNewCourseImportAttempts =
     overrides?.maxNewCourseImportAttempts ??
-    (legacyTotal != null ? legacyTotal : parsePositiveIntEnv("COURSE_IMPORT_MAX_NEW_COURSE_IMPORT_ATTEMPTS", 42));
+    (legacyTotal != null
+      ? legacyTotal
+      : seed
+        ? parsePositiveIntEnv("COURSE_IMPORT_MAX_NEW_COURSE_IMPORT_ATTEMPTS", s.maxNewCourseImportAttempts)
+        : parsePositiveIntEnv("COURSE_IMPORT_MAX_NEW_COURSE_IMPORT_ATTEMPTS", 42));
   const maxStaleCandidateRefreshAttempts =
     overrides?.maxStaleCandidateRefreshAttempts ??
-    parsePositiveIntEnv("COURSE_IMPORT_MAX_STALE_CANDIDATE_REFRESH", 8);
+    (seed
+      ? parsePositiveIntEnv("COURSE_IMPORT_MAX_STALE_CANDIDATE_REFRESH", s.maxStaleCandidateRefreshAttempts)
+      : parsePositiveIntEnv("COURSE_IMPORT_MAX_STALE_CANDIDATE_REFRESH", 8));
   const maxStaleCatalogSweepCourses =
-    overrides?.maxStaleCatalogSweepCourses ?? parsePositiveIntEnv("COURSE_IMPORT_STALE_SWEEP_MAX_COURSES", 12);
+    overrides?.maxStaleCatalogSweepCourses ??
+    (seed
+      ? parsePositiveIntEnv("COURSE_IMPORT_STALE_SWEEP_MAX_COURSES", s.maxStaleCatalogSweepCourses)
+      : parsePositiveIntEnv("COURSE_IMPORT_STALE_SWEEP_MAX_COURSES", 12));
   return {
-    maxPriorityCourses: overrides?.maxPriorityCourses ?? parsePositiveIntEnv("COURSE_IMPORT_MAX_PRIORITY", 12),
-    maxNewSeeds: overrides?.maxNewSeeds ?? parsePositiveIntEnv("COURSE_IMPORT_MAX_NEW_SEEDS", 20),
-    maxRetries: overrides?.maxRetries ?? parsePositiveIntEnv("COURSE_IMPORT_MAX_RETRIES", 12),
-    maxRefreshes: overrides?.maxRefreshes ?? parsePositiveIntEnv("COURSE_IMPORT_MAX_REFRESHES", 25),
-    maxDiscoveryPerRun: overrides?.maxDiscoveryPerRun ?? parsePositiveIntEnv("COURSE_IMPORT_MAX_DISCOVERY", 120),
+    maxPriorityCourses:
+      overrides?.maxPriorityCourses ??
+      (seed ? parsePositiveIntEnv("COURSE_IMPORT_MAX_PRIORITY", s.maxPriorityCourses) : parsePositiveIntEnv("COURSE_IMPORT_MAX_PRIORITY", 12)),
+    maxNewSeeds:
+      overrides?.maxNewSeeds ?? (seed ? parsePositiveIntEnv("COURSE_IMPORT_MAX_NEW_SEEDS", s.maxNewSeeds) : parsePositiveIntEnv("COURSE_IMPORT_MAX_NEW_SEEDS", 20)),
+    maxRetries:
+      overrides?.maxRetries ?? (seed ? parsePositiveIntEnv("COURSE_IMPORT_MAX_RETRIES", s.maxRetries) : parsePositiveIntEnv("COURSE_IMPORT_MAX_RETRIES", 12)),
+    maxRefreshes:
+      overrides?.maxRefreshes ?? (seed ? parsePositiveIntEnv("COURSE_IMPORT_MAX_REFRESHES", s.maxRefreshes) : parsePositiveIntEnv("COURSE_IMPORT_MAX_REFRESHES", 25)),
+    maxDiscoveryPerRun:
+      overrides?.maxDiscoveryPerRun ??
+      (seed ? parsePositiveIntEnv("COURSE_IMPORT_MAX_DISCOVERY", s.maxDiscoveryPerRun) : parsePositiveIntEnv("COURSE_IMPORT_MAX_DISCOVERY", 120)),
     maxNewCourseImportAttempts,
     maxStaleCandidateRefreshAttempts,
     maxStaleCatalogSweepCourses,
@@ -1563,6 +1613,7 @@ async function insertBatchRun(
     caps: TerritoryImportCaps;
     triggerType: "manual" | "nightly" | "territory_nightly";
     catalogFreshness?: CourseCatalogFreshnessReport;
+    importRunMode?: CourseImportRunMode;
   },
 ): Promise<string> {
   const { data, error } = await supabase
@@ -1579,6 +1630,7 @@ async function insertBatchRun(
       max_refreshes: payload.caps.maxRefreshes,
       summary_json: {
         mode: payload.mode,
+        importRunMode: payload.importRunMode ?? "maintenance",
         ...(payload.catalogFreshness ? { catalogFreshness: payload.catalogFreshness } : {}),
       },
     })
@@ -1996,7 +2048,8 @@ export async function runTerritoryScaleNightlyImport(
   const supabaseUrl = requireEnv("NEXT_PUBLIC_SUPABASE_URL");
   const serviceKey = requireEnv("SUPABASE_SERVICE_ROLE_KEY");
   const supabase = createClient(supabaseUrl, serviceKey);
-  const caps = getTerritoryImportCaps(options?.caps);
+  const importRunMode = resolveCourseImportRunMode(options);
+  const caps = getTerritoryImportCaps(options?.caps, importRunMode);
   const dryRun = options?.dryRun === true;
   const overwriteManualOverrides = options?.overwriteManualOverrides === true;
   const includeSocietySeeds = options?.includeSocietySeeds !== false;
@@ -2031,7 +2084,7 @@ export async function runTerritoryScaleNightlyImport(
     );
   }
   console.log(
-    `[course-import] Budgets: newCourseImports<=${caps.maxNewCourseImportAttempts} | staleCandidateRefresh<=${caps.maxStaleCandidateRefreshAttempts} | staleCatalogSweep<=${caps.maxStaleCatalogSweepCourses} (sweep is subordinate to growth unless forced).`,
+    `[course-import] Run mode: ${importRunMode} | Budgets: newCourseImports<=${caps.maxNewCourseImportAttempts} | staleCandidateRefresh<=${caps.maxStaleCandidateRefreshAttempts} | staleCatalogSweep<=${caps.maxStaleCatalogSweepCourses} (seeding suppresses sweep unless --force-catalog-full-refresh).`,
   );
   console.log(
     "[course-import] Large-catalog note: stale-SI and incomplete-tee metrics use bounded scans; tune COURSE_IMPORT_STALE_SWEEP_MAX_COURSES, COURSE_IMPORT_STALE_AGE_DAYS, and scan caps in courseCatalogFreshness if needed.",
@@ -2044,6 +2097,7 @@ export async function runTerritoryScaleNightlyImport(
     caps,
     triggerType,
     catalogFreshness,
+    importRunMode,
   });
 
   const discoveredCandidates = await discoverCandidatesBounded(
@@ -2151,8 +2205,15 @@ export async function runTerritoryScaleNightlyImport(
   const queuedCandidatesAfterCandidatePhases = await countQueuedCandidatesForPhase(supabase, phase, territory);
   const forceSweep = options?.forceCatalogFullRefresh === true;
   const shouldConsiderCatalogSweep = catalogFreshness.triggeredFullRefresh;
+  const seedingSweepSuppressedByMode = importRunMode === "seeding" && !forceSweep;
+
   let skippedStaleCatalogSweepReason: string | null = null;
-  if (!shouldConsiderCatalogSweep) {
+  if (seedingSweepSuppressedByMode) {
+    skippedStaleCatalogSweepReason = "seeding_mode_catalog_sweep_suppressed";
+    console.log(
+      "[course-import] Stale catalog sweep suppressed for seeding mode (set COURSE_IMPORT_RUN_MODE=maintenance or pass --force-catalog-full-refresh to run a sweep).",
+    );
+  } else if (!shouldConsiderCatalogSweep) {
     skippedStaleCatalogSweepReason = "freshness_thresholds_not_met";
   } else if (!forceSweep && queuedCandidatesAfterCandidatePhases > 0) {
     skippedStaleCatalogSweepReason = "deferred_growth_queued_backlog";
@@ -2178,7 +2239,13 @@ export async function runTerritoryScaleNightlyImport(
     if (r.apiId != null) pickedApiIds.add(r.apiId);
   }
 
-  if (shouldConsiderCatalogSweep && (forceSweep || queuedCandidatesAfterCandidatePhases === 0)) {
+  const canRunStaleSweep =
+    !seedingSweepSuppressedByMode &&
+    shouldConsiderCatalogSweep &&
+    (forceSweep || queuedCandidatesAfterCandidatePhases === 0) &&
+    caps.maxStaleCatalogSweepCourses > 0;
+
+  if (canRunStaleSweep) {
     skippedStaleCatalogSweepReason = null;
     const sweepRows = await fetchStaleCatalogCoursesForSweep(supabase, {
       maxRows: caps.maxStaleCatalogSweepCourses,
@@ -2222,9 +2289,12 @@ export async function runTerritoryScaleNightlyImport(
     console.log(
       `[course-import] Stale catalog sweep finished in ${Date.now() - sweepStarted}ms: attempted=${staleCatalogSweep.attempted} ok=${staleCatalogSweep.ok} partial=${staleCatalogSweep.partial} failed=${staleCatalogSweep.failed} skippedDupApi=${staleCatalogSweep.skippedDuplicateApiInBatch}`,
     );
-  } else if (shouldConsiderCatalogSweep) {
+  } else if (!seedingSweepSuppressedByMode && shouldConsiderCatalogSweep && caps.maxStaleCatalogSweepCourses <= 0) {
+    skippedStaleCatalogSweepReason = skippedStaleCatalogSweepReason ?? "stale_sweep_cap_zero";
+    console.log("[course-import] Stale catalog sweep skipped (stale sweep cap is 0).");
+  } else if (shouldConsiderCatalogSweep && !seedingSweepSuppressedByMode && skippedStaleCatalogSweepReason != null) {
     console.log("[course-import] Stale catalog sweep skipped (see skippedStaleCatalogSweepReason in report).");
-  } else {
+  } else if (!shouldConsiderCatalogSweep) {
     console.log("[course-import] Stale catalog sweep skipped (freshness thresholds not met).");
   }
 
@@ -2267,11 +2337,69 @@ export async function runTerritoryScaleNightlyImport(
     `[course-import] Nightly exit policy: code=${nightlyRunExit.exitCode} reason=${nightlyRunExit.exitReason} hardFailures=${nightlyRunExit.hardFailureCount} unresolved=${nightlyRunExit.unresolvedCandidateCount}/${nightlyRunExit.maxUnresolvedOk} downgraded=${nightlyRunExit.exitDowngradedToSuccess}`,
   );
 
+  const growthSkipped = growthResults.filter((r) => r.status === "skipped").length;
+  const refreshSkipped = refreshResults.filter((r) => r.status === "skipped").length;
+  const sweepSkipped = staleCatalogSweep ? staleCatalogSweep.results.filter((r) => r.status === "skipped").length : 0;
+  const importRunBreakdown = {
+    importRunMode,
+    capsSnapshot: {
+      maxNewCourseImportAttempts: caps.maxNewCourseImportAttempts,
+      maxStaleCandidateRefreshAttempts: caps.maxStaleCandidateRefreshAttempts,
+      maxStaleCatalogSweepCourses: caps.maxStaleCatalogSweepCourses,
+      maxDiscoveryPerRun: caps.maxDiscoveryPerRun,
+      maxNewSeeds: caps.maxNewSeeds,
+      maxPriorityCourses: caps.maxPriorityCourses,
+      maxRetries: caps.maxRetries,
+    },
+    newCourseRowsInserted: {
+      growthPhase: growthInserted,
+      staleCandidateRefreshPhase: refreshInserted,
+      staleCatalogSweepPhase: staleCatalogSweep ? sweepInserted : 0,
+      total: insertedCoursesFinal,
+    },
+    existingCourseRowsUpdated: {
+      growthPhase: growthUpdated,
+      staleCandidateRefreshPhase: refreshUpdated,
+      staleCatalogSweepPhase: staleCatalogSweep ? sweepUpdated : 0,
+      total: updatedCoursesFinal,
+    },
+    skippedOrUnresolved: {
+      growthPhase: growthSkipped,
+      staleCandidateRefreshPhase: refreshSkipped,
+      staleCatalogSweepPhase: sweepSkipped,
+      total: skipped,
+    },
+    staleCatalogSweepWork: staleCatalogSweep
+      ? {
+          ran: true,
+          attempted: staleCatalogSweep.attempted,
+          skippedDuplicateApiInBatch: staleCatalogSweep.skippedDuplicateApiInBatch,
+          ok: staleCatalogSweep.ok,
+          partial: staleCatalogSweep.partial,
+          failed: staleCatalogSweep.failed,
+        }
+      : { ran: false, skippedReason: skippedStaleCatalogSweepReason },
+    staleCandidateRefreshWork: {
+      attempted: refreshResults.length,
+      inserted: refreshInserted,
+      updated: refreshUpdated,
+      skipped: refreshSkipped,
+    },
+    newCourseGrowthWork: {
+      attempted: growthResults.length,
+      inserted: growthInserted,
+      updated: growthUpdated,
+      skipped: growthSkipped,
+    },
+  };
+
   const report: Record<string, unknown> = {
     batchId,
     batchRunId,
     phase,
     territory,
+    importRunMode,
+    importRunBreakdown,
     catalogFreshness,
     staleCatalogSweep: staleCatalogSweep ?? null,
     skippedStaleCatalogSweepReason,
@@ -2340,6 +2468,7 @@ export async function runTerritoryScaleNightlyImport(
     skippedStaleCatalogSweepReason,
     queuedCandidatesAfterCandidatePhases,
     nightlyRunExit,
+    importRunMode,
   };
 }
 

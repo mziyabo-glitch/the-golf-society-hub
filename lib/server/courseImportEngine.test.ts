@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   buildSearchQueryVariantsForImport,
+  COURSE_IMPORT_SEEDING_PRESET_CAPS,
+  resolveCourseImportRunMode,
   scoreGolfApiSearchRowAgainstTarget,
   validateNormalizedImport,
 } from "@/lib/server/courseImportEngine";
@@ -49,6 +51,18 @@ function baseImport(): NormalizedCourseImport {
     ],
   };
 }
+
+describe("course import run mode", () => {
+  it("resolveCourseImportRunMode prefers explicit options over env", () => {
+    expect(resolveCourseImportRunMode({ runMode: "seeding" })).toBe("seeding");
+    expect(resolveCourseImportRunMode({ runMode: "maintenance" })).toBe("maintenance");
+  });
+
+  it("exposes seeding preset caps for ops ramp tuning", () => {
+    expect(COURSE_IMPORT_SEEDING_PRESET_CAPS.maxNewCourseImportAttempts).toBe(75);
+    expect(COURSE_IMPORT_SEEDING_PRESET_CAPS.maxStaleCatalogSweepCourses).toBe(0);
+  });
+});
 
 describe("GolfCourseAPI search helpers", () => {
   it("buildSearchQueryVariantsForImport adds shorter venue tokens for long club names", () => {

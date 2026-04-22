@@ -1,7 +1,11 @@
 import dotenv from "dotenv";
 import { mkdir, writeFile } from "node:fs/promises";
 import { resolve as resolvePath } from "node:path";
-import { runTerritoryScaleNightlyImport, type TerritorySeedPhase } from "../lib/server/courseImportEngine";
+import {
+  runTerritoryScaleNightlyImport,
+  type CourseImportRunMode,
+  type TerritorySeedPhase,
+} from "../lib/server/courseImportEngine";
 
 dotenv.config();
 
@@ -29,8 +33,11 @@ async function main(): Promise<void> {
   const maxNewGrowthArg = process.argv.find((arg) => arg.startsWith("--max-new-growth="));
   const maxStaleRefreshArg = process.argv.find((arg) => arg.startsWith("--max-stale-candidate-refresh="));
   const maxStaleSweepArg = process.argv.find((arg) => arg.startsWith("--max-stale-sweep="));
+  const modeArg = process.argv.find((arg) => arg.startsWith("--mode="))?.split("=")[1]?.trim().toLowerCase();
   const triggerType = hasArg("--manual") ? "manual" : "nightly";
   const forceCatalogFullRefresh = hasArg("--force-catalog-full-refresh");
+  const runMode: CourseImportRunMode | undefined =
+    modeArg === "seeding" || modeArg === "maintenance" ? (modeArg as CourseImportRunMode) : undefined;
 
   const startedAt = Date.now();
   const outcome = await runTerritoryScaleNightlyImport({
@@ -38,6 +45,7 @@ async function main(): Promise<void> {
     overwriteManualOverrides,
     includeSocietySeeds: !skipSocietySeeds,
     triggerType,
+    runMode,
     territoryOverride: territoryArg?.split("=")[1]?.trim(),
     phaseOverride: (phaseArg?.split("=")[1]?.trim() as TerritorySeedPhase | undefined) ?? undefined,
     forceCatalogFullRefresh,
@@ -61,6 +69,8 @@ async function main(): Promise<void> {
 
   console.log("[course-import-nightly] batch:", batchId);
   console.log("[course-import-nightly] batchRun:", outcome.batchRunId);
+  console.log("[course-import-nightly] importRunMode:", outcome.importRunMode);
+  console.log("[course-import-nightly] importRunBreakdown:", outcome.report.importRunBreakdown);
   console.log("[course-import-nightly] phase:", outcome.phase, "| territory:", outcome.territory);
   console.log("[course-import-nightly] dryRun:", dryRun);
   console.log("[course-import-nightly] totals:", { ok, partial, failed, skipped, total: results.length, elapsedMs });
@@ -113,6 +123,7 @@ async function main(): Promise<void> {
     `- Batch Run ID: \`${outcome.batchRunId}\``,
     `- Phase: \`${outcome.phase}\``,
     `- Territory: \`${outcome.territory}\``,
+    `- Import run mode: \`${outcome.importRunMode}\` (seeding | maintenance; env \`COURSE_IMPORT_RUN_MODE\` or \`--mode=\`)`,
     `- Dry run: \`${dryRun}\``,
     `- Discovered candidates: \`${outcome.discoveredCandidates}\``,
     `- Attempted candidates: \`${outcome.attemptedCandidates}\``,
@@ -130,6 +141,11 @@ async function main(): Promise<void> {
     `- Unresolved candidate count: \`${outcome.nightlyRunExit.unresolvedCandidateCount}\` (cap \`${outcome.nightlyRunExit.maxUnresolvedOk}\`)`,
     `- Unresolved names: ${outcome.nightlyRunExit.unresolvedCandidateNames.length ? outcome.nightlyRunExit.unresolvedCandidateNames.map((n) => `\`${n}\``).join(", ") : "none"}`,
     `- Exit downgraded to success (bounded unresolved only): \`${outcome.nightlyRunExit.exitDowngradedToSuccess}\``,
+    "",
+    "## Import breakdown (growth vs refresh vs sweep)",
+    "```json",
+    `${JSON.stringify(outcome.report.importRunBreakdown, null, 2)}`,
+    "```",
     "",
     "## Catalog freshness",
     `- Full stale sweep: \`${outcome.catalogFreshness.triggeredFullRefresh}\``,

@@ -40,13 +40,17 @@ on:
         description: "If true, always run post-batch stale catalog sweep (same as CLI --force-catalog-full-refresh)"
         required: false
         default: "false"
+      run_mode:
+        description: "maintenance (default) | seeding — seeding prioritizes new growth, minimal refresh, suppresses catalog sweep unless force_catalog_full_refresh"
+        required: false
+        default: "maintenance"
   schedule:
     - cron: "15 2 * * *"
 
 jobs:
   import-courses:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 90
     # Importer env (scripts/nightly-course-import.ts → lib/server/courseImportEngine.ts):
     # - requireEnv("NEXT_PUBLIC_SUPABASE_URL") — same project URL as lib/supabase.ts (also accepts EXPO_PUBLIC there).
     # - requireEnv("SUPABASE_SERVICE_ROLE_KEY")
@@ -55,6 +59,8 @@ jobs:
       NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL || secrets.EXPO_PUBLIC_SUPABASE_URL }}
       SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
       GOLFCOURSE_API_KEY: ${{ secrets.GOLFCOURSE_API_KEY || secrets.EXPO_PUBLIC_GOLFCOURSE_API_KEY || secrets.NEXT_PUBLIC_GOLF_API_KEY }}
+      # workflow_dispatch supplies inputs; schedule/cron does not — default maintenance.
+      COURSE_IMPORT_RUN_MODE: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.run_mode || 'maintenance' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v5
