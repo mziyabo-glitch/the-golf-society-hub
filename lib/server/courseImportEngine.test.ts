@@ -55,6 +55,8 @@ describe("GolfCourseAPI search helpers", () => {
     const v = buildSearchQueryVariantsForImport("Woodhall Spa Golf Club", "woodhall spa golf club");
     expect(v[0]).toBe("Woodhall Spa Golf Club");
     expect(v).toContain("Woodhall Spa");
+    expect(v).toContain("Hotchkin");
+    expect(v).toContain("National Golf Centre");
   });
 
   it("scores API club+course rows against marketing-style candidate names", () => {

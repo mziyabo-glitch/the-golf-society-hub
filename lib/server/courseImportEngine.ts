@@ -271,6 +271,12 @@ export function buildSearchQueryVariantsForImport(candidateName: string, normali
     out.push(t);
   };
   for (const s of seeds) add(s);
+  /** GolfCourseAPI lists Woodhall Spa under "The National Golf Centre (…)" — bare "Woodhall Spa …" returns 0 hits. */
+  if (/\bwoodhall\b/i.test(candidateName) && /\bspa\b/i.test(candidateName)) {
+    add("Hotchkin");
+    add("National Golf Centre");
+    add("The National Golf Centre");
+  }
   for (const s of [...out]) {
     add(s.replace(/\s+Resort\s*$/i, "").trim());
     add(s.replace(/\s+Golf Club\s*$/i, "").trim());
@@ -335,18 +341,121 @@ export function scoreGolfApiSearchRowAgainstTarget(targetDisplayName: string, ap
   return Math.min(1, recall + substringBoost);
 }
 
-function pickBestApiIdFromScoredRows(
-  ranked: Array<{ id: number; score: number }>,
+type RankedCourseSearchHit = { id: number; score: number; row: Record<string, unknown> };
+
+type CandidateSearchResolutionClass = "matched" | "no_catalog_match" | "below_threshold" | "ambiguous_api_match";
+
+/** GolfCourseAPI loop ids for Celtic Manor — club_name is "Celtic Manor"; course_name Roman Road / Montgomerie / "2010" (Twenty Ten). */
+const CELTIC_MANOR_GOLF_API_LOOP_IDS = new Set([10110, 15579, 15594]);
+/** Default loop when discovery name is generic "Celtic Manor Resort" (Ryder Cup / headline layout in API as course "2010"). */
+const CELTIC_MANOR_RESORT_DEFAULT_API_ID = 15594;
+
+function applyVenueAliasScoreBoost(displayName: string, row: Record<string, unknown>, baseScore: number): number {
+  const t = normalizeCandidateName(displayName);
+  const club = normalizeCandidateName(String(row.club_name ?? ""));
+  const loc = row.location && typeof row.location === "object" ? (row.location as Record<string, unknown>) : null;
+  const city = loc && typeof loc.city === "string" ? normalizeCandidateName(String(loc.city)) : "";
+
+  if (t.includes("woodhall") && t.includes("spa")) {
+    if (club.includes("national") && club.includes("golf") && club.includes("centre") && city.includes("woodhall") && city.includes("spa")) {
+      const course = normalizeCandidateName(String(row.course_name ?? ""));
+      if (course.includes("hotchkin")) return Math.max(baseScore, 0.78);
+      if (course.includes("bracken")) return Math.max(baseScore, 0.71);
+      return Math.max(baseScore, 0.74);
+    }
+  }
+  if (t.includes("celtic") && t.includes("manor")) {
+    if (club.includes("celtic") && club.includes("manor")) {
+      return Math.max(baseScore, 0.62);
+    }
+  }
+  return baseScore;
+}
+
+function compareWoodhallNationalGcfTieBreak(displayName: string, a: RankedCourseSearchHit, b: RankedCourseSearchHit): number {
+  const t = normalizeCandidateName(displayName);
+  if (!t.includes("woodhall") || !t.includes("spa")) return 0;
+  const rank = (row: Record<string, unknown>): number => {
+    const club = normalizeCandidateName(String(row.club_name ?? ""));
+    if (!club.includes("national") || !club.includes("golf") || !club.includes("centre")) return 99;
+    const c = String(row.course_name ?? "").toLowerCase();
+    if (c === "hotchkin") return 0;
+    if (c === "bracken") return 1;
+    return 5;
+  };
+  return rank(a.row) - rank(b.row);
+}
+
+function tryCelticManorResortMultiLoopDefault(displayName: string, ranked: RankedCourseSearchHit[]): number | null {
+  const t = normalizeCandidateName(displayName);
+  if (!t.includes("celtic") || !t.includes("manor")) return null;
+  if (t.includes("roman") || t.includes("montgomerie") || t.includes("twenty") || t.includes("2010")) return null;
+
+  const top = ranked.slice(0, 6);
+  const celticHits = top.filter((h) => CELTIC_MANOR_GOLF_API_LOOP_IDS.has(h.id));
+  if (celticHits.length < 2) return null;
+  for (const h of celticHits) {
+    const c = normalizeCandidateName(String(h.row.club_name ?? ""));
+    if (!(c.includes("celtic") && c.includes("manor"))) return null;
+  }
+  if (t.includes("resort") || (t.includes("celtic") && t.includes("manor"))) {
+    return CELTIC_MANOR_RESORT_DEFAULT_API_ID;
+  }
+  return null;
+}
+
+function formatTopSearchHitDiagnostics(ranked: RankedCourseSearchHit[], limit: number): string {
+  return ranked
+    .slice(0, limit)
+    .map((h) => {
+      const label = searchRowDisplayName(h.row).replace(/\|/g, "/") || "(no name)";
+      return `${h.id}:"${label}"(${h.score.toFixed(2)})`;
+    })
+    .join(" | ");
+}
+
+function pickBestCourseSearchHit(
+  displayName: string,
+  rankedInput: RankedCourseSearchHit[],
   minScore: number,
   ambiguityGap: number,
-): { apiId: number | null; reason: string } {
-  if (ranked.length === 0) return { apiId: null, reason: "no_search_rows" };
-  const [top, second] = ranked;
-  if (top.score < minScore) return { apiId: null, reason: `best_score_below_min(${top.score.toFixed(3)}<${minScore})` };
-  if (second && second.score > 0 && top.score - second.score < ambiguityGap) {
-    return { apiId: null, reason: `ambiguous_top_scores(${top.score.toFixed(3)}vs${second.score.toFixed(3)})` };
+  totalSearchRows: number,
+): { apiId: number | null; reason: string; resolutionClass: CandidateSearchResolutionClass } {
+  if (rankedInput.length === 0) {
+    return {
+      apiId: null,
+      reason: totalSearchRows === 0 ? "no_search_rows" : "no_scored_hits",
+      resolutionClass: totalSearchRows === 0 ? "no_catalog_match" : "below_threshold",
+    };
   }
-  return { apiId: top.id, reason: `match_score=${top.score.toFixed(3)}` };
+  const ranked = [...rankedInput].sort((a, b) => {
+    if (Math.abs(b.score - a.score) > 1e-5) return b.score - a.score;
+    return compareWoodhallNationalGcfTieBreak(displayName, a, b);
+  });
+  const [top, second] = ranked;
+  if (top.score < minScore) {
+    return {
+      apiId: null,
+      reason: `best_score_below_min(${top.score.toFixed(3)}<${minScore})`,
+      resolutionClass: top.score <= 0 ? "no_catalog_match" : "below_threshold",
+    };
+  }
+  if (second && second.score > 0 && top.score - second.score < ambiguityGap) {
+    const celticPick = tryCelticManorResortMultiLoopDefault(displayName, ranked);
+    if (celticPick != null) {
+      return {
+        apiId: celticPick,
+        reason: `celtic_manor_resort_default_api_id=${celticPick}`,
+        resolutionClass: "matched",
+      };
+    }
+    return {
+      apiId: null,
+      reason: `ambiguous_top_scores(${top.score.toFixed(3)}vs${second.score.toFixed(3)})`,
+      resolutionClass: "ambiguous_api_match",
+    };
+  }
+  return { apiId: top.id, reason: `match_score=${top.score.toFixed(3)}`, resolutionClass: "matched" };
 }
 
 function getSearchMatchThresholdsFromEnv(): { minScore: number; ambiguityGap: number; maxQueries: number } {
@@ -362,32 +471,34 @@ function getSearchMatchThresholdsFromEnv(): { minScore: number; ambiguityGap: nu
 async function searchCourseApiIdFromVariants(
   displayName: string,
   normalizedName: string,
-): Promise<{ apiId: number | null; diagnostic: string }> {
+): Promise<{ apiId: number | null; diagnostic: string; resolutionClass: CandidateSearchResolutionClass }> {
   const { minScore, ambiguityGap, maxQueries } = getSearchMatchThresholdsFromEnv();
   const queries = buildSearchQueryVariantsForImport(displayName, normalizedName).slice(0, maxQueries);
-  const scoreById = new Map<number, number>();
+  const hitById = new Map<number, RankedCourseSearchHit>();
   const diag: string[] = [];
+  let totalSearchRows = 0;
   for (const q of queries) {
     const payload = (await golfApiGet(`/search?search_query=${encodeURIComponent(q)}`)) as unknown;
     const rows = extractCoursesFromSearchPayload(payload);
+    totalSearchRows += rows.length;
     diag.push(`${q}→${rows.length}`);
     for (const row of rows) {
       const id = Number(row.id);
       if (!Number.isFinite(id) || id <= 0) continue;
-      const s = scoreGolfApiSearchRowAgainstTarget(displayName, row);
-      const prev = scoreById.get(id) ?? 0;
-      if (s > prev) scoreById.set(id, s);
+      const base = scoreGolfApiSearchRowAgainstTarget(displayName, row);
+      const s = applyVenueAliasScoreBoost(displayName, row, base);
+      const prev = hitById.get(id);
+      if (!prev || s > prev.score) hitById.set(id, { id, score: s, row });
     }
   }
-  const ranked = [...scoreById.entries()]
-    .map(([id, score]) => ({ id, score }))
-    .sort((a, b) => b.score - a.score);
-  const picked = pickBestApiIdFromScoredRows(ranked, minScore, ambiguityGap);
-  const diagnostic = `${picked.reason} | queries:[${diag.join("; ")}] | top:${ranked
-    .slice(0, 3)
-    .map((r) => `${r.id}:${r.score.toFixed(2)}`)
-    .join(",")}`;
-  return { apiId: picked.apiId, diagnostic };
+  const ranked = [...hitById.values()].sort((a, b) => {
+    if (Math.abs(b.score - a.score) > 1e-5) return b.score - a.score;
+    return compareWoodhallNationalGcfTieBreak(displayName, a, b);
+  });
+  const picked = pickBestCourseSearchHit(displayName, ranked, minScore, ambiguityGap, totalSearchRows);
+  const topDiag = formatTopSearchHitDiagnostics(ranked, 6);
+  const diagnostic = `${picked.reason} | class=${picked.resolutionClass} | queries:[${diag.join("; ")}] | topHits:${topDiag}`;
+  return { apiId: picked.apiId, diagnostic, resolutionClass: picked.resolutionClass };
 }
 
 async function findExistingCourseApiIdByLooseDbName(
@@ -754,9 +865,13 @@ async function resolveApiIdDetail(
   supabase: SupabaseClient,
   seed: CourseSeed,
   opts?: { normalizedName?: string },
-): Promise<{ apiId: number | null; diagnostic?: string }> {
+): Promise<{
+  apiId: number | null;
+  diagnostic?: string;
+  resolutionClass?: CandidateSearchResolutionClass;
+}> {
   if (seed.preferredApiId && seed.preferredApiId > 0) {
-    return { apiId: seed.preferredApiId, diagnostic: "preferred_api_id" };
+    return { apiId: seed.preferredApiId, diagnostic: "preferred_api_id", resolutionClass: "matched" };
   }
   const normalized = opts?.normalizedName?.trim() || normalizeCandidateName(seed.name);
   const { data: existing } = await supabase
@@ -768,12 +883,16 @@ async function resolveApiIdDetail(
     .maybeSingle();
   const existingApi = existing ? Number((existing as { api_id?: number }).api_id) : null;
   if (existingApi != null && Number.isFinite(existingApi) && existingApi > 0) {
-    return { apiId: existingApi, diagnostic: "db_case_insensitive_name_match" };
+    return { apiId: existingApi, diagnostic: "db_case_insensitive_name_match", resolutionClass: "matched" };
   }
   const loose = await findExistingCourseApiIdByLooseDbName(supabase, seed.name, normalized);
-  if (loose != null) return { apiId: loose, diagnostic: "db_substring_ilike_scored" };
+  if (loose != null) return { apiId: loose, diagnostic: "db_substring_ilike_scored", resolutionClass: "matched" };
   const searched = await searchCourseApiIdFromVariants(seed.name, normalized);
-  return { apiId: searched.apiId, diagnostic: searched.diagnostic };
+  return {
+    apiId: searched.apiId,
+    diagnostic: searched.diagnostic,
+    resolutionClass: searched.apiId != null ? "matched" : searched.resolutionClass,
+  };
 }
 
 async function resolveApiId(
@@ -1052,10 +1171,10 @@ function computeNightlyImportRunExitSummary(
   results: NightlyImportCourseResult[],
   policy: { maxUnresolvedOk: number },
 ): NightlyImportRunExitSummary {
-  const UNRESOLVED_PREFIX = "Unresolved candidate:";
+  const unresolvedMarker = "Unresolved candidate";
   const hardFailureCount = results.filter((r) => r.status === "failed").length;
   const unresolvedCandidateNames = results
-    .filter((r) => r.status === "skipped" && (r.error ?? "").includes(UNRESOLVED_PREFIX))
+    .filter((r) => r.status === "skipped" && (r.error ?? "").includes(unresolvedMarker))
     .map((r) => r.courseName);
   const unresolvedCandidateCount = unresolvedCandidateNames.length;
   let exitCode: 0 | 1 = 0;
@@ -1763,7 +1882,7 @@ async function importCandidateCourse(
   };
   const sourceType: ImportSourceType = "golfcourseapi";
   const sourceUrl = null;
-  const { apiId, diagnostic } = await resolveApiIdDetail(supabase, seed, {
+  const { apiId, diagnostic, resolutionClass } = await resolveApiIdDetail(supabase, seed, {
     normalizedName: candidate.normalized_name,
   });
   const jobId = await insertJobStart(supabase, {
@@ -1781,10 +1900,16 @@ async function importCandidateCourse(
   });
 
   if (!apiId) {
-    const errorMessage = `Unresolved candidate: no confident GolfCourseAPI id after DB + scored search. ${diagnostic ?? ""}`.slice(
-      0,
-      480,
-    );
+    const cls = resolutionClass ?? "below_threshold";
+    const clsTag =
+      cls === "no_catalog_match"
+        ? "(no_catalog_match)"
+        : cls === "ambiguous_api_match"
+          ? "(ambiguous_api_match)"
+          : cls === "below_threshold"
+            ? "(below_threshold)"
+            : "(unresolved)";
+    const errorMessage = `Unresolved candidate ${clsTag}: ${diagnostic ?? ""}`.slice(0, 480);
     await updateCandidateAfterAttempt(supabase, candidate, {
       status: "skipped",
       syncStatus: "skipped",
