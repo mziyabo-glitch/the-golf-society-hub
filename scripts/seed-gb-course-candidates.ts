@@ -23,6 +23,7 @@ type RawGbArrayRow = [string?, number?, number?, string?];
 type ExistingCandidateRow = {
   normalized_name: string | null;
   canonical_api_id: number | null;
+  metadata: Record<string, unknown> | null;
 };
 
 type ExistingCourseRow = {
@@ -30,6 +31,7 @@ type ExistingCourseRow = {
   club_name: string | null;
   canonical_api_id: number | null;
   api_id: number | null;
+  seeded_status: string | null;
 };
 
 const TERRITORY = "uk";
@@ -153,6 +155,14 @@ function buildInputDedupeKey(row: GbSeedRow, roundedDp: number): string {
   return `${normalizeName(row.name)}|${roundedCoord(row.lat, roundedDp)}|${roundedCoord(row.lng, roundedDp)}`;
 }
 
+function readCanonicalKeyFromMetadata(metadata: Record<string, unknown> | null): string | null {
+  if (!metadata || typeof metadata !== "object") return null;
+  const key = metadata.seedCanonicalKey;
+  if (typeof key !== "string") return null;
+  const trimmed = key.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
 async function fetchAllRows<T>(client: SupabaseClient, table: string, columns: string): Promise<T[]> {
   const out: T[] = [];
   let from = 0;
@@ -166,6 +176,20 @@ async function fetchAllRows<T>(client: SupabaseClient, table: string, columns: s
     from += PAGE_SIZE;
   }
   return out;
+}
+
+async function countQueuedByPhase(
+  client: SupabaseClient,
+  phase: SeedPhase,
+): Promise<number> {
+  const { count, error } = await client
+    .from("course_import_candidates")
+    .select("id", { count: "exact", head: true })
+    .eq("territory", TERRITORY)
+    .eq("seed_phase", phase)
+    .eq("status", "queued");
+  if (error) throw new Error(error.message || "Failed to count queued candidates by seed phase.");
+  return count ?? 0;
 }
 
 function requireEnv(name: string): string {
@@ -194,21 +218,29 @@ async function main(): Promise<void> {
   const existingCandidates = await fetchAllRows<ExistingCandidateRow>(
     supabase,
     "course_import_candidates",
-    "normalized_name, canonical_api_id",
+    "normalized_name, canonical_api_id, metadata",
   );
   const existingCourses = await fetchAllRows<ExistingCourseRow>(
     supabase,
     "courses",
-    "course_name, club_name, canonical_api_id, api_id",
+    "course_name, club_name, canonical_api_id, api_id, seeded_status",
   );
 
   const existingCandidateNames = new Set(existingCandidates.map((r) => String(r.normalized_name ?? "").trim()).filter(Boolean));
+  const existingCandidateCanonicalKeys = new Set(
+    existingCandidates.map((r) => readCanonicalKeyFromMetadata(r.metadata)).filter((v): v is string => v != null),
+  );
   const existingCandidateApiIds = new Set(
     existingCandidates.map((r) => (r.canonical_api_id != null ? Math.round(Number(r.canonical_api_id)) : null)).filter((n): n is number => n != null && n > 0),
   );
   const existingCourseNames = new Set<string>();
   const existingCourseApiIds = new Set<number>();
   for (const row of existingCourses) {
+    const importedCourse =
+      String(row.seeded_status ?? "").toLowerCase() === "seeded" ||
+      (asFiniteNumber(row.canonical_api_id) ?? 0) > 0 ||
+      (asFiniteNumber(row.api_id) ?? 0) > 0;
+    if (!importedCourse) continue;
     const courseName = cleanName(String(row.course_name ?? ""));
     const clubName = cleanName(String(row.club_name ?? ""));
     if (courseName) existingCourseNames.add(normalizeName(courseName));
@@ -252,7 +284,8 @@ async function main(): Promise<void> {
 
     const phase = classifySeedPhase(row);
     const normalized = normalizeName(row.name);
-    const inputKey = buildInputDedupeKey(row, roundedDp);
+    const canonicalKey = buildInputDedupeKey(row, roundedDp);
+    const inputKey = canonicalKey;
     if (seenInputKeys.has(inputKey)) {
       duplicatesSkipped += 1;
       phaseBreakdownSkippedDup[phase] += 1;
@@ -261,10 +294,11 @@ async function main(): Promise<void> {
     seenInputKeys.add(inputKey);
 
     const duplicateByName = existingCandidateNames.has(normalized) || existingCourseNames.has(normalized);
+    const duplicateByCanonicalKey = existingCandidateCanonicalKeys.has(canonicalKey);
     const duplicateByApiId =
       row.canonicalApiId != null &&
       (existingCandidateApiIds.has(row.canonicalApiId) || existingCourseApiIds.has(row.canonicalApiId));
-    if (duplicateByName || duplicateByApiId) {
+    if (duplicateByName || duplicateByCanonicalKey || duplicateByApiId) {
       duplicatesSkipped += 1;
       phaseBreakdownSkippedDup[phase] += 1;
       continue;
@@ -284,6 +318,7 @@ async function main(): Promise<void> {
       metadata: {
         source: DISCOVERY_SOURCE,
         sourceFile: inputPath,
+        seedCanonicalKey: canonicalKey,
         coordRoundedDp: roundedDp,
         lat: row.lat,
         lng: row.lng,
@@ -302,8 +337,15 @@ async function main(): Promise<void> {
     inserted += 1;
     phaseBreakdownInserted[phase] += 1;
     existingCandidateNames.add(normalized);
+    existingCandidateCanonicalKeys.add(canonicalKey);
     if (row.canonicalApiId != null) existingCandidateApiIds.add(row.canonicalApiId);
   }
+
+  const queueSizeBySeedPhase = {
+    england_wales: await countQueuedByPhase(supabase, "england_wales"),
+    scotland: await countQueuedByPhase(supabase, "scotland"),
+    ireland: await countQueuedByPhase(supabase, "ireland"),
+  };
 
   const summary = {
     inputPath,
@@ -315,6 +357,7 @@ async function main(): Promise<void> {
     duplicatesSkipped,
     insertedByPhase: phaseBreakdownInserted,
     duplicatesSkippedByPhase: phaseBreakdownSkippedDup,
+    queueSizeBySeedPhase,
   };
 
   console.log("[gb-seed] complete:", JSON.stringify(summary, null, 2));
