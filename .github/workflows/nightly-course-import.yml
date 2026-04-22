@@ -1,5 +1,10 @@
 name: Nightly Course Import
 
+# Opt into Node 24 for JavaScript-based actions (GitHub Actions platform migration away from Node 20).
+# See: https://github.com/actions/runner/pull/3948
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 on:
   workflow_dispatch:
     inputs:
@@ -44,11 +49,13 @@ jobs:
     timeout-minutes: 30
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
+          # Job runtime: keep Node 20 for stability with tsx / Expo toolchain (engines allow >=18).
+          # Bump to 22 LTS when you want a supported upgrade path before Node 24 for app code.
           node-version: 20
           cache: npm
 
@@ -92,7 +99,7 @@ jobs:
 
       - name: Upload morning report artifact
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: nightly-course-import-report-${{ github.run_id }}
           path: reports/nightly-course-import/*
