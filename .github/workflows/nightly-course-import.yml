@@ -65,6 +65,8 @@ jobs:
       GOLFCOURSE_API_KEY: ${{ secrets.GOLFCOURSE_API_KEY || secrets.EXPO_PUBLIC_GOLFCOURSE_API_KEY || secrets.NEXT_PUBLIC_GOLF_API_KEY }}
       # schedule/cron uses seeding to burn down large GB queues; override via workflow_dispatch run_mode.
       COURSE_IMPORT_RUN_MODE: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.run_mode || 'seeding' }}
+      # many unresolved fuzzy matches in one batch; engine default is 100 in seeding — set explicitly for visibility with older checkouts
+      COURSE_IMPORT_EXIT_OK_MAX_UNRESOLVED: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.run_mode == 'maintenance' && '5' || '100' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v5
