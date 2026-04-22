@@ -44,6 +44,10 @@ on:
         description: "maintenance (default) | seeding — seeding prioritizes new growth, minimal refresh, suppresses catalog sweep unless force_catalog_full_refresh"
         required: false
         default: "maintenance"
+      active_phase:
+        description: "Optional COURSE_IMPORT_ACTIVE_PHASE override (england_wales|scotland|ireland). Empty = auto-pick first phase with queued/failed backlog, else england_wales."
+        required: false
+        default: ""
   schedule:
     - cron: "15 2 * * *"
 
@@ -80,6 +84,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          if [[ -n "${{ github.event.inputs.active_phase || '' }}" ]]; then
+            export COURSE_IMPORT_ACTIVE_PHASE="${{ github.event.inputs.active_phase }}"
+          fi
           ARGS=""
           if [[ "${{ github.event.inputs.dry_run || '' }}" == "true" ]]; then
             ARGS="$ARGS --dry-run"

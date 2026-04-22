@@ -114,6 +114,43 @@ export type CandidateImportPhaseSummary = {
   skipped: number;
 };
 
+/** Growth vs refresh vs catalog sweep — distinct API budgets within a single batch. */
+export type TerritoryImportWorkPhaseId = "newCourseGrowth" | "staleCandidateRefresh" | "staleCatalogSweep";
+
+export type ImportYieldWorkPhaseMetrics = {
+  attempted: number;
+  inserted: number;
+  updated: number;
+  /** Skipped because API id could not be resolved (ambiguous / below threshold / no match). */
+  unresolved: number;
+  skipped: number;
+  /** `inserted / attempted` as a percentage; null when `attempted` is 0. */
+  importYieldPct: number | null;
+};
+
+export type QueueCompositionPhaseSnapshot = {
+  byStatus: Record<TerritoryCandidateStatus, number>;
+  totalRows: number;
+};
+
+const UNRESOLVED_CANDIDATE_MARKER = "Unresolved candidate";
+
+/** Pure helper for nightly JSON/MD — counts unresolved API matches separately from other skips. */
+export function buildImportYieldWorkPhaseMetrics(
+  attempted: number,
+  inserted: number,
+  updated: number,
+  results: NightlyImportCourseResult[],
+): ImportYieldWorkPhaseMetrics {
+  const skipped = results.filter((r) => r.status === "skipped").length;
+  const unresolved = results.filter(
+    (r) => r.status === "skipped" && (r.error ?? "").includes(UNRESOLVED_CANDIDATE_MARKER),
+  ).length;
+  const importYieldPct =
+    attempted > 0 ? Math.round((inserted / attempted) * 10000) / 100 : null;
+  return { attempted, inserted, updated, unresolved, skipped, importYieldPct };
+}
+
 /** Nightly / CI exit policy derived from import results (see scripts/nightly-course-import.ts). */
 export type NightlyImportRunExitSummary = {
   exitCode: 0 | 1;
@@ -148,6 +185,10 @@ export type TerritoryImportOutcome = {
   skippedStaleCatalogSweepReason: string | null;
   /** Queued candidates remaining after growth + refresh phases (same phase/territory). */
   queuedCandidatesAfterCandidatePhases: number;
+  /** Post-run counts in `course_import_candidates` by `seed_phase` (territory-wide snapshot). */
+  queueCompositionBySeedPhase: Record<TerritorySeedPhase, QueueCompositionPhaseSnapshot>;
+  /** Insert yield and unresolved skips per work phase (this batch only). */
+  importYieldByWorkPhase: Record<TerritoryImportWorkPhaseId, ImportYieldWorkPhaseMetrics | null>;
   nightlyRunExit: NightlyImportRunExitSummary;
   importRunMode: CourseImportRunMode;
 };
@@ -1180,10 +1221,9 @@ function computeNightlyImportRunExitSummary(
   results: NightlyImportCourseResult[],
   policy: { maxUnresolvedOk: number },
 ): NightlyImportRunExitSummary {
-  const unresolvedMarker = "Unresolved candidate";
   const hardFailureCount = results.filter((r) => r.status === "failed").length;
   const unresolvedCandidateNames = results
-    .filter((r) => r.status === "skipped" && (r.error ?? "").includes(unresolvedMarker))
+    .filter((r) => r.status === "skipped" && (r.error ?? "").includes(UNRESOLVED_CANDIDATE_MARKER))
     .map((r) => r.courseName);
   const unresolvedCandidateCount = unresolvedCandidateNames.length;
   let exitCode: 0 | 1 = 0;
@@ -1296,6 +1336,46 @@ async function countQueuedCandidatesForPhase(
   return count ?? 0;
 }
 
+const CANDIDATE_STATUSES_FOR_QUEUE_SNAPSHOT: TerritoryCandidateStatus[] = [
+  "queued",
+  "resolved",
+  "imported",
+  "rejected",
+  "failed",
+  "skipped",
+];
+
+async function fetchQueueCompositionBySeedPhase(
+  supabase: SupabaseClient,
+  territory: string,
+): Promise<Record<TerritorySeedPhase, QueueCompositionPhaseSnapshot>> {
+  const counts = await Promise.all(
+    PHASE_ORDER.flatMap((phase) =>
+      CANDIDATE_STATUSES_FOR_QUEUE_SNAPSHOT.map(async (status) => {
+        const { count, error } = await supabase
+          .from("course_import_candidates")
+          .select("id", { count: "exact", head: true })
+          .eq("territory", territory)
+          .eq("seed_phase", phase)
+          .eq("status", status);
+        if (error) throw new Error(error.message || "Failed to count candidates by phase/status.");
+        return { phase, status, count: count ?? 0 };
+      }),
+    ),
+  );
+  const init = (): Record<TerritorySeedPhase, QueueCompositionPhaseSnapshot> => ({
+    england_wales: { byStatus: { queued: 0, resolved: 0, imported: 0, rejected: 0, failed: 0, skipped: 0 }, totalRows: 0 },
+    scotland: { byStatus: { queued: 0, resolved: 0, imported: 0, rejected: 0, failed: 0, skipped: 0 }, totalRows: 0 },
+    ireland: { byStatus: { queued: 0, resolved: 0, imported: 0, rejected: 0, failed: 0, skipped: 0 }, totalRows: 0 },
+  });
+  const out = init();
+  for (const row of counts) {
+    out[row.phase].byStatus[row.status] = row.count;
+    out[row.phase].totalRows += row.count;
+  }
+  return out;
+}
+
 function computeRefreshDueIso(now: Date): string {
   const days = parsePositiveIntEnv("COURSE_IMPORT_REFRESH_DAYS", 30);
   const due = new Date(now.getTime() + days * 24 * 60 * 60 * 1000);
@@ -1309,6 +1389,11 @@ function computeRetryDueIso(now: Date, retryCount: number): string {
   return due.toISOString();
 }
 
+/**
+ * Picks the seed phase for this batch. Precedence: CLI `phaseOverride` → `COURSE_IMPORT_ACTIVE_PHASE`
+ * → first phase with `queued`/`failed` backlog (UK territory) → first phase with **zero** candidate rows
+ *   (territory bootstrap: run discovery for Scotland/Ireland after EW is populated) → `england_wales`.
+ */
 async function resolveActivePhase(
   supabase: SupabaseClient,
   phaseOverride?: TerritorySeedPhase,
@@ -1321,9 +1406,18 @@ async function resolveActivePhase(
     const { count, error } = await supabase
       .from("course_import_candidates")
       .select("id", { count: "exact", head: true })
+      .eq("territory", DEFAULT_TERRITORY)
       .eq("seed_phase", phase)
       .in("status", ["queued", "failed"]);
     if (!error && (count ?? 0) > 0) return phase;
+  }
+  for (const phase of PHASE_ORDER) {
+    const { count, error } = await supabase
+      .from("course_import_candidates")
+      .select("id", { count: "exact", head: true })
+      .eq("territory", DEFAULT_TERRITORY)
+      .eq("seed_phase", phase);
+    if (!error && (count ?? 0) === 0) return phase;
   }
   return "england_wales";
 }
@@ -2337,6 +2431,33 @@ export async function runTerritoryScaleNightlyImport(
     `[course-import] Nightly exit policy: code=${nightlyRunExit.exitCode} reason=${nightlyRunExit.exitReason} hardFailures=${nightlyRunExit.hardFailureCount} unresolved=${nightlyRunExit.unresolvedCandidateCount}/${nightlyRunExit.maxUnresolvedOk} downgraded=${nightlyRunExit.exitDowngradedToSuccess}`,
   );
 
+  const queueCompositionBySeedPhase = await fetchQueueCompositionBySeedPhase(supabase, territory);
+  const importYieldByWorkPhase: Record<TerritoryImportWorkPhaseId, ImportYieldWorkPhaseMetrics | null> = {
+    newCourseGrowth: buildImportYieldWorkPhaseMetrics(growthResults.length, growthInserted, growthUpdated, growthResults),
+    staleCandidateRefresh: buildImportYieldWorkPhaseMetrics(
+      refreshResults.length,
+      refreshInserted,
+      refreshUpdated,
+      refreshResults,
+    ),
+    staleCatalogSweep: staleCatalogSweep
+      ? buildImportYieldWorkPhaseMetrics(
+          staleCatalogSweep.attempted,
+          sweepInserted,
+          sweepUpdated,
+          staleCatalogSweep.results,
+        )
+      : null,
+  };
+  const gY = importYieldByWorkPhase.newCourseGrowth;
+  const rY = importYieldByWorkPhase.staleCandidateRefresh;
+  console.log(
+    `[course-import] Queue snapshot @end: EW queued=${queueCompositionBySeedPhase.england_wales.byStatus.queued} imported=${queueCompositionBySeedPhase.england_wales.byStatus.imported} skipped=${queueCompositionBySeedPhase.england_wales.byStatus.skipped} | SC queued=${queueCompositionBySeedPhase.scotland.byStatus.queued} | IE queued=${queueCompositionBySeedPhase.ireland.byStatus.queued}`,
+  );
+  console.log(
+    `[course-import] Yield: growth ins/att=${gY.inserted}/${gY.attempted} (${gY.importYieldPct ?? "n/a"}%) upd=${gY.updated} unresolved=${gY.unresolved} | refresh ins/att=${rY.inserted}/${rY.attempted} (${rY.importYieldPct ?? "n/a"}%)`,
+  );
+
   const growthSkipped = growthResults.filter((r) => r.status === "skipped").length;
   const refreshSkipped = refreshResults.filter((r) => r.status === "skipped").length;
   const sweepSkipped = staleCatalogSweep ? staleCatalogSweep.results.filter((r) => r.status === "skipped").length : 0;
@@ -2391,6 +2512,8 @@ export async function runTerritoryScaleNightlyImport(
       updated: growthUpdated,
       skipped: growthSkipped,
     },
+    importYieldByWorkPhase,
+    queueCompositionBySeedPhase,
   };
 
   const report: Record<string, unknown> = {
@@ -2426,6 +2549,8 @@ export async function runTerritoryScaleNightlyImport(
     topFailureReasons,
     manualReviewItems,
     nightlyRunExit,
+    importYieldByWorkPhase,
+    queueCompositionBySeedPhase,
     generatedAt: new Date().toISOString(),
   };
 
@@ -2467,6 +2592,8 @@ export async function runTerritoryScaleNightlyImport(
     staleCandidateRefreshSummary,
     skippedStaleCatalogSweepReason,
     queuedCandidatesAfterCandidatePhases,
+    queueCompositionBySeedPhase,
+    importYieldByWorkPhase,
     nightlyRunExit,
     importRunMode,
   };

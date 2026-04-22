@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildImportYieldWorkPhaseMetrics,
   buildSearchQueryVariantsForImport,
   COURSE_IMPORT_SEEDING_PRESET_CAPS,
   resolveCourseImportRunMode,
@@ -51,6 +52,35 @@ function baseImport(): NormalizedCourseImport {
     ],
   };
 }
+
+describe("buildImportYieldWorkPhaseMetrics", () => {
+  it("computes yield and splits unresolved skips", () => {
+    const results = [
+      { courseName: "A", apiId: 1, status: "ok" as const, validationIssues: [] },
+      { courseName: "B", apiId: 2, status: "ok" as const, validationIssues: [] },
+      {
+        courseName: "C",
+        apiId: null,
+        status: "skipped" as const,
+        validationIssues: [],
+        error: "Unresolved candidate (ambiguous_api_match): x",
+      },
+      { courseName: "D", apiId: null, status: "skipped" as const, validationIssues: [], error: "other skip" },
+    ];
+    const m = buildImportYieldWorkPhaseMetrics(4, 2, 0, results);
+    expect(m.attempted).toBe(4);
+    expect(m.inserted).toBe(2);
+    expect(m.updated).toBe(0);
+    expect(m.unresolved).toBe(1);
+    expect(m.skipped).toBe(2);
+    expect(m.importYieldPct).toBe(50);
+  });
+
+  it("returns null yield when nothing attempted", () => {
+    const m = buildImportYieldWorkPhaseMetrics(0, 0, 0, []);
+    expect(m.importYieldPct).toBeNull();
+  });
+});
 
 describe("course import run mode", () => {
   it("resolveCourseImportRunMode prefers explicit options over env", () => {

@@ -85,6 +85,8 @@ async function main(): Promise<void> {
     "| queuedAfterPhases:",
     outcome.queuedCandidatesAfterCandidatePhases,
   );
+  console.log("[course-import-nightly] queueCompositionBySeedPhase:", outcome.queueCompositionBySeedPhase);
+  console.log("[course-import-nightly] importYieldByWorkPhase:", outcome.importYieldByWorkPhase);
   console.log(
     "[course-import-nightly] catalogFreshness:",
     outcome.catalogFreshness.triggeredFullRefresh ? "FULL_SWEEP" : "incremental_only",
@@ -145,6 +147,18 @@ async function main(): Promise<void> {
     "## Import breakdown (growth vs refresh vs sweep)",
     "```json",
     `${JSON.stringify(outcome.report.importRunBreakdown, null, 2)}`,
+    "```",
+    "",
+    "## Queue composition by seed phase (DB snapshot at end of run)",
+    "Counts are from `course_import_candidates` for this territory. **`queued`** = not yet successfully imported (still eligible for growth discovery).",
+    "```json",
+    `${JSON.stringify(outcome.queueCompositionBySeedPhase, null, 2)}`,
+    "```",
+    "",
+    "## Import yield by work phase (this batch)",
+    "`importYieldPct` = new course rows inserted ÷ API attempts in that work phase. **`unresolved`** = skipped with unresolved API id match.",
+    "```json",
+    `${JSON.stringify(outcome.importYieldByWorkPhase, null, 2)}`,
     "```",
     "",
     "## Catalog freshness",
