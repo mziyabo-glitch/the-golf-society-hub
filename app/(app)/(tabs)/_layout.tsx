@@ -14,8 +14,7 @@ export default function TabsLayout() {
     hasSociety && (isCaptain(member as any) || (member as any)?.has_seat === true);
 
   const societyTabHref = hasFullAccess ? undefined : null;
-  /** Scorecard is the hero tab for any member in a society (premium gates live scoring inside the screen). */
-  const scorecardBarHref = hasSociety ? undefined : null;
+  const rivalriesTabHref = hasSociety ? undefined : null;
 
   return (
     <Tabs
@@ -37,15 +36,15 @@ export default function TabsLayout() {
           href: societyTabHref,
         }}
       />
+      {/* Temporarily hidden from navigation; screen remains routable for guarded direct access */}
+      <Tabs.Screen name="scorecard" options={{ href: null }} />
       <Tabs.Screen
-        name="scorecard"
+        name="sinbook"
         options={{
-          title: "Scorecard",
-          tabBarAccessibilityLabel: "Matchday scorecard",
-          tabBarIcon: ({ color, focused }) => (
-            <Feather name="edit-3" color={color} size={focused ? 26 : 24} />
-          ),
-          href: scorecardBarHref,
+          title: "Rivalries",
+          tabBarAccessibilityLabel: "Rivalries",
+          tabBarIcon: ({ color }) => <Feather name="zap" color={color} size={24} />,
+          href: rivalriesTabHref,
         }}
       />
       <Tabs.Screen
@@ -66,7 +65,6 @@ export default function TabsLayout() {
       />
       {/* Routable from More / deep links; not shown in tab bar */}
       <Tabs.Screen name="weather" options={{ href: null }} />
-      <Tabs.Screen name="sinbook" options={{ href: null }} />
       <Tabs.Screen name="members" options={{ href: null }} />
       <Tabs.Screen name="settings" options={{ href: null }} />
     </Tabs>

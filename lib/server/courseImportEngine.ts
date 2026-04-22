@@ -242,6 +242,7 @@ async function upsertNormalizedImport(
     syncStatus: "ok" | "partial";
     confidence: number;
     importedAtIso: string;
+    rawRow: Record<string, unknown>;
   },
 ): Promise<{ courseId: string }> {
   const coursePayload: Record<string, unknown> = {
@@ -264,6 +265,7 @@ async function upsertNormalizedImport(
     imported_at: metadata.importedAtIso,
     last_synced_at: metadata.importedAtIso,
     enrichment_status: metadata.syncStatus === "ok" ? "imported" : "partial",
+    raw_row: metadata.rawRow,
   };
 
   const { data: savedCourse, error: courseError } = await supabase
@@ -497,6 +499,7 @@ export async function runNightlyCourseImport(
           syncStatus: status,
           confidence,
           importedAtIso,
+          rawRow: fetched.raw,
         });
         courseId = persisted.courseId;
         await applyManualOverrides(supabase, persisted.courseId, overwriteManualOverrides);

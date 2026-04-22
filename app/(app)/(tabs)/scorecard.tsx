@@ -20,6 +20,7 @@ import { InlineNotice } from "@/components/ui/InlineNotice";
 import { LicenceRequiredModal } from "@/components/LicenceRequiredModal";
 import { useBootstrap } from "@/lib/useBootstrap";
 import { usePaidAccess } from "@/lib/access/usePaidAccess";
+import { getPermissionsForMember, isCaptain, isSecretary } from "@/lib/rbac";
 import { getEventsForSociety, type EventDoc } from "@/lib/db_supabase/eventRepo";
 import { findTodayScorecardEvent } from "@/lib/matchday/scorecardMatchday";
 import { fetchPlayerRoundRow } from "@/lib/db_supabase/eventPlayerScoringRepo";
@@ -35,6 +36,9 @@ export default function ScorecardTabScreen() {
   const tabBarHeight = useBottomTabBarHeight();
   const { societyId, society, member, loading: bootstrapLoading } = useBootstrap();
   const { needsLicence, guardPaidAction, modalVisible, setModalVisible, societyId: guardSocietyId } = usePaidAccess();
+  const permissions = getPermissionsForMember(member);
+  const canAccessScorecardUi =
+    permissions.canManageHandicaps || isCaptain(member) || isSecretary(member);
 
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -100,6 +104,14 @@ export default function ScorecardTabScreen() {
     return (
       <Screen>
         <EmptyState title="Join a society" message="Choose a society to use the scorecard." />
+      </Screen>
+    );
+  }
+
+  if (!canAccessScorecardUi) {
+    return (
+      <Screen>
+        <EmptyState title="Scorecard" message="This feature is temporarily unavailable." />
       </Screen>
     );
   }

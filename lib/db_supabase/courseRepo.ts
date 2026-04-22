@@ -89,6 +89,12 @@ export type CourseSearchHit = {
   location?: string | null;
 };
 
+export type PlayableCourseHit = {
+  id: string;
+  course_name: string;
+  api_id: number | null;
+};
+
 /**
  * Fetch tees for a course (from course_tees table).
  * By default returns **active** tees only (`is_active = true`, migration 118) so pickers and scoring
@@ -337,6 +343,63 @@ export async function searchCourses(
     };
   });
   return { data: hits, error: null };
+}
+
+function normalizeCourseNameKey(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/golf club/g, "")
+    .replace(/golf centre/g, "")
+    .replace(/golf center/g, "")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+/**
+ * Resolve the best existing DB course row for scoring metadata by name.
+ * Used when legacy rounds point at older duplicate course rows with no tees.
+ */
+export async function findBestPlayableCourseByName(courseName: string): Promise<PlayableCourseHit | null> {
+  const q = courseName.trim();
+  if (!q) return null;
+  const { data, error } = await courseSupabase
+    .from("courses")
+    .select("id, course_name, api_id")
+    .ilike("course_name", `%${q}%`)
+    .limit(20);
+
+  if (error || !data || data.length === 0) return null;
+
+  const targetKey = normalizeCourseNameKey(q);
+  const ranked: Array<PlayableCourseHit & { score: number; teeCount: number }> = [];
+  for (const row of data as Array<{ id: string; course_name: string | null; api_id: number | null }>) {
+    const name = String(row.course_name ?? "").trim();
+    if (!name) continue;
+    const tees = await getTeesByCourseId(String(row.id));
+    const teeCount = tees.length;
+    if (teeCount === 0) continue;
+    const nameKey = normalizeCourseNameKey(name);
+    const exact = nameKey === targetKey ? 100 : 0;
+    const prefix = nameKey.startsWith(targetKey) || targetKey.startsWith(nameKey) ? 20 : 0;
+    const hasApi = row.api_id != null ? 10 : 0;
+    const score = exact + prefix + hasApi;
+    ranked.push({
+      id: String(row.id),
+      course_name: name,
+      api_id: row.api_id != null && Number.isFinite(Number(row.api_id)) ? Number(row.api_id) : null,
+      score,
+      teeCount,
+    });
+  }
+
+  if (ranked.length === 0) return null;
+  ranked.sort((a, b) => b.score - a.score || b.teeCount - a.teeCount || a.course_name.localeCompare(b.course_name));
+  const best = ranked[0];
+  return {
+    id: best.id,
+    course_name: best.course_name,
+    api_id: best.api_id,
+  };
 }
 
 /** Lat/lng + optional contact fields for playability / directions (migration 086+049). */

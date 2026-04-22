@@ -18,6 +18,7 @@ import { usePaidAccess } from "@/lib/access/usePaidAccess";
 import { useBootstrap } from "@/lib/useBootstrap";
 import { getColors, radius, spacing } from "@/lib/ui/theme";
 import {
+  findBestPlayableCourseByName,
   getCourseMetaById,
   getCourseTeeById,
   getHolesByTeeId,
@@ -31,6 +32,7 @@ import {
   addFreePlayRoundPlayer,
   getFreePlayRoundBundle,
   replaceHoleScores,
+  relinkFreePlayRoundCourse,
   saveQuickTotals,
   setFreePlayRoundMode,
   startFreePlayRound,
@@ -156,7 +158,21 @@ export default function FreePlayRoundDetailScreen() {
         }
 
         // 3) Resolve best tee for this round and auto-attach when possible.
-        const tees = await getTeesByCourseId(courseId);
+        let resolvedCourseId = courseId;
+        let resolvedCourseName = String(round.course_name ?? "").trim();
+        let tees = await getTeesByCourseId(resolvedCourseId);
+
+        // Legacy rounds can point at duplicate course rows without tee/hole metadata.
+        // Auto-heal by finding a playable sibling course row by name.
+        if (!tees.length && resolvedCourseName) {
+          const alt = await findBestPlayableCourseByName(resolvedCourseName);
+          if (alt && alt.id !== resolvedCourseId) {
+            resolvedCourseId = alt.id;
+            resolvedCourseName = alt.course_name || resolvedCourseName;
+            tees = await getTeesByCourseId(resolvedCourseId);
+          }
+        }
+
         if (!tees.length) {
           if (!cancelled) {
             setTeeMeta(null);
@@ -183,11 +199,21 @@ export default function FreePlayRoundDetailScreen() {
           setHoleMeta((holes ?? []).slice().sort((a, b) => a.hole_number - b.hole_number));
         }
 
-        // Persist picked tee on round so future loads hydrate immediately.
-        if (picked.id && round.tee_id !== picked.id) {
+        // Persist selected tee / healed course on round so future loads hydrate immediately.
+        if (picked.id && (round.tee_id !== picked.id || round.course_id !== resolvedCourseId)) {
           try {
-            await updateFreePlayRoundTee(round.id, picked.id, picked.tee_name);
-            if (!cancelled) setNotice("Loaded tee metadata for this round.");
+            if (round.course_id !== resolvedCourseId) {
+              await relinkFreePlayRoundCourse(round.id, {
+                courseId: resolvedCourseId,
+                courseName: resolvedCourseName || round.course_name,
+                teeId: picked.id,
+                teeName: picked.tee_name,
+              });
+              if (!cancelled) setNotice("Round course metadata repaired and tee loaded.");
+            } else {
+              await updateFreePlayRoundTee(round.id, picked.id, picked.tee_name);
+              if (!cancelled) setNotice("Loaded tee metadata for this round.");
+            }
           } catch {
             // Non-blocking; keep UI hydrated even if update fails.
           }

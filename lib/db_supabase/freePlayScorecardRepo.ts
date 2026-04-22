@@ -251,6 +251,22 @@ export async function updateFreePlayRoundTee(roundId: string, teeId: string, tee
   if (error) throw toFreePlayError(error, "Could not update round tee.");
 }
 
+export async function relinkFreePlayRoundCourse(
+  roundId: string,
+  payload: { courseId: string; courseName: string; teeId: string | null; teeName: string | null },
+): Promise<void> {
+  const { error } = await supabase
+    .from("free_play_rounds")
+    .update({
+      course_id: payload.courseId,
+      course_name: payload.courseName,
+      tee_id: payload.teeId,
+      tee_name: payload.teeName,
+    })
+    .eq("id", roundId);
+  if (error) throw toFreePlayError(error, "Could not relink round course.");
+}
+
 export async function startFreePlayRound(roundId: string): Promise<void> {
   const { error } = await supabase
     .from("free_play_rounds")

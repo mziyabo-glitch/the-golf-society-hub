@@ -65,6 +65,7 @@ export default function EventOverviewScreen() {
     () => permissions.canManageHandicaps || isSecretary(currentMember),
     [currentMember, permissions.canManageHandicaps],
   );
+  const canAccessScorecardUi = canEnterGrossScores;
   const canManagePayments = canManageEventPaymentsForSociety(memberships, societyId);
   const canManageRoster = canManageEventRosterForSociety(memberships, societyId);
   const canManageEvent =
@@ -411,26 +412,28 @@ export default function EventOverviewScreen() {
               <Feather name="chevron-right" size={18} color={colors.textTertiary} />
             </Pressable>
 
-            <Pressable
-              style={styles.quickAction}
-              onPress={() =>
-                router.push({
-                  pathname: "/(app)/event/[id]/gross-scores/leaderboard",
-                  params: { id: event.id },
-                } as never)
-              }
-            >
-              <View style={styles.quickActionLeft}>
-                <Feather name="list" size={18} color={colors.primary} />
-                <View>
-                  <AppText variant="bodyBold">Scoring leaderboard</AppText>
-                  <AppText variant="small" color="secondary">
-                    Gross-based order (Draft vs Official shown on screen)
-                  </AppText>
+            {canAccessScorecardUi ? (
+              <Pressable
+                style={styles.quickAction}
+                onPress={() =>
+                  router.push({
+                    pathname: "/(app)/event/[id]/gross-scores/leaderboard",
+                    params: { id: event.id },
+                  } as never)
+                }
+              >
+                <View style={styles.quickActionLeft}>
+                  <Feather name="list" size={18} color={colors.primary} />
+                  <View>
+                    <AppText variant="bodyBold">Scoring leaderboard</AppText>
+                    <AppText variant="small" color="secondary">
+                      Gross-based order (Draft vs Official shown on screen)
+                    </AppText>
+                  </View>
                 </View>
-              </View>
-              <Feather name="chevron-right" size={18} color={colors.textTertiary} />
-            </Pressable>
+                <Feather name="chevron-right" size={18} color={colors.textTertiary} />
+              </Pressable>
+            ) : null}
 
             {canEnterGrossScores ? (
               <Pressable
