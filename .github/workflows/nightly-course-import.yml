@@ -47,6 +47,14 @@ jobs:
   import-courses:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    # Importer env (scripts/nightly-course-import.ts → lib/server/courseImportEngine.ts):
+    # - requireEnv("NEXT_PUBLIC_SUPABASE_URL") — same project URL as lib/supabase.ts (also accepts EXPO_PUBLIC there).
+    # - requireEnv("SUPABASE_SERVICE_ROLE_KEY")
+    # - golfApiGet: GOLFCOURSE_API_KEY | EXPO_PUBLIC_GOLFCOURSE_API_KEY | NEXT_PUBLIC_GOLF_API_KEY
+    env:
+      NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL || secrets.EXPO_PUBLIC_SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      GOLFCOURSE_API_KEY: ${{ secrets.GOLFCOURSE_API_KEY || secrets.EXPO_PUBLIC_GOLFCOURSE_API_KEY || secrets.NEXT_PUBLIC_GOLF_API_KEY }}
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -92,15 +100,11 @@ jobs:
             ARGS="$ARGS --force-catalog-full-refresh"
           fi
           npm run course-import:nightly -- $ARGS
-        env:
-          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
-          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-          GOLFCOURSE_API_KEY: ${{ secrets.GOLFCOURSE_API_KEY }}
 
       - name: Upload morning report artifact
-        if: always()
+        if: always() && hashFiles('reports/nightly-course-import/**') != ''
         uses: actions/upload-artifact@v5
         with:
           name: nightly-course-import-report-${{ github.run_id }}
           path: reports/nightly-course-import/*
-          if-no-files-found: warn
+          if-no-files-found: ignore
