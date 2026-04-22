@@ -41,9 +41,9 @@ on:
         required: false
         default: "false"
       run_mode:
-        description: "maintenance (default) | seeding — seeding prioritizes new growth, minimal refresh, suppresses catalog sweep unless force_catalog_full_refresh"
+        description: "seeding (default) | maintenance — use seeding to maximize growth API budget and suppress sweep; maintenance for steady-state"
         required: false
-        default: "maintenance"
+        default: "seeding"
       active_phase:
         description: "Optional COURSE_IMPORT_ACTIVE_PHASE override (england_wales|scotland|ireland). Empty = auto-pick first phase with queued/failed backlog, else england_wales."
         required: false
@@ -63,8 +63,8 @@ jobs:
       NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL || secrets.EXPO_PUBLIC_SUPABASE_URL }}
       SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
       GOLFCOURSE_API_KEY: ${{ secrets.GOLFCOURSE_API_KEY || secrets.EXPO_PUBLIC_GOLFCOURSE_API_KEY || secrets.NEXT_PUBLIC_GOLF_API_KEY }}
-      # workflow_dispatch supplies inputs; schedule/cron does not — default maintenance.
-      COURSE_IMPORT_RUN_MODE: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.run_mode || 'maintenance' }}
+      # schedule/cron uses seeding to burn down large GB queues; override via workflow_dispatch run_mode.
+      COURSE_IMPORT_RUN_MODE: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.run_mode || 'seeding' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v5

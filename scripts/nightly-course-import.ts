@@ -87,6 +87,7 @@ async function main(): Promise<void> {
   );
   console.log("[course-import-nightly] queueCompositionBySeedPhase:", outcome.queueCompositionBySeedPhase);
   console.log("[course-import-nightly] importYieldByWorkPhase:", outcome.importYieldByWorkPhase);
+  console.log("[course-import-nightly] newCourseGrowthWaste:", outcome.newCourseGrowthWaste);
   console.log(
     "[course-import-nightly] catalogFreshness:",
     outcome.catalogFreshness.triggeredFullRefresh ? "FULL_SWEEP" : "incremental_only",
@@ -159,6 +160,12 @@ async function main(): Promise<void> {
     "`importYieldPct` = new course rows inserted ÷ API attempts in that work phase. **`unresolved`** = skipped with unresolved API id match.",
     "```json",
     `${JSON.stringify(outcome.importYieldByWorkPhase, null, 2)}`,
+    "```",
+    "",
+    "## New-course growth: conversion & waste (growth phase only)",
+    "Distinguishes **net-new** `courses` rows from **updates** to existing rows, and skip reasons (ambiguous / no catalog / low score). `notNetNew` segments duplicate-style work: DB/alias path vs search that still deduped to an existing course.",
+    "```json",
+    `${JSON.stringify(outcome.newCourseGrowthWaste, null, 2)}`,
     "```",
     "",
     "## Catalog freshness",

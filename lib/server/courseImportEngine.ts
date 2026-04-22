@@ -36,6 +36,22 @@ export type NightlyImportOptions = {
   triggerType?: "manual" | "nightly" | "territory_nightly";
 };
 
+/** How a GolfCourseAPI id was selected before `runCourseDetailImportFromApi` (or unresolved). */
+export type ApiIdResolutionPath = "preferred_api" | "db_name_match" | "db_loose" | "api_search" | "unresolved";
+
+export type GrowthSkipReason = "ambiguous_api_match" | "no_catalog_match" | "below_threshold";
+
+/**
+ * Set on `NightlyImportCourseResult` for territory `importCandidateCourse` (growth/refresh) attempts,
+ * to explain insert yield and candidate waste.
+ */
+export type NightlyImportGrowthConversion = {
+  resolutionPath: ApiIdResolutionPath;
+  skipReason?: GrowthSkipReason;
+  newCourseInserted: boolean;
+  existingCourseUpdated: boolean;
+};
+
 export type NightlyImportCourseResult = {
   courseName: string;
   apiId: number | null;
@@ -43,7 +59,42 @@ export type NightlyImportCourseResult = {
   validationIssues: ValidationIssue[];
   error?: string;
   courseId?: string;
+  /** Present when `importCandidateCourse` ran (territory pipeline). */
+  growthConversion?: NightlyImportGrowthConversion;
 };
+
+/** Aggregates how growth attempts break down: skips by search class, and non-net-new by resolution path. */
+export type NewCourseGrowthWasteReport = {
+  attempted: number;
+  netNewInserts: number;
+  existingCourseRowsRefreshed: number;
+  okOrPartial: number;
+  skipped: {
+    total: number;
+    ambiguousApiMatch: number;
+    noCatalogMatch: number;
+    belowThreshold: number;
+  };
+  /** Count of ok|partial by how api_id was resolved. */
+  byResolutionOnSuccess: {
+    preferredApi: number;
+    dbNameMatch: number;
+    dbLooseMatch: number;
+    apiSearch: number;
+  };
+  /**
+   * Attempts that succeeded on import but only refreshed a course row already in `courses` (no new row):
+   * local DB/alias to api_id, vs search that still deduped to an existing `courses` row.
+   */
+  notNetNew: {
+    fromDbOrPreferredPath: number;
+    fromApiSearchPath: number;
+  };
+  /** Unresolved / fuzzy spotlight names (e.g. known tricky venues). */
+  spotlightUnresolved: Array<{ name: string; reason: string }>;
+};
+
+const UNRESOLVED_SPOTLIGHT = /(woodhall\s+spa|york\s+golf|yeovil\s+golf|yarrow\s+valley)/i;
 
 export type TerritorySeedPhase = "england_wales" | "scotland" | "ireland";
 
@@ -151,6 +202,65 @@ export function buildImportYieldWorkPhaseMetrics(
   return { attempted, inserted, updated, unresolved, skipped, importYieldPct };
 }
 
+/**
+ * For territory growth: explains low insert % vs `attempts` (updates vs true inserts, and skip reasons from API search).
+ */
+export function buildNewCourseGrowthWasteFromGrowthResults(results: NightlyImportCourseResult[]): NewCourseGrowthWasteReport {
+  const report: NewCourseGrowthWasteReport = {
+    attempted: results.length,
+    netNewInserts: 0,
+    existingCourseRowsRefreshed: 0,
+    okOrPartial: 0,
+    skipped: { total: 0, ambiguousApiMatch: 0, noCatalogMatch: 0, belowThreshold: 0 },
+    byResolutionOnSuccess: { preferredApi: 0, dbNameMatch: 0, dbLooseMatch: 0, apiSearch: 0 },
+    notNetNew: { fromDbOrPreferredPath: 0, fromApiSearchPath: 0 },
+    spotlightUnresolved: [],
+  };
+  const spotlightSeen = new Set<string>();
+  const pushSpotlight = (name: string, err: string): void => {
+    if (!UNRESOLVED_SPOTLIGHT.test(name) || !err || spotlightSeen.has(name)) return;
+    spotlightSeen.add(name);
+    report.spotlightUnresolved.push({ name, reason: err.slice(0, 200) });
+  };
+  for (const r of results) {
+    const g = r.growthConversion;
+    if (r.status === "ok" || r.status === "partial") {
+      report.okOrPartial += 1;
+      if (g) {
+        if (g.resolutionPath === "preferred_api") report.byResolutionOnSuccess.preferredApi += 1;
+        else if (g.resolutionPath === "db_name_match") report.byResolutionOnSuccess.dbNameMatch += 1;
+        else if (g.resolutionPath === "db_loose") report.byResolutionOnSuccess.dbLooseMatch += 1;
+        else if (g.resolutionPath === "api_search") report.byResolutionOnSuccess.apiSearch += 1;
+        if (g.newCourseInserted) report.netNewInserts += 1;
+        if (g.existingCourseUpdated) {
+          report.existingCourseRowsRefreshed += 1;
+          if (!g.newCourseInserted) {
+            if (g.resolutionPath === "preferred_api" || g.resolutionPath === "db_name_match" || g.resolutionPath === "db_loose") {
+              report.notNetNew.fromDbOrPreferredPath += 1;
+            } else if (g.resolutionPath === "api_search") {
+              report.notNetNew.fromApiSearchPath += 1;
+            }
+          }
+        }
+      }
+    } else if (r.status === "skipped" && (r.error?.includes("Unresolved candidate") || g?.skipReason)) {
+      report.skipped.total += 1;
+      const tag =
+        g?.skipReason ??
+        (r.error?.includes("ambiguous_api_match")
+          ? "ambiguous_api_match"
+          : r.error?.includes("no_catalog_match")
+            ? "no_catalog_match"
+            : "below_threshold");
+      if (tag === "ambiguous_api_match") report.skipped.ambiguousApiMatch += 1;
+      else if (tag === "no_catalog_match") report.skipped.noCatalogMatch += 1;
+      else report.skipped.belowThreshold += 1;
+      pushSpotlight(r.courseName ?? "", r.error ?? "");
+    }
+  }
+  return report;
+}
+
 /** Nightly / CI exit policy derived from import results (see scripts/nightly-course-import.ts). */
 export type NightlyImportRunExitSummary = {
   exitCode: 0 | 1;
@@ -189,6 +299,8 @@ export type TerritoryImportOutcome = {
   queueCompositionBySeedPhase: Record<TerritorySeedPhase, QueueCompositionPhaseSnapshot>;
   /** Insert yield and unresolved skips per work phase (this batch only). */
   importYieldByWorkPhase: Record<TerritoryImportWorkPhaseId, ImportYieldWorkPhaseMetrics | null>;
+  /** Growth-phase conversion: where attempts went (net-new vs updates vs search skips by class). */
+  newCourseGrowthWaste: NewCourseGrowthWasteReport;
   nightlyRunExit: NightlyImportRunExitSummary;
   importRunMode: CourseImportRunMode;
 };
@@ -919,9 +1031,15 @@ async function resolveApiIdDetail(
   apiId: number | null;
   diagnostic?: string;
   resolutionClass?: CandidateSearchResolutionClass;
+  resolutionPath: ApiIdResolutionPath;
 }> {
   if (seed.preferredApiId && seed.preferredApiId > 0) {
-    return { apiId: seed.preferredApiId, diagnostic: "preferred_api_id", resolutionClass: "matched" };
+    return {
+      apiId: seed.preferredApiId,
+      diagnostic: "preferred_api_id",
+      resolutionClass: "matched",
+      resolutionPath: "preferred_api",
+    };
   }
   const normalized = opts?.normalizedName?.trim() || normalizeCandidateName(seed.name);
   const { data: existing } = await supabase
@@ -933,15 +1051,28 @@ async function resolveApiIdDetail(
     .maybeSingle();
   const existingApi = existing ? Number((existing as { api_id?: number }).api_id) : null;
   if (existingApi != null && Number.isFinite(existingApi) && existingApi > 0) {
-    return { apiId: existingApi, diagnostic: "db_case_insensitive_name_match", resolutionClass: "matched" };
+    return {
+      apiId: existingApi,
+      diagnostic: "db_case_insensitive_name_match",
+      resolutionClass: "matched",
+      resolutionPath: "db_name_match",
+    };
   }
   const loose = await findExistingCourseApiIdByLooseDbName(supabase, seed.name, normalized);
-  if (loose != null) return { apiId: loose, diagnostic: "db_substring_ilike_scored", resolutionClass: "matched" };
+  if (loose != null) {
+    return {
+      apiId: loose,
+      diagnostic: "db_substring_ilike_scored",
+      resolutionClass: "matched",
+      resolutionPath: "db_loose",
+    };
+  }
   const searched = await searchCourseApiIdFromVariants(seed.name, normalized);
   return {
     apiId: searched.apiId,
     diagnostic: searched.diagnostic,
     resolutionClass: searched.apiId != null ? "matched" : searched.resolutionClass,
+    resolutionPath: "api_search",
   };
 }
 
@@ -2028,7 +2159,7 @@ async function importCandidateCourse(
   };
   const sourceType: ImportSourceType = "golfcourseapi";
   const sourceUrl = null;
-  const { apiId, diagnostic, resolutionClass } = await resolveApiIdDetail(supabase, seed, {
+  const { apiId, diagnostic, resolutionClass, resolutionPath } = await resolveApiIdDetail(supabase, seed, {
     normalizedName: candidate.normalized_name,
   });
   const jobId = await insertJobStart(supabase, {
@@ -2047,6 +2178,12 @@ async function importCandidateCourse(
 
   if (!apiId) {
     const cls = resolutionClass ?? "below_threshold";
+    const growthSkip: GrowthSkipReason =
+      cls === "ambiguous_api_match"
+        ? "ambiguous_api_match"
+        : cls === "no_catalog_match"
+          ? "no_catalog_match"
+          : "below_threshold";
     const clsTag =
       cls === "no_catalog_match"
         ? "(no_catalog_match)"
@@ -2073,6 +2210,12 @@ async function importCandidateCourse(
         status: "skipped",
         validationIssues: [],
         error: errorMessage,
+        growthConversion: {
+          resolutionPath: "unresolved",
+          skipReason: growthSkip,
+          newCourseInserted: false,
+          existingCourseUpdated: false,
+        },
       },
       inserted: false,
       updated: false,
@@ -2080,7 +2223,7 @@ async function importCandidateCourse(
     };
   }
 
-  return runCourseDetailImportFromApi(supabase, {
+  const detail = await runCourseDetailImportFromApi(supabase, {
     batchId: params.batchId,
     batchRunId: params.batchRunId,
     phase: params.phase,
@@ -2100,6 +2243,19 @@ async function importCandidateCourse(
     },
     catalogStaleSweep: false,
   });
+  return {
+    result: {
+      ...detail.result,
+      growthConversion: {
+        resolutionPath,
+        newCourseInserted: detail.inserted,
+        existingCourseUpdated: detail.updated,
+      },
+    },
+    inserted: detail.inserted,
+    updated: detail.updated,
+    missingSiCount: detail.missingSiCount,
+  };
 }
 
 function buildTopFailureReasons(results: NightlyImportCourseResult[]): Array<{ reason: string; count: number }> {
@@ -2431,6 +2587,7 @@ export async function runTerritoryScaleNightlyImport(
     `[course-import] Nightly exit policy: code=${nightlyRunExit.exitCode} reason=${nightlyRunExit.exitReason} hardFailures=${nightlyRunExit.hardFailureCount} unresolved=${nightlyRunExit.unresolvedCandidateCount}/${nightlyRunExit.maxUnresolvedOk} downgraded=${nightlyRunExit.exitDowngradedToSuccess}`,
   );
 
+  const newCourseGrowthWaste = buildNewCourseGrowthWasteFromGrowthResults(growthResults);
   const queueCompositionBySeedPhase = await fetchQueueCompositionBySeedPhase(supabase, territory);
   const importYieldByWorkPhase: Record<TerritoryImportWorkPhaseId, ImportYieldWorkPhaseMetrics | null> = {
     newCourseGrowth: buildImportYieldWorkPhaseMetrics(growthResults.length, growthInserted, growthUpdated, growthResults),
@@ -2456,6 +2613,9 @@ export async function runTerritoryScaleNightlyImport(
   );
   console.log(
     `[course-import] Yield: growth ins/att=${gY.inserted}/${gY.attempted} (${gY.importYieldPct ?? "n/a"}%) upd=${gY.updated} unresolved=${gY.unresolved} | refresh ins/att=${rY.inserted}/${rY.attempted} (${rY.importYieldPct ?? "n/a"}%)`,
+  );
+  console.log(
+    `[course-import] Growth waste: netNew=${newCourseGrowthWaste.netNewInserts} catalogRefresh=${newCourseGrowthWaste.existingCourseRowsRefreshed} skips amb=${newCourseGrowthWaste.skipped.ambiguousApiMatch} noMatch=${newCourseGrowthWaste.skipped.noCatalogMatch} lowScore=${newCourseGrowthWaste.skipped.belowThreshold} notNetNew db=${newCourseGrowthWaste.notNetNew.fromDbOrPreferredPath} searchDedupe=${newCourseGrowthWaste.notNetNew.fromApiSearchPath}`,
   );
 
   const growthSkipped = growthResults.filter((r) => r.status === "skipped").length;
@@ -2514,6 +2674,7 @@ export async function runTerritoryScaleNightlyImport(
     },
     importYieldByWorkPhase,
     queueCompositionBySeedPhase,
+    newCourseGrowthWaste,
   };
 
   const report: Record<string, unknown> = {
@@ -2551,6 +2712,7 @@ export async function runTerritoryScaleNightlyImport(
     nightlyRunExit,
     importYieldByWorkPhase,
     queueCompositionBySeedPhase,
+    newCourseGrowthWaste,
     generatedAt: new Date().toISOString(),
   };
 
@@ -2594,6 +2756,7 @@ export async function runTerritoryScaleNightlyImport(
     queuedCandidatesAfterCandidatePhases,
     queueCompositionBySeedPhase,
     importYieldByWorkPhase,
+    newCourseGrowthWaste,
     nightlyRunExit,
     importRunMode,
   };

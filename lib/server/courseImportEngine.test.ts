@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildImportYieldWorkPhaseMetrics,
+  buildNewCourseGrowthWasteFromGrowthResults,
   buildSearchQueryVariantsForImport,
   COURSE_IMPORT_SEEDING_PRESET_CAPS,
   resolveCourseImportRunMode,
@@ -52,6 +53,55 @@ function baseImport(): NormalizedCourseImport {
     ],
   };
 }
+
+describe("buildNewCourseGrowthWasteFromGrowthResults", () => {
+  it("separates net-new inserts, catalog refreshes, and skip classes", () => {
+    const results = [
+      {
+        courseName: "A",
+        apiId: 1,
+        status: "ok" as const,
+        validationIssues: [],
+        growthConversion: {
+          resolutionPath: "api_search" as const,
+          newCourseInserted: true,
+          existingCourseUpdated: false,
+        },
+      },
+      {
+        courseName: "B",
+        apiId: 2,
+        status: "ok" as const,
+        validationIssues: [],
+        growthConversion: {
+          resolutionPath: "db_name_match" as const,
+          newCourseInserted: false,
+          existingCourseUpdated: true,
+        },
+      },
+      {
+        courseName: "Woodhall Spa Golf Club",
+        apiId: null,
+        status: "skipped" as const,
+        validationIssues: [],
+        error: "Unresolved candidate (ambiguous_api_match): x",
+        growthConversion: {
+          resolutionPath: "unresolved" as const,
+          skipReason: "ambiguous_api_match" as const,
+          newCourseInserted: false,
+          existingCourseUpdated: false,
+        },
+      },
+    ];
+    const w = buildNewCourseGrowthWasteFromGrowthResults(results);
+    expect(w.attempted).toBe(3);
+    expect(w.netNewInserts).toBe(1);
+    expect(w.existingCourseRowsRefreshed).toBe(1);
+    expect(w.notNetNew.fromDbOrPreferredPath).toBe(1);
+    expect(w.skipped.ambiguousApiMatch).toBe(1);
+    expect(w.spotlightUnresolved.length).toBeGreaterThan(0);
+  });
+});
 
 describe("buildImportYieldWorkPhaseMetrics", () => {
   it("computes yield and splits unresolved skips", () => {
