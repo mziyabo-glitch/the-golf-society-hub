@@ -1,7 +1,11 @@
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import * as os from "node:os";
+import * as path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   buildOfficialDiscoveryQueries,
   isPriorityCourseName,
+  loadPriorityCourseEntriesFromConfig,
   normalizeCourseKey,
   parseHtmlScorecard,
   parseStructuredScorecardText,
@@ -58,5 +62,36 @@ describe("priorityOfficialSources", () => {
     expect(tees).toHaveLength(1);
     expect(tees[0]?.teeName).toBe("White");
     expect(tees[0]?.holes[1]?.yardage).toBe(512);
+  });
+
+  it("loads priority override fields from JSON config", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "priority-course-config-"));
+    const jsonPath = path.join(dir, "priority.json");
+    await writeFile(
+      jsonPath,
+      JSON.stringify({
+        courses: [
+          {
+            courseName: "The Vale Resort",
+            officialScorecardUrl: "https://example.com/vale-scorecard.pdf",
+            sourceType: "pdf",
+            notes: "official pdf override",
+          },
+        ],
+      }),
+      "utf8",
+    );
+    const prev = process.env.COURSE_IMPORT_PRIORITY_COURSES_JSON;
+    process.env.COURSE_IMPORT_PRIORITY_COURSES_JSON = jsonPath;
+    try {
+      const rows = await loadPriorityCourseEntriesFromConfig();
+      const vale = rows.find((r) => r.name === "The Vale Resort");
+      expect(vale?.officialScorecardUrl).toBe("https://example.com/vale-scorecard.pdf");
+      expect(vale?.sourceType).toBe("pdf");
+    } finally {
+      if (prev == null) delete process.env.COURSE_IMPORT_PRIORITY_COURSES_JSON;
+      else process.env.COURSE_IMPORT_PRIORITY_COURSES_JSON = prev;
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 });

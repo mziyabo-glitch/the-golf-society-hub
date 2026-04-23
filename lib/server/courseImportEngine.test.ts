@@ -3,6 +3,7 @@ import {
   buildImportYieldWorkPhaseMetrics,
   buildNewCourseGrowthWasteFromGrowthResults,
   buildSearchQueryVariantsForImport,
+  classifyUnverifiedStage,
   COURSE_IMPORT_SEEDING_PRESET_CAPS,
   evaluateCourseCompleteness,
   evaluateGolferDataPromotionDecision,
@@ -135,6 +136,56 @@ describe("evaluateGolferDataPromotionDecision", () => {
     });
     expect(decision.status).toBe("rejected");
     expect(decision.promotionDecision).toBe("reject");
+  });
+});
+
+describe("classifyUnverifiedStage", () => {
+  it("classifies as needs official confirmation when data is complete", () => {
+    const cls = classifyUnverifiedStage({
+      completeTeeCount: 2,
+      missingSI: 0,
+      missingYardage: 0,
+      officialSourceFound: false,
+      officialParseSuccess: false,
+      ambiguousMatch: false,
+    });
+    expect(cls).toBe("unverified_needs_official_confirmation");
+  });
+
+  it("classifies parse failure when official source exists but parse failed", () => {
+    const cls = classifyUnverifiedStage({
+      completeTeeCount: 1,
+      missingSI: 0,
+      missingYardage: 0,
+      officialSourceFound: true,
+      officialParseSuccess: false,
+      ambiguousMatch: false,
+    });
+    expect(cls).toBe("unverified_parse_failed");
+  });
+
+  it("classifies ambiguous match first", () => {
+    const cls = classifyUnverifiedStage({
+      completeTeeCount: 1,
+      missingSI: 0,
+      missingYardage: 0,
+      officialSourceFound: false,
+      officialParseSuccess: false,
+      ambiguousMatch: true,
+    });
+    expect(cls).toBe("unverified_ambiguous_match");
+  });
+
+  it("falls back to incomplete hole data", () => {
+    const cls = classifyUnverifiedStage({
+      completeTeeCount: 0,
+      missingSI: 3,
+      missingYardage: 1,
+      officialSourceFound: false,
+      officialParseSuccess: false,
+      ambiguousMatch: false,
+    });
+    expect(cls).toBe("unverified_incomplete_hole_data");
   });
 });
 

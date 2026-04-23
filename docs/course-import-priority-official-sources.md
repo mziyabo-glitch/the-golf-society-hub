@@ -13,7 +13,13 @@ Use these inputs to prioritize specific courses and improve verified promotions 
 ```json
 {
   "courses": [
-    { "name": "The Vale Resort", "officialUrls": ["https://www.valeresort.com/golf/"] }
+    {
+      "name": "The Vale Resort",
+      "officialScorecardUrl": "https://www.valeresort.com/golf/",
+      "sourceType": "html",
+      "notes": "Try official override before discovery",
+      "officialUrls": ["https://www.valeresort.com/golf/"]
+    }
   ]
 }
 ```
@@ -47,6 +53,16 @@ Supports a manually supplied official scorecard dataset:
 
 If the supplied data is complete and passes hardened validation, it can be promoted to `verified`.
 
+## Priority maintenance budget
+
+- `COURSE_IMPORT_MAX_PRIORITY_MAINTENANCE`
+
+Reserves a small pass for imported priority candidates even when growth backlog is non-zero.
+Defaults:
+
+- maintenance mode: `3`
+- seeding mode: `5`
+
 ## Report section
 
 Nightly report now includes a `Priority course promotion audit` JSON section with:
@@ -57,3 +73,11 @@ Nightly report now includes a `Priority course promotion audit` JSON section wit
 - `missingSI`
 - `missingYardage`
 - `finalStatus`
+- `unverifiedClassification`
+
+Nightly report also includes `priorityCoursesReadyForOfficialConfirmation` with:
+
+- `courseName`
+- `completeTeeCount`
+- `likelyPromotionBlocker`
+- `suggestedNextAction`

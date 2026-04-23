@@ -8,6 +8,9 @@ export type ValidationBasis = "official_only" | "official_plus_secondary" | "dua
 export type PriorityCourseEntry = {
   name: string;
   officialUrls?: string[];
+  officialScorecardUrl?: string;
+  sourceType?: "pdf" | "html";
+  notes?: string;
 };
 
 export type HoleSourceRow = {
@@ -99,13 +102,37 @@ export async function loadPriorityCourseEntriesFromConfig(): Promise<PriorityCou
           : [];
       for (const row of rows) {
         if (!row || typeof row !== "object") continue;
-        const r = row as { name?: unknown; officialUrls?: unknown };
-        const name = typeof r.name === "string" ? r.name.trim() : "";
+        const r = row as {
+          name?: unknown;
+          courseName?: unknown;
+          officialUrls?: unknown;
+          officialScorecardUrl?: unknown;
+          sourceType?: unknown;
+          notes?: unknown;
+        };
+        const name =
+          typeof r.name === "string"
+            ? r.name.trim()
+            : typeof r.courseName === "string"
+              ? r.courseName.trim()
+              : "";
         if (!name) continue;
         const officialUrls = Array.isArray(r.officialUrls)
           ? r.officialUrls.map((u) => String(u).trim()).filter((u) => /^https?:\/\//i.test(u))
           : [];
-        entries.push({ name, officialUrls: officialUrls.length > 0 ? officialUrls : undefined });
+        const officialScorecardUrl =
+          typeof r.officialScorecardUrl === "string" && /^https?:\/\//i.test(r.officialScorecardUrl.trim())
+            ? r.officialScorecardUrl.trim()
+            : undefined;
+        const sourceType = r.sourceType === "pdf" || r.sourceType === "html" ? r.sourceType : undefined;
+        const notes = typeof r.notes === "string" ? r.notes.trim() : undefined;
+        entries.push({
+          name,
+          officialUrls: officialUrls.length > 0 ? officialUrls : undefined,
+          officialScorecardUrl,
+          sourceType,
+          notes,
+        });
       }
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
@@ -124,6 +151,9 @@ export async function loadPriorityCourseEntriesFromConfig(): Promise<PriorityCou
     }
     const mergedUrls = [...(existing.officialUrls ?? []), ...(row.officialUrls ?? [])];
     existing.officialUrls = [...new Set(mergedUrls)];
+    existing.officialScorecardUrl = existing.officialScorecardUrl ?? row.officialScorecardUrl;
+    existing.sourceType = existing.sourceType ?? row.sourceType;
+    existing.notes = existing.notes ?? row.notes;
   }
   return [...byName.values()];
 }
@@ -344,8 +374,26 @@ function manualRowsForCourse(courseName: string, manual: ManualScorecardDataset 
   return ensureCompleteRows(tees);
 }
 
-function mergeAndNormalizeUrls(explicit: string[] | undefined, discovered: string[]): string[] {
-  return sortOfficialCandidates([...(explicit ?? []), ...discovered]);
+function mergeAndNormalizeUrls(
+  entry: PriorityCourseEntry | undefined,
+  discovered: string[],
+): Array<{ url: string; source: "override" | "discovery"; preferredType?: "pdf" | "html" }> {
+  const merged: Array<{ url: string; source: "override" | "discovery"; preferredType?: "pdf" | "html" }> = [];
+  if (entry?.officialScorecardUrl) {
+    merged.push({
+      url: entry.officialScorecardUrl,
+      source: "override",
+      preferredType: entry.sourceType,
+    });
+  }
+  for (const url of entry?.officialUrls ?? []) merged.push({ url, source: "override" });
+  for (const url of sortOfficialCandidates(discovered)) merged.push({ url, source: "discovery" });
+  const seen = new Set<string>();
+  return merged.filter((row) => {
+    if (seen.has(row.url)) return false;
+    seen.add(row.url);
+    return true;
+  });
 }
 
 export async function resolvePriorityOfficialSource(params: {
@@ -398,8 +446,9 @@ export async function resolvePriorityOfficialSource(params: {
       // best-effort discovery only
     }
   }
-  const urls = mergeAndNormalizeUrls(entry?.officialUrls, discovered).slice(0, 12);
-  let officialSourceFound = urls.length > 0;
+  const urlCandidates = mergeAndNormalizeUrls(entry, discovered).slice(0, 12);
+  const urls = urlCandidates.map((u) => u.url);
+  const officialSourceFound = urls.length > 0;
   const attemptedUrls: string[] = [];
   for (const url of urls) {
     attemptedUrls.push(url);

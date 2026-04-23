@@ -46,6 +46,11 @@ export type ValidationIssue = {
 
 export type CourseDataConfidence = "high" | "medium" | "low";
 export type CourseGolferDataStatus = "verified" | "partial" | "unverified" | "rejected";
+export type UnverifiedClassification =
+  | "unverified_needs_official_confirmation"
+  | "unverified_incomplete_hole_data"
+  | "unverified_ambiguous_match"
+  | "unverified_parse_failed";
 
 type MultiSourceSourceId = "official_scorecard" | "golf_api";
 
@@ -139,6 +144,7 @@ export type NightlyImportCourseResult = {
   growthConversion?: NightlyImportGrowthConversion;
   golferDataStatus?: CourseGolferDataStatus;
   golferDataMetrics?: GolferDataPromotionDecision["metrics"];
+  unverifiedClassification?: UnverifiedClassification;
   priorityPromotionAudit?: {
     isPriority: boolean;
     officialSourceFound: boolean;
@@ -147,6 +153,7 @@ export type NightlyImportCourseResult = {
     missingSI: number;
     missingYardage: number;
     finalStatus: CourseGolferDataStatus | ImportSyncStatus;
+    unverifiedClassification?: UnverifiedClassification;
   };
 };
 
@@ -207,6 +214,8 @@ export type TerritoryImportCaps = {
   maxNewCourseImportAttempts: number;
   /** Max imports for candidates already imported but due for refresh. Separate API budget from growth. */
   maxStaleCandidateRefreshAttempts: number;
+  /** Small reserved pass for high-priority imported candidates, even when growth backlog exists. */
+  maxPriorityMaintenanceCourses: number;
   /** Max rows processed in the optional catalog stale sweep (separate from candidate budgets). */
   maxStaleCatalogSweepCourses: number;
   /**
@@ -1126,6 +1135,27 @@ function deriveValidationBasis(params: {
   return "secondary_only";
 }
 
+export function classifyUnverifiedStage(params: {
+  completeTeeCount: number;
+  missingSI: number;
+  missingYardage: number;
+  officialSourceFound: boolean;
+  officialParseSuccess: boolean;
+  ambiguousMatch: boolean;
+}): UnverifiedClassification {
+  if (params.ambiguousMatch) return "unverified_ambiguous_match";
+  if (params.officialSourceFound && !params.officialParseSuccess) return "unverified_parse_failed";
+  if (
+    params.completeTeeCount > 0 &&
+    params.missingSI === 0 &&
+    params.missingYardage === 0 &&
+    !params.officialSourceFound
+  ) {
+    return "unverified_needs_official_confirmation";
+  }
+  return "unverified_incomplete_hole_data";
+}
+
 async function resolveApiIdDetail(
   supabase: SupabaseClient,
   seed: CourseSeed,
@@ -1496,6 +1526,7 @@ export const COURSE_IMPORT_SEEDING_PRESET_CAPS: TerritoryImportCaps = {
   maxNewSeeds: 64,
   maxRetries: 14,
   maxRefreshes: 8,
+  maxPriorityMaintenanceCourses: 5,
   maxDiscoveryPerRun: 500,
   maxNewCourseImportAttempts: 75,
   maxStaleCandidateRefreshAttempts: 2,
@@ -1541,6 +1572,11 @@ function getTerritoryImportCaps(overrides?: Partial<TerritoryImportCaps>, runMod
       overrides?.maxRetries ?? (seed ? parsePositiveIntEnv("COURSE_IMPORT_MAX_RETRIES", s.maxRetries) : parsePositiveIntEnv("COURSE_IMPORT_MAX_RETRIES", 12)),
     maxRefreshes:
       overrides?.maxRefreshes ?? (seed ? parsePositiveIntEnv("COURSE_IMPORT_MAX_REFRESHES", s.maxRefreshes) : parsePositiveIntEnv("COURSE_IMPORT_MAX_REFRESHES", 25)),
+    maxPriorityMaintenanceCourses:
+      overrides?.maxPriorityMaintenanceCourses ??
+      (seed
+        ? parsePositiveIntEnv("COURSE_IMPORT_MAX_PRIORITY_MAINTENANCE", s.maxPriorityMaintenanceCourses)
+        : parsePositiveIntEnv("COURSE_IMPORT_MAX_PRIORITY_MAINTENANCE", 3)),
     maxDiscoveryPerRun:
       overrides?.maxDiscoveryPerRun ??
       (seed ? parsePositiveIntEnv("COURSE_IMPORT_MAX_DISCOVERY", s.maxDiscoveryPerRun) : parsePositiveIntEnv("COURSE_IMPORT_MAX_DISCOVERY", 120)),
@@ -2362,13 +2398,33 @@ async function runCourseDetailImportFromApi(
       missingSI: golferDecision.metrics.missingSI,
       missingYardage: golferDecision.metrics.missingYardage,
       finalStatus: golferDecision.status,
+      unverifiedClassification:
+        golferDecision.promotionDecision === "insert"
+          ? undefined
+          : classifyUnverifiedStage({
+              completeTeeCount: golferDecision.metrics.completeTeeCount,
+              missingSI: golferDecision.metrics.missingSI,
+              missingYardage: golferDecision.metrics.missingYardage,
+              officialSourceFound: priorityOfficial.officialSourceFound,
+              officialParseSuccess: priorityOfficial.parseSuccess,
+              ambiguousMatch: false,
+            }),
     };
     console.log(
       `[course-import] Source validation ${seedName} api_id=${params.apiId}: sourceCount=${golferDecision.metrics.sourceCount} official=${golferDecision.metrics.officialSourceUsed} holesValidated=${golferDecision.metrics.validatedHoleCount} completeTeeCount=${golferDecision.metrics.completeTeeCount} missingSI=${golferDecision.metrics.missingSI} missingYardage=${golferDecision.metrics.missingYardage} parMismatch=${golferDecision.metrics.parMismatchCount} siMismatch=${golferDecision.metrics.siMismatchCount} yardageMismatch=${golferDecision.metrics.yardageMismatchCount} confidence=${golferDecision.confidence} decision=${golferDecision.promotionDecision}`,
     );
 
     if (golferDecision.promotionDecision !== "insert") {
-      const lowReason = golferDecision.reasons.join("; ") || "validation_not_promoted";
+      const unverifiedClassification = classifyUnverifiedStage({
+        completeTeeCount: golferDecision.metrics.completeTeeCount,
+        missingSI: golferDecision.metrics.missingSI,
+        missingYardage: golferDecision.metrics.missingYardage,
+        officialSourceFound: priorityOfficial.officialSourceFound,
+        officialParseSuccess: priorityOfficial.parseSuccess,
+        ambiguousMatch: false,
+      });
+      const lowReason =
+        `classification=${unverifiedClassification}; ` + (golferDecision.reasons.join("; ") || "validation_not_promoted");
       if (!params.dryRun) {
         await insertLowConfidenceStagingRow(supabase, {
           batchRunId: params.batchRunId,
@@ -2411,6 +2467,7 @@ async function runCourseDetailImportFromApi(
           sourceComparison: sourceValidation.comparison,
           priorityPromotionAudit,
           validationBasis,
+          unverifiedClassification,
         },
       });
       console.log(`[course-import] Decision ${seedName} api_id=${params.apiId}: REJECT_TO_STAGING reason=${lowReason}`);
@@ -2423,6 +2480,7 @@ async function runCourseDetailImportFromApi(
           error: `Low confidence import staged: ${lowReason}`.slice(0, 480),
           golferDataStatus: golferDecision.status,
           golferDataMetrics: golferDecision.metrics,
+          unverifiedClassification,
           priorityPromotionAudit,
         },
         inserted: false,
@@ -2669,15 +2727,18 @@ async function importCandidateCourse(
             ? "(below_threshold)"
             : "(unresolved)";
     const errorMessage = `Unresolved candidate ${clsTag}: ${diagnostic ?? ""}`.slice(0, 480);
+    const isPriorityCourse = isPriorityCourseName(seed.name, params.priorityEntries);
+    const unverifiedClassification: UnverifiedClassification =
+      growthSkip === "ambiguous_api_match" ? "unverified_ambiguous_match" : "unverified_incomplete_hole_data";
     await updateCandidateAfterAttempt(supabase, candidate, {
       status: "skipped",
       syncStatus: "skipped",
-      error: errorMessage,
+      error: `classification=${unverifiedClassification}; ${errorMessage}`.slice(0, 480),
     });
     await updateJob(supabase, jobId, {
       sync_status: "skipped",
       finished_at: new Date().toISOString(),
-      error_message: errorMessage,
+      error_message: `classification=${unverifiedClassification}; ${errorMessage}`.slice(0, 480),
     });
     return {
       result: {
@@ -2685,7 +2746,21 @@ async function importCandidateCourse(
         apiId: null,
         status: "skipped",
         validationIssues: [],
-        error: errorMessage,
+        error: `classification=${unverifiedClassification}; ${errorMessage}`.slice(0, 480),
+        golferDataStatus: "unverified",
+        unverifiedClassification,
+        priorityPromotionAudit: isPriorityCourse
+          ? {
+              isPriority: true,
+              officialSourceFound: false,
+              parseSuccess: false,
+              completeTeeCount: 0,
+              missingSI: 0,
+              missingYardage: 0,
+              finalStatus: "unverified",
+              unverifiedClassification,
+            }
+          : undefined,
         growthConversion: {
           resolutionPath: "unresolved",
           skipReason: growthSkip,
@@ -2812,7 +2887,7 @@ export async function runTerritoryScaleNightlyImport(
     );
   }
   console.log(
-    `[course-import] Run mode: ${importRunMode} | Budgets: newCourseImports<=${caps.maxNewCourseImportAttempts} | staleCandidateRefresh<=${caps.maxStaleCandidateRefreshAttempts} | staleCatalogSweep<=${caps.maxStaleCatalogSweepCourses} (seeding suppresses sweep unless --force-catalog-full-refresh).`,
+    `[course-import] Run mode: ${importRunMode} | Budgets: newCourseImports<=${caps.maxNewCourseImportAttempts} | staleCandidateRefresh<=${caps.maxStaleCandidateRefreshAttempts} | priorityMaintenance<=${caps.maxPriorityMaintenanceCourses} | staleCatalogSweep<=${caps.maxStaleCatalogSweepCourses} (seeding suppresses sweep unless --force-catalog-full-refresh).`,
   );
   console.log(
     "[course-import] Large-catalog note: stale-SI and incomplete-tee metrics use bounded scans; tune COURSE_IMPORT_STALE_SWEEP_MAX_COURSES, COURSE_IMPORT_STALE_AGE_DAYS, and scan caps in courseCatalogFreshness if needed.",
@@ -2837,7 +2912,7 @@ export async function runTerritoryScaleNightlyImport(
     priorityEntries,
   );
 
-  const [priorityGrowthCandidates, retryCandidates, newCandidates, refreshCandidates] = await Promise.all([
+  const [priorityGrowthCandidates, retryCandidates, newCandidates, refreshCandidates, priorityMaintenanceCandidates] = await Promise.all([
     listCandidateBucket(supabase, {
       phase,
       territory,
@@ -2864,6 +2939,13 @@ export async function runTerritoryScaleNightlyImport(
       statuses: ["imported"],
       refreshDueOnly: true,
       limit: Math.max(caps.maxRefreshes * 4, 80),
+    }),
+    listCandidateBucket(supabase, {
+      phase,
+      territory,
+      statuses: ["imported"],
+      minPriority: 900,
+      limit: Math.max(caps.maxPriorityMaintenanceCourses * 4, 20),
     }),
   ]);
 
@@ -2916,6 +2998,29 @@ export async function runTerritoryScaleNightlyImport(
   let refreshInserted = 0;
   let refreshUpdated = 0;
   for (const candidate of refreshPicked) {
+    const imported = await importCandidateCourse(supabase, {
+      candidate,
+      batchId,
+      batchRunId,
+      phase,
+      territory,
+      dryRun,
+      overwriteManualOverrides,
+      triggerType,
+      priorityEntries,
+    });
+    refreshResults.push(imported.result);
+    if (imported.inserted) refreshInserted += 1;
+    if (imported.updated) refreshUpdated += 1;
+    missingSiCount += imported.missingSiCount;
+  }
+
+  const alreadyAttempted = new Set<string>([...growthPicked.map((c) => c.id), ...refreshPicked.map((c) => c.id)]);
+  const priorityMaintenancePicked = priorityMaintenanceCandidates
+    .filter((c) => !alreadyAttempted.has(c.id))
+    .sort((a, b) => b.import_priority - a.import_priority)
+    .slice(0, Math.max(0, caps.maxPriorityMaintenanceCourses));
+  for (const candidate of priorityMaintenancePicked) {
     const imported = await importCandidateCourse(supabase, {
       candidate,
       batchId,
@@ -3075,6 +3180,14 @@ export async function runTerritoryScaleNightlyImport(
     coursesInsertedButNotGolferReady: results.filter(
       (r) => (r.status === "ok" || r.status === "partial") && r.golferDataStatus != null && r.golferDataStatus !== "verified",
     ).length,
+    unverifiedNeedsOfficialConfirmation: results.filter(
+      (r) => r.unverifiedClassification === "unverified_needs_official_confirmation",
+    ).length,
+    unverifiedIncompleteHoleData: results.filter(
+      (r) => r.unverifiedClassification === "unverified_incomplete_hole_data",
+    ).length,
+    unverifiedAmbiguousMatch: results.filter((r) => r.unverifiedClassification === "unverified_ambiguous_match").length,
+    unverifiedParseFailed: results.filter((r) => r.unverifiedClassification === "unverified_parse_failed").length,
   };
   const priorityCoursePromotionReport = results
     .filter((r) => r.priorityPromotionAudit?.isPriority === true && (r.status === "skipped" || r.golferDataStatus != null))
@@ -3086,6 +3199,15 @@ export async function runTerritoryScaleNightlyImport(
       missingSI: r.priorityPromotionAudit?.missingSI ?? 0,
       missingYardage: r.priorityPromotionAudit?.missingYardage ?? 0,
       finalStatus: r.golferDataStatus ?? r.status,
+      unverifiedClassification: r.unverifiedClassification ?? r.priorityPromotionAudit?.unverifiedClassification ?? null,
+    }));
+  const priorityCoursesReadyForOfficialConfirmation = priorityCoursePromotionReport
+    .filter((row) => row.unverifiedClassification === "unverified_needs_official_confirmation")
+    .map((row) => ({
+      courseName: row.courseName,
+      completeTeeCount: row.completeTeeCount,
+      likelyPromotionBlocker: "missing_official_source_confirmation",
+      suggestedNextAction: "add officialScorecardUrl override or provide manual official scorecard dataset",
     }));
   const invalidPromotions = results.filter(
     (r) =>
@@ -3172,6 +3294,7 @@ export async function runTerritoryScaleNightlyImport(
     capsSnapshot: {
       maxNewCourseImportAttempts: caps.maxNewCourseImportAttempts,
       maxStaleCandidateRefreshAttempts: caps.maxStaleCandidateRefreshAttempts,
+      maxPriorityMaintenanceCourses: caps.maxPriorityMaintenanceCourses,
       maxStaleCatalogSweepCourses: caps.maxStaleCatalogSweepCourses,
       maxDiscoveryPerRun: caps.maxDiscoveryPerRun,
       maxNewSeeds: caps.maxNewSeeds,
@@ -3215,6 +3338,7 @@ export async function runTerritoryScaleNightlyImport(
       inserted: refreshInserted,
       updated: refreshUpdated,
       skipped: refreshSkipped,
+      priorityMaintenanceAttempted: priorityMaintenancePicked.length,
     },
     newCourseGrowthWork: {
       attempted: growthResults.length,
@@ -3227,6 +3351,7 @@ export async function runTerritoryScaleNightlyImport(
     newCourseGrowthWaste,
     golferDataQualitySummary,
     priorityCoursePromotionReport,
+    priorityCoursesReadyForOfficialConfirmation,
     invalidPromotions: invalidPromotions.map((r) => ({
       courseName: r.courseName,
       metrics: r.golferDataMetrics ?? null,
@@ -3247,7 +3372,8 @@ export async function runTerritoryScaleNightlyImport(
     discoveredCandidates,
     newCourseGrowthPicked: growthPicked.length,
     staleCandidateRefreshPicked: refreshPicked.length,
-    attemptedCandidates: growthPicked.length + refreshPicked.length,
+    priorityMaintenancePicked: priorityMaintenancePicked.length,
+    attemptedCandidates: growthPicked.length + refreshResults.length,
     newCourseGrowthSummary,
     staleCandidateRefreshSummary,
     staleCatalogSweepAttempted: staleCatalogSweep?.attempted ?? 0,
@@ -3272,6 +3398,7 @@ export async function runTerritoryScaleNightlyImport(
     newCourseGrowthWaste,
     golferDataQualitySummary,
     priorityCoursePromotionReport,
+    priorityCoursesReadyForOfficialConfirmation,
     invalidPromotions: invalidPromotions.map((r) => ({
       courseName: r.courseName,
       metrics: r.golferDataMetrics ?? null,
@@ -3285,7 +3412,7 @@ export async function runTerritoryScaleNightlyImport(
       finished_at: new Date().toISOString(),
       status: nightlyRunExit.exitCode === 1 ? "failed" : "completed",
       total_candidates: discoveredCandidates,
-      total_attempted: growthPicked.length + refreshPicked.length + (staleCatalogSweep?.attempted ?? 0),
+      total_attempted: growthPicked.length + refreshResults.length + (staleCatalogSweep?.attempted ?? 0),
       total_inserted: insertedCoursesFinal,
       total_updated: updatedCoursesFinal,
       total_ok: ok,
@@ -3304,7 +3431,7 @@ export async function runTerritoryScaleNightlyImport(
     territory,
     results,
     discoveredCandidates,
-    attemptedCandidates: growthPicked.length + refreshPicked.length,
+    attemptedCandidates: growthPicked.length + refreshResults.length,
     insertedCourses: insertedCoursesFinal,
     updatedCourses: updatedCoursesFinal,
     missingSiCount,

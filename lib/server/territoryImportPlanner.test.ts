@@ -12,6 +12,7 @@ describe("planTerritoryCandidateOrder", () => {
       maxDiscoveryPerRun: 50,
       maxNewCourseImportAttempts: 5,
       maxStaleCandidateRefreshAttempts: 0,
+      maxPriorityMaintenanceCourses: 3,
       maxStaleCatalogSweepCourses: 10,
     };
     const ordered = planTerritoryCandidateOrder(caps, {
@@ -32,6 +33,7 @@ describe("planTerritoryCandidateOrder", () => {
       maxDiscoveryPerRun: 50,
       maxNewCourseImportAttempts: 4,
       maxStaleCandidateRefreshAttempts: 1,
+      maxPriorityMaintenanceCourses: 3,
       maxStaleCatalogSweepCourses: 10,
     };
     const ordered = planTerritoryCandidateOrder(caps, {

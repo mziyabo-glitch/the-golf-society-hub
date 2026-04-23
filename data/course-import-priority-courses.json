@@ -2,24 +2,36 @@
   "courses": [
     {
       "name": "The Vale Resort",
+      "officialScorecardUrl": "https://www.valeresort.com/golf/",
+      "sourceType": "html",
+      "notes": "Resort golf hub page; parse embedded scorecard links first.",
       "officialUrls": [
         "https://www.valeresort.com/golf/"
       ]
     },
     {
       "name": "Wycombe Heights Golf Centre",
+      "officialScorecardUrl": "https://www.wycombeheightsgc.co.uk/",
+      "sourceType": "html",
+      "notes": "Club site page first, then discovered scorecard links.",
       "officialUrls": [
         "https://www.wycombeheightsgc.co.uk/"
       ]
     },
     {
       "name": "Upavon Golf Club",
+      "officialScorecardUrl": "https://upavongolfclub.co.uk/",
+      "sourceType": "html",
+      "notes": "Official club website should be attempted before discovery search.",
       "officialUrls": [
         "https://upavongolfclub.co.uk/"
       ]
     },
     {
       "name": "Shrivenham Park Golf Club",
+      "officialScorecardUrl": "https://www.shrivenhampark.co.uk/",
+      "sourceType": "html",
+      "notes": "Priority course override for official-source confirmation.",
       "officialUrls": [
         "https://www.shrivenhampark.co.uk/"
       ]
