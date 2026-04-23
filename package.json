@@ -22,7 +22,8 @@
     "course-import:nightly:dry": "tsx scripts/nightly-course-import.ts --dry-run",
     "course-import:territory": "tsx scripts/nightly-course-import.ts --manual",
     "course-import:stale-smoke": "tsx scripts/stale-course-import-smoke.ts",
-    "course-import:seed-gb": "tsx scripts/seed-gb-course-candidates.ts"
+    "course-import:seed-gb": "tsx scripts/seed-gb-course-candidates.ts",
+    "course-import:seed-vale": "tsx scripts/seed-vale-resort.ts"
   },
   "engines": {
     "node": ">=18.x"
