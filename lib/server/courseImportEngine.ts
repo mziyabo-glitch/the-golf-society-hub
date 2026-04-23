@@ -5,6 +5,13 @@ import type { GolfCourseApiCourse, NormalizedCourseImport } from "@/types/course
 import { loadTerritoryDiscoveryDataset } from "@/lib/server/courseImportDiscoveryAdapter";
 import { applyOfficialScorecardFallback } from "@/lib/course/officialScorecardFallback";
 import {
+  isPriorityCourseName,
+  loadPriorityCourseEntriesFromConfig,
+  resolvePriorityOfficialSource,
+  type PriorityCourseEntry,
+  type ValidationBasis,
+} from "@/lib/server/priorityOfficialSources";
+import {
   evaluateCourseCatalogFreshness,
   fetchStaleCatalogCoursesForSweep,
   getCourseCatalogFreshnessThresholdsFromEnv,
@@ -13,7 +20,14 @@ import {
   type StaleCatalogCourseRow,
 } from "@/lib/server/courseCatalogFreshness";
 
-export type ImportSourceType = "golfcourseapi" | "club_official" | "manual_seed";
+export type ImportSourceType =
+  | "golfcourseapi"
+  | "club_official"
+  | "manual_seed"
+  | "official_pdf"
+  | "official_html"
+  | "official_embedded"
+  | "manual_dataset";
 export type ImportSyncStatus = "ok" | "partial" | "failed" | "skipped";
 
 export type CourseSeed = {
@@ -31,6 +45,7 @@ export type ValidationIssue = {
 };
 
 export type CourseDataConfidence = "high" | "medium" | "low";
+export type CourseGolferDataStatus = "verified" | "partial" | "unverified" | "rejected";
 
 type MultiSourceSourceId = "official_scorecard" | "golf_api";
 
@@ -46,10 +61,12 @@ type TeeSourceRows = {
   holes: HoleSourceRow[];
 };
 
-type MultiSourceValidationResult = {
+export type MultiSourceValidationResult = {
   confidence: CourseDataConfidence;
   reasons: string[];
   comparison: {
+    sourceCount: number;
+    officialSourceUsed: boolean;
     primarySource: MultiSourceSourceId | "unavailable";
     secondarySource: MultiSourceSourceId;
     teesCompared: number;
@@ -59,6 +76,32 @@ type MultiSourceValidationResult = {
     missingStrokeIndex: number;
     yardageOutsideTolerance: number;
     yardageWithinToleranceVariance: number;
+  };
+};
+
+export type GolferDataCompleteness = {
+  completeTeeCount: number;
+  missingSI: number;
+  missingYardage: number;
+  promotedTeeMissingSI: number;
+};
+
+export type GolferDataPromotionDecision = {
+  status: CourseGolferDataStatus;
+  promotionDecision: "insert" | "stage_partial" | "stage_unverified" | "reject";
+  reasons: string[];
+  confidence: CourseDataConfidence;
+  metrics: {
+    sourceCount: number;
+    officialSourceUsed: boolean;
+    validatedHoleCount: number;
+    completeTeeCount: number;
+    missingSI: number;
+    missingYardage: number;
+    parMismatchCount: number;
+    yardageMismatchCount: number;
+    siMismatchCount: number;
+    promotionDecision: "insert" | "stage_partial" | "stage_unverified" | "reject";
   };
 };
 
@@ -94,6 +137,17 @@ export type NightlyImportCourseResult = {
   courseId?: string;
   /** Present when `importCandidateCourse` ran (territory pipeline). */
   growthConversion?: NightlyImportGrowthConversion;
+  golferDataStatus?: CourseGolferDataStatus;
+  golferDataMetrics?: GolferDataPromotionDecision["metrics"];
+  priorityPromotionAudit?: {
+    isPriority: boolean;
+    officialSourceFound: boolean;
+    parseSuccess: boolean;
+    completeTeeCount: number;
+    missingSI: number;
+    missingYardage: number;
+    finalStatus: CourseGolferDataStatus | ImportSyncStatus;
+  };
 };
 
 /** Aggregates how growth attempts break down: skips by search class, and non-net-new by resolution path. */
@@ -867,6 +921,8 @@ async function upsertNormalizedImport(
     seededStatus?: "unseeded" | "seeded" | "refresh_due" | "retired";
     discoveryStatus?: "unknown" | "discovered" | "queued" | "resolved" | "rejected";
     dataConfidence?: CourseDataConfidence;
+    golferDataStatus?: CourseGolferDataStatus;
+    validationBasis?: ValidationBasis;
   },
 ): Promise<{ courseId: string }> {
   const coursePayload: Record<string, unknown> = {
@@ -901,6 +957,8 @@ async function upsertNormalizedImport(
     seeded_status: metadata.seededStatus ?? "seeded",
     discovery_status: metadata.discoveryStatus ?? "resolved",
     data_confidence: metadata.dataConfidence ?? "high",
+    golfer_data_status: metadata.golferDataStatus ?? "verified",
+    validation_basis: metadata.validationBasis ?? "secondary_only",
   };
 
   const { data: savedCourse, error: courseError } = await supabase
@@ -1056,6 +1114,16 @@ function mergeSeeds(priority: CourseSeed[], additional: CourseSeed[]): CourseSee
     out.push(seed);
   }
   return out;
+}
+
+function deriveValidationBasis(params: {
+  officialSourceUsed: boolean;
+  sourceCount: number;
+}): ValidationBasis {
+  if (params.officialSourceUsed && params.sourceCount <= 1) return "official_only";
+  if (params.officialSourceUsed) return "official_plus_secondary";
+  if (params.sourceCount >= 2) return "dual_secondary_match";
+  return "secondary_only";
 }
 
 async function resolveApiIdDetail(
@@ -1709,6 +1777,7 @@ async function discoverCandidatesBounded(
   territory: string,
   caps: TerritoryImportCaps,
   includeSocietySeeds: boolean,
+  priorityEntries: PriorityCourseEntry[],
 ): Promise<number> {
   let discovered = 0;
   const dataset = await loadTerritoryDiscoveryDataset(phase);
@@ -1725,18 +1794,18 @@ async function discoverCandidatesBounded(
     discovered += 1;
   }
 
-  for (const pinned of DEFAULT_PRIORITY_SEEDS) {
+  for (const pinned of priorityEntries) {
     await upsertCandidate(supabase, {
       name: pinned.name,
       country: null,
       territory,
       phase,
       discoverySource: "pinned_seed",
-      priority: 900,
-      canonicalApiId: pinned.preferredApiId ?? null,
+      priority: 1200,
       metadata: {
-        sourceType: pinned.sourceType ?? "manual_seed",
-        sourceUrl: pinned.sourceUrl ?? null,
+        sourceType: "club_official",
+        sourceUrl: pinned.officialUrls?.[0] ?? null,
+        isPriorityCourse: true,
       },
     });
     discovered += 1;
@@ -2005,9 +2074,15 @@ function buildOfficialScorecardRowsOrNull(apiId: number, normalized: NormalizedC
 function validateMultiSourceCourseData(params: {
   apiId: number;
   normalized: NormalizedCourseImport;
+  primaryRowsOverride?: TeeSourceRows[] | null;
+  primarySourceId?: MultiSourceSourceId | "unavailable";
+  secondarySourceId?: MultiSourceSourceId;
 }): MultiSourceValidationResult {
   const secondary = toTeeSourceRows(params.normalized);
-  const primary = buildOfficialScorecardRowsOrNull(params.apiId, params.normalized);
+  const primary =
+    params.primaryRowsOverride !== undefined ? params.primaryRowsOverride : buildOfficialScorecardRowsOrNull(params.apiId, params.normalized);
+  const primarySourceId = params.primarySourceId ?? (primary != null ? "official_scorecard" : "unavailable");
+  const secondarySourceId = params.secondarySourceId ?? "golf_api";
   const primaryByTee = new Map((primary ?? []).map((t) => [normalizeCandidateName(t.teeName), t]));
   let teesCompared = 0;
   let holesCompared = 0;
@@ -2059,8 +2134,10 @@ function validateMultiSourceCourseData(params: {
     confidence,
     reasons,
     comparison: {
-      primarySource: primary != null ? "official_scorecard" : "unavailable",
-      secondarySource: "golf_api",
+      sourceCount: primary != null ? 2 : 1,
+      officialSourceUsed: primary != null,
+      primarySource: primarySourceId,
+      secondarySource: secondarySourceId,
       teesCompared,
       holesCompared,
       parMismatches,
@@ -2068,6 +2145,104 @@ function validateMultiSourceCourseData(params: {
       missingStrokeIndex,
       yardageOutsideTolerance,
       yardageWithinToleranceVariance,
+    },
+  };
+}
+
+export function evaluateCourseCompleteness(normalized: NormalizedCourseImport): GolferDataCompleteness {
+  let completeTeeCount = 0;
+  let missingSI = 0;
+  let missingYardage = 0;
+  let promotedTeeMissingSI = 0;
+  for (const tee of normalized.tees) {
+    const holes = tee.holes;
+    const has18 = holes.length === 18;
+    const teeMissingSi = holes.filter((h) => h.strokeIndex == null).length;
+    const teeMissingYardage = holes.filter((h) => h.yardage == null).length;
+    const teeMissingPar = holes.filter((h) => h.par == null).length;
+    missingSI += teeMissingSi;
+    missingYardage += teeMissingYardage;
+    if (has18 && teeMissingSi === 0 && teeMissingYardage === 0 && teeMissingPar === 0) {
+      completeTeeCount += 1;
+    }
+    if (promotedTeeMissingSI === 0 && has18) {
+      promotedTeeMissingSI = teeMissingSi;
+    }
+  }
+  return { completeTeeCount, missingSI, missingYardage, promotedTeeMissingSI };
+}
+
+export function evaluateGolferDataPromotionDecision(params: {
+  sourceValidation: MultiSourceValidationResult;
+  completeness: GolferDataCompleteness;
+}): GolferDataPromotionDecision {
+  const sv = params.sourceValidation;
+  const c = params.completeness;
+  const reasons = [...sv.reasons];
+  if (!sv.comparison.officialSourceUsed) reasons.push("official_source_unavailable");
+  if (c.completeTeeCount === 0) reasons.push("no_complete_tee");
+  if (c.missingSI > 0) reasons.push("missing_stroke_index");
+  if (c.missingYardage > 0) reasons.push("missing_yardage");
+  if (sv.comparison.sourceCount < 2 && !sv.comparison.officialSourceUsed) reasons.push("insufficient_source_validation");
+  if (sv.comparison.parMismatches > 0 || sv.comparison.strokeIndexMismatches > 0 || sv.comparison.yardageOutsideTolerance > 0) {
+    reasons.push("contradictory_sources");
+  }
+
+  let confidence: CourseDataConfidence = sv.confidence;
+  if (
+    sv.comparison.holesCompared === 0 ||
+    c.completeTeeCount === 0 ||
+    (sv.comparison.sourceCount < 2 && !sv.comparison.officialSourceUsed)
+  ) {
+    confidence = "low";
+  }
+
+  const contradictory = reasons.includes("contradictory_sources");
+  const hasCompleteTee = c.completeTeeCount > 0;
+  const verified =
+    hasCompleteTee &&
+    c.promotedTeeMissingSI === 0 &&
+    sv.comparison.holesCompared > 0 &&
+    (sv.comparison.officialSourceUsed || sv.comparison.sourceCount >= 2) &&
+    !contradictory &&
+    confidence !== "low";
+
+  let status: CourseGolferDataStatus;
+  let promotionDecision: GolferDataPromotionDecision["promotionDecision"];
+  if (verified) {
+    status = "verified";
+    promotionDecision = "insert";
+  } else if (contradictory) {
+    status = "rejected";
+    promotionDecision = "reject";
+  } else if (sv.comparison.holesCompared === 0) {
+    status = "unverified";
+    promotionDecision = "stage_unverified";
+  } else if (hasCompleteTee) {
+    status = "unverified";
+    promotionDecision = "stage_unverified";
+  } else {
+    status = "partial";
+    promotionDecision = "stage_partial";
+  }
+
+  const uniqueReasons = [...new Set(reasons)];
+  return {
+    status,
+    promotionDecision,
+    confidence,
+    reasons: uniqueReasons,
+    metrics: {
+      sourceCount: sv.comparison.sourceCount,
+      officialSourceUsed: sv.comparison.officialSourceUsed,
+      validatedHoleCount: sv.comparison.holesCompared,
+      completeTeeCount: c.completeTeeCount,
+      missingSI: c.missingSI,
+      missingYardage: c.missingYardage,
+      parMismatchCount: sv.comparison.parMismatches,
+      yardageMismatchCount: sv.comparison.yardageOutsideTolerance,
+      siMismatchCount: sv.comparison.strokeIndexMismatches,
+      promotionDecision,
     },
   };
 }
@@ -2082,6 +2257,7 @@ async function insertLowConfidenceStagingRow(
     candidate: TerritoryCandidateRow | null;
     courseName: string;
     validation: MultiSourceValidationResult;
+    golferDecision: GolferDataPromotionDecision;
     rawPayload: unknown;
   },
 ): Promise<void> {
@@ -2093,14 +2269,14 @@ async function insertLowConfidenceStagingRow(
     candidate_id: params.candidate?.id ?? null,
     candidate_name: params.candidate?.candidate_name ?? params.courseName,
     course_name: params.courseName,
-    confidence: params.validation.confidence,
-    failure_reason: params.validation.reasons.join("; "),
+    confidence: params.golferDecision.confidence,
+    failure_reason: params.golferDecision.reasons.join("; "),
     comparison_json: params.validation.comparison,
     raw_json:
       params.rawPayload && typeof params.rawPayload === "object"
         ? (params.rawPayload as Record<string, unknown>)
         : { raw_payload: params.rawPayload ?? null },
-    status: "rejected_low_confidence",
+    status: params.golferDecision.status,
   };
   const { error } = await supabase.from("course_import_staging").insert(payload);
   if (error) throw new Error(error.message || "Failed to insert low-confidence row into course_import_staging.");
@@ -2123,6 +2299,7 @@ async function runCourseDetailImportFromApi(
     jobId: string | null;
     bindings: CourseDetailBindings;
     catalogStaleSweep?: boolean;
+    priorityEntries: PriorityCourseEntry[];
   },
 ): Promise<{
   result: NightlyImportCourseResult;
@@ -2130,10 +2307,9 @@ async function runCourseDetailImportFromApi(
   updated: boolean;
   missingSiCount: number;
 }> {
-  const sourceType: ImportSourceType = "golfcourseapi";
-  const sourceUrl = null;
   const b = params.bindings;
   const seedName = b.displayCourseName;
+  const isPriorityCourse = isPriorityCourseName(seedName, params.priorityEntries);
 
   try {
     const fetched = await fetchCourseByApiId(params.apiId);
@@ -2145,13 +2321,54 @@ async function runCourseDetailImportFromApi(
     const missingSiCount = validationIssues.filter(
       (issue) => issue.code === "SI_OUT_OF_RANGE" || issue.code === "SI_DUPLICATE",
     ).length;
-    const sourceValidation = validateMultiSourceCourseData({ apiId: params.apiId, normalized });
+    const priorityOfficial = await resolvePriorityOfficialSource({
+      courseName: seedName,
+      entries: params.priorityEntries,
+    });
+    const sourceValidation = validateMultiSourceCourseData({
+      apiId: params.apiId,
+      normalized,
+      primaryRowsOverride: isPriorityCourse ? priorityOfficial.primaryRows : undefined,
+    });
+    const completeness = evaluateCourseCompleteness(normalized);
+    let golferDecision = evaluateGolferDataPromotionDecision({ sourceValidation, completeness });
+    if (isPriorityCourse && !sourceValidation.comparison.officialSourceUsed) {
+      golferDecision = {
+        ...golferDecision,
+        status: "unverified",
+        promotionDecision: "stage_unverified",
+        reasons: [...new Set([...golferDecision.reasons, "priority_requires_official_source"])],
+        confidence: "low",
+        metrics: {
+          ...golferDecision.metrics,
+          promotionDecision: "stage_unverified",
+        },
+      };
+    }
+    const validationBasis = deriveValidationBasis({
+      officialSourceUsed: golferDecision.metrics.officialSourceUsed,
+      sourceCount: golferDecision.metrics.sourceCount,
+    });
+    const promotedSourceType: ImportSourceType =
+      priorityOfficial.sourceType !== "unavailable"
+        ? (priorityOfficial.sourceType as ImportSourceType)
+        : "golfcourseapi";
+    const promotedSourceUrl = priorityOfficial.sourceUrl;
+    const priorityPromotionAudit = {
+      isPriority: isPriorityCourse,
+      officialSourceFound: priorityOfficial.officialSourceFound,
+      parseSuccess: priorityOfficial.parseSuccess,
+      completeTeeCount: golferDecision.metrics.completeTeeCount,
+      missingSI: golferDecision.metrics.missingSI,
+      missingYardage: golferDecision.metrics.missingYardage,
+      finalStatus: golferDecision.status,
+    };
     console.log(
-      `[course-import] Source validation ${seedName} api_id=${params.apiId}: primary=${sourceValidation.comparison.primarySource} secondary=${sourceValidation.comparison.secondarySource} holes=${sourceValidation.comparison.holesCompared} parMismatch=${sourceValidation.comparison.parMismatches} siMismatch=${sourceValidation.comparison.strokeIndexMismatches} missingSI=${sourceValidation.comparison.missingStrokeIndex} yardageOut=${sourceValidation.comparison.yardageOutsideTolerance} confidence=${sourceValidation.confidence}`,
+      `[course-import] Source validation ${seedName} api_id=${params.apiId}: sourceCount=${golferDecision.metrics.sourceCount} official=${golferDecision.metrics.officialSourceUsed} holesValidated=${golferDecision.metrics.validatedHoleCount} completeTeeCount=${golferDecision.metrics.completeTeeCount} missingSI=${golferDecision.metrics.missingSI} missingYardage=${golferDecision.metrics.missingYardage} parMismatch=${golferDecision.metrics.parMismatchCount} siMismatch=${golferDecision.metrics.siMismatchCount} yardageMismatch=${golferDecision.metrics.yardageMismatchCount} confidence=${golferDecision.confidence} decision=${golferDecision.promotionDecision}`,
     );
 
-    if (sourceValidation.confidence === "low") {
-      const lowReason = sourceValidation.reasons.join("; ") || "low_confidence_validation_failed";
+    if (golferDecision.promotionDecision !== "insert") {
+      const lowReason = golferDecision.reasons.join("; ") || "validation_not_promoted";
       if (!params.dryRun) {
         await insertLowConfidenceStagingRow(supabase, {
           batchRunId: params.batchRunId,
@@ -2161,6 +2378,7 @@ async function runCourseDetailImportFromApi(
           candidate: b.candidate,
           courseName: seedName,
           validation: sourceValidation,
+          golferDecision,
           rawPayload: fetched.raw,
         });
       }
@@ -2187,8 +2405,12 @@ async function runCourseDetailImportFromApi(
           phase: params.phase,
           territory: params.territory,
           detailPersistence: "staged_low_confidence",
-          dataConfidence: sourceValidation.confidence,
+          dataConfidence: golferDecision.confidence,
+          golferDataStatus: golferDecision.status,
+          golferDataMetrics: golferDecision.metrics,
           sourceComparison: sourceValidation.comparison,
+          priorityPromotionAudit,
+          validationBasis,
         },
       });
       console.log(`[course-import] Decision ${seedName} api_id=${params.apiId}: REJECT_TO_STAGING reason=${lowReason}`);
@@ -2199,6 +2421,9 @@ async function runCourseDetailImportFromApi(
           status: "skipped",
           validationIssues,
           error: `Low confidence import staged: ${lowReason}`.slice(0, 480),
+          golferDataStatus: golferDecision.status,
+          golferDataMetrics: golferDecision.metrics,
+          priorityPromotionAudit,
         },
         inserted: false,
         updated: false,
@@ -2206,7 +2431,7 @@ async function runCourseDetailImportFromApi(
       };
     }
     console.log(
-      `[course-import] Decision ${seedName} api_id=${params.apiId}: INSERT confidence=${sourceValidation.confidence} reasons=${sourceValidation.reasons.join("; ") || "all_match"}`,
+      `[course-import] Decision ${seedName} api_id=${params.apiId}: INSERT confidence=${golferDecision.confidence} reasons=${golferDecision.reasons.join("; ") || "all_match"}`,
     );
 
     const { data: existing } = await supabase
@@ -2219,8 +2444,8 @@ async function runCourseDetailImportFromApi(
     let courseId: string | undefined;
     if (!params.dryRun) {
       const persisted = await upsertNormalizedImport(supabase, normalized, {
-        sourceType,
-        sourceUrl,
+        sourceType: promotedSourceType,
+        sourceUrl: promotedSourceUrl,
         syncStatus: status,
         confidence: confidenceScore,
         importedAtIso,
@@ -2233,9 +2458,11 @@ async function runCourseDetailImportFromApi(
         firstDiscoveredAt: b.firstDiscoveredAt,
         lastDiscoveredAt: b.lastDiscoveredAt ?? importedAtIso,
         canonicalApiId: params.apiId,
-        seededStatus: status === "failed" ? "refresh_due" : "seeded",
+        seededStatus: "seeded",
         discoveryStatus: "resolved",
-        dataConfidence: sourceValidation.confidence,
+        dataConfidence: golferDecision.confidence,
+        golferDataStatus: "verified",
+        validationBasis,
       });
       courseId = persisted.courseId;
       await applyManualOverrides(supabase, persisted.courseId, params.overwriteManualOverrides);
@@ -2269,8 +2496,12 @@ async function runCourseDetailImportFromApi(
         territory: params.territory,
         catalogStaleSweep: params.catalogStaleSweep === true,
         detailPersistence: "full",
-        dataConfidence: sourceValidation.confidence,
+        dataConfidence: golferDecision.confidence,
+        golferDataStatus: "verified",
+        golferDataMetrics: golferDecision.metrics,
         sourceComparison: sourceValidation.comparison,
+        validationBasis,
+        priorityPromotionAudit,
       },
     });
 
@@ -2281,6 +2512,9 @@ async function runCourseDetailImportFromApi(
         status,
         validationIssues,
         courseId,
+        golferDataStatus: "verified",
+        golferDataMetrics: golferDecision.metrics,
+        priorityPromotionAudit: { ...priorityPromotionAudit, finalStatus: "verified" },
       },
       inserted: !existedBefore,
       updated: existedBefore,
@@ -2327,6 +2561,7 @@ async function importCatalogStaleCourse(
     dryRun: boolean;
     overwriteManualOverrides: boolean;
     triggerType: "manual" | "nightly" | "territory_nightly";
+    priorityEntries: PriorityCourseEntry[];
   },
 ): Promise<{
   result: NightlyImportCourseResult;
@@ -2369,6 +2604,7 @@ async function importCatalogStaleCourse(
       lastDiscoveredAt: nowIso,
     },
     catalogStaleSweep: true,
+    priorityEntries: params.priorityEntries,
   });
 }
 
@@ -2383,6 +2619,7 @@ async function importCandidateCourse(
     dryRun: boolean;
     overwriteManualOverrides: boolean;
     triggerType: "manual" | "nightly" | "territory_nightly";
+    priorityEntries: PriorityCourseEntry[];
   },
 ): Promise<{
   result: NightlyImportCourseResult;
@@ -2481,6 +2718,7 @@ async function importCandidateCourse(
       lastDiscoveredAt: candidate.last_discovered_at,
     },
     catalogStaleSweep: false,
+    priorityEntries: params.priorityEntries,
   });
   return {
     result: {
@@ -2546,6 +2784,7 @@ export async function runTerritoryScaleNightlyImport(
     options?.triggerType === "manual" ? "manual" : "territory_nightly";
   const territory = options?.territoryOverride?.trim() || DEFAULT_TERRITORY;
   const phase = await resolveActivePhase(supabase, options?.phaseOverride);
+  const priorityEntries = await loadPriorityCourseEntriesFromConfig();
   const batchId = randomUUID();
   const freshnessThresholds = getCourseCatalogFreshnessThresholdsFromEnv({
     ...options?.catalogFreshnessThresholds,
@@ -2595,6 +2834,7 @@ export async function runTerritoryScaleNightlyImport(
     territory,
     caps,
     includeSocietySeeds,
+    priorityEntries,
   );
 
   const [priorityGrowthCandidates, retryCandidates, newCandidates, refreshCandidates] = await Promise.all([
@@ -2656,6 +2896,7 @@ export async function runTerritoryScaleNightlyImport(
       dryRun,
       overwriteManualOverrides,
       triggerType,
+      priorityEntries,
     });
     growthResults.push(imported.result);
     if (imported.inserted) growthInserted += 1;
@@ -2684,6 +2925,7 @@ export async function runTerritoryScaleNightlyImport(
       dryRun,
       overwriteManualOverrides,
       triggerType,
+      priorityEntries,
     });
     refreshResults.push(imported.result);
     if (imported.inserted) refreshInserted += 1;
@@ -2761,6 +3003,7 @@ export async function runTerritoryScaleNightlyImport(
         dryRun,
         overwriteManualOverrides,
         triggerType,
+        priorityEntries,
       });
       sweepResults.push(sweepOutcome.result);
       if (sweepOutcome.inserted) sweepInserted += 1;
@@ -2821,7 +3064,50 @@ export async function runTerritoryScaleNightlyImport(
     skipped: refreshResults.filter((r) => r.status === "skipped").length,
   };
 
-  const nightlyRunExit = computeNightlyImportRunExitSummary(results, getNightlyExitPolicyFromEnv(importRunMode));
+  const golferDataQualitySummary = {
+    verifiedCoursesPromoted: results.filter((r) => r.golferDataStatus === "verified" && (r.status === "ok" || r.status === "partial")).length,
+    partialCoursesStaged: results.filter((r) => r.golferDataStatus === "partial" && r.status === "skipped").length,
+    unverifiedCoursesStaged: results.filter((r) => r.golferDataStatus === "unverified" && r.status === "skipped").length,
+    rejectedCourses: results.filter((r) => r.golferDataStatus === "rejected" && r.status === "skipped").length,
+    coursesWithMissingSI: results.filter((r) => (r.golferDataMetrics?.missingSI ?? 0) > 0).length,
+    coursesWithMissingYardage: results.filter((r) => (r.golferDataMetrics?.missingYardage ?? 0) > 0).length,
+    coursesWithZeroCompleteTees: results.filter((r) => (r.golferDataMetrics?.completeTeeCount ?? 0) === 0).length,
+    coursesInsertedButNotGolferReady: results.filter(
+      (r) => (r.status === "ok" || r.status === "partial") && r.golferDataStatus != null && r.golferDataStatus !== "verified",
+    ).length,
+  };
+  const priorityCoursePromotionReport = results
+    .filter((r) => r.priorityPromotionAudit?.isPriority === true && (r.status === "skipped" || r.golferDataStatus != null))
+    .map((r) => ({
+      courseName: r.courseName,
+      officialSourceFound: r.priorityPromotionAudit?.officialSourceFound ?? false,
+      parseSuccess: r.priorityPromotionAudit?.parseSuccess ?? false,
+      completeTeeCount: r.priorityPromotionAudit?.completeTeeCount ?? 0,
+      missingSI: r.priorityPromotionAudit?.missingSI ?? 0,
+      missingYardage: r.priorityPromotionAudit?.missingYardage ?? 0,
+      finalStatus: r.golferDataStatus ?? r.status,
+    }));
+  const invalidPromotions = results.filter(
+    (r) =>
+      r.golferDataStatus === "verified" &&
+      ((r.golferDataMetrics?.validatedHoleCount ?? 0) === 0 ||
+        (r.golferDataMetrics?.completeTeeCount ?? 0) === 0 ||
+        (r.golferDataMetrics?.missingSI ?? 0) > 0),
+  );
+  const failOnInvalidPromotion = String(process.env.COURSE_IMPORT_FAIL_ON_INVALID_PROMOTION ?? "false").toLowerCase() === "true";
+  let nightlyRunExit = computeNightlyImportRunExitSummary(results, getNightlyExitPolicyFromEnv(importRunMode));
+  if (invalidPromotions.length > 0) {
+    console.error(
+      `[course-import] ERROR invalid promotions detected: ${invalidPromotions.length} course(s) marked verified with incomplete golfer metrics.`,
+    );
+    if (failOnInvalidPromotion) {
+      nightlyRunExit = {
+        ...nightlyRunExit,
+        exitCode: 1,
+        exitReason: "invalid_verified_promotion_detected",
+      };
+    }
+  }
   console.log(
     `[course-import] Nightly exit policy: code=${nightlyRunExit.exitCode} reason=${nightlyRunExit.exitReason} hardFailures=${nightlyRunExit.hardFailureCount} unresolved=${nightlyRunExit.unresolvedCandidateCount}/${nightlyRunExit.maxUnresolvedOk} downgraded=${nightlyRunExit.exitDowngradedToSuccess}`,
   );
@@ -2845,8 +3131,22 @@ export async function runTerritoryScaleNightlyImport(
         )
       : null,
   };
-  const gY = importYieldByWorkPhase.newCourseGrowth;
-  const rY = importYieldByWorkPhase.staleCandidateRefresh;
+  const gY = importYieldByWorkPhase.newCourseGrowth ?? {
+    attempted: 0,
+    inserted: 0,
+    updated: 0,
+    unresolved: 0,
+    skipped: 0,
+    importYieldPct: null,
+  };
+  const rY = importYieldByWorkPhase.staleCandidateRefresh ?? {
+    attempted: 0,
+    inserted: 0,
+    updated: 0,
+    unresolved: 0,
+    skipped: 0,
+    importYieldPct: null,
+  };
   console.log(
     `[course-import] Queue snapshot @end: EW queued=${queueCompositionBySeedPhase.england_wales.byStatus.queued} imported=${queueCompositionBySeedPhase.england_wales.byStatus.imported} skipped=${queueCompositionBySeedPhase.england_wales.byStatus.skipped} | SC queued=${queueCompositionBySeedPhase.scotland.byStatus.queued} | IE queued=${queueCompositionBySeedPhase.ireland.byStatus.queued}`,
   );
@@ -2856,6 +3156,10 @@ export async function runTerritoryScaleNightlyImport(
   console.log(
     `[course-import] Growth waste: netNew=${newCourseGrowthWaste.netNewInserts} catalogRefresh=${newCourseGrowthWaste.existingCourseRowsRefreshed} skips amb=${newCourseGrowthWaste.skipped.ambiguousApiMatch} noMatch=${newCourseGrowthWaste.skipped.noCatalogMatch} lowScore=${newCourseGrowthWaste.skipped.belowThreshold} notNetNew db=${newCourseGrowthWaste.notNetNew.fromDbOrPreferredPath} searchDedupe=${newCourseGrowthWaste.notNetNew.fromApiSearchPath}`,
   );
+  console.log(
+    `[course-import] Golfer quality: verified=${golferDataQualitySummary.verifiedCoursesPromoted} partial=${golferDataQualitySummary.partialCoursesStaged} unverified=${golferDataQualitySummary.unverifiedCoursesStaged} rejected=${golferDataQualitySummary.rejectedCourses} missingSI=${golferDataQualitySummary.coursesWithMissingSI} missingYardage=${golferDataQualitySummary.coursesWithMissingYardage} zeroCompleteTees=${golferDataQualitySummary.coursesWithZeroCompleteTees}`,
+  );
+  console.log(`[course-import] Priority course promotion rows=${priorityCoursePromotionReport.length}`);
 
   const growthSkipped = growthResults.filter((r) => r.status === "skipped").length;
   const refreshSkipped = refreshResults.filter((r) => r.status === "skipped").length;
@@ -2921,6 +3225,12 @@ export async function runTerritoryScaleNightlyImport(
     importYieldByWorkPhase,
     queueCompositionBySeedPhase,
     newCourseGrowthWaste,
+    golferDataQualitySummary,
+    priorityCoursePromotionReport,
+    invalidPromotions: invalidPromotions.map((r) => ({
+      courseName: r.courseName,
+      metrics: r.golferDataMetrics ?? null,
+    })),
   };
 
   const report: Record<string, unknown> = {
@@ -2960,6 +3270,12 @@ export async function runTerritoryScaleNightlyImport(
     importYieldByWorkPhase,
     queueCompositionBySeedPhase,
     newCourseGrowthWaste,
+    golferDataQualitySummary,
+    priorityCoursePromotionReport,
+    invalidPromotions: invalidPromotions.map((r) => ({
+      courseName: r.courseName,
+      metrics: r.golferDataMetrics ?? null,
+    })),
     generatedAt: new Date().toISOString(),
   };
 
@@ -2967,7 +3283,7 @@ export async function runTerritoryScaleNightlyImport(
     .from("course_import_batches")
     .update({
       finished_at: new Date().toISOString(),
-      status: nightlyRunExit.hardFailureCount > 0 ? "failed" : "completed",
+      status: nightlyRunExit.exitCode === 1 ? "failed" : "completed",
       total_candidates: discoveredCandidates,
       total_attempted: growthPicked.length + refreshPicked.length + (staleCatalogSweep?.attempted ?? 0),
       total_inserted: insertedCoursesFinal,

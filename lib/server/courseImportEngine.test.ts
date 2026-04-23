@@ -4,6 +4,8 @@ import {
   buildNewCourseGrowthWasteFromGrowthResults,
   buildSearchQueryVariantsForImport,
   COURSE_IMPORT_SEEDING_PRESET_CAPS,
+  evaluateCourseCompleteness,
+  evaluateGolferDataPromotionDecision,
   resolveCourseImportRunMode,
   scoreGolfApiSearchRowAgainstTarget,
   validateNormalizedImport,
@@ -53,6 +55,88 @@ function baseImport(): NormalizedCourseImport {
     ],
   };
 }
+
+function sourceValidationFixture(overrides?: Partial<{
+  sourceCount: number;
+  officialSourceUsed: boolean;
+  holesCompared: number;
+  parMismatches: number;
+  strokeIndexMismatches: number;
+  missingStrokeIndex: number;
+  yardageOutsideTolerance: number;
+  yardageWithinToleranceVariance: number;
+}>): Parameters<typeof evaluateGolferDataPromotionDecision>[0]["sourceValidation"] {
+  return {
+    confidence: "high",
+    reasons: [],
+    comparison: {
+      sourceCount: overrides?.sourceCount ?? 2,
+      officialSourceUsed: overrides?.officialSourceUsed ?? true,
+      primarySource: overrides?.officialSourceUsed === false ? "unavailable" : "official_scorecard",
+      secondarySource: "golf_api",
+      teesCompared: 1,
+      holesCompared: overrides?.holesCompared ?? 18,
+      parMismatches: overrides?.parMismatches ?? 0,
+      strokeIndexMismatches: overrides?.strokeIndexMismatches ?? 0,
+      missingStrokeIndex: overrides?.missingStrokeIndex ?? 0,
+      yardageOutsideTolerance: overrides?.yardageOutsideTolerance ?? 0,
+      yardageWithinToleranceVariance: overrides?.yardageWithinToleranceVariance ?? 0,
+    },
+  };
+}
+
+describe("evaluateGolferDataPromotionDecision", () => {
+  it("primary unavailable + secondary only + holes=0 => staged unverified", () => {
+    const decision = evaluateGolferDataPromotionDecision({
+      sourceValidation: sourceValidationFixture({ sourceCount: 1, officialSourceUsed: false, holesCompared: 0 }),
+      completeness: { completeTeeCount: 0, missingSI: 18, missingYardage: 18, promotedTeeMissingSI: 18 },
+    });
+    expect(decision.status).toBe("unverified");
+    expect(decision.promotionDecision).toMatch(/stage_/);
+    expect(decision.confidence).toBe("low");
+  });
+
+  it("one tee has 18 holes but missing SI => partial/unverified not verified", () => {
+    const payload = baseImport();
+    for (let i = 0; i < 3; i += 1) payload.tees[0]!.holes[i]!.strokeIndex = null;
+    const completeness = evaluateCourseCompleteness(payload);
+    const decision = evaluateGolferDataPromotionDecision({
+      sourceValidation: sourceValidationFixture({ sourceCount: 2, officialSourceUsed: true, holesCompared: 18 }),
+      completeness,
+    });
+    expect(decision.status).not.toBe("verified");
+    expect(decision.promotionDecision).toMatch(/stage_/);
+  });
+
+  it("official full 18-hole tee => verified", () => {
+    const completeness = evaluateCourseCompleteness(baseImport());
+    const decision = evaluateGolferDataPromotionDecision({
+      sourceValidation: sourceValidationFixture({ sourceCount: 2, officialSourceUsed: true, holesCompared: 18 }),
+      completeness,
+    });
+    expect(decision.status).toBe("verified");
+    expect(decision.promotionDecision).toBe("insert");
+  });
+
+  it("two non-official sources matching 18 holes => verified", () => {
+    const completeness = evaluateCourseCompleteness(baseImport());
+    const decision = evaluateGolferDataPromotionDecision({
+      sourceValidation: sourceValidationFixture({ sourceCount: 2, officialSourceUsed: false, holesCompared: 18 }),
+      completeness,
+    });
+    expect(decision.status).toBe("verified");
+  });
+
+  it("contradictory SI between sources => rejected or staged", () => {
+    const completeness = evaluateCourseCompleteness(baseImport());
+    const decision = evaluateGolferDataPromotionDecision({
+      sourceValidation: sourceValidationFixture({ strokeIndexMismatches: 2 }),
+      completeness,
+    });
+    expect(decision.status).toBe("rejected");
+    expect(decision.promotionDecision).toBe("reject");
+  });
+});
 
 describe("buildNewCourseGrowthWasteFromGrowthResults", () => {
   it("separates net-new inserts, catalog refreshes, and skip classes", () => {

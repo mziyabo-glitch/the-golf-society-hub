@@ -1,0 +1,28 @@
+{
+  "courses": [
+    {
+      "name": "The Vale Resort",
+      "officialUrls": [
+        "https://www.valeresort.com/golf/"
+      ]
+    },
+    {
+      "name": "Wycombe Heights Golf Centre",
+      "officialUrls": [
+        "https://www.wycombeheightsgc.co.uk/"
+      ]
+    },
+    {
+      "name": "Upavon Golf Club",
+      "officialUrls": [
+        "https://upavongolfclub.co.uk/"
+      ]
+    },
+    {
+      "name": "Shrivenham Park Golf Club",
+      "officialUrls": [
+        "https://www.shrivenhampark.co.uk/"
+      ]
+    }
+  ]
+}
