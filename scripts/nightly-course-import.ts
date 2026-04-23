@@ -78,6 +78,7 @@ async function main(): Promise<void> {
   console.log("[course-import-nightly] discovered:", outcome.discoveredCandidates, "| attempted:", outcome.attemptedCandidates);
   console.log("[course-import-nightly] growth:", outcome.newCourseGrowthSummary, "| stale-refresh:", outcome.staleCandidateRefreshSummary);
   console.log("[course-import-nightly] inserted:", outcome.insertedCourses, "| updated:", outcome.updatedCourses);
+  console.log("[course-import-nightly] rejected:", Number((outcome.report as Record<string, unknown>).rejectedCourses ?? 0));
   console.log("[course-import-nightly] missing-si:", outcome.missingSiCount);
   console.log(
     "[course-import-nightly] staleSweepSkipReason:",
@@ -131,6 +132,7 @@ async function main(): Promise<void> {
     `- Discovered candidates: \`${outcome.discoveredCandidates}\``,
     `- Attempted candidates: \`${outcome.attemptedCandidates}\``,
     `- Inserted courses: \`${outcome.insertedCourses}\``,
+    `- Rejected courses (low confidence): \`${Number((outcome.report as Record<string, unknown>).rejectedCourses ?? 0)}\``,
     `- Updated courses: \`${outcome.updatedCourses}\``,
     `- OK: \`${ok}\``,
     `- Partial: \`${partial}\``,

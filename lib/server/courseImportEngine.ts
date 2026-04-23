@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { normalizeGolfCourseApiCourse } from "@/lib/courseNormalizer";
 import type { GolfCourseApiCourse, NormalizedCourseImport } from "@/types/course";
 import { loadTerritoryDiscoveryDataset } from "@/lib/server/courseImportDiscoveryAdapter";
+import { applyOfficialScorecardFallback } from "@/lib/course/officialScorecardFallback";
 import {
   evaluateCourseCatalogFreshness,
   fetchStaleCatalogCoursesForSweep,
@@ -27,6 +28,38 @@ export type ValidationIssue = {
   message: string;
   teeName?: string;
   holeNumber?: number;
+};
+
+export type CourseDataConfidence = "high" | "medium" | "low";
+
+type MultiSourceSourceId = "official_scorecard" | "golf_api";
+
+type HoleSourceRow = {
+  hole_number: number;
+  par: number | null;
+  stroke_index: number | null;
+  yardage: number | null;
+};
+
+type TeeSourceRows = {
+  teeName: string;
+  holes: HoleSourceRow[];
+};
+
+type MultiSourceValidationResult = {
+  confidence: CourseDataConfidence;
+  reasons: string[];
+  comparison: {
+    primarySource: MultiSourceSourceId | "unavailable";
+    secondarySource: MultiSourceSourceId;
+    teesCompared: number;
+    holesCompared: number;
+    parMismatches: number;
+    strokeIndexMismatches: number;
+    missingStrokeIndex: number;
+    yardageOutsideTolerance: number;
+    yardageWithinToleranceVariance: number;
+  };
 };
 
 export type NightlyImportOptions = {
@@ -833,6 +866,7 @@ async function upsertNormalizedImport(
     canonicalApiId?: number | null;
     seededStatus?: "unseeded" | "seeded" | "refresh_due" | "retired";
     discoveryStatus?: "unknown" | "discovered" | "queued" | "resolved" | "rejected";
+    dataConfidence?: CourseDataConfidence;
   },
 ): Promise<{ courseId: string }> {
   const coursePayload: Record<string, unknown> = {
@@ -866,6 +900,7 @@ async function upsertNormalizedImport(
     canonical_api_id: metadata.canonicalApiId ?? normalized.course.apiId,
     seeded_status: metadata.seededStatus ?? "seeded",
     discovery_status: metadata.discoveryStatus ?? "resolved",
+    data_confidence: metadata.dataConfidence ?? "high",
   };
 
   const { data: savedCourse, error: courseError } = await supabase
@@ -1937,6 +1972,140 @@ type CourseDetailBindings = {
   lastDiscoveredAt: string | null;
 };
 
+function toHoleSourceRows(holes: Array<{ holeNumber: number; par: number | null; strokeIndex: number | null; yardage: number | null }>): HoleSourceRow[] {
+  return holes
+    .map((h) => ({
+      hole_number: h.holeNumber,
+      par: h.par,
+      stroke_index: h.strokeIndex,
+      yardage: h.yardage,
+    }))
+    .sort((a, b) => a.hole_number - b.hole_number);
+}
+
+function toTeeSourceRows(normalized: NormalizedCourseImport): TeeSourceRows[] {
+  return normalized.tees.map((b) => ({ teeName: b.tee.teeName, holes: toHoleSourceRows(b.holes) }));
+}
+
+function buildOfficialScorecardRowsOrNull(apiId: number, normalized: NormalizedCourseImport): TeeSourceRows[] | null {
+  const out: TeeSourceRows[] = [];
+  let anyApplied = false;
+  for (const b of normalized.tees) {
+    const patched = applyOfficialScorecardFallback({
+      apiId,
+      teeName: b.tee.teeName,
+      holes: b.holes,
+    });
+    if (patched.applied) anyApplied = true;
+    out.push({ teeName: b.tee.teeName, holes: toHoleSourceRows(patched.holes) });
+  }
+  return anyApplied ? out : null;
+}
+
+function validateMultiSourceCourseData(params: {
+  apiId: number;
+  normalized: NormalizedCourseImport;
+}): MultiSourceValidationResult {
+  const secondary = toTeeSourceRows(params.normalized);
+  const primary = buildOfficialScorecardRowsOrNull(params.apiId, params.normalized);
+  const primaryByTee = new Map((primary ?? []).map((t) => [normalizeCandidateName(t.teeName), t]));
+  let teesCompared = 0;
+  let holesCompared = 0;
+  let parMismatches = 0;
+  let strokeIndexMismatches = 0;
+  let missingStrokeIndex = 0;
+  let yardageOutsideTolerance = 0;
+  let yardageWithinToleranceVariance = 0;
+
+  for (const tee of secondary) {
+    const p = primaryByTee.get(normalizeCandidateName(tee.teeName));
+    if (!p) continue;
+    teesCompared += 1;
+    const pByHole = new Map(p.holes.map((h) => [h.hole_number, h]));
+    for (const h of tee.holes) {
+      const ph = pByHole.get(h.hole_number);
+      if (!ph) continue;
+      holesCompared += 1;
+      if (h.par == null || ph.par == null || h.par !== ph.par) parMismatches += 1;
+      if (h.stroke_index == null || ph.stroke_index == null) {
+        missingStrokeIndex += 1;
+      } else if (h.stroke_index !== ph.stroke_index) {
+        strokeIndexMismatches += 1;
+      }
+      if (h.yardage != null && ph.yardage != null && ph.yardage > 0) {
+        const deltaPct = Math.abs(h.yardage - ph.yardage) / ph.yardage;
+        if (deltaPct > 0.05) yardageOutsideTolerance += 1;
+        else if (deltaPct > 0) yardageWithinToleranceVariance += 1;
+      }
+    }
+  }
+
+  const reasons: string[] = [];
+  let confidence: CourseDataConfidence = "high";
+  if (missingStrokeIndex > 0) reasons.push(`missing_stroke_index:${missingStrokeIndex}`);
+  if (parMismatches > 0) reasons.push(`par_mismatch:${parMismatches}`);
+  if (strokeIndexMismatches > 0) reasons.push(`stroke_index_mismatch:${strokeIndexMismatches}`);
+  if (yardageOutsideTolerance > 0) reasons.push(`yardage_outside_tolerance:${yardageOutsideTolerance}`);
+  if (yardageWithinToleranceVariance > 0) reasons.push(`yardage_variance_within_tolerance:${yardageWithinToleranceVariance}`);
+  if (primary == null) reasons.push("official_source_unavailable");
+
+  if (missingStrokeIndex > 0 || parMismatches > 0 || strokeIndexMismatches > 0 || yardageOutsideTolerance > 0) {
+    confidence = "low";
+  } else if (yardageWithinToleranceVariance > 0 || primary == null) {
+    confidence = "medium";
+  }
+
+  return {
+    confidence,
+    reasons,
+    comparison: {
+      primarySource: primary != null ? "official_scorecard" : "unavailable",
+      secondarySource: "golf_api",
+      teesCompared,
+      holesCompared,
+      parMismatches,
+      strokeIndexMismatches,
+      missingStrokeIndex,
+      yardageOutsideTolerance,
+      yardageWithinToleranceVariance,
+    },
+  };
+}
+
+async function insertLowConfidenceStagingRow(
+  supabase: SupabaseClient,
+  params: {
+    batchRunId: string;
+    phase: TerritorySeedPhase;
+    territory: string;
+    apiId: number;
+    candidate: TerritoryCandidateRow | null;
+    courseName: string;
+    validation: MultiSourceValidationResult;
+    rawPayload: unknown;
+  },
+): Promise<void> {
+  const payload = {
+    batch_run_id: params.batchRunId,
+    phase: params.phase,
+    territory: params.territory,
+    api_id: params.apiId,
+    candidate_id: params.candidate?.id ?? null,
+    candidate_name: params.candidate?.candidate_name ?? params.courseName,
+    course_name: params.courseName,
+    confidence: params.validation.confidence,
+    failure_reason: params.validation.reasons.join("; "),
+    comparison_json: params.validation.comparison,
+    raw_json:
+      params.rawPayload && typeof params.rawPayload === "object"
+        ? (params.rawPayload as Record<string, unknown>)
+        : { raw_payload: params.rawPayload ?? null },
+    status: "rejected_low_confidence",
+  };
+  const { error } = await supabase.from("course_import_staging").insert(payload);
+  if (error) throw new Error(error.message || "Failed to insert low-confidence row into course_import_staging.");
+}
+
 /**
  * Fetches from GolfCourseAPI and persists tees + holes (full detail refresh via `upsertNormalizedImport`).
  */
@@ -1972,10 +2141,73 @@ async function runCourseDetailImportFromApi(
     const validationIssues = validateNormalizedImport(normalized);
     const status: "ok" | "partial" = validationIssues.length === 0 ? "ok" : "partial";
     const importedAtIso = new Date().toISOString();
-    const confidence = toConfidence(validationIssues);
+    const confidenceScore = toConfidence(validationIssues);
     const missingSiCount = validationIssues.filter(
       (issue) => issue.code === "SI_OUT_OF_RANGE" || issue.code === "SI_DUPLICATE",
     ).length;
+    const sourceValidation = validateMultiSourceCourseData({ apiId: params.apiId, normalized });
+    console.log(
+      `[course-import] Source validation ${seedName} api_id=${params.apiId}: primary=${sourceValidation.comparison.primarySource} secondary=${sourceValidation.comparison.secondarySource} holes=${sourceValidation.comparison.holesCompared} parMismatch=${sourceValidation.comparison.parMismatches} siMismatch=${sourceValidation.comparison.strokeIndexMismatches} missingSI=${sourceValidation.comparison.missingStrokeIndex} yardageOut=${sourceValidation.comparison.yardageOutsideTolerance} confidence=${sourceValidation.confidence}`,
+    );
+
+    if (sourceValidation.confidence === "low") {
+      const lowReason = sourceValidation.reasons.join("; ") || "low_confidence_validation_failed";
+      if (!params.dryRun) {
+        await insertLowConfidenceStagingRow(supabase, {
+          batchRunId: params.batchRunId,
+          phase: params.phase,
+          territory: params.territory,
+          apiId: params.apiId,
+          candidate: b.candidate,
+          courseName: seedName,
+          validation: sourceValidation,
+          rawPayload: fetched.raw,
+        });
+      }
+      if (b.candidate) {
+        await updateCandidateAfterAttempt(supabase, b.candidate, {
+          status: "skipped",
+          syncStatus: "skipped",
+          apiId: params.apiId,
+          error: `Low confidence import staged: ${lowReason}`.slice(0, 480),
+        });
+      }
+      await updateJob(supabase, params.jobId, {
+        sync_status: "skipped",
+        finished_at: new Date().toISOString(),
+        error_message: `low_confidence: ${lowReason}`.slice(0, 480),
+        confidence_score: confidenceScore,
+        validation_errors: validationIssues,
+        raw_source_payload: fetched.raw,
+        summary: {
+          dryRun: params.dryRun,
+          teeCount: normalized.tees.length,
+          holeCount: normalized.tees.reduce((sum, tee) => sum + tee.holes.length, 0),
+          candidateId: b.candidate?.id ?? null,
+          phase: params.phase,
+          territory: params.territory,
+          detailPersistence: "staged_low_confidence",
+          dataConfidence: sourceValidation.confidence,
+          sourceComparison: sourceValidation.comparison,
+        },
+      });
+      console.log(`[course-import] Decision ${seedName} api_id=${params.apiId}: REJECT_TO_STAGING reason=${lowReason}`);
+      return {
+        result: {
+          courseName: seedName,
+          apiId: params.apiId,
+          status: "skipped",
+          validationIssues,
+          error: `Low confidence import staged: ${lowReason}`.slice(0, 480),
+        },
+        inserted: false,
+        updated: false,
+        missingSiCount,
+      };
+    }
+    console.log(
+      `[course-import] Decision ${seedName} api_id=${params.apiId}: INSERT confidence=${sourceValidation.confidence} reasons=${sourceValidation.reasons.join("; ") || "all_match"}`,
+    );
 
     const { data: existing } = await supabase
       .from("courses")
@@ -1990,7 +2222,7 @@ async function runCourseDetailImportFromApi(
         sourceType,
         sourceUrl,
         syncStatus: status,
-        confidence,
+        confidence: confidenceScore,
         importedAtIso,
         rawRow: fetched.raw,
         territory: params.territory,
@@ -2003,6 +2235,7 @@ async function runCourseDetailImportFromApi(
         canonicalApiId: params.apiId,
         seededStatus: status === "failed" ? "refresh_due" : "seeded",
         discoveryStatus: "resolved",
+        dataConfidence: sourceValidation.confidence,
       });
       courseId = persisted.courseId;
       await applyManualOverrides(supabase, persisted.courseId, params.overwriteManualOverrides);
@@ -2012,7 +2245,7 @@ async function runCourseDetailImportFromApi(
           syncStatus: status,
           apiId: params.apiId,
           courseId,
-          confidence,
+          confidence: confidenceScore,
           refreshDueAt: computeRefreshDueIso(new Date()),
         });
       }
@@ -2023,7 +2256,7 @@ async function runCourseDetailImportFromApi(
       sync_status: status,
       finished_at: new Date().toISOString(),
       imported_at: params.dryRun ? null : importedAtIso,
-      confidence_score: confidence,
+      confidence_score: confidenceScore,
       validation_errors: validationIssues,
       raw_source_payload: fetched.raw,
       summary: {
@@ -2036,6 +2269,8 @@ async function runCourseDetailImportFromApi(
         territory: params.territory,
         catalogStaleSweep: params.catalogStaleSweep === true,
         detailPersistence: "full",
+        dataConfidence: sourceValidation.confidence,
+        sourceComparison: sourceValidation.comparison,
       },
     });
 
@@ -2625,6 +2860,9 @@ export async function runTerritoryScaleNightlyImport(
   const growthSkipped = growthResults.filter((r) => r.status === "skipped").length;
   const refreshSkipped = refreshResults.filter((r) => r.status === "skipped").length;
   const sweepSkipped = staleCatalogSweep ? staleCatalogSweep.results.filter((r) => r.status === "skipped").length : 0;
+  const rejectedLowConfidenceCount = results.filter((r) =>
+    (r.error ?? "").toLowerCase().includes("low confidence import staged"),
+  ).length;
   const importRunBreakdown = {
     importRunMode,
     capsSnapshot: {
@@ -2653,6 +2891,10 @@ export async function runTerritoryScaleNightlyImport(
       staleCandidateRefreshPhase: refreshSkipped,
       staleCatalogSweepPhase: sweepSkipped,
       total: skipped,
+    },
+    rejectedWork: {
+      lowConfidence: rejectedLowConfidenceCount,
+      totalRejected: rejectedLowConfidenceCount,
     },
     staleCatalogSweepWork: staleCatalogSweep
       ? {
@@ -2707,6 +2949,7 @@ export async function runTerritoryScaleNightlyImport(
     partial,
     failed,
     skipped,
+    rejectedCourses: rejectedLowConfidenceCount,
     staleSweepOk: staleOk,
     staleSweepPartial: stalePartial,
     staleSweepFailed: staleFailed,
