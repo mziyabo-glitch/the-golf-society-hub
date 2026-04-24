@@ -1,13 +1,56 @@
 {
   "courses": [
     {
-      "name": "The Vale Resort",
-      "officialScorecardUrl": "https://www.valeresort.com/golf/",
-      "sourceType": "html",
-      "notes": "Resort golf hub page; parse embedded scorecard links first.",
+      "courseName": "The Vale Resort",
+      "subCourseName": "Wales National Course",
+      "courseAlias": ["The Wales National Course", "Wales National", "The Vale Resort - Wales National Course"],
+      "officialScorecardUrl": "https://www.valeresort.com/wp-content/uploads/2024/09/wales-national-scorecard-2020.pdf",
+      "sourceType": "pdf",
+      "notes": "Vale sub-course override: Wales National only.",
       "officialUrls": [
-        "https://www.valeresort.com/golf/"
-      ]
+        "https://www.valeresort.com/vale-golf/the-wales-national-course/",
+        "https://www.valeresort.com/wp-content/uploads/2024/09/wales-national-scorecard-2020.pdf"
+      ],
+      "expectedIdentityTerms": [
+        "Vale Resort",
+        "Wales National",
+        "Hensol",
+        "Vale of Glamorgan",
+        "Wales"
+      ],
+      "excludedIdentityTerms": [
+        "Union Vale",
+        "Links At Union Vale"
+      ],
+      "expectedCountry": "Wales",
+      "expectedRegion": "Vale of Glamorgan",
+      "allowOfficialOnlyPromotion": true
+    },
+    {
+      "courseName": "The Vale Resort",
+      "subCourseName": "Lake Course",
+      "courseAlias": ["The Lake Course", "Lake", "The Vale Resort - Lake Course"],
+      "officialScorecardUrl": "https://www.valeresort.com/wp-content/uploads/2026/03/Lake-scorecard-Final-2025.pdf",
+      "sourceType": "pdf",
+      "notes": "Vale sub-course override: Lake only.",
+      "officialUrls": [
+        "https://www.valeresort.com/vale-golf/the-lake-course/",
+        "https://www.valeresort.com/wp-content/uploads/2026/03/Lake-scorecard-Final-2025.pdf"
+      ],
+      "expectedIdentityTerms": [
+        "Vale Resort",
+        "Lake Course",
+        "Hensol",
+        "Vale of Glamorgan",
+        "Wales"
+      ],
+      "excludedIdentityTerms": [
+        "Union Vale",
+        "Links At Union Vale"
+      ],
+      "expectedCountry": "Wales",
+      "expectedRegion": "Vale of Glamorgan",
+      "allowOfficialOnlyPromotion": true
     },
     {
       "name": "Wycombe Heights Golf Centre",
@@ -19,12 +62,14 @@
       ]
     },
     {
-      "name": "Upavon Golf Club",
-      "officialScorecardUrl": "https://upavongolfclub.co.uk/",
+      "courseName": "Upavon Golf Club",
+      "officialScorecardUrl": "https://www.upavongolfclub.co.uk/scorecard",
       "sourceType": "html",
-      "notes": "Official club website should be attempted before discovery search.",
+      "notes": "Use official scorecard page first, then follow embedded scorecard links.",
       "officialUrls": [
-        "https://upavongolfclub.co.uk/"
+        "https://www.upavongolfclub.co.uk/scorecard",
+        "https://upavongolfclub.co.uk/",
+        "https://www.upavongolfclub.co.uk/"
       ]
     },
     {

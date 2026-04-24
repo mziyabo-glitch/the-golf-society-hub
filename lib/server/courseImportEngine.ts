@@ -5,9 +5,12 @@ import type { GolfCourseApiCourse, NormalizedCourseImport } from "@/types/course
 import { loadTerritoryDiscoveryDataset } from "@/lib/server/courseImportDiscoveryAdapter";
 import { applyOfficialScorecardFallback } from "@/lib/course/officialScorecardFallback";
 import {
+  evaluateIdentitySanity,
   isPriorityCourseName,
   loadPriorityCourseEntriesFromConfig,
+  normalizeCourseKey,
   resolvePriorityOfficialSource,
+  type IdentitySanityResult,
   type PriorityCourseEntry,
   type ValidationBasis,
 } from "@/lib/server/priorityOfficialSources";
@@ -50,6 +53,7 @@ export type UnverifiedClassification =
   | "unverified_needs_official_confirmation"
   | "unverified_incomplete_hole_data"
   | "unverified_ambiguous_match"
+  | "unverified_ambiguous_course_mapping"
   | "unverified_parse_failed";
 
 type MultiSourceSourceId = "official_scorecard" | "golf_api";
@@ -147,13 +151,35 @@ export type NightlyImportCourseResult = {
   unverifiedClassification?: UnverifiedClassification;
   priorityPromotionAudit?: {
     isPriority: boolean;
+    apiCourseIdentityName?: string;
     officialSourceFound: boolean;
     parseSuccess: boolean;
+    subCourseMappingRequired?: boolean;
+    selectedOfficialCandidateUrl?: string | null;
+    selectedOfficialSubCourseName?: string | null;
     completeTeeCount: number;
     missingSI: number;
     missingYardage: number;
     finalStatus: CourseGolferDataStatus | ImportSyncStatus;
     unverifiedClassification?: UnverifiedClassification;
+    identitySanity?: {
+      ok: boolean;
+      reason: string;
+      matchedTerms: string[];
+      missingTerms: string[];
+      excludedTermHit: string | null;
+      expectedIdentityTerms: string[];
+      excludedIdentityTerms: string[];
+      expectedCountry: string | null;
+      expectedRegion: string | null;
+    };
+    officialOnlyPromotedCourses?: Array<{
+      courseName: string;
+      teeCount: number;
+      holeCountsByTee: Array<{ teeName: string; holeCount: number }>;
+      sourceUrl: string | null;
+      golferDataStatus: CourseGolferDataStatus;
+    }>;
   };
 };
 
@@ -601,7 +627,19 @@ export function scoreGolfApiSearchRowAgainstTarget(targetDisplayName: string, ap
 
 type RankedCourseSearchHit = { id: number; score: number; row: Record<string, unknown> };
 
-type CandidateSearchResolutionClass = "matched" | "no_catalog_match" | "below_threshold" | "ambiguous_api_match";
+type CandidateSearchResolutionClass =
+  | "matched"
+  | "no_catalog_match"
+  | "below_threshold"
+  | "ambiguous_api_match"
+  | "no_sane_api_candidate";
+
+type RejectedApiCandidate = {
+  id: number;
+  score: number;
+  displayName: string;
+  reason: string;
+};
 
 /** GolfCourseAPI loop ids for Celtic Manor — club_name is "Celtic Manor"; course_name Roman Road / Montgomerie / "2010" (Twenty Ten). */
 const CELTIC_MANOR_GOLF_API_LOOP_IDS = new Set([10110, 15579, 15594]);
@@ -672,6 +710,43 @@ function formatTopSearchHitDiagnostics(ranked: RankedCourseSearchHit[], limit: n
     .join(" | ");
 }
 
+function extractSearchRowCountry(row: Record<string, unknown>): string | null {
+  if (typeof row.country === "string" && row.country.trim().length > 0) return row.country.trim();
+  const loc = row.location;
+  if (loc && typeof loc === "object" && typeof (loc as Record<string, unknown>).country === "string") {
+    const v = String((loc as Record<string, unknown>).country).trim();
+    return v.length > 0 ? v : null;
+  }
+  return null;
+}
+
+function extractSearchRowRegion(row: Record<string, unknown>): string | null {
+  if (typeof row.region === "string" && row.region.trim().length > 0) return row.region.trim();
+  if (typeof row.city === "string" && row.city.trim().length > 0) return row.city.trim();
+  const loc = row.location;
+  if (loc && typeof loc === "object") {
+    const o = loc as Record<string, unknown>;
+    if (typeof o.region === "string" && o.region.trim().length > 0) return o.region.trim();
+    if (typeof o.city === "string" && o.city.trim().length > 0) return o.city.trim();
+    if (typeof o.state === "string" && o.state.trim().length > 0) return o.state.trim();
+  }
+  return null;
+}
+
+function identityBoostForPriorityMatch(matchedTermsCount: number): number {
+  if (matchedTermsCount <= 0) return 0;
+  return Math.min(0.12, 0.03 + matchedTermsCount * 0.01);
+}
+
+function formatRejectedApiCandidateDiagnostics(rejected: RejectedApiCandidate[], limit: number): string {
+  if (rejected.length === 0) return "";
+  return rejected
+    .sort((a, b) => b.score - a.score)
+    .slice(0, limit)
+    .map((r) => `${r.id}:"${r.displayName.replace(/\|/g, "/")}"(${r.score.toFixed(2)}):${r.reason}`)
+    .join(" | ");
+}
+
 function pickBestCourseSearchHit(
   displayName: string,
   rankedInput: RankedCourseSearchHit[],
@@ -729,11 +804,16 @@ function getSearchMatchThresholdsFromEnv(): { minScore: number; ambiguityGap: nu
 async function searchCourseApiIdFromVariants(
   displayName: string,
   normalizedName: string,
+  opts?: { priorityCourseName?: string; priorityEntries?: PriorityCourseEntry[] },
 ): Promise<{ apiId: number | null; diagnostic: string; resolutionClass: CandidateSearchResolutionClass }> {
   const { minScore, ambiguityGap, maxQueries } = getSearchMatchThresholdsFromEnv();
   const queries = buildSearchQueryVariantsForImport(displayName, normalizedName).slice(0, maxQueries);
   const hitById = new Map<number, RankedCourseSearchHit>();
   const diag: string[] = [];
+  const rejectedByIdentity: RejectedApiCandidate[] = [];
+  const priorityCourseName = opts?.priorityCourseName;
+  const priorityEntries = opts?.priorityEntries ?? [];
+  const shouldApplyPriorityIdentity = !!priorityCourseName && isPriorityCourseName(priorityCourseName, priorityEntries);
   let totalSearchRows = 0;
   for (const q of queries) {
     const payload = (await golfApiGet(`/search?search_query=${encodeURIComponent(q)}`)) as unknown;
@@ -744,10 +824,41 @@ async function searchCourseApiIdFromVariants(
       const id = Number(row.id);
       if (!Number.isFinite(id) || id <= 0) continue;
       const base = scoreGolfApiSearchRowAgainstTarget(displayName, row);
-      const s = applyVenueAliasScoreBoost(displayName, row, base);
+      let s = applyVenueAliasScoreBoost(displayName, row, base);
+      if (shouldApplyPriorityIdentity) {
+        const sanity = evaluateIdentitySanity({
+          courseName: priorityCourseName,
+          entries: priorityEntries,
+          apiCourseIdentityName: searchRowDisplayName(row),
+          apiCountry: extractSearchRowCountry(row),
+          apiRegion: extractSearchRowRegion(row),
+        });
+        if (!sanity.ok) {
+          rejectedByIdentity.push({
+            id,
+            score: s,
+            displayName: searchRowDisplayName(row) || "(no name)",
+            reason:
+              sanity.reason === "identity_excluded_term_hit"
+                ? `excluded_term:${sanity.excludedTermHit ?? "unknown"}`
+                : sanity.missingTerms.length > 0
+                  ? `missing_terms:${sanity.missingTerms.join(",")}`
+                  : sanity.reason,
+          });
+          continue;
+        }
+        if (sanity.reason !== "no_constraints") {
+          s = Math.min(1, s + identityBoostForPriorityMatch(sanity.matchedTerms.length));
+        }
+      }
       const prev = hitById.get(id);
       if (!prev || s > prev.score) hitById.set(id, { id, score: s, row });
     }
+  }
+  if (shouldApplyPriorityIdentity && hitById.size === 0 && rejectedByIdentity.length > 0) {
+    const rejectedDiag = formatRejectedApiCandidateDiagnostics(rejectedByIdentity, 6);
+    const diagnostic = `no_sane_api_candidate | class=no_sane_api_candidate | queries:[${diag.join("; ")}] | rejected:${rejectedDiag}`;
+    return { apiId: null, diagnostic, resolutionClass: "no_sane_api_candidate" };
   }
   const ranked = [...hitById.values()].sort((a, b) => {
     if (Math.abs(b.score - a.score) > 1e-5) return b.score - a.score;
@@ -755,7 +866,8 @@ async function searchCourseApiIdFromVariants(
   });
   const picked = pickBestCourseSearchHit(displayName, ranked, minScore, ambiguityGap, totalSearchRows);
   const topDiag = formatTopSearchHitDiagnostics(ranked, 6);
-  const diagnostic = `${picked.reason} | class=${picked.resolutionClass} | queries:[${diag.join("; ")}] | topHits:${topDiag}`;
+  const rejectedDiag = formatRejectedApiCandidateDiagnostics(rejectedByIdentity, 4);
+  const diagnostic = `${picked.reason} | class=${picked.resolutionClass} | queries:[${diag.join("; ")}] | topHits:${topDiag}${rejectedDiag ? ` | rejected:${rejectedDiag}` : ""}`;
   return { apiId: picked.apiId, diagnostic, resolutionClass: picked.resolutionClass };
 }
 
@@ -1142,7 +1254,9 @@ export function classifyUnverifiedStage(params: {
   officialSourceFound: boolean;
   officialParseSuccess: boolean;
   ambiguousMatch: boolean;
+  subCourseMappingRequired?: boolean;
 }): UnverifiedClassification {
+  if (params.subCourseMappingRequired) return "unverified_ambiguous_course_mapping";
   if (params.ambiguousMatch) return "unverified_ambiguous_match";
   if (params.officialSourceFound && !params.officialParseSuccess) return "unverified_parse_failed";
   if (
@@ -1156,23 +1270,253 @@ export function classifyUnverifiedStage(params: {
   return "unverified_incomplete_hole_data";
 }
 
+function priorityEntriesForCourse(courseName: string, entries: PriorityCourseEntry[]): PriorityCourseEntry[] {
+  const key = normalizeCourseKey(courseName);
+  return entries.filter((e) => normalizeCourseKey(e.name) === key);
+}
+
+function allowsOfficialOnlyPromotion(courseName: string, entries: PriorityCourseEntry[]): boolean {
+  return priorityEntriesForCourse(courseName, entries).some((e) => e.allowOfficialOnlyPromotion === true);
+}
+
+function hasConfiguredOfficialSource(courseName: string, entries: PriorityCourseEntry[]): boolean {
+  return priorityEntriesForCourse(courseName, entries).some(
+    (e) =>
+      (typeof e.officialScorecardUrl === "string" && e.officialScorecardUrl.trim().length > 0) ||
+      (Array.isArray(e.officialUrls) && e.officialUrls.length > 0),
+  );
+}
+
+function officialOnlyTargetCourseName(seedName: string, entry: PriorityCourseEntry): string {
+  const sub = entry.subCourseName?.trim();
+  if (!sub) return seedName;
+  return `${seedName} - ${sub}`;
+}
+
+function evaluateOfficialRowsCompleteness(rows: TeeSourceRows[]): {
+  completeTeeCount: number;
+  missingSI: number;
+  missingYardage: number;
+  completeTees: TeeSourceRows[];
+} {
+  let missingSI = 0;
+  let missingYardage = 0;
+  const completeTees: TeeSourceRows[] = [];
+  for (const tee of rows) {
+    const holes = tee.holes ?? [];
+    for (const h of holes) {
+      if (h.stroke_index == null) missingSI += 1;
+      if (h.yardage == null) missingYardage += 1;
+    }
+    const isComplete =
+      holes.length === 18 &&
+      holes.every((h) => h.par != null && h.yardage != null && h.stroke_index != null);
+    if (isComplete) completeTees.push(tee);
+  }
+  return { completeTeeCount: completeTees.length, missingSI, missingYardage, completeTees };
+}
+
+function toOfficialOnlyDedupeKey(courseName: string, territory: string): string {
+  return `official_only:${territory.toLowerCase()}:${normalizeCandidateName(courseName)}`;
+}
+
+function toNumberOrNull(value: unknown): number | null {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+async function upsertOfficialOnlyPriorityImport(
+  supabase: SupabaseClient,
+  params: {
+    courseName: string;
+    territory: string;
+    seedPhase: TerritorySeedPhase;
+    country: string | null;
+    sourceType: ImportSourceType;
+    sourceUrl: string | null;
+    importedAtIso: string;
+    rawRow: Record<string, unknown>;
+    rows: TeeSourceRows[];
+    importPriority?: number | null;
+    discoverySource?: string | null;
+    firstDiscoveredAt?: string | null;
+    lastDiscoveredAt?: string | null;
+    metadata?: Record<string, unknown>;
+  },
+): Promise<{ courseId: string; teeCount: number; holeCount: number; existedBefore: boolean }> {
+  const dedupeKey = toOfficialOnlyDedupeKey(params.courseName, params.territory);
+  const normalizedName = normalizeCandidateName(params.courseName);
+  const lat =
+    toNumberOrNull(params.metadata?.latitude) ??
+    toNumberOrNull(params.metadata?.lat) ??
+    toNumberOrNull(params.metadata?.y) ??
+    null;
+  const lng =
+    toNumberOrNull(params.metadata?.longitude) ??
+    toNumberOrNull(params.metadata?.lng) ??
+    toNumberOrNull(params.metadata?.x) ??
+    null;
+
+  const { data: existing } = await supabase.from("courses").select("id").eq("dedupe_key", dedupeKey).maybeSingle();
+  const existedBefore = !!existing;
+
+  const coursePayload: Record<string, unknown> = {
+    dedupe_key: dedupeKey,
+    api_id: null,
+    canonical_api_id: null,
+    club_name: params.courseName,
+    course_name: params.courseName,
+    full_name: params.courseName,
+    address: null,
+    city: null,
+    country: params.country,
+    lat,
+    lng,
+    normalized_name: `|${normalizedName}`,
+    source: "priority_official_only",
+    source_type: params.sourceType,
+    source_url: params.sourceUrl,
+    sync_status: "ok",
+    confidence_score: 1,
+    imported_at: params.importedAtIso,
+    last_synced_at: params.importedAtIso,
+    enrichment_status: "imported",
+    raw_row: params.rawRow,
+    territory: params.territory,
+    seed_phase: params.seedPhase,
+    discovery_source: params.discoverySource ?? null,
+    import_priority: params.importPriority ?? 0,
+    first_discovered_at: params.firstDiscoveredAt ?? null,
+    last_discovered_at: params.lastDiscoveredAt ?? null,
+    seeded_status: "seeded",
+    discovery_status: "resolved",
+    data_confidence: "high",
+    golfer_data_status: "verified",
+    validation_basis: "official_only",
+  };
+  const { data: savedCourse, error: courseError } = await supabase
+    .from("courses")
+    .upsert(coursePayload, { onConflict: "dedupe_key" })
+    .select("id")
+    .single();
+  if (courseError || !savedCourse) throw new Error(courseError?.message || "Failed to upsert official-only course");
+  const courseId = String((savedCourse as { id: string }).id);
+
+  const teeRows = params.rows.map((tee, idx) => {
+    const totalYards = tee.holes.reduce((sum, h) => sum + (h.yardage ?? 0), 0);
+    const totalPar = tee.holes.reduce((sum, h) => sum + (h.par ?? 0), 0);
+    return {
+      course_id: courseId,
+      tee_name: tee.teeName,
+      course_rating: null,
+      bogey_rating: null,
+      slope_rating: null,
+      par_total: totalPar > 0 ? totalPar : null,
+      yards: totalYards > 0 ? totalYards : null,
+      total_meters: null,
+      gender: null,
+      tee_color: null,
+      is_default: idx === 0,
+      display_order: idx + 1,
+      is_active: true,
+      source_type: params.sourceType,
+      source_url: params.sourceUrl,
+      sync_status: "ok",
+      confidence_score: 1,
+      imported_at: params.importedAtIso,
+      last_synced_at: params.importedAtIso,
+    };
+  });
+
+  const teeIdsByName = new Map<string, string>();
+  for (const teeRow of teeRows) {
+    const { data: savedTee, error: teeError } = await supabase
+      .from("course_tees")
+      .upsert(teeRow, { onConflict: "course_id,tee_name" })
+      .select("id, tee_name")
+      .single();
+    if (teeError || !savedTee) throw new Error(teeError?.message || `Failed to upsert tee ${teeRow.tee_name}`);
+    teeIdsByName.set(String((savedTee as { tee_name: string }).tee_name), String((savedTee as { id: string }).id));
+  }
+
+  await supabase.from("course_holes").delete().eq("course_id", courseId);
+  let holeCount = 0;
+  for (const tee of params.rows) {
+    const teeId = teeIdsByName.get(tee.teeName);
+    if (!teeId) continue;
+    const holeRows = tee.holes.map((hole) => ({
+      course_id: courseId,
+      tee_id: teeId,
+      hole_number: hole.hole_number,
+      par: hole.par,
+      yardage: hole.yardage,
+      stroke_index: hole.stroke_index,
+      source_type: params.sourceType,
+      source_url: params.sourceUrl,
+      sync_status: "ok",
+      confidence_score: 1,
+      imported_at: params.importedAtIso,
+      last_synced_at: params.importedAtIso,
+    }));
+    if (holeRows.length > 0) {
+      const { error } = await supabase.from("course_holes").upsert(holeRows, { onConflict: "tee_id,hole_number" });
+      if (error) throw new Error(error.message || `Failed to upsert official-only holes for tee ${tee.teeName}`);
+      holeCount += holeRows.length;
+    }
+  }
+
+  return { courseId, teeCount: teeRows.length, holeCount, existedBefore };
+}
+
 async function resolveApiIdDetail(
   supabase: SupabaseClient,
   seed: CourseSeed,
-  opts?: { normalizedName?: string },
+  opts?: { normalizedName?: string; priorityEntries?: PriorityCourseEntry[] },
 ): Promise<{
   apiId: number | null;
   diagnostic?: string;
   resolutionClass?: CandidateSearchResolutionClass;
   resolutionPath: ApiIdResolutionPath;
 }> {
+  const priorityEntries = opts?.priorityEntries ?? [];
+  const enforcePriorityIdentitySanity = isPriorityCourseName(seed.name, priorityEntries);
+  const sanityRejects: string[] = [];
+  const isApiIdSaneForPriority = async (apiId: number): Promise<boolean> => {
+    if (!enforcePriorityIdentitySanity) return true;
+    try {
+      const fetched = await fetchCourseByApiId(apiId);
+      const sanity = evaluateIdentitySanity({
+        courseName: seed.name,
+        entries: priorityEntries,
+        apiCourseIdentityName: fetched.course.course_name,
+        apiCountry: fetched.course.country,
+        apiRegion: fetched.course.city,
+      });
+      if (sanity.ok) return true;
+      const why =
+        sanity.reason === "identity_excluded_term_hit"
+          ? `excluded_term:${sanity.excludedTermHit ?? "unknown"}`
+          : sanity.missingTerms.length > 0
+            ? `missing_terms:${sanity.missingTerms.join(",")}`
+            : sanity.reason;
+      sanityRejects.push(`${apiId}:${fetched.course.course_name}:${why}`);
+      return false;
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      sanityRejects.push(`${apiId}:fetch_error:${msg}`);
+      return false;
+    }
+  };
+
   if (seed.preferredApiId && seed.preferredApiId > 0) {
-    return {
-      apiId: seed.preferredApiId,
-      diagnostic: "preferred_api_id",
-      resolutionClass: "matched",
-      resolutionPath: "preferred_api",
-    };
+    if (await isApiIdSaneForPriority(seed.preferredApiId)) {
+      return {
+        apiId: seed.preferredApiId,
+        diagnostic: "preferred_api_id",
+        resolutionClass: "matched",
+        resolutionPath: "preferred_api",
+      };
+    }
   }
   const normalized = opts?.normalizedName?.trim() || normalizeCandidateName(seed.name);
   const { data: existing } = await supabase
@@ -1184,26 +1528,50 @@ async function resolveApiIdDetail(
     .maybeSingle();
   const existingApi = existing ? Number((existing as { api_id?: number }).api_id) : null;
   if (existingApi != null && Number.isFinite(existingApi) && existingApi > 0) {
-    return {
-      apiId: existingApi,
-      diagnostic: "db_case_insensitive_name_match",
-      resolutionClass: "matched",
-      resolutionPath: "db_name_match",
-    };
+    if (await isApiIdSaneForPriority(existingApi)) {
+      return {
+        apiId: existingApi,
+        diagnostic: "db_case_insensitive_name_match",
+        resolutionClass: "matched",
+        resolutionPath: "db_name_match",
+      };
+    }
   }
   const loose = await findExistingCourseApiIdByLooseDbName(supabase, seed.name, normalized);
   if (loose != null) {
+    if (await isApiIdSaneForPriority(loose)) {
+      return {
+        apiId: loose,
+        diagnostic: "db_substring_ilike_scored",
+        resolutionClass: "matched",
+        resolutionPath: "db_loose",
+      };
+    }
+  }
+  const searched = await searchCourseApiIdFromVariants(seed.name, normalized, {
+    priorityCourseName: seed.name,
+    priorityEntries,
+  });
+  const rejectSuffix = sanityRejects.length > 0 ? ` | rejected_presearch:${sanityRejects.join(" | ")}` : "";
+  if (searched.apiId == null) {
     return {
-      apiId: loose,
-      diagnostic: "db_substring_ilike_scored",
-      resolutionClass: "matched",
-      resolutionPath: "db_loose",
+      apiId: null,
+      diagnostic: `${searched.diagnostic ?? ""}${rejectSuffix}`.trim(),
+      resolutionClass: searched.resolutionClass,
+      resolutionPath: "api_search",
     };
   }
-  const searched = await searchCourseApiIdFromVariants(seed.name, normalized);
+  if (!(await isApiIdSaneForPriority(searched.apiId))) {
+    return {
+      apiId: null,
+      diagnostic: `no_sane_api_candidate | class=no_sane_api_candidate | search:${searched.diagnostic}${rejectSuffix}`,
+      resolutionClass: "no_sane_api_candidate",
+      resolutionPath: "api_search",
+    };
+  }
   return {
     apiId: searched.apiId,
-    diagnostic: searched.diagnostic,
+    diagnostic: `${searched.diagnostic ?? ""}${rejectSuffix}`.trim(),
     resolutionClass: searched.apiId != null ? "matched" : searched.resolutionClass,
     resolutionPath: "api_search",
   };
@@ -2092,6 +2460,105 @@ function toTeeSourceRows(normalized: NormalizedCourseImport): TeeSourceRows[] {
   return normalized.tees.map((b) => ({ teeName: b.tee.teeName, holes: toHoleSourceRows(b.holes) }));
 }
 
+function teeColorKey(name: string): string | null {
+  const key = normalizeCandidateName(name);
+  if (/\bwhite\b/.test(key)) return "white";
+  if (/\byellow\b/.test(key)) return "yellow";
+  if (/\bred\b/.test(key)) return "red";
+  if (/\bblue\b/.test(key)) return "blue";
+  if (/\bblack\b/.test(key)) return "black";
+  if (/\bgold\b/.test(key)) return "gold";
+  return null;
+}
+
+function previewTeeComparison(secondary: TeeSourceRows, primary: TeeSourceRows): {
+  holesCompared: number;
+  parMismatches: number;
+  strokeIndexMismatches: number;
+  yardageOutsideTolerance: number;
+  yardageWithinToleranceVariance: number;
+} {
+  const primaryByHole = new Map(primary.holes.map((h) => [h.hole_number, h]));
+  let holesCompared = 0;
+  let parMismatches = 0;
+  let strokeIndexMismatches = 0;
+  let yardageOutsideTolerance = 0;
+  let yardageWithinToleranceVariance = 0;
+  for (const hole of secondary.holes) {
+    const pHole = primaryByHole.get(hole.hole_number);
+    if (!pHole) continue;
+    holesCompared += 1;
+    if (hole.par == null || pHole.par == null || hole.par !== pHole.par) parMismatches += 1;
+    if (hole.stroke_index != null && pHole.stroke_index != null && hole.stroke_index !== pHole.stroke_index) {
+      strokeIndexMismatches += 1;
+    }
+    if (hole.yardage != null && pHole.yardage != null && pHole.yardage > 0) {
+      const deltaPct = Math.abs(hole.yardage - pHole.yardage) / pHole.yardage;
+      if (deltaPct > 0.05) yardageOutsideTolerance += 1;
+      else if (deltaPct > 0) yardageWithinToleranceVariance += 1;
+    }
+  }
+  return {
+    holesCompared,
+    parMismatches,
+    strokeIndexMismatches,
+    yardageOutsideTolerance,
+    yardageWithinToleranceVariance,
+  };
+}
+
+function alignPrimaryTeeForSecondary(params: {
+  secondaryTee: TeeSourceRows;
+  primaryByTee: Map<string, TeeSourceRows>;
+  unmatchedPrimaryKeys: Set<string>;
+}): TeeSourceRows | null {
+  const secondaryKey = normalizeCandidateName(params.secondaryTee.teeName);
+  const byName = params.primaryByTee.get(secondaryKey);
+  if (byName) {
+    params.unmatchedPrimaryKeys.delete(normalizeCandidateName(byName.teeName));
+    return byName;
+  }
+  const secondaryColor = teeColorKey(params.secondaryTee.teeName);
+  if (secondaryColor) {
+    for (const key of params.unmatchedPrimaryKeys) {
+      const row = params.primaryByTee.get(key);
+      if (!row) continue;
+      if (teeColorKey(row.teeName) === secondaryColor) {
+        params.unmatchedPrimaryKeys.delete(key);
+        return row;
+      }
+    }
+  }
+  let bestKey: string | null = null;
+  let bestScore = -Infinity;
+  for (const key of params.unmatchedPrimaryKeys) {
+    const row = params.primaryByTee.get(key);
+    if (!row) continue;
+    const preview = previewTeeComparison(params.secondaryTee, row);
+    if (preview.holesCompared < 9) continue;
+    const criticalMismatches =
+      preview.parMismatches + preview.strokeIndexMismatches + preview.yardageOutsideTolerance;
+    const maxCriticalAllowed = Math.max(1, Math.floor(preview.holesCompared * 0.1));
+    if (criticalMismatches > maxCriticalAllowed) continue;
+    const colorBonus = secondaryColor != null && teeColorKey(row.teeName) === secondaryColor ? 8 : 0;
+    const nameTokenBonus =
+      secondaryKey.split(" ").some((token) => token.length > 2 && normalizeCandidateName(row.teeName).includes(token)) ? 3 : 0;
+    const score =
+      preview.holesCompared * 2 +
+      colorBonus +
+      nameTokenBonus -
+      criticalMismatches * 6 -
+      preview.yardageWithinToleranceVariance * 0.5;
+    if (score > bestScore) {
+      bestScore = score;
+      bestKey = key;
+    }
+  }
+  if (!bestKey) return null;
+  params.unmatchedPrimaryKeys.delete(bestKey);
+  return params.primaryByTee.get(bestKey) ?? null;
+}
+
 function buildOfficialScorecardRowsOrNull(apiId: number, normalized: NormalizedCourseImport): TeeSourceRows[] | null {
   const out: TeeSourceRows[] = [];
   let anyApplied = false;
@@ -2120,6 +2587,7 @@ function validateMultiSourceCourseData(params: {
   const primarySourceId = params.primarySourceId ?? (primary != null ? "official_scorecard" : "unavailable");
   const secondarySourceId = params.secondarySourceId ?? "golf_api";
   const primaryByTee = new Map((primary ?? []).map((t) => [normalizeCandidateName(t.teeName), t]));
+  const unmatchedPrimaryKeys = new Set<string>([...primaryByTee.keys()]);
   let teesCompared = 0;
   let holesCompared = 0;
   let parMismatches = 0;
@@ -2129,7 +2597,11 @@ function validateMultiSourceCourseData(params: {
   let yardageWithinToleranceVariance = 0;
 
   for (const tee of secondary) {
-    const p = primaryByTee.get(normalizeCandidateName(tee.teeName));
+    const p = alignPrimaryTeeForSecondary({
+      secondaryTee: tee,
+      primaryByTee,
+      unmatchedPrimaryKeys,
+    });
     if (!p) continue;
     teesCompared += 1;
     const pByHole = new Map(p.holes.map((h) => [h.hole_number, h]));
@@ -2359,15 +2831,46 @@ async function runCourseDetailImportFromApi(
     ).length;
     const priorityOfficial = await resolvePriorityOfficialSource({
       courseName: seedName,
+      apiCourseIdentityName: normalized.course.courseName,
       entries: params.priorityEntries,
+      secondaryRowsForScoring: toTeeSourceRows(normalized),
     });
+    let identitySanity: IdentitySanityResult | null = null;
+    if (isPriorityCourse) {
+      identitySanity = evaluateIdentitySanity({
+        courseName: seedName,
+        entries: params.priorityEntries,
+        apiCourseIdentityName: normalized.course.courseName,
+        apiCountry: normalized.course.country,
+        apiRegion: normalized.course.city,
+      });
+      if (!identitySanity.ok) {
+        console.log(
+          `[course-import] Identity sanity FAILED for priority course ${seedName}: apiIdentity="${normalized.course.courseName}" country="${normalized.course.country ?? ""}" reason=${identitySanity.reason} matched=[${identitySanity.matchedTerms.join(",")}] missing=[${identitySanity.missingTerms.join(",")}] excludedHit=${identitySanity.excludedTermHit ?? "none"}`,
+        );
+      }
+    }
+    const identitySanityFailed = !!(identitySanity && !identitySanity.ok);
     const sourceValidation = validateMultiSourceCourseData({
       apiId: params.apiId,
       normalized,
-      primaryRowsOverride: isPriorityCourse ? priorityOfficial.primaryRows : undefined,
+      primaryRowsOverride: isPriorityCourse && !identitySanityFailed ? priorityOfficial.primaryRows : undefined,
     });
     const completeness = evaluateCourseCompleteness(normalized);
     let golferDecision = evaluateGolferDataPromotionDecision({ sourceValidation, completeness });
+    if (identitySanityFailed) {
+      golferDecision = {
+        ...golferDecision,
+        status: "unverified",
+        promotionDecision: "stage_unverified",
+        confidence: "low",
+        reasons: [...new Set([...golferDecision.reasons, "api_identity_mismatch"])],
+        metrics: {
+          ...golferDecision.metrics,
+          promotionDecision: "stage_unverified",
+        },
+      };
+    }
     if (isPriorityCourse && !sourceValidation.comparison.officialSourceUsed) {
       golferDecision = {
         ...golferDecision,
@@ -2375,6 +2878,23 @@ async function runCourseDetailImportFromApi(
         promotionDecision: "stage_unverified",
         reasons: [...new Set([...golferDecision.reasons, "priority_requires_official_source"])],
         confidence: "low",
+        metrics: {
+          ...golferDecision.metrics,
+          promotionDecision: "stage_unverified",
+        },
+      };
+    }
+    if (
+      isPriorityCourse &&
+      priorityOfficial.subCourseMappingRequired &&
+      golferDecision.reasons.includes("contradictory_sources")
+    ) {
+      golferDecision = {
+        ...golferDecision,
+        status: "unverified",
+        promotionDecision: "stage_unverified",
+        confidence: "low",
+        reasons: [...new Set([...golferDecision.reasons, "sub_course_mapping_required"])],
         metrics: {
           ...golferDecision.metrics,
           promotionDecision: "stage_unverified",
@@ -2392,8 +2912,12 @@ async function runCourseDetailImportFromApi(
     const promotedSourceUrl = priorityOfficial.sourceUrl;
     const priorityPromotionAudit = {
       isPriority: isPriorityCourse,
+      apiCourseIdentityName: normalized.course.courseName,
       officialSourceFound: priorityOfficial.officialSourceFound,
       parseSuccess: priorityOfficial.parseSuccess,
+      subCourseMappingRequired: priorityOfficial.subCourseMappingRequired,
+      selectedOfficialCandidateUrl: priorityOfficial.sourceUrl,
+      selectedOfficialSubCourseName: priorityOfficial.selectedSubCourseName,
       completeTeeCount: golferDecision.metrics.completeTeeCount,
       missingSI: golferDecision.metrics.missingSI,
       missingYardage: golferDecision.metrics.missingYardage,
@@ -2408,7 +2932,21 @@ async function runCourseDetailImportFromApi(
               officialSourceFound: priorityOfficial.officialSourceFound,
               officialParseSuccess: priorityOfficial.parseSuccess,
               ambiguousMatch: false,
+              subCourseMappingRequired: priorityOfficial.subCourseMappingRequired || identitySanityFailed,
             }),
+      identitySanity: identitySanity
+        ? {
+            ok: identitySanity.ok,
+            reason: identitySanity.reason,
+            matchedTerms: identitySanity.matchedTerms,
+            missingTerms: identitySanity.missingTerms,
+            excludedTermHit: identitySanity.excludedTermHit,
+            expectedIdentityTerms: identitySanity.expectedIdentityTerms,
+            excludedIdentityTerms: identitySanity.excludedIdentityTerms,
+            expectedCountry: identitySanity.expectedCountry,
+            expectedRegion: identitySanity.expectedRegion,
+          }
+        : undefined,
     };
     console.log(
       `[course-import] Source validation ${seedName} api_id=${params.apiId}: sourceCount=${golferDecision.metrics.sourceCount} official=${golferDecision.metrics.officialSourceUsed} holesValidated=${golferDecision.metrics.validatedHoleCount} completeTeeCount=${golferDecision.metrics.completeTeeCount} missingSI=${golferDecision.metrics.missingSI} missingYardage=${golferDecision.metrics.missingYardage} parMismatch=${golferDecision.metrics.parMismatchCount} siMismatch=${golferDecision.metrics.siMismatchCount} yardageMismatch=${golferDecision.metrics.yardageMismatchCount} confidence=${golferDecision.confidence} decision=${golferDecision.promotionDecision}`,
@@ -2422,6 +2960,7 @@ async function runCourseDetailImportFromApi(
         officialSourceFound: priorityOfficial.officialSourceFound,
         officialParseSuccess: priorityOfficial.parseSuccess,
         ambiguousMatch: false,
+        subCourseMappingRequired: priorityOfficial.subCourseMappingRequired || identitySanityFailed,
       });
       const lowReason =
         `classification=${unverifiedClassification}; ` + (golferDecision.reasons.join("; ") || "validation_not_promoted");
@@ -2695,6 +3234,7 @@ async function importCandidateCourse(
   const sourceUrl = null;
   const { apiId, diagnostic, resolutionClass, resolutionPath } = await resolveApiIdDetail(supabase, seed, {
     normalizedName: candidate.normalized_name,
+    priorityEntries: params.priorityEntries,
   });
   const jobId = await insertJobStart(supabase, {
     batchId: params.batchId,
@@ -2712,9 +3252,204 @@ async function importCandidateCourse(
 
   if (!apiId) {
     const cls = resolutionClass ?? "below_threshold";
+    const isPriorityCourse = isPriorityCourseName(seed.name, params.priorityEntries);
+    const canOfficialOnlyPromote =
+      isPriorityCourse && cls === "no_sane_api_candidate" && allowsOfficialOnlyPromotion(seed.name, params.priorityEntries);
+    if (canOfficialOnlyPromote) {
+      const courseEntries = priorityEntriesForCourse(seed.name, params.priorityEntries).filter((e) => e.allowOfficialOnlyPromotion === true);
+      const targets = courseEntries.length > 0 ? courseEntries : priorityEntriesForCourse(seed.name, params.priorityEntries);
+      const promotions: Array<{
+        targetCourseName: string;
+        sourceUrl: string | null;
+        sourceType: ImportSourceType;
+        rows: TeeSourceRows[];
+        completeTeeCount: number;
+      }> = [];
+      for (const entry of targets) {
+        const targetCourseName = officialOnlyTargetCourseName(seed.name, entry);
+        const priorityOfficial = await resolvePriorityOfficialSource({
+          courseName: seed.name,
+          apiCourseIdentityName: entry.subCourseName ?? undefined,
+          entries: [entry],
+        });
+        const officialRows = priorityOfficial.primaryRows ?? [];
+        const officialCompleteness = evaluateOfficialRowsCompleteness(officialRows);
+        const officialConfigured = hasConfiguredOfficialSource(seed.name, [entry]);
+        const officialPromotionSafe =
+          officialConfigured &&
+          priorityOfficial.officialSourceFound &&
+          priorityOfficial.parseSuccess &&
+          officialCompleteness.completeTeeCount > 0 &&
+          officialCompleteness.missingSI === 0 &&
+          officialCompleteness.missingYardage === 0;
+        if (!officialPromotionSafe) continue;
+        promotions.push({
+          targetCourseName,
+          sourceUrl: priorityOfficial.sourceUrl,
+          sourceType:
+            priorityOfficial.sourceType !== "unavailable"
+              ? (priorityOfficial.sourceType as ImportSourceType)
+              : "manual_dataset",
+          rows: officialCompleteness.completeTees,
+          completeTeeCount: officialCompleteness.completeTeeCount,
+        });
+      }
+
+      if (promotions.length > 0) {
+        const importedAtIso = new Date().toISOString();
+        const aggregateHoleCount = promotions.reduce((sum, p) => sum + p.rows.reduce((acc, tee) => acc + tee.holes.length, 0), 0);
+        const aggregateTeeCount = promotions.reduce((sum, p) => sum + p.completeTeeCount, 0);
+        const golferMetrics: GolferDataPromotionDecision["metrics"] = {
+          sourceCount: 1,
+          officialSourceUsed: true,
+          validatedHoleCount: aggregateHoleCount,
+          completeTeeCount: aggregateTeeCount,
+          missingSI: 0,
+          missingYardage: 0,
+          parMismatchCount: 0,
+          yardageMismatchCount: 0,
+          siMismatchCount: 0,
+          promotionDecision: "insert",
+        };
+        const priorityPromotionAudit = {
+          isPriority: true,
+          apiCourseIdentityName: undefined,
+          officialSourceFound: true,
+          parseSuccess: true,
+          subCourseMappingRequired: false,
+          selectedOfficialCandidateUrl: promotions[0]?.sourceUrl ?? null,
+          selectedOfficialSubCourseName: targets[0]?.subCourseName ?? null,
+          completeTeeCount: aggregateTeeCount,
+          missingSI: 0,
+          missingYardage: 0,
+          finalStatus: "verified" as const,
+          unverifiedClassification: undefined,
+          identitySanity: undefined,
+          officialOnlyPromotedCourses: promotions.map((p) => ({
+            courseName: p.targetCourseName,
+            teeCount: p.completeTeeCount,
+            holeCountsByTee: p.rows.map((tee) => ({ teeName: tee.teeName, holeCount: tee.holes.length })),
+            sourceUrl: p.sourceUrl,
+            golferDataStatus: "verified" as const,
+          })),
+        };
+        let courseId: string | undefined = undefined;
+        let inserted = false;
+        let updated = false;
+        if (!params.dryRun) {
+          for (const p of promotions) {
+            const persisted = await upsertOfficialOnlyPriorityImport(supabase, {
+              courseName: p.targetCourseName,
+              territory: params.territory,
+              seedPhase: params.phase,
+              country: candidate.country,
+              sourceType: p.sourceType,
+              sourceUrl: p.sourceUrl,
+              importedAtIso,
+              rawRow: {
+                official_only_promotion: true,
+                resolutionClass: cls,
+                diagnostic: diagnostic ?? null,
+                sourceUrl: p.sourceUrl,
+                targetCourseName: p.targetCourseName,
+              },
+              rows: p.rows,
+              importPriority: candidate.import_priority,
+              discoverySource: candidate.discovery_source,
+              firstDiscoveredAt: candidate.first_discovered_at,
+              lastDiscoveredAt: candidate.last_discovered_at,
+              metadata: candidate.metadata,
+            });
+            if (!courseId) courseId = persisted.courseId;
+            inserted = inserted || !persisted.existedBefore;
+            updated = updated || persisted.existedBefore;
+            await applyManualOverrides(supabase, persisted.courseId, params.overwriteManualOverrides);
+          }
+        }
+        await updateCandidateAfterAttempt(supabase, candidate, {
+          status: "imported",
+          syncStatus: "ok",
+          apiId: null,
+          error: null,
+        });
+        await updateJob(supabase, jobId, {
+          target_course_id: courseId ?? null,
+          sync_status: "ok",
+          finished_at: new Date().toISOString(),
+          imported_at: params.dryRun ? null : importedAtIso,
+          confidence_score: 1,
+          validation_errors: [],
+          raw_source_payload: {
+            official_only_promotion: true,
+            resolutionClass: cls,
+            diagnostic: diagnostic ?? null,
+            promotedCourses: promotions.map((p) => ({
+              courseName: p.targetCourseName,
+              sourceUrl: p.sourceUrl,
+              sourceType: p.sourceType,
+              teeCount: p.completeTeeCount,
+              holeCount: p.rows.reduce((sum, tee) => sum + tee.holes.length, 0),
+            })),
+          },
+          summary: {
+            dryRun: params.dryRun,
+            teeCount: aggregateTeeCount,
+            holeCount: aggregateHoleCount,
+            overwriteManualOverrides: params.overwriteManualOverrides,
+            candidateId: candidate.id,
+            phase: params.phase,
+            territory: params.territory,
+            detailPersistence: "official_only_priority",
+            dataConfidence: "high",
+            golferDataStatus: "verified",
+            golferDataMetrics: golferMetrics,
+            sourceComparison: {
+              sourceCount: 1,
+              officialSourceUsed: true,
+              validatedHoleCount: aggregateHoleCount,
+              parMismatchCount: 0,
+              yardageMismatchCount: 0,
+              siMismatchCount: 0,
+            },
+            validationBasis: "official_only" as ValidationBasis,
+            priorityPromotionAudit,
+            officialOnlyPromotion: true,
+            officialOnlyPromotedCourses: promotions.map((p) => ({
+              courseName: p.targetCourseName,
+              teeCount: p.completeTeeCount,
+              holeCountsByTee: p.rows.map((tee) => ({ teeName: tee.teeName, holeCount: tee.holes.length })),
+              sourceUrl: p.sourceUrl,
+              golferDataStatus: "verified",
+            })),
+          },
+        });
+        return {
+          result: {
+            courseName: seed.name,
+            apiId: null,
+            status: "ok",
+            validationIssues: [],
+            courseId,
+            golferDataStatus: "verified",
+            golferDataMetrics: golferMetrics,
+            priorityPromotionAudit,
+            growthConversion: {
+              resolutionPath: "unresolved",
+              newCourseInserted: inserted,
+              existingCourseUpdated: updated,
+            },
+          },
+          inserted,
+          updated,
+          missingSiCount: 0,
+        };
+      }
+    }
     const growthSkip: GrowthSkipReason =
       cls === "ambiguous_api_match"
         ? "ambiguous_api_match"
+        : cls === "no_sane_api_candidate"
+          ? "ambiguous_api_match"
         : cls === "no_catalog_match"
           ? "no_catalog_match"
           : "below_threshold";
@@ -2723,13 +3458,18 @@ async function importCandidateCourse(
         ? "(no_catalog_match)"
         : cls === "ambiguous_api_match"
           ? "(ambiguous_api_match)"
+          : cls === "no_sane_api_candidate"
+            ? "(no_sane_api_candidate)"
           : cls === "below_threshold"
             ? "(below_threshold)"
             : "(unresolved)";
     const errorMessage = `Unresolved candidate ${clsTag}: ${diagnostic ?? ""}`.slice(0, 480);
-    const isPriorityCourse = isPriorityCourseName(seed.name, params.priorityEntries);
     const unverifiedClassification: UnverifiedClassification =
-      growthSkip === "ambiguous_api_match" ? "unverified_ambiguous_match" : "unverified_incomplete_hole_data";
+      cls === "no_sane_api_candidate"
+        ? "unverified_ambiguous_course_mapping"
+        : growthSkip === "ambiguous_api_match"
+          ? "unverified_ambiguous_match"
+          : "unverified_incomplete_hole_data";
     await updateCandidateAfterAttempt(supabase, candidate, {
       status: "skipped",
       syncStatus: "skipped",
@@ -3187,19 +3927,28 @@ export async function runTerritoryScaleNightlyImport(
       (r) => r.unverifiedClassification === "unverified_incomplete_hole_data",
     ).length,
     unverifiedAmbiguousMatch: results.filter((r) => r.unverifiedClassification === "unverified_ambiguous_match").length,
+    unverifiedAmbiguousCourseMapping: results.filter(
+      (r) => r.unverifiedClassification === "unverified_ambiguous_course_mapping",
+    ).length,
     unverifiedParseFailed: results.filter((r) => r.unverifiedClassification === "unverified_parse_failed").length,
   };
   const priorityCoursePromotionReport = results
     .filter((r) => r.priorityPromotionAudit?.isPriority === true && (r.status === "skipped" || r.golferDataStatus != null))
     .map((r) => ({
       courseName: r.courseName,
+      apiCourseIdentityName: r.priorityPromotionAudit?.apiCourseIdentityName ?? null,
       officialSourceFound: r.priorityPromotionAudit?.officialSourceFound ?? false,
       parseSuccess: r.priorityPromotionAudit?.parseSuccess ?? false,
+      subCourseMappingRequired: r.priorityPromotionAudit?.subCourseMappingRequired ?? false,
+      selectedOfficialCandidateUrl: r.priorityPromotionAudit?.selectedOfficialCandidateUrl ?? null,
+      selectedOfficialSubCourseName: r.priorityPromotionAudit?.selectedOfficialSubCourseName ?? null,
       completeTeeCount: r.priorityPromotionAudit?.completeTeeCount ?? 0,
       missingSI: r.priorityPromotionAudit?.missingSI ?? 0,
       missingYardage: r.priorityPromotionAudit?.missingYardage ?? 0,
       finalStatus: r.golferDataStatus ?? r.status,
       unverifiedClassification: r.unverifiedClassification ?? r.priorityPromotionAudit?.unverifiedClassification ?? null,
+      identitySanity: r.priorityPromotionAudit?.identitySanity ?? null,
+      officialOnlyPromotedCourses: r.priorityPromotionAudit?.officialOnlyPromotedCourses ?? [],
     }));
   const priorityCoursesReadyForOfficialConfirmation = priorityCoursePromotionReport
     .filter((row) => row.unverifiedClassification === "unverified_needs_official_confirmation")

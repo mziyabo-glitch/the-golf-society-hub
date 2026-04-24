@@ -4,11 +4,13 @@ import * as path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   buildOfficialDiscoveryQueries,
+  evaluateIdentitySanity,
   isPriorityCourseName,
   loadPriorityCourseEntriesFromConfig,
   normalizeCourseKey,
   parseHtmlScorecard,
   parseStructuredScorecardText,
+  type PriorityCourseEntry,
 } from "@/lib/server/priorityOfficialSources";
 
 describe("priorityOfficialSources", () => {
@@ -19,6 +21,8 @@ describe("priorityOfficialSources", () => {
       "Upavon Golf Club hole by hole",
       "Upavon Golf Club golf scorecard",
       "Upavon Golf Club tee yardage stroke index",
+      "Upavon Golf Club England Golf",
+      "Upavon Golf Club R&A",
     ]);
   });
 
@@ -93,5 +97,77 @@ describe("priorityOfficialSources", () => {
       else process.env.COURSE_IMPORT_PRIORITY_COURSES_JSON = prev;
       await rm(dir, { recursive: true, force: true });
     }
+  });
+
+  describe("evaluateIdentitySanity", () => {
+    const valeEntries: PriorityCourseEntry[] = [
+      {
+        name: "The Vale Resort",
+        subCourseName: "Wales National Course",
+        courseAlias: ["The Wales National Course", "Wales National"],
+        expectedIdentityTerms: ["Vale Resort", "Wales National", "Hensol", "Vale of Glamorgan", "Wales"],
+        excludedIdentityTerms: ["Union Vale", "Links At Union Vale"],
+        expectedCountry: "Wales",
+        expectedRegion: "Vale of Glamorgan",
+      },
+      {
+        name: "The Vale Resort",
+        subCourseName: "Lake Course",
+        courseAlias: ["The Lake Course", "Lake"],
+        expectedIdentityTerms: ["Vale Resort", "Lake Course", "Hensol", "Vale of Glamorgan", "Wales"],
+        excludedIdentityTerms: ["Union Vale", "Links At Union Vale"],
+        expectedCountry: "Wales",
+        expectedRegion: "Vale of Glamorgan",
+      },
+    ];
+
+    it("rejects api identity that matches an excluded term", () => {
+      const result = evaluateIdentitySanity({
+        courseName: "The Vale Resort",
+        entries: valeEntries,
+        apiCourseIdentityName: "The Links At Union Vale",
+        apiCountry: "United States",
+        apiRegion: "New York",
+      });
+      expect(result.ok).toBe(false);
+      expect(result.reason).toBe("identity_excluded_term_hit");
+      expect(result.excludedTermHit).toMatch(/Union Vale|Links At Union Vale/);
+    });
+
+    it("passes api identity that matches expected vale resort terms", () => {
+      const result = evaluateIdentitySanity({
+        courseName: "The Vale Resort",
+        entries: valeEntries,
+        apiCourseIdentityName: "The Vale Resort - Wales National Course",
+        apiCountry: "Wales",
+        apiRegion: "Vale of Glamorgan",
+      });
+      expect(result.ok).toBe(true);
+      expect(result.reason).toBe("identity_matched");
+      expect(result.matchedTerms.some((t) => /Vale Resort/i.test(t))).toBe(true);
+    });
+
+    it("fails if api identity has none of the expected terms and identity is present", () => {
+      const result = evaluateIdentitySanity({
+        courseName: "The Vale Resort",
+        entries: valeEntries,
+        apiCourseIdentityName: "Some Unrelated Course",
+        apiCountry: "Germany",
+        apiRegion: "Bavaria",
+      });
+      expect(result.ok).toBe(false);
+      expect(result.reason).toBe("identity_missing_terms");
+      expect(result.missingTerms.length).toBeGreaterThan(0);
+    });
+
+    it("passes with no_constraints when no identity terms are configured", () => {
+      const result = evaluateIdentitySanity({
+        courseName: "Somewhere",
+        entries: [{ name: "Somewhere" }],
+        apiCourseIdentityName: "Somewhere Else",
+      });
+      expect(result.ok).toBe(true);
+      expect(result.reason).toBe("no_constraints");
+    });
   });
 });
