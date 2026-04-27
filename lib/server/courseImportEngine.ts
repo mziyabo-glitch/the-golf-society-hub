@@ -1459,9 +1459,26 @@ async function upsertOfficialOnlyPriorityImport(
       last_synced_at: params.importedAtIso,
     }));
     if (holeRows.length > 0) {
-      const { error } = await supabase.from("course_holes").upsert(holeRows, { onConflict: "tee_id,hole_number" });
+      const byHole = new Map<number, (typeof holeRows)[number]>();
+      for (const row of holeRows) {
+        const holeNumber = Number(row.hole_number);
+        if (!Number.isFinite(holeNumber) || holeNumber <= 0) continue;
+        const existing = byHole.get(holeNumber);
+        if (!existing) {
+          byHole.set(holeNumber, row);
+          continue;
+        }
+        const existingScore =
+          (existing.par != null ? 1 : 0) + (existing.yardage != null ? 1 : 0) + (existing.stroke_index != null ? 1 : 0);
+        const nextScore = (row.par != null ? 1 : 0) + (row.yardage != null ? 1 : 0) + (row.stroke_index != null ? 1 : 0);
+        if (nextScore >= existingScore) byHole.set(holeNumber, row);
+      }
+      const uniqueHoleRows = [...byHole.entries()]
+        .sort((a, b) => a[0] - b[0])
+        .map(([, row]) => row);
+      const { error } = await supabase.from("course_holes").upsert(uniqueHoleRows, { onConflict: "tee_id,hole_number" });
       if (error) throw new Error(error.message || `Failed to upsert official-only holes for tee ${tee.teeName}`);
-      holeCount += holeRows.length;
+      holeCount += uniqueHoleRows.length;
     }
   }
 
