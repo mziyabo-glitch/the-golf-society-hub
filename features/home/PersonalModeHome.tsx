@@ -90,6 +90,23 @@ export function PersonalModeHome({
         </Pressable>
       )}
 
+      <Pressable onPress={() => pushWithBlur("/(app)/free-play")} style={cardPressStyle}>
+        <AppCard style={styles.premiumCard}>
+          <View style={personalHomeStyles.featureRow}>
+            <View style={[personalHomeStyles.featureIcon, { backgroundColor: colors.success + "14" }]}>
+              <Feather name="flag" size={20} color={colors.success} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <AppText variant="bodyBold">Free Play Scorecard</AppText>
+              <AppText variant="small" color="secondary">
+                Score a casual round with verified courses, net or Stableford leaderboard, and guests.
+              </AppText>
+            </View>
+            <Feather name="chevron-right" size={18} color={colors.textTertiary} />
+          </View>
+        </AppCard>
+      </Pressable>
+
       {/* Feature cards */}
       <Pressable onPress={() => pushWithBlur("/(app)/(tabs)/sinbook")} style={cardPressStyle}>
         <AppCard style={styles.premiumCard}>

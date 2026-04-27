@@ -5,9 +5,12 @@ import { updateEvent } from "@/lib/db_supabase/eventRepo";
 import { assertLiveTeeHolesValidForEventAttach } from "@/lib/course/courseTeeHoleValidation";
 import { listStaleTeeRows, partitionStaleTeesForImportReconciliation } from "@/lib/course/teeReconciliation";
 import type { NormalizedCourseImport, PersistedCourseImport, TeeImportReconciliationStats } from "@/types/course";
+import { computeTrustRankForSearchHit } from "@/lib/course/freePlayTrustPresentation";
+import type { CourseApprovalState, CourseDataSubmissionType } from "@/types/courseTrust";
 import type { EventCourseContext, EventHoleSnapshotRow, EventTeeRatingSnapshot } from "@/types/eventCourseScoring";
 
 export type { EventCourseContext, EventCourseLiveTee, EventHoleSnapshotRow, EventTeeRatingSnapshot } from "@/types/eventCourseScoring";
+export type { CourseApprovalState, CourseDataSubmissionType } from "@/types/courseTrust";
 
 let courseSupabase: SupabaseClient = defaultSupabase;
 
@@ -87,6 +90,12 @@ export type CourseSearchHit = {
   id: string;
   name: string;
   location?: string | null;
+  /** Present when DB has migrations `129` / `133` (`golfer_data_status` on `courses`). */
+  golfer_data_status?: "verified" | "partial" | "unverified" | "rejected" | string | null;
+  /** Free Play trust sort: 0 global verified, 1 society approved, 2 pending submission, 3 other. */
+  trustRank?: number;
+  societyApprovedForSociety?: boolean;
+  pendingCourseDataReview?: boolean;
 };
 
 export type PlayableCourseHit = {
@@ -165,6 +174,23 @@ export async function getCourseTeeById(teeId: string): Promise<CourseTee | null>
 export type SearchCoursesResult = {
   data: CourseSearchHit[];
   error: string | null;
+  /**
+   * True when results came from a broad name search because the verified-only query
+   * failed (e.g. PostgREST/RLS) or returned no rows and {@link SearchVerifiedCoursesOptions.expandWhenEmpty} applied.
+   */
+  includedUnverifiedFallback?: boolean;
+};
+
+export type SearchVerifiedCoursesOptions = {
+  /**
+   * When the verified-only query returns zero rows, run {@link searchCourses} so the user can still pick a course.
+   * Default true (Free Play).
+   */
+  expandWhenEmpty?: boolean;
+  /**
+   * Active society: enriches hits with society approval + pending submission flags and sorts by trust tier.
+   */
+  societyIdForTrust?: string | null;
 };
 
 export type CourseWithTees = {
@@ -180,6 +206,7 @@ export type CourseMeta = {
   api_id: number | null;
   lat: number | null;
   lng: number | null;
+  golfer_data_status?: string | null;
 };
 
 /**
@@ -211,7 +238,7 @@ export async function getCourseByApiId(apiId: number): Promise<CourseWithTees | 
 export async function getCourseMetaById(courseId: string): Promise<CourseMeta | null> {
   const { data, error } = await courseSupabase
     .from("courses")
-    .select("id, course_name, api_id, lat, lng")
+    .select("id, course_name, api_id, lat, lng, golfer_data_status")
     .eq("id", courseId)
     .maybeSingle();
 
@@ -220,12 +247,14 @@ export async function getCourseMetaById(courseId: string): Promise<CourseMeta | 
   const lngRaw = data.lng;
   const lat = latRaw != null && Number.isFinite(Number(latRaw)) ? Number(latRaw) : null;
   const lng = lngRaw != null && Number.isFinite(Number(lngRaw)) ? Number(lngRaw) : null;
+  const gds = (data as { golfer_data_status?: string | null }).golfer_data_status;
   return {
     id: data.id,
     course_name: data.course_name ?? null,
     api_id: data.api_id != null ? Number(data.api_id) : null,
     lat,
     lng,
+    golfer_data_status: gds != null ? String(gds) : null,
   };
 }
 
@@ -301,6 +330,90 @@ export async function upsertTeesFromApi(
   return getTeesByCourseId(courseId);
 }
 
+function isCoursesTableMissingFromSearch(error: { code?: string; message?: string } | null): boolean {
+  if (!error) return false;
+  const msg = String(error.message ?? "");
+  return error.code === "42P01" || msg.includes("does not exist");
+}
+
+function logSearchVerifiedFailure(context: string, error: unknown): void {
+  const e = error as { message?: string; code?: string; details?: string; hint?: string } | null;
+  console.error(
+    `[courseRepo] searchVerifiedCourses ${context}:`,
+    e?.code,
+    e?.message,
+    JSON.stringify({ details: e?.details, hint: e?.hint }),
+  );
+}
+
+function mapDbCourseRowToSearchHit(row: Record<string, unknown>, opts?: { syntheticVerified?: boolean }): CourseSearchHit {
+  const location = (row.area || row.city || row.country) ?? null;
+  let status: string | null =
+    row.golfer_data_status != null && String(row.golfer_data_status).trim() ? String(row.golfer_data_status) : null;
+  if (opts?.syntheticVerified && !status) {
+    status = "verified";
+  }
+  return {
+    id: String(row.id),
+    name: String(row.course_name ?? row.name ?? ""),
+    location: location != null ? String(location) : null,
+    golfer_data_status: status as CourseSearchHit["golfer_data_status"],
+  };
+}
+
+/** Enrich Free Play search hits with society approval + pending submission; sort by trust tier. */
+async function enrichAndSortFreePlayCourseHits(
+  hits: CourseSearchHit[],
+  societyIdForTrust: string | null | undefined,
+): Promise<CourseSearchHit[]> {
+  if (hits.length === 0) return hits;
+  const ids = [...new Set(hits.map((h) => h.id))];
+  const approvedSet = new Set<string>();
+  const pendingSet = new Set<string>();
+
+  if (societyIdForTrust) {
+    const { data: appr, error: apprErr } = await courseSupabase
+      .from("course_society_approvals")
+      .select("course_id")
+      .eq("society_id", societyIdForTrust)
+      .in("course_id", ids);
+    if (apprErr) {
+      console.warn("[courseRepo] course_society_approvals read skipped:", apprErr.message);
+    } else {
+      for (const r of appr ?? []) approvedSet.add(String((r as { course_id: string }).course_id));
+    }
+  }
+
+  const { data: pend, error: pendErr } = await courseSupabase
+    .from("course_data_submissions")
+    .select("course_id")
+    .eq("status", "pending_review")
+    .in("course_id", ids);
+  if (pendErr) {
+    console.warn("[courseRepo] course_data_submissions read skipped:", pendErr.message);
+  } else {
+    for (const r of pend ?? []) pendingSet.add(String((r as { course_id: string }).course_id));
+  }
+
+  const enriched = hits.map((h) => {
+    const societyApprovedForSociety = Boolean(societyIdForTrust && approvedSet.has(h.id));
+    const pendingCourseDataReview = pendingSet.has(h.id);
+    const trustRank = computeTrustRankForSearchHit({
+      golfer_data_status: h.golfer_data_status,
+      societyApprovedForSociety,
+      pendingCourseDataReview,
+    });
+    return { ...h, societyApprovedForSociety, pendingCourseDataReview, trustRank };
+  });
+
+  return enriched.sort((a, b) => {
+    const ta = a.trustRank ?? 3;
+    const tb = b.trustRank ?? 3;
+    if (ta !== tb) return ta - tb;
+    return a.name.localeCompare(b.name);
+  });
+}
+
 /**
  * Search courses by name (for event creation: Search Course → Select Tee).
  *
@@ -317,10 +430,12 @@ export async function searchCourses(
   console.log("[courseRepo] searchCourses:", q);
 
   // Select all columns (*) so we can pick location from whatever exists
+  const pattern = `%${q}%`;
+  const escapedPattern = pattern.replace(/,/g, "\\,");
   const { data, error } = await courseSupabase
     .from("courses")
     .select("*")
-    .ilike("course_name", `%${q}%`)
+    .or(`course_name.ilike.${escapedPattern},club_name.ilike.${escapedPattern}`)
     .order("course_name")
     .limit(limit);
 
@@ -334,15 +449,209 @@ export async function searchCourses(
 
   console.log("[courseRepo] searchCourses returned", (data ?? []).length, "hits");
 
-  const hits = (data ?? []).map((row: any) => {
-    const location = row.area || row.city || row.country || null;
-    return {
-      id: row.id,
-      name: row.course_name ?? row.name ?? "",
-      location,
-    };
-  });
+  const hits = (data ?? []).map((row: Record<string, unknown>) => mapDbCourseRowToSearchHit(row));
   return { data: hits, error: null };
+}
+
+/**
+ * Free Play course search: prefers `courses.golfer_data_status = 'verified'` (migrations 129 / 133).
+ *
+ * Resilience:
+ * - If that filter fails (missing column, PostgREST 400, etc.), logs and immediately uses {@link searchCourses}.
+ * - If it succeeds with zero rows and `expandWhenEmpty`, tries `validation_basis = official_only` then
+ *   `data_confidence = high` (migrations 130 / 128) before falling back to broad name search.
+ */
+export async function searchVerifiedCourses(
+  query: string,
+  limit = 20,
+  options?: SearchVerifiedCoursesOptions,
+): Promise<SearchCoursesResult> {
+  const q = (query || "").trim();
+  if (!q) return { data: [], error: null };
+
+  const expandWhenEmpty = options?.expandWhenEmpty !== false;
+  const societyTrust = options?.societyIdForTrust ?? null;
+
+  console.log("[courseRepo] searchVerifiedCourses:", q);
+
+  const pattern = `%${q}%`;
+  const escapedPattern = pattern.replace(/,/g, "\\,");
+
+  const { data: verifiedRows, error: verifiedError } = await courseSupabase
+    .from("courses")
+    .select("*")
+    .eq("golfer_data_status", "verified")
+    .or(`course_name.ilike.${escapedPattern},club_name.ilike.${escapedPattern}`)
+    .order("course_name")
+    .limit(limit);
+
+  if (verifiedError) {
+    logSearchVerifiedFailure("golfer_data_status=verified filter failed (falling back to broad search)", verifiedError);
+    if (isCoursesTableMissingFromSearch(verifiedError)) {
+      return { data: [], error: "courses table not found — run migrations" };
+    }
+    const fb = await searchCourses(query, limit);
+    return {
+      ...fb,
+      data: await enrichAndSortFreePlayCourseHits(fb.data ?? [], societyTrust),
+      includedUnverifiedFallback: true,
+    };
+  }
+
+  const verifiedHits = (verifiedRows ?? []).map((row) => mapDbCourseRowToSearchHit(row as Record<string, unknown>));
+  if (verifiedHits.length > 0) {
+    console.log("[courseRepo] searchVerifiedCourses returned", verifiedHits.length, "verified (golfer_data_status) hits");
+    return { data: await enrichAndSortFreePlayCourseHits(verifiedHits, societyTrust), error: null };
+  }
+
+  if (!expandWhenEmpty || q.length < 2) {
+    return { data: [], error: null };
+  }
+
+  const { data: officialRows, error: officialErr } = await courseSupabase
+    .from("courses")
+    .select("*")
+    .eq("validation_basis", "official_only")
+    .or(`course_name.ilike.${escapedPattern},club_name.ilike.${escapedPattern}`)
+    .order("course_name")
+    .limit(limit);
+
+  if (!officialErr && (officialRows?.length ?? 0) > 0) {
+    console.log(
+      "[courseRepo] searchVerifiedCourses: 0 golfer_data_status=verified rows; using validation_basis=official_only subset",
+    );
+    const hits = (officialRows ?? []).map((row) =>
+      mapDbCourseRowToSearchHit(row as Record<string, unknown>, { syntheticVerified: true }),
+    );
+    return { data: await enrichAndSortFreePlayCourseHits(hits, societyTrust), error: null, includedUnverifiedFallback: true };
+  }
+  if (officialErr) {
+    logSearchVerifiedFailure("validation_basis=official_only branch skipped", officialErr);
+  }
+
+  const { data: highRows, error: highErr } = await courseSupabase
+    .from("courses")
+    .select("*")
+    .eq("data_confidence", "high")
+    .or(`course_name.ilike.${escapedPattern},club_name.ilike.${escapedPattern}`)
+    .order("course_name")
+    .limit(limit);
+
+  if (!highErr && (highRows?.length ?? 0) > 0) {
+    console.log(
+      "[courseRepo] searchVerifiedCourses: 0 verified/official rows; using data_confidence=high subset",
+    );
+    const hits = (highRows ?? []).map((row) =>
+      mapDbCourseRowToSearchHit(row as Record<string, unknown>, { syntheticVerified: true }),
+    );
+    return { data: await enrichAndSortFreePlayCourseHits(hits, societyTrust), error: null, includedUnverifiedFallback: true };
+  }
+  if (highErr) {
+    logSearchVerifiedFailure("data_confidence=high branch skipped", highErr);
+  }
+
+  console.log("[courseRepo] searchVerifiedCourses: no strict matches, expanding to searchCourses");
+  const fb = await searchCourses(query, limit);
+  return {
+    ...fb,
+    data: await enrichAndSortFreePlayCourseHits(fb.data ?? [], societyTrust),
+    includedUnverifiedFallback: true,
+  };
+}
+
+/**
+ * Trust state for a course in Free Play (global status + society approval + pending submissions).
+ */
+export async function getCourseApprovalState(
+  courseId: string,
+  societyId?: string | null,
+): Promise<CourseApprovalState | null> {
+  const { data: courseRow, error: cErr } = await courseSupabase
+    .from("courses")
+    .select("id, golfer_data_status")
+    .eq("id", courseId)
+    .maybeSingle();
+  if (cErr || !courseRow) return null;
+
+  const globalStatus =
+    (courseRow as { golfer_data_status?: string | null }).golfer_data_status != null
+      ? String((courseRow as { golfer_data_status?: string | null }).golfer_data_status)
+      : null;
+
+  let societyApproved = false;
+  let societyApprovedAt: string | null = null;
+  let societyApprovalNotes: string | null = null;
+  if (societyId) {
+    const { data: appr, error: aErr } = await courseSupabase
+      .from("course_society_approvals")
+      .select("approved_at, notes")
+      .eq("course_id", courseId)
+      .eq("society_id", societyId)
+      .maybeSingle();
+    if (!aErr && appr) {
+      societyApproved = true;
+      societyApprovedAt = (appr as { approved_at?: string }).approved_at ?? null;
+      societyApprovalNotes = (appr as { notes?: string | null }).notes ?? null;
+    }
+  }
+
+  const { data: pendRows, error: pErr } = await courseSupabase
+    .from("course_data_submissions")
+    .select("id")
+    .eq("course_id", courseId)
+    .eq("status", "pending_review")
+    .limit(1);
+  const pendingSubmission = !pErr && (pendRows?.length ?? 0) > 0;
+
+  return {
+    courseId,
+    globalStatus,
+    societyApproved,
+    societyApprovedAt,
+    societyApprovalNotes,
+    pendingSubmission,
+  };
+}
+
+export async function approveCourseForSociety(courseId: string, societyId: string, notes?: string | null): Promise<void> {
+  const { error } = await courseSupabase.rpc("approve_course_for_society", {
+    p_course_id: courseId,
+    p_society_id: societyId,
+    p_notes: notes ?? null,
+  });
+  if (error) throw new Error(error.message || "Could not approve course for society.");
+}
+
+export async function submitCourseDataReview(input: {
+  courseId: string;
+  societyId?: string | null;
+  submissionType: CourseDataSubmissionType;
+  notes?: string | null;
+  payload?: Record<string, unknown> | null;
+}): Promise<void> {
+  const { error } = await courseSupabase.rpc("submit_course_data_review", {
+    p_course_id: input.courseId,
+    p_society_id: input.societyId ?? null,
+    p_submission_type: input.submissionType,
+    p_notes: input.notes ?? "",
+    p_payload: input.payload ?? {},
+  });
+  if (error) throw new Error(error.message || "Could not submit course data for review.");
+}
+
+export async function reviewCourseDataSubmission(input: {
+  submissionId: string;
+  decision: "approved" | "rejected";
+  reviewNotes?: string | null;
+  markCourseStatus?: "verified" | "partial" | "unverified" | "rejected" | null;
+}): Promise<void> {
+  const { error } = await courseSupabase.rpc("review_course_data_submission", {
+    p_submission_id: input.submissionId,
+    p_decision: input.decision,
+    p_review_notes: input.reviewNotes ?? null,
+    p_mark_course_status: input.markCourseStatus ?? null,
+  });
+  if (error) throw new Error(error.message || "Could not review submission.");
 }
 
 function normalizeCourseNameKey(name: string): string {

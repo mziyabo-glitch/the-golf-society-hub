@@ -252,6 +252,36 @@ export default function MoreScreen() {
           )}
         </AppCard>
 
+        <SectionTitle>Free play</SectionTitle>
+        <AppCard style={styles.card}>
+          <MenuRow
+            icon="edit-3"
+            iconBg={`${colors.primary}16`}
+            title="Free Play Scorecard"
+            subtitle="Verified courses, live leaderboard, members & guests"
+            colors={colors}
+            onPress={() => push("/(app)/free-play")}
+          />
+          <View style={[styles.divider, { backgroundColor: colors.borderLight }]} />
+          <MenuRow
+            icon="plus-circle"
+            iconBg={`${colors.success}18`}
+            title="Create new scorecard"
+            subtitle="Start a casual round for your society"
+            colors={colors}
+            onPress={() => push("/(app)/free-play")}
+          />
+          <View style={[styles.divider, { backgroundColor: colors.borderLight }]} />
+          <MenuRow
+            icon="activity"
+            iconBg={`${colors.info}18`}
+            title="My active scorecards"
+            subtitle="Draft and in-progress rounds"
+            colors={colors}
+            onPress={() => push("/(app)/free-play")}
+          />
+        </AppCard>
+
         <SectionTitle>Account</SectionTitle>
         <AppCard style={styles.card}>
           <MenuRow

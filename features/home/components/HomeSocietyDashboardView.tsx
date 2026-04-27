@@ -129,6 +129,23 @@ export function HomeSocietyDashboardView(vm: HomeSocietyDashboardVm) {
         Event Results, Prize Pools, and Season Standings — all in one place.
       </AppText>
 
+      <Pressable onPress={() => pushWithBlur("/(app)/free-play")}>
+        <AppCard style={[styles.premiumCard, { borderColor: colors.primary + "33" }]}>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+            <View style={{ backgroundColor: colors.primary + "18", borderRadius: 12, padding: 10 }}>
+              <Feather name="flag" size={20} color={colors.primary} />
+            </View>
+            <View style={{ flex: 1, minWidth: 0 }}>
+              <AppText variant="bodyBold">Free Play Scorecard</AppText>
+              <AppText variant="small" color="secondary" numberOfLines={2}>
+                Create or resume a society round — verified courses, live leaderboard.
+              </AppText>
+            </View>
+            <Feather name="chevron-right" size={18} color={colors.textTertiary} />
+          </View>
+        </AppCard>
+      </Pressable>
+
       {loadError && (
         <InlineNotice
           variant="error"

@@ -196,6 +196,7 @@ async function seedCourse(supabase: SupabaseClient, seed: CourseSeed, dryRun: bo
   console.log(`[shrivenham-seed] course ok: ${seed.course_name} (course_id=${courseId})`);
 
   const teeIdByName = new Map<string, string>();
+  const seededTeeNames = new Set(seed.tees.map((t) => t.name));
   for (const tee of seed.tees) {
     const teePayload = {
       course_id: courseId,
@@ -224,6 +225,34 @@ async function seedCourse(supabase: SupabaseClient, seed: CourseSeed, dryRun: bo
       .single();
     if (teeErr || !teeRow) throw new Error(`Tee upsert failed (${seed.course_name} / ${tee.name}): ${teeErr?.message ?? "unknown"}`);
     teeIdByName.set(tee.name, String((teeRow as { id: string }).id));
+  }
+
+  if (!dryRun) {
+    const { data: existingTees, error: existingTeesErr } = await supabase
+      .from("course_tees")
+      .select("id, tee_name, is_active")
+      .eq("course_id", courseId);
+    if (existingTeesErr) {
+      throw new Error(`Tee list read failed (${seed.course_name}): ${existingTeesErr.message}`);
+    }
+
+    const staleTeeIds = (existingTees ?? [])
+      .filter((row) => !seededTeeNames.has(String((row as { tee_name?: unknown }).tee_name ?? "")))
+      .map((row) => String((row as { id: string }).id));
+
+    if (staleTeeIds.length > 0) {
+      const { error: deactivateErr } = await supabase
+        .from("course_tees")
+        .update({ is_active: false })
+        .eq("course_id", courseId)
+        .in("id", staleTeeIds);
+      if (deactivateErr) {
+        throw new Error(`Stale tee deactivation failed (${seed.course_name}): ${deactivateErr.message}`);
+      }
+      console.log(
+        `[shrivenham-seed] deactivated ${staleTeeIds.length} stale tees for ${seed.course_name}: ${staleTeeIds.join(", ")}`,
+      );
+    }
   }
 
   if (dryRun) {

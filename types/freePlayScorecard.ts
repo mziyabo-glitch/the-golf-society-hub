@@ -1,4 +1,6 @@
 export type FreePlayScoringMode = "quick" | "hole_by_hole";
+/** Competition format for net / Stableford (v1). */
+export type FreePlayScoringFormat = "stroke_net" | "stableford";
 export type FreePlayRoundStatus = "draft" | "in_progress" | "completed";
 export type FreePlayPlayerType = "member" | "app_user" | "guest";
 export type FreePlayInviteStatus = "none" | "invited" | "joined";
@@ -14,6 +16,8 @@ export type FreePlayRound = {
   tee_name: string | null;
   join_code: string;
   scoring_mode: FreePlayScoringMode;
+  /** stroke_net | stableford — drives leaderboard (v1). */
+  scoring_format: FreePlayScoringFormat;
   status: FreePlayRoundStatus;
   started_at: string | null;
   completed_at: string | null;
@@ -29,7 +33,14 @@ export type FreePlayRoundPlayer = {
   user_id: string | null;
   invite_email: string | null;
   display_name: string;
+  /** WHS-style handicap index (decimal). */
   handicap_index: number;
+  /** Playing handicap strokes for the round / selected tee (integer or half per DB). */
+  playing_handicap: number | null;
+  /** Optional guest label when player_type is guest. */
+  guest_name: string | null;
+  /** Per-player tee override; defaults to round tee when null. */
+  tee_id: string | null;
   invite_status: FreePlayInviteStatus;
   is_owner: boolean;
   sort_order: number;
@@ -52,7 +63,8 @@ export type FreePlayRoundHoleScore = {
   round_id: string;
   round_player_id: string;
   hole_number: number;
-  gross_strokes: number;
+  /** Null = pickup / no score recorded for this hole. */
+  gross_strokes: number | null;
   created_at: string;
   updated_at: string;
 };
