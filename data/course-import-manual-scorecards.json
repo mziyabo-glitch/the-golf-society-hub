@@ -1,0 +1,125 @@
+{
+  "courses": [
+    {
+      "courseName": "Shrivenham Park Golf Club",
+      "sourceUrl": "Official Shrivenham Park GC Summer scorecard screenshot/manual entry.",
+      "tees": [
+        {
+          "teeName": "Yellow",
+          "holes": [
+            { "hole_number": 1, "par": 4, "yardage": 318, "stroke_index": 17 },
+            { "hole_number": 2, "par": 3, "yardage": 166, "stroke_index": 11 },
+            { "hole_number": 3, "par": 4, "yardage": 372, "stroke_index": 9 },
+            { "hole_number": 4, "par": 4, "yardage": 257, "stroke_index": 15 },
+            { "hole_number": 5, "par": 5, "yardage": 481, "stroke_index": 3 },
+            { "hole_number": 6, "par": 4, "yardage": 275, "stroke_index": 5 },
+            { "hole_number": 7, "par": 4, "yardage": 295, "stroke_index": 7 },
+            { "hole_number": 8, "par": 4, "yardage": 413, "stroke_index": 1 },
+            { "hole_number": 9, "par": 3, "yardage": 202, "stroke_index": 13 },
+            { "hole_number": 10, "par": 3, "yardage": 153, "stroke_index": 18 },
+            { "hole_number": 11, "par": 3, "yardage": 187, "stroke_index": 12 },
+            { "hole_number": 12, "par": 4, "yardage": 323, "stroke_index": 10 },
+            { "hole_number": 13, "par": 5, "yardage": 504, "stroke_index": 2 },
+            { "hole_number": 14, "par": 4, "yardage": 312, "stroke_index": 8 },
+            { "hole_number": 15, "par": 3, "yardage": 155, "stroke_index": 16 },
+            { "hole_number": 16, "par": 4, "yardage": 373, "stroke_index": 4 },
+            { "hole_number": 17, "par": 5, "yardage": 500, "stroke_index": 6 },
+            { "hole_number": 18, "par": 3, "yardage": 181, "stroke_index": 14 }
+          ]
+        },
+        {
+          "teeName": "Purple",
+          "holes": [
+            { "hole_number": 1, "par": 4, "yardage": 278, "stroke_index": 17 },
+            { "hole_number": 2, "par": 3, "yardage": 136, "stroke_index": 11 },
+            { "hole_number": 3, "par": 4, "yardage": 343, "stroke_index": 9 },
+            { "hole_number": 4, "par": 4, "yardage": 228, "stroke_index": 15 },
+            { "hole_number": 5, "par": 5, "yardage": 460, "stroke_index": 3 },
+            { "hole_number": 6, "par": 4, "yardage": 275, "stroke_index": 5 },
+            { "hole_number": 7, "par": 4, "yardage": 283, "stroke_index": 7 },
+            { "hole_number": 8, "par": 4, "yardage": 392, "stroke_index": 1 },
+            { "hole_number": 9, "par": 3, "yardage": 191, "stroke_index": 13 },
+            { "hole_number": 10, "par": 3, "yardage": 147, "stroke_index": 18 },
+            { "hole_number": 11, "par": 3, "yardage": 176, "stroke_index": 12 },
+            { "hole_number": 12, "par": 4, "yardage": 303, "stroke_index": 10 },
+            { "hole_number": 13, "par": 5, "yardage": 471, "stroke_index": 2 },
+            { "hole_number": 14, "par": 4, "yardage": 270, "stroke_index": 8 },
+            { "hole_number": 15, "par": 3, "yardage": 132, "stroke_index": 16 },
+            { "hole_number": 16, "par": 4, "yardage": 331, "stroke_index": 4 },
+            { "hole_number": 17, "par": 5, "yardage": 473, "stroke_index": 6 },
+            { "hole_number": 18, "par": 3, "yardage": 149, "stroke_index": 14 }
+          ]
+        },
+        {
+          "teeName": "Green",
+          "holes": [
+            { "hole_number": 1, "par": 4, "yardage": 269, "stroke_index": 17 },
+            { "hole_number": 2, "par": 3, "yardage": 152, "stroke_index": 13 },
+            { "hole_number": 3, "par": 4, "yardage": 318, "stroke_index": 9 },
+            { "hole_number": 4, "par": 4, "yardage": 221, "stroke_index": 15 },
+            { "hole_number": 5, "par": 5, "yardage": 409, "stroke_index": 3 },
+            { "hole_number": 6, "par": 4, "yardage": 275, "stroke_index": 5 },
+            { "hole_number": 7, "par": 4, "yardage": 249, "stroke_index": 7 },
+            { "hole_number": 8, "par": 4, "yardage": 367, "stroke_index": 1 },
+            { "hole_number": 9, "par": 3, "yardage": 182, "stroke_index": 11 },
+            { "hole_number": 10, "par": 3, "yardage": 141, "stroke_index": 16 },
+            { "hole_number": 11, "par": 3, "yardage": 152, "stroke_index": 12 },
+            { "hole_number": 12, "par": 4, "yardage": 287, "stroke_index": 10 },
+            { "hole_number": 13, "par": 5, "yardage": 433, "stroke_index": 2 },
+            { "hole_number": 14, "par": 4, "yardage": 268, "stroke_index": 8 },
+            { "hole_number": 15, "par": 3, "yardage": 117, "stroke_index": 18 },
+            { "hole_number": 16, "par": 4, "yardage": 318, "stroke_index": 6 },
+            { "hole_number": 17, "par": 5, "yardage": 491, "stroke_index": 4 },
+            { "hole_number": 18, "par": 3, "yardage": 171, "stroke_index": 14 }
+          ]
+        },
+        {
+          "teeName": "Blue",
+          "holes": [
+            { "hole_number": 1, "par": 4, "yardage": 257, "stroke_index": 17 },
+            { "hole_number": 2, "par": 3, "yardage": 107, "stroke_index": 11 },
+            { "hole_number": 3, "par": 4, "yardage": 330, "stroke_index": 9 },
+            { "hole_number": 4, "par": 4, "yardage": 209, "stroke_index": 15 },
+            { "hole_number": 5, "par": 5, "yardage": 428, "stroke_index": 3 },
+            { "hole_number": 6, "par": 4, "yardage": 275, "stroke_index": 5 },
+            { "hole_number": 7, "par": 3, "yardage": 131, "stroke_index": 7 },
+            { "hole_number": 8, "par": 4, "yardage": 384, "stroke_index": 1 },
+            { "hole_number": 9, "par": 3, "yardage": 168, "stroke_index": 13 },
+            { "hole_number": 10, "par": 3, "yardage": 144, "stroke_index": 18 },
+            { "hole_number": 11, "par": 3, "yardage": 159, "stroke_index": 12 },
+            { "hole_number": 12, "par": 4, "yardage": 276, "stroke_index": 10 },
+            { "hole_number": 13, "par": 5, "yardage": 428, "stroke_index": 2 },
+            { "hole_number": 14, "par": 4, "yardage": 243, "stroke_index": 8 },
+            { "hole_number": 15, "par": 3, "yardage": 114, "stroke_index": 16 },
+            { "hole_number": 16, "par": 4, "yardage": 311, "stroke_index": 4 },
+            { "hole_number": 17, "par": 5, "yardage": 456, "stroke_index": 6 },
+            { "hole_number": 18, "par": 3, "yardage": 161, "stroke_index": 14 }
+          ]
+        },
+        {
+          "teeName": "Blue Alternate",
+          "holes": [
+            { "hole_number": 1, "par": 4, "yardage": 257, "stroke_index": 17 },
+            { "hole_number": 2, "par": 3, "yardage": 107, "stroke_index": 11 },
+            { "hole_number": 3, "par": 4, "yardage": 330, "stroke_index": 9 },
+            { "hole_number": 4, "par": 4, "yardage": 209, "stroke_index": 15 },
+            { "hole_number": 5, "par": 5, "yardage": 428, "stroke_index": 3 },
+            { "hole_number": 6, "par": 4, "yardage": 275, "stroke_index": 5 },
+            { "hole_number": 7, "par": 3, "yardage": 131, "stroke_index": 7 },
+            { "hole_number": 8, "par": 4, "yardage": 384, "stroke_index": 1 },
+            { "hole_number": 9, "par": 3, "yardage": 168, "stroke_index": 13 },
+            { "hole_number": 10, "par": 3, "yardage": 144, "stroke_index": 18 },
+            { "hole_number": 11, "par": 3, "yardage": 159, "stroke_index": 12 },
+            { "hole_number": 12, "par": 4, "yardage": 276, "stroke_index": 10 },
+            { "hole_number": 13, "par": 5, "yardage": 428, "stroke_index": 2 },
+            { "hole_number": 14, "par": 4, "yardage": 243, "stroke_index": 8 },
+            { "hole_number": 15, "par": 3, "yardage": 114, "stroke_index": 16 },
+            { "hole_number": 16, "par": 4, "yardage": 311, "stroke_index": 4 },
+            { "hole_number": 17, "par": 5, "yardage": 456, "stroke_index": 6 },
+            { "hole_number": 18, "par": 3, "yardage": 161, "stroke_index": 14 }
+          ]
+        }
+      ]
+    }
+  ]
+}

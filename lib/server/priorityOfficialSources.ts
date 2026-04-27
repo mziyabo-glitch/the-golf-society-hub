@@ -4,9 +4,14 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { inflateSync } from "node:zlib";
 import * as cheerio from "cheerio";
-import pdfParse from "pdf-parse";
+import { PDFParse } from "pdf-parse";
 
-export type ValidationBasis = "official_only" | "official_plus_secondary" | "dual_secondary_match" | "secondary_only";
+export type ValidationBasis =
+  | "official_only"
+  | "official_plus_secondary"
+  | "dual_secondary_match"
+  | "secondary_only"
+  | "gsh_review";
 
 export type PriorityCourseEntry = {
   name: string;
@@ -696,8 +701,13 @@ export async function parsePdfScorecard(
 ): Promise<TeeSourceRows[]> {
   let text = "";
   try {
-    const parsed = await pdfParse(pdfBuffer);
-    text = parsed.text ?? "";
+    const parser = new PDFParse({ data: pdfBuffer });
+    try {
+      const parsed = await parser.getText();
+      text = parsed.text ?? "";
+    } finally {
+      await parser.destroy().catch(() => undefined);
+    }
   } catch (error) {
     if (debug?.enabled) {
       debug.events.push({
@@ -899,17 +909,23 @@ async function parseOfficialUrl(
 
 async function loadManualDataset(): Promise<ManualScorecardDataset | null> {
   const manualPath = process.env.COURSE_IMPORT_MANUAL_SCORECARD_JSON?.trim();
-  if (!manualPath) return null;
-  try {
-    const raw = await readFile(toAbsoluteIfNeeded(manualPath), "utf8");
-    const parsed = JSON.parse(raw) as ManualScorecardDataset;
-    if (!parsed || !Array.isArray(parsed.courses)) return null;
-    return parsed;
-  } catch (error) {
-    const msg = error instanceof Error ? error.message : String(error);
-    console.warn(`[course-import] Failed reading COURSE_IMPORT_MANUAL_SCORECARD_JSON: ${msg}`);
-    return null;
+  const defaultPath = "data/course-import-manual-scorecards.json";
+  const candidatePaths = manualPath ? [manualPath] : [defaultPath];
+  for (const p of candidatePaths) {
+    try {
+      const raw = await readFile(toAbsoluteIfNeeded(p), "utf8");
+      const parsed = JSON.parse(raw) as ManualScorecardDataset;
+      if (parsed && Array.isArray(parsed.courses)) return parsed;
+    } catch (error) {
+      const code = typeof error === "object" && error != null && "code" in error ? String((error as { code?: unknown }).code ?? "") : "";
+      if (!manualPath && code === "ENOENT") continue;
+      const msg = error instanceof Error ? error.message : String(error);
+      const label = manualPath ? "COURSE_IMPORT_MANUAL_SCORECARD_JSON" : defaultPath;
+      console.warn(`[course-import] Failed reading ${label}: ${msg}`);
+      return null;
+    }
   }
+  return null;
 }
 
 function manualRowsForCourse(courseName: string, manual: ManualScorecardDataset | null): TeeSourceRows[] | null {
@@ -1179,6 +1195,8 @@ export async function resolvePriorityOfficialSource(params: {
   const manual = await loadManualDataset();
   const manualRows = manualRowsForCourse(params.courseName, manual);
   if (manualRows && manualRows.length > 0) {
+    const manualSourceUrl =
+      manual?.courses.find((c) => normalizeCourseKey(c.courseName) === normalizeCourseKey(params.courseName))?.sourceUrl ?? null;
     return {
       isPriority: true,
       officialSourceFound: true,
@@ -1186,15 +1204,14 @@ export async function resolvePriorityOfficialSource(params: {
       subCourseMappingRequired: false,
       selectedSubCourseName: null,
       sourceType: "manual_dataset",
-      sourceUrl:
-        manual?.courses.find((c) => normalizeCourseKey(c.courseName) === normalizeCourseKey(params.courseName))?.sourceUrl ?? null,
+      sourceUrl: manualSourceUrl,
       attemptedQueries: [],
       attemptedUrls: [],
       primaryRows: manualRows,
       fieldProvenance: {
-        par: { source_type: "manual_dataset", source_url: null },
-        yardage: { source_type: "manual_dataset", source_url: null },
-        stroke_index: { source_type: "manual_dataset", source_url: null },
+        par: { source_type: "manual_dataset", source_url: manualSourceUrl },
+        yardage: { source_type: "manual_dataset", source_url: manualSourceUrl },
+        stroke_index: { source_type: "manual_dataset", source_url: manualSourceUrl },
       },
     };
   }
@@ -1225,6 +1242,8 @@ export async function resolvePriorityOfficialSource(params: {
     url: string;
     sourceType: "official_pdf" | "official_html" | "official_embedded";
     rows: TeeSourceRows[];
+    subCourseName?: string;
+    courseAlias?: string[];
   }> = [];
   for (const url of urls) {
     attemptedUrls.push(url);

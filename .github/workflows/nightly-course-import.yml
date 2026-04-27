@@ -79,8 +79,40 @@ jobs:
           node-version: 20
           cache: npm
 
+      - name: Validate required import environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          missing=0
+          if [[ -z "${NEXT_PUBLIC_SUPABASE_URL:-}" ]]; then
+            echo "::error::Missing NEXT_PUBLIC_SUPABASE_URL (or EXPO_PUBLIC_SUPABASE_URL secret)."
+            missing=1
+          fi
+          if [[ -z "${SUPABASE_SERVICE_ROLE_KEY:-}" ]]; then
+            echo "::error::Missing SUPABASE_SERVICE_ROLE_KEY secret."
+            missing=1
+          fi
+          if [[ -z "${GOLFCOURSE_API_KEY:-}" ]]; then
+            echo "::error::Missing Golf API key secret. Set one of: GOLFCOURSE_API_KEY, EXPO_PUBLIC_GOLFCOURSE_API_KEY, NEXT_PUBLIC_GOLF_API_KEY."
+            missing=1
+          fi
+          if [[ "$missing" -ne 0 ]]; then
+            echo "::error::Nightly course import aborted due to missing required environment variables."
+            exit 1
+          fi
+
       - name: Install dependencies
         run: npm ci
+
+      - name: Apply curated Shrivenham Park GC Summer seed
+        shell: bash
+        run: |
+          set -euo pipefail
+          SEED_ARGS=""
+          if [[ "${{ github.event.inputs.dry_run || '' }}" == "true" ]]; then
+            SEED_ARGS="$SEED_ARGS --dry-run"
+          fi
+          npm run course-import:seed-shrivenham-summer -- $SEED_ARGS
 
       - name: Seed candidate queue from GB dataset
         shell: bash
@@ -128,12 +160,16 @@ jobs:
           if [[ "${{ github.event.inputs.force_catalog_full_refresh || '' }}" == "true" ]]; then
             ARGS="$ARGS --force-catalog-full-refresh"
           fi
+          if [[ -n "${COURSE_IMPORT_RUN_MODE:-}" ]]; then
+            ARGS="$ARGS --mode=${COURSE_IMPORT_RUN_MODE}"
+          fi
+          mkdir -p reports/nightly-course-import
           npm run course-import:nightly -- $ARGS
 
       - name: Upload morning report artifact
-        if: always() && hashFiles('reports/nightly-course-import/**') != ''
+        if: always()
         uses: actions/upload-artifact@v5
         with:
           name: nightly-course-import-report-${{ github.run_id }}
           path: reports/nightly-course-import/*
-          if-no-files-found: ignore
+          if-no-files-found: warn

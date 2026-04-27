@@ -76,10 +76,15 @@
       "name": "Shrivenham Park Golf Club",
       "officialScorecardUrl": "https://www.shrivenhampark.co.uk/",
       "sourceType": "html",
-      "notes": "Priority course override for official-source confirmation.",
+      "notes": "Priority course override for official-source confirmation using curated Summer scorecard seed.",
+      "courseAlias": [
+        "Shrivenham Park GC Summer",
+        "Shrivenham Park Summer"
+      ],
       "officialUrls": [
         "https://www.shrivenhampark.co.uk/"
-      ]
+      ],
+      "allowOfficialOnlyPromotion": true
     }
   ]
 }

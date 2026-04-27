@@ -20,6 +20,49 @@ function parseNumericArg(raw: string | undefined): number | undefined {
   return Math.round(n);
 }
 
+async function writeFatalReport(error: unknown, context: Record<string, unknown>): Promise<void> {
+  const reportsDir = resolvePath(process.cwd(), "reports", "nightly-course-import");
+  await mkdir(reportsDir, { recursive: true });
+  const dateKey = new Date().toISOString().slice(0, 10);
+  const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const base = `${dateKey}-fatal-${timestamp}`;
+  const jsonPath = resolvePath(reportsDir, `${base}.json`);
+  const mdPath = resolvePath(reportsDir, `${base}.md`);
+  const message = error instanceof Error ? error.message : String(error);
+  const stack = error instanceof Error ? error.stack ?? null : null;
+  const payload = {
+    fatal: true,
+    message,
+    stack,
+    context,
+    generatedAt: new Date().toISOString(),
+  };
+  await writeFile(jsonPath, JSON.stringify(payload, null, 2), "utf8");
+  const mdLines = [
+    "# Nightly Course Import Fatal Error",
+    "",
+    `- Generated at: \`${payload.generatedAt}\``,
+    `- Message: ${message}`,
+    `- Trigger type: \`${String(context.triggerType ?? "")}\``,
+    `- Run mode arg: \`${String(context.modeArg ?? "")}\``,
+    `- Territory arg: \`${String(context.territoryArg ?? "")}\``,
+    `- Phase arg: \`${String(context.phaseArg ?? "")}\``,
+    "",
+    "## Context",
+    "```json",
+    JSON.stringify(context, null, 2),
+    "```",
+    "",
+    "## Stack",
+    "```",
+    stack ?? "(no stack)",
+    "```",
+  ];
+  await writeFile(mdPath, mdLines.join("\n"), "utf8");
+  console.log("[course-import-nightly] fatal-report-json:", jsonPath);
+  console.log("[course-import-nightly] fatal-report-md:", mdPath);
+}
+
 async function main(): Promise<void> {
   const dryRun = hasArg("--dry-run");
   const overwriteManualOverrides = hasArg("--overwrite-manual");
@@ -228,5 +271,30 @@ async function main(): Promise<void> {
 main().catch((error) => {
   const message = error instanceof Error ? error.message : String(error);
   console.error("[course-import-nightly] fatal:", message);
-  process.exit(1);
+  const territoryArg = process.argv.find((arg) => arg.startsWith("--territory="));
+  const phaseArg = process.argv.find((arg) => arg.startsWith("--phase="));
+  const modeArg = process.argv.find((arg) => arg.startsWith("--mode="));
+  void writeFatalReport(error, {
+    argv: process.argv.slice(2),
+    triggerType: hasArg("--manual") ? "manual" : "nightly",
+    modeArg: modeArg ?? process.env.COURSE_IMPORT_RUN_MODE ?? null,
+    territoryArg: territoryArg ?? null,
+    phaseArg: phaseArg ?? process.env.COURSE_IMPORT_ACTIVE_PHASE ?? null,
+    env: {
+      COURSE_IMPORT_RUN_MODE: process.env.COURSE_IMPORT_RUN_MODE ?? null,
+      COURSE_IMPORT_ACTIVE_PHASE: process.env.COURSE_IMPORT_ACTIVE_PHASE ?? null,
+      NEXT_PUBLIC_SUPABASE_URL: process.env.NEXT_PUBLIC_SUPABASE_URL ? "[set]" : "[missing]",
+      SUPABASE_SERVICE_ROLE_KEY: process.env.SUPABASE_SERVICE_ROLE_KEY ? "[set]" : "[missing]",
+      GOLFCOURSE_API_KEY: process.env.GOLFCOURSE_API_KEY ? "[set]" : "[missing]",
+    },
+  })
+    .catch((reportError) => {
+      console.error(
+        "[course-import-nightly] failed to write fatal report:",
+        reportError instanceof Error ? reportError.message : String(reportError),
+      );
+    })
+    .finally(() => {
+      process.exit(1);
+    });
 });
