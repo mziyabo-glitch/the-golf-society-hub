@@ -92,7 +92,9 @@ export type CreateFreePlayRoundPlayerInput = {
   userId?: string | null;
   inviteEmail?: string | null;
   handicapIndex?: number | null;
+  courseHandicap?: number | null;
   playingHandicap?: number | null;
+  handicapSource?: "auto" | "manual" | null;
   guestName?: string | null;
   teeId?: string | null;
   inviteStatus?: "none" | "invited" | "joined";
@@ -141,6 +143,8 @@ function mapRound(row: Record<string, unknown>): FreePlayRound {
 
 function mapRoundPlayer(row: Record<string, unknown>): FreePlayRoundPlayer {
   const ph = row.playing_handicap;
+  const ch = row.course_handicap;
+  const hs = row.handicap_source;
   return {
     id: String(row.id),
     round_id: String(row.round_id),
@@ -150,7 +154,9 @@ function mapRoundPlayer(row: Record<string, unknown>): FreePlayRoundPlayer {
     invite_email: row.invite_email ? String(row.invite_email) : null,
     display_name: String(row.display_name ?? "Player"),
     handicap_index: Number.isFinite(Number(row.handicap_index)) ? Number(row.handicap_index) : 0,
+    course_handicap: ch == null || ch === "" ? null : Number.isFinite(Number(ch)) ? Number(ch) : null,
     playing_handicap: ph == null || ph === "" ? null : Number.isFinite(Number(ph)) ? Number(ph) : null,
+    handicap_source: hs === "manual" ? "manual" : hs === "auto" ? "auto" : null,
     guest_name: row.guest_name != null && String(row.guest_name).trim() ? String(row.guest_name).trim() : null,
     tee_id: row.tee_id ? String(row.tee_id) : null,
     invite_status: row.invite_status === "invited" ? "invited" : row.invite_status === "joined" ? "joined" : "none",
@@ -327,6 +333,7 @@ export async function createFreePlayRound(input: CreateRoundInput): Promise<Free
     .filter((p) => p.displayName?.trim())
     .map((p, i) => {
       const hi = Number.isFinite(Number(p.handicapIndex)) ? Number(p.handicapIndex) : 0;
+      const ch = Number.isFinite(Number(p.courseHandicap)) ? Number(p.courseHandicap) : hi;
       const ph = Number.isFinite(Number(p.playingHandicap)) ? Number(p.playingHandicap) : hi;
       return {
         round_id: roundId,
@@ -336,7 +343,9 @@ export async function createFreePlayRound(input: CreateRoundInput): Promise<Free
         invite_email: p.inviteEmail ?? null,
         display_name: p.displayName.trim(),
         handicap_index: hi,
+        course_handicap: ch,
         playing_handicap: ph,
+        handicap_source: p.handicapSource ?? "auto",
         guest_name: p.guestName?.trim() || (p.playerType === "guest" ? p.displayName.trim() : null),
         tee_id: p.teeId ?? defaultTeeId,
         invite_status: p.inviteStatus ?? "none",
@@ -364,9 +373,21 @@ export async function updateFreePlayPlayerHandicap(roundPlayerId: string, handic
   if (error) throw toFreePlayError(error, "Could not update handicap.");
 }
 
-export async function updateFreePlayPlayerPlayingHandicap(roundPlayerId: string, playingHandicap: number): Promise<void> {
-  const ph = Number.isFinite(Number(playingHandicap)) ? Number(playingHandicap) : 0;
-  const { error } = await supabase.from("free_play_round_players").update({ playing_handicap: ph }).eq("id", roundPlayerId);
+export async function updateFreePlayPlayerCourseAndPlayingHandicap(
+  roundPlayerId: string,
+  payload: { courseHandicap: number | null; playingHandicap: number | null; handicapSource?: "auto" | "manual" | null },
+): Promise<void> {
+  const ch = payload.courseHandicap == null ? null : Number.isFinite(Number(payload.courseHandicap)) ? Number(payload.courseHandicap) : null;
+  const ph =
+    payload.playingHandicap == null ? null : Number.isFinite(Number(payload.playingHandicap)) ? Number(payload.playingHandicap) : null;
+  const { error } = await supabase
+    .from("free_play_round_players")
+    .update({
+      course_handicap: ch,
+      playing_handicap: ph,
+      handicap_source: payload.handicapSource ?? "auto",
+    })
+    .eq("id", roundPlayerId);
   if (error) throw toFreePlayError(error, "Could not update playing handicap.");
 }
 
@@ -427,6 +448,11 @@ export async function reopenFreePlayRound(roundId: string): Promise<void> {
     .update({ status: "in_progress", completed_at: null })
     .eq("id", roundId);
   if (error) throw toFreePlayError(error, "Could not reopen round.");
+}
+
+export async function deleteFreePlayRound(roundId: string): Promise<void> {
+  const { error } = await supabase.from("free_play_rounds").delete().eq("id", roundId);
+  if (error) throw toFreePlayError(error, "Could not delete round.");
 }
 
 export async function saveQuickTotals(
@@ -574,13 +600,16 @@ export async function addFreePlayRoundPlayer(
     userId?: string | null;
     inviteEmail?: string | null;
     handicapIndex?: number | null;
+    courseHandicap?: number | null;
     playingHandicap?: number | null;
+    handicapSource?: "auto" | "manual" | null;
     guestName?: string | null;
     teeId?: string | null;
     inviteStatus?: "none" | "invited" | "joined";
   },
 ): Promise<void> {
   const hi = Number.isFinite(Number(player.handicapIndex)) ? Number(player.handicapIndex) : 0;
+  const ch = Number.isFinite(Number(player.courseHandicap)) ? Number(player.courseHandicap) : hi;
   const ph = Number.isFinite(Number(player.playingHandicap)) ? Number(player.playingHandicap) : hi;
   const { error } = await supabase.from("free_play_round_players").insert({
     round_id: roundId,
@@ -590,10 +619,21 @@ export async function addFreePlayRoundPlayer(
     invite_email: player.inviteEmail ?? null,
     display_name: player.displayName.trim(),
     handicap_index: hi,
+    course_handicap: ch,
     playing_handicap: ph,
+    handicap_source: player.handicapSource ?? "auto",
     guest_name: player.guestName?.trim() || (player.playerType === "guest" ? player.displayName.trim() : null),
     tee_id: player.teeId ?? null,
     invite_status: player.inviteStatus ?? "none",
   });
   if (error) throw toFreePlayError(error, "Could not add player.");
+}
+
+export async function removeFreePlayRoundPlayer(roundId: string, roundPlayerId: string): Promise<void> {
+  const { error } = await supabase
+    .from("free_play_round_players")
+    .delete()
+    .eq("round_id", roundId)
+    .eq("id", roundPlayerId);
+  if (error) throw toFreePlayError(error, "Could not remove player.");
 }

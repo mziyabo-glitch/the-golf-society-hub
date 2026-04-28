@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 import type { EventHoleSnapshot } from "@/lib/scoring/eventScoringTypes";
 import {
   buildFreePlayLeaderboard,
+  deriveCourseAndPlayingHandicapFromHi,
   freePlayHolesToSnapshots,
   intPlayingHandicap,
+  normalizeHandicapIndexInput,
 } from "@/lib/scoring/freePlayScoring";
 
 function holes18UniformPar4(): EventHoleSnapshot[] {
@@ -31,6 +33,66 @@ describe("intPlayingHandicap", () => {
   });
   it("falls back to rounded HI", () => {
     expect(intPlayingHandicap(null, 15.4)).toBe(15);
+  });
+});
+
+describe("normalizeHandicapIndexInput", () => {
+  it("parses decimals and rounds to 1dp", () => {
+    expect(normalizeHandicapIndexInput("18.44")).toBe(18.4);
+  });
+  it("accepts plus handicaps", () => {
+    expect(normalizeHandicapIndexInput("-1.2")).toBe(-1.2);
+  });
+  it("rejects empty and non-numeric", () => {
+    expect(normalizeHandicapIndexInput("")).toBeNull();
+    expect(normalizeHandicapIndexInput("abc")).toBeNull();
+  });
+});
+
+describe("deriveCourseAndPlayingHandicapFromHi", () => {
+  it("computes CH/PH for HI 18.4 slope 121 rating 67.7 par 69", () => {
+    const out = deriveCourseAndPlayingHandicapFromHi({
+      handicapIndex: 18.4,
+      slopeRating: 121,
+      courseRating: 67.7,
+      parTotal: 69,
+    });
+    expect(out.courseHandicap).toBe(18);
+    expect(out.playingHandicap).toBe(18);
+    expect(out.usedFormula).toBe(true);
+  });
+
+  it("computes CH/PH for HI 24.0 slope 114 rating 65.3 par 69", () => {
+    const out = deriveCourseAndPlayingHandicapFromHi({
+      handicapIndex: 24,
+      slopeRating: 114,
+      courseRating: 65.3,
+      parTotal: 69,
+    });
+    expect(out.courseHandicap).toBe(21);
+    expect(out.playingHandicap).toBe(21);
+  });
+
+  it("handles HI zero", () => {
+    const out = deriveCourseAndPlayingHandicapFromHi({
+      handicapIndex: 0,
+      slopeRating: 121,
+      courseRating: 67.7,
+      parTotal: 69,
+    });
+    expect(out.courseHandicap).toBe(-1);
+  });
+
+  it("falls back safely when tee metrics unavailable", () => {
+    const out = deriveCourseAndPlayingHandicapFromHi({
+      handicapIndex: 12.7,
+      slopeRating: null,
+      courseRating: null,
+      parTotal: null,
+    });
+    expect(out.courseHandicap).toBe(13);
+    expect(out.playingHandicap).toBe(13);
+    expect(out.usedFormula).toBe(false);
   });
 });
 

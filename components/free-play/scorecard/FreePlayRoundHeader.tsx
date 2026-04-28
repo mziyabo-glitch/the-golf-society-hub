@@ -43,29 +43,40 @@ export function FreePlayRoundHeader({
         freePlayPremium.cardShadow,
       ]}
     >
-      <AppText variant="captionBold" color="secondary" numberOfLines={1}>
-        {courseName}
-      </AppText>
-      <AppText variant="bodyBold" style={{ marginTop: 4 }}>
-        Hole {currentHole} of {maxHole}
-      </AppText>
+      <View style={styles.topRow}>
+        <AppText variant="captionBold" color="secondary" numberOfLines={1} style={{ flex: 1 }}>
+          {courseName}
+        </AppText>
+        <View style={[styles.livePill, { borderColor: colors.success + "66", backgroundColor: `${colors.success}12` }]}>
+          <AppText variant="captionBold" color="success">
+            Live round
+          </AppText>
+        </View>
+      </View>
+      <View style={[styles.metaRow, { marginTop: spacing.xs }]}>
+        <AppText variant="bodyBold">Hole {currentHole} of {maxHole}</AppText>
+        <View style={[styles.formatPill, { borderColor: colors.primary + "55" }]}>
+          <AppText variant="captionBold" color="primary">
+            {scoringFormatLabel}
+          </AppText>
+        </View>
+      </View>
       <AppText variant="small" color="secondary" style={{ marginTop: 4 }}>
         Par {par} · {siText} · {teeName}
       </AppText>
-      <View style={[styles.formatPill, { borderColor: colors.primary + "55", marginTop: spacing.sm }]}>
-        <AppText variant="captionBold" color="primary">
-          {scoringFormatLabel}
-        </AppText>
-      </View>
       {leaderLine ? (
-        <AppText variant="captionBold" color="secondary" style={{ marginTop: spacing.sm }} numberOfLines={2}>
-          {leaderLine}
-        </AppText>
+        <View style={[styles.energyLine, { borderColor: colors.borderLight }]}>
+          <AppText variant="captionBold" color="secondary" numberOfLines={2}>
+            {leaderLine}
+          </AppText>
+        </View>
       ) : null}
       {currentPlayerLine ? (
-        <AppText variant="captionBold" color="primary" style={{ marginTop: 4 }} numberOfLines={2}>
-          {currentPlayerLine}
-        </AppText>
+        <View style={[styles.energyLine, { borderColor: colors.primary + "55", backgroundColor: `${colors.primary}0f` }]}>
+          <AppText variant="captionBold" color="primary" numberOfLines={2}>
+            {currentPlayerLine}
+          </AppText>
+        </View>
       ) : null}
     </View>
   );
@@ -74,8 +85,20 @@ export function FreePlayRoundHeader({
 const styles = StyleSheet.create({
   wrap: {
     paddingHorizontal: spacing.base,
-    paddingVertical: spacing.sm,
+    paddingTop: spacing.sm,
+    paddingBottom: spacing.xs,
     borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  topRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.xs,
+  },
+  metaRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: spacing.sm,
   },
   formatPill: {
     alignSelf: "flex-start",
@@ -83,5 +106,18 @@ const styles = StyleSheet.create({
     borderRadius: radius.md,
     paddingHorizontal: spacing.sm,
     paddingVertical: 4,
+  },
+  livePill: {
+    borderWidth: 1,
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 4,
+  },
+  energyLine: {
+    marginTop: spacing.xs,
+    borderWidth: 1,
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
   },
 });

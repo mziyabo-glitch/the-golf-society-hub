@@ -30,7 +30,7 @@ export function FreePlayLeaderboardPreview({ format, rows, onPressOpenFull }: Fr
           LIVE LEADERBOARD
         </AppText>
         <AppText variant="small" color="secondary" style={{ marginTop: spacing.sm }}>
-          Scores will appear once the first hole is entered.
+          Leaderboard starts after the first score.
         </AppText>
       </View>
     );
@@ -58,7 +58,18 @@ export function FreePlayLeaderboardPreview({ format, rows, onPressOpenFull }: Fr
         <Feather name="chevron-right" size={18} color={colors.primary} />
       </View>
       {top.map((row, idx) => (
-        <View key={row.roundPlayerId} style={[styles.row, { borderBottomColor: colors.borderLight }]}>
+        <View
+          key={row.roundPlayerId}
+          style={[
+            styles.row,
+            {
+              borderBottomColor: colors.borderLight,
+              backgroundColor: idx === 0 ? `${freePlayPremium.accentDeepGreen}10` : "transparent",
+              borderRadius: idx === 0 ? radius.md : 0,
+              paddingHorizontal: idx === 0 ? spacing.xs : 0,
+            },
+          ]}
+        >
           <AppText variant="captionBold" color="secondary" style={styles.rank}>
             {idx + 1}
           </AppText>
@@ -82,7 +93,7 @@ export function FreePlayLeaderboardPreview({ format, rows, onPressOpenFull }: Fr
 
 const styles = StyleSheet.create({
   card: {
-    marginTop: spacing.lg,
+    marginTop: spacing.md,
     borderWidth: 1,
     borderRadius: freePlayPremium.heroRadius,
     padding: spacing.base,

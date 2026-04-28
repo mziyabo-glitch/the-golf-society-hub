@@ -35,8 +35,12 @@ export type FreePlayRoundPlayer = {
   display_name: string;
   /** WHS-style handicap index (decimal). */
   handicap_index: number;
+  /** Course Handicap derived from HI + tee ratings/par. */
+  course_handicap?: number | null;
   /** Playing handicap strokes for the round / selected tee (integer or half per DB). */
   playing_handicap: number | null;
+  /** How handicap values were set for this row. */
+  handicap_source?: "auto" | "manual" | null;
   /** Optional guest label when player_type is guest. */
   guest_name: string | null;
   /** Per-player tee override; defaults to round tee when null. */

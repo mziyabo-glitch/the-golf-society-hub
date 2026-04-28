@@ -34,6 +34,9 @@ export function FreePlayHoleHero({
         {strokeIndexUnavailable || strokeIndex == null ? "" : ` · SI ${strokeIndex}`}
         {dist}
       </AppText>
+      <AppText variant="small" color="secondary" style={{ marginTop: spacing.xs }}>
+        Enter scores below to update leaderboard live.
+      </AppText>
       {strokeIndexUnavailable || strokeIndex == null ? (
         <View style={{ marginTop: spacing.md }}>
           <AppText variant="bodyBold" color="warning">

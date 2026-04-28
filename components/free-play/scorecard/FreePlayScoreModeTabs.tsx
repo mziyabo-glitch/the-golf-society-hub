@@ -13,9 +13,9 @@ type FreePlayScoreModeTabsProps = {
 export function FreePlayScoreModeTabs({ value, onChange }: FreePlayScoreModeTabsProps) {
   const colors = getColors();
   const tabs: { id: FreePlayScoreViewTab; label: string }[] = [
-    { id: "simple", label: "Simple" },
+    { id: "simple", label: "Live" },
     { id: "stats", label: "Stats" },
-    { id: "card", label: "Card" },
+    { id: "card", label: "Scorecard" },
   ];
 
   return (

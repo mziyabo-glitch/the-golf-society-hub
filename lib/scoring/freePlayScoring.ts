@@ -6,6 +6,7 @@
 import type { EventHoleSnapshot } from "@/lib/scoring/eventScoringTypes";
 import { buildStrokesReceivedByHole } from "@/lib/scoring/handicapStrokeAllocation";
 import { stablefordPointsForHole } from "@/lib/scoring/stablefordPoints";
+import { calculateCourseHandicap } from "@/lib/scoring/handicap";
 import type { FreePlayScoringFormat } from "@/types/freePlayScorecard";
 
 export type FreePlayHoleLike = {
@@ -35,6 +36,40 @@ export function intPlayingHandicap(playingHandicap: number | null | undefined, h
   }
   const hi = Number.isFinite(Number(handicapIndexFallback)) ? Number(handicapIndexFallback) : 0;
   return Math.max(0, Math.round(hi));
+}
+
+export function normalizeHandicapIndexInput(raw: string): number | null {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  const n = Number(trimmed);
+  if (!Number.isFinite(n)) return null;
+  if (n < -10 || n > 54) return null;
+  return Math.round(n * 10) / 10;
+}
+
+export function deriveCourseAndPlayingHandicapFromHi(params: {
+  handicapIndex: number;
+  slopeRating: number | null | undefined;
+  courseRating: number | null | undefined;
+  parTotal: number | null | undefined;
+  allowancePct?: number;
+}): { courseHandicap: number; playingHandicap: number; usedFormula: boolean } {
+  const hi = Number.isFinite(Number(params.handicapIndex)) ? Number(params.handicapIndex) : 0;
+  const slope = params.slopeRating;
+  const rating = params.courseRating;
+  const par = params.parTotal;
+  const allowance = Number.isFinite(Number(params.allowancePct)) ? Number(params.allowancePct) : 100;
+  const hasInputs =
+    Number.isFinite(Number(slope)) &&
+    Number(slope) > 0 &&
+    Number.isFinite(Number(rating)) &&
+    Number.isFinite(Number(par)) &&
+    Number(par) > 0;
+  const courseHandicap = hasInputs
+    ? calculateCourseHandicap(hi, Number(slope), Number(rating), Number(par))
+    : Math.round(hi);
+  const playingHandicap = Math.round((courseHandicap * allowance) / 100);
+  return { courseHandicap, playingHandicap, usedFormula: hasInputs };
 }
 
 export type FreePlayLeaderboardInputPlayer = {

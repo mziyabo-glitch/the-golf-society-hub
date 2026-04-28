@@ -31,6 +31,7 @@ import type { CourseApprovalState } from "@/types/courseTrust";
 import { isManCo } from "@/lib/rbac";
 import { deriveFreePlayTrustLabel, getFreePlayTrustCopy } from "@/lib/course/freePlayTrustPresentation";
 import { calculateCourseHandicap } from "@/lib/scoring/handicap";
+import { deriveCourseAndPlayingHandicapFromHi } from "@/lib/scoring/freePlayScoring";
 import { deriveFreePlayDataTrustBadge } from "@/components/free-play/freePlaySetupTrust";
 import {
   createFreePlayRound,
@@ -436,13 +437,23 @@ export default function FreePlayHomeScreen() {
     setSaving(true);
     setError(null);
     try {
+      const tee = tees.find((t) => t.id === selectedTeeId) ?? null;
+      const derive = (hi: number) =>
+        deriveCourseAndPlayingHandicapFromHi({
+          handicapIndex: hi,
+          slopeRating: tee?.slope_rating,
+          courseRating: tee?.course_rating,
+          parTotal: tee?.par_total,
+        });
       const ownerPlayer = {
         playerType: member?.id ? ("member" as const) : ("app_user" as const),
         displayName: ownerName,
         memberId: member?.id ?? null,
         userId: userId ?? null,
         handicapIndex: Number(ownerHcp) || 0,
-        playingHandicap: Math.round(Number(ownerHcp)) || 0,
+        courseHandicap: derive(Number(ownerHcp) || 0).courseHandicap,
+        playingHandicap: derive(Number(ownerHcp) || 0).playingHandicap,
+        handicapSource: "auto" as const,
         inviteStatus: "joined" as const,
         isOwner: true,
         sortOrder: 0,
@@ -456,11 +467,12 @@ export default function FreePlayHomeScreen() {
           userId: p.userId ?? null,
           inviteEmail: p.inviteEmail.trim() || null,
           handicapIndex: Number.isFinite(Number(p.handicapIndex)) ? Number(p.handicapIndex) : 0,
-          playingHandicap: Number.isFinite(Number(p.handicapIndex)) ? Math.round(Number(p.handicapIndex)) : 0,
+          courseHandicap: derive(Number.isFinite(Number(p.handicapIndex)) ? Number(p.handicapIndex) : 0).courseHandicap,
+          playingHandicap: derive(Number.isFinite(Number(p.handicapIndex)) ? Number(p.handicapIndex) : 0).playingHandicap,
+          handicapSource: "manual" as const,
           inviteStatus: p.kind === "app_user" && p.inviteEmail.trim() ? ("invited" as const) : ("none" as const),
           sortOrder: i + 1,
         }));
-      const tee = tees.find((t) => t.id === selectedTeeId) ?? null;
       const round = await createFreePlayRound({
         societyId: societyId ?? null,
         createdByMemberId: member?.id ?? null,

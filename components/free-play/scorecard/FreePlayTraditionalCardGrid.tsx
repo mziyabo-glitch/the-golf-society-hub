@@ -20,6 +20,8 @@ type FreePlayTraditionalCardGridProps = {
   onSaveAll: () => void;
   saving: boolean;
   readOnly?: boolean;
+  currentHole?: number | null;
+  footerValueLabel?: string;
 };
 
 export function FreePlayTraditionalCardGrid({
@@ -35,6 +37,8 @@ export function FreePlayTraditionalCardGrid({
   onSaveAll,
   saving,
   readOnly,
+  currentHole,
+  footerValueLabel,
 }: FreePlayTraditionalCardGridProps) {
   const colors = getColors();
 
@@ -48,7 +52,10 @@ export function FreePlayTraditionalCardGrid({
     >
       <AppText variant="h2">Scorecard</AppText>
       <AppText variant="small" color="secondary" style={{ marginTop: spacing.xs }}>
-        Traditional card view — scroll horizontally for all holes.
+        Hole-by-hole view
+      </AppText>
+      <AppText variant="caption" color="tertiary" style={{ marginTop: spacing.xs }}>
+        Swipe across to view all holes.
       </AppText>
 
       <View style={[styles.holeSummaryCard, { borderColor: colors.borderLight, marginTop: spacing.md }]}>
@@ -63,7 +70,7 @@ export function FreePlayTraditionalCardGrid({
             Dist
           </AppText>
           <AppText variant="captionBold" color="muted">
-            Score
+            {footerValueLabel ?? "Score"}
           </AppText>
         </View>
         <View style={styles.holeSummaryRow}>
@@ -112,7 +119,16 @@ export function FreePlayTraditionalCardGrid({
 
       <ScrollView horizontal showsHorizontalScrollIndicator style={{ marginTop: spacing.md }} contentContainerStyle={styles.hScroll}>
         {holeNumbers.map((hole) => (
-          <View key={hole} style={[styles.holeCell, { borderColor: colors.borderLight }]}>
+          <View
+            key={hole}
+            style={[
+              styles.holeCell,
+              {
+                borderColor: hole === currentHole ? colors.primary : colors.borderLight,
+                backgroundColor: hole === currentHole ? `${colors.primary}10` : colors.surface,
+              },
+            ]}
+          >
             <AppText variant="captionBold" color="muted">
               H{hole}
             </AppText>

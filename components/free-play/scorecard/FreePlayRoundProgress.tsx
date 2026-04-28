@@ -19,7 +19,7 @@ export function FreePlayRoundProgress({ currentHole, maxHole }: FreePlayRoundPro
           Round progress
         </AppText>
         <AppText variant="captionBold" color="secondary">
-          {currentHole} / {maxHole}
+          Hole {currentHole} of {maxHole}
         </AppText>
       </View>
       <View style={[styles.track, { backgroundColor: colors.borderLight }]}>
@@ -39,12 +39,12 @@ const styles = StyleSheet.create({
     marginBottom: 6,
   },
   track: {
-    height: 6,
+    height: 8,
     borderRadius: radius.sm,
     overflow: "hidden",
   },
   fill: {
-    height: 6,
+    height: 8,
     borderRadius: radius.sm,
   },
 });

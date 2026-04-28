@@ -6,6 +6,7 @@ import { freePlayPremium } from "@/lib/ui/freePlayPremiumTheme";
 
 export type FreePlayPlayerScoreCardProps = {
   playerName: string;
+  handicapLine?: string | null;
   grossDisplay: string;
   netLabel: string | null;
   /** Hole Stableford points, e.g. "2 pts" or "—" when unavailable */
@@ -22,10 +23,13 @@ export type FreePlayPlayerScoreCardProps = {
   disabled?: boolean;
   /** Global save in flight — subtle dimming */
   saving?: boolean;
+  onEditHandicap?: () => void;
+  onRemovePlayer?: () => void;
 };
 
 export function FreePlayPlayerScoreCard({
   playerName,
+  handicapLine,
   grossDisplay,
   netLabel,
   stablefordPointsDisplay,
@@ -39,6 +43,8 @@ export function FreePlayPlayerScoreCard({
   onBogeyShortcut,
   disabled,
   saving,
+  onEditHandicap,
+  onRemovePlayer,
 }: FreePlayPlayerScoreCardProps) {
   const colors = getColors();
   const dim = disabled || saving;
@@ -65,6 +71,11 @@ export function FreePlayPlayerScoreCard({
       <AppText variant="bodyBold" numberOfLines={1}>
         {playerName}
       </AppText>
+      {handicapLine ? (
+        <AppText variant="caption" color="tertiary" style={{ marginTop: 4 }}>
+          {handicapLine}
+        </AppText>
+      ) : null}
       {netLabel ? (
         <AppText variant="small" color="secondary" style={{ marginTop: 6 }}>
           {netLabel}
@@ -122,6 +133,9 @@ export function FreePlayPlayerScoreCard({
           </AppText>
         </Pressable>
       </View>
+      <AppText variant="caption" color="tertiary" style={styles.adjustHint}>
+        Tap +/- for quick adjust
+      </AppText>
 
       <View style={styles.shortcuts}>
         <Pressable
@@ -152,6 +166,24 @@ export function FreePlayPlayerScoreCard({
           </AppText>
         </Pressable>
       </View>
+      {(onEditHandicap || onRemovePlayer) ? (
+        <View style={styles.manageRow}>
+          {onEditHandicap ? (
+            <Pressable onPress={onEditHandicap} disabled={disabled} style={[styles.manageBtn, { borderColor: colors.borderLight }]}>
+              <AppText variant="captionBold" color="secondary">
+                Edit HI
+              </AppText>
+            </Pressable>
+          ) : null}
+          {onRemovePlayer ? (
+            <Pressable onPress={onRemovePlayer} disabled={disabled} style={[styles.manageBtn, { borderColor: colors.warning + "66" }]}>
+              <AppText variant="captionBold" color="warning">
+                Remove player
+              </AppText>
+            </Pressable>
+          ) : null}
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -205,6 +237,10 @@ const styles = StyleSheet.create({
     marginTop: spacing.md,
     justifyContent: "center",
   },
+  adjustHint: {
+    marginTop: spacing.xs,
+    textAlign: "center",
+  },
   shortBtn: {
     borderWidth: 1,
     borderRadius: radius.md,
@@ -220,5 +256,17 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.base,
     minWidth: 120,
     alignItems: "center",
+  },
+  manageRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: spacing.sm,
+    marginTop: spacing.md,
+  },
+  manageBtn: {
+    borderWidth: 1,
+    borderRadius: radius.md,
+    paddingVertical: spacing.xs,
+    paddingHorizontal: spacing.sm,
   },
 });
