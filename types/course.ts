@@ -120,7 +120,7 @@ export type NormalizedCourse = {
   longitude: number | null;
   dedupeKey: string;
   normalizedNameKey: string;
-  source: "golfcourseapi";
+  source: "golfcourseapi" | "uk_golf_api";
 };
 
 export type NormalizedCourseImport = {
@@ -180,4 +180,6 @@ export type PersistedCourseImport = {
     yards?: number | null;
   }>;
   teeReconciliation?: TeeImportReconciliationStats;
+  /** Set when the course row was upserted but hole clear / re-import could not proceed safely. */
+  skipped_reason?: string;
 };

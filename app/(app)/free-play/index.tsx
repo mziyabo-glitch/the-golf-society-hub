@@ -50,6 +50,7 @@ import {
 } from "@/components/free-play/FreePlayPlayerSetupCard";
 import { FreePlayHandicapReviewCard, type FreePlayHandicapReviewRow } from "@/components/free-play/FreePlayHandicapReviewCard";
 import { FreePlayDataQualityNotice } from "@/components/free-play/FreePlayDataQualityNotice";
+import { logFreePlayShrivenhamSetupDataPathQa } from "@/lib/free-play/scorecardDataPathQa";
 
 type ContribHoleRow = { id: string; holeNumber: string; par: string; strokeIndex: string; yards: string };
 
@@ -339,6 +340,17 @@ export default function FreePlayHomeScreen() {
       cancelled = true;
     };
   }, [selectedTeeId]);
+
+  useEffect(() => {
+    if (!selectedCourse) return;
+    logFreePlayShrivenhamSetupDataPathQa({
+      courseId: selectedCourse.id,
+      courseName: selectedCourse.name,
+      tees,
+      selectedTeeId,
+      setupHoles,
+    });
+  }, [selectedCourse, tees, selectedTeeId, setupHoles]);
 
   useEffect(() => {
     const q = courseQuery.trim();

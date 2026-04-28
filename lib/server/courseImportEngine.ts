@@ -25,6 +25,7 @@ import {
 
 export type ImportSourceType =
   | "golfcourseapi"
+  | "uk_golf_api"
   | "club_official"
   | "manual_seed"
   | "official_pdf"

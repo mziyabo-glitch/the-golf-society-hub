@@ -343,8 +343,8 @@ export async function createFreePlayRound(input: CreateRoundInput): Promise<Free
         invite_email: p.inviteEmail ?? null,
         display_name: p.displayName.trim(),
         handicap_index: hi,
-        course_handicap: ch,
-        playing_handicap: ph,
+        course_handicap: Math.round(ch),
+        playing_handicap: Math.round(ph),
         handicap_source: p.handicapSource ?? "auto",
         guest_name: p.guestName?.trim() || (p.playerType === "guest" ? p.displayName.trim() : null),
         tee_id: p.teeId ?? defaultTeeId,
@@ -377,9 +377,11 @@ export async function updateFreePlayPlayerCourseAndPlayingHandicap(
   roundPlayerId: string,
   payload: { courseHandicap: number | null; playingHandicap: number | null; handicapSource?: "auto" | "manual" | null },
 ): Promise<void> {
-  const ch = payload.courseHandicap == null ? null : Number.isFinite(Number(payload.courseHandicap)) ? Number(payload.courseHandicap) : null;
-  const ph =
+  const chRaw = payload.courseHandicap == null ? null : Number.isFinite(Number(payload.courseHandicap)) ? Number(payload.courseHandicap) : null;
+  const phRaw =
     payload.playingHandicap == null ? null : Number.isFinite(Number(payload.playingHandicap)) ? Number(payload.playingHandicap) : null;
+  const ch = chRaw == null ? null : Math.round(chRaw);
+  const ph = phRaw == null ? null : Math.round(phRaw);
   const { error } = await supabase
     .from("free_play_round_players")
     .update({
@@ -619,8 +621,8 @@ export async function addFreePlayRoundPlayer(
     invite_email: player.inviteEmail ?? null,
     display_name: player.displayName.trim(),
     handicap_index: hi,
-    course_handicap: ch,
-    playing_handicap: ph,
+    course_handicap: Math.round(ch),
+    playing_handicap: Math.round(ph),
     handicap_source: player.handicapSource ?? "auto",
     guest_name: player.guestName?.trim() || (player.playerType === "guest" ? player.displayName.trim() : null),
     tee_id: player.teeId ?? null,

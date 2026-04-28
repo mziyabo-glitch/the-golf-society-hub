@@ -32,6 +32,7 @@ import {
   type CourseReviewSummary,
   type TerritoryProgressSummary,
 } from "@/lib/db_supabase/courseAdminRepo";
+import { isPlatformAdmin } from "@/lib/db_supabase/adminRepo";
 import { getColors, radius, spacing } from "@/lib/ui/theme";
 
 export default function CourseDataReviewScreen() {
@@ -56,6 +57,7 @@ export default function CourseDataReviewScreen() {
   const [valueInput, setValueInput] = useState("");
   const [saving, setSaving] = useState(false);
   const [reimporting, setReimporting] = useState(false);
+  const [platformAdmin, setPlatformAdmin] = useState(false);
 
   const editableFields = getEditableCourseOverrideFields();
   const adminAllowed = canManageCourseDataUI(member);
@@ -107,6 +109,17 @@ export default function CourseDataReviewScreen() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const ok = await isPlatformAdmin();
+      if (!cancelled) setPlatformAdmin(ok);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     if (!selectedCourse) return;
@@ -193,6 +206,18 @@ export default function CourseDataReviewScreen() {
         <AppText variant="small" color="secondary" style={{ marginTop: spacing.xs, marginBottom: spacing.base }}>
           Review imports, integrity checks, and manual overrides.
         </AppText>
+
+        {platformAdmin ? (
+          <Pressable
+            onPress={() => router.push("/(app)/course-data/uk-golf-staging" as never)}
+            style={[styles.platformLink, { borderColor: colors.border }]}
+          >
+            <AppText variant="bodyBold">UK Golf API staging (platform)</AppText>
+            <AppText variant="small" color="secondary" style={{ marginTop: spacing.xs }}>
+              Approve or reject staged UK Golf candidates before CLI promotion.
+            </AppText>
+          </Pressable>
+        ) : null}
 
         {error ? <InlineNotice variant="error" message={error} style={{ marginBottom: spacing.base }} /> : null}
 
@@ -477,5 +502,11 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     gap: spacing.sm,
     marginTop: spacing.base,
+  },
+  platformLink: {
+    borderWidth: 1,
+    borderRadius: radius.md,
+    padding: spacing.base,
+    marginBottom: spacing.base,
   },
 });

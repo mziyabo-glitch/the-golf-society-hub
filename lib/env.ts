@@ -13,6 +13,11 @@ export const GOLF_API_KEY =
 export const WEATHER_API_KEY =
   process.env.EXPO_PUBLIC_WEATHER_API_KEY || process.env.WEATHER_API_KEY || "";
 
+/** RapidAPI UK Golf provider credentials (import pipeline only). */
+export const RAPIDAPI_KEY = process.env.RAPIDAPI_KEY || "";
+export const UK_GOLF_API_HOST = process.env.UK_GOLF_API_HOST || "";
+export const UK_GOLF_API_BASE_URL = process.env.UK_GOLF_API_BASE_URL || "";
+
 /**
  * `openweathermap` — EXPO_PUBLIC_WEATHER_API_KEY + 2.5/3.0 forecast APIs
  * `open-meteo` — force free Open-Meteo (ignores key)

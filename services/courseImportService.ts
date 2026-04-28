@@ -48,6 +48,9 @@ export async function importCourseFromApiId(apiId: number): Promise<PersistedCou
       holeCount: normalized.tees.reduce((a, t) => a + t.holes.length, 0),
     });
     const result = await persistNormalizedCourseImport(normalized);
+    if (result.skipped_reason) {
+      console.warn("[courseImport] importCourseFromApiId: persist skipped", result.skipped_reason, { courseId: result.courseId });
+    }
     if (__DEV__) {
       console.log("[courseImport] importCourseFromApiId: persisted tee names", result.tees.map((t) => t.teeName));
       if (result.teeReconciliation) {
@@ -107,6 +110,6 @@ export async function importCourseForEventFlow(apiCourse: GolfCourseApiCourse): 
     courseId: persisted.courseId,
     courseName: persisted.courseName,
     tees: mapDbTeesToImported(tees),
-    imported: true,
+    imported: !persisted.skipped_reason,
   };
 }

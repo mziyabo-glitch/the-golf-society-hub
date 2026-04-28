@@ -3,6 +3,7 @@
 // After auth, the app resumes the join flow with the stored code.
 
 import { supabaseStorage } from "@/lib/supabaseStorage";
+import { normalizeJoinCode } from "@/lib/db_supabase/societyRepo";
 
 const KEY = "pending-society-join-code";
 
@@ -10,7 +11,7 @@ const KEY = "pending-society-join-code";
  * Store a pending society join code before redirecting to auth.
  */
 export async function storePendingSocietyJoinCode(code: string): Promise<void> {
-  const normalized = String(code).trim().toUpperCase();
+  const normalized = normalizeJoinCode(String(code));
   if (normalized) {
     await supabaseStorage.setItem(KEY, normalized);
   }

@@ -361,6 +361,35 @@ function mapDbCourseRowToSearchHit(row: Record<string, unknown>, opts?: { synthe
   };
 }
 
+/** Active tee row counts per course — used to rank search hits so playable DB rows (e.g. seeded Shrivenham) sort above empty duplicates. */
+async function fetchActiveTeeCountsByCourseIds(courseIds: readonly string[]): Promise<Map<string, number>> {
+  const ids = [...new Set(courseIds.filter(Boolean))];
+  if (ids.length === 0) return new Map();
+  let { data, error } = await courseSupabase
+    .from("course_tees")
+    .select("course_id")
+    .in("course_id", ids)
+    .eq("is_active", true);
+  if (
+    error &&
+    (error.message?.includes("is_active") || (error as { code?: string }).code === "42703")
+  ) {
+    const legacy = await courseSupabase.from("course_tees").select("course_id").in("course_id", ids);
+    data = legacy.data;
+    error = legacy.error;
+  }
+  if (error || !data) {
+    if (error) console.warn("[courseRepo] fetchActiveTeeCountsByCourseIds:", error.message);
+    return new Map();
+  }
+  const m = new Map<string, number>();
+  for (const row of data as { course_id: string }[]) {
+    const id = String(row.course_id);
+    m.set(id, (m.get(id) ?? 0) + 1);
+  }
+  return m;
+}
+
 /** Enrich Free Play search hits with society approval + pending submission; sort by trust tier. */
 async function enrichAndSortFreePlayCourseHits(
   hits: CourseSearchHit[],
@@ -368,6 +397,7 @@ async function enrichAndSortFreePlayCourseHits(
 ): Promise<CourseSearchHit[]> {
   if (hits.length === 0) return hits;
   const ids = [...new Set(hits.map((h) => h.id))];
+  const teeCounts = await fetchActiveTeeCountsByCourseIds(ids);
   const approvedSet = new Set<string>();
   const pendingSet = new Set<string>();
 
@@ -410,6 +440,9 @@ async function enrichAndSortFreePlayCourseHits(
     const ta = a.trustRank ?? 3;
     const tb = b.trustRank ?? 3;
     if (ta !== tb) return ta - tb;
+    const ca = teeCounts.get(a.id) ?? 0;
+    const cb = teeCounts.get(b.id) ?? 0;
+    if (cb !== ca) return cb - ca;
     return a.name.localeCompare(b.name);
   });
 }
@@ -910,13 +943,141 @@ export async function reconcileCourseTeesAfterNormalizedImport(
   };
 }
 
+export type ClearCourseHolesForImportResult = {
+  ok: boolean;
+  countBefore: number;
+  /** Prefer header from DELETE when available; may be null on older clients. */
+  deletedReported: number | null;
+  countAfter: number;
+  deleteError: string | null;
+};
+
+async function countCourseHolesByCourseId(courseId: string): Promise<number> {
+  const { count, error } = await courseSupabase
+    .from("course_holes")
+    .select("id", { count: "exact", head: true })
+    .eq("course_id", courseId);
+  if (error && error.code !== "42P01" && !error.message?.includes("does not exist")) {
+    throw new Error(error.message || "count course_holes failed");
+  }
+  return count ?? 0;
+}
+
+async function logCourseHolesClearDiagnostics(courseId: string, remainingCount: number): Promise<void> {
+  const { data: tees, error: teeErr } = await courseSupabase
+    .from("course_tees")
+    .select("id, tee_name")
+    .eq("course_id", courseId);
+  const { data: samples, error: holeErr } = await courseSupabase
+    .from("course_holes")
+    .select("id, course_id, tee_id, hole_number, par, yardage, stroke_index")
+    .eq("course_id", courseId)
+    .order("tee_id", { ascending: true })
+    .order("hole_number", { ascending: true })
+    .limit(12);
+
+  console.warn("[courseRepo] course_holes DELETE diagnostic (rows still present)", {
+    course_id: courseId,
+    remaining_rows: remainingCount,
+    tee_ids_under_course: (tees ?? []).map((t: { id: string; tee_name: string }) => ({ id: t.id, tee_name: t.tee_name })),
+    tee_load_error: teeErr?.message ?? null,
+    sample_course_holes: samples ?? [],
+    sample_load_error: holeErr?.message ?? null,
+    referencing_tables_note:
+      "public.event_course_holes does not FK to course_holes; no known FK targets course_holes.id. Orphan rows usually mean RLS blocked DELETE — use service role or apply course_holes_delete_authenticated policy.",
+  });
+}
+
 /**
- * Remove all hole rows for a course (before re-import). Safe with FK: child rows first.
+ * DELETE FROM course_holes WHERE course_id = :courseId — with counts, logging, and diagnostics.
+ * Importers should use the service-role Supabase client ({@link setCourseRepoSupabase}) so RLS does not block DELETE.
+ */
+export async function clearCourseHolesForImport(courseId: string): Promise<ClearCourseHolesForImportResult> {
+  let countBefore = 0;
+  try {
+    countBefore = await countCourseHolesByCourseId(courseId);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.warn("[courseRepo] clearCourseHolesForImport: pre-delete count failed", { course_id: courseId, error: msg });
+    return {
+      ok: false,
+      countBefore: -1,
+      deletedReported: null,
+      countAfter: -1,
+      deleteError: msg,
+    };
+  }
+
+  console.warn("[courseRepo] clearCourseHolesForImport: pre-delete", { course_id: courseId, course_holes_count: countBefore });
+
+  const { error: delErr, count: deletedReported } = await courseSupabase
+    .from("course_holes")
+    .delete({ count: "exact" })
+    .eq("course_id", courseId);
+
+  if (delErr && delErr.code !== "42P01" && !delErr.message?.includes("does not exist")) {
+    console.warn("[courseRepo] clearCourseHolesForImport: DELETE request failed", {
+      course_id: courseId,
+      message: delErr.message,
+      code: delErr.code,
+    });
+    return {
+      ok: false,
+      countBefore,
+      deletedReported: null,
+      countAfter: countBefore,
+      deleteError: delErr.message ?? "course_holes delete failed",
+    };
+  }
+
+  let countAfter = 0;
+  try {
+    countAfter = await countCourseHolesByCourseId(courseId);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.warn("[courseRepo] clearCourseHolesForImport: post-delete count failed", { course_id: courseId, error: msg });
+    return {
+      ok: false,
+      countBefore,
+      deletedReported: deletedReported ?? null,
+      countAfter: -1,
+      deleteError: msg,
+    };
+  }
+
+  console.warn("[courseRepo] clearCourseHolesForImport: post-delete", {
+    course_id: courseId,
+    rows_deleted_reported: deletedReported ?? null,
+    course_holes_remaining: countAfter,
+  });
+
+  if (countAfter > 0) {
+    console.warn("[courseRepo] clearCourseHolesForImport: verification SELECT count(*)", {
+      course_id: courseId,
+      remaining_count: countAfter,
+    });
+    await logCourseHolesClearDiagnostics(courseId, countAfter);
+  }
+
+  return {
+    ok: countAfter === 0 && !delErr,
+    countBefore,
+    deletedReported: deletedReported ?? null,
+    countAfter,
+    deleteError: null,
+  };
+}
+
+/**
+ * Remove all hole rows for a course (strict). Throws if any rows remain or delete errors.
  */
 export async function deleteHolesForCourse(courseId: string): Promise<void> {
-  const { error } = await courseSupabase.from("course_holes").delete().eq("course_id", courseId);
-  if (error && error.code !== "42P01" && !error.message?.includes("does not exist")) {
-    throw new Error(error.message || "Failed to delete course_holes");
+  const r = await clearCourseHolesForImport(courseId);
+  if (r.deleteError) throw new Error(r.deleteError);
+  if (r.countAfter > 0) {
+    throw new Error(
+      `${r.countAfter} course_holes rows still exist for course ${courseId} after delete — check RLS DELETE policy and client key (service role bypasses RLS).`,
+    );
   }
 }
 
@@ -990,6 +1151,7 @@ export async function getCourseWithTeesAndHoles(courseId: string): Promise<Cours
 /**
  * Persist a normalized import package (idempotent on `courses.dedupe_key`).
  * See file header for full re-import strategy.
+ * Uses {@link courseSupabase}: for scripted imports prefer {@link setCourseRepoSupabase} with `SUPABASE_SERVICE_ROLE_KEY` so `course_holes` DELETE is not blocked by RLS.
  */
 export async function persistNormalizedCourseImport(n: NormalizedCourseImport): Promise<PersistedCourseImport> {
   const coursePayload: Record<string, unknown> = {
@@ -1021,20 +1183,30 @@ export async function persistNormalizedCourseImport(n: NormalizedCourseImport): 
   }
 
   const courseId = String((saved as any).id);
-  await deleteHolesForCourse(courseId);
+  const courseNameOut = String((saved as any).course_name ?? n.course.courseName);
+  const holeClear = await clearCourseHolesForImport(courseId);
 
-  const { count: remainingHoles, error: holeVerifyErr } = await courseSupabase
-    .from("course_holes")
-    .select("id", { count: "exact", head: true })
-    .eq("course_id", courseId);
+  const cannotClearHoles =
+    holeClear.deleteError != null ||
+    holeClear.countBefore < 0 ||
+    holeClear.countAfter < 0 ||
+    holeClear.countAfter > 0;
 
-  if (holeVerifyErr && holeVerifyErr.code !== "42P01" && !holeVerifyErr.message?.includes("does not exist")) {
-    throw new Error(holeVerifyErr.message || "persistNormalizedCourseImport: could not verify hole delete");
-  }
-  if ((remainingHoles ?? 0) > 0) {
-    throw new Error(
-      `persistNormalizedCourseImport: ${remainingHoles} course_holes rows still exist for course ${courseId} after delete — aborting.`,
-    );
+  if (cannotClearHoles) {
+    console.warn("[courseRepo] persistNormalizedCourseImport: skip course — failed to clear existing holes", {
+      courseId,
+      skipped_reason: "failed_to_clear_existing_holes",
+      holeClear,
+    });
+    return {
+      courseId,
+      apiId: n.course.apiId,
+      courseName: courseNameOut,
+      teeCount: 0,
+      holeCount: 0,
+      tees: [],
+      skipped_reason: "failed_to_clear_existing_holes",
+    };
   }
 
   let holeTotal = 0;
@@ -1107,7 +1279,7 @@ export async function persistNormalizedCourseImport(n: NormalizedCourseImport): 
   return {
     courseId,
     apiId: n.course.apiId,
-    courseName: (saved as any).course_name ?? n.course.courseName,
+    courseName: courseNameOut,
     teeCount: teeOut.length,
     holeCount: holeTotal,
     tees: teeOut,

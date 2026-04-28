@@ -309,6 +309,103 @@ export function getEditableCourseOverrideFields(): readonly OverrideFieldDef[] {
   return OVERRIDE_FIELDS;
 }
 
+async function assembleCourseReviewSummary(
+  row: Record<string, unknown>,
+  options?: { includeInactiveTees?: boolean },
+): Promise<CourseReviewSummary> {
+  const courseId = String(row.id);
+  const apiId = row.api_id != null ? Number(row.api_id) : null;
+  const includeInactiveTees = options?.includeInactiveTees === true;
+  let teesQuery = supabase
+    .from("course_tees")
+    .select("id, tee_name, source_type, source_url, sync_status, last_synced_at, imported_at, confidence_score, yards, total_meters")
+    .eq("course_id", courseId)
+    .order("display_order", { ascending: true })
+    .order("tee_name", { ascending: true });
+  if (!includeInactiveTees) {
+    teesQuery = teesQuery.eq("is_active", true);
+  }
+  const [overrides, teesResp, holesResp, job] = await Promise.all([
+    listActiveOverridesForCourse(courseId),
+    teesQuery,
+    supabase
+      .from("course_holes")
+      .select("id, tee_id, hole_number, par, yardage, stroke_index, source_type, source_url, sync_status, imported_at, last_synced_at")
+      .eq("course_id", courseId),
+    latestImportJob(courseId, apiId),
+  ]);
+  if (teesResp.error) throw new Error(teesResp.error.message || "Could not load tees.");
+  if (holesResp.error) throw new Error(holesResp.error.message || "Could not load holes.");
+
+  const holesByTee = new Map<string, TeeEditorHole[]>();
+  for (const h of (holesResp.data ?? []) as Record<string, unknown>[]) {
+    const teeIdKey = String(h.tee_id);
+    const holeRow: TeeEditorHole = {
+      id: String(h.id),
+      tee_id: teeIdKey,
+      hole_number: Number(h.hole_number),
+      par: h.par != null ? Number(h.par) : null,
+      yardage: h.yardage != null ? Number(h.yardage) : null,
+      stroke_index: h.stroke_index != null ? Number(h.stroke_index) : null,
+      source_type: h.source_type != null ? String(h.source_type) : null,
+      source_url: h.source_url != null ? String(h.source_url) : null,
+      sync_status: h.sync_status != null ? String(h.sync_status) : null,
+      imported_at: h.imported_at != null ? String(h.imported_at) : null,
+      last_synced_at: h.last_synced_at != null ? String(h.last_synced_at) : null,
+    };
+    const list = holesByTee.get(teeIdKey) ?? [];
+    list.push(holeRow);
+    holesByTee.set(teeIdKey, list);
+  }
+
+  const tees: CourseReviewTee[] = ((teesResp.data ?? []) as Record<string, unknown>[]).map((tee) => {
+    const teeId = String(tee.id);
+    const teeHoles = holesByTee.get(teeId) ?? [];
+    return {
+      id: teeId,
+      tee_name: String(tee.tee_name ?? "Tee"),
+      source_type: tee.source_type != null ? String(tee.source_type) : null,
+      source_url: tee.source_url != null ? String(tee.source_url) : null,
+      sync_status: tee.sync_status != null ? String(tee.sync_status) : null,
+      last_synced_at: tee.last_synced_at != null ? String(tee.last_synced_at) : null,
+      imported_at: tee.imported_at != null ? String(tee.imported_at) : null,
+      confidence_score: tee.confidence_score != null ? Number(tee.confidence_score) : null,
+      yards: tee.yards != null ? Number(tee.yards) : null,
+      total_meters: tee.total_meters != null ? Number(tee.total_meters) : null,
+      integrity: integrityStats(teeHoles),
+      manualOverrideCount: overrides.filter((o) => o.tee_id === teeId).length,
+    };
+  });
+
+  return {
+    id: courseId,
+    course_name: String(row.course_name ?? "Unknown course"),
+    source_type: row.source_type != null ? String(row.source_type) : null,
+    source_url: row.source_url != null ? String(row.source_url) : null,
+    sync_status: row.sync_status != null ? String(row.sync_status) : null,
+    last_synced_at: row.last_synced_at != null ? String(row.last_synced_at) : null,
+    imported_at: row.imported_at != null ? String(row.imported_at) : null,
+    confidence_score: row.confidence_score != null ? Number(row.confidence_score) : null,
+    api_id: apiId,
+    manualOverrideCount: overrides.length,
+    hasManualOverrides: overrides.length > 0,
+    tees,
+    latestJob: job,
+  };
+}
+
+/** Single course for deep links (tee editor); includes inactive tees so archived rows still open. */
+export async function getCourseReviewSummaryById(courseId: string): Promise<CourseReviewSummary | null> {
+  const { data: row, error } = await supabase
+    .from("courses")
+    .select("id, course_name, source_type, source_url, sync_status, last_synced_at, imported_at, confidence_score, api_id")
+    .eq("id", courseId)
+    .maybeSingle();
+  if (error) throw new Error(error.message || "Could not load course.");
+  if (!row) return null;
+  return assembleCourseReviewSummary(row as Record<string, unknown>, { includeInactiveTees: true });
+}
+
 export async function listCourseReviewSummaries(params?: { query?: string; limit?: number }): Promise<CourseReviewSummary[]> {
   const limit = Math.max(1, Math.min(120, params?.limit ?? 40));
   const query = (params?.query ?? "").trim();
@@ -323,86 +420,13 @@ export async function listCourseReviewSummaries(params?: { query?: string; limit
 
   const out: CourseReviewSummary[] = [];
   for (const row of (data ?? []) as Record<string, unknown>[]) {
-    const courseId = String(row.id);
-    const apiId = row.api_id != null ? Number(row.api_id) : null;
-    const [overrides, teesResp, holesResp, job] = await Promise.all([
-      listActiveOverridesForCourse(courseId),
-      supabase
-        .from("course_tees")
-        .select("id, tee_name, source_type, source_url, sync_status, last_synced_at, imported_at, confidence_score, yards, total_meters")
-        .eq("course_id", courseId)
-        .eq("is_active", true)
-        .order("display_order", { ascending: true }),
-      supabase
-        .from("course_holes")
-        .select("id, tee_id, hole_number, par, yardage, stroke_index, source_type, source_url, sync_status, imported_at, last_synced_at")
-        .eq("course_id", courseId),
-      latestImportJob(courseId, apiId),
-    ]);
-    if (teesResp.error) throw new Error(teesResp.error.message || "Could not load tees.");
-    if (holesResp.error) throw new Error(holesResp.error.message || "Could not load holes.");
-
-    const holesByTee = new Map<string, TeeEditorHole[]>();
-    for (const h of (holesResp.data ?? []) as Record<string, unknown>[]) {
-      const teeId = String(h.tee_id);
-      const holeRow: TeeEditorHole = {
-        id: String(h.id),
-        tee_id: teeId,
-        hole_number: Number(h.hole_number),
-        par: h.par != null ? Number(h.par) : null,
-        yardage: h.yardage != null ? Number(h.yardage) : null,
-        stroke_index: h.stroke_index != null ? Number(h.stroke_index) : null,
-        source_type: h.source_type != null ? String(h.source_type) : null,
-        source_url: h.source_url != null ? String(h.source_url) : null,
-        sync_status: h.sync_status != null ? String(h.sync_status) : null,
-        imported_at: h.imported_at != null ? String(h.imported_at) : null,
-        last_synced_at: h.last_synced_at != null ? String(h.last_synced_at) : null,
-      };
-      const list = holesByTee.get(teeId) ?? [];
-      list.push(holeRow);
-      holesByTee.set(teeId, list);
-    }
-
-    const tees: CourseReviewTee[] = ((teesResp.data ?? []) as Record<string, unknown>[]).map((tee) => {
-      const teeId = String(tee.id);
-      const teeHoles = holesByTee.get(teeId) ?? [];
-      return {
-        id: teeId,
-        tee_name: String(tee.tee_name ?? "Tee"),
-        source_type: tee.source_type != null ? String(tee.source_type) : null,
-        source_url: tee.source_url != null ? String(tee.source_url) : null,
-        sync_status: tee.sync_status != null ? String(tee.sync_status) : null,
-        last_synced_at: tee.last_synced_at != null ? String(tee.last_synced_at) : null,
-        imported_at: tee.imported_at != null ? String(tee.imported_at) : null,
-        confidence_score: tee.confidence_score != null ? Number(tee.confidence_score) : null,
-        yards: tee.yards != null ? Number(tee.yards) : null,
-        total_meters: tee.total_meters != null ? Number(tee.total_meters) : null,
-        integrity: integrityStats(teeHoles),
-        manualOverrideCount: overrides.filter((o) => o.tee_id === teeId).length,
-      };
-    });
-
-    out.push({
-      id: courseId,
-      course_name: String(row.course_name ?? "Unknown course"),
-      source_type: row.source_type != null ? String(row.source_type) : null,
-      source_url: row.source_url != null ? String(row.source_url) : null,
-      sync_status: row.sync_status != null ? String(row.sync_status) : null,
-      last_synced_at: row.last_synced_at != null ? String(row.last_synced_at) : null,
-      imported_at: row.imported_at != null ? String(row.imported_at) : null,
-      confidence_score: row.confidence_score != null ? Number(row.confidence_score) : null,
-      api_id: apiId,
-      manualOverrideCount: overrides.length,
-      hasManualOverrides: overrides.length > 0,
-      tees,
-      latestJob: job,
-    });
+    out.push(await assembleCourseReviewSummary(row, { includeInactiveTees: false }));
   }
   return out;
 }
 
 export async function getTeeEditorBundle(courseId: string, teeId: string): Promise<TeeEditorBundle> {
-  const course = (await listCourseReviewSummaries({ limit: 200 })).find((row) => row.id === courseId);
+  const course = await getCourseReviewSummaryById(courseId);
   if (!course) throw new Error("Course not found.");
   const tee = course.tees.find((t) => t.id === teeId);
   if (!tee) throw new Error("Tee not found.");

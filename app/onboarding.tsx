@@ -14,7 +14,7 @@ import { LoadingState } from "@/components/ui/LoadingState";
 import { invalidateCache } from "@/lib/cache/clientCache";
 import { useBootstrap, ACTIVE_SOCIETY_CLIENT_CACHE_KEY } from "@/lib/useBootstrap";
 import { ensureSignedIn } from "@/lib/auth_supabase";
-import { createSociety, joinSociety } from "@/lib/db_supabase/societyRepo";
+import { createSociety, joinSociety, normalizeJoinCode } from "@/lib/db_supabase/societyRepo";
 import { createMember } from "@/lib/db_supabase/memberRepo";
 import { setActiveSocietyAndMember } from "@/lib/db_supabase/profileRepo";
 import { supabase } from "@/lib/supabase";
@@ -259,7 +259,7 @@ export default function OnboardingScreen() {
     if (joinLoading) return;
     setJoinError(null);
 
-    const code = joinCode.trim().toUpperCase();
+    const code = normalizeJoinCode(joinCode);
     const nameInput = displayName.trim();
 
     if (!code) {
@@ -575,7 +575,7 @@ export default function OnboardingScreen() {
                   value={joinCode}
                   editable={!joinLoading}
                   onChangeText={(text) => {
-                    setJoinCode(text.toUpperCase().replace(/\s/g, ""));
+                    setJoinCode(normalizeJoinCode(text));
                     setJoinError(null);
                   }}
                   autoCapitalize="characters"

@@ -30,7 +30,9 @@ type EditedRow = { par: string; yardage: string; stroke_index: string };
 export default function CourseTeeEditorScreen() {
   const colors = getColors();
   const router = useRouter();
-  const { courseId, teeId } = useLocalSearchParams<{ courseId: string; teeId: string }>();
+  const params = useLocalSearchParams<{ courseId?: string | string[]; teeId?: string | string[] }>();
+  const courseId = (Array.isArray(params.courseId) ? params.courseId[0] : params.courseId) ?? "";
+  const teeId = (Array.isArray(params.teeId) ? params.teeId[0] : params.teeId) ?? "";
   const { member } = useBootstrap();
   const { guardPaidAction, modalVisible, setModalVisible, societyId } = usePaidAccess();
   const [loading, setLoading] = useState(true);

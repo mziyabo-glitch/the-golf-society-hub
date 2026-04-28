@@ -79,6 +79,7 @@ import { FreePlayRoundSummaryHero } from "@/components/free-play/summary/FreePla
 import { FreePlayShareResultCard } from "@/components/free-play/summary/FreePlayShareResultCard";
 import { getMembersBySocietyId, type MemberDoc } from "@/lib/db_supabase/memberRepo";
 import type { FreePlayRoundBundle, FreePlayScoringFormat, FreePlayScoringMode } from "@/types/freePlayScorecard";
+import { logFreePlayScorecardDataPathQa } from "@/lib/free-play/scorecardDataPathQa";
 
 function netStrokeLabel(net: number, par: number): string {
   const d = net - par;
@@ -129,6 +130,7 @@ export default function FreePlayRoundDetailScreen() {
   const [editingHandicapPlayerId, setEditingHandicapPlayerId] = useState<string | null>(null);
   const [editingHandicapInput, setEditingHandicapInput] = useState("");
   const holeTransition = useRef(new Animated.Value(1)).current;
+  const scorecardDataPathQaLoggedRef = useRef<string | null>(null);
 
   const load = useCallback(async () => {
     if (!roundId) {
@@ -209,29 +211,63 @@ export default function FreePlayRoundDetailScreen() {
 
   useEffect(() => {
     const round = bundle?.round;
-    if (!round?.id || !round?.course_id) {
+    if (!round?.id) {
       setTeeMeta(null);
       setHoleMeta([]);
       return;
     }
-    const courseId = round.course_id;
     let cancelled = false;
     void (async () => {
       setMetaHydrating(true);
       try {
-        // 1) Try existing tee reference first.
+        let resolvedCourseId = round.course_id ? String(round.course_id) : null;
+        let resolvedCourseName = String(round.course_name ?? "").trim();
+
+        if (!resolvedCourseId && resolvedCourseName) {
+          const byName = await findBestPlayableCourseByName(resolvedCourseName);
+          if (!cancelled && byName) {
+            resolvedCourseId = byName.id;
+            resolvedCourseName = byName.course_name || resolvedCourseName;
+          }
+        }
+
+        if (!resolvedCourseId) {
+          if (!cancelled) {
+            setTeeMeta(null);
+            setHoleMeta([]);
+          }
+          return;
+        }
+
+        // 1) Use round.tee_id only when that tee belongs to the resolved course and has hole rows.
         if (round.tee_id) {
           const [tee, holes] = await Promise.all([getCourseTeeById(round.tee_id), getHolesByTeeId(round.tee_id)]);
-          if (!cancelled && tee && holes.length > 0) {
+          if (!cancelled && tee && tee.course_id === resolvedCourseId && holes.length > 0) {
             setTeeMeta(tee);
-            setHoleMeta((holes ?? []).slice().sort((a, b) => a.hole_number - b.hole_number));
-            setMetaHydrating(false);
+            setHoleMeta(holes.slice().sort((a, b) => a.hole_number - b.hole_number));
+            const mustPersist = round.course_id !== resolvedCourseId || round.tee_id !== tee.id;
+            if (mustPersist) {
+              try {
+                await relinkFreePlayRoundCourse(round.id, {
+                  courseId: resolvedCourseId,
+                  courseName: resolvedCourseName || round.course_name,
+                  teeId: tee.id,
+                  teeName: tee.tee_name,
+                });
+                if (!cancelled) {
+                  setNotice("Round linked to course metadata.");
+                  await load();
+                }
+              } catch {
+                /* keep hydrated UI */
+              }
+            }
             return;
           }
         }
 
         // 2) Fallback: ensure course metadata is imported if api_id exists.
-        const meta = await getCourseMetaById(courseId);
+        const meta = await getCourseMetaById(resolvedCourseId);
         if (meta?.api_id != null && Number.isFinite(Number(meta.api_id))) {
           try {
             await importCourseFromApiId(Number(meta.api_id));
@@ -240,13 +276,9 @@ export default function FreePlayRoundDetailScreen() {
           }
         }
 
-        // 3) Resolve best tee for this round and auto-attach when possible.
-        let resolvedCourseId = courseId;
-        let resolvedCourseName = String(round.course_name ?? "").trim();
+        // 3) Pick a tee that has course_holes (name match → default → display order).
         let tees = await getTeesByCourseId(resolvedCourseId);
 
-        // Legacy rounds can point at duplicate course rows without tee/hole metadata.
-        // Auto-heal by finding a playable sibling course row by name.
         if (!tees.length && resolvedCourseName) {
           const alt = await findBestPlayableCourseByName(resolvedCourseName);
           if (alt && alt.id !== resolvedCourseId) {
@@ -261,28 +293,49 @@ export default function FreePlayRoundDetailScreen() {
             setTeeMeta(null);
             setHoleMeta([]);
           }
-          setMetaHydrating(false);
           return;
         }
 
         const roundTeeName = String(round.tee_name ?? "").trim().toLowerCase();
-        const picked =
-          tees.find((t) => roundTeeName && String(t.tee_name ?? "").trim().toLowerCase() === roundTeeName) ??
-          tees.find((t) => t.is_default === true) ??
-          tees[0] ??
-          null;
+        const orderedTees = [...tees].sort((a, b) => {
+          const aName = String(a.tee_name ?? "").trim().toLowerCase();
+          const bName = String(b.tee_name ?? "").trim().toLowerCase();
+          const aMatch = roundTeeName && aName === roundTeeName ? 0 : 1;
+          const bMatch = roundTeeName && bName === roundTeeName ? 0 : 1;
+          if (aMatch !== bMatch) return aMatch - bMatch;
+          const aDef = a.is_default === true ? 0 : 1;
+          const bDef = b.is_default === true ? 0 : 1;
+          if (aDef !== bDef) return aDef - bDef;
+          const ao = Number.isFinite(Number(a.display_order)) ? Number(a.display_order) : 0;
+          const bo = Number.isFinite(Number(b.display_order)) ? Number(b.display_order) : 0;
+          if (ao !== bo) return ao - bo;
+          return a.tee_name.localeCompare(b.tee_name);
+        });
+
+        let picked: CourseTee | null = null;
+        let holes: CourseHoleRow[] = [];
+        for (const t of orderedTees) {
+          const h = await getHolesByTeeId(t.id);
+          if (h.length > 0) {
+            picked = t;
+            holes = h;
+            break;
+          }
+        }
+
         if (!picked) {
-          setMetaHydrating(false);
+          if (!cancelled) {
+            setTeeMeta(null);
+            setHoleMeta([]);
+          }
           return;
         }
 
-        const holes = await getHolesByTeeId(picked.id);
         if (!cancelled) {
           setTeeMeta(picked);
-          setHoleMeta((holes ?? []).slice().sort((a, b) => a.hole_number - b.hole_number));
+          setHoleMeta(holes.slice().sort((a, b) => a.hole_number - b.hole_number));
         }
 
-        // Persist selected tee / healed course on round so future loads hydrate immediately.
         if (picked.id && (round.tee_id !== picked.id || round.course_id !== resolvedCourseId)) {
           try {
             if (round.course_id !== resolvedCourseId) {
@@ -297,6 +350,7 @@ export default function FreePlayRoundDetailScreen() {
               await updateFreePlayRoundTee(round.id, picked.id, picked.tee_name);
               if (!cancelled) setNotice("Loaded tee metadata for this round.");
             }
+            if (!cancelled) await load();
           } catch {
             // Non-blocking; keep UI hydrated even if update fails.
           }
@@ -308,7 +362,19 @@ export default function FreePlayRoundDetailScreen() {
     return () => {
       cancelled = true;
     };
-  }, [bundle?.round]);
+  }, [bundle?.round, load]);
+
+  useEffect(() => {
+    scorecardDataPathQaLoggedRef.current = null;
+  }, [roundId]);
+
+  useEffect(() => {
+    if (!bundle || metaHydrating) return;
+    const stableKey = `${bundle.round.id}:${teeMeta?.id ?? "no-tee"}:${holeMeta.length}`;
+    if (scorecardDataPathQaLoggedRef.current === stableKey) return;
+    scorecardDataPathQaLoggedRef.current = stableKey;
+    logFreePlayScorecardDataPathQa({ bundle, teeMeta, holeMeta, metaHydrating: false });
+  }, [bundle, teeMeta, holeMeta, metaHydrating]);
 
   const mode: FreePlayScoringMode = bundle?.round.scoring_mode ?? "quick";
   const isCompletedRound = bundle?.round.status === "completed";
