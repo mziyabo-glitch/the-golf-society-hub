@@ -118,6 +118,9 @@ export type UkScorecardFetchDebug = {
   attemptedEndpoints: string[];
 };
 
+const UK_GOLF_API_BASE_URL_DEFAULT = "https://uk-golf-course-data-api.p.rapidapi.com";
+const UK_GOLF_API_HOST_DEFAULT = "uk-golf-course-data-api.p.rapidapi.com";
+
 function resolveRapidApiKeyFromEnv(): string {
   return (
     process.env.RAPIDAPI_KEY ||
@@ -452,8 +455,10 @@ export class UkGolfApiProvider {
 
   constructor(config?: Partial<UkGolfProviderConfig>) {
     const rapidApiKey = (config?.rapidApiKey ?? resolveRapidApiKeyFromEnv()).trim();
-    const host = (config?.host ?? process.env.UK_GOLF_API_HOST ?? "").trim();
-    const baseUrl = (config?.baseUrl ?? process.env.UK_GOLF_API_BASE_URL ?? "").trim();
+    const host = (config?.host ?? process.env.UK_GOLF_API_HOST ?? UK_GOLF_API_HOST_DEFAULT).trim() || UK_GOLF_API_HOST_DEFAULT;
+    const baseUrl =
+      (config?.baseUrl ?? process.env.UK_GOLF_API_BASE_URL ?? UK_GOLF_API_BASE_URL_DEFAULT).trim() ||
+      UK_GOLF_API_BASE_URL_DEFAULT;
     const timeoutMsRaw = Number(config?.timeoutMs ?? process.env.UK_GOLF_API_TIMEOUT_MS ?? 20000);
     const maxRetriesRaw = Number(config?.maxRetries ?? process.env.UK_GOLF_API_MAX_RETRIES ?? 3);
     this.config = {
@@ -471,7 +476,6 @@ export class UkGolfApiProvider {
         "Missing RapidAPI key (set RAPIDAPI_KEY, GOLFCOURSE_API_KEY, EXPO_PUBLIC_GOLFCOURSE_API_KEY, or NEXT_PUBLIC_GOLF_API_KEY).",
       );
     }
-    if (!this.config.baseUrl) throw new Error("Missing UK_GOLF_API_BASE_URL");
   }
 
   private async get(path: string): Promise<unknown> {

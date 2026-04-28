@@ -26,6 +26,16 @@ import {
 
 dotenv.config();
 
+function resolveRapidApiKeyFromEnv(): string {
+  return (
+    process.env.RAPIDAPI_KEY ||
+    process.env.GOLFCOURSE_API_KEY ||
+    process.env.EXPO_PUBLIC_GOLFCOURSE_API_KEY ||
+    process.env.NEXT_PUBLIC_GOLF_API_KEY ||
+    ""
+  ).trim();
+}
+
 type QueryOutcome = {
   query: string;
   courseName: string;
@@ -856,6 +866,22 @@ export async function runUkGolfApiDryRun(): Promise<{
   report: Record<string, unknown>;
   fallbackDiscoveryCalls: number;
 }> {
+  const rapidApiKey = resolveRapidApiKeyFromEnv();
+  if (!rapidApiKey) {
+    console.warn(
+      "[course-import:ukgolfapi:dry] Missing RapidAPI key; skipping uk_golf_api dry run (set RAPIDAPI_KEY, GOLFCOURSE_API_KEY, EXPO_PUBLIC_GOLFCOURSE_API_KEY, or NEXT_PUBLIC_GOLF_API_KEY).",
+    );
+    return {
+      report: {
+        provider: "uk_golf_api",
+        timestamp: new Date().toISOString(),
+        skipped: true,
+        skipReason: "missing_rapidapi_key",
+      },
+      fallbackDiscoveryCalls: 0,
+    };
+  }
+
   const provider = new UkGolfApiProvider();
   provider.assertConfigured();
 
