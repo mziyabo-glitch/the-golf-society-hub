@@ -1123,6 +1123,10 @@ export async function runUkGolfApiDryRun(): Promise<{
     samples: outcomes.slice(0, 25),
   };
 
+  const requestSummary = provider.getAndResetRequestSummary();
+  console.log("[uk-golf-api] request-summary", requestSummary);
+  report.requestSummary = requestSummary;
+
   return {
     report,
     fallbackDiscoveryCalls: totals.fallbackDiscoveryCalls,

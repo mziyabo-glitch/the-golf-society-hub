@@ -6,6 +6,8 @@ export type UkGolfProviderConfig = {
   baseUrl: string;
   timeoutMs: number;
   maxRetries: number;
+  requestDelayMs: number;
+  requestJitterMs: number;
 };
 
 export type UkGolfClub = {
@@ -452,6 +454,11 @@ function sleep(ms: number): Promise<void> {
 export class UkGolfApiProvider {
   readonly config: UkGolfProviderConfig;
   private fallbackDiscoveryCalls = 0;
+  private totalRequests = 0;
+  private total429s = 0;
+  private totalRetries = 0;
+  private static requestQueue: Promise<void> = Promise.resolve();
+  private static nextAllowedRequestAt = 0;
 
   constructor(config?: Partial<UkGolfProviderConfig>) {
     const rapidApiKey = (config?.rapidApiKey ?? resolveRapidApiKeyFromEnv()).trim();
@@ -461,12 +468,16 @@ export class UkGolfApiProvider {
       UK_GOLF_API_BASE_URL_DEFAULT;
     const timeoutMsRaw = Number(config?.timeoutMs ?? process.env.UK_GOLF_API_TIMEOUT_MS ?? 20000);
     const maxRetriesRaw = Number(config?.maxRetries ?? process.env.UK_GOLF_API_MAX_RETRIES ?? 3);
+    const requestDelayMsRaw = Number(config?.requestDelayMs ?? process.env.UK_GOLF_API_DELAY_MS ?? 2500);
+    const requestJitterMsRaw = Number(config?.requestJitterMs ?? 500);
     this.config = {
       rapidApiKey,
       host,
       baseUrl,
       timeoutMs: Number.isFinite(timeoutMsRaw) && timeoutMsRaw > 0 ? Math.round(timeoutMsRaw) : 20000,
       maxRetries: Number.isFinite(maxRetriesRaw) && maxRetriesRaw >= 0 ? Math.round(maxRetriesRaw) : 3,
+      requestDelayMs: Number.isFinite(requestDelayMsRaw) && requestDelayMsRaw >= 0 ? Math.round(requestDelayMsRaw) : 2500,
+      requestJitterMs: Number.isFinite(requestJitterMsRaw) && requestJitterMsRaw >= 0 ? Math.round(requestJitterMsRaw) : 500,
     };
   }
 
@@ -476,6 +487,27 @@ export class UkGolfApiProvider {
         "Missing RapidAPI key (set RAPIDAPI_KEY, GOLFCOURSE_API_KEY, EXPO_PUBLIC_GOLFCOURSE_API_KEY, or NEXT_PUBLIC_GOLF_API_KEY).",
       );
     }
+  }
+
+  private async runQueuedFetch(url: string, headers: Record<string, string>): Promise<Response> {
+    const run = async () => {
+      const now = Date.now();
+      const waitMs = Math.max(0, UkGolfApiProvider.nextAllowedRequestAt - now);
+      if (waitMs > 0) {
+        await sleep(waitMs);
+      }
+      this.totalRequests += 1;
+      const res = await fetch(url, { method: "GET", headers, signal: withTimeout(this.config.timeoutMs) });
+      const jitter = this.config.requestJitterMs > 0 ? Math.floor(Math.random() * (this.config.requestJitterMs + 1)) : 0;
+      UkGolfApiProvider.nextAllowedRequestAt = Date.now() + this.config.requestDelayMs + jitter;
+      return res;
+    };
+    const scheduled = UkGolfApiProvider.requestQueue.then(run, run);
+    UkGolfApiProvider.requestQueue = scheduled.then(
+      () => undefined,
+      () => undefined,
+    );
+    return scheduled;
   }
 
   private async get(path: string): Promise<unknown> {
@@ -491,12 +523,14 @@ export class UkGolfApiProvider {
     const maxRetryAttempts = Math.min(this.config.maxRetries, 3);
     let dynamicBackoffMs = 10000;
     for (let attempt = 0; attempt <= maxRetryAttempts; attempt += 1) {
-      const res = await fetch(url, { method: "GET", headers, signal: withTimeout(this.config.timeoutMs) });
+      const res = await this.runQueuedFetch(url, headers);
       if (res.ok) {
         return safeReadJson(res);
       }
 
       if (res.status === 429 && attempt < maxRetryAttempts) {
+        this.total429s += 1;
+        this.totalRetries += 1;
         const retryAfterHeader = res.headers.get("retry-after");
         const retryAfterSec = Number(retryAfterHeader);
         const backoffMs = Number.isFinite(retryAfterSec) && retryAfterSec > 0
@@ -857,6 +891,22 @@ export class UkGolfApiProvider {
     const value = this.fallbackDiscoveryCalls;
     this.fallbackDiscoveryCalls = 0;
     return value;
+  }
+
+  getAndResetRequestSummary(): {
+    totalRequests: number;
+    total429s: number;
+    totalRetries: number;
+  } {
+    const snapshot = {
+      totalRequests: this.totalRequests,
+      total429s: this.total429s,
+      totalRetries: this.totalRetries,
+    };
+    this.totalRequests = 0;
+    this.total429s = 0;
+    this.totalRetries = 0;
+    return snapshot;
   }
 
   async getCourseScorecardForTeeWithDebug(
