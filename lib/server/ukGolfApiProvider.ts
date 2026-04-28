@@ -118,6 +118,16 @@ export type UkScorecardFetchDebug = {
   attemptedEndpoints: string[];
 };
 
+function resolveRapidApiKeyFromEnv(): string {
+  return (
+    process.env.RAPIDAPI_KEY ||
+    process.env.GOLFCOURSE_API_KEY ||
+    process.env.EXPO_PUBLIC_GOLFCOURSE_API_KEY ||
+    process.env.NEXT_PUBLIC_GOLF_API_KEY ||
+    ""
+  ).trim();
+}
+
 function asRecord(v: unknown): Record<string, unknown> | null {
   if (!v || typeof v !== "object" || Array.isArray(v)) return null;
   return v as Record<string, unknown>;
@@ -441,7 +451,7 @@ export class UkGolfApiProvider {
   private fallbackDiscoveryCalls = 0;
 
   constructor(config?: Partial<UkGolfProviderConfig>) {
-    const rapidApiKey = (config?.rapidApiKey ?? process.env.RAPIDAPI_KEY ?? "").trim();
+    const rapidApiKey = (config?.rapidApiKey ?? resolveRapidApiKeyFromEnv()).trim();
     const host = (config?.host ?? process.env.UK_GOLF_API_HOST ?? "").trim();
     const baseUrl = (config?.baseUrl ?? process.env.UK_GOLF_API_BASE_URL ?? "").trim();
     const timeoutMsRaw = Number(config?.timeoutMs ?? process.env.UK_GOLF_API_TIMEOUT_MS ?? 20000);
@@ -456,7 +466,11 @@ export class UkGolfApiProvider {
   }
 
   assertConfigured(): void {
-    if (!this.config.rapidApiKey) throw new Error("Missing RAPIDAPI_KEY");
+    if (!this.config.rapidApiKey) {
+      throw new Error(
+        "Missing RapidAPI key (set RAPIDAPI_KEY, GOLFCOURSE_API_KEY, EXPO_PUBLIC_GOLFCOURSE_API_KEY, or NEXT_PUBLIC_GOLF_API_KEY).",
+      );
+    }
     if (!this.config.baseUrl) throw new Error("Missing UK_GOLF_API_BASE_URL");
   }
 

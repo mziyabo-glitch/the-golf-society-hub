@@ -4,6 +4,12 @@ import { runUkGolfApiDryRun } from "./uk-golf-api-dry-run";
 
 dotenv.config();
 
+const RAPIDAPI_KEY =
+  process.env.RAPIDAPI_KEY ||
+  process.env.GOLFCOURSE_API_KEY ||
+  process.env.EXPO_PUBLIC_GOLFCOURSE_API_KEY ||
+  process.env.NEXT_PUBLIC_GOLF_API_KEY;
+
 type CourseCandidateSummaryRow = {
   id: string;
   validation_status: string;
@@ -146,6 +152,14 @@ async function main(): Promise<void> {
     console.warn(
       "[course-import-nightly] UK_GOLF_API_ALLOW_LIVE_PROMOTION=true detected; nightly-course-import is staging-only and will not promote.",
     );
+  }
+
+  if (!RAPIDAPI_KEY?.trim()) {
+    console.warn(
+      "[course-import-nightly] Missing RapidAPI key; skipping uk_golf_api import (set RAPIDAPI_KEY, GOLFCOURSE_API_KEY, EXPO_PUBLIC_GOLFCOURSE_API_KEY, or NEXT_PUBLIC_GOLF_API_KEY).",
+    );
+    await logStagingSummary(0);
+    return;
   }
 
   const { fallbackDiscoveryCalls } = await runUkGolfApiDryRun();
