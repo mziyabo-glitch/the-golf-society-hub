@@ -26,6 +26,8 @@
     "course-import:ukgolfapi:inspect-course": "tsx scripts/uk-golf-api-inspect-course.ts",
     "course-import:ukgolfapi:staging-report": "tsx scripts/uk-golf-api-staging-report.ts",
     "course-import:ukgolfapi:promote-approved": "tsx scripts/uk-golf-api-promote-approved.ts",
+    "course-import:ukgolfapi:seed-queue": "tsx scripts/uk-golf-api-seed-queue.ts",
+    "course-import:ukgolfapi:process-queue": "tsx scripts/uk-golf-api-process-queue.ts",
     "course-import:territory": "tsx scripts/nightly-course-import.ts --manual",
     "course-import:stale-smoke": "tsx scripts/stale-course-import-smoke.ts",
     "course-import:seed-gb": "tsx scripts/seed-gb-course-candidates.ts",

@@ -120,6 +120,17 @@ export type UkScorecardFetchDebug = {
   attemptedEndpoints: string[];
 };
 
+export class UkGolfApiRateLimitError extends Error {
+  readonly code = "RATE_LIMITED" as const;
+  readonly retryAfterMs: number;
+
+  constructor(message: string, retryAfterMs: number) {
+    super(message);
+    this.name = "UkGolfApiRateLimitError";
+    this.retryAfterMs = retryAfterMs;
+  }
+}
+
 const UK_GOLF_API_BASE_URL_DEFAULT = "https://uk-golf-course-data-api.p.rapidapi.com";
 const UK_GOLF_API_HOST_DEFAULT = "uk-golf-course-data-api.p.rapidapi.com";
 
@@ -547,6 +558,15 @@ export class UkGolfApiProvider {
           dynamicBackoffMs *= 1.5;
         }
         continue;
+      }
+      if (res.status === 429) {
+        this.total429s += 1;
+        const retryAfterHeader = res.headers.get("retry-after");
+        const retryAfterSec = Number(retryAfterHeader);
+        const retryAfterMs = Number.isFinite(retryAfterSec) && retryAfterSec > 0
+          ? Math.round(retryAfterSec * 1000)
+          : Math.round(dynamicBackoffMs);
+        throw new UkGolfApiRateLimitError(`UK Golf API 429 on ${normalizedPath}`, retryAfterMs);
       }
 
       const body = await res.text().catch(() => "");

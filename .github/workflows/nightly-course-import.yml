@@ -63,6 +63,11 @@ jobs:
       RAPIDAPI_KEY: ${{ secrets.RAPIDAPI_KEY }}
       UK_GOLF_API_BASE_URL: https://uk-golf-course-data-api.p.rapidapi.com
       UK_GOLF_API_HOST: uk-golf-course-data-api.p.rapidapi.com
+      UK_GOLF_API_DELAY_MS: 7000
+      UK_GOLF_API_JITTER_MS: 1000
+      UK_GOLF_API_MAX_QUEUE_ITEMS_PER_RUN: 25
+      UK_GOLF_API_MAX_REQUESTS_PER_RUN: 150
+      UK_GOLF_API_ALLOW_STAGING_WRITES: "true"
       UK_GOLF_DRY_DELAY_MS: 6000
       NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL || secrets.EXPO_PUBLIC_SUPABASE_URL }}
       SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}

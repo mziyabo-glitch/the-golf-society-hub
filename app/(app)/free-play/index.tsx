@@ -917,7 +917,7 @@ export default function FreePlayHomeScreen() {
 
             {showMemberPicker ? (
               <View style={{ marginTop: spacing.sm }}>
-                {members.slice(0, 20).map((m) => (
+                {members.map((m) => (
                   <Pressable
                     key={m.id}
                     onPress={() => addMemberPlayer(m)}

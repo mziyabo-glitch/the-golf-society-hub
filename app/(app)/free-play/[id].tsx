@@ -1704,7 +1704,6 @@ export default function FreePlayRoundDetailScreen() {
               <View style={{ marginTop: spacing.xs }}>
                 {members
                   .filter((m) => !bundle.players.some((p) => p.member_id && p.member_id === m.id))
-                  .slice(0, 12)
                   .map((m) => (
                     <Pressable
                       key={m.id}
