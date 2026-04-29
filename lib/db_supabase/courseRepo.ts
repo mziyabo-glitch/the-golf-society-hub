@@ -8,6 +8,7 @@ import type { NormalizedCourseImport, PersistedCourseImport, TeeImportReconcilia
 import { computeTrustRankForSearchHit } from "@/lib/course/freePlayTrustPresentation";
 import type { CourseApprovalState, CourseDataSubmissionType } from "@/types/courseTrust";
 import type { EventCourseContext, EventHoleSnapshotRow, EventTeeRatingSnapshot } from "@/types/eventCourseScoring";
+import { normalizePlayableCourseNameKey, normalizedLabelMatchScore } from "@/lib/db_supabase/playableCourseNameMatch";
 
 export type { EventCourseContext, EventCourseLiveTee, EventHoleSnapshotRow, EventTeeRatingSnapshot } from "@/types/eventCourseScoring";
 export type { CourseApprovalState, CourseDataSubmissionType } from "@/types/courseTrust";
@@ -687,47 +688,48 @@ export async function reviewCourseDataSubmission(input: {
   if (error) throw new Error(error.message || "Could not review submission.");
 }
 
-function normalizeCourseNameKey(name: string): string {
-  return name
-    .toLowerCase()
-    .replace(/golf club/g, "")
-    .replace(/golf centre/g, "")
-    .replace(/golf center/g, "")
-    .replace(/[^a-z0-9]+/g, " ")
-    .trim();
-}
-
 /**
  * Resolve the best existing DB course row for scoring metadata by name.
  * Used when legacy rounds point at older duplicate course rows with no tees.
+ *
+ * Matches both `course_name` and `club_name` so rounds saved as club name (e.g. "Shrivenham Park Golf Club")
+ * still resolve to layout rows where the layout is stored under a layout-specific `course_name`
+ * (e.g. "Shrivenham Park GC Summer").
  */
 export async function findBestPlayableCourseByName(courseName: string): Promise<PlayableCourseHit | null> {
   const q = courseName.trim();
   if (!q) return null;
+  const pattern = `%${q}%`;
+  const escapedPattern = pattern.replace(/,/g, "\\,");
   const { data, error } = await courseSupabase
     .from("courses")
-    .select("id, course_name, api_id")
-    .ilike("course_name", `%${q}%`)
-    .limit(20);
+    .select("id, course_name, club_name, api_id")
+    .or(`course_name.ilike.${escapedPattern},club_name.ilike.${escapedPattern}`)
+    .limit(40);
 
   if (error || !data || data.length === 0) return null;
 
-  const targetKey = normalizeCourseNameKey(q);
-  const ranked: Array<PlayableCourseHit & { score: number; teeCount: number }> = [];
-  for (const row of data as Array<{ id: string; course_name: string | null; api_id: number | null }>) {
-    const name = String(row.course_name ?? "").trim();
-    if (!name) continue;
+  const targetKey = normalizePlayableCourseNameKey(q);
+  const ranked: (PlayableCourseHit & { score: number; teeCount: number })[] = [];
+  for (const row of data as {
+    id: string;
+    course_name: string | null;
+    club_name: string | null;
+    api_id: number | null;
+  }[]) {
+    const displayName = String(row.course_name ?? "").trim() || String(row.club_name ?? "").trim();
+    if (!displayName) continue;
     const tees = await getTeesByCourseId(String(row.id));
     const teeCount = tees.length;
     if (teeCount === 0) continue;
-    const nameKey = normalizeCourseNameKey(name);
-    const exact = nameKey === targetKey ? 100 : 0;
-    const prefix = nameKey.startsWith(targetKey) || targetKey.startsWith(nameKey) ? 20 : 0;
+    const nameKey = normalizePlayableCourseNameKey(String(row.course_name ?? ""));
+    const clubKey = normalizePlayableCourseNameKey(String(row.club_name ?? ""));
+    const nameScore = Math.max(normalizedLabelMatchScore(targetKey, nameKey), normalizedLabelMatchScore(targetKey, clubKey));
     const hasApi = row.api_id != null ? 10 : 0;
-    const score = exact + prefix + hasApi;
+    const score = nameScore + hasApi;
     ranked.push({
       id: String(row.id),
-      course_name: name,
+      course_name: displayName,
       api_id: row.api_id != null && Number.isFinite(Number(row.api_id)) ? Number(row.api_id) : null,
       score,
       teeCount,
