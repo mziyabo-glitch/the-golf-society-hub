@@ -43,6 +43,7 @@ export default function MembersScreen() {
     handleDeleteMember,
     handleTogglePaidById,
     onPressMemberRow,
+    retryLoadMembers,
   } = useMembersScreen();
 
   if (bootstrapLoading && loading) {
@@ -105,6 +106,8 @@ export default function MembersScreen() {
         reduceMotion={reduceMotion}
         refreshing={refreshing}
         loadError={loadError}
+        onRetryLoad={retryLoadMembers}
+        retryingLoad={refreshing}
         permissions={permissions}
         memberRows={memberRows}
         onOpenAdd={openAddModal}

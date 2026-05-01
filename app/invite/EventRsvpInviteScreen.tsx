@@ -30,6 +30,7 @@ import {
   mapPublicRsvpError,
 } from "@/lib/eventInvitePublic";
 import { blurWebActiveElement } from "@/lib/ui/focus";
+import { goBack } from "@/lib/navigation";
 import {
   EventRsvpError,
   mapRsvpErrorCodeToInlineMessage,
@@ -302,7 +303,7 @@ export function EventRsvpInviteScreen({ eventId }: { eventId: string }) {
         <EmptyState
           title="Event not found"
           message={loadError ?? "Check the link and try again."}
-          action={{ label: "Close", onPress: () => router.back() }}
+          action={{ label: "Close", onPress: () => goBack(router, "/sign-in") }}
         />
       </Screen>
     );

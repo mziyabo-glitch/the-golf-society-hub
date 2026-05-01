@@ -5,6 +5,7 @@
 import { View, StyleSheet, Pressable, ActivityIndicator } from "react-native";
 import { Feather } from "@expo/vector-icons";
 import { AppText } from "@/components/ui/AppText";
+import { InlineNotice } from "@/components/ui/InlineNotice";
 import { getColors, spacing, radius, premiumTokens } from "@/lib/ui/theme";
 import type { PlayabilityInsight, PlayabilityLevel } from "@/lib/playability/types";
 import { comfortScan, rainIntensityScan, windImpactScan } from "@/lib/playability/weatherVisual";
@@ -103,16 +104,26 @@ export function PlayabilityCard({
             Loading…
           </AppText>
         </View>
-      ) : error ? (
-        <AppText variant="small" style={{ color: colors.error }}>
-          {error}
-        </AppText>
       ) : !insight ? (
-        <AppText variant="small" color="secondary">
-          {noLocationMessage}
-        </AppText>
+        error ? (
+          <AppText variant="small" style={{ color: colors.error }}>
+            {error}
+          </AppText>
+        ) : (
+          <AppText variant="small" color="secondary">
+            {noLocationMessage}
+          </AppText>
+        )
       ) : (
         <>
+          {error ? (
+            <InlineNotice
+              variant="info"
+              message="Could not refresh the latest forecast."
+              detail={error}
+              style={{ marginBottom: spacing.sm }}
+            />
+          ) : null}
           <AppText variant="h2" style={[styles.headline, { color: c }]} numberOfLines={2}>
             {insight.label}
           </AppText>

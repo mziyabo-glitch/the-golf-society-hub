@@ -11,32 +11,34 @@ export type FreePlayLeaderboardPreviewProps = {
   format: FreePlayScoringFormat;
   rows: FreePlayLeaderboardRow[];
   onPressOpenFull: () => void;
+  /** When set, thru column shows `n/total` and marks incomplete rounds. */
+  expectedHoles?: number;
+  /** Limit visible rows (e.g. sticky top 3). */
+  maxRows?: number;
+  /** Compact spacing for sticky bottom placement. */
+  compact?: boolean;
+  /** Hide CTA line when used as sticky preview. */
+  hideCta?: boolean;
 };
 
-export function FreePlayLeaderboardPreview({ format, rows, onPressOpenFull }: FreePlayLeaderboardPreviewProps) {
+export function FreePlayLeaderboardPreview({
+  format,
+  rows,
+  onPressOpenFull,
+  expectedHoles,
+  maxRows,
+  compact,
+  hideCta,
+}: FreePlayLeaderboardPreviewProps) {
   const colors = getColors();
-  const hasScores = rows.some((r) => r.thru > 0);
-
-  if (!hasScores) {
-    return (
-      <View
-        style={[
-          styles.card,
-          { borderColor: colors.borderLight, backgroundColor: freePlayPremium.creamSurface },
-          freePlayPremium.cardShadow,
-        ]}
-      >
-        <AppText variant="captionBold" style={{ color: freePlayPremium.accentDeepGreen, letterSpacing: 0.8 }}>
-          LIVE LEADERBOARD
-        </AppText>
-        <AppText variant="small" color="secondary" style={{ marginTop: spacing.sm }}>
-          Leaderboard starts after the first score.
-        </AppText>
-      </View>
-    );
-  }
-
-  const top = rows.slice(0, 3);
+  const list = rows.slice(0, maxRows != null ? maxRows : 3);
+  const thruCell = (thru: number) => {
+    if (expectedHoles != null && expectedHoles > 0) {
+      const incomplete = thru < expectedHoles && thru > 0;
+      return `${thru}/${expectedHoles}${incomplete ? "*" : ""}`;
+    }
+    return String(thru);
+  };
 
   return (
     <Pressable
@@ -45,9 +47,10 @@ export function FreePlayLeaderboardPreview({ format, rows, onPressOpenFull }: Fr
         styles.card,
         {
           borderColor: freePlayPremium.accentDeepGreen + "44",
-          backgroundColor: colors.surface,
+          backgroundColor: compact ? freePlayPremium.creamSurface : colors.surface,
           opacity: pressed ? 0.92 : 1,
         },
+        compact ? styles.cardCompact : null,
         freePlayPremium.cardShadow,
       ]}
     >
@@ -57,7 +60,12 @@ export function FreePlayLeaderboardPreview({ format, rows, onPressOpenFull }: Fr
         </AppText>
         <Feather name="chevron-right" size={18} color={colors.primary} />
       </View>
-      {top.map((row, idx) => (
+      {list.length === 0 ? (
+        <AppText variant="small" color="secondary">
+          No players yet.
+        </AppText>
+      ) : null}
+      {list.map((row, idx) => (
         <View
           key={row.roundPlayerId}
           style={[
@@ -80,13 +88,15 @@ export function FreePlayLeaderboardPreview({ format, rows, onPressOpenFull }: Fr
             {format === "stableford" ? `${row.stablefordPoints ?? "—"} pts` : `${row.netTotal ?? "—"}`}
           </AppText>
           <AppText variant="caption" color="tertiary" style={styles.thru}>
-            thru {row.thru}
+            thru {thruCell(row.thru)}
           </AppText>
         </View>
       ))}
-      <AppText variant="captionBold" color="primary" style={{ marginTop: spacing.md }}>
-        View full leaderboard
-      </AppText>
+      {!hideCta ? (
+        <AppText variant="captionBold" color="primary" style={{ marginTop: spacing.md }}>
+          View full leaderboard
+        </AppText>
+      ) : null}
     </Pressable>
   );
 }
@@ -97,6 +107,11 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderRadius: freePlayPremium.heroRadius,
     padding: spacing.base,
+  },
+  cardCompact: {
+    marginTop: 0,
+    borderRadius: radius.lg,
+    paddingVertical: spacing.sm,
   },
   headRow: {
     flexDirection: "row",

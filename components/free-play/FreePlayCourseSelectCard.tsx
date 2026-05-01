@@ -23,7 +23,8 @@ type FreePlayCourseSelectCardProps = {
   courseQuery: string;
   onCourseQueryChange: (q: string) => void;
   courseHits: CourseSearchHit[];
-  courseSearchBroadened: boolean;
+  /** Catalog name matches not shown (incomplete scorecard data or duplicate display name). */
+  courseSearchHiddenIncompleteCount: number | null;
   selectedCourse: CourseSearchHit | null;
   onSelectCourse: (c: CourseSearchHit) => void;
   /** Holes count for selected tee context (or best available). */
@@ -54,7 +55,7 @@ export function FreePlayCourseSelectCard({
   courseQuery,
   onCourseQueryChange,
   courseHits,
-  courseSearchBroadened,
+  courseSearchHiddenIncompleteCount,
   selectedCourse,
   onSelectCourse,
   holesAvailable,
@@ -100,20 +101,23 @@ export function FreePlayCourseSelectCard({
         style={{ marginTop: spacing.md }}
       />
 
-      {courseSearchBroadened && courseHits.length > 0 ? (
+      {!selectedCourse &&
+      courseSearchHiddenIncompleteCount != null &&
+      courseSearchHiddenIncompleteCount > 0 &&
+      courseHits.length > 0 ? (
         <InlineNotice
           variant="info"
-          message="No verified-only match for that text — showing name matches (may include unverified courses). Prefer verified data when your captain has approved imports."
+          message={`${courseSearchHiddenIncompleteCount} catalog match${courseSearchHiddenIncompleteCount === 1 ? "" : "es"} hidden — not scorecard-ready yet or needs duplicate-name review.`}
           style={{ marginTop: spacing.sm }}
         />
       ) : null}
-      {courseQuery.trim().length >= 2 && courseHits.length === 0 ? (
+      {!selectedCourse && courseQuery.trim().length >= 2 && courseHits.length === 0 ? (
         <InlineNotice
           variant="info"
           message={
-            courseSearchBroadened
-              ? "Nothing matched that search, even when including unverified courses."
-              : "No verified courses match that search. Try another name or ask your captain to verify course imports."
+            courseSearchHiddenIncompleteCount != null && courseSearchHiddenIncompleteCount > 0
+              ? `This course is not scorecard-ready yet. We're still importing tee, rating and stroke index data. ${courseSearchHiddenIncompleteCount} catalog row${courseSearchHiddenIncompleteCount === 1 ? "" : "s"} matched your search but are hidden until data is complete.`
+              : "This course is not scorecard-ready yet. We're still importing tee, rating and stroke index data."
           }
           style={{ marginTop: spacing.sm }}
         />

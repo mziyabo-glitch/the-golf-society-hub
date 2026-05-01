@@ -1,3 +1,4 @@
+import { analyzeHoleScoreRowKeys } from "@/lib/free-play/freePlayHoleScoreDiagnostics";
 import { supabase } from "@/lib/supabase";
 import type {
   FreePlayRound,
@@ -9,15 +10,63 @@ import type {
   FreePlayScoringMode,
 } from "@/types/freePlayScorecard";
 
-function isFreePlaySchemaMissing(error: unknown): boolean {
+/** Repo-relative path referenced in setup-required UI (clone root). */
+export const FREE_PLAY_SETUP_DOC_PATH = "supabase/README_FREE_PLAY.md";
+
+/** Primary line when Free Play is unavailable (migrations not applied or API schema out of date). */
+export const FREE_PLAY_SETUP_REQUIRED_MESSAGE =
+  "Free Play migrations are missing or the PostgREST schema cache is stale.";
+
+/** Doc pointer + admin troubleshooting (use as InlineNotice `detail` or RetryErrorBlock `staleHint`). */
+export const FREE_PLAY_SETUP_REQUIRED_DETAIL = `Documentation: ${FREE_PLAY_SETUP_DOC_PATH}. Troubleshooting: (1) Run npx supabase db push (2) In SQL Editor: SELECT pg_notify('pgrst', 'reload schema'); (3) Restart the dev server (4) Retest: create round → add players → save handicaps → start round → enter a score.`;
+
+/** Single blob for `setError` / thrown errors where only one string is shown. */
+export const FREE_PLAY_SETUP_REQUIRED_FULL_MESSAGE = `${FREE_PLAY_SETUP_REQUIRED_MESSAGE}\n\n${FREE_PLAY_SETUP_REQUIRED_DETAIL}`;
+
+export function isFreePlaySchemaMissing(error: unknown): boolean {
   const e = error as { code?: string; message?: string } | null;
   if (!e) return false;
   const msg = String(e.message ?? "").toLowerCase();
+  const code = String(e.code ?? "");
   return (
-    e.code === "42P01" ||
+    code === "42P01" ||
+    code === "PGRST202" ||
+    code === "PGRST204" ||
+    code === "PGRST205" ||
     msg.includes("schema cache") ||
-    msg.includes("does not exist")
+    msg.includes("does not exist") ||
+    msg.includes("could not find the table")
   );
+}
+
+/**
+ * True when `free_play_rounds` is reachable (table exists in PostgREST). Does not require rows.
+ * Other errors (RLS, network) are treated as “available” so normal error handling applies.
+ */
+export async function getFreePlayTablesAvailable(): Promise<boolean> {
+  const attempts = 3;
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    const { error } = await supabase.from("free_play_rounds").select("id").limit(1);
+    if (!error) return true;
+    if (!isFreePlaySchemaMissing(error)) {
+      if (__DEV__) {
+        console.warn("[freePlayScorecardRepo] free_play_rounds probe: treating as available (non-schema error)", {
+          message: (error as { message?: string }).message,
+          code: (error as { code?: string }).code,
+        });
+      }
+      return true;
+    }
+    if (attempt < attempts - 1) {
+      await new Promise((r) => setTimeout(r, 350 * (attempt + 1)));
+    } else if (__DEV__) {
+      console.warn("[freePlayScorecardRepo] free_play_rounds probe: schema/cache still failing after retries", {
+        message: (error as { message?: string }).message,
+        code: (error as { code?: string }).code,
+      });
+    }
+  }
+  return false;
 }
 
 function isFreePlayPermissionDenied(error: unknown): boolean {
@@ -71,14 +120,11 @@ function logFreePlaySupabaseError(context: string, error: unknown, extra?: Recor
 function toFreePlayError(error: unknown, fallback: string): Error {
   const detail = formatSupabaseErrorDetails(error);
   if (isFreePlayPermissionDenied(error)) {
-    const base =
-      "Free Play access was denied (RLS or permissions). Apply Supabase migration 139 (free_play_rounds RLS created_by_user_id) and reload PostgREST schema (NOTIFY pgrst, 'reload schema';).";
+    const base = `Free Play access was denied (RLS or permissions). Ensure the full Free Play migration chain is applied and the schema cache is current — see ${FREE_PLAY_SETUP_DOC_PATH}.`;
     return new Error(detail ? `${base} ${detail}` : base);
   }
   if (isFreePlaySchemaMissing(error)) {
-    return new Error(
-      "Free Play tables are missing in this database. Run migration `122_free_play_scorecards.sql` and reload Supabase API schema.",
-    );
+    return new Error(FREE_PLAY_SETUP_REQUIRED_FULL_MESSAGE);
   }
   const e = error as { message?: string } | null;
   const msg = e?.message || fallback;
@@ -197,7 +243,11 @@ async function requireAuthUserId(): Promise<string> {
   if (error || !data?.user?.id) {
     throw new Error(error?.message || "You need to be signed in.");
   }
-  return data.user.id;
+  const uid = data.user.id;
+  if (__DEV__) {
+    console.log("[freePlayScorecardRepo] auth.uid()", uid);
+  }
+  return uid;
 }
 
 export async function listMyFreePlayRounds(): Promise<FreePlayRound[]> {
@@ -248,12 +298,32 @@ export async function getFreePlayRoundBundle(roundId: string): Promise<FreePlayR
   if (playersError) throw toFreePlayError(playersError, "Failed to load players.");
   if (scoreError) throw toFreePlayError(scoreError, "Failed to load scores.");
   if (holeError) throw toFreePlayError(holeError, "Failed to load hole scores.");
-  return {
+  const bundle = {
     round: mapRound(roundRow as Record<string, unknown>),
     players: (playersRows ?? []).map((r) => mapRoundPlayer(r as Record<string, unknown>)),
     scores: (scoreRows ?? []).map((r) => mapScore(r as Record<string, unknown>)),
     holeScores: (holeRows ?? []).map((r) => mapHoleScore(r as Record<string, unknown>)),
   };
+  const holeDiag = analyzeHoleScoreRowKeys(bundle.holeScores);
+  if (holeDiag.duplicateKeys.length > 0) {
+    console.warn("[freePlayScorecardRepo] duplicate hole score keys (same player+hole)", {
+      roundId,
+      duplicateKeys: holeDiag.duplicateKeys,
+    });
+  }
+  if (__DEV__) {
+    console.log(
+      "[freePlayScorecardRepo] getFreePlayRoundBundle loaded",
+      JSON.stringify({
+        roundId,
+        players: bundle.players.length,
+        aggregateScoreRows: bundle.scores.length,
+        holeScoreRows: bundle.holeScores.length,
+        duplicateHoleKeys: holeDiag.duplicateKeys.length,
+      }),
+    );
+  }
+  return bundle;
 }
 
 /**
@@ -354,9 +424,7 @@ export async function createFreePlayRound(input: CreateRoundInput): Promise<Free
       };
     });
   if (playerRows.length > 0) {
-    if (__DEV__) {
-      console.log("[freePlayScorecardRepo] createFreePlayRound player rows", JSON.stringify(playerRows));
-    }
+    console.log("[freePlayScorecardRepo] createFreePlayRound player insert payload", JSON.stringify(playerRows, null, 2));
     const { error } = await supabase.from("free_play_round_players").insert(playerRows);
     if (error) {
       logFreePlaySupabaseError("createFreePlayRound: free_play_round_players insert failed", error, { roundId });
@@ -459,7 +527,7 @@ export async function deleteFreePlayRound(roundId: string): Promise<void> {
 
 export async function saveQuickTotals(
   roundId: string,
-  entries: Array<{ roundPlayerId: string; quickTotal: number | null }>,
+  entries: { roundPlayerId: string; quickTotal: number | null }[],
 ): Promise<void> {
   if (entries.length === 0) return;
   const rows = entries.map((e) => ({
@@ -498,7 +566,7 @@ async function syncPlayerAggregateFromHoles(roundId: string, roundPlayerId: stri
 export async function replaceHoleScores(
   roundId: string,
   roundPlayerId: string,
-  holes: Array<{ holeNumber: number; grossStrokes: number | null }>,
+  holes: { holeNumber: number; grossStrokes: number | null }[],
 ): Promise<void> {
   const { error: delErr } = await supabase
     .from("free_play_round_hole_scores")
@@ -511,16 +579,24 @@ export async function replaceHoleScores(
     (h) => Number.isFinite(h.holeNumber) && (h.grossStrokes === null || Number.isFinite(Number(h.grossStrokes))),
   );
   if (filtered.length) {
-    const { error: upsertErr } = await supabase.from("free_play_round_hole_scores").upsert(
-      filtered.map((h) => ({
-        round_id: roundId,
-        round_player_id: roundPlayerId,
-        hole_number: h.holeNumber,
-        gross_strokes: h.grossStrokes == null ? null : Number(h.grossStrokes),
-      })),
-      { onConflict: "round_id,round_player_id,hole_number" },
-    );
-    if (upsertErr) throw toFreePlayError(upsertErr, "Could not save hole scores.");
+    const rows = filtered.map((h) => ({
+      round_id: roundId,
+      round_player_id: roundPlayerId,
+      hole_number: h.holeNumber,
+      gross_strokes: h.grossStrokes == null ? null : Number(h.grossStrokes),
+    }));
+    if (__DEV__) {
+      console.log("[freePlayScorecardRepo] replaceHoleScores upsert", { roundId, roundPlayerId, count: rows.length, rows });
+    }
+    const { error: upsertErr } = await supabase
+      .from("free_play_round_hole_scores")
+      .upsert(rows, { onConflict: "round_id,round_player_id,hole_number" });
+    if (upsertErr) {
+      if (__DEV__) {
+        console.warn("[freePlayScorecardRepo] replaceHoleScores upsert error", upsertErr);
+      }
+      throw toFreePlayError(upsertErr, "Could not save hole scores.");
+    }
   }
   await syncPlayerAggregateFromHoles(roundId, roundPlayerId);
 }
@@ -533,17 +609,37 @@ export async function upsertHoleScore(
   grossStrokes: number | null,
 ): Promise<void> {
   if (!Number.isFinite(holeNumber)) return;
-  const { error } = await supabase.from("free_play_round_hole_scores").upsert(
-    {
-      round_id: roundId,
-      round_player_id: roundPlayerId,
-      hole_number: holeNumber,
-      gross_strokes: grossStrokes == null ? null : Number(grossStrokes),
-    },
-    { onConflict: "round_id,round_player_id,hole_number" },
-  );
-  if (error) throw toFreePlayError(error, "Could not save hole score.");
+  const payload = {
+    round_id: roundId,
+    round_player_id: roundPlayerId,
+    hole_number: holeNumber,
+    gross_strokes: grossStrokes == null ? null : Number(grossStrokes),
+  };
+  if (__DEV__) {
+    console.log("[freePlayScorecardRepo] upsertHoleScore payload", payload, {
+      onConflict: "round_id,round_player_id,hole_number",
+    });
+  }
+  const { error } = await supabase
+    .from("free_play_round_hole_scores")
+    .upsert(payload, { onConflict: "round_id,round_player_id,hole_number" });
+  if (error) {
+    console.warn("[freePlayScorecardRepo] upsertHoleScore error", {
+      message: error.message,
+      code: error.code,
+      details: (error as { details?: string }).details,
+      hint: (error as { hint?: string }).hint,
+      payload,
+    });
+    throw toFreePlayError(error, "Could not save hole score.");
+  }
+  if (__DEV__) {
+    console.log("[freePlayScorecardRepo] upsertHoleScore result ok", payload);
+  }
   await syncPlayerAggregateFromHoles(roundId, roundPlayerId);
+  if (__DEV__) {
+    console.log("[freePlayScorecardRepo] upsertHoleScore aggregate sync ok", { roundId, roundPlayerId });
+  }
 }
 
 export async function joinFreePlayRoundByCode(code: string, displayName?: string): Promise<FreePlayRound> {
@@ -613,7 +709,7 @@ export async function addFreePlayRoundPlayer(
   const hi = Number.isFinite(Number(player.handicapIndex)) ? Number(player.handicapIndex) : 0;
   const ch = Number.isFinite(Number(player.courseHandicap)) ? Number(player.courseHandicap) : hi;
   const ph = Number.isFinite(Number(player.playingHandicap)) ? Number(player.playingHandicap) : hi;
-  const { error } = await supabase.from("free_play_round_players").insert({
+  const insertPayload = {
     round_id: roundId,
     player_type: player.playerType,
     member_id: player.memberId ?? null,
@@ -627,7 +723,9 @@ export async function addFreePlayRoundPlayer(
     guest_name: player.guestName?.trim() || (player.playerType === "guest" ? player.displayName.trim() : null),
     tee_id: player.teeId ?? null,
     invite_status: player.inviteStatus ?? "none",
-  });
+  };
+  console.log("[freePlayScorecardRepo] addFreePlayRoundPlayer insert", JSON.stringify(insertPayload, null, 2));
+  const { error } = await supabase.from("free_play_round_players").insert(insertPayload);
   if (error) throw toFreePlayError(error, "Could not add player.");
 }
 

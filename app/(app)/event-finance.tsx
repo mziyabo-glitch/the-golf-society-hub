@@ -21,6 +21,8 @@ import { AppInput } from "@/components/ui/AppInput";
 import { PrimaryButton, SecondaryButton } from "@/components/ui/Button";
 import { LoadingState } from "@/components/ui/LoadingState";
 import { EmptyState } from "@/components/ui/EmptyState";
+import { RetryErrorBlock } from "@/components/ui/RetryErrorBlock";
+import { getCache, setCache } from "@/lib/cache/clientCache";
 import { useBootstrap } from "@/lib/useBootstrap";
 import {
   getEventsFinanceSummary,
@@ -59,6 +61,13 @@ type EditingEvent = {
   costsInput: string;
 };
 
+type EventFinanceCache = {
+  events: EventFinanceSummary[];
+  totalIncome: number;
+  totalCosts: number;
+  totalNet: number;
+};
+
 export default function EventFinanceScreen() {
   const router = useRouter();
   const { societyId, member, loading: bootstrapLoading } = useBootstrap();
@@ -69,40 +78,83 @@ export default function EventFinanceScreen() {
   const [totalCosts, setTotalCosts] = useState(0);
   const [totalNet, setTotalNet] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [listRefreshing, setListRefreshing] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [editing, setEditing] = useState<EditingEvent | null>(null);
   const [saving, setSaving] = useState(false);
 
   const permissions = getPermissionsForMember(member);
   const canManageFinance = permissions.canAccessFinance;
 
-  // Load events finance data
-  const loadData = useCallback(async () => {
-    if (!societyId) return;
+  const financeCacheKey = societyId ? `society:${societyId}:event-finance` : null;
 
-    setLoading(true);
-    try {
-      const summary = await getEventsFinanceSummary(societyId);
-      setEvents(summary.events);
-      setTotalIncome(summary.totalIncomePence);
-      setTotalCosts(summary.totalCostsPence);
-      setTotalNet(summary.totalNetPence);
-    } catch (err: any) {
-      console.error("[EventFinance] loadData error:", err);
-      Alert.alert("Error", err?.message || "Failed to load data.");
-    } finally {
-      setLoading(false);
-    }
-  }, [societyId]);
+  const loadData = useCallback(
+    async (opts?: { silent?: boolean }) => {
+      if (!societyId) return;
+
+      const silent = !!opts?.silent;
+      if (silent) {
+        setListRefreshing(true);
+      } else {
+        setLoading(true);
+      }
+      setLoadError(null);
+      try {
+        const summary = await getEventsFinanceSummary(societyId);
+        setEvents(summary.events);
+        setTotalIncome(summary.totalIncomePence);
+        setTotalCosts(summary.totalCostsPence);
+        setTotalNet(summary.totalNetPence);
+        const payload: EventFinanceCache = {
+          events: summary.events,
+          totalIncome: summary.totalIncomePence,
+          totalCosts: summary.totalCostsPence,
+          totalNet: summary.totalNetPence,
+        };
+        if (financeCacheKey) {
+          await setCache(financeCacheKey, payload, { ttlMs: 1000 * 60 * 15 });
+        }
+      } catch (err: any) {
+        console.error("[EventFinance] loadData error:", err);
+        setLoadError(err?.message || "Failed to load data.");
+      } finally {
+        setLoading(false);
+        setListRefreshing(false);
+      }
+    },
+    [societyId, financeCacheKey],
+  );
 
   useEffect(() => {
-    loadData();
-  }, [loadData]);
+    let cancelled = false;
+    void (async () => {
+      if (!societyId) return;
+      if (financeCacheKey) {
+        const cached = await getCache<EventFinanceCache>(financeCacheKey, { maxAgeMs: 1000 * 60 * 60 * 24 });
+        if (cancelled) return;
+        if (cached?.value?.events) {
+          setEvents(cached.value.events);
+          setTotalIncome(cached.value.totalIncome);
+          setTotalCosts(cached.value.totalCosts);
+          setTotalNet(cached.value.totalNet);
+          setLoading(false);
+          await loadData({ silent: true });
+          return;
+        }
+      }
+      if (cancelled) return;
+      await loadData({ silent: false });
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [societyId, financeCacheKey, loadData]);
 
   // Refresh on focus
   useFocusEffect(
     useCallback(() => {
-      if (societyId) loadData();
-    }, [societyId, loadData])
+      if (societyId) void loadData({ silent: true });
+    }, [societyId, loadData]),
   );
 
   // Start editing an event
@@ -150,12 +202,30 @@ export default function EventFinanceScreen() {
     }
   };
 
-  if (bootstrapLoading || loading) {
+  if ((bootstrapLoading || loading) && events.length === 0) {
     return (
       <Screen scrollable={false}>
         <View style={styles.centered}>
           <LoadingState message="Loading event finances..." />
         </View>
+      </Screen>
+    );
+  }
+
+  if (loadError && events.length === 0 && !loading && !bootstrapLoading) {
+    return (
+      <Screen>
+        <View style={styles.header}>
+          <SecondaryButton onPress={() => goBack(router, "/(app)/(tabs)/settings")} size="sm">
+            <Feather name="arrow-left" size={iconSize.sm} color={colors.text} /> Back
+          </SecondaryButton>
+        </View>
+        <RetryErrorBlock
+          title="Could not load finances"
+          message={loadError}
+          onRetry={() => void loadData({ silent: false })}
+          retrying={loading || listRefreshing}
+        />
       </Screen>
     );
   }
@@ -189,6 +259,22 @@ export default function EventFinanceScreen() {
       <AppText variant="title" style={styles.title}>
         <Feather name="bar-chart-2" size={iconSize.lg} color={colors.primary} /> Event Finances
       </AppText>
+
+      {loadError ? (
+        <RetryErrorBlock
+          title="Could not refresh"
+          message={loadError}
+          onRetry={() => void loadData({ silent: true })}
+          retrying={listRefreshing}
+          staleHint={events.length > 0 ? "Totals and events below are from your last successful load." : undefined}
+          style={{ marginBottom: spacing.md }}
+        />
+      ) : null}
+      {listRefreshing ? (
+        <AppText variant="small" color="muted" style={{ marginBottom: spacing.sm }}>
+          Updating…
+        </AppText>
+      ) : null}
 
       <ScrollView showsVerticalScrollIndicator={false}>
         {/* Totals Summary */}

@@ -24,6 +24,7 @@ import {
   type TeeEditorBundle,
 } from "@/lib/db_supabase/courseAdminRepo";
 import { getColors, radius, spacing } from "@/lib/ui/theme";
+import { goBack } from "@/lib/navigation";
 
 type EditedRow = { par: string; yardage: string; stroke_index: string };
 
@@ -176,7 +177,7 @@ export default function CourseTeeEditorScreen() {
           </AppText>
           <View style={styles.actionRow}>
             <PrimaryButton label="Re-import and preserve overrides" loading={reimporting} onPress={onReimport} />
-            <SecondaryButton label="Back" onPress={() => router.back()} />
+            <SecondaryButton label="Back" onPress={() => goBack(router, "/(app)/course-data")} />
           </View>
         </AppCard>
 

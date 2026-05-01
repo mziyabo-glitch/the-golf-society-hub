@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Pressable, RefreshControl, ScrollView, StyleSheet, View } from "react-native";
 import { Feather } from "@expo/vector-icons";
 import { useFocusEffect, useNavigation } from "@react-navigation/native";
@@ -9,6 +9,7 @@ import { AppCard } from "@/components/ui/AppCard";
 import { AppText } from "@/components/ui/AppText";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { LoadingState } from "@/components/ui/LoadingState";
+import { RetryErrorBlock } from "@/components/ui/RetryErrorBlock";
 import { PrimaryButton, SecondaryButton } from "@/components/ui/Button";
 import { SocietyBadge } from "@/components/ui/SocietyHeader";
 import { StatusBadge } from "@/components/ui/StatusBadge";
@@ -28,6 +29,7 @@ import {
 } from "@/lib/rbac";
 import { isActiveSocietyParticipantForEvent } from "@/lib/jointEventAccess";
 import { getJointEventDetail, mapJointEventToEventDoc } from "@/lib/db_supabase/jointEventRepo";
+import { getCache, setCache } from "@/lib/cache/clientCache";
 
 function formatEventDate(value?: string): string {
   if (!value?.trim()) return "Date TBD";
@@ -45,6 +47,15 @@ function getMemberRegistration(regs: EventRegistration[], memberId?: string | nu
   if (!memberId) return null;
   return regs.find((r) => String(r.member_id) === String(memberId)) ?? null;
 }
+
+type EventOverviewCache = {
+  event: EventDoc;
+  participantSocietyIds: string[];
+  registrations: EventRegistration[];
+  guestCount: number;
+  hasResults: boolean;
+  poolCount: number;
+};
 
 export default function EventOverviewScreen() {
   const router = useRouter();
@@ -84,62 +95,129 @@ export default function EventOverviewScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [refreshError, setRefreshError] = useState<string | null>(null);
+  const eventRef = useRef<EventDoc | null>(null);
+  eventRef.current = event;
 
-  const loadEventOverview = useCallback(async () => {
-    if (!eventId) {
-      setError("Missing event id.");
-      setLoading(false);
-      return;
-    }
+  const overviewCacheKey = eventId ? `event:${eventId}:overview` : null;
 
-    setError(null);
-    setLoading(true);
-    try {
-      let detail = await getEvent(eventId);
-      let participants = (detail?.participant_society_ids ?? []).filter(Boolean);
-      if (!detail) {
-        const joint = await getJointEventDetail(eventId);
-        if (!joint) {
-          setError("Event not found.");
-          setLoading(false);
-          return;
-        }
-        detail = mapJointEventToEventDoc(joint.event) as EventDoc;
-        participants = joint.participating_societies.map((s) => s.society_id).filter(Boolean);
+  const applyOverviewCache = useCallback((payload: EventOverviewCache) => {
+    setEvent(payload.event);
+    setParticipantSocietyIds(payload.participantSocietyIds ?? []);
+    setRegistrations(payload.registrations ?? []);
+    setGuestCount(payload.guestCount ?? 0);
+    setHasResults(payload.hasResults ?? false);
+    setPoolCount(payload.poolCount ?? 0);
+  }, []);
+
+  const loadEventOverview = useCallback(
+    async (opts?: { silent?: boolean }) => {
+      if (!eventId) {
+        setError("Missing event id.");
+        setLoading(false);
+        return;
       }
-      setEvent(detail);
-      setParticipantSocietyIds([...new Set(participants)]);
 
-      const [allRegs, guests, pools, results] = await Promise.all([
-        getEventRegistrations(eventId),
-        getEventGuests(eventId),
-        listEventPrizePools(eventId).catch(() => []),
-        societyId ? getEventResultsForSociety(eventId, societyId).catch(() => []) : Promise.resolve([]),
-      ]);
+      const silent = !!opts?.silent;
+      if (silent) {
+        setRefreshing(true);
+        setRefreshError(null);
+      } else {
+        setLoading(true);
+        setError(null);
+        setRefreshError(null);
+      }
 
-      const scopedRegs = societyId
-        ? allRegs.filter((r) => String(r.society_id) === String(societyId))
-        : allRegs;
+      try {
+        let detail = await getEvent(eventId);
+        let participants = (detail?.participant_society_ids ?? []).filter(Boolean);
+        if (!detail) {
+          const joint = await getJointEventDetail(eventId);
+          if (!joint) {
+            setError("Event not found.");
+            setEvent(null);
+            setLoading(false);
+            setRefreshing(false);
+            return;
+          }
+          detail = mapJointEventToEventDoc(joint.event) as EventDoc;
+          participants = joint.participating_societies.map((s) => s.society_id).filter(Boolean);
+        }
+        setEvent(detail);
+        setParticipantSocietyIds([...new Set(participants)]);
 
-      setRegistrations(scopedRegs);
-      const scopedGuests = societyId
-        ? guests.filter((g) => String(g.society_id) === String(societyId))
-        : guests;
-      setGuestCount(scopedGuests.length);
-      setPoolCount(pools.length);
-      setHasResults(results.length > 0);
-    } catch (e: any) {
-      setError(e?.message ?? "Failed to load event overview.");
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-    }
-  }, [eventId, societyId]);
+        const [allRegs, guests, pools, results] = await Promise.all([
+          getEventRegistrations(eventId),
+          getEventGuests(eventId),
+          listEventPrizePools(eventId).catch(() => []),
+          societyId ? getEventResultsForSociety(eventId, societyId).catch(() => []) : Promise.resolve([]),
+        ]);
+
+        const scopedRegs = societyId
+          ? allRegs.filter((r) => String(r.society_id) === String(societyId))
+          : allRegs;
+
+        setRegistrations(scopedRegs);
+        const scopedGuests = societyId
+          ? guests.filter((g) => String(g.society_id) === String(societyId))
+          : guests;
+        const nextGuestCount = scopedGuests.length;
+        const nextPoolCount = pools.length;
+        const nextHasResults = results.length > 0;
+        setGuestCount(nextGuestCount);
+        setPoolCount(nextPoolCount);
+        setHasResults(nextHasResults);
+
+        const cachePayload: EventOverviewCache = {
+          event: detail,
+          participantSocietyIds: [...new Set(participants)],
+          registrations: scopedRegs,
+          guestCount: nextGuestCount,
+          hasResults: nextHasResults,
+          poolCount: nextPoolCount,
+        };
+        if (overviewCacheKey) {
+          await setCache(overviewCacheKey, cachePayload, { ttlMs: 1000 * 60 * 30 });
+        }
+        setRefreshError(null);
+        setError(null);
+      } catch (e: any) {
+        const msg = e?.message ?? "Failed to load event overview.";
+        if (eventRef.current) {
+          setRefreshError(msg);
+        } else {
+          setError(msg);
+        }
+      } finally {
+        setLoading(false);
+        setRefreshing(false);
+      }
+    },
+    [eventId, societyId, overviewCacheKey],
+  );
 
   useFocusEffect(
     useCallback(() => {
-      void loadEventOverview();
-    }, [loadEventOverview]),
+      let cancelled = false;
+      void (async () => {
+        if (!eventId) return;
+        if (overviewCacheKey) {
+          const cached = await getCache<EventOverviewCache>(overviewCacheKey, { maxAgeMs: 1000 * 60 * 60 * 24 });
+          if (cancelled) return;
+          if (cached?.value?.event) {
+            applyOverviewCache(cached.value);
+            setLoading(false);
+            await loadEventOverview({ silent: true });
+            return;
+          }
+        }
+        if (cancelled) return;
+        await loadEventOverview({ silent: false });
+      })();
+      return () => {
+        cancelled = true;
+      };
+    }, [eventId, overviewCacheKey, applyOverviewCache, loadEventOverview]),
   );
 
   useEffect(() => {
@@ -224,7 +302,7 @@ export default function EventOverviewScreen() {
     return "Gross leaderboard is draft until Captain / Secretary / Handicapper publishes official results.";
   }, [event, scoringOfficialKind]);
 
-  if (bootstrapLoading || loading) {
+  if ((bootstrapLoading || loading) && !event) {
     return (
       <Screen>
         <LoadingState message="Loading event overview..." />
@@ -232,10 +310,18 @@ export default function EventOverviewScreen() {
     );
   }
 
-  if (error) {
+  if (!event && error) {
     return (
       <Screen>
-        <EmptyState title="Unable to load event" message={error} />
+        <RetryErrorBlock
+          title="Unable to load event"
+          message={error}
+          onRetry={() => {
+            setError(null);
+            void loadEventOverview({ silent: false });
+          }}
+          retrying={loading || refreshing}
+        />
       </Screen>
     );
   }
@@ -252,12 +338,26 @@ export default function EventOverviewScreen() {
     <Screen>
       <ScrollView
         contentContainerStyle={styles.content}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => {
-          setRefreshing(true);
-          void loadEventOverview();
-        }} />}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={() => {
+              void loadEventOverview({ silent: true });
+            }}
+          />
+        }
         showsVerticalScrollIndicator={false}
       >
+        {refreshError ? (
+          <RetryErrorBlock
+            title="Could not refresh"
+            message={refreshError}
+            staleHint="Showing the last loaded details below."
+            onRetry={() => void loadEventOverview({ silent: true })}
+            retrying={refreshing}
+            style={{ marginBottom: spacing.md }}
+          />
+        ) : null}
         <View style={styles.topActions}>
           <SecondaryButton
             size="sm"

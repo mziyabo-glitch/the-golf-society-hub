@@ -112,8 +112,7 @@ export function usePlayabilityBundle(
       } catch (e: any) {
         if (!cancelled) {
           setError(e?.message || "Could not load forecast");
-          setInsight(null);
-          setForecast(null);
+          // Keep last good forecast/insight so poor-signal refreshes do not blank the UI.
         }
       } finally {
         if (!cancelled) setLoading(false);

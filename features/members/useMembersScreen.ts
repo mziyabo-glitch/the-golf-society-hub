@@ -364,6 +364,10 @@ export function useMembersScreen() {
     [router],
   );
 
+  const retryLoadMembers = () => {
+    void loadMembers({ silent: true });
+  };
+
   return {
     tabContentStyle,
     colors,
@@ -396,5 +400,6 @@ export function useMembersScreen() {
     handleTogglePaidById,
     onPressMemberRow,
     currentMemberId: currentMember?.id,
+    retryLoadMembers,
   };
 }

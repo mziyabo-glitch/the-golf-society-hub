@@ -18,6 +18,9 @@ import { consumePendingPostAuthRedirect } from "@/lib/pendingPostAuthRedirect";
 import { blurWebActiveElement } from "@/lib/ui/focus";
 import { isEventRsvpInvitePath } from "@/lib/eventInviteLink";
 import { StatusBar } from "expo-status-bar";
+import { SafeAreaProvider, initialWindowMetrics } from "react-native-safe-area-context";
+import { NetworkProvider } from "@/lib/network/NetworkContext";
+import { OfflineNetworkBanner } from "@/components/network/OfflineNetworkBanner";
 
 const APP_TABS = "/(app)/(tabs)";
 const JOIN_FLOW_SEGMENTS = new Set(["onboarding", "join", "join-society", "invite"]);
@@ -270,6 +273,7 @@ function RootNavigator() {
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>
+      <OfflineNetworkBanner />
       {/* Always render the navigator so expo-router can resolve all routes */}
       <Stack screenOptions={{ headerShown: false }} />
 
@@ -303,13 +307,17 @@ function RootNavigator() {
 
 export default function RootLayout() {
   return (
-    <ThemeProvider>
-      <FontScaleProvider>
-        <StatusBar style="auto" />
-        <BootstrapProvider>
-          <RootNavigator />
-        </BootstrapProvider>
-      </FontScaleProvider>
-    </ThemeProvider>
+    <SafeAreaProvider initialMetrics={initialWindowMetrics}>
+      <NetworkProvider>
+        <ThemeProvider>
+          <FontScaleProvider>
+            <StatusBar style="auto" />
+            <BootstrapProvider>
+              <RootNavigator />
+            </BootstrapProvider>
+          </FontScaleProvider>
+        </ThemeProvider>
+      </NetworkProvider>
+    </SafeAreaProvider>
   );
 }

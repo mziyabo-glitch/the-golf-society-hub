@@ -7,6 +7,7 @@ import { AppCard } from "@/components/ui/AppCard";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { InlineNotice } from "@/components/ui/InlineNotice";
+import { RetryErrorBlock } from "@/components/ui/RetryErrorBlock";
 import { PrimaryButton } from "@/components/ui/Button";
 import { getColors, spacing, radius, iconSize } from "@/lib/ui/theme";
 import { pressableSurfaceStyle } from "@/lib/ui/interaction";
@@ -20,6 +21,9 @@ type Props = {
   reduceMotion: boolean;
   refreshing: boolean;
   loadError: string | null;
+  /** When set with loadError, shows standard retry block */
+  onRetryLoad?: () => void;
+  retryingLoad?: boolean;
   permissions: MembersPermissionsVm;
   memberRows: MemberListRowVm[];
   onOpenAdd: () => void;
@@ -120,6 +124,8 @@ export function MembersListView({
   reduceMotion,
   refreshing,
   loadError,
+  onRetryLoad,
+  retryingLoad,
   permissions,
   memberRows,
   onOpenAdd,
@@ -166,13 +172,18 @@ export function MembersListView({
             Refreshing...
           </AppText>
         )}
-        {loadError && (
-          <InlineNotice
-            variant="error"
+        {loadError && onRetryLoad ? (
+          <RetryErrorBlock
+            title="Could not load members"
             message={loadError}
+            onRetry={onRetryLoad}
+            retrying={!!retryingLoad}
+            staleHint={memberRows.length > 0 ? "Showing the last loaded list below." : undefined}
             style={{ marginBottom: spacing.sm }}
           />
-        )}
+        ) : loadError ? (
+          <InlineNotice variant="error" message={loadError} style={{ marginBottom: spacing.sm }} />
+        ) : null}
       </>
     ),
     [
@@ -181,6 +192,8 @@ export function MembersListView({
       onOpenAdd,
       refreshing,
       loadError,
+      onRetryLoad,
+      retryingLoad,
     ],
   );
 

@@ -7,6 +7,7 @@ import { AppCard } from "@/components/ui/AppCard";
 import { AppText } from "@/components/ui/AppText";
 import { SecondaryButton } from "@/components/ui/Button";
 import { getColors, spacing } from "@/lib/ui/theme";
+import { goBack } from "@/lib/navigation";
 
 type PolicySection = {
   title: string;
@@ -172,7 +173,7 @@ export default function PrivacyPolicyScreen() {
     <Screen>
       <View style={styles.container}>
         <View style={styles.headerRow}>
-          <SecondaryButton onPress={() => router.back()} size="sm">
+          <SecondaryButton onPress={() => goBack(router, "/sign-in")} size="sm">
             <Feather name="arrow-left" size={14} color={colors.primary} /> Back
           </SecondaryButton>
         </View>

@@ -194,6 +194,27 @@ export type SearchVerifiedCoursesOptions = {
   societyIdForTrust?: string | null;
 };
 
+/** Free Play strict scorecard-ready search (migration `156_free_play_scorecard_ready_search.sql`). */
+export type SearchScorecardReadyCoursesOptions = {
+  societyIdForTrust?: string | null;
+};
+
+export type SearchScorecardReadyCoursesResult = {
+  data: CourseSearchHit[];
+  error: string | null;
+  /**
+   * Name matches in the catalog that are not returned (incomplete tee/hole/SI data or duplicate display name).
+   * Null when the RPC failed or the query was too short to search.
+   */
+  hiddenIncompleteMatchCount: number | null;
+};
+
+type FreePlaySearchRpcPayload = {
+  courses?: Record<string, unknown>[] | null;
+  broad_name_match_count?: number | string | null;
+  scorecard_ready_name_match_count?: number | string | null;
+};
+
 export type CourseWithTees = {
   courseId: string;
   courseName: string;
@@ -591,6 +612,64 @@ export async function searchVerifiedCourses(
     data: await enrichAndSortFreePlayCourseHits(fb.data ?? [], societyTrust),
     includedUnverifiedFallback: true,
   };
+}
+
+/**
+ * Free Play course search: only courses with at least one **strict** scorecard-ready active tee
+ * (same tee: CR + slope + par, holes 1–18 with par, stroke index 1–18 integers, no duplicate SI).
+ * Excludes courses whose display name collides with another row (duplicate-name review).
+ *
+ * Uses RPC `free_play_search_scorecard_ready_courses` (single round-trip). If the RPC is missing,
+ * returns an empty list and a null hidden count (deploy migration 156).
+ */
+export async function searchScorecardReadyCourses(
+  query: string,
+  limit = 20,
+  options?: SearchScorecardReadyCoursesOptions,
+): Promise<SearchScorecardReadyCoursesResult> {
+  const q = (query || "").trim();
+  if (!q || q.length < 2) {
+    return { data: [], error: null, hiddenIncompleteMatchCount: null };
+  }
+
+  const lim = Math.max(1, Math.min(100, limit));
+  const societyTrust = options?.societyIdForTrust ?? null;
+
+  const { data: raw, error } = await courseSupabase.rpc("free_play_search_scorecard_ready_courses", {
+    p_query: q,
+    p_limit: lim,
+  });
+
+  if (error) {
+    console.error(
+      "[courseRepo] searchScorecardReadyCourses RPC failed (run migration 156_free_play_scorecard_ready_search.sql):",
+      error.message,
+      error.code,
+    );
+    return { data: [], error: error.message ?? "free_play_search_scorecard_ready_courses failed", hiddenIncompleteMatchCount: null };
+  }
+
+  const payload = raw as FreePlaySearchRpcPayload | null;
+  const broad = Number(payload?.broad_name_match_count ?? 0);
+  const readyTotal = Number(payload?.scorecard_ready_name_match_count ?? 0);
+  const hiddenIncompleteMatchCount = Math.max(0, broad - readyTotal);
+
+  const courseRows = Array.isArray(payload?.courses) ? payload!.courses! : [];
+  const hits = courseRows.map((row) => mapDbCourseRowToSearchHit(row));
+  const data = await enrichAndSortFreePlayCourseHits(hits, societyTrust);
+
+  console.log(
+    "[courseRepo] searchScorecardReadyCourses:",
+    JSON.stringify({
+      query: q,
+      readyCourseCountReturned: data.length,
+      scorecardReadyNameMatchCount: readyTotal,
+      broadNameMatchCount: broad,
+      hiddenIncompleteMatchCount,
+    }),
+  );
+
+  return { data, error: null, hiddenIncompleteMatchCount };
 }
 
 /**

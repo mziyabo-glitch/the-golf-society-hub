@@ -161,17 +161,17 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   labelPrimary: {
-    fontSize: 12,
-    lineHeight: 14,
+    fontSize: 13,
+    lineHeight: 16,
   },
   label: {
-    fontSize: 11,
-    lineHeight: 13,
+    fontSize: 12,
+    lineHeight: 15,
     letterSpacing: 0.12,
     textAlign: "center",
     paddingHorizontal: 0,
     maxWidth: "100%",
-    minHeight: 26,
+    minHeight: 28,
   },
   /** Restrained 18px accent — visible but not loud */
   activeBar: {

@@ -9,6 +9,8 @@ type FreePlayStartHeroProps = {
   onStartFreeRound: () => void;
   onResumeRound?: () => void;
   resumeLabel?: string | null;
+  /** When true, primary “Start free round” and resume are non-interactive (e.g. DB migrations missing). */
+  freeRoundDisabled?: boolean;
   societyRoundDisabled?: boolean;
   onSocietyRound?: () => void;
 };
@@ -20,6 +22,7 @@ export function FreePlayStartHero({
   onStartFreeRound,
   onResumeRound,
   resumeLabel,
+  freeRoundDisabled = false,
   societyRoundDisabled = true,
   onSocietyRound,
 }: FreePlayStartHeroProps) {
@@ -54,10 +57,15 @@ export function FreePlayStartHero({
 
       <View style={styles.ctaRow}>
         <Pressable
-          onPress={onStartFreeRound}
+          onPress={freeRoundDisabled ? undefined : onStartFreeRound}
+          disabled={freeRoundDisabled}
+          accessibilityState={{ disabled: freeRoundDisabled }}
           style={({ pressed }) => [
             styles.primaryCta,
-            { backgroundColor: cream, opacity: pressed ? 0.92 : 1 },
+            {
+              backgroundColor: cream,
+              opacity: freeRoundDisabled ? 0.45 : pressed ? 0.92 : 1,
+            },
           ]}
         >
           <Feather name="play-circle" size={18} color={deep} />
@@ -67,10 +75,15 @@ export function FreePlayStartHero({
         </Pressable>
         {onResumeRound && resumeLabel ? (
           <Pressable
-            onPress={onResumeRound}
+            onPress={freeRoundDisabled ? undefined : onResumeRound}
+            disabled={freeRoundDisabled}
+            accessibilityState={{ disabled: freeRoundDisabled }}
             style={({ pressed }) => [
               styles.secondaryCta,
-              { borderColor: `${cream}55`, opacity: pressed ? 0.88 : 1 },
+              {
+                borderColor: `${cream}55`,
+                opacity: freeRoundDisabled ? 0.45 : pressed ? 0.88 : 1,
+              },
             ]}
           >
             <Feather name="rotate-ccw" size={16} color={cream} />

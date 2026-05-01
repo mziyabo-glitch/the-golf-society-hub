@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Modal, Pressable, ScrollView, StyleSheet, View, type LayoutChangeEvent } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
+import { useFocusEffect } from "@react-navigation/native";
 import { Feather } from "@expo/vector-icons";
 
 import { Screen } from "@/components/ui/Screen";
@@ -10,6 +11,8 @@ import { AppInput } from "@/components/ui/AppInput";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { LoadingState } from "@/components/ui/LoadingState";
 import { InlineNotice } from "@/components/ui/InlineNotice";
+import { RetryErrorBlock } from "@/components/ui/RetryErrorBlock";
+import { getCache, setCache } from "@/lib/cache/clientCache";
 import { PrimaryButton, SecondaryButton } from "@/components/ui/Button";
 import { LicenceRequiredModal } from "@/components/LicenceRequiredModal";
 import { useBootstrap } from "@/lib/useBootstrap";
@@ -21,7 +24,7 @@ import {
   getCourseApprovalState,
   getHolesByTeeId,
   getTeesByCourseId,
-  searchVerifiedCourses,
+  searchScorecardReadyCourses,
   submitCourseDataReview,
   type CourseHoleRow,
   type CourseSearchHit,
@@ -35,10 +38,13 @@ import { deriveCourseAndPlayingHandicapFromHi } from "@/lib/scoring/freePlayScor
 import { deriveFreePlayDataTrustBadge } from "@/components/free-play/freePlaySetupTrust";
 import {
   createFreePlayRound,
+  FREE_PLAY_SETUP_REQUIRED_DETAIL,
+  FREE_PLAY_SETUP_REQUIRED_MESSAGE,
   joinFreePlayRoundByCode,
   listMyActiveFreePlayRounds,
   listMyFreePlayRounds,
 } from "@/lib/db_supabase/freePlayScorecardRepo";
+import { useFreePlaySchemaStatus } from "@/lib/free-play/useFreePlaySchemaStatus";
 import type { FreePlayRound, FreePlayScoringFormat, FreePlayScoringMode } from "@/types/freePlayScorecard";
 import { FreePlaySetupStepper, type FreePlaySetupStep } from "@/components/free-play/FreePlaySetupStepper";
 import { FreePlayStartHero } from "@/components/free-play/FreePlayStartHero";
@@ -53,6 +59,12 @@ import { FreePlayDataQualityNotice } from "@/components/free-play/FreePlayDataQu
 import { logFreePlayShrivenhamSetupDataPathQa } from "@/lib/free-play/scorecardDataPathQa";
 
 type ContribHoleRow = { id: string; holeNumber: string; par: string; strokeIndex: string; yards: string };
+
+type FreePlayHomeCache = {
+  rounds: FreePlayRound[];
+  activeRounds: FreePlayRound[];
+  members: MemberDoc[];
+};
 
 type DraftPlayer = {
   id: string;
@@ -70,10 +82,14 @@ export default function FreePlayHomeScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ join?: string | string[]; joinCode?: string | string[] }>();
   const colors = getColors();
-  const { societyId, member, userId } = useBootstrap();
+  const { societyId, member, userId, bootstrapped } = useBootstrap();
   const { needsLicence, guardPaidAction, modalVisible, setModalVisible, societyId: guardSocietyId } = usePaidAccess();
+  const { status: fpSchemaStatus, recheck: recheckFpSchema } = useFreePlaySchemaStatus(userId, bootstrapped);
 
   const [loading, setLoading] = useState(true);
+  const [listRefreshing, setListRefreshing] = useState(false);
+  const [listLoadError, setListLoadError] = useState<string | null>(null);
+  const [listReady, setListReady] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [rounds, setRounds] = useState<FreePlayRound[]>([]);
@@ -83,8 +99,8 @@ export default function FreePlayHomeScreen() {
   const [joinCode, setJoinCode] = useState("");
   const [courseQuery, setCourseQuery] = useState("");
   const [courseHits, setCourseHits] = useState<CourseSearchHit[]>([]);
-  /** True when results are from broad name search (verified filter failed or no verified rows). */
-  const [courseSearchBroadened, setCourseSearchBroadened] = useState(false);
+  /** Name matches hidden (incomplete data or duplicate display name); null when not searched or RPC unavailable. */
+  const [courseSearchHiddenIncompleteCount, setCourseSearchHiddenIncompleteCount] = useState<number | null>(null);
   const courseQueryRef = useRef(courseQuery);
   courseQueryRef.current = courseQuery;
   const [selectedCourse, setSelectedCourse] = useState<CourseSearchHit | null>(null);
@@ -104,6 +120,8 @@ export default function FreePlayHomeScreen() {
   const [contribHoles, setContribHoles] = useState<ContribHoleRow[]>([]);
   const [trustActionNotice, setTrustActionNotice] = useState<string | null>(null);
   const scrollRef = useRef<ScrollView>(null);
+  /** Skip the initial focus callback so we do not duplicate the mount `load` from `useEffect`. */
+  const freePlayHomeFocusPassRef = useRef(0);
   const [newRoundSectionY, setNewRoundSectionY] = useState(280);
   const [setupHoles, setSetupHoles] = useState<CourseHoleRow[]>([]);
 
@@ -261,28 +279,93 @@ export default function FreePlayHomeScreen() {
     scrollRef.current?.scrollTo({ y: Math.max(0, newRoundSectionY - 8), animated: true });
   }, [newRoundSectionY]);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const [myRounds, active, memberRows] = await Promise.all([
-        listMyFreePlayRounds(),
-        listMyActiveFreePlayRounds(),
-        societyId ? getMembersBySocietyId(societyId) : Promise.resolve([]),
-      ]);
-      setRounds(myRounds);
-      setActiveRounds(active);
-      setMembers(memberRows);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to load free-play rounds.");
-    } finally {
-      setLoading(false);
-    }
-  }, [societyId]);
+  const freePlayHomeCacheKey = useMemo(
+    () => (userId ? `user:${userId}:society:${societyId ?? "none"}:free-play-home` : null),
+    [userId, societyId],
+  );
+
+  const load = useCallback(
+    async (opts?: { silent?: boolean }) => {
+      const silent = !!opts?.silent;
+      if (!userId) {
+        setLoading(false);
+        setListRefreshing(false);
+        setListReady(true);
+        return;
+      }
+      if (silent) {
+        setListRefreshing(true);
+      } else {
+        setLoading(true);
+      }
+      setListLoadError(null);
+      try {
+        const [myRounds, active, memberRows] = await Promise.all([
+          listMyFreePlayRounds(),
+          listMyActiveFreePlayRounds(),
+          societyId ? getMembersBySocietyId(societyId) : Promise.resolve([]),
+        ]);
+        setRounds(myRounds);
+        setActiveRounds(active);
+        setMembers(memberRows);
+        if (freePlayHomeCacheKey) {
+          const payload: FreePlayHomeCache = { rounds: myRounds, activeRounds: active, members: memberRows };
+          await setCache(freePlayHomeCacheKey, payload, { ttlMs: 1000 * 60 * 15 });
+        }
+      } catch (e) {
+        setListLoadError(e instanceof Error ? e.message : "Failed to load free-play rounds.");
+      } finally {
+        setLoading(false);
+        setListRefreshing(false);
+        setListReady(true);
+      }
+    },
+    [userId, societyId, freePlayHomeCacheKey],
+  );
 
   useEffect(() => {
-    void load();
-  }, [load]);
+    let cancelled = false;
+    void (async () => {
+      if (!userId) {
+        setListReady(true);
+        setLoading(false);
+        return;
+      }
+      if (fpSchemaStatus === "pending") return;
+      if (fpSchemaStatus === "missing") {
+        setListReady(true);
+        setLoading(false);
+        setListLoadError(null);
+        return;
+      }
+      if (freePlayHomeCacheKey) {
+        const cached = await getCache<FreePlayHomeCache>(freePlayHomeCacheKey, { maxAgeMs: 1000 * 60 * 60 * 24 });
+        if (cancelled) return;
+        if (cached?.value) {
+          setRounds(cached.value.rounds);
+          setActiveRounds(cached.value.activeRounds);
+          setMembers(cached.value.members);
+          setLoading(false);
+          setListReady(true);
+          await load({ silent: true });
+          return;
+        }
+      }
+      if (cancelled) return;
+      await load({ silent: false });
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [userId, freePlayHomeCacheKey, load, fpSchemaStatus]);
+
+  useFocusEffect(
+    useCallback(() => {
+      freePlayHomeFocusPassRef.current += 1;
+      if (freePlayHomeFocusPassRef.current === 1) return;
+      if (userId && listReady && fpSchemaStatus === "ok") void load({ silent: true });
+    }, [userId, listReady, load, fpSchemaStatus]),
+  );
 
   useEffect(() => {
     if (!selectedCourse?.id) {
@@ -356,21 +439,20 @@ export default function FreePlayHomeScreen() {
     const q = courseQuery.trim();
     if (q.length < 2) {
       setCourseHits([]);
-      setCourseSearchBroadened(false);
+      setCourseSearchHiddenIncompleteCount(null);
       return;
     }
     let cancelled = false;
     const timer = setTimeout(() => {
       const requested = courseQueryRef.current.trim();
       if (requested.length < 2) return;
-      void searchVerifiedCourses(requested, 20, {
-        expandWhenEmpty: true,
+      void searchScorecardReadyCourses(requested, 20, {
         societyIdForTrust: societyId ?? null,
       }).then((res) => {
         if (cancelled) return;
         if (courseQueryRef.current.trim() !== requested) return;
         setCourseHits(res.data ?? []);
-        setCourseSearchBroadened(res.includedUnverifiedFallback === true);
+        setCourseSearchHiddenIncompleteCount(res.hiddenIncompleteMatchCount ?? null);
       });
     }, 250);
     return () => {
@@ -437,6 +519,7 @@ export default function FreePlayHomeScreen() {
   }, []);
 
   const handleCreate = useCallback(async () => {
+    if (fpSchemaStatus === "missing") return;
     if (!guardPaidAction()) return;
     if (!selectedCourse?.id) {
       setError("Pick a course first.");
@@ -516,9 +599,11 @@ export default function FreePlayHomeScreen() {
     scoringMode,
     scoringFormat,
     router,
+    fpSchemaStatus,
   ]);
 
   const handleJoinByCode = useCallback(async () => {
+    if (fpSchemaStatus === "missing") return;
     if (!joinCode.trim()) return;
     setSaving(true);
     setError(null);
@@ -530,7 +615,7 @@ export default function FreePlayHomeScreen() {
     } finally {
       setSaving(false);
     }
-  }, [joinCode, ownerName, router]);
+  }, [joinCode, ownerName, router, fpSchemaStatus]);
 
   const handleApproveForSociety = useCallback(async () => {
     if (!selectedCourse?.id || !societyId) {
@@ -657,10 +742,33 @@ export default function FreePlayHomeScreen() {
     }
   }, [selectedCourse, societyId, userId]);
 
-  if (loading) {
+  if ((!listReady && loading) || (userId && fpSchemaStatus === "pending")) {
     return (
       <Screen>
         <LoadingState message="Loading free-play scorecards…" />
+      </Screen>
+    );
+  }
+
+  if (
+    listLoadError &&
+    rounds.length === 0 &&
+    activeRounds.length === 0 &&
+    listReady &&
+    !loading &&
+    !listRefreshing
+  ) {
+    return (
+      <Screen>
+        <RetryErrorBlock
+          title="Could not load free-play"
+          message={listLoadError}
+          onRetry={() => {
+            recheckFpSchema();
+            void load({ silent: false });
+          }}
+          retrying={loading || listRefreshing}
+        />
       </Screen>
     );
   }
@@ -680,9 +788,35 @@ export default function FreePlayHomeScreen() {
               : undefined
           }
           resumeLabel={resumeLabel}
+          freeRoundDisabled={fpSchemaStatus === "missing"}
         />
         <FreePlaySetupStepper steps={setupSteps} />
 
+        {fpSchemaStatus === "missing" ? (
+          <InlineNotice
+            variant="error"
+            message={FREE_PLAY_SETUP_REQUIRED_MESSAGE}
+            detail={FREE_PLAY_SETUP_REQUIRED_DETAIL}
+            style={{ marginBottom: spacing.md }}
+          />
+        ) : null}
+
+        {listRefreshing && (rounds.length > 0 || activeRounds.length > 0) ? (
+          <InlineNotice variant="info" message="Updating rounds…" style={{ marginBottom: spacing.sm }} />
+        ) : null}
+        {listLoadError && (rounds.length > 0 || activeRounds.length > 0) ? (
+          <RetryErrorBlock
+            title="Could not refresh rounds"
+            message={listLoadError}
+            onRetry={() => {
+              recheckFpSchema();
+              void load({ silent: true });
+            }}
+            retrying={listRefreshing}
+            staleHint="Showing your last loaded list. Try again when the connection improves."
+            style={{ marginBottom: spacing.md }}
+          />
+        ) : null}
         {error ? <InlineNotice variant="error" message={error} style={{ marginBottom: spacing.md }} /> : null}
 
         <AppCard style={styles.card}>
@@ -697,7 +831,12 @@ export default function FreePlayHomeScreen() {
               autoCapitalize="characters"
               style={{ flex: 1 }}
             />
-            <PrimaryButton label="Join" onPress={handleJoinByCode} loading={saving} />
+            <PrimaryButton
+              label="Join"
+              onPress={handleJoinByCode}
+              loading={saving}
+              disabled={fpSchemaStatus === "missing"}
+            />
           </View>
         </AppCard>
 
@@ -718,12 +857,13 @@ export default function FreePlayHomeScreen() {
             courseQuery={courseQuery}
             onCourseQueryChange={setCourseQuery}
             courseHits={courseHits}
-            courseSearchBroadened={courseSearchBroadened}
+            courseSearchHiddenIncompleteCount={courseSearchHiddenIncompleteCount}
             selectedCourse={selectedCourse}
             onSelectCourse={(c) => {
               setSelectedCourse(c);
               setCourseQuery(c.name);
               setCourseHits([]);
+              setCourseSearchHiddenIncompleteCount(null);
               setTrustActionNotice(null);
             }}
             holesAvailable={selectedTeeId ? setupHoles.length : null}
@@ -967,6 +1107,7 @@ export default function FreePlayHomeScreen() {
             label="Create free-play round"
             onPress={handleCreate}
             loading={saving}
+            disabled={fpSchemaStatus === "missing"}
             style={{ marginTop: spacing.md }}
           />
         </View>

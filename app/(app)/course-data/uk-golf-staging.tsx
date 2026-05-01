@@ -21,6 +21,7 @@ import {
   type UkGolfStagingCourseWithTees,
 } from "@/lib/db_supabase/ukGolfStagingRepo";
 import { getColors, radius, spacing } from "@/lib/ui/theme";
+import { goBack } from "@/lib/navigation";
 
 export default function UkGolfStagingReviewScreen() {
   const router = useRouter();
@@ -105,7 +106,7 @@ export default function UkGolfStagingReviewScreen() {
     return (
       <Screen>
         <EmptyState title="Platform admin only" message="UK Golf staging review requires a platform administrator account." />
-        <SecondaryButton label="Back" onPress={() => router.back()} style={{ marginTop: spacing.lg }} />
+        <SecondaryButton label="Back" onPress={() => goBack(router, "/(app)/course-data")} style={{ marginTop: spacing.lg }} />
       </Screen>
     );
   }
@@ -126,7 +127,7 @@ export default function UkGolfStagingReviewScreen() {
         contentContainerStyle={styles.scroll}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); void load(); }} />}
       >
-        <Pressable onPress={() => router.back()} style={styles.backRow} hitSlop={12}>
+        <Pressable onPress={() => goBack(router, "/(app)/course-data")} style={styles.backRow} hitSlop={12}>
           <Feather name="arrow-left" size={20} color={colors.text} />
           <AppText variant="bodyBold" style={{ marginLeft: spacing.sm }}>
             Back

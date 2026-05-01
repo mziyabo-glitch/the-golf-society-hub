@@ -1,4 +1,5 @@
-import { Pressable, StyleSheet, View } from "react-native";
+import { useMemo, useState } from "react";
+import { Pressable, StyleSheet, TextInput, View } from "react-native";
 
 import { AppText } from "@/components/ui/AppText";
 import { getColors, radius, spacing } from "@/lib/ui/theme";
@@ -6,55 +7,53 @@ import { freePlayPremium } from "@/lib/ui/freePlayPremiumTheme";
 
 export type FreePlayPlayerScoreCardProps = {
   playerName: string;
-  handicapLine?: string | null;
+  playingHandicapLabel?: string | null;
+  currentTotalLabel?: string | null;
   grossDisplay: string;
-  netLabel: string | null;
-  /** Hole Stableford points, e.g. "2 pts" or "—" when unavailable */
-  stablefordPointsDisplay: string | null;
-  /** When true, Stableford points are not reliable (missing SI). */
-  stablefordUnavailable: boolean;
-  runningTotalLabel: string | null;
-  showStableford: boolean;
   onDecrement: () => void;
   onIncrement: () => void;
-  onPickup: () => void;
-  onParShortcut: () => void;
-  onBogeyShortcut: () => void;
+  onCommitTypedGross: (gross: number | null) => void;
   disabled?: boolean;
-  /** Global save in flight — subtle dimming */
   saving?: boolean;
-  onEditHandicap?: () => void;
-  onRemovePlayer?: () => void;
+  saveHint?: string | null;
 };
 
 export function FreePlayPlayerScoreCard({
   playerName,
-  handicapLine,
+  playingHandicapLabel,
+  currentTotalLabel,
   grossDisplay,
-  netLabel,
-  stablefordPointsDisplay,
-  stablefordUnavailable,
-  runningTotalLabel,
-  showStableford,
   onDecrement,
   onIncrement,
-  onPickup,
-  onParShortcut,
-  onBogeyShortcut,
+  onCommitTypedGross,
   disabled,
   saving,
-  onEditHandicap,
-  onRemovePlayer,
+  saveHint,
 }: FreePlayPlayerScoreCardProps) {
   const colors = getColors();
-  const dim = disabled || saving;
+  const dim = disabled;
+  const [typing, setTyping] = useState(false);
+  const [typedValue, setTypedValue] = useState("");
+  const typedError = useMemo(() => {
+    const raw = typedValue.trim();
+    if (raw === "") return null;
+    const n = Number(raw);
+    if (!Number.isFinite(n) || n < 1 || n > 30) return "Use 1-30 or leave blank for pickup.";
+    return null;
+  }, [typedValue]);
 
-  const sfPill =
-    showStableford && (stablefordPointsDisplay != null || stablefordUnavailable)
-      ? stablefordUnavailable
-        ? "—"
-        : stablefordPointsDisplay
-      : null;
+  const commitTyped = () => {
+    const raw = typedValue.trim();
+    if (raw === "") {
+      onCommitTypedGross(null);
+      setTyping(false);
+      return;
+    }
+    const n = Number(raw);
+    if (!Number.isFinite(n) || n < 1 || n > 30) return;
+    onCommitTypedGross(Math.round(n));
+    setTyping(false);
+  };
 
   return (
     <View
@@ -71,38 +70,36 @@ export function FreePlayPlayerScoreCard({
       <AppText variant="bodyBold" numberOfLines={1}>
         {playerName}
       </AppText>
-      {handicapLine ? (
+      {playingHandicapLabel ? (
         <AppText variant="caption" color="tertiary" style={{ marginTop: 4 }}>
-          {handicapLine}
+          {playingHandicapLabel}
         </AppText>
       ) : null}
-      {netLabel ? (
-        <AppText variant="small" color="secondary" style={{ marginTop: 6 }}>
-          {netLabel}
+      <View style={styles.metaRow}>
+        <AppText variant="captionBold" color="secondary">
+          {currentTotalLabel ?? "Total —"}
         </AppText>
-      ) : null}
-
-      <View style={styles.pillRow}>
-        {showStableford && sfPill != null ? (
-          <View style={[styles.pill, { borderColor: colors.primary + "44", backgroundColor: `${colors.primary}10` }]}>
-            <AppText variant="captionBold" color="primary">
-              {stablefordUnavailable ? "Pts —" : sfPill}
-            </AppText>
-          </View>
-        ) : null}
-        {runningTotalLabel ? (
-          <View style={[styles.pill, { borderColor: colors.borderLight, backgroundColor: freePlayPremium.creamSurface }]}>
-            <AppText variant="captionBold" color="secondary">
-              {runningTotalLabel}
-            </AppText>
-          </View>
-        ) : null}
+        <AppText
+          variant="captionBold"
+          color={
+            saveHint?.toLowerCase().includes("fail")
+              ? "warning"
+              : saveHint?.toLowerCase().includes("saving")
+                ? "secondary"
+                : "primary"
+          }
+        >
+          {saveHint ?? (saving ? "Saving..." : "Saved")}
+        </AppText>
       </View>
 
       <View style={styles.scoreRow}>
         <Pressable
           onPress={onDecrement}
           disabled={disabled}
+          accessibilityRole="button"
+          accessibilityLabel="Decrease gross strokes"
+          hitSlop={8}
           style={({ pressed }) => [
             styles.bigBtn,
             { borderColor: colors.primary, opacity: disabled ? 0.35 : pressed ? 0.85 : 1 },
@@ -112,17 +109,49 @@ export function FreePlayPlayerScoreCard({
             −
           </AppText>
         </Pressable>
-        <View style={styles.grossBox}>
-          <AppText variant="h1" style={styles.grossNum}>
-            {grossDisplay}
-          </AppText>
-          <AppText variant="caption" color="tertiary">
-            Gross
-          </AppText>
-        </View>
+        <Pressable
+          onPress={() => {
+            if (dim) return;
+            setTypedValue(grossDisplay === "—" ? "" : grossDisplay);
+            setTyping(true);
+          }}
+          disabled={dim}
+          accessibilityRole="button"
+          accessibilityLabel="Edit gross score"
+          style={styles.grossBox}
+        >
+          {typing ? (
+            <View style={styles.typeWrap}>
+              <TextInput
+                value={typedValue}
+                onChangeText={setTypedValue}
+                keyboardType="number-pad"
+                autoFocus
+                maxLength={2}
+                onSubmitEditing={commitTyped}
+                onBlur={commitTyped}
+                style={[styles.typeInput, { borderColor: typedError ? colors.warning : colors.borderLight, color: colors.text }]}
+                placeholder="--"
+                placeholderTextColor={colors.textTertiary}
+              />
+            </View>
+          ) : (
+            <>
+              <AppText variant="h1" style={styles.grossNum}>
+                {grossDisplay}
+              </AppText>
+              <AppText variant="caption" color="tertiary">
+                Tap to type
+              </AppText>
+            </>
+          )}
+        </Pressable>
         <Pressable
           onPress={onIncrement}
           disabled={disabled}
+          accessibilityRole="button"
+          accessibilityLabel="Increase gross strokes"
+          hitSlop={8}
           style={({ pressed }) => [
             styles.bigBtn,
             { borderColor: colors.primary, opacity: disabled ? 0.35 : pressed ? 0.85 : 1 },
@@ -133,56 +162,10 @@ export function FreePlayPlayerScoreCard({
           </AppText>
         </Pressable>
       </View>
-      <AppText variant="caption" color="tertiary" style={styles.adjustHint}>
-        Tap +/- for quick adjust
-      </AppText>
-
-      <View style={styles.shortcuts}>
-        <Pressable
-          onPress={onParShortcut}
-          disabled={disabled}
-          style={({ pressed }) => [styles.shortBtn, { borderColor: colors.borderLight, opacity: disabled ? 0.35 : pressed ? 0.9 : 1 }]}
-        >
-          <AppText variant="captionBold" color="secondary">
-            Par
-          </AppText>
-        </Pressable>
-        <Pressable
-          onPress={onBogeyShortcut}
-          disabled={disabled}
-          style={({ pressed }) => [styles.shortBtn, { borderColor: colors.borderLight, opacity: disabled ? 0.35 : pressed ? 0.9 : 1 }]}
-        >
-          <AppText variant="captionBold" color="secondary">
-            Bogey
-          </AppText>
-        </Pressable>
-        <Pressable
-          onPress={onPickup}
-          disabled={disabled}
-          style={({ pressed }) => [styles.pickup, { borderColor: colors.warning + "66", opacity: disabled ? 0.35 : pressed ? 0.9 : 1 }]}
-        >
-          <AppText variant="captionBold" color="warning">
-            Pick up / Blob
-          </AppText>
-        </Pressable>
-      </View>
-      {(onEditHandicap || onRemovePlayer) ? (
-        <View style={styles.manageRow}>
-          {onEditHandicap ? (
-            <Pressable onPress={onEditHandicap} disabled={disabled} style={[styles.manageBtn, { borderColor: colors.borderLight }]}>
-              <AppText variant="captionBold" color="secondary">
-                Edit HI
-              </AppText>
-            </Pressable>
-          ) : null}
-          {onRemovePlayer ? (
-            <Pressable onPress={onRemovePlayer} disabled={disabled} style={[styles.manageBtn, { borderColor: colors.warning + "66" }]}>
-              <AppText variant="captionBold" color="warning">
-                Remove player
-              </AppText>
-            </Pressable>
-          ) : null}
-        </View>
+      {typedError ? (
+        <AppText variant="caption" color="warning" style={styles.errorText}>
+          {typedError}
+        </AppText>
       ) : null}
     </View>
   );
@@ -195,78 +178,51 @@ const styles = StyleSheet.create({
     padding: spacing.base,
     marginTop: spacing.md,
   },
-  pillRow: {
+  metaRow: {
     flexDirection: "row",
-    flexWrap: "wrap",
-    gap: spacing.xs,
+    alignItems: "center",
+    justifyContent: "space-between",
     marginTop: spacing.sm,
-  },
-  pill: {
-    borderWidth: 1,
-    borderRadius: radius.md,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 5,
   },
   scoreRow: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    gap: spacing.md,
+    gap: spacing.sm,
     marginTop: spacing.md,
   },
   bigBtn: {
-    width: 56,
-    height: 56,
-    borderRadius: radius.lg,
+    width: 64,
+    height: 64,
+    borderRadius: radius.xl,
     borderWidth: 2,
     alignItems: "center",
     justifyContent: "center",
   },
   grossBox: {
-    minWidth: 72,
+    minWidth: 120,
+    minHeight: 86,
     alignItems: "center",
-  },
-  grossNum: {
-    fontSize: 40,
-    lineHeight: 44,
-  },
-  shortcuts: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: spacing.sm,
-    marginTop: spacing.md,
     justifyContent: "center",
   },
-  adjustHint: {
-    marginTop: spacing.xs,
+  grossNum: {
+    fontSize: 44,
+    lineHeight: 48,
+  },
+  typeWrap: {
+    width: 92,
+    alignItems: "center",
+  },
+  typeInput: {
+    width: 92,
+    height: 56,
+    borderWidth: 1,
+    borderRadius: radius.md,
     textAlign: "center",
+    fontSize: 28,
+    fontWeight: "700",
   },
-  shortBtn: {
-    borderWidth: 1,
-    borderRadius: radius.md,
-    paddingVertical: spacing.sm,
-    paddingHorizontal: spacing.base,
-    minWidth: 88,
-    alignItems: "center",
-  },
-  pickup: {
-    borderWidth: 1,
-    borderRadius: radius.md,
-    paddingVertical: spacing.sm,
-    paddingHorizontal: spacing.base,
-    minWidth: 120,
-    alignItems: "center",
-  },
-  manageRow: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: spacing.sm,
-    marginTop: spacing.md,
-  },
-  manageBtn: {
-    borderWidth: 1,
-    borderRadius: radius.md,
-    paddingVertical: spacing.xs,
-    paddingHorizontal: spacing.sm,
+  errorText: {
+    marginTop: spacing.xs,
   },
 });

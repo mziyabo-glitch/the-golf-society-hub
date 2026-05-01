@@ -2,7 +2,7 @@
  * Primary button primitive — sizes, variants, loading; shared by Button.tsx exports.
  */
 
-import { ReactNode } from "react";
+import { ReactNode, useRef } from "react";
 import {
   Pressable,
   StyleSheet,
@@ -68,6 +68,7 @@ export function AppButton({
 }: AppButtonProps) {
   const colors = getColors();
   const reduceMotion = useReducedMotion();
+  const lastPressAtRef = useRef(0);
   const height = buttonHeights[size];
   const paddingHorizontal = size === "sm" ? spacing.base : size === "md" ? spacing.lg : spacing.lg;
   const content = resolveContent(label, children);
@@ -101,9 +102,17 @@ export function AppButton({
   const spinnerColor =
     variant === "secondary" || variant === "ghost" ? colors.primary : colors.textInverse;
 
+  const handleGuardedPress = () => {
+    const now = Date.now();
+    // Guard against accidental double-taps that can duplicate writes.
+    if (now - lastPressAtRef.current < 700) return;
+    lastPressAtRef.current = now;
+    handlePress(onPress);
+  };
+
   return (
     <Pressable
-      onPress={() => handlePress(onPress)}
+      onPress={handleGuardedPress}
       disabled={isDisabled}
       style={(state) => {
         const pressed = state.pressed;

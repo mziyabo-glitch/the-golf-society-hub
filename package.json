@@ -32,7 +32,8 @@
     "course-import:stale-smoke": "tsx scripts/stale-course-import-smoke.ts",
     "course-import:seed-gb": "tsx scripts/seed-gb-course-candidates.ts",
     "course-import:seed-vale": "tsx scripts/seed-vale-resort.ts",
-    "course-import:seed-shrivenham-summer": "tsx scripts/seed-shrivenham-park-summer.ts"
+    "course-import:seed-shrivenham-summer": "tsx scripts/seed-shrivenham-park-summer.ts",
+    "course-catalog:audit": "tsx scripts/audit-course-catalog.ts"
   },
   "engines": {
     "node": ">=18.x"
@@ -40,6 +41,7 @@
   "dependencies": {
     "@expo/vector-icons": "^15.0.3",
     "@react-native-async-storage/async-storage": "2.2.0",
+    "@react-native-community/netinfo": "11.4.1",
     "@react-navigation/bottom-tabs": "^7.4.0",
     "@react-navigation/elements": "^2.6.3",
     "@react-navigation/native": "^7.1.8",

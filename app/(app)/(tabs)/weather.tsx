@@ -46,6 +46,8 @@ import {
 import { planStartForFiveDayWindow } from "@/lib/playability/weatherPlanAnchor";
 import { HeaderSettingsPill } from "@/components/navigation/HeaderSettingsPill";
 import { blurWebActiveElement } from "@/lib/ui/focus";
+import { getCache, setCache } from "@/lib/cache/clientCache";
+import { RetryErrorBlock } from "@/components/ui/RetryErrorBlock";
 
 type WeatherMode = "next_event" | "choose_course";
 
@@ -135,6 +137,8 @@ export default function WeatherScreen() {
 
   const [events, setEvents] = useState<EventDoc[]>([]);
   const [eventsLoading, setEventsLoading] = useState(true);
+  const [eventsRefreshing, setEventsRefreshing] = useState(false);
+  const [eventsError, setEventsError] = useState<string | null>(null);
   const [mode, setMode] = useState<WeatherMode>("next_event");
   const [searchQuery, setSearchQuery] = useState("");
   const [debouncedQuery, setDebouncedQuery] = useState("");
@@ -151,17 +155,33 @@ export default function WeatherScreen() {
     if (!canLoadSocietyWeather || !societyId) {
       setEvents([]);
       setEventsLoading(false);
+      setEventsRefreshing(false);
+      setEventsError(null);
       return;
     }
-    setEventsLoading(true);
+
+    const cacheKey = `society:${societyId}:weather-tab-events`;
+    const cached = await getCache<EventDoc[]>(cacheKey, { maxAgeMs: 1000 * 60 * 60 * 24 });
+    const hadCached = Array.isArray(cached?.value) && cached!.value.length > 0;
+    if (hadCached) {
+      setEvents(cached!.value);
+      setEventsLoading(false);
+      setEventsRefreshing(true);
+    } else {
+      setEventsLoading(true);
+    }
+    setEventsError(null);
+
     try {
       const data = await getEventsForSociety(societyId);
       setEvents(data);
+      await setCache(cacheKey, data, { ttlMs: 1000 * 60 * 15 });
     } catch (e) {
       console.error("[weather] Failed to load events:", e);
-      setEvents([]);
+      setEventsError(e instanceof Error ? e.message : "Could not load your schedule.");
     } finally {
       setEventsLoading(false);
+      setEventsRefreshing(false);
     }
   }, [canLoadSocietyWeather, societyId]);
 
@@ -530,7 +550,17 @@ export default function WeatherScreen() {
 
         {mode === "next_event" ? (
           <>
-            {eventsLoading ? (
+            {eventsError ? (
+              <RetryErrorBlock
+                title="Schedule unavailable"
+                message={eventsError}
+                onRetry={() => void loadEvents()}
+                retrying={eventsRefreshing || eventsLoading}
+                staleHint={events.length > 0 ? "Showing your last loaded schedule below." : undefined}
+                style={{ marginBottom: spacing.md }}
+              />
+            ) : null}
+            {eventsLoading && events.length === 0 ? (
               <LoadingState message="Loading schedule…" />
             ) : nextEvent && societyId && member?.id ? (
               <>
@@ -555,6 +585,11 @@ export default function WeatherScreen() {
                     {nextEvent.courseName ? ` · ${nextEvent.courseName}` : ""}
                   </AppText>
                 </View>
+                {eventsRefreshing ? (
+                  <AppText variant="small" color="muted" style={{ marginBottom: spacing.sm }}>
+                    Updating schedule…
+                  </AppText>
+                ) : null}
                 <EventPlayabilitySection
                   event={nextEvent}
                   societyId={societyId}

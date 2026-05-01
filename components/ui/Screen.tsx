@@ -4,7 +4,7 @@
  */
 
 import { ReactNode, useContext } from "react";
-import { ScrollView, StyleSheet, View, ViewStyle, StyleProp } from "react-native";
+import { KeyboardAvoidingView, Platform, ScrollView, StyleSheet, View, ViewStyle, StyleProp } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { BottomTabBarHeightContext } from "@react-navigation/bottom-tabs";
 import { getColors, spacing } from "@/lib/ui/theme";
@@ -44,14 +44,20 @@ export function Screen({ children, scrollable = true, style, contentStyle }: Scr
         style={[styles.container, { backgroundColor: colors.background }, style]}
         edges={["top", "bottom"]}
       >
-        <ScrollView
-          style={styles.scroll}
-          contentContainerStyle={styles.scrollContent}
-          showsVerticalScrollIndicator={false}
-          keyboardShouldPersistTaps="handled"
+        <KeyboardAvoidingView
+          style={styles.keyboardContainer}
+          behavior={Platform.select({ ios: "padding", android: "height", default: undefined })}
         >
-          {content}
-        </ScrollView>
+          <ScrollView
+            style={styles.scroll}
+            contentContainerStyle={styles.scrollContent}
+            showsVerticalScrollIndicator={false}
+            keyboardShouldPersistTaps="handled"
+            keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
+          >
+            {content}
+          </ScrollView>
+        </KeyboardAvoidingView>
       </SafeAreaView>
     );
   }
@@ -61,7 +67,12 @@ export function Screen({ children, scrollable = true, style, contentStyle }: Scr
       style={[styles.container, { backgroundColor: colors.background }, style]}
       edges={["top", "bottom"]}
     >
-      {content}
+      <KeyboardAvoidingView
+        style={styles.keyboardContainer}
+        behavior={Platform.select({ ios: "padding", android: "height", default: undefined })}
+      >
+        {content}
+      </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }
@@ -75,6 +86,9 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     flexGrow: 1,
+  },
+  keyboardContainer: {
+    flex: 1,
   },
   content: {
     flex: 1,
