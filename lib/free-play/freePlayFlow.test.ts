@@ -4,7 +4,9 @@ import type { CourseHoleRow, CourseTee } from "@/lib/db_supabase/courseRepo";
 import type { FreePlayRoundBundle } from "@/types/freePlayScorecard";
 
 import { analyzeHoleScoreRowKeys } from "./freePlayHoleScoreDiagnostics";
+import { nextGrossOnDecrement, nextGrossOnIncrement } from "./freePlayGrossControl";
 import { findFirstIncompleteHoleNumber } from "./freePlayHoleResume";
+import { flushThenSetHole } from "./freePlayHoleNavigation";
 import { getFreePlayStartBlockers } from "./freePlayStartReadiness";
 import { mergeHoleGrossIntoBundle } from "./mergeFreePlayBundleHoleScore";
 import { buildFreePlayLeaderboard } from "@/lib/scoring/freePlayScoring";
@@ -105,6 +107,35 @@ describe("analyzeHoleScoreRowKeys", () => {
     const out = analyzeHoleScoreRowKeys(rows);
     expect(out.duplicateKeys).toEqual(["a:1"]);
     expect(out.totalRows).toBe(3);
+  });
+});
+
+describe("freePlay gross controls", () => {
+  it("increment/decrement follow one-hole UX defaults", () => {
+    expect(nextGrossOnIncrement(null, 4)).toBe(4);
+    expect(nextGrossOnIncrement(4, 4)).toBe(5);
+    expect(nextGrossOnDecrement(null, 4)).toBe(3);
+    expect(nextGrossOnDecrement(2, 4)).toBe(1);
+    expect(nextGrossOnDecrement(1, 4)).toBeNull();
+  });
+});
+
+describe("flushThenSetHole", () => {
+  it("flushes pending saves before navigating", async () => {
+    const calls: string[] = [];
+    let setTo = 0;
+    await flushThenSetHole(
+      async () => {
+        calls.push("flush");
+      },
+      (n) => {
+        calls.push("set");
+        setTo = n;
+      },
+      9,
+    );
+    expect(calls).toEqual(["flush", "set"]);
+    expect(setTo).toBe(9);
   });
 });
 

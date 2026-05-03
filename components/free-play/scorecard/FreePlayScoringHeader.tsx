@@ -4,45 +4,61 @@ import { AppText } from "@/components/ui/AppText";
 import { getColors, radius, spacing } from "@/lib/ui/theme";
 import { freePlayPremium } from "@/lib/ui/freePlayPremiumTheme";
 
-export type FreePlayHoleHeroProps = {
+export type FreePlayScoringHeaderProps = {
   holeNumber: number;
   maxHoleNumber: number;
   par: number;
   strokeIndex: number | null;
-  strokeIndexUnavailable: boolean;
   yardageLabel: string | null;
-  stablefordActive: boolean;
-  onPrevHole: () => void;
-  onNextHole: () => void;
   canPrev: boolean;
   canNext: boolean;
+  onPrev: () => void;
+  onNext: () => void;
+  saveState: "saving" | "saved" | "failed";
+  resumedHole: number | null;
 };
 
-export function FreePlayHoleHero({
+export function FreePlayScoringHeader({
   holeNumber,
   maxHoleNumber,
   par,
   strokeIndex,
-  strokeIndexUnavailable,
   yardageLabel,
-  stablefordActive,
-  onPrevHole,
-  onNextHole,
   canPrev,
   canNext,
-}: FreePlayHoleHeroProps) {
+  onPrev,
+  onNext,
+  saveState,
+  resumedHole,
+}: FreePlayScoringHeaderProps) {
   const colors = getColors();
-  const siLabel = strokeIndexUnavailable || strokeIndex == null ? "SI -" : `SI ${strokeIndex}`;
+  const saveLabel = saveState === "saving" ? "Saving..." : saveState === "failed" ? "Failed" : "Saved";
+  const saveTone = saveState === "failed" ? "warning" : saveState === "saving" ? "secondary" : "primary";
 
   return (
-    <View style={[styles.card, { borderColor: freePlayPremium.accentDeepGreen + "44", backgroundColor: freePlayPremium.creamSurface }]}>
+    <View
+      style={[
+        styles.card,
+        {
+          borderColor: freePlayPremium.accentDeepGreen + "44",
+          backgroundColor: freePlayPremium.creamSurface,
+        },
+      ]}
+    >
+      {resumedHole != null ? (
+        <View style={[styles.banner, { borderColor: colors.primary + "44", backgroundColor: colors.primary + "10" }]}>
+          <AppText variant="captionBold" color="primary">
+            Resumed at Hole {resumedHole}
+          </AppText>
+        </View>
+      ) : null}
       <View style={styles.topRow}>
         <Pressable
-          onPress={onPrevHole}
+          onPress={onPrev}
           disabled={!canPrev}
           style={({ pressed }) => [
             styles.navBtn,
-            { borderColor: colors.borderLight, opacity: !canPrev ? 0.4 : pressed ? 0.82 : 1 },
+            { borderColor: colors.borderLight, opacity: !canPrev ? 0.45 : pressed ? 0.84 : 1 },
           ]}
         >
           <AppText variant="captionBold" color="secondary">
@@ -50,7 +66,7 @@ export function FreePlayHoleHero({
           </AppText>
         </Pressable>
         <View style={styles.center}>
-          <AppText variant="captionBold" style={{ color: freePlayPremium.accentDeepGreen, letterSpacing: 1.1 }}>
+          <AppText variant="captionBold" style={{ color: freePlayPremium.accentDeepGreen, letterSpacing: 1 }}>
             Hole {holeNumber} of {maxHoleNumber}
           </AppText>
           <AppText variant="h1" style={{ marginTop: 2 }}>
@@ -58,11 +74,11 @@ export function FreePlayHoleHero({
           </AppText>
         </View>
         <Pressable
-          onPress={onNextHole}
+          onPress={onNext}
           disabled={!canNext}
           style={({ pressed }) => [
             styles.navBtn,
-            { borderColor: colors.borderLight, opacity: !canNext ? 0.4 : pressed ? 0.82 : 1 },
+            { borderColor: colors.borderLight, opacity: !canNext ? 0.45 : pressed ? 0.84 : 1 },
           ]}
         >
           <AppText variant="captionBold" color="secondary">
@@ -70,16 +86,15 @@ export function FreePlayHoleHero({
           </AppText>
         </Pressable>
       </View>
-
       <View style={styles.metaRow}>
         <View style={[styles.pill, { borderColor: colors.borderLight }]}>
           <AppText variant="captionBold" color="secondary">
             Par {par}
           </AppText>
         </View>
-        <View style={[styles.pill, { borderColor: strokeIndexUnavailable ? colors.warning + "55" : colors.borderLight }]}>
-          <AppText variant="captionBold" color={strokeIndexUnavailable ? "warning" : "secondary"}>
-            {siLabel}
+        <View style={[styles.pill, { borderColor: colors.borderLight }]}>
+          <AppText variant="captionBold" color="secondary">
+            SI {strokeIndex ?? "-"}
           </AppText>
         </View>
         {yardageLabel ? (
@@ -90,10 +105,11 @@ export function FreePlayHoleHero({
           </View>
         ) : null}
       </View>
-
-      <AppText variant="small" color="secondary" style={{ marginTop: spacing.xs }}>
-        {stablefordActive ? "Stableford scoring · autosave enabled" : "Stroke net scoring · autosave enabled"}
-      </AppText>
+      <View style={styles.saveRow}>
+        <AppText variant="captionBold" color={saveTone}>
+          {saveLabel}
+        </AppText>
+      </View>
     </View>
   );
 }
@@ -103,6 +119,15 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderRadius: freePlayPremium.heroRadius,
     padding: spacing.base,
+    marginBottom: spacing.sm,
+  },
+  banner: {
+    borderWidth: 1,
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+    marginBottom: spacing.sm,
+    alignSelf: "flex-start",
   },
   topRow: {
     flexDirection: "row",
@@ -119,7 +144,7 @@ const styles = StyleSheet.create({
     borderRadius: radius.md,
     paddingHorizontal: spacing.sm,
     paddingVertical: spacing.sm,
-    minWidth: 72,
+    minWidth: 74,
     alignItems: "center",
   },
   metaRow: {
@@ -129,10 +154,14 @@ const styles = StyleSheet.create({
     marginTop: spacing.sm,
   },
   pill: {
-    alignSelf: "flex-start",
     borderWidth: 1,
     borderRadius: radius.md,
     paddingHorizontal: spacing.sm,
     paddingVertical: 4,
+  },
+  saveRow: {
+    marginTop: spacing.sm,
+    flexDirection: "row",
+    justifyContent: "flex-end",
   },
 });

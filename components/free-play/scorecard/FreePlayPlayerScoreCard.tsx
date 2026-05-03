@@ -1,5 +1,5 @@
-import { useMemo, useState } from "react";
-import { Pressable, StyleSheet, TextInput, View } from "react-native";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Animated, Easing, Pressable, StyleSheet, TextInput, View } from "react-native";
 
 import { AppText } from "@/components/ui/AppText";
 import { getColors, radius, spacing } from "@/lib/ui/theme";
@@ -8,8 +8,12 @@ import { freePlayPremium } from "@/lib/ui/freePlayPremiumTheme";
 export type FreePlayPlayerScoreCardProps = {
   playerName: string;
   playingHandicapLabel?: string | null;
+  courseHandicapLabel?: string | null;
   currentTotalLabel?: string | null;
+  relativeToParLabel?: string | null;
   grossDisplay: string;
+  isConfirmedScore: boolean;
+  defaultHint?: string | null;
   onDecrement: () => void;
   onIncrement: () => void;
   onCommitTypedGross: (gross: number | null) => void;
@@ -21,8 +25,12 @@ export type FreePlayPlayerScoreCardProps = {
 export function FreePlayPlayerScoreCard({
   playerName,
   playingHandicapLabel,
+  courseHandicapLabel,
   currentTotalLabel,
+  relativeToParLabel,
   grossDisplay,
+  isConfirmedScore,
+  defaultHint,
   onDecrement,
   onIncrement,
   onCommitTypedGross,
@@ -34,6 +42,8 @@ export function FreePlayPlayerScoreCard({
   const dim = disabled;
   const [typing, setTyping] = useState(false);
   const [typedValue, setTypedValue] = useState("");
+  const scoreScale = useRef(new Animated.Value(1)).current;
+  const previousGrossDisplayRef = useRef(grossDisplay);
   const typedError = useMemo(() => {
     const raw = typedValue.trim();
     if (raw === "") return null;
@@ -41,6 +51,25 @@ export function FreePlayPlayerScoreCard({
     if (!Number.isFinite(n) || n < 1 || n > 30) return "Use 1-30 or leave blank for pickup.";
     return null;
   }, [typedValue]);
+
+  useEffect(() => {
+    if (previousGrossDisplayRef.current === grossDisplay) return;
+    previousGrossDisplayRef.current = grossDisplay;
+    Animated.sequence([
+      Animated.timing(scoreScale, {
+        toValue: 1.1,
+        duration: 60,
+        easing: Easing.out(Easing.quad),
+        useNativeDriver: true,
+      }),
+      Animated.timing(scoreScale, {
+        toValue: 1,
+        duration: 60,
+        easing: Easing.in(Easing.quad),
+        useNativeDriver: true,
+      }),
+    ]).start();
+  }, [grossDisplay, scoreScale]);
 
   const commitTyped = () => {
     const raw = typedValue.trim();
@@ -73,11 +102,15 @@ export function FreePlayPlayerScoreCard({
       {playingHandicapLabel ? (
         <AppText variant="caption" color="tertiary" style={{ marginTop: 4 }}>
           {playingHandicapLabel}
+          {courseHandicapLabel ? ` · ${courseHandicapLabel}` : ""}
         </AppText>
       ) : null}
       <View style={styles.metaRow}>
         <AppText variant="captionBold" color="secondary">
           {currentTotalLabel ?? "Total —"}
+        </AppText>
+        <AppText variant="bodyBold" color="primary">
+          {relativeToParLabel ?? "—"}
         </AppText>
         <AppText
           variant="captionBold"
@@ -137,11 +170,19 @@ export function FreePlayPlayerScoreCard({
             </View>
           ) : (
             <>
-              <AppText variant="h1" style={styles.grossNum}>
-                {grossDisplay}
-              </AppText>
+              <Animated.View style={{ transform: [{ scale: scoreScale }] }}>
+                <AppText
+                  variant="h1"
+                  style={[
+                    styles.grossNum,
+                    { color: isConfirmedScore ? colors.text : colors.textSecondary, opacity: isConfirmedScore ? 1 : 0.72 },
+                  ]}
+                >
+                  {grossDisplay}
+                </AppText>
+              </Animated.View>
               <AppText variant="caption" color="tertiary">
-                Tap to type
+                {isConfirmedScore ? "Tap to type" : defaultHint ?? "Par default · tap to confirm"}
               </AppText>
             </>
           )}

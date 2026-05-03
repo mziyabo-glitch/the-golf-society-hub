@@ -41,7 +41,6 @@ import {
   FREE_PLAY_SETUP_REQUIRED_MESSAGE,
   getFreePlayRoundBundle,
   reopenFreePlayRound,
-  replaceHoleScores,
   relinkFreePlayRoundCourse,
   saveQuickTotals,
   setFreePlayRoundMode,
@@ -64,18 +63,11 @@ import {
 } from "@/lib/scoring/freePlayScoring";
 import { buildStrokesReceivedByHole } from "@/lib/scoring/handicapStrokeAllocation";
 import { stablefordPointsForHole } from "@/lib/scoring/stablefordPoints";
-import { FreePlayRoundHeader } from "@/components/free-play/scorecard/FreePlayRoundHeader";
-import { FreePlayHoleHero } from "@/components/free-play/scorecard/FreePlayHoleHero";
 import { FreePlayPlayerScoreCard } from "@/components/free-play/scorecard/FreePlayPlayerScoreCard";
-import {
-  FreePlayScoreModeTabs,
-  type FreePlayScoreViewTab,
-} from "@/components/free-play/scorecard/FreePlayScoreModeTabs";
-import { FreePlayLeaderboardPreview } from "@/components/free-play/scorecard/FreePlayLeaderboardPreview";
+import { FreePlayMiniLeaderboard } from "@/components/free-play/scorecard/FreePlayMiniLeaderboard";
+import { FreePlayScoringHeader } from "@/components/free-play/scorecard/FreePlayScoringHeader";
 import { FreePlayLeaderboardSheet } from "@/components/free-play/scorecard/FreePlayLeaderboardSheet";
-import { FreePlayStatsComingSoonCard } from "@/components/free-play/scorecard/FreePlayStatsComingSoonCard";
 import { FreePlayTraditionalCardGrid } from "@/components/free-play/scorecard/FreePlayTraditionalCardGrid";
-import { FreePlayRoundProgress } from "@/components/free-play/scorecard/FreePlayRoundProgress";
 import { FreePlayScorecardEmptyState } from "@/components/free-play/scorecard/FreePlayScorecardEmptyState";
 import { FreePlayFinalLeaderboardCard } from "@/components/free-play/summary/FreePlayFinalLeaderboardCard";
 import { FreePlayIncompleteRoundNotice } from "@/components/free-play/summary/FreePlayIncompleteRoundNotice";
@@ -91,6 +83,14 @@ import { findFirstIncompleteHoleNumber } from "@/lib/free-play/freePlayHoleResum
 import { getFreePlayStartBlockers } from "@/lib/free-play/freePlayStartReadiness";
 import { FreePlayHoleJumpBar } from "@/components/free-play/scorecard/FreePlayHoleJumpBar";
 import { analyzeHoleScoreRowKeys } from "@/lib/free-play/freePlayHoleScoreDiagnostics";
+import { nextGrossOnDecrement, nextGrossOnIncrement } from "@/lib/free-play/freePlayGrossControl";
+import { flushThenSetHole } from "@/lib/free-play/freePlayHoleNavigation";
+
+function formatRelativeToPar(delta: number | null): string {
+  if (delta == null || !Number.isFinite(delta)) return "—";
+  if (delta === 0) return "E";
+  return delta > 0 ? `+${delta}` : String(delta);
+}
 
 export default function FreePlayRoundDetailScreen() {
   const router = useRouter();
@@ -124,9 +124,7 @@ export default function FreePlayRoundDetailScreen() {
   const [teeMeta, setTeeMeta] = useState<CourseTee | null>(null);
   const [holeMeta, setHoleMeta] = useState<CourseHoleRow[]>([]);
   const [currentHole, setCurrentHole] = useState(1);
-  const [showFullHoleGrid, setShowFullHoleGrid] = useState(false);
   const [roundTrust, setRoundTrust] = useState<CourseApprovalState | null>(null);
-  const [scoreViewTab, setScoreViewTab] = useState<FreePlayScoreViewTab>("simple");
   const [leaderboardOpen, setLeaderboardOpen] = useState(false);
   const [completedView, setCompletedView] = useState<"summary" | "card">("summary");
   const [editingHandicapPlayerId, setEditingHandicapPlayerId] = useState<string | null>(null);
@@ -150,9 +148,6 @@ export default function FreePlayRoundDetailScreen() {
   const holePersistTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
   const holePersistLatestRef = useRef<Map<string, number | null>>(new Map());
   const [resumedHoleBanner, setResumedHoleBanner] = useState<number | null>(null);
-  const [autoAdvancePending, setAutoAdvancePending] = useState(false);
-  const autoAdvanceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const autoAdvanceKeyRef = useRef<string | null>(null);
   const [devFpPersistHud, setDevFpPersistHud] = useState<{
     reloadCount: number;
     lastReloadIso: string;
@@ -566,10 +561,6 @@ export default function FreePlayRoundDetailScreen() {
 
   const mode: FreePlayScoringMode = bundle?.round.scoring_mode ?? "quick";
   const isCompletedRound = bundle?.round.status === "completed";
-  const playerForHoles = useMemo(
-    () => bundle?.players.find((p) => p.id === selectedPlayerId) ?? null,
-    [bundle?.players, selectedPlayerId],
-  );
 
   const isRoundCreator = Boolean(userId && bundle?.round.created_by_user_id === userId);
   const editingHandicapPlayer = useMemo(
@@ -674,37 +665,6 @@ export default function FreePlayRoundDetailScreen() {
     }
   }, [bundle?.round.id, bundle?.players, quickTotals, load, isRoundCreator, scoreablePlayers, freePlayWritesOk]);
 
-  const onSaveHoles = useCallback(async () => {
-    if (!freePlayWritesOk || !bundle?.round.id || !selectedPlayerId) return;
-    if (!isRoundCreator && !ownRoundPlayerIds.includes(selectedPlayerId)) {
-      setError("You can only save scores for your own player.");
-      return;
-    }
-    setSaving(true);
-    setError(null);
-    try {
-      await flushPendingDebouncedHoleScores();
-      const rows = Object.entries(holeInputs)
-        .map(([hole, v]) => {
-          const t = v.trim();
-          if (t === "" || t === "—") return null;
-          const low = t.toLowerCase();
-          if (low === "nr" || low === "pickup") {
-            return { holeNumber: Number(hole), grossStrokes: null as number | null };
-          }
-          const n = Number(t);
-          return Number.isFinite(n) ? { holeNumber: Number(hole), grossStrokes: n } : null;
-        })
-        .filter((r): r is { holeNumber: number; grossStrokes: number | null } => r != null && Number.isFinite(r.holeNumber));
-      await replaceHoleScores(bundle.round.id, selectedPlayerId, rows);
-      await load({ silent: true });
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not save hole scores.");
-    } finally {
-      setSaving(false);
-    }
-  }, [bundle?.round.id, selectedPlayerId, holeInputs, load, isRoundCreator, ownRoundPlayerIds, freePlayWritesOk, flushPendingDebouncedHoleScores]);
-
   const roundStage = useMemo(() => {
     if (!bundle) return "Setup";
     if (bundle.round.status === "completed") return "Completed";
@@ -752,43 +712,6 @@ export default function FreePlayRoundDetailScreen() {
     if (!bundle) return [];
     return analyzeHoleScoreRowKeys(bundle.holeScores).duplicateKeys;
   }, [bundle]);
-
-  const selectedPlayerHeaderLine = useMemo(() => {
-    if (!bundle || !playerForHoles || holesSnapshots.length === 0) return null;
-    const p = playerForHoles;
-    const lb = leaderboardRows.find((r) => r.roundPlayerId === p.id);
-    const grossByHole = new Map<number, number | null>();
-    for (const h of bundle.holeScores.filter((x) => x.round_player_id === p.id)) {
-      grossByHole.set(h.hole_number, h.gross_strokes);
-    }
-    const ph = intPlayingHandicap(p.playing_handicap, p.handicap_index);
-    const strokeMap = buildStrokesReceivedByHole(ph, holesSnapshots);
-    let vsPar = 0;
-    for (const h of holesSnapshots) {
-      const g = grossByHole.get(h.holeNumber);
-      if (g == null || !Number.isFinite(g)) continue;
-      const sr = strokeMap.get(h.holeNumber) ?? 0;
-      const net = Math.round(g - sr);
-      vsPar += net - h.par;
-    }
-    const short = p.display_name.trim().split(/\s+/)[0] || p.display_name;
-    const vsStr = vsPar > 0 ? `+${vsPar}` : String(vsPar);
-    if (bundle.round.scoring_format === "stableford") {
-      const pts = lb?.stablefordPoints;
-      return `${short} ${vsStr} · ${pts != null ? `${pts} pts` : "— pts"}`;
-    }
-    const netTot = lb?.netTotal;
-    return `${short} ${vsStr}${netTot != null ? ` · net ${netTot}` : ""}`;
-  }, [bundle, playerForHoles, holesSnapshots, leaderboardRows]);
-
-  const leaderSummaryLine = useMemo(() => {
-    if (!bundle || leaderboardRows.length === 0) return null;
-    const r = leaderboardRows[0]!;
-    if (bundle.round.scoring_format === "stableford") {
-      return `${r.displayName} leads · ${r.stablefordPoints ?? "—"} pts · thru ${r.thru}`;
-    }
-    return `${r.displayName} · net ${r.netTotal ?? "—"} · thru ${r.thru}`;
-  }, [bundle, leaderboardRows]);
 
   const maxHoleNumber = useMemo(
     () => (holeNumbers.length > 0 ? Math.max(...holeNumbers) : 18),
@@ -849,87 +772,27 @@ export default function FreePlayRoundDetailScreen() {
     return Math.round(Number(row?.stroke_index));
   }, [holeMetaByNo, currentHole]);
 
-  const persistHoleGrossForPlayer = useCallback(
-    async (roundPlayerId: string, holeNo: number, gross: number | null) => {
-      const prevBundle = bundleRef.current;
-      if (!prevBundle?.round.id) {
-        setError("Round data is not loaded yet.");
-        return;
-      }
-      const roundId = prevBundle.round.id;
-      if (!freePlayWritesOk) {
-        setError("Sign in and ensure Free Play is set up before saving scores.");
-        return;
-      }
-      if (!isRoundCreator && !ownRoundPlayerIds.includes(roundPlayerId)) {
-        setError("You can only save scores for your own player.");
-        return;
-      }
-      if (holeSaveClearRef.current) clearTimeout(holeSaveClearRef.current);
-      setHoleSaveUi({ playerId: roundPlayerId, hole: holeNo, phase: "saving" });
-      setError(null);
-      setRoundRefreshError(null);
-      try {
-        if (__DEV__) {
-          console.log("[free-play] persist hole", {
-            roundId,
-            roundPlayerId,
-            holeNo,
-            gross,
-          });
-        }
-        await upsertHoleScore(roundId, roundPlayerId, holeNo, gross);
-        const merged = mergeHoleGrossIntoBundle(prevBundle, roundPlayerId, holeNo, gross);
-        setBundle(merged);
-        void setCache(`freeplay:round:${roundId}`, merged, { ttlMs: 1000 * 60 * 30 });
-        if (roundPlayerId === selectedPlayerId) {
-          setHoleInputs((prev) => ({ ...prev, [holeNo]: gross == null ? "" : String(gross) }));
-        }
-        setHoleSaveUi({ playerId: roundPlayerId, hole: holeNo, phase: "saved" });
-        holeSaveClearRef.current = setTimeout(() => {
-          setHoleSaveUi((cur) =>
-            cur?.playerId === roundPlayerId && cur?.hole === holeNo && cur.phase === "saved" ? null : cur,
-          );
-        }, 2000);
-        try {
-          await load({ silent: true });
-        } catch (refreshErr) {
-          if (__DEV__) {
-            console.warn("[free-play] reload after hole save failed (local score kept)", refreshErr);
-          }
-          setRoundRefreshError(
-            refreshErr instanceof Error ? refreshErr.message : "Could not refresh from server.",
-          );
-        }
-      } catch (e) {
-        setHoleSaveUi({ playerId: roundPlayerId, hole: holeNo, phase: "failed" });
-        holeSaveClearRef.current = setTimeout(() => {
-          setHoleSaveUi((cur) =>
-            cur?.playerId === roundPlayerId && cur?.hole === holeNo && cur.phase === "failed" ? null : cur,
-          );
-        }, 4000);
-        setError(e instanceof Error ? e.message : "Could not save score.");
-        if (__DEV__) {
-          console.warn("[free-play] persist hole failed", e);
-        }
-      }
-    },
-    [selectedPlayerId, load, isRoundCreator, ownRoundPlayerIds, freePlayWritesOk],
-  );
+  const firstIncompleteHoleForSelection = useMemo(() => {
+    if (!bundle) return null;
+    const playerId = selectedPlayerId ?? scoreablePlayers[0]?.id ?? bundle.players[0]?.id;
+    if (!playerId) return null;
+    return findFirstIncompleteHoleNumber(holeNumbers, bundle.holeScores, playerId);
+  }, [bundle, selectedPlayerId, scoreablePlayers, holeNumbers]);
 
-  const persistHoleGross = useCallback(
-    async (holeNo: number, gross: number | null) => {
-      if (!selectedPlayerId) return;
-      triggerImpact(Haptics.ImpactFeedbackStyle.Light);
-      await persistHoleGrossForPlayer(selectedPlayerId, holeNo, gross);
-    },
-    [selectedPlayerId, persistHoleGrossForPlayer, triggerImpact],
-  );
+  const relativeToParByPlayerId = useMemo(() => {
+    const out: Record<string, string> = {};
+    for (const row of leaderboardRows) {
+      const thruHoles = holesSnapshots.slice(0, Math.max(0, row.thru));
+      const thruPar = thruHoles.reduce((sum, h) => sum + h.par, 0);
+      const delta = row.netTotal == null ? null : row.netTotal - thruPar;
+      out[row.roundPlayerId] = formatRelativeToPar(delta);
+    }
+    return out;
+  }, [leaderboardRows, holesSnapshots]);
 
   useEffect(() => {
     return () => {
       if (holeSaveClearRef.current) clearTimeout(holeSaveClearRef.current);
-      if (autoAdvanceTimerRef.current) clearTimeout(autoAdvanceTimerRef.current);
       for (const t of holePersistTimersRef.current.values()) {
         clearTimeout(t);
       }
@@ -955,44 +818,32 @@ export default function FreePlayRoundDetailScreen() {
   const goPrevHole = useCallback(async () => {
     if (currentHole <= 1) return;
     triggerSelection();
-    if (autoAdvanceTimerRef.current) clearTimeout(autoAdvanceTimerRef.current);
-    setAutoAdvancePending(false);
     try {
-      await flushPendingDebouncedHoleScores();
+      await flushThenSetHole(flushPendingDebouncedHoleScores, setCurrentHole, currentHole - 1);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not save pending scores.");
-      return;
     }
-    setCurrentHole(currentHole - 1);
   }, [currentHole, triggerSelection, flushPendingDebouncedHoleScores]);
 
   const goNextHole = useCallback(async () => {
     if (currentHole >= maxHoleNumber) return;
     triggerSelection();
-    if (autoAdvanceTimerRef.current) clearTimeout(autoAdvanceTimerRef.current);
-    setAutoAdvancePending(false);
     try {
-      await flushPendingDebouncedHoleScores();
+      await flushThenSetHole(flushPendingDebouncedHoleScores, setCurrentHole, currentHole + 1);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not save pending scores.");
-      return;
     }
-    setCurrentHole(currentHole + 1);
   }, [currentHole, maxHoleNumber, triggerSelection, flushPendingDebouncedHoleScores]);
 
   const jumpToHole = useCallback(
     async (n: number) => {
       if (!Number.isFinite(n) || n < 1 || n > maxHoleNumber) return;
       triggerSelection();
-      if (autoAdvanceTimerRef.current) clearTimeout(autoAdvanceTimerRef.current);
-      setAutoAdvancePending(false);
       try {
-        await flushPendingDebouncedHoleScores();
+        await flushThenSetHole(flushPendingDebouncedHoleScores, setCurrentHole, n);
       } catch (e) {
         setError(e instanceof Error ? e.message : "Could not save pending scores.");
-        return;
       }
-      setCurrentHole(n);
     },
     [maxHoleNumber, triggerSelection, flushPendingDebouncedHoleScores],
   );
@@ -1004,28 +855,6 @@ export default function FreePlayRoundDetailScreen() {
       bundle.holeScores.some((h) => h.round_player_id === p.id && h.hole_number === currentHole),
     );
   }, [bundle, scoreablePlayers, currentHole]);
-
-  useEffect(() => {
-    if (!showPremiumHoleDashboard) return;
-    if (!allScoreablePlayersScoredCurrentHole) {
-      if (autoAdvanceTimerRef.current) clearTimeout(autoAdvanceTimerRef.current);
-      setAutoAdvancePending(false);
-      autoAdvanceKeyRef.current = null;
-      return;
-    }
-    if (currentHole >= maxHoleNumber) return;
-    const key = `${bundle?.round.id ?? "no-round"}:${currentHole}`;
-    if (autoAdvanceKeyRef.current === key) return;
-    autoAdvanceKeyRef.current = key;
-    setAutoAdvancePending(true);
-    autoAdvanceTimerRef.current = setTimeout(() => {
-      setAutoAdvancePending(false);
-      void goNextHole();
-    }, 900);
-    return () => {
-      if (autoAdvanceTimerRef.current) clearTimeout(autoAdvanceTimerRef.current);
-    };
-  }, [allScoreablePlayersScoredCurrentHole, showPremiumHoleDashboard, currentHole, maxHoleNumber, goNextHole, bundle?.round.id]);
 
   const holeSwipeResponder = useMemo(
     () =>
@@ -2312,163 +2141,13 @@ export default function FreePlayRoundDetailScreen() {
                 disabled={!freePlayWritesOk}
               />
             </>
-          ) : (
-            <>
-              {!isRoundCreator ? (
-                <InlineNotice
-                  variant="info"
-                  message="You can enter scores for your own player row. The round owner can enter for everyone."
-                  style={{ marginBottom: spacing.sm }}
-                />
-              ) : null}
-
-              {!showPremiumHoleDashboard ? (
-                <>
-                  <View style={styles.modeRow}>
-                    {scoreablePlayers.map((p) => (
-                      <Pressable
-                        key={p.id}
-                        onPress={() => {
-                          triggerSelection();
-                          setSelectedPlayerId(p.id);
-                          const map: Record<number, string> = {};
-                          for (const h of bundle.holeScores.filter((x) => x.round_player_id === p.id)) {
-                            map[h.hole_number] = h.gross_strokes == null ? "" : String(h.gross_strokes);
-                          }
-                          setHoleInputs(map);
-                        }}
-                        style={[
-                          styles.modeChip,
-                          {
-                            borderColor: selectedPlayerId === p.id ? colors.primary : colors.borderLight,
-                            backgroundColor: selectedPlayerId === p.id ? `${colors.primary}14` : colors.surface,
-                          },
-                        ]}
-                      >
-                        <AppText variant="captionBold" color={selectedPlayerId === p.id ? "primary" : "secondary"}>
-                          {p.display_name}
-                        </AppText>
-                      </Pressable>
-                    ))}
-                  </View>
-                  <AppText variant="small" color="secondary" style={{ marginBottom: spacing.xs }}>
-                    Score for {playerForHoles?.display_name || "selected player"} — hole {currentHole} of {maxHoleNumber}.
-                  </AppText>
-                  <View style={[styles.holeHeaderCard, { borderColor: colors.primary + "44", backgroundColor: `${colors.primary}0c` }]}>
-                    <View style={{ flex: 1 }}>
-                      <AppText variant="h2" style={{ letterSpacing: 0.5 }}>
-                        Hole {currentHole}
-                      </AppText>
-                      <AppText variant="small" color="secondary" style={{ marginTop: spacing.xs }}>
-                        Par {currentParForHole}
-                        {holeMetaByNo.get(currentHole)?.stroke_index != null
-                          ? ` · SI ${holeMetaByNo.get(currentHole)?.stroke_index}`
-                          : ""}
-                        {formatDistance(holeMetaByNo.get(currentHole)?.yardage)
-                          ? ` · ${formatDistance(holeMetaByNo.get(currentHole)?.yardage)}`
-                          : ""}
-                      </AppText>
-                    </View>
-                    <View style={styles.holeNavCluster}>
-                      <SecondaryButton
-                        label="Prev"
-                        size="sm"
-                        onPress={goPrevHole}
-                      />
-                      <SecondaryButton
-                        label="Next"
-                        size="sm"
-                        onPress={goNextHole}
-                      />
-                    </View>
-                  </View>
-                  <AppInput
-                    value={holeInputs[currentHole] ?? ""}
-                    onChangeText={(v) => setHoleInputs((prev) => ({ ...prev, [currentHole]: v }))}
-                    keyboardType="number-pad"
-                    placeholder="Gross (empty = pickup)"
-                    editable={freePlayWritesOk}
-                    style={{ marginTop: spacing.sm }}
-                  />
-                  <View style={[styles.quickScoreRow, { marginTop: spacing.sm }]}>
-                    {currentParForHole > 2 ? (
-                      <SecondaryButton
-                        label={`Birdie ${currentParForHole - 1}`}
-                        size="sm"
-                        onPress={() => void persistHoleGross(currentHole, currentParForHole - 1)}
-                        disabled={!freePlayWritesOk}
-                      />
-                    ) : null}
-                    <SecondaryButton
-                      label={`Par ${currentParForHole}`}
-                      size="sm"
-                      onPress={() => void persistHoleGross(currentHole, currentParForHole)}
-                      disabled={!freePlayWritesOk}
-                    />
-                    <SecondaryButton
-                      label={`Bogey ${currentParForHole + 1}`}
-                      size="sm"
-                      onPress={() => void persistHoleGross(currentHole, currentParForHole + 1)}
-                      disabled={!freePlayWritesOk}
-                    />
-                    <SecondaryButton
-                      label={`Double ${currentParForHole + 2}`}
-                      size="sm"
-                      onPress={() => void persistHoleGross(currentHole, currentParForHole + 2)}
-                      disabled={!freePlayWritesOk}
-                    />
-                    <SecondaryButton
-                      label="Pickup"
-                      size="sm"
-                      onPress={() => void persistHoleGross(currentHole, null)}
-                      disabled={!freePlayWritesOk}
-                    />
-                  </View>
-                  <PrimaryButton
-                    label="Save this hole"
-                    size="sm"
-                    onPress={() => {
-                      const raw = holeInputs[currentHole]?.trim() ?? "";
-                      if (raw === "" || raw.toLowerCase() === "nr" || raw.toLowerCase() === "pickup") {
-                        void persistHoleGross(currentHole, null);
-                        return;
-                      }
-                      const n = Number(raw);
-                      if (Number.isFinite(n)) void persistHoleGross(currentHole, n);
-                    }}
-                    loading={saving}
-                    disabled={!freePlayWritesOk}
-                    style={{ marginTop: spacing.sm }}
-                  />
-                  <Pressable onPress={() => setShowFullHoleGrid((v) => !v)} style={{ marginTop: spacing.sm }}>
-                    <AppText variant="captionBold" color="primary">
-                      {showFullHoleGrid ? "Hide full grid" : "Show full hole grid"}
-                    </AppText>
-                  </Pressable>
-                  {showFullHoleGrid ? (
-                    <View style={{ marginTop: spacing.sm }}>
-                      <FreePlayTraditionalCardGrid
-                        holeNumbers={holeNumbers}
-                        holeMetaByNo={holeMetaByNo}
-                        holeInputs={holeInputs}
-                        onHoleInputChange={(hole, value) => setHoleInputs((prev) => ({ ...prev, [hole]: value }))}
-                        metaParTotals={metaParTotals}
-                        metaDistanceTotals={metaDistanceTotals}
-                        selectedScoreTotals={selectedScoreTotals}
-                        formatDistance={formatDistance}
-                        formatScore={formatScore}
-                        currentHole={currentHole}
-                        footerValueLabel={bundle.round.scoring_format === "stableford" ? "Gross" : "Gross"}
-                        onSaveAll={() => void onSaveHoles()}
-                        saving={saving}
-                        readOnly={!freePlayWritesOk}
-                      />
-                    </View>
-                  ) : null}
-                </>
-              ) : null}
-            </>
-          )}
+          ) : !showPremiumHoleDashboard ? (
+            <InlineNotice
+              variant="info"
+              message="Start the round to use the premium one-hole score entry."
+              style={{ marginTop: spacing.sm }}
+            />
+          ) : null}
         </AppCard>
           </>
         )}
@@ -2478,26 +2157,6 @@ export default function FreePlayRoundDetailScreen() {
 
         {showPremiumHoleDashboard ? (
           <>
-            <View style={[styles.stickyLiveBar, { backgroundColor: colors.surface, borderBottomColor: colors.borderLight }]}>
-              <FreePlayRoundHeader
-                courseName={bundle.round.course_name}
-                currentHole={currentHole}
-                maxHole={maxHoleNumber}
-                par={currentParForHole}
-                strokeIndex={currentHoleStrokeIndexDisplay}
-                strokeIndexUnavailable={currentHoleSiUnavailable}
-                teeName={String(bundle.round.tee_name || teeMeta?.tee_name || "Tee")}
-                scoringFormatLabel={bundle.round.scoring_format === "stableford" ? "Stableford" : "Stroke (net)"}
-                leaderLine={leaderSummaryLine}
-                currentPlayerLine={selectedPlayerHeaderLine}
-              />
-              <View style={{ paddingHorizontal: spacing.base, paddingBottom: spacing.sm }}>
-                <FreePlayRoundProgress currentHole={currentHole} maxHole={maxHoleNumber} />
-                <View style={{ marginTop: spacing.sm }}>
-                  <FreePlayScoreModeTabs value={scoreViewTab} onChange={setScoreViewTab} />
-                </View>
-              </View>
-            </View>
             <View style={{ paddingHorizontal: spacing.base, paddingTop: spacing.md }}>
               {roundRefreshError ? (
                 <RetryErrorBlock
@@ -2531,41 +2190,10 @@ export default function FreePlayRoundDetailScreen() {
                   style={{ marginBottom: spacing.sm }}
                 />
               ) : null}
-              <AppText variant="bodyBold" style={{ marginBottom: spacing.xs }}>
-                One-hole score entry
-              </AppText>
-              <AppText variant="caption" color="tertiary" style={{ marginBottom: spacing.sm }}>
-                Tap - / + for instant updates, tap score to type, swipe left/right to move holes.
-              </AppText>
-              <View style={styles.modeRow}>
-                {scoreablePlayers.map((p) => (
-                  <Pressable
-                    key={`live-${p.id}`}
-                    onPress={() => {
-                      triggerSelection();
-                      setSelectedPlayerId(p.id);
-                      const map: Record<number, string> = {};
-                      for (const h of bundle.holeScores.filter((x) => x.round_player_id === p.id)) {
-                        map[h.hole_number] = h.gross_strokes == null ? "" : String(h.gross_strokes);
-                      }
-                      setHoleInputs(map);
-                    }}
-                    style={[
-                      styles.modeChip,
-                      {
-                        borderColor: selectedPlayerId === p.id ? colors.primary : colors.borderLight,
-                        backgroundColor: selectedPlayerId === p.id ? `${colors.primary}14` : colors.surface,
-                      },
-                    ]}
-                  >
-                    <AppText variant="captionBold" color={selectedPlayerId === p.id ? "primary" : "secondary"}>
-                      {p.display_name}
-                    </AppText>
-                  </Pressable>
-                ))}
-              </View>
 
-              {scoreViewTab === "simple" ? (
+              {scoreablePlayers.length === 0 ? (
+                <FreePlayScorecardEmptyState />
+              ) : (
                 <Animated.View
                   {...holeSwipeResponder.panHandlers}
                   style={{
@@ -2580,32 +2208,24 @@ export default function FreePlayRoundDetailScreen() {
                     ],
                   }}
                 >
-                  {resumedHoleBanner != null ? (
-                    <InlineNotice
-                      variant="info"
-                      message={`Resumed at Hole ${resumedHoleBanner}`}
-                      style={{ marginBottom: spacing.sm }}
-                    />
-                  ) : null}
-                  {autoAdvancePending ? (
-                    <InlineNotice
-                      variant="info"
-                      message="All players scored. Auto-advancing to next hole..."
-                      style={{ marginBottom: spacing.sm }}
-                    />
-                  ) : null}
-                  <FreePlayHoleHero
+                  <FreePlayScoringHeader
                     holeNumber={currentHole}
                     maxHoleNumber={maxHoleNumber}
                     par={currentParForHole}
-                    strokeIndex={currentHoleStrokeIndexDisplay}
-                    strokeIndexUnavailable={currentHoleSiUnavailable}
+                    strokeIndex={currentHoleStrokeIndexDisplay ?? null}
                     yardageLabel={formatDistance(holeMetaByNo.get(currentHole)?.yardage)}
-                    stablefordActive={bundle.round.scoring_format === "stableford"}
-                    onPrevHole={() => void goPrevHole()}
-                    onNextHole={() => void goNextHole()}
+                    onPrev={() => void goPrevHole()}
+                    onNext={() => void goNextHole()}
                     canPrev={currentHole > 1}
                     canNext={currentHole < maxHoleNumber}
+                    saveState={
+                      holeSaveUi?.phase === "failed"
+                        ? "failed"
+                        : holeSaveUi?.phase === "saving"
+                          ? "saving"
+                          : "saved"
+                    }
+                    resumedHole={resumedHoleBanner}
                   />
                   <FreePlayHoleJumpBar
                     holeNumbers={holeNumbers}
@@ -2613,32 +2233,37 @@ export default function FreePlayRoundDetailScreen() {
                     onSelectHole={(n) => void jumpToHole(n)}
                     disabled={!freePlayWritesOk}
                   />
+                  {firstIncompleteHoleForSelection != null && firstIncompleteHoleForSelection !== currentHole ? (
+                    <SecondaryButton
+                      label={`Jump to first incomplete (Hole ${firstIncompleteHoleForSelection})`}
+                      size="sm"
+                      onPress={() => void jumpToHole(firstIncompleteHoleForSelection)}
+                      disabled={!freePlayWritesOk}
+                      style={{ marginTop: spacing.sm }}
+                    />
+                  ) : null}
                   {scoreablePlayers.map((p) => {
                     const holeScoreRow = bundle.holeScores.find(
                       (h) => h.round_player_id === p.id && h.hole_number === currentHole,
                     );
                     const gross = holeScoreRow?.gross_strokes ?? null;
                     const par = currentParForHole;
-                    const ph = intPlayingHandicap(p.playing_handicap, p.handicap_index);
-                    const strokeMap =
-                      holesSnapshots.length > 0 ? buildStrokesReceivedByHole(ph, holesSnapshots) : new Map<number, number>();
-                    const sfUnreliable =
-                      bundle.round.scoring_format === "stableford" && currentHoleSiUnavailable;
-                    const grossDisplay = gross == null || !Number.isFinite(gross) ? "—" : String(gross);
+                    const isConfirmedScore = !!holeScoreRow;
+                    const grossDisplay =
+                      gross == null || !Number.isFinite(gross)
+                        ? isConfirmedScore
+                          ? "—"
+                          : String(par)
+                        : String(gross);
                     const lbRow = leaderboardRows.find((r) => r.roundPlayerId === p.id);
                     const currentTotalLabel =
                       bundle.round.scoring_format === "stableford"
                         ? lbRow?.stablefordPoints != null
-                          ? `Total ${lbRow.stablefordPoints} pts`
+                          ? `Points ${lbRow.stablefordPoints}`
                           : "Total —"
-                        : (() => {
-                            if (lbRow?.netTotal == null) return "Total —";
-                            const thruHoles = holesSnapshots.slice(0, Math.max(0, lbRow.thru));
-                            const thruPar = thruHoles.reduce((sum, h) => sum + h.par, 0);
-                            const delta = lbRow.netTotal - thruPar;
-                            const sign = delta > 0 ? `+${delta}` : String(delta);
-                            return `${sign} net`;
-                          })();
+                        : lbRow?.netTotal != null
+                          ? `Net ${lbRow.netTotal}`
+                          : "Total —";
                     const canEdit = isRoundCreator || ownRoundPlayerIds.includes(p.id);
                     const scoresLocked = bundle.round.status === "completed";
                     const disabled = scoresLocked || !canEdit || !freePlayWritesOk;
@@ -2646,6 +2271,10 @@ export default function FreePlayRoundDetailScreen() {
                       p.playing_handicap != null && Number.isFinite(Number(p.playing_handicap))
                         ? Number(p.playing_handicap)
                         : intPlayingHandicap(p.playing_handicap, p.handicap_index);
+                    const chValue =
+                      p.course_handicap != null && Number.isFinite(Number(p.course_handicap))
+                        ? Number(p.course_handicap)
+                        : null;
                     const cardSaving =
                       holeSaveUi?.playerId === p.id && holeSaveUi.hole === currentHole && holeSaveUi.phase === "saving";
                     const saveHint =
@@ -2663,26 +2292,22 @@ export default function FreePlayRoundDetailScreen() {
                         key={p.id}
                         playerName={p.display_name}
                         playingHandicapLabel={phValue != null ? `Playing handicap ${Math.round(phValue)}` : "Playing handicap —"}
+                        courseHandicapLabel={chValue != null ? `Course handicap ${Math.round(chValue)}` : null}
                         currentTotalLabel={currentTotalLabel}
+                        relativeToParLabel={relativeToParByPlayerId[p.id] ?? "—"}
                         grossDisplay={grossDisplay}
+                        isConfirmedScore={isConfirmedScore}
+                        defaultHint={`Par default (${par})`}
                         disabled={disabled}
                         saving={cardSaving}
                         saveHint={saveHint}
                         onDecrement={() => {
-                          if (gross != null && Number.isFinite(gross)) {
-                            if (gross <= 1) saveHoleWithFeedback(p.id, currentHole, null, Haptics.ImpactFeedbackStyle.Medium);
-                            else saveHoleWithFeedback(p.id, currentHole, gross - 1);
-                          } else {
-                            const start = Math.max(1, par - 1);
-                            saveHoleWithFeedback(p.id, currentHole, start);
-                          }
+                          const next = nextGrossOnDecrement(gross, par);
+                          saveHoleWithFeedback(p.id, currentHole, next, Haptics.ImpactFeedbackStyle.Medium);
                         }}
                         onIncrement={() => {
-                          if (gross == null || !Number.isFinite(gross)) {
-                            saveHoleWithFeedback(p.id, currentHole, currentParForHole);
-                          } else {
-                            saveHoleWithFeedback(p.id, currentHole, gross + 1);
-                          }
+                          const next = nextGrossOnIncrement(gross, par);
+                          saveHoleWithFeedback(p.id, currentHole, next);
                         }}
                         onCommitTypedGross={(n) =>
                           saveHoleWithFeedback(p.id, currentHole, n, Haptics.ImpactFeedbackStyle.Medium)
@@ -2690,6 +2315,14 @@ export default function FreePlayRoundDetailScreen() {
                       />
                     );
                   })}
+                  {allScoreablePlayersScoredCurrentHole && currentHole < maxHoleNumber ? (
+                    <PrimaryButton
+                      label="Next hole"
+                      onPress={() => void goNextHole()}
+                      disabled={!freePlayWritesOk}
+                      style={{ marginTop: spacing.sm }}
+                    />
+                  ) : null}
                   {currentHoleSiUnavailable && bundle.round.scoring_format === "stableford" ? (
                     <InlineNotice
                       variant="info"
@@ -2727,56 +2360,6 @@ export default function FreePlayRoundDetailScreen() {
                     </AppText>
                   ) : null}
                 </Animated.View>
-              ) : scoreViewTab === "stats" ? (
-                <FreePlayStatsComingSoonCard />
-              ) : holeNumbers.length > 0 ? (
-                <View style={{ marginTop: spacing.md }}>
-                  <View style={styles.modeRow}>
-                    {scoreablePlayers.map((p) => (
-                      <Pressable
-                        key={`card-${p.id}`}
-                        onPress={() => {
-                          triggerSelection();
-                          setSelectedPlayerId(p.id);
-                          const map: Record<number, string> = {};
-                          for (const h of bundle.holeScores.filter((x) => x.round_player_id === p.id)) {
-                            map[h.hole_number] = h.gross_strokes == null ? "" : String(h.gross_strokes);
-                          }
-                          setHoleInputs(map);
-                        }}
-                        style={[
-                          styles.modeChip,
-                          {
-                            borderColor: selectedPlayerId === p.id ? colors.primary : colors.borderLight,
-                            backgroundColor: selectedPlayerId === p.id ? `${colors.primary}14` : colors.surface,
-                          },
-                        ]}
-                      >
-                        <AppText variant="captionBold" color={selectedPlayerId === p.id ? "primary" : "secondary"}>
-                          {p.display_name}
-                        </AppText>
-                      </Pressable>
-                    ))}
-                  </View>
-                  <FreePlayTraditionalCardGrid
-                    holeNumbers={holeNumbers}
-                    holeMetaByNo={holeMetaByNo}
-                    holeInputs={holeInputs}
-                    onHoleInputChange={(hole, value) => setHoleInputs((prev) => ({ ...prev, [hole]: value }))}
-                    metaParTotals={metaParTotals}
-                    metaDistanceTotals={metaDistanceTotals}
-                    selectedScoreTotals={selectedScoreTotals}
-                    formatDistance={formatDistance}
-                    formatScore={formatScore}
-                    currentHole={currentHole}
-                    footerValueLabel={bundle.round.scoring_format === "stableford" ? "Gross" : "Gross"}
-                    onSaveAll={() => void onSaveHoles()}
-                    saving={saving}
-                    readOnly={!freePlayWritesOk}
-                  />
-                </View>
-              ) : (
-                <FreePlayScorecardEmptyState />
               )}
 
               <View style={[styles.inlineRow, { marginTop: spacing.lg }]}>
@@ -2857,14 +2440,12 @@ export default function FreePlayRoundDetailScreen() {
       </ScrollView>
       {showPremiumHoleDashboard ? (
         <View style={[styles.stickyLeaderboardWrap, { borderColor: colors.borderLight, backgroundColor: colors.backgroundSecondary }]}>
-          <FreePlayLeaderboardPreview
+          <FreePlayMiniLeaderboard
             format={bundle.round.scoring_format === "stableford" ? "stableford" : "stroke_net"}
             rows={leaderboardRows}
-            onPressOpenFull={() => setLeaderboardOpen(true)}
             expectedHoles={maxHoleNumber}
-            maxRows={leaderboardRows.length <= 4 ? leaderboardRows.length : 3}
-            compact
-            hideCta
+            onPressOpen={() => setLeaderboardOpen(true)}
+            relativeToParByPlayerId={relativeToParByPlayerId}
           />
         </View>
       ) : null}
@@ -3056,30 +2637,6 @@ const styles = StyleSheet.create({
     width: "22%",
     minWidth: 64,
   },
-  holeHeaderCard: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    justifyContent: "space-between",
-    gap: spacing.sm,
-    borderWidth: 1,
-    borderRadius: radius.lg,
-    padding: spacing.base,
-    marginBottom: spacing.xs,
-  },
-  holeNavCluster: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: spacing.xs,
-    alignItems: "center",
-    maxWidth: 160,
-    justifyContent: "flex-end",
-  },
-  quickScoreRow: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: spacing.xs,
-    alignItems: "center",
-  },
   leaderboardCard: {
     borderWidth: 1,
     borderRadius: radius.md,
@@ -3097,10 +2654,6 @@ const styles = StyleSheet.create({
     alignItems: "center",
     paddingVertical: 6,
     gap: spacing.xs,
-  },
-  stickyLiveBar: {
-    zIndex: 2,
-    borderBottomWidth: StyleSheet.hairlineWidth,
   },
   holeNavFooter: {
     flexDirection: "row",
