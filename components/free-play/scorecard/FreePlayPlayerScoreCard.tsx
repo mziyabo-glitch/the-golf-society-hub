@@ -3,40 +3,33 @@ import { Animated, Easing, Pressable, StyleSheet, TextInput, View } from "react-
 
 import { AppText } from "@/components/ui/AppText";
 import { getColors, radius, spacing } from "@/lib/ui/theme";
-import { freePlayPremium } from "@/lib/ui/freePlayPremiumTheme";
 
 export type FreePlayPlayerScoreCardProps = {
   playerName: string;
   playingHandicapLabel?: string | null;
-  courseHandicapLabel?: string | null;
-  currentTotalLabel?: string | null;
-  relativeToParLabel?: string | null;
+  grossValue: number | null;
   grossDisplay: string;
-  isConfirmedScore: boolean;
-  defaultHint?: string | null;
+  par: number;
+  onCycleScore: () => void;
   onDecrement: () => void;
   onIncrement: () => void;
   onCommitTypedGross: (gross: number | null) => void;
+  showFineAdjust?: boolean;
   disabled?: boolean;
-  saving?: boolean;
-  saveHint?: string | null;
 };
 
 export function FreePlayPlayerScoreCard({
   playerName,
   playingHandicapLabel,
-  courseHandicapLabel,
-  currentTotalLabel,
-  relativeToParLabel,
+  grossValue,
   grossDisplay,
-  isConfirmedScore,
-  defaultHint,
+  par,
+  onCycleScore,
   onDecrement,
   onIncrement,
   onCommitTypedGross,
+  showFineAdjust,
   disabled,
-  saving,
-  saveHint,
 }: FreePlayPlayerScoreCardProps) {
   const colors = getColors();
   const dim = disabled;
@@ -93,65 +86,41 @@ export function FreePlayPlayerScoreCard({
           backgroundColor: colors.surface,
           opacity: dim ? 0.55 : 1,
         },
-        freePlayPremium.cardShadow,
       ]}
     >
-      <AppText variant="bodyBold" numberOfLines={1}>
-        {playerName}
-      </AppText>
-      {playingHandicapLabel ? (
-        <AppText variant="caption" color="tertiary" style={{ marginTop: 4 }}>
-          {playingHandicapLabel}
-          {courseHandicapLabel ? ` · ${courseHandicapLabel}` : ""}
-        </AppText>
-      ) : null}
-      <View style={styles.metaRow}>
-        <AppText variant="captionBold" color="secondary">
-          {currentTotalLabel ?? "Total —"}
-        </AppText>
-        <AppText variant="bodyBold" color="primary">
-          {relativeToParLabel ?? "—"}
-        </AppText>
-        <AppText
-          variant="captionBold"
-          color={
-            saveHint?.toLowerCase().includes("fail")
-              ? "warning"
-              : saveHint?.toLowerCase().includes("saving")
-                ? "secondary"
-                : "primary"
-          }
-        >
-          {saveHint ?? (saving ? "Saving..." : "Saved")}
-        </AppText>
-      </View>
-
-      <View style={styles.scoreRow}>
-        <Pressable
-          onPress={onDecrement}
-          disabled={disabled}
-          accessibilityRole="button"
-          accessibilityLabel="Decrease gross strokes"
-          hitSlop={8}
-          style={({ pressed }) => [
-            styles.bigBtn,
-            { borderColor: colors.primary, opacity: disabled ? 0.35 : pressed ? 0.85 : 1 },
-          ]}
-        >
-          <AppText variant="h2" color="primary">
-            −
+      <View style={styles.row}>
+        <View style={styles.nameWrap}>
+          <AppText variant="bodyBold" numberOfLines={1}>
+            {playerName}
           </AppText>
-        </Pressable>
+          {playingHandicapLabel ? (
+            <AppText variant="caption" color="tertiary" numberOfLines={1} style={{ marginTop: 2 }}>
+              {playingHandicapLabel}
+            </AppText>
+          ) : null}
+        </View>
         <Pressable
           onPress={() => {
+            if (typing || dim) return;
+            onCycleScore();
+          }}
+          onLongPress={() => {
             if (dim) return;
-            setTypedValue(grossDisplay === "—" ? "" : grossDisplay);
+            setTypedValue(grossValue == null || !Number.isFinite(grossValue) ? "" : String(Math.round(grossValue)));
             setTyping(true);
           }}
+          delayLongPress={300}
           disabled={dim}
           accessibilityRole="button"
-          accessibilityLabel="Edit gross score"
-          style={styles.grossBox}
+          accessibilityLabel="Score cell. Tap to cycle, long press to type."
+          style={({ pressed }) => [
+            styles.scoreCell,
+            {
+              borderColor: colors.borderLight,
+              backgroundColor: colors.background,
+              opacity: dim ? 0.55 : pressed ? 0.9 : 1,
+            },
+          ]}
         >
           {typing ? (
             <View style={styles.typeWrap}>
@@ -164,45 +133,56 @@ export function FreePlayPlayerScoreCard({
                 onSubmitEditing={commitTyped}
                 onBlur={commitTyped}
                 style={[styles.typeInput, { borderColor: typedError ? colors.warning : colors.borderLight, color: colors.text }]}
-                placeholder="--"
+                placeholder="-"
                 placeholderTextColor={colors.textTertiary}
               />
             </View>
           ) : (
-            <>
-              <Animated.View style={{ transform: [{ scale: scoreScale }] }}>
-                <AppText
-                  variant="h1"
-                  style={[
-                    styles.grossNum,
-                    { color: isConfirmedScore ? colors.text : colors.textSecondary, opacity: isConfirmedScore ? 1 : 0.72 },
-                  ]}
-                >
-                  {grossDisplay}
-                </AppText>
-              </Animated.View>
-              <AppText variant="caption" color="tertiary">
-                {isConfirmedScore ? "Tap to type" : defaultHint ?? "Par default · tap to confirm"}
+            <Animated.View style={{ transform: [{ scale: scoreScale }] }}>
+              <AppText variant="h1" style={styles.scoreText}>
+                {grossDisplay}
               </AppText>
-            </>
+            </Animated.View>
           )}
         </Pressable>
-        <Pressable
-          onPress={onIncrement}
-          disabled={disabled}
-          accessibilityRole="button"
-          accessibilityLabel="Increase gross strokes"
-          hitSlop={8}
-          style={({ pressed }) => [
-            styles.bigBtn,
-            { borderColor: colors.primary, opacity: disabled ? 0.35 : pressed ? 0.85 : 1 },
-          ]}
-        >
-          <AppText variant="h2" color="primary">
-            +
-          </AppText>
-        </Pressable>
       </View>
+      {showFineAdjust && grossValue != null && Number.isFinite(grossValue) ? (
+        <View style={styles.adjustRow}>
+          <Pressable
+            onPress={onDecrement}
+            disabled={disabled}
+            accessibilityRole="button"
+            accessibilityLabel="Decrease gross strokes"
+            hitSlop={8}
+            style={({ pressed }) => [
+              styles.tinyBtn,
+              { borderColor: colors.borderLight, opacity: disabled ? 0.45 : pressed ? 0.84 : 1 },
+            ]}
+          >
+            <AppText variant="captionBold" color="secondary">
+              −
+            </AppText>
+          </Pressable>
+          <AppText variant="caption" color="tertiary">
+            Par {par}
+          </AppText>
+          <Pressable
+            onPress={onIncrement}
+            disabled={disabled}
+            accessibilityRole="button"
+            accessibilityLabel="Increase gross strokes"
+            hitSlop={8}
+            style={({ pressed }) => [
+              styles.tinyBtn,
+              { borderColor: colors.borderLight, opacity: disabled ? 0.45 : pressed ? 0.84 : 1 },
+            ]}
+          >
+            <AppText variant="captionBold" color="secondary">
+              +
+            </AppText>
+          </Pressable>
+        </View>
+      ) : null}
       {typedError ? (
         <AppText variant="caption" color="warning" style={styles.errorText}>
           {typedError}
@@ -215,52 +195,59 @@ export function FreePlayPlayerScoreCard({
 const styles = StyleSheet.create({
   card: {
     borderWidth: 1,
-    borderRadius: freePlayPremium.cardRadius,
-    padding: spacing.base,
-    marginTop: spacing.md,
+    borderRadius: radius.lg,
+    paddingHorizontal: spacing.base,
+    paddingVertical: spacing.sm,
+    marginTop: spacing.sm,
   },
-  metaRow: {
+  row: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    marginTop: spacing.sm,
+    gap: spacing.sm,
   },
-  scoreRow: {
+  nameWrap: {
+    flex: 1,
+    minWidth: 0,
+  },
+  scoreCell: {
+    minWidth: 72,
+    height: 56,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  scoreText: {
+    fontSize: 34,
+    lineHeight: 36,
+  },
+  adjustRow: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "center",
-    gap: spacing.sm,
-    marginTop: spacing.md,
+    justifyContent: "flex-end",
+    gap: spacing.xs,
+    marginTop: spacing.xs,
   },
-  bigBtn: {
-    width: 64,
-    height: 64,
-    borderRadius: radius.xl,
-    borderWidth: 2,
+  tinyBtn: {
+    borderWidth: 1,
+    borderRadius: radius.md,
+    minWidth: 28,
+    height: 28,
     alignItems: "center",
     justifyContent: "center",
-  },
-  grossBox: {
-    minWidth: 120,
-    minHeight: 86,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  grossNum: {
-    fontSize: 44,
-    lineHeight: 48,
   },
   typeWrap: {
-    width: 92,
+    width: 60,
     alignItems: "center",
   },
   typeInput: {
-    width: 92,
-    height: 56,
+    width: 60,
+    height: 40,
     borderWidth: 1,
     borderRadius: radius.md,
     textAlign: "center",
-    fontSize: 28,
+    fontSize: 22,
     fontWeight: "700",
   },
   errorText: {

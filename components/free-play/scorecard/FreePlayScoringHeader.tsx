@@ -2,7 +2,6 @@ import { Pressable, StyleSheet, View } from "react-native";
 
 import { AppText } from "@/components/ui/AppText";
 import { getColors, radius, spacing } from "@/lib/ui/theme";
-import { freePlayPremium } from "@/lib/ui/freePlayPremiumTheme";
 
 export type FreePlayScoringHeaderProps = {
   holeNumber: number;
@@ -36,15 +35,7 @@ export function FreePlayScoringHeader({
   const saveTone = saveState === "failed" ? "warning" : saveState === "saving" ? "secondary" : "primary";
 
   return (
-    <View
-      style={[
-        styles.card,
-        {
-          borderColor: freePlayPremium.accentDeepGreen + "44",
-          backgroundColor: freePlayPremium.creamSurface,
-        },
-      ]}
-    >
+    <View style={[styles.card, { borderColor: colors.borderLight, backgroundColor: colors.surface }]}>
       {resumedHole != null ? (
         <View style={[styles.banner, { borderColor: colors.primary + "44", backgroundColor: colors.primary + "10" }]}>
           <AppText variant="captionBold" color="primary">
@@ -53,6 +44,12 @@ export function FreePlayScoringHeader({
         </View>
       ) : null}
       <View style={styles.topRow}>
+        <View style={styles.center}>
+          <AppText variant="h2">Hole {holeNumber}</AppText>
+          <AppText variant="caption" color="tertiary" style={{ marginTop: 2 }}>
+            {holeNumber}/{maxHoleNumber}
+          </AppText>
+        </View>
         <Pressable
           onPress={onPrev}
           disabled={!canPrev}
@@ -65,14 +62,6 @@ export function FreePlayScoringHeader({
             Prev
           </AppText>
         </Pressable>
-        <View style={styles.center}>
-          <AppText variant="captionBold" style={{ color: freePlayPremium.accentDeepGreen, letterSpacing: 1 }}>
-            Hole {holeNumber} of {maxHoleNumber}
-          </AppText>
-          <AppText variant="h1" style={{ marginTop: 2 }}>
-            {holeNumber}
-          </AppText>
-        </View>
         <Pressable
           onPress={onNext}
           disabled={!canNext}
@@ -87,25 +76,10 @@ export function FreePlayScoringHeader({
         </Pressable>
       </View>
       <View style={styles.metaRow}>
-        <View style={[styles.pill, { borderColor: colors.borderLight }]}>
-          <AppText variant="captionBold" color="secondary">
-            Par {par}
-          </AppText>
-        </View>
-        <View style={[styles.pill, { borderColor: colors.borderLight }]}>
-          <AppText variant="captionBold" color="secondary">
-            SI {strokeIndex ?? "-"}
-          </AppText>
-        </View>
-        {yardageLabel ? (
-          <View style={[styles.pill, { borderColor: colors.borderLight }]}>
-            <AppText variant="captionBold" color="secondary">
-              {yardageLabel}
-            </AppText>
-          </View>
-        ) : null}
-      </View>
-      <View style={styles.saveRow}>
+        <AppText variant="bodyBold" color="secondary">
+          Par {par} · SI {strokeIndex ?? "-"}
+          {yardageLabel ? ` · ${yardageLabel}` : ""}
+        </AppText>
         <AppText variant="captionBold" color={saveTone}>
           {saveLabel}
         </AppText>
@@ -117,8 +91,9 @@ export function FreePlayScoringHeader({
 const styles = StyleSheet.create({
   card: {
     borderWidth: 1,
-    borderRadius: freePlayPremium.heroRadius,
-    padding: spacing.base,
+    borderRadius: radius.lg,
+    paddingHorizontal: spacing.base,
+    paddingVertical: spacing.sm,
     marginBottom: spacing.sm,
   },
   banner: {
@@ -132,11 +107,11 @@ const styles = StyleSheet.create({
   topRow: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "space-between",
+    justifyContent: "flex-end",
     gap: spacing.sm,
   },
   center: {
-    alignItems: "center",
+    marginRight: "auto",
     flex: 1,
   },
   navBtn: {
@@ -144,24 +119,13 @@ const styles = StyleSheet.create({
     borderRadius: radius.md,
     paddingHorizontal: spacing.sm,
     paddingVertical: spacing.sm,
-    minWidth: 74,
+    minWidth: 64,
     alignItems: "center",
   },
   metaRow: {
     flexDirection: "row",
-    flexWrap: "wrap",
-    gap: spacing.xs,
+    alignItems: "center",
+    justifyContent: "space-between",
     marginTop: spacing.sm,
-  },
-  pill: {
-    borderWidth: 1,
-    borderRadius: radius.md,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 4,
-  },
-  saveRow: {
-    marginTop: spacing.sm,
-    flexDirection: "row",
-    justifyContent: "flex-end",
   },
 });

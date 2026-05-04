@@ -81,7 +81,6 @@ import { logFreePlayScorecardDataPathQa } from "@/lib/free-play/scorecardDataPat
 import { mergeHoleGrossIntoBundle } from "@/lib/free-play/mergeFreePlayBundleHoleScore";
 import { findFirstIncompleteHoleNumber } from "@/lib/free-play/freePlayHoleResume";
 import { getFreePlayStartBlockers } from "@/lib/free-play/freePlayStartReadiness";
-import { FreePlayHoleJumpBar } from "@/components/free-play/scorecard/FreePlayHoleJumpBar";
 import { analyzeHoleScoreRowKeys } from "@/lib/free-play/freePlayHoleScoreDiagnostics";
 import { nextGrossOnDecrement, nextGrossOnIncrement } from "@/lib/free-play/freePlayGrossControl";
 import { flushThenSetHole } from "@/lib/free-play/freePlayHoleNavigation";
@@ -90,6 +89,15 @@ function formatRelativeToPar(delta: number | null): string {
   if (delta == null || !Number.isFinite(delta)) return "—";
   if (delta === 0) return "E";
   return delta > 0 ? `+${delta}` : String(delta);
+}
+
+function cycleGrossForSimpleMode(currentGross: number | null, par: number): number | null {
+  const sequence = [par, par + 1, par + 2, par + 3];
+  if (currentGross == null || !Number.isFinite(currentGross)) return sequence[0] ?? par;
+  const rounded = Math.round(currentGross);
+  const idx = sequence.indexOf(rounded);
+  if (idx === -1 || idx >= sequence.length - 1) return null;
+  return sequence[idx + 1] ?? null;
 }
 
 export default function FreePlayRoundDetailScreen() {
@@ -126,6 +134,7 @@ export default function FreePlayRoundDetailScreen() {
   const [currentHole, setCurrentHole] = useState(1);
   const [roundTrust, setRoundTrust] = useState<CourseApprovalState | null>(null);
   const [leaderboardOpen, setLeaderboardOpen] = useState(false);
+  const [miniLeaderboardOpen, setMiniLeaderboardOpen] = useState(false);
   const [completedView, setCompletedView] = useState<"summary" | "card">("summary");
   const [editingHandicapPlayerId, setEditingHandicapPlayerId] = useState<string | null>(null);
   const [editingHandicapInput, setEditingHandicapInput] = useState("");
@@ -571,13 +580,23 @@ export default function FreePlayRoundDetailScreen() {
   const editingHandicapPreview = useMemo(() => {
     const hi = normalizeHandicapIndexInput(editingHandicapInput);
     if (hi == null) return null;
+    const parFromHoles = holeMeta.reduce((sum, h) => {
+      const p = Number(h.par);
+      return Number.isFinite(p) && p > 0 ? sum + p : sum;
+    }, 0);
+    const resolvedParTotal =
+      Number.isFinite(Number(teeMeta?.par_total)) && Number(teeMeta?.par_total) > 0
+        ? Number(teeMeta?.par_total)
+        : parFromHoles > 0
+          ? parFromHoles
+          : null;
     return deriveCourseAndPlayingHandicapFromHi({
       handicapIndex: hi,
       slopeRating: teeMeta?.slope_rating,
       courseRating: teeMeta?.course_rating,
-      parTotal: teeMeta?.par_total,
+      parTotal: resolvedParTotal,
     });
-  }, [editingHandicapInput, teeMeta?.slope_rating, teeMeta?.course_rating, teeMeta?.par_total]);
+  }, [editingHandicapInput, teeMeta?.slope_rating, teeMeta?.course_rating, teeMeta?.par_total, holeMeta]);
 
   useEffect(() => {
     if (bundle?.round.status === "completed") {
@@ -761,23 +780,11 @@ export default function FreePlayRoundDetailScreen() {
     }
   }, []);
 
-  const currentHoleSiUnavailable = useMemo(() => {
-    const row = holeMetaByNo.get(currentHole);
-    return !(Number.isFinite(Number(row?.stroke_index)) && Number(row?.stroke_index) > 0);
-  }, [holeMetaByNo, currentHole]);
-
   const currentHoleStrokeIndexDisplay = useMemo(() => {
     const row = holeMetaByNo.get(currentHole);
     if (!(Number.isFinite(Number(row?.stroke_index)) && Number(row?.stroke_index) > 0)) return null;
     return Math.round(Number(row?.stroke_index));
   }, [holeMetaByNo, currentHole]);
-
-  const firstIncompleteHoleForSelection = useMemo(() => {
-    if (!bundle) return null;
-    const playerId = selectedPlayerId ?? scoreablePlayers[0]?.id ?? bundle.players[0]?.id;
-    if (!playerId) return null;
-    return findFirstIncompleteHoleNumber(holeNumbers, bundle.holeScores, playerId);
-  }, [bundle, selectedPlayerId, scoreablePlayers, holeNumbers]);
 
   const relativeToParByPlayerId = useMemo(() => {
     const out: Record<string, string> = {};
@@ -834,27 +841,6 @@ export default function FreePlayRoundDetailScreen() {
       setError(e instanceof Error ? e.message : "Could not save pending scores.");
     }
   }, [currentHole, maxHoleNumber, triggerSelection, flushPendingDebouncedHoleScores]);
-
-  const jumpToHole = useCallback(
-    async (n: number) => {
-      if (!Number.isFinite(n) || n < 1 || n > maxHoleNumber) return;
-      triggerSelection();
-      try {
-        await flushThenSetHole(flushPendingDebouncedHoleScores, setCurrentHole, n);
-      } catch (e) {
-        setError(e instanceof Error ? e.message : "Could not save pending scores.");
-      }
-    },
-    [maxHoleNumber, triggerSelection, flushPendingDebouncedHoleScores],
-  );
-
-  const allScoreablePlayersScoredCurrentHole = useMemo(() => {
-    if (!bundle) return false;
-    if (scoreablePlayers.length === 0) return false;
-    return scoreablePlayers.every((p) =>
-      bundle.holeScores.some((h) => h.round_player_id === p.id && h.hole_number === currentHole),
-    );
-  }, [bundle, scoreablePlayers, currentHole]);
 
   const holeSwipeResponder = useMemo(
     () =>
@@ -1509,7 +1495,7 @@ export default function FreePlayRoundDetailScreen() {
     <Screen scrollable={false} contentStyle={{ flex: 1, padding: 0 }} style={{ backgroundColor: colors.backgroundSecondary }}>
       <ScrollView
         style={{ flex: 1 }}
-        contentContainerStyle={[styles.scroll, showPremiumHoleDashboard ? styles.scrollWithStickyLeaderboard : null]}
+        contentContainerStyle={styles.scroll}
         stickyHeaderIndices={showPremiumHoleDashboard ? [1] : undefined}
         keyboardShouldPersistTaps="handled"
       >
@@ -2183,14 +2169,6 @@ export default function FreePlayRoundDetailScreen() {
                   style={{ marginBottom: spacing.sm }}
                 />
               ) : null}
-              {!isRoundCreator ? (
-                <InlineNotice
-                  variant="info"
-                  message="You can enter scores for your own player row. The round owner can enter for everyone."
-                  style={{ marginBottom: spacing.sm }}
-                />
-              ) : null}
-
               {scoreablePlayers.length === 0 ? (
                 <FreePlayScorecardEmptyState />
               ) : (
@@ -2227,43 +2205,13 @@ export default function FreePlayRoundDetailScreen() {
                     }
                     resumedHole={resumedHoleBanner}
                   />
-                  <FreePlayHoleJumpBar
-                    holeNumbers={holeNumbers}
-                    currentHole={currentHole}
-                    onSelectHole={(n) => void jumpToHole(n)}
-                    disabled={!freePlayWritesOk}
-                  />
-                  {firstIncompleteHoleForSelection != null && firstIncompleteHoleForSelection !== currentHole ? (
-                    <SecondaryButton
-                      label={`Jump to first incomplete (Hole ${firstIncompleteHoleForSelection})`}
-                      size="sm"
-                      onPress={() => void jumpToHole(firstIncompleteHoleForSelection)}
-                      disabled={!freePlayWritesOk}
-                      style={{ marginTop: spacing.sm }}
-                    />
-                  ) : null}
                   {scoreablePlayers.map((p) => {
                     const holeScoreRow = bundle.holeScores.find(
                       (h) => h.round_player_id === p.id && h.hole_number === currentHole,
                     );
                     const gross = holeScoreRow?.gross_strokes ?? null;
                     const par = currentParForHole;
-                    const isConfirmedScore = !!holeScoreRow;
-                    const grossDisplay =
-                      gross == null || !Number.isFinite(gross)
-                        ? isConfirmedScore
-                          ? "—"
-                          : String(par)
-                        : String(gross);
-                    const lbRow = leaderboardRows.find((r) => r.roundPlayerId === p.id);
-                    const currentTotalLabel =
-                      bundle.round.scoring_format === "stableford"
-                        ? lbRow?.stablefordPoints != null
-                          ? `Points ${lbRow.stablefordPoints}`
-                          : "Total —"
-                        : lbRow?.netTotal != null
-                          ? `Net ${lbRow.netTotal}`
-                          : "Total —";
+                    const grossDisplay = gross == null || !Number.isFinite(gross) ? "-" : String(Math.round(gross));
                     const canEdit = isRoundCreator || ownRoundPlayerIds.includes(p.id);
                     const scoresLocked = bundle.round.status === "completed";
                     const disabled = scoresLocked || !canEdit || !freePlayWritesOk;
@@ -2271,36 +2219,20 @@ export default function FreePlayRoundDetailScreen() {
                       p.playing_handicap != null && Number.isFinite(Number(p.playing_handicap))
                         ? Number(p.playing_handicap)
                         : intPlayingHandicap(p.playing_handicap, p.handicap_index);
-                    const chValue =
-                      p.course_handicap != null && Number.isFinite(Number(p.course_handicap))
-                        ? Number(p.course_handicap)
-                        : null;
-                    const cardSaving =
-                      holeSaveUi?.playerId === p.id && holeSaveUi.hole === currentHole && holeSaveUi.phase === "saving";
-                    const saveHint =
-                      holeSaveUi?.playerId === p.id && holeSaveUi.hole === currentHole
-                        ? holeSaveUi.phase === "saved"
-                          ? "Saved"
-                          : holeSaveUi.phase === "failed"
-                            ? "Failed — try again"
-                            : null
-                        : holeScoreRow
-                          ? "Saved"
-                          : "Waiting";
                     return (
                       <FreePlayPlayerScoreCard
                         key={p.id}
                         playerName={p.display_name}
-                        playingHandicapLabel={phValue != null ? `Playing handicap ${Math.round(phValue)}` : "Playing handicap —"}
-                        courseHandicapLabel={chValue != null ? `Course handicap ${Math.round(chValue)}` : null}
-                        currentTotalLabel={currentTotalLabel}
-                        relativeToParLabel={relativeToParByPlayerId[p.id] ?? "—"}
+                        playingHandicapLabel={phValue != null ? `PH ${Math.round(phValue)}` : null}
+                        grossValue={gross}
                         grossDisplay={grossDisplay}
-                        isConfirmedScore={isConfirmedScore}
-                        defaultHint={`Par default (${par})`}
+                        par={par}
+                        showFineAdjust={gross != null && Number.isFinite(gross)}
                         disabled={disabled}
-                        saving={cardSaving}
-                        saveHint={saveHint}
+                        onCycleScore={() => {
+                          const next = cycleGrossForSimpleMode(gross, par);
+                          saveHoleWithFeedback(p.id, currentHole, next, Haptics.ImpactFeedbackStyle.Light);
+                        }}
                         onDecrement={() => {
                           const next = nextGrossOnDecrement(gross, par);
                           saveHoleWithFeedback(p.id, currentHole, next, Haptics.ImpactFeedbackStyle.Medium);
@@ -2315,35 +2247,33 @@ export default function FreePlayRoundDetailScreen() {
                       />
                     );
                   })}
-                  {allScoreablePlayersScoredCurrentHole && currentHole < maxHoleNumber ? (
+                  {currentHole < maxHoleNumber ? (
                     <PrimaryButton
-                      label="Next hole"
+                      label="Next Hole"
                       onPress={() => void goNextHole()}
                       disabled={!freePlayWritesOk}
                       style={{ marginTop: spacing.sm }}
                     />
                   ) : null}
-                  {currentHoleSiUnavailable && bundle.round.scoring_format === "stableford" ? (
-                    <InlineNotice
-                      variant="info"
-                      message="Stroke index unavailable — Stableford points may be limited for this hole. Points show as — until SI data is complete."
-                      style={{ marginTop: spacing.sm }}
-                    />
-                  ) : null}
-                  <View style={[styles.holeNavFooter, { borderColor: colors.borderLight }]}>
+                  <View style={[styles.inlineRow, { marginTop: spacing.sm }]}>
+                    <SecondaryButton label="View leaderboard" size="sm" onPress={() => setLeaderboardOpen(true)} />
                     <SecondaryButton
-                      label="Previous hole"
+                      label={miniLeaderboardOpen ? "Hide mini leaderboard" : "Show mini leaderboard"}
                       size="sm"
-                      onPress={goPrevHole}
-                      disabled={currentHole <= 1}
-                    />
-                    <SecondaryButton
-                      label="Next hole"
-                      size="sm"
-                      onPress={goNextHole}
-                      disabled={currentHole >= maxHoleNumber}
+                      onPress={() => setMiniLeaderboardOpen((v) => !v)}
                     />
                   </View>
+                  {miniLeaderboardOpen ? (
+                    <View style={{ marginTop: spacing.sm }}>
+                      <FreePlayMiniLeaderboard
+                        format={bundle.round.scoring_format === "stableford" ? "stableford" : "stroke_net"}
+                        rows={leaderboardRows}
+                        expectedHoles={maxHoleNumber}
+                        onPressOpen={() => setLeaderboardOpen(true)}
+                        relativeToParByPlayerId={relativeToParByPlayerId}
+                      />
+                    </View>
+                  ) : null}
                   {currentHole >= maxHoleNumber &&
                   bundle.round.status === "in_progress" &&
                   isRoundCreator ? (
@@ -2438,17 +2368,6 @@ export default function FreePlayRoundDetailScreen() {
           </AppCard>
         ) : null}
       </ScrollView>
-      {showPremiumHoleDashboard ? (
-        <View style={[styles.stickyLeaderboardWrap, { borderColor: colors.borderLight, backgroundColor: colors.backgroundSecondary }]}>
-          <FreePlayMiniLeaderboard
-            format={bundle.round.scoring_format === "stableford" ? "stableford" : "stroke_net"}
-            rows={leaderboardRows}
-            expectedHoles={maxHoleNumber}
-            onPressOpen={() => setLeaderboardOpen(true)}
-            relativeToParByPlayerId={relativeToParByPlayerId}
-          />
-        </View>
-      ) : null}
       <Modal
         visible={editingHandicapPlayer != null}
         animationType="slide"
@@ -2511,19 +2430,6 @@ const styles = StyleSheet.create({
   scroll: {
     padding: spacing.base,
     paddingBottom: spacing.xl,
-  },
-  scrollWithStickyLeaderboard: {
-    paddingBottom: 190,
-  },
-  stickyLeaderboardWrap: {
-    position: "absolute",
-    left: 0,
-    right: 0,
-    bottom: 0,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    paddingHorizontal: spacing.base,
-    paddingTop: spacing.sm,
-    paddingBottom: spacing.sm,
   },
   card: {
     marginTop: spacing.base,
@@ -2654,17 +2560,6 @@ const styles = StyleSheet.create({
     alignItems: "center",
     paddingVertical: 6,
     gap: spacing.xs,
-  },
-  holeNavFooter: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginTop: spacing.lg,
-    paddingVertical: spacing.md,
-    paddingHorizontal: spacing.sm,
-    borderWidth: 1,
-    borderRadius: 12,
-    gap: spacing.sm,
   },
   modalBackdrop: {
     flex: 1,

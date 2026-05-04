@@ -94,6 +94,30 @@ describe("deriveCourseAndPlayingHandicapFromHi", () => {
     expect(out.playingHandicap).toBe(13);
     expect(out.usedFormula).toBe(false);
   });
+
+  it("uses WHS formula for Meon Valley yellow tee example", () => {
+    const out = deriveCourseAndPlayingHandicapFromHi({
+      handicapIndex: 18.4,
+      slopeRating: 124,
+      courseRating: 69.5,
+      parTotal: 71,
+    });
+    expect(out.courseHandicap).toBe(19);
+    expect(out.playingHandicap).toBe(19);
+    expect(out.usedFormula).toBe(true);
+  });
+
+  it("applies allowance percentage to playing handicap", () => {
+    const out = deriveCourseAndPlayingHandicapFromHi({
+      handicapIndex: 18.4,
+      slopeRating: 124,
+      courseRating: 69.5,
+      parTotal: 71,
+      allowancePct: 95,
+    });
+    expect(out.courseHandicap).toBe(19);
+    expect(out.playingHandicap).toBe(18);
+  });
 });
 
 describe("buildFreePlayLeaderboard", () => {
