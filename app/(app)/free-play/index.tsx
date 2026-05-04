@@ -124,6 +124,8 @@ export default function FreePlayHomeScreen() {
   const freePlayHomeFocusPassRef = useRef(0);
   const [newRoundSectionY, setNewRoundSectionY] = useState(280);
   const [setupHoles, setSetupHoles] = useState<CourseHoleRow[]>([]);
+  /** Avoid treating empty hole rows as “missing data” while the tee’s holes are still fetching. */
+  const [setupHolesLoading, setSetupHolesLoading] = useState(false);
 
   const ownerName = String(member?.displayName || member?.name || "You");
   const ownerHcp = member?.handicapIndex ?? member?.handicap_index ?? 0;
@@ -225,21 +227,27 @@ export default function FreePlayHomeScreen() {
     canCourseHandicapForSetup,
   ]);
 
+  const setupHolesUnavailable = useMemo(
+    () =>
+      Boolean(selectedTeeId) &&
+      setupHoles.length === 0 &&
+      tees.length > 0 &&
+      !setupHolesLoading,
+    [selectedTeeId, setupHoles.length, tees.length, setupHolesLoading],
+  );
+
   const setupDataQualityBadge = useMemo(() => {
     if (!selectedCourse || !selectedTrustLabelForCard) return null;
     return deriveFreePlayDataTrustBadge({
       trustLabel: selectedTrustLabelForCard,
       strokeIndexIncomplete: setupStrokeIndexIncomplete,
-      holesUnavailable:
-        Boolean(selectedTeeId) && setupHoles.length === 0 && tees.length > 0,
+      holesUnavailable: setupHolesUnavailable,
     });
   }, [
     selectedCourse,
     selectedTrustLabelForCard,
     setupStrokeIndexIncomplete,
-    selectedTeeId,
-    setupHoles.length,
-    tees.length,
+    setupHolesUnavailable,
   ]);
 
   const manCoCanApproveSociety =
@@ -408,19 +416,26 @@ export default function FreePlayHomeScreen() {
   useEffect(() => {
     if (!selectedTeeId) {
       setSetupHoles([]);
+      setSetupHolesLoading(false);
       return;
     }
     let cancelled = false;
+    setSetupHolesLoading(true);
     void getHolesByTeeId(selectedTeeId)
       .then((rows) => {
         if (cancelled) return;
         setSetupHoles(rows.slice().sort((a, b) => a.hole_number - b.hole_number));
+        setSetupHolesLoading(false);
       })
       .catch(() => {
-        if (!cancelled) setSetupHoles([]);
+        if (!cancelled) {
+          setSetupHoles([]);
+          setSetupHolesLoading(false);
+        }
       });
     return () => {
       cancelled = true;
+      setSetupHolesLoading(false);
     };
   }, [selectedTeeId]);
 
@@ -870,7 +885,7 @@ export default function FreePlayHomeScreen() {
             teeCount={tees.length}
             selectedTrustLabel={selectedTrustLabelForCard}
             strokeIndexIncomplete={setupStrokeIndexIncomplete}
-            holesUnavailable={Boolean(selectedTeeId) && setupHoles.length === 0 && tees.length > 0}
+            holesUnavailable={setupHolesUnavailable}
             trustPanel={
               selectedCourse ? (
                 <View style={{ marginTop: spacing.md }}>
