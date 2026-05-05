@@ -7,7 +7,12 @@ import * as WebBrowser from "expo-web-browser";
 import { isCaptain, canManageEventPaymentsForSociety } from "@/lib/rbac";
 import { supabase } from "@/lib/supabase";
 import { getEventsForSociety, type EventDoc } from "@/lib/db_supabase/eventRepo";
-import { getMembersBySocietyId, getMembersByIds, type MemberDoc } from "@/lib/db_supabase/memberRepo";
+import {
+  findMemberByUserAndSociety,
+  getMembersBySocietyId,
+  getMembersByIds,
+  type MemberDoc,
+} from "@/lib/db_supabase/memberRepo";
 import { buildSocietyIdToNameMap } from "@/lib/jointEventSocietyLabel";
 import {
   loadCanonicalTeeSheet,
@@ -58,6 +63,7 @@ import { useReducedMotion } from "@/hooks/useReducedMotion";
 import { getSocietyLogoUrl } from "@/lib/societyLogo";
 import { measureAsync } from "@/lib/perf/perf";
 import { buildRecentActivityRows } from "./homeRecentActivityVm";
+import { logRsvpFailureTelemetry, logRsvpSuccessDevOnly } from "@/lib/events/rsvpTelemetry";
 import {
   formatRole,
   formatPoints,
@@ -107,6 +113,7 @@ export function useHomeDashboard() {
   /** Joint events: member rows for all societies in canonical groups (home only loads active society by default). */
   const [jointTeeMemberAugment, setJointTeeMemberAugment] = useState<MemberDoc[]>([]);
   const [regBusy, setRegBusy] = useState(false);
+  const [regError, setRegError] = useState<string | null>(null);
   const [latestGuestNameMap, setLatestGuestNameMap] = useState<Record<string, string>>({});
 
   // Licence banner state
@@ -341,7 +348,11 @@ export function useHomeDashboard() {
   // Derived Data
   // ============================================================================
 
-  const memberId = member?.id;
+  const activeMembership = useMemo(
+    () => (societyId ? memberships.find((m) => m.societyId === societyId) ?? null : null),
+    [memberships, societyId],
+  );
+  const memberId = member?.id ?? activeMembership?.memberId ?? null;
 
   /** Local calendar date as YYYY-MM-DD (avoids UTC midnight issues with date-only strings). */
   const todayLocalKey = useMemo(() => {
@@ -541,16 +552,26 @@ export function useHomeDashboard() {
 
   // Load registration for the next event whenever it changes
   useEffect(() => {
-    if (!nextEventId || !memberId) {
+    if (!nextEventId || !societyId) {
       setMyReg(null);
       return;
     }
     let cancelled = false;
-    getMyRegistration(nextEventId, memberId).then((reg) => {
+    void (async () => {
+      let effectiveMemberId = memberId;
+      if (!effectiveMemberId && userId) {
+        const linked = await findMemberByUserAndSociety(societyId, userId);
+        effectiveMemberId = linked?.id ?? null;
+      }
+      if (!effectiveMemberId) {
+        if (!cancelled) setMyReg(null);
+        return;
+      }
+      const reg = await getMyRegistration(nextEventId, effectiveMemberId);
       if (!cancelled) setMyReg(reg);
-    });
+    })();
     return () => { cancelled = true; };
-  }, [nextEventId, memberId]);
+  }, [nextEventId, memberId, societyId, userId]);
 
   // Attendance snapshot for next event (status=in), plus guest count if available.
   useEffect(() => {
@@ -716,7 +737,7 @@ export function useHomeDashboard() {
   }, [latestResultsEvent, recentResultsMap, members, latestGuestNameMap]);
 
   const recentActivityRows = useMemo(
-    () => buildRecentActivityRows(recentEvents, recentResultsMap, memberId, colors),
+    () => buildRecentActivityRows(recentEvents, recentResultsMap, memberId ?? undefined, colors),
     [recentEvents, recentResultsMap, memberId, colors],
   );
 
@@ -836,13 +857,43 @@ export function useHomeDashboard() {
   const [showAdmin, setShowAdmin] = useState(false);
 
   const toggleRegistration = async (newStatus: "in" | "out") => {
-    if (!nextEvent || !societyId || !memberId || regBusy) return;
+    if (!nextEvent || !societyId || regBusy) return;
     setRegBusy(true);
+    setRegError(null);
+    const bootstrapMemberIdPresent = Boolean(member?.id);
+    let resolvedMemberId: string | null = memberId;
     try {
-      const updated = await setMyStatus({ eventId: nextEvent.id, societyId, memberId, status: newStatus });
+      if (!resolvedMemberId && userId) {
+        const linked = await findMemberByUserAndSociety(societyId, userId);
+        resolvedMemberId = linked?.id ?? null;
+      }
+      if (!resolvedMemberId) {
+        throw new Error("Could not resolve your active membership for this society.");
+      }
+      const updated = await setMyStatus({
+        eventId: nextEvent.id,
+        societyId,
+        memberId: resolvedMemberId,
+        status: newStatus,
+      });
       setMyReg(updated);
-    } catch {
-      // silently degrade — user can retry
+      logRsvpSuccessDevOnly({
+        eventId: nextEvent.id,
+        societyId,
+        memberId: resolvedMemberId,
+        status: newStatus,
+        source: "home_dashboard_rsvp",
+      });
+    } catch (e: unknown) {
+      logRsvpFailureTelemetry({
+        eventId: nextEvent.id,
+        societyId,
+        resolvedMemberIdPresent: Boolean(resolvedMemberId),
+        bootstrapMemberIdPresent,
+        source: "home_dashboard_rsvp",
+        error: e,
+      });
+      setRegError(e instanceof Error ? e.message : "Could not update RSVP. Please try again.");
     } finally {
       setRegBusy(false);
     }
@@ -954,6 +1005,7 @@ export function useHomeDashboard() {
     nextEventAttendance,
     myReg,
     regBusy,
+    regError,
     canAdmin,
     showAdmin,
     setShowAdmin,

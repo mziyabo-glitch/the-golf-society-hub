@@ -50,6 +50,7 @@ export function HomeSocietyDashboardView(vm: HomeSocietyDashboardVm) {
     nextEventAttendance,
     myReg,
     regBusy,
+    regError,
     canAdmin,
     showAdmin,
     setShowAdmin,
@@ -237,21 +238,30 @@ export function HomeSocietyDashboardView(vm: HomeSocietyDashboardVm) {
 
       {/* Event RSVP + payment status summary directly below Next Event */}
       {nextEvent ? (
-        <HomeEventAttendanceCard
-          nextEvent={nextEvent}
-          nextEventAttendance={nextEventAttendance}
-          myReg={myReg}
-          regBusy={regBusy}
-          canAccessNextEventTeeSheet={canAccessNextEventTeeSheet}
-          canAdmin={canAdmin}
-          showAdmin={showAdmin}
-          onToggleAdmin={() => setShowAdmin((v) => !v)}
-          onToggleRegistration={toggleRegistration}
-          onMarkPaid={handleMarkPaid}
-          onOpenTeeSheet={() =>
-            pushWithBlur({ pathname: "/(app)/event/[id]/tee-sheet", params: { id: nextEvent.id } })
-          }
-        />
+        <>
+          <HomeEventAttendanceCard
+            nextEvent={nextEvent}
+            nextEventAttendance={nextEventAttendance}
+            myReg={myReg}
+            regBusy={regBusy}
+            canAccessNextEventTeeSheet={canAccessNextEventTeeSheet}
+            canAdmin={canAdmin}
+            showAdmin={showAdmin}
+            onToggleAdmin={() => setShowAdmin((v) => !v)}
+            onToggleRegistration={toggleRegistration}
+            onMarkPaid={handleMarkPaid}
+            onOpenTeeSheet={() =>
+              pushWithBlur({ pathname: "/(app)/event/[id]/tee-sheet", params: { id: nextEvent.id } })
+            }
+          />
+          {regError ? (
+            <InlineNotice
+              variant="error"
+              message={regError}
+              style={{ marginTop: spacing.sm }}
+            />
+          ) : null}
+        </>
       ) : null}
 
       <AppText variant="captionBold" color="primary" style={rhythmStyles.sectionEyebrow}>
@@ -269,7 +279,7 @@ export function HomeSocietyDashboardView(vm: HomeSocietyDashboardVm) {
       </AppText>
       <HomePrizePoolCard
         eventId={nextEvent?.prizePoolEnabled || prizePoolCard?.managerName ? nextEvent?.id ?? null : null}
-        myMemberId={memberId}
+        myMemberId={memberId ?? undefined}
         managerName={prizePoolCard?.managerName ?? null}
         paymentInstructions={nextEvent?.prizePoolPaymentInstructions}
         poolRows={prizePoolCard?.poolRows ?? []}
@@ -293,7 +303,7 @@ export function HomeSocietyDashboardView(vm: HomeSocietyDashboardVm) {
         points={oomPointsMain}
         unranked={showUnrankedHint}
         entries={oomStandings}
-        memberId={memberId}
+        memberId={memberId ?? undefined}
         onOpenLeaderboard={openLeaderboard}
         formatPoints={formatPoints}
       />

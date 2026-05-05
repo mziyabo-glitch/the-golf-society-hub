@@ -226,8 +226,14 @@ export default function EventOverviewScreen() {
   }, [event?.name, navigation]);
 
   const myRegistration = useMemo(
-    () => getMemberRegistration(registrations, currentMember?.id),
-    [registrations, currentMember?.id],
+    () => {
+      const activeMembershipMemberId = societyId
+        ? memberships.find((m) => String(m.societyId) === String(societyId))?.memberId ?? null
+        : null;
+      const effectiveMemberId = currentMember?.id ?? activeMembershipMemberId ?? null;
+      return getMemberRegistration(registrations, effectiveMemberId);
+    },
+    [registrations, currentMember?.id, memberships, societyId],
   );
 
   const attendanceSummary = useMemo(() => {
