@@ -35,15 +35,13 @@ eas build --platform android --profile play
 
 This produces an **Android App Bundle (.aab)** suitable for Google Play.
 
-## Bump versionCode
+## Android versionCode policy (Play)
 
-The `play` profile has `autoIncrement: true`, so **versionCode is incremented automatically** on each build.
-
-To bump manually:
-
-1. Edit `app.json` → `expo.android.versionCode` (integer)
-
-For each new Play Store upload, `versionCode` must be greater than the previous upload.
+- Google Play requires each uploaded Android App Bundle to use a strictly higher `versionCode` than previous uploads.
+- This project uses EAS **remote app versioning** (`cli.appVersionSource = "remote"`), so EAS owns Android `versionCode`.
+- Store upload profiles (`play`, `production`) use `autoIncrement: true` to prevent version reuse.
+- Keep `expo.version` as the user-facing app version; do not manually set or reset `expo.android.versionCode` locally.
+- If your upload key was recently reset, Play may block uploads until the reset propagation window ends (current block window shown by Play: **May 8, 2026 06:18:04 UTC**).
 
 ## Get the .aab from EAS
 
@@ -84,6 +82,6 @@ eas build:download --platform android --latest
 ## Troubleshooting
 
 - **Build fails**: Check EAS build logs; ensure secrets are set
-- **versionCode conflict**: Increment `versionCode` in `app.json` and rebuild
+- **versionCode conflict**: verify remote versioning is enabled and rebuild with `play` or `production` (both auto-increment)
 - **Missing package**: Ensure `app.json` has `expo.android.package` (e.g. `com.godskid.golfsocietyhub`)
 - **Wrong backend**: Verify EAS Secrets point to TEST for play profile; check Settings footer for "Environment: TEST"

@@ -14,7 +14,6 @@
     },
     "android": {
       "package": "com.godskid.golfsocietyhub",
-      "versionCode": 12,
       "intentFilters": [
         {
           "action": "VIEW",
@@ -32,12 +31,13 @@
     "web": {
       "output": "single",
       "bundler": "metro",
-      "favicon": "./assets/images/app-icon.png",
+      "favicon": "./public/pwa-icon.png",
       "name": "The Golf Society Hub",
-      "shortName": "Golf Society Hub",
+      "shortName": "GSH",
       "lang": "en",
       "description": "Everything Golf Society",
       "backgroundColor": "#F8FAF8",
+      "themeColor": "#166534",
       "display": "standalone",
       "orientation": "portrait"
     },
@@ -53,6 +53,14 @@
           "dark": {
             "backgroundColor": "#F8FAF8"
           }
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Allow $(PRODUCT_NAME) to access your photos to upload a society logo.",
+          "cameraPermission": false,
+          "microphonePermission": false
         }
       ],
       "expo-secure-store"
