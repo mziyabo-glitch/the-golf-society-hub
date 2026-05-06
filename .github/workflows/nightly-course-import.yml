@@ -193,5 +193,6 @@ jobs:
         uses: actions/upload-artifact@v5
         with:
           name: nightly-course-import-report-${{ github.run_id }}
+          # Stable names written by scripts/nightly-course-import.ts (nightly-summary.json, nightly-summary.md)
           path: reports/nightly-course-import/*
           if-no-files-found: warn

@@ -1,6 +1,7 @@
 import dotenv from "dotenv";
 import { readFile } from "node:fs/promises";
 import { resolve as resolvePath } from "node:path";
+import { pathToFileURL } from "node:url";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
 dotenv.config();
@@ -204,7 +205,19 @@ async function main(): Promise<void> {
   console.log("[uk-golf-api:seed-queue]", summary);
 }
 
-main().catch((error) => {
-  console.error("[uk-golf-api:seed-queue] fatal:", error instanceof Error ? error.message : String(error));
-  process.exit(1);
-});
+function ranAsCliEntrypoint(): boolean {
+  const entry = process.argv[1];
+  if (!entry) return false;
+  try {
+    return import.meta.url === pathToFileURL(resolvePath(entry)).href;
+  } catch {
+    return false;
+  }
+}
+
+if (ranAsCliEntrypoint()) {
+  void main().catch((error) => {
+    console.error("[uk-golf-api:seed-queue] fatal:", error instanceof Error ? error.message : String(error));
+    process.exit(1);
+  });
+}

@@ -1,5 +1,7 @@
 import dotenv from "dotenv";
 import { createHash } from "node:crypto";
+import { resolve as resolvePath } from "node:path";
+import { pathToFileURL } from "node:url";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import {
   UkGolfApiProvider,
@@ -24,7 +26,7 @@ type QueueRow = {
   next_attempt_after: string | null;
 };
 
-type ProcessSummary = {
+export type ProcessSummary = {
   queuePending: number;
   queueStaged: number;
   queuePartial: number;
@@ -46,6 +48,29 @@ type ProcessSummary = {
     | "rate_limit_threshold_reached"
     | "missing_provider_key";
 };
+
+/** Default summary when the processor did not run (used for nightly reports). */
+export function emptyProcessSummary(
+  stoppedReason: ProcessSummary["stoppedReason"] = "queue_empty",
+): ProcessSummary {
+  return {
+    queuePending: 0,
+    queueStaged: 0,
+    queuePartial: 0,
+    queueFailed: 0,
+    processedThisRun: 0,
+    requestsMade: 0,
+    rateLimitEvents: 0,
+    retries: 0,
+    successfulItems: 0,
+    failedItems: 0,
+    stagedCourses: 0,
+    stagedTees: 0,
+    stagedHoles: 0,
+    fallbackDiscoveryCalls: 0,
+    stoppedReason,
+  };
+}
 
 function requireSupabaseConfig(): { url: string; key: string } {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim() || process.env.EXPO_PUBLIC_SUPABASE_URL?.trim();
@@ -504,7 +529,19 @@ async function main(): Promise<void> {
   console.log(JSON.stringify(summary, null, 2));
 }
 
-main().catch((error) => {
-  console.error("[uk-golf-api:process-queue] fatal:", error instanceof Error ? error.message : String(error));
-  process.exit(1);
-});
+function ranAsCliEntrypoint(): boolean {
+  const entry = process.argv[1];
+  if (!entry) return false;
+  try {
+    return import.meta.url === pathToFileURL(resolvePath(entry)).href;
+  } catch {
+    return false;
+  }
+}
+
+if (ranAsCliEntrypoint()) {
+  void main().catch((error) => {
+    console.error("[uk-golf-api:process-queue] fatal:", error instanceof Error ? error.message : String(error));
+    process.exit(1);
+  });
+}
