@@ -1,5 +1,5 @@
 import "@/lib/ui/themeSplash";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Stack, usePathname, useRouter, useSegments } from "expo-router";
 import { StyleSheet, View } from "react-native";
 import { BootstrapProvider, useBootstrap } from "@/lib/useBootstrap";
@@ -21,6 +21,8 @@ import { StatusBar } from "expo-status-bar";
 import { SafeAreaProvider, initialWindowMetrics } from "react-native-safe-area-context";
 import { NetworkProvider } from "@/lib/network/NetworkContext";
 import { OfflineNetworkBanner } from "@/components/network/OfflineNetworkBanner";
+import { PwaInstallNotice } from "@/components/pwa/PwaInstallNotice";
+import { isWebRuntime } from "@/lib/pwa/runtime";
 
 const APP_TABS = "/(app)/(tabs)";
 const JOIN_FLOW_SEGMENTS = new Set(["onboarding", "join", "join-society", "invite"]);
@@ -73,10 +75,29 @@ function RootNavigator() {
   // Timestamp of last time activeSocietyId was truthy — used to debounce
   // transient null→true→null flickers during post-join bootstrap.
   const lastHadSocietyAt = useRef<number>(0);
+  const [dismissedInstallNotice, setDismissedInstallNotice] = useState(false);
 
   if (activeSocietyId) {
     lastHadSocietyAt.current = Date.now();
   }
+
+  useEffect(() => {
+    if (!isWebRuntime()) return;
+    try {
+      const saved = window.localStorage.getItem("gsh:pwa-install-notice:dismissed");
+      if (saved === "1") setDismissedInstallNotice(true);
+    } catch {
+      // Ignore storage errors.
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!isWebRuntime()) return;
+    if (!("serviceWorker" in navigator)) return;
+    void navigator.serviceWorker.register("/sw.js").catch((e) => {
+      if (__DEV__) console.warn("[pwa] service worker registration failed", e);
+    });
+  }, []);
 
   useEffect(() => {
     // Route as soon as auth is known; profile/membership loading can continue in-app.
@@ -274,6 +295,18 @@ function RootNavigator() {
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>
       <OfflineNetworkBanner />
+      <PwaInstallNotice
+        dismissed={dismissedInstallNotice}
+        onDismiss={() => {
+          setDismissedInstallNotice(true);
+          if (!isWebRuntime()) return;
+          try {
+            window.localStorage.setItem("gsh:pwa-install-notice:dismissed", "1");
+          } catch {
+            // Ignore storage errors.
+          }
+        }}
+      />
       {/* Always render the navigator so expo-router can resolve all routes */}
       <Stack screenOptions={{ headerShown: false }} />
 

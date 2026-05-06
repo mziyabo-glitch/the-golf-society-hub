@@ -14,6 +14,7 @@
     "course-import:e2e": "vitest run --config vitest.e2e.config.ts",
     "test:rsvp": "node scripts/rsvp-qa-smoke.cjs",
     "verify:invite-rsvp": "node scripts/verify-public-invite-rsvp-e2e.mjs",
+    "verify:pwa-postdeploy": "node scripts/pwa-postdeploy-smoke.mjs",
     "build": "expo export -p web",
     "vercel-build": "npm run build",
     "build-pilot": "node scripts/build-pilot-course-list.js",
@@ -27,13 +28,17 @@
     "course-import:ukgolfapi:staging-report": "tsx scripts/uk-golf-api-staging-report.ts",
     "course-import:ukgolfapi:promote-approved": "tsx scripts/uk-golf-api-promote-approved.ts",
     "course-import:ukgolfapi:seed-queue": "tsx scripts/uk-golf-api-seed-queue.ts",
+    "course-import:ukgolfapi:seed-queue-from-osm": "tsx scripts/seed-uk-golf-queue-from-osm-holes.ts",
     "course-import:ukgolfapi:process-queue": "tsx scripts/uk-golf-api-process-queue.ts",
     "course-import:territory": "tsx scripts/nightly-course-import.ts --manual",
     "course-import:stale-smoke": "tsx scripts/stale-course-import-smoke.ts",
     "course-import:seed-gb": "tsx scripts/seed-gb-course-candidates.ts",
     "course-import:seed-vale": "tsx scripts/seed-vale-resort.ts",
     "course-import:seed-shrivenham-summer": "tsx scripts/seed-shrivenham-park-summer.ts",
-    "course-catalog:audit": "tsx scripts/audit-course-catalog.ts"
+    "course-catalog:audit": "tsx scripts/audit-course-catalog.ts",
+    "build:android:preview": "eas build --platform android --profile preview",
+    "build:android:production": "eas build --platform android --profile production",
+    "play:upload-cert-sha1": "node scripts/print-pem-sha1.mjs upload_cert.pem"
   },
   "engines": {
     "node": ">=18.x"

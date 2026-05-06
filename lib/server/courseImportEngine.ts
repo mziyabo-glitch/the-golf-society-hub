@@ -1904,7 +1904,7 @@ function computeNightlyImportRunExitSummary(
 }
 
 /**
- * Tier-1 seeding preset (~75 growth API calls/night before per-field `caps` overrides).
+ * Tier-1 seeding preset (~100 new course import attempts/night before per-field `caps` overrides).
  * Ramp when stable: raise `maxNewCourseImportAttempts` via CLI `--max-new-growth=` or env `COURSE_IMPORT_MAX_NEW_COURSE_IMPORT_ATTEMPTS` while `COURSE_IMPORT_RUN_MODE=seeding`.
  */
 export const COURSE_IMPORT_SEEDING_PRESET_CAPS: TerritoryImportCaps = {
@@ -1914,7 +1914,7 @@ export const COURSE_IMPORT_SEEDING_PRESET_CAPS: TerritoryImportCaps = {
   maxRefreshes: 8,
   maxPriorityMaintenanceCourses: 5,
   maxDiscoveryPerRun: 500,
-  maxNewCourseImportAttempts: 75,
+  maxNewCourseImportAttempts: 100,
   maxStaleCandidateRefreshAttempts: 2,
   maxStaleCatalogSweepCourses: 0,
 };

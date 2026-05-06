@@ -9,11 +9,11 @@ import * as WebBrowser from "expo-web-browser";
 import { Linking, Platform } from "react-native";
 
 import { supabase } from "@/lib/supabase";
+import { getPublicWebBaseUrl } from "@/lib/appConfig";
 import type { User, Session } from "@supabase/supabase-js";
 
 WebBrowser.maybeCompleteAuthSession();
 
-const WEB_BASE_URL = "https://the-golf-society-hub.vercel.app";
 const NATIVE_AUTH_SCHEME = "thegolfsocietyhub";
 const NATIVE_AUTH_CALLBACK_PATH = "auth/callback";
 const NATIVE_OAUTH_DISMISS_FALLBACK_WAIT_MS = 2500;
@@ -24,7 +24,7 @@ export function getAuthRedirectUri(): string {
     if (typeof window !== "undefined" && window.location?.origin) {
       return `${window.location.origin}${window.location.pathname || "/"}`;
     }
-    return WEB_BASE_URL;
+    return getPublicWebBaseUrl();
   }
   // Expected native callback format:
   // thegolfsocietyhub://auth/callback
@@ -303,18 +303,17 @@ export async function signUpWithEmail(email: string, password: string): Promise<
  * Uses the stable production URL so the redirect always matches the
  * Supabase allowlist (preview URLs change per Vercel deployment).
  */
-const RESET_REDIRECT_URL = `${WEB_BASE_URL}/reset-password`;
-
 export async function resetPassword(email: string): Promise<void> {
   const cleanEmail = email.trim().toLowerCase();
+  const resetRedirectUrl = `${getPublicWebBaseUrl()}/reset-password`;
 
   console.log("[auth] resetPassword", {
     email: cleanEmail,
-    redirectTo: RESET_REDIRECT_URL,           // beta: verify correct URL
+    redirectTo: resetRedirectUrl,
   });
 
   const { error } = await supabase.auth.resetPasswordForEmail(cleanEmail, {
-    redirectTo: RESET_REDIRECT_URL,
+    redirectTo: resetRedirectUrl,
   });
 
   if (error) {

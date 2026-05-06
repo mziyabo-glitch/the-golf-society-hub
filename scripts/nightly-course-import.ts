@@ -1,4 +1,5 @@
 import dotenv from "dotenv";
+import { runUkGolfApiOsmHoleGridSeed } from "./seed-uk-golf-queue-from-osm-holes";
 import { runUkGolfApiSeedQueue } from "./uk-golf-api-seed-queue";
 import { runUkGolfApiProcessQueue } from "./uk-golf-api-process-queue";
 
@@ -13,6 +14,9 @@ async function main(): Promise<void> {
 
   const seeded = await runUkGolfApiSeedQueue();
   console.log("[uk-golf-api:seed-queue]", seeded);
+
+  const gbSeeded = await runUkGolfApiOsmHoleGridSeed();
+  console.log("[uk-golf-api:gb-json-seed]", gbSeeded);
 
   const summary = await runUkGolfApiProcessQueue();
   console.log("[uk-golf-api:nightly-summary]");

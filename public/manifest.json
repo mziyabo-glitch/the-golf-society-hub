@@ -1,6 +1,6 @@
 {
   "name": "The Golf Society Hub",
-  "short_name": "Golf Society Hub",
+  "short_name": "GSH",
   "description": "Everything Golf Society",
   "start_url": "/",
   "scope": "/",
@@ -11,7 +11,13 @@
   "icons": [
     {
       "src": "/pwa-icon.png",
-      "sizes": "1024x1024",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/pwa-icon.png",
+      "sizes": "512x512",
       "type": "image/png",
       "purpose": "any maskable"
     }

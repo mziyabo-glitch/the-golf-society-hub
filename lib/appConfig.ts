@@ -14,7 +14,8 @@ export const APP_MODE = APP_STAGE;
 
 const VERCEL_WEB_URL = "https://the-golf-society-hub.vercel.app";
 
-function getPublicWebBaseUrl(): string {
+/** Canonical web origin for deep links, password reset, and calendar/invite URLs (override with EXPO_PUBLIC_WEB_BASE_URL). */
+export function getPublicWebBaseUrl(): string {
   const fromEnv =
     typeof process !== "undefined" && typeof process.env.EXPO_PUBLIC_WEB_BASE_URL === "string"
       ? process.env.EXPO_PUBLIC_WEB_BASE_URL.trim()
@@ -68,7 +69,7 @@ const APP_STORE_URL = "https://apps.apple.com/app/the-golf-society-hub/id6740041
  */
 export function getRivalryInviteUrl(joinCode: string): string {
   const code = String(joinCode).trim().toUpperCase();
-  return `${VERCEL_WEB_URL}/join-rivalry?code=${encodeURIComponent(code)}`;
+  return `${getPublicWebBaseUrl()}/join-rivalry?code=${encodeURIComponent(code)}`;
 }
 
 /**
@@ -105,7 +106,7 @@ export function getRivalryInviteMessage(
  */
 export function getSocietyInviteUrl(joinCode: string): string {
   const code = String(joinCode).trim().toUpperCase();
-  return `${VERCEL_WEB_URL}/invite/${encodeURIComponent(code)}`;
+  return `${getPublicWebBaseUrl()}/invite/${encodeURIComponent(code)}`;
 }
 
 /**
