@@ -10,21 +10,31 @@ import {
   normalizeUkTeeLabel,
   validateUkGolfTee,
 } from "@/lib/server/ukGolfApiProvider";
+import {
+  UK_GOLF_API_SEED_QUEUE_CLASSIFIED_FAILURE_STATUSES,
+  UK_GOLF_API_SEED_QUEUE_RETRY_STATUSES,
+  classifyUkGolfApiSeedQueueFailure,
+  isClassifiedFailureStatus,
+  type UkGolfApiSeedQueueStatus,
+} from "@/lib/server/ukGolfApiSeedQueueStatus";
 
 dotenv.config();
 
-type QueueStatus = "pending" | "processing" | "staged" | "partial" | "failed" | "rate_limited" | "skipped";
 type QueueRow = {
   id: string;
   territory: "england" | "wales" | "scotland" | "ni";
   query: string;
   club_id: string | null;
   course_id: string | null;
-  status: QueueStatus;
+  status: UkGolfApiSeedQueueStatus;
   priority: number;
   attempts: number;
   next_attempt_after: string | null;
 };
+
+/** DB rows counted as “failure backlog” for summaries (excludes `rate_limited`, which sits in the retry/pending bucket). */
+const QUEUE_FAILED_BACKLOG_STATUSES: readonly UkGolfApiSeedQueueStatus[] =
+  UK_GOLF_API_SEED_QUEUE_CLASSIFIED_FAILURE_STATUSES.filter((s) => s !== "rate_limited");
 
 export type ProcessSummary = {
   queuePending: number;
@@ -37,6 +47,8 @@ export type ProcessSummary = {
   retries: number;
   successfulItems: number;
   failedItems: number;
+  /** Counts of terminal `finalStatus` values from this run (includes `rate_limited`). */
+  failureBreakdownThisRun: Record<string, number>;
   stagedCourses: number;
   stagedTees: number;
   stagedHoles: number;
@@ -64,6 +76,7 @@ export function emptyProcessSummary(
     retries: 0,
     successfulItems: 0,
     failedItems: 0,
+    failureBreakdownThisRun: {},
     stagedCourses: 0,
     stagedTees: 0,
     stagedHoles: 0,
@@ -103,7 +116,7 @@ async function fetchRetryableQueueRows(
   const { data, error } = await supabase
     .from("uk_golf_api_seed_queue")
     .select("id, territory, query, club_id, course_id, status, priority, attempts, next_attempt_after")
-    .in("status", ["pending", "failed", "rate_limited"])
+    .in("status", [...UK_GOLF_API_SEED_QUEUE_RETRY_STATUSES])
     .order("priority", { ascending: false })
     .order("created_at", { ascending: true })
     .limit(500);
@@ -111,7 +124,8 @@ async function fetchRetryableQueueRows(
   const now = Date.now();
   return ((data ?? []) as QueueRow[])
     .filter((row) => {
-      if (row.status === "failed" && (row.attempts ?? 0) >= 3) return false;
+      if (row.status === "duplicate_course") return false;
+      if (row.status !== "pending" && row.status !== "rate_limited" && (row.attempts ?? 0) >= 3) return false;
       if (!row.next_attempt_after) return true;
       const t = Date.parse(row.next_attempt_after);
       return Number.isFinite(t) && t <= now;
@@ -133,7 +147,7 @@ async function processQueueItem(
   provider: UkGolfApiProvider,
   row: QueueRow,
 ): Promise<{
-  finalStatus: Exclude<QueueStatus, "pending" | "processing">;
+  finalStatus: Exclude<UkGolfApiSeedQueueStatus, "pending" | "processing">;
   stagedCourseCandidateId: string | null;
   stagedCourses: number;
   stagedTees: number;
@@ -198,12 +212,12 @@ async function processQueueItem(
     const tees = sourceTees.length > 0 ? sourceTees : scorecard.tees;
     if (!tees || tees.length === 0) {
       await patchQueueRow(supabase, row.id, {
-        status: "skipped",
-        next_attempt_after: null,
+        status: "missing_tees",
+        next_attempt_after: new Date(Date.now() + backoffMsForFailedAttempt(currentAttempts)).toISOString(),
         last_error: "no_tee_data",
       });
       return {
-        finalStatus: "skipped",
+        finalStatus: "missing_tees",
         stagedCourseCandidateId: null,
         stagedCourses: 0,
         stagedTees: 0,
@@ -327,7 +341,7 @@ async function processQueueItem(
       }
     }
 
-    const finalStatus: Exclude<QueueStatus, "pending" | "processing"> = stagedTees > 0 ? "staged" : "partial";
+    const finalStatus: Exclude<UkGolfApiSeedQueueStatus, "pending" | "processing"> = stagedTees > 0 ? "staged" : "partial";
     await patchQueueRow(supabase, row.id, {
       status: finalStatus,
       next_attempt_after: null,
@@ -360,14 +374,15 @@ async function processQueueItem(
       };
     }
     const message = error instanceof Error ? error.message : String(error);
-    const retryable = currentAttempts < 3;
+    const classified = classifyUkGolfApiSeedQueueFailure(message);
+    const retryable = classified !== "duplicate_course" && currentAttempts < 3;
     await patchQueueRow(supabase, row.id, {
-      status: "failed",
+      status: classified,
       next_attempt_after: retryable ? new Date(Date.now() + backoffMsForFailedAttempt(currentAttempts)).toISOString() : null,
       last_error: message.slice(0, 500),
     });
     return {
-      finalStatus: "failed",
+      finalStatus: classified,
       stagedCourseCandidateId: null,
       stagedCourses: 0,
       stagedTees: 0,
@@ -383,7 +398,7 @@ async function countQueueStatuses(supabase: SupabaseClient): Promise<{
   queuePartial: number;
   queueFailed: number;
 }> {
-  const count = async (status: QueueStatus): Promise<number> => {
+  const count = async (status: UkGolfApiSeedQueueStatus): Promise<number> => {
     const { count, error } = await supabase
       .from("uk_golf_api_seed_queue")
       .select("*", { count: "exact", head: true })
@@ -391,13 +406,14 @@ async function countQueueStatuses(supabase: SupabaseClient): Promise<{
     if (error) throw new Error(error.message);
     return count ?? 0;
   };
-  const [queuePending, queueStaged, queuePartial, queueFailed, queueRateLimited] = await Promise.all([
+  const [queuePending, queueStaged, queuePartial, queueRateLimited, ...failureCounts] = await Promise.all([
     count("pending"),
     count("staged"),
     count("partial"),
-    count("failed"),
     count("rate_limited"),
+    ...QUEUE_FAILED_BACKLOG_STATUSES.map((s) => count(s)),
   ]);
+  const queueFailed = failureCounts.reduce((a, b) => a + b, 0);
   return {
     queuePending: queuePending + queueRateLimited,
     queueStaged,
@@ -425,6 +441,7 @@ export async function runUkGolfApiProcessQueue(): Promise<ProcessSummary> {
       retries: 0,
       successfulItems: 0,
       failedItems: 0,
+      failureBreakdownThisRun: {},
       stagedCourses: 0,
       stagedTees: 0,
       stagedHoles: 0,
@@ -446,6 +463,7 @@ export async function runUkGolfApiProcessQueue(): Promise<ProcessSummary> {
       retries: 0,
       successfulItems: 0,
       failedItems: 0,
+      failureBreakdownThisRun: {},
       stagedCourses: 0,
       stagedTees: 0,
       stagedHoles: 0,
@@ -465,6 +483,10 @@ export async function runUkGolfApiProcessQueue(): Promise<ProcessSummary> {
   let stagedHoles = 0;
   let fallbackDiscoveryCalls = 0;
   let stoppedReason: ProcessSummary["stoppedReason"] = "max_items_reached";
+  const failureBreakdownThisRun: Record<string, number> = {};
+  const bumpFailureBreakdown = (status: string): void => {
+    failureBreakdownThisRun[status] = (failureBreakdownThisRun[status] ?? 0) + 1;
+  };
 
   for (const row of queueRows) {
     if (requestsMade >= maxRequests) {
@@ -481,9 +503,15 @@ export async function runUkGolfApiProcessQueue(): Promise<ProcessSummary> {
     stagedCourses += result.stagedCourses;
     stagedTees += result.stagedTees;
     stagedHoles += result.stagedHoles;
-    if (result.finalStatus === "failed") failedItems += 1;
-    else if (result.finalStatus === "rate_limited") rateLimitEvents += 1;
-    else successfulItems += 1;
+    if (result.finalStatus === "rate_limited") {
+      rateLimitEvents += 1;
+      bumpFailureBreakdown("rate_limited");
+    } else if (isClassifiedFailureStatus(result.finalStatus)) {
+      failedItems += 1;
+      bumpFailureBreakdown(result.finalStatus);
+    } else {
+      successfulItems += 1;
+    }
 
     const requestDelta = provider.getAndResetRequestSummary();
     requestsMade += requestDelta.totalRequests;
@@ -515,6 +543,7 @@ export async function runUkGolfApiProcessQueue(): Promise<ProcessSummary> {
     retries,
     successfulItems,
     failedItems,
+    failureBreakdownThisRun,
     stagedCourses,
     stagedTees,
     stagedHoles,

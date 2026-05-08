@@ -18,6 +18,25 @@ export type ProfileDoc = {
   updated_at?: string;
 };
 
+function normalizeEmailInput(email: string | null | undefined): string | null {
+  if (email == null) return null;
+  const cleaned = email.trim().toLowerCase();
+  return cleaned.length > 0 ? cleaned : null;
+}
+
+function extractConstraintHint(
+  details: string | null | undefined,
+  message: string | null | undefined,
+): string | null {
+  const src = `${details ?? ""} ${message ?? ""}`.trim();
+  if (!src) return null;
+  const m =
+    src.match(/constraint\s+\"([^\"]+)\"/i) ??
+    src.match(/violates\s+([a-zA-Z0-9_]+)\s+constraint/i) ??
+    src.match(/on\s+table\s+\"([^\"]+)\"/i);
+  return m?.[1] ?? null;
+}
+
 /**
  * Ensure profile exists for user.
  * Uses upsert WITHOUT .select().single() to avoid 406 errors,
@@ -100,19 +119,33 @@ export async function updateProfile(
   userId: string,
   updates: Partial<Omit<ProfileDoc, "id">>
 ): Promise<void> {
-  console.log("[profileRepo] updateProfile:", userId, JSON.stringify(updates, null, 2));
+  const payload: Record<string, unknown> = {
+    ...updates,
+    updated_at: new Date().toISOString(),
+  };
+  if ("email" in payload) {
+    payload.email = normalizeEmailInput(payload.email as string | null | undefined);
+  }
+  console.log("[profileRepo] updateProfile payload:", {
+    userId,
+    payload,
+  });
 
   const { error } = await supabase
     .from("profiles")
-    .update({ ...updates, updated_at: new Date().toISOString() })
+    .update(payload)
     .eq("id", userId);
 
   if (error) {
+    const constraint = extractConstraintHint(error.details, error.message);
     console.error("[profileRepo] updateProfile failed:", {
+      userId,
+      payload,
       message: error.message,
       details: error.details,
       hint: error.hint,
       code: error.code,
+      constraint,
     });
     throw new Error(error.message || "Failed to update profile");
   }
@@ -127,20 +160,34 @@ export async function updateUserProfile(
   fields: { full_name: string; sex: string; whs_index: number | null }
 ): Promise<void> {
   const profileComplete = !!(fields.full_name?.trim() && fields.sex?.trim());
+  const payload = {
+    full_name: fields.full_name.trim(),
+    sex: fields.sex,
+    whs_index: fields.whs_index,
+    profile_complete: profileComplete,
+    updated_at: new Date().toISOString(),
+  };
+  console.log("[profileRepo] updateUserProfile payload:", {
+    userId,
+    payload,
+  });
 
   const { error } = await supabase
     .from("profiles")
-    .update({
-      full_name: fields.full_name.trim(),
-      sex: fields.sex,
-      whs_index: fields.whs_index,
-      profile_complete: profileComplete,
-      updated_at: new Date().toISOString(),
-    })
+    .update(payload)
     .eq("id", userId);
 
   if (error) {
-    console.error("[profileRepo] updateUserProfile failed:", error.message);
+    const constraint = extractConstraintHint(error.details, error.message);
+    console.error("[profileRepo] updateUserProfile failed:", {
+      userId,
+      payload,
+      message: error.message,
+      details: error.details,
+      hint: error.hint,
+      code: error.code,
+      constraint,
+    });
     throw new Error(error.message || "Failed to update profile");
   }
 }

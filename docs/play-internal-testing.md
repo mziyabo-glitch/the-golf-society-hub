@@ -43,6 +43,8 @@ The scheduled job `scripts/nightly-course-import.ts` runs:
 2. **GB list bulk seeds** from `datasets/osm/gb.json` (`[name, lat, lng, area?]` tuples) — enqueues each venue name as a UK Golf API search string (territory inferred from coordinates). Cap per run: `UK_GOLF_API_OSM_SEED_MAX_NEW` (default 500 locally; workflow sets 400). Override file with `UK_GOLF_API_OSM_SEED_JSON_PATH`. Disable with `UK_GOLF_API_OSM_SEED_DISABLE=true`.
 3. `uk-golf-api-process-queue` which calls the RapidAPI UK Golf Course Data API to stage candidates.
 
+Queue row **`status`** uses classified failures (e.g. `missing_tees`, `api_timeout`, `duplicate_course`) instead of a single generic `failed` where possible; see `lib/server/ukGolfApiSeedQueueStatus.ts` and migration `158_uk_golf_api_seed_queue_failure_class_statuses.sql`.
+
 Run OSM seeding alone:
 
 ```bash

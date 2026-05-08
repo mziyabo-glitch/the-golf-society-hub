@@ -83,6 +83,19 @@ function formatMd(report: NightlyReportV1): string {
     `| **stoppedReason** | **${p.stoppedReason}** |`,
     "",
   );
+  const bd = p.failureBreakdownThisRun ?? {};
+  if (Object.keys(bd).length > 0) {
+    lines.push(
+      "### Failure classification (this run)",
+      "",
+      "| status | count |",
+      "|--------|-------|",
+      ...Object.entries(bd)
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([k, v]) => `| ${k} | ${v} |`),
+      "",
+    );
+  }
   return lines.join("\n");
 }
 
