@@ -29,7 +29,16 @@ export type EventRegistration = {
   marked_by_member_id: string | null;
   created_at: string;
   updated_at: string;
+  /** ManCo soft-remove: row kept for audit, hidden from operational UIs when set. */
+  removed_from_event_at?: string | null;
+  removed_by_member_id?: string | null;
 };
+
+/** Registrations visible on event manage / players / payments / tee eligibility. */
+export function isOperationalEventRegistration(r: EventRegistration | null | undefined): boolean {
+  if (!r) return false;
+  return r.removed_from_event_at == null || String(r.removed_from_event_at).trim() === "";
+}
 
 /**
  * Fetch the current user's registration for a single event.
@@ -44,6 +53,7 @@ export async function getMyRegistration(
     .select("*")
     .eq("event_id", eventId)
     .eq("member_id", memberId)
+    .is("removed_from_event_at", null)
     .maybeSingle();
 
   if (error) {
@@ -58,12 +68,17 @@ export async function getMyRegistration(
  */
 export async function getEventRegistrations(
   eventId: string,
+  opts?: { includeRemoved?: boolean },
 ): Promise<EventRegistration[]> {
-  const { data, error } = await supabase
+  let q = supabase
     .from("event_registrations")
     .select("*")
     .eq("event_id", eventId)
     .order("created_at", { ascending: true });
+  if (!opts?.includeRemoved) {
+    q = q.is("removed_from_event_at", null);
+  }
+  const { data, error } = await q;
 
   if (error) {
     console.error("[eventRegRepo] getEventRegistrations:", error.message);
@@ -119,7 +134,7 @@ export function filterRegistrationsForActiveSocietyMembers(
 
 /** Confirmed / attending */
 export function isRegistrationConfirmed(r: EventRegistration): boolean {
-  return r.status === "in";
+  return isOperationalEventRegistration(r) && r.status === "in";
 }
 
 /**
@@ -181,12 +196,12 @@ export async function getJointTeeSheetCandidatePoolForEvent(
  * Requires both confirmed attendance and payment recorded (paid ⇒ confirmed is enforced server-side).
  */
 export function isTeeSheetEligible(r: EventRegistration): boolean {
-  return r.status === "in" && r.paid === true;
+  return isOperationalEventRegistration(r) && r.status === "in" && r.paid === true;
 }
 
 /** Standard event summaries (joint attendance uses event entries, not this). */
 export function summarizeEventRegistrations(regs: EventRegistration[] | unknown) {
-  const list = ensureRegistrationArray(regs);
+  const list = ensureRegistrationArray(regs).filter(isOperationalEventRegistration);
   const attending = list.filter(isRegistrationConfirmed);
   return {
     /** status === "in" */
@@ -225,6 +240,8 @@ export async function setMyStatus(opts: {
         society_id: opts.societyId,
         member_id: opts.memberId,
         status: opts.status,
+        removed_from_event_at: null,
+        removed_by_member_id: null,
       },
       { onConflict: "event_id,member_id" },
     )
@@ -313,5 +330,33 @@ export async function addMemberToEventAsAdmin(opts: {
       );
     }
     throw new Error(msg || "Failed to add member to event");
+  }
+}
+
+/**
+ * Captain/Treasurer/Secretary/Handicapper: remove a society member from all operational
+ * event views for the active society (soft-remove registration; strip player_ids / joint entries / tee slots).
+ * Guests: use deleteEventGuestForEvent (eventGuestRepo) — not handled here.
+ */
+export async function removeEventParticipant(opts: {
+  eventId: string;
+  societyId: string;
+  targetMemberId: string;
+}): Promise<void> {
+  const { error } = await supabase.rpc("remove_event_participant", {
+    p_event_id: opts.eventId,
+    p_society_id: opts.societyId,
+    p_target_member_id: opts.targetMemberId,
+  });
+
+  if (error) {
+    console.error("[eventRegRepo] remove_event_participant RPC:", error.message);
+    const msg = error.message || "";
+    if (msg.includes("function public.remove_event_participant") && msg.includes("does not exist")) {
+      throw new Error(
+        "Database is out of date: apply migration 20260213120000_event_participant_soft_remove.sql, then retry.",
+      );
+    }
+    throw new Error(msg || "Failed to remove participant from event");
   }
 }

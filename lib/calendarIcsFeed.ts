@@ -207,7 +207,8 @@ export async function getCalendarIcsForToken(pathLastSegment: string): Promise<{
     .select("event_id")
     .eq("member_id", row.member_id)
     .eq("society_id", row.society_id)
-    .eq("status", "in");
+    .eq("status", "in")
+    .is("removed_from_event_at", null);
 
   if (e2) {
     return {

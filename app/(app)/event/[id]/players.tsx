@@ -11,6 +11,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { buildSocietyIdToNameMap, societyLabelFromMember } from "@/lib/jointEventSocietyLabel";
 import {
   dedupeJointMembers,
+  memberIdForActiveSocietyInJointDedupe,
   normalizeJointSelectedMemberIds,
   representativeMemberIdForJoint,
   expandJointRepresentativesToParticipatingMemberIds,
@@ -42,7 +43,7 @@ import { canManageEventRosterForSociety, getPermissionsForMember, isSecretary } 
 import { getColors, spacing, radius, typography } from "@/lib/ui/theme";
 import { JOINT_EVENT_CHIP_LONG } from "@/lib/eventModuleUi";
 import { isJointEventFromMeta, isActiveSocietyParticipantForEvent } from "@/lib/jointEventAccess";
-import { getEventRegistrations } from "@/lib/db_supabase/eventRegistrationRepo";
+import { getEventRegistrations, removeEventParticipant } from "@/lib/db_supabase/eventRegistrationRepo";
 import {
   logJointPlayableConsistencyDev,
   formatJointPlayableGapWarning,
@@ -50,6 +51,7 @@ import {
 } from "@/lib/jointEventPlayableConsistency";
 import { InlineNotice } from "@/components/ui/InlineNotice";
 import { invalidateCache, invalidateCachePrefix } from "@/lib/cache/clientCache";
+import { confirmDestructive } from "@/lib/ui/alert";
 
 export default function EventPlayersScreen() {
   const router = useRouter();
@@ -88,6 +90,7 @@ export default function EventPlayersScreen() {
   const [editGuestSex, setEditGuestSex] = useState<"male" | "female" | null>(null);
   const [editGuestHandicap, setEditGuestHandicap] = useState("");
   const [savingGuestEdit, setSavingGuestEdit] = useState(false);
+  const [reloadTick, setReloadTick] = useState(0);
 
   const canManageGuests = canManageEventRosterForSociety(memberships, societyId);
   const canEnterGrossScores =
@@ -259,7 +262,7 @@ export default function EventPlayersScreen() {
     return () => {
       cancelled = true;
     };
-  }, [bootstrapLoading, societyId, eventId]);
+  }, [bootstrapLoading, societyId, eventId, reloadTick]);
 
   useEffect(() => {
     if (!__DEV__ || !eventId || !societyId || members.length === 0) return;
@@ -412,6 +415,31 @@ export default function EventPlayersScreen() {
         },
       },
     ]);
+  }
+
+  function handleRemoveMemberFromEventPlayers(memberId: string, displayName: string) {
+    if (!event?.id || !societyId) return;
+    const msg = `Remove ${displayName} from this event for your society? They disappear from players, payments, and tee workflows. The registration row stays for audit.`;
+    const runRemove = async () => {
+      try {
+        await removeEventParticipant({ eventId: event.id, societyId, targetMemberId: memberId });
+        await refreshGuestDependentViews();
+        setReloadTick((x) => x + 1);
+      } catch (e: any) {
+        Alert.alert("Failed", e?.message ?? "Could not remove member.");
+      }
+    };
+    if (Platform.OS === "web") {
+      const ok =
+        typeof globalThis !== "undefined" &&
+        typeof (globalThis as unknown as { confirm?: (s: string) => boolean }).confirm === "function" &&
+        (globalThis as unknown as { confirm: (s: string) => boolean }).confirm(`Remove from event\n\n${msg}`);
+      if (ok) void runRemove();
+      return;
+    }
+    confirmDestructive("Remove from event", msg, "Remove", () => {
+      void runRemove();
+    });
   }
 
   function openEditGuest(g: EventGuest) {
@@ -612,6 +640,22 @@ export default function EventPlayersScreen() {
                             <Feather name="edit-3" size={20} color={colors.primary} />
                           </Pressable>
                         ) : null}
+                        {canManageGuests && societyId ? (
+                          <Pressable
+                            accessibilityLabel="Remove member from event"
+                            hitSlop={10}
+                            onPress={() =>
+                              handleRemoveMemberFromEventPlayers(
+                                memberIdForActiveSocietyInJointDedupe(d, members, societyId),
+                                resolveAttendeeDisplayName(d.representative, {
+                                  memberId: d.representative.id,
+                                }).name,
+                              )
+                            }
+                          >
+                            <Feather name="user-x" size={20} color={colors.error} />
+                          </Pressable>
+                        ) : null}
                       </View>
                     </AppCard>
                   );
@@ -655,6 +699,20 @@ export default function EventPlayersScreen() {
                             }
                           >
                             <Feather name="edit-3" size={20} color={colors.primary} />
+                          </Pressable>
+                        ) : null}
+                        {canManageGuests && societyId ? (
+                          <Pressable
+                            accessibilityLabel="Remove member from event"
+                            hitSlop={10}
+                            onPress={() =>
+                              handleRemoveMemberFromEventPlayers(
+                                id,
+                                resolveAttendeeDisplayName(m, { memberId: m.id }).name,
+                              )
+                            }
+                          >
+                            <Feather name="user-x" size={20} color={colors.error} />
                           </Pressable>
                         ) : null}
                       </View>

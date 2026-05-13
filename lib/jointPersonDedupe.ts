@@ -118,6 +118,22 @@ export type DedupedJointMember = {
 };
 
 /**
+ * Joint dedupe row: member id in `activeSocietyId` for society-scoped RPCs (remove, payment, …).
+ */
+export function memberIdForActiveSocietyInJointDedupe(
+  d: DedupedJointMember,
+  allMembers: MemberDoc[],
+  activeSocietyId: string,
+): string {
+  const sid = String(activeSocietyId);
+  for (const mid of d.mergedMemberIds) {
+    const m = allMembers.find((x) => String(x.id) === String(mid));
+    if (m && String(m.society_id) === sid) return String(m.id);
+  }
+  return String(d.representative.id);
+}
+
+/**
  * Build merged society label from member rows (unique by society_id).
  */
 export function mergeJointSocietyLabels(

@@ -66,6 +66,8 @@ import {
   markMePaid,
   addMemberToEventAsAdmin,
   filterRegistrationsForActiveSocietyMembers,
+  isOperationalEventRegistration,
+  removeEventParticipant,
   type EventRegistration,
 } from "@/lib/db_supabase/eventRegistrationRepo";
 import { getMembersBySocietyId, getMembersByIds, type MemberDoc } from "@/lib/db_supabase/memberRepo";
@@ -716,7 +718,7 @@ export default function ManageEventScreen() {
     try {
       setRegistrationsRefreshing(true);
       const [regs, mems, guests] = await Promise.all([
-        getEventRegistrations(eventId),
+        getEventRegistrations(eventId, { includeRemoved: true }),
         getMembersBySocietyId(societyId),
         getEventGuests(eventId),
       ]);
@@ -736,6 +738,26 @@ export default function ManageEventScreen() {
       setRegistrationsRefreshing(false);
     }
   }, [eventId, societyId]);
+
+  const handleRemoveMemberFromEvent = useCallback(
+    (memberId: string, displayName: string) => {
+      if (!eventId || !societyId) return;
+      const msg = `Remove ${displayName} from this event for your society? They disappear from players, payments, tee lists, and RSVP summaries. The database row is kept for audit.`;
+      confirmDestructive("Remove from event", msg, "Remove", async () => {
+        try {
+          await removeEventParticipant({ eventId, societyId, targetMemberId: memberId });
+          await invalidateCache(`event:${eventId}:detail`);
+          await invalidateCache(`event:${eventId}:registrations`);
+          await invalidateCachePrefix(`society:${societyId}:`);
+          await loadRegistrations();
+          await loadEvent();
+        } catch (e: unknown) {
+          showAlert("Could not remove", e instanceof Error ? e.message : "Try again.");
+        }
+      });
+    },
+    [eventId, societyId, loadRegistrations, loadEvent],
+  );
 
   useEffect(() => {
     if (!eventId || !societyId) return;
@@ -765,8 +787,29 @@ export default function ManageEventScreen() {
    */
   const societyPageRegistrations = useMemo(() => {
     if (!societyId) return [];
-    return filterRegistrationsForActiveSocietyMembers(registrations, societyId, activeMemberIdSet);
+    return filterRegistrationsForActiveSocietyMembers(registrations, societyId, activeMemberIdSet).filter(
+      isOperationalEventRegistration,
+    );
   }, [registrations, societyId, activeMemberIdSet]);
+
+  const removedMemberIdsForActiveSociety = useMemo(() => {
+    if (!societyId) return new Set<string>();
+    return new Set(
+      registrations
+        .filter(
+          (r) =>
+            String(r.society_id) === String(societyId) &&
+            !isOperationalEventRegistration(r) &&
+            activeMemberIdSet.has(String(r.member_id)),
+        )
+        .map((r) => String(r.member_id)),
+    );
+  }, [registrations, societyId, activeMemberIdSet]);
+
+  const membersForRsvpStats = useMemo(
+    () => activeSocietyMembers.filter((m) => !removedMemberIdsForActiveSociety.has(String(m.id))),
+    [activeSocietyMembers, removedMemberIdsForActiveSociety],
+  );
 
   /** Display name per registration row. */
   const registrationMemberDisplayName = useCallback(
@@ -976,17 +1019,14 @@ export default function ManageEventScreen() {
   const rsvpSummary = useMemo(() => {
     const inCount = societyPageRegistrations.filter((r) => r.status === "in").length;
     const outCount = societyPageRegistrations.filter((r) => r.status === "out").length;
-    const noResponseCount = countMembersWithNoSocietyRsvpRow(
-      activeSocietyMembers,
-      societyPageRegistrations,
-    );
+    const noResponseCount = countMembersWithNoSocietyRsvpRow(membersForRsvpStats, societyPageRegistrations);
     return {
       inCount,
       outCount,
       guestCount: societyGuestCount,
       noResponseCount,
     };
-  }, [societyPageRegistrations, activeSocietyMembers, societyGuestCount]);
+  }, [societyPageRegistrations, membersForRsvpStats, societyGuestCount]);
 
   const teeSheetEligibleCount = buckets.confirmedPaid.length + guestConfirmedPaid.length;
   const pendingPaymentCount =
@@ -2490,26 +2530,52 @@ export default function ManageEventScreen() {
 
               <View style={styles.paidRightCol}>
                 <StatusBadge label={PaymentPill.paid} tone="success" />
-                {canManagePayments && (
-                  <Pressable
-                    disabled={payBusy === reg.member_id}
-                    onPress={() => {
-                      void handleTogglePaid(reg);
-                    }}
-                    hitSlop={10}
-                    style={({ pressed }) => [
-                      styles.paidToggleBtn,
-                      {
-                        borderColor: colors.border,
-                        opacity: pressed ? 0.6 : payBusy === reg.member_id ? 0.4 : 1,
-                      },
-                    ]}
-                  >
-                    <AppText variant="captionBold" color="primary">
-                      Mark unpaid
-                    </AppText>
-                  </Pressable>
-                )}
+                {canManagePayments || canManageEventRoster ? (
+                  <View style={styles.paidActionsStack}>
+                    {canManagePayments ? (
+                      <Pressable
+                        disabled={payBusy === reg.member_id}
+                        onPress={() => {
+                          void handleTogglePaid(reg);
+                        }}
+                        hitSlop={10}
+                        style={({ pressed }) => [
+                          styles.paidToggleBtn,
+                          {
+                            borderColor: colors.border,
+                            opacity: pressed ? 0.6 : payBusy === reg.member_id ? 0.4 : 1,
+                          },
+                        ]}
+                      >
+                        <AppText variant="captionBold" color="primary">
+                          Mark unpaid
+                        </AppText>
+                      </Pressable>
+                    ) : null}
+                    {canManageEventRoster ? (
+                      <Pressable
+                        hitSlop={10}
+                        onPress={() =>
+                          handleRemoveMemberFromEvent(
+                            String(reg.member_id),
+                            registrationMemberDisplayName(reg),
+                          )
+                        }
+                        style={({ pressed }) => [
+                          styles.paidToggleBtn,
+                          {
+                            borderColor: colors.border,
+                            opacity: pressed ? 0.88 : 1,
+                          },
+                        ]}
+                      >
+                        <AppText variant="captionBold" style={{ color: colors.error }}>
+                          Remove from event
+                        </AppText>
+                      </Pressable>
+                    ) : null}
+                  </View>
+                ) : null}
               </View>
             </View>
           ))}
@@ -2567,26 +2633,52 @@ export default function ManageEventScreen() {
 
               <View style={styles.paidRightCol}>
                 <StatusBadge label={PaymentPill.unpaid} tone="warning" />
-                {canManagePayments && (
-                  <Pressable
-                    disabled={payBusy === reg.member_id}
-                    onPress={() => {
-                      void handleTogglePaid(reg);
-                    }}
-                    hitSlop={10}
-                    style={({ pressed }) => [
-                      styles.paidToggleBtn,
-                      {
-                        borderColor: colors.border,
-                        opacity: pressed ? 0.6 : payBusy === reg.member_id ? 0.4 : 1,
-                      },
-                    ]}
-                  >
-                    <AppText variant="captionBold" color="primary">
-                      Mark paid
-                    </AppText>
-                  </Pressable>
-                )}
+                {canManagePayments || canManageEventRoster ? (
+                  <View style={styles.paidActionsStack}>
+                    {canManagePayments ? (
+                      <Pressable
+                        disabled={payBusy === reg.member_id}
+                        onPress={() => {
+                          void handleTogglePaid(reg);
+                        }}
+                        hitSlop={10}
+                        style={({ pressed }) => [
+                          styles.paidToggleBtn,
+                          {
+                            borderColor: colors.border,
+                            opacity: pressed ? 0.6 : payBusy === reg.member_id ? 0.4 : 1,
+                          },
+                        ]}
+                      >
+                        <AppText variant="captionBold" color="primary">
+                          Mark paid
+                        </AppText>
+                      </Pressable>
+                    ) : null}
+                    {canManageEventRoster ? (
+                      <Pressable
+                        hitSlop={10}
+                        onPress={() =>
+                          handleRemoveMemberFromEvent(
+                            String(reg.member_id),
+                            registrationMemberDisplayName(reg),
+                          )
+                        }
+                        style={({ pressed }) => [
+                          styles.paidToggleBtn,
+                          {
+                            borderColor: colors.border,
+                            opacity: pressed ? 0.88 : 1,
+                          },
+                        ]}
+                      >
+                        <AppText variant="captionBold" style={{ color: colors.error }}>
+                          Remove from event
+                        </AppText>
+                      </Pressable>
+                    ) : null}
+                  </View>
+                ) : null}
               </View>
             </View>
           ))}
@@ -2645,46 +2737,67 @@ export default function ManageEventScreen() {
 
               <View style={styles.paidRightCol}>
                 <StatusBadge label={PaymentPill.unpaid} tone="warning" />
-                {canManagePayments && (
+                {canManagePayments || canManageEventRoster ? (
                   <View style={styles.paidActionsStack}>
-                    <Pressable
-                      disabled={payBusy === mid}
-                      onPress={() => {
-                        void handleLineupMemberFeeAction(mid, true);
-                      }}
-                      hitSlop={10}
-                      style={({ pressed }) => [
-                        styles.paidToggleBtn,
-                        {
-                          borderColor: colors.border,
-                          opacity: pressed ? 0.6 : payBusy === mid ? 0.4 : 1,
-                        },
-                      ]}
-                    >
-                      <AppText variant="captionBold" color="primary">
-                        Mark paid
-                      </AppText>
-                    </Pressable>
-                    <Pressable
-                      disabled={payBusy === mid}
-                      onPress={() => {
-                        void handleLineupMemberFeeAction(mid, false);
-                      }}
-                      hitSlop={10}
-                      style={({ pressed }) => [
-                        styles.paidToggleBtn,
-                        {
-                          borderColor: colors.border,
-                          opacity: pressed ? 0.6 : payBusy === mid ? 0.4 : 1,
-                        },
-                      ]}
-                    >
-                      <AppText variant="captionBold" color="secondary">
-                        Record unpaid
-                      </AppText>
-                    </Pressable>
+                    {canManagePayments ? (
+                      <>
+                        <Pressable
+                          disabled={payBusy === mid}
+                          onPress={() => {
+                            void handleLineupMemberFeeAction(mid, true);
+                          }}
+                          hitSlop={10}
+                          style={({ pressed }) => [
+                            styles.paidToggleBtn,
+                            {
+                              borderColor: colors.border,
+                              opacity: pressed ? 0.6 : payBusy === mid ? 0.4 : 1,
+                            },
+                          ]}
+                        >
+                          <AppText variant="captionBold" color="primary">
+                            Mark paid
+                          </AppText>
+                        </Pressable>
+                        <Pressable
+                          disabled={payBusy === mid}
+                          onPress={() => {
+                            void handleLineupMemberFeeAction(mid, false);
+                          }}
+                          hitSlop={10}
+                          style={({ pressed }) => [
+                            styles.paidToggleBtn,
+                            {
+                              borderColor: colors.border,
+                              opacity: pressed ? 0.6 : payBusy === mid ? 0.4 : 1,
+                            },
+                          ]}
+                        >
+                          <AppText variant="captionBold" color="secondary">
+                            Record unpaid
+                          </AppText>
+                        </Pressable>
+                      </>
+                    ) : null}
+                    {canManageEventRoster ? (
+                      <Pressable
+                        hitSlop={10}
+                        onPress={() => handleRemoveMemberFromEvent(mid, memberNameForAttendeeId(mid))}
+                        style={({ pressed }) => [
+                          styles.paidToggleBtn,
+                          {
+                            borderColor: colors.border,
+                            opacity: pressed ? 0.88 : 1,
+                          },
+                        ]}
+                      >
+                        <AppText variant="captionBold" style={{ color: colors.error }}>
+                          Remove from event
+                        </AppText>
+                      </Pressable>
+                    ) : null}
                   </View>
-                )}
+                ) : null}
               </View>
             </View>
           ))}
@@ -2702,9 +2815,35 @@ export default function ManageEventScreen() {
                 Not playing / withdrawn
               </AppText>
               {notPlayingRegs.map((reg) => (
-                <AppText key={reg.id} variant="small" color="muted" style={{ paddingVertical: 2 }}>
-                  {registrationMemberDisplayName(reg)}
-                </AppText>
+                <View
+                  key={reg.id}
+                  style={{
+                    flexDirection: "row",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    gap: spacing.sm,
+                    paddingVertical: 4,
+                  }}
+                >
+                  <AppText variant="small" color="muted" style={{ flex: 1 }}>
+                    {registrationMemberDisplayName(reg)}
+                  </AppText>
+                  {canManageEventRoster ? (
+                    <Pressable
+                      hitSlop={10}
+                      onPress={() =>
+                        handleRemoveMemberFromEvent(
+                          String(reg.member_id),
+                          registrationMemberDisplayName(reg),
+                        )
+                      }
+                    >
+                      <AppText variant="captionBold" style={{ color: colors.error }}>
+                        Remove from event
+                      </AppText>
+                    </Pressable>
+                  ) : null}
+                </View>
               ))}
             </View>
           )}

@@ -11,6 +11,7 @@ import type { EventRegistration } from "@/lib/db_supabase/eventRegistrationRepo"
 import {
   isTeeSheetEligible,
   isRegistrationConfirmed,
+  isOperationalEventRegistration,
 } from "@/lib/db_supabase/eventRegistrationRepo";
 
 export type SocietyPlayerBucket = "confirmed_paid" | "pending_payment" | "withdrawn";
@@ -31,6 +32,7 @@ export function partitionSocietyRegistrations(regs: EventRegistration[]): {
   const pendingPayment: EventRegistration[] = [];
   const withdrawn: EventRegistration[] = [];
   for (const r of regs) {
+    if (!isOperationalEventRegistration(r)) continue;
     switch (bucketForRegistration(r)) {
       case "confirmed_paid":
         confirmedPaid.push(r);
@@ -53,6 +55,7 @@ export { isTeeSheetEligible as isConfirmedAndPaidForTeeSheet };
 export function memberIdsConfirmedIn(regs: EventRegistration[]): Set<string> {
   const s = new Set<string>();
   for (const r of regs) {
+    if (!isOperationalEventRegistration(r)) continue;
     if (isRegistrationConfirmed(r)) s.add(String(r.member_id));
   }
   return s;
@@ -95,6 +98,7 @@ export function withdrawnRegsForDisplay(
   ]);
   const byMemberId = new Map<string, EventRegistration>();
   for (const reg of societyRegs) {
+    if (!isOperationalEventRegistration(reg)) continue;
     if (reg.status !== "out") continue;
     const mid = String(reg.member_id);
     if (!activeMemberIds.has(mid)) continue;
