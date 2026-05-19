@@ -10,25 +10,35 @@ type Props = {
   onDismiss: () => void;
 };
 
+function getInstallHint(platform: ReturnType<typeof getPwaPlatform>): string {
+  if (platform === "android") {
+    return "Chrome menu → Install app or Add to Home screen. That opens without the address bar.";
+  }
+  if (platform === "ios") {
+    return "Safari Share → Add to Home Screen. That opens without the Safari URL bar.";
+  }
+  return "Use your browser’s install or “Add to Home screen” option to open without the address bar.";
+}
+
 export function PwaInstallNotice({ dismissed, onDismiss }: Props) {
   const colors = getColors();
   const platform = useMemo(() => getPwaPlatform(), []);
   const shouldShow = isWebRuntime() && !dismissed && !isStandalonePwa();
   if (!shouldShow) return null;
 
-  const hint =
-    platform === "android"
-      ? "Android Chrome: open browser menu and tap Install app / Add to Home screen."
-      : platform === "ios"
-        ? "iOS Safari: tap Share, then Add to Home Screen."
-        : "Use your browser install option to launch as an app.";
-
   return (
     <View style={[styles.wrap, { borderColor: colors.borderLight, backgroundColor: colors.backgroundSecondary }]}>
       <View style={{ flex: 1 }}>
-        <AppText variant="captionBold">Install The Golf Society Hub for the best app experience.</AppText>
-        <AppText variant="caption" color="secondary" style={{ marginTop: 4 }}>
-          {hint}
+        <AppText variant="captionBold">You’re in a browser tab — not the Play Store app</AppText>
+        <AppText variant="caption" color="secondary" style={styles.line}>
+          The URL bar at the top is normal here. It does not mean the Android app is broken.
+        </AppText>
+        <AppText variant="caption" color="secondary" style={styles.line}>
+          For Google Play: install the native build (internal testing or production), package
+          com.godskid.golfsocietyhub, built with eas build --platform android --profile play.
+        </AppText>
+        <AppText variant="caption" color="secondary" style={styles.line}>
+          For web only: {getInstallHint(platform)}
         </AppText>
       </View>
       <Pressable
@@ -55,8 +65,13 @@ const styles = StyleSheet.create({
     borderRadius: radius.md,
     padding: spacing.sm,
     flexDirection: "row",
-    alignItems: "center",
+    alignItems: "flex-start",
     gap: spacing.sm,
     zIndex: 9999,
+    maxWidth: 560,
+    alignSelf: "center",
+  },
+  line: {
+    marginTop: 4,
   },
 });

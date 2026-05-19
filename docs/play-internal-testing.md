@@ -1,5 +1,25 @@
 # Google Play Internal Testing – Release Checklist
 
+## Native Android app vs web browser (URL bar)
+
+| How you open the app | Address / URL bar? | Counts for Play Store publish? |
+|----------------------|--------------------|--------------------------------|
+| Vercel link or Chrome tab (`expo start --web`) | **Yes** — expected | **No** — this is a website |
+| Installed PWA (“Install app” / “Add to Home screen”) | **No** — standalone window | **No** — still web, not the Play `.aab` |
+| EAS Android build (internal testing, APK, or Play `.aab`) | **No** — native shell | **Yes** — this is what you ship |
+
+The Play-ready artifact is an **Android App Bundle** from EAS (`com.godskid.golfsocietyhub`), not the Vercel URL. If you see `the-golf-society-hub.vercel.app` (or similar) at the top, you are in a **browser**, not the store app.
+
+**Test the real app before publish:**
+
+```bash
+eas build --platform android --profile play
+```
+
+Install from Play **Internal testing** (or download the APK from a `preview`/`dev` profile build). Do **not** judge “app-like” feel from a normal browser tab.
+
+**Web-only shortcut (no Play):** On Android Chrome or iOS Safari, use **Install app** / **Add to Home screen** so the manifest `display: standalone` hides the URL bar. That is still the PWA, not the Play listing.
+
 ## Prerequisites
 
 1. **EAS CLI** installed: `npm install -g eas-cli`

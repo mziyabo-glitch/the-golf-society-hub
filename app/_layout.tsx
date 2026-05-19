@@ -17,8 +17,8 @@ import { consumePendingSocietyJoinCode } from "@/lib/pendingSocietyJoinCode";
 import { consumePendingPostAuthRedirect } from "@/lib/pendingPostAuthRedirect";
 import { blurWebActiveElement } from "@/lib/ui/focus";
 import { isEventRsvpInvitePath } from "@/lib/eventInviteLink";
-import { StatusBar } from "expo-status-bar";
 import { SafeAreaProvider, initialWindowMetrics } from "react-native-safe-area-context";
+import { NativeAppChrome } from "@/lib/ui/NativeAppChrome";
 import { NetworkProvider } from "@/lib/network/NetworkContext";
 import { OfflineNetworkBanner } from "@/components/network/OfflineNetworkBanner";
 import { PwaInstallNotice } from "@/components/pwa/PwaInstallNotice";
@@ -344,7 +344,7 @@ export default function RootLayout() {
       <NetworkProvider>
         <ThemeProvider>
           <FontScaleProvider>
-            <StatusBar style="auto" />
+            <NativeAppChrome />
             <BootstrapProvider>
               <RootNavigator />
             </BootstrapProvider>

@@ -14,6 +14,15 @@
     },
     "android": {
       "package": "com.godskid.golfsocietyhub",
+      "androidStatusBar": {
+        "barStyle": "dark-content",
+        "backgroundColor": "#F8FAF8",
+        "translucent": true
+      },
+      "androidNavigationBar": {
+        "barStyle": "dark-content",
+        "backgroundColor": "#F8FAF8"
+      },
       "intentFilters": [
         {
           "action": "VIEW",
