@@ -3,7 +3,8 @@
  */
 
 import { useCallback, useEffect, useState } from "react";
-import { StyleSheet, View, Pressable } from "react-native";
+import { StyleSheet, View } from "react-native";
+import { ReliablePressable } from "@/components/ui/ReliablePressable";
 import { useRouter } from "expo-router";
 
 import { Screen } from "@/components/ui/Screen";
@@ -51,7 +52,7 @@ type MemberGateKind = "unlinked" | "needs_auth" | "ambiguous";
 export function EventRsvpInviteScreen({ eventId }: { eventId: string }) {
   const router = useRouter();
   const colors = getColors();
-  const { userId, isSignedIn } = useBootstrap();
+  const { userId, isSignedIn, authRestoring } = useBootstrap();
 
   const [summary, setSummary] = useState<PublicEventInviteSummary | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -95,18 +96,32 @@ export function EventRsvpInviteScreen({ eventId }: { eventId: string }) {
     void clearPendingPostAuthRedirectIfMatches(`/invite/${eventId}`);
   }, [eventId, isSignedIn]);
 
+  const participantSocietyIds = useCallback((): string[] => {
+    if (!summary) return [];
+    return summary.participant_society_ids.length > 0
+      ? summary.participant_society_ids
+      : [summary.host_society_id];
+  }, [summary]);
+
+  const resolveSignedInMemberCtx = useCallback(async (): Promise<{ memberId: string; societyId: string } | null> => {
+    if (!summary || !userId || authRestoring) return null;
+    return findMemberContextForEventInvite(userId, participantSocietyIds(), summary.host_society_id);
+  }, [summary, userId, authRestoring, participantSocietyIds]);
+
   useEffect(() => {
-    if (!summary || !userId || ctxResolved) return;
-    const parts =
-      summary.participant_society_ids.length > 0
-        ? summary.participant_society_ids
-        : [summary.host_society_id];
+    if (!summary || !userId || authRestoring) return;
+    let cancelled = false;
+    setCtxResolved(false);
     void (async () => {
-      const ctx = await findMemberContextForEventInvite(userId, parts, summary.host_society_id);
+      const ctx = await resolveSignedInMemberCtx();
+      if (cancelled) return;
       setMemberCtx(ctx);
       setCtxResolved(true);
     })();
-  }, [summary, userId, ctxResolved]);
+    return () => {
+      cancelled = true;
+    };
+  }, [summary, userId, authRestoring, resolveSignedInMemberCtx]);
 
   useEffect(() => {
     setMemberGate(null);
@@ -142,7 +157,7 @@ export function EventRsvpInviteScreen({ eventId }: { eventId: string }) {
   const openSignIn = useCallback(() => {
     void storePendingPostAuthRedirect(invitePath);
     blurWebActiveElement();
-    router.push("/sign-in");
+    router.push({ pathname: "/sign-in", params: { next: invitePath } });
   }, [invitePath, router]);
 
   const mapSubmitError = (e: unknown): string => {
@@ -191,11 +206,16 @@ export function EventRsvpInviteScreen({ eventId }: { eventId: string }) {
     if (!assertRsvpOpen()) return;
     setBusy(true);
     try {
-      if (userId && memberCtx) {
+      let ctx = memberCtx;
+      if (userId && !ctx) {
+        ctx = await resolveSignedInMemberCtx();
+        if (ctx) setMemberCtx(ctx);
+      }
+      if (userId && ctx) {
         await setMyStatus({
           eventId: summary.event_id,
-          societyId: memberCtx.societyId,
-          memberId: memberCtx.memberId,
+          societyId: ctx.societyId,
+          memberId: ctx.memberId,
           status: "in",
         });
         setDonePath("member");
@@ -210,7 +230,7 @@ export function EventRsvpInviteScreen({ eventId }: { eventId: string }) {
         setStep("done");
         return;
       }
-      if (userId && !memberCtx) {
+      if (userId && !ctx) {
         setFormError(
           "Use “Open app to join society” so this account is linked to the roster, then return here to RSVP.",
         );
@@ -230,11 +250,16 @@ export function EventRsvpInviteScreen({ eventId }: { eventId: string }) {
     if (!assertRsvpOpen()) return;
     setBusy(true);
     try {
-      if (userId && memberCtx) {
+      let ctx = memberCtx;
+      if (userId && !ctx) {
+        ctx = await resolveSignedInMemberCtx();
+        if (ctx) setMemberCtx(ctx);
+      }
+      if (userId && ctx) {
         await setMyStatus({
           eventId: summary.event_id,
-          societyId: memberCtx.societyId,
-          memberId: memberCtx.memberId,
+          societyId: ctx.societyId,
+          memberId: ctx.memberId,
           status: "out",
         });
         setDonePath("member");
@@ -249,7 +274,7 @@ export function EventRsvpInviteScreen({ eventId }: { eventId: string }) {
         setStep("done");
         return;
       }
-      if (userId && !memberCtx) {
+      if (userId && !ctx) {
         setFormError(
           "Use “Open app to join society” so this account is linked to the roster, then return here to RSVP.",
         );
@@ -500,33 +525,33 @@ export function EventRsvpInviteScreen({ eventId }: { eventId: string }) {
                 </View>
               ) : (
                 <View style={[styles.row, { marginTop: spacing.base }]}>
-                  <Pressable
+                  <ReliablePressable
                     onPress={() => void onMemberIn()}
                     disabled={busy}
-                    style={({ pressed }) => [
-                      styles.halfBtn,
-                      { backgroundColor: colors.primary, opacity: pressed ? 0.9 : 1 },
-                    ]}
+                    hitSlop={12}
+                    accessibilityLabel="RSVP in"
+                    style={[styles.halfBtn, { backgroundColor: colors.primary }]}
                   >
                     <AppText variant="bodyBold" color="inverse">
                       In
                     </AppText>
-                  </Pressable>
-                  <Pressable
+                  </ReliablePressable>
+                  <ReliablePressable
                     onPress={() => void onMemberOut()}
                     disabled={busy}
-                    style={({ pressed }) => [
+                    hitSlop={12}
+                    accessibilityLabel="RSVP out"
+                    style={[
                       styles.halfBtn,
                       {
                         backgroundColor: colors.backgroundTertiary,
                         borderWidth: 1,
                         borderColor: colors.border,
-                        opacity: pressed ? 0.9 : 1,
                       },
                     ]}
                   >
                     <AppText variant="bodyBold">Out</AppText>
-                  </Pressable>
+                  </ReliablePressable>
                 </View>
               )}
             </>
@@ -538,33 +563,33 @@ export function EventRsvpInviteScreen({ eventId }: { eventId: string }) {
                 Confirm for this event.
               </AppText>
               <View style={styles.row}>
-                <Pressable
+                <ReliablePressable
                   onPress={() => void onMemberIn()}
                   disabled={busy}
-                  style={({ pressed }) => [
-                    styles.halfBtn,
-                    { backgroundColor: colors.primary, opacity: pressed ? 0.9 : 1 },
-                  ]}
+                  hitSlop={12}
+                  accessibilityLabel="RSVP in"
+                  style={[styles.halfBtn, { backgroundColor: colors.primary }]}
                 >
                   <AppText variant="bodyBold" color="inverse">
                     In
                   </AppText>
-                </Pressable>
-                <Pressable
+                </ReliablePressable>
+                <ReliablePressable
                   onPress={() => void onMemberOut()}
                   disabled={busy}
-                  style={({ pressed }) => [
+                  hitSlop={12}
+                  accessibilityLabel="RSVP out"
+                  style={[
                     styles.halfBtn,
                     {
                       backgroundColor: colors.backgroundTertiary,
                       borderWidth: 1,
                       borderColor: colors.border,
-                      opacity: pressed ? 0.9 : 1,
                     },
                   ]}
                 >
                   <AppText variant="bodyBold">Out</AppText>
-                </Pressable>
+                </ReliablePressable>
               </View>
             </>
           ) : (

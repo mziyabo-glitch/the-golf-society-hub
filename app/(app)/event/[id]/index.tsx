@@ -10,6 +10,8 @@ import { AppText } from "@/components/ui/AppText";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { LoadingState } from "@/components/ui/LoadingState";
 import { RetryErrorBlock } from "@/components/ui/RetryErrorBlock";
+import { InlineNotice } from "@/components/ui/InlineNotice";
+import { ReliablePressable } from "@/components/ui/ReliablePressable";
 import { PrimaryButton, SecondaryButton } from "@/components/ui/Button";
 import { SocietyBadge } from "@/components/ui/SocietyHeader";
 import { StatusBadge } from "@/components/ui/StatusBadge";
@@ -17,6 +19,7 @@ import { scoringOfficialBadgeLabel, scoringOfficialUiKind } from "@/lib/scoring/
 import { EVENT_CLASSIFICATIONS, EVENT_FORMATS, getEvent, type EventDoc } from "@/lib/db_supabase/eventRepo";
 import { getEventGuests } from "@/lib/db_supabase/eventGuestRepo";
 import { getEventRegistrations, type EventRegistration } from "@/lib/db_supabase/eventRegistrationRepo";
+import { submitMemberEventRsvp } from "@/lib/events/memberEventRsvp";
 import { listEventPrizePools } from "@/lib/db_supabase/eventPrizePoolRepo";
 import { getEventResultsForSociety } from "@/lib/db_supabase/resultsRepo";
 import { getColors, iconSize, radius, spacing } from "@/lib/ui/theme";
@@ -69,6 +72,7 @@ export default function EventOverviewScreen() {
     societyId,
     member: currentMember,
     memberships,
+    userId,
   } = useBootstrap();
 
   const permissions = getPermissionsForMember(currentMember);
@@ -96,6 +100,8 @@ export default function EventOverviewScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [refreshError, setRefreshError] = useState<string | null>(null);
+  const [rsvpBusy, setRsvpBusy] = useState(false);
+  const [rsvpError, setRsvpError] = useState<string | null>(null);
   const eventRef = useRef<EventDoc | null>(null);
   eventRef.current = event;
 
@@ -225,15 +231,59 @@ export default function EventOverviewScreen() {
     navigation.setOptions({ title: event.name });
   }, [event?.name, navigation]);
 
-  const myRegistration = useMemo(
-    () => {
-      const activeMembershipMemberId = societyId
+  const activeMembershipMemberId = useMemo(
+    () =>
+      societyId
         ? memberships.find((m) => String(m.societyId) === String(societyId))?.memberId ?? null
-        : null;
-      const effectiveMemberId = currentMember?.id ?? activeMembershipMemberId ?? null;
-      return getMemberRegistration(registrations, effectiveMemberId);
+        : null,
+    [memberships, societyId],
+  );
+
+  const effectiveMemberId = currentMember?.id ?? activeMembershipMemberId ?? null;
+
+  const myRegistration = useMemo(
+    () => getMemberRegistration(registrations, effectiveMemberId),
+    [registrations, effectiveMemberId],
+  );
+
+  const toggleEventRsvp = useCallback(
+    async (newStatus: "in" | "out") => {
+      if (rsvpBusy || !event?.id || !societyId) {
+        if (!rsvpBusy && (!event?.id || !societyId)) {
+          setRsvpError("Your society is still loading. Wait a moment and try again.");
+        }
+        return;
+      }
+      setRsvpBusy(true);
+      setRsvpError(null);
+      try {
+        const { registration, resolvedMemberId } = await submitMemberEventRsvp({
+          eventId: event.id,
+          societyId,
+          status: newStatus,
+          userId,
+          bootstrapMemberId: currentMember?.id ?? null,
+          membershipMemberId: activeMembershipMemberId,
+          source: "event_detail_rsvp",
+        });
+        setRegistrations((prev) => {
+          const without = prev.filter((r) => String(r.member_id) !== String(resolvedMemberId));
+          return registration ? [...without, registration] : without;
+        });
+      } catch (e: unknown) {
+        setRsvpError(e instanceof Error ? e.message : "Could not update RSVP. Please try again.");
+      } finally {
+        setRsvpBusy(false);
+      }
     },
-    [registrations, currentMember?.id, memberships, societyId],
+    [
+      rsvpBusy,
+      event?.id,
+      societyId,
+      userId,
+      currentMember?.id,
+      activeMembershipMemberId,
+    ],
   );
 
   const attendanceSummary = useMemo(() => {
@@ -344,6 +394,7 @@ export default function EventOverviewScreen() {
     <Screen>
       <ScrollView
         contentContainerStyle={styles.content}
+        keyboardShouldPersistTaps="handled"
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
@@ -474,6 +525,70 @@ export default function EventOverviewScreen() {
             <AppText variant="small" color="muted" style={{ marginTop: spacing.sm }}>
               {guestCount} guest{guestCount === 1 ? "" : "s"} currently linked to this event.
             </AppText>
+          ) : null}
+
+          {societyId && userId ? (
+            <>
+              <AppText variant="captionBold" color="muted" style={{ marginTop: spacing.md }}>
+                Update your RSVP
+              </AppText>
+              <View
+                style={[
+                  styles.rsvpSegmentShell,
+                  { borderColor: colors.borderLight, backgroundColor: colors.backgroundSecondary },
+                ]}
+              >
+                <ReliablePressable
+                  onPress={() => void toggleEventRsvp("in")}
+                  disabled={rsvpBusy}
+                  hitSlop={8}
+                  accessibilityLabel="Mark as playing"
+                  style={[
+                    styles.rsvpSegmentBtn,
+                    {
+                      backgroundColor: myRegistration?.status === "in" ? colors.primary : "transparent",
+                      borderColor: myRegistration?.status === "in" ? colors.primary : "transparent",
+                    },
+                  ]}
+                >
+                  <AppText
+                    variant="bodyBold"
+                    style={{
+                      color: myRegistration?.status === "in" ? colors.textInverse : colors.text,
+                    }}
+                  >
+                    Playing
+                  </AppText>
+                </ReliablePressable>
+                <ReliablePressable
+                  onPress={() => void toggleEventRsvp("out")}
+                  disabled={rsvpBusy}
+                  hitSlop={8}
+                  accessibilityLabel="Mark as not playing"
+                  style={[
+                    styles.rsvpSegmentBtn,
+                    {
+                      backgroundColor:
+                        myRegistration?.status === "out" ? colors.textSecondary : "transparent",
+                      borderColor:
+                        myRegistration?.status === "out" ? colors.textSecondary : "transparent",
+                    },
+                  ]}
+                >
+                  <AppText
+                    variant="bodyBold"
+                    style={{
+                      color: myRegistration?.status === "out" ? colors.textInverse : colors.text,
+                    }}
+                  >
+                    Not playing
+                  </AppText>
+                </ReliablePressable>
+              </View>
+              {rsvpError ? (
+                <InlineNotice variant="error" message={rsvpError} style={{ marginTop: spacing.sm }} />
+              ) : null}
+            </>
           ) : null}
         </AppCard>
 
@@ -724,6 +839,24 @@ const styles = StyleSheet.create({
     borderColor: "rgba(0,0,0,0.08)",
     padding: spacing.sm,
     gap: spacing.xs,
+  },
+  rsvpSegmentShell: {
+    flexDirection: "row",
+    borderRadius: radius.md,
+    borderWidth: 1,
+    padding: 4,
+    gap: 4,
+    marginTop: spacing.xs,
+  },
+  rsvpSegmentBtn: {
+    flex: 1,
+    minHeight: 48,
+    borderRadius: radius.sm,
+    borderWidth: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.xs,
   },
   actionsStack: {
     gap: spacing.sm,

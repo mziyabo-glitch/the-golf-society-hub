@@ -1,4 +1,5 @@
 import { Pressable, StyleSheet, View } from "react-native";
+import { ReliablePressable } from "@/components/ui/ReliablePressable";
 import { Feather } from "@expo/vector-icons";
 import { AppCard } from "@/components/ui/AppCard";
 import { AppText } from "@/components/ui/AppText";
@@ -160,46 +161,42 @@ export function HomeEventAttendanceCard({
         Your attendance
       </AppText>
       <View style={[styles.segmentShell, { borderColor: colors.borderLight, backgroundColor: colors.backgroundSecondary }]}>
-        <Pressable
+        <ReliablePressable
           onPress={() => onToggleRegistration("in")}
           disabled={regBusy}
-          style={({ pressed }) => [
+          hitSlop={8}
+          accessibilityLabel="Mark as playing"
+          style={[
             styles.segmentBtn,
             {
               backgroundColor: playingActive ? colors.primary : "transparent",
               borderColor: playingActive ? colors.primary : "transparent",
-              opacity: pressed ? 0.88 : 1,
             },
           ]}
-          accessibilityRole="button"
-          accessibilityState={{ selected: playingActive }}
-          accessibilityLabel="Mark as playing"
         >
           <Feather name="sun" size={16} color={playingActive ? colors.textInverse : colors.textSecondary} />
           <AppText variant="bodyBold" style={{ marginTop: 4, color: playingActive ? colors.textInverse : colors.text }}>
             Playing
           </AppText>
-        </Pressable>
-        <Pressable
+        </ReliablePressable>
+        <ReliablePressable
           onPress={() => onToggleRegistration("out")}
           disabled={regBusy}
-          style={({ pressed }) => [
+          hitSlop={8}
+          accessibilityLabel="Mark as not playing"
+          style={[
             styles.segmentBtn,
             {
               backgroundColor: notPlayingActive ? colors.textSecondary : "transparent",
               borderColor: notPlayingActive ? colors.textSecondary : "transparent",
-              opacity: pressed ? 0.88 : 1,
             },
           ]}
-          accessibilityRole="button"
-          accessibilityState={{ selected: notPlayingActive }}
-          accessibilityLabel="Mark as not playing"
         >
           <Feather name="moon" size={16} color={notPlayingActive ? colors.textInverse : colors.textSecondary} />
           <AppText variant="bodyBold" style={{ marginTop: 4, color: notPlayingActive ? colors.textInverse : colors.text }}>
             Not playing
           </AppText>
-        </Pressable>
+        </ReliablePressable>
       </View>
 
       {nextEvent.teeTimePublishedAt && canAccessNextEventTeeSheet ? (

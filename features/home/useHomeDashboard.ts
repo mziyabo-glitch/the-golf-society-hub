@@ -7,12 +7,7 @@ import * as WebBrowser from "expo-web-browser";
 import { isCaptain, canManageEventPaymentsForSociety } from "@/lib/rbac";
 import { supabase } from "@/lib/supabase";
 import { getEventsForSociety, type EventDoc } from "@/lib/db_supabase/eventRepo";
-import {
-  findMemberByUserAndSociety,
-  getMembersBySocietyId,
-  getMembersByIds,
-  type MemberDoc,
-} from "@/lib/db_supabase/memberRepo";
+import { getMembersBySocietyId, getMembersByIds, type MemberDoc } from "@/lib/db_supabase/memberRepo";
 import { buildSocietyIdToNameMap } from "@/lib/jointEventSocietyLabel";
 import {
   loadCanonicalTeeSheet,
@@ -41,7 +36,6 @@ import {
   getEventRegistrations,
   scopeEventRegistrations,
   summarizeEventRegistrations,
-  setMyStatus,
   markMePaid,
   type EventRegistration,
 } from "@/lib/db_supabase/eventRegistrationRepo";
@@ -63,7 +57,7 @@ import { useReducedMotion } from "@/hooks/useReducedMotion";
 import { getSocietyLogoUrl } from "@/lib/societyLogo";
 import { measureAsync } from "@/lib/perf/perf";
 import { buildRecentActivityRows } from "./homeRecentActivityVm";
-import { logRsvpFailureTelemetry, logRsvpSuccessDevOnly } from "@/lib/events/rsvpTelemetry";
+import { resolveMemberIdForSocietyRsvp, submitMemberEventRsvp } from "@/lib/events/memberEventRsvp";
 import {
   formatRole,
   formatPoints,
@@ -559,9 +553,13 @@ export function useHomeDashboard() {
     let cancelled = false;
     void (async () => {
       let effectiveMemberId = memberId;
-      if (!effectiveMemberId && userId) {
-        const linked = await findMemberByUserAndSociety(societyId, userId);
-        effectiveMemberId = linked?.id ?? null;
+      if (!effectiveMemberId) {
+        effectiveMemberId = await resolveMemberIdForSocietyRsvp({
+          societyId,
+          userId,
+          bootstrapMemberId: member?.id ?? null,
+          membershipMemberId: activeMembership?.memberId ?? null,
+        });
       }
       if (!effectiveMemberId) {
         if (!cancelled) setMyReg(null);
@@ -571,7 +569,7 @@ export function useHomeDashboard() {
       if (!cancelled) setMyReg(reg);
     })();
     return () => { cancelled = true; };
-  }, [nextEventId, memberId, societyId, userId]);
+  }, [nextEventId, memberId, societyId, userId, member?.id, activeMembership?.memberId]);
 
   // Attendance snapshot for next event (status=in), plus guest count if available.
   useEffect(() => {
@@ -857,42 +855,29 @@ export function useHomeDashboard() {
   const [showAdmin, setShowAdmin] = useState(false);
 
   const toggleRegistration = async (newStatus: "in" | "out") => {
-    if (!nextEvent || !societyId || regBusy) return;
+    if (regBusy) return;
+    if (!nextEvent || !societyId) {
+      setRegError(
+        !societyId
+          ? "Your active society is still loading. Wait a moment and try again."
+          : "No upcoming event to update.",
+      );
+      return;
+    }
     setRegBusy(true);
     setRegError(null);
-    const bootstrapMemberIdPresent = Boolean(member?.id);
-    let resolvedMemberId: string | null = memberId;
     try {
-      if (!resolvedMemberId && userId) {
-        const linked = await findMemberByUserAndSociety(societyId, userId);
-        resolvedMemberId = linked?.id ?? null;
-      }
-      if (!resolvedMemberId) {
-        throw new Error("Could not resolve your active membership for this society.");
-      }
-      const updated = await setMyStatus({
+      const { registration } = await submitMemberEventRsvp({
         eventId: nextEvent.id,
         societyId,
-        memberId: resolvedMemberId,
         status: newStatus,
-      });
-      setMyReg(updated);
-      logRsvpSuccessDevOnly({
-        eventId: nextEvent.id,
-        societyId,
-        memberId: resolvedMemberId,
-        status: newStatus,
+        userId,
+        bootstrapMemberId: member?.id ?? null,
+        membershipMemberId: activeMembership?.memberId ?? null,
         source: "home_dashboard_rsvp",
       });
+      setMyReg(registration);
     } catch (e: unknown) {
-      logRsvpFailureTelemetry({
-        eventId: nextEvent.id,
-        societyId,
-        resolvedMemberIdPresent: Boolean(resolvedMemberId),
-        bootstrapMemberIdPresent,
-        source: "home_dashboard_rsvp",
-        error: e,
-      });
       setRegError(e instanceof Error ? e.message : "Could not update RSVP. Please try again.");
     } finally {
       setRegBusy(false);
