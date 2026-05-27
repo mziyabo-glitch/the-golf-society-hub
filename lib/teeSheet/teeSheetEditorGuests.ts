@@ -18,12 +18,24 @@ export function editorGuestPlayerFromDoc(g: EventGuest): EditorGuestPlayer {
   };
 }
 
+/** Merge saved guest tee rows, then add any paid guests still missing from groups. */
+export function hydrateEditorGroupsWithPaidGuests<
+  T extends { groupNumber: number; players: EditorGuestPlayer[] },
+>(groups: T[], paidGuests: EventGuest[], guestAssignments: TeeGroupPlayerRow[] = []): T[] {
+  let out = groups;
+  if (guestAssignments.length > 0) {
+    out = mergeGuestTeeAssignmentsIntoEditorGroups(out, guestAssignments, paidGuests);
+  }
+  return ensurePaidGuestsInEditorGroups(out, paidGuests);
+}
+
 /** Add paid guests missing from the current editor groups (e.g. newly marked paid). */
 export function ensurePaidGuestsInEditorGroups<
   T extends { groupNumber: number; players: EditorGuestPlayer[] },
 >(groups: T[], paidGuests: EventGuest[]): T[] {
   const present = new Set(groups.flatMap((g) => g.players.map((p) => String(p.id))));
   const missing = paidGuests
+    .filter((g) => g.paid === true)
     .filter((g) => !present.has(guestPlayerId(g.id)))
     .map(editorGuestPlayerFromDoc);
   if (missing.length === 0) return groups;
@@ -49,6 +61,7 @@ export function mergeGuestTeeAssignmentsIntoEditorGroups<
     if (!gid) continue;
     const id = guestPlayerId(gid);
     const g = guestsById.get(gid);
+    if (g && g.paid !== true) continue;
     const player = editorGuestPlayerFromDoc(
       g ?? {
         id: gid,

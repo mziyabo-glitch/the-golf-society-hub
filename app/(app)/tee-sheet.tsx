@@ -42,17 +42,17 @@ import {
   getJointTeeSheetCandidatePoolForEvent,
   type EventRegistration,
 } from "@/lib/db_supabase/eventRegistrationRepo";
-import { getTeeSheetEligibleGuestsForEvent } from "@/lib/db_supabase/eventGuestRepo";
+import { getTeeSheetEligibleGuestsForEvent, type EventGuest } from "@/lib/db_supabase/eventGuestRepo";
 import {
   upsertTeeSheet,
   clearPersistedTeeSheet,
   getTeeGroupPlayers,
   replaceTeeSheetGuestAssignments,
 } from "@/lib/db_supabase/teeGroupsRepo";
-import { parseGuestPlayerId } from "@/lib/teeSheetEligibility";
+import { guestPlayerId, parseGuestPlayerId } from "@/lib/teeSheetEligibility";
 import {
-  ensurePaidGuestsInEditorGroups,
-  mergeGuestTeeAssignmentsIntoEditorGroups,
+  editorGuestPlayerFromDoc,
+  hydrateEditorGroupsWithPaidGuests,
 } from "@/lib/teeSheet/teeSheetEditorGuests";
 import {
   getJointEventTeeSheet,
@@ -325,6 +325,8 @@ export default function TeeSheetScreen() {
   const [selectedPlayerIds, setSelectedPlayerIds] = useState<string[]>([]);
   const [eligibleMemberIds, setEligibleMemberIds] = useState<string[]>([]);
   const [eventMemberPool, setEventMemberPool] = useState<MemberDoc[]>([]);
+  /** Paid event_guests for manual add + auto-hydration (id-based, not name). */
+  const [eligiblePaidGuests, setEligiblePaidGuests] = useState<EventGuest[]>([]);
   const [, setSelectedEventRegistrations] = useState<EventRegistration[]>([]);
   const [showGroupEditor, setShowGroupEditor] = useState(false);
   const [manCo, setManCo] = useState<ManCoDetails>({ captain: null, secretary: null, treasurer: null, handicapper: null });
@@ -434,6 +436,7 @@ export default function TeeSheetScreen() {
         setSelectedPlayerIds([]);
         setEligibleMemberIds([]);
         setEventMemberPool([]);
+        setEligiblePaidGuests([]);
         setIsJointEventTeeSheet(false);
         setJointTeeSheetData(null);
         return;
@@ -502,22 +505,16 @@ export default function TeeSheetScreen() {
             ),
             getTeeSheetEligibleGuestsForEvent(selectedEventId),
           ]);
+          setEligiblePaidGuests(jointPaidGuests);
           let persistedGroups: PlayerGroup[] = normalizeGroups(
             (teeSheet.groups ?? []).map((g, groupIdx) => ({
               groupNumber: g.group_number,
               players: (g.entries ?? []).map((e) => jointTeeSheetEntryToEditable(e, groupIdx)),
             })),
           );
-          if (jointGuestAssignments.length > 0) {
-            persistedGroups = normalizeGroups(
-              mergeGuestTeeAssignmentsIntoEditorGroups(
-                persistedGroups,
-                jointGuestAssignments,
-                jointPaidGuests,
-              ),
-            );
-          }
-          persistedGroups = ensurePaidGuestsInEditorGroups(persistedGroups, jointPaidGuests);
+          persistedGroups = normalizeGroups(
+            hydrateEditorGroupsWithPaidGuests(persistedGroups, jointPaidGuests, jointGuestAssignments),
+          );
           const persistedIds = groupsToPlayerIdsFrom(persistedGroups);
           if (persistedIds.length > 0 || persistedGroups.some((g) => g.players.length > 0)) {
             setGroups(persistedGroups);
@@ -572,6 +569,7 @@ export default function TeeSheetScreen() {
           getEventRegistrations(selectedEventId),
           getTeeSheetEligibleGuestsForEvent(selectedEventId),
         ]);
+        setEligiblePaidGuests(paidGuests);
         setSelectedEvent(event);
         setSelectedEventRegistrations(registrations ?? []);
 
@@ -606,7 +604,7 @@ export default function TeeSheetScreen() {
           canonical.groups.length > 0;
         if (hasPersistedGroups) {
           let persistedGroups = groupsFromCanonical(event, canonical, membersStd);
-          persistedGroups = ensurePaidGuestsInEditorGroups(persistedGroups, paidGuests);
+          persistedGroups = hydrateEditorGroupsWithPaidGuests(persistedGroups, paidGuests);
           const persistedIds = groupsToPlayerIdsFrom(persistedGroups);
           setGroups(persistedGroups);
           setSelectedPlayerIds(persistedIds);
@@ -945,6 +943,7 @@ export default function TeeSheetScreen() {
         ]);
         if (evt) {
           setSelectedEvent(evt);
+          setEligiblePaidGuests(paidGuestList);
           const eligibleIds = await getTeeSheetEligibleMemberIdsForEvent(selectedEventId);
           setSelectedPlayerIds(eligibleIds);
           setEligibleMemberIds(eligibleIds);
@@ -1221,13 +1220,27 @@ export default function TeeSheetScreen() {
         if (!opts?.quiet) {
           setToast({ visible: true, message: "Draft saved", type: "success" });
         }
-        const tsSaved = await getJointEventTeeSheet(selectedEventId);
+        const [tsSaved, jointGuestAssignmentsAfterSave, jointPaidGuestsAfterSave] = await Promise.all([
+          getJointEventTeeSheet(selectedEventId),
+          getTeeGroupPlayers(selectedEventId).then((rows) =>
+            rows.filter((r) => parseGuestPlayerId(String(r.player_id)) != null),
+          ),
+          getTeeSheetEligibleGuestsForEvent(selectedEventId),
+        ]);
         if (tsSaved) {
           setJointTeeSheetData(tsSaved);
-          const newGroups: PlayerGroup[] = normalizeGroups((tsSaved.groups ?? []).map((g, groupIdx) => ({
+          setEligiblePaidGuests(jointPaidGuestsAfterSave);
+          const baseGroups: PlayerGroup[] = (tsSaved.groups ?? []).map((g, groupIdx) => ({
             groupNumber: g.group_number,
             players: (g.entries ?? []).map((e) => jointTeeSheetEntryToEditable(e, groupIdx)),
-          })));
+          }));
+          const newGroups = normalizeGroups(
+            hydrateEditorGroupsWithPaidGuests(
+              baseGroups,
+              jointPaidGuestsAfterSave,
+              jointGuestAssignmentsAfterSave,
+            ),
+          );
           setGroups(newGroups.length > 0 ? newGroups : []);
           const ids = groupsToPlayerIdsFrom(newGroups);
           setSelectedPlayerIds(ids);
@@ -1457,6 +1470,29 @@ export default function TeeSheetScreen() {
     }
   };
 
+  const addGuestToField = (guest: EventGuest) => {
+    const id = guestPlayerId(guest.id);
+    if (groups.some((g) => g.players.some((p) => String(p.id) === id))) return;
+    const player = editorGuestPlayerFromDoc(guest);
+    setGroups((prev) => {
+      const targetGroupIdx = prev.length > 0 ? 0 : -1;
+      const editable: EditablePlayer = {
+        id: player.id,
+        name: player.name,
+        handicapIndex: player.handicapIndex,
+        playingHandicap: null,
+        gender: player.gender,
+        groupIndex: targetGroupIdx >= 0 ? targetGroupIdx : 0,
+      };
+      if (targetGroupIdx === -1) {
+        return [{ groupNumber: 1, players: [editable] }];
+      }
+      return prev.map((g, i) =>
+        i === targetGroupIdx ? { ...g, players: [...g.players, editable] } : g,
+      );
+    });
+  };
+
   const addPlayerToField = (m: MemberDoc) => {
     const id = String(m.id);
     if (!id || selectedPlayerIds.includes(id)) return;
@@ -1663,12 +1699,14 @@ export default function TeeSheetScreen() {
   const womenCount = groups.reduce((sum, g) => sum + g.players.filter((p) => p.gender === "female").length, 0);
   const selectedIdSet = new Set(selectedPlayerIds);
   const eligibleIdSet = new Set(eligibleMemberIds.map(String));
+  const playersInGroups = new Set(groups.flatMap((g) => g.players.map((p) => String(p.id))));
   const addablePlayers = eventMemberPool.filter((m) => {
     const id = String(m.id);
-    if (selectedIdSet.has(id)) return false;
+    if (selectedIdSet.has(id) || playersInGroups.has(id)) return false;
     if (!isJointEventTeeSheet && !eligibleIdSet.has(id)) return false;
     return true;
   });
+  const addableGuests = eligiblePaidGuests.filter((g) => !playersInGroups.has(guestPlayerId(g.id)));
 
   // Check if we have tee settings configured
   const hasMenTees = selectedEvent?.par != null && selectedEvent?.slopeRating != null;
@@ -1971,7 +2009,7 @@ export default function TeeSheetScreen() {
                     <AppText variant="small" color="secondary" style={{ marginTop: 4 }}>
                       ➕ Add player from event societies, or ❌ remove from current field.
                     </AppText>
-                    {addablePlayers.length === 0 ? (
+                    {addablePlayers.length === 0 && addableGuests.length === 0 ? (
                       <AppText variant="small" color="muted" style={{ marginTop: spacing.xs }}>
                         All available players are already selected.
                       </AppText>
@@ -1980,6 +2018,11 @@ export default function TeeSheetScreen() {
                         {addablePlayers.slice(0, 10).map((m) => (
                           <SecondaryButton key={m.id} size="sm" onPress={() => addPlayerToField(m)}>
                             <Feather name="plus" size={12} color={colors.text} /> {m.name || m.displayName || "Member"}
+                          </SecondaryButton>
+                        ))}
+                        {addableGuests.map((g) => (
+                          <SecondaryButton key={g.id} size="sm" onPress={() => addGuestToField(g)}>
+                            <Feather name="plus" size={12} color={colors.text} /> {g.name} (guest)
                           </SecondaryButton>
                         ))}
                       </View>
@@ -2079,6 +2122,7 @@ export default function TeeSheetScreen() {
                           getTeeSheetEligibleGuestsForEvent(selectedEventId),
                         ]);
                         if (!evt) return;
+                        setEligiblePaidGuests(paidGuestList);
                         const eligibleIds = await getTeeSheetEligibleMemberIdsForEvent(selectedEventId);
                         setSelectedPlayerIds(eligibleIds);
                         logSelectedPlayersDev("[teesheet] tee-sheet eligible (paid + in)", selectedEventId, eligibleIds);

@@ -1,3 +1,4 @@
+-- 162: renamed from 161_* (161_events_nullable_slope_rating already uses version 161).
 -- Allow any member linked to the event (host or joint participant) to read guest rows for that event.
 -- Fixes tee sheet / canonical hydration when guests belong to another participating society.
 
