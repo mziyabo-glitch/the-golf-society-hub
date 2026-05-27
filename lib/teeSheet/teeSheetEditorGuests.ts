@@ -80,7 +80,7 @@ export function mergeGuestTeeAssignmentsIntoEditorGroups<
     const gn = row.group_number;
     let group = byGroup.get(gn);
     if (!group) {
-      group = { groupNumber: gn, players: [] } as T;
+      group = { groupNumber: gn, players: [] } as unknown as T;
       byGroup.set(gn, group);
     }
     if (!group.players.some((p) => p.id === id)) {

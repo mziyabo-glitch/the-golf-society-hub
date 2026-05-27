@@ -9,6 +9,7 @@ import {
   editorGuestPlayerFromDoc,
   ensurePaidGuestsInEditorGroups,
   hydrateEditorGroupsWithPaidGuests,
+  type EditorGuestPlayer,
 } from "@/lib/teeSheet/teeSheetEditorGuests";
 import { guestPlayerId } from "@/lib/teeSheetEligibility";
 
@@ -47,7 +48,10 @@ const unpaidGuest: TestGuest = {
 
 describe("teeSheetEditorGuests", () => {
   it("adds paid guest not in initial generator pool to empty groups", () => {
-    const out = ensurePaidGuestsInEditorGroups([], [paidFred]);
+    const out = ensurePaidGuestsInEditorGroups<{ groupNumber: number; players: EditorGuestPlayer[] }>(
+      [],
+      [paidFred],
+    );
     expect(out).toHaveLength(1);
     expect(out[0].players.map((p) => p.id)).toEqual([guestPlayerId("fred-uuid")]);
     expect(out[0].players[0].name).toBe("Fred Cuthbertson");

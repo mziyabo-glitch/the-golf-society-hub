@@ -24,6 +24,7 @@ import { PrimaryButton, SecondaryButton } from "@/components/ui/Button";
 import { LoadingState } from "@/components/ui/LoadingState";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { InlineNotice } from "@/components/ui/InlineNotice";
+import { RetryErrorBlock } from "@/components/ui/RetryErrorBlock";
 import { Toast } from "@/components/ui/Toast";
 import { LicenceRequiredModal } from "@/components/LicenceRequiredModal";
 import { useBootstrap } from "@/lib/useBootstrap";
@@ -333,6 +334,7 @@ export default function TeeSheetScreen() {
   const [isJointEventTeeSheet, setIsJointEventTeeSheet] = useState(false);
   const [jointTeeSheetData, setJointTeeSheetData] = useState<JointEventTeeSheet | null>(null);
   const [eventDetailsRefreshing, setEventDetailsRefreshing] = useState(false);
+  const [eventDetailsError, setEventDetailsError] = useState<FormattedError | null>(null);
   const [hasHydratedIndexCache, setHasHydratedIndexCache] = useState(false);
   const [lastSavedAt, setLastSavedAt] = useState<Date | null>(null);
   const eventLoadSeqRef = React.useRef(0);
@@ -443,6 +445,7 @@ export default function TeeSheetScreen() {
       }
 
       setNotice(null);
+      setEventDetailsError(null);
       savedSnapshotRef.current = null;
       const seq = ++eventLoadSeqRef.current;
       try {
@@ -646,7 +649,9 @@ export default function TeeSheetScreen() {
         }
       } catch (err) {
         console.error("[TeeSheet] reloadSelectedEventDetails error:", err);
-        setNotice({ type: "error", ...formatError(err) });
+        const formatted = formatError(err);
+        setEventDetailsError(formatted);
+        setNotice({ type: "error", ...formatted });
       } finally {
         if (eventLoadSeqRef.current === seq) {
           setEventDetailsRefreshing(false);
@@ -1737,10 +1742,20 @@ export default function TeeSheetScreen() {
       <AppText variant="small" color="muted" style={{ marginBottom: spacing.lg }}>
         Tee sheet includes confirmed + paid players. ManCo can remove players, and can add only tee-sheet-eligible players.
       </AppText>
-      {(refreshing || eventDetailsRefreshing) ? (
+      {(refreshing || eventDetailsRefreshing) && !eventDetailsError ? (
         <AppText variant="small" color="muted" style={{ marginBottom: spacing.sm }}>
           Refreshing...
         </AppText>
+      ) : null}
+
+      {eventDetailsError ? (
+        <RetryErrorBlock
+          title="Could not load tee sheet"
+          message={eventDetailsError.message}
+          onRetry={() => void reloadSelectedEventDetails()}
+          retrying={eventDetailsRefreshing}
+          style={{ marginBottom: spacing.sm }}
+        />
       ) : null}
 
       {loadError ? (

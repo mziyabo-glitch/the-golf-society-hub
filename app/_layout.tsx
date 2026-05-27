@@ -23,6 +23,7 @@ import { NetworkProvider } from "@/lib/network/NetworkContext";
 import { OfflineNetworkBanner } from "@/components/network/OfflineNetworkBanner";
 import { PwaInstallNotice } from "@/components/pwa/PwaInstallNotice";
 import { isWebRuntime } from "@/lib/pwa/runtime";
+import { registerAppServiceWorker } from "@/lib/pwa/serviceWorkerRegistration";
 
 const APP_TABS = "/(app)/(tabs)";
 const JOIN_FLOW_SEGMENTS = new Set(["onboarding", "join", "join-society", "invite"]);
@@ -92,11 +93,7 @@ function RootNavigator() {
   }, []);
 
   useEffect(() => {
-    if (!isWebRuntime()) return;
-    if (!("serviceWorker" in navigator)) return;
-    void navigator.serviceWorker.register("/sw.js").catch((e) => {
-      if (__DEV__) console.warn("[pwa] service worker registration failed", e);
-    });
+    void registerAppServiceWorker();
   }, []);
 
   useEffect(() => {
