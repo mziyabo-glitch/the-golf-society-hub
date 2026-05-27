@@ -26,7 +26,7 @@ export type EventCourseLiveTee = {
   tee_name: string;
   tee_color?: string | null;
   course_rating: number;
-  slope_rating: number;
+  slope_rating: number | null;
   par_total: number;
   gender?: string | null;
   yards?: number | null;

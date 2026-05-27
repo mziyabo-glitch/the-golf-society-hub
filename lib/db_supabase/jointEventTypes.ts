@@ -131,12 +131,12 @@ export interface JointEventBaseInput {
   teeName?: string;
   par?: number;
   courseRating?: number;
-  slopeRating?: number;
+  slopeRating?: number | null;
   handicapAllowance?: number;
   ladiesTeeName?: string;
   ladiesPar?: number;
   ladiesCourseRating?: number;
-  ladiesSlopeRating?: number;
+  ladiesSlopeRating?: number | null;
   teeSource?: "imported" | "manual";
   /** Optional entry fee label for members */
   entryFeeDisplay?: string | null;

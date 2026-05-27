@@ -48,6 +48,7 @@ import { getTeesByCourseId, getCourseByApiId, getCourseMetaById, upsertTeesFromA
 import { searchCourses as searchCoursesApi, getCourseById, type ApiCourseSearchResult } from "@/lib/golfApi";
 import { importCourse, type ImportedCourse } from "@/lib/importCourse";
 import { CourseTeeSelector } from "@/components/CourseTeeSelector";
+import { normalizeSlopeRating } from "@/lib/teeMetrics";
 import { InlineNotice } from "@/components/ui/InlineNotice";
 import {
   menAndLadiesTeeOptions,
@@ -1222,7 +1223,7 @@ export default function ManageEventScreen() {
             tee_name: t.teeName,
             tee_color: null,
             course_rating: t.courseRating ?? 0,
-            slope_rating: t.slopeRating ?? 0,
+            slope_rating: t.slopeRating ?? null,
             par_total: t.parTotal ?? 0,
           }));
         } else {
@@ -1567,7 +1568,11 @@ export default function ManageEventScreen() {
     const teeName = selectedTee?.tee_name ?? (manualTeeName.trim() || event?.teeName || undefined);
     const par = selectedTee?.par_total ?? parseOptionalNumber(manualPar, true) ?? event?.par ?? undefined;
     const courseRating = selectedTee?.course_rating ?? parseOptionalNumber(manualCourseRating) ?? event?.courseRating ?? undefined;
-    const slopeRating = selectedTee?.slope_rating ?? parseOptionalNumber(manualSlopeRating, true) ?? event?.slopeRating ?? undefined;
+    const slopeRating =
+      normalizeSlopeRating(selectedTee?.slope_rating) ??
+      normalizeSlopeRating(parseOptionalNumber(manualSlopeRating, true)) ??
+      normalizeSlopeRating(event?.slopeRating) ??
+      undefined;
     const ladiesTeeName =
       selectedLadiesTee?.tee_name ?? (manualLadiesTeeName.trim() || event?.ladiesTeeName || undefined);
     const ladiesPar = selectedLadiesTee
@@ -1576,9 +1581,11 @@ export default function ManageEventScreen() {
     const ladiesCourseRating = selectedLadiesTee
       ? selectedLadiesTee.course_rating
       : parseOptionalNumber(manualLadiesCourseRating) ?? event?.ladiesCourseRating ?? undefined;
-    const ladiesSlopeRating = selectedLadiesTee
-      ? selectedLadiesTee.slope_rating
-      : parseOptionalNumber(manualLadiesSlopeRating, true) ?? event?.ladiesSlopeRating ?? undefined;
+    const ladiesSlopeRating =
+      normalizeSlopeRating(selectedLadiesTee?.slope_rating) ??
+      normalizeSlopeRating(parseOptionalNumber(manualLadiesSlopeRating, true)) ??
+      normalizeSlopeRating(event?.ladiesSlopeRating) ??
+      undefined;
     const teeSource = selectedTee
       ? "imported"
       : teeName || par != null || courseRating != null || slopeRating != null
@@ -2352,7 +2359,7 @@ export default function ManageEventScreen() {
               {event.courseRating != null && (
                 <Row icon="activity" label="Course Rating" value={String(event.courseRating)} />
               )}
-              {event.slopeRating != null && (
+              {event.slopeRating != null && event.slopeRating > 0 && (
                 <Row icon="trending-up" label="Slope Rating" value={String(event.slopeRating)} />
               )}
             </>

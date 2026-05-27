@@ -33,6 +33,7 @@ import { getMySocieties } from "@/lib/db_supabase/mySocietiesRepo";
 import { ParticipatingSocietiesSection } from "@/components/event/ParticipatingSocietiesSection";
 import type { EventSocietyInput } from "@/lib/db_supabase/jointEventTypes";
 import { type CourseTee, getCourseByApiId, getTeesByCourseId } from "@/lib/db_supabase/courseRepo";
+import { normalizeSlopeRating } from "@/lib/teeMetrics";
 import { searchCourses as searchCoursesApi, getCourseById, type ApiCourseSearchResult } from "@/lib/golfApi";
 import { importCourse, type ImportedCourse } from "@/lib/importCourse";
 import { CourseTeeSelector } from "@/components/CourseTeeSelector";
@@ -279,7 +280,7 @@ export default function EventsScreen() {
             tee_name: t.teeName,
             tee_color: null,
             course_rating: t.courseRating ?? 0,
-            slope_rating: t.slopeRating ?? 0,
+            slope_rating: t.slopeRating ?? null,
             par_total: t.parTotal ?? 0,
             gender: t.gender ?? null,
             yards: t.yards ?? null,
@@ -532,7 +533,11 @@ export default function EventsScreen() {
     const teeName = selectedTee ? selectedTee.tee_name : (manualTeeName.trim() || undefined);
     const par = selectedTee ? selectedTee.par_total : (manualPar.trim() ? parseFloat(manualPar) : undefined);
     const courseRating = selectedTee ? selectedTee.course_rating : (manualCourseRating.trim() ? parseFloat(manualCourseRating) : undefined);
-    const slopeRating = selectedTee ? selectedTee.slope_rating : (manualSlopeRating.trim() ? parseFloat(manualSlopeRating) : undefined);
+    const slopeRating = selectedTee
+      ? normalizeSlopeRating(selectedTee.slope_rating)
+      : manualSlopeRating.trim()
+        ? normalizeSlopeRating(parseFloat(manualSlopeRating))
+        : undefined;
     const ladiesTeeName =
       selectedLadiesTee?.tee_name ?? (manualLadiesTeeName.trim() || undefined);
     const ladiesPar = selectedLadiesTee
@@ -546,9 +551,9 @@ export default function EventsScreen() {
         ? parseFloat(manualLadiesCourseRating)
         : undefined;
     const ladiesSlopeRating = selectedLadiesTee
-      ? selectedLadiesTee.slope_rating
+      ? normalizeSlopeRating(selectedLadiesTee.slope_rating)
       : manualLadiesSlopeRating.trim()
-        ? parseFloat(manualLadiesSlopeRating)
+        ? normalizeSlopeRating(parseFloat(manualLadiesSlopeRating))
         : undefined;
 
     const createPayload = {

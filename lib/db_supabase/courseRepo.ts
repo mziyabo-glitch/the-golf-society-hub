@@ -1,5 +1,6 @@
 // Course and course_tees for event setup (search course → select tee)
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { normalizeSlopeRating } from "@/lib/teeMetrics";
 import { supabase as defaultSupabase } from "@/lib/supabase";
 import { updateEvent } from "@/lib/db_supabase/eventRepo";
 import { assertLiveTeeHolesValidForEventAttach } from "@/lib/course/courseTeeHoleValidation";
@@ -32,7 +33,7 @@ export type CourseTee = {
   tee_name: string;
   tee_color?: string | null;
   course_rating: number;
-  slope_rating: number;
+  slope_rating: number | null;
   par_total: number;
   gender?: string | null;
   yards?: number | null;
@@ -63,7 +64,7 @@ function mapCourseTeeRow(row: Record<string, unknown>): CourseTee {
     tee_name: (row.tee_name as string) ?? "",
     tee_color: (row.tee_color as string | null) ?? null,
     course_rating: cr != null && Number.isFinite(Number(cr)) ? Number(cr) : 0,
-    slope_rating: sr != null && Number.isFinite(Number(sr)) ? Number(sr) : 0,
+    slope_rating: normalizeSlopeRating(sr),
     par_total: pt != null && Number.isFinite(Number(pt)) ? Number(pt) : 0,
     gender: (row.gender as string | null) ?? null,
     yards: (row.yards as number | null) ?? null,
@@ -323,7 +324,7 @@ export async function upsertTeesFromApi(
       const courseRating = t.course_rating;
       const parVal = t.par_total ?? t.par;
       const cr = courseRating != null && Number.isFinite(Number(courseRating)) ? Number(courseRating) : null;
-      const sr = slope != null && Number.isFinite(Number(slope)) ? Math.round(Number(slope)) : null;
+      const sr = normalizeSlopeRating(slope);
       const pt = parVal != null && Number.isFinite(Number(parVal)) ? Math.round(Number(parVal)) : null;
       const y = yards != null && Number.isFinite(Number(yards)) ? Math.round(Number(yards)) : null;
       return {
@@ -1420,8 +1421,7 @@ export async function attachCourseAndTeeToEvent(
   const parTotal = tr.par_total != null && Number.isFinite(Number(tr.par_total)) ? Math.round(Number(tr.par_total)) : undefined;
   const courseRating =
     tr.course_rating != null && Number.isFinite(Number(tr.course_rating)) ? Number(tr.course_rating) : undefined;
-  const slopeRating =
-    tr.slope_rating != null && Number.isFinite(Number(tr.slope_rating)) ? Math.round(Number(tr.slope_rating)) : undefined;
+  const slopeRating = normalizeSlopeRating(tr.slope_rating) ?? undefined;
 
   await updateEvent(eventId, {
     courseId,

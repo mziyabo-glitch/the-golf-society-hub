@@ -7,6 +7,7 @@ import { StyleSheet, View, Pressable } from "react-native";
 import { AppText } from "@/components/ui/AppText";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
 import type { CourseTee } from "@/lib/db_supabase/courseRepo";
+import { formatSlopeRatingLabel, hasValidSlopeRating } from "@/lib/teeMetrics";
 
 const teeColors: Record<string, string> = {
   white: "#ffffff",
@@ -74,8 +75,8 @@ export function CourseTeeSelector({
         const isSelected = selectedTee?.id === tee.id;
         const dotColor = getTeeColor(tee);
         const courseHcap =
-          handicapIndex != null && !isNaN(handicapIndex)
-            ? courseHandicapFromTee(handicapIndex, tee.slope_rating)
+          handicapIndex != null && !isNaN(handicapIndex) && hasValidSlopeRating(tee.slope_rating)
+            ? courseHandicapFromTee(handicapIndex, tee.slope_rating!)
             : null;
 
         return (
@@ -116,7 +117,7 @@ export function CourseTeeSelector({
             </View>
             <View style={styles.statsRow}>
               <AppText variant="caption" color="secondary">
-                CR {tee.course_rating} / SR {tee.slope_rating}
+                CR {tee.course_rating} / {formatSlopeRatingLabel(tee.slope_rating)}
               </AppText>
               <AppText variant="caption" color="secondary">
                 Par {tee.par_total}

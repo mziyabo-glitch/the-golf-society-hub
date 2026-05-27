@@ -1,6 +1,7 @@
 // lib/db_supabase/eventRepo.ts
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { supabase as defaultSupabase } from "@/lib/supabase";
+import { normalizeSlopeRating } from "@/lib/teeMetrics";
 
 let eventSupabase: SupabaseClient = defaultSupabase;
 
@@ -143,13 +144,13 @@ function mapEvent(row: any): EventDoc {
     teeName: row.tee_name ?? null,
     par: row.par ?? null,
     courseRating: row.course_rating ?? null,
-    slopeRating: row.slope_rating ?? null,
+    slopeRating: normalizeSlopeRating(row.slope_rating),
     handicapAllowance: row.handicap_allowance ?? null,
     // Map Ladies' tee settings from snake_case
     ladiesTeeName: row.ladies_tee_name ?? null,
     ladiesPar: row.ladies_par ?? null,
     ladiesCourseRating: row.ladies_course_rating ?? null,
-    ladiesSlopeRating: row.ladies_slope_rating ?? null,
+    ladiesSlopeRating: normalizeSlopeRating(row.ladies_slope_rating),
     // Map competition holes
     nearestPinHoles: row.nearest_pin_holes ?? null,
     longestDriveHoles: row.longest_drive_holes ?? null,
@@ -359,13 +360,13 @@ export async function createEvent(
     teeName?: string;
     par?: number;
     courseRating?: number;
-    slopeRating?: number;
+    slopeRating?: number | null;
     handicapAllowance?: number;
     // Ladies' tee settings
     ladiesTeeName?: string;
     ladiesPar?: number;
     ladiesCourseRating?: number;
-    ladiesSlopeRating?: number;
+    ladiesSlopeRating?: number | null;
     /** 'imported' when from course_tees, 'manual' when user-entered */
     teeSource?: "imported" | "manual";
     /** Optional display e.g. £45 incl. food */
@@ -401,14 +402,14 @@ export async function createEvent(
   if (data.teeName !== undefined) payload.tee_name = data.teeName;
   if (data.par !== undefined) payload.par = data.par;
   if (data.courseRating !== undefined) payload.course_rating = data.courseRating;
-  if (data.slopeRating !== undefined) payload.slope_rating = data.slopeRating;
+  if (data.slopeRating !== undefined) payload.slope_rating = normalizeSlopeRating(data.slopeRating);
   if (data.handicapAllowance !== undefined) payload.handicap_allowance = data.handicapAllowance;
 
   // Add Ladies' tee settings if provided
   if (data.ladiesTeeName !== undefined) payload.ladies_tee_name = data.ladiesTeeName;
   if (data.ladiesPar !== undefined) payload.ladies_par = data.ladiesPar;
   if (data.ladiesCourseRating !== undefined) payload.ladies_course_rating = data.ladiesCourseRating;
-  if (data.ladiesSlopeRating !== undefined) payload.ladies_slope_rating = data.ladiesSlopeRating;
+  if (data.ladiesSlopeRating !== undefined) payload.ladies_slope_rating = normalizeSlopeRating(data.ladiesSlopeRating);
   if (data.teeSource !== undefined) payload.tee_source = data.teeSource;
 
   // Server-side: ensure tee_id exists in course_tees (FK events_tee_id_fkey)
@@ -483,13 +484,13 @@ export async function updateEvent(
     teeName: string;
     par: number;
     courseRating: number;
-    slopeRating: number;
+    slopeRating: number | null;
     handicapAllowance: number;
     // Ladies' tee settings
     ladiesTeeName: string;
     ladiesPar: number;
     ladiesCourseRating: number;
-    ladiesSlopeRating: number;
+    ladiesSlopeRating: number | null;
     teeSource: "imported" | "manual";
     // Competition holes
     nearestPinHoles: number[];
@@ -525,14 +526,14 @@ export async function updateEvent(
   if (updates.teeName !== undefined) payload.tee_name = updates.teeName;
   if (updates.par !== undefined) payload.par = updates.par;
   if (updates.courseRating !== undefined) payload.course_rating = updates.courseRating;
-  if (updates.slopeRating !== undefined) payload.slope_rating = updates.slopeRating;
+  if (updates.slopeRating !== undefined) payload.slope_rating = normalizeSlopeRating(updates.slopeRating);
   if (updates.handicapAllowance !== undefined) payload.handicap_allowance = updates.handicapAllowance;
 
   // Ladies' tee settings
   if (updates.ladiesTeeName !== undefined) payload.ladies_tee_name = updates.ladiesTeeName;
   if (updates.ladiesPar !== undefined) payload.ladies_par = updates.ladiesPar;
   if (updates.ladiesCourseRating !== undefined) payload.ladies_course_rating = updates.ladiesCourseRating;
-  if (updates.ladiesSlopeRating !== undefined) payload.ladies_slope_rating = updates.ladiesSlopeRating;
+  if (updates.ladiesSlopeRating !== undefined) payload.ladies_slope_rating = normalizeSlopeRating(updates.ladiesSlopeRating);
   if (updates.teeSource !== undefined) payload.tee_source = updates.teeSource;
 
   // Competition holes
