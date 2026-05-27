@@ -1609,7 +1609,7 @@ export default function FreePlayRoundDetailScreen() {
                 <AppText variant="caption" color="secondary">CR {Number(teeMeta?.course_rating).toFixed(1)}</AppText>
               </View>
             ) : null}
-            {Number.isFinite(Number(teeMeta?.slope_rating)) ? (
+            {Number.isFinite(Number(teeMeta?.slope_rating)) && Number(teeMeta?.slope_rating) > 0 ? (
               <View style={[styles.metaChip, { borderColor: colors.borderLight }]}>
                 <AppText variant="caption" color="secondary">Slope {Math.round(Number(teeMeta?.slope_rating))}</AppText>
               </View>
@@ -2033,7 +2033,9 @@ export default function FreePlayRoundDetailScreen() {
             {Number.isFinite(Number(teeMeta?.course_rating)) || Number.isFinite(Number(teeMeta?.slope_rating)) || metaParTotals.totalPar != null ? (
               <AppText variant="caption" color="tertiary">
                 {Number.isFinite(Number(teeMeta?.course_rating)) ? `CR ${Number(teeMeta?.course_rating).toFixed(1)} ` : ""}
-                {Number.isFinite(Number(teeMeta?.slope_rating)) ? `· S ${Math.round(Number(teeMeta?.slope_rating))} ` : ""}
+                {Number.isFinite(Number(teeMeta?.slope_rating)) && Number(teeMeta?.slope_rating) > 0
+                  ? `· S ${Math.round(Number(teeMeta?.slope_rating))} `
+                  : ""}
                 {metaParTotals.totalPar != null ? `· Par ${metaParTotals.totalPar}` : ""}
               </AppText>
             ) : null}

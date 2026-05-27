@@ -2585,6 +2585,9 @@ function buildOfficialScorecardRowsOrNull(apiId: number, normalized: NormalizedC
       apiId,
       teeName: b.tee.teeName,
       holes: b.holes,
+      clubName: normalized.course.clubName,
+      courseName: normalized.course.courseName,
+      fullName: normalized.course.fullName,
     });
     if (patched.applied) anyApplied = true;
     out.push({ teeName: b.tee.teeName, holes: toHoleSourceRows(patched.holes) });

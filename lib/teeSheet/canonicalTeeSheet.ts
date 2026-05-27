@@ -65,6 +65,11 @@ export type CanonicalTeeSheetResult = {
   groups: CanonicalGroupRow[];
 };
 
+/** ManCo draft editor: load all saved rows even if registration eligibility changed since save. */
+export type LoadCanonicalTeeSheetOptions = {
+  preserveDraftPlayers?: boolean;
+};
+
 function logCanonicalDebug(label: string, payload: Record<string, unknown>) {
   if (__DEV__) {
     console.log(`[teesheet][canonical] ${label}`, payload);
@@ -223,8 +228,11 @@ function standardDbToCanonical(
   eligible: Set<string>,
   isJoint: boolean,
   societyIdToName?: Map<string, string>,
+  preserveDraftPlayers = false,
 ): CanonicalGroupRow[] {
-  const filtered = filterTeeGroupPlayersForEligibility(teeGroupPlayers, eligible);
+  const filtered = preserveDraftPlayers
+    ? teeGroupPlayers
+    : filterTeeGroupPlayersForEligibility(teeGroupPlayers, eligible);
   if (teeGroups.length === 0 || filtered.length === 0) return [];
 
   const lookup = (playerId: string): GroupedPlayer | null => {
@@ -338,7 +346,11 @@ function standardComputedToCanonical(
  * Load the canonical tee sheet for an event (published or not).
  * Prefer this for dashboard, member view, and export after publish.
  */
-export async function loadCanonicalTeeSheet(eventId: string): Promise<CanonicalTeeSheetResult | null> {
+export async function loadCanonicalTeeSheet(
+  eventId: string,
+  options?: LoadCanonicalTeeSheetOptions,
+): Promise<CanonicalTeeSheetResult | null> {
+  const preserveDraftPlayers = options?.preserveDraftPlayers === true;
   if (!eventId?.trim()) return null;
 
   const event = await getEvent(eventId);
@@ -471,7 +483,16 @@ export async function loadCanonicalTeeSheet(eventId: string): Promise<CanonicalT
   }
 
   if (teeGroups.length > 0 && teeGroupPlayers.length > 0) {
-    const groups = standardDbToCanonical(teeGroups, teeGroupPlayers, members, guests, eligible, false);
+    const groups = standardDbToCanonical(
+      teeGroups,
+      teeGroupPlayers,
+      members,
+      guests,
+      eligible,
+      false,
+      undefined,
+      preserveDraftPlayers,
+    );
     const flatIds = groups.flatMap((g) => g.players.map((p) => p.id));
     const result: CanonicalTeeSheetResult = {
       ...base,

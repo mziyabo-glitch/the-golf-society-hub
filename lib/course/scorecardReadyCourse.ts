@@ -1,7 +1,7 @@
 /**
- * Strict Free Play / scorecard-ready rules: one **active** tee must carry ratings,
- * holes 1–18 with par, and stroke indices 1–18 with no duplicates.
- * Used by unit tests and kept in sync with `search_scorecard_ready_courses` (migration 156).
+ * Strict Free Play / scorecard-ready rules: one **active** tee must carry course_rating + par_total
+ * (slope optional when null), holes 1–18 with par, and stroke indices 1–18 with no duplicates.
+ * Used by unit tests and kept in sync with `free_play_search_scorecard_ready_courses` (migration 159).
  */
 
 export type ScorecardReadyTeeInput = {
@@ -22,13 +22,14 @@ export function isTeeActiveForScoring(row: ScorecardReadyTeeInput): boolean {
 }
 
 export function teeHasRatingBlock(row: ScorecardReadyTeeInput): boolean {
+  const slopeOk =
+    row.slope_rating == null ||
+    (Number.isFinite(Number(row.slope_rating)) && Number(row.slope_rating) > 0);
   return (
     row.course_rating != null &&
     Number.isFinite(Number(row.course_rating)) &&
     Number(row.course_rating) > 0 &&
-    row.slope_rating != null &&
-    Number.isFinite(Number(row.slope_rating)) &&
-    Number(row.slope_rating) > 0 &&
+    slopeOk &&
     row.par_total != null &&
     Number.isFinite(Number(row.par_total)) &&
     Number(row.par_total) > 0

@@ -253,26 +253,43 @@ export function normalizeGolfCourseApiCourse(api: GolfCourseApiCourse): Normaliz
       apiId,
       teeName,
       holes: holesRaw,
+      clubName,
+      courseName,
+      fullName,
     });
     const holes = fallback.holes;
     if (isDevRuntime() && fallback.applied) {
-      console.log("[courseNormalizer] applied SI fallback", {
+      console.log("[courseNormalizer] applied official scorecard fallback", {
         apiId,
         teeName,
         sourceType: fallback.sourceType,
         sourceUrl: fallback.sourceUrl,
+        fullOverride: fallback.fullOverride === true,
       });
+    }
+
+    let resolvedCourseRating = courseRating;
+    let resolvedSlopeRating = slopeRating;
+    let resolvedParTotal = parTotal;
+    let resolvedTotalYards = totalYards;
+    if (fallback.applied && fallback.teeMetrics) {
+      resolvedCourseRating = fallback.teeMetrics.courseRating;
+      resolvedParTotal = fallback.teeMetrics.parTotal;
+      resolvedTotalYards = fallback.teeMetrics.totalYards;
+      resolvedSlopeRating = fallback.teeMetrics.slopeRating;
+    } else if (fallback.applied && fallback.fullOverride) {
+      resolvedSlopeRating = null;
     }
 
     const normalizedTee: NormalizedTee = {
       teeName,
       gender,
       apiSourceGroup: group,
-      courseRating,
+      courseRating: resolvedCourseRating,
       bogeyRating,
-      slopeRating,
-      parTotal,
-      totalYards,
+      slopeRating: resolvedSlopeRating,
+      parTotal: resolvedParTotal,
+      totalYards: resolvedTotalYards,
       totalMeters,
       teeColor,
       isDefault: false,

@@ -117,6 +117,38 @@ describe("normalizeGolfCourseApiCourse", () => {
     expect(out.tees[0]!.holes).toHaveLength(9);
   });
 
+  it("applies Meon Valley full official fallback for white tee", () => {
+    const api: GolfCourseApiCourse = {
+      id: 88001,
+      club_name: "Meon Valley Hotel & Country Club",
+      course_name: "Meon Course",
+      tees: {
+        male: [
+          {
+            tee_name: "White",
+            course_rating: 69.5,
+            slope_rating: 124,
+            par_total: 72,
+            total_yards: 6000,
+            holes: Array.from({ length: 18 }, (_, i) => ({
+              hole_number: i + 1,
+              par: 4,
+              yardage: 300,
+              handicap: 1,
+            })),
+          },
+        ],
+      },
+    };
+    const out = normalizeGolfCourseApiCourse(api);
+    const tee = out.tees[0]!;
+    expect(tee.tee.courseRating).toBe(72);
+    expect(tee.tee.parTotal).toBe(71);
+    expect(tee.tee.totalYards).toBe(6492);
+    expect(tee.tee.slopeRating).toBeNull();
+    expect(tee.holes.map((h) => h.strokeIndex)).toEqual([11, 1, 7, 15, 3, 13, 17, 5, 9, 4, 8, 14, 12, 10, 16, 2, 6, 18]);
+  });
+
   it("applies Upavon SI fallback when API holes omit SI", () => {
     const api: GolfCourseApiCourse = {
       id: 12241,

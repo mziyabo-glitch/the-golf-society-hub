@@ -123,7 +123,7 @@ export const getPermissionsForMember = (
     canEditEvents: captain || secretary || handicapper,
     canDeleteEvents: captain || secretary || treasurer,
     canUploadTeeSheet: captain || handicapper,
-    canGenerateTeeSheet: captain || secretary || handicapper,
+    canGenerateTeeSheet: captain || secretary || treasurer || handicapper,
 
     // Finance / P&L
     canAccessFinance: captain || treasurer,

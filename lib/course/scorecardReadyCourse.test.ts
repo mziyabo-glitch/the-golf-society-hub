@@ -54,6 +54,18 @@ describe("scorecardReadyCourse (Free Play strict gate)", () => {
     expect(strictScorecardReadyForTee(ratedTee, perm)).toBe(true);
   });
 
+  it("shows scorecard-ready when course rating and par exist but slope is missing", () => {
+    const teeNoSlope: ScorecardReadyTeeInput & { id: string } = {
+      id: "tee-no-slope",
+      is_active: true,
+      course_rating: 70,
+      slope_rating: null,
+      par_total: 71,
+    };
+    const perm = holes18(4, (n) => n);
+    expect(strictScorecardReadyForTee(teeNoSlope, perm)).toBe(true);
+  });
+
   it("eligible search: duplicate name group is hidden even when strict-ready", () => {
     const nk = new Map<string, string[]>([["test gc", ["c1", "c2"]]]);
     const tee: ScorecardReadyTeeInput & { id: string } = {

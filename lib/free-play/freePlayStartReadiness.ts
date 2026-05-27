@@ -39,10 +39,8 @@ export function getFreePlayStartBlockers(ctx: FreePlayStartReadinessContext): st
   }
 
   const cr = Number(teeMeta.course_rating);
-  const slope = Number(teeMeta.slope_rating);
   const par = Number(teeMeta.par_total);
   if (!(Number.isFinite(cr) && cr > 0)) out.push("Selected tee is missing a valid course rating.");
-  if (!(Number.isFinite(slope) && slope > 0)) out.push("Selected tee is missing a valid slope rating.");
   if (!(Number.isFinite(par) && par > 0)) out.push("Selected tee is missing a valid par total.");
 
   if (holeMeta.length < 18) {
