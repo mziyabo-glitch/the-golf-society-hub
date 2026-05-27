@@ -39,6 +39,12 @@ export async function getEventGuests(eventId: string): Promise<EventGuest[]> {
   return (data ?? []).map(normalizeGuestRow);
 }
 
+/** Paid guests eligible for tee sheet generation (same rule as event manage screen). */
+export async function getTeeSheetEligibleGuestsForEvent(eventId: string): Promise<EventGuest[]> {
+  const guests = await getEventGuests(eventId);
+  return guests.filter((g) => g.paid === true);
+}
+
 export async function addEventGuest(opts: {
   eventId: string;
   societyId: string;

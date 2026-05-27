@@ -42,11 +42,18 @@ import {
   getJointTeeSheetCandidatePoolForEvent,
   type EventRegistration,
 } from "@/lib/db_supabase/eventRegistrationRepo";
-import { getEventGuests } from "@/lib/db_supabase/eventGuestRepo";
+import { getTeeSheetEligibleGuestsForEvent } from "@/lib/db_supabase/eventGuestRepo";
 import {
   upsertTeeSheet,
   clearPersistedTeeSheet,
+  getTeeGroupPlayers,
+  replaceTeeSheetGuestAssignments,
 } from "@/lib/db_supabase/teeGroupsRepo";
+import { parseGuestPlayerId } from "@/lib/teeSheetEligibility";
+import {
+  ensurePaidGuestsInEditorGroups,
+  mergeGuestTeeAssignmentsIntoEditorGroups,
+} from "@/lib/teeSheet/teeSheetEditorGuests";
 import {
   getJointEventTeeSheet,
   getJointMetaForEventIds,
@@ -66,18 +73,19 @@ import {
   formatHandicap,
   DEFAULT_ALLOWANCE,
 } from "@/lib/whs";
-import { parseHoleNumbers, formatHoleNumbers, calculateGroupSizes } from "@/lib/teeSheetGrouping";
+import { parseHoleNumbers, formatHoleNumbers, calculateGroupSizes, sortPlayersByHandicap } from "@/lib/teeSheetGrouping";
 import { buildSocietyIdToNameMap } from "@/lib/jointEventSocietyLabel";
 import { expandJointTeeSheetReplaceRowsForParticipatingSocieties } from "@/lib/jointPersonDedupe";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
 import { assertPngExportOnly } from "@/lib/share/pngExportGuard";
 import { formatError, type FormattedError } from "@/lib/ui/formatError";
-import type { TeeSheetData } from "@/lib/teeSheetPdf";
 import {
   loadCanonicalTeeSheet,
-  buildTeeSheetDataFromCanonical,
   type CanonicalTeeSheetResult,
 } from "@/lib/teeSheet/canonicalTeeSheet";
+import { buildTeeSheetExportPayload } from "@/lib/teeSheet/buildTeeSheetExportPayload";
+import { encodeTeeSheetShareRoutePayload } from "@/lib/teeSheet/encodeTeeSheetShareRoutePayload";
+import { logShareError } from "@/lib/share/logShareError";
 import {
   buildTeeSheetEditorSnapshot,
   teeSheetEditorSnapshotsEqual,
@@ -488,14 +496,30 @@ export default function TeeSheetScreen() {
           setSelectedPlayerIds(candidate.memberIds);
           setEligibleMemberIds(candidate.memberIds);
           setSelectedEventRegistrations(candidate.registrations);
-          const persistedGroups: PlayerGroup[] = normalizeGroups(
+          const [jointGuestAssignments, jointPaidGuests] = await Promise.all([
+            getTeeGroupPlayers(selectedEventId).then((rows) =>
+              rows.filter((r) => parseGuestPlayerId(String(r.player_id)) != null),
+            ),
+            getTeeSheetEligibleGuestsForEvent(selectedEventId),
+          ]);
+          let persistedGroups: PlayerGroup[] = normalizeGroups(
             (teeSheet.groups ?? []).map((g, groupIdx) => ({
               groupNumber: g.group_number,
               players: (g.entries ?? []).map((e) => jointTeeSheetEntryToEditable(e, groupIdx)),
             })),
           );
+          if (jointGuestAssignments.length > 0) {
+            persistedGroups = normalizeGroups(
+              mergeGuestTeeAssignmentsIntoEditorGroups(
+                persistedGroups,
+                jointGuestAssignments,
+                jointPaidGuests,
+              ),
+            );
+          }
+          persistedGroups = ensurePaidGuestsInEditorGroups(persistedGroups, jointPaidGuests);
           const persistedIds = groupsToPlayerIdsFrom(persistedGroups);
-          if (persistedIds.length > 0) {
+          if (persistedIds.length > 0 || persistedGroups.some((g) => g.players.length > 0)) {
             setGroups(persistedGroups);
             setSelectedPlayerIds(persistedIds);
             if (eventLoadSeqRef.current === seq) {
@@ -519,7 +543,12 @@ export default function TeeSheetScreen() {
             }
             logSelectedPlayersDev("[teesheet] selected players (after ManCo edits)", selectedEventId, persistedIds);
           } else {
-            initializeGroups(mapJointEventToEventDoc(teeSheet.event) as EventDoc, candidate.memberIds, candidateMembers, []);
+            initializeGroups(
+              mapJointEventToEventDoc(teeSheet.event) as EventDoc,
+              candidate.memberIds,
+              candidateMembers,
+              jointPaidGuests,
+            );
             if (__DEV__) {
               console.log("[teesheet] reload source", {
                 eventId: selectedEventId,
@@ -538,10 +567,10 @@ export default function TeeSheetScreen() {
         setIsJointEventTeeSheet(false);
         setJointTeeSheetData(null);
 
-        const [event, registrations, guests] = await Promise.all([
+        const [event, registrations, paidGuests] = await Promise.all([
           getEvent(selectedEventId),
           getEventRegistrations(selectedEventId),
-          getEventGuests(selectedEventId),
+          getTeeSheetEligibleGuestsForEvent(selectedEventId),
         ]);
         setSelectedEvent(event);
         setSelectedEventRegistrations(registrations ?? []);
@@ -576,7 +605,8 @@ export default function TeeSheetScreen() {
           canonical.source === "tee_groups" &&
           canonical.groups.length > 0;
         if (hasPersistedGroups) {
-          const persistedGroups = groupsFromCanonical(event, canonical, membersStd);
+          let persistedGroups = groupsFromCanonical(event, canonical, membersStd);
+          persistedGroups = ensurePaidGuestsInEditorGroups(persistedGroups, paidGuests);
           const persistedIds = groupsToPlayerIdsFrom(persistedGroups);
           setGroups(persistedGroups);
           setSelectedPlayerIds(persistedIds);
@@ -602,7 +632,7 @@ export default function TeeSheetScreen() {
           }
           logSelectedPlayersDev("[teesheet] selected players (after ManCo edits)", selectedEventId, persistedIds);
         } else {
-          initializeGroups(event, eligibleIds, membersStd, guests ?? []);
+          initializeGroups(event, eligibleIds, membersStd, paidGuests);
           if (__DEV__) {
             console.log("[teesheet] reload source", {
               eventId: selectedEventId,
@@ -693,7 +723,12 @@ export default function TeeSheetScreen() {
       displayName: g.name,
     }));
 
-    const allPlayers = [...eventMembers, ...guestPlayers];
+    const allPlayers = sortPlayersByHandicap(
+      [...eventMembers, ...guestPlayers].map((p) => ({
+        ...p,
+        handicapIndex: p.handicapIndex ?? p.handicap_index ?? null,
+      })),
+    );
 
     if (allPlayers.length === 0) {
       setGroups([]);
@@ -711,10 +746,8 @@ export default function TeeSheetScreen() {
         : null;
     const allowance = event.handicapAllowance ?? DEFAULT_ALLOWANCE;
 
-    // Preserve selected player order.
     const sorted = allPlayers;
 
-    // Calculate group sizes
     const groupSizes = calculateGroupSizes(sorted.length);
 
     // Create groups
@@ -906,9 +939,9 @@ export default function TeeSheetScreen() {
           setSelectedPlayerIds([]);
         }
       } else {
-        const [evt, guestList] = await Promise.all([
+        const [evt, paidGuestList] = await Promise.all([
           getEvent(selectedEventId),
-          getEventGuests(selectedEventId),
+          getTeeSheetEligibleGuestsForEvent(selectedEventId),
         ]);
         if (evt) {
           setSelectedEvent(evt);
@@ -916,7 +949,12 @@ export default function TeeSheetScreen() {
           setSelectedPlayerIds(eligibleIds);
           setEligibleMemberIds(eligibleIds);
           logSelectedPlayersDev("[teesheet] tee-sheet eligible (paid + in)", selectedEventId, eligibleIds);
-          initializeGroups(evt, eligibleIds, eventMemberPool.length > 0 ? eventMemberPool : members, guestList ?? []);
+          initializeGroups(
+            evt,
+            eligibleIds,
+            eventMemberPool.length > 0 ? eventMemberPool : members,
+            paidGuestList,
+          );
         }
       }
       setToast({ visible: true, message: "Tee sheet cleared", type: "success" });
@@ -1021,17 +1059,70 @@ export default function TeeSheetScreen() {
     ]);
   };
 
-  // Save tee sheet (groups + tee times) without publishing — editable, re-issue when ready
-  const handleSaveTeeSheet = async () => {
-    if (!guardPaidAction()) return;
-    if (!selectedEventId || !selectedEvent) return;
+  const navigateToTeeSheetShare = useCallback(
+    async (canonical: CanonicalTeeSheetResult) => {
+      if (!selectedEventId || !societyId) return;
+
+      const interval = parseInt(teeInterval, 10) || 10;
+      const ntpHoles = parseHoleNumbers(ntpHolesInput === "-" ? "" : ntpHolesInput);
+      const ldHoles = parseHoleNumbers(ldHolesInput === "-" ? "" : ldHolesInput);
+      const societyNameExport =
+        isJointEventTeeSheet && jointTeeSheetData?.participating_societies?.length
+          ? `Joint: ${jointTeeSheetData.participating_societies.map((s: { society_name: string }) => s.society_name).filter(Boolean).join(" & ")}`
+          : (society?.name || "Golf Society");
+
+      const exportData = buildTeeSheetExportPayload({
+        canonical,
+        societyId,
+        societyName: societyNameExport,
+        logoUrl,
+        manCo,
+        nearestPinHoles: ntpHoles.length > 0 ? ntpHoles : null,
+        longestDriveHoles: ldHoles.length > 0 ? ldHoles : null,
+        startTime: startTime || null,
+        teeTimeInterval: interval,
+        genderHints: groups.flatMap((g) =>
+          g.players.map((p) => ({ id: p.id, gender: p.gender ?? null })),
+        ),
+      });
+
+      assertPngExportOnly("Tee Sheet export");
+      router.push({
+        pathname: "/(share)/tee-sheet",
+        params: { payload: encodeTeeSheetShareRoutePayload(exportData) },
+      });
+    },
+    [
+      groups,
+      isJointEventTeeSheet,
+      jointTeeSheetData,
+      ldHolesInput,
+      logoUrl,
+      manCo,
+      ntpHolesInput,
+      router,
+      society?.name,
+      societyId,
+      startTime,
+      teeInterval,
+    ],
+  );
+
+  /** Persist groups, tee times, competition holes, and player scope — does not publish. */
+  const persistTeeSheetDraft = async (opts?: { quiet?: boolean }): Promise<boolean> => {
+    if (!guardPaidAction()) return false;
+    if (!selectedEventId || !selectedEvent) return false;
     const nonEmptyGroups = groups.filter((g) => g.players.length > 0);
     if (nonEmptyGroups.length === 0) {
-      setNotice({ type: "error", message: "No players added", detail: "Add players to groups before saving." });
-      return;
+      if (!opts?.quiet) {
+        setNotice({ type: "error", message: "No players added", detail: "Add players to groups before saving." });
+      }
+      return false;
     }
-    setNotice(null);
-    setSaving(true);
+    if (!opts?.quiet) {
+      setNotice(null);
+      setSaving(true);
+    }
     try {
       const interval = parseInt(teeInterval, 10) || 10;
       const ntpHoles = parseHoleNumbers(ntpHolesInput === "-" ? "" : ntpHolesInput);
@@ -1074,11 +1165,30 @@ export default function TeeSheetScreen() {
           console.error("[teesheet] replaceJointEventTeeSheetEntries failed", e);
           throw e;
         }
+        const jointTeeGroupInputs = nonEmptyGroups.map((g) => ({
+          group_number: g.groupNumber,
+          tee_time: computeTeeTimeForGroup(g.groupNumber),
+        }));
+        const jointTeePlayerInputs = nonEmptyGroups.flatMap((g) =>
+          g.players.map((p, idx) => ({
+            player_id: p.id,
+            group_number: g.groupNumber,
+            position: idx,
+          })),
+        );
+        await replaceTeeSheetGuestAssignments(
+          selectedEventId,
+          jointTeeGroupInputs,
+          jointTeePlayerInputs,
+        );
         if (__DEV__) {
           console.log("[teesheet] save db response", {
             eventId: selectedEventId,
             source: "joint_event_entries",
             rowsWritten: replaceRows.length,
+            guestRowsWritten: jointTeePlayerInputs.filter((p) =>
+              String(p.player_id).startsWith("guest-"),
+            ).length,
           });
         }
         const savePayloadJoint = {
@@ -1108,7 +1218,9 @@ export default function TeeSheetScreen() {
         }
         await logPostSaveJointRead(selectedEventId, finalPlayerIds);
         markDraftSavedLocally();
-        setToast({ visible: true, message: "Draft saved", type: "success" });
+        if (!opts?.quiet) {
+          setToast({ visible: true, message: "Draft saved", type: "success" });
+        }
         const tsSaved = await getJointEventTeeSheet(selectedEventId);
         if (tsSaved) {
           setJointTeeSheetData(tsSaved);
@@ -1126,13 +1238,15 @@ export default function TeeSheetScreen() {
         await invalidateCache(`event:${selectedEventId}:detail`);
         if (societyId) await invalidateCachePrefix(`society:${societyId}:`);
         await reloadSelectedEventDetails();
-        return;
+        return true;
       }
 
       const mismatchStd = validateGroupsMatchSelectedIds(nonEmptyGroups, selectedPlayerIds);
       if (mismatchStd) {
-        setNotice({ type: "error", message: "Tee sheet out of sync", detail: mismatchStd });
-        return;
+        if (!opts?.quiet) {
+          setNotice({ type: "error", message: "Tee sheet out of sync", detail: mismatchStd });
+        }
+        return false;
       }
 
       const playerIds = selectedPlayerIds.filter((id) => !id.startsWith("guest-"));
@@ -1202,19 +1316,30 @@ export default function TeeSheetScreen() {
         });
       }
       markDraftSavedLocally();
-      setToast({ visible: true, message: "Draft saved", type: "success" });
+      if (!opts?.quiet) {
+        setToast({ visible: true, message: "Draft saved", type: "success" });
+      }
       await invalidateCache(`event:${selectedEventId}:tee-sheet`);
       await invalidateCache(`event:${selectedEventId}:detail`);
       if (societyId) await invalidateCachePrefix(`society:${societyId}:`);
       loadData();
       await reloadSelectedEventDetails();
-    } catch (err: any) {
-      console.error("[teesheet] handleSaveTeeSheet", err);
+      return true;
+    } catch (err: unknown) {
+      console.error("[teesheet] persistTeeSheetDraft", err);
+      logShareError(err, { action: "save_draft", eventId: selectedEventId, screen: "tee-sheet" });
       const formatted = formatError(err);
-      setNotice({ type: "error", message: formatted.message, detail: formatted.detail });
+      if (!opts?.quiet) {
+        setNotice({ type: "error", message: formatted.message, detail: formatted.detail });
+      }
+      return false;
     } finally {
-      setSaving(false);
+      if (!opts?.quiet) setSaving(false);
     }
+  };
+
+  const handleSaveTeeSheet = () => {
+    void persistTeeSheetDraft();
   };
 
   // Save NTP/LD settings to event
@@ -1370,242 +1495,138 @@ export default function TeeSheetScreen() {
   // Share/export tee sheet
   const MAX_TEE_TIMES = 12;
 
-  const handleGenerateTeeSheet = async () => {
+  const handleShareExport = async () => {
     if (!guardPaidAction()) return;
-    if (!selectedEvent || !societyId) return;
+    if (!selectedEventId || !selectedEvent || !societyId) return;
 
     const nonEmptyGroups = groups.filter((g) => g.players.length > 0);
     if (nonEmptyGroups.length === 0) {
-      setNotice({ type: "error", message: "No players added", detail: "Add players to the event before generating the tee sheet." });
+      setNotice({
+        type: "error",
+        message: "Nothing to export",
+        detail: "Add players to groups before sharing.",
+      });
       return;
     }
 
     if (nonEmptyGroups.length > MAX_TEE_TIMES) {
-      setToast({ visible: true, message: `Max ${MAX_TEE_TIMES} tee times — split into 2 exports.`, type: "error" });
+      setToast({
+        visible: true,
+        message: `Max ${MAX_TEE_TIMES} tee times per image — remove extra groups or publish in two steps.`,
+        type: "error",
+      });
+      return;
     }
 
-    const groupsForExport = nonEmptyGroups.slice(0, MAX_TEE_TIMES);
+    const runExport = async () => {
+      setGenerating(true);
+      setNotice(null);
+      try {
+        if (isDirty) {
+          const saved = await persistTeeSheetDraft({ quiet: true });
+          if (!saved) {
+            setNotice({
+              type: "error",
+              message: "Could not save draft",
+              detail: "Fix errors above, then try Share / Export again.",
+            });
+            return;
+          }
+        }
+
+        const canonical = await loadCanonicalTeeSheet(selectedEventId, { preserveDraftPlayers: true });
+        if (!canonical || canonical.groups.length === 0) {
+          throw new Error("No saved tee sheet to export. Save draft first.");
+        }
+
+        await navigateToTeeSheetShare(canonical);
+      } catch (err: unknown) {
+        logShareError(err, { action: "export", eventId: selectedEventId, screen: "tee-sheet" });
+        const formatted = formatError(err, "Couldn't export tee sheet.");
+        setNotice({ type: "error", message: formatted.message, detail: formatted.detail });
+      } finally {
+        setGenerating(false);
+      }
+    };
+
+    if (isDirty) {
+      const message = "Save your latest groups before exporting?";
+      if (Platform.OS === "web" && typeof globalThis.confirm === "function") {
+        if (globalThis.confirm(`${message}\n\nOK saves draft then opens export.`)) {
+          void runExport();
+        }
+        return;
+      }
+      Alert.alert("Unsaved changes", message, [
+        { text: "Cancel", style: "cancel" },
+        { text: "Save & export", onPress: () => void runExport() },
+      ]);
+      return;
+    }
+
+    void runExport();
+  };
+
+  const handleGenerateTeeSheet = async () => {
+    if (!guardPaidAction()) return;
+    if (!selectedEvent || !societyId || !selectedEventId) return;
+
+    const nonEmptyGroups = groups.filter((g) => g.players.length > 0);
+    if (nonEmptyGroups.length === 0) {
+      setNotice({
+        type: "error",
+        message: "No players added",
+        detail: "Add players to groups before publishing.",
+      });
+      return;
+    }
+
+    if (nonEmptyGroups.length > MAX_TEE_TIMES) {
+      setToast({
+        visible: true,
+        message: `Max ${MAX_TEE_TIMES} tee times — remove extra groups before publishing.`,
+        type: "error",
+      });
+      return;
+    }
 
     setNotice(null);
     setGenerating(true);
     try {
       const interval = parseInt(teeInterval, 10) || 10;
-      const ntpHoles = parseHoleNumbers(ntpHolesInput === "-" ? "" : ntpHolesInput);
-      const ldHoles = parseHoleNumbers(ldHolesInput === "-" ? "" : ldHolesInput);
-      if (__DEV__) {
-        console.log("[teesheet] publish start", {
-          eventId: selectedEvent.id,
-          societyId: selectedEvent.society_id ?? societyId ?? null,
-          isJointEvent: isJointEventTeeSheet,
-          groups: nonEmptyGroups.length,
-          rowCount: nonEmptyGroups.flatMap((g) => g.players).length,
-          teeTimeStart: startTime || "08:00",
-          teeTimeInterval: interval,
+
+      const saved = await persistTeeSheetDraft({ quiet: true });
+      if (!saved) {
+        setNotice({
+          type: "error",
+          message: "Could not save draft",
+          detail: "Publishing was cancelled because the draft could not be saved.",
         });
+        return;
       }
 
-      if (isJointEventTeeSheet && selectedEventId) {
-        const finalPlayerIds = groupsToPlayerIdsFrom(nonEmptyGroups);
-        const mismatch = validateGroupsMatchSelectedIds(nonEmptyGroups, selectedPlayerIds);
-        if (__DEV__ && mismatch) {
-          console.warn("[teesheet] publish mismatch warning", { eventId: selectedEventId, mismatch });
-        }
-        const replaceRows = await buildJointExpandedReplaceRows(
-          nonEmptyGroups,
-          jointTeeSheetData,
-          selectedEventId,
-        );
-        if (__DEV__) {
-          console.log("[teesheet] payload write", {
-            eventId: selectedEventId,
-            source: "joint_event_entries",
-            action: "publish",
-            rowCount: replaceRows.length,
-            rows: replaceRows,
-          });
-        }
-        try {
-          await replaceJointEventTeeSheetEntries(selectedEventId, replaceRows);
-        } catch (e) {
-          console.error("[teesheet] replaceJointEventTeeSheetEntries failed", e);
-          throw e;
-        }
-        if (__DEV__) {
-          console.log("[teesheet] save db response", {
-            eventId: selectedEventId,
-            source: "joint_event_entries",
-            action: "publish",
-            rowsWritten: replaceRows.length,
-          });
-        }
-        await logPostSaveJointRead(selectedEventId, finalPlayerIds);
-        logSelectedPlayersDev("[teesheet] final published players", selectedEventId, finalPlayerIds);
-        if (__DEV__) {
-          console.log("[tee-competition-holes][save]", {
-            path: "joint_publish",
-            eventId: selectedEventId,
-            payload: {
-              nearestPinHoles: ntpHoles,
-              longestDriveHoles: ldHoles,
-              teeTimeStart: startTime || "08:00",
-              teeTimeInterval: interval,
-            },
-          });
-        }
-        await updateEvent(selectedEventId, {
-          nearestPinHoles: ntpHoles,
-          longestDriveHoles: ldHoles,
-          teeTimeStart: startTime || "08:00",
-          teeTimeInterval: interval,
-        });
-        const refreshed = await publishTeeTime(selectedEventId, startTime || "08:00", interval);
-        if (refreshed) {
-          setSelectedEvent(refreshed);
-        }
-        markDraftSavedLocally();
-      } else {
-        const mismatchPub = validateGroupsMatchSelectedIds(groupsForExport, selectedPlayerIds);
-        if (mismatchPub) {
-          setNotice({ type: "error", message: "Tee sheet out of sync", detail: mismatchPub });
-          return;
-        }
+      const refreshed = await publishTeeTime(selectedEventId, startTime || "08:00", interval);
+      if (refreshed) setSelectedEvent(refreshed);
 
-        const teeGroupInputs = groupsForExport.map((g) => ({
-          group_number: g.groupNumber,
-          tee_time: computeTeeTimeForGroup(g.groupNumber),
-        }));
-        const teePlayerInputs = groupsForExport.flatMap((g) =>
-          g.players.map((p, idx) => ({ player_id: p.id, group_number: g.groupNumber, position: idx }))
-        );
-        if (__DEV__) {
-          console.log("[teesheet] payload write", {
-            eventId: selectedEvent.id,
-            source: "tee_groups",
-            action: "publish",
-            payload: {
-              teeGroups: teeGroupInputs,
-              teeGroupPlayers: teePlayerInputs,
-            },
-          });
-        }
-        const upsertResult = await upsertTeeSheet(selectedEvent.id, teeGroupInputs, teePlayerInputs);
-        if (__DEV__) {
-          console.log("[teesheet] save db response", {
-            source: "tee_groups",
-            action: "publish",
-            ...upsertResult,
-          });
-        }
-
-        const playerIds = selectedPlayerIds.filter((id) => !id.startsWith("guest-"));
-        if (__DEV__) {
-          console.log("[tee-competition-holes][save]", {
-            path: "standard_publish",
-            eventId: selectedEvent.id,
-            payload: {
-              playerIds,
-              nearestPinHoles: ntpHoles,
-              longestDriveHoles: ldHoles,
-              teeTimeStart: startTime || "08:00",
-              teeTimeInterval: interval,
-            },
-          });
-        }
-        await updateEvent(selectedEvent.id, {
-          playerIds,
-          nearestPinHoles: ntpHoles,
-          longestDriveHoles: ldHoles,
-          teeTimeStart: startTime || "08:00",
-          teeTimeInterval: interval,
-        });
-        logSelectedPlayersDev("[teesheet] final published players", selectedEventId!, playerIds);
-
-        const refreshed = await publishTeeTime(selectedEvent.id, startTime || "08:00", interval);
-        if (refreshed) setSelectedEvent(refreshed);
-        markDraftSavedLocally();
-      }
-
-      if (__DEV__) {
-        const roundTrip = await getEvent(selectedEventId!);
-        console.log("[tee-competition-holes][roundtrip]", {
-          path: isJointEventTeeSheet ? "joint_publish" : "standard_publish",
-          eventId: selectedEventId,
-          savedNearestPinHoles: ntpHoles,
-          savedLongestDriveHoles: ldHoles,
-          persistedNearestPinHoles: roundTrip?.nearestPinHoles ?? [],
-          persistedLongestDriveHoles: roundTrip?.longestDriveHoles ?? [],
-        });
-      }
-
-      const canonical = await loadCanonicalTeeSheet(selectedEventId!);
+      const canonical = await loadCanonicalTeeSheet(selectedEventId, { preserveDraftPlayers: true });
       if (!canonical) {
         throw new Error("Could not load tee sheet after publish");
       }
+
       await invalidateCache(`event:${selectedEventId}:tee-sheet`);
       await invalidateCache(`event:${selectedEventId}:detail`);
       if (societyId) await invalidateCachePrefix(`society:${societyId}:`);
-      if (__DEV__) {
-        console.log("[teesheet] row count after reload", {
-          eventId: selectedEventId!,
-          source: canonical.source,
-          rowCount: canonical.groups.flatMap((g) => g.players).length,
-          groupCount: canonical.groups.length,
-          published: canonical.published,
-          fallbackUsed: canonical.source === "computed_fallback",
-        });
-      }
-
-      const societyNameExport =
-        isJointEventTeeSheet && jointTeeSheetData?.participating_societies?.length
-          ? `Joint: ${jointTeeSheetData.participating_societies.map((s: { society_name: string }) => s.society_name).filter(Boolean).join(" & ")}`
-          : (society?.name || "Golf Society");
-
-      let exportData: TeeSheetData = buildTeeSheetDataFromCanonical(canonical, {
-        societyId,
-        societyName: societyNameExport,
-        logoUrl,
-        jointSocieties:
-          canonical.isJoint && canonical.jointParticipatingSocieties?.length
-            ? canonical.jointParticipatingSocieties.map((s) => ({
-                societyId: s.society_id,
-                societyName: s.society_name || s.society_id,
-                logoUrl: null,
-              }))
-            : undefined,
-        manCo,
-        nearestPinHoles: ntpHoles.length > 0 ? ntpHoles : null,
-        longestDriveHoles: ldHoles.length > 0 ? ldHoles : null,
-        startTime: startTime || null,
-        teeTimeInterval: interval,
-      });
-
-      const genderById = new Map<string, "male" | "female" | null>(
-        groupsForExport.flatMap((g) => g.players.map((p) => [p.id, p.gender ?? null] as const)),
-      );
-      exportData = {
-        ...exportData,
-        players: exportData.players.map((p) => ({
-          ...p,
-          gender: (p.id ? genderById.get(p.id) : null) ?? p.gender ?? null,
-        })),
-      };
-      assertPngExportOnly("Tee Sheet export");
 
       setToast({
         visible: true,
         message: "Tee times published — members can now see their slot.",
         type: "success",
       });
-      await new Promise((r) => setTimeout(r, 1200));
 
-      const payload = encodeURIComponent(JSON.stringify(exportData));
-      router.push({
-        pathname: "/(share)/tee-sheet",
-        params: { payload },
-      });
-    } catch (err: any) {
-      console.error("[TeeSheet] share tee sheet error:", err);
-      const formatted = formatError(err);
+      await navigateToTeeSheetShare(canonical);
+    } catch (err: unknown) {
+      logShareError(err, { action: "publish", eventId: selectedEventId, screen: "tee-sheet" });
+      const formatted = formatError(err, "Couldn't publish tee sheet.");
       setNotice({ type: "error", message: formatted.message, detail: formatted.detail });
     } finally {
       setGenerating(false);
@@ -2053,15 +2074,20 @@ export default function TeeSheetScreen() {
                           logSelectedPlayersDev("[teesheet] selected players (after ManCo edits)", selectedEventId, ids);
                           return;
                         }
-                        const [evt, guestList] = await Promise.all([
+                        const [evt, paidGuestList] = await Promise.all([
                           getEvent(selectedEventId),
-                          getEventGuests(selectedEventId),
+                          getTeeSheetEligibleGuestsForEvent(selectedEventId),
                         ]);
                         if (!evt) return;
                         const eligibleIds = await getTeeSheetEligibleMemberIdsForEvent(selectedEventId);
                         setSelectedPlayerIds(eligibleIds);
                         logSelectedPlayersDev("[teesheet] tee-sheet eligible (paid + in)", selectedEventId, eligibleIds);
-                        initializeGroups(evt, eligibleIds, eventMemberPool.length > 0 ? eventMemberPool : members, guestList ?? []);
+                        initializeGroups(
+                          evt,
+                          eligibleIds,
+                          eventMemberPool.length > 0 ? eventMemberPool : members,
+                          paidGuestList,
+                        );
                       }}
                     >
                       <Feather name="refresh-cw" size={14} color={colors.text} /> Reset
@@ -2192,9 +2218,18 @@ export default function TeeSheetScreen() {
                   style={{ flex: 1 }}
                 >
                   <Feather name="upload-cloud" size={18} color={colors.textInverse} />
-                  {" Publish Tee Sheet"}
+                  {" Publish"}
                 </PrimaryButton>
               </View>
+              <SecondaryButton
+                onPress={handleShareExport}
+                loading={generating}
+                disabled={selectedPlayerCount === 0 || isPastEventSelected}
+                style={{ marginBottom: spacing.sm }}
+              >
+                <Feather name="share-2" size={18} color={colors.primary} />
+                {" Share / Export PNG"}
+              </SecondaryButton>
               {!!selectedEvent?.teeTimePublishedAt && (
                 <SecondaryButton
                   onPress={handleUnpublishTeeTimesOnly}

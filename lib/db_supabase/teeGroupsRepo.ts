@@ -136,6 +136,79 @@ export type UpsertTeeSheetResult = {
  * Remove all tee_groups / tee_group_players rows for an event (via RPC).
  * Use before rebuilding from scratch or when clearing the tee sheet.
  */
+const GUEST_PLAYER_ID_PREFIX = "guest-";
+
+function isGuestPlayerId(playerId: string): boolean {
+  return String(playerId).startsWith(GUEST_PLAYER_ID_PREFIX);
+}
+
+/**
+ * Replace guest assignments on tee_group_players for an event (joint events: members live in event_entries).
+ * Ensures tee_groups rows exist for referenced group numbers.
+ */
+export async function replaceTeeSheetGuestAssignments(
+  eventId: string,
+  groups: TeeGroupInput[],
+  players: TeeGroupPlayerInput[],
+): Promise<void> {
+  if (!eventId?.trim()) throw new Error("replaceTeeSheetGuestAssignments: missing eventId");
+
+  const guestPlayers = players.filter((p) => isGuestPlayerId(p.player_id));
+  const guestGroups = groups.filter((g) =>
+    guestPlayers.some((p) => p.group_number === g.group_number),
+  );
+
+  const { error: delErr } = await supabase
+    .from("tee_group_players")
+    .delete()
+    .eq("event_id", eventId)
+    .like("player_id", `${GUEST_PLAYER_ID_PREFIX}%`);
+
+  if (delErr) {
+    console.error("[teeGroupsRepo] replaceTeeSheetGuestAssignments delete:", delErr);
+    throw new Error(delErr.message || "Failed to clear guest tee assignments");
+  }
+
+  if (guestGroups.length === 0 || guestPlayers.length === 0) return;
+
+  const groupNumbers = [...new Set(guestGroups.map((g) => g.group_number))];
+  const { data: existingGroups } = await supabase
+    .from("tee_groups")
+    .select("group_number")
+    .eq("event_id", eventId)
+    .in("group_number", groupNumbers);
+
+  const haveGroup = new Set((existingGroups ?? []).map((r) => Number(r.group_number)));
+  const missingGroupRows = guestGroups
+    .filter((g) => !haveGroup.has(g.group_number))
+    .map((g) => ({
+      event_id: eventId,
+      group_number: g.group_number,
+      tee_time: formatTeeTimeForDb(g.tee_time),
+    }));
+
+  if (missingGroupRows.length > 0) {
+    const { error: groupErr } = await supabase.from("tee_groups").insert(missingGroupRows);
+    if (groupErr) {
+      console.error("[teeGroupsRepo] replaceTeeSheetGuestAssignments insert groups:", groupErr);
+      throw new Error(groupErr.message || "Failed to save guest tee groups");
+    }
+  }
+
+  const playerRows = guestPlayers.map((p) => ({
+    event_id: eventId,
+    player_id: p.player_id,
+    group_number: p.group_number,
+    position: p.position,
+  }));
+
+  const { error: insErr } = await supabase.from("tee_group_players").insert(playerRows);
+  if (insErr) {
+    console.error("[teeGroupsRepo] replaceTeeSheetGuestAssignments insert players:", insErr);
+    throw new Error(insErr.message || "Failed to save guest tee assignments");
+  }
+}
+
 export async function clearPersistedTeeSheet(eventId: string): Promise<void> {
   if (!eventId?.trim()) throw new Error("clearPersistedTeeSheet: missing eventId");
   const { error } = await supabase.rpc("clear_tee_sheet_for_event", {

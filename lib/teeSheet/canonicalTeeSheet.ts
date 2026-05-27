@@ -31,7 +31,16 @@ import { getMembersBySocietyId, getMembersByIds, type MemberDoc } from "@/lib/db
 import { resolveAttendeeDisplayName } from "@/lib/eventAttendeeName";
 import { societyLabelFromMember } from "@/lib/jointEventSocietyLabel";
 import { dedupeJointGroupedPlayers, representativeMemberIdForJoint } from "@/lib/jointPersonDedupe";
-import { eligibleMemberIdSetFromRegistrations, filterTeeGroupPlayersForEligibility } from "@/lib/teeSheetEligibility";
+import type { EventGuest } from "@/lib/db_supabase/eventGuestRepo";
+import {
+  eligibleMemberIdSetFromRegistrations,
+  filterTeeGroupPlayersForEligibility,
+  guestPlayerId,
+  isTeeSheetEligibleGuest,
+  parseGuestPlayerId,
+  teeSheetEligibleGuestPlayerIds,
+  type TeeSheetPlayerEligibilityFilter,
+} from "@/lib/teeSheetEligibility";
 import { assignTeeTimes, groupPlayers, type GroupedPlayer } from "@/lib/teeSheetGrouping";
 import type { TeeSheetData } from "@/lib/teeSheetPdf";
 import type { ManCoDetails } from "@/lib/db_supabase/memberRepo";
@@ -185,6 +194,81 @@ function teeTimeForGroupSlot(
   return `${String(th).padStart(2, "0")}:${String(tm).padStart(2, "0")}`;
 }
 
+function guestDocById(guests: EventGuest[]): Map<string, EventGuest> {
+  return new Map(guests.map((g) => [String(g.id), g]));
+}
+
+function groupedPlayerFromGuestPlayerId(
+  playerId: string,
+  guestsById: Map<string, EventGuest>,
+): GroupedPlayer | null {
+  const gid = parseGuestPlayerId(playerId);
+  if (!gid) return null;
+  const g = guestsById.get(gid);
+  if (g) {
+    return {
+      id: playerId,
+      name: g.name,
+      handicapIndex: g.handicap_index ?? null,
+      courseHandicap: null,
+      playingHandicap: null,
+    };
+  }
+  return {
+    id: playerId,
+    name: "Guest",
+    handicapIndex: null,
+    courseHandicap: null,
+    playingHandicap: null,
+  };
+}
+
+function mergeGuestTeeAssignmentsIntoCanonical(
+  baseGroups: CanonicalGroupRow[],
+  teeGroups: TeeGroupRow[],
+  guestAssignments: TeeGroupPlayerRow[],
+  guests: EventGuest[],
+  eligibility: TeeSheetPlayerEligibilityFilter,
+): CanonicalGroupRow[] {
+  const filteredGuests = filterTeeGroupPlayersForEligibility(guestAssignments, eligibility);
+  if (filteredGuests.length === 0) return baseGroups;
+
+  const guestsById = guestDocById(guests);
+  const teeTimeByGroup = new Map(
+    teeGroups.map((g) => [g.group_number, g.tee_time ? teeTimeToDisplay(g.tee_time) : "08:00"]),
+  );
+  const groupByNumber = new Map(baseGroups.map((g) => [g.groupNumber, { ...g, players: [...g.players] }]));
+
+  for (const row of filteredGuests) {
+    const player = groupedPlayerFromGuestPlayerId(String(row.player_id), guestsById);
+    if (!player) continue;
+
+    const gn = row.group_number;
+    let group = groupByNumber.get(gn);
+    if (!group) {
+      group = {
+        groupNumber: gn,
+        teeTime: teeTimeByGroup.get(gn) ?? "08:00",
+        players: [],
+      };
+      groupByNumber.set(gn, group);
+    }
+    if (!group.players.some((p) => p.id === player.id)) {
+      group.players.push({
+        id: player.id,
+        name: player.name,
+        handicapIndex: player.handicapIndex ?? null,
+      });
+    }
+  }
+
+  for (const g of groupByNumber.values()) {
+    g.players.sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  return [...groupByNumber.values()].sort((a, b) => a.groupNumber - b.groupNumber);
+}
+
 function jointGroupsToCanonical(ts: JointEventTeeSheet): CanonicalGroupRow[] {
   const ev = ts.event;
   const start = ev.tee_time_start ?? DEFAULT_START;
@@ -224,30 +308,19 @@ function standardDbToCanonical(
   teeGroups: TeeGroupRow[],
   teeGroupPlayers: TeeGroupPlayerRow[],
   members: MemberDoc[],
-  guests: { id: string; name: string; sex: "male" | "female" | null; handicap_index: number | null }[],
-  eligible: Set<string>,
+  guests: EventGuest[],
+  eligibility: TeeSheetPlayerEligibilityFilter,
   isJoint: boolean,
   societyIdToName?: Map<string, string>,
-  preserveDraftPlayers = false,
 ): CanonicalGroupRow[] {
-  const filtered = preserveDraftPlayers
-    ? teeGroupPlayers
-    : filterTeeGroupPlayersForEligibility(teeGroupPlayers, eligible);
+  const filtered = filterTeeGroupPlayersForEligibility(teeGroupPlayers, eligibility);
   if (teeGroups.length === 0 || filtered.length === 0) return [];
 
+  const guestsById = guestDocById(guests);
+
   const lookup = (playerId: string): GroupedPlayer | null => {
-    if (playerId.startsWith("guest-")) {
-      const g = guests.find((x) => x.id === playerId.slice(6));
-      return g
-        ? {
-            id: playerId,
-            name: g.name,
-            handicapIndex: g.handicap_index ?? null,
-            courseHandicap: null,
-            playingHandicap: null,
-          }
-        : null;
-    }
+    const guestPlayer = groupedPlayerFromGuestPlayerId(playerId, guestsById);
+    if (guestPlayer) return guestPlayer;
     const m = members.find((x) => x.id === playerId);
     if (!m) return null;
     return {
@@ -303,12 +376,12 @@ function standardComputedToCanonical(
   event: EventDoc,
   members: MemberDoc[],
   eligibleMemberIds: string[],
-  guests: { id: string; name: string; sex: "male" | "female" | null; handicap_index: number | null }[],
+  guests: EventGuest[],
 ): CanonicalGroupRow[] {
   const playerIds = event.playerIds?.length ? event.playerIds : eligibleMemberIds;
   const subset = members.filter((m) => playerIds.includes(m.id));
-  const guestPlayers: GroupedPlayer[] = guests.map((g) => ({
-    id: `guest-${g.id}`,
+  const guestPlayers: GroupedPlayer[] = guests.filter(isTeeSheetEligibleGuest).map((g) => ({
+    id: guestPlayerId(g.id),
     name: g.name,
     handicapIndex: g.handicap_index ?? null,
     courseHandicap: null,
@@ -431,7 +504,26 @@ export async function loadCanonicalTeeSheet(
       return empty;
     }
 
-    const groups = jointGroupsToCanonical(teeSheet);
+    let groups = jointGroupsToCanonical(teeSheet);
+    const [jointTeeGroups, jointGuestAssignments, jointGuests] = await Promise.all([
+      getTeeGroups(eventId),
+      getTeeGroupPlayers(eventId).then((rows) =>
+        rows.filter((r) => parseGuestPlayerId(String(r.player_id)) != null),
+      ),
+      getEventGuests(eventId),
+    ]);
+    if (jointGuestAssignments.length > 0) {
+      groups = mergeGuestTeeAssignmentsIntoCanonical(
+        groups,
+        jointTeeGroups,
+        jointGuestAssignments,
+        jointGuests,
+        {
+          eligibleMemberIds: new Set(),
+          eligibleGuestPlayerIds: teeSheetEligibleGuestPlayerIds(jointGuests),
+        },
+      );
+    }
     const flatIds = groups.flatMap((g) => g.players.map((p) => p.id));
     logDevJointCanonicalPipeline(eventId, teeSheet, groups);
 
@@ -465,7 +557,11 @@ export async function loadCanonicalTeeSheet(
   ]);
 
   const scoped = scopeEventRegistrations(registrations, { kind: "standard", hostSocietyId: hostId });
-  const eligible = eligibleMemberIdSetFromRegistrations(scoped);
+  const eligibleMemberIds = eligibleMemberIdSetFromRegistrations(scoped);
+  const eligibleGuestPlayerIds = teeSheetEligibleGuestPlayerIds(guests);
+  const eligibility: TeeSheetPlayerEligibilityFilter = preserveDraftPlayers
+    ? { eligibleMemberIds, preserveAllSavedRows: true }
+    : { eligibleMemberIds, eligibleGuestPlayerIds };
 
   let members = await getMembersBySocietyId(hostId);
   const needIds = new Set<string>();
@@ -488,10 +584,9 @@ export async function loadCanonicalTeeSheet(
       teeGroupPlayers,
       members,
       guests,
-      eligible,
+      eligibility,
       false,
       undefined,
-      preserveDraftPlayers,
     );
     const flatIds = groups.flatMap((g) => g.players.map((p) => p.id));
     const result: CanonicalTeeSheetResult = {
@@ -513,8 +608,7 @@ export async function loadCanonicalTeeSheet(
   }
 
   const regIds = scoped.filter(isTeeSheetEligible).map((r) => r.member_id);
-  const groups =
-    published ? standardComputedToCanonical(event, members, regIds, guests) : [];
+  const groups = published ? standardComputedToCanonical(event, members, regIds, guests) : [];
 
   const result: CanonicalTeeSheetResult = {
     ...base,

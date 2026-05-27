@@ -1,5 +1,5 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
-import { StyleSheet, View, Text } from "react-native";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Platform, StyleSheet, View, Text } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { goBack } from "@/lib/navigation";
 
@@ -12,6 +12,7 @@ import { PrimaryButton, SecondaryButton } from "@/components/ui/Button";
 import { spacing, typography } from "@/lib/ui/theme";
 import { captureAndShareMultiple, type ShareTarget } from "@/lib/share/captureAndShare";
 import { assertPngExportOnly } from "@/lib/share/pngExportGuard";
+import { logShareError } from "@/lib/share/logShareError";
 import { getSocietyLogoDataUri } from "@/lib/societyLogo";
 import { formatError, type FormattedError } from "@/lib/ui/formatError";
 import {
@@ -31,7 +32,7 @@ import type { TeeSheetData } from "@/lib/teeSheetPdf";
 import { useBootstrap } from "@/lib/useBootstrap";
 import { showAlert } from "@/lib/ui/alert";
 
-type ExportStatus = "loading" | "ready" | "error" | "success";
+type ExportStatus = "loading" | "ready" | "sharing" | "error" | "success";
 
 type PlayerWithCalcs = GroupedPlayer & {
   gender: "male" | "female" | null;
@@ -47,7 +48,6 @@ export default function TeeSheetShareScreen() {
 
   const [status, setStatus] = useState<ExportStatus>("loading");
   const [error, setError] = useState<FormattedError | null>(null);
-  const [retryKey, setRetryKey] = useState(0);
 
   const [logoSrc, setLogoSrc] = useState<string | null>(null);
   const [jointLogoSrcs, setJointLogoSrcs] = useState<{ src: string | null; name: string }[]>([]);
@@ -70,129 +70,139 @@ export default function TeeSheetShareScreen() {
     }
   }, [params.payload, activeSocietyId]);
 
-  useEffect(() => {
+  const prepareExport = useCallback(async () => {
     if (!payload) {
       setStatus("error");
       setError({ message: "Tee sheet unavailable", detail: "Missing export data." });
       return;
     }
 
-    let mounted = true;
+    setStatus("loading");
+    setError(null);
 
-    (async () => {
-      setStatus("loading");
-      setError(null);
+    try {
+      assertPngExportOnly("Tee Sheet export");
 
-      try {
-        assertPngExportOnly("Tee Sheet export");
-        if (__DEV__) {
-          const sourceIsJoint = /^Joint:/i.test(payload.societyName || "");
-          console.log("[png] joint mode decision", {
-            source: "app/(share)/tee-sheet.tsx::useEffect",
-            eventId: payload.eventName || null,
-            uiToggleValue: null,
-            event_is_joint_event: sourceIsJoint,
-            linkedSocietiesCount: null,
-            participantSocietiesCount: sourceIsJoint
-              ? (payload.societyName?.replace(/^Joint:\s*/i, "").split("&").map((x) => x.trim()).filter(Boolean).length ?? null)
-              : 1,
-          });
-        }
-
-        const computedPages = buildTeeSheetPages(payload);
-        if (__DEV__) {
-          const flatPlayerIds = computedPages.flatMap((groups) =>
-            groups.flatMap((g) => g.players.map((p) => p.id)),
-          );
-          const flatNames = computedPages.flatMap((groups) =>
-            groups.flatMap((g) => g.players.map((p) => p.name)),
-          );
-          console.log("[png] snapshot source", {
-            source: "app/(share)/tee-sheet.tsx::buildTeeSheetPages",
-            eventId: payload.eventName || null,
-            isJoint: /^Joint:/i.test(payload.societyName || ""),
-            sourceUsed: payload.preGrouped ? "canonical preGrouped payload" : "computed grouping payload",
-            playerIds: flatPlayerIds,
-            displayNames: flatNames,
-            societiesRepresented: payload.societyName ? [payload.societyName] : [],
-          });
-        }
-        if (computedPages.length === 0) {
-          throw new Error("No player groups to share.");
-        }
-
-        const refs = computedPages.map(
-          (_, index) => pageRefs.current[index] ?? React.createRef<View>()
-        );
-        pageRefs.current = refs;
-        setPages(computedPages);
-
-        const logoDataUri = payload.societyId
-          ? await getSocietyLogoDataUri(payload.societyId, { logoUrl: payload.logoUrl ?? null })
-          : null;
-        setLogoSrc(logoDataUri);
-        if ((payload.jointSocieties?.length ?? 0) > 1) {
-          const logos = await Promise.all(
-            (payload.jointSocieties ?? []).slice(0, 2).map(async (s) => {
-              const src = await getSocietyLogoDataUri(s.societyId, { logoUrl: s.logoUrl ?? null });
-              return { src: src ?? s.logoUrl ?? null, name: s.societyName };
-            }),
-          );
-          setJointLogoSrcs(logos);
-        } else {
-          setJointLogoSrcs([]);
-        }
-
-        setStatus("ready");
-
-        // Give layout a moment before capture
-        await new Promise((resolve) => setTimeout(resolve, 200));
-        if (!mounted) return;
-
-        const targets: ShareTarget[] = refs.map((ref, index) => ({
-          ref,
-          title: `Tee Sheet ${index + 1}`,
-          width: PAGE_WIDTH * 3,
-          height: PAGE_HEIGHT * 3,
-        }));
-
-        const shareResult = await captureAndShareMultiple(targets, {
-          dialogTitle: `Tee Sheet - ${payload.eventName || "Event"}`,
-        });
-        if (shareResult.completedVia === "download") {
-          showAlert(
-            "Download complete",
-            "On iPhone Safari, automatic file sharing may be blocked. Your image has been downloaded instead.",
-          );
-        }
-
-        if (!mounted) return;
-        setStatus("success");
-        setTimeout(() => goBack(router, "/(app)/(tabs)"), 400);
-      } catch (err) {
-        if (!mounted) return;
-        setError(formatError(err, "Couldn't generate tee sheet."));
-        setStatus("error");
+      const computedPages = buildTeeSheetPages(payload);
+      if (computedPages.length === 0) {
+        throw new Error("No player groups to share.");
       }
-    })();
 
-    return () => {
-      mounted = false;
-    };
-  }, [payload, retryKey, router]);
+      const refs = computedPages.map(
+        (_, index) => pageRefs.current[index] ?? React.createRef<View>(),
+      );
+      pageRefs.current = refs;
+      setPages(computedPages);
 
-  const shouldRenderPages = status === "ready" || status === "loading";
+      const logoDataUri = payload.societyId
+        ? await getSocietyLogoDataUri(payload.societyId, { logoUrl: payload.logoUrl ?? null })
+        : null;
+      setLogoSrc(logoDataUri);
+
+      if ((payload.jointSocieties?.length ?? 0) > 1) {
+        const logos = await Promise.all(
+          (payload.jointSocieties ?? []).slice(0, 2).map(async (s) => {
+            const src = await getSocietyLogoDataUri(s.societyId, { logoUrl: s.logoUrl ?? null });
+            return { src: src ?? s.logoUrl ?? null, name: s.societyName };
+          }),
+        );
+        setJointLogoSrcs(logos);
+      } else {
+        setJointLogoSrcs([]);
+      }
+
+      setStatus("ready");
+    } catch (err) {
+      logShareError(err, {
+        action: "export",
+        screen: "tee-sheet-share",
+        eventId: payload.eventName ?? null,
+      });
+      setError(formatError(err, "Couldn't prepare tee sheet for export."));
+      setStatus("error");
+    }
+  }, [payload]);
+
+  useEffect(() => {
+    void prepareExport();
+  }, [prepareExport]);
+
+  const runShare = async () => {
+    if (!payload || pages.length === 0) return;
+
+    setStatus("sharing");
+    setError(null);
+
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 200));
+
+      const targets: ShareTarget[] = pageRefs.current.map((ref, index) => ({
+        ref,
+        title: `Tee Sheet ${index + 1}`,
+        width: PAGE_WIDTH * 3,
+        height: PAGE_HEIGHT * 3,
+      }));
+
+      const shareResult = await captureAndShareMultiple(targets, {
+        dialogTitle: `Tee Sheet - ${payload.eventName || "Event"}`,
+      });
+
+      if (shareResult.completedVia === "download") {
+        showAlert(
+          "Download complete",
+          Platform.OS === "web"
+            ? "On iPhone Safari, use this download or tap Share again after the file saves. If sharing was blocked, attach the downloaded PNG manually."
+            : "Your tee sheet image was saved.",
+        );
+      }
+
+      setStatus("success");
+      setTimeout(() => goBack(router, "/(app)/(tabs)"), 600);
+    } catch (err) {
+      logShareError(err, {
+        action: "share",
+        screen: "tee-sheet-share",
+        eventId: payload.eventName ?? null,
+      });
+      setError(formatError(err, "Couldn't export tee sheet. Try again or use Download on the next screen."));
+      setStatus("error");
+    }
+  };
+
+  const shouldRenderPages = status === "ready" || status === "sharing" || status === "loading";
 
   return (
     <Screen scrollable={false}>
       <View style={styles.centered}>
         {status === "loading" && (
-          <LoadingState message="Generating tee sheet..." />
+          <LoadingState message="Preparing tee sheet..." />
+        )}
+
+        {status === "ready" && (
+          <AppCard style={styles.noticeCard}>
+            <InlineNotice
+              variant="info"
+              message="Ready to export"
+              detail="Tap below to create a PNG you can share or save. On iPhone Safari this must be a tap (not automatic)."
+            />
+            <View style={styles.noticeActions}>
+              <SecondaryButton onPress={() => goBack(router, "/(app)/(tabs)")} style={{ flex: 1 }}>
+                Cancel
+              </SecondaryButton>
+              <PrimaryButton onPress={() => void runShare()} style={{ flex: 1 }}>
+                Share / Download
+              </PrimaryButton>
+            </View>
+          </AppCard>
+        )}
+
+        {status === "sharing" && (
+          <LoadingState message="Generating image..." />
         )}
 
         {status === "success" && (
           <AppCard style={styles.noticeCard}>
-            <InlineNotice variant="success" message="Tee sheet shared" />
+            <InlineNotice variant="success" message="Tee sheet exported" />
           </AppCard>
         )}
 
@@ -200,7 +210,7 @@ export default function TeeSheetShareScreen() {
           <AppCard style={styles.noticeCard}>
             <InlineNotice
               variant="error"
-              message={error?.message ?? "Couldn't generate tee sheet."}
+              message={error?.message ?? "Couldn't export tee sheet."}
               detail={error?.detail}
               style={{ marginBottom: spacing.sm }}
             />
@@ -209,7 +219,7 @@ export default function TeeSheetShareScreen() {
                 Close
               </SecondaryButton>
               {payload ? (
-                <PrimaryButton onPress={() => setRetryKey((k) => k + 1)} style={{ flex: 1 }}>
+                <PrimaryButton onPress={() => void prepareExport()} style={{ flex: 1 }}>
                   Try Again
                 </PrimaryButton>
               ) : null}
@@ -219,7 +229,7 @@ export default function TeeSheetShareScreen() {
       </View>
 
       {shouldRenderPages && payload ? (
-        <View style={styles.captureRoot} pointerEvents="none">
+        <View style={styles.captureRoot} pointerEvents="none" data-testid="share-target">
           {pages.map((groups, pageIndex) => (
             <TeeSheetPage
               key={`page-${pageIndex}`}
@@ -288,6 +298,13 @@ const TeeSheetPage = React.forwardRef<View, {
     `Allowance: ${Math.round(allowance * 100)}%`,
   ];
 
+  const manCoLines = [
+    data.manCo?.captain ? `Captain: ${data.manCo.captain}` : null,
+    data.manCo?.secretary ? `Secretary: ${data.manCo.secretary}` : null,
+    data.manCo?.treasurer ? `Treasurer: ${data.manCo.treasurer}` : null,
+    data.manCo?.handicapper ? `Handicapper: ${data.manCo.handicapper}` : null,
+  ].filter(Boolean) as string[];
+
   return (
     <View ref={ref} style={styles.page} collapsable={false}>
       <View style={styles.headerRow}>
@@ -314,6 +331,7 @@ const TeeSheetPage = React.forwardRef<View, {
           )}
         </View>
         <View style={styles.headerCenter}>
+          <Text style={styles.societyTitle}>{data.societyName}</Text>
           <Text style={styles.eventTitle}>{data.eventName}</Text>
           <Text style={styles.eventMeta}>
             {dateStr}
@@ -364,6 +382,9 @@ const TeeSheetPage = React.forwardRef<View, {
         ) : (
           <Text style={styles.specialBodyMuted}>Competition holes: not set</Text>
         )}
+        {manCoLines.length > 0 ? (
+          <Text style={styles.manCoLine}>{manCoLines.join(" · ")}</Text>
+        ) : null}
       </View>
 
       <View style={styles.footer}>
@@ -464,11 +485,10 @@ function buildTeeSheetPages(data: TeeSheetData): GroupWithTime[][] {
       ? data.teeTimeInterval!
       : 8;
 
-  // Cap to 12 groups per page; pad to exactly 12 for consistent PNG dimensions.
   const capped = groups.slice(0, 12);
   const groupsWithTimes: GroupWithTime[] = capped.map((group, index) => ({
     ...group,
-    teeTime: isValidTime(group.teeTime) ? group.teeTime : buildTeeTime(baseStartTime, intervalMinutes, index),
+    teeTime: isValidTime(group.teeTime) ? group.teeTime! : buildTeeTime(baseStartTime, intervalMinutes, index),
   }));
 
   while (groupsWithTimes.length < 12) {
@@ -516,6 +536,7 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: "center",
     alignItems: "center",
+    padding: spacing.md,
   },
   noticeCard: {
     width: "100%",
@@ -524,6 +545,7 @@ const styles = StyleSheet.create({
   noticeActions: {
     flexDirection: "row",
     gap: spacing.sm,
+    marginTop: spacing.sm,
   },
   captureRoot: {
     position: "absolute",
@@ -560,6 +582,15 @@ const styles = StyleSheet.create({
     flex: 1,
     paddingHorizontal: 12,
     alignItems: "center",
+  },
+  societyTitle: {
+    fontSize: 11,
+    fontWeight: "600",
+    color: "#6b7280",
+    textAlign: "center",
+    letterSpacing: 0.4,
+    marginBottom: 2,
+    textTransform: "uppercase",
   },
   eventTitle: {
     fontSize: 22,
@@ -709,6 +740,12 @@ const styles = StyleSheet.create({
     color: "#c4c4c4",
     lineHeight: 12,
     letterSpacing: 0.2,
+  },
+  manCoLine: {
+    fontSize: 8,
+    color: "#9ca3af",
+    marginTop: 4,
+    lineHeight: 12,
   },
   footer: {
     flexDirection: "row",

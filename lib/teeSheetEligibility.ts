@@ -19,23 +19,63 @@ export function eligibleMemberIdSetFromRegistrations(regs: EventRegistration[]):
   return new Set(regs.filter(isTeeSheetEligible).map((r) => String(r.member_id)));
 }
 
-/** Keep guest-* ids; filter member ids to the eligible set. */
-export function filterPlayerIdsForTeeSheet(playerIds: string[], eligible: Set<string>): string[] {
-  return playerIds.filter((id) => {
-    const s = String(id);
-    if (s.startsWith("guest-")) return true;
-    return eligible.has(s);
-  });
+/** Tee sheet guest ids use `guest-{event_guests.id}` (see tee_group_players.player_id). */
+export function guestPlayerId(guestId: string): string {
+  return `guest-${String(guestId)}`;
+}
+
+export function parseGuestPlayerId(playerId: string): string | null {
+  const s = String(playerId);
+  if (!s.startsWith("guest-")) return null;
+  const gid = s.slice(6).trim();
+  return gid.length > 0 ? gid : null;
+}
+
+export function isGuestPlayerId(playerId: string): boolean {
+  return parseGuestPlayerId(playerId) != null;
+}
+
+/** Paid guests count as tee-sheet eligible (no registration row). */
+export function isTeeSheetEligibleGuest(g: { paid: boolean }): boolean {
+  return g.paid === true;
+}
+
+export function teeSheetEligibleGuestPlayerIds(
+  guests: { id: string; paid: boolean }[],
+): Set<string> {
+  return new Set(guests.filter(isTeeSheetEligibleGuest).map((g) => guestPlayerId(g.id)));
+}
+
+export type TeeSheetPlayerEligibilityFilter = {
+  eligibleMemberIds: Set<string>;
+  /** When set, only these `guest-*` player ids are kept (paid guests). */
+  eligibleGuestPlayerIds?: Set<string>;
+  /** ManCo draft reload: keep every saved row even if eligibility changed since save. */
+  preserveAllSavedRows?: boolean;
+};
+
+function keepTeeSheetPlayerId(id: string, filter: TeeSheetPlayerEligibilityFilter): boolean {
+  if (filter.preserveAllSavedRows) return true;
+  const guestId = parseGuestPlayerId(id);
+  if (guestId != null) {
+    if (filter.eligibleGuestPlayerIds) return filter.eligibleGuestPlayerIds.has(id);
+    return true;
+  }
+  return filter.eligibleMemberIds.has(id);
+}
+
+/** Filter member ids to eligible set; guests use paid-only unless preserveAllGuestRows. */
+export function filterPlayerIdsForTeeSheet(
+  playerIds: string[],
+  filter: TeeSheetPlayerEligibilityFilter,
+): string[] {
+  return playerIds.filter((id) => keepTeeSheetPlayerId(String(id), filter));
 }
 
 export function filterTeeGroupPlayersForEligibility<
   T extends { player_id: string; group_number: number; position: number },
->(rows: T[], eligible: Set<string>): T[] {
-  return rows.filter((row) => {
-    const id = String(row.player_id);
-    if (id.startsWith("guest-")) return true;
-    return eligible.has(id);
-  });
+>(rows: T[], filter: TeeSheetPlayerEligibilityFilter): T[] {
+  return rows.filter((row) => keepTeeSheetPlayerId(String(row.player_id), filter));
 }
 
 /**
@@ -84,16 +124,12 @@ export async function fetchEligibleMemberIdsForTeeSheetSave(opts: {
 
 export function sanitizePlayerGroupsForTeeSheetSave<T extends { players: { id: string }[] }>(
   groups: T[],
-  eligible: Set<string>,
+  filter: TeeSheetPlayerEligibilityFilter,
 ): T[] {
   return groups
     .map((g) => ({
       ...g,
-      players: g.players.filter((p) => {
-        const id = String(p.id);
-        if (id.startsWith("guest-")) return true;
-        return eligible.has(id);
-      }),
+      players: g.players.filter((p) => keepTeeSheetPlayerId(String(p.id), filter)),
     }))
     .filter((g) => g.players.length > 0);
 }
