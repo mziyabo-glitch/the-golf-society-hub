@@ -7,6 +7,9 @@ import {
 export type TeeSheetExportGenderHint = {
   id: string;
   gender?: "male" | "female" | null;
+  teeAssignment?: "men" | "ladies" | null;
+  manualOverride?: boolean;
+  playingHandicapSnapshot?: number | null;
 };
 
 export type BuildTeeSheetExportPayloadInput = {
@@ -49,12 +52,24 @@ export function buildTeeSheetExportPayload(input: BuildTeeSheetExportPayloadInpu
   const genderById = new Map<string, "male" | "female" | null>(
     genderHints.map((p) => [p.id, p.gender ?? null] as const),
   );
+  const teeAssignmentById = new Map<string, "men" | "ladies" | null>(
+    genderHints.map((p) => [p.id, p.teeAssignment ?? null] as const),
+  );
+  const manualOverrideById = new Map<string, boolean>(
+    genderHints.map((p) => [p.id, p.manualOverride === true] as const),
+  );
+  const phSnapshotById = new Map<string, number | null>(
+    genderHints.map((p) => [p.id, p.playingHandicapSnapshot ?? null] as const),
+  );
 
   return {
     ...exportData,
     players: exportData.players.map((p) => ({
       ...p,
       gender: (p.id ? genderById.get(p.id) : null) ?? p.gender ?? null,
+      teeAssignment: (p.id ? teeAssignmentById.get(p.id) : null) ?? p.teeAssignment ?? null,
+      manualOverride: p.id ? manualOverrideById.get(p.id) === true : false,
+      playingHandicapSnapshot: (p.id ? phSnapshotById.get(p.id) : null) ?? p.playingHandicapSnapshot ?? null,
     })),
   };
 }

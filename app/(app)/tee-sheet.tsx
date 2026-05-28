@@ -48,7 +48,10 @@ import {
   upsertTeeSheet,
   clearPersistedTeeSheet,
   getTeeGroupPlayers,
+  getTeeSheetPlayerPolicy,
   replaceTeeSheetGuestAssignments,
+  upsertTeeSheetPlayerPolicy,
+  type TeeSheetPlayerPolicyRow,
 } from "@/lib/db_supabase/teeGroupsRepo";
 import { guestPlayerId, parseGuestPlayerId } from "@/lib/teeSheetEligibility";
 import {
@@ -70,7 +73,6 @@ import {
   type TeeBlock,
   calcCourseHandicap,
   calcPlayingHandicap,
-  selectTeeByGender,
   formatHandicap,
   DEFAULT_ALLOWANCE,
 } from "@/lib/whs";
@@ -118,6 +120,9 @@ type EditablePlayer = {
   handicapIndex: number | null;
   playingHandicap: number | null;
   gender: Gender;
+  teeAssignment: "men" | "ladies" | null;
+  manualGenderSet?: boolean;
+  manualTeeOverride?: "men" | "ladies" | null;
   groupIndex: number;
   /** Set when built from joint event tee sheet (for save path) */
   event_entry_id?: string;
@@ -131,6 +136,68 @@ type PlayerGroup = {
   groupNumber: number;
   players: EditablePlayer[];
 };
+
+function teeAssignmentFromGender(
+  gender: Gender,
+  existing: "men" | "ladies" | null,
+): "men" | "ladies" | null {
+  if (gender === "female") return "ladies";
+  if (gender === "male") return "men";
+  return existing ?? null;
+}
+
+function policyByPlayerId(rows: TeeSheetPlayerPolicyRow[]): Map<string, TeeSheetPlayerPolicyRow> {
+  return new Map(rows.map((r) => [String(r.player_id), r]));
+}
+
+function applySexPolicyToGroups(
+  groups: PlayerGroup[],
+  event: EventDoc,
+  members: MemberDoc[],
+  guests: EventGuest[],
+  persistedPolicy?: Map<string, TeeSheetPlayerPolicyRow>,
+): PlayerGroup[] {
+  const menTee: TeeBlock | null =
+    event.par != null && event.courseRating != null && event.slopeRating != null
+      ? { par: event.par, courseRating: event.courseRating, slopeRating: event.slopeRating }
+      : null;
+  const ladiesTee: TeeBlock | null =
+    event.ladiesPar != null && event.ladiesCourseRating != null && event.ladiesSlopeRating != null
+      ? { par: event.ladiesPar, courseRating: event.ladiesCourseRating, slopeRating: event.ladiesSlopeRating }
+      : null;
+  const allowance = event.handicapAllowance ?? DEFAULT_ALLOWANCE;
+
+  const memberById = new Map(members.map((m) => [String(m.id), m] as const));
+  const guestByPlayerId = new Map(guests.map((g) => [guestPlayerId(g.id), g] as const));
+
+  return groups.map((group, groupIndex) => ({
+    ...group,
+    players: group.players.map((player) => {
+      const member = memberById.get(String(player.id));
+      const guest = guestByPlayerId.get(String(player.id));
+      const persisted = persistedPolicy?.get(String(player.id));
+      const manualGender = (persisted?.manual_gender ?? null) as Gender;
+      const manualTeeOverride = (persisted?.manual_tee_override ?? null) as "men" | "ladies" | null;
+      const gender = (manualGender ?? member?.gender ?? guest?.sex ?? player.gender ?? null) as Gender;
+      const teeAssignment = manualTeeOverride ?? teeAssignmentFromGender(gender, player.teeAssignment ?? null);
+      const playerTee =
+        teeAssignment === "ladies" ? ladiesTee : teeAssignment === "men" ? menTee : null;
+      const hi = player.handicapIndex ?? member?.handicapIndex ?? member?.handicap_index ?? guest?.handicap_index ?? null;
+      const courseHandicap = calcCourseHandicap(hi, playerTee);
+      const playingHandicap = calcPlayingHandicap(courseHandicap, allowance);
+      return {
+        ...player,
+        handicapIndex: hi,
+        gender,
+        teeAssignment,
+        manualGenderSet: manualGender != null || player.manualGenderSet === true,
+        manualTeeOverride,
+        playingHandicap,
+        groupIndex,
+      };
+    }),
+  }));
+}
 
 function jointTeeSheetEntryToEditable(
   e: JointEventTeeSheetEntry,
@@ -148,6 +215,9 @@ function jointTeeSheetEntryToEditable(
     handicapIndex: e.handicap_index ?? null,
     playingHandicap: null,
     gender: null as Gender,
+    teeAssignment: null,
+    manualGenderSet: false,
+    manualTeeOverride: null,
     groupIndex: groupIndexZeroBased,
     event_entry_id: e.event_entry_id,
     all_event_entry_ids: allIds,
@@ -525,11 +595,12 @@ export default function TeeSheetScreen() {
               const candidateMembers = pooled.filter((m) => candidateIdSet.has(String(m.id)));
 
               logStep("joint_guests");
-              const [jointGuestAssignments, jointPaidGuests] = await Promise.all([
+              const [jointGuestAssignments, jointPaidGuests, jointPolicyRows] = await Promise.all([
                 getTeeGroupPlayers(eventId).then((rows) =>
                   rows.filter((r) => parseGuestPlayerId(String(r.player_id)) != null),
                 ),
                 getTeeSheetEligibleGuestsForEvent(eventId),
+                getTeeSheetPlayerPolicy(eventId),
               ]);
 
               let persistedGroups: PlayerGroup[] = normalizeGroups(
@@ -541,8 +612,15 @@ export default function TeeSheetScreen() {
               persistedGroups = normalizeGroups(
                 hydrateEditorGroupsWithPaidGuests(persistedGroups, jointPaidGuests, jointGuestAssignments),
               );
-              const persistedIds = groupsToPlayerIdsFrom(persistedGroups);
               const jointEventDoc = mapJointEventToEventDoc(teeSheet.event) as EventDoc;
+              persistedGroups = applySexPolicyToGroups(
+                persistedGroups,
+                jointEventDoc,
+                candidateMembers,
+                jointPaidGuests,
+                policyByPlayerId(jointPolicyRows),
+              );
+              const persistedIds = groupsToPlayerIdsFrom(persistedGroups);
 
               applyIfCurrent(() => {
                 setJointTeeSheetData(teeSheet);
@@ -588,10 +666,11 @@ export default function TeeSheetScreen() {
               setJointTeeSheetData(null);
             });
 
-            const [event, registrations, paidGuests] = await Promise.all([
+            const [event, registrations, paidGuests, persistedPolicyRows] = await Promise.all([
               getEvent(eventId),
               getEventRegistrations(eventId),
               getTeeSheetEligibleGuestsForEvent(eventId),
+              getTeeSheetPlayerPolicy(eventId),
             ]);
             logStep("standard_event done", { hasEvent: !!event });
 
@@ -635,7 +714,13 @@ export default function TeeSheetScreen() {
               setEligibleMemberIds(eligibleIds);
 
               if (hasPersistedGroups && canonical) {
-                let persistedGroups = groupsFromCanonical(event, canonical, membersStd);
+                let persistedGroups = groupsFromCanonical(
+                  event,
+                  canonical,
+                  membersStd,
+                  paidGuests,
+                  policyByPlayerId(persistedPolicyRows),
+                );
                 persistedGroups = hydrateEditorGroupsWithPaidGuests(persistedGroups, paidGuests);
                 const persistedIds = groupsToPlayerIdsFrom(persistedGroups);
                 setGroups(persistedGroups);
@@ -695,6 +780,8 @@ export default function TeeSheetScreen() {
     event: EventDoc,
     canonical: CanonicalTeeSheetResult,
     membersList: MemberDoc[],
+    guests: EventGuest[],
+    persistedPolicy?: Map<string, TeeSheetPlayerPolicyRow>,
   ): PlayerGroup[] => {
     const menTee: TeeBlock | null =
       event.par != null && event.courseRating != null && event.slopeRating != null
@@ -706,14 +793,21 @@ export default function TeeSheetScreen() {
         : null;
     const allowance = event.handicapAllowance ?? DEFAULT_ALLOWANCE;
 
+    const guestByPlayerId = new Map(guests.map((g) => [`guest-${g.id}`, g] as const));
+
     return normalizeGroups(
       canonical.groups.map((g, groupIdx) => ({
         groupNumber: g.groupNumber,
         players: g.players.map((p) => {
           const member = membersList.find((m) => m.id === p.id);
-          const gender = member?.gender ?? null;
+          const guest = guestByPlayerId.get(p.id);
+          const persisted = persistedPolicy?.get(String(p.id));
+          const manualGender = (persisted?.manual_gender ?? null) as Gender;
+          const gender = (manualGender ?? member?.gender ?? guest?.sex ?? null) as Gender;
+          const teeAssignment = teeAssignmentFromGender(gender, null);
           const hi = member?.handicapIndex ?? member?.handicap_index ?? p.handicapIndex ?? null;
-          const playerTee = selectTeeByGender(gender, menTee, ladiesTee);
+          const playerTee =
+            teeAssignment === "ladies" ? ladiesTee : teeAssignment === "men" ? menTee : null;
           const courseHandicap = calcCourseHandicap(hi, playerTee);
           const playingHandicap = calcPlayingHandicap(courseHandicap, allowance);
           return {
@@ -722,6 +816,7 @@ export default function TeeSheetScreen() {
             handicapIndex: hi,
             playingHandicap,
             gender,
+            teeAssignment,
             groupIndex: groupIdx,
             societyLabel: p.societyLabel ?? null,
           } as EditablePlayer;
@@ -791,10 +886,12 @@ export default function TeeSheetScreen() {
       for (let j = 0; j < size && playerIndex < sorted.length; j++) {
         const m = sorted[playerIndex];
         const gender = m.gender ?? null;
+        const teeAssignment = teeAssignmentFromGender(gender, null);
         const hi = m.handicapIndex ?? m.handicap_index ?? null;
 
         // Calculate playing handicap based on gender and tee settings
-        const playerTee = selectTeeByGender(gender, menTee, ladiesTee);
+        const playerTee =
+          teeAssignment === "ladies" ? ladiesTee : teeAssignment === "men" ? menTee : null;
         const courseHandicap = calcCourseHandicap(hi, playerTee);
         const playingHandicap = calcPlayingHandicap(courseHandicap, allowance);
 
@@ -804,6 +901,7 @@ export default function TeeSheetScreen() {
           handicapIndex: hi,
           playingHandicap,
           gender,
+          teeAssignment,
           groupIndex: i,
         });
         playerIndex++;
@@ -1099,7 +1197,13 @@ export default function TeeSheetScreen() {
         startTime: startTime || null,
         teeTimeInterval: interval,
         genderHints: groups.flatMap((g) =>
-          g.players.map((p) => ({ id: p.id, gender: p.gender ?? null })),
+          g.players.map((p) => ({
+            id: p.id,
+            gender: p.gender ?? null,
+            teeAssignment: p.teeAssignment ?? null,
+            manualOverride: p.manualGenderSet === true || p.manualTeeOverride != null,
+            playingHandicapSnapshot: p.playingHandicap ?? null,
+          })),
         ),
       });
 
@@ -1144,6 +1248,14 @@ export default function TeeSheetScreen() {
       const interval = parseInt(teeInterval, 10) || 10;
       const ntpHoles = parseHoleNumbers(ntpHolesInput === "-" ? "" : ntpHolesInput);
       const ldHoles = parseHoleNumbers(ldHolesInput === "-" ? "" : ldHolesInput);
+      const manualPolicyInputs = nonEmptyGroups.flatMap((g) =>
+        g.players.map((p) => ({
+          player_id: p.id,
+          manual_gender: p.manualGenderSet ? (p.gender ?? null) : null,
+          manual_tee_assignment: p.teeAssignment ?? null,
+          manual_tee_override: p.manualTeeOverride ?? null,
+        })),
+      );
       if (__DEV__) {
         console.log("[teesheet] save start", {
           eventId: selectedEventId,
@@ -1191,6 +1303,9 @@ export default function TeeSheetScreen() {
             player_id: p.id,
             group_number: g.groupNumber,
             position: idx,
+            manual_gender: p.manualGenderSet ? (p.gender ?? null) : null,
+            manual_tee_assignment: p.teeAssignment ?? null,
+            manual_tee_override: p.manualTeeOverride ?? null,
           })),
         );
         await replaceTeeSheetGuestAssignments(
@@ -1198,6 +1313,7 @@ export default function TeeSheetScreen() {
           jointTeeGroupInputs,
           jointTeePlayerInputs,
         );
+        await upsertTeeSheetPlayerPolicy(selectedEventId, manualPolicyInputs);
         if (__DEV__) {
           console.log("[teesheet] save db response", {
             eventId: selectedEventId,
@@ -1238,12 +1354,13 @@ export default function TeeSheetScreen() {
         if (!opts?.quiet) {
           setToast({ visible: true, message: "Draft saved", type: "success" });
         }
-        const [tsSaved, jointGuestAssignmentsAfterSave, jointPaidGuestsAfterSave] = await Promise.all([
+        const [tsSaved, jointGuestAssignmentsAfterSave, jointPaidGuestsAfterSave, jointPolicyRowsAfterSave] = await Promise.all([
           getJointEventTeeSheet(selectedEventId),
           getTeeGroupPlayers(selectedEventId).then((rows) =>
             rows.filter((r) => parseGuestPlayerId(String(r.player_id)) != null),
           ),
           getTeeSheetEligibleGuestsForEvent(selectedEventId),
+          getTeeSheetPlayerPolicy(selectedEventId),
         ]);
         if (tsSaved) {
           setJointTeeSheetData(tsSaved);
@@ -1252,12 +1369,19 @@ export default function TeeSheetScreen() {
             groupNumber: g.group_number,
             players: (g.entries ?? []).map((e) => jointTeeSheetEntryToEditable(e, groupIdx)),
           }));
-          const newGroups = normalizeGroups(
+          let newGroups = normalizeGroups(
             hydrateEditorGroupsWithPaidGuests(
               baseGroups,
               jointPaidGuestsAfterSave,
               jointGuestAssignmentsAfterSave,
             ),
+          );
+          newGroups = applySexPolicyToGroups(
+            newGroups,
+            selectedEvent,
+            eventMemberPool.length > 0 ? eventMemberPool : members,
+            jointPaidGuestsAfterSave,
+            policyByPlayerId(jointPolicyRowsAfterSave),
           );
           setGroups(newGroups.length > 0 ? newGroups : []);
           const ids = groupsToPlayerIdsFrom(newGroups);
@@ -1290,6 +1414,9 @@ export default function TeeSheetScreen() {
           player_id: p.id,
           group_number: g.groupNumber,
           position: idx,
+          manual_gender: p.manualGenderSet ? (p.gender ?? null) : null,
+          manual_tee_assignment: p.teeAssignment ?? null,
+          manual_tee_override: p.manualTeeOverride ?? null,
         }))
       );
       if (__DEV__) {
@@ -1303,6 +1430,7 @@ export default function TeeSheetScreen() {
         });
       }
       const upsertResult = await upsertTeeSheet(selectedEventId, teeGroupInputs, teePlayerInputs);
+      await upsertTeeSheetPlayerPolicy(selectedEventId, manualPolicyInputs);
       if (__DEV__) {
         console.log("[teesheet] save db response", {
           source: "tee_groups",
@@ -1488,6 +1616,63 @@ export default function TeeSheetScreen() {
     }
   };
 
+  const setPlayerSexFromEditor = (playerId: string, nextGender: Gender) => {
+    if (!selectedEvent) return;
+    const menTee: TeeBlock | null =
+      selectedEvent.par != null && selectedEvent.courseRating != null && selectedEvent.slopeRating != null
+        ? { par: selectedEvent.par, courseRating: selectedEvent.courseRating, slopeRating: selectedEvent.slopeRating }
+        : null;
+    const ladiesTee: TeeBlock | null =
+      selectedEvent.ladiesPar != null && selectedEvent.ladiesCourseRating != null && selectedEvent.ladiesSlopeRating != null
+        ? {
+            par: selectedEvent.ladiesPar,
+            courseRating: selectedEvent.ladiesCourseRating,
+            slopeRating: selectedEvent.ladiesSlopeRating,
+          }
+        : null;
+    const allowance = selectedEvent.handicapAllowance ?? DEFAULT_ALLOWANCE;
+    setGroups((prev) =>
+      prev.map((group) => ({
+        ...group,
+        players: group.players.map((player) => {
+          if (String(player.id) !== String(playerId)) return player;
+          const teeAssignment = teeAssignmentFromGender(nextGender, player.teeAssignment ?? null);
+          const playerTee =
+            teeAssignment === "ladies" ? ladiesTee : teeAssignment === "men" ? menTee : null;
+          const courseHandicap = calcCourseHandicap(player.handicapIndex, playerTee);
+          const playingHandicap = calcPlayingHandicap(courseHandicap, allowance);
+          return {
+            ...player,
+            gender: nextGender,
+            teeAssignment,
+            manualGenderSet: nextGender != null,
+            playingHandicap,
+          };
+        }),
+      })),
+    );
+  };
+
+  const resetToProfileDefaults = () => {
+    if (!selectedEvent) return;
+    const sourceMembers = eventMemberPool.length > 0 ? eventMemberPool : members;
+    setGroups((prev) =>
+      applySexPolicyToGroups(
+        prev.map((g) => ({
+          ...g,
+          players: g.players.map((p) => ({
+            ...p,
+            manualGenderSet: false,
+            manualTeeOverride: null,
+          })),
+        })),
+        selectedEvent,
+        sourceMembers,
+        eligiblePaidGuests,
+      ),
+    );
+  };
+
   const addGuestToField = (guest: EventGuest) => {
     const id = guestPlayerId(guest.id);
     if (groups.some((g) => g.players.some((p) => String(p.id) === id))) return;
@@ -1500,6 +1685,9 @@ export default function TeeSheetScreen() {
         handicapIndex: player.handicapIndex,
         playingHandicap: null,
         gender: player.gender,
+        teeAssignment: teeAssignmentFromGender(player.gender, null),
+        manualGenderSet: false,
+        manualTeeOverride: null,
         groupIndex: targetGroupIdx >= 0 ? targetGroupIdx : 0,
       };
       if (targetGroupIdx === -1) {
@@ -1535,6 +1723,9 @@ export default function TeeSheetScreen() {
         handicapIndex: m.handicapIndex ?? m.handicap_index ?? null,
         playingHandicap: null,
         gender: m.gender ?? null,
+        teeAssignment: teeAssignmentFromGender(m.gender ?? null, null),
+        manualGenderSet: false,
+        manualTeeOverride: null,
         groupIndex: targetGroupIdx >= 0 ? targetGroupIdx : 0,
       };
       if (targetGroupIdx === -1) {
@@ -1715,6 +1906,10 @@ export default function TeeSheetScreen() {
   const selectedPlayerCount = groups.reduce((sum, g) => sum + g.players.length, 0);
   const groupCount = groups.filter((g) => g.players.length > 0).length;
   const womenCount = groups.reduce((sum, g) => sum + g.players.filter((p) => p.gender === "female").length, 0);
+  const playersNeedingTeeConfirmation = groups.reduce(
+    (sum, g) => sum + g.players.filter((p) => p.gender == null || p.teeAssignment == null).length,
+    0,
+  );
   const selectedIdSet = new Set(selectedPlayerIds);
   const eligibleIdSet = new Set(eligibleMemberIds.map(String));
   const playersInGroups = new Set(groups.flatMap((g) => g.players.map((p) => String(p.id))));
@@ -2040,6 +2235,16 @@ export default function TeeSheetScreen() {
               {showGroupEditor ? (
                 /* Editable Group View */
                 <View style={styles.groupEditor}>
+                  <SecondaryButton size="sm" onPress={resetToProfileDefaults}>
+                    <Feather name="rotate-ccw" size={12} color={colors.text} /> Reset to profile defaults
+                  </SecondaryButton>
+                  {playersNeedingTeeConfirmation > 0 ? (
+                    <InlineNotice
+                      variant="warning"
+                      message={`${playersNeedingTeeConfirmation} player${playersNeedingTeeConfirmation !== 1 ? "s" : ""} need tee confirmation`}
+                      detail="Set sex to Male, Female, or Unknown. Unknown shows Tee TBC and PH remains '-' unless tee is explicitly set."
+                    />
+                  ) : null}
                   <AppCard>
                     <AppText variant="captionBold" color="primary">
                       ✔ Attending players (default)
@@ -2091,6 +2296,46 @@ export default function TeeSheetScreen() {
                               <AppText variant="caption" color="secondary">
                                 HI: {player.handicapIndex != null ? player.handicapIndex.toFixed(1) : "-"}
                               </AppText>
+                              <View style={styles.sexEditorRow}>
+                                {(["male", "female", null] as const).map((sexOption) => {
+                                  const active = player.gender === sexOption;
+                                  const label = sexOption === "male" ? "Male" : sexOption === "female" ? "Female" : "Unknown";
+                                  return (
+                                    <Pressable
+                                      key={`${player.id}-${label}`}
+                                      style={[
+                                        styles.sexChip,
+                                        active ? styles.sexChipActive : null,
+                                      ]}
+                                      onPress={() => setPlayerSexFromEditor(player.id, sexOption)}
+                                    >
+                                      <AppText
+                                        variant="caption"
+                                        color="secondary"
+                                        style={{ fontWeight: "600", color: active ? "#FFFFFF" : colors.textSecondary }}
+                                      >
+                                        {label}
+                                      </AppText>
+                                    </Pressable>
+                                  );
+                                })}
+                              </View>
+                              {player.gender == null || player.teeAssignment == null ? (
+                                <View style={styles.policyWarningChip}>
+                                  <Feather name="alert-circle" size={12} color={colors.warning} />
+                                  <AppText variant="caption" style={{ color: colors.warning, marginLeft: 4 }}>
+                                    Tee needs confirming
+                                  </AppText>
+                                </View>
+                              ) : null}
+                              {player.manualGenderSet || player.manualTeeOverride ? (
+                                <View style={styles.overrideChip}>
+                                  <Feather name="shield" size={12} color={colors.primary} />
+                                  <AppText variant="caption" style={{ color: colors.primary, marginLeft: 4 }}>
+                                    Manual tee override
+                                  </AppText>
+                                </View>
+                              ) : null}
                             </View>
 
                             {/* Group number input — type target group and blur to move */}
@@ -2428,6 +2673,44 @@ const styles = StyleSheet.create({
   },
   playerInfo: {
     flex: 1,
+  },
+  sexEditorRow: {
+    flexDirection: "row",
+    gap: 6,
+    marginTop: 6,
+    flexWrap: "wrap",
+  },
+  sexChip: {
+    borderWidth: 1,
+    borderColor: "#D1D5DB",
+    borderRadius: 999,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    backgroundColor: "#F8FAFC",
+  },
+  sexChipActive: {
+    backgroundColor: "#0B1F3A",
+    borderColor: "#0B1F3A",
+  },
+  policyWarningChip: {
+    marginTop: 6,
+    alignSelf: "flex-start",
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#FEF3C7",
+    borderRadius: 999,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+  },
+  overrideChip: {
+    marginTop: 6,
+    alignSelf: "flex-start",
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#DBEAFE",
+    borderRadius: 999,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
   },
   groupNumInputWrap: {
     flexDirection: "row",

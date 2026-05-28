@@ -18,6 +18,21 @@ export type TeeGroupPlayerRow = {
   player_id: string;
   created_at?: string;
   updated_at?: string;
+  manual_gender?: "male" | "female" | null;
+  manual_tee_assignment?: "men" | "ladies" | null;
+  manual_tee_override?: "men" | "ladies" | null;
+};
+
+export type TeeSheetPlayerPolicyRow = {
+  id: string;
+  event_id: string;
+  player_id: string;
+  manual_gender: "male" | "female" | null;
+  manual_tee_assignment: "men" | "ladies" | null;
+  manual_tee_override?: "men" | "ladies" | null;
+  updated_by?: string | null;
+  created_at?: string;
+  updated_at?: string;
 };
 
 /** Normalize time to HH:MM:SS for Postgres TIME */
@@ -122,6 +137,16 @@ export type TeeGroupPlayerInput = {
   player_id: string;
   group_number: number;
   position: number;
+  manual_gender?: "male" | "female" | null;
+  manual_tee_assignment?: "men" | "ladies" | null;
+  manual_tee_override?: "men" | "ladies" | null;
+};
+
+export type TeeSheetPlayerPolicyInput = {
+  player_id: string;
+  manual_gender?: "male" | "female" | null;
+  manual_tee_assignment?: "men" | "ladies" | null;
+  manual_tee_override?: "men" | "ladies" | null;
 };
 
 export type UpsertTeeSheetResult = {
@@ -200,6 +225,9 @@ export async function replaceTeeSheetGuestAssignments(
     player_id: p.player_id,
     group_number: p.group_number,
     position: p.position,
+    manual_gender: p.manual_gender ?? null,
+    manual_tee_assignment: p.manual_tee_assignment ?? null,
+    manual_tee_override: p.manual_tee_override ?? null,
   }));
 
   const { error: insErr } = await supabase.from("tee_group_players").insert(playerRows);
@@ -217,6 +245,67 @@ export async function clearPersistedTeeSheet(eventId: string): Promise<void> {
   if (error) {
     console.error("[teeGroupsRepo] clearPersistedTeeSheet failed:", error);
     throw new Error(error.message || "Failed to clear tee sheet");
+  }
+  const { error: policyErr } = await supabase
+    .from("tee_sheet_player_policy")
+    .delete()
+    .eq("event_id", eventId);
+  if (policyErr) {
+    console.error("[teeGroupsRepo] clear tee_sheet_player_policy failed:", policyErr);
+    throw new Error(policyErr.message || "Failed to clear tee sheet player policy");
+  }
+}
+
+export async function getTeeSheetPlayerPolicy(eventId: string): Promise<TeeSheetPlayerPolicyRow[]> {
+  const { data, error } = await supabase
+    .from("tee_sheet_player_policy")
+    .select("*")
+    .eq("event_id", eventId);
+  if (error) {
+    console.error("[teeGroupsRepo] getTeeSheetPlayerPolicy error:", error);
+    throw new Error(error.message || "Failed to load tee sheet player policy");
+  }
+  return (data ?? []) as TeeSheetPlayerPolicyRow[];
+}
+
+export async function upsertTeeSheetPlayerPolicy(
+  eventId: string,
+  players: TeeSheetPlayerPolicyInput[],
+): Promise<void> {
+  if (!eventId?.trim()) throw new Error("upsertTeeSheetPlayerPolicy: missing eventId");
+  const unique = new Map<string, TeeSheetPlayerPolicyInput>();
+  for (const p of players) {
+    if (!p.player_id?.trim()) continue;
+    unique.set(String(p.player_id), p);
+  }
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  const updater = user?.id ?? null;
+
+  const rows = [...unique.values()].map((p) => ({
+    event_id: eventId,
+    player_id: String(p.player_id),
+    manual_gender: p.manual_gender ?? null,
+    manual_tee_assignment: p.manual_tee_assignment ?? null,
+    manual_tee_override: p.manual_tee_override ?? null,
+    updated_by: updater,
+  }));
+
+  const { error: delErr } = await supabase
+    .from("tee_sheet_player_policy")
+    .delete()
+    .eq("event_id", eventId);
+  if (delErr) {
+    console.error("[teeGroupsRepo] upsertTeeSheetPlayerPolicy delete error:", delErr);
+    throw new Error(delErr.message || "Failed to reset tee sheet player policy");
+  }
+  if (rows.length === 0) return;
+
+  const { error } = await supabase.from("tee_sheet_player_policy").insert(rows);
+  if (error) {
+    console.error("[teeGroupsRepo] upsertTeeSheetPlayerPolicy insert error:", error);
+    throw new Error(error.message || "Failed to save tee sheet player policy");
   }
 }
 
@@ -261,6 +350,9 @@ export async function upsertTeeSheet(
     player_id: p.player_id,
     group_number: p.group_number,
     position: p.position,
+    manual_gender: p.manual_gender ?? null,
+    manual_tee_assignment: p.manual_tee_assignment ?? null,
+    manual_tee_override: p.manual_tee_override ?? null,
   }));
 
   let groupsInserted = 0;

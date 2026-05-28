@@ -33,6 +33,9 @@ export type TeeSheetPlayer = {
   name: string;
   handicapIndex?: number | null;
   gender?: "male" | "female" | null;
+  teeAssignment?: "men" | "ladies" | null;
+  manualOverride?: boolean;
+  playingHandicapSnapshot?: number | null;
   status?: string | null;
   teeTime?: string | null;
   group?: number | null;
