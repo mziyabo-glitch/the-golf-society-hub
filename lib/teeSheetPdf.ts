@@ -23,6 +23,7 @@ import {
   type GroupedPlayer,
   type PlayerGroup,
 } from "./teeSheetGrouping";
+import { stripRtsBranding } from "./teeSheet/teeSheetPosterMeta";
 import { assertNoPrintAsync } from "./pdf/exportContract";
 import { printHtmlToPdfFileAsync } from "./pdf/printHtmlToPdfFile";
 import { sharePdfAsync } from "./pdf/sharePdf";
@@ -132,6 +133,8 @@ function generateTeeSheetHTML(
     preGrouped = false,
   } = data;
 
+  const displayEventName = stripRtsBranding(eventName) ?? eventName;
+
   const allowance = handicapAllowance ?? DEFAULT_ALLOWANCE;
 
   // Format date for display
@@ -203,7 +206,8 @@ function generateTeeSheetHTML(
         groupNumber,
         players: groupPlayers,
         teeTime: undefined,
-      }));
+      }))
+      .filter((group) => group.players.length > 0);
   } else {
     // Auto-group players (sorted by handicap descending)
     groups = groupPlayers(playersWithHandicaps, true);
@@ -213,8 +217,8 @@ function generateTeeSheetHTML(
   const intervalMinutes =
     Number.isFinite(teeTimeInterval) && teeTimeInterval > 0 ? teeTimeInterval : 8;
 
-  // Cap to 12 groups (48 players max on a single compact A4 page).
-  const capped = groups.slice(0, 12);
+  // Cap to 12 non-empty groups (48 players max on a single compact A4 page).
+  const capped = groups.filter((group) => group.players.length > 0).slice(0, 12);
   const groupsWithTimes: GroupWithTime[] = capped.map((group, index) => ({
     ...group,
     teeTime: buildTeeTime(baseStartTime, intervalMinutes, index),
@@ -282,7 +286,7 @@ function generateTeeSheetHTML(
     <html>
       <head>
         <meta charset="utf-8">
-        <title>Tee Sheet - ${escapeHtml(eventName)}</title>
+        <title>Tee Sheet - ${escapeHtml(displayEventName)}</title>
       </head>
       <body>
         <div class="pdf-root ${useFallback11 ? "fallback-11" : ""}">
@@ -387,7 +391,7 @@ function generateTeeSheetHTML(
         </style>
         <div class="sheet-page">
           <div class="sheet-header">
-            <div class="header-line">${escapeHtml(eventName)} | ${escapeHtml(dateStr)} | ${escapeHtml(courseName || "Course TBC")}</div>
+            <div class="header-line">${escapeHtml(displayEventName)} | ${escapeHtml(dateStr)} | ${escapeHtml(courseName || "Course TBC")}</div>
             <div class="header-subline">${escapeHtml(sublineBits.join(" | "))}${jointLine ? ` | ${escapeHtml(`Joint: ${jointLine}`)}` : ""}${competitionLine ? ` | ${escapeHtml(competitionLine)}` : ""}</div>
           </div>
           <table class="sheet-table">

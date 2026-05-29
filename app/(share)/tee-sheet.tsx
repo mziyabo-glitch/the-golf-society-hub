@@ -286,22 +286,14 @@ function buildTeeSheetPages(data: TeeSheetData): GroupWithTime[][] {
       ? data.teeTimeInterval!
       : 8;
 
-  const capped = groups.slice(0, 12);
+  const nonEmptyGroups = groups.filter((group) => group.players.length > 0);
+  const capped = nonEmptyGroups.slice(0, 12);
   const groupsWithTimes: GroupWithTime[] = capped.map((group, index) => ({
     ...group,
     teeTime: isValidTime(group.teeTime) ? group.teeTime! : buildTeeTime(baseStartTime, intervalMinutes, index),
   }));
 
-  while (groupsWithTimes.length < 12) {
-    const idx = groupsWithTimes.length;
-    groupsWithTimes.push({
-      groupNumber: idx + 1,
-      players: [],
-      teeTime: buildTeeTime(baseStartTime, intervalMinutes, idx),
-    });
-  }
-
-  return [groupsWithTimes];
+  return groupsWithTimes.length > 0 ? [groupsWithTimes] : [];
 }
 
 function isValidTime(value: string | null | undefined): value is string {

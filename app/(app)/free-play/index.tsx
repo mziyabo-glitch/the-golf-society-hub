@@ -34,6 +34,7 @@ import type { CourseApprovalState } from "@/types/courseTrust";
 import { isManCo } from "@/lib/rbac";
 import { deriveFreePlayTrustLabel, getFreePlayTrustCopy } from "@/lib/course/freePlayTrustPresentation";
 import { calculateCourseHandicap } from "@/lib/scoring/handicap";
+import { getRecommendedAllowance } from "@/lib/handicapUtils";
 import { deriveCourseAndPlayingHandicapFromHi } from "@/lib/scoring/freePlayScoring";
 import { deriveFreePlayDataTrustBadge } from "@/components/free-play/freePlaySetupTrust";
 import {
@@ -191,6 +192,8 @@ export default function FreePlayHomeScreen() {
   const handicapReviewRows = useMemo((): FreePlayHandicapReviewRow[] => {
     const rows: FreePlayHandicapReviewRow[] = [];
     const t = selectedTeeForSetup;
+    // Playing Handicap = Course Handicap × allowance (95% for individual stroke/Stableford).
+    const allowance = getRecommendedAllowance(scoringFormat);
     const pushRow = (id: string, name: string, hiRaw: number, source: "calculated" | "manual") => {
       const hi = Number.isFinite(Number(hiRaw)) ? Number(hiRaw) : 0;
       let ch: number | null = null;
@@ -201,7 +204,8 @@ export default function FreePlayHomeScreen() {
           ch = null;
         }
       }
-      const ph = ch != null ? ch : Math.round(hi);
+      const baseCh = ch != null ? ch : Math.round(hi);
+      const ph = Math.round(baseCh * allowance);
       rows.push({ id, name, hi, ch, ph, source });
     };
     pushRow("owner", ownerName, Number(ownerHcp) || 0, "calculated");
@@ -223,6 +227,7 @@ export default function FreePlayHomeScreen() {
     draftPlayers,
     selectedTeeForSetup,
     canCourseHandicapForSetup,
+    scoringFormat,
   ]);
 
   const setupDataQualityBadge = useMemo(() => {
@@ -539,6 +544,7 @@ export default function FreePlayHomeScreen() {
           slopeRating: tee?.slope_rating,
           courseRating: tee?.course_rating,
           parTotal: tee?.par_total,
+          allowancePct: getRecommendedAllowance(scoringFormat) * 100,
         });
       const ownerPlayer = {
         playerType: member?.id ? ("member" as const) : ("app_user" as const),

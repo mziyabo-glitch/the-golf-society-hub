@@ -58,7 +58,7 @@ describe("deriveCourseAndPlayingHandicapFromHi", () => {
       parTotal: 69,
     });
     expect(out.courseHandicap).toBe(18);
-    expect(out.playingHandicap).toBe(18);
+    expect(out.playingHandicap).toBe(17);
     expect(out.usedFormula).toBe(true);
   });
 
@@ -70,7 +70,7 @@ describe("deriveCourseAndPlayingHandicapFromHi", () => {
       parTotal: 69,
     });
     expect(out.courseHandicap).toBe(21);
-    expect(out.playingHandicap).toBe(21);
+    expect(out.playingHandicap).toBe(20);
   });
 
   it("handles HI zero", () => {
@@ -81,6 +81,7 @@ describe("deriveCourseAndPlayingHandicapFromHi", () => {
       parTotal: 69,
     });
     expect(out.courseHandicap).toBe(-1);
+    expect(out.playingHandicap).toBe(-1);
   });
 
   it("falls back safely when tee metrics unavailable", () => {
@@ -91,7 +92,7 @@ describe("deriveCourseAndPlayingHandicapFromHi", () => {
       parTotal: null,
     });
     expect(out.courseHandicap).toBe(13);
-    expect(out.playingHandicap).toBe(13);
+    expect(out.playingHandicap).toBe(12);
     expect(out.usedFormula).toBe(false);
   });
 
@@ -103,8 +104,19 @@ describe("deriveCourseAndPlayingHandicapFromHi", () => {
       parTotal: 71,
     });
     expect(out.courseHandicap).toBe(19);
-    expect(out.playingHandicap).toBe(19);
+    expect(out.playingHandicap).toBe(18);
     expect(out.usedFormula).toBe(true);
+  });
+
+  it("defaults to 95% allowance when allowancePct omitted", () => {
+    const out = deriveCourseAndPlayingHandicapFromHi({
+      handicapIndex: 18.4,
+      slopeRating: 124,
+      courseRating: 69.5,
+      parTotal: 71,
+    });
+    expect(out.courseHandicap).toBe(19);
+    expect(out.playingHandicap).toBe(Math.round(19 * 0.95));
   });
 
   it("applies allowance percentage to playing handicap", () => {

@@ -57,9 +57,23 @@ export function formatCompetitionLine(rawHoles: unknown): string {
   return `Hole${holes.length > 1 ? "s" : ""} ${formatHoleNumbers(holes)}`;
 }
 
+/** Strip legacy RTS branding from display titles (poster/PDF header). */
+export function stripRtsBranding(value: string | null | undefined): string | null {
+  const cleaned = cleanText(value);
+  if (!cleaned) return null;
+  return cleaned
+    .replace(/\s*\(\s*RTS[^)]*\)\s*/gi, " ")
+    .replace(/\s*[-–|/]\s*RTS\b[^|]*/gi, "")
+    .replace(/\bRTS\s*[-–|/]\s*/gi, "")
+    .replace(/\s*\(RTS\)\s*/gi, " ")
+    .replace(/\bRTS\b/gi, "")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+}
+
 export function buildPosterHeader(data: TeeSheetData): { title: string; badge: string } {
   return {
-    title: cleanText(data.eventName) ?? "Event TBC",
+    title: stripRtsBranding(data.eventName) ?? "Event TBC",
     badge: formatLabel(data.format),
   };
 }

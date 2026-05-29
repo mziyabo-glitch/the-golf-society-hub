@@ -208,14 +208,14 @@ const styles = StyleSheet.create({
     elevation: 2,
   },
   logoWrap: {
-    width: 300,
-    height: 118,
+    width: 525,
+    height: 207,
     justifyContent: "center",
     alignItems: "flex-start",
   },
   logo: {
-    width: 288,
-    height: 108,
+    width: 504,
+    height: 189,
   },
   titleWrap: {
     flex: 1,

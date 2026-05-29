@@ -61,6 +61,7 @@ import {
   intPlayingHandicap,
   normalizeHandicapIndexInput,
 } from "@/lib/scoring/freePlayScoring";
+import { getRecommendedAllowance } from "@/lib/handicapUtils";
 import { buildStrokesReceivedByHole } from "@/lib/scoring/handicapStrokeAllocation";
 import { stablefordPointsForHole } from "@/lib/scoring/stablefordPoints";
 import { FreePlayPlayerScoreCard } from "@/components/free-play/scorecard/FreePlayPlayerScoreCard";
@@ -577,6 +578,12 @@ export default function FreePlayRoundDetailScreen() {
     [bundle?.players, editingHandicapPlayerId],
   );
 
+  // Playing Handicap allowance (%) for this round's format (95% for individual stroke/Stableford).
+  const roundAllowancePct = useMemo(
+    () => getRecommendedAllowance(bundle?.round.scoring_format) * 100,
+    [bundle?.round.scoring_format],
+  );
+
   const editingHandicapPreview = useMemo(() => {
     const hi = normalizeHandicapIndexInput(editingHandicapInput);
     if (hi == null) return null;
@@ -595,8 +602,9 @@ export default function FreePlayRoundDetailScreen() {
       slopeRating: teeMeta?.slope_rating,
       courseRating: teeMeta?.course_rating,
       parTotal: resolvedParTotal,
+      allowancePct: roundAllowancePct,
     });
-  }, [editingHandicapInput, teeMeta?.slope_rating, teeMeta?.course_rating, teeMeta?.par_total, holeMeta]);
+  }, [editingHandicapInput, teeMeta?.slope_rating, teeMeta?.course_rating, teeMeta?.par_total, holeMeta, roundAllowancePct]);
 
   useEffect(() => {
     if (bundle?.round.status === "completed") {
@@ -1203,6 +1211,7 @@ export default function FreePlayRoundDetailScreen() {
           slopeRating: teeMeta?.slope_rating,
           courseRating: teeMeta?.course_rating,
           parTotal: metaParTotals.totalPar,
+          allowancePct: roundAllowancePct,
         });
         await addFreePlayRoundPlayer(bundle.round.id, {
           playerType: kind,
@@ -1237,6 +1246,7 @@ export default function FreePlayRoundDetailScreen() {
       teeMeta?.course_rating,
       metaParTotals.totalPar,
       freePlayWritesOk,
+      roundAllowancePct,
     ],
   );
 
@@ -1254,6 +1264,7 @@ export default function FreePlayRoundDetailScreen() {
           slopeRating: teeMeta?.slope_rating,
           courseRating: teeMeta?.course_rating,
           parTotal: metaParTotals.totalPar,
+          allowancePct: roundAllowancePct,
         });
         await addFreePlayRoundPlayer(bundle.round.id, {
           playerType: "member",
@@ -1283,6 +1294,7 @@ export default function FreePlayRoundDetailScreen() {
       teeMeta?.course_rating,
       metaParTotals.totalPar,
       freePlayWritesOk,
+      roundAllowancePct,
     ],
   );
 
@@ -1301,6 +1313,7 @@ export default function FreePlayRoundDetailScreen() {
           slopeRating: teeMeta?.slope_rating,
           courseRating: teeMeta?.course_rating,
           parTotal: metaParTotals.totalPar,
+          allowancePct: roundAllowancePct,
         });
         await updateFreePlayPlayerHandicap(p.id, hi);
         await updateFreePlayPlayerCourseAndPlayingHandicap(p.id, {
@@ -1316,7 +1329,7 @@ export default function FreePlayRoundDetailScreen() {
     } finally {
       setSaving(false);
     }
-  }, [bundle, handicapDraft, load, teeMeta?.slope_rating, teeMeta?.course_rating, metaParTotals.totalPar, freePlayWritesOk]);
+  }, [bundle, handicapDraft, load, teeMeta?.slope_rating, teeMeta?.course_rating, metaParTotals.totalPar, freePlayWritesOk, roundAllowancePct]);
 
   const openHandicapEditor = useCallback((playerId: string) => {
     const player = bundle?.players.find((p) => p.id === playerId);
@@ -1341,6 +1354,7 @@ export default function FreePlayRoundDetailScreen() {
           slopeRating: teeMeta?.slope_rating,
           courseRating: teeMeta?.course_rating,
           parTotal: metaParTotals.totalPar,
+          allowancePct: roundAllowancePct,
         });
         await updateFreePlayPlayerHandicap(editingHandicapPlayer.id, hi);
         await updateFreePlayPlayerCourseAndPlayingHandicap(editingHandicapPlayer.id, {
@@ -1382,6 +1396,7 @@ export default function FreePlayRoundDetailScreen() {
     load,
     bundle?.round.status,
     freePlayWritesOk,
+    roundAllowancePct,
   ]);
 
   const removePlayerInRound = useCallback((playerId: string) => {
@@ -1460,10 +1475,11 @@ export default function FreePlayRoundDetailScreen() {
         slopeRating: teeMeta?.slope_rating,
         courseRating: teeMeta?.course_rating,
         parTotal: metaParTotals.totalPar,
+        allowancePct: roundAllowancePct,
       });
       return `HI ${hi.toFixed(1)} · CH ${h.courseHandicap} · PH ${h.playingHandicap}`;
     },
-    [metaParTotals.totalPar, teeMeta?.course_rating, teeMeta?.slope_rating],
+    [metaParTotals.totalPar, teeMeta?.course_rating, teeMeta?.slope_rating, roundAllowancePct],
   );
 
   if (loading && !bundle) {

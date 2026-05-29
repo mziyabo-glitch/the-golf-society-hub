@@ -18,14 +18,21 @@ export function teeSettingsForAssignment(data: TeeSheetData, assignment: TeeAssi
   return null;
 }
 
+/** Compact tee label for group/player rows — full tee details stay in the header only. */
+export function compactTeeRowLabel(assignment: TeeAssignment): string {
+  if (assignment === "ladies") return "🔴 Red";
+  if (assignment === "men") return "🟡 Yellow";
+  return "Tee TBC";
+}
+
 export function teeIndicatorForAssignment(data: TeeSheetData, assignment: TeeAssignment): { label: string; color: string } {
   if (assignment === "ladies") {
-    return { label: data.ladiesTeeName?.trim() || "Ladies", color: "#C1121F" };
+    return { label: compactTeeRowLabel(assignment), color: "#C1121F" };
   }
   if (assignment === "men") {
-    return { label: data.teeName?.trim() || "Men", color: "#E0B100" };
+    return { label: compactTeeRowLabel(assignment), color: "#E0B100" };
   }
-  return { label: "Tee TBC", color: "#94A3B8" };
+  return { label: compactTeeRowLabel(assignment), color: "#94A3B8" };
 }
 
 export function needsTeePolicyConfirmation(player: Pick<TeeSheetPlayer, "gender" | "teeAssignment">): boolean {

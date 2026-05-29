@@ -7,6 +7,7 @@ import type { EventHoleSnapshot } from "@/lib/scoring/eventScoringTypes";
 import { buildStrokesReceivedByHole } from "@/lib/scoring/handicapStrokeAllocation";
 import { stablefordPointsForHole } from "@/lib/scoring/stablefordPoints";
 import { calculateCourseHandicap } from "@/lib/scoring/handicap";
+import { DEFAULT_HANDICAP_ALLOWANCE } from "@/lib/handicapUtils";
 import type { FreePlayScoringFormat } from "@/types/freePlayScorecard";
 
 export type FreePlayHoleLike = {
@@ -58,7 +59,9 @@ export function deriveCourseAndPlayingHandicapFromHi(params: {
   const slope = params.slopeRating;
   const rating = params.courseRating;
   const par = params.parTotal;
-  const allowance = Number.isFinite(Number(params.allowancePct)) ? Number(params.allowancePct) : 100;
+  const allowance = Number.isFinite(Number(params.allowancePct))
+    ? Number(params.allowancePct)
+    : DEFAULT_HANDICAP_ALLOWANCE * 100;
   const hasInputs =
     Number.isFinite(Number(slope)) &&
     Number(slope) > 0 &&

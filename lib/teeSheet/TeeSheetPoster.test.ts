@@ -4,8 +4,10 @@ import {
   buildPosterHeader,
   formatCompetitionLine,
   normalizeCompetitionHoles,
+  stripRtsBranding,
 } from "@/lib/teeSheet/teeSheetPosterMeta";
 import {
+  compactTeeRowLabel,
   hasManualTeeOverride,
   needsTeePolicyConfirmation,
   resolveTeeAssignment,
@@ -62,6 +64,15 @@ describe("tee sheet poster payload metadata", () => {
     expect(infoCards[1]?.value).toContain("Match play");
   });
 
+  it("strips RTS branding from poster title", () => {
+    expect(stripRtsBranding("OOM 3 - MEON VALLEY RTS")).toBe("OOM 3 - MEON VALLEY");
+    expect(stripRtsBranding("OOM 3 - Meon Valley (RTS Event)")).toBe("OOM 3 - Meon Valley");
+    expect(stripRtsBranding("RTS | Summer Open")).toBe("Summer Open");
+    expect(buildPosterHeader(makePayload({ eventName: "OOM 3 - MEON VALLEY RTS" })).title).toBe(
+      "OOM 3 - MEON VALLEY",
+    );
+  });
+
   it("normalizes competition hole formats deterministically", () => {
     expect(normalizeCompetitionHoles([7, "7", 3, "x", 25, 1])).toEqual([1, 3, 7]);
     expect(formatCompetitionLine("7, 3, 3")).toBe("Holes 3, 7");
@@ -92,8 +103,14 @@ describe("tee assignment and PH rules", () => {
       teeAssignment: "ladies",
     });
     const indicator = teeIndicatorForAssignment(data, assignment);
-    expect(indicator.label).toBe("Red");
+    expect(indicator.label).toBe("🔴 Red");
     expect(indicator.color).toBe("#C1121F");
+  });
+
+  it("uses compact row labels for tee indicators", () => {
+    expect(compactTeeRowLabel("ladies")).toBe("🔴 Red");
+    expect(compactTeeRowLabel("men")).toBe("🟡 Yellow");
+    expect(compactTeeRowLabel(null)).toBe("Tee TBC");
   });
 
   it("female guest PH uses ladies tee settings", () => {
@@ -194,7 +211,7 @@ describe("tee assignment and PH rules", () => {
       teeAssignment: "men",
     });
     const indicator = teeIndicatorForAssignment(data, assignment);
-    expect(indicator.label).toBe("Yellow");
+    expect(indicator.label).toBe("🟡 Yellow");
     expect(indicator.color).toBe("#E0B100");
   });
 
