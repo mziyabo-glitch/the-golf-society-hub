@@ -18,7 +18,7 @@
  * active society’s member row (e.g. ZGS placeholder) when they cluster as one person (email, name+claimed twin, etc.).
  */
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { Alert, Platform, Pressable, ScrollView, StyleSheet, View, type ViewStyle } from "react-native";
 import { useFocusEffect } from "@react-navigation/native";
 import { useLocalSearchParams, useRouter } from "expo-router";
@@ -65,6 +65,7 @@ import { dedupeJointMembers, resolveJointCandidatePlayerIdsForActiveSociety } fr
 import {
   calculateFieldPositionsAndMemberOomPoints,
   isGuestEntrantKey,
+  type OomFieldSortOrder,
 } from "@/lib/oomMemberOnlyScoring";
 
 /** Set `EXPO_PUBLIC_POINTS_DEBUG_EVENT_ID` to this event’s UUID to enable `[points-debug]` logs. */
@@ -184,6 +185,15 @@ function applyPointsDisplayOrder(list: PlayerEntry[]): PlayerEntry[] {
   return [...noScore, ...draft, ...saved];
 }
 
+function calculatePointsKeepingDisplayOrder(
+  list: PlayerEntry[],
+  sortOrder: OomFieldSortOrder,
+): PlayerEntry[] {
+  const calculated = calculateFieldPositionsAndMemberOomPoints(list, sortOrder);
+  const byMemberId = new Map(calculated.map((p) => [p.memberId, p]));
+  return list.map((p) => byMemberId.get(p.memberId) ?? p);
+}
+
 type PointsRowVisual = "empty" | "editing" | "saved";
 
 function pointsRowVisual(player: PlayerEntry, editingMemberId: string | null): PointsRowVisual {
@@ -246,13 +256,15 @@ export default function EventPointsScreen() {
   const [exportingPdf, setExportingPdf] = useState(false);
   const [orphanResults, setOrphanResults] = useState<OrphanResultRow[]>([]);
   const saveAction = useAsyncAction();
+  const hasLoadedDataRef = useRef(false);
 
   const permissions = getPermissionsForMember(currentMember);
   const canEnterPoints = permissions.canManageHandicaps;
 
   // Load event data and existing results
-  const loadData = useCallback(async () => {
+  const loadData = useCallback(async (options?: { silent?: boolean }) => {
     if (bootstrapLoading) return;
+    const silent = options?.silent === true;
 
     if (!societyId) {
       setError("Missing society");
@@ -266,7 +278,7 @@ export default function EventPointsScreen() {
       return;
     }
 
-    setLoading(true);
+    if (!silent) setLoading(true);
     setError(null);
     setShowJointSocietyScopedCopy(false);
     setJointPeerNamesLine(null);
@@ -578,6 +590,7 @@ export default function EventPointsScreen() {
       }
 
       setPlayers(playerList);
+      hasLoadedDataRef.current = true;
     } catch (e: any) {
       console.error("[points] load FAILED", e);
       setError(e?.message ?? "Failed to load data");
@@ -588,7 +601,7 @@ export default function EventPointsScreen() {
 
   useFocusEffect(
     useCallback(() => {
-      void loadData();
+      void loadData({ silent: hasLoadedDataRef.current });
     }, [loadData]),
   );
 
@@ -602,9 +615,14 @@ export default function EventPointsScreen() {
         p.memberId === memberId ? { ...p, dayPoints: value } : p
       );
 
-      // Recalculate positions and OOM points, then apply stable display order
-      return applyPointsDisplayOrder(calculateFieldPositionsAndMemberOomPoints(updated, sortOrder));
+      // Keep the focused row mounted while typing; reorder after the field blurs.
+      return calculatePointsKeepingDisplayOrder(updated, sortOrder);
     });
+  };
+
+  const handleDayPointsBlur = (memberId: string) => {
+    setEditingMemberId((cur) => (cur === memberId ? null : cur));
+    setPlayers((prev) => applyPointsDisplayOrder(calculateFieldPositionsAndMemberOomPoints(prev, sortOrder)));
   };
 
   // Get sort order based on event format
@@ -1024,13 +1042,19 @@ export default function EventPointsScreen() {
   }
 
   return (
-    <Screen>
+    <Screen scrollable={false} contentStyle={styles.screenContent}>
       <Toast
         visible={toast.visible}
         message={toast.message}
         type={toast.type}
         onHide={() => setToast((t) => ({ ...t, visible: false }))}
       />
+      <ScrollView
+        style={styles.scoreScroll}
+        contentContainerStyle={styles.scoreScrollContent}
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
+      >
       {/* Header */}
       <View style={styles.header}>
         <SecondaryButton onPress={() => goBack(router, "/(app)/(tabs)/events")} size="sm">
@@ -1184,7 +1208,6 @@ export default function EventPointsScreen() {
       </View>
 
       {/* Player List */}
-      <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: spacing.xl }}>
         <View style={{ gap: spacing.xs }}>
           {players.map((player) => {
             const visual = pointsRowVisual(player, editingMemberId);
@@ -1244,10 +1267,11 @@ export default function EventPointsScreen() {
                   value={player.dayPoints}
                   onChangeText={(v) => updateDayPoints(player.memberId, v)}
                   onFocus={() => setEditingMemberId(player.memberId)}
-                  onBlur={() =>
-                    setEditingMemberId((cur) => (cur === player.memberId ? null : cur))
-                  }
+                  onBlur={() => handleDayPointsBlur(player.memberId)}
                   keyboardType="number-pad"
+                  inputMode="numeric"
+                  returnKeyType="done"
+                  selectTextOnFocus
                   style={styles.inputBox}
                 />
               </View>
@@ -1282,6 +1306,15 @@ export default function EventPointsScreen() {
 }
 
 const styles = StyleSheet.create({
+  screenContent: {
+    flex: 1,
+  },
+  scoreScroll: {
+    flex: 1,
+  },
+  scoreScrollContent: {
+    paddingBottom: spacing.xl,
+  },
   header: {
     flexDirection: "row",
     alignItems: "center",
@@ -1361,7 +1394,7 @@ const styles = StyleSheet.create({
     marginBottom: spacing.xs,
   },
   colDayPoints: {
-    width: 60,
+    width: 72,
     alignItems: "center",
   },
   colPos: {
@@ -1381,7 +1414,7 @@ const styles = StyleSheet.create({
   },
   inputBox: {
     textAlign: "center",
-    width: 44,
+    width: 56,
     paddingHorizontal: spacing.xs,
   },
 });
