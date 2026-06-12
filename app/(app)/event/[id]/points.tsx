@@ -1053,6 +1053,7 @@ export default function EventPointsScreen() {
         style={styles.scoreScroll}
         contentContainerStyle={styles.scoreScrollContent}
         keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="none"
         showsVerticalScrollIndicator={false}
       >
       {/* Header */}
