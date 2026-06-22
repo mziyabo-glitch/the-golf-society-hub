@@ -22,6 +22,8 @@ export type ResolveEventAttendeesOpts = {
   participantSocietyIds: string[];
   societyIdToName: Map<string, string>;
   membersById?: Map<string, MemberDoc>;
+  /** All member rows from participating societies (for dual membership detection). */
+  participatingMembers?: MemberDoc[];
   /** When true, only status "in" member registrations are included (default). */
   attendingMembersOnly?: boolean;
 };
@@ -71,7 +73,11 @@ export function resolveEventAttendeesForDisplay(
     scopedGuests,
     opts.societyIdToName,
     opts.membersById,
-    { attendingMembersOnly: opts.attendingMembersOnly },
+    {
+      attendingMembersOnly: opts.attendingMembersOnly,
+      participatingMembers: opts.participatingMembers,
+      participantSocietyIds: isJoint ? opts.participantSocietyIds : undefined,
+    },
   );
 }
 

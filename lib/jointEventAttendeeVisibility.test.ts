@@ -212,6 +212,34 @@ describe("resolveEventAttendeesForDisplay", () => {
     expect(rows.some((r) => r.displayName === "ZGS Only")).toBe(false);
     expect(rows.some((r) => r.displayName === "Away Guest")).toBe(false);
   });
+
+  it("dual member registered via one society shows Dual label when participatingMembers provided", () => {
+    const participatingMembers = [
+      { id: "m4-ziv", society_id: M4, user_id: "uid-ziv", name: "Ziv Kudenga" },
+      { id: "zgs-ziv", society_id: ZGS, user_id: "uid-ziv", name: "Ziv Kudenga" },
+    ];
+    const rows = resolveEventAttendeesForDisplay({
+      isJoint: true,
+      regs: [
+        reg({
+          member_id: "m4-ziv",
+          society_id: M4,
+          user_id: "uid-ziv",
+          member_name: "Ziv Kudenga",
+          paid: true,
+        }),
+      ],
+      guests: [],
+      activeSocietyId: ZGS,
+      participantSocietyIds: [M4, ZGS],
+      societyIdToName: societyMap,
+      participatingMembers,
+    });
+    const ziv = rows.find((r) => r.displayName === "Ziv Kudenga");
+    expect(ziv?.societyBadge).toBe("Dual");
+    expect(ziv?.sourceLabel).toBe("Dual / registered via M4");
+    expect(ziv?.paymentLabel).toBe("Paid");
+  });
 });
 
 describe("resolveJointEventRegistrations", () => {
@@ -316,12 +344,40 @@ describe("resolveJointEventRegistrations", () => {
       r.displayName.toLowerCase().includes("jade muchando"),
     );
     expect(jadeRows).toHaveLength(1);
-    expect(jadeRows[0].paymentLabel).toMatch(/Paid/);
-    expect(jadeRows[0].paymentLabel).toMatch(/Unpaid/);
+    expect(jadeRows[0].paymentLabel).toBe("Paid");
+    expect(jadeRows[0].sourceLabel).toBe("M4 Member");
     const exportJade = paymentLists.exportRows?.filter((r) =>
       r.name.toLowerCase().includes("jade muchando"),
     );
     expect(exportJade).toHaveLength(1);
+    expect(exportJade?.[0]?.statusLabel).toBe("Paid");
+  });
+
+  it("Ziv-style dual member registered only via M4 via full resolver", () => {
+    const participatingMembers = [
+      { id: "m4-ziv", society_id: M4, user_id: "uid-ziv", name: "Ziv Kudenga" },
+      { id: "zgs-ziv", society_id: ZGS, user_id: "uid-ziv", name: "Ziv Kudenga" },
+    ];
+    const { attendeeRows, paymentLists } = resolveJointEventRegistrations({
+      ...jointOpts,
+      regs: [
+        reg({
+          member_id: "m4-ziv",
+          society_id: M4,
+          user_id: "uid-ziv",
+          member_name: "Ziv Kudenga",
+          paid: true,
+        }),
+      ],
+      guests: [],
+      participatingMembers,
+    });
+    const ziv = attendeeRows.find((r) => r.displayName === "Ziv Kudenga");
+    expect(ziv?.societyBadge).toBe("Dual");
+    expect(ziv?.sourceLabel).toBe("Dual / registered via M4");
+    expect(paymentLists.exportRows?.find((r) => r.name === "Ziv Kudenga")?.typeLabel).toBe(
+      "Dual / registered via M4",
+    );
   });
 
   it("dedupes duplicate guest rows with same name (Aulia Alfazema case)", () => {

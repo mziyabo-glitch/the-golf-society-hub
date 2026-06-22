@@ -71,7 +71,7 @@ describe("buildEventPaymentPdfHtml", () => {
         {
           name: "Jade Muchando",
           typeLabel: "M4 Fairway Member",
-          statusLabel: "Paid via M4 Fairway / Unpaid via M4 Fairway",
+          statusLabel: "Paid",
         },
         {
           name: "Dual Person",
@@ -93,7 +93,7 @@ describe("buildEventPaymentPdfHtml", () => {
 
     expect(rows[0].type).toBe("Zambezi Golf Society Member");
     expect(rows[0].status).toBe("Unpaid");
-    expect(rows[1].status).toBe("Paid via M4 Fairway / Unpaid via M4 Fairway");
+    expect(rows[1].status).toBe("Paid");
     expect(rows[2].status).toBe("Paid via M4 Fairway / Unpaid via Zambezi Golf Society");
   });
 

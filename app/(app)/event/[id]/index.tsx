@@ -19,6 +19,7 @@ import { scoringOfficialBadgeLabel, scoringOfficialUiKind } from "@/lib/scoring/
 import { EVENT_CLASSIFICATIONS, EVENT_FORMATS, getEvent, type EventDoc } from "@/lib/db_supabase/eventRepo";
 import { getEventGuests } from "@/lib/db_supabase/eventGuestRepo";
 import { getEventRegistrations, getJointEventRegistrations, type EventRegistration } from "@/lib/db_supabase/eventRegistrationRepo";
+import { getMembersBySocietyId, type MemberDoc } from "@/lib/db_supabase/memberRepo";
 import { submitMemberEventRsvp } from "@/lib/events/memberEventRsvp";
 import { listEventPrizePools } from "@/lib/db_supabase/eventPrizePoolRepo";
 import { getEventResultsForSociety } from "@/lib/db_supabase/resultsRepo";
@@ -106,6 +107,8 @@ export default function EventOverviewScreen() {
   const [guestCount, setGuestCount] = useState(0);
   const [hasResults, setHasResults] = useState(false);
   const [poolCount, setPoolCount] = useState(0);
+  /** Joint events: member rows from all participating societies (dual membership detection). */
+  const [jointParticipatingMembers, setJointParticipatingMembers] = useState<MemberDoc[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -169,14 +172,32 @@ export default function EventOverviewScreen() {
           isJointEventFromMeta(participantsUnique, detail.linked_society_count) ||
           detail.is_joint_event === true;
 
-        const [allRegs, guests, pools, results] = await Promise.all([
+        const participatingMemberListsPromise =
+          isJoint && participantsUnique.length >= 2
+            ? Promise.all(participantsUnique.map((id) => getMembersBySocietyId(id)))
+            : Promise.resolve([] as MemberDoc[][]);
+
+        const [allRegs, guests, pools, results, participatingMemberLists] = await Promise.all([
           isJoint && participantsUnique.length >= 2
             ? getJointEventRegistrations(eventId)
             : getEventRegistrations(eventId),
           getEventGuests(eventId),
           listEventPrizePools(eventId).catch(() => []),
           societyId ? getEventResultsForSociety(eventId, societyId).catch(() => []) : Promise.resolve([]),
+          participatingMemberListsPromise,
         ]);
+
+        if (isJoint && participantsUnique.length >= 2) {
+          const byId = new Map<string, MemberDoc>();
+          for (const list of participatingMemberLists) {
+            for (const m of list) {
+              if (m?.id) byId.set(m.id, m);
+            }
+          }
+          setJointParticipatingMembers([...byId.values()]);
+        } else {
+          setJointParticipatingMembers([]);
+        }
 
         const scopedRegs = societyId
           ? allRegs.filter((r) => String(r.society_id) === String(societyId))
@@ -336,6 +357,7 @@ export default function EventOverviewScreen() {
       activeSocietyId: societyId,
       participantSocietyIds,
       societyIdToName: jointSocietyIdToName,
+      participatingMembers: jointParticipatingMembers,
       attendingMembersOnly: true,
     });
   }, [
@@ -345,6 +367,7 @@ export default function EventOverviewScreen() {
     allEventRegistrations,
     allGuests,
     jointSocietyIdToName,
+    jointParticipatingMembers,
   ]);
 
   const attendanceSummary = useMemo(() => {

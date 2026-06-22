@@ -426,6 +426,8 @@ export default function ManageEventScreen() {
   const [registrations, setRegistrations] = useState<EventRegistration[]>([]);
   /** Members of the active society only — sole source for society-scoped attendance / payment / confirmed lists. */
   const [activeSocietyMembers, setActiveSocietyMembers] = useState<MemberDoc[]>([]);
+  /** Joint events: member rows from all participating societies (dual membership detection). */
+  const [jointParticipatingMembers, setJointParticipatingMembers] = useState<MemberDoc[]>([]);
   const [payBusy, setPayBusy] = useState<string | null>(null);
   const [paymentPdfBusy, setPaymentPdfBusy] = useState(false);
   const [payToast, setPayToast] = useState<{ visible: boolean; message: string; type: "success" | "error" }>({ visible: false, message: "", type: "success" });
@@ -739,6 +741,25 @@ export default function ManageEventScreen() {
       ]);
       setRegistrations(regs);
       setActiveSocietyMembers(mems);
+      if (isJoint) {
+        const participantIds =
+          jointMeta.get(eventId)?.participantSocietyIds?.filter(Boolean) ??
+          [...new Set(regs.map((r) => String(r.society_id)).filter(Boolean))];
+        if (participantIds.length >= 2) {
+          const lists = await Promise.all(participantIds.map((id) => getMembersBySocietyId(id)));
+          const byId = new Map<string, MemberDoc>();
+          for (const list of lists) {
+            for (const m of list) {
+              if (m?.id) byId.set(m.id, m);
+            }
+          }
+          setJointParticipatingMembers([...byId.values()]);
+        } else {
+          setJointParticipatingMembers(mems);
+        }
+      } else {
+        setJointParticipatingMembers([]);
+      }
       setEventGuestsAll(guests);
       const sg = guests.filter((g) => String(g.society_id) === String(societyId));
       setSocietyGuests(sg);
@@ -815,10 +836,13 @@ export default function ManageEventScreen() {
     [activeSocietyMembers],
   );
 
-  /** Joint visibility: augment active-society members with RPC member fields for other clubs. */
+  /** Joint visibility: all participating-society members + RPC stubs for registration-only rows. */
   const jointMemberByIdForRegs = useMemo(() => {
     const m = new Map(memberByIdForRegs);
     if (!detailIsJointEvent) return m;
+    for (const member of jointParticipatingMembers) {
+      m.set(member.id, member);
+    }
     for (const r of registrations) {
       const mid = String(r.member_id);
       if (m.has(mid)) continue;
@@ -834,7 +858,7 @@ export default function ManageEventScreen() {
       });
     }
     return m;
-  }, [memberByIdForRegs, registrations, detailIsJointEvent]);
+  }, [memberByIdForRegs, jointParticipatingMembers, registrations, detailIsJointEvent]);
   const activeMemberIdSet = useMemo(
     () => new Set(activeSocietyMembers.map((m) => m.id)),
     [activeSocietyMembers],
@@ -972,6 +996,7 @@ export default function ManageEventScreen() {
       participantSocietyIds: participantSocietyIdsForAccess,
       societyIdToName: jointSocietyIdToName,
       membersById: jointMemberByIdForRegs,
+      participatingMembers: jointParticipatingMembers,
       attendingMembersOnly: true,
     });
   }, [
@@ -982,6 +1007,7 @@ export default function ManageEventScreen() {
     societyId,
     jointSocietyIdToName,
     jointMemberByIdForRegs,
+    jointParticipatingMembers,
   ]);
 
   const jointEventAttendeeRows = jointRegistrationResolution?.attendeeRows ?? [];

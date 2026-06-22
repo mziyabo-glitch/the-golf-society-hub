@@ -78,6 +78,38 @@ export function signupIdentityFromRegistration(
   };
 }
 
+export function signupIdentityFromMember(member: MemberDoc): SignupIdentity {
+  return {
+    memberId: String(member.id),
+    societyId: String(member.society_id ?? ""),
+    user_id: member.user_id ?? null,
+    email: member.email ?? null,
+    name: member.displayName ?? member.display_name ?? member.name ?? null,
+  };
+}
+
+/** Society ids where this person has a members row among participating societies. */
+export function membershipSocietyIdsForIdentity(
+  identity: SignupIdentity,
+  participatingMembers: MemberDoc[],
+  participantSocietyIds: Set<string>,
+): string[] {
+  const ids = new Set<string>();
+  for (const m of participatingMembers) {
+    const sid = String(m.society_id ?? "");
+    if (!sid || !participantSocietyIds.has(sid)) continue;
+    if (shouldMergeSignupIdentities(identity, signupIdentityFromMember(m))) {
+      ids.add(sid);
+    }
+  }
+  return [...ids].sort((a, b) => a.localeCompare(b));
+}
+
+export type JointEventMembershipContext = {
+  participatingMembers?: MemberDoc[];
+  participantSocietyIds?: string[];
+};
+
 /** Merge when identities share user_id, email, or normalized full name (fallback). */
 export function shouldMergeSignupIdentities(a: SignupIdentity, b: SignupIdentity): boolean {
   const uidA = a.user_id?.trim();
@@ -167,9 +199,15 @@ export function mergeJointEventSignups(
   regs: JointEventRegistrationRow[] | EventRegistration[],
   societyIdToName: Map<string, string>,
   membersById?: Map<string, MemberDoc>,
+  membershipCtx?: JointEventMembershipContext,
 ): MergedJointSignup[] {
   const operational = (regs as JointEventRegistrationRow[]).filter(isOperationalRegistration);
   if (operational.length === 0) return [];
+
+  const participantSet = new Set(
+    (membershipCtx?.participantSocietyIds ?? []).filter(Boolean).map(String),
+  );
+  const participatingMembers = membershipCtx?.participatingMembers ?? [];
 
   const identities = operational.map((r) =>
     signupIdentityFromRegistration(r, membersById?.get(String(r.member_id))),
@@ -184,7 +222,12 @@ export function mergeJointEventSignups(
     const mergedMemberIds = [...new Set(cluster.map((c) => c.memberId))].sort((a, b) =>
       a.localeCompare(b),
     );
-    const societyIds = [...new Set(cluster.map((c) => c.societyId).filter(Boolean))].sort((a, b) =>
+    const regSocietyIds = [...new Set(cluster.map((c) => c.societyId).filter(Boolean))];
+    const membershipSocietyIds =
+      participatingMembers.length > 0 && participantSet.size > 0
+        ? membershipSocietyIdsForIdentity(rep, participatingMembers, participantSet)
+        : [];
+    const societyIds = [...new Set([...regSocietyIds, ...membershipSocietyIds])].sort((a, b) =>
       a.localeCompare(b),
     );
     const clusterRegs = operational.filter((r) => mergedMemberIds.includes(String(r.member_id)));
@@ -316,17 +359,58 @@ function sourcesFromMergedSignup(
 }
 
 /**
+ * Collapse duplicate sources for the same society (member+guest or duplicate registrations).
+ * Paid wins when statuses conflict.
+ */
+export function collapseJointAttendeeSources(
+  sources: JointAttendeeSource[],
+  logContext?: { displayName?: string },
+): JointAttendeeSource[] {
+  if (sources.length <= 1) return sources;
+
+  const bySociety = new Map<string, JointAttendeeSource[]>();
+  for (const s of sources) {
+    const sid = String(s.societyId);
+    if (!bySociety.has(sid)) bySociety.set(sid, []);
+    bySociety.get(sid)!.push(s);
+  }
+
+  const out: JointAttendeeSource[] = [];
+  for (const [societyId, group] of bySociety) {
+    if (group.length > 1) {
+      console.warn(
+        "[jointEventSignups] collapsed duplicate attendee sources for same society",
+        {
+          societyId,
+          count: group.length,
+          displayName: logContext?.displayName,
+          kinds: group.map((s) => s.kind),
+          paidStates: group.map((s) => s.paid),
+        },
+      );
+    }
+    const paid = group.some((s) => s.paid);
+    const member = group.find((s) => s.kind === "member");
+    const chosen = member ?? group[0];
+    out.push({ ...chosen, paid });
+  }
+
+  return out.sort((a, b) => a.societyId.localeCompare(b.societyId));
+}
+
+/**
  * Society + member/guest label for a merged attendee row.
  * Dual members: "Dual / registered via {representative society}".
  */
 export function formatJointAttendeeSourceLabel(
   sources: JointAttendeeSource[],
-  opts?: { representativeSocietyId?: string | null },
+  opts?: { representativeSocietyId?: string | null; isDualMember?: boolean },
 ): string {
   if (sources.length === 0) return "";
 
   const memberSources = sources.filter((s) => s.kind === "member");
-  if (memberSources.length >= 2) {
+  const isDual = opts?.isDualMember === true || memberSources.length >= 2;
+  if (isDual && memberSources.length >= 1) {
     const repId = opts?.representativeSocietyId ?? memberSources[0].societyId;
     const repName =
       memberSources.find((s) => s.societyId === repId)?.societyName ?? memberSources[0].societyName;
@@ -360,20 +444,48 @@ function representativeSocietyIdFromMergedSignup(row: MergedJointSignup): string
   return pickRepresentativeIdentity(identities).societyId;
 }
 
+function applyAttendeeSourceLabels(
+  row: Pick<JointEventAttendeeRow, "displayName" | "sources" | "societyBadge" | "registrations">,
+  opts?: { representativeSocietyId?: string | null; isDualMember?: boolean },
+): Pick<JointEventAttendeeRow, "sources" | "sourceLabel" | "paymentLabel"> {
+  const isDualMember =
+    opts?.isDualMember ?? (row.societyBadge === "Dual" && row.registrations.length > 0);
+  const collapsed = collapseJointAttendeeSources(row.sources, { displayName: row.displayName });
+  const repSocietyId =
+    opts?.representativeSocietyId ??
+    (row.registrations.length > 0 ? representativeSocietyIdFromMergedSignup(row as MergedJointSignup) : null);
+  return {
+    sources: collapsed,
+    sourceLabel: formatJointAttendeeSourceLabel(collapsed, {
+      representativeSocietyId: repSocietyId,
+      isDualMember,
+    }),
+    paymentLabel: formatJointAttendeePaymentLabel(collapsed),
+  };
+}
+
 function attendeeRowFromMergedSignup(
   row: MergedJointSignup,
   societyIdToName: Map<string, string>,
 ): JointEventAttendeeRow {
-  const sources = sourcesFromMergedSignup(row, societyIdToName);
+  const rawSources = sourcesFromMergedSignup(row, societyIdToName);
   const repSocietyId = representativeSocietyIdFromMergedSignup(row);
+  const labels = applyAttendeeSourceLabels(
+    {
+      displayName: row.displayName,
+      sources: rawSources,
+      societyBadge: row.societyBadge,
+      registrations: row.registrations,
+    },
+    {
+      representativeSocietyId: repSocietyId,
+      isDualMember: row.societyBadge === "Dual",
+    },
+  );
   return {
     key: row.key,
     displayName: row.displayName,
-    sources,
-    sourceLabel: formatJointAttendeeSourceLabel(sources, {
-      representativeSocietyId: repSocietyId,
-    }),
-    paymentLabel: formatJointAttendeePaymentLabel(sources),
+    ...labels,
     societyBadge: row.societyBadge,
     registrations: row.registrations,
   };
@@ -422,7 +534,7 @@ function mergeAttendeeRows(
   primary: JointEventAttendeeRow,
   secondary: JointEventAttendeeRow,
 ): JointEventAttendeeRow {
-  const sources = [...primary.sources, ...secondary.sources];
+  const rawSources = [...primary.sources, ...secondary.sources];
   const repSocietyId =
     primary.registrations.length > 0
       ? representativeSocietyIdFromMergedSignup({
@@ -436,20 +548,32 @@ function mergeAttendeeRows(
         })
       : (primary.sources[0]?.societyId ?? secondary.sources[0]?.societyId ?? null);
 
-  const societyIds = [...new Set(sources.map((s) => s.societyId).filter(Boolean))];
+  const societyIds = [...new Set(rawSources.map((s) => s.societyId).filter(Boolean))];
   const societyBadge =
-    societyIds.length >= 2
+    primary.societyBadge === "Dual" || societyIds.length >= 2
       ? "Dual"
-      : jointSocietySourceBadge(societyIds, new Map(sources.map((s) => [s.societyId, s.societyName])));
+      : jointSocietySourceBadge(
+          societyIds,
+          new Map(rawSources.map((s) => [s.societyId, s.societyName])),
+        );
+
+  const labels = applyAttendeeSourceLabels(
+    {
+      displayName: primary.displayName,
+      sources: rawSources,
+      societyBadge,
+      registrations: primary.registrations,
+    },
+    {
+      representativeSocietyId: repSocietyId,
+      isDualMember: societyBadge === "Dual" && primary.registrations.length > 0,
+    },
+  );
 
   return {
     key: primary.key,
     displayName: primary.displayName,
-    sources,
-    sourceLabel: formatJointAttendeeSourceLabel(sources, {
-      representativeSocietyId: repSocietyId,
-    }),
-    paymentLabel: formatJointAttendeePaymentLabel(sources),
+    ...labels,
     societyBadge,
     registrations: primary.registrations,
     guestId: secondary.guestId ?? primary.guestId,
@@ -502,12 +626,18 @@ function mergeGuestsIntoMemberRows(
  * Merge member registrations + guest rows into one attendee list per person (members de-duped).
  * Input should already be scoped to participating societies for joint events.
  */
+export type ResolveJointEventAttendeesOpts = {
+  attendingMembersOnly?: boolean;
+  participatingMembers?: MemberDoc[];
+  participantSocietyIds?: string[];
+};
+
 export function resolveJointEventAttendees(
   regs: JointEventRegistrationRow[] | EventRegistration[],
   guests: JointEventGuestInput[],
   societyIdToName: Map<string, string>,
   membersById?: Map<string, MemberDoc>,
-  opts?: { attendingMembersOnly?: boolean },
+  opts?: ResolveJointEventAttendeesOpts,
 ): JointEventAttendeeRow[] {
   const attendingOnly = opts?.attendingMembersOnly !== false;
   let memberRegs = regs as JointEventRegistrationRow[];
@@ -515,7 +645,23 @@ export function resolveJointEventAttendees(
     memberRegs = memberRegs.filter((r) => r.status === "in");
   }
 
-  const merged = mergeJointEventSignups(memberRegs, societyIdToName, membersById);
+  const participatingMembers =
+    opts?.participatingMembers ??
+    (membersById ? [...membersById.values()] : undefined);
+  const membershipCtx: JointEventMembershipContext | undefined =
+    participatingMembers?.length && opts?.participantSocietyIds?.length
+      ? {
+          participatingMembers,
+          participantSocietyIds: opts.participantSocietyIds,
+        }
+      : undefined;
+
+  const merged = mergeJointEventSignups(
+    memberRegs,
+    societyIdToName,
+    membersById,
+    membershipCtx,
+  );
   const memberRows = merged.map((row) => attendeeRowFromMergedSignup(row, societyIdToName));
   const guestRows = guests.map((g) => attendeeRowFromGuest(g, societyIdToName));
 

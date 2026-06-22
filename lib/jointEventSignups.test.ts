@@ -5,10 +5,12 @@ vi.stubGlobal("__DEV__", false);
 import type { MemberDoc } from "@/lib/db_supabase/memberRepo";
 import type { EventRegistration } from "@/lib/db_supabase/eventRegistrationRepo";
 import {
+  collapseJointAttendeeSources,
   dedupeJointSignupMemberIds,
   formatJointAttendeePaymentLabel,
   formatJointAttendeeSourceLabel,
   mergeJointEventSignups,
+  membershipSocietyIdsForIdentity,
   resolveJointEventAttendees,
   shouldMergeSignupIdentities,
   signupIdentityFromRegistration,
@@ -148,6 +150,22 @@ describe("mergeJointEventSignups", () => {
     expect(merged).toHaveLength(2);
     expect(merged.map((r) => r.societyBadge).sort()).toEqual(["M4", "ZGS"]);
   });
+
+  it("labels Dual when member exists in both societies but registered via one only (Ziv-style)", () => {
+    const participatingMembers: MemberDoc[] = [
+      { id: "m4-ziv", society_id: M4, user_id: "uid-ziv", name: "Ziv Kudenga" },
+      { id: "zgs-ziv", society_id: ZGS, user_id: "uid-ziv", name: "Ziv Kudenga" },
+    ];
+    const rows = mergeJointEventSignups(
+      [reg({ member_id: "m4-ziv", society_id: M4, user_id: "uid-ziv", member_name: "Ziv Kudenga" })],
+      societyMap,
+      undefined,
+      { participatingMembers, participantSocietyIds: [M4, ZGS] },
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0].societyBadge).toBe("Dual");
+    expect(rows[0].registrations).toHaveLength(1);
+  });
 });
 
 describe("dedupeJointSignupMemberIds", () => {
@@ -197,5 +215,117 @@ describe("resolveJointEventAttendees payment visibility", () => {
     );
     expect(rows).toHaveLength(1);
     expect(rows[0].paymentLabel).toBe("Paid via M4 / Unpaid via ZGS");
+  });
+
+  it("Ziv-style: dual member registered only via M4 shows Dual / registered via M4", () => {
+    const participatingMembers: MemberDoc[] = [
+      { id: "m4-ziv", society_id: M4, user_id: "uid-ziv", name: "Ziv Kudenga" },
+      { id: "zgs-ziv", society_id: ZGS, user_id: "uid-ziv", name: "Ziv Kudenga" },
+    ];
+    const rows = resolveJointEventAttendees(
+      [reg({ member_id: "m4-ziv", society_id: M4, user_id: "uid-ziv", member_name: "Ziv Kudenga", paid: true })],
+      [],
+      societyMap,
+      undefined,
+      { participatingMembers, participantSocietyIds: [M4, ZGS] },
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0].societyBadge).toBe("Dual");
+    expect(rows[0].sourceLabel).toBe("Dual / registered via M4");
+    expect(rows[0].paymentLabel).toBe("Paid");
+  });
+
+  it("Tawanda-style: dual registered via ZGS shows Dual / registered via ZGS", () => {
+    const participatingMembers: MemberDoc[] = [
+      { id: "m4-t", society_id: M4, user_id: "uid-t", name: "Tawanda Moyo" },
+      { id: "zgs-t", society_id: ZGS, user_id: "uid-t", name: "Tawanda Moyo" },
+    ];
+    const rows = resolveJointEventAttendees(
+      [reg({ member_id: "zgs-t", society_id: ZGS, user_id: "uid-t", member_name: "Tawanda Moyo", paid: false })],
+      [],
+      societyMap,
+      undefined,
+      { participatingMembers, participantSocietyIds: [M4, ZGS] },
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0].sourceLabel).toBe("Dual / registered via ZGS");
+    expect(rows[0].paymentLabel).toBe("Unpaid");
+  });
+
+  it("same-society duplicate paid+unpaid collapses to Paid only (Jade-style)", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const rows = resolveJointEventAttendees(
+      [
+        reg({ member_id: "jade-m", society_id: M4, member_name: "Jade Muchando", paid: true }),
+        reg({ member_id: "jade-m-dup", society_id: M4, member_name: "Jade Muchando", paid: false }),
+      ],
+      [],
+      societyMap,
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0].paymentLabel).toBe("Paid");
+    expect(rows[0].paymentLabel).not.toContain("Unpaid via");
+    warn.mockRestore();
+  });
+
+  it("member+guest same society collapses to member Paid (Jade guest duplicate)", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const rows = resolveJointEventAttendees(
+      [reg({ member_id: "jade-m", society_id: M4, member_name: "Jade Muchando", paid: true })],
+      [{ id: "g-jade", society_id: M4, name: "jade muchando", paid: false }],
+      societyMap,
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0].sourceLabel).toBe("M4 Member");
+    expect(rows[0].paymentLabel).toBe("Paid");
+    warn.mockRestore();
+  });
+
+  it("guest remains Guest, not Dual", () => {
+    const participatingMembers: MemberDoc[] = [
+      { id: "m4-a", society_id: M4, user_id: "uid-a", name: "Alice" },
+      { id: "zgs-a", society_id: ZGS, user_id: "uid-a", name: "Alice" },
+    ];
+    const rows = resolveJointEventAttendees(
+      [],
+      [{ id: "g1", society_id: M4, name: "Visitor Guest", paid: false }],
+      societyMap,
+      undefined,
+      { participatingMembers, participantSocietyIds: [M4, ZGS] },
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0].sourceLabel).toBe("M4 Guest");
+    expect(rows[0].societyBadge).toBe("M4");
+  });
+});
+
+describe("collapseJointAttendeeSources", () => {
+  it("collapses same-society paid+unpaid with Paid winning", () => {
+    const collapsed = collapseJointAttendeeSources([
+      { societyId: M4, societyName: "M4", kind: "member", paid: true },
+      { societyId: M4, societyName: "M4", kind: "member", paid: false },
+    ]);
+    expect(collapsed).toHaveLength(1);
+    expect(collapsed[0].paid).toBe(true);
+  });
+
+  it("preserves cross-society mixed payment sources", () => {
+    const collapsed = collapseJointAttendeeSources([
+      { societyId: M4, societyName: "M4", kind: "member", paid: true },
+      { societyId: ZGS, societyName: "ZGS", kind: "member", paid: false },
+    ]);
+    expect(collapsed).toHaveLength(2);
+    expect(formatJointAttendeePaymentLabel(collapsed)).toBe("Paid via M4 / Unpaid via ZGS");
+  });
+});
+
+describe("membershipSocietyIdsForIdentity", () => {
+  it("finds both societies for shared user_id", () => {
+    const identity = { memberId: "m4-ziv", societyId: M4, user_id: "uid-ziv", email: null, name: "Ziv Kudenga" };
+    const members: MemberDoc[] = [
+      { id: "m4-ziv", society_id: M4, user_id: "uid-ziv", name: "Ziv Kudenga" },
+      { id: "zgs-ziv", society_id: ZGS, user_id: "uid-ziv", name: "Ziv Kudenga" },
+    ];
+    expect(membershipSocietyIdsForIdentity(identity, members, new Set([M4, ZGS]))).toEqual([M4, ZGS]);
   });
 });
