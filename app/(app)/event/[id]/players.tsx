@@ -43,7 +43,7 @@ import { canManageEventRosterForSociety, getPermissionsForMember, isSecretary } 
 import { getColors, spacing, radius, typography } from "@/lib/ui/theme";
 import { JOINT_EVENT_CHIP_LONG } from "@/lib/eventModuleUi";
 import { isJointEventFromMeta, isActiveSocietyParticipantForEvent } from "@/lib/jointEventAccess";
-import { getEventRegistrations, removeEventParticipant } from "@/lib/db_supabase/eventRegistrationRepo";
+import { removeEventParticipant, getJointEventRegistrations } from "@/lib/db_supabase/eventRegistrationRepo";
 import {
   logJointPlayableConsistencyDev,
   formatJointPlayableGapWarning,
@@ -157,7 +157,7 @@ export default function EventPlayersScreen() {
           const [jointPayload, guestList, registrations] = await Promise.all([
             getJointEventDetail(eventId),
             getEventGuests(eventId),
-            getEventRegistrations(eventId),
+            getJointEventRegistrations(eventId),
           ]);
           if (cancelled) return;
           const evt = jointPayload ? await getEvent(eventId) : null;

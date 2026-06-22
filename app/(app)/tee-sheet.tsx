@@ -67,7 +67,7 @@ import {
   type JointEventTeeSheetReplaceRow,
 } from "@/lib/db_supabase/jointEventRepo";
 import type { JointEventTeeSheet, JointEventTeeSheetEntry } from "@/lib/db_supabase/jointEventTypes";
-import { getMembersBySocietyId, getManCoRoleHolders, type MemberDoc, type Gender, type ManCoDetails } from "@/lib/db_supabase/memberRepo";
+import { getMembersBySocietyId, getJointEventMemberVisibility, getManCoRoleHolders, type MemberDoc, type Gender, type ManCoDetails } from "@/lib/db_supabase/memberRepo";
 import { getPermissionsForMember } from "@/lib/rbac";
 import {
   type TeeBlock,
@@ -588,8 +588,18 @@ export default function TeeSheetScreen() {
               const participantSocietyIds =
                 teeSheet.participating_societies?.map((s) => s.society_id).filter(Boolean) ?? [];
               logStep("joint_members", { societyCount: participantSocietyIds.length });
-              const lists = await Promise.all(participantSocietyIds.map((sid) => getMembersBySocietyId(sid)));
-              const pooled = lists.flat();
+              let pooled: MemberDoc[] = [];
+              try {
+                pooled = await getJointEventMemberVisibility(eventId);
+              } catch {
+                pooled = [];
+              }
+              if (pooled.length === 0) {
+                const lists = await Promise.all(
+                  participantSocietyIds.map((sid) => getMembersBySocietyId(sid)),
+                );
+                pooled = lists.flat();
+              }
               const candidate = await getJointTeeSheetCandidatePoolForEvent(eventId, participantSocietyIds);
               const candidateIdSet = new Set(candidate.memberIds);
               const candidateMembers = pooled.filter((m) => candidateIdSet.has(String(m.id)));

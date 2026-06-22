@@ -144,7 +144,10 @@ export async function loadJointTeeSheetForManCo(eventId: string): Promise<{
   teeSheet: JointEventTeeSheet;
   eligibleIds: Set<string>;
 } | null> {
-  const [teeSheet, regs] = await Promise.all([getJointEventTeeSheet(eventId), getEventRegistrations(eventId)]);
+  const [teeSheet, regs] = await Promise.all([
+    getJointEventTeeSheet(eventId),
+    getJointEventRegistrations(eventId),
+  ]);
   if (!teeSheet) return null;
   const societies = teeSheet.participating_societies?.map((s) => s.society_id).filter(Boolean) ?? [];
   const { eligibleIds } = jointScopedRegsAndEligibleSet(regs, societies);

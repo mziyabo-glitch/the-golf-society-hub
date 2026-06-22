@@ -9,7 +9,12 @@
 //
 // Joint: per-society rows in `event_registrations`; shared tee/entries use joint repos elsewhere.
 
+import {
+  dedupeJointSignupMemberIds,
+  type JointEventRegistrationRow,
+} from "@/lib/jointEventSignups";
 import { supabase } from "@/lib/supabase";
+import { getMembersByIds } from "@/lib/db_supabase/memberRepo";
 
 /** Cache or legacy callers may pass a non-array; never throw on `.filter`. */
 function ensureRegistrationArray(regs: unknown): EventRegistration[] {
@@ -85,6 +90,60 @@ export async function getEventRegistrations(
     return [];
   }
   return ensureRegistrationArray(data ?? []);
+}
+
+/**
+ * Joint events: all participating-society registrations via SECURITY DEFINER RPC.
+ * Falls back to society-scoped `getEventRegistrations` when RPC is unavailable.
+ */
+export async function getJointEventRegistrations(
+  eventId: string,
+  opts?: { includeRemoved?: boolean },
+): Promise<JointEventRegistrationRow[]> {
+  if (!eventId?.trim()) return [];
+
+  try {
+    const { data, error } = await supabase.rpc("get_joint_event_registrations", {
+      p_event_id: eventId,
+    });
+    if (error) {
+      if (__DEV__) {
+        console.warn("[eventRegRepo] get_joint_event_registrations RPC:", error.message);
+      }
+      return getEventRegistrations(eventId, opts) as JointEventRegistrationRow[];
+    }
+
+    let rows = (data ?? []).map((row: Record<string, unknown>) => ({
+      id: String(row.id ?? ""),
+      society_id: String(row.society_id ?? ""),
+      event_id: String(row.event_id ?? ""),
+      member_id: String(row.member_id ?? ""),
+      status: (row.status === "out" ? "out" : "in") as "in" | "out",
+      paid: Boolean(row.paid),
+      amount_paid_pence: Number(row.amount_paid_pence ?? 0),
+      paid_at: row.paid_at != null ? String(row.paid_at) : null,
+      marked_by_member_id:
+        row.marked_by_member_id != null ? String(row.marked_by_member_id) : null,
+      created_at: String(row.created_at ?? ""),
+      updated_at: String(row.updated_at ?? ""),
+      removed_from_event_at:
+        row.removed_from_event_at != null ? String(row.removed_from_event_at) : null,
+      removed_by_member_id:
+        row.removed_by_member_id != null ? String(row.removed_by_member_id) : null,
+      user_id: row.user_id != null ? String(row.user_id) : null,
+      member_email: row.member_email != null ? String(row.member_email) : null,
+      member_name: row.member_name != null ? String(row.member_name) : null,
+      member_display_name:
+        row.member_display_name != null ? String(row.member_display_name) : null,
+    })) as JointEventRegistrationRow[];
+
+    if (!opts?.includeRemoved) {
+      rows = rows.filter(isOperationalEventRegistration);
+    }
+    return rows;
+  } catch {
+    return getEventRegistrations(eventId, opts) as JointEventRegistrationRow[];
+  }
 }
 
 /**
@@ -176,14 +235,38 @@ export async function getJointTeeSheetCandidatePoolForEvent(
   registrations: EventRegistration[];
   supportedStatuses: readonly string[];
 }> {
-  const regs = await getEventRegistrations(eventId);
+  const regs = await getJointEventRegistrations(eventId);
   const scoped = scopeEventRegistrations(regs, {
     kind: "joint_participants",
     participantSocietyIds,
   });
   const allowed = new Set<string>(JOINT_TEE_SHEET_CANDIDATE_STATUSES);
   const filtered = scoped.filter((r) => r.paid === true && allowed.has(String(r.status)));
-  const memberIds = [...new Set(filtered.map((r) => String(r.member_id)).filter(Boolean))];
+  const rawMemberIds = filtered.map((r) => String(r.member_id)).filter(Boolean);
+  const uniqueRaw = [...new Set(rawMemberIds)];
+
+  const memberRows = await getMembersByIds(uniqueRaw);
+  const jointRegs = regs as JointEventRegistrationRow[];
+  const augmentById = new Map(memberRows.map((m) => [String(m.id), m]));
+  for (const r of jointRegs) {
+    const mid = String(r.member_id);
+    if (augmentById.has(mid)) continue;
+    augmentById.set(mid, {
+      id: mid,
+      society_id: String(r.society_id),
+      user_id: r.user_id ?? null,
+      email: r.member_email ?? undefined,
+      name: r.member_name ?? undefined,
+      display_name: r.member_display_name ?? undefined,
+      displayName: r.member_display_name ?? r.member_name ?? undefined,
+    });
+  }
+  const membersForDedupe = [...augmentById.values()];
+  const societyIdToName = new Map(
+    participantSocietyIds.filter(Boolean).map((id) => [id, id] as const),
+  );
+  const memberIds = dedupeJointSignupMemberIds(uniqueRaw, membersForDedupe, societyIdToName);
+
   return {
     memberIds,
     registrations: filtered,

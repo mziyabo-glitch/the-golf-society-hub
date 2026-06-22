@@ -64,10 +64,12 @@ import {
 } from "@/lib/rbac";
 import {
   getEventRegistrations,
+  getJointEventRegistrations,
   markMePaid,
   addMemberToEventAsAdmin,
   filterRegistrationsForActiveSocietyMembers,
   isOperationalEventRegistration,
+  scopeEventRegistrations,
   removeEventParticipant,
   type EventRegistration,
 } from "@/lib/db_supabase/eventRegistrationRepo";
@@ -94,6 +96,8 @@ import {
   isActiveSocietyParticipantForEvent,
   isJointEventFromMeta,
 } from "@/lib/jointEventAccess";
+import { buildSocietyIdToNameMap } from "@/lib/jointEventSocietyLabel";
+import { mergeJointEventSignups } from "@/lib/jointEventSignups";
 import { getEventRsvpInviteShareMessage } from "@/lib/appConfig";
 import { shareViaWhatsAppOrFallback } from "@/lib/eventInviteLink";
 import { getEventGuests, setEventGuestPaid, type EventGuest } from "@/lib/db_supabase/eventGuestRepo";
@@ -718,8 +722,12 @@ export default function ManageEventScreen() {
     if (!eventId || !societyId) return;
     try {
       setRegistrationsRefreshing(true);
+      const jointMeta = await getJointMetaForEventIds([eventId]);
+      const isJoint = jointMeta.get(eventId)?.is_joint_event === true;
       const [regs, mems, guests] = await Promise.all([
-        getEventRegistrations(eventId, { includeRemoved: true }),
+        isJoint
+          ? getJointEventRegistrations(eventId, { includeRemoved: true })
+          : getEventRegistrations(eventId, { includeRemoved: true }),
         getMembersBySocietyId(societyId),
         getEventGuests(eventId),
       ]);
@@ -1028,6 +1036,37 @@ export default function ManageEventScreen() {
       noResponseCount,
     };
   }, [societyPageRegistrations, membersForRsvpStats, societyGuestCount]);
+
+  const jointSocietyIdToName = useMemo(
+    () =>
+      buildSocietyIdToNameMap(
+        jointParticipatingSocieties.map((s) => ({
+          society_id: s.society_id,
+          society_name: s.society_name,
+        })),
+      ),
+    [jointParticipatingSocieties],
+  );
+
+  const mergedJointSignups = useMemo(() => {
+    if (!detailIsJointEvent || participantSocietyIdsForAccess.length < 2) return [];
+    const scoped = scopeEventRegistrations(registrations, {
+      kind: "joint_participants",
+      participantSocietyIds: participantSocietyIdsForAccess,
+    });
+    return mergeJointEventSignups(scoped, jointSocietyIdToName, memberByIdForRegs);
+  }, [
+    detailIsJointEvent,
+    participantSocietyIdsForAccess,
+    registrations,
+    jointSocietyIdToName,
+    memberByIdForRegs,
+  ]);
+
+  const mergedJointAttendingSignups = useMemo(
+    () => mergedJointSignups.filter((row) => row.registrations.some((r) => r.status === "in")),
+    [mergedJointSignups],
+  );
 
   const teeSheetEligibleCount = buckets.confirmedPaid.length + guestConfirmedPaid.length;
   const pendingPaymentCount =
@@ -2427,6 +2466,45 @@ export default function ManageEventScreen() {
           ) : null}
         </AppCard>
       )}
+
+      {detailIsJointEvent && (canManageEventRoster || canEditEvent) ? (
+        <AppCard style={styles.card}>
+          <AppText variant="captionBold" color="secondary" style={{ marginBottom: spacing.xs }}>
+            Joint event signups
+          </AppText>
+          <AppText variant="small" color="secondary" style={[styles.cardBodyText, { marginBottom: spacing.sm }]}>
+            All participating societies — one row per person. Payment actions below remain society-scoped.
+          </AppText>
+          {mergedJointAttendingSignups.length === 0 ? (
+            <AppText variant="small" color="muted">
+              No confirmed signups yet across participating societies.
+            </AppText>
+          ) : (
+            mergedJointAttendingSignups.map((row) => (
+              <View
+                key={row.key}
+                style={{
+                  flexDirection: "row",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: spacing.sm,
+                  paddingVertical: spacing.xs,
+                  borderBottomWidth: 1,
+                  borderBottomColor: colors.borderLight,
+                }}
+              >
+                <AppText variant="body" style={{ flex: 1 }} numberOfLines={2}>
+                  {row.displayName}
+                </AppText>
+                <StatusBadge
+                  label={row.societyBadge}
+                  tone={row.societyBadge === "Dual" ? "info" : "neutral"}
+                />
+              </View>
+            ))
+          )}
+        </AppCard>
+      ) : null}
 
       {/* Players link */}
       <Pressable
