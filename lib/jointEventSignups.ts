@@ -261,3 +261,174 @@ export function mergedSignupIsTeeSheetEligible(
 ): boolean {
   return row.registrations.some(isEligible);
 }
+
+export type JointAttendeeKind = "member" | "guest";
+
+/** One society-scoped registration source (member row or guest row). */
+export type JointAttendeeSource = {
+  societyId: string;
+  societyName: string;
+  kind: JointAttendeeKind;
+  paid: boolean;
+};
+
+/** Merged joint-event attendee row for cross-society visibility UIs. */
+export type JointEventAttendeeRow = {
+  key: string;
+  displayName: string;
+  sources: JointAttendeeSource[];
+  /** e.g. "M4 Member", "ZGS Guest", "Dual / registered via M4" */
+  sourceLabel: string;
+  /** e.g. "Paid", "Unpaid", "Paid via M4 / Unpaid via ZGS" */
+  paymentLabel: string;
+  /** Participating society label: "M4", "ZGS", or "Dual" (members only). */
+  societyBadge: string;
+  registrations: EventRegistration[];
+  guestId?: string;
+};
+
+export type JointEventGuestInput = {
+  id: string;
+  society_id: string;
+  name: string;
+  paid: boolean;
+};
+
+function societyNameFromMap(societyId: string, societyIdToName: Map<string, string>): string {
+  return societyIdToName.get(societyId) ?? societyId;
+}
+
+function sourcesFromMergedSignup(
+  row: MergedJointSignup,
+  societyIdToName: Map<string, string>,
+): JointAttendeeSource[] {
+  return row.registrations.map((r) => ({
+    societyId: String(r.society_id),
+    societyName: societyNameFromMap(String(r.society_id), societyIdToName),
+    kind: "member" as const,
+    paid: r.paid === true,
+  }));
+}
+
+/**
+ * Society + member/guest label for a merged attendee row.
+ * Dual members: "Dual / registered via {representative society}".
+ */
+export function formatJointAttendeeSourceLabel(
+  sources: JointAttendeeSource[],
+  opts?: { representativeSocietyId?: string | null },
+): string {
+  if (sources.length === 0) return "";
+
+  const memberSources = sources.filter((s) => s.kind === "member");
+  if (memberSources.length >= 2) {
+    const repId = opts?.representativeSocietyId ?? memberSources[0].societyId;
+    const repName =
+      memberSources.find((s) => s.societyId === repId)?.societyName ?? memberSources[0].societyName;
+    return `Dual / registered via ${repName}`;
+  }
+
+  const s = sources[0];
+  return `${s.societyName} ${s.kind === "guest" ? "Guest" : "Member"}`;
+}
+
+/**
+ * Payment label tied to each society registration source.
+ * Single status when uniform; per-society when mixed.
+ */
+export function formatJointAttendeePaymentLabel(sources: JointAttendeeSource[]): string {
+  if (sources.length === 0) return "";
+  const allPaid = sources.every((s) => s.paid);
+  const allUnpaid = sources.every((s) => !s.paid);
+  if (allPaid) return "Paid";
+  if (allUnpaid) return "Unpaid";
+  return sources
+    .map((s) => `${s.paid ? "Paid" : "Unpaid"} via ${s.societyName}`)
+    .join(" / ");
+}
+
+function representativeSocietyIdFromMergedSignup(row: MergedJointSignup): string | null {
+  const identities = row.registrations.map((r) =>
+    signupIdentityFromRegistration(r as JointEventRegistrationRow),
+  );
+  if (identities.length === 0) return null;
+  return pickRepresentativeIdentity(identities).societyId;
+}
+
+function attendeeRowFromMergedSignup(
+  row: MergedJointSignup,
+  societyIdToName: Map<string, string>,
+): JointEventAttendeeRow {
+  const sources = sourcesFromMergedSignup(row, societyIdToName);
+  const repSocietyId = representativeSocietyIdFromMergedSignup(row);
+  return {
+    key: row.key,
+    displayName: row.displayName,
+    sources,
+    sourceLabel: formatJointAttendeeSourceLabel(sources, {
+      representativeSocietyId: repSocietyId,
+    }),
+    paymentLabel: formatJointAttendeePaymentLabel(sources),
+    societyBadge: row.societyBadge,
+    registrations: row.registrations,
+  };
+}
+
+function attendeeRowFromGuest(
+  guest: JointEventGuestInput,
+  societyIdToName: Map<string, string>,
+): JointEventAttendeeRow {
+  const sources: JointAttendeeSource[] = [
+    {
+      societyId: String(guest.society_id),
+      societyName: societyNameFromMap(String(guest.society_id), societyIdToName),
+      kind: "guest",
+      paid: guest.paid === true,
+    },
+  ];
+  return {
+    key: `guest:${guest.id}`,
+    displayName: String(guest.name ?? "").trim() || "Guest",
+    sources,
+    sourceLabel: formatJointAttendeeSourceLabel(sources),
+    paymentLabel: formatJointAttendeePaymentLabel(sources),
+    societyBadge: sources[0].societyName,
+    registrations: [],
+    guestId: guest.id,
+  };
+}
+
+/**
+ * Merge member registrations + guest rows into one attendee list per person (members de-duped).
+ * Input should already be scoped to participating societies for joint events.
+ */
+export function resolveJointEventAttendees(
+  regs: JointEventRegistrationRow[] | EventRegistration[],
+  guests: JointEventGuestInput[],
+  societyIdToName: Map<string, string>,
+  membersById?: Map<string, MemberDoc>,
+  opts?: { attendingMembersOnly?: boolean },
+): JointEventAttendeeRow[] {
+  const attendingOnly = opts?.attendingMembersOnly !== false;
+  let memberRegs = regs as JointEventRegistrationRow[];
+  if (attendingOnly) {
+    memberRegs = memberRegs.filter((r) => r.status === "in");
+  }
+
+  const merged = mergeJointEventSignups(memberRegs, societyIdToName, membersById);
+  const memberRows = merged.map((row) => attendeeRowFromMergedSignup(row, societyIdToName));
+  const guestRows = guests.map((g) => attendeeRowFromGuest(g, societyIdToName));
+
+  return [...memberRows, ...guestRows].sort((a, b) => a.displayName.localeCompare(b.displayName));
+}
+
+/** Summary counts from merged joint attendee rows (one per person + guests). */
+export function summarizeJointEventAttendees(rows: JointEventAttendeeRow[]) {
+  return {
+    attendeeCount: rows.length,
+    memberCount: rows.filter((r) => !r.guestId).length,
+    guestCount: rows.filter((r) => !!r.guestId).length,
+    paidCount: rows.filter((r) => r.sources.every((s) => s.paid)).length,
+    unpaidCount: rows.filter((r) => r.sources.some((s) => !s.paid)).length,
+  };
+}

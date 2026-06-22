@@ -6,7 +6,10 @@ import type { MemberDoc } from "@/lib/db_supabase/memberRepo";
 import type { EventRegistration } from "@/lib/db_supabase/eventRegistrationRepo";
 import {
   dedupeJointSignupMemberIds,
+  formatJointAttendeePaymentLabel,
+  formatJointAttendeeSourceLabel,
   mergeJointEventSignups,
+  resolveJointEventAttendees,
   shouldMergeSignupIdentities,
   signupIdentityFromRegistration,
   type JointEventRegistrationRow,
@@ -179,5 +182,20 @@ describe("signupIdentityFromRegistration", () => {
     );
     expect(identity.user_id).toBe("uid-x");
     expect(identity.email).toBe("x@test.com");
+  });
+});
+
+describe("resolveJointEventAttendees payment visibility", () => {
+  it("duplicate with different payment status shows both statuses", () => {
+    const rows = resolveJointEventAttendees(
+      [
+        reg({ member_id: "m4-dual", society_id: M4, user_id: "u1", paid: true, member_name: "Dual" }),
+        reg({ member_id: "zgs-dual", society_id: ZGS, user_id: "u1", paid: false }),
+      ],
+      [],
+      societyMap,
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0].paymentLabel).toBe("Paid via M4 / Unpaid via ZGS");
   });
 });

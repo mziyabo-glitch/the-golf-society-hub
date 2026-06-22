@@ -18,7 +18,7 @@ import { StatusBadge } from "@/components/ui/StatusBadge";
 import { scoringOfficialBadgeLabel, scoringOfficialUiKind } from "@/lib/scoring/scoringOfficialUi";
 import { EVENT_CLASSIFICATIONS, EVENT_FORMATS, getEvent, type EventDoc } from "@/lib/db_supabase/eventRepo";
 import { getEventGuests } from "@/lib/db_supabase/eventGuestRepo";
-import { getEventRegistrations, type EventRegistration } from "@/lib/db_supabase/eventRegistrationRepo";
+import { getEventRegistrations, getJointEventRegistrations, type EventRegistration } from "@/lib/db_supabase/eventRegistrationRepo";
 import { submitMemberEventRsvp } from "@/lib/events/memberEventRsvp";
 import { listEventPrizePools } from "@/lib/db_supabase/eventPrizePoolRepo";
 import { getEventResultsForSociety } from "@/lib/db_supabase/resultsRepo";
@@ -30,9 +30,15 @@ import {
   getPermissionsForMember,
   isSecretary,
 } from "@/lib/rbac";
-import { isActiveSocietyParticipantForEvent } from "@/lib/jointEventAccess";
+import { isActiveSocietyParticipantForEvent, isJointEventFromMeta } from "@/lib/jointEventAccess";
 import { getJointEventDetail, mapJointEventToEventDoc } from "@/lib/db_supabase/jointEventRepo";
 import { getCache, setCache } from "@/lib/cache/clientCache";
+import {
+  resolveEventAttendeesForDisplay,
+  summarizeJointEventAttendees,
+  type JointEventAttendeeRow,
+} from "@/lib/jointEventAttendeeVisibility";
+import { buildSocietyIdToNameMap } from "@/lib/jointEventSocietyLabel";
 
 function formatEventDate(value?: string): string {
   if (!value?.trim()) return "Date TBD";
@@ -55,6 +61,8 @@ type EventOverviewCache = {
   event: EventDoc;
   participantSocietyIds: string[];
   registrations: EventRegistration[];
+  allEventRegistrations: EventRegistration[];
+  allGuests: { id: string; society_id: string; name: string; paid: boolean }[];
   guestCount: number;
   hasResults: boolean;
   poolCount: number;
@@ -93,6 +101,8 @@ export default function EventOverviewScreen() {
   const [event, setEvent] = useState<EventDoc | null>(null);
   const [participantSocietyIds, setParticipantSocietyIds] = useState<string[]>([]);
   const [registrations, setRegistrations] = useState<EventRegistration[]>([]);
+  const [allEventRegistrations, setAllEventRegistrations] = useState<EventRegistration[]>([]);
+  const [allGuests, setAllGuests] = useState<{ id: string; society_id: string; name: string; paid: boolean }[]>([]);
   const [guestCount, setGuestCount] = useState(0);
   const [hasResults, setHasResults] = useState(false);
   const [poolCount, setPoolCount] = useState(0);
@@ -111,6 +121,8 @@ export default function EventOverviewScreen() {
     setEvent(payload.event);
     setParticipantSocietyIds(payload.participantSocietyIds ?? []);
     setRegistrations(payload.registrations ?? []);
+    setAllEventRegistrations(payload.allEventRegistrations ?? payload.registrations ?? []);
+    setAllGuests(payload.allGuests ?? []);
     setGuestCount(payload.guestCount ?? 0);
     setHasResults(payload.hasResults ?? false);
     setPoolCount(payload.poolCount ?? 0);
@@ -150,10 +162,17 @@ export default function EventOverviewScreen() {
           participants = joint.participating_societies.map((s) => s.society_id).filter(Boolean);
         }
         setEvent(detail);
-        setParticipantSocietyIds([...new Set(participants)]);
+        const participantsUnique = [...new Set(participants)];
+        setParticipantSocietyIds(participantsUnique);
+
+        const isJoint =
+          isJointEventFromMeta(participantsUnique, detail.linked_society_count) ||
+          detail.is_joint_event === true;
 
         const [allRegs, guests, pools, results] = await Promise.all([
-          getEventRegistrations(eventId),
+          isJoint && participantsUnique.length >= 2
+            ? getJointEventRegistrations(eventId)
+            : getEventRegistrations(eventId),
           getEventGuests(eventId),
           listEventPrizePools(eventId).catch(() => []),
           societyId ? getEventResultsForSociety(eventId, societyId).catch(() => []) : Promise.resolve([]),
@@ -164,10 +183,18 @@ export default function EventOverviewScreen() {
           : allRegs;
 
         setRegistrations(scopedRegs);
+        setAllEventRegistrations(allRegs);
+        const guestRows = guests.map((g) => ({
+          id: g.id,
+          society_id: g.society_id,
+          name: g.name,
+          paid: g.paid,
+        }));
+        setAllGuests(guestRows);
         const scopedGuests = societyId
-          ? guests.filter((g) => String(g.society_id) === String(societyId))
-          : guests;
-        const nextGuestCount = scopedGuests.length;
+          ? guestRows.filter((g) => String(g.society_id) === String(societyId))
+          : guestRows;
+        const nextGuestCount = isJoint ? guestRows.length : scopedGuests.length;
         const nextPoolCount = pools.length;
         const nextHasResults = results.length > 0;
         setGuestCount(nextGuestCount);
@@ -176,8 +203,10 @@ export default function EventOverviewScreen() {
 
         const cachePayload: EventOverviewCache = {
           event: detail,
-          participantSocietyIds: [...new Set(participants)],
+          participantSocietyIds: participantsUnique,
           registrations: scopedRegs,
+          allEventRegistrations: allRegs,
+          allGuests: guestRows,
           guestCount: nextGuestCount,
           hasResults: nextHasResults,
           poolCount: nextPoolCount,
@@ -286,12 +315,53 @@ export default function EventOverviewScreen() {
     ],
   );
 
+  const detailIsJointEvent = useMemo(
+    () =>
+      isJointEventFromMeta(participantSocietyIds, event?.linked_society_count) ||
+      event?.is_joint_event === true,
+    [participantSocietyIds, event?.linked_society_count, event?.is_joint_event],
+  );
+
+  const jointSocietyIdToName = useMemo(
+    () => buildSocietyIdToNameMap(participantSocietyIds.map((id) => ({ society_id: id }))),
+    [participantSocietyIds],
+  );
+
+  const jointEventAttendeeRows = useMemo((): JointEventAttendeeRow[] => {
+    if (!detailIsJointEvent || participantSocietyIds.length < 2 || !societyId) return [];
+    return resolveEventAttendeesForDisplay({
+      isJoint: true,
+      regs: allEventRegistrations,
+      guests: allGuests,
+      activeSocietyId: societyId,
+      participantSocietyIds,
+      societyIdToName: jointSocietyIdToName,
+      attendingMembersOnly: true,
+    });
+  }, [
+    detailIsJointEvent,
+    participantSocietyIds,
+    societyId,
+    allEventRegistrations,
+    allGuests,
+    jointSocietyIdToName,
+  ]);
+
   const attendanceSummary = useMemo(() => {
+    if (detailIsJointEvent && participantSocietyIds.length >= 2) {
+      const summary = summarizeJointEventAttendees(jointEventAttendeeRows);
+      return {
+        inCount: summary.memberCount,
+        outCount: 0,
+        paidCount: summary.paidCount,
+        guestCount: summary.guestCount,
+      };
+    }
     const inCount = registrations.filter((r) => r.status === "in").length;
     const outCount = registrations.filter((r) => r.status === "out").length;
     const paidCount = registrations.filter((r) => r.paid).length;
-    return { inCount, outCount, paidCount };
-  }, [registrations]);
+    return { inCount, outCount, paidCount, guestCount };
+  }, [detailIsJointEvent, participantSocietyIds, jointEventAttendeeRows, registrations, guestCount]);
 
   const canViewTeeSheet = useMemo(() => {
     if (!event?.teeTimePublishedAt || !event.society_id || !societyId) return false;
@@ -521,9 +591,10 @@ export default function EventOverviewScreen() {
               </AppText>
             </View>
           </View>
-          {guestCount > 0 ? (
+          {attendanceSummary.guestCount > 0 ? (
             <AppText variant="small" color="muted" style={{ marginTop: spacing.sm }}>
-              {guestCount} guest{guestCount === 1 ? "" : "s"} currently linked to this event.
+              {attendanceSummary.guestCount} guest{attendanceSummary.guestCount === 1 ? "" : "s"}
+              {detailIsJointEvent ? " across participating societies" : " currently linked to this event"}.
             </AppText>
           ) : null}
 
@@ -591,6 +662,45 @@ export default function EventOverviewScreen() {
             </>
           ) : null}
         </AppCard>
+
+        {detailIsJointEvent && jointEventAttendeeRows.length > 0 ? (
+          <AppCard>
+            <AppText variant="subheading" style={styles.cardTitle}>
+              Registered attendees
+            </AppText>
+            <AppText variant="small" color="secondary" style={{ marginBottom: spacing.sm }}>
+              All participating societies — payment is recorded per society.
+            </AppText>
+            {jointEventAttendeeRows.map((row) => (
+              <View
+                key={row.key}
+                style={{
+                  flexDirection: "row",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: spacing.sm,
+                  paddingVertical: spacing.xs,
+                  borderBottomWidth: StyleSheet.hairlineWidth,
+                  borderBottomColor: colors.borderLight,
+                }}
+              >
+                <AppText variant="body" style={{ flex: 1 }} numberOfLines={2}>
+                  {row.displayName}
+                </AppText>
+                <View style={{ alignItems: "flex-end", gap: spacing.xs }}>
+                  <StatusBadge
+                    label={row.paymentLabel}
+                    tone={row.sources.every((s) => s.paid) ? "success" : "warning"}
+                  />
+                  <StatusBadge
+                    label={row.sourceLabel}
+                    tone={row.societyBadge === "Dual" ? "info" : "neutral"}
+                  />
+                </View>
+              </View>
+            ))}
+          </AppCard>
+        ) : null}
 
         <AppCard>
           <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm, flexWrap: "wrap", marginBottom: spacing.xs }}>

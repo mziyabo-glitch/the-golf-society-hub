@@ -69,7 +69,6 @@ import {
   addMemberToEventAsAdmin,
   filterRegistrationsForActiveSocietyMembers,
   isOperationalEventRegistration,
-  scopeEventRegistrations,
   removeEventParticipant,
   type EventRegistration,
 } from "@/lib/db_supabase/eventRegistrationRepo";
@@ -97,7 +96,11 @@ import {
   isJointEventFromMeta,
 } from "@/lib/jointEventAccess";
 import { buildSocietyIdToNameMap } from "@/lib/jointEventSocietyLabel";
-import { mergeJointEventSignups } from "@/lib/jointEventSignups";
+import {
+  resolveEventAttendeesForDisplay,
+  type JointEventAttendeeRow,
+} from "@/lib/jointEventAttendeeVisibility";
+import type { JointEventRegistrationRow } from "@/lib/jointEventSignups";
 import { getEventRsvpInviteShareMessage } from "@/lib/appConfig";
 import { shareViaWhatsAppOrFallback } from "@/lib/eventInviteLink";
 import { getEventGuests, setEventGuestPaid, type EventGuest } from "@/lib/db_supabase/eventGuestRepo";
@@ -449,6 +452,7 @@ export default function ManageEventScreen() {
   const [registrationsRefreshing, setRegistrationsRefreshing] = useState(false);
   const [societyGuestCount, setSocietyGuestCount] = useState(0);
   const [societyGuests, setSocietyGuests] = useState<EventGuest[]>([]);
+  const [eventGuestsAll, setEventGuestsAll] = useState<EventGuest[]>([]);
   const [guestDuplicateExtraRows, setGuestDuplicateExtraRows] = useState(0);
 
   const hostSocietyId = event?.society_id ?? societyId ?? null;
@@ -733,6 +737,7 @@ export default function ManageEventScreen() {
       ]);
       setRegistrations(regs);
       setActiveSocietyMembers(mems);
+      setEventGuestsAll(guests);
       const sg = guests.filter((g) => String(g.society_id) === String(societyId));
       setSocietyGuests(sg);
       setSocietyGuestCount(sg.length);
@@ -787,6 +792,27 @@ export default function ManageEventScreen() {
     () => new Map(activeSocietyMembers.map((m) => [m.id, m])),
     [activeSocietyMembers],
   );
+
+  /** Joint visibility: augment active-society members with RPC member fields for other clubs. */
+  const jointMemberByIdForRegs = useMemo(() => {
+    const m = new Map(memberByIdForRegs);
+    if (!detailIsJointEvent) return m;
+    for (const r of registrations) {
+      const mid = String(r.member_id);
+      if (m.has(mid)) continue;
+      const row = r as JointEventRegistrationRow;
+      m.set(mid, {
+        id: mid,
+        society_id: String(r.society_id),
+        user_id: row.user_id ?? null,
+        email: row.member_email ?? undefined,
+        name: row.member_name ?? undefined,
+        display_name: row.member_display_name ?? undefined,
+        displayName: row.member_display_name ?? row.member_name ?? undefined,
+      });
+    }
+    return m;
+  }, [memberByIdForRegs, registrations, detailIsJointEvent]);
   const activeMemberIdSet = useMemo(
     () => new Set(activeSocietyMembers.map((m) => m.id)),
     [activeSocietyMembers],
@@ -1048,25 +1074,32 @@ export default function ManageEventScreen() {
     [jointParticipatingSocieties],
   );
 
-  const mergedJointSignups = useMemo(() => {
+  const jointEventAttendeeRows = useMemo((): JointEventAttendeeRow[] => {
     if (!detailIsJointEvent || participantSocietyIdsForAccess.length < 2) return [];
-    const scoped = scopeEventRegistrations(registrations, {
-      kind: "joint_participants",
+    return resolveEventAttendeesForDisplay({
+      isJoint: true,
+      regs: registrations,
+      guests: eventGuestsAll.map((g) => ({
+        id: g.id,
+        society_id: g.society_id,
+        name: g.name,
+        paid: g.paid,
+      })),
+      activeSocietyId: societyId ?? "",
       participantSocietyIds: participantSocietyIdsForAccess,
+      societyIdToName: jointSocietyIdToName,
+      membersById: jointMemberByIdForRegs,
+      attendingMembersOnly: true,
     });
-    return mergeJointEventSignups(scoped, jointSocietyIdToName, memberByIdForRegs);
   }, [
     detailIsJointEvent,
     participantSocietyIdsForAccess,
     registrations,
+    eventGuestsAll,
+    societyId,
     jointSocietyIdToName,
-    memberByIdForRegs,
+    jointMemberByIdForRegs,
   ]);
-
-  const mergedJointAttendingSignups = useMemo(
-    () => mergedJointSignups.filter((row) => row.registrations.some((r) => r.status === "in")),
-    [mergedJointSignups],
-  );
 
   const teeSheetEligibleCount = buckets.confirmedPaid.length + guestConfirmedPaid.length;
   const pendingPaymentCount =
@@ -2475,12 +2508,12 @@ export default function ManageEventScreen() {
           <AppText variant="small" color="secondary" style={[styles.cardBodyText, { marginBottom: spacing.sm }]}>
             All participating societies — one row per person. Payment actions below remain society-scoped.
           </AppText>
-          {mergedJointAttendingSignups.length === 0 ? (
+          {jointEventAttendeeRows.length === 0 ? (
             <AppText variant="small" color="muted">
               No confirmed signups yet across participating societies.
             </AppText>
           ) : (
-            mergedJointAttendingSignups.map((row) => (
+            jointEventAttendeeRows.map((row) => (
               <View
                 key={row.key}
                 style={{
@@ -2496,10 +2529,16 @@ export default function ManageEventScreen() {
                 <AppText variant="body" style={{ flex: 1 }} numberOfLines={2}>
                   {row.displayName}
                 </AppText>
-                <StatusBadge
-                  label={row.societyBadge}
-                  tone={row.societyBadge === "Dual" ? "info" : "neutral"}
-                />
+                <View style={{ alignItems: "flex-end", gap: spacing.xs }}>
+                  <StatusBadge
+                    label={row.paymentLabel}
+                    tone={row.sources.every((s) => s.paid) ? "success" : "warning"}
+                  />
+                  <StatusBadge
+                    label={row.sourceLabel}
+                    tone={row.societyBadge === "Dual" ? "info" : "neutral"}
+                  />
+                </View>
               </View>
             ))
           )}

@@ -34,12 +34,17 @@ import { getMySinbooks, type SinbookWithParticipants } from "@/lib/db_supabase/s
 import {
   getMyRegistration,
   getEventRegistrations,
+  getJointEventRegistrations,
   scopeEventRegistrations,
   summarizeEventRegistrations,
   markMePaid,
   type EventRegistration,
 } from "@/lib/db_supabase/eventRegistrationRepo";
 import { getEventGuests } from "@/lib/db_supabase/eventGuestRepo";
+import {
+  resolveEventAttendeesForDisplay,
+  summarizeJointEventAttendees,
+} from "@/lib/jointEventAttendeeVisibility";
 import {
   listEventPrizePoolResults,
   listEventPrizePools,
@@ -580,21 +585,43 @@ export function useHomeDashboard() {
     let cancelled = false;
     void (async () => {
       try {
+        const participantIds = (nextEvent?.participant_society_ids ?? []).filter(Boolean);
         const [regs, guests] = await Promise.all([
-          getEventRegistrations(nextEventId),
+          nextEventIsJoint && participantIds.length >= 2
+            ? getJointEventRegistrations(nextEventId)
+            : getEventRegistrations(nextEventId),
           getEventGuests(nextEventId),
         ]);
         if (cancelled) return;
-        const scopedRegs = nextEventIsJoint
-          ? scopeEventRegistrations(regs, { kind: "joint_home", activeSocietyId: societyId })
-          : scopeEventRegistrations(regs, {
-              kind: "standard",
-              hostSocietyId: nextEvent.society_id ?? societyId,
-            });
+        if (nextEventIsJoint && participantIds.length >= 2) {
+          const societyIdToName = buildSocietyIdToNameMap(
+            participantIds.map((id) => ({ society_id: id })),
+          );
+          const rows = resolveEventAttendeesForDisplay({
+            isJoint: true,
+            regs,
+            guests,
+            activeSocietyId: societyId,
+            participantSocietyIds: participantIds,
+            societyIdToName,
+            attendingMembersOnly: true,
+          });
+          const summary = summarizeJointEventAttendees(rows);
+          setNextEventAttendance({
+            attendingCount: summary.memberCount,
+            guestCount: summary.guestCount,
+          });
+          return;
+        }
+        const scopedRegs = scopeEventRegistrations(regs, {
+          kind: "standard",
+          hostSocietyId: nextEvent.society_id ?? societyId,
+        });
         const summary = summarizeEventRegistrations(scopedRegs);
+        const scopedGuests = guests.filter((g) => String(g.society_id) === String(societyId));
         setNextEventAttendance({
           attendingCount: summary.attendingCount,
-          guestCount: Array.isArray(guests) ? guests.length : 0,
+          guestCount: scopedGuests.length,
         });
       } catch {
         if (!cancelled) setNextEventAttendance({ attendingCount: 0, guestCount: 0 });

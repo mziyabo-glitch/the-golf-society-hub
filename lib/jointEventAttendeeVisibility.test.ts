@@ -1,0 +1,233 @@
+import { describe, expect, it, vi } from "vitest";
+
+vi.stubGlobal("__DEV__", false);
+
+import type { EventRegistration } from "@/lib/db_supabase/eventRegistrationRepo";
+import {
+  resolveEventAttendeesForDisplay,
+  summarizeJointEventAttendees,
+} from "@/lib/jointEventAttendeeVisibility";
+import {
+  formatJointAttendeePaymentLabel,
+  formatJointAttendeeSourceLabel,
+  resolveJointEventAttendees,
+  type JointAttendeeSource,
+  type JointEventRegistrationRow,
+} from "@/lib/jointEventSignups";
+
+const M4 = "society-m4";
+const ZGS = "society-zgs";
+const HOST = M4;
+const societyMap = new Map<string, string>([
+  [M4, "M4"],
+  [ZGS, "ZGS"],
+]);
+
+function reg(
+  partial: Partial<JointEventRegistrationRow> & {
+    member_id: string;
+    society_id: string;
+  },
+): JointEventRegistrationRow {
+  return {
+    id: `reg-${partial.member_id}-${partial.society_id}`,
+    event_id: "event-1",
+    status: "in",
+    paid: false,
+    amount_paid_pence: 0,
+    paid_at: null,
+    marked_by_member_id: null,
+    created_at: "2026-01-01T00:00:00Z",
+    updated_at: "2026-01-01T00:00:00Z",
+    ...partial,
+  };
+}
+
+function guest(partial: {
+  id: string;
+  society_id: string;
+  name: string;
+  paid?: boolean;
+}) {
+  return {
+    id: partial.id,
+    society_id: partial.society_id,
+    name: partial.name,
+    paid: partial.paid ?? false,
+    event_id: "event-1",
+    attendee_type: "guest" as const,
+    sex: null as const,
+    handicap_index: null,
+    created_at: "2026-01-01T00:00:00Z",
+    updated_at: "2026-01-01T00:00:00Z",
+  };
+}
+
+describe("formatJointAttendeeSourceLabel", () => {
+  it("labels M4 member and ZGS guest", () => {
+    const m4Member: JointAttendeeSource[] = [
+      { societyId: M4, societyName: "M4", kind: "member", paid: true },
+    ];
+    const zgsGuest: JointAttendeeSource[] = [
+      { societyId: ZGS, societyName: "ZGS", kind: "guest", paid: true },
+    ];
+    expect(formatJointAttendeeSourceLabel(m4Member)).toBe("M4 Member");
+    expect(formatJointAttendeeSourceLabel(zgsGuest)).toBe("ZGS Guest");
+  });
+
+  it("labels dual member with representative society", () => {
+    const dual: JointAttendeeSource[] = [
+      { societyId: M4, societyName: "M4", kind: "member", paid: true },
+      { societyId: ZGS, societyName: "ZGS", kind: "member", paid: true },
+    ];
+    expect(formatJointAttendeeSourceLabel(dual, { representativeSocietyId: M4 })).toBe(
+      "Dual / registered via M4",
+    );
+  });
+});
+
+describe("formatJointAttendeePaymentLabel", () => {
+  it("shows single Paid or Unpaid when uniform", () => {
+    expect(
+      formatJointAttendeePaymentLabel([{ societyId: M4, societyName: "M4", kind: "member", paid: true }]),
+    ).toBe("Paid");
+    expect(
+      formatJointAttendeePaymentLabel([{ societyId: ZGS, societyName: "ZGS", kind: "member", paid: false }]),
+    ).toBe("Unpaid");
+  });
+
+  it("shows per-society payment when mixed", () => {
+    expect(
+      formatJointAttendeePaymentLabel([
+        { societyId: M4, societyName: "M4", kind: "member", paid: true },
+        { societyId: ZGS, societyName: "ZGS", kind: "member", paid: false },
+      ]),
+    ).toBe("Paid via M4 / Unpaid via ZGS");
+  });
+});
+
+describe("resolveJointEventAttendees", () => {
+  it("ZGS viewer sees M4 paid and unpaid members on joint event", () => {
+    const rows = resolveJointEventAttendees(
+      [
+        reg({ member_id: "m4-paid", society_id: M4, member_name: "Brian Dube", paid: true }),
+        reg({ member_id: "m4-unpaid", society_id: M4, member_name: "M4 Owes", paid: false }),
+        reg({ member_id: "zgs-a", society_id: ZGS, member_name: "ZGS Player", paid: true }),
+      ],
+      [],
+      societyMap,
+    );
+    const m4Paid = rows.find((r) => r.displayName === "Brian Dube");
+    const m4Unpaid = rows.find((r) => r.displayName === "M4 Owes");
+    expect(m4Paid?.paymentLabel).toBe("Paid");
+    expect(m4Paid?.sourceLabel).toBe("M4 Member");
+    expect(m4Unpaid?.paymentLabel).toBe("Unpaid");
+    expect(m4Unpaid?.sourceLabel).toBe("M4 Member");
+    expect(rows.some((r) => r.displayName === "ZGS Player")).toBe(true);
+  });
+
+  it("M4 viewer sees ZGS paid and unpaid members on joint event", () => {
+    const rows = resolveJointEventAttendees(
+      [
+        reg({ member_id: "zgs-paid", society_id: ZGS, member_name: "John Smith", paid: true }),
+        reg({ member_id: "zgs-unpaid", society_id: ZGS, member_name: "ZGS Due", paid: false }),
+      ],
+      [],
+      societyMap,
+    );
+    expect(rows.find((r) => r.displayName === "John Smith")?.paymentLabel).toBe("Paid");
+    expect(rows.find((r) => r.displayName === "John Smith")?.sourceLabel).toBe("ZGS Member");
+    expect(rows.find((r) => r.displayName === "ZGS Due")?.paymentLabel).toBe("Unpaid");
+  });
+
+  it("shows ZGS guest as ZGS Guest", () => {
+    const rows = resolveJointEventAttendees(
+      [],
+      [{ id: "g1", society_id: ZGS, name: "Taka Guest", paid: true }],
+      societyMap,
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0].sourceLabel).toBe("ZGS Guest");
+    expect(rows[0].paymentLabel).toBe("Paid");
+  });
+
+  it("shows M4 guest as M4 Guest", () => {
+    const rows = resolveJointEventAttendees(
+      [],
+      [{ id: "g2", society_id: M4, name: "M4 Visitor", paid: false }],
+      societyMap,
+    );
+    expect(rows[0].sourceLabel).toBe("M4 Guest");
+    expect(rows[0].paymentLabel).toBe("Unpaid");
+  });
+
+  it("shows dual member once with mixed payment labels", () => {
+    const rows = resolveJointEventAttendees(
+      [
+        reg({ member_id: "m4-dual", society_id: M4, user_id: "uid-dual", paid: true }),
+        reg({ member_id: "zgs-dual", society_id: ZGS, user_id: "uid-dual", paid: false }),
+      ],
+      [],
+      societyMap,
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0].societyBadge).toBe("Dual");
+    expect(rows[0].paymentLabel).toBe("Paid via M4 / Unpaid via ZGS");
+    expect(rows[0].sourceLabel).toMatch(/^Dual \/ registered via/);
+  });
+});
+
+describe("resolveEventAttendeesForDisplay", () => {
+  const jointRegs = [
+    reg({ member_id: "m4-a", society_id: M4, member_name: "M4 Only" }),
+    reg({ member_id: "zgs-b", society_id: ZGS, member_name: "ZGS Only" }),
+  ];
+
+  it("joint event exposes merged attendees from both societies", () => {
+    const rows = resolveEventAttendeesForDisplay({
+      isJoint: true,
+      regs: jointRegs,
+      guests: [],
+      activeSocietyId: ZGS,
+      participantSocietyIds: [M4, ZGS],
+      societyIdToName: societyMap,
+    });
+    expect(rows.map((r) => r.displayName).sort()).toEqual(["M4 Only", "ZGS Only"]);
+  });
+
+  it("non-joint event does not expose other society attendees", () => {
+    const rows = resolveEventAttendeesForDisplay({
+      isJoint: false,
+      regs: jointRegs as EventRegistration[],
+      guests: [
+        guest({ id: "g-m4", society_id: M4, name: "Host Guest" }),
+        guest({ id: "g-zgs", society_id: ZGS, name: "Away Guest" }),
+      ],
+      activeSocietyId: HOST,
+      participantSocietyIds: [HOST],
+      societyIdToName: societyMap,
+    });
+    expect(rows.map((r) => r.displayName)).toEqual(["Host Guest", "M4 Only"]);
+    expect(rows.some((r) => r.displayName === "ZGS Only")).toBe(false);
+    expect(rows.some((r) => r.displayName === "Away Guest")).toBe(false);
+  });
+});
+
+describe("summarizeJointEventAttendees", () => {
+  it("counts merged members and guests", () => {
+    const rows = resolveJointEventAttendees(
+      [
+        reg({ member_id: "m1", society_id: M4, member_name: "A", paid: true }),
+        reg({ member_id: "m2", society_id: ZGS, member_name: "B", paid: false }),
+      ],
+      [{ id: "g1", society_id: ZGS, name: "Guest", paid: true }],
+      societyMap,
+    );
+    const summary = summarizeJointEventAttendees(rows);
+    expect(summary.attendeeCount).toBe(3);
+    expect(summary.memberCount).toBe(2);
+    expect(summary.guestCount).toBe(1);
+    expect(summary.paidCount).toBe(2);
+    expect(summary.unpaidCount).toBe(1);
+  });
+});
