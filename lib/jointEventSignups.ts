@@ -15,6 +15,11 @@ function isOperationalRegistration(r: EventRegistration): boolean {
   return r.removed_from_event_at == null || String(r.removed_from_event_at).trim() === "";
 }
 
+/** Same rule as eventRegistrationRepo.isTeeSheetEligible (kept here to avoid RN import in tests). */
+export function isJointRegistrationTeeSheetEligible(r: EventRegistration): boolean {
+  return isOperationalRegistration(r) && r.status === "in" && r.paid === true;
+}
+
 export type JointEventRegistrationRow = EventRegistration & {
   user_id?: string | null;
   member_email?: string | null;

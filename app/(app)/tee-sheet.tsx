@@ -39,6 +39,7 @@ import {
 } from "@/lib/db_supabase/eventRepo";
 import {
   getEventRegistrations,
+  getJointEventRegistrations,
   getTeeSheetEligibleMemberIdsForEvent,
   getJointTeeSheetCandidatePoolForEvent,
   type EventRegistration,
@@ -583,7 +584,7 @@ export default function TeeSheetScreen() {
               const persistedLd = formatHoleNumbers(ev.longest_drive_holes ?? []);
 
               logStep("joint_regs");
-              const regs = await getEventRegistrations(eventId);
+              const regs = await getJointEventRegistrations(eventId);
 
               const participantSocietyIds =
                 teeSheet.participating_societies?.map((s) => s.society_id).filter(Boolean) ?? [];

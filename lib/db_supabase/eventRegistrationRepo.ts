@@ -240,8 +240,7 @@ export async function getJointTeeSheetCandidatePoolForEvent(
     kind: "joint_participants",
     participantSocietyIds,
   });
-  const allowed = new Set<string>(JOINT_TEE_SHEET_CANDIDATE_STATUSES);
-  const filtered = scoped.filter((r) => r.paid === true && allowed.has(String(r.status)));
+  const filtered = scoped.filter(isTeeSheetEligible);
   const rawMemberIds = filtered.map((r) => String(r.member_id)).filter(Boolean);
   const uniqueRaw = [...new Set(rawMemberIds)];
 

@@ -367,7 +367,7 @@ export async function exportEventPaymentPdf(opts: {
     unpaidEntries: opts.unpaidEntries,
     generatedAt: formatPdfGenerationTimestamp(),
     jointThisSocietyNote: opts.isJointEvent
-      ? "Joint event: other participating societies are not listed here."
+      ? "Joint event: all participating societies are included."
       : null,
   };
 

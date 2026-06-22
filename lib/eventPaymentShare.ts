@@ -1,6 +1,7 @@
 /**
  * Society-scoped payment list text for ManCo share actions (WhatsApp-first).
  * Paid = same rule as tee sheet: status "in" AND paid (see isTeeSheetEligible).
+ * Joint events: use buildPaymentShareListsFromJointAttendees in jointEventAttendeeVisibility.
  */
 
 import type { EventRegistration } from "@/lib/db_supabase/eventRegistrationRepo";

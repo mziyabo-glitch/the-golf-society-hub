@@ -97,8 +97,7 @@ import {
 } from "@/lib/jointEventAccess";
 import { buildSocietyIdToNameMap } from "@/lib/jointEventSocietyLabel";
 import {
-  resolveEventAttendeesForDisplay,
-  type JointEventAttendeeRow,
+  resolveJointEventRegistrations,
 } from "@/lib/jointEventAttendeeVisibility";
 import type { JointEventRegistrationRow } from "@/lib/jointEventSignups";
 import { getEventRsvpInviteShareMessage } from "@/lib/appConfig";
@@ -504,9 +503,9 @@ export default function ManageEventScreen() {
     return formatSharePaymentHeader({
       eventName: event?.name ?? "Event",
       dateShort,
-      jointThisSocietyOnly: detailIsJointEvent,
+      jointThisSocietyOnly: false,
     });
-  }, [event?.name, event?.date, detailIsJointEvent]);
+  }, [event?.name, event?.date]);
 
   const canShowMemberTeeSheetCta = useMemo(() => {
     if (!event?.society_id || !societyId) return false;
@@ -924,9 +923,52 @@ export default function ManageEventScreen() {
     [societyGuests],
   );
 
-  const paymentShareLists = useMemo(
+  const jointSocietyIdToName = useMemo(
     () =>
-      buildPaymentShareNameLists({
+      buildSocietyIdToNameMap(
+        jointParticipatingSocieties.map((s) => ({
+          society_id: s.society_id,
+          society_name: s.society_name,
+        })),
+      ),
+    [jointParticipatingSocieties],
+  );
+
+  const jointRegistrationResolution = useMemo(() => {
+    if (!detailIsJointEvent || participantSocietyIdsForAccess.length < 2) return null;
+    return resolveJointEventRegistrations({
+      isJoint: true,
+      regs: registrations,
+      guests: eventGuestsAll.map((g) => ({
+        id: g.id,
+        society_id: g.society_id,
+        name: g.name,
+        paid: g.paid,
+      })),
+      activeSocietyId: societyId ?? "",
+      participantSocietyIds: participantSocietyIdsForAccess,
+      societyIdToName: jointSocietyIdToName,
+      membersById: jointMemberByIdForRegs,
+      attendingMembersOnly: true,
+    });
+  }, [
+    detailIsJointEvent,
+    participantSocietyIdsForAccess,
+    registrations,
+    eventGuestsAll,
+    societyId,
+    jointSocietyIdToName,
+    jointMemberByIdForRegs,
+  ]);
+
+  const jointEventAttendeeRows = jointRegistrationResolution?.attendeeRows ?? [];
+
+  const paymentShareLists = useMemo(
+    () => {
+      if (jointRegistrationResolution) {
+        return jointRegistrationResolution.paymentLists;
+      }
+      return buildPaymentShareNameLists({
         confirmedPaidRegs: buckets.confirmedPaid,
         pendingPaymentRegs: buckets.pendingPayment,
         captainPickMemberIds,
@@ -934,8 +976,10 @@ export default function ManageEventScreen() {
         unpaidGuestNames: guestPendingPayment.map((g) => g.name),
         nameForReg: registrationMemberDisplayName,
         nameForMemberId: memberNameForAttendeeId,
-      }),
+      });
+    },
     [
+      jointRegistrationResolution,
       buckets.confirmedPaid,
       buckets.pendingPayment,
       captainPickMemberIds,
@@ -1063,45 +1107,11 @@ export default function ManageEventScreen() {
     };
   }, [societyPageRegistrations, membersForRsvpStats, societyGuestCount]);
 
-  const jointSocietyIdToName = useMemo(
-    () =>
-      buildSocietyIdToNameMap(
-        jointParticipatingSocieties.map((s) => ({
-          society_id: s.society_id,
-          society_name: s.society_name,
-        })),
-      ),
-    [jointParticipatingSocieties],
-  );
-
-  const jointEventAttendeeRows = useMemo((): JointEventAttendeeRow[] => {
-    if (!detailIsJointEvent || participantSocietyIdsForAccess.length < 2) return [];
-    return resolveEventAttendeesForDisplay({
-      isJoint: true,
-      regs: registrations,
-      guests: eventGuestsAll.map((g) => ({
-        id: g.id,
-        society_id: g.society_id,
-        name: g.name,
-        paid: g.paid,
-      })),
-      activeSocietyId: societyId ?? "",
-      participantSocietyIds: participantSocietyIdsForAccess,
-      societyIdToName: jointSocietyIdToName,
-      membersById: jointMemberByIdForRegs,
-      attendingMembersOnly: true,
-    });
-  }, [
-    detailIsJointEvent,
-    participantSocietyIdsForAccess,
-    registrations,
-    eventGuestsAll,
-    societyId,
-    jointSocietyIdToName,
-    jointMemberByIdForRegs,
-  ]);
-
-  const teeSheetEligibleCount = buckets.confirmedPaid.length + guestConfirmedPaid.length;
+  const teeSheetEligibleCount =
+    jointRegistrationResolution != null
+      ? jointRegistrationResolution.teeSheetEligibleMemberIds.length +
+        eventGuestsAll.filter((g) => g.paid === true).length
+      : buckets.confirmedPaid.length + guestConfirmedPaid.length;
   const pendingPaymentCount =
     buckets.pendingPayment.length + captainPickMemberIds.length + guestPendingPayment.length;
   const activeRosterCount =
@@ -3267,7 +3277,9 @@ export default function ManageEventScreen() {
             Payment lists
           </AppText>
           <AppText variant="small" color="secondary" style={[styles.cardBodyText, { marginBottom: spacing.sm }]}>
-            This society only on joint events. Names use the same paid / unpaid rules as Payments &amp; finance above.
+            {detailIsJointEvent
+              ? "All participating societies — names include society source (member/guest). Same paid/unpaid rules as Payments & finance."
+              : "Names use the same paid / unpaid rules as Payments & finance above."}
             {detailIsJointEvent ? ` ${JOINT_EVENT_CHIP_SHORT}` : ""}
           </AppText>
           <View

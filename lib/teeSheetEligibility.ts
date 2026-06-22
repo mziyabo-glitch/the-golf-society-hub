@@ -10,6 +10,7 @@ import { getJointEventTeeSheet } from "@/lib/db_supabase/jointEventRepo";
 import type { JointEventTeeSheet, JointEventTeeSheetEntry, JointEventTeeSheetGroup } from "@/lib/db_supabase/jointEventTypes";
 import {
   getEventRegistrations,
+  getJointEventRegistrations,
   isTeeSheetEligible,
   scopeEventRegistrations,
   type EventRegistration,
@@ -114,7 +115,10 @@ export async function fetchEligibleMemberIdsForTeeSheetSave(opts: {
   participantSocietyIds: string[];
   hostSocietyId: string | null;
 }): Promise<Set<string>> {
-  const regs = await getEventRegistrations(opts.eventId);
+  const regs =
+    opts.isJoint && opts.participantSocietyIds.length > 0
+      ? await getJointEventRegistrations(opts.eventId)
+      : await getEventRegistrations(opts.eventId);
   if (opts.isJoint && opts.participantSocietyIds.length > 0) {
     return jointScopedRegsAndEligibleSet(regs, opts.participantSocietyIds).eligibleIds;
   }

@@ -5,6 +5,7 @@ vi.stubGlobal("__DEV__", false);
 import type { EventRegistration } from "@/lib/db_supabase/eventRegistrationRepo";
 import {
   resolveEventAttendeesForDisplay,
+  resolveJointEventRegistrations,
   summarizeJointEventAttendees,
 } from "@/lib/jointEventAttendeeVisibility";
 import {
@@ -210,6 +211,82 @@ describe("resolveEventAttendeesForDisplay", () => {
     expect(rows.map((r) => r.displayName)).toEqual(["Host Guest", "M4 Only"]);
     expect(rows.some((r) => r.displayName === "ZGS Only")).toBe(false);
     expect(rows.some((r) => r.displayName === "Away Guest")).toBe(false);
+  });
+});
+
+describe("resolveJointEventRegistrations", () => {
+  const jointRegs = [
+    reg({ member_id: "m4-paid", society_id: M4, member_name: "Brian Dube", paid: true }),
+    reg({ member_id: "m4-unpaid", society_id: M4, member_name: "M4 Owes", paid: false }),
+    reg({ member_id: "zgs-paid", society_id: ZGS, member_name: "John Smith", paid: true }),
+    reg({ member_id: "zgs-unpaid", society_id: ZGS, member_name: "ZGS Due", paid: false }),
+    reg({ member_id: "m4-dual", society_id: M4, user_id: "uid-dual", member_name: "Dual Member", paid: true }),
+    reg({ member_id: "zgs-dual", society_id: ZGS, user_id: "uid-dual", member_name: "Dual Member", paid: false }),
+  ];
+
+  const jointOpts = {
+    isJoint: true as const,
+    regs: jointRegs,
+    guests: [
+      { id: "g1", society_id: ZGS, name: "Taka Guest", paid: true },
+      { id: "g2", society_id: M4, name: "M4 Visitor", paid: false },
+    ],
+    activeSocietyId: ZGS,
+    participantSocietyIds: [M4, ZGS],
+    societyIdToName: societyMap,
+    attendingMembersOnly: true,
+  };
+
+  it("paid list includes M4 and ZGS fully paid members and guests", () => {
+    const { paymentLists } = resolveJointEventRegistrations(jointOpts);
+    const paid = paymentLists.paidNames.join(" ");
+    expect(paid).toContain("Brian Dube");
+    expect(paid).toContain("John Smith");
+    expect(paid).toContain("Taka Guest");
+    expect(paid).not.toContain("M4 Owes");
+    expect(paid).not.toContain("ZGS Due");
+  });
+
+  it("unpaid list includes M4 and ZGS unpaid members and guests", () => {
+    const { paymentLists } = resolveJointEventRegistrations(jointOpts);
+    const unpaid = paymentLists.unpaidNames.join(" ");
+    expect(unpaid).toContain("M4 Owes");
+    expect(unpaid).toContain("ZGS Due");
+    expect(unpaid).toContain("M4 Visitor");
+    expect(unpaid).toContain("Dual Member");
+  });
+
+  it("dual member appears once in unpaid with mixed payment preserved", () => {
+    const { paymentLists, attendeeRows } = resolveJointEventRegistrations(jointOpts);
+    const dualRows = attendeeRows.filter((r) => r.societyBadge === "Dual");
+    expect(dualRows).toHaveLength(1);
+    expect(dualRows[0].paymentLabel).toBe("Paid via M4 / Unpaid via ZGS");
+    const dualInUnpaid = paymentLists.unpaidNames.filter((n) => n.includes("Dual Member"));
+    expect(dualInUnpaid).toHaveLength(1);
+    expect(paymentLists.paidNames.some((n) => n.includes("Dual Member"))).toBe(false);
+  });
+
+  it("tee sheet eligible ids include paid from both societies, de-duped once", () => {
+    const { teeSheetEligibleMemberIds } = resolveJointEventRegistrations(jointOpts);
+    expect(teeSheetEligibleMemberIds).toContain("m4-paid");
+    expect(teeSheetEligibleMemberIds).toContain("zgs-paid");
+    expect(teeSheetEligibleMemberIds).toContain("m4-dual");
+    expect(teeSheetEligibleMemberIds).not.toContain("zgs-dual");
+    expect(new Set(teeSheetEligibleMemberIds).size).toBe(teeSheetEligibleMemberIds.length);
+  });
+
+  it("non-joint path stays society scoped", () => {
+    const { paymentLists } = resolveJointEventRegistrations({
+      ...jointOpts,
+      isJoint: false,
+      activeSocietyId: M4,
+      participantSocietyIds: [M4],
+      guests: [{ id: "g-zgs", society_id: ZGS, name: "Away Guest", paid: false }],
+    });
+    const names = [...paymentLists.paidNames, ...paymentLists.unpaidNames].join(" ");
+    expect(names).toContain("Brian Dube");
+    expect(names).not.toContain("John Smith");
+    expect(names).not.toContain("Away Guest");
   });
 });
 

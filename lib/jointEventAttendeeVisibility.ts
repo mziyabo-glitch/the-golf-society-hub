@@ -5,12 +5,14 @@
 import {
   resolveJointEventAttendees,
   summarizeJointEventAttendees,
+  isJointRegistrationTeeSheetEligible,
   type JointEventAttendeeRow,
   type JointEventGuestInput,
   type JointEventRegistrationRow,
 } from "@/lib/jointEventSignups";
 import type { EventRegistration } from "@/lib/db_supabase/eventRegistrationRepo";
 import type { MemberDoc } from "@/lib/db_supabase/memberRepo";
+import type { PaymentShareNameLists } from "@/lib/eventPaymentShare";
 
 export type ResolveEventAttendeesOpts = {
   isJoint: boolean;
@@ -71,6 +73,92 @@ export function resolveEventAttendeesForDisplay(
     opts.membersById,
     { attendingMembersOnly: opts.attendingMembersOnly },
   );
+}
+
+function formatJointAttendeeShareName(row: JointEventAttendeeRow): string {
+  const name = row.displayName.trim();
+  const src = row.sourceLabel.trim();
+  if (!src) return name;
+  return `${name} (${src})`;
+}
+
+/**
+ * Paid / unpaid / full-status lists for joint events (both participating societies, de-duped).
+ * Paid list: every source paid. Unpaid list: any source unpaid (mixed dual rows appear here only).
+ */
+export function buildPaymentShareListsFromJointAttendees(
+  rows: JointEventAttendeeRow[],
+): PaymentShareNameLists {
+  const uniqSort = (xs: string[]) => [...new Set(xs)].sort((a, b) => a.localeCompare(b));
+
+  const paidNames: string[] = [];
+  const unpaidNames: string[] = [];
+  const entries: PaymentShareNameLists["entries"] = [];
+
+  for (const row of rows) {
+    const name = formatJointAttendeeShareName(row);
+    const type = row.guestId ? ("guest" as const) : ("member" as const);
+    const allPaid = row.sources.every((s) => s.paid);
+    const anyUnpaid = row.sources.some((s) => !s.paid);
+
+    if (allPaid) {
+      paidNames.push(name);
+      entries.push({ name, status: "paid", type });
+    }
+    if (anyUnpaid) {
+      unpaidNames.push(name);
+      entries.push({ name, status: "unpaid", type });
+    }
+  }
+
+  entries.sort((a, b) => a.name.localeCompare(b.name));
+
+  return {
+    paidNames: uniqSort(paidNames),
+    unpaidNames: uniqSort(unpaidNames),
+    entries,
+  };
+}
+
+export type JointEventRegistrationResolution = {
+  attendeeRows: JointEventAttendeeRow[];
+  paymentLists: PaymentShareNameLists;
+  /** De-duped member ids with status in + paid in any participating society. */
+  teeSheetEligibleMemberIds: string[];
+};
+
+/** Member ids for tee sheet / PNG export — one per person, prefer paid+confirmed registration. */
+export function teeSheetEligibleMemberIdsFromJointAttendees(
+  rows: JointEventAttendeeRow[],
+): string[] {
+  const out: string[] = [];
+  const seenKeys = new Set<string>();
+
+  for (const row of rows) {
+    if (row.guestId) continue;
+    const eligibleReg = row.registrations.find(isJointRegistrationTeeSheetEligible);
+    if (!eligibleReg) continue;
+    if (seenKeys.has(row.key)) continue;
+    seenKeys.add(row.key);
+    out.push(String(eligibleReg.member_id));
+  }
+
+  return out;
+}
+
+/**
+ * Single resolver for joint-event paid / unpaid / full-status lists and tee-sheet eligibility.
+ * Non-joint events: use society-scoped buildPaymentShareNameLists instead.
+ */
+export function resolveJointEventRegistrations(
+  opts: ResolveEventAttendeesOpts,
+): JointEventRegistrationResolution {
+  const attendeeRows = resolveEventAttendeesForDisplay(opts);
+  return {
+    attendeeRows,
+    paymentLists: buildPaymentShareListsFromJointAttendees(attendeeRows),
+    teeSheetEligibleMemberIds: teeSheetEligibleMemberIdsFromJointAttendees(attendeeRows),
+  };
 }
 
 export { summarizeJointEventAttendees, type JointEventAttendeeRow };
