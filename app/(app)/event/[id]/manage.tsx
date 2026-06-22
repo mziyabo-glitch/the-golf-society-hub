@@ -102,7 +102,7 @@ import {
 import type { JointEventRegistrationRow } from "@/lib/jointEventSignups";
 import { getEventRsvpInviteShareMessage } from "@/lib/appConfig";
 import { shareViaWhatsAppOrFallback } from "@/lib/eventInviteLink";
-import { getEventGuests, setEventGuestPaid, type EventGuest } from "@/lib/db_supabase/eventGuestRepo";
+import { getEventGuests, removeEventGuestFromEvent, setEventGuestPaid, type EventGuest } from "@/lib/db_supabase/eventGuestRepo";
 import {
   formatRsvpDeadlineDisplay,
   getRsvpDeadlineDisplayTimeZone,
@@ -762,6 +762,26 @@ export default function ManageEventScreen() {
       confirmDestructive("Remove from event", msg, "Remove", async () => {
         try {
           await removeEventParticipant({ eventId, societyId, targetMemberId: memberId });
+          await invalidateCache(`event:${eventId}:detail`);
+          await invalidateCache(`event:${eventId}:registrations`);
+          await invalidateCachePrefix(`society:${societyId}:`);
+          await loadRegistrations();
+          await loadEvent();
+        } catch (e: unknown) {
+          showAlert("Could not remove", e instanceof Error ? e.message : "Try again.");
+        }
+      });
+    },
+    [eventId, societyId, loadRegistrations, loadEvent],
+  );
+
+  const handleRemoveGuestFromEvent = useCallback(
+    (guest: EventGuest) => {
+      if (!eventId || !societyId) return;
+      const msg = `Remove ${guest.name} from this event for your society? They disappear from players, payments, and tee workflows.`;
+      confirmDestructive("Remove from event", msg, "Remove", async () => {
+        try {
+          await removeEventGuestFromEvent({ eventId, societyId, guestId: guest.id });
           await invalidateCache(`event:${eventId}:detail`);
           await invalidateCache(`event:${eventId}:registrations`);
           await invalidateCachePrefix(`society:${societyId}:`);
@@ -2731,26 +2751,47 @@ export default function ManageEventScreen() {
 
               <View style={styles.paidRightCol}>
                 <StatusBadge label={PaymentPill.paid} tone="success" />
-                {canManagePayments && (
-                  <Pressable
-                    disabled={payBusy === `guest:${g.id}`}
-                    onPress={() => {
-                      void handleToggleGuestPaid(g);
-                    }}
-                    hitSlop={10}
-                    style={({ pressed }) => [
-                      styles.paidToggleBtn,
-                      {
-                        borderColor: colors.border,
-                        opacity: pressed ? 0.6 : payBusy === `guest:${g.id}` ? 0.4 : 1,
-                      },
-                    ]}
-                  >
-                    <AppText variant="captionBold" color="primary">
-                      Mark unpaid
-                    </AppText>
-                  </Pressable>
-                )}
+                {canManagePayments || canManageEventRoster ? (
+                  <View style={styles.paidActionsStack}>
+                    {canManagePayments ? (
+                      <Pressable
+                        disabled={payBusy === `guest:${g.id}`}
+                        onPress={() => {
+                          void handleToggleGuestPaid(g);
+                        }}
+                        hitSlop={10}
+                        style={({ pressed }) => [
+                          styles.paidToggleBtn,
+                          {
+                            borderColor: colors.border,
+                            opacity: pressed ? 0.6 : payBusy === `guest:${g.id}` ? 0.4 : 1,
+                          },
+                        ]}
+                      >
+                        <AppText variant="captionBold" color="primary">
+                          Mark unpaid
+                        </AppText>
+                      </Pressable>
+                    ) : null}
+                    {canManageEventRoster ? (
+                      <Pressable
+                        hitSlop={10}
+                        onPress={() => handleRemoveGuestFromEvent(g)}
+                        style={({ pressed }) => [
+                          styles.paidToggleBtn,
+                          {
+                            borderColor: colors.border,
+                            opacity: pressed ? 0.88 : 1,
+                          },
+                        ]}
+                      >
+                        <AppText variant="captionBold" style={{ color: colors.error }}>
+                          Remove from event
+                        </AppText>
+                      </Pressable>
+                    ) : null}
+                  </View>
+                ) : null}
               </View>
             </View>
           ))}
@@ -2834,26 +2875,47 @@ export default function ManageEventScreen() {
 
               <View style={styles.paidRightCol}>
                 <StatusBadge label={PaymentPill.unpaid} tone="warning" />
-                {canManagePayments && (
-                  <Pressable
-                    disabled={payBusy === `guest:${g.id}`}
-                    onPress={() => {
-                      void handleToggleGuestPaid(g);
-                    }}
-                    hitSlop={10}
-                    style={({ pressed }) => [
-                      styles.paidToggleBtn,
-                      {
-                        borderColor: colors.border,
-                        opacity: pressed ? 0.6 : payBusy === `guest:${g.id}` ? 0.4 : 1,
-                      },
-                    ]}
-                  >
-                    <AppText variant="captionBold" color="primary">
-                      Mark paid
-                    </AppText>
-                  </Pressable>
-                )}
+                {canManagePayments || canManageEventRoster ? (
+                  <View style={styles.paidActionsStack}>
+                    {canManagePayments ? (
+                      <Pressable
+                        disabled={payBusy === `guest:${g.id}`}
+                        onPress={() => {
+                          void handleToggleGuestPaid(g);
+                        }}
+                        hitSlop={10}
+                        style={({ pressed }) => [
+                          styles.paidToggleBtn,
+                          {
+                            borderColor: colors.border,
+                            opacity: pressed ? 0.6 : payBusy === `guest:${g.id}` ? 0.4 : 1,
+                          },
+                        ]}
+                      >
+                        <AppText variant="captionBold" color="primary">
+                          Mark paid
+                        </AppText>
+                      </Pressable>
+                    ) : null}
+                    {canManageEventRoster ? (
+                      <Pressable
+                        hitSlop={10}
+                        onPress={() => handleRemoveGuestFromEvent(g)}
+                        style={({ pressed }) => [
+                          styles.paidToggleBtn,
+                          {
+                            borderColor: colors.border,
+                            opacity: pressed ? 0.88 : 1,
+                          },
+                        ]}
+                      >
+                        <AppText variant="captionBold" style={{ color: colors.error }}>
+                          Remove from event
+                        </AppText>
+                      </Pressable>
+                    ) : null}
+                  </View>
+                ) : null}
               </View>
             </View>
           ))}

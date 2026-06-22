@@ -113,20 +113,43 @@ export async function updateEventGuest(
   return data ? normalizeGuestRow(data) : null;
 }
 
-export async function deleteEventGuest(guestId: string): Promise<void> {
-  const { error } = await supabase
-    .from("event_guests")
-    .delete()
-    .eq("id", guestId);
+/**
+ * Captain/Treasurer/Secretary/Handicapper: remove a society guest from the event
+ * (hard delete; strips tee_group_players guest-* rows). Society must match guest.society_id.
+ */
+export async function removeEventGuestFromEvent(opts: {
+  eventId: string;
+  societyId: string;
+  guestId: string;
+}): Promise<void> {
+  const { error } = await supabase.rpc("remove_event_guest", {
+    p_event_id: opts.eventId,
+    p_society_id: opts.societyId,
+    p_target_guest_id: opts.guestId,
+  });
 
   if (error) {
-    console.error("[eventGuestRepo] deleteEventGuest:", error.message);
-    throw new Error(error.message || "Failed to delete guest");
+    console.error("[eventGuestRepo] remove_event_guest RPC:", error.message);
+    const msg = error.message || "";
+    if (msg.includes("function public.remove_event_guest") && msg.includes("does not exist")) {
+      throw new Error(
+        "Database is out of date: apply migration 20260622120000_remove_event_guest_rpc.sql, then retry.",
+      );
+    }
+    throw new Error(msg || "Failed to remove guest from event");
   }
 }
 
-/** Delete guest row scoped to event for extra safety in event screens. */
-export async function deleteEventGuestForEvent(guestId: string, eventId: string): Promise<void> {
+/** @deprecated Prefer removeEventGuestFromEvent (RPC cleans tee sheet rows). */
+export async function deleteEventGuestForEvent(
+  guestId: string,
+  eventId: string,
+  societyId?: string,
+): Promise<void> {
+  if (societyId?.trim()) {
+    await removeEventGuestFromEvent({ eventId, societyId, guestId });
+    return;
+  }
   const { error } = await supabase
     .from("event_guests")
     .delete()

@@ -418,7 +418,7 @@ export async function addMemberToEventAsAdmin(opts: {
 /**
  * Captain/Treasurer/Secretary/Handicapper: remove a society member from all operational
  * event views for the active society (soft-remove registration; strip player_ids / joint entries / tee slots).
- * Guests: use deleteEventGuestForEvent (eventGuestRepo) — not handled here.
+ * Guests: use removeEventGuestFromEvent (eventGuestRepo) — not handled here.
  */
 export async function removeEventParticipant(opts: {
   eventId: string;

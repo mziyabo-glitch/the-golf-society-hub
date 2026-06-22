@@ -216,21 +216,32 @@ export function buildEventPaymentPdfHtml(p: EventPaymentPdfPayload): string {
     vertical-align: middle;
     page-break-inside: avoid;
     break-inside: avoid;
+    overflow: hidden;
   }
   .sheet-table tbody td:last-child { border-right: none; }
   .sheet-table tbody tr:nth-child(even) { background: #fafafa; }
   .status-paid { color: #166534; font-weight: 600; }
   .status-unpaid { color: #b45309; font-weight: 600; }
   .sheet-table tr { page-break-inside: avoid; break-inside: avoid; }
-  .col-no { width: 10%; white-space: nowrap; font-weight: 700; }
+  .col-no { width: 8%; white-space: nowrap; font-weight: 700; }
   .col-name {
-    width: 56%;
+    width: 40%;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
   }
-  .col-type { width: 12%; white-space: nowrap; }
-  .col-status { width: 22%; white-space: nowrap; }
+  .col-type {
+    width: 28%;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .col-status {
+    width: 24%;
+    white-space: normal;
+    overflow: hidden;
+    word-break: break-word;
+  }
   .empty {
     text-align: center;
     color: #666;

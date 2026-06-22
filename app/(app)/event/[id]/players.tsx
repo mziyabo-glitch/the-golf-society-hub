@@ -35,7 +35,7 @@ import { getJointMetaForEventIds, getJointEventDetail, syncJointEventEntries } f
 import {
   getEventGuests,
   addEventGuest,
-  deleteEventGuestForEvent,
+  removeEventGuestFromEvent,
   updateEventGuest,
   type EventGuest,
 } from "@/lib/db_supabase/eventGuestRepo";
@@ -384,10 +384,10 @@ export default function EventPlayersScreen() {
   }
 
   async function handleDeleteGuest(g: EventGuest) {
+    if (!eventId || !societyId) return;
     const runDelete = async () => {
       try {
-        if (!eventId) return;
-        await deleteEventGuestForEvent(g.id, eventId);
+        await removeEventGuestFromEvent({ eventId, societyId, guestId: g.id });
         await loadGuests();
         await refreshGuestDependentViews();
       } catch (e: any) {
