@@ -403,6 +403,101 @@ function attendeeRowFromGuest(
   };
 }
 
+function signupIdentityFromAttendeeRow(row: JointEventAttendeeRow): SignupIdentity {
+  if (row.registrations.length > 0) {
+    const rep = row.registrations[0] as JointEventRegistrationRow;
+    return signupIdentityFromRegistration(rep);
+  }
+  const src = row.sources[0];
+  return {
+    memberId: row.guestId ? `guest:${row.guestId}` : row.key,
+    societyId: src?.societyId ?? "",
+    user_id: null,
+    email: null,
+    name: row.displayName,
+  };
+}
+
+function mergeAttendeeRows(
+  primary: JointEventAttendeeRow,
+  secondary: JointEventAttendeeRow,
+): JointEventAttendeeRow {
+  const sources = [...primary.sources, ...secondary.sources];
+  const repSocietyId =
+    primary.registrations.length > 0
+      ? representativeSocietyIdFromMergedSignup({
+          key: primary.key,
+          displayName: primary.displayName,
+          societyBadge: primary.societyBadge,
+          societyIds: primary.sources.map((s) => s.societyId),
+          mergedMemberIds: primary.registrations.map((r) => String(r.member_id)),
+          representativeMemberId: String(primary.registrations[0]?.member_id ?? ""),
+          registrations: primary.registrations,
+        })
+      : (primary.sources[0]?.societyId ?? secondary.sources[0]?.societyId ?? null);
+
+  const societyIds = [...new Set(sources.map((s) => s.societyId).filter(Boolean))];
+  const societyBadge =
+    societyIds.length >= 2
+      ? "Dual"
+      : jointSocietySourceBadge(societyIds, new Map(sources.map((s) => [s.societyId, s.societyName])));
+
+  return {
+    key: primary.key,
+    displayName: primary.displayName,
+    sources,
+    sourceLabel: formatJointAttendeeSourceLabel(sources, {
+      representativeSocietyId: repSocietyId,
+    }),
+    paymentLabel: formatJointAttendeePaymentLabel(sources),
+    societyBadge,
+    registrations: primary.registrations,
+    guestId: secondary.guestId ?? primary.guestId,
+  };
+}
+
+/** Merge guest rows that share user_id, email, or normalized name (e.g. duplicate guest signups). */
+function dedupeGuestAttendeeRows(guestRows: JointEventAttendeeRow[]): JointEventAttendeeRow[] {
+  if (guestRows.length <= 1) return guestRows;
+
+  const identities = guestRows.map(signupIdentityFromAttendeeRow);
+  const clusters = clusterSignupIdentities(identities);
+  const out: JointEventAttendeeRow[] = [];
+
+  for (const cluster of clusters) {
+    const clusterIds = new Set(cluster.map((c) => c.memberId));
+    const rows = guestRows.filter((r) => clusterIds.has(signupIdentityFromAttendeeRow(r).memberId));
+    if (rows.length === 0) continue;
+    let merged = rows[0];
+    for (let i = 1; i < rows.length; i++) {
+      merged = mergeAttendeeRows(merged, rows[i]);
+    }
+    out.push(merged);
+  }
+
+  return out;
+}
+
+function mergeGuestsIntoMemberRows(
+  memberRows: JointEventAttendeeRow[],
+  guestRows: JointEventAttendeeRow[],
+): { memberRows: JointEventAttendeeRow[]; orphanGuests: JointEventAttendeeRow[] } {
+  const usedGuestKeys = new Set<string>();
+  const mergedMembers = memberRows.map((member) => {
+    const memberIdentity = signupIdentityFromAttendeeRow(member);
+    const match = guestRows.find((guest) => {
+      if (usedGuestKeys.has(guest.key)) return false;
+      return shouldMergeSignupIdentities(memberIdentity, signupIdentityFromAttendeeRow(guest));
+    });
+    if (!match) return member;
+    usedGuestKeys.add(match.key);
+    return mergeAttendeeRows(member, match);
+  });
+
+  const orphanGuests = guestRows.filter((g) => !usedGuestKeys.has(g.key));
+  return { memberRows: mergedMembers, orphanGuests };
+}
+
 /**
  * Merge member registrations + guest rows into one attendee list per person (members de-duped).
  * Input should already be scoped to participating societies for joint events.
@@ -424,7 +519,15 @@ export function resolveJointEventAttendees(
   const memberRows = merged.map((row) => attendeeRowFromMergedSignup(row, societyIdToName));
   const guestRows = guests.map((g) => attendeeRowFromGuest(g, societyIdToName));
 
-  return [...memberRows, ...guestRows].sort((a, b) => a.displayName.localeCompare(b.displayName));
+  const { memberRows: withGuestsMerged, orphanGuests } = mergeGuestsIntoMemberRows(
+    memberRows,
+    guestRows,
+  );
+  const dedupedGuests = dedupeGuestAttendeeRows(orphanGuests);
+
+  return [...withGuestsMerged, ...dedupedGuests].sort((a, b) =>
+    a.displayName.localeCompare(b.displayName),
+  );
 }
 
 /** Summary counts from merged joint attendee rows (one per person + guests). */

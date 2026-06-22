@@ -288,6 +288,57 @@ describe("resolveJointEventRegistrations", () => {
     expect(names).not.toContain("John Smith");
     expect(names).not.toContain("Away Guest");
   });
+
+  it("exportRows include society source labels for PDF full-status", () => {
+    const { paymentLists } = resolveJointEventRegistrations(jointOpts);
+    expect(paymentLists.exportRows?.length).toBeGreaterThan(0);
+    const brian = paymentLists.exportRows?.find((r) => r.name === "Brian Dube");
+    expect(brian?.typeLabel).toBe("M4 Member");
+    expect(brian?.statusLabel).toBe("Paid");
+    const taka = paymentLists.exportRows?.find((r) => r.name === "Taka Guest");
+    expect(taka?.typeLabel).toBe("ZGS Guest");
+  });
+
+  it("merges paid member with unpaid guest when names match (Jade Muchando case)", () => {
+    const { attendeeRows, paymentLists } = resolveJointEventRegistrations({
+      ...jointOpts,
+      regs: [
+        reg({
+          member_id: "jade-m",
+          society_id: M4,
+          member_name: "Jade Muchando",
+          paid: true,
+        }),
+      ],
+      guests: [{ id: "g-jade", society_id: M4, name: "jade muchando", paid: false }],
+    });
+    const jadeRows = attendeeRows.filter((r) =>
+      r.displayName.toLowerCase().includes("jade muchando"),
+    );
+    expect(jadeRows).toHaveLength(1);
+    expect(jadeRows[0].paymentLabel).toMatch(/Paid/);
+    expect(jadeRows[0].paymentLabel).toMatch(/Unpaid/);
+    const exportJade = paymentLists.exportRows?.filter((r) =>
+      r.name.toLowerCase().includes("jade muchando"),
+    );
+    expect(exportJade).toHaveLength(1);
+  });
+
+  it("dedupes duplicate guest rows with same name (Aulia Alfazema case)", () => {
+    const { attendeeRows, paymentLists } = resolveJointEventRegistrations({
+      ...jointOpts,
+      regs: [],
+      guests: [
+        { id: "g-a1", society_id: ZGS, name: "Aulia Alfazema", paid: false },
+        { id: "g-a2", society_id: ZGS, name: "Aulia Alfazema", paid: false },
+      ],
+    });
+    const auliaRows = attendeeRows.filter((r) =>
+      r.displayName.toLowerCase().includes("aulia alfazema"),
+    );
+    expect(auliaRows).toHaveLength(1);
+    expect(paymentLists.exportRows?.filter((r) => r.name === "Aulia Alfazema")).toHaveLength(1);
+  });
 });
 
 describe("summarizeJointEventAttendees", () => {

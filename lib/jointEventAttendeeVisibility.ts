@@ -12,7 +12,7 @@ import {
 } from "@/lib/jointEventSignups";
 import type { EventRegistration } from "@/lib/db_supabase/eventRegistrationRepo";
 import type { MemberDoc } from "@/lib/db_supabase/memberRepo";
-import type { PaymentShareNameLists } from "@/lib/eventPaymentShare";
+import type { PaymentShareExportRow, PaymentShareNameLists } from "@/lib/eventPaymentShare";
 
 export type ResolveEventAttendeesOpts = {
   isJoint: boolean;
@@ -82,6 +82,19 @@ function formatJointAttendeeShareName(row: JointEventAttendeeRow): string {
   return `${name} (${src})`;
 }
 
+/** One export row per de-duped attendee (PDF / full-status table). */
+export function buildPaymentExportRowsFromJointAttendees(
+  rows: JointEventAttendeeRow[],
+): PaymentShareExportRow[] {
+  return rows
+    .map((row) => ({
+      name: row.displayName.trim(),
+      typeLabel: row.sourceLabel.trim() || (row.guestId ? "Guest" : "Member"),
+      statusLabel: row.paymentLabel.trim() || "Unpaid",
+    }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
 /**
  * Paid / unpaid / full-status lists for joint events (both participating societies, de-duped).
  * Paid list: every source paid. Unpaid list: any source unpaid (mixed dual rows appear here only).
@@ -98,16 +111,17 @@ export function buildPaymentShareListsFromJointAttendees(
   for (const row of rows) {
     const name = formatJointAttendeeShareName(row);
     const type = row.guestId ? ("guest" as const) : ("member" as const);
+    const typeLabel = row.sourceLabel.trim() || (type === "guest" ? "Guest" : "Member");
     const allPaid = row.sources.every((s) => s.paid);
     const anyUnpaid = row.sources.some((s) => !s.paid);
 
     if (allPaid) {
       paidNames.push(name);
-      entries.push({ name, status: "paid", type });
+      entries.push({ name, status: "paid", type, typeLabel });
     }
     if (anyUnpaid) {
       unpaidNames.push(name);
-      entries.push({ name, status: "unpaid", type });
+      entries.push({ name, status: "unpaid", type, typeLabel });
     }
   }
 
@@ -117,6 +131,7 @@ export function buildPaymentShareListsFromJointAttendees(
     paidNames: uniqSort(paidNames),
     unpaidNames: uniqSort(unpaidNames),
     entries,
+    exportRows: buildPaymentExportRowsFromJointAttendees(rows),
   };
 }
 

@@ -726,7 +726,10 @@ export default function ManageEventScreen() {
     try {
       setRegistrationsRefreshing(true);
       const jointMeta = await getJointMetaForEventIds([eventId]);
-      const isJoint = jointMeta.get(eventId)?.is_joint_event === true;
+      const isJoint =
+        detailIsJointEvent ||
+        participantSocietyIdsForAccess.length >= 2 ||
+        jointMeta.get(eventId)?.is_joint_event === true;
       const [regs, mems, guests] = await Promise.all([
         isJoint
           ? getJointEventRegistrations(eventId, { includeRemoved: true })
@@ -750,7 +753,7 @@ export default function ManageEventScreen() {
     } finally {
       setRegistrationsRefreshing(false);
     }
-  }, [eventId, societyId]);
+  }, [eventId, societyId, detailIsJointEvent, participantSocietyIdsForAccess.length]);
 
   const handleRemoveMemberFromEvent = useCallback(
     (memberId: string, displayName: string) => {
@@ -1037,10 +1040,11 @@ export default function ManageEventScreen() {
         unpaidNames: paymentShareLists.unpaidNames,
         paidEntries: paymentShareLists.entries
           .filter((e) => e.status === "paid")
-          .map((e) => ({ name: e.name, type: e.type })),
+          .map((e) => ({ name: e.name, type: e.type, typeLabel: e.typeLabel })),
         unpaidEntries: paymentShareLists.entries
           .filter((e) => e.status === "unpaid")
-          .map((e) => ({ name: e.name, type: e.type })),
+          .map((e) => ({ name: e.name, type: e.type, typeLabel: e.typeLabel })),
+        exportRows: paymentShareLists.exportRows,
         isJointEvent: detailIsJointEvent,
       });
     } catch (e: unknown) {
@@ -1056,6 +1060,7 @@ export default function ManageEventScreen() {
     paymentShareLists.paidNames,
     paymentShareLists.unpaidNames,
     paymentShareLists.entries,
+    paymentShareLists.exportRows,
     detailIsJointEvent,
   ]);
 

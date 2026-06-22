@@ -7,6 +7,12 @@
 import type { EventRegistration } from "@/lib/db_supabase/eventRegistrationRepo";
 import { isTeeSheetEligible } from "@/lib/db_supabase/eventRegistrationRepo";
 
+export type PaymentShareExportRow = {
+  name: string;
+  typeLabel: string;
+  statusLabel: string;
+};
+
 export type PaymentShareNameLists = {
   paidNames: string[];
   unpaidNames: string[];
@@ -14,7 +20,10 @@ export type PaymentShareNameLists = {
     name: string;
     status: "paid" | "unpaid";
     type: "member" | "guest";
+    typeLabel?: string;
   }[];
+  /** One row per de-duped person for PDF / full-status export (joint events). */
+  exportRows?: PaymentShareExportRow[];
 };
 
 export function buildPaymentShareNameLists(args: {
