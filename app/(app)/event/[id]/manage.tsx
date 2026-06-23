@@ -1161,7 +1161,7 @@ export default function ManageEventScreen() {
   const teeSheetEligibleCount =
     jointRegistrationResolution != null
       ? jointRegistrationResolution.teeSheetEligibleMemberIds.length +
-        eventGuestsAll.filter((g) => g.paid === true).length
+        jointRegistrationResolution.teeSheetEligibleGuestPlayerIds.length
       : buckets.confirmedPaid.length + guestConfirmedPaid.length;
   const pendingPaymentCount =
     buckets.pendingPayment.length + captainPickMemberIds.length + guestPendingPayment.length;

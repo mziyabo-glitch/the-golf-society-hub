@@ -15,6 +15,9 @@ import {
   scopeEventRegistrations,
   type EventRegistration,
 } from "@/lib/db_supabase/eventRegistrationRepo";
+import { getEventGuests } from "@/lib/db_supabase/eventGuestRepo";
+import type { MemberDoc } from "@/lib/db_supabase/memberRepo";
+import { resolveJointEventRegistrations } from "@/lib/jointEventAttendeeVisibility";
 
 export function eligibleMemberIdSetFromRegistrations(regs: EventRegistration[]): Set<string> {
   return new Set(regs.filter(isTeeSheetEligible).map((r) => String(r.member_id)));
@@ -114,14 +117,35 @@ export async function fetchEligibleMemberIdsForTeeSheetSave(opts: {
   isJoint: boolean;
   participantSocietyIds: string[];
   hostSocietyId: string | null;
+  societyIdToName?: Map<string, string>;
+  participatingMembers?: MemberDoc[];
 }): Promise<Set<string>> {
-  const regs =
-    opts.isJoint && opts.participantSocietyIds.length > 0
-      ? await getJointEventRegistrations(opts.eventId)
-      : await getEventRegistrations(opts.eventId);
   if (opts.isJoint && opts.participantSocietyIds.length > 0) {
-    return jointScopedRegsAndEligibleSet(regs, opts.participantSocietyIds).eligibleIds;
+    const [regs, guests] = await Promise.all([
+      getJointEventRegistrations(opts.eventId),
+      getEventGuests(opts.eventId),
+    ]);
+    const societyIdToName =
+      opts.societyIdToName ??
+      new Map(opts.participantSocietyIds.filter(Boolean).map((id) => [id, id] as const));
+    const { teeSheetEligibleMemberIds } = resolveJointEventRegistrations({
+      isJoint: true,
+      regs,
+      guests: guests.map((g) => ({
+        id: g.id,
+        society_id: g.society_id,
+        name: g.name,
+        paid: g.paid,
+      })),
+      activeSocietyId: opts.participantSocietyIds[0] ?? "",
+      participantSocietyIds: opts.participantSocietyIds,
+      societyIdToName,
+      participatingMembers: opts.participatingMembers,
+      attendingMembersOnly: true,
+    });
+    return new Set(teeSheetEligibleMemberIds);
   }
+  const regs = await getEventRegistrations(opts.eventId);
   const scoped = scopeEventRegistrations(regs, { kind: "standard", hostSocietyId: opts.hostSocietyId });
   return eligibleMemberIdSetFromRegistrations(scoped);
 }

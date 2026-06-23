@@ -44,7 +44,7 @@ import {
   getJointTeeSheetCandidatePoolForEvent,
   type EventRegistration,
 } from "@/lib/db_supabase/eventRegistrationRepo";
-import { getTeeSheetEligibleGuestsForEvent, type EventGuest } from "@/lib/db_supabase/eventGuestRepo";
+import { getTeeSheetEligibleGuestsForEvent, getEventGuests, type EventGuest } from "@/lib/db_supabase/eventGuestRepo";
 import {
   upsertTeeSheet,
   clearPersistedTeeSheet,
@@ -68,7 +68,7 @@ import {
   type JointEventTeeSheetReplaceRow,
 } from "@/lib/db_supabase/jointEventRepo";
 import type { JointEventTeeSheet, JointEventTeeSheetEntry } from "@/lib/db_supabase/jointEventTypes";
-import { getMembersBySocietyId, getJointEventMemberVisibility, getManCoRoleHolders, type MemberDoc, type Gender, type ManCoDetails } from "@/lib/db_supabase/memberRepo";
+import { getMembersBySocietyId, getMembersByIds, getJointEventMemberVisibility, getManCoRoleHolders, type MemberDoc, type Gender, type ManCoDetails } from "@/lib/db_supabase/memberRepo";
 import { getPermissionsForMember } from "@/lib/rbac";
 import {
   type TeeBlock,
@@ -588,6 +588,12 @@ export default function TeeSheetScreen() {
 
               const participantSocietyIds =
                 teeSheet.participating_societies?.map((s) => s.society_id).filter(Boolean) ?? [];
+              const societyIdToName = buildSocietyIdToNameMap(
+                (teeSheet.participating_societies ?? []).map((s) => ({
+                  society_id: s.society_id,
+                  society_name: s.society_name,
+                })),
+              );
               logStep("joint_members", { societyCount: participantSocietyIds.length });
               let pooled: MemberDoc[] = [];
               try {
@@ -601,16 +607,55 @@ export default function TeeSheetScreen() {
                 );
                 pooled = lists.flat();
               }
-              const candidate = await getJointTeeSheetCandidatePoolForEvent(eventId, participantSocietyIds);
-              const candidateIdSet = new Set(candidate.memberIds);
-              const candidateMembers = pooled.filter((m) => candidateIdSet.has(String(m.id)));
+              const allGuests = await getEventGuests(eventId);
+              const candidate = await getJointTeeSheetCandidatePoolForEvent(
+                eventId,
+                participantSocietyIds,
+                {
+                  societyIdToName,
+                  participatingMembers: pooled,
+                  guests: allGuests,
+                },
+              );
+              const memberById = new Map(pooled.map((m) => [String(m.id), m]));
+              const missingMemberIds = candidate.memberIds.filter((id) => !memberById.has(String(id)));
+              if (missingMemberIds.length > 0) {
+                const extra = await getMembersByIds(missingMemberIds);
+                for (const m of extra) {
+                  if (m?.id) memberById.set(String(m.id), m);
+                }
+              }
+              for (const r of regs) {
+                const mid = String(r.member_id);
+                if (!mid || memberById.has(mid)) continue;
+                memberById.set(mid, {
+                  id: mid,
+                  society_id: String(r.society_id),
+                  user_id: (r as { user_id?: string | null }).user_id ?? null,
+                  email: (r as { member_email?: string | null }).member_email ?? undefined,
+                  name: (r as { member_name?: string | null }).member_name ?? undefined,
+                  display_name: (r as { member_display_name?: string | null }).member_display_name ?? undefined,
+                  displayName:
+                    (r as { member_display_name?: string | null }).member_display_name ??
+                    (r as { member_name?: string | null }).member_name ??
+                    undefined,
+                });
+              }
+              const candidateMembers = candidate.memberIds
+                .map((id) => memberById.get(String(id)))
+                .filter((m): m is MemberDoc => !!m);
+              const eligibleGuestIdSet = new Set(
+                candidate.guestPlayerIds
+                  .map((pid) => parseGuestPlayerId(pid))
+                  .filter((gid): gid is string => gid != null),
+              );
+              const jointPaidGuests = allGuests.filter((g) => eligibleGuestIdSet.has(g.id));
 
               logStep("joint_guests");
-              const [jointGuestAssignments, jointPaidGuests, jointPolicyRows] = await Promise.all([
+              const [jointGuestAssignments, jointPolicyRows] = await Promise.all([
                 getTeeGroupPlayers(eventId).then((rows) =>
                   rows.filter((r) => parseGuestPlayerId(String(r.player_id)) != null),
                 ),
-                getTeeSheetEligibleGuestsForEvent(eventId),
                 getTeeSheetPlayerPolicy(eventId),
               ]);
 

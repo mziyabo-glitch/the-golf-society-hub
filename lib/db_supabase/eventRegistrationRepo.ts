@@ -9,12 +9,11 @@
 //
 // Joint: per-society rows in `event_registrations`; shared tee/entries use joint repos elsewhere.
 
-import {
-  dedupeJointSignupMemberIds,
-  type JointEventRegistrationRow,
-} from "@/lib/jointEventSignups";
+import { type JointEventRegistrationRow } from "@/lib/jointEventSignups";
+import { resolveJointEventRegistrations } from "@/lib/jointEventAttendeeVisibility";
+import { getEventGuests, type EventGuest } from "@/lib/db_supabase/eventGuestRepo";
+import type { MemberDoc } from "@/lib/db_supabase/memberRepo";
 import { supabase } from "@/lib/supabase";
-import { getMembersByIds } from "@/lib/db_supabase/memberRepo";
 
 /** Cache or legacy callers may pass a non-array; never throw on `.filter`. */
 function ensureRegistrationArray(regs: unknown): EventRegistration[] {
@@ -222,52 +221,57 @@ export async function getConfirmedPlayersForEvent(eventId: string): Promise<stri
 export const JOINT_TEE_SHEET_CANDIDATE_STATUSES = ["in", "maybe", "pending"] as const;
 
 /**
- * Joint tee-sheet candidate pool:
- * - scoped to participating societies
- * - paid only
- * - RSVP status in JOINT_TEE_SHEET_CANDIDATE_STATUSES
+ * Joint tee-sheet candidate pool — same merged resolver as Paid/Unpaid/Full status
+ * (`resolveJointEventRegistrations`): host + guest society, paid + confirmed, de-duped.
  */
 export async function getJointTeeSheetCandidatePoolForEvent(
   eventId: string,
   participantSocietyIds: string[],
+  opts?: {
+    societyIdToName?: Map<string, string>;
+    participatingMembers?: MemberDoc[];
+    guests?: EventGuest[];
+  },
 ): Promise<{
   memberIds: string[];
+  guestPlayerIds: string[];
   registrations: EventRegistration[];
   supportedStatuses: readonly string[];
 }> {
-  const regs = await getJointEventRegistrations(eventId);
+  const [regs, guests] = await Promise.all([
+    getJointEventRegistrations(eventId),
+    opts?.guests ? Promise.resolve(opts.guests) : getEventGuests(eventId),
+  ]);
+
+  const societyIdToName =
+    opts?.societyIdToName ??
+    new Map(participantSocietyIds.filter(Boolean).map((id) => [id, id] as const));
+
+  const resolution = resolveJointEventRegistrations({
+    isJoint: true,
+    regs,
+    guests: guests.map((g) => ({
+      id: g.id,
+      society_id: g.society_id,
+      name: g.name,
+      paid: g.paid,
+    })),
+    activeSocietyId: participantSocietyIds[0] ?? "",
+    participantSocietyIds,
+    societyIdToName,
+    participatingMembers: opts?.participatingMembers,
+    attendingMembersOnly: true,
+  });
+
   const scoped = scopeEventRegistrations(regs, {
     kind: "joint_participants",
     participantSocietyIds,
   });
   const filtered = scoped.filter(isTeeSheetEligible);
-  const rawMemberIds = filtered.map((r) => String(r.member_id)).filter(Boolean);
-  const uniqueRaw = [...new Set(rawMemberIds)];
-
-  const memberRows = await getMembersByIds(uniqueRaw);
-  const jointRegs = regs as JointEventRegistrationRow[];
-  const augmentById = new Map(memberRows.map((m) => [String(m.id), m]));
-  for (const r of jointRegs) {
-    const mid = String(r.member_id);
-    if (augmentById.has(mid)) continue;
-    augmentById.set(mid, {
-      id: mid,
-      society_id: String(r.society_id),
-      user_id: r.user_id ?? null,
-      email: r.member_email ?? undefined,
-      name: r.member_name ?? undefined,
-      display_name: r.member_display_name ?? undefined,
-      displayName: r.member_display_name ?? r.member_name ?? undefined,
-    });
-  }
-  const membersForDedupe = [...augmentById.values()];
-  const societyIdToName = new Map(
-    participantSocietyIds.filter(Boolean).map((id) => [id, id] as const),
-  );
-  const memberIds = dedupeJointSignupMemberIds(uniqueRaw, membersForDedupe, societyIdToName);
 
   return {
-    memberIds,
+    memberIds: resolution.teeSheetEligibleMemberIds,
+    guestPlayerIds: resolution.teeSheetEligibleGuestPlayerIds,
     registrations: filtered,
     supportedStatuses: JOINT_TEE_SHEET_CANDIDATE_STATUSES,
   };

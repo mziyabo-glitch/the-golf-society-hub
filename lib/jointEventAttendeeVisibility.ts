@@ -146,6 +146,8 @@ export type JointEventRegistrationResolution = {
   paymentLists: PaymentShareNameLists;
   /** De-duped member ids with status in + paid in any participating society. */
   teeSheetEligibleMemberIds: string[];
+  /** De-duped `guest-{id}` player ids for paid guest-only rows. */
+  teeSheetEligibleGuestPlayerIds: string[];
 };
 
 /** Member ids for tee sheet / PNG export — one per person, prefer paid+confirmed registration. */
@@ -156,12 +158,29 @@ export function teeSheetEligibleMemberIdsFromJointAttendees(
   const seenKeys = new Set<string>();
 
   for (const row of rows) {
-    if (row.guestId) continue;
     const eligibleReg = row.registrations.find(isJointRegistrationTeeSheetEligible);
     if (!eligibleReg) continue;
     if (seenKeys.has(row.key)) continue;
     seenKeys.add(row.key);
     out.push(String(eligibleReg.member_id));
+  }
+
+  return out;
+}
+
+/** Paid guest-only rows — `guest-{event_guests.id}` (see tee_group_players.player_id). */
+export function teeSheetEligibleGuestPlayerIdsFromJointAttendees(
+  rows: JointEventAttendeeRow[],
+): string[] {
+  const out: string[] = [];
+  const seenKeys = new Set<string>();
+
+  for (const row of rows) {
+    if (!row.guestId || row.registrations.length > 0) continue;
+    if (!row.sources.some((s) => s.paid)) continue;
+    if (seenKeys.has(row.key)) continue;
+    seenKeys.add(row.key);
+    out.push(`guest-${String(row.guestId)}`);
   }
 
   return out;
@@ -179,6 +198,7 @@ export function resolveJointEventRegistrations(
     attendeeRows,
     paymentLists: buildPaymentShareListsFromJointAttendees(attendeeRows),
     teeSheetEligibleMemberIds: teeSheetEligibleMemberIdsFromJointAttendees(attendeeRows),
+    teeSheetEligibleGuestPlayerIds: teeSheetEligibleGuestPlayerIdsFromJointAttendees(attendeeRows),
   };
 }
 

@@ -303,6 +303,69 @@ describe("resolveJointEventRegistrations", () => {
     expect(new Set(teeSheetEligibleMemberIds).size).toBe(teeSheetEligibleMemberIds.length);
   });
 
+  it("tee sheet guest player ids include paid M4 and ZGS guests only", () => {
+    const { teeSheetEligibleGuestPlayerIds } = resolveJointEventRegistrations(jointOpts);
+    expect(teeSheetEligibleGuestPlayerIds).toContain("guest-g1");
+    expect(teeSheetEligibleGuestPlayerIds).not.toContain("guest-g2");
+    expect(teeSheetEligibleGuestPlayerIds).toHaveLength(1);
+  });
+
+  it("unpaid members and guests are not tee sheet eligible by default", () => {
+    const { teeSheetEligibleMemberIds, teeSheetEligibleGuestPlayerIds } =
+      resolveJointEventRegistrations(jointOpts);
+    expect(teeSheetEligibleMemberIds).not.toContain("m4-unpaid");
+    expect(teeSheetEligibleMemberIds).not.toContain("zgs-unpaid");
+    expect(teeSheetEligibleGuestPlayerIds).not.toContain("guest-g2");
+  });
+
+  it("dual member paid in one society appears once in tee sheet pool", () => {
+    const { teeSheetEligibleMemberIds } = resolveJointEventRegistrations({
+      ...jointOpts,
+      regs: [
+        reg({ member_id: "m4-dual", society_id: M4, user_id: "uid-dual", paid: true }),
+        reg({ member_id: "zgs-dual", society_id: ZGS, user_id: "uid-dual", paid: false }),
+      ],
+      guests: [],
+    });
+    expect(teeSheetEligibleMemberIds).toEqual(["m4-dual"]);
+  });
+
+  it("non-joint tee sheet eligibility stays society scoped", () => {
+    const { teeSheetEligibleMemberIds, teeSheetEligibleGuestPlayerIds } =
+      resolveJointEventRegistrations({
+        ...jointOpts,
+        isJoint: false,
+        activeSocietyId: M4,
+        participantSocietyIds: [M4],
+        guests: [
+          { id: "g-m4", society_id: M4, name: "Host Guest", paid: true },
+          { id: "g-zgs", society_id: ZGS, name: "Away Guest", paid: true },
+        ],
+      });
+    expect(teeSheetEligibleMemberIds).toContain("m4-paid");
+    expect(teeSheetEligibleMemberIds).not.toContain("zgs-paid");
+    expect(teeSheetEligibleGuestPlayerIds).toContain("guest-g-m4");
+    expect(teeSheetEligibleGuestPlayerIds).not.toContain("guest-g-zgs");
+  });
+
+  it("paid member merged with unpaid guest is tee sheet eligible as member", () => {
+    const { teeSheetEligibleMemberIds, teeSheetEligibleGuestPlayerIds } =
+      resolveJointEventRegistrations({
+        ...jointOpts,
+        regs: [
+          reg({
+            member_id: "jade-m",
+            society_id: M4,
+            member_name: "Jade Muchando",
+            paid: true,
+          }),
+        ],
+        guests: [{ id: "g-jade", society_id: M4, name: "jade muchando", paid: false }],
+      });
+    expect(teeSheetEligibleMemberIds).toEqual(["jade-m"]);
+    expect(teeSheetEligibleGuestPlayerIds).toEqual([]);
+  });
+
   it("non-joint path stays society scoped", () => {
     const { paymentLists } = resolveJointEventRegistrations({
       ...jointOpts,
