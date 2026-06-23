@@ -68,7 +68,7 @@ import {
   type JointEventTeeSheetReplaceRow,
 } from "@/lib/db_supabase/jointEventRepo";
 import type { JointEventTeeSheet, JointEventTeeSheetEntry } from "@/lib/db_supabase/jointEventTypes";
-import { getMembersBySocietyId, getMembersByIds, getJointEventMemberVisibility, getManCoRoleHolders, type MemberDoc, type Gender, type ManCoDetails } from "@/lib/db_supabase/memberRepo";
+import { getMembersBySocietyId, getMembersByIds, getJointEventMemberVisibility, getManCoRoleHolders, type MemberDoc, type Gender, type ManCoDetails, normalizeMemberDocId } from "@/lib/db_supabase/memberRepo";
 import { getPermissionsForMember } from "@/lib/rbac";
 import {
   type TeeBlock,
@@ -78,7 +78,7 @@ import {
   DEFAULT_ALLOWANCE,
 } from "@/lib/whs";
 import { parseHoleNumbers, formatHoleNumbers, calculateGroupSizes, sortPlayersByHandicap } from "@/lib/teeSheetGrouping";
-import { buildSocietyIdToNameMap } from "@/lib/jointEventSocietyLabel";
+import { hydrateJointTeeSheetMemberPool } from "@/lib/teeSheet/hydrateJointTeeSheetMemberPool";
 import { expandJointTeeSheetReplaceRowsForParticipatingSocieties } from "@/lib/jointPersonDedupe";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
 import { assertPngExportOnly } from "@/lib/share/pngExportGuard";
@@ -601,7 +601,7 @@ export default function TeeSheetScreen() {
               } catch {
                 pooled = [];
               }
-              if (pooled.length === 0) {
+              if (pooled.filter((m) => normalizeMemberDocId(m)).length === 0) {
                 const lists = await Promise.all(
                   participantSocietyIds.map((sid) => getMembersBySocietyId(sid)),
                 );
@@ -615,35 +615,15 @@ export default function TeeSheetScreen() {
                   societyIdToName,
                   participatingMembers: pooled,
                   guests: allGuests,
+                  registrations: regs,
                 },
               );
-              const memberById = new Map(pooled.map((m) => [String(m.id), m]));
-              const missingMemberIds = candidate.memberIds.filter((id) => !memberById.has(String(id)));
-              if (missingMemberIds.length > 0) {
-                const extra = await getMembersByIds(missingMemberIds);
-                for (const m of extra) {
-                  if (m?.id) memberById.set(String(m.id), m);
-                }
-              }
-              for (const r of regs) {
-                const mid = String(r.member_id);
-                if (!mid || memberById.has(mid)) continue;
-                memberById.set(mid, {
-                  id: mid,
-                  society_id: String(r.society_id),
-                  user_id: (r as { user_id?: string | null }).user_id ?? null,
-                  email: (r as { member_email?: string | null }).member_email ?? undefined,
-                  name: (r as { member_name?: string | null }).member_name ?? undefined,
-                  display_name: (r as { member_display_name?: string | null }).member_display_name ?? undefined,
-                  displayName:
-                    (r as { member_display_name?: string | null }).member_display_name ??
-                    (r as { member_name?: string | null }).member_name ??
-                    undefined,
-                });
-              }
-              const candidateMembers = candidate.memberIds
-                .map((id) => memberById.get(String(id)))
-                .filter((m): m is MemberDoc => !!m);
+              const candidateMembers = await hydrateJointTeeSheetMemberPool({
+                candidateMemberIds: candidate.memberIds,
+                pooledMembers: pooled,
+                registrations: regs,
+                fetchMembersByIds: getMembersByIds,
+              });
               const eligibleGuestIdSet = new Set(
                 candidate.guestPlayerIds
                   .map((pid) => parseGuestPlayerId(pid))

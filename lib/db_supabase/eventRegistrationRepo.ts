@@ -106,9 +106,10 @@ export async function getJointEventRegistrations(
       p_event_id: eventId,
     });
     if (error) {
-      if (__DEV__) {
-        console.warn("[eventRegRepo] get_joint_event_registrations RPC:", error.message);
-      }
+      console.warn(
+        "[eventRegRepo] get_joint_event_registrations RPC unavailable; falling back to society-scoped SELECT (joint tee sheet may miss co-participant paid players until migration 167 is applied):",
+        error.message,
+      );
       return getEventRegistrations(eventId, opts) as JointEventRegistrationRow[];
     }
 
@@ -231,6 +232,8 @@ export async function getJointTeeSheetCandidatePoolForEvent(
     societyIdToName?: Map<string, string>;
     participatingMembers?: MemberDoc[];
     guests?: EventGuest[];
+    /** Pre-fetched joint registrations (avoids duplicate RPC round-trip). */
+    registrations?: EventRegistration[] | JointEventRegistrationRow[];
   },
 ): Promise<{
   memberIds: string[];
@@ -239,7 +242,9 @@ export async function getJointTeeSheetCandidatePoolForEvent(
   supportedStatuses: readonly string[];
 }> {
   const [regs, guests] = await Promise.all([
-    getJointEventRegistrations(eventId),
+    opts?.registrations
+      ? Promise.resolve(ensureRegistrationArray(opts.registrations))
+      : getJointEventRegistrations(eventId),
     opts?.guests ? Promise.resolve(opts.guests) : getEventGuests(eventId),
   ]);
 
@@ -268,6 +273,17 @@ export async function getJointTeeSheetCandidatePoolForEvent(
     participantSocietyIds,
   });
   const filtered = scoped.filter(isTeeSheetEligible);
+
+  const registrationSocietyIds = [...new Set(scoped.map((r) => String(r.society_id)).filter(Boolean))];
+  if (participantSocietyIds.filter(Boolean).length >= 2 && registrationSocietyIds.length < 2) {
+    console.warn("[eventRegRepo] joint tee sheet candidate pool: registrations cover only one society", {
+      eventId,
+      participantSocietyIds,
+      registrationSocietyIds,
+      registrationCount: scoped.length,
+      eligibleCount: filtered.length,
+    });
+  }
 
   return {
     memberIds: resolution.teeSheetEligibleMemberIds,

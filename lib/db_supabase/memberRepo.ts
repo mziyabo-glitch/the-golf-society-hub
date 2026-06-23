@@ -5,6 +5,7 @@
 // annual_fee_paid, annual_fee_paid_at, annual_fee_note, has_seat
 
 import { supabase } from "@/lib/supabase";
+import { normalizeMemberDocId } from "@/lib/memberDocUtils";
 
 export type Gender = "male" | "female" | null;
 
@@ -54,9 +55,17 @@ export type MemberDoc = {
   emergency_contact?: string | null;
 };
 
+export { memberDocFromRegistrationRow, normalizeMemberDocId } from "@/lib/memberDocUtils";
+
+function mapJointVisibilityMember(row: Record<string, unknown>): MemberDoc {
+  const id = String(row.member_id ?? row.id ?? "").trim();
+  return mapMember({ ...row, id });
+}
+
 function mapMember(row: any): MemberDoc {
   return {
     ...row,
+    id: normalizeMemberDocId(row),
     displayName: row.name || row.display_name,
     roles: row.role ? [row.role] : ["member"],
     whsNumber: row.whs_number ?? null,
@@ -354,7 +363,7 @@ export async function getJointEventMemberVisibility(
     });
     throw new Error(error.message || "Failed to load joint event members");
   }
-  return (data ?? []).map(mapMember);
+  return (data ?? []).map(mapJointVisibilityMember);
 }
 
 /**
