@@ -79,6 +79,7 @@ import {
 } from "@/lib/whs";
 import { parseHoleNumbers, formatHoleNumbers, calculateGroupSizes, sortPlayersByHandicap } from "@/lib/teeSheetGrouping";
 import { hydrateJointTeeSheetMemberPool } from "@/lib/teeSheet/hydrateJointTeeSheetMemberPool";
+import { buildSocietyIdToNameMap } from "@/lib/jointEventSocietyLabel";
 import { expandJointTeeSheetReplaceRowsForParticipatingSocieties } from "@/lib/jointPersonDedupe";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
 import { assertPngExportOnly } from "@/lib/share/pngExportGuard";
