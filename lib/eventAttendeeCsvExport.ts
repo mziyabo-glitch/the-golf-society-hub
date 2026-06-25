@@ -23,7 +23,7 @@ export type ExportEventAttendeesCsvOpts = {
   guests: EventGuest[];
   /** When provided (e.g. tee sheet editor), used instead of loading canonical tee sheet. */
   teeOverlayGroups?: TeeOverlayGroupInput[];
-  /** When true, loads canonical tee sheet for HI/PH/group overlay (manage / event overview). */
+  /** When true, loads canonical tee sheet for HI overlay (manage / event overview). */
   loadTeeSheetOverlay?: boolean;
 };
 
@@ -46,7 +46,6 @@ export async function exportEventAttendeesCsv(opts: ExportEventAttendeesCsvOpts)
             id: p.id,
             handicapIndex: p.handicapIndex,
             playingHandicap: null,
-            teeAssignment: null,
             gender: null,
           })),
         })),

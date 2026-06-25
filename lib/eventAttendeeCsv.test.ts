@@ -82,7 +82,7 @@ describe("buildEventAttendeeCsvRow", () => {
     attendingMembersOnly: true,
   };
 
-  it("de-dupes dual members to one CSV row with mixed paid label", () => {
+  it("de-dupes dual members to one CSV row with HI and gender", () => {
     const { attendeeRows } = resolveJointEventRegistrations(jointOpts);
     const dual = attendeeRows.find((r) => r.societyBadge === "Dual");
     expect(dual).toBeDefined();
@@ -98,14 +98,25 @@ describe("buildEventAttendeeCsvRow", () => {
     ]);
     const csvRow = buildEventAttendeeCsvRow(dual!, membersById, guestsByIdFromList([]));
     expect(csvRow.Name).toBe("Dual Member");
-    expect(csvRow["Society registered through"]).toBe("Dual");
-    expect(csvRow["Paid status"]).toBe("Paid via M4 / Unpaid via ZGS");
-    expect(csvRow["Member/Guest"]).toBe("Member");
-    expect(csvRow.Email).toBe("dual@example.com");
+    expect(csvRow.Gender).toBe("Male");
     expect(csvRow.HI).toBe("12.4");
+    expect(csvRow.PI).toBe("");
   });
 
-  it("includes guest row with paid status and society", () => {
+  it("includes PI from tee sheet overlay", () => {
+    const { attendeeRows } = resolveJointEventRegistrations(jointOpts);
+    const dual = attendeeRows.find((r) => r.societyBadge === "Dual");
+    expect(dual).toBeDefined();
+
+    const overlay = new Map([
+      ["m4-dual", { handicapIndex: 12.4, playingHandicap: 11, gender: "male" as const }],
+    ]);
+    const csvRow = buildEventAttendeeCsvRow(dual!, new Map(), guestsByIdFromList([]), overlay);
+    expect(csvRow.HI).toBe("12.4");
+    expect(csvRow.PI).toBe("11");
+  });
+
+  it("includes guest row with HI and gender", () => {
     const { attendeeRows } = resolveJointEventRegistrations(jointOpts);
     const guest = attendeeRows.find((r) => r.guestId === "g1");
     expect(guest).toBeDefined();
@@ -126,20 +137,16 @@ describe("buildEventAttendeeCsvRow", () => {
     ]);
     const csvRow = buildEventAttendeeCsvRow(guest!, new Map(), guests);
     expect(csvRow.Name).toBe("Taka Guest");
-    expect(csvRow["Member/Guest"]).toBe("Guest");
-    expect(csvRow["Paid status"]).toBe("Paid");
-    expect(csvRow["Society registered through"]).toBe("ZGS");
+    expect(csvRow.Gender).toBe("Male");
     expect(csvRow.HI).toBe("18.2");
-    expect(csvRow["Gender/sex"]).toBe("Male");
+    expect(csvRow.PI).toBe("");
   });
 
-  it("builds CSV content with header row", () => {
+  it("builds compact CSV content with 4-column header row", () => {
     const { attendeeRows } = resolveJointEventRegistrations(jointOpts);
     const rows = buildEventAttendeeCsvRows(attendeeRows, new Map(), guestsByIdFromList([]));
     const content = buildEventAttendeeCsvContent(rows);
-    expect(content.split("\r\n")[0]).toBe(
-      "Name,Society registered through,Member/Guest,Paid status,HI,PH,Tee assignment,Gender/sex,Email,Phone,Notes",
-    );
+    expect(content.split("\r\n")[0]).toBe("Name,Gender,HI,PI");
     expect(content).toContain("Brian Dube");
     expect(content).toContain("Taka Guest");
     const dualLines = content.split("\r\n").filter((l) => l.includes("Dual Member"));

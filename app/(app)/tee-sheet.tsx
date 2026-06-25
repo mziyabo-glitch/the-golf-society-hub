@@ -583,7 +583,6 @@ export default function TeeSheetScreen() {
             id: p.id,
             handicapIndex: p.handicapIndex,
             playingHandicap: p.playingHandicap,
-            teeAssignment: p.teeAssignment,
             gender: p.gender,
           })),
         })),

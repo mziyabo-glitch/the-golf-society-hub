@@ -1,5 +1,6 @@
 /**
  * Event attendee CSV export — joint (de-duped) and society-scoped rows.
+ * Compact 4-column layout (Name, Gender, HI, PI) for single-page width.
  */
 
 import type { EventGuest } from "@/lib/db_supabase/eventGuestRepo";
@@ -11,28 +12,14 @@ function guestPlayerIdForExport(guestId: string): string {
   return `guest-${String(guestId)}`;
 }
 
-export const EVENT_ATTENDEE_CSV_HEADERS = [
-  "Name",
-  "Society registered through",
-  "Member/Guest",
-  "Paid status",
-  "HI",
-  "PH",
-  "Tee assignment",
-  "Gender/sex",
-  "Email",
-  "Phone",
-  "Notes",
-] as const;
+export const EVENT_ATTENDEE_CSV_HEADERS = ["Name", "Gender", "HI", "PI"] as const;
 
 export type EventAttendeeCsvRow = Record<(typeof EVENT_ATTENDEE_CSV_HEADERS)[number], string>;
 
 export type AttendeeTeeSheetOverlay = {
   handicapIndex?: number | null;
   playingHandicap?: number | null;
-  teeAssignment?: "men" | "ladies" | null;
   gender?: Gender;
-  groupLabel?: string;
 };
 
 function escapeCsvCell(value: string): string {
@@ -46,12 +33,6 @@ function escapeCsvCell(value: string): string {
 export function formatGenderForCsv(gender: Gender | "male" | "female" | null | undefined): string {
   if (gender === "male") return "Male";
   if (gender === "female") return "Female";
-  return "";
-}
-
-export function formatTeeAssignmentForCsv(tee: "men" | "ladies" | null | undefined): string {
-  if (tee === "men") return "Men";
-  if (tee === "ladies") return "Ladies";
   return "";
 }
 
@@ -71,13 +52,6 @@ function playerIdForAttendeeRow(row: JointEventAttendeeRow): string | null {
     return guestPlayerIdForExport(row.guestId);
   }
   return representativeMemberId(row);
-}
-
-function societyRegisteredThrough(row: JointEventAttendeeRow): string {
-  const badge = row.societyBadge?.trim();
-  if (badge) return badge;
-  const names = [...new Set(row.sources.map((s) => s.societyName).filter(Boolean))];
-  return names.join(" / ");
 }
 
 function lookupMember(
@@ -114,25 +88,14 @@ export function buildEventAttendeeCsvRow(
     member?.handicap_index ??
     guest?.handicap_index ??
     null;
-  const ph = overlay?.playingHandicap ?? null;
-  const tee = overlay?.teeAssignment ?? null;
+  const pi = overlay?.playingHandicap ?? null;
   const gender = overlay?.gender ?? member?.gender ?? guest?.sex ?? null;
-
-  const groupLabel = overlay?.groupLabel?.trim() ?? "";
-  const notes = groupLabel ? `Group: ${groupLabel}` : "";
 
   return {
     Name: row.displayName.trim(),
-    "Society registered through": societyRegisteredThrough(row),
-    "Member/Guest": memberGuestKindFromAttendeeRow(row),
-    "Paid status": row.paymentLabel.trim() || "Unpaid",
+    Gender: formatGenderForCsv(gender),
     HI: hi != null && Number.isFinite(Number(hi)) ? formatHandicap(hi, 1) : "",
-    PH: ph != null && Number.isFinite(Number(ph)) ? formatHandicap(ph) : "",
-    "Tee assignment": formatTeeAssignmentForCsv(tee),
-    "Gender/sex": formatGenderForCsv(gender),
-    Email: (member?.email ?? "").trim(),
-    Phone: (member?.emergency_contact ?? "").trim(),
-    Notes: notes,
+    PI: pi != null && Number.isFinite(Number(pi)) ? formatHandicap(pi) : "",
   };
 }
 
@@ -180,7 +143,6 @@ export type TeeOverlayGroupInput = {
     id: string;
     handicapIndex?: number | null;
     playingHandicap?: number | null;
-    teeAssignment?: "men" | "ladies" | null;
     gender?: Gender;
   }[];
 };
@@ -189,16 +151,13 @@ export type TeeOverlayGroupInput = {
 export function teeOverlayMapFromGroups(groups: TeeOverlayGroupInput[]): Map<string, AttendeeTeeSheetOverlay> {
   const out = new Map<string, AttendeeTeeSheetOverlay>();
   for (const g of groups) {
-    const groupLabel = g.groupNumber === 0 ? "Unassigned" : `Group ${g.groupNumber}`;
     for (const p of g.players) {
       const id = String(p.id);
       if (!id) continue;
       out.set(id, {
         handicapIndex: p.handicapIndex ?? null,
         playingHandicap: p.playingHandicap ?? null,
-        teeAssignment: p.teeAssignment ?? null,
         gender: p.gender ?? null,
-        groupLabel,
       });
     }
   }
