@@ -10,6 +10,7 @@ import {
   formatCompetitionLine,
 } from "@/lib/teeSheet/teeSheetPosterMeta";
 import { teeIndicatorForAssignment, type TeeAssignment } from "@/lib/teeSheet/teeAssignment";
+import { teeLegendLine } from "@/lib/teeSheet/teeColour";
 
 const m4FairwayLogo = require("@/assets/images/m4-fairway-logo.png");
 
@@ -86,7 +87,18 @@ export const TeeGroupCard = React.memo(function TeeGroupCard({
             <Text style={styles.playerStat}>{player ? formatHandicap(player.handicapIndex, 1) : "-"}</Text>
             <Text style={styles.playerStatStrong}>{player ? formatHandicap(player.playingHandicap) : "-"}</Text>
             <View style={styles.teeCompactWrap}>
-              <View style={[styles.teeDot, tee ? { backgroundColor: tee.color } : null]} />
+              <View
+                style={[
+                  styles.teeDot,
+                  tee
+                    ? {
+                        backgroundColor: tee.color,
+                        borderWidth: tee.outline ? 1 : 0,
+                        borderColor: tee.outlineColor ?? "transparent",
+                      }
+                    : null,
+                ]}
+              />
               <Text style={[styles.teeCompactLabel, tee ? { color: tee.color } : null]} numberOfLines={1}>
                 {tee?.label || "Tee TBC"}
               </Text>
@@ -163,7 +175,7 @@ export const TeeSheetPoster = React.forwardRef<View, {
         </View>
         <View style={styles.brandFooter}>
           <Text style={styles.brandFooterText}>Produced by The Golf Society Hub</Text>
-          <Text style={styles.legendText}>Tee colours: yellow = Men, red = Ladies</Text>
+          <Text style={styles.legendText}>{teeLegendLine(data.teeName, data.ladiesTeeName)}</Text>
           <Text style={styles.brandFooterPage}>Page {pageIndex + 1} / {pageCount}</Text>
         </View>
       </View>

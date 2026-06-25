@@ -670,19 +670,23 @@ export async function publishTeeTime(
     throw new Error(`Invalid tee time format: ${start}. Expected HH:MM:SS`);
   }
 
-  // Try RPC first (migrations 038/039)
-  const { error: rpcError } = await eventSupabase.rpc("publish_tee_times", {
-    p_event_id: eventId,
-    p_start: start,
-    p_interval: interval,
-  });
+  // Try RPC — migration 160 uses p_start_time; older migrations use p_start.
+  const rpcAttempts: Record<string, string | number>[] = [
+    { p_event_id: eventId, p_start_time: start, p_interval: interval },
+    { p_event_id: eventId, p_start: start, p_interval: interval },
+  ];
 
-  if (!rpcError) {
-    return getEvent(eventId);
+  let rpcError: { message: string } | null = null;
+  for (const args of rpcAttempts) {
+    const { error } = await eventSupabase.rpc("publish_tee_times", args);
+    if (!error) {
+      return getEvent(eventId);
+    }
+    rpcError = error;
   }
 
   // Fallback: direct UPDATE (works when RPC doesn't exist)
-  console.warn("[eventRepo] publishTeeTime RPC failed, trying direct update:", rpcError.message);
+  console.warn("[eventRepo] publishTeeTime RPC failed, trying direct update:", rpcError?.message);
   const { error: updateError } = await eventSupabase
     .from("events")
     .update({

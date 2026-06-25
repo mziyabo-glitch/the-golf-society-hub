@@ -107,10 +107,11 @@ describe("tee assignment and PH rules", () => {
     expect(indicator.color).toBe("#C1121F");
   });
 
-  it("uses compact row labels for tee indicators", () => {
-    expect(compactTeeRowLabel("ladies")).toBe("🔴 Red");
-    expect(compactTeeRowLabel("men")).toBe("🟡 Yellow");
-    expect(compactTeeRowLabel(null)).toBe("Tee TBC");
+  it("uses compact row labels from event tee names", () => {
+    const data = makePayload({ teeName: "White", ladiesTeeName: "Red" });
+    expect(compactTeeRowLabel("ladies", data)).toBe("🔴 Red");
+    expect(compactTeeRowLabel("men", data)).toBe("⚪ White");
+    expect(compactTeeRowLabel(null, data)).toBe("Tee TBC");
   });
 
   it("female guest PH uses ladies tee settings", () => {
@@ -201,7 +202,22 @@ describe("tee assignment and PH rules", () => {
     expect(phAfter).not.toBeNull();
   });
 
-  it("male rows still render men indicator", () => {
+  it("male rows use men tee name from payload", () => {
+    const data = makePayload({ teeName: "White" });
+    const assignment = resolveTeeAssignment({
+      id: "m-1",
+      name: "Member",
+      handicapIndex: 9.4,
+      gender: "male",
+      teeAssignment: "men",
+    });
+    const indicator = teeIndicatorForAssignment(data, assignment);
+    expect(indicator.label).toBe("⚪ White");
+    expect(indicator.color).toBe("#FFFFFF");
+    expect(indicator.outline).toBe(true);
+  });
+
+  it("yellow men tee still renders when configured on event", () => {
     const data = makePayload({ teeName: "Yellow" });
     const assignment = resolveTeeAssignment({
       id: "m-1",

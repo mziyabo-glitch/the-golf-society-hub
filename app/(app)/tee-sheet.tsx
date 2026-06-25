@@ -60,6 +60,12 @@ import {
   hydratePersistedEditorGroupsWithGuestAssignments,
 } from "@/lib/teeSheet/teeSheetEditorGuests";
 import { shouldLoadPersistedTeeSheetDraft } from "@/lib/teeSheet/teeSheetDraftPersistence";
+import { buildMemberByPlayerIdMap, memberDocForPlayerId } from "@/lib/teeSheet/teeSheetMemberLookup";
+import {
+  formatTeeSheetPublishValidationMessage,
+  validateTeeSheetForPublish,
+} from "@/lib/teeSheet/teeSheetPublishValidation";
+import { teeColourFromName } from "@/lib/teeSheet/teeColour";
 import {
   getJointEventTeeSheet,
   getJointMetaForEventIds,
@@ -169,6 +175,7 @@ function applySexPolicyToGroups(
   members: MemberDoc[],
   guests: EventGuest[],
   persistedPolicy?: Map<string, TeeSheetPlayerPolicyRow>,
+  societyIdToName?: Map<string, string>,
 ): PlayerGroup[] {
   const menTee: TeeBlock | null =
     event.par != null && event.courseRating != null && event.slopeRating != null
@@ -180,13 +187,13 @@ function applySexPolicyToGroups(
       : null;
   const allowance = event.handicapAllowance ?? DEFAULT_ALLOWANCE;
 
-  const memberById = new Map(members.map((m) => [String(m.id), m] as const));
+  const memberById = buildMemberByPlayerIdMap(members, societyIdToName);
   const guestByPlayerId = new Map(guests.map((g) => [guestPlayerId(g.id), g] as const));
 
   return groups.map((group, groupIndex) => ({
     ...group,
     players: group.players.map((player) => {
-      const member = memberById.get(String(player.id));
+      const member = memberDocForPlayerId(player.id, members, memberById, societyIdToName);
       const guest = guestByPlayerId.get(String(player.id));
       const persisted = persistedPolicy?.get(String(player.id));
       const manualGender = (persisted?.manual_gender ?? null) as Gender;
@@ -826,6 +833,7 @@ export default function TeeSheetScreen() {
                 candidateMembers,
                 jointPaidGuests,
                 policyByPlayerId(jointPolicyRows),
+                societyIdToName,
               );
               const persistedIds = groupsToPlayerIdsFrom(persistedGroups);
 
@@ -990,6 +998,7 @@ export default function TeeSheetScreen() {
     membersList: MemberDoc[],
     guests: EventGuest[],
     persistedPolicy?: Map<string, TeeSheetPlayerPolicyRow>,
+    societyIdToName?: Map<string, string>,
   ): PlayerGroup[] => {
     const menTee: TeeBlock | null =
       event.par != null && event.courseRating != null && event.slopeRating != null
@@ -1002,12 +1011,13 @@ export default function TeeSheetScreen() {
     const allowance = event.handicapAllowance ?? DEFAULT_ALLOWANCE;
 
     const guestByPlayerId = new Map(guests.map((g) => [`guest-${g.id}`, g] as const));
+    const memberById = buildMemberByPlayerIdMap(membersList, societyIdToName);
 
     return normalizeGroups(
       canonical.groups.map((g, groupIdx) => ({
         groupNumber: g.groupNumber,
         players: g.players.map((p) => {
-          const member = membersList.find((m) => m.id === p.id);
+          const member = memberDocForPlayerId(p.id, membersList, memberById, societyIdToName);
           const guest = guestByPlayerId.get(p.id);
           const persisted = persistedPolicy?.get(String(p.id));
           const manualGender = (persisted?.manual_gender ?? null) as Gender;
@@ -1046,8 +1056,9 @@ export default function TeeSheetScreen() {
     guests: { id: string; name: string; sex: "male" | "female" | null; handicap_index: number | null }[] = []
   ) => {
     const playerIds = [...new Set(selectedIds.map(String).filter(Boolean))];
+    const memberById = buildMemberByPlayerIdMap(membersList);
     const eventMembers = playerIds
-      .map((id) => membersList.find((m) => m.id === id))
+      .map((id) => memberDocForPlayerId(id, membersList, memberById))
       .filter(Boolean) as typeof membersList;
 
     // Convert guests to same shape as members for grouping
@@ -1601,6 +1612,12 @@ export default function TeeSheetScreen() {
             eventMemberPool.length > 0 ? eventMemberPool : members,
             jointPaidGuestsAfterSave,
             policyByPlayerId(jointPolicyRowsAfterSave),
+            buildSocietyIdToNameMap(
+              (jointTeeSheetData?.participating_societies ?? []).map((s) => ({
+                society_id: s.society_id,
+                society_name: s.society_name,
+              })),
+            ),
           );
           setGroups(newGroups.length > 0 ? newGroups : []);
           const ids = groupsToPlayerIdsFrom(newGroups);
@@ -1902,6 +1919,15 @@ export default function TeeSheetScreen() {
   const resetToProfileDefaults = () => {
     if (!selectedEvent) return;
     const sourceMembers = eventMemberPool.length > 0 ? eventMemberPool : members;
+    const societyIdToName =
+      isJointEventTeeSheet && jointTeeSheetData?.participating_societies?.length
+        ? buildSocietyIdToNameMap(
+            jointTeeSheetData.participating_societies.map((s) => ({
+              society_id: s.society_id,
+              society_name: s.society_name,
+            })),
+          )
+        : undefined;
     setGroups((prev) =>
       applySexPolicyToGroups(
         prev.map((g) => ({
@@ -1915,6 +1941,8 @@ export default function TeeSheetScreen() {
         selectedEvent,
         sourceMembers,
         eligiblePaidGuests,
+        undefined,
+        societyIdToName,
       ),
     );
   };
@@ -2060,7 +2088,32 @@ export default function TeeSheetScreen() {
       return;
     }
 
-    setNotice(null);
+    const eligibleSet = new Set([
+      ...eligibleMemberIds.map(String),
+      ...eligiblePaidGuests.map((g) => guestPlayerId(g.id)),
+    ]);
+    const validation = validateTeeSheetForPublish({
+      groups: nonEmptyGroups,
+      eligiblePlayerIds: eligibleSet,
+    });
+    if (!validation.ok) {
+      setNotice({
+        type: "error",
+        message: "Cannot publish tee sheet",
+        detail: formatTeeSheetPublishValidationMessage(validation),
+      });
+      return;
+    }
+
+    setNotice(
+      validation.warnings.length > 0
+        ? {
+            type: "warning",
+            message: "Publishing with notes",
+            detail: validation.warnings.join("\n"),
+          }
+        : null,
+    );
     setGenerating(true);
     try {
       const interval = parseInt(teeInterval, 10) || 10;
@@ -2076,7 +2129,10 @@ export default function TeeSheetScreen() {
       }
 
       const refreshed = await publishTeeTime(selectedEventId, startTime || "08:00", interval);
-      if (refreshed) setSelectedEvent(refreshed);
+      if (!refreshed?.teeTimePublishedAt) {
+        throw new Error("Publish did not set tee_time_published_at — check permissions or try Save Draft first.");
+      }
+      setSelectedEvent(refreshed);
 
       const canonical = await loadCanonicalTeeSheet(selectedEventId, { preserveDraftPlayers: true });
       if (!canonical) {
@@ -2803,7 +2859,16 @@ export default function TeeSheetScreen() {
                   <AppCard>
                     {hasMenTees && (
                       <View style={styles.teeRow}>
-                        <View style={[styles.teeColorDot, { backgroundColor: "#FFD700" }]} />
+                        <View
+                          style={[
+                            styles.teeColorDot,
+                            {
+                              backgroundColor: teeColourFromName(selectedEvent.teeName).color,
+                              borderWidth: teeColourFromName(selectedEvent.teeName).outline ? 1 : 0,
+                              borderColor: teeColourFromName(selectedEvent.teeName).outlineColor ?? "transparent",
+                            },
+                          ]}
+                        />
                         <AppText variant="bodyBold" style={{ minWidth: 60 }}>
                           {selectedEvent.teeName || "Men's"}
                         </AppText>
@@ -2814,7 +2879,17 @@ export default function TeeSheetScreen() {
                     )}
                     {hasLadiesTees && (
                       <View style={[styles.teeRow, { marginTop: spacing.xs }]}>
-                        <View style={[styles.teeColorDot, { backgroundColor: "#E53935" }]} />
+                        <View
+                          style={[
+                            styles.teeColorDot,
+                            {
+                              backgroundColor: teeColourFromName(selectedEvent.ladiesTeeName).color,
+                              borderWidth: teeColourFromName(selectedEvent.ladiesTeeName).outline ? 1 : 0,
+                              borderColor:
+                                teeColourFromName(selectedEvent.ladiesTeeName).outlineColor ?? "transparent",
+                            },
+                          ]}
+                        />
                         <AppText variant="bodyBold" style={{ minWidth: 60 }}>
                           {selectedEvent.ladiesTeeName || "Ladies'"}
                         </AppText>

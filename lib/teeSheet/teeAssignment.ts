@@ -1,7 +1,15 @@
 import type { TeeSheetData, TeeSheetPlayer } from "@/lib/teeSheetPdf";
 import type { TeeBlock } from "@/lib/whs";
+import { formatTeeRowLabel, teeColourFromName } from "@/lib/teeSheet/teeColour";
 
 export type TeeAssignment = "men" | "ladies" | null;
+
+export type TeeIndicator = {
+  label: string;
+  color: string;
+  outline?: boolean;
+  outlineColor?: string;
+};
 
 export function resolveTeeAssignment(player: TeeSheetPlayer): TeeAssignment {
   // Policy: sex is authoritative when present.
@@ -18,21 +26,30 @@ export function teeSettingsForAssignment(data: TeeSheetData, assignment: TeeAssi
   return null;
 }
 
-/** Compact tee label for group/player rows — full tee details stay in the header only. */
-export function compactTeeRowLabel(assignment: TeeAssignment): string {
-  if (assignment === "ladies") return "🔴 Red";
-  if (assignment === "men") return "🟡 Yellow";
-  return "Tee TBC";
+function teeNameForAssignment(data: TeeSheetData, assignment: TeeAssignment): string | null {
+  if (assignment === "ladies") return data.ladiesTeeName ?? null;
+  if (assignment === "men") return data.teeName ?? null;
+  return null;
 }
 
-export function teeIndicatorForAssignment(data: TeeSheetData, assignment: TeeAssignment): { label: string; color: string } {
-  if (assignment === "ladies") {
-    return { label: compactTeeRowLabel(assignment), color: "#C1121F" };
+/** Compact tee label for group/player rows — uses event tee names (e.g. White / Red). */
+export function compactTeeRowLabel(assignment: TeeAssignment, data: TeeSheetData): string {
+  if (assignment == null) return "Tee TBC";
+  return formatTeeRowLabel(teeNameForAssignment(data, assignment));
+}
+
+export function teeIndicatorForAssignment(data: TeeSheetData, assignment: TeeAssignment): TeeIndicator {
+  if (assignment == null) {
+    return { label: "Tee TBC", color: "#94A3B8" };
   }
-  if (assignment === "men") {
-    return { label: compactTeeRowLabel(assignment), color: "#E0B100" };
-  }
-  return { label: compactTeeRowLabel(assignment), color: "#94A3B8" };
+  const teeName = teeNameForAssignment(data, assignment);
+  const colour = teeColourFromName(teeName);
+  return {
+    label: compactTeeRowLabel(assignment, data),
+    color: colour.color,
+    outline: colour.outline,
+    outlineColor: colour.outlineColor,
+  };
 }
 
 export function needsTeePolicyConfirmation(player: Pick<TeeSheetPlayer, "gender" | "teeAssignment">): boolean {
