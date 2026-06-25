@@ -1983,9 +1983,6 @@ export default function TeeSheetScreen() {
     });
   };
 
-  // Share/export tee sheet
-  const MAX_TEE_TIMES = 12;
-
   const handleShareExport = async () => {
     if (!guardPaidAction()) return;
     if (!selectedEventId || !selectedEvent || !societyId) return;
@@ -1996,15 +1993,6 @@ export default function TeeSheetScreen() {
         type: "error",
         message: "Nothing to export",
         detail: "Add players to groups before sharing.",
-      });
-      return;
-    }
-
-    if (nonEmptyGroups.length > MAX_TEE_TIMES) {
-      setToast({
-        visible: true,
-        message: `Max ${MAX_TEE_TIMES} tee times per image — remove extra groups or publish in two steps.`,
-        type: "error",
       });
       return;
     }
@@ -2068,15 +2056,6 @@ export default function TeeSheetScreen() {
         type: "error",
         message: "No players added",
         detail: "Add players to groups before publishing.",
-      });
-      return;
-    }
-
-    if (nonEmptyGroups.length > MAX_TEE_TIMES) {
-      setToast({
-        visible: true,
-        message: `Max ${MAX_TEE_TIMES} tee times — remove extra groups before publishing.`,
-        type: "error",
       });
       return;
     }
