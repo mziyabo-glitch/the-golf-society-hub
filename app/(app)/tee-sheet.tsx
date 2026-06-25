@@ -65,6 +65,7 @@ import {
   competitionHolesInputFromPersisted,
   resolveCompetitionHolesInputForReload,
   parseEditorCompetitionHoles,
+  assertTeeTimePublished,
 } from "@/lib/teeSheet/teeSheetDraftPersistence";
 import { buildMemberByPlayerIdMap, memberDocForPlayerId } from "@/lib/teeSheet/teeSheetMemberLookup";
 import {
@@ -2247,10 +2248,8 @@ export default function TeeSheetScreen() {
       }
 
       const refreshed = await publishTeeTime(selectedEventId, startTime || "08:00", interval);
-      if (!refreshed?.teeTimePublishedAt) {
-        throw new Error("Publish did not set tee_time_published_at — check permissions or try Save Draft first.");
-      }
-      setSelectedEvent(refreshed);
+      assertTeeTimePublished(refreshed);
+      setSelectedEvent(refreshed!);
 
       await invalidateCache(`event:${selectedEventId}:tee-sheet`);
       await invalidateCache(`event:${selectedEventId}:detail`);

@@ -164,6 +164,21 @@ export type UpsertTeeSheetWriteCheck = {
   playersInserted: number;
 };
 
+/**
+ * Confirm a publish attempt actually set tee_time_published_at on the refreshed event.
+ * A missing value means the publish did not persist (RLS no-op, RPC type error, or stale read) —
+ * never report success in that case. Throws a real, user-surfaceable error.
+ */
+export function assertTeeTimePublished(
+  refreshed: { teeTimePublishedAt?: string | null } | null | undefined,
+): void {
+  if (!refreshed?.teeTimePublishedAt) {
+    throw new Error(
+      "Publish did not set tee_time_published_at — check permissions or try Save Draft first.",
+    );
+  }
+}
+
 /** Surface silent RLS failures when inserts return zero rows. */
 export function assertTeeSheetUpsertWritten(check: UpsertTeeSheetWriteCheck): void {
   if (check.groupsRequested > 0 && check.groupsInserted === 0) {

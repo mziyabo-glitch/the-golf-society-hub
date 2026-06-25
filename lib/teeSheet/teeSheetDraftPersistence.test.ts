@@ -8,6 +8,7 @@ vi.mock("@/lib/db_supabase/jointEventRepo", () => ({
 
 import {
   assertTeeSheetUpsertWritten,
+  assertTeeTimePublished,
   competitionHolesInputFromPersisted,
   editorGroupsFromCanonicalRows,
   formatTeeSheetPersistenceError,
@@ -146,6 +147,22 @@ describe("teeSheet draft persistence helpers", () => {
         playersInserted: 0,
       }),
     ).toThrow(/tee group players/i);
+  });
+
+  it("treats publish as success when the refreshed event has tee_time_published_at", () => {
+    expect(() =>
+      assertTeeTimePublished({ teeTimePublishedAt: "2026-06-25T21:11:23.211Z" }),
+    ).not.toThrow();
+  });
+
+  it("surfaces a real publish error when tee_time_published_at is not set", () => {
+    // Regression: publish_tee_times RPC failing (e.g. text->time cast) or an RLS no-op must NOT
+    // report a false success. The refreshed event then has no published_at and we must throw.
+    expect(() => assertTeeTimePublished({ teeTimePublishedAt: null })).toThrow(
+      /tee_time_published_at/i,
+    );
+    expect(() => assertTeeTimePublished(null)).toThrow(/tee_time_published_at/i);
+    expect(() => assertTeeTimePublished(undefined)).toThrow(/permissions|Save Draft/i);
   });
 
   it("maps RLS errors to friendly copy outside dev", () => {

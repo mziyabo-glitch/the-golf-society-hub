@@ -685,9 +685,9 @@ export async function publishTeeTime(
     rpcError = error;
   }
 
-  // Fallback: direct UPDATE (works when RPC doesn't exist)
+  // Fallback: direct UPDATE (works when the RPC is missing entirely).
   console.warn("[eventRepo] publishTeeTime RPC failed, trying direct update:", rpcError?.message);
-  const { error: updateError } = await eventSupabase
+  const { data: updatedRows, error: updateError } = await eventSupabase
     .from("events")
     .update({
       tee_time_start: start,
@@ -695,11 +695,21 @@ export async function publishTeeTime(
       tee_time_published_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     })
-    .eq("id", eventId);
+    .eq("id", eventId)
+    .select("id");
 
   if (updateError) {
     console.error("[eventRepo] publishTeeTime direct update failed:", updateError.message);
-    throw new Error(updateError.message || "Failed to publish tee times");
+    throw new Error(updateError.message || rpcError?.message || "Failed to publish tee times");
+  }
+
+  // An events UPDATE blocked by RLS silently affects 0 rows (no error). Surface it as a real
+  // failure instead of reporting a false success that never persisted published_at.
+  if (!updatedRows || updatedRows.length === 0) {
+    throw new Error(
+      rpcError?.message ||
+        "Publish failed — you don't have permission to publish tee times for this event.",
+    );
   }
 
   return getEvent(eventId);
