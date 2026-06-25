@@ -204,18 +204,58 @@ export function validateHoleNumbers(holes: number[]): boolean {
   return holes.every((h) => Number.isInteger(h) && h >= 1 && h <= 18);
 }
 
+export type ParseCompetitionHoleInputResult =
+  | { ok: true; holes: number[] }
+  | { ok: false; error: string; holes: number[] };
+
 /**
- * Parse hole numbers from comma-separated string
- * e.g., "3, 7, 14" => [3, 7, 14]
+ * Parse competition hole input with validation (no silent discard).
+ * Accepts comma/space-separated values like "8, 10" or "12,14".
+ */
+export function parseCompetitionHoleInput(input: string, label: string): ParseCompetitionHoleInputResult {
+  const trimmed = input.trim();
+  if (!trimmed || trimmed === "-") return { ok: true, holes: [] };
+
+  const tokens = trimmed.split(/[,\s]+/).filter(Boolean);
+  const holes: number[] = [];
+  const seen = new Set<number>();
+
+  for (const token of tokens) {
+    if (!/^\d+$/.test(token)) {
+      return {
+        ok: false,
+        error: `${label}: "${token}" is not a valid hole number (use whole numbers 1–18).`,
+        holes: [],
+      };
+    }
+    const n = parseInt(token, 10);
+    if (n < 1 || n > 18) {
+      return {
+        ok: false,
+        error: `${label}: hole ${n} is out of range (use 1–18).`,
+        holes: [],
+      };
+    }
+    if (seen.has(n)) {
+      return {
+        ok: false,
+        error: `${label}: duplicate hole ${n}.`,
+        holes: [],
+      };
+    }
+    seen.add(n);
+    holes.push(n);
+  }
+
+  holes.sort((a, b) => a - b);
+  return { ok: true, holes };
+}
+
+/**
+ * Parse hole numbers from comma-separated string (legacy — filters invalid tokens silently).
+ * Prefer {@link parseCompetitionHoleInput} for editor save/publish paths.
  */
 export function parseHoleNumbers(input: string): number[] {
-  if (!input.trim()) return [];
-
-  const numbers = input
-    .split(/[,\s]+/)
-    .map((s) => parseInt(s.trim(), 10))
-    .filter((n) => !isNaN(n) && n >= 1 && n <= 18);
-
-  // Remove duplicates and sort
-  return [...new Set(numbers)].sort((a, b) => a - b);
+  const parsed = parseCompetitionHoleInput(input, "Hole");
+  return parsed.ok ? parsed.holes : [];
 }

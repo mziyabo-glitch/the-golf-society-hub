@@ -8,11 +8,14 @@ vi.mock("@/lib/db_supabase/jointEventRepo", () => ({
 
 import {
   assertTeeSheetUpsertWritten,
+  competitionHolesInputFromPersisted,
   editorGroupsFromCanonicalRows,
   formatTeeSheetPersistenceError,
   jointMetaFromParticipatingSocieties,
+  parseEditorCompetitionHoles,
   policyByPlayerId,
   reconcileJointEventMeta,
+  resolveCompetitionHolesInputForReload,
   shouldLoadPersistedTeeSheetDraft,
   teeAssignmentFromGender,
 } from "@/lib/teeSheet/teeSheetDraftPersistence";
@@ -152,5 +155,36 @@ describe("teeSheet draft persistence helpers", () => {
     vi.stubGlobal("__DEV__", true);
     expect(formatTeeSheetPersistenceError(new Error("custom db error"))).toBe("custom db error");
     vi.stubGlobal("__DEV__", false);
+  });
+
+  it("round-trips NTP 12,14 through save/reload editor input", () => {
+    const saved = parseEditorCompetitionHoles({ ntpHolesInput: "12, 14", ldHolesInput: "" });
+    expect(saved).toEqual({ ok: true, nearestPinHoles: [12, 14], longestDriveHoles: [] });
+    expect(competitionHolesInputFromPersisted(saved.ok ? saved.nearestPinHoles : [])).toBe("12, 14");
+    expect(resolveCompetitionHolesInputForReload(saved.ok ? saved.nearestPinHoles : null)).toBe("12, 14");
+  });
+
+  it("round-trips LD 8,10 through save/reload editor input", () => {
+    const saved = parseEditorCompetitionHoles({ ntpHolesInput: "", ldHolesInput: "8, 10" });
+    expect(saved).toEqual({ ok: true, nearestPinHoles: [], longestDriveHoles: [8, 10] });
+    expect(competitionHolesInputFromPersisted(saved.ok ? saved.longestDriveHoles : [])).toBe("8, 10");
+    expect(resolveCompetitionHolesInputForReload(saved.ok ? saved.longestDriveHoles : null)).toBe("8, 10");
+  });
+
+  it("does not overwrite in-progress input with blank when DB has no holes", () => {
+    expect(resolveCompetitionHolesInputForReload(null, "12, 14")).toBe("12, 14");
+    expect(resolveCompetitionHolesInputForReload([], "8, 10")).toBe("8, 10");
+  });
+
+  it("prefers persisted DB holes over blank editor state", () => {
+    expect(resolveCompetitionHolesInputForReload([12, 14], "")).toBe("12, 14");
+  });
+
+  it("surfaces invalid competition hole validation errors", () => {
+    const invalid = parseEditorCompetitionHoles({ ntpHolesInput: "abc", ldHolesInput: "8" });
+    expect(invalid.ok).toBe(false);
+    if (!invalid.ok) {
+      expect(invalid.error).toMatch(/Nearest the Pin/i);
+    }
   });
 });

@@ -6,6 +6,11 @@ import type { TeeSheetPlayerPolicyRow } from "@/lib/db_supabase/teeGroupsRepo";
 import type { EventJointMeta } from "@/lib/db_supabase/jointEventRepo";
 import type { CanonicalGroupRow, CanonicalTeeSheetResult } from "@/lib/teeSheet/canonicalTeeSheet";
 import { hydratePersistedEditorGroupsWithGuestAssignments, type EditorGuestPlayer } from "@/lib/teeSheet/teeSheetEditorGuests";
+import {
+  formatHoleNumbers,
+  parseCompetitionHoleInput,
+  type ParseCompetitionHoleInputResult,
+} from "@/lib/teeSheetGrouping";
 
 export { hydratePersistedEditorGroupsWithGuestAssignments };
 
@@ -39,6 +44,47 @@ export function teeAssignmentFromGender(
 export function shouldLoadPersistedTeeSheetDraft(canonical: CanonicalTeeSheetResult | null): boolean {
   return canonical != null && canonical.source === "tee_groups" && canonical.groups.length > 0;
 }
+
+/** Editor input from persisted events.nearest_pin_holes / longest_drive_holes (empty when unset). */
+export function competitionHolesInputFromPersisted(holes: number[] | null | undefined): string {
+  if (!holes || holes.length === 0) return "";
+  return formatHoleNumbers(holes);
+}
+
+/**
+ * Load precedence for competition holes: persisted DB values win; never replace saved holes
+ * with blank defaults from generated state when the editor still holds in-progress input.
+ */
+export function resolveCompetitionHolesInputForReload(
+  persistedHoles: number[] | null | undefined,
+  currentInput?: string,
+): string {
+  const fromDb = competitionHolesInputFromPersisted(persistedHoles);
+  if (fromDb) return fromDb;
+  const cur = (currentInput ?? "").trim();
+  if (cur && cur !== "-") return cur;
+  return "";
+}
+
+export type ParsedEditorCompetitionHoles =
+  | { ok: true; nearestPinHoles: number[]; longestDriveHoles: number[] }
+  | { ok: false; error: string };
+
+/** Validate NTP/LD editor inputs before save, publish, or export. */
+export function parseEditorCompetitionHoles(input: {
+  ntpHolesInput: string;
+  ldHolesInput: string;
+}): ParsedEditorCompetitionHoles {
+  const ntpRaw = input.ntpHolesInput === "-" ? "" : input.ntpHolesInput;
+  const ldRaw = input.ldHolesInput === "-" ? "" : input.ldHolesInput;
+  const ntp = parseCompetitionHoleInput(ntpRaw, "Nearest the Pin");
+  if (!ntp.ok) return { ok: false, error: ntp.error };
+  const ld = parseCompetitionHoleInput(ldRaw, "Longest Drive");
+  if (!ld.ok) return { ok: false, error: ld.error };
+  return { ok: true, nearestPinHoles: ntp.holes, longestDriveHoles: ld.holes };
+}
+
+export type { ParseCompetitionHoleInputResult };
 
 /** True when joint event detail reports 2+ participating societies (RPC truth). */
 export function jointMetaFromParticipatingSocieties(

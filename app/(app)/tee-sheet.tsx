@@ -59,7 +59,13 @@ import {
   editorGuestPlayerFromDoc,
   hydratePersistedEditorGroupsWithGuestAssignments,
 } from "@/lib/teeSheet/teeSheetEditorGuests";
-import { shouldLoadPersistedTeeSheetDraft, formatTeeSheetPersistenceError } from "@/lib/teeSheet/teeSheetDraftPersistence";
+import {
+  shouldLoadPersistedTeeSheetDraft,
+  formatTeeSheetPersistenceError,
+  competitionHolesInputFromPersisted,
+  resolveCompetitionHolesInputForReload,
+  parseEditorCompetitionHoles,
+} from "@/lib/teeSheet/teeSheetDraftPersistence";
 import { buildMemberByPlayerIdMap, memberDocForPlayerId } from "@/lib/teeSheet/teeSheetMemberLookup";
 import {
   formatTeeSheetPublishValidationMessage,
@@ -84,7 +90,7 @@ import {
   formatHandicap,
   DEFAULT_ALLOWANCE,
 } from "@/lib/whs";
-import { parseHoleNumbers, formatHoleNumbers, calculateGroupSizes, sortPlayersByHandicap } from "@/lib/teeSheetGrouping";
+import { calculateGroupSizes, sortPlayersByHandicap } from "@/lib/teeSheetGrouping";
 import { hydrateJointTeeSheetMemberPool } from "@/lib/teeSheet/hydrateJointTeeSheetMemberPool";
 import { buildSocietyIdToNameMap } from "@/lib/jointEventSocietyLabel";
 import { resolveEventAttendeesForDisplay } from "@/lib/jointEventAttendeeVisibility";
@@ -780,15 +786,20 @@ export default function TeeSheetScreen() {
 
             if (joint) {
               logStep("joint_tee_sheet fetch");
-              const teeSheet = await getJointEventTeeSheet(eventId);
+              const [teeSheet, eventRowForHoles] = await Promise.all([
+                getJointEventTeeSheet(eventId),
+                getEvent(eventId),
+              ]);
               logStep("joint_tee_sheet done", { hasTeeSheet: !!teeSheet });
               if (!teeSheet) {
                 throw new Error("Could not load joint event tee sheet.");
               }
 
               const ev = teeSheet.event;
-              const persistedNtp = formatHoleNumbers(ev.nearest_pin_holes ?? []);
-              const persistedLd = formatHoleNumbers(ev.longest_drive_holes ?? []);
+              const ntpFromDb = eventRowForHoles?.nearestPinHoles ?? ev.nearest_pin_holes ?? null;
+              const ldFromDb = eventRowForHoles?.longestDriveHoles ?? ev.longest_drive_holes ?? null;
+              const persistedNtp = resolveCompetitionHolesInputForReload(ntpFromDb);
+              const persistedLd = resolveCompetitionHolesInputForReload(ldFromDb);
 
               logStep("joint_regs");
               const regs = await getJointEventRegistrations(eventId);
@@ -953,8 +964,8 @@ export default function TeeSheetScreen() {
               setSelectedEvent(event);
               setPoolRegistrations(registrations ?? []);
               setPoolGuests(allGuestsStd);
-              setNtpHolesInput(formatHoleNumbers(event.nearestPinHoles));
-              setLdHolesInput(formatHoleNumbers(event.longestDriveHoles));
+              setNtpHolesInput(resolveCompetitionHolesInputForReload(event.nearestPinHoles));
+              setLdHolesInput(resolveCompetitionHolesInputForReload(event.longestDriveHoles));
               if (event.teeTimeStart) setStartTime(event.teeTimeStart);
               if (event.teeTimeInterval != null && event.teeTimeInterval > 0) {
                 setTeeInterval(String(event.teeTimeInterval));
@@ -978,8 +989,8 @@ export default function TeeSheetScreen() {
                   groups: persistedGroups,
                   startTime: event.teeTimeStart || "08:00",
                   teeInterval: String(event.teeTimeInterval ?? 10),
-                  ntpHolesInput: formatHoleNumbers(event.nearestPinHoles),
-                  ldHolesInput: formatHoleNumbers(event.longestDriveHoles),
+                  ntpHolesInput: resolveCompetitionHolesInputForReload(event.nearestPinHoles),
+                  ldHolesInput: resolveCompetitionHolesInputForReload(event.longestDriveHoles),
                   selectedPlayerIds: persistedIds,
                 });
                 logSelectedPlayersDev("[teesheet] selected players (after ManCo edits)", eventId, persistedIds);
@@ -1211,18 +1222,6 @@ export default function TeeSheetScreen() {
     return unsubscribe;
   }, [navigation, isDirty, saving, generating]);
 
-  const markDraftSavedLocally = useCallback(() => {
-    commitSavedSnapshotBaseline({
-      groups,
-      startTime,
-      teeInterval,
-      ntpHolesInput,
-      ldHolesInput,
-      selectedPlayerIds,
-    });
-    setLastSavedAt(new Date());
-  }, [commitSavedSnapshotBaseline, groups, startTime, teeInterval, ntpHolesInput, ldHolesInput, selectedPlayerIds]);
-
   // Refresh on focus — always reload persisted draft from DB (same event id stays mounted in stack).
   useFocusEffect(
     useCallback(() => {
@@ -1440,8 +1439,11 @@ export default function TeeSheetScreen() {
 
       const groupsForExport = hintGroups ?? editorStateRef.current.groups;
       const interval = parseInt(teeInterval, 10) || 10;
-      const ntpHoles = parseHoleNumbers(ntpHolesInput === "-" ? "" : ntpHolesInput);
-      const ldHoles = parseHoleNumbers(ldHolesInput === "-" ? "" : ldHolesInput);
+      const holesParsed = parseEditorCompetitionHoles({ ntpHolesInput, ldHolesInput });
+      if (!holesParsed.ok) {
+        throw new Error(holesParsed.error);
+      }
+      const { nearestPinHoles: ntpHoles, longestDriveHoles: ldHoles } = holesParsed;
       const societyNameExport =
         isJointEventTeeSheet && jointTeeSheetData?.participating_societies?.length
           ? `Joint: ${jointTeeSheetData.participating_societies.map((s: { society_name: string }) => s.society_name).filter(Boolean).join(" & ")}`
@@ -1508,9 +1510,18 @@ export default function TeeSheetScreen() {
       setSaving(true);
     }
     try {
+      const holesParsed = parseEditorCompetitionHoles({
+        ntpHolesInput: editor.ntpHolesInput,
+        ldHolesInput: editor.ldHolesInput,
+      });
+      if (!holesParsed.ok) {
+        if (!opts?.quiet) {
+          setNotice({ type: "error", message: "Invalid competition holes", detail: holesParsed.error });
+        }
+        return false;
+      }
+      const { nearestPinHoles: ntpHoles, longestDriveHoles: ldHoles } = holesParsed;
       const interval = parseInt(editor.teeInterval, 10) || 10;
-      const ntpHoles = parseHoleNumbers(editor.ntpHolesInput === "-" ? "" : editor.ntpHolesInput);
-      const ldHoles = parseHoleNumbers(editor.ldHolesInput === "-" ? "" : editor.ldHolesInput);
       const manualPolicyInputs = nonEmptyGroups.flatMap((g) =>
         g.players.map((p) => ({
           player_id: p.id,
@@ -1629,7 +1640,19 @@ export default function TeeSheetScreen() {
           });
         }
         await logPostSaveJointRead(eventId, finalPlayerIds);
-        markDraftSavedLocally();
+        const persistedNtpInput = competitionHolesInputFromPersisted(ntpHoles);
+        const persistedLdInput = competitionHolesInputFromPersisted(ldHoles);
+        setNtpHolesInput(persistedNtpInput);
+        setLdHolesInput(persistedLdInput);
+        commitSavedSnapshotBaseline({
+          groups: editor.groups,
+          startTime: editor.startTime || "08:00",
+          teeInterval: String(interval),
+          ntpHolesInput: persistedNtpInput,
+          ldHolesInput: persistedLdInput,
+          selectedPlayerIds: editor.selectedPlayerIds,
+        });
+        setLastSavedAt(new Date());
         if (!opts?.quiet) {
           setToast({ visible: true, message: "Draft saved successfully", type: "success" });
         }
@@ -1763,6 +1786,10 @@ export default function TeeSheetScreen() {
           groupCount: canonicalAfterSave?.groups.length ?? 0,
         });
       }
+      const persistedNtpInput = competitionHolesInputFromPersisted(ntpHoles);
+      const persistedLdInput = competitionHolesInputFromPersisted(ldHoles);
+      setNtpHolesInput(persistedNtpInput);
+      setLdHolesInput(persistedLdInput);
       if (shouldLoadPersistedTeeSheetDraft(canonicalAfterSave)) {
         const membersForEditor =
           editor.eventMemberPool.length > 0 ? editor.eventMemberPool : editor.members;
@@ -1781,12 +1808,21 @@ export default function TeeSheetScreen() {
           groups: savedGroups,
           startTime: editor.startTime || "08:00",
           teeInterval: String(interval),
-          ntpHolesInput: editor.ntpHolesInput,
-          ldHolesInput: editor.ldHolesInput,
+          ntpHolesInput: persistedNtpInput,
+          ldHolesInput: persistedLdInput,
           selectedPlayerIds: savedIds,
         });
+      } else {
+        commitSavedSnapshotBaseline({
+          groups: editor.groups,
+          startTime: editor.startTime || "08:00",
+          teeInterval: String(interval),
+          ntpHolesInput: persistedNtpInput,
+          ldHolesInput: persistedLdInput,
+          selectedPlayerIds: editor.selectedPlayerIds,
+        });
       }
-      markDraftSavedLocally();
+      setLastSavedAt(new Date());
       if (!opts?.quiet) {
         setToast({ visible: true, message: "Draft saved successfully", type: "success" });
       }
@@ -1822,8 +1858,12 @@ export default function TeeSheetScreen() {
   const handleSaveSettings = async () => {
     if (!selectedEventId) return;
 
-    const ntpHoles = parseHoleNumbers(ntpHolesInput === "-" ? "" : ntpHolesInput);
-    const ldHoles = parseHoleNumbers(ldHolesInput === "-" ? "" : ldHolesInput);
+    const holesParsed = parseEditorCompetitionHoles({ ntpHolesInput, ldHolesInput });
+    if (!holesParsed.ok) {
+      setNotice({ type: "error", message: "Invalid competition holes", detail: holesParsed.error });
+      return;
+    }
+    const { nearestPinHoles: ntpHoles, longestDriveHoles: ldHoles } = holesParsed;
 
     setNotice(null);
     setSaving(true);
@@ -1841,6 +1881,16 @@ export default function TeeSheetScreen() {
       await updateEvent(selectedEventId, {
         nearestPinHoles: ntpHoles,
         longestDriveHoles: ldHoles,
+      });
+      setNtpHolesInput(competitionHolesInputFromPersisted(ntpHoles));
+      setLdHolesInput(competitionHolesInputFromPersisted(ldHoles));
+      commitSavedSnapshotBaseline({
+        groups,
+        startTime,
+        teeInterval,
+        ntpHolesInput: competitionHolesInputFromPersisted(ntpHoles),
+        ldHolesInput: competitionHolesInputFromPersisted(ldHoles),
+        selectedPlayerIds,
       });
       if (__DEV__) {
         const roundTrip = await getEvent(selectedEventId);
@@ -2163,6 +2213,16 @@ export default function TeeSheetScreen() {
       return;
     }
 
+    const holesParsed = parseEditorCompetitionHoles({ ntpHolesInput, ldHolesInput });
+    if (!holesParsed.ok) {
+      setNotice({
+        type: "error",
+        message: "Cannot publish tee sheet",
+        detail: holesParsed.error,
+      });
+      return;
+    }
+
     setNotice(
       validation.warnings.length > 0
         ? {
@@ -2181,7 +2241,7 @@ export default function TeeSheetScreen() {
         setNotice({
           type: "error",
           message: "Publish failed",
-          detail: "Publishing was cancelled because the draft could not be saved.",
+          detail: "Could not save the tee sheet draft before publishing. Check the error above and try Save Draft first.",
         });
         return;
       }
@@ -2192,22 +2252,31 @@ export default function TeeSheetScreen() {
       }
       setSelectedEvent(refreshed);
 
-      const canonical = await loadCanonicalTeeSheet(selectedEventId, { preserveDraftPlayers: true });
-      if (!canonical) {
-        throw new Error("Could not load tee sheet after publish");
-      }
-
       await invalidateCache(`event:${selectedEventId}:tee-sheet`);
       await invalidateCache(`event:${selectedEventId}:detail`);
       if (societyId) await invalidateCachePrefix(`society:${societyId}:`);
 
+      await reloadSelectedEventDetails();
+
       setToast({
         visible: true,
-        message: "Published successfully — members can now see their slot.",
+        message: "Tee sheet published",
         type: "success",
       });
 
-      await navigateToTeeSheetShare(canonical, editorStateRef.current.groups);
+      const canonical = await loadCanonicalTeeSheet(selectedEventId, { preserveDraftPlayers: true });
+      if (canonical && canonical.groups.length > 0) {
+        try {
+          await navigateToTeeSheetShare(canonical, editorStateRef.current.groups);
+        } catch (shareErr: unknown) {
+          logShareError(shareErr, { action: "publish_share", eventId: selectedEventId, screen: "tee-sheet" });
+          setNotice({
+            type: "info",
+            message: "Tee sheet published",
+            detail: "Share/export could not be opened — use Share / Export PNG when ready.",
+          });
+        }
+      }
     } catch (err: unknown) {
       logShareError(err, { action: "publish", eventId: selectedEventId, screen: "tee-sheet" });
       const formatted = formatError(err, "Couldn't publish tee sheet.");

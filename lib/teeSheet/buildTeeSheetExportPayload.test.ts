@@ -12,12 +12,16 @@ vi.mock("@/lib/teeSheet/canonicalTeeSheet", () => ({
       societyId?: string;
       societyName: string;
       jointSocieties?: { societyId: string; societyName: string }[];
+      nearestPinHoles?: number[] | null;
+      longestDriveHoles?: number[] | null;
     },
   ) => ({
     societyId: opts.societyId,
     societyName: opts.societyName,
     jointSocieties: opts.jointSocieties,
     manCo: { captain: null, secretary: null, treasurer: null, handicapper: null },
+    nearestPinHoles: opts.nearestPinHoles ?? null,
+    longestDriveHoles: opts.longestDriveHoles ?? null,
     eventName: canonical.event.name,
     eventDate: canonical.event.date,
     courseName: canonical.event.courseName,
@@ -108,6 +112,22 @@ describe("buildTeeSheetExportPayload", () => {
     expect(payload.players.map((p) => p.group)).toEqual([2, 2, 1]);
     expect(payload.players.find((p) => p.id === "a")?.teeAssignment).toBe("ladies");
     expect(payload.players.find((p) => p.id === "a")?.playingHandicapSnapshot).toBe(7);
+  });
+
+  it("includes nearestPinHoles and longestDriveHoles in PNG/export payload", () => {
+    const payload = buildTeeSheetExportPayload({
+      canonical: canonical(),
+      societyId: "soc1",
+      societyName: "M4",
+      manCo,
+      nearestPinHoles: [12, 14],
+      longestDriveHoles: [8, 10],
+      startTime: "08:00",
+      teeTimeInterval: 10,
+      genderHints: [],
+    });
+    expect(payload.nearestPinHoles).toEqual([12, 14]);
+    expect(payload.longestDriveHoles).toEqual([8, 10]);
   });
 
   it("uses joint society label in export header", () => {
