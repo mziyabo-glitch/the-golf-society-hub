@@ -57,8 +57,9 @@ import {
 import { guestPlayerId, parseGuestPlayerId } from "@/lib/teeSheetEligibility";
 import {
   editorGuestPlayerFromDoc,
-  hydrateEditorGroupsWithPaidGuests,
+  hydratePersistedEditorGroupsWithGuestAssignments,
 } from "@/lib/teeSheet/teeSheetEditorGuests";
+import { shouldLoadPersistedTeeSheetDraft } from "@/lib/teeSheet/teeSheetDraftPersistence";
 import {
   getJointEventTeeSheet,
   getJointMetaForEventIds,
@@ -812,7 +813,11 @@ export default function TeeSheetScreen() {
                 })),
               );
               persistedGroups = normalizeGroups(
-                hydrateEditorGroupsWithPaidGuests(persistedGroups, jointPaidGuests, jointGuestAssignments),
+                hydratePersistedEditorGroupsWithGuestAssignments(
+                  persistedGroups,
+                  jointPaidGuests,
+                  jointGuestAssignments,
+                ),
               );
               const jointEventDoc = mapJointEventToEventDoc(teeSheet.event) as EventDoc;
               persistedGroups = applySexPolicyToGroups(
@@ -900,8 +905,7 @@ export default function TeeSheetScreen() {
               groupCount: canonical?.groups.length ?? 0,
             });
 
-            const hasPersistedGroups =
-              canonical != null && canonical.source === "tee_groups" && canonical.groups.length > 0;
+            const hasPersistedGroups = shouldLoadPersistedTeeSheetDraft(canonical);
 
             applyIfCurrent(() => {
               setEligiblePaidGuests(paidGuests);
@@ -925,7 +929,7 @@ export default function TeeSheetScreen() {
                   paidGuests,
                   policyByPlayerId(persistedPolicyRows),
                 );
-                persistedGroups = hydrateEditorGroupsWithPaidGuests(persistedGroups, paidGuests);
+                persistedGroups = hydratePersistedEditorGroupsWithGuestAssignments(persistedGroups, paidGuests);
                 const persistedIds = groupsToPlayerIdsFrom(persistedGroups);
                 setGroups(persistedGroups);
                 setSelectedPlayerIds(persistedIds);
@@ -1007,8 +1011,11 @@ export default function TeeSheetScreen() {
           const guest = guestByPlayerId.get(p.id);
           const persisted = persistedPolicy?.get(String(p.id));
           const manualGender = (persisted?.manual_gender ?? null) as Gender;
+          const manualTeeOverride = (persisted?.manual_tee_override ?? null) as "men" | "ladies" | null;
+          const manualTeeAssignment = (persisted?.manual_tee_assignment ?? null) as "men" | "ladies" | null;
           const gender = (manualGender ?? member?.gender ?? guest?.sex ?? null) as Gender;
-          const teeAssignment = teeAssignmentFromGender(gender, null);
+          const teeAssignment =
+            manualTeeOverride ?? manualTeeAssignment ?? teeAssignmentFromGender(gender, null);
           const hi = member?.handicapIndex ?? member?.handicap_index ?? p.handicapIndex ?? null;
           const playerTee =
             teeAssignment === "ladies" ? ladiesTee : teeAssignment === "men" ? menTee : null;
@@ -1021,6 +1028,8 @@ export default function TeeSheetScreen() {
             playingHandicap,
             gender,
             teeAssignment,
+            manualGenderSet: manualGender != null,
+            manualTeeOverride,
             groupIndex: groupIdx,
             societyLabel: p.societyLabel ?? null,
           } as EditablePlayer;
@@ -1460,19 +1469,25 @@ export default function TeeSheetScreen() {
           manual_tee_override: p.manualTeeOverride ?? null,
         })),
       );
+      const jointMetaForSave = await getJointMetaForEventIds([selectedEventId]);
+      const isJointSave = jointMetaForSave.get(selectedEventId)?.is_joint_event === true;
       if (__DEV__) {
         console.log("[teesheet] save start", {
           eventId: selectedEventId,
           societyId: selectedEvent.society_id ?? societyId ?? null,
-          isJointEvent: isJointEventTeeSheet,
+          isJointEventState: isJointEventTeeSheet,
+          isJointEventResolved: isJointSave,
           groups: nonEmptyGroups.length,
           rowCount: nonEmptyGroups.flatMap((g) => g.players).length,
           teeTimeStart: startTime || "08:00",
           teeTimeInterval: interval,
         });
       }
+      if (isJointSave !== isJointEventTeeSheet) {
+        setIsJointEventTeeSheet(isJointSave);
+      }
 
-      if (isJointEventTeeSheet) {
+      if (isJointSave) {
         const finalPlayerIds = groupsToPlayerIdsFrom(nonEmptyGroups);
         const mismatch = validateGroupsMatchSelectedIds(nonEmptyGroups, selectedPlayerIds);
         if (__DEV__ && mismatch) {
@@ -1574,7 +1589,7 @@ export default function TeeSheetScreen() {
             players: (g.entries ?? []).map((e) => jointTeeSheetEntryToEditable(e, groupIdx)),
           }));
           let newGroups = normalizeGroups(
-            hydrateEditorGroupsWithPaidGuests(
+            hydratePersistedEditorGroupsWithGuestAssignments(
               baseGroups,
               jointPaidGuestsAfterSave,
               jointGuestAssignmentsAfterSave,
@@ -1669,13 +1684,40 @@ export default function TeeSheetScreen() {
         });
       }
       logSelectedPlayersDev("[teesheet] final published players", selectedEventId, playerIds);
-      const canonicalAfterSave = await loadCanonicalTeeSheet(selectedEventId, { preserveDraftPlayers: true });
+      const [canonicalAfterSave, policyRowsAfterSave, paidGuestsAfterSave] = await Promise.all([
+        loadCanonicalTeeSheet(selectedEventId, { preserveDraftPlayers: true }),
+        getTeeSheetPlayerPolicy(selectedEventId),
+        getTeeSheetEligibleGuestsForEvent(selectedEventId),
+      ]);
       if (__DEV__) {
         console.log("[teesheet] row count after reload", {
           eventId: selectedEventId,
           source: canonicalAfterSave?.source ?? "none",
           rowCount: canonicalAfterSave?.groups.flatMap((g) => g.players).length ?? 0,
           groupCount: canonicalAfterSave?.groups.length ?? 0,
+        });
+      }
+      if (shouldLoadPersistedTeeSheetDraft(canonicalAfterSave)) {
+        const membersForEditor =
+          eventMemberPool.length > 0 ? eventMemberPool : members;
+        let savedGroups = groupsFromCanonical(
+          selectedEvent,
+          canonicalAfterSave!,
+          membersForEditor,
+          paidGuestsAfterSave,
+          policyByPlayerId(policyRowsAfterSave),
+        );
+        savedGroups = hydratePersistedEditorGroupsWithGuestAssignments(savedGroups, paidGuestsAfterSave);
+        setGroups(savedGroups);
+        const savedIds = groupsToPlayerIdsFrom(savedGroups);
+        setSelectedPlayerIds(savedIds);
+        commitSavedSnapshotBaseline({
+          groups: savedGroups,
+          startTime: startTime || "08:00",
+          teeInterval: String(interval),
+          ntpHolesInput,
+          ldHolesInput,
+          selectedPlayerIds: savedIds,
         });
       }
       markDraftSavedLocally();

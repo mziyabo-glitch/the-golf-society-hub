@@ -1,5 +1,6 @@
 // lib/db_supabase/teeGroupsRepo.ts
 import { supabase } from "@/lib/supabase";
+import { assertTeeSheetUpsertWritten } from "@/lib/teeSheet/teeSheetDraftPersistence";
 
 export type TeeGroupRow = {
   id: string;
@@ -391,11 +392,13 @@ export async function upsertTeeSheet(
     });
   }
 
-  return {
+  const upsertResult = {
     eventId,
     groupsRequested: groups.length,
     playersRequested: players.length,
     groupsInserted,
     playersInserted,
   };
+  assertTeeSheetUpsertWritten(upsertResult);
+  return upsertResult;
 }

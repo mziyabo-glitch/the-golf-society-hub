@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
+vi.mock("@/lib/supabase", () => ({ supabase: {} }));
 vi.mock("@/lib/db_supabase/jointEventRepo", () => ({ getJointEventTeeSheet: vi.fn() }));
 vi.mock("@/lib/db_supabase/eventRegistrationRepo", () => ({
   getEventRegistrations: vi.fn(),

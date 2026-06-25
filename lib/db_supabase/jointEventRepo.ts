@@ -93,6 +93,33 @@ export async function getJointMetaForEventIds(
         participantSocietyIds,
       });
     }
+
+    // Participant ManCo may only see their own event_societies row under RLS (pre-170).
+    // Reconcile via SECURITY DEFINER detail when direct count under-reports joint events.
+    const reconcileIds = ids.filter((id) => {
+      const m = result.get(id);
+      return m != null && !m.is_joint_event && m.linkedSocietyCount >= 1;
+    });
+    for (const id of reconcileIds) {
+      const detail = await getJointEventDetail(id);
+      const societyIds = [
+        ...new Set((detail?.participating_societies ?? []).map((s) => s.society_id).filter(Boolean)),
+      ].sort((a, b) => a.localeCompare(b));
+      if (societyIds.length >= 2) {
+        if (__DEV__) {
+          console.warn("[jointEventRepo] getJointMetaForEventIds reconciled joint meta from RPC", {
+            eventId: id,
+            eventSocietiesCount: result.get(id)?.linkedSocietyCount,
+            rpcSocietyCount: societyIds.length,
+          });
+        }
+        result.set(id, {
+          is_joint_event: true,
+          linkedSocietyCount: societyIds.length,
+          participantSocietyIds: societyIds,
+        });
+      }
+    }
   } catch {
     // leave defaults
   }

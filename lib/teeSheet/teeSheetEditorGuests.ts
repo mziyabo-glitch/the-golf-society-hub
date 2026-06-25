@@ -18,6 +18,17 @@ export function editorGuestPlayerFromDoc(g: EventGuest): EditorGuestPlayer {
   };
 }
 
+/**
+ * Reload saved draft: restore guest assignments from tee_group_players only.
+ * Do not inject paid-pool guests the ManCo removed from the sheet.
+ */
+export function hydratePersistedEditorGroupsWithGuestAssignments<
+  T extends { groupNumber: number; players: EditorGuestPlayer[] },
+>(groups: T[], paidGuests: EventGuest[], guestAssignments: TeeGroupPlayerRow[] = []): T[] {
+  if (guestAssignments.length === 0) return groups;
+  return mergeGuestTeeAssignmentsIntoEditorGroups(groups, guestAssignments, paidGuests);
+}
+
 /** Merge saved guest tee rows, then add any paid guests still missing from groups. */
 export function hydrateEditorGroupsWithPaidGuests<
   T extends { groupNumber: number; players: EditorGuestPlayer[] },
