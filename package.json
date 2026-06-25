@@ -35,6 +35,7 @@
     "course-import:seed-gb": "tsx scripts/seed-gb-course-candidates.ts",
     "course-import:seed-vale": "tsx scripts/seed-vale-resort.ts",
     "course-import:seed-shrivenham-summer": "tsx scripts/seed-shrivenham-park-summer.ts",
+    "course-import:seed-bulawayo": "tsx scripts/seed-bulawayo-courses.ts",
     "course-catalog:audit": "tsx scripts/audit-course-catalog.ts",
     "build:android:preview": "eas build --platform android --profile preview",
     "build:android:production": "eas build --platform android --profile production",
