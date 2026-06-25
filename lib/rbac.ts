@@ -174,6 +174,18 @@ export function canShareEventPaymentListsForSociety(
   return r === "CAPTAIN" || r === "TREASURER" || r === "SECRETARY";
 }
 
+/** Captain / Handicapper in the active society — attendee CSV export. */
+export function canExportEventAttendeesForSociety(
+  memberships: { societyId: string; role: string }[] | null | undefined,
+  activeSocietyId: string | null | undefined,
+): boolean {
+  if (!activeSocietyId || !memberships?.length) return false;
+  const m = memberships.find((x) => x.societyId === activeSocietyId);
+  if (!m) return false;
+  const r = String(m.role || "").toUpperCase();
+  return r === "CAPTAIN" || r === "HANDICAPPER";
+}
+
 /** Same roles as `mark_event_paid` / `admin_add_member_to_event` (per active society membership). */
 export function canManageEventRosterForSociety(
   memberships: { societyId: string; role: string }[] | null | undefined,

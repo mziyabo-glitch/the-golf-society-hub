@@ -2,6 +2,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { supabase as defaultSupabase } from "@/lib/supabase";
 import { normalizeSlopeRating } from "@/lib/teeMetrics";
+import { formatEventUpdatePermissionError, isSupabaseRlsError } from "./eventSocietiesUtils";
 
 let eventSupabase: SupabaseClient = defaultSupabase;
 
@@ -598,13 +599,16 @@ export async function updateEvent(
         hint: error.hint,
         code: error.code,
       });
+      if (isSupabaseRlsError(error)) {
+        throw new Error(formatEventUpdatePermissionError());
+      }
       throw new Error(error.message || "Failed to update event");
     }
   }
 
   if (!data || (Array.isArray(data) && data.length === 0)) {
     console.error("[eventRepo] updateEvent: 0 rows updated (RLS may have blocked)");
-    throw new Error("Event could not be updated. You may not have permission to edit this event.");
+    throw new Error(formatEventUpdatePermissionError());
   }
 
   const row = Array.isArray(data) ? data[0] : data;

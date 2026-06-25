@@ -69,7 +69,7 @@ import {
 } from "@/lib/db_supabase/jointEventRepo";
 import type { JointEventTeeSheet, JointEventTeeSheetEntry } from "@/lib/db_supabase/jointEventTypes";
 import { getMembersBySocietyId, getMembersByIds, getJointEventMemberVisibility, getManCoRoleHolders, type MemberDoc, type Gender, type ManCoDetails, normalizeMemberDocId } from "@/lib/db_supabase/memberRepo";
-import { getPermissionsForMember } from "@/lib/rbac";
+import { getPermissionsForMember, canExportEventAttendeesForSociety } from "@/lib/rbac";
 import {
   type TeeBlock,
   calcCourseHandicap,
@@ -80,6 +80,16 @@ import {
 import { parseHoleNumbers, formatHoleNumbers, calculateGroupSizes, sortPlayersByHandicap } from "@/lib/teeSheetGrouping";
 import { hydrateJointTeeSheetMemberPool } from "@/lib/teeSheet/hydrateJointTeeSheetMemberPool";
 import { buildSocietyIdToNameMap } from "@/lib/jointEventSocietyLabel";
+import { resolveEventAttendeesForDisplay } from "@/lib/jointEventAttendeeVisibility";
+import { exportEventAttendeesCsv } from "@/lib/eventAttendeeCsvExport";
+import { guestsByIdFromList, membersByIdFromLists } from "@/lib/eventAttendeeCsv";
+import {
+  buildPlayerPoolItems,
+  filterPlayerPoolItems,
+  DEFAULT_PLAYER_POOL_FILTERS,
+  type PlayerPoolFilterState,
+} from "@/lib/teeSheet/playerPoolFilters";
+import { showAlert } from "@/lib/ui/alert";
 import { expandJointTeeSheetReplaceRowsForParticipatingSocieties } from "@/lib/jointPersonDedupe";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
 import { assertPngExportOnly } from "@/lib/share/pngExportGuard";
@@ -379,7 +389,7 @@ const GroupTableCard = React.memo(function GroupTableCard({
 export default function TeeSheetScreen() {
   const router = useRouter();
   const navigation = useNavigation();
-  const { societyId, society, member, loading: bootstrapLoading } = useBootstrap();
+  const { societyId, society, member, memberships, loading: bootstrapLoading } = useBootstrap();
   const { guardPaidAction, modalVisible, setModalVisible, societyId: guardSocietyId } = usePaidAccess();
   const colors = getColors();
 
@@ -408,7 +418,12 @@ export default function TeeSheetScreen() {
   const [eventMemberPool, setEventMemberPool] = useState<MemberDoc[]>([]);
   /** Paid event_guests for manual add + auto-hydration (id-based, not name). */
   const [eligiblePaidGuests, setEligiblePaidGuests] = useState<EventGuest[]>([]);
-  const [, setSelectedEventRegistrations] = useState<EventRegistration[]>([]);
+  const [poolRegistrations, setPoolRegistrations] = useState<EventRegistration[]>([]);
+  const [poolGuests, setPoolGuests] = useState<EventGuest[]>([]);
+  const [playerPoolFilters, setPlayerPoolFilters] = useState<PlayerPoolFilterState>(
+    DEFAULT_PLAYER_POOL_FILTERS,
+  );
+  const [attendeesCsvBusy, setAttendeesCsvBusy] = useState(false);
   const [showGroupEditor, setShowGroupEditor] = useState(false);
   const [manCo, setManCo] = useState<ManCoDetails>({ captain: null, secretary: null, treasurer: null, handicapper: null });
   const [isJointEventTeeSheet, setIsJointEventTeeSheet] = useState(false);
@@ -424,6 +439,10 @@ export default function TeeSheetScreen() {
 
   const permissions = getPermissionsForMember(member);
   const canGenerateTeeSheet = permissions.canGenerateTeeSheet;
+  const canExportEventAttendees = useMemo(
+    () => canExportEventAttendeesForSociety(memberships, societyId),
+    [memberships, societyId],
+  );
 
   const { upcomingEvents, pastEvents } = useMemo(() => {
     const { upcoming, past } = partitionUpcomingPast(events);
@@ -434,6 +453,152 @@ export default function TeeSheetScreen() {
   }, [events]);
 
   const isPastEventSelected = !!(selectedEvent && isEventPastForList(selectedEvent));
+
+  const participatingSocietiesForFilters = useMemo(() => {
+    if (isJointEventTeeSheet && jointTeeSheetData?.participating_societies?.length) {
+      return jointTeeSheetData.participating_societies
+        .map((s) => ({
+          id: String(s.society_id),
+          name: String(s.society_name || s.society_id),
+        }))
+        .filter((s) => s.id);
+    }
+    const sid = selectedEvent?.society_id ?? societyId ?? "";
+    if (!sid) return [];
+    return [{ id: String(sid), name: society?.name ?? sid }];
+  }, [isJointEventTeeSheet, jointTeeSheetData, selectedEvent?.society_id, societyId, society?.name]);
+
+  const poolSocietyIdToName = useMemo(() => {
+    if (isJointEventTeeSheet && jointTeeSheetData?.participating_societies?.length) {
+      return buildSocietyIdToNameMap(
+        jointTeeSheetData.participating_societies.map((s) => ({
+          society_id: s.society_id,
+          society_name: s.society_name,
+        })),
+      );
+    }
+    const sid = selectedEvent?.society_id ?? societyId ?? "";
+    return buildSocietyIdToNameMap([{ society_id: sid, society_name: society?.name }]);
+  }, [isJointEventTeeSheet, jointTeeSheetData, selectedEvent?.society_id, societyId, society?.name]);
+
+  const poolParticipantSocietyIds = useMemo(() => {
+    if (isJointEventTeeSheet && jointTeeSheetData?.participating_societies?.length) {
+      return jointTeeSheetData.participating_societies.map((s) => String(s.society_id)).filter(Boolean);
+    }
+    const sid = selectedEvent?.society_id ?? societyId;
+    return sid ? [String(sid)] : [];
+  }, [isJointEventTeeSheet, jointTeeSheetData, selectedEvent?.society_id, societyId]);
+
+  const poolMembersById = useMemo(
+    () => membersByIdFromLists(eventMemberPool, members),
+    [eventMemberPool, members],
+  );
+
+  const poolAttendeeRows = useMemo(() => {
+    if (!societyId || poolParticipantSocietyIds.length === 0) return [];
+    return resolveEventAttendeesForDisplay({
+      isJoint: isJointEventTeeSheet && poolParticipantSocietyIds.length >= 2,
+      regs: poolRegistrations,
+      guests: poolGuests.map((g) => ({
+        id: g.id,
+        society_id: g.society_id,
+        name: g.name,
+        paid: g.paid,
+      })),
+      activeSocietyId: societyId,
+      participantSocietyIds: poolParticipantSocietyIds,
+      societyIdToName: poolSocietyIdToName,
+      participatingMembers: eventMemberPool.length > 0 ? eventMemberPool : members,
+      attendingMembersOnly: true,
+    });
+  }, [
+    societyId,
+    poolParticipantSocietyIds,
+    isJointEventTeeSheet,
+    poolRegistrations,
+    poolGuests,
+    poolSocietyIdToName,
+    eventMemberPool,
+    members,
+  ]);
+
+  const playerPoolItemsAll = useMemo(
+    () => buildPlayerPoolItems(poolAttendeeRows, poolMembersById, guestsByIdFromList(poolGuests)),
+    [poolAttendeeRows, poolMembersById, poolGuests],
+  );
+
+  const playersInGroupsSet = useMemo(
+    () => new Set(groups.flatMap((g) => g.players.map((p) => String(p.id)))),
+    [groups],
+  );
+
+  const eligibleMemberIdSet = useMemo(
+    () => new Set(eligibleMemberIds.map(String)),
+    [eligibleMemberIds],
+  );
+
+  const availablePlayerPoolItems = useMemo(() => {
+    const selectedSet = new Set(selectedPlayerIds.map(String));
+    return playerPoolItemsAll.filter((item) => {
+      const memberId = String(item.id);
+      const guestPid = item.kind === "guest" ? guestPlayerId(item.id) : "";
+      if (selectedSet.has(memberId) || playersInGroupsSet.has(memberId)) return false;
+      if (guestPid && playersInGroupsSet.has(guestPid)) return false;
+      if (!isJointEventTeeSheet && item.kind === "member" && !eligibleMemberIdSet.has(memberId)) {
+        return false;
+      }
+      return true;
+    });
+  }, [
+    playerPoolItemsAll,
+    selectedPlayerIds,
+    playersInGroupsSet,
+    isJointEventTeeSheet,
+    eligibleMemberIdSet,
+  ]);
+
+  const filteredPlayerPoolItems = useMemo(
+    () => filterPlayerPoolItems(availablePlayerPoolItems, playerPoolFilters),
+    [availablePlayerPoolItems, playerPoolFilters],
+  );
+
+  const handleExportAttendeesCsv = useCallback(async () => {
+    if (!selectedEvent?.id || !societyId) return;
+    if (Platform.OS !== "web") {
+      showAlert("Export unavailable", "Attendee CSV export is available on web.");
+      return;
+    }
+    setAttendeesCsvBusy(true);
+    try {
+      await exportEventAttendeesCsv({
+        eventId: selectedEvent.id,
+        eventName: selectedEvent.name ?? "Event",
+        eventDate: selectedEvent.date ?? null,
+        attendeeRows: poolAttendeeRows,
+        membersById: poolMembersById,
+        guests: poolGuests,
+        teeOverlayGroups: groups.map((g) => ({
+          groupNumber: g.groupNumber,
+          players: g.players.map((p) => ({
+            id: p.id,
+            handicapIndex: p.handicapIndex,
+            playingHandicap: p.playingHandicap,
+            teeAssignment: p.teeAssignment,
+            gender: p.gender,
+          })),
+        })),
+        loadTeeSheetOverlay: false,
+      });
+    } catch (e: unknown) {
+      showAlert("Could not export CSV", e instanceof Error ? e.message : "Try again.");
+    } finally {
+      setAttendeesCsvBusy(false);
+    }
+  }, [selectedEvent, societyId, poolAttendeeRows, poolMembersById, poolGuests, groups]);
+
+  useEffect(() => {
+    setPlayerPoolFilters(DEFAULT_PLAYER_POOL_FILTERS);
+  }, [selectedEventId]);
 
   // Get logo URL from society
   const logoUrl = getSocietyLogoUrl(society);
@@ -531,7 +696,8 @@ export default function TeeSheetScreen() {
 
       if (!eventId) {
         setSelectedEvent(null);
-        setSelectedEventRegistrations([]);
+        setPoolRegistrations([]);
+        setPoolGuests([]);
         setGroups([]);
         setSelectedPlayerIds([]);
         setEligibleMemberIds([]);
@@ -663,7 +829,8 @@ export default function TeeSheetScreen() {
                 setJointTeeSheetData(teeSheet);
                 setIsJointEventTeeSheet(true);
                 setSelectedEvent(jointEventDoc);
-                setSelectedEventRegistrations(regs);
+                setPoolRegistrations(regs);
+                setPoolGuests(allGuests);
                 setNtpHolesInput(persistedNtp);
                 setLdHolesInput(persistedLd);
                 if (ev.tee_time_start) setStartTime(ev.tee_time_start);
@@ -673,7 +840,6 @@ export default function TeeSheetScreen() {
                 setEventMemberPool(candidateMembers);
                 setEligiblePaidGuests(jointPaidGuests);
                 setEligibleMemberIds(candidate.memberIds);
-                setSelectedEventRegistrations(candidate.registrations);
 
                 if (persistedIds.length > 0 || persistedGroups.some((g) => g.players.length > 0)) {
                   setGroups(persistedGroups);
@@ -703,10 +869,11 @@ export default function TeeSheetScreen() {
               setJointTeeSheetData(null);
             });
 
-            const [event, registrations, paidGuests, persistedPolicyRows] = await Promise.all([
+            const [event, registrations, paidGuests, allGuestsStd, persistedPolicyRows] = await Promise.all([
               getEvent(eventId),
               getEventRegistrations(eventId),
               getTeeSheetEligibleGuestsForEvent(eventId),
+              getEventGuests(eventId),
               getTeeSheetPlayerPolicy(eventId),
             ]);
             logStep("standard_event done", { hasEvent: !!event });
@@ -740,7 +907,8 @@ export default function TeeSheetScreen() {
             applyIfCurrent(() => {
               setEligiblePaidGuests(paidGuests);
               setSelectedEvent(event);
-              setSelectedEventRegistrations(registrations ?? []);
+              setPoolRegistrations(registrations ?? []);
+              setPoolGuests(allGuestsStd);
               setNtpHolesInput(formatHoleNumbers(event.nearestPinHoles));
               setLdHolesInput(formatHoleNumbers(event.longestDriveHoles));
               if (event.teeTimeStart) setStartTime(event.teeTimeStart);
@@ -1947,17 +2115,6 @@ export default function TeeSheetScreen() {
     (sum, g) => sum + g.players.filter((p) => p.gender == null || p.teeAssignment == null).length,
     0,
   );
-  const selectedIdSet = new Set(selectedPlayerIds);
-  const eligibleIdSet = new Set(eligibleMemberIds.map(String));
-  const playersInGroups = new Set(groups.flatMap((g) => g.players.map((p) => String(p.id))));
-  const addablePlayers = eventMemberPool.filter((m) => {
-    const id = String(m.id);
-    if (selectedIdSet.has(id) || playersInGroups.has(id)) return false;
-    if (!isJointEventTeeSheet && !eligibleIdSet.has(id)) return false;
-    return true;
-  });
-  const addableGuests = eligiblePaidGuests.filter((g) => !playersInGroups.has(guestPlayerId(g.id)));
-
   // Check if we have tee settings configured
   const hasMenTees = selectedEvent?.par != null && selectedEvent?.slopeRating != null;
   const hasLadiesTees = selectedEvent?.ladiesPar != null && selectedEvent?.ladiesSlopeRating != null;
@@ -1976,6 +2133,17 @@ export default function TeeSheetScreen() {
           <Feather name="arrow-left" size={16} color={colors.text} /> Back
         </SecondaryButton>
         <View style={{ flex: 1 }} />
+        {selectedEvent && canExportEventAttendees ? (
+          <SecondaryButton
+            size="sm"
+            onPress={() => void handleExportAttendeesCsv()}
+            loading={attendeesCsvBusy}
+            disabled={attendeesCsvBusy || poolAttendeeRows.length === 0}
+            icon={<Feather name="download" size={14} color={colors.primary} />}
+          >
+            Export attendees
+          </SecondaryButton>
+        ) : null}
       </View>
 
       <AppText variant="title" style={styles.title}>
@@ -2284,25 +2452,128 @@ export default function TeeSheetScreen() {
                   ) : null}
                   <AppCard>
                     <AppText variant="captionBold" color="primary">
-                      ✔ Attending players (default)
+                      ✔ Player pool
                     </AppText>
                     <AppText variant="small" color="secondary" style={{ marginTop: 4 }}>
-                      ➕ Add player from event societies, or ❌ remove from current field.
+                      Filter and add players from event societies, or remove from groups below.
                     </AppText>
-                    {addablePlayers.length === 0 && addableGuests.length === 0 ? (
+                    <AppInput
+                      placeholder="Search by name"
+                      value={playerPoolFilters.searchQuery}
+                      onChangeText={(searchQuery) =>
+                        setPlayerPoolFilters((f) => ({ ...f, searchQuery }))
+                      }
+                      style={{ marginTop: spacing.sm }}
+                    />
+                    <View style={[styles.poolFilterRow, { marginTop: spacing.sm }]}>
+                      {(
+                        [
+                          { key: "paidOnly", label: "Paid only" },
+                          { key: "unpaidOnly", label: "Unpaid" },
+                          { key: "membersOnly", label: "Members" },
+                          { key: "guestsOnly", label: "Guests" },
+                        ] as const
+                      ).map(({ key, label }) => {
+                        const active = playerPoolFilters[key];
+                        return (
+                          <Pressable
+                            key={key}
+                            onPress={() =>
+                              setPlayerPoolFilters((f) => ({ ...f, [key]: !f[key] }))
+                            }
+                            style={[
+                              styles.poolFilterChip,
+                              active && { backgroundColor: colors.primary, borderColor: colors.primary },
+                            ]}
+                          >
+                            <AppText
+                              variant="caption"
+                              style={{ color: active ? colors.textInverse : colors.textSecondary }}
+                            >
+                              {label}
+                            </AppText>
+                          </Pressable>
+                        );
+                      })}
+                    </View>
+                    {participatingSocietiesForFilters.length > 1 ? (
+                      <View style={[styles.poolFilterRow, { marginTop: spacing.xs }]}>
+                        <Pressable
+                          onPress={() =>
+                            setPlayerPoolFilters((f) => ({ ...f, societyId: "all" }))
+                          }
+                          style={[
+                            styles.poolFilterChip,
+                            playerPoolFilters.societyId === "all" && {
+                              backgroundColor: colors.primary,
+                              borderColor: colors.primary,
+                            },
+                          ]}
+                        >
+                          <AppText
+                            variant="caption"
+                            style={{
+                              color:
+                                playerPoolFilters.societyId === "all"
+                                  ? colors.textInverse
+                                  : colors.textSecondary,
+                            }}
+                          >
+                            All
+                          </AppText>
+                        </Pressable>
+                        {participatingSocietiesForFilters.map((s) => (
+                          <Pressable
+                            key={s.id}
+                            onPress={() =>
+                              setPlayerPoolFilters((f) => ({ ...f, societyId: s.id }))
+                            }
+                            style={[
+                              styles.poolFilterChip,
+                              playerPoolFilters.societyId === s.id && {
+                                backgroundColor: colors.primary,
+                                borderColor: colors.primary,
+                              },
+                            ]}
+                          >
+                            <AppText
+                              variant="caption"
+                              style={{
+                                color:
+                                  playerPoolFilters.societyId === s.id
+                                    ? colors.textInverse
+                                    : colors.textSecondary,
+                              }}
+                            >
+                              {s.name}
+                            </AppText>
+                          </Pressable>
+                        ))}
+                      </View>
+                    ) : null}
+                    {filteredPlayerPoolItems.length === 0 ? (
                       <AppText variant="small" color="muted" style={{ marginTop: spacing.xs }}>
-                        All available players are already selected.
+                        {availablePlayerPoolItems.length === 0
+                          ? "All available players are already selected."
+                          : "No players match these filters."}
                       </AppText>
                     ) : (
                       <View style={[styles.groupActions, { marginTop: spacing.xs }]}>
-                        {addablePlayers.slice(0, 10).map((m) => (
-                          <SecondaryButton key={m.id} size="sm" onPress={() => addPlayerToField(m)}>
-                            <Feather name="plus" size={12} color={colors.text} /> {m.name || m.displayName || "Member"}
-                          </SecondaryButton>
-                        ))}
-                        {addableGuests.map((g) => (
-                          <SecondaryButton key={g.id} size="sm" onPress={() => addGuestToField(g)}>
-                            <Feather name="plus" size={12} color={colors.text} /> {g.name} (guest)
+                        {filteredPlayerPoolItems.slice(0, 20).map((item) => (
+                          <SecondaryButton
+                            key={item.key}
+                            size="sm"
+                            onPress={() => {
+                              if (item.kind === "member" && item.member) {
+                                addPlayerToField(item.member);
+                              } else if (item.kind === "guest" && item.guest) {
+                                addGuestToField(item.guest);
+                              }
+                            }}
+                          >
+                            <Feather name="plus" size={12} color={colors.text} /> {item.name}
+                            {item.kind === "guest" ? " (guest)" : ""}
+                            {!item.paid ? " · unpaid" : ""}
                           </SecondaryButton>
                         ))}
                       </View>
@@ -2831,5 +3102,18 @@ const styles = StyleSheet.create({
     padding: spacing.sm,
     borderRadius: radius.md,
     marginTop: spacing.sm,
+  },
+  poolFilterRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: spacing.xs,
+  },
+  poolFilterChip: {
+    borderWidth: 1,
+    borderColor: "#D1D5DB",
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    backgroundColor: "#F8FAFC",
   },
 });

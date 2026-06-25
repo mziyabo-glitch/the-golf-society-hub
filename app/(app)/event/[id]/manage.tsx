@@ -60,6 +60,7 @@ import {
   canManageEventPaymentsForSociety,
   canManageEventRosterForSociety,
   canShareEventPaymentListsForSociety,
+  canExportEventAttendeesForSociety,
   isCaptainOrSecretaryInLinkedSocietiesForEvent,
 } from "@/lib/rbac";
 import {
@@ -98,6 +99,7 @@ import {
 import { buildSocietyIdToNameMap } from "@/lib/jointEventSocietyLabel";
 import {
   resolveJointEventRegistrations,
+  resolveEventAttendeesForDisplay,
 } from "@/lib/jointEventAttendeeVisibility";
 import type { JointEventRegistrationRow } from "@/lib/jointEventSignups";
 import { getEventRsvpInviteShareMessage } from "@/lib/appConfig";
@@ -121,6 +123,7 @@ import {
   formatWhatsAppUnpaidList,
 } from "@/lib/eventPaymentShare";
 import { exportEventPaymentPdf } from "@/lib/pdf/eventPaymentPdf";
+import { exportEventAttendeesCsv } from "@/lib/eventAttendeeCsvExport";
 import {
   assignEventPrizePoolManager,
   formatPenceGbp,
@@ -423,6 +426,10 @@ export default function ManageEventScreen() {
     () => canShareEventPaymentListsForSociety(memberships, societyId),
     [memberships, societyId],
   );
+  const canExportEventAttendees = useMemo(
+    () => canExportEventAttendeesForSociety(memberships, societyId),
+    [memberships, societyId],
+  );
   const [registrations, setRegistrations] = useState<EventRegistration[]>([]);
   /** Members of the active society only — sole source for society-scoped attendance / payment / confirmed lists. */
   const [activeSocietyMembers, setActiveSocietyMembers] = useState<MemberDoc[]>([]);
@@ -430,6 +437,7 @@ export default function ManageEventScreen() {
   const [jointParticipatingMembers, setJointParticipatingMembers] = useState<MemberDoc[]>([]);
   const [payBusy, setPayBusy] = useState<string | null>(null);
   const [paymentPdfBusy, setPaymentPdfBusy] = useState(false);
+  const [attendeesCsvBusy, setAttendeesCsvBusy] = useState(false);
   const [payToast, setPayToast] = useState<{ visible: boolean; message: string; type: "success" | "error" }>({ visible: false, message: "", type: "success" });
   const [addMemberModalOpen, setAddMemberModalOpen] = useState(false);
   const [addMemberSearch, setAddMemberSearch] = useState("");
@@ -1012,6 +1020,33 @@ export default function ManageEventScreen() {
 
   const jointEventAttendeeRows = jointRegistrationResolution?.attendeeRows ?? [];
 
+  const attendeeRowsForExport = useMemo(() => {
+    if (!societyId) return [];
+    if (jointRegistrationResolution) return jointRegistrationResolution.attendeeRows;
+    return resolveEventAttendeesForDisplay({
+      isJoint: false,
+      regs: registrations,
+      guests: eventGuestsAll.map((g) => ({
+        id: g.id,
+        society_id: g.society_id,
+        name: g.name,
+        paid: g.paid,
+      })),
+      activeSocietyId: societyId,
+      participantSocietyIds: [societyId],
+      societyIdToName: jointSocietyIdToName,
+      membersById: jointMemberByIdForRegs,
+      attendingMembersOnly: true,
+    });
+  }, [
+    societyId,
+    jointRegistrationResolution,
+    registrations,
+    eventGuestsAll,
+    jointSocietyIdToName,
+    jointMemberByIdForRegs,
+  ]);
+
   const paymentShareLists = useMemo(
     () => {
       if (jointRegistrationResolution) {
@@ -1072,6 +1107,37 @@ export default function ManageEventScreen() {
       /* share cancelled */
     }
   }, [sharePaymentHeader, paymentShareLists.paidNames, paymentShareLists.unpaidNames]);
+
+  const handleExportAttendeesCsv = useCallback(async () => {
+    if (!societyId || !event || !eventId) return;
+    if (Platform.OS !== "web") {
+      showAlert("Export unavailable", "Attendee CSV export is available on web.");
+      return;
+    }
+    setAttendeesCsvBusy(true);
+    try {
+      await exportEventAttendeesCsv({
+        eventId,
+        eventName: event.name ?? "Event",
+        eventDate: event.date ?? null,
+        attendeeRows: attendeeRowsForExport,
+        membersById: jointMemberByIdForRegs,
+        guests: eventGuestsAll,
+        loadTeeSheetOverlay: true,
+      });
+    } catch (e: unknown) {
+      showAlert("Could not export CSV", e instanceof Error ? e.message : "Try again.");
+    } finally {
+      setAttendeesCsvBusy(false);
+    }
+  }, [
+    societyId,
+    event,
+    eventId,
+    attendeeRowsForExport,
+    jointMemberByIdForRegs,
+    eventGuestsAll,
+  ]);
 
   const handleExportPaymentPdf = useCallback(async () => {
     if (!societyId || !event) return;
@@ -3330,10 +3396,10 @@ export default function ManageEventScreen() {
       </ManageEventSection>
       ) : null}
 
-      {(canSendEventInvites || (canSharePaymentLists && societyId && event)) ? (
+      {(canSendEventInvites || (canSharePaymentLists && societyId && event) || (canExportEventAttendees && societyId && event)) ? (
       <ManageEventSection
         title="Sharing & Export"
-        description="Invites and payment lists for WhatsApp, email, or PDF."
+        description="Invites, payment lists, and attendee CSV for WhatsApp, email, or download."
       >
       {canSendEventInvites ? (
         <AppCard style={styles.card}>
@@ -3416,6 +3482,32 @@ export default function ManageEventScreen() {
             }}
             loading={paymentPdfBusy}
             disabled={paymentPdfBusy}
+          />
+        </AppCard>
+      ) : null}
+
+      {canExportEventAttendees && societyId && event ? (
+        <AppCard style={styles.card}>
+          <AppText variant="subheading" style={{ marginBottom: spacing.xs }}>
+            Attendee export
+          </AppText>
+          <AppText variant="small" color="secondary" style={[styles.cardBodyText, { marginBottom: spacing.sm }]}>
+            {detailIsJointEvent
+              ? "All participating societies — one row per person (dual members de-duped). Paid status shows each society."
+              : "Society-scoped attendee list with handicaps and tee assignment when saved."}
+            {detailIsJointEvent ? ` ${JOINT_EVENT_CHIP_SHORT}` : ""}
+          </AppText>
+          <AppText variant="small" color="muted" style={{ marginBottom: spacing.sm }}>
+            {attendeeRowsForExport.length} attendee{attendeeRowsForExport.length !== 1 ? "s" : ""}
+          </AppText>
+          <SecondaryButton
+            icon={<Feather name="download" size={16} color={colors.text} />}
+            label={Platform.OS === "web" ? "Export attendees" : "Export attendees (web)"}
+            onPress={() => {
+              void handleExportAttendeesCsv();
+            }}
+            loading={attendeesCsvBusy}
+            disabled={attendeesCsvBusy || attendeeRowsForExport.length === 0}
           />
         </AppCard>
       ) : null}

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Pressable, RefreshControl, ScrollView, StyleSheet, View } from "react-native";
+import { Platform, Pressable, RefreshControl, ScrollView, StyleSheet, View } from "react-native";
 import { Feather } from "@expo/vector-icons";
 import { useFocusEffect, useNavigation } from "@react-navigation/native";
 import { useLocalSearchParams, useRouter } from "expo-router";
@@ -28,6 +28,7 @@ import { useBootstrap } from "@/lib/useBootstrap";
 import {
   canManageEventPaymentsForSociety,
   canManageEventRosterForSociety,
+  canExportEventAttendeesForSociety,
   getPermissionsForMember,
   isSecretary,
 } from "@/lib/rbac";
@@ -40,6 +41,9 @@ import {
   type JointEventAttendeeRow,
 } from "@/lib/jointEventAttendeeVisibility";
 import { buildSocietyIdToNameMap } from "@/lib/jointEventSocietyLabel";
+import { exportEventAttendeesCsv } from "@/lib/eventAttendeeCsvExport";
+import { membersByIdFromLists } from "@/lib/eventAttendeeCsv";
+import { showAlert } from "@/lib/ui/alert";
 
 function formatEventDate(value?: string): string {
   if (!value?.trim()) return "Date TBD";
@@ -92,6 +96,7 @@ export default function EventOverviewScreen() {
   const canAccessScorecardUi = canEnterGrossScores;
   const canManagePayments = canManageEventPaymentsForSociety(memberships, societyId);
   const canManageRoster = canManageEventRosterForSociety(memberships, societyId);
+  const canExportEventAttendees = canExportEventAttendeesForSociety(memberships, societyId);
   const canManageEvent =
     permissions.canCreateEvents ||
     permissions.canManageHandicaps ||
@@ -115,6 +120,7 @@ export default function EventOverviewScreen() {
   const [refreshError, setRefreshError] = useState<string | null>(null);
   const [rsvpBusy, setRsvpBusy] = useState(false);
   const [rsvpError, setRsvpError] = useState<string | null>(null);
+  const [attendeesCsvBusy, setAttendeesCsvBusy] = useState(false);
   const eventRef = useRef<EventDoc | null>(null);
   eventRef.current = event;
 
@@ -344,9 +350,95 @@ export default function EventOverviewScreen() {
   );
 
   const jointSocietyIdToName = useMemo(
-    () => buildSocietyIdToNameMap(participantSocietyIds.map((id) => ({ society_id: id }))),
-    [participantSocietyIds],
+    () =>
+      buildSocietyIdToNameMap(
+        participantSocietyIds.map((id) => ({
+          society_id: id,
+          society_name: id === societyId ? (society?.name ?? id) : id,
+        })),
+      ),
+    [participantSocietyIds, societyId, society?.name],
   );
+
+  const attendeeRowsForExport = useMemo((): JointEventAttendeeRow[] => {
+    if (!societyId) return [];
+    const isJoint = detailIsJointEvent && participantSocietyIds.length >= 2;
+    return resolveEventAttendeesForDisplay({
+      isJoint,
+      regs: allEventRegistrations,
+      guests: allGuests,
+      activeSocietyId: societyId,
+      participantSocietyIds: isJoint ? participantSocietyIds : [societyId],
+      societyIdToName: jointSocietyIdToName,
+      participatingMembers: jointParticipatingMembers,
+      attendingMembersOnly: true,
+    });
+  }, [
+    societyId,
+    detailIsJointEvent,
+    participantSocietyIds,
+    allEventRegistrations,
+    allGuests,
+    jointSocietyIdToName,
+    jointParticipatingMembers,
+  ]);
+
+  const exportMembersById = useMemo(() => {
+    const m = membersByIdFromLists(jointParticipatingMembers);
+    for (const r of allEventRegistrations) {
+      const mid = String(r.member_id);
+      if (!mid || m.has(mid)) continue;
+      const row = r as EventRegistration & {
+        member_email?: string | null;
+        member_name?: string | null;
+        member_display_name?: string | null;
+      };
+      m.set(mid, {
+        id: mid,
+        society_id: String(r.society_id),
+        email: row.member_email ?? undefined,
+        name: row.member_name ?? undefined,
+        display_name: row.member_display_name ?? undefined,
+        displayName: row.member_display_name ?? row.member_name ?? undefined,
+      });
+    }
+    return m;
+  }, [jointParticipatingMembers, allEventRegistrations]);
+
+  const handleExportAttendeesCsv = useCallback(async () => {
+    if (!event?.id || !societyId) return;
+    if (Platform.OS !== "web") {
+      showAlert("Export unavailable", "Attendee CSV export is available on web.");
+      return;
+    }
+    setAttendeesCsvBusy(true);
+    try {
+      await exportEventAttendeesCsv({
+        eventId: event.id,
+        eventName: event.name ?? "Event",
+        eventDate: event.date ?? null,
+        attendeeRows: attendeeRowsForExport,
+        membersById: exportMembersById,
+        guests: allGuests.map((g) => ({
+          id: g.id,
+          society_id: g.society_id,
+          event_id: event.id,
+          name: g.name,
+          attendee_type: "guest" as const,
+          sex: null,
+          handicap_index: null,
+          paid: g.paid,
+          created_at: "",
+          updated_at: "",
+        })),
+        loadTeeSheetOverlay: true,
+      });
+    } catch (e: unknown) {
+      showAlert("Could not export CSV", e instanceof Error ? e.message : "Try again.");
+    } finally {
+      setAttendeesCsvBusy(false);
+    }
+  }, [event, societyId, attendeeRowsForExport, exportMembersById, allGuests]);
 
   const jointEventAttendeeRows = useMemo((): JointEventAttendeeRow[] => {
     if (!detailIsJointEvent || participantSocietyIds.length < 2 || !societyId) return [];
@@ -619,6 +711,19 @@ export default function EventOverviewScreen() {
               {attendanceSummary.guestCount} guest{attendanceSummary.guestCount === 1 ? "" : "s"}
               {detailIsJointEvent ? " across participating societies" : " currently linked to this event"}.
             </AppText>
+          ) : null}
+
+          {canExportEventAttendees ? (
+            <SecondaryButton
+              size="sm"
+              onPress={() => void handleExportAttendeesCsv()}
+              loading={attendeesCsvBusy}
+              disabled={attendeesCsvBusy || attendeeRowsForExport.length === 0}
+              icon={<Feather name="download" size={iconSize.sm} color={colors.primary} />}
+              style={{ marginTop: spacing.md, alignSelf: "flex-start" }}
+            >
+              {Platform.OS === "web" ? "Export attendees" : "Export attendees (web)"}
+            </SecondaryButton>
           ) : null}
 
           {societyId && userId ? (

@@ -33,6 +33,11 @@ import type {
 import { getMembersByIds, type MemberDoc } from "./memberRepo";
 import { buildSocietyIdToNameMap } from "@/lib/jointEventSocietyLabel";
 import { canonicalJointPersonKey, dedupeJointMembers } from "@/lib/jointPersonDedupe";
+import {
+  eventSocietyInputsEqual,
+  formatEventSocietiesPermissionError,
+  isSupabaseRlsError,
+} from "./eventSocietiesUtils";
 
 const DEBUG = __DEV__;
 
@@ -668,6 +673,26 @@ export function validateJointEventInput(input: {
   return errors;
 }
 
+/** Load current participating societies for change detection (skip no-op upserts). */
+export async function getEventSocietyInputs(eventId: string): Promise<EventSocietyInput[]> {
+  const { data, error } = await supabase
+    .from("event_societies")
+    .select("society_id, role, has_society_oom, society_oom_name")
+    .eq("event_id", eventId);
+
+  if (error) {
+    console.error("[jointEventRepo] getEventSocietyInputs failed:", error);
+    throw new Error(error.message || "Failed to load participating societies");
+  }
+
+  return (data ?? []).map((row) => ({
+    society_id: String((row as { society_id: string }).society_id),
+    role: (row as { role: "host" | "participant" }).role,
+    has_society_oom: Boolean((row as { has_society_oom?: boolean }).has_society_oom ?? true),
+    society_oom_name: (row as { society_oom_name?: string | null }).society_oom_name ?? null,
+  }));
+}
+
 /**
  * Replace event_societies for an event (delete existing, then insert).
  * Phase 3 replacement strategy only; not the final long-term upsert model
@@ -698,6 +723,9 @@ export async function upsertEventSocieties(
 
   if (delErr) {
     console.error("[jointEventRepo] upsertEventSocieties delete failed:", delErr);
+    if (isSupabaseRlsError(delErr)) {
+      throw new Error(formatEventSocietiesPermissionError());
+    }
     throw new Error(delErr.message || "Failed to update participating societies");
   }
 
@@ -705,6 +733,9 @@ export async function upsertEventSocieties(
 
   if (insErr) {
     console.error("[jointEventRepo] upsertEventSocieties insert failed:", insErr);
+    if (isSupabaseRlsError(insErr)) {
+      throw new Error(formatEventSocietiesPermissionError());
+    }
     throw new Error(insErr.message || "Failed to save participating societies");
   }
 
@@ -951,8 +982,8 @@ export async function createJointEvent(
 
 /**
  * Update a joint event. One master event row; event_societies is updated only when
- * participating_societies is provided with 2+ societies. Do not silently downgrade
- * joint to standard; throw a clear error instead.
+ * participating_societies changed (not on tee/course-rating-only saves). Do not silently
+ * downgrade joint to standard; throw a clear error instead.
  */
 export async function updateJointEvent(
   eventId: string,
@@ -1001,7 +1032,12 @@ export async function updateJointEvent(
   });
 
   if (societies && societies.length >= 2) {
-    await upsertEventSocieties(eventId, societies);
+    const existingSocieties = await getEventSocietyInputs(eventId);
+    if (!eventSocietyInputsEqual(societies, existingSocieties)) {
+      await upsertEventSocieties(eventId, societies);
+    } else if (DEBUG) {
+      console.log("[jointEventRepo] updateJointEvent: participating societies unchanged, skipping upsert");
+    }
   }
 }
 
