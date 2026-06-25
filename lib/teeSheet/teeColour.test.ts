@@ -3,7 +3,6 @@ import {
   formatTeeRowLabel,
   teeColourFromName,
   teeColourKeyFromName,
-  teeLegendLine,
 } from "@/lib/teeSheet/teeColour";
 
 describe("teeColour", () => {
@@ -12,7 +11,7 @@ describe("teeColour", () => {
     expect(teeColourKeyFromName("White")).toBe("white");
     expect(colour.color).toBe("#FFFFFF");
     expect(colour.outline).toBe(true);
-    expect(formatTeeRowLabel("White")).toBe("⚪ White");
+    expect(formatTeeRowLabel("White")).toBe("White");
   });
 
   it("supports standard tee colour names", () => {
@@ -25,7 +24,8 @@ describe("teeColour", () => {
     expect(teeColourFromName("Red").color).toBe("#C1121F");
   });
 
-  it("builds legend from event tee names", () => {
-    expect(teeLegendLine("White", "Red")).toBe("Tee colours: White = Men, Red = Ladies");
+  it("returns Tee TBC when tee name missing", () => {
+    expect(formatTeeRowLabel(null)).toBe("Tee TBC");
+    expect(formatTeeRowLabel("")).toBe("Tee TBC");
   });
 });

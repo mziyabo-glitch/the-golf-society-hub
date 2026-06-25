@@ -18,6 +18,7 @@ import { useBootstrap } from "@/lib/useBootstrap";
 import { showAlert } from "@/lib/ui/alert";
 import { buildTeeSheetPages } from "@/lib/teeSheet/buildTeeSheetPages";
 import { TeeSheetPoster, type PosterGroup } from "@/lib/teeSheet/TeeSheetPoster";
+import { resolveTeeSheetPosterLogos, type PosterLogo } from "@/lib/teeSheet/resolveTeeSheetPosterLogos";
 
 type ExportStatus = "loading" | "ready" | "sharing" | "error" | "success";
 
@@ -32,6 +33,7 @@ export default function TeeSheetShareScreen() {
   const [error, setError] = useState<FormattedError | null>(null);
 
   const [pages, setPages] = useState<GroupWithTime[][]>([]);
+  const [posterLogos, setPosterLogos] = useState<PosterLogo[]>([]);
 
   const pageRefs = useRef<React.RefObject<View>[]>([]);
 
@@ -67,6 +69,9 @@ export default function TeeSheetShareScreen() {
       if (computedPages.length === 0) {
         throw new Error("No player groups to share.");
       }
+
+      const logos = await resolveTeeSheetPosterLogos(payload);
+      setPosterLogos(logos);
 
       const refs = computedPages.map(
         (_, index) => pageRefs.current[index] ?? React.createRef<View>(),
@@ -205,6 +210,7 @@ export default function TeeSheetShareScreen() {
               groups={groups}
               pageIndex={pageIndex}
               pageCount={pages.length}
+              logos={posterLogos}
             />
           ))}
         </View>
@@ -218,13 +224,15 @@ const TeeSheetPage = React.forwardRef<View, {
   groups: GroupWithTime[];
   pageIndex: number;
   pageCount: number;
-}>(({ data, groups, pageIndex, pageCount }, ref) => (
+  logos: PosterLogo[];
+}>(({ data, groups, pageIndex, pageCount, logos }, ref) => (
   <TeeSheetPoster
     ref={ref}
     data={data}
     groups={groups}
     pageIndex={pageIndex}
     pageCount={pageCount}
+    logos={logos}
   />
 ));
 

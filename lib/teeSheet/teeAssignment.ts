@@ -1,14 +1,11 @@
 import type { TeeSheetData, TeeSheetPlayer } from "@/lib/teeSheetPdf";
 import type { TeeBlock } from "@/lib/whs";
-import { formatTeeRowLabel, teeColourFromName } from "@/lib/teeSheet/teeColour";
+import { formatTeeRowLabel } from "@/lib/teeSheet/teeColour";
 
 export type TeeAssignment = "men" | "ladies" | null;
 
 export type TeeIndicator = {
   label: string;
-  color: string;
-  outline?: boolean;
-  outlineColor?: string;
 };
 
 export function resolveTeeAssignment(player: TeeSheetPlayer): TeeAssignment {
@@ -40,16 +37,9 @@ export function compactTeeRowLabel(assignment: TeeAssignment, data: TeeSheetData
 
 export function teeIndicatorForAssignment(data: TeeSheetData, assignment: TeeAssignment): TeeIndicator {
   if (assignment == null) {
-    return { label: "Tee TBC", color: "#94A3B8" };
+    return { label: "Tee TBC" };
   }
-  const teeName = teeNameForAssignment(data, assignment);
-  const colour = teeColourFromName(teeName);
-  return {
-    label: compactTeeRowLabel(assignment, data),
-    color: colour.color,
-    outline: colour.outline,
-    outlineColor: colour.outlineColor,
-  };
+  return { label: compactTeeRowLabel(assignment, data) };
 }
 
 export function needsTeePolicyConfirmation(player: Pick<TeeSheetPlayer, "gender" | "teeAssignment">): boolean {

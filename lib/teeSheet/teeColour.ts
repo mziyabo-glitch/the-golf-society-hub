@@ -11,17 +11,6 @@ const TEE_COLOUR_HEX: Record<string, string> = {
   orange: "#EA580C",
 };
 
-const TEE_EMOJI: Record<string, string> = {
-  white: "⚪",
-  yellow: "🟡",
-  gold: "🟡",
-  blue: "🔵",
-  red: "🔴",
-  black: "⚫",
-  green: "🟢",
-  orange: "🟠",
-};
-
 export type ResolvedTeeColour = {
   color: string;
   /** True when fill is white/light and needs a visible border in PNG/UI. */
@@ -65,17 +54,9 @@ function capitalizeWords(value: string): string {
     .join(" ");
 }
 
-/** Compact row label — uses resolved tee name, not men/ladies defaults. */
+/** Compact row label — event tee name only (no colour blobs or emoji). */
 export function formatTeeRowLabel(teeName: string | null | undefined): string {
   const cleaned = cleanTeeName(teeName);
-  const key = teeColourKeyFromName(cleaned);
-  const emoji = TEE_EMOJI[key] ?? "⛳";
-  const label = cleaned ? capitalizeWords(cleaned) : capitalizeWords(key);
-  return `${emoji} ${label}`;
-}
-
-export function teeLegendLine(menTeeName: string | null | undefined, ladiesTeeName: string | null | undefined): string {
-  const men = cleanTeeName(menTeeName) || "Men";
-  const ladies = cleanTeeName(ladiesTeeName) || "Ladies";
-  return `Tee colours: ${men} = Men, ${ladies} = Ladies`;
+  if (cleaned) return capitalizeWords(cleaned);
+  return "Tee TBC";
 }

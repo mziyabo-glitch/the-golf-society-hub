@@ -16,6 +16,7 @@ import {
 } from "@/lib/teeSheet/teeAssignment";
 import type { TeeSheetData } from "@/lib/teeSheetPdf";
 import { calcCourseHandicap, calcPlayingHandicap } from "@/lib/whs";
+import { buildTeeSheetPages } from "@/lib/teeSheet/buildTeeSheetPages";
 
 function makePayload(overrides: Partial<TeeSheetData>): TeeSheetData {
   return {
@@ -93,7 +94,7 @@ describe("tee assignment and PH rules", () => {
     expect(assignment).toBe("ladies");
   });
 
-  it("female guest with ladies tee renders red indicator", () => {
+  it("female guest with ladies tee renders red tee name", () => {
     const data = makePayload({});
     const assignment = resolveTeeAssignment({
       id: "guest-1",
@@ -103,14 +104,13 @@ describe("tee assignment and PH rules", () => {
       teeAssignment: "ladies",
     });
     const indicator = teeIndicatorForAssignment(data, assignment);
-    expect(indicator.label).toBe("🔴 Red");
-    expect(indicator.color).toBe("#C1121F");
+    expect(indicator.label).toBe("Red");
   });
 
   it("uses compact row labels from event tee names", () => {
     const data = makePayload({ teeName: "White", ladiesTeeName: "Red" });
-    expect(compactTeeRowLabel("ladies", data)).toBe("🔴 Red");
-    expect(compactTeeRowLabel("men", data)).toBe("⚪ White");
+    expect(compactTeeRowLabel("ladies", data)).toBe("Red");
+    expect(compactTeeRowLabel("men", data)).toBe("White");
     expect(compactTeeRowLabel(null, data)).toBe("Tee TBC");
   });
 
@@ -212,9 +212,7 @@ describe("tee assignment and PH rules", () => {
       teeAssignment: "men",
     });
     const indicator = teeIndicatorForAssignment(data, assignment);
-    expect(indicator.label).toBe("⚪ White");
-    expect(indicator.color).toBe("#FFFFFF");
-    expect(indicator.outline).toBe(true);
+    expect(indicator.label).toBe("White");
   });
 
   it("yellow men tee still renders when configured on event", () => {
@@ -227,8 +225,7 @@ describe("tee assignment and PH rules", () => {
       teeAssignment: "men",
     });
     const indicator = teeIndicatorForAssignment(data, assignment);
-    expect(indicator.label).toBe("🟡 Yellow");
-    expect(indicator.color).toBe("#E0B100");
+    expect(indicator.label).toBe("Yellow");
   });
 
   it("male PH uses men's tee settings", () => {
@@ -247,5 +244,51 @@ describe("tee assignment and PH rules", () => {
     expect(assignment).toBe("men");
     expect(tee).toEqual(data.teeSettings);
     expect(courseHandicap).not.toBe(ladiesCourseHandicap);
+  });
+
+  it("buildTeeSheetPages uses event tee slope/rating per gender for Millbrook-style joint payload", () => {
+    const data = makePayload({
+      teeName: "White",
+      ladiesTeeName: "Red",
+      teeSettings: { par: 72, slopeRating: 135, courseRating: 73.3 },
+      ladiesTeeSettings: { par: 72, slopeRating: 124, courseRating: 70.8 },
+      handicapAllowance: 0.95,
+      preGrouped: true,
+      players: [
+        {
+          id: "m-1",
+          name: "Male Member",
+          handicapIndex: 10,
+          gender: "male",
+          group: 1,
+        },
+        {
+          id: "f-1",
+          name: "Female Member",
+          handicapIndex: 18,
+          gender: "female",
+          group: 1,
+        },
+      ],
+    });
+
+    const pages = buildTeeSheetPages(data);
+    const players = pages[0]?.[0]?.players ?? [];
+    const male = players.find((p) => p.id === "m-1");
+    const female = players.find((p) => p.id === "f-1");
+
+    const expectedMalePh = calcPlayingHandicap(
+      calcCourseHandicap(10, data.teeSettings ?? null),
+      data.handicapAllowance ?? 0.95,
+    );
+    const expectedFemalePh = calcPlayingHandicap(
+      calcCourseHandicap(18, data.ladiesTeeSettings ?? null),
+      data.handicapAllowance ?? 0.95,
+    );
+
+    expect(male?.teeAssignment).toBe("men");
+    expect(female?.teeAssignment).toBe("ladies");
+    expect(male?.playingHandicap).toBe(expectedMalePh);
+    expect(female?.playingHandicap).toBe(expectedFemalePh);
   });
 });

@@ -9,8 +9,8 @@ import {
   buildPosterHeader,
   formatCompetitionLine,
 } from "@/lib/teeSheet/teeSheetPosterMeta";
-import { teeIndicatorForAssignment, type TeeAssignment } from "@/lib/teeSheet/teeAssignment";
-import { teeLegendLine } from "@/lib/teeSheet/teeColour";
+import { compactTeeRowLabel, type TeeAssignment } from "@/lib/teeSheet/teeAssignment";
+import type { PosterLogo } from "@/lib/teeSheet/resolveTeeSheetPosterLogos";
 
 const m4FairwayLogo = require("@/assets/images/m4-fairway-logo.png");
 
@@ -43,8 +43,71 @@ export type PosterGroup = {
   players: PosterPlayer[];
 };
 
-function getTeeIndicator(player: PosterPlayer, data: TeeSheetData): { label: string; color: string } {
-  return teeIndicatorForAssignment(data, player.teeAssignment);
+function teeLabelForPlayer(player: PosterPlayer, data: TeeSheetData): string {
+  return compactTeeRowLabel(player.teeAssignment, data);
+}
+
+function PosterHeader({
+  data,
+  logos,
+}: {
+  data: TeeSheetData;
+  logos: PosterLogo[];
+}) {
+  const header = buildPosterHeader(data);
+  const isJoint = (data.jointSocieties?.length ?? 0) >= 2;
+  const jointSocieties = (data.jointSocieties ?? []).slice(0, 2);
+  const logoBySocietyId = new Map(logos.map((l) => [l.societyId ?? "", l]));
+
+  return (
+    <View style={styles.headerCard}>
+      {isJoint ? (
+        <View style={styles.jointLogoRow}>
+          {jointSocieties.map((society, index) => {
+            const logo = logoBySocietyId.get(society.societyId);
+            return (
+              <React.Fragment key={society.societyId}>
+                {index > 0 ? <Text style={styles.jointAmp}>&</Text> : null}
+                <View style={styles.jointLogoBlock}>
+                  {logo?.src ? (
+                    <Image source={{ uri: logo.src }} style={styles.jointLogo} resizeMode="contain" />
+                  ) : (
+                    <View style={styles.jointLogoPlaceholder}>
+                      <Text style={styles.jointLogoPlaceholderText} numberOfLines={2}>
+                        {society.societyName}
+                      </Text>
+                    </View>
+                  )}
+                  <Text style={styles.jointSocietyName} numberOfLines={2}>
+                    {society.societyName}
+                  </Text>
+                </View>
+              </React.Fragment>
+            );
+          })}
+        </View>
+      ) : (
+        <View style={styles.logoWrap}>
+          {logos[0]?.src ? (
+            <Image source={{ uri: logos[0].src }} style={styles.logo} resizeMode="contain" />
+          ) : (
+            <Image source={m4FairwayLogo} style={styles.logo} resizeMode="contain" />
+          )}
+        </View>
+      )}
+      <View style={styles.titleWrap}>
+        <Text style={styles.title}>{header.title}</Text>
+        <View style={styles.subtitleBadge}>
+          <Text style={styles.subtitleText}>{header.badge}</Text>
+        </View>
+        {isJoint ? (
+          <Text style={styles.jointEventLabel} numberOfLines={2}>
+            Joint event
+          </Text>
+        ) : null}
+      </View>
+    </View>
+  );
 }
 
 export const TeeGroupCard = React.memo(function TeeGroupCard({
@@ -72,7 +135,7 @@ export const TeeGroupCard = React.memo(function TeeGroupCard({
 
       {Array.from({ length: 4 }).map((_, idx) => {
         const player = group.players[idx] ?? null;
-        const tee = player ? getTeeIndicator(player, data) : null;
+        const teeLabel = player ? teeLabelForPlayer(player, data) : null;
         const isAlt = idx % 2 === 1;
         return (
           <View key={`${group.groupNumber}-${idx}`} style={[styles.playerRow, isAlt ? styles.playerRowAlt : null]}>
@@ -87,20 +150,8 @@ export const TeeGroupCard = React.memo(function TeeGroupCard({
             <Text style={styles.playerStat}>{player ? formatHandicap(player.handicapIndex, 1) : "-"}</Text>
             <Text style={styles.playerStatStrong}>{player ? formatHandicap(player.playingHandicap) : "-"}</Text>
             <View style={styles.teeCompactWrap}>
-              <View
-                style={[
-                  styles.teeDot,
-                  tee
-                    ? {
-                        backgroundColor: tee.color,
-                        borderWidth: tee.outline ? 1 : 0,
-                        borderColor: tee.outlineColor ?? "transparent",
-                      }
-                    : null,
-                ]}
-              />
-              <Text style={[styles.teeCompactLabel, tee ? { color: tee.color } : null]} numberOfLines={1}>
-                {tee?.label || "Tee TBC"}
+              <Text style={styles.teeCompactLabel} numberOfLines={1}>
+                {teeLabel || "Tee TBC"}
               </Text>
               {player?.manualOverride ? (
                 <Feather
@@ -123,28 +174,26 @@ export const TeeSheetPoster = React.forwardRef<View, {
   groups: PosterGroup[];
   pageIndex: number;
   pageCount: number;
-}>(({ data, groups, pageIndex, pageCount }, ref) => {
-  const header = buildPosterHeader(data);
+  logos?: PosterLogo[];
+}>(({ data, groups, pageIndex, pageCount, logos = [] }, ref) => {
   const infoCards = buildInfoCards(data);
   const leftGroups = groups.slice(0, 6);
   const rightGroups = groups.slice(6, MAX_GROUPS_PER_PAGE);
   const ntp = formatCompetitionLine(data.nearestPinHoles);
   const ld = formatCompetitionLine(data.longestDriveHoles);
+  const isJoint = (data.jointSocieties?.length ?? 0) >= 2;
+  const watermark = isJoint
+    ? (data.jointSocieties ?? [])
+        .slice(0, 2)
+        .map((s) => s.societyName)
+        .filter(Boolean)
+        .join("  •  ")
+    : "M4 FAIRWAY";
 
   return (
     <View ref={ref} style={styles.poster} collapsable={false}>
-      <Text style={styles.watermark}>M4 FAIRWAY</Text>
-      <View style={styles.headerCard}>
-        <View style={styles.logoWrap}>
-          <Image source={m4FairwayLogo} style={styles.logo} resizeMode="contain" />
-        </View>
-        <View style={styles.titleWrap}>
-          <Text style={styles.title}>{header.title}</Text>
-          <View style={styles.subtitleBadge}>
-            <Text style={styles.subtitleText}>{header.badge}</Text>
-          </View>
-        </View>
-      </View>
+      <Text style={styles.watermark}>{watermark}</Text>
+      <PosterHeader data={data} logos={logos} />
 
       <View style={styles.infoBar}>
         {infoCards.map((card) => (
@@ -175,7 +224,6 @@ export const TeeSheetPoster = React.forwardRef<View, {
         </View>
         <View style={styles.brandFooter}>
           <Text style={styles.brandFooterText}>Produced by The Golf Society Hub</Text>
-          <Text style={styles.legendText}>{teeLegendLine(data.teeName, data.ladiesTeeName)}</Text>
           <Text style={styles.brandFooterPage}>Page {pageIndex + 1} / {pageCount}</Text>
         </View>
       </View>
@@ -224,6 +272,65 @@ const styles = StyleSheet.create({
     height: 207,
     justifyContent: "center",
     alignItems: "flex-start",
+  },
+  jointLogoRow: {
+    width: 525,
+    minHeight: 180,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 10,
+    paddingHorizontal: 8,
+  },
+  jointLogoBlock: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    minWidth: 0,
+  },
+  jointLogo: {
+    width: 220,
+    height: 120,
+  },
+  jointLogoPlaceholder: {
+    width: 220,
+    height: 120,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: posterTokens.border,
+    backgroundColor: "#F8FAFC",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 10,
+  },
+  jointLogoPlaceholderText: {
+    color: posterTokens.navy,
+    fontSize: 13,
+    fontWeight: "800",
+    textAlign: "center",
+  },
+  jointSocietyName: {
+    marginTop: 6,
+    color: posterTokens.navy,
+    fontSize: 11,
+    fontWeight: "700",
+    textAlign: "center",
+    letterSpacing: 0.3,
+  },
+  jointAmp: {
+    color: posterTokens.gold,
+    fontSize: 28,
+    fontWeight: "800",
+    marginHorizontal: 4,
+  },
+  jointEventLabel: {
+    marginTop: 8,
+    color: posterTokens.muted,
+    fontSize: 11,
+    fontWeight: "700",
+    letterSpacing: 0.6,
+    textTransform: "uppercase",
+    textAlign: "center",
   },
   logo: {
     width: 504,
@@ -421,17 +528,11 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "flex-end",
-    gap: 6,
+    gap: 4,
     minWidth: 0,
   },
-  teeDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: "#94A3B8",
-  },
   teeCompactLabel: {
-    color: "#64748B",
+    color: posterTokens.navy,
     fontWeight: "700",
     fontSize: 10,
     flexShrink: 1,
@@ -481,11 +582,6 @@ const styles = StyleSheet.create({
     color: posterTokens.navy,
     fontSize: 11,
     fontWeight: "700",
-  },
-  legendText: {
-    color: "#475569",
-    fontSize: 10,
-    fontWeight: "600",
   },
   brandFooterPage: {
     color: posterTokens.muted,

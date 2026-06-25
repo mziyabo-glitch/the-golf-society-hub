@@ -4,6 +4,7 @@ import {
   buildTeeSheetDataFromCanonical,
   type CanonicalTeeSheetResult,
 } from "@/lib/teeSheet/canonicalTeeSheet";
+
 export type TeeSheetExportGenderHint = {
   id: string;
   gender?: "male" | "female" | null;
@@ -24,6 +25,8 @@ export type BuildTeeSheetExportPayloadInput = {
   teeTimeInterval: number;
   /** Flat list from editor — used to attach gender from ManCo UI */
   genderHints: TeeSheetExportGenderHint[];
+  /** Optional logo URLs for joint participating societies (speeds poster load). */
+  jointSocietyLogoUrls?: Record<string, string | null>;
 };
 
 /** Build encoded share-route payload from persisted canonical + editor gender hints. */
@@ -39,7 +42,7 @@ export function buildTeeSheetExportPayload(input: BuildTeeSheetExportPayloadInpu
         ? canonical.jointParticipatingSocieties.map((s) => ({
             societyId: s.society_id,
             societyName: s.society_name || s.society_id,
-            logoUrl: null,
+            logoUrl: opts.jointSocietyLogoUrls?.[s.society_id] ?? null,
           }))
         : undefined,
     manCo: opts.manCo,
