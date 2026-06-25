@@ -48,6 +48,6 @@ export function formatEventSocietiesPermissionError(): string {
 export function formatEventUpdatePermissionError(): string {
   return (
     "You don't have permission to update this event. " +
-    "Only Captain, Secretary, or Handicapper from the host or participating societies can edit event details and tee settings."
+    "Only Captain, Secretary, Treasurer, or Handicapper from the host or participating societies can edit event details and tee settings."
   );
 }

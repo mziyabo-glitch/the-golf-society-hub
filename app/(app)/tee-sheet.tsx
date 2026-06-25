@@ -59,7 +59,7 @@ import {
   editorGuestPlayerFromDoc,
   hydratePersistedEditorGroupsWithGuestAssignments,
 } from "@/lib/teeSheet/teeSheetEditorGuests";
-import { shouldLoadPersistedTeeSheetDraft } from "@/lib/teeSheet/teeSheetDraftPersistence";
+import { shouldLoadPersistedTeeSheetDraft, formatTeeSheetPersistenceError } from "@/lib/teeSheet/teeSheetDraftPersistence";
 import { buildMemberByPlayerIdMap, memberDocForPlayerId } from "@/lib/teeSheet/teeSheetMemberLookup";
 import {
   formatTeeSheetPublishValidationMessage,
@@ -121,6 +121,10 @@ import {
   validateCanonicalTeeGroupsForEditor,
   withTeeSheetLoadTimeout,
 } from "@/lib/teeSheet/teeSheetEventLoadUtils";
+import {
+  REGENERATE_TEE_SHEET_CONFIRM_MESSAGE,
+  shouldSkipTeeSheetFocusReload,
+} from "@/lib/teeSheet/teeSheetFocusReload";
 import { getSocietyLogoUrl } from "@/lib/societyLogo";
 import { getCache, invalidateCache, invalidateCachePrefix, setCache } from "@/lib/cache/clientCache";
 import {
@@ -410,6 +414,7 @@ export default function TeeSheetScreen() {
   const [loadError, setLoadError] = useState<FormattedError | null>(null);
   const [generating, setGenerating] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [publishing, setPublishing] = useState(false);
   const [notice, setNotice] = useState<{ type: "success" | "error" | "info"; message: string; detail?: string } | null>(null);
   const [toast, setToast] = useState<{ visible: boolean; message: string; type: "success" | "error" | "info" }>({ visible: false, message: "", type: "success" });
 
@@ -444,6 +449,34 @@ export default function TeeSheetScreen() {
   const savedSnapshotRef = React.useRef<TeeSheetEditorSnapshot | null>(null);
   const societyIdRef = React.useRef(societyId);
   societyIdRef.current = societyId;
+  const editorStateRef = React.useRef({
+    groups,
+    selectedPlayerIds,
+    startTime,
+    teeInterval,
+    ntpHolesInput,
+    ldHolesInput,
+    isJointEventTeeSheet,
+    jointTeeSheetData,
+    selectedEvent,
+    eventMemberPool,
+    members,
+    societyId,
+  });
+  editorStateRef.current = {
+    groups,
+    selectedPlayerIds,
+    startTime,
+    teeInterval,
+    ntpHolesInput,
+    ldHolesInput,
+    isJointEventTeeSheet,
+    jointTeeSheetData,
+    selectedEvent,
+    eventMemberPool,
+    members,
+    societyId,
+  };
 
   const permissions = getPermissionsForMember(member);
   const canGenerateTeeSheet = permissions.canGenerateTeeSheet;
@@ -1196,11 +1229,14 @@ export default function TeeSheetScreen() {
       if (societyId) {
         loadData();
       }
-      if (selectedEventId) {
+      if (
+        selectedEventId &&
+        !shouldSkipTeeSheetFocusReload({ isDirty, saving, publishing })
+      ) {
         void reloadSelectedEventDetails();
       }
       setGenerating(false);
-    }, [societyId, loadData, selectedEventId, reloadSelectedEventDetails]),
+    }, [societyId, loadData, selectedEventId, reloadSelectedEventDetails, isDirty, saving, publishing]),
   );
 
   const logPostSaveJointRead = useCallback(async (eventId: string, expectedMemberIds: string[]) => {
@@ -1399,9 +1435,10 @@ export default function TeeSheetScreen() {
   };
 
   const navigateToTeeSheetShare = useCallback(
-    async (canonical: CanonicalTeeSheetResult) => {
+    async (canonical: CanonicalTeeSheetResult, hintGroups?: PlayerGroup[]) => {
       if (!selectedEventId || !societyId) return;
 
+      const groupsForExport = hintGroups ?? editorStateRef.current.groups;
       const interval = parseInt(teeInterval, 10) || 10;
       const ntpHoles = parseHoleNumbers(ntpHolesInput === "-" ? "" : ntpHolesInput);
       const ldHoles = parseHoleNumbers(ldHolesInput === "-" ? "" : ldHolesInput);
@@ -1420,7 +1457,7 @@ export default function TeeSheetScreen() {
         longestDriveHoles: ldHoles.length > 0 ? ldHoles : null,
         startTime: startTime || null,
         teeTimeInterval: interval,
-        genderHints: groups.flatMap((g) =>
+        genderHints: groupsForExport.flatMap((g) =>
           g.players.map((p) => ({
             id: p.id,
             gender: p.gender ?? null,
@@ -1438,7 +1475,6 @@ export default function TeeSheetScreen() {
       });
     },
     [
-      groups,
       isJointEventTeeSheet,
       jointTeeSheetData,
       ldHolesInput,
@@ -1456,8 +1492,11 @@ export default function TeeSheetScreen() {
   /** Persist groups, tee times, competition holes, and player scope — does not publish. */
   const persistTeeSheetDraft = async (opts?: { quiet?: boolean }): Promise<boolean> => {
     if (!guardPaidAction()) return false;
-    if (!selectedEventId || !selectedEvent) return false;
-    const nonEmptyGroups = groups.filter((g) => g.players.length > 0);
+    const editor = editorStateRef.current;
+    const eventId = selectedEventId;
+    const eventDoc = editor.selectedEvent;
+    if (!eventId || !eventDoc) return false;
+    const nonEmptyGroups = editor.groups.filter((g) => g.players.length > 0);
     if (nonEmptyGroups.length === 0) {
       if (!opts?.quiet) {
         setNotice({ type: "error", message: "No players added", detail: "Add players to groups before saving." });
@@ -1469,9 +1508,9 @@ export default function TeeSheetScreen() {
       setSaving(true);
     }
     try {
-      const interval = parseInt(teeInterval, 10) || 10;
-      const ntpHoles = parseHoleNumbers(ntpHolesInput === "-" ? "" : ntpHolesInput);
-      const ldHoles = parseHoleNumbers(ldHolesInput === "-" ? "" : ldHolesInput);
+      const interval = parseInt(editor.teeInterval, 10) || 10;
+      const ntpHoles = parseHoleNumbers(editor.ntpHolesInput === "-" ? "" : editor.ntpHolesInput);
+      const ldHoles = parseHoleNumbers(editor.ldHolesInput === "-" ? "" : editor.ldHolesInput);
       const manualPolicyInputs = nonEmptyGroups.flatMap((g) =>
         g.players.map((p) => ({
           player_id: p.id,
@@ -1480,53 +1519,63 @@ export default function TeeSheetScreen() {
           manual_tee_override: p.manualTeeOverride ?? null,
         })),
       );
-      const jointMetaForSave = await getJointMetaForEventIds([selectedEventId]);
-      const isJointSave = jointMetaForSave.get(selectedEventId)?.is_joint_event === true;
+      const jointMetaForSave = await getJointMetaForEventIds([eventId]);
+      const isJointSave = jointMetaForSave.get(eventId)?.is_joint_event === true;
       if (__DEV__) {
         console.log("[teesheet] save start", {
-          eventId: selectedEventId,
-          societyId: selectedEvent.society_id ?? societyId ?? null,
-          isJointEventState: isJointEventTeeSheet,
+          eventId,
+          societyId: eventDoc.society_id ?? editor.societyId ?? null,
+          isJointEventState: editor.isJointEventTeeSheet,
           isJointEventResolved: isJointSave,
           groups: nonEmptyGroups.length,
           rowCount: nonEmptyGroups.flatMap((g) => g.players).length,
-          teeTimeStart: startTime || "08:00",
+          teeTimeStart: editor.startTime || "08:00",
           teeTimeInterval: interval,
         });
       }
-      if (isJointSave !== isJointEventTeeSheet) {
+      if (isJointSave !== editor.isJointEventTeeSheet) {
         setIsJointEventTeeSheet(isJointSave);
       }
 
+      const teeTimeForGroup = (groupNumber: number): string => {
+        const start = (editor.startTime || "08:00").trim() || "08:00";
+        const [h, m] = start.split(":").map(Number);
+        const startMins = (isNaN(h) ? 8 : h) * 60 + (isNaN(m) ? 0 : m);
+        const totalMins = startMins + (groupNumber - 1) * interval;
+        const th = Math.floor(totalMins / 60);
+        const tm = totalMins % 60;
+        return `${String(th).padStart(2, "0")}:${String(tm).padStart(2, "0")}`;
+      };
+
       if (isJointSave) {
         const finalPlayerIds = groupsToPlayerIdsFrom(nonEmptyGroups);
-        const mismatch = validateGroupsMatchSelectedIds(nonEmptyGroups, selectedPlayerIds);
+        const mismatch = validateGroupsMatchSelectedIds(nonEmptyGroups, editor.selectedPlayerIds);
         if (__DEV__ && mismatch) {
-          console.warn("[teesheet] save mismatch warning", { eventId: selectedEventId, mismatch });
+          console.warn("[teesheet] save mismatch warning", { eventId, mismatch });
         }
         const replaceRows = await buildJointExpandedReplaceRows(
           nonEmptyGroups,
-          jointTeeSheetData,
-          selectedEventId,
+          editor.jointTeeSheetData,
+          eventId,
         );
         if (__DEV__) {
           console.log("[teesheet] payload write", {
-            eventId: selectedEventId,
+            eventId,
             source: "joint_event_entries",
-            participatingSocieties: jointTeeSheetData?.participating_societies?.map((s) => s.society_id) ?? [],
+            participatingSocieties: editor.jointTeeSheetData?.participating_societies?.map((s) => s.society_id) ?? [],
             rowCount: replaceRows.length,
             rows: replaceRows,
           });
         }
         try {
-          await replaceJointEventTeeSheetEntries(selectedEventId, replaceRows);
+          await replaceJointEventTeeSheetEntries(eventId, replaceRows);
         } catch (e) {
           console.error("[teesheet] replaceJointEventTeeSheetEntries failed", e);
           throw e;
         }
         const jointTeeGroupInputs = nonEmptyGroups.map((g) => ({
           group_number: g.groupNumber,
-          tee_time: computeTeeTimeForGroup(g.groupNumber),
+          tee_time: teeTimeForGroup(g.groupNumber),
         }));
         const jointTeePlayerInputs = nonEmptyGroups.flatMap((g) =>
           g.players.map((p, idx) => ({
@@ -1539,14 +1588,14 @@ export default function TeeSheetScreen() {
           })),
         );
         await replaceTeeSheetGuestAssignments(
-          selectedEventId,
+          eventId,
           jointTeeGroupInputs,
           jointTeePlayerInputs,
         );
-        await upsertTeeSheetPlayerPolicy(selectedEventId, manualPolicyInputs);
+        await upsertTeeSheetPlayerPolicy(eventId, manualPolicyInputs);
         if (__DEV__) {
           console.log("[teesheet] save db response", {
-            eventId: selectedEventId,
+            eventId,
             source: "joint_event_entries",
             rowsWritten: replaceRows.length,
             guestRowsWritten: jointTeePlayerInputs.filter((p) =>
@@ -1555,7 +1604,7 @@ export default function TeeSheetScreen() {
           });
         }
         const savePayloadJoint = {
-          teeTimeStart: startTime || "08:00",
+          teeTimeStart: editor.startTime || "08:00",
           teeTimeInterval: interval,
           nearestPinHoles: ntpHoles,
           longestDriveHoles: ldHoles,
@@ -1563,34 +1612,34 @@ export default function TeeSheetScreen() {
         if (__DEV__) {
           console.log("[tee-competition-holes][save]", {
             path: "joint_save_tee_sheet",
-            eventId: selectedEventId,
+            eventId,
             payload: savePayloadJoint,
           });
         }
-        await updateEvent(selectedEventId, savePayloadJoint);
+        await updateEvent(eventId, savePayloadJoint);
         if (__DEV__) {
-          const roundTrip = await getEvent(selectedEventId);
+          const roundTrip = await getEvent(eventId);
           console.log("[tee-competition-holes][roundtrip]", {
             path: "joint_save_tee_sheet",
-            eventId: selectedEventId,
+            eventId,
             savedNearestPinHoles: ntpHoles,
             savedLongestDriveHoles: ldHoles,
             persistedNearestPinHoles: roundTrip?.nearestPinHoles ?? [],
             persistedLongestDriveHoles: roundTrip?.longestDriveHoles ?? [],
           });
         }
-        await logPostSaveJointRead(selectedEventId, finalPlayerIds);
+        await logPostSaveJointRead(eventId, finalPlayerIds);
         markDraftSavedLocally();
         if (!opts?.quiet) {
-          setToast({ visible: true, message: "Draft saved", type: "success" });
+          setToast({ visible: true, message: "Draft saved successfully", type: "success" });
         }
         const [tsSaved, jointGuestAssignmentsAfterSave, jointPaidGuestsAfterSave, jointPolicyRowsAfterSave] = await Promise.all([
-          getJointEventTeeSheet(selectedEventId),
-          getTeeGroupPlayers(selectedEventId).then((rows) =>
+          getJointEventTeeSheet(eventId),
+          getTeeGroupPlayers(eventId).then((rows) =>
             rows.filter((r) => parseGuestPlayerId(String(r.player_id)) != null),
           ),
-          getTeeSheetEligibleGuestsForEvent(selectedEventId),
-          getTeeSheetPlayerPolicy(selectedEventId),
+          getTeeSheetEligibleGuestsForEvent(eventId),
+          getTeeSheetPlayerPolicy(eventId),
         ]);
         if (tsSaved) {
           setJointTeeSheetData(tsSaved);
@@ -1608,12 +1657,12 @@ export default function TeeSheetScreen() {
           );
           newGroups = applySexPolicyToGroups(
             newGroups,
-            selectedEvent,
-            eventMemberPool.length > 0 ? eventMemberPool : members,
+            eventDoc,
+            editor.eventMemberPool.length > 0 ? editor.eventMemberPool : editor.members,
             jointPaidGuestsAfterSave,
             policyByPlayerId(jointPolicyRowsAfterSave),
             buildSocietyIdToNameMap(
-              (jointTeeSheetData?.participating_societies ?? []).map((s) => ({
+              (editor.jointTeeSheetData?.participating_societies ?? []).map((s) => ({
                 society_id: s.society_id,
                 society_name: s.society_name,
               })),
@@ -1622,17 +1671,17 @@ export default function TeeSheetScreen() {
           setGroups(newGroups.length > 0 ? newGroups : []);
           const ids = groupsToPlayerIdsFrom(newGroups);
           setSelectedPlayerIds(ids);
-          logSelectedPlayersDev("[teesheet] selected players (after ManCo edits)", selectedEventId, ids);
+          logSelectedPlayersDev("[teesheet] selected players (after ManCo edits)", eventId, ids);
         }
         loadData();
-        await invalidateCache(`event:${selectedEventId}:tee-sheet`);
-        await invalidateCache(`event:${selectedEventId}:detail`);
-        if (societyId) await invalidateCachePrefix(`society:${societyId}:`);
+        await invalidateCache(`event:${eventId}:tee-sheet`);
+        await invalidateCache(`event:${eventId}:detail`);
+        if (editor.societyId) await invalidateCachePrefix(`society:${editor.societyId}:`);
         await reloadSelectedEventDetails();
         return true;
       }
 
-      const mismatchStd = validateGroupsMatchSelectedIds(nonEmptyGroups, selectedPlayerIds);
+      const mismatchStd = validateGroupsMatchSelectedIds(nonEmptyGroups, editor.selectedPlayerIds);
       if (mismatchStd) {
         if (!opts?.quiet) {
           setNotice({ type: "error", message: "Tee sheet out of sync", detail: mismatchStd });
@@ -1640,10 +1689,10 @@ export default function TeeSheetScreen() {
         return false;
       }
 
-      const playerIds = selectedPlayerIds.filter((id) => !id.startsWith("guest-"));
+      const playerIds = editor.selectedPlayerIds.filter((id) => !id.startsWith("guest-"));
       const teeGroupInputs = nonEmptyGroups.map((g) => ({
         group_number: g.groupNumber,
-        tee_time: computeTeeTimeForGroup(g.groupNumber),
+        tee_time: teeTimeForGroup(g.groupNumber),
       }));
       const teePlayerInputs = nonEmptyGroups.flatMap((g) =>
         g.players.map((p, idx) => ({
@@ -1657,7 +1706,7 @@ export default function TeeSheetScreen() {
       );
       if (__DEV__) {
         console.log("[teesheet] payload write", {
-          eventId: selectedEventId,
+          eventId,
           source: "tee_groups",
           payload: {
             teeGroups: teeGroupInputs,
@@ -1665,8 +1714,8 @@ export default function TeeSheetScreen() {
           },
         });
       }
-      const upsertResult = await upsertTeeSheet(selectedEventId, teeGroupInputs, teePlayerInputs);
-      await upsertTeeSheetPlayerPolicy(selectedEventId, manualPolicyInputs);
+      const upsertResult = await upsertTeeSheet(eventId, teeGroupInputs, teePlayerInputs);
+      await upsertTeeSheetPlayerPolicy(eventId, manualPolicyInputs);
       if (__DEV__) {
         console.log("[teesheet] save db response", {
           source: "tee_groups",
@@ -1676,7 +1725,7 @@ export default function TeeSheetScreen() {
 
       const savePayloadStandard = {
         playerIds,
-        teeTimeStart: startTime || "08:00",
+        teeTimeStart: editor.startTime || "08:00",
         teeTimeInterval: interval,
         nearestPinHoles: ntpHoles,
         longestDriveHoles: ldHoles,
@@ -1684,31 +1733,31 @@ export default function TeeSheetScreen() {
       if (__DEV__) {
         console.log("[tee-competition-holes][save]", {
           path: "standard_save_tee_sheet",
-          eventId: selectedEventId,
+          eventId,
           payload: savePayloadStandard,
         });
       }
-      await updateEvent(selectedEventId, savePayloadStandard);
+      await updateEvent(eventId, savePayloadStandard);
       if (__DEV__) {
-        const roundTrip = await getEvent(selectedEventId);
+        const roundTrip = await getEvent(eventId);
         console.log("[tee-competition-holes][roundtrip]", {
           path: "standard_save_tee_sheet",
-          eventId: selectedEventId,
+          eventId,
           savedNearestPinHoles: ntpHoles,
           savedLongestDriveHoles: ldHoles,
           persistedNearestPinHoles: roundTrip?.nearestPinHoles ?? [],
           persistedLongestDriveHoles: roundTrip?.longestDriveHoles ?? [],
         });
       }
-      logSelectedPlayersDev("[teesheet] final published players", selectedEventId, playerIds);
+      logSelectedPlayersDev("[teesheet] final published players", eventId, playerIds);
       const [canonicalAfterSave, policyRowsAfterSave, paidGuestsAfterSave] = await Promise.all([
-        loadCanonicalTeeSheet(selectedEventId, { preserveDraftPlayers: true }),
-        getTeeSheetPlayerPolicy(selectedEventId),
-        getTeeSheetEligibleGuestsForEvent(selectedEventId),
+        loadCanonicalTeeSheet(eventId, { preserveDraftPlayers: true }),
+        getTeeSheetPlayerPolicy(eventId),
+        getTeeSheetEligibleGuestsForEvent(eventId),
       ]);
       if (__DEV__) {
         console.log("[teesheet] row count after reload", {
-          eventId: selectedEventId,
+          eventId,
           source: canonicalAfterSave?.source ?? "none",
           rowCount: canonicalAfterSave?.groups.flatMap((g) => g.players).length ?? 0,
           groupCount: canonicalAfterSave?.groups.length ?? 0,
@@ -1716,9 +1765,9 @@ export default function TeeSheetScreen() {
       }
       if (shouldLoadPersistedTeeSheetDraft(canonicalAfterSave)) {
         const membersForEditor =
-          eventMemberPool.length > 0 ? eventMemberPool : members;
+          editor.eventMemberPool.length > 0 ? editor.eventMemberPool : editor.members;
         let savedGroups = groupsFromCanonical(
-          selectedEvent,
+          eventDoc,
           canonicalAfterSave!,
           membersForEditor,
           paidGuestsAfterSave,
@@ -1730,20 +1779,20 @@ export default function TeeSheetScreen() {
         setSelectedPlayerIds(savedIds);
         commitSavedSnapshotBaseline({
           groups: savedGroups,
-          startTime: startTime || "08:00",
+          startTime: editor.startTime || "08:00",
           teeInterval: String(interval),
-          ntpHolesInput,
-          ldHolesInput,
+          ntpHolesInput: editor.ntpHolesInput,
+          ldHolesInput: editor.ldHolesInput,
           selectedPlayerIds: savedIds,
         });
       }
       markDraftSavedLocally();
       if (!opts?.quiet) {
-        setToast({ visible: true, message: "Draft saved", type: "success" });
+        setToast({ visible: true, message: "Draft saved successfully", type: "success" });
       }
-      await invalidateCache(`event:${selectedEventId}:tee-sheet`);
-      await invalidateCache(`event:${selectedEventId}:detail`);
-      if (societyId) await invalidateCachePrefix(`society:${societyId}:`);
+      await invalidateCache(`event:${eventId}:tee-sheet`);
+      await invalidateCache(`event:${eventId}:detail`);
+      if (editor.societyId) await invalidateCachePrefix(`society:${editor.societyId}:`);
       loadData();
       await reloadSelectedEventDetails();
       return true;
@@ -1751,8 +1800,13 @@ export default function TeeSheetScreen() {
       console.error("[teesheet] persistTeeSheetDraft", err);
       logShareError(err, { action: "save_draft", eventId: selectedEventId, screen: "tee-sheet" });
       const formatted = formatError(err);
+      const message = formatTeeSheetPersistenceError(err, formatted.message);
       if (!opts?.quiet) {
-        setNotice({ type: "error", message: formatted.message, detail: formatted.detail });
+        setNotice({
+          type: "error",
+          message: "Save failed",
+          detail: __DEV__ ? formatted.detail ?? message : message,
+        });
       }
       return false;
     } finally {
@@ -2046,11 +2100,15 @@ export default function TeeSheetScreen() {
           throw new Error("No saved tee sheet to export. Save draft first.");
         }
 
-        await navigateToTeeSheetShare(canonical);
+        await navigateToTeeSheetShare(canonical, editorStateRef.current.groups);
       } catch (err: unknown) {
         logShareError(err, { action: "export", eventId: selectedEventId, screen: "tee-sheet" });
         const formatted = formatError(err, "Couldn't export tee sheet.");
-        setNotice({ type: "error", message: formatted.message, detail: formatted.detail });
+        setNotice({
+          type: "error",
+          message: "Export failed",
+          detail: formatTeeSheetPersistenceError(err, formatted.message),
+        });
       } finally {
         setGenerating(false);
       }
@@ -2114,7 +2172,7 @@ export default function TeeSheetScreen() {
           }
         : null,
     );
-    setGenerating(true);
+    setPublishing(true);
     try {
       const interval = parseInt(teeInterval, 10) || 10;
 
@@ -2122,7 +2180,7 @@ export default function TeeSheetScreen() {
       if (!saved) {
         setNotice({
           type: "error",
-          message: "Could not save draft",
+          message: "Publish failed",
           detail: "Publishing was cancelled because the draft could not be saved.",
         });
         return;
@@ -2145,18 +2203,97 @@ export default function TeeSheetScreen() {
 
       setToast({
         visible: true,
-        message: "Tee times published — members can now see their slot.",
+        message: "Published successfully — members can now see their slot.",
         type: "success",
       });
 
-      await navigateToTeeSheetShare(canonical);
+      await navigateToTeeSheetShare(canonical, editorStateRef.current.groups);
     } catch (err: unknown) {
       logShareError(err, { action: "publish", eventId: selectedEventId, screen: "tee-sheet" });
       const formatted = formatError(err, "Couldn't publish tee sheet.");
-      setNotice({ type: "error", message: formatted.message, detail: formatted.detail });
+      setNotice({
+        type: "error",
+        message: "Publish failed",
+        detail: formatTeeSheetPersistenceError(err, formatted.message),
+      });
     } finally {
-      setGenerating(false);
+      setPublishing(false);
     }
+  };
+
+  const executeRegenerateTeeSheetFromPool = async () => {
+    if (!selectedEventId || !selectedEvent) return;
+    if (isJointEventTeeSheet && jointTeeSheetData) {
+      const eventId = selectedEventId;
+      const participantSocietyIds =
+        jointTeeSheetData.participating_societies?.map((s) => s.society_id).filter(Boolean) ?? [];
+      const societyIdToName = buildSocietyIdToNameMap(
+        (jointTeeSheetData.participating_societies ?? []).map((s) => ({
+          society_id: s.society_id,
+          society_name: s.society_name,
+        })),
+      );
+      const [regs, allGuests, pooled] = await Promise.all([
+        getJointEventRegistrations(eventId),
+        getEventGuests(eventId),
+        getJointEventMemberVisibility(eventId).catch(() => [] as MemberDoc[]),
+      ]);
+      const candidate = await getJointTeeSheetCandidatePoolForEvent(eventId, participantSocietyIds, {
+        societyIdToName,
+        participatingMembers: pooled,
+        guests: allGuests,
+        registrations: regs,
+      });
+      const candidateMembers = await hydrateJointTeeSheetMemberPool({
+        candidateMemberIds: candidate.memberIds,
+        pooledMembers: pooled,
+        registrations: regs,
+        fetchMembersByIds: getMembersByIds,
+      });
+      const eligibleGuestIdSet = new Set(
+        candidate.guestPlayerIds
+          .map((pid) => parseGuestPlayerId(pid))
+          .filter((gid): gid is string => gid != null),
+      );
+      const jointPaidGuests = allGuests.filter((g) => eligibleGuestIdSet.has(g.id));
+      setEligiblePaidGuests(jointPaidGuests);
+      setEligibleMemberIds(candidate.memberIds);
+      setSelectedPlayerIds(candidate.memberIds);
+      initializeGroups(selectedEvent, candidate.memberIds, candidateMembers, jointPaidGuests);
+      logSelectedPlayersDev("[teesheet] selected players (after ManCo edits)", eventId, candidate.memberIds);
+      return;
+    }
+    const [evt, paidGuestList] = await Promise.all([
+      getEvent(selectedEventId),
+      getTeeSheetEligibleGuestsForEvent(selectedEventId),
+    ]);
+    if (!evt) return;
+    setEligiblePaidGuests(paidGuestList);
+    const eligibleIds = await getTeeSheetEligibleMemberIdsForEvent(selectedEventId);
+    setSelectedPlayerIds(eligibleIds);
+    setEligibleMemberIds(eligibleIds);
+    logSelectedPlayersDev("[teesheet] tee-sheet eligible (paid + in)", selectedEventId, eligibleIds);
+    initializeGroups(
+      evt,
+      eligibleIds,
+      eventMemberPool.length > 0 ? eventMemberPool : members,
+      paidGuestList,
+    );
+  };
+
+  const handleRegenerateTeeSheet = () => {
+    if (!selectedEventId || !guardPaidAction()) return;
+    const run = () => {
+      void executeRegenerateTeeSheetFromPool();
+    };
+    if (Platform.OS === "web" && typeof globalThis.confirm === "function") {
+      if (globalThis.confirm(`${REGENERATE_TEE_SHEET_CONFIRM_MESSAGE}\n\nContinue?`)) run();
+      return;
+    }
+    Alert.alert("Regenerate tee sheet?", REGENERATE_TEE_SHEET_CONFIRM_MESSAGE, [
+      { text: "Cancel", style: "cancel" },
+      { text: "Regenerate", style: "destructive", onPress: run },
+    ]);
   };
 
   if ((bootstrapLoading && loading) || (!hasHydratedIndexCache && loading)) {
@@ -2768,40 +2905,9 @@ export default function TeeSheetScreen() {
                     </SecondaryButton>
                     <SecondaryButton
                       size="sm"
-                      onPress={async () => {
-                        if (!selectedEventId) return;
-                        if (isJointEventTeeSheet) {
-                          const tsReset = await getJointEventTeeSheet(selectedEventId);
-                          if (!tsReset) return;
-                          setJointTeeSheetData(tsReset);
-                          const newGroups: PlayerGroup[] = (tsReset.groups ?? []).map((g, groupIdx) => ({
-                            groupNumber: g.group_number,
-                            players: (g.entries ?? []).map((e) => jointTeeSheetEntryToEditable(e, groupIdx)),
-                          }));
-                          setGroups(newGroups.length > 0 ? newGroups : []);
-                          const ids = groupsToPlayerIdsFrom(newGroups);
-                          setSelectedPlayerIds(ids);
-                          logSelectedPlayersDev("[teesheet] selected players (after ManCo edits)", selectedEventId, ids);
-                          return;
-                        }
-                        const [evt, paidGuestList] = await Promise.all([
-                          getEvent(selectedEventId),
-                          getTeeSheetEligibleGuestsForEvent(selectedEventId),
-                        ]);
-                        if (!evt) return;
-                        setEligiblePaidGuests(paidGuestList);
-                        const eligibleIds = await getTeeSheetEligibleMemberIdsForEvent(selectedEventId);
-                        setSelectedPlayerIds(eligibleIds);
-                        logSelectedPlayersDev("[teesheet] tee-sheet eligible (paid + in)", selectedEventId, eligibleIds);
-                        initializeGroups(
-                          evt,
-                          eligibleIds,
-                          eventMemberPool.length > 0 ? eventMemberPool : members,
-                          paidGuestList,
-                        );
-                      }}
+                      onPress={handleRegenerateTeeSheet}
                     >
-                      <Feather name="refresh-cw" size={14} color={colors.text} /> Reset
+                      <Feather name="refresh-cw" size={14} color={colors.text} /> Regenerate
                     </SecondaryButton>
                   </View>
                 </View>
@@ -2922,39 +3028,45 @@ export default function TeeSheetScreen() {
 
               <View style={{ marginTop: spacing.lg, marginBottom: spacing.sm }}>
                 <AppText variant="small" color={isDirty ? "warning" : "muted"}>
-                  {isDirty
-                    ? "Unsaved changes — save draft before leaving"
-                    : lastSavedAt
-                      ? `Draft saved · Last saved at ${lastSavedAt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`
-                      : selectedEvent?.teeTimePublishedAt
-                        ? "Published — members see tee times"
-                        : "No draft saved yet"}
+                  {saving
+                    ? "Saving draft..."
+                    : publishing
+                      ? "Publishing..."
+                      : generating
+                        ? "Preparing export..."
+                        : isDirty
+                          ? "Unsaved changes — save draft before leaving"
+                          : lastSavedAt
+                            ? `Draft saved · Last saved at ${lastSavedAt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`
+                            : selectedEvent?.teeTimePublishedAt
+                              ? "Published — members see tee times"
+                              : "No draft saved yet"}
                 </AppText>
               </View>
               <View style={{ flexDirection: "row", gap: spacing.sm, marginBottom: spacing.sm }}>
                 <SecondaryButton
                   onPress={handleSaveTeeSheet}
                   loading={saving}
-                  disabled={selectedPlayerCount === 0 || isPastEventSelected}
+                  disabled={selectedPlayerCount === 0 || isPastEventSelected || publishing}
                   style={{ flex: 1 }}
                 >
                   <Feather name="save" size={18} color={colors.primary} />
-                  {" Save Draft"}
+                  {saving ? " Saving..." : " Save Draft"}
                 </SecondaryButton>
                 <PrimaryButton
                   onPress={handleGenerateTeeSheet}
-                  loading={generating}
-                  disabled={selectedPlayerCount === 0 || isPastEventSelected}
+                  loading={publishing}
+                  disabled={selectedPlayerCount === 0 || isPastEventSelected || saving}
                   style={{ flex: 1 }}
                 >
                   <Feather name="upload-cloud" size={18} color={colors.textInverse} />
-                  {" Publish"}
+                  {publishing ? " Publishing..." : " Publish"}
                 </PrimaryButton>
               </View>
               <SecondaryButton
                 onPress={handleShareExport}
-                loading={generating}
-                disabled={selectedPlayerCount === 0 || isPastEventSelected}
+                loading={generating && !publishing}
+                disabled={selectedPlayerCount === 0 || isPastEventSelected || saving || publishing}
                 style={{ marginBottom: spacing.sm }}
               >
                 <Feather name="share-2" size={18} color={colors.primary} />

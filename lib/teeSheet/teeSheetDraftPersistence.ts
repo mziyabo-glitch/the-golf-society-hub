@@ -127,3 +127,21 @@ export function assertTeeSheetUpsertWritten(check: UpsertTeeSheetWriteCheck): vo
     throw new Error("Failed to save tee group players (no rows written — check permissions)");
   }
 }
+
+const TEE_SHEET_PERMISSION_FRIENDLY =
+  "You don't have permission to save this tee sheet. Ask your society Captain, Secretary, Treasurer, or Handicapper to try, or contact support.";
+
+/** Friendly message for ManCo UI; dev builds keep the underlying error text. */
+export function formatTeeSheetPersistenceError(error: unknown, fallback = "Couldn't save tee sheet."): string {
+  const raw =
+    error instanceof Error
+      ? error.message
+      : typeof error === "string"
+        ? error
+        : fallback;
+  if (__DEV__) return raw || fallback;
+  if (/permission|rls|policy|denied|not authorized|no rows written/i.test(raw)) {
+    return TEE_SHEET_PERMISSION_FRIENDLY;
+  }
+  return raw || fallback;
+}

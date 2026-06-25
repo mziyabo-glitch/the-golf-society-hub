@@ -9,6 +9,7 @@ vi.mock("@/lib/db_supabase/jointEventRepo", () => ({
 import {
   assertTeeSheetUpsertWritten,
   editorGroupsFromCanonicalRows,
+  formatTeeSheetPersistenceError,
   jointMetaFromParticipatingSocieties,
   policyByPlayerId,
   reconcileJointEventMeta,
@@ -142,5 +143,14 @@ describe("teeSheet draft persistence helpers", () => {
         playersInserted: 0,
       }),
     ).toThrow(/tee group players/i);
+  });
+
+  it("maps RLS errors to friendly copy outside dev", () => {
+    expect(formatTeeSheetPersistenceError(new Error("no rows written — check permissions"))).toMatch(
+      /don't have permission/i,
+    );
+    vi.stubGlobal("__DEV__", true);
+    expect(formatTeeSheetPersistenceError(new Error("custom db error"))).toBe("custom db error");
+    vi.stubGlobal("__DEV__", false);
   });
 });
