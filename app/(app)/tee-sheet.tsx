@@ -70,6 +70,7 @@ import {
 import { buildMemberByPlayerIdMap, memberDocForPlayerId } from "@/lib/teeSheet/teeSheetMemberLookup";
 import {
   formatTeeSheetPublishValidationMessage,
+  publishEligibilityCheckSet,
   validateTeeSheetForPublish,
 } from "@/lib/teeSheet/teeSheetPublishValidation";
 import { teeColourFromName } from "@/lib/teeSheet/teeColour";
@@ -2194,6 +2195,7 @@ export default function TeeSheetScreen() {
         message: "No players added",
         detail: "Add players to groups before publishing.",
       });
+      setToast({ visible: true, message: "Add players to groups before publishing", type: "error" });
       return;
     }
 
@@ -2203,7 +2205,12 @@ export default function TeeSheetScreen() {
     ]);
     const validation = validateTeeSheetForPublish({
       groups: nonEmptyGroups,
-      eligiblePlayerIds: eligibleSet,
+      // Joint events: membership is authoritative from saved cross-society entries, so the
+      // host-derived eligible set must not gate publish (mirrors the add-player rule).
+      eligiblePlayerIds: publishEligibilityCheckSet({
+        isJointEvent: isJointEventTeeSheet,
+        eligiblePlayerIds: eligibleSet,
+      }),
     });
     if (!validation.ok) {
       setNotice({
@@ -2211,6 +2218,9 @@ export default function TeeSheetScreen() {
         message: "Cannot publish tee sheet",
         detail: formatTeeSheetPublishValidationMessage(validation),
       });
+      // Toast as well so the reason is visible even when the notice is scrolled off-screen
+      // (the Publish button sits below a long player list).
+      setToast({ visible: true, message: "Can't publish — check the highlighted issues above", type: "error" });
       return;
     }
 
@@ -2221,6 +2231,7 @@ export default function TeeSheetScreen() {
         message: "Cannot publish tee sheet",
         detail: holesParsed.error,
       });
+      setToast({ visible: true, message: holesParsed.error, type: "error" });
       return;
     }
 
@@ -2244,6 +2255,7 @@ export default function TeeSheetScreen() {
           message: "Publish failed",
           detail: "Could not save the tee sheet draft before publishing. Check the error above and try Save Draft first.",
         });
+        setToast({ visible: true, message: "Publish failed — could not save the draft first", type: "error" });
         return;
       }
 
@@ -2279,11 +2291,13 @@ export default function TeeSheetScreen() {
     } catch (err: unknown) {
       logShareError(err, { action: "publish", eventId: selectedEventId, screen: "tee-sheet" });
       const formatted = formatError(err, "Couldn't publish tee sheet.");
+      const detail = formatTeeSheetPersistenceError(err, formatted.message);
       setNotice({
         type: "error",
         message: "Publish failed",
-        detail: formatTeeSheetPersistenceError(err, formatted.message),
+        detail,
       });
+      setToast({ visible: true, message: "Publish failed — see the error above", type: "error" });
     } finally {
       setPublishing(false);
     }

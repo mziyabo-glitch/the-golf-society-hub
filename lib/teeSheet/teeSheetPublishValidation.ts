@@ -100,3 +100,21 @@ export function formatTeeSheetPublishValidationMessage(result: TeeSheetPublishVa
   const lines = [...result.errors, ...result.warnings];
   return lines.join("\n");
 }
+
+/**
+ * Resolve the eligible-id set to hand to {@link validateTeeSheetForPublish}.
+ *
+ * Joint events: tee-sheet membership is authoritative from the saved cross-society
+ * `event_entries` (dual members, participant-society players, and confirmed-but-not-
+ * locally-"paid" entries all belong). The host-derived eligible set under-reports those
+ * players, so it must NOT gate publish — mirroring the add-player rule which already skips
+ * the eligibility check for joint events. Returning `undefined` skips the eligibility check.
+ *
+ * Standard events: enforce the eligible set so unpaid / not-"in" members cannot be published.
+ */
+export function publishEligibilityCheckSet(input: {
+  isJointEvent: boolean;
+  eligiblePlayerIds: ReadonlySet<string>;
+}): ReadonlySet<string> | undefined {
+  return input.isJointEvent ? undefined : input.eligiblePlayerIds;
+}
