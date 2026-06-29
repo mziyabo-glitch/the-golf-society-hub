@@ -40,11 +40,12 @@ const MILLBROOK_SOCIETIES: JointEventSociety[] = [
 const MILLBROOK_GAMEBOOK_NET: {
   key: string;
   name: string;
+  teeSheetName?: string;
   net: number;
   society: typeof M4 | typeof ZGS;
 }[] = [
   { key: "makurumure", name: "K J Makurumure", net: 70, society: M4 },
-  { key: "gorejena", name: "Augustine Gorejena", net: 73, society: ZGS },
+  { key: "gorejena", name: "Augustine Gorejena", teeSheetName: "Gorejena Farai", net: 73, society: M4 },
   { key: "mokom", name: "Terence Mokom", net: 73, society: M4 },
   { key: "mokoena", name: "Mpho Mokoena", net: 74, society: M4 },
   { key: "muchando", name: "Jade Muchando", net: 75, society: ZGS },
@@ -81,7 +82,7 @@ function millbrookMembers(): MemberDoc[] {
   return MILLBROOK_GAMEBOOK_NET.map((p) => ({
     id: `member-${p.key}`,
     society_id: p.society,
-    name: p.name,
+    name: p.teeSheetName ?? p.name,
     displayName: p.name,
   }));
 }
@@ -90,7 +91,7 @@ function millbrookJointEntries(): JointEventEntry[] {
   return MILLBROOK_GAMEBOOK_NET.map((p, i) => ({
     event_entry_id: `entry-${p.key}`,
     player_id: `member-${p.key}`,
-    player_name: p.name,
+    player_name: p.teeSheetName ?? p.name,
     tee_id: null,
     tee_name: "White",
     status: "confirmed",
@@ -145,12 +146,26 @@ function millbrookPlayerList(extraGuests: { id: string; name: string; net: numbe
   });
   return withScores.map((p) => ({
     memberId: p.memberId,
-    memberName: p.memberName,
-    dayPoints: p.dayPoints,
-    isOomEligible: p.isOomEligible,
-    societyId: p.societyId,
-  }));
+        memberName: p.memberName,
+        dayPoints: p.dayPoints,
+        isOomEligible: p.isOomEligible,
+        societyId: p.societyId,
+      }));
 }
+
+describe("Millbrook Gorejena identity (tee sheet vs GameBook)", () => {
+  it("merges Gorejena Farai and Augustine Gorejena member rows for joint dedupe", async () => {
+    const { dedupeJointMembers } = await import("@/lib/jointPersonDedupe");
+    const societyIdToName = new Map([[M4, "M4"], [ZGS, "ZGS"]]);
+    const members: MemberDoc[] = [
+      { id: "m-farai", society_id: M4, name: "Gorejena Farai" },
+      { id: "m-augustine", society_id: M4, name: "Augustine Gorejena" },
+    ];
+    const deduped = dedupeJointMembers(members, societyIdToName);
+    expect(deduped).toHaveLength(1);
+    expect(deduped[0]!.mergedMemberIds.sort()).toEqual(["m-augustine", "m-farai"]);
+  });
+});
 
 describe("Millbrook OOM 4 regression (GameBook NET, joint M4/ZGS)", () => {
   it("full field NET order matches GameBook (lowest net wins; ties share position)", () => {
@@ -169,21 +184,23 @@ describe("Millbrook OOM 4 regression (GameBook NET, joint M4/ZGS)", () => {
     expect(new Set(tied80.map((p) => p.position))).toEqual(new Set([14]));
   });
 
-  it("M4 OOM: Gorejena (ZGS) at 73 does not take M4 OOM slots; Mokom shares 2nd member OOM with Gorejena field tie", () => {
+  it("M4 OOM: Gorejena Farai (Augustine Gorejena) at 73 shares 2nd-place member OOM with Mokom", () => {
     const scored = calculateFieldPositionsAndMemberOomPoints(millbrookPlayerList(), "low_wins");
-    const makurumure = scored.find((p) => p.memberName === "K J Makurumure")!;
-    const gorejena = scored.find((p) => p.memberName === "Augustine Gorejena")!;
-    const mokom = scored.find((p) => p.memberName === "Terence Mokom")!;
+    const makurumure = scored.find((p) => p.memberId === "member-makurumure")!;
+    const gorejena = scored.find((p) => p.memberId === "member-gorejena")!;
+    const mokom = scored.find((p) => p.memberId === "member-mokom")!;
 
     expect(makurumure.position).toBe(1);
     expect(makurumure.oomPoints).toBe(25);
 
+    expect(gorejena.memberName).toBe("Gorejena Farai");
+    expect(gorejena.isOomEligible).toBe(true);
     expect(gorejena.position).toBe(2);
-    expect(gorejena.oomPoints).toBe(0);
+    expect(gorejena.oomPoints).toBeCloseTo(getAveragedOOMPoints(2, 2));
 
     expect(mokom.position).toBe(2);
-    expect(mokom.oomPoints).toBeCloseTo(getAveragedOOMPoints(2, 1));
-    expect(mokom.oomPoints).toBe(18);
+    expect(mokom.oomPoints).toBeCloseTo(getAveragedOOMPoints(2, 2));
+    expect(mokom.oomPoints).toBeCloseTo(16.5);
   });
 
   it("guest with best net is position 1 but M4 member Makurumure keeps 25 OOM points", () => {
@@ -199,7 +216,7 @@ describe("Millbrook OOM 4 regression (GameBook NET, joint M4/ZGS)", () => {
     expect(makurumure.oomPoints).toBe(25);
   });
 
-  it("six-way tie at net 80 shares field position 14; M4 members share member OOM slots 10–12", () => {
+  it("six-way tie at net 80 shares field position 14; M4 at 80 are member ranks 11+ (0 OOM after Gorejena in M4 top 10)", () => {
     const scored = calculateFieldPositionsAndMemberOomPoints(millbrookPlayerList(), "low_wins");
     const at80 = scored.filter((p) => p.dayPoints === "80");
     expect(at80).toHaveLength(6);
@@ -207,9 +224,8 @@ describe("Millbrook OOM 4 regression (GameBook NET, joint M4/ZGS)", () => {
 
     const m4At80 = at80.filter((p) => p.societyId === M4);
     expect(m4At80).toHaveLength(3);
-    const expectedMemberOom = getAveragedOOMPoints(10, 3);
     for (const p of m4At80) {
-      expect(p.oomPoints).toBeCloseTo(expectedMemberOom);
+      expect(p.oomPoints).toBe(0);
     }
     for (const p of at80.filter((x) => x.societyId === ZGS)) {
       expect(p.oomPoints).toBe(0);
@@ -261,7 +277,7 @@ describe("Millbrook OOM 4 regression (GameBook NET, joint M4/ZGS)", () => {
     const makurumure = out.find((r) => r.member_id === "member-makurumure")!;
     const gorejena = out.find((r) => r.member_id === "member-gorejena")!;
     expect(makurumure.points).toBe(25);
-    expect(gorejena.points).toBe(0);
+    expect(gorejena.points).toBeCloseTo(getAveragedOOMPoints(2, 2));
     expect(makurumure.day_value).toBe(70);
   });
 });

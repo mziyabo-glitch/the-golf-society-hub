@@ -10,6 +10,7 @@ import {
   memberIdForActiveSocietyInJointDedupe,
   type DedupedJointMember,
 } from "@/lib/jointPersonDedupe";
+import { resolveAttendeeDisplayName } from "@/lib/eventAttendeeName";
 import { isGuestEntrantKey } from "@/lib/oomMemberOnlyScoring";
 
 export type OomFieldEntrant = {
@@ -110,7 +111,7 @@ export function buildJointFullFieldOomEntrants(params: {
 
     out.push({
       memberId: repForActive,
-      memberName: String(repMember.displayName || repMember.display_name || repMember.name || "Unknown"),
+      memberName: resolveAttendeeDisplayName(repMember, { memberId: repForActive }).name,
       dayPoints: "",
       isOomEligible,
       societyId: repMember.society_id ?? null,
