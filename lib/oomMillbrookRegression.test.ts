@@ -56,7 +56,7 @@ const MILLBROOK_GAMEBOOK_NET: {
   { key: "nyasulu", name: "Bernie Nyasulu", net: 77, society: ZGS },
   { key: "guda", name: "Edward Guda", net: 79, society: M4 },
   { key: "alfazema", name: "Aulia Alfazema", net: 79, society: ZGS },
-  { key: "nyemba", name: "TonKennedy Nyemba", net: 79, society: M4 },
+  { key: "nyemba", name: "TonKennedy Nyemba", teeSheetName: "Kenny G", net: 79, society: M4 },
   { key: "nhavira", name: "Sidney Nhavira", net: 80, society: ZGS },
   { key: "zikwature", name: "Tank Zikwature", net: 80, society: M4 },
   { key: "kudenga", name: "Ziv Kudenga", net: 80, society: ZGS },
@@ -167,6 +167,26 @@ describe("Millbrook Gorejena identity (tee sheet vs GameBook)", () => {
   });
 });
 
+describe("Millbrook Nyemba identity (tee sheet vs GameBook)", () => {
+  it("merges Kenny G and TonKennedy Nyemba member rows for joint dedupe", async () => {
+    const { dedupeJointMembers } = await import("@/lib/jointPersonDedupe");
+    const societyIdToName = new Map([[M4, "M4"], [ZGS, "ZGS"]]);
+    const members: MemberDoc[] = [
+      { id: "m-kenny", society_id: M4, name: "Kenny G" },
+      { id: "m-ton", society_id: M4, name: "TonKennedy Nyemba" },
+    ];
+    const deduped = dedupeJointMembers(members, societyIdToName);
+    expect(deduped).toHaveLength(1);
+    expect(deduped[0]!.mergedMemberIds.sort()).toEqual(["m-kenny", "m-ton"]);
+  });
+
+  it("matches Kenny Nyemba spoken name with GameBook and tee-sheet variants", async () => {
+    const { jointPersonNamesEquivalent } = await import("@/lib/jointPersonNameMatch");
+    expect(jointPersonNamesEquivalent("Kenny Nyemba", "TonKennedy Nyemba")).toBe(true);
+    expect(jointPersonNamesEquivalent("Kenny G", "TonKennedy Nyemba")).toBe(true);
+  });
+});
+
 describe("Millbrook OOM 4 regression (GameBook NET, joint M4/ZGS)", () => {
   it("full field NET order matches GameBook (lowest net wins; ties share position)", () => {
     const scored = calculateFieldPositionsAndMemberOomPoints(millbrookPlayerList(), "low_wins");
@@ -201,6 +221,26 @@ describe("Millbrook OOM 4 regression (GameBook NET, joint M4/ZGS)", () => {
     expect(mokom.position).toBe(2);
     expect(mokom.oomPoints).toBeCloseTo(getAveragedOOMPoints(2, 2));
     expect(mokom.oomPoints).toBeCloseTo(16.5);
+  });
+
+  it("M4 OOM: TonKennedy Nyemba (Kenny G) at 79 shares member OOM with Guda; Alfazema (ZGS) gets 0", () => {
+    const scored = calculateFieldPositionsAndMemberOomPoints(millbrookPlayerList(), "low_wins");
+    const guda = scored.find((p) => p.memberId === "member-guda")!;
+    const nyemba = scored.find((p) => p.memberId === "member-nyemba")!;
+    const alfazema = scored.find((p) => p.memberId === "member-alfazema")!;
+
+    expect(nyemba.memberName).toBe("Kenny G");
+    expect(nyemba.isOomEligible).toBe(true);
+    expect(nyemba.societyId).toBe(M4);
+
+    const at79 = scored.filter((p) => p.dayPoints === "79");
+    expect(at79).toHaveLength(3);
+    expect(new Set(at79.map((p) => p.position))).toEqual(new Set([guda.position]));
+
+    expect(alfazema.oomPoints).toBe(0);
+    expect(guda.oomPoints).toBeCloseTo(nyemba.oomPoints);
+    expect(guda.oomPoints).toBeCloseTo(getAveragedOOMPoints(9, 2));
+    expect(nyemba.oomPoints).toBeCloseTo(1.5);
   });
 
   it("guest with best net is position 1 but M4 member Makurumure keeps 25 OOM points", () => {

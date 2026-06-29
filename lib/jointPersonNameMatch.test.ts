@@ -15,6 +15,12 @@ describe("jointPersonNamesEquivalent", () => {
     expect(jointPersonNamesEquivalent("Augustine Gorejena", "Farai Gorejena")).toBe(true);
   });
 
+  it("matches TonKennedy Nyemba with Kenny Nyemba and Kenny G (GameBook vs tee sheet)", () => {
+    expect(jointPersonNamesEquivalent("TonKennedy Nyemba", "Kenny Nyemba")).toBe(true);
+    expect(jointPersonNamesEquivalent("Kenny G", "TonKennedy Nyemba")).toBe(true);
+    expect(jointPersonNamesEquivalent("Kenny G", "Kenny Nyemba")).toBe(true);
+  });
+
   it("does not match unrelated players", () => {
     expect(jointPersonNamesEquivalent("Terence Mokom", "Augustine Gorejena")).toBe(false);
   });

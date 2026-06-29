@@ -54,6 +54,9 @@ function verifyNamesEquivalent(expected, actual) {
     ["noble chigwedere", "noble chhigwedere"],
     ["gorejena farai", "augustine gorejena"],
     ["gorejena farai", "farai gorejena"],
+    ["kenny g", "tonkennedy nyemba"],
+    ["kenny g", "kenny nyemba"],
+    ["kenny nyemba", "tonkennedy nyemba"],
   ];
   return pairs.some(([x, y]) => (e === x && a === y) || (e === y && a === x));
 }

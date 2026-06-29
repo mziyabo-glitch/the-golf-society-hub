@@ -6,6 +6,7 @@
 /** Normalized names known to refer to the same real person (lowercase). */
 export const JOINT_PERSON_ALIAS_GROUPS: readonly (readonly string[])[] = [
   ["augustine gorejena", "gorejena farai", "farai gorejena"],
+  ["tonkennedy nyemba", "kenny nyemba", "kenny g"],
 ];
 
 export function normalizeJointPersonName(name: string): string {
