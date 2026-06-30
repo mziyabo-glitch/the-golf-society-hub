@@ -74,7 +74,10 @@ import {
   logOomScoringBreakdown,
 } from "@/lib/oomJointField";
 
-/** Set `EXPO_PUBLIC_POINTS_DEBUG_EVENT_ID` to this event’s UUID to enable `[points-debug]` logs. */
+/** Set `EXPO_PUBLIC_POINTS_DEBUG_EVENT_ID` to an event UUID to enable `[points-debug]` / `[oom-scoring]` logs.
+ *  Millbrook OOM 4: f0267e53-d29a-4301-82ce-ca02160f76cf
+ *  Morley Hayes OOM 4: 474eef8f-32cf-49fa-a0f0-07db7bc0bf9a
+ */
 function pointsDebugEnabled(eid: string | undefined): boolean {
   const t = process.env.EXPO_PUBLIC_POINTS_DEBUG_EVENT_ID?.trim();
   return Boolean(eid && t && eid === t);
