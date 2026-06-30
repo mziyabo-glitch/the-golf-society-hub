@@ -69,6 +69,7 @@ import {
 import {
   buildJointFullFieldOomEntrants,
   buildOomScoringDebugRows,
+  buildStandardFullFieldOomEntrants,
   hydrateDayPointsFromCrossSocietyResults,
   logOomScoringBreakdown,
 } from "@/lib/oomJointField";
@@ -365,7 +366,10 @@ export default function EventPointsScreen() {
         isJointWithDetail && jointDetail
           ? [...new Set([...jointEntryPlayerIds, ...evtPlayerIds])]
           : [...new Set(evtPlayerIds)];
-      const mergedCandidateIds: string[] = [...new Set([...baseMerged, ...regBoostMemberIds])];
+      const guestCandidateIds = eventGuests.map((g) => `guest-${g.id}`);
+      const mergedCandidateIds: string[] = [
+        ...new Set([...baseMerged, ...regBoostMemberIds, ...guestCandidateIds]),
+      ];
 
       const playerIds: string[] = mergedCandidateIds;
 
@@ -461,36 +465,23 @@ export default function EventPointsScreen() {
           });
         }
       } else {
-        playerList = playerIds.map((pid: string) => {
-          const ps = String(pid);
-          if (ps.startsWith("guest-")) {
-            const gid = ps.slice("guest-".length);
-            const g = guestById.get(gid);
-            return {
-              memberId: ps,
-              memberName: (g?.name ?? "Guest").trim(),
-              dayPoints: "",
-              position: null,
-              oomPoints: 0,
-              societyId: null,
-              isOomEligible: false,
-              hasPersistedResult: false,
-              isKnownMember: Boolean(g),
-            };
-          }
-          const member = memberMap.get(pid);
-          return {
-            memberId: pid,
-            memberName: member?.displayName || member?.name || "Unknown",
-            dayPoints: "",
-            position: null,
-            oomPoints: 0,
-            societyId: member?.society_id ?? societyId,
-            isOomEligible: Boolean(member),
-            hasPersistedResult: false,
-            isKnownMember: Boolean(member),
-          };
+        const fullField = buildStandardFullFieldOomEntrants({
+          mergedCandidateIds,
+          members: memberDocs,
+          activeSocietyId: societyId,
+          guestById,
         });
+        playerList = fullField.map((p) => ({
+          memberId: p.memberId,
+          memberName: p.memberName,
+          dayPoints: p.dayPoints,
+          position: null,
+          oomPoints: 0,
+          societyId: p.societyId,
+          isOomEligible: p.isOomEligible,
+          hasPersistedResult: false,
+          isKnownMember: p.isKnownMember,
+        }));
       }
 
       const fromDetail = (jointDetail?.participating_societies ?? []).map((s) => s.society_id).filter(Boolean);

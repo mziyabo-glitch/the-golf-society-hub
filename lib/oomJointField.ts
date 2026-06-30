@@ -121,6 +121,78 @@ export function buildJointFullFieldOomEntrants(params: {
   }
 
   const inList = new Set(out.map((p) => p.memberId));
+  for (const [gid, g] of guestById) {
+    const ps = `guest-${gid}`;
+    if (inList.has(ps)) continue;
+    out.push({
+      memberId: ps,
+      memberName: String(g?.name ?? "Guest").trim(),
+      dayPoints: "",
+      isOomEligible: false,
+      societyId: null,
+      isKnownMember: true,
+    });
+    inList.add(ps);
+  }
+  for (const pid of mergedCandidateIds) {
+    const ps = String(pid);
+    if (!ps.startsWith("guest-") || inList.has(ps)) continue;
+    const gid = ps.slice("guest-".length);
+    const g = guestById.get(gid);
+    out.push({
+      memberId: ps,
+      memberName: String(g?.name ?? "Guest").trim(),
+      dayPoints: "",
+      isOomEligible: false,
+      societyId: null,
+      isKnownMember: Boolean(g),
+    });
+    inList.add(ps);
+  }
+
+  return out;
+}
+
+/** Standard (non-joint) events: one row per candidate member + every event guest for full-field ranking. */
+export function buildStandardFullFieldOomEntrants(params: {
+  mergedCandidateIds: string[];
+  members: MemberDoc[];
+  activeSocietyId: string;
+  guestById: Map<string, { name?: string | null }>;
+}): OomFieldEntrant[] {
+  const { mergedCandidateIds, members, activeSocietyId, guestById } = params;
+  const memberById = new Map(members.map((m) => [m.id, m]));
+  const out: OomFieldEntrant[] = [];
+  const inList = new Set<string>();
+
+  for (const pid of mergedCandidateIds) {
+    const ps = String(pid);
+    if (ps.startsWith("guest-") || inList.has(ps)) continue;
+    const member = memberById.get(ps);
+    out.push({
+      memberId: ps,
+      memberName: resolveAttendeeDisplayName(member, { memberId: ps }).name,
+      dayPoints: "",
+      isOomEligible: Boolean(member && String(member.society_id) === String(activeSocietyId)),
+      societyId: member?.society_id ?? null,
+      isKnownMember: Boolean(member),
+    });
+    inList.add(ps);
+  }
+
+  for (const [gid, g] of guestById) {
+    const ps = `guest-${gid}`;
+    if (inList.has(ps)) continue;
+    out.push({
+      memberId: ps,
+      memberName: String(g?.name ?? "Guest").trim(),
+      dayPoints: "",
+      isOomEligible: false,
+      societyId: null,
+      isKnownMember: true,
+    });
+    inList.add(ps);
+  }
   for (const pid of mergedCandidateIds) {
     const ps = String(pid);
     if (!ps.startsWith("guest-") || inList.has(ps)) continue;
