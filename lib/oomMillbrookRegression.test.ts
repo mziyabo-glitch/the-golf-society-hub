@@ -36,7 +36,12 @@ const MILLBROOK_SOCIETIES: JointEventSociety[] = [
   },
 ];
 
-/** GameBook stroke play NET results — OOM 4 The Millbrook, PAR 74 White tees. */
+/** GameBook stroke play NET — guests (not society members; 0 OOM). */
+const MILLBROOK_GAMEBOOK_GUESTS: { id: string; name: string; net: number }[] = [
+  { id: "nyasulu", name: "Bernie Nyasulu", net: 77 },
+];
+
+/** GameBook stroke play NET results — OOM 4 The Millbrook, PAR 74 White tees (members only). */
 const MILLBROOK_GAMEBOOK_NET: {
   key: string;
   name: string;
@@ -53,7 +58,6 @@ const MILLBROOK_GAMEBOOK_NET: {
   { key: "ndlovu", name: "Tony Ndlovu", net: 75, society: M4 },
   { key: "nyoni", name: "David Nyoni", net: 76, society: M4 },
   { key: "ganga", name: "Arthur Ganga", net: 77, society: M4 },
-  { key: "nyasulu", name: "Bernie Nyasulu", net: 77, society: ZGS },
   { key: "guda", name: "Edward Guda", net: 79, society: M4 },
   { key: "alfazema", name: "Aulia Alfazema", net: 79, society: ZGS },
   { key: "nyemba", name: "TonKennedy Nyemba", teeSheetName: "Kenny G", net: 79, society: M4 },
@@ -77,6 +81,15 @@ const MILLBROOK_GAMEBOOK_NET: {
   { key: "adegbola", name: "Biyi Adegbõla", net: 86, society: M4 },
   { key: "sagiya", name: "Alf Sagiya", net: 86, society: ZGS },
 ];
+
+function gameBookNetsInRankOrder(): number[] {
+  const rows = [
+    ...MILLBROOK_GAMEBOOK_NET.map((p) => ({ net: p.net, name: p.name })),
+    ...MILLBROOK_GAMEBOOK_GUESTS.map((g) => ({ net: g.net, name: g.name })),
+  ];
+  rows.sort((a, b) => a.net - b.net || a.name.localeCompare(b.name));
+  return rows.map((r) => r.net);
+}
 
 function millbrookMembers(): MemberDoc[] {
   return MILLBROOK_GAMEBOOK_NET.map((p) => ({
@@ -117,15 +130,13 @@ function millbrookJointEntries(): JointEventEntry[] {
 }
 
 function millbrookPlayerList(extraGuests: { id: string; name: string; net: number }[] = []) {
+  const guests = [...MILLBROOK_GAMEBOOK_GUESTS, ...extraGuests];
   const members = millbrookMembers();
   const societyIdToName = new Map([
     [M4, "M4"],
     [ZGS, "ZGS"],
   ]);
-  const mergedIds = [
-    ...members.map((m) => m.id),
-    ...extraGuests.map((g) => `guest-${g.id}`),
-  ];
+  const mergedIds = [...members.map((m) => m.id), ...guests.map((g) => `guest-${g.id}`)];
   const entrants = buildJointFullFieldOomEntrants({
     mergedCandidateIds: mergedIds,
     allParticipatingMembers: members,
@@ -133,12 +144,12 @@ function millbrookPlayerList(extraGuests: { id: string; name: string; net: numbe
     activeSocietyId: M4,
     participatingSocieties: MILLBROOK_SOCIETIES,
     jointEntries: millbrookJointEntries(),
-    guestById: new Map(extraGuests.map((g) => [g.id, { name: g.name }])),
+    guestById: new Map(guests.map((g) => [g.id, { name: g.name }])),
   });
   const withScores = entrants.map((e) => {
     if (e.memberId.startsWith("guest-")) {
       const gid = e.memberId.slice("guest-".length);
-      const g = extraGuests.find((x) => x.id === gid);
+      const g = guests.find((x) => x.id === gid);
       return { ...e, dayPoints: g ? String(g.net) : "" };
     }
     const p = MILLBROOK_GAMEBOOK_NET.find((x) => `member-${x.key}` === e.memberId);
@@ -193,7 +204,7 @@ describe("Millbrook OOM 4 regression (GameBook NET, joint M4/ZGS)", () => {
     const ranked = scored
       .filter((p) => p.dayPoints.trim() !== "")
       .sort((a, b) => (a.position ?? 99) - (b.position ?? 99) || a.memberName.localeCompare(b.memberName));
-    expect(ranked.map((p) => parseInt(p.dayPoints, 10))).toEqual(MILLBROOK_GAMEBOOK_NET.map((p) => p.net));
+    expect(ranked.map((p) => parseInt(p.dayPoints, 10))).toEqual(gameBookNetsInRankOrder());
     expect(ranked[0]!.memberName).toBe("K J Makurumure");
     expect(ranked[0]!.position).toBe(1);
     expect(ranked[ranked.length - 1]!.position).toBe(30);
@@ -221,6 +232,21 @@ describe("Millbrook OOM 4 regression (GameBook NET, joint M4/ZGS)", () => {
     expect(mokom.position).toBe(2);
     expect(mokom.oomPoints).toBeCloseTo(getAveragedOOMPoints(2, 2));
     expect(mokom.oomPoints).toBeCloseTo(16.5);
+  });
+
+  it("Bernie Nyasulu guest at 77 ties Arthur Ganga in field but earns 0 M4 OOM; Ganga keeps member OOM", () => {
+    const scored = calculateFieldPositionsAndMemberOomPoints(millbrookPlayerList(), "low_wins");
+    const ganga = scored.find((p) => p.memberId === "member-ganga")!;
+    const bernie = scored.find((p) => p.memberId === "guest-nyasulu")!;
+
+    expect(bernie.memberName).toBe("Bernie Nyasulu");
+    expect(bernie.isOomEligible).toBe(false);
+    expect(bernie.position).toBe(ganga.position);
+    expect(bernie.oomPoints).toBe(0);
+
+    expect(ganga.position).toBe(9);
+    expect(ganga.oomPoints).toBeCloseTo(getAveragedOOMPoints(8, 1));
+    expect(ganga.oomPoints).toBe(4);
   });
 
   it("M4 OOM: TonKennedy Nyemba (Kenny G) at 79 shares member OOM with Guda; Alfazema (ZGS) gets 0", () => {
