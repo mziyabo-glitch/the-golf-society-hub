@@ -12,6 +12,7 @@ import {
   type EventScoringResultsStatus,
 } from "@/lib/scoring/eventScoringPublishStatus";
 import { buildEventResultInputsFromLeaderboard, validateScoringPublishReadiness } from "@/lib/scoring/publishFromLeaderboard";
+import { isOomPointsEvent } from "@/lib/oomEventClassification";
 import type { PublishOomEligibilityResolver } from "@/lib/oomPublishEligibility";
 import type { EventDoc } from "@/lib/db_supabase/eventRepo";
 import type { EventResultInput } from "@/lib/db_supabase/resultsRepo";
@@ -126,7 +127,7 @@ export async function publishEventScoringResults(
     throw new Error(`publishEventScoringResults: not ready:\n- ${readiness.join("\n- ")}`);
   }
 
-  const isOom = Boolean(event.isOOM ?? event.classification === "oom");
+  const isOom = isOomPointsEvent(event);
 
   const completePlayerIds = board.filter((r) => r.round_complete).map((r) => r.player_id);
   const resolveOomEligible =
@@ -144,6 +145,7 @@ export async function publishEventScoringResults(
     isOom,
     resolveOomEligible,
     isOom ? `publish:${eventId}:${societyId}` : undefined,
+    { classification: event.classification, par: event.par ?? null },
   );
   if (inputs.length === 0) {
     throw new Error("publishEventScoringResults: no official rows to write.");
