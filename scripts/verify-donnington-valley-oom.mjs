@@ -1,5 +1,5 @@
 /**
- * Verify OOM 5 Donnington Major Day 1 event_results match GameBook Today order.
+ * Verify OOM 5 Donnington Major Day 1 event_results match GameBook left-hand score order.
  *
  * Usage: node scripts/verify-donnington-valley-oom.mjs
  */
@@ -13,32 +13,32 @@ const ZGS_SOCIETY = "3ddf9225-4220-4f72-80fc-6039ab39b523";
 const KADUNGURE_GUEST_ID = "a8f3c2d1-9e4b-4a7c-b6d5-1e0f9a8b7c6d";
 const EXPECTED_PAR = 71;
 
-/** GameBook Today (signed net-to-par). Malunga excluded (incomplete). */
+/** GameBook left-hand small score column. Malunga excluded (incomplete). */
 const GAMEBOOK = [
-  { name: "Adventure Musarurwa", today: -3, memberId: "f9be6700-2133-46be-b657-da8f8601170e", zgsOom: 25 },
-  { name: "David Sibanda", today: -2, memberId: "455d7000-d414-4fd2-a7ea-63cb96f58e72", zgsOom: 18 },
-  { name: "Don Fundira", today: 0, memberId: "c380464f-f1ea-45af-94b4-74a5a7ddeecc", zgsOom: 15 },
-  { name: "Tony Ndlovu", today: 3, memberId: "1bc8411a-adc7-4d20-80be-6fc408aa9165", altName: "Sandile Tony Ndlovu", zgsOom: 12 },
-  { name: "Elliott Chikwanda", today: 3, guestId: "3bf71fdb-3bc9-4194-be4a-644ad682890d" },
-  { name: "Alf Sagiya", today: 4, memberId: "9ba584a4-6217-4b7d-be0c-7e5b5ffd9e30", altName: "Alfonse Sagiya", zgsOom: 9 },
-  { name: "Tarisai Kadungure", today: 4, guestId: KADUNGURE_GUEST_ID },
-  { name: "Mpho Mokoena", today: 4, memberId: "139c1af3-4268-443d-8111-fa3ba7c5b8fd", zgsOom: 9 },
-  { name: "Justin Gapara", today: 5, memberId: "da555301-6105-4c8f-bacc-df56824693d0", zgsOom: 3.25 },
-  { name: "Prince Z", today: 5, guestId: "85ceaf2b-0024-4a2d-b25c-241c7a0ae3c7", altName: "Prince Zhandire" },
-  { name: "Dennis Padya", today: 5, memberId: "a419ba96-f006-45bf-b3be-2594c4cebbf8", zgsOom: 3.25 },
-  { name: "Rob Ravu", today: 5, guestId: "a9562207-2816-4fe8-abdb-6c2d54f5e4b9" },
-  { name: "Tawanda Moyo", today: 5, memberId: "d984a051-e43a-4eab-9019-867857ca77fb", zgsOom: 3.25 },
-  { name: "Ian Pinks", today: 5, memberId: "0ccef550-83c2-44c5-9744-d1d542ab393d", altName: "Ian Pinkerton", zgsOom: 3.25 },
-  { name: "Noble Chigwedere", today: 6, memberId: "d8bdb9f5-8658-4c9c-a867-c2390915463d", altName: "Noble Chhigwedere", zgsOom: 0 },
-  { name: "K J Makurumure", today: 7, memberId: "3d90cd38-b711-47b3-a434-b8a17651de24", zgsOom: 0 },
-  { name: "Tinaye Mharapara", today: 7, guestId: "d746cdee-caf4-4e82-a608-dd9b299056aa" },
-  { name: "Itai Chinyadza", today: 8, memberId: "2a7df864-c1a9-41e5-b6d6-64a0c047cf66", zgsOom: 0 },
-  { name: "Shenton Banda", today: 8, guestId: "a57ed881-c7b2-4172-aa03-8a7a4ae0fa5b" },
-  { name: "George Tiziraichapwana", today: 8, memberId: "57252422-a31e-403e-bab9-0e40826443de", altName: "George Tizirai-Chapwanya", zgsOom: 0 },
-  { name: "Augustine Gorejena", today: 9, guestId: "3e1ed651-b94d-4d4e-b20d-ef8629c18dc2", altName: "Farai Gorejena" },
-  { name: "Byron Fundira", today: 10, guestId: "173cab41-063a-45c4-a96a-975725483301", zgsOom: 0 },
-  { name: "Max Mandangu", today: 11, guestId: "7debe58c-db76-4434-ace1-912ad622e057", altName: "Max MANDANGU" },
-  { name: "Gari Mbwanda", today: 11, memberId: "1c65157e-d8c0-4a46-bedc-ba003ce9fb58", zgsOom: 0 },
+  { name: "David Sibanda", dayScore: -2, memberId: "455d7000-d414-4fd2-a7ea-63cb96f58e72", zgsOom: 25 },
+  { name: "Don Fundira", dayScore: 0, memberId: "c380464f-f1ea-45af-94b4-74a5a7ddeecc", zgsOom: 18 },
+  { name: "Adventure Musarurwa", dayScore: 3, memberId: "f9be6700-2133-46be-b657-da8f8601170e", zgsOom: 13.5 },
+  { name: "Tony Ndlovu", dayScore: 3, memberId: "1bc8411a-adc7-4d20-80be-6fc408aa9165", altName: "Sandile Tony Ndlovu", zgsOom: 13.5 },
+  { name: "Elliott Chikwanda", dayScore: 3, guestId: "3bf71fdb-3bc9-4194-be4a-644ad682890d" },
+  { name: "Alf Sagiya", dayScore: 4, memberId: "9ba584a4-6217-4b7d-be0c-7e5b5ffd9e30", altName: "Alfonse Sagiya", zgsOom: 9 },
+  { name: "Tarisai Kadungure", dayScore: 4, guestId: KADUNGURE_GUEST_ID },
+  { name: "Mpho Mokoena", dayScore: 4, memberId: "139c1af3-4268-443d-8111-fa3ba7c5b8fd", zgsOom: 9 },
+  { name: "Justin Gapara", dayScore: 5, memberId: "da555301-6105-4c8f-bacc-df56824693d0", zgsOom: 3.25 },
+  { name: "Prince Z", dayScore: 5, guestId: "85ceaf2b-0024-4a2d-b25c-241c7a0ae3c7", altName: "Prince Zhandire" },
+  { name: "Dennis Padya", dayScore: 5, memberId: "a419ba96-f006-45bf-b3be-2594c4cebbf8", zgsOom: 3.25 },
+  { name: "Rob Ravu", dayScore: 5, guestId: "a9562207-2816-4fe8-abdb-6c2d54f5e4b9" },
+  { name: "Tawanda Moyo", dayScore: 5, memberId: "d984a051-e43a-4eab-9019-867857ca77fb", zgsOom: 3.25 },
+  { name: "Ian Pinks", dayScore: 5, memberId: "0ccef550-83c2-44c5-9744-d1d542ab393d", altName: "Ian Pinkerton", zgsOom: 3.25 },
+  { name: "Noble Chigwedere", dayScore: 6, memberId: "d8bdb9f5-8658-4c9c-a867-c2390915463d", altName: "Noble Chhigwedere", zgsOom: 0 },
+  { name: "K J Makurumure", dayScore: 7, memberId: "3d90cd38-b711-47b3-a434-b8a17651de24", zgsOom: 0 },
+  { name: "Tinaye Mharapara", dayScore: 7, guestId: "d746cdee-caf4-4e82-a608-dd9b299056aa" },
+  { name: "Itai Chinyadza", dayScore: 8, memberId: "2a7df864-c1a9-41e5-b6d6-64a0c047cf66", zgsOom: 0 },
+  { name: "Shenton Banda", dayScore: 8, guestId: "a57ed881-c7b2-4172-aa03-8a7a4ae0fa5b" },
+  { name: "George Tiziraichapwana", dayScore: 8, memberId: "57252422-a31e-403e-bab9-0e40826443de", altName: "George Tizirai-Chapwanya", zgsOom: 0 },
+  { name: "Augustine Gorejena", dayScore: 9, guestId: "3e1ed651-b94d-4d4e-b20d-ef8629c18dc2", altName: "Farai Gorejena" },
+  { name: "Byron Fundira", dayScore: 10, guestId: "173cab41-063a-45c4-a96a-975725483301", zgsOom: 0 },
+  { name: "Max Mandangu", dayScore: 11, guestId: "7debe58c-db76-4434-ace1-912ad622e057", altName: "Max MANDANGU" },
+  { name: "Gari Mbwanda", dayScore: 11, memberId: "1c65157e-d8c0-4a46-bedc-ba003ce9fb58", zgsOom: 0 },
 ];
 
 function expectedPositions() {
@@ -46,9 +46,9 @@ function expectedPositions() {
   let pos = 1;
   let i = 0;
   while (i < GAMEBOOK.length) {
-    const today = GAMEBOOK[i].today;
+    const dayScore = GAMEBOOK[i].dayScore;
     let tieCount = 0;
-    while (i + tieCount < GAMEBOOK.length && GAMEBOOK[i + tieCount].today === today) tieCount++;
+    while (i + tieCount < GAMEBOOK.length && GAMEBOOK[i + tieCount].dayScore === dayScore) tieCount++;
     for (let j = 0; j < tieCount; j++) out.push(pos);
     pos += tieCount;
     i += tieCount;
@@ -80,7 +80,7 @@ async function main() {
     console.warn(`[donnington-valley] WARN: par is ${evt.par}, expected ${EXPECTED_PAR}`);
   }
   if (evt.format !== "stableford") {
-    console.warn(`[donnington-valley] WARN: format is ${evt.format}, expected stableford for GameBook Today OOM`);
+    console.warn(`[donnington-valley] WARN: format is ${evt.format}, expected stableford for GameBook left-hand OOM`);
   }
 
   const { data: results, error: resErr } = await sb
@@ -109,19 +109,19 @@ async function main() {
       continue;
     }
     const ok =
-      hit.day_value === row.today &&
+      hit.day_value === row.dayScore &&
       hit.position === expPos &&
       Math.abs(Number(hit.points) - expOom) < 0.01;
     const line = {
       player: row.name,
-      today: hit.day_value,
+      dayScore: hit.day_value,
       position: hit.position,
       oom: Number(hit.points),
       expectedOom: expOom,
       kind: row.memberId ? "ZGS member" : "BW guest",
     };
     if (!ok) {
-      console.error("[donnington-valley] MISMATCH", { ...line, expectedToday: row.today, expectedPosition: expPos });
+      console.error("[donnington-valley] MISMATCH", { ...line, expectedDayScore: row.dayScore, expectedPosition: expPos });
       failures++;
     } else {
       console.log("[donnington-valley] OK", line);
