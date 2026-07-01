@@ -38,7 +38,14 @@ import { LicenceRequiredModal } from "@/components/LicenceRequiredModal";
 import { useBootstrap } from "@/lib/useBootstrap";
 import { useAsyncAction } from "@/lib/hooks/useAsyncAction";
 import { usePaidAccess } from "@/lib/access/usePaidAccess";
-import { getEvent, getFormatSortOrder, type EventDoc } from "@/lib/db_supabase/eventRepo";
+import { getEvent, type EventDoc } from "@/lib/db_supabase/eventRepo";
+import { getOomDaySortOrder, isOomPointsEvent, parseGameBookTodayScore, usesMajorStablefordNetTodayScoring } from "@/lib/oomEventClassification";
+import {
+  buildMajorDayOomDebugRows,
+  logMajorDayOomBreakdown,
+  resolveOomDayPointsInput,
+  shouldUseMajorDayOomPipeline,
+} from "@/lib/majorDayOomScoring";
 import { getMembersBySocietyId, getMembersByIds, type MemberDoc } from "@/lib/db_supabase/memberRepo";
 import {
   getEventRegistrations,
@@ -51,6 +58,7 @@ import { logJointPlayableConsistencyDev } from "@/lib/jointEventPlayableConsiste
 import {
   upsertEventResults,
   getEventResultsForSociety,
+  getEventResults,
   deleteEventResultForMember,
   deleteEventResultForGuest,
   type EventResultDoc,
@@ -61,13 +69,24 @@ import { invalidateCache, invalidateCachePrefix } from "@/lib/cache/clientCache"
 import { getPermissionsForMember } from "@/lib/rbac";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
 import { buildSocietyIdToNameMap } from "@/lib/jointEventSocietyLabel";
-import { dedupeJointMembers, resolveJointCandidatePlayerIdsForActiveSociety } from "@/lib/jointPersonDedupe";
 import {
   calculateFieldPositionsAndMemberOomPoints,
   isGuestEntrantKey,
 } from "@/lib/oomMemberOnlyScoring";
+import {
+  buildJointFullFieldOomEntrants,
+  buildOomScoringDebugRows,
+  buildStandardFullFieldOomEntrants,
+  hydrateDayPointsFromCrossSocietyResults,
+  logOomScoringBreakdown,
+} from "@/lib/oomJointField";
 
-/** Set `EXPO_PUBLIC_POINTS_DEBUG_EVENT_ID` to this event’s UUID to enable `[points-debug]` logs. */
+/** Set `EXPO_PUBLIC_POINTS_DEBUG_EVENT_ID` to an event UUID to enable `[points-debug]` / `[oom-scoring]` logs.
+ *  Millbrook OOM 4: f0267e53-d29a-4301-82ce-ca02160f76cf
+ *  Morley Hayes OOM 4: 474eef8f-32cf-49fa-a0f0-07db7bc0bf9a
+ *  Donnington Day 1 OOM 5: 713eda5f-b8bd-4e24-9d8b-6a350a5e0eb1
+ *  Donnington Grove Major Day 2: 400c8e95-e256-48b6-88fa-15966e5b3ae8
+ */
 function pointsDebugEnabled(eid: string | undefined): boolean {
   const t = process.env.EXPO_PUBLIC_POINTS_DEBUG_EVENT_ID?.trim();
   return Boolean(eid && t && eid === t);
@@ -104,6 +123,10 @@ type PlayerEntry = {
   dayPoints: string; // User input - the competition/stableford score
   position: number | null; // Auto-calculated
   oomPoints: number; // Auto-calculated F1 points
+  /** Active society for this row (null for guests). */
+  societyId?: string | null;
+  /** Society-scoped OOM slot eligibility (full field still ranks everyone). */
+  isOomEligible?: boolean;
   /** Saved row exists in event_results for this event + active society */
   hasPersistedResult?: boolean;
   /**
@@ -163,10 +186,16 @@ function pickExistingResultForPlayer(
   return pickExistingResultForMergedMemberIds(existingResults, idCandidates);
 }
 
-function hasValidDayPoints(p: PlayerEntry): boolean {
+function shouldPersistPointsRowForSociety(player: PlayerEntry, activeSocietyId: string): boolean {
+  if (isGuestEntrantKey(player.memberId)) return true;
+  return String(player.societyId ?? "") === String(activeSocietyId);
+}
+
+function hasValidDayPoints(p: PlayerEntry, format?: string, classification?: string, eventName?: string): boolean {
   const t = p.dayPoints.trim();
   if (t === "") return false;
-  return !isNaN(parseInt(t, 10));
+  if (!isNaN(parseInt(t, 10))) return true;
+  return parseGameBookTodayScore(t) != null && usesMajorStablefordNetTodayScoring(format, classification, { eventName });
 }
 
 function comparePlayerName(a: PlayerEntry, b: PlayerEntry): number {
@@ -177,6 +206,24 @@ function comparePlayerName(a: PlayerEntry, b: PlayerEntry): number {
  * Display order only (does not affect scoring): no score → unsaved scores → saved scores;
  * alphabetical within each band. Deterministic.
  */
+function normalizeDayPointsForOom(dayPoints: string, format: string | undefined, classification: string | undefined, eventName?: string): string {
+  return resolveOomDayPointsInput(dayPoints, format, classification, eventName);
+}
+
+function scorePlayerListForOom(
+  list: PlayerEntry[],
+  format: string | undefined,
+  classification: string | undefined,
+  eventName?: string,
+): PlayerEntry[] {
+  const sortOrder = getOomDaySortOrder(format, classification, { eventName });
+  const normalized = list.map((p) => ({
+    ...p,
+    dayPoints: normalizeDayPointsForOom(p.dayPoints, format, classification, eventName),
+  }));
+  return applyPointsDisplayOrder(calculateFieldPositionsAndMemberOomPoints(normalized, sortOrder));
+}
+
 function applyPointsDisplayOrder(list: PlayerEntry[]): PlayerEntry[] {
   const noScore = list.filter((p) => !hasValidDayPoints(p)).sort(comparePlayerName);
   const draft = list.filter((p) => hasValidDayPoints(p) && !p.hasPersistedResult).sort(comparePlayerName);
@@ -272,14 +319,19 @@ export default function EventPointsScreen() {
     setJointPeerNamesLine(null);
 
     try {
-      const [evt, societyMembers, existingResults, jointMetaMap, eventRegs, eventGuests] = await Promise.all([
-        getEvent(eventId),
-        getMembersBySocietyId(societyId),
-        getEventResultsForSociety(eventId, societyId),
-        getJointMetaForEventIds([eventId]),
-        getEventRegistrations(eventId),
-        getEventGuests(eventId),
-      ]);
+      const jointMetaMap = await getJointMetaForEventIds([eventId]);
+      const metaRow = jointMetaMap.get(eventId);
+      const derivedIsJoint = isJointEventFromMeta(metaRow?.participantSocietyIds, metaRow?.linkedSocietyCount);
+
+      const [evt, societyMembers, existingResults, allEventResults, eventRegs, eventGuests] =
+        await Promise.all([
+          getEvent(eventId),
+          getMembersBySocietyId(societyId),
+          getEventResultsForSociety(eventId, societyId),
+          derivedIsJoint ? getEventResults(eventId) : Promise.resolve([] as EventResultDoc[]),
+          getEventRegistrations(eventId),
+          getEventGuests(eventId),
+        ]);
       const guestById = new Map(eventGuests.map((g) => [g.id, g]));
 
       if (!evt) {
@@ -289,9 +341,6 @@ export default function EventPointsScreen() {
       }
 
       setEvent(evt);
-
-      const metaRow = jointMetaMap.get(eventId);
-      const derivedIsJoint = isJointEventFromMeta(metaRow?.participantSocietyIds, metaRow?.linkedSocietyCount);
 
       let jointDetail: Awaited<ReturnType<typeof getJointEventDetail>> = null;
       if (derivedIsJoint) {
@@ -348,7 +397,10 @@ export default function EventPointsScreen() {
         isJointWithDetail && jointDetail
           ? [...new Set([...jointEntryPlayerIds, ...evtPlayerIds])]
           : [...new Set(evtPlayerIds)];
-      const mergedCandidateIds: string[] = [...new Set([...baseMerged, ...regBoostMemberIds])];
+      const guestCandidateIds = eventGuests.map((g) => `guest-${g.id}`);
+      const mergedCandidateIds: string[] = [
+        ...new Set([...baseMerged, ...regBoostMemberIds, ...guestCandidateIds]),
+      ];
 
       const playerIds: string[] = mergedCandidateIds;
 
@@ -406,96 +458,61 @@ export default function EventPointsScreen() {
 
       if (isJointWithDetail && jointDetail) {
         const societyIdToName = buildSocietyIdToNameMap(jointDetail.participating_societies ?? []);
-        const scopedPlayerIds = resolveJointCandidatePlayerIdsForActiveSociety(
+        const fullField = buildJointFullFieldOomEntrants({
           mergedCandidateIds,
-          memberDocs,
+          allParticipatingMembers: memberDocs,
           societyIdToName,
-          societyId,
+          activeSocietyId: societyId,
+          participatingSocieties: jointDetail.participating_societies ?? [],
+          jointEntries: jointDetail.entries ?? [],
+          guestById,
+        });
+        playerList = hydrateDayPointsFromCrossSocietyResults(fullField, allEventResults, memberMap).map(
+          (p) => ({
+            memberId: p.memberId,
+            memberName: p.memberName,
+            dayPoints: p.dayPoints,
+            position: null,
+            oomPoints: 0,
+            societyId: p.societyId,
+            isOomEligible: p.isOomEligible,
+            hasPersistedResult: false,
+            mergedResultMemberIds: p.mergedResultMemberIds,
+            isKnownMember: p.isKnownMember,
+          }),
         );
         if (dbg) {
-          const visiblePlayers = scopedPlayerIds.map((id) =>
-            memberRowForDebug(memberMap.get(id)),
-          );
-          console.log("[points-debug] post-society-resolve", {
+          console.log("[points-debug] joint full-field entrants", {
             activeSocietyId: societyId,
-            visiblePlayerIds: scopedPlayerIds,
-            visiblePlayers,
-          });
-        }
-
-        const missingScoped = scopedPlayerIds.filter((id) => !memberMap.has(id));
-        if (missingScoped.length > 0) {
-          const extra = await getMembersByIds(missingScoped);
-          if (dbg) {
-            const fallbackRows = (extra ?? []).map((m) => memberRowForDebug(m));
-            console.log("[points-debug] fallback getMembersByIds result", JSON.stringify(fallbackRows));
-          }
-          for (const m of extra) {
-            if (m?.id && m.society_id === societyId && !memberMap.has(m.id)) {
-              memberMap.set(m.id, m);
-            }
-          }
-        }
-        const scopedDocs = scopedPlayerIds
-          .map((id) => memberMap.get(id))
-          .filter((m): m is MemberDoc => Boolean(m));
-        const dedupedJoint = dedupeJointMembers(scopedDocs, societyIdToName);
-        playerList = dedupedJoint.map((d) => {
-          const rep = d.representative;
-          return {
-            memberId: rep.id,
-            memberName: rep.displayName || rep.display_name || rep.name || "Unknown",
-            dayPoints: "",
-            position: null,
-            oomPoints: 0,
-            hasPersistedResult: false,
-            mergedResultMemberIds: d.mergedMemberIds,
-            isKnownMember: true,
-          };
-        });
-        const inJointList = new Set(playerList.map((p) => p.memberId));
-        for (const pid of mergedCandidateIds) {
-          const ps = String(pid);
-          if (!ps.startsWith("guest-") || inJointList.has(ps)) continue;
-          const gid = ps.slice("guest-".length);
-          const g = guestById.get(gid);
-          playerList.push({
-            memberId: ps,
-            memberName: (g?.name ?? "Guest").trim(),
-            dayPoints: "",
-            position: null,
-            oomPoints: 0,
-            hasPersistedResult: false,
-            isKnownMember: Boolean(g),
+            entrantCount: playerList.length,
+            oomEligibleCount: playerList.filter((p) => p.isOomEligible).length,
+            entrants: playerList.map((p) => ({
+              memberId: p.memberId,
+              name: p.memberName,
+              societyId: p.societyId,
+              isOomEligible: p.isOomEligible,
+              dayPoints: p.dayPoints,
+            })),
           });
         }
       } else {
-        playerList = playerIds.map((pid: string) => {
-          const ps = String(pid);
-          if (ps.startsWith("guest-")) {
-            const gid = ps.slice("guest-".length);
-            const g = guestById.get(gid);
-            return {
-              memberId: ps,
-              memberName: (g?.name ?? "Guest").trim(),
-              dayPoints: "",
-              position: null,
-              oomPoints: 0,
-              hasPersistedResult: false,
-              isKnownMember: Boolean(g),
-            };
-          }
-          const member = memberMap.get(pid);
-          return {
-            memberId: pid,
-            memberName: member?.displayName || member?.name || "Unknown",
-            dayPoints: "",
-            position: null,
-            oomPoints: 0,
-            hasPersistedResult: false,
-            isKnownMember: Boolean(member),
-          };
+        const fullField = buildStandardFullFieldOomEntrants({
+          mergedCandidateIds,
+          members: memberDocs,
+          activeSocietyId: societyId,
+          guestById,
         });
+        playerList = fullField.map((p) => ({
+          memberId: p.memberId,
+          memberName: p.memberName,
+          dayPoints: p.dayPoints,
+          position: null,
+          oomPoints: 0,
+          societyId: p.societyId,
+          isOomEligible: p.isOomEligible,
+          hasPersistedResult: false,
+          isKnownMember: p.isKnownMember,
+        }));
       }
 
       const fromDetail = (jointDetail?.participating_societies ?? []).map((s) => s.society_id).filter(Boolean);
@@ -514,21 +531,45 @@ export default function EventPointsScreen() {
         });
       }
 
-      const sortOrder = getFormatSortOrder(evt.format);
-      if (existingResults.length > 0) {
-        playerList = playerList.map((p) => {
-          const hit = pickExistingResultForPlayer(p, existingResults, societyId);
-          if (!hit) return { ...p, hasPersistedResult: false };
-          const dv = hit.day_value != null ? String(hit.day_value) : "";
-          return {
-            ...p,
-            dayPoints: dv,
-            position: null,
-            oomPoints: 0,
-            hasPersistedResult: true,
-          };
-        });
-        playerList = calculateFieldPositionsAndMemberOomPoints(playerList, sortOrder);
+      const sortOrder = getOomDaySortOrder(evt.format, evt.classification, { eventName: evt.name });
+      playerList = playerList.map((p) => {
+        const hit = pickExistingResultForPlayer(p, existingResults, societyId);
+        if (!hit) return { ...p, hasPersistedResult: false };
+        const dv = hit.day_value != null ? String(hit.day_value) : p.dayPoints;
+        return {
+          ...p,
+          dayPoints: dv,
+          position: null,
+          oomPoints: 0,
+          hasPersistedResult: true,
+        };
+      });
+      if (playerList.some((p) => hasValidDayPoints(p, evt.format, evt.classification, evt.name))) {
+        playerList = scorePlayerListForOom(playerList, evt.format, evt.classification, evt.name);
+        if (dbg || pointsDebugEnabled(eventId)) {
+          const scoredForLog = playerList.map((p) => ({
+            memberId: p.memberId,
+            memberName: p.memberName,
+            dayPoints: p.dayPoints,
+            position: p.position,
+            oomPoints: p.oomPoints,
+            isOomEligible: p.isOomEligible,
+            societyId: p.societyId,
+          }));
+          if (shouldUseMajorDayOomPipeline(evt)) {
+            logMajorDayOomBreakdown(
+              `points-load:${eventId}:${societyId}`,
+              buildMajorDayOomDebugRows(scoredForLog, evt),
+              { format: evt.format, sortOrder, scoringSource: "day_today_not_cumulative" },
+            );
+          } else {
+            logOomScoringBreakdown(
+              `points-load:${eventId}:${societyId}`,
+              buildOomScoringDebugRows(scoredForLog),
+              { format: evt.format, sortOrder },
+            );
+          }
+        }
       }
       playerList = applyPointsDisplayOrder(playerList);
       const resolvedMemberIds = new Set(
@@ -603,23 +644,21 @@ export default function EventPointsScreen() {
       );
 
       // Recalculate positions and OOM points, then apply stable display order
-      return applyPointsDisplayOrder(calculateFieldPositionsAndMemberOomPoints(updated, sortOrder));
+      return scorePlayerListForOom(updated, event?.format, event?.classification, event?.name);
     });
   };
 
   // Get sort order based on event format
-  const sortOrder = getFormatSortOrder(event?.format);
+  const sortOrder = getOomDaySortOrder(event?.format, event?.classification, { eventName: event?.name });
 
   // Calculate players with valid day points (used for canSave and save)
   const playersWithDayPoints = useMemo(() => {
-    return players.filter(
-      (p) => p.dayPoints.trim() !== "" && !isNaN(parseInt(p.dayPoints.trim(), 10))
-    );
-  }, [players]);
+    return players.filter((p) => hasValidDayPoints(p, event?.format, event?.classification, event?.name));
+  }, [players, event?.format, event?.classification, event?.name]);
 
   const scoreEntryProgress = useMemo(() => {
     const total = players.length;
-    const completed = players.filter(hasValidDayPoints).length;
+    const completed = players.filter((p) => hasValidDayPoints(p, event?.format, event?.classification, event?.name)).length;
     return { completed, total };
   }, [players]);
 
@@ -748,8 +787,10 @@ export default function EventPointsScreen() {
 
     const results: EventResultInput[] = [];
     for (const p of playersToSave) {
+      if (!shouldPersistPointsRowForSociety(p, societyId)) continue;
       if (!String(p.memberId).startsWith("guest-") && p.isKnownMember === false) continue;
-      const dayValue = parseInt(p.dayPoints.trim(), 10);
+      const dayRaw = normalizeDayPointsForOom(p.dayPoints, event.format, event.classification, event.name);
+      const dayValue = parseInt(dayRaw.trim(), 10);
       if (String(p.memberId).startsWith("guest-")) {
         const gid = String(p.memberId).slice("guest-".length);
         results.push({
@@ -773,6 +814,31 @@ export default function EventPointsScreen() {
       length: results.length,
       results: JSON.stringify(results),
     });
+
+    if (pointsDebugEnabled(eventId) && event) {
+      const scoredForLog = playersToSave.map((p) => ({
+        memberId: p.memberId,
+        memberName: p.memberName,
+        dayPoints: p.dayPoints,
+        position: p.position,
+        oomPoints: p.oomPoints,
+        isOomEligible: p.isOomEligible,
+        societyId: p.societyId,
+      }));
+      if (shouldUseMajorDayOomPipeline(event)) {
+        logMajorDayOomBreakdown(
+          `points-save:${eventId}:${societyId}`,
+          buildMajorDayOomDebugRows(scoredForLog, event),
+          { persistedRowCount: results.length, scoringSource: "day_today_not_cumulative" },
+        );
+      } else {
+        logOomScoringBreakdown(
+          `points-save:${eventId}:${societyId}`,
+          buildOomScoringDebugRows(scoredForLog),
+          { persistedRowCount: results.length },
+        );
+      }
+    }
 
     if (!Array.isArray(results) || results.length === 0) {
       console.error("[points] Save true failure — empty results payload");

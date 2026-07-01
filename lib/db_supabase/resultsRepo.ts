@@ -3,6 +3,7 @@ import { supabase } from "@/lib/supabase";
 import { fetchEventIdsWithAnyPlayerRound } from "@/lib/db_supabase/eventPlayerScoringRepo";
 import { canonicalJointPersonKey, dedupeJointMembers } from "@/lib/jointPersonDedupe";
 import { buildOomEligibleEventIdSet } from "@/lib/scoring/oomAggregateEligibility";
+import { isOomPointsClassification } from "@/lib/oomEventClassification";
 import type { MemberDoc } from "@/lib/db_supabase/memberRepo";
 
 /** One row per member_id; if duplicates exist (legacy / bad data), keep latest by updated_at. */
@@ -369,8 +370,7 @@ export async function getOrderOfMeritFullFieldExport(
     (eventsData ?? [])
       .filter(
         (e: any) =>
-          e.is_oom === true ||
-          (e.classification && String(e.classification).toLowerCase() === "oom"),
+          e.is_oom === true || isOomPointsClassification(e.classification),
       )
       .map((e: any) => e.id),
   );
@@ -874,7 +874,7 @@ export async function getOrderOfMeritTotals(
   const oomEventIds = new Set(
     (eventsData ?? [])
       .filter((e) => {
-        const isOom = e.is_oom === true || (e.classification && e.classification.toLowerCase() === 'oom');
+        const isOom = e.is_oom === true || isOomPointsClassification(e.classification);
         return isOom;
       })
       .map((e) => e.id)
@@ -1123,7 +1123,7 @@ export async function getOrderOfMeritLog(
     .map((id) => eventsById.get(id))
     .filter((e): e is NonNullable<typeof e> => Boolean(e))
     .filter((e) => {
-      const isOom = e.is_oom === true || (e.classification && e.classification.toLowerCase() === "oom");
+      const isOom = e.is_oom === true || isOomPointsClassification(e.classification);
       return isOom;
     });
 
