@@ -4,6 +4,7 @@ import {
   getOomDaySortOrder,
   isOomPointsEvent,
   parseGameBookTodayScore,
+  isOomMajorDay2Round,
   usesMajorStablefordNetTodayScoring,
 } from "@/lib/oomEventClassification";
 
@@ -22,8 +23,18 @@ describe("oomEventClassification", () => {
 
   it("major stableford NET uses low_wins on Today (not cumulative stableford points)", () => {
     expect(usesMajorStablefordNetTodayScoring("stableford", "major")).toBe(true);
+    expect(
+      usesMajorStablefordNetTodayScoring("stableford", "oom", {
+        eventName: "OOM 6 - Donnington Major Day 2",
+      }),
+    ).toBe(true);
     expect(getOomDaySortOrder("stableford", "major")).toBe("low_wins");
+    expect(
+      getOomDaySortOrder("stableford", "oom", { eventName: "OOM 6 - Donnington Major Day 2" }),
+    ).toBe("low_wins");
     expect(getOomDaySortOrder("stableford", "oom")).toBe("high_wins");
+    expect(isOomMajorDay2Round("oom", "OOM 6 - Donnington Major Day 2")).toBe(true);
+    expect(isOomMajorDay2Round("oom", "OOM 5 - Regular Stableford")).toBe(false);
   });
 
   it("publish day_value for major stableford uses net-to-par (Today), not stableford_points total", () => {

@@ -35,25 +35,41 @@ function baseFormatSortOrder(format: string | undefined): OomFieldSortOrder {
   return "high_wins";
 }
 
+export type OomScoringContext = {
+  eventName?: string | null;
+};
+
+/** True for OOM Major Day 2 rounds named e.g. "OOM 6 - Donnington Major Day 2". */
+export function isOomMajorDay2Round(
+  classification: string | null | undefined,
+  eventName?: string | null,
+): boolean {
+  const c = String(classification ?? "").toLowerCase();
+  if (c !== "oom") return false;
+  return /major\s+day\s*2/i.test(String(eventName ?? ""));
+}
+
 /**
  * Major Day 2 Stableford NET (GameBook "Today") ranks by day net-to-par — lower is better.
- * Standard stableford uses total points (high wins). Strokeplay uses low wins.
+ * Standard stableford OOM uses total points (high wins). Strokeplay uses low wins.
  */
 export function usesMajorStablefordNetTodayScoring(
   format: string | undefined,
   classification: string | null | undefined,
+  context?: OomScoringContext,
 ): boolean {
-  return (
-    String(format ?? "").toLowerCase() === "stableford" &&
-    String(classification ?? "").toLowerCase() === "major"
-  );
+  if (String(format ?? "").toLowerCase() !== "stableford") return false;
+  const c = String(classification ?? "").toLowerCase();
+  if (c === "major") return true;
+  return isOomMajorDay2Round(c, context?.eventName);
 }
 
 export function getOomDaySortOrder(
   format: string | undefined,
   classification?: string | null,
+  context?: OomScoringContext,
 ): OomFieldSortOrder {
-  if (usesMajorStablefordNetTodayScoring(format, classification)) {
+  if (usesMajorStablefordNetTodayScoring(format, classification, context)) {
     return "low_wins";
   }
   return baseFormatSortOrder(format);
@@ -87,11 +103,12 @@ export function formatGameBookTodayScore(value: number): string {
 export function dayValueForOomFromLeaderboardRow(input: {
   format: EventFormatLike;
   classification?: string | null;
+  eventName?: string | null;
   stableford_points: number;
   net_total: number;
   par: number | null | undefined;
 }): number {
-  if (usesMajorStablefordNetTodayScoring(input.format, input.classification)) {
+  if (usesMajorStablefordNetTodayScoring(input.format, input.classification, { eventName: input.eventName })) {
     const par = input.par ?? 72;
     return input.net_total - par;
   }

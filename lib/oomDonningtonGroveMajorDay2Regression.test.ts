@@ -98,7 +98,9 @@ function grovePlayerList() {
 
 describe("Donnington Grove Major Day 2 (Stableford NET Today)", () => {
   it("uses low_wins on Today for major stableford NET OOM", () => {
-    expect(getOomDaySortOrder("stableford", "major")).toBe("low_wins");
+    expect(getOomDaySortOrder("stableford", "oom", { eventName: "OOM 6 - Donnington Major Day 2" })).toBe(
+      "low_wins",
+    );
   });
 
   it("Musarurwa Today -6 leads Day 2 member OOM with 25 points", () => {
@@ -141,7 +143,7 @@ describe("Donnington Grove Major Day 2 (Stableford NET Today)", () => {
       course_handicap: 18,
       playing_handicap: 18,
     };
-    const meta = { classification: "major", par: PAR };
+    const meta = { classification: "oom", par: PAR, eventName: "OOM 6 - Donnington Major Day 2" };
     expect(dayValueForPublishedResult("stableford", row, meta)).toBe(-6);
 
     const out = buildEventResultInputsFromLeaderboard(
@@ -177,7 +179,7 @@ describe("Donnington Grove Major Day 2 (Stableford NET Today)", () => {
           tournamentPosition: (gb?.gameBookPos ?? 0) + 3,
         };
       }),
-      { format: "stableford", classification: "major" },
+      { format: "stableford", classification: "oom", name: "OOM 6 - Donnington Major Day 2" },
     );
     expect(rows.length).toBe(25);
     const musarurwa = rows.find((r) => r.name === "Adventure Musarurwa")!;

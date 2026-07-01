@@ -24,8 +24,9 @@ export function resolveOomDayPointsInput(
   dayPoints: string,
   format: string | undefined,
   classification: string | null | undefined,
+  eventName?: string | null,
 ): string {
-  if (!usesMajorStablefordNetTodayScoring(format, classification)) {
+  if (!usesMajorStablefordNetTodayScoring(format, classification, { eventName })) {
     return dayPoints;
   }
   const parsed = parseGameBookTodayScore(dayPoints);
@@ -46,7 +47,9 @@ export function buildMajorDayOomDebugRows(
   }>,
   event: { format?: string; classification?: string | null },
 ): MajorDayOomDebugRow[] {
-  const majorNetToday = usesMajorStablefordNetTodayScoring(event.format, event.classification);
+  const majorNetToday = usesMajorStablefordNetTodayScoring(event.format, event.classification, {
+    eventName: event.name,
+  });
   return scored
     .filter((p) => p.dayPoints.trim() !== "" && !Number.isNaN(parseInt(p.dayPoints.trim(), 10)))
     .sort((a, b) => (a.position ?? 999) - (b.position ?? 999))
@@ -94,8 +97,10 @@ export function shouldUseMajorDayOomPipeline(event: {
   format?: string;
   classification?: string | null;
   isOOM?: boolean | null;
+  name?: string | null;
 }): boolean {
   return (
-    isOomPointsEvent(event) && usesMajorStablefordNetTodayScoring(event.format, event.classification)
+    isOomPointsEvent(event) &&
+    usesMajorStablefordNetTodayScoring(event.format, event.classification, { eventName: event.name })
   );
 }

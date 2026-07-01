@@ -107,13 +107,13 @@ async function main() {
 
   const { error: evtErr } = await sb
     .from("events")
-    .update({ classification: "major", is_oom: true })
+    .update({ classification: "oom", is_oom: true })
     .eq("id", EVENT_ID);
   if (evtErr) {
     console.error("[donnington-grove-day2] event update failed", evtErr);
     process.exit(1);
   }
-  console.log("[donnington-grove-day2] event classification -> major");
+  console.log("[donnington-grove-day2] event classification -> oom");
 
   const { data: existingKad } = await sb
     .from("event_guests")

@@ -191,11 +191,11 @@ function shouldPersistPointsRowForSociety(player: PlayerEntry, activeSocietyId: 
   return String(player.societyId ?? "") === String(activeSocietyId);
 }
 
-function hasValidDayPoints(p: PlayerEntry, format?: string, classification?: string): boolean {
+function hasValidDayPoints(p: PlayerEntry, format?: string, classification?: string, eventName?: string): boolean {
   const t = p.dayPoints.trim();
   if (t === "") return false;
   if (!isNaN(parseInt(t, 10))) return true;
-  return parseGameBookTodayScore(t) != null && usesMajorStablefordNetTodayScoring(format, classification);
+  return parseGameBookTodayScore(t) != null && usesMajorStablefordNetTodayScoring(format, classification, { eventName });
 }
 
 function comparePlayerName(a: PlayerEntry, b: PlayerEntry): number {
@@ -206,19 +206,20 @@ function comparePlayerName(a: PlayerEntry, b: PlayerEntry): number {
  * Display order only (does not affect scoring): no score → unsaved scores → saved scores;
  * alphabetical within each band. Deterministic.
  */
-function normalizeDayPointsForOom(dayPoints: string, format: string | undefined, classification: string | undefined): string {
-  return resolveOomDayPointsInput(dayPoints, format, classification);
+function normalizeDayPointsForOom(dayPoints: string, format: string | undefined, classification: string | undefined, eventName?: string): string {
+  return resolveOomDayPointsInput(dayPoints, format, classification, eventName);
 }
 
 function scorePlayerListForOom(
   list: PlayerEntry[],
   format: string | undefined,
   classification: string | undefined,
+  eventName?: string,
 ): PlayerEntry[] {
-  const sortOrder = getOomDaySortOrder(format, classification);
+  const sortOrder = getOomDaySortOrder(format, classification, { eventName });
   const normalized = list.map((p) => ({
     ...p,
-    dayPoints: normalizeDayPointsForOom(p.dayPoints, format, classification),
+    dayPoints: normalizeDayPointsForOom(p.dayPoints, format, classification, eventName),
   }));
   return applyPointsDisplayOrder(calculateFieldPositionsAndMemberOomPoints(normalized, sortOrder));
 }
@@ -530,7 +531,7 @@ export default function EventPointsScreen() {
         });
       }
 
-      const sortOrder = getOomDaySortOrder(evt.format, evt.classification);
+      const sortOrder = getOomDaySortOrder(evt.format, evt.classification, { eventName: evt.name });
       playerList = playerList.map((p) => {
         const hit = pickExistingResultForPlayer(p, existingResults, societyId);
         if (!hit) return { ...p, hasPersistedResult: false };
@@ -543,8 +544,8 @@ export default function EventPointsScreen() {
           hasPersistedResult: true,
         };
       });
-      if (playerList.some((p) => hasValidDayPoints(p, evt.format, evt.classification))) {
-        playerList = scorePlayerListForOom(playerList, evt.format, evt.classification);
+      if (playerList.some((p) => hasValidDayPoints(p, evt.format, evt.classification, evt.name))) {
+        playerList = scorePlayerListForOom(playerList, evt.format, evt.classification, evt.name);
         if (dbg || pointsDebugEnabled(eventId)) {
           const scoredForLog = playerList.map((p) => ({
             memberId: p.memberId,
@@ -643,21 +644,21 @@ export default function EventPointsScreen() {
       );
 
       // Recalculate positions and OOM points, then apply stable display order
-      return scorePlayerListForOom(updated, event?.format, event?.classification);
+      return scorePlayerListForOom(updated, event?.format, event?.classification, event?.name);
     });
   };
 
   // Get sort order based on event format
-  const sortOrder = getOomDaySortOrder(event?.format, event?.classification);
+  const sortOrder = getOomDaySortOrder(event?.format, event?.classification, { eventName: event?.name });
 
   // Calculate players with valid day points (used for canSave and save)
   const playersWithDayPoints = useMemo(() => {
-    return players.filter((p) => hasValidDayPoints(p, event?.format, event?.classification));
-  }, [players, event?.format, event?.classification]);
+    return players.filter((p) => hasValidDayPoints(p, event?.format, event?.classification, event?.name));
+  }, [players, event?.format, event?.classification, event?.name]);
 
   const scoreEntryProgress = useMemo(() => {
     const total = players.length;
-    const completed = players.filter((p) => hasValidDayPoints(p, event?.format, event?.classification)).length;
+    const completed = players.filter((p) => hasValidDayPoints(p, event?.format, event?.classification, event?.name)).length;
     return { completed, total };
   }, [players]);
 
@@ -788,7 +789,7 @@ export default function EventPointsScreen() {
     for (const p of playersToSave) {
       if (!shouldPersistPointsRowForSociety(p, societyId)) continue;
       if (!String(p.memberId).startsWith("guest-") && p.isKnownMember === false) continue;
-      const dayRaw = normalizeDayPointsForOom(p.dayPoints, event.format, event.classification);
+      const dayRaw = normalizeDayPointsForOom(p.dayPoints, event.format, event.classification, event.name);
       const dayValue = parseInt(dayRaw.trim(), 10);
       if (String(p.memberId).startsWith("guest-")) {
         const gid = String(p.memberId).slice("guest-".length);

@@ -145,7 +145,7 @@ export async function publishEventScoringResults(
     isOom,
     resolveOomEligible,
     isOom ? `publish:${eventId}:${societyId}` : undefined,
-    { classification: event.classification, par: event.par ?? null },
+    { classification: event.classification, par: event.par ?? null, eventName: event.name ?? null },
   );
   if (inputs.length === 0) {
     throw new Error("publishEventScoringResults: no official rows to write.");

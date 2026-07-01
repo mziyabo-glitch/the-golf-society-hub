@@ -23,6 +23,7 @@ import type { EventResultInput } from "@/lib/db_supabase/resultsRepo";
 export type PublishOomEventMeta = {
   classification?: string | null;
   par?: number | null;
+  eventName?: string | null;
 };
 
 export function dayValueForPublishedResult(
@@ -33,6 +34,7 @@ export function dayValueForPublishedResult(
   return dayValueForOomFromLeaderboardRow({
     format,
     classification: meta?.classification,
+    eventName: meta?.eventName,
     stableford_points: row.stableford_points,
     net_total: row.net_total,
     par: meta?.par,
@@ -57,7 +59,7 @@ export function buildEventResultInputsFromLeaderboard(
   meta?: PublishOomEventMeta,
 ): EventResultInput[] {
   const complete = rows.filter((r) => r.round_complete);
-  const sortOrder = getOomDaySortOrder(format, meta?.classification);
+  const sortOrder = getOomDaySortOrder(format, meta?.classification, { eventName: meta?.eventName });
 
   let oomByPlayerId = new Map<string, number>();
   let dayPositionByPlayerId = new Map<string, number>();
@@ -82,7 +84,7 @@ export function buildEventResultInputsFromLeaderboard(
         isOomEligible: resolveOomEligible(s.memberId),
         tournamentPosition: complete.find((r) => r.player_id === s.memberId)?.rank ?? null,
       }));
-      if (shouldUseMajorDayOomPipeline({ format, classification: meta?.classification, isOOM: true })) {
+      if (shouldUseMajorDayOomPipeline({ format, classification: meta?.classification, isOOM: true, name: meta?.eventName })) {
         logMajorDayOomBreakdown(
           debugLabel,
           buildMajorDayOomDebugRows(scoredRows, { format, classification: meta?.classification }),

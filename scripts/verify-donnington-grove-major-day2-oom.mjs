@@ -109,8 +109,8 @@ async function main() {
   }
 
   console.log("[donnington-grove-day2] event", evt);
-  if (evt.classification !== "major") {
-    console.error(`[donnington-grove-day2] expected classification major, got ${evt.classification}`);
+  if (evt.classification !== "oom") {
+    console.error(`[donnington-grove-day2] expected classification oom, got ${evt.classification}`);
     process.exit(1);
   }
   if (evt.par !== EXPECTED_PAR) {
