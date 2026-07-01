@@ -1,5 +1,6 @@
 /**
- * Major multi-day events: Day 2 OOM uses the round **Today** score only, not cumulative tournament standing.
+ * Major multi-day events: each round's OOM uses the GameBook **Today** score only,
+ * not cumulative tournament standing.
  */
 
 import {
@@ -45,10 +46,10 @@ export function buildMajorDayOomDebugRows(
     societyId?: string | null;
     tournamentPosition?: number | null;
   }>,
-  event: { format?: string; classification?: string | null },
+  event: { format?: string; classification?: string | null; name?: string | null; eventName?: string | null },
 ): MajorDayOomDebugRow[] {
   const majorNetToday = usesMajorStablefordNetTodayScoring(event.format, event.classification, {
-    eventName: event.name,
+    eventName: event.eventName ?? event.name,
   });
   return scored
     .filter((p) => p.dayPoints.trim() !== "" && !Number.isNaN(parseInt(p.dayPoints.trim(), 10)))

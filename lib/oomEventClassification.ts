@@ -39,18 +39,26 @@ export type OomScoringContext = {
   eventName?: string | null;
 };
 
-/** True for OOM Major Day 2 rounds named e.g. "OOM 6 - Donnington Major Day 2". */
-export function isOomMajorDay2Round(
+/** True for OOM Major Day 1/2 rounds named e.g. "OOM 5 - Donnington Major Day 1". */
+export function isOomMajorGameBookDayRound(
   classification: string | null | undefined,
   eventName?: string | null,
 ): boolean {
   const c = String(classification ?? "").toLowerCase();
   if (c !== "oom") return false;
-  return /major\s+day\s*2/i.test(String(eventName ?? ""));
+  return /major\s+day\s*[12]/i.test(String(eventName ?? ""));
+}
+
+/** @deprecated Use {@link isOomMajorGameBookDayRound}. */
+export function isOomMajorDay2Round(
+  classification: string | null | undefined,
+  eventName?: string | null,
+): boolean {
+  return isOomMajorGameBookDayRound(classification, eventName);
 }
 
 /**
- * Major Day 2 Stableford NET (GameBook "Today") ranks by day net-to-par — lower is better.
+ * Major multi-day Stableford NET (GameBook "Today") ranks by day net-to-par — lower is better.
  * Standard stableford OOM uses total points (high wins). Strokeplay uses low wins.
  */
 export function usesMajorStablefordNetTodayScoring(
@@ -61,7 +69,7 @@ export function usesMajorStablefordNetTodayScoring(
   if (String(format ?? "").toLowerCase() !== "stableford") return false;
   const c = String(classification ?? "").toLowerCase();
   if (c === "major") return true;
-  return isOomMajorDay2Round(c, context?.eventName);
+  return isOomMajorGameBookDayRound(c, context?.eventName);
 }
 
 export function getOomDaySortOrder(
