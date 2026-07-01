@@ -11,6 +11,8 @@ dotenv.config();
 
 const EVENT_ID = "f0267e53-d29a-4301-82ce-ca02160f76cf";
 const ZGS = "3ddf9225-4220-4f72-80fc-6039ab39b523";
+const GOREJENA_ZGS = "35ef9876-c2e9-47c1-b20d-47ac955d16f4";
+const BIYI_ZGS = "f3a563f9-5671-41db-a888-a81fe8262838";
 
 const F1 = [25, 18, 15, 12, 10, 8, 6, 4, 2, 1];
 const getPts = (p) => (p >= 1 && p <= 10 ? F1[p - 1] : 0);
@@ -23,7 +25,7 @@ const avgPts = (start, tie) => {
 /** GameBook NET order — exact positions from organiser sheet. */
 const GAMEBOOK = [
   { pos: 1, name: "K J Makurumure", net: 70, memberId: "3d90cd38-b711-47b3-a434-b8a17651de24", zgs: true },
-  { pos: 2, name: "Augustine Gorejena", net: 73, memberId: "7e02f3ba-9c44-4aa3-89b7-c0a1f9d74075", zgs: false },
+  { pos: 2, name: "Augustine Gorejena", net: 73, memberId: GOREJENA_ZGS, zgs: true },
   { pos: 3, name: "Terence Mokom", net: 73, fieldOnly: true },
   { pos: 4, name: "Mpho Mokoena", net: 74, memberId: "139c1af3-4268-443d-8111-fa3ba7c5b8fd", zgs: true },
   { pos: 5, name: "Jade Muchando", net: 75, memberId: "e2753b26-5c71-410a-9c96-097021e95045", zgs: false },
@@ -52,7 +54,7 @@ const GAMEBOOK = [
   { pos: 28, name: "Phanuel Mtape", net: 85, memberId: "58544f4d-2b4c-4c26-8afa-5a61b52b6016", zgs: true },
   { pos: 29, name: "Don Govere", net: 85, memberId: "96dc9189-07aa-4b98-bfd1-c8af27a55e83", zgs: false },
   { pos: 30, name: "Ian Pinks", net: 86, memberId: "0ccef550-83c2-44c5-9744-d1d542ab393d", zgs: true },
-  { pos: 31, name: "Biyi Adegbola", net: 86, unmatched: true },
+  { pos: 31, name: "Biyi Adegbola", net: 86, memberId: BIYI_ZGS, zgs: true },
   { pos: 32, name: "Alf Sagiya", net: 86, memberId: "9ba584a4-6217-4b7d-be0c-7e5b5ffd9e30", zgs: true },
   { pos: 33, name: "Alan Mccarthy", net: 87, memberId: "9f14bce4-2ca5-460a-87ba-925268886163", zgs: false },
   { pos: 34, name: "Terry T D D Manthando", net: 88, memberId: "58b26272-e329-4fa2-bda5-c67f67a25be4", zgs: false },
