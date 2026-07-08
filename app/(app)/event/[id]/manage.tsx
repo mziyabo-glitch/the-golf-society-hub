@@ -52,6 +52,7 @@ import { normalizeSlopeRating } from "@/lib/teeMetrics";
 import { InlineNotice } from "@/components/ui/InlineNotice";
 import {
   menAndLadiesTeeOptions,
+  matchMenTeeFromEvent,
   matchLadiesTeeFromEvent,
   hasManualLadiesTeeMinimum,
 } from "@/lib/courseTeeGender";
@@ -1471,7 +1472,17 @@ export default function ManageEventScreen() {
     try {
       const list = await getTeesByCourseId(courseId);
       setTees(list);
-      const match = teeId ? list.find((t) => t.id === teeId) : null;
+      const byId = teeId ? list.find((t) => t.id === teeId) : null;
+      const match =
+        byId ??
+        (savedEvent
+          ? matchMenTeeFromEvent(list, {
+              teeName: savedEvent.teeName,
+              par: savedEvent.par,
+              courseRating: savedEvent.courseRating,
+              slopeRating: savedEvent.slopeRating,
+            })
+          : null);
       setSelectedTee(match ?? null);
       if (savedEvent) {
         setSelectedLadiesTee(
@@ -1486,15 +1497,15 @@ export default function ManageEventScreen() {
         setSelectedLadiesTee(null);
       }
       if (list.length > 0) {
+        setShowManualTee(false);
         setTeeStatus("synced");
-        setTeeStatusMessage("Synced tee data loaded.");
-        if (match) {
-          setShowManualTee(false);
-        } else if (savedEvent?.teeName || savedEvent?.par != null || savedEvent?.courseRating != null || savedEvent?.slopeRating != null) {
-          setShowManualTee(true);
-          setTeeStatus("manual");
-          setTeeStatusMessage("Saved tee setup loaded from this event. You can edit it below.");
-        }
+        setTeeStatusMessage(
+          match
+            ? "Synced tee data loaded."
+            : savedEvent?.teeName || savedEvent?.par != null || savedEvent?.courseRating != null || savedEvent?.slopeRating != null
+              ? "Imported tees available — pick a tee below or edit manual values."
+              : "Synced tee data loaded.",
+        );
         return;
       }
 
@@ -1597,7 +1608,6 @@ export default function ManageEventScreen() {
     );
 
     if (event.course_id) {
-      setShowManualTee(!!(event.teeName || event.par != null || event.courseRating != null || event.slopeRating != null));
       loadTeesForEvent(event.course_id, event.tee_id ?? undefined, event);
     } else {
       setTees([]);
@@ -2329,10 +2339,13 @@ export default function ManageEventScreen() {
                       <AppText variant="captionBold" style={styles.manualTeeHeaderTitle}>
                         Manual Tee Entry
                       </AppText>
-                      {selectedTee ? (
-                        <Pressable onPress={() => setShowManualTee(false)} style={styles.manualTeeHeaderLink}>
+                      {selectedTee || tees.length > 0 ? (
+                        <Pressable
+                          onPress={() => setShowManualTee(false)}
+                          style={styles.manualTeeHeaderLink}
+                        >
                           <AppText variant="small" color="primary">
-                            Use selected tee instead
+                            {selectedTee ? "Use selected tee instead" : "Select from imported tees"}
                           </AppText>
                         </Pressable>
                       ) : null}
