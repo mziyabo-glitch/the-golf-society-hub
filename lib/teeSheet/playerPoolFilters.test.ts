@@ -6,6 +6,8 @@ import { resolveJointEventRegistrations } from "@/lib/jointEventAttendeeVisibili
 import {
   buildPlayerPoolItems,
   filterPlayerPoolItems,
+  resolveMemberDocForPoolItem,
+  playerPoolItemFromAttendeeRow,
   DEFAULT_PLAYER_POOL_FILTERS,
 } from "@/lib/teeSheet/playerPoolFilters";
 
@@ -112,5 +114,38 @@ describe("filterPlayerPoolItems", () => {
     });
     expect(filtered).toHaveLength(2);
     expect(filtered.every((i) => i.name.toLowerCase().includes("guest"))).toBe(true);
+  });
+});
+
+describe("resolveMemberDocForPoolItem", () => {
+  it("falls back to registration stub when member is missing from society list", () => {
+    const { attendeeRows } = resolveJointEventRegistrations(jointOpts);
+    const paidRow = attendeeRows.find((r) => r.displayName === "Paid Member");
+    expect(paidRow).toBeTruthy();
+    const item = playerPoolItemFromAttendeeRow(paidRow!, new Map(), new Map());
+    expect(item?.member).toBeUndefined();
+
+    const member = resolveMemberDocForPoolItem(
+      item!,
+      new Map(),
+      [
+        {
+          id: "r-paid",
+          society_id: M4,
+          event_id: "ev1",
+          member_id: "m-paid",
+          status: "in",
+          paid: true,
+          amount_paid_pence: 0,
+          paid_at: null,
+          marked_by_member_id: null,
+          created_at: "",
+          updated_at: "",
+        },
+      ],
+    );
+
+    expect(member?.id).toBe("m-paid");
+    expect(member?.displayName).toBe("Paid Member");
   });
 });
