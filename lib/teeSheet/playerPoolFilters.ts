@@ -3,9 +3,11 @@
  */
 
 import type { EventGuest } from "@/lib/db_supabase/eventGuestRepo";
+import type { EventRegistration } from "@/lib/db_supabase/eventRegistrationRepo";
 import type { MemberDoc } from "@/lib/db_supabase/memberRepo";
 import type { JointEventAttendeeRow } from "@/lib/jointEventSignups";
 import { memberGuestKindFromAttendeeRow } from "@/lib/eventAttendeeCsv";
+import { memberDocFromRegistrationRow } from "@/lib/memberDocUtils";
 
 export type PlayerPoolItem = {
   key: string;
@@ -92,6 +94,43 @@ export function buildPlayerPoolItems(
     if (item) out.push(item);
   }
   return out.sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/** Resolve a MemberDoc for pool add — falls back to registration stub when society member list is incomplete. */
+export function resolveMemberDocForPoolItem(
+  item: PlayerPoolItem,
+  membersById: Map<string, MemberDoc>,
+  registrations: EventRegistration[],
+): MemberDoc | null {
+  if (item.kind !== "member") return null;
+  const id = String(item.id);
+  const existing = item.member ?? membersById.get(id);
+  if (existing) return existing;
+
+  const reg = registrations.find((r) => String(r.member_id) === id);
+  if (reg) {
+    const stub = memberDocFromRegistrationRow({
+      member_id: reg.member_id,
+      society_id: reg.society_id,
+      member_name: item.name,
+      member_display_name: item.name,
+    });
+    return {
+      ...stub,
+      name: item.name,
+      displayName: item.name,
+      handicapIndex: stub.handicapIndex ?? stub.handicap_index ?? null,
+      gender: stub.gender ?? null,
+    };
+  }
+
+  if (!id) return null;
+  return {
+    id,
+    society_id: item.societyIds[0] ?? "",
+    name: item.name,
+    displayName: item.name,
+  };
 }
 
 export function filterPlayerPoolItems(

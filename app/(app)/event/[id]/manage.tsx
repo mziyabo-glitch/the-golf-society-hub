@@ -784,6 +784,13 @@ export default function ManageEventScreen() {
     }
   }, [eventId, societyId, detailIsJointEvent, participantSocietyIdsForAccess.length]);
 
+  const invalidateEventPaymentCaches = useCallback(async () => {
+    await invalidateCache(`event:${eventId}:detail`);
+    await invalidateCache(`event:${eventId}:registrations`);
+    await invalidateCache(`event:${eventId}:tee-sheet`);
+    if (societyId) await invalidateCachePrefix(`society:${societyId}:`);
+  }, [eventId, societyId]);
+
   const handleRemoveMemberFromEvent = useCallback(
     (memberId: string, displayName: string) => {
       if (!eventId || !societyId) return;
@@ -1274,8 +1281,7 @@ export default function ManageEventScreen() {
         type: "success",
       });
       await loadRegistrations();
-      await invalidateCache(`event:${eventId}:detail`);
-      if (societyId) await invalidateCachePrefix(`society:${societyId}:`);
+      await invalidateEventPaymentCaches();
     } catch (e: any) {
       setPayToast({ visible: true, message: e?.message || "Failed", type: "error" });
     } finally {
@@ -1296,8 +1302,7 @@ export default function ManageEventScreen() {
         type: "success",
       });
       await loadRegistrations();
-      await invalidateCache(`event:${eventId}:detail`);
-      if (societyId) await invalidateCachePrefix(`society:${societyId}:`);
+      await invalidateEventPaymentCaches();
     } catch (e: any) {
       setPayToast({ visible: true, message: e?.message || "Failed", type: "error" });
     } finally {
@@ -1324,8 +1329,7 @@ export default function ManageEventScreen() {
         type: "success",
       });
       await loadRegistrations();
-      await invalidateCache(`event:${eventId}:detail`);
-      if (societyId) await invalidateCachePrefix(`society:${societyId}:`);
+      await invalidateEventPaymentCaches();
     } catch (e: any) {
       setPayToast({ visible: true, message: e?.message || "Failed", type: "error" });
     } finally {
@@ -1350,8 +1354,7 @@ export default function ManageEventScreen() {
       setAddMemberModalOpen(false);
       setAddMemberSearch("");
       await loadRegistrations();
-      await invalidateCache(`event:${eventId}:detail`);
-      if (societyId) await invalidateCachePrefix(`society:${societyId}:`);
+      await invalidateEventPaymentCaches();
     } catch (e: any) {
       setPayToast({ visible: true, message: e?.message || "Failed", type: "error" });
     } finally {

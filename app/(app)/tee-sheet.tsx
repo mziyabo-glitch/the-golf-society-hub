@@ -101,9 +101,11 @@ import { guestsByIdFromList, membersByIdFromLists } from "@/lib/eventAttendeeCsv
 import {
   buildPlayerPoolItems,
   filterPlayerPoolItems,
+  resolveMemberDocForPoolItem,
   DEFAULT_PLAYER_POOL_FILTERS,
   type PlayerPoolFilterState,
 } from "@/lib/teeSheet/playerPoolFilters";
+import { loadTeeSheetPoolEligibilityForEvent } from "@/lib/teeSheet/refreshTeeSheetPoolEligibility";
 import { showAlert } from "@/lib/ui/alert";
 import { expandJointTeeSheetReplaceRowsForParticipatingSocieties } from "@/lib/jointPersonDedupe";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
@@ -537,6 +539,32 @@ export default function TeeSheetScreen() {
     const sid = selectedEvent?.society_id ?? societyId;
     return sid ? [String(sid)] : [];
   }, [isJointEventTeeSheet, jointTeeSheetData, selectedEvent?.society_id, societyId]);
+
+  /** Always refresh paid/eligible pool when returning from event manage (even if editor is dirty). */
+  const refreshPoolEligibility = useCallback(async () => {
+    if (!selectedEventId) return;
+    try {
+      const snapshot = await loadTeeSheetPoolEligibilityForEvent(selectedEventId, {
+        isJoint: isJointEventTeeSheet,
+        participantSocietyIds: poolParticipantSocietyIds,
+        participatingSocieties: jointTeeSheetData?.participating_societies,
+      });
+      setPoolRegistrations(snapshot.registrations);
+      setEligibleMemberIds(snapshot.eligibleMemberIds);
+      setEligiblePaidGuests(snapshot.paidGuests);
+      setPoolGuests(snapshot.allGuests);
+      if (snapshot.eventMemberPool?.length) {
+        setEventMemberPool(snapshot.eventMemberPool);
+      }
+    } catch (err) {
+      console.warn("[tee-sheet] refreshPoolEligibility error:", err);
+    }
+  }, [
+    selectedEventId,
+    isJointEventTeeSheet,
+    poolParticipantSocietyIds,
+    jointTeeSheetData?.participating_societies,
+  ]);
 
   const poolMembersById = useMemo(
     () => membersByIdFromLists(eventMemberPool, members),
@@ -1230,6 +1258,9 @@ export default function TeeSheetScreen() {
       if (societyId) {
         loadData();
       }
+      if (selectedEventId) {
+        void refreshPoolEligibility();
+      }
       if (
         selectedEventId &&
         !shouldSkipTeeSheetFocusReload({ isDirty, saving, publishing })
@@ -1237,7 +1268,16 @@ export default function TeeSheetScreen() {
         void reloadSelectedEventDetails();
       }
       setGenerating(false);
-    }, [societyId, loadData, selectedEventId, reloadSelectedEventDetails, isDirty, saving, publishing]),
+    }, [
+      societyId,
+      loadData,
+      selectedEventId,
+      refreshPoolEligibility,
+      reloadSelectedEventDetails,
+      isDirty,
+      saving,
+      publishing,
+    ]),
   );
 
   const logPostSaveJointRead = useCallback(async (eventId: string, expectedMemberIds: string[]) => {
@@ -2859,8 +2899,21 @@ export default function TeeSheetScreen() {
                             key={item.key}
                             size="sm"
                             onPress={() => {
-                              if (item.kind === "member" && item.member) {
-                                addPlayerToField(item.member);
+                              if (item.kind === "member") {
+                                const member = resolveMemberDocForPoolItem(
+                                  item,
+                                  poolMembersById,
+                                  poolRegistrations,
+                                );
+                                if (member) {
+                                  addPlayerToField(member);
+                                } else {
+                                  setNotice({
+                                    type: "error",
+                                    message: "Could not add player",
+                                    detail: "Member details are missing — try refreshing the tee sheet.",
+                                  });
+                                }
                               } else if (item.kind === "guest" && item.guest) {
                                 addGuestToField(item.guest);
                               }
