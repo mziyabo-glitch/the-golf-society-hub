@@ -9,9 +9,9 @@
  * - Generate grouped tee sheet PDF with gender-based tee settings
  */
 
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Alert, Platform, StyleSheet, View, Pressable, ScrollView } from "react-native";
-import { useRouter } from "expo-router";
+import { useRouter, useLocalSearchParams } from "expo-router";
 import { useFocusEffect, useNavigation } from "@react-navigation/native";
 import { Feather } from "@expo/vector-icons";
 import { goBack } from "@/lib/navigation";
@@ -101,9 +101,13 @@ import { guestsByIdFromList, membersByIdFromLists } from "@/lib/eventAttendeeCsv
 import {
   buildPlayerPoolItems,
   filterPlayerPoolItems,
+  resolveMemberDocForPoolItem,
   DEFAULT_PLAYER_POOL_FILTERS,
   type PlayerPoolFilterState,
 } from "@/lib/teeSheet/playerPoolFilters";
+import { loadTeeSheetPoolEligibilityForEvent } from "@/lib/teeSheet/refreshTeeSheetPoolEligibility";
+import { trackEvent, trackExportCompleted } from "@/lib/analytics/trackEvent";
+import { useScreenView } from "@/lib/analytics/useScreenView";
 import { showAlert } from "@/lib/ui/alert";
 import { expandJointTeeSheetReplaceRowsForParticipatingSocieties } from "@/lib/jointPersonDedupe";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
@@ -408,6 +412,11 @@ const GroupTableCard = React.memo(function GroupTableCard({
 
 export default function TeeSheetScreen() {
   const router = useRouter();
+  const routeParams = useLocalSearchParams<{ eventId?: string | string[] }>();
+  const routeEventId = useMemo(() => {
+    const raw = routeParams.eventId;
+    return (Array.isArray(raw) ? raw[0] : raw)?.trim() || null;
+  }, [routeParams.eventId]);
   const navigation = useNavigation();
   const { societyId, society, member, memberships, loading: bootstrapLoading } = useBootstrap();
   const { guardPaidAction, modalVisible, setModalVisible, societyId: guardSocietyId } = usePaidAccess();
@@ -538,6 +547,49 @@ export default function TeeSheetScreen() {
     return sid ? [String(sid)] : [];
   }, [isJointEventTeeSheet, jointTeeSheetData, selectedEvent?.society_id, societyId]);
 
+  /** Always refresh paid/eligible pool when returning from event manage (even if editor is dirty). */
+  const refreshPoolEligibility = useCallback(async () => {
+    if (!selectedEventId) return;
+    try {
+      const snapshot = await loadTeeSheetPoolEligibilityForEvent(selectedEventId, {
+        isJoint: isJointEventTeeSheet,
+        participantSocietyIds: poolParticipantSocietyIds,
+        participatingSocieties: jointTeeSheetData?.participating_societies,
+      });
+      setPoolRegistrations(snapshot.registrations);
+      setEligibleMemberIds(snapshot.eligibleMemberIds);
+      setEligiblePaidGuests(snapshot.paidGuests);
+      setPoolGuests(snapshot.allGuests);
+      if (snapshot.eventMemberPool?.length) {
+        setEventMemberPool(snapshot.eventMemberPool);
+      }
+    } catch (err) {
+      console.warn("[tee-sheet] refreshPoolEligibility error:", err);
+    }
+  }, [
+    selectedEventId,
+    isJointEventTeeSheet,
+    poolParticipantSocietyIds,
+    jointTeeSheetData?.participating_societies,
+  ]);
+
+  useScreenView("tee-sheet", routeEventId ? `/(app)/tee-sheet?eventId=${routeEventId}` : "/(app)/tee-sheet", {
+    event_id: selectedEventId,
+  });
+
+  const openedAnalyticsRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!selectedEventId) return;
+    if (openedAnalyticsRef.current === selectedEventId) return;
+    openedAnalyticsRef.current = selectedEventId;
+    trackEvent({
+      eventName: "tee_sheet_opened",
+      screen: "tee-sheet",
+      relatedEventId: selectedEventId,
+      societyId: societyId ?? undefined,
+    });
+  }, [selectedEventId, societyId]);
+
   const poolMembersById = useMemo(
     () => membersByIdFromLists(eventMemberPool, members),
     [eventMemberPool, members],
@@ -637,6 +689,12 @@ export default function TeeSheetScreen() {
         })),
         loadTeeSheetOverlay: false,
       });
+      trackExportCompleted("event_attendees_csv", {
+        screen: "tee-sheet",
+        societyId,
+        relatedEventId: selectedEvent.id,
+        format: "csv",
+      });
     } catch (e: unknown) {
       showAlert("Could not export CSV", e instanceof Error ? e.message : "Try again.");
     } finally {
@@ -677,8 +735,9 @@ export default function TeeSheetScreen() {
         manCo: manCoData,
       }, { ttlMs: 1000 * 60 * 5 });
 
-      // Prefer keeping selection if still listed; otherwise default to nearest upcoming (then any event).
+      // Prefer deep-link event, then keep selection, then nearest upcoming.
       setSelectedEventId((prev) => {
+        if (routeEventId && mergedForList.some((e) => e.id === routeEventId)) return routeEventId;
         if (prev && mergedForList.some((e) => e.id === prev)) return prev;
         return upcomingSorted[0]?.id ?? mergedForList[0]?.id ?? null;
       });
@@ -689,7 +748,11 @@ export default function TeeSheetScreen() {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [societyId, events.length, members.length]);
+  }, [societyId, events.length, members.length, routeEventId]);
+
+  useEffect(() => {
+    if (routeEventId) setSelectedEventId(routeEventId);
+  }, [routeEventId]);
 
   useEffect(() => {
     if (!societyId) return;
@@ -1230,6 +1293,9 @@ export default function TeeSheetScreen() {
       if (societyId) {
         loadData();
       }
+      if (selectedEventId) {
+        void refreshPoolEligibility();
+      }
       if (
         selectedEventId &&
         !shouldSkipTeeSheetFocusReload({ isDirty, saving, publishing })
@@ -1237,7 +1303,16 @@ export default function TeeSheetScreen() {
         void reloadSelectedEventDetails();
       }
       setGenerating(false);
-    }, [societyId, loadData, selectedEventId, reloadSelectedEventDetails, isDirty, saving, publishing]),
+    }, [
+      societyId,
+      loadData,
+      selectedEventId,
+      refreshPoolEligibility,
+      reloadSelectedEventDetails,
+      isDirty,
+      saving,
+      publishing,
+    ]),
   );
 
   const logPostSaveJointRead = useCallback(async (eventId: string, expectedMemberIds: string[]) => {
@@ -1825,6 +1900,13 @@ export default function TeeSheetScreen() {
         });
       }
       setLastSavedAt(new Date());
+      trackEvent({
+        eventName: "tee_sheet_saved",
+        screen: "tee-sheet",
+        relatedEventId: eventId,
+        societyId: editor.societyId ?? undefined,
+        metadata: { player_count: editor.groups.reduce((n, g) => n + g.players.length, 0) },
+      });
       if (!opts?.quiet) {
         setToast({ visible: true, message: "Draft saved successfully", type: "success" });
       }
@@ -2274,6 +2356,13 @@ export default function TeeSheetScreen() {
         message: "Tee sheet published",
         type: "success",
       });
+      trackEvent({
+        eventName: "tee_sheet_published",
+        screen: "tee-sheet",
+        relatedEventId: selectedEventId,
+        societyId: societyId ?? undefined,
+        metadata: { republish: !!selectedEvent?.teeTimePublishedAt },
+      });
 
       const canonical = await loadCanonicalTeeSheet(selectedEventId, { preserveDraftPlayers: true });
       if (canonical && canonical.groups.length > 0) {
@@ -2413,6 +2502,9 @@ export default function TeeSheetScreen() {
   // Check if we have tee settings configured
   const hasMenTees = selectedEvent?.par != null && selectedEvent?.slopeRating != null;
   const hasLadiesTees = selectedEvent?.ladiesPar != null && selectedEvent?.ladiesSlopeRating != null;
+  const publishButtonLabel = selectedEvent?.teeTimePublishedAt
+    ? "Update Published Tee Sheet"
+    : "Publish Tee Sheet";
 
   return (
     <Screen>
@@ -2442,10 +2534,11 @@ export default function TeeSheetScreen() {
       </View>
 
       <AppText variant="title" style={styles.title}>
-        <Feather name="file-text" size={24} color={colors.primary} /> Tee Sheet
+        <Feather name="file-text" size={24} color={colors.primary} />{" "}
+        {routeEventId && selectedEvent ? `Manage Tee Sheet — ${selectedEvent.name}` : "Manage Tee Sheet"}
       </AppText>
       <AppText variant="body" color="secondary" style={{ marginBottom: spacing.sm }}>
-        Generate grouped tee sheets with WHS handicaps for Men and Ladies.
+        Build, save, and publish grouped tee sheets with WHS handicaps for this event.
       </AppText>
       <AppText variant="small" color="muted" style={{ marginBottom: spacing.lg }}>
         Tee sheet includes confirmed + paid players. ManCo can remove players, and can add only tee-sheet-eligible players.
@@ -2859,8 +2952,21 @@ export default function TeeSheetScreen() {
                             key={item.key}
                             size="sm"
                             onPress={() => {
-                              if (item.kind === "member" && item.member) {
-                                addPlayerToField(item.member);
+                              if (item.kind === "member") {
+                                const member = resolveMemberDocForPoolItem(
+                                  item,
+                                  poolMembersById,
+                                  poolRegistrations,
+                                );
+                                if (member) {
+                                  addPlayerToField(member);
+                                } else {
+                                  setNotice({
+                                    type: "error",
+                                    message: "Could not add player",
+                                    detail: "Member details are missing — try refreshing the tee sheet.",
+                                  });
+                                }
                               } else if (item.kind === "guest" && item.guest) {
                                 addGuestToField(item.guest);
                               }
@@ -3142,7 +3248,7 @@ export default function TeeSheetScreen() {
                   style={{ flex: 1 }}
                 >
                   <Feather name="upload-cloud" size={18} color={colors.textInverse} />
-                  {publishing ? " Publishing..." : " Publish"}
+                  {publishing ? " Publishing..." : ` ${publishButtonLabel}`}
                 </PrimaryButton>
               </View>
               <SecondaryButton

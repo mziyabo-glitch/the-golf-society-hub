@@ -137,36 +137,6 @@ export default function MoreScreen() {
   }
 
   const adminToolEntries: { key: string; row: ReactNode }[] = [];
-  if (permissions.canGenerateTeeSheet) {
-    adminToolEntries.push({
-      key: "tee",
-      row: (
-        <MenuRow
-          icon="file-text"
-          iconBg={`${colors.warning}20`}
-          title="Tee sheet generator"
-          subtitle="Grouped sheets with WHS handicaps"
-          colors={colors}
-          onPress={() => push("/(app)/tee-sheet")}
-        />
-      ),
-    });
-  }
-  if (captain || secretary || permissions.canManageHandicaps) {
-    adminToolEntries.push({
-      key: "courseData",
-      row: (
-        <MenuRow
-          icon="database"
-          iconBg={`${colors.info}20`}
-          title="Course data review"
-          subtitle="Import quality, SI checks, and manual overrides"
-          colors={colors}
-          onPress={() => push("/(app)/course-data")}
-        />
-      ),
-    });
-  }
   if (captain) {
     adminToolEntries.push(
       {
@@ -200,6 +170,7 @@ export default function MoreScreen() {
 
   const showFinance = financeEntries.length > 0;
   const showAdminTools = adminToolEntries.length > 0;
+  const isManCo = captain || secretary || permissions.canGenerateTeeSheet || permissions.canManageHandicaps;
 
   return (
     <Screen scrollable={false} style={{ backgroundColor: colors.backgroundSecondary }}>
@@ -211,18 +182,37 @@ export default function MoreScreen() {
           Members, settings, finance, and admin tools
         </AppText>
 
+        {isManCo && hasFullAccess ? (
+          <>
+            <SectionTitle>Members</SectionTitle>
+            <AppCard style={styles.card}>
+              <MenuRow
+                icon="users"
+                iconBg={`${colors.primary}16`}
+                title="Members"
+                subtitle="Roster, roles, and member details"
+                colors={colors}
+                onPress={() => push("/(app)/(tabs)/members")}
+              />
+            </AppCard>
+          </>
+        ) : null}
+
         <SectionTitle>Society</SectionTitle>
         <AppCard style={styles.card}>
-          {hasFullAccess ? (
-            <MenuRow
-              icon="users"
-              iconBg={`${colors.primary}16`}
-              title="Members"
-              subtitle="Roster, roles, and member details"
-              colors={colors}
-              onPress={() => push("/(app)/(tabs)/members")}
-            />
-          ) : (
+          {!isManCo && hasFullAccess ? (
+            <>
+              <MenuRow
+                icon="users"
+                iconBg={`${colors.primary}16`}
+                title="Members"
+                subtitle="Roster, roles, and member details"
+                colors={colors}
+                onPress={() => push("/(app)/(tabs)/members")}
+              />
+              <View style={[styles.divider, { backgroundColor: colors.borderLight }]} />
+            </>
+          ) : !hasFullAccess ? (
             <View style={styles.mutedBlock}>
               <Feather name="info" size={16} color={colors.textTertiary} />
               <AppText variant="small" color="tertiary" style={{ flex: 1, marginLeft: spacing.sm }}>
@@ -231,8 +221,7 @@ export default function MoreScreen() {
                   : "Join a society with a seat to access the member directory."}
               </AppText>
             </View>
-          )}
-          <View style={[styles.divider, { backgroundColor: colors.borderLight }]} />
+          ) : null}
           {hasSociety ? (
             <MenuRow
               icon="zap"
@@ -335,6 +324,15 @@ export default function MoreScreen() {
           <>
             <SectionTitle>Platform</SectionTitle>
             <AppCard style={styles.card}>
+              <MenuRow
+                icon="bar-chart"
+                iconBg={`${colors.info}18`}
+                title="Product usage report"
+                subtitle="Screen views, actions, and errors (7/30/90 days)"
+                colors={colors}
+                onPress={() => push("/(admin)/usage-report" as any)}
+              />
+              <View style={[styles.divider, { backgroundColor: colors.borderLight }]} />
               <MenuRow
                 icon="shield"
                 iconBg={`${colors.error}18`}

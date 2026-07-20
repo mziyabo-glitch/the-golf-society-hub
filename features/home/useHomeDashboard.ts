@@ -61,6 +61,8 @@ import { useBootstrap } from "@/lib/useBootstrap";
 import { useReducedMotion } from "@/hooks/useReducedMotion";
 import { getSocietyLogoUrl } from "@/lib/societyLogo";
 import { measureAsync } from "@/lib/perf/perf";
+import { shouldShowBirdiesLeagueHomeCard } from "@/lib/featureVisibility";
+import { trackEvent } from "@/lib/analytics/trackEvent";
 import { buildRecentActivityRows } from "./homeRecentActivityVm";
 import { resolveMemberIdForSocietyRsvp, submitMemberEventRsvp } from "@/lib/events/memberEventRsvp";
 import {
@@ -789,6 +791,14 @@ export function useHomeDashboard() {
   }, [memberId, birdiesStandings, members]);
 
   const birdiesPreviewRows = useMemo(() => birdiesStandings.slice(0, 3), [birdiesStandings]);
+  const showBirdiesLeagueCard = useMemo(
+    () =>
+      shouldShowBirdiesLeagueHomeCard(
+        birdiesLeague,
+        birdiesStandings.some((row) => (row.totalBirdies ?? 0) > 0),
+      ),
+    [birdiesLeague, birdiesStandings],
+  );
 
   const nextEventJointSocietyMap = useMemo(() => {
     if (!canonicalNextEventTee?.isJoint || !canonicalNextEventTee.jointParticipatingSocieties?.length) {
@@ -904,6 +914,13 @@ export function useHomeDashboard() {
         source: "home_dashboard_rsvp",
       });
       setMyReg(registration);
+      trackEvent({
+        eventName: "event_rsvp_submitted",
+        screen: "home",
+        relatedEventId: nextEvent.id,
+        societyId,
+        metadata: { status: newStatus },
+      });
     } catch (e: unknown) {
       setRegError(e instanceof Error ? e.message : "Could not update RSVP. Please try again.");
     } finally {
@@ -1044,6 +1061,7 @@ export function useHomeDashboard() {
     birdiesMyEvents: birdiesMy.events,
     birdiesPreviewRows,
     openBirdiesLeague,
+    showBirdiesLeagueCard,
   };
 }
 

@@ -135,6 +135,12 @@ import {
   setEventPrizePoolEnabled,
 } from "@/lib/db_supabase/eventPrizePoolRepo";
 import type { EventPrizePoolResultRow, EventPrizePoolRow } from "@/lib/event-prize-pools-types";
+import { getTeeGroupPlayers } from "@/lib/db_supabase/teeGroupsRepo";
+import { loadCanonicalTeeSheet } from "@/lib/teeSheet/canonicalTeeSheet";
+import { buildTeeSheetManageWarnings } from "@/lib/teeSheet/teeSheetManageWarnings";
+import { parseGuestPlayerId } from "@/lib/teeSheetEligibility";
+import { trackEvent, trackExportCompleted } from "@/lib/analytics/trackEvent";
+import { useScreenView } from "@/lib/analytics/useScreenView";
 
 // Picker option component
 function PickerOption({
@@ -186,6 +192,7 @@ export default function ManageEventScreen() {
   const permissions = getPermissionsForMember(currentMember);
   const canEnterPoints = permissions.canManageHandicaps;
   const canEditEvent = permissions.canCreateEvents;
+  const canManageTeeSheet = permissions.canGenerateTeeSheet;
   const canManagePrizePools = canManageEventPaymentsForSociety(memberships, societyId);
   const canAccessManageEvent =
     permissions.canCreateEvents ||
@@ -196,6 +203,10 @@ export default function ManageEventScreen() {
 
   // Safely extract eventId (could be string or array from URL params)
   const eventId = Array.isArray(params.id) ? params.id[0] : params.id;
+
+  useScreenView("event-manage", eventId ? `/(app)/event/${eventId}/manage` : undefined, {
+    event_id: eventId,
+  });
 
   const [event, setEvent] = useState<EventDoc | null>(null);
   const [jointParticipatingSocieties, setJointParticipatingSocieties] = useState<EventSocietyInput[]>([]);
@@ -249,6 +260,10 @@ export default function ManageEventScreen() {
   const [manualLadiesTeeName, setManualLadiesTeeName] = useState("");
   const [manualLadiesPar, setManualLadiesPar] = useState("");
   const [manualLadiesCourseRating, setManualLadiesCourseRating] = useState("");
+  const [teeSheetDraftPlayers, setTeeSheetDraftPlayers] = useState<
+    { member_id?: string | null; guest_id?: string | null }[]
+  >([]);
+  const [teeSheetPublishedPlayerCount, setTeeSheetPublishedPlayerCount] = useState<number | null>(null);
   const [manualLadiesSlopeRating, setManualLadiesSlopeRating] = useState("");
   const [showManualTee, setShowManualTee] = useState(false);
 
@@ -1125,6 +1140,12 @@ export default function ManageEventScreen() {
         guests: eventGuestsAll,
         loadTeeSheetOverlay: true,
       });
+      trackExportCompleted("event_attendees", {
+        screen: "event-manage",
+        societyId,
+        relatedEventId: eventId,
+        format: "csv",
+      });
     } catch (e: unknown) {
       showAlert("Could not export CSV", e instanceof Error ? e.message : "Try again.");
     } finally {
@@ -1158,6 +1179,12 @@ export default function ManageEventScreen() {
           .map((e) => ({ name: e.name, type: e.type, typeLabel: e.typeLabel })),
         exportRows: paymentShareLists.exportRows,
         isJointEvent: detailIsJointEvent,
+      });
+      trackExportCompleted("event_payment", {
+        screen: "event-manage",
+        societyId,
+        relatedEventId: event?.id,
+        format: Platform.OS === "web" ? "png" : "pdf",
       });
     } catch (e: unknown) {
       const label = Platform.OS === "web" ? "PNG" : "PDF";
@@ -1229,6 +1256,84 @@ export default function ManageEventScreen() {
       ? jointRegistrationResolution.teeSheetEligibleMemberIds.length +
         jointRegistrationResolution.teeSheetEligibleGuestPlayerIds.length
       : buckets.confirmedPaid.length + guestConfirmedPaid.length;
+
+  const paidTeeSheetMemberIds = useMemo(() => {
+    if (jointRegistrationResolution) {
+      return jointRegistrationResolution.teeSheetEligibleMemberIds;
+    }
+    return buckets.confirmedPaid.map((r) => r.member_id);
+  }, [jointRegistrationResolution, buckets.confirmedPaid]);
+
+  const jointPaidMissingFromPoolCount = useMemo(() => {
+    if (!detailIsJointEvent) return 0;
+    const pool = new Set(jointRegistrationResolution?.teeSheetEligibleMemberIds ?? []);
+    return registrations.filter((r) => r.paid && r.status === "in" && !pool.has(r.member_id)).length;
+  }, [detailIsJointEvent, jointRegistrationResolution, registrations]);
+
+  const teeSheetManageWarnings = useMemo(() => {
+    if (!canManageTeeSheet) return [];
+    const draftPlayerCount = teeSheetDraftPlayers.length;
+    return buildTeeSheetManageWarnings({
+      paidMemberIds: paidTeeSheetMemberIds,
+      eligibleMemberIds:
+        jointRegistrationResolution?.teeSheetEligibleMemberIds ?? paidTeeSheetMemberIds,
+      groups: [{ players: teeSheetDraftPlayers }],
+      publishedPlayerCount: teeSheetPublishedPlayerCount,
+      draftPlayerCount,
+      isJointEvent: detailIsJointEvent,
+      jointPaidMissingFromPoolCount,
+    });
+  }, [
+    canManageTeeSheet,
+    paidTeeSheetMemberIds,
+    jointRegistrationResolution,
+    teeSheetDraftPlayers,
+    teeSheetPublishedPlayerCount,
+    detailIsJointEvent,
+    jointPaidMissingFromPoolCount,
+  ]);
+
+  useEffect(() => {
+    if (!eventId || !canManageTeeSheet) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const [rows, canonical] = await Promise.all([
+          getTeeGroupPlayers(eventId),
+          loadCanonicalTeeSheet(eventId),
+        ]);
+        if (cancelled) return;
+        setTeeSheetDraftPlayers(
+          rows.map((r) => {
+            const guestId = parseGuestPlayerId(r.player_id);
+            return guestId
+              ? { member_id: null, guest_id: guestId }
+              : { member_id: r.player_id, guest_id: null };
+          }),
+        );
+        setTeeSheetPublishedPlayerCount(
+          canonical?.published
+            ? canonical.groups.reduce((sum, g) => sum + g.players.length, 0)
+            : null,
+        );
+      } catch {
+        if (!cancelled) {
+          setTeeSheetDraftPlayers([]);
+          setTeeSheetPublishedPlayerCount(null);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    eventId,
+    canManageTeeSheet,
+    teeSheetEligibleCount,
+    event?.teeTimePublishedAt,
+    registrations.length,
+  ]);
+
   const pendingPaymentCount =
     buckets.pendingPayment.length + captainPickMemberIds.length + guestPendingPayment.length;
   const activeRosterCount =
@@ -1268,6 +1373,13 @@ export default function ManageEventScreen() {
     setPayBusy(reg.member_id);
     try {
       await markMePaid(reg.event_id, reg.member_id, !reg.paid, societyId);
+      trackEvent({
+        eventName: "payment_marked",
+        screen: "event-manage",
+        relatedEventId: eventId,
+        societyId,
+        metadata: { paid: !reg.paid },
+      });
       setPayToast({
         visible: true,
         message: reg.paid ? "Marked unpaid" : "Marked paid (also confirmed as attending)",
@@ -3364,12 +3476,90 @@ export default function ManageEventScreen() {
       </ManageEventSection>
       ) : null}
 
-      {event.teeTimePublishedAt && canShowMemberTeeSheetCta ? (
+      {canManageTeeSheet ? (
+      <ManageEventSection
+        title="Tee Sheet"
+        description="Build, save, and publish the tee sheet for this event."
+      >
+        {teeSheetManageWarnings.map((warning) => (
+          <InlineNotice
+            key={warning.kind}
+            variant="warning"
+            message={warning.message}
+            style={{ marginBottom: spacing.sm }}
+          />
+        ))}
+        {teeSheetManageWarnings.some((w) => w.missingPaidMemberIds?.length) ? (
+          <SecondaryButton
+            size="sm"
+            style={{ marginBottom: spacing.sm, alignSelf: "flex-start" }}
+            onPress={() =>
+              router.push({
+                pathname: "/(app)/tee-sheet",
+                params: { eventId },
+              } as never)
+            }
+          >
+            Review missing players
+          </SecondaryButton>
+        ) : null}
+        <Pressable
+          onPress={() =>
+            router.push({
+              pathname: "/(app)/tee-sheet",
+              params: { eventId },
+            } as never)
+          }
+          style={({ pressed }) => ({ opacity: pressed ? 0.8 : 1 })}
+        >
+          <AppCard style={[styles.actionCard, styles.managePrimaryActionCard]}>
+            <View style={styles.actionRow}>
+              <View style={[styles.iconContainer, { backgroundColor: colors.primary + "20" }]}>
+                <Feather name="edit" size={18} color={colors.primary} />
+              </View>
+              <View style={styles.actionContent}>
+                <AppText variant="bodyBold" style={styles.actionRowTitle}>Manage Tee Sheet</AppText>
+                <AppText variant="caption" color="secondary" style={styles.actionRowSubtitle}>
+                  {teeSheetEligibleCount} paid &amp; confirmed · {teeSheetDraftPlayers.length} on saved sheet
+                  {event.teeTimePublishedAt ? " · published" : ""}
+                </AppText>
+              </View>
+              <Feather name="chevron-right" size={20} color={colors.textTertiary} style={styles.actionRowChevron} />
+            </View>
+          </AppCard>
+        </Pressable>
+        {event.teeTimePublishedAt && canShowMemberTeeSheetCta ? (
+          <Pressable
+            onPress={() =>
+              router.push({
+                pathname: "/(app)/event/[id]/tee-sheet",
+                params: { id: eventId },
+              })
+            }
+            style={({ pressed }) => ({ opacity: pressed ? 0.8 : 1, marginTop: spacing.sm })}
+          >
+            <AppCard style={styles.actionCard}>
+              <View style={styles.actionRow}>
+                <View style={[styles.iconContainer, { backgroundColor: colors.success + "20" }]}>
+                  <Feather name="flag" size={18} color={colors.success} />
+                </View>
+                <View style={styles.actionContent}>
+                  <AppText variant="bodyBold">View published tee sheet</AppText>
+                  <AppText variant="caption" color="secondary">
+                    Member read-only view
+                  </AppText>
+                </View>
+                <Feather name="chevron-right" size={20} color={colors.textTertiary} />
+              </View>
+            </AppCard>
+          </Pressable>
+        ) : null}
+      </ManageEventSection>
+      ) : event.teeTimePublishedAt && canShowMemberTeeSheetCta ? (
       <ManageEventSection
         title="Tee Sheet"
         description="Published tee sheet for members (when available)."
       >
-      {/* View Tee Sheet — published + active society is host or event_societies participant */}
       <Pressable
         onPress={() =>
           router.push({

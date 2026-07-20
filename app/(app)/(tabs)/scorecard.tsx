@@ -28,6 +28,7 @@ import { supabase } from "@/lib/supabase";
 import { scoringPublishStatusFromEvent } from "@/lib/services/publishEventScoringService";
 import { isOfficialScoringPublished } from "@/lib/scoring/eventScoringPublishStatus";
 import { getColors, iconSize, spacing, radius } from "@/lib/ui/theme";
+import { isLiveGrossScoringEnabledForEvent } from "@/lib/featureVisibility";
 import { formatEventDate } from "@/features/home/homeFormatters";
 
 export default function ScorecardTabScreen() {
@@ -224,7 +225,7 @@ export default function ScorecardTabScreen() {
             <PrimaryButton label="Unlock live scoring" onPress={() => router.push("/(app)/premium-scoring" as never)} />
             <SecondaryButton label="Billing and seats" onPress={() => router.push("/(app)/billing" as never)} style={{ marginTop: spacing.sm }} />
           </>
-        ) : (
+        ) : isLiveGrossScoringEnabledForEvent(todayEvent) ? (
           <>
             <AppText variant="small" color="secondary" style={{ marginBottom: spacing.md }}>
               {hasRoundProgress ? "Pick up your saved gross card." : "Open gross entry for this match."}
@@ -236,6 +237,11 @@ export default function ScorecardTabScreen() {
               }
             />
           </>
+        ) : (
+          <InlineNotice
+            variant="info"
+            message="Live gross scoring is not enabled for today's event. Official published results remain available when published."
+          />
         )}
 
         {officialPublished ? (
@@ -253,7 +259,7 @@ export default function ScorecardTabScreen() {
             </AppText>
             <Feather name="chevron-right" size={iconSize.sm} color={colors.primary} />
           </Pressable>
-        ) : needsLicence ? null : (
+        ) : needsLicence || !isLiveGrossScoringEnabledForEvent(todayEvent) ? null : (
           <Pressable
             style={styles.secondaryLink}
             onPress={() =>
