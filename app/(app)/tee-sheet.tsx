@@ -85,6 +85,13 @@ import {
 import type { JointEventTeeSheet, JointEventTeeSheetEntry } from "@/lib/db_supabase/jointEventTypes";
 import { getMembersBySocietyId, getMembersByIds, getJointEventMemberVisibility, getManCoRoleHolders, type MemberDoc, type Gender, type ManCoDetails, normalizeMemberDocId } from "@/lib/db_supabase/memberRepo";
 import { getPermissionsForMember, canExportEventAttendeesForSociety } from "@/lib/rbac";
+import { isPlatformAdmin } from "@/lib/db_supabase/adminRepo";
+import {
+  resolveTeeSheetManageAccess,
+  TEE_SHEET_ACCESS_DENIED_MESSAGE,
+  canPersistTeeSheetForEvent,
+  type TeeSheetManageAccessResult,
+} from "@/lib/teeSheet/teeSheetManageAccess";
 import {
   type TeeBlock,
   calcCourseHandicap,
@@ -418,7 +425,7 @@ export default function TeeSheetScreen() {
     return (Array.isArray(raw) ? raw[0] : raw)?.trim() || null;
   }, [routeParams.eventId]);
   const navigation = useNavigation();
-  const { societyId, society, member, memberships, loading: bootstrapLoading } = useBootstrap();
+  const { societyId, society, member, memberships, userId, loading: bootstrapLoading } = useBootstrap();
   const { guardPaidAction, modalVisible, setModalVisible, societyId: guardSocietyId } = usePaidAccess();
   const colors = getColors();
 
@@ -461,6 +468,8 @@ export default function TeeSheetScreen() {
   const [eventDetailsRefreshing, setEventDetailsRefreshing] = useState(false);
   const [eventDetailsError, setEventDetailsError] = useState<FormattedError | null>(null);
   const [hasHydratedIndexCache, setHasHydratedIndexCache] = useState(false);
+  const [eventManageAccess, setEventManageAccess] = useState<TeeSheetManageAccessResult | null>(null);
+  const [eventAccessChecking, setEventAccessChecking] = useState(false);
   const [lastSavedAt, setLastSavedAt] = useState<Date | null>(null);
   const eventLoadSeqRef = React.useRef(0);
   const savedSnapshotRef = React.useRef<TeeSheetEditorSnapshot | null>(null);
@@ -572,6 +581,52 @@ export default function TeeSheetScreen() {
     poolParticipantSocietyIds,
     jointTeeSheetData?.participating_societies,
   ]);
+
+  useEffect(() => {
+    if (!selectedEventId) {
+      setEventManageAccess(null);
+      setEventAccessChecking(false);
+      return;
+    }
+
+    let cancelled = false;
+    setEventAccessChecking(true);
+
+    void (async () => {
+      try {
+        const [eventRow, jointMetaMap, platformAdmin] = await Promise.all([
+          getEvent(selectedEventId),
+          getJointMetaForEventIds([selectedEventId]),
+          isPlatformAdmin(),
+        ]);
+        const jointMeta = jointMetaMap.get(selectedEventId);
+        const participantIds =
+          jointMeta?.participant_society_ids ??
+          eventRow?.participant_society_ids ??
+          [];
+        const access = resolveTeeSheetManageAccess({
+          userId,
+          memberships: memberships.map((m) => ({ societyId: m.societyId, role: m.role })),
+          participantSocietyIds: participantIds,
+          hostSocietyId: eventRow?.society_id ?? null,
+          isPlatformAdmin: platformAdmin,
+        });
+        if (!cancelled) setEventManageAccess(access);
+      } catch {
+        if (!cancelled) {
+          setEventManageAccess({ allowed: false, reason: "not_participating_manco" });
+        }
+      } finally {
+        if (!cancelled) setEventAccessChecking(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedEventId, userId, memberships]);
+
+  const canEditSelectedEventTeeSheet = canPersistTeeSheetForEvent(eventManageAccess);
 
   useScreenView("tee-sheet", routeEventId ? `/(app)/tee-sheet?eventId=${routeEventId}` : "/(app)/tee-sheet", {
     event_id: selectedEventId,
@@ -694,6 +749,7 @@ export default function TeeSheetScreen() {
         societyId,
         relatedEventId: selectedEvent.id,
         format: "csv",
+        feature: "tee_sheet_attendees_csv",
       });
     } catch (e: unknown) {
       showAlert("Could not export CSV", e instanceof Error ? e.message : "Try again.");
@@ -1098,8 +1154,9 @@ export default function TeeSheetScreen() {
   }, [selectedEventId, commitSavedSnapshotBaseline, logSelectedPlayersDev]);
 
   useEffect(() => {
+    if (!selectedEventId || eventAccessChecking || !canEditSelectedEventTeeSheet) return;
     void reloadSelectedEventDetails();
-  }, [selectedEventId, societyId, reloadSelectedEventDetails]);
+  }, [selectedEventId, societyId, reloadSelectedEventDetails, eventAccessChecking, canEditSelectedEventTeeSheet]);
 
   const groupsFromCanonical = (
     event: EventDoc,
@@ -1293,11 +1350,12 @@ export default function TeeSheetScreen() {
       if (societyId) {
         loadData();
       }
-      if (selectedEventId) {
+      if (selectedEventId && canEditSelectedEventTeeSheet) {
         void refreshPoolEligibility();
       }
       if (
         selectedEventId &&
+        canEditSelectedEventTeeSheet &&
         !shouldSkipTeeSheetFocusReload({ isDirty, saving, publishing })
       ) {
         void reloadSelectedEventDetails();
@@ -1309,6 +1367,7 @@ export default function TeeSheetScreen() {
       selectedEventId,
       refreshPoolEligibility,
       reloadSelectedEventDetails,
+      canEditSelectedEventTeeSheet,
       isDirty,
       saving,
       publishing,
@@ -1571,6 +1630,16 @@ export default function TeeSheetScreen() {
   /** Persist groups, tee times, competition holes, and player scope — does not publish. */
   const persistTeeSheetDraft = async (opts?: { quiet?: boolean }): Promise<boolean> => {
     if (!guardPaidAction()) return false;
+    if (!canEditSelectedEventTeeSheet) {
+      if (!opts?.quiet) {
+        setNotice({
+          type: "error",
+          message: TEE_SHEET_ACCESS_DENIED_MESSAGE,
+          detail: "You cannot save changes for this event.",
+        });
+      }
+      return false;
+    }
     const editor = editorStateRef.current;
     const eventId = selectedEventId;
     const eventDoc = editor.selectedEvent;
@@ -2201,6 +2270,10 @@ export default function TeeSheetScreen() {
 
   const handleShareExport = async () => {
     if (!guardPaidAction()) return;
+    if (!canEditSelectedEventTeeSheet) {
+      setNotice({ type: "error", message: TEE_SHEET_ACCESS_DENIED_MESSAGE });
+      return;
+    }
     if (!selectedEventId || !selectedEvent || !societyId) return;
 
     const nonEmptyGroups = groups.filter((g) => g.players.length > 0);
@@ -2268,6 +2341,10 @@ export default function TeeSheetScreen() {
 
   const handleGenerateTeeSheet = async () => {
     if (!guardPaidAction()) return;
+    if (!canEditSelectedEventTeeSheet) {
+      setNotice({ type: "error", message: TEE_SHEET_ACCESS_DENIED_MESSAGE });
+      return;
+    }
     if (!selectedEvent || !societyId || !selectedEventId) return;
 
     const nonEmptyGroups = groups.filter((g) => g.players.length > 0);
@@ -2487,6 +2564,32 @@ export default function TeeSheetScreen() {
           icon={<Feather name="lock" size={32} color={colors.textTertiary} />}
           title="Access Restricted"
           message="Only ManCo members (Captain, Secretary, Treasurer, Handicapper) can generate tee sheets."
+        />
+      </Screen>
+    );
+  }
+
+  if (selectedEventId && (eventAccessChecking || eventManageAccess === null)) {
+    return (
+      <Screen>
+        <LoadingState message="Checking event access..." />
+      </Screen>
+    );
+  }
+
+  if (selectedEventId && eventManageAccess && !eventManageAccess.allowed) {
+    return (
+      <Screen>
+        <View style={styles.header}>
+          <SecondaryButton onPress={() => router.replace("/(app)/(tabs)/events")} size="sm">
+            <Feather name="arrow-left" size={16} color={colors.text} /> Back to Events
+          </SecondaryButton>
+        </View>
+        <EmptyState
+          icon={<Feather name="lock" size={32} color={colors.textTertiary} />}
+          title="Access Restricted"
+          message={TEE_SHEET_ACCESS_DENIED_MESSAGE}
+          action={{ label: "Go to Events", onPress: () => router.replace("/(app)/(tabs)/events") }}
         />
       </Screen>
     );

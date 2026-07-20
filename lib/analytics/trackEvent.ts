@@ -72,15 +72,28 @@ export function trackErrorShown(
 
 export function trackExportCompleted(
   exportType: string,
-  opts?: { screen?: string; societyId?: string; relatedEventId?: string; format?: string },
+  opts?: {
+    screen?: string;
+    societyId?: string;
+    relatedEventId?: string;
+    format?: string;
+    feature?: string;
+  },
 ): void {
+  const feature = opts?.feature ?? exportType;
   trackEvent({
     eventName: "export_completed",
     screen: opts?.screen,
-    feature: exportType,
+    feature,
     societyId: opts?.societyId,
     relatedEventId: opts?.relatedEventId,
-    metadata: opts?.format ? { format: opts.format } : {},
+    metadata: {
+      export_type: exportType,
+      event_id: opts?.relatedEventId ?? null,
+      society_id: opts?.societyId ?? null,
+      feature,
+      ...(opts?.format ? { format: opts.format } : {}),
+    },
   });
 }
 

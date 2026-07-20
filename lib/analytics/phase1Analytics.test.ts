@@ -6,7 +6,7 @@ vi.mock("@/lib/db_supabase/productEventsRepo", () => ({
 }));
 
 import { insertProductEvent } from "@/lib/db_supabase/productEventsRepo";
-import { setAnalyticsContext, trackEvent } from "@/lib/analytics/trackEvent";
+import { setAnalyticsContext, trackEvent, trackExportCompleted } from "@/lib/analytics/trackEvent";
 import { sanitizeAnalyticsMetadata } from "@/lib/analytics/sanitizeMetadata";
 import { shouldShowBirdiesLeagueHomeCard, isLiveGrossScoringEnabledForEvent } from "@/lib/featureVisibility";
 import { buildTeeSheetManageWarnings } from "@/lib/teeSheet/teeSheetManageWarnings";
@@ -40,6 +40,33 @@ describe("trackEvent", () => {
     expect(insertProductEvent).toHaveBeenCalledWith(
       expect.objectContaining({
         metadata: { count: 3 },
+      }),
+    );
+  });
+});
+
+describe("trackExportCompleted", () => {
+  it("includes consistent export_completed metadata", () => {
+    setAnalyticsContext({ userId: "user-1", societyId: "soc-1" });
+    trackExportCompleted("tee_sheet", {
+      screen: "tee-sheet-share",
+      societyId: "soc-1",
+      relatedEventId: "ev-1",
+      format: "png",
+      feature: "tee_sheet_share_export",
+    });
+    expect(insertProductEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event_name: "export_completed",
+        related_event_id: "ev-1",
+        society_id: "soc-1",
+        metadata: expect.objectContaining({
+          export_type: "tee_sheet",
+          event_id: "ev-1",
+          society_id: "soc-1",
+          feature: "tee_sheet_share_export",
+          format: "png",
+        }),
       }),
     );
   });

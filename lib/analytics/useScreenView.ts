@@ -1,26 +1,33 @@
 import { useEffect, useRef } from 'react';
-import { trackEvent } from './trackEvent';
+import { trackEvent, getAnalyticsContext } from './trackEvent';
+import {
+  buildScreenViewDedupeKey,
+  shouldEmitScreenView,
+} from './screenViewDedupe';
 
 /**
- * Deduped screen_view tracking.
+ * Deduped screen_view tracking with in-memory suppression for Strict Mode.
  *
- * Fires once per unique `screen::route` key per component mount.
- * Metadata is included in the payload but NOT in the dedupe key (avoids
- * unstable object references causing duplicate events).
+ * Fires once per unique userId+screen+route+session key within a short window.
+ * Metadata is included in the payload but NOT in the dedupe key.
  */
 export function useScreenView(
   screen: string,
   route?: string,
   metadata?: Record<string, unknown>,
 ) {
-  const lastKeyRef = useRef<string | null>(null);
   const metadataRef = useRef(metadata);
   metadataRef.current = metadata;
 
   useEffect(() => {
-    const key = `${screen}::${route ?? ''}`;
-    if (lastKeyRef.current === key) return;
-    lastKeyRef.current = key;
+    const ctx = getAnalyticsContext();
+    const key = buildScreenViewDedupeKey({
+      userId: ctx.userId,
+      screen,
+      route,
+    });
+    if (!shouldEmitScreenView(key)) return;
+
     void trackEvent({
       eventName: 'screen_view',
       screen,

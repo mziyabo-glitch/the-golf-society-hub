@@ -1145,6 +1145,7 @@ export default function ManageEventScreen() {
         societyId,
         relatedEventId: eventId,
         format: "csv",
+        feature: "event_manage_attendees_csv",
       });
     } catch (e: unknown) {
       showAlert("Could not export CSV", e instanceof Error ? e.message : "Try again.");
@@ -1185,6 +1186,7 @@ export default function ManageEventScreen() {
         societyId,
         relatedEventId: event?.id,
         format: Platform.OS === "web" ? "png" : "pdf",
+        feature: "event_manage_payment_export",
       });
     } catch (e: unknown) {
       const label = Platform.OS === "web" ? "PNG" : "PDF";
@@ -1400,6 +1402,13 @@ export default function ManageEventScreen() {
     setPayBusy(`guest:${guest.id}`);
     try {
       await setEventGuestPaid(guest.id, !guest.paid);
+      trackEvent({
+        eventName: "payment_marked",
+        screen: "event-manage",
+        relatedEventId: eventId,
+        societyId,
+        metadata: { paid: !guest.paid, attendee_type: "guest" },
+      });
       setPayToast({
         visible: true,
         message: guest.paid

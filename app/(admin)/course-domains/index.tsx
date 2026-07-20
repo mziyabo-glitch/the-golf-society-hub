@@ -7,14 +7,20 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { View, StyleSheet, Pressable, Linking, ActivityIndicator } from "react-native";
+import { useRouter } from "expo-router";
 
 import { Screen } from "@/components/ui/Screen";
 import { AppText } from "@/components/ui/AppText";
 import { AppCard } from "@/components/ui/AppCard";
 import { PrimaryButton, SecondaryButton } from "@/components/ui/Button";
+import { LoadingState } from "@/components/ui/LoadingState";
+import { InlineNotice } from "@/components/ui/InlineNotice";
 import { supabase } from "@/lib/supabase";
+import { isPlatformAdmin } from "@/lib/db_supabase/adminRepo";
+import { useScreenView } from "@/lib/analytics/useScreenView";
 import { getColors, spacing } from "@/lib/ui/theme";
 import { showAlert } from "@/lib/ui/alert";
+import { goBack } from "@/lib/navigation";
 
 type CourseDomain = {
   id: string;
@@ -37,11 +43,19 @@ type CourseWithCandidates = {
 const PAGE_SIZE = 20;
 
 export default function CourseDomainsPage() {
+  const router = useRouter();
   const colors = getColors();
+  const [allowed, setAllowed] = useState<boolean | null>(null);
   const [loading, setLoading] = useState(true);
   const [courses, setCourses] = useState<CourseWithCandidates[]>([]);
   const [offset, setOffset] = useState(0);
   const [acting, setActing] = useState<string | null>(null);
+
+  useScreenView("admin-course-domains", "/(admin)/course-domains");
+
+  useEffect(() => {
+    void isPlatformAdmin().then(setAllowed);
+  }, []);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -89,8 +103,32 @@ export default function CourseDomainsPage() {
   }, [offset]);
 
   useEffect(() => {
+    if (allowed !== true) return;
     load();
-  }, [load]);
+  }, [load, allowed]);
+
+  if (allowed === null) {
+    return (
+      <Screen>
+        <LoadingState message="Checking access…" />
+      </Screen>
+    );
+  }
+
+  if (!allowed) {
+    return (
+      <Screen>
+        <SecondaryButton
+          onPress={() => goBack(router, "/(app)/(tabs)/more")}
+          size="sm"
+          style={{ alignSelf: "flex-start", marginBottom: spacing.md }}
+        >
+          Back
+        </SecondaryButton>
+        <InlineNotice variant="error" message="Platform administrator access is required." />
+      </Screen>
+    );
+  }
 
   const handleApprove = async (domain: CourseDomain, courseId: string) => {
     const key = `${domain.id}-approve`;
