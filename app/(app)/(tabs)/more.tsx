@@ -161,7 +161,7 @@ export default function MoreScreen() {
             title="Club domain review"
             subtitle="Approve club website candidates"
             colors={colors}
-            onPress={() => push("/(admin)/course-domains" as any)}
+            onPress={() => push("/(app)/admin/course-domains" as any)}
           />
         ),
       },
@@ -330,7 +330,7 @@ export default function MoreScreen() {
                 title="Product usage report"
                 subtitle="Screen views, actions, and errors (7/30/90 days)"
                 colors={colors}
-                onPress={() => push("/(admin)/usage-report" as any)}
+                onPress={() => push("/(app)/admin/usage-report" as any)}
               />
               <View style={[styles.divider, { backgroundColor: colors.borderLight }]} />
               <MenuRow

@@ -54,7 +54,7 @@ export default function AdminUsageReportPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  useScreenView("admin-usage-report", "/(admin)/usage-report");
+  useScreenView("admin-usage-report", "/(app)/admin/usage-report");
 
   useEffect(() => {
     void isPlatformAdmin().then(setAllowed);
@@ -139,7 +139,18 @@ export default function AdminUsageReportPage() {
         </View>
 
         {loading ? <LoadingState message="Loading analytics…" /> : null}
-        {error ? <InlineNotice variant="error" message={error} style={{ marginBottom: spacing.md }} /> : null}
+        {error ? (
+          <InlineNotice
+            variant="error"
+            message={error}
+            detail={
+              /platform admin only/i.test(error)
+                ? "Your account is signed in but is not listed as a platform administrator."
+                : undefined
+            }
+            style={{ marginBottom: spacing.md }}
+          />
+        ) : null}
 
         {summary && !loading ? (
           <>
