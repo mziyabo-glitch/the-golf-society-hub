@@ -24,6 +24,7 @@ import { OfflineNetworkBanner } from "@/components/network/OfflineNetworkBanner"
 import { PwaInstallNotice } from "@/components/pwa/PwaInstallNotice";
 import { isWebRuntime } from "@/lib/pwa/runtime";
 import { registerAppServiceWorker } from "@/lib/pwa/serviceWorkerRegistration";
+import { isAdminRoute, isToolRoute } from "@/lib/rootRouteExemptions";
 
 const APP_TABS = "/(app)/(tabs)";
 const JOIN_FLOW_SEGMENTS = new Set(["onboarding", "join", "join-society", "invite"]);
@@ -41,17 +42,6 @@ function isJoinFlowRoute(pathname?: string, seg0?: string): boolean {
     pathname === "/join-rivalry" ||
     pathname.startsWith("/join-rivalry") ||
     pathname.startsWith("/invite/")
-  );
-}
-
-/** Routes that must never be redirected away from by any guard. */
-function isToolRoute(pathname?: string, seg0?: string): boolean {
-  if (seg0 === "(share)") return true;
-  if (typeof pathname !== "string") return false;
-  return (
-    pathname.startsWith("/(share)") ||
-    pathname.startsWith("/tee-sheet") ||
-    pathname.startsWith("/(app)/tee-sheet")
   );
 }
 
@@ -142,7 +132,12 @@ function RootNavigator() {
     }
 
     // Exempt routes that handle their own flow
-    if (inSinbookInvite || inPublicRoute || isToolRoute(pathname, segments[0])) {
+    if (
+      inSinbookInvite ||
+      inPublicRoute ||
+      isToolRoute(pathname, segments[0]) ||
+      isAdminRoute(pathname, segments[0])
+    ) {
       return;
     }
     if (pathname === "/join-rivalry" || (typeof pathname === "string" && pathname.startsWith("/join-rivalry"))) {
@@ -225,7 +220,15 @@ function RootNavigator() {
       const seg0 = segments[0];
       const inJoinFlow = isJoinFlowRoute(pathname, seg0);
       const onSignIn = pathname === "/sign-in" || (typeof pathname === "string" && pathname.startsWith("/sign-in"));
-      if (inJoinFlow || isToolRoute(pathname, seg0) || isEventRsvpInvitePath(pathname) || onSignIn) return;
+      if (
+        inJoinFlow ||
+        isToolRoute(pathname, seg0) ||
+        isAdminRoute(pathname, seg0) ||
+        isEventRsvpInvitePath(pathname) ||
+        onSignIn
+      ) {
+        return;
+      }
       const inApp = seg0 === "(app)" || (typeof pathname === "string" && pathname.startsWith("/(app)"));
       if (inApp) return;
 

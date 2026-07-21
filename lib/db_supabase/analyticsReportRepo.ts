@@ -35,6 +35,7 @@ const ERROR_EVENTS = new Set(["error_shown"]);
 const ACTION_EVENTS = new Set([
   "event_rsvp_submitted",
   "payment_marked",
+  "tee_sheet_opened",
   "tee_sheet_saved",
   "tee_sheet_published",
   "oom_results_saved",
@@ -49,8 +50,64 @@ export function classifyAnalyticsEventName(eventName: string): "screen_view" | "
   return "other";
 }
 
+function asNumber(value: unknown): number {
+  const n = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function asNullableString(value: unknown): string | null {
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+/** Normalize RPC jsonb into a stable UI shape (empty aggregates never crash the screen). */
+export function normalizeAnalyticsSummary(raw: unknown, fallbackDays: number): AnalyticsSummary {
+  const data = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
+  const totals = data.totals && typeof data.totals === "object" ? (data.totals as Record<string, unknown>) : {};
+  const exports = data.exports && typeof data.exports === "object" ? (data.exports as Record<string, unknown>) : {};
+  const teeSheet =
+    data.tee_sheet && typeof data.tee_sheet === "object" ? (data.tee_sheet as Record<string, unknown>) : {};
+  const rsvp =
+    data.rsvp_payment && typeof data.rsvp_payment === "object"
+      ? (data.rsvp_payment as Record<string, unknown>)
+      : {};
+
+  return {
+    since: asNullableString(data.since) ?? new Date().toISOString(),
+    days: asNumber(data.days) || fallbackDays,
+    totals: {
+      events: asNumber(totals.events),
+      unique_users: asNumber(totals.unique_users),
+    },
+    by_event_name: Array.isArray(data.by_event_name)
+      ? (data.by_event_name as AnalyticsEventNameRow[])
+      : [],
+    errors_by_screen: Array.isArray(data.errors_by_screen)
+      ? (data.errors_by_screen as AnalyticsErrorScreenRow[])
+      : [],
+    exports: {
+      count: asNumber(exports.count),
+      unique_users: asNumber(exports.unique_users),
+      last_at: asNullableString(exports.last_at),
+    },
+    tee_sheet: {
+      opened: asNumber(teeSheet.opened),
+      saved: asNumber(teeSheet.saved),
+      published: asNumber(teeSheet.published),
+      last_saved_at: asNullableString(teeSheet.last_saved_at),
+      last_published_at: asNullableString(teeSheet.last_published_at),
+    },
+    rsvp_payment: {
+      rsvp_submitted: asNumber(rsvp.rsvp_submitted),
+      payment_marked: asNumber(rsvp.payment_marked),
+    },
+  };
+}
+
 export async function fetchAdminProductEventsSummary(days: number): Promise<AnalyticsSummary> {
   const { data, error } = await supabase.rpc("admin_product_events_summary", { p_days: days });
-  if (error) throw error;
-  return data as AnalyticsSummary;
+  if (error) {
+    const message = error.message || "Could not load usage report.";
+    throw new Error(message);
+  }
+  return normalizeAnalyticsSummary(data, days);
 }

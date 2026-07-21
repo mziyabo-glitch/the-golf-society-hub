@@ -139,7 +139,18 @@ export default function AdminUsageReportPage() {
         </View>
 
         {loading ? <LoadingState message="Loading analytics…" /> : null}
-        {error ? <InlineNotice variant="error" message={error} style={{ marginBottom: spacing.md }} /> : null}
+        {error ? (
+          <InlineNotice
+            variant="error"
+            message={error}
+            detail={
+              /platform admin only/i.test(error)
+                ? "Your account is signed in but is not listed as a platform administrator."
+                : undefined
+            }
+            style={{ marginBottom: spacing.md }}
+          />
+        ) : null}
 
         {summary && !loading ? (
           <>
