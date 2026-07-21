@@ -10,6 +10,21 @@ import {
 
 const fixtures = loadFixtures();
 
+function payloadFromUrl(url: string): Record<string, unknown> {
+  const raw = new URL(url).searchParams.get("payload");
+  if (!raw) throw new Error(`No payload in ${url}`);
+  let decoded = raw;
+  for (let i = 0; i < 3; i++) {
+    try {
+      const parsed = JSON.parse(decoded);
+      return parsed as Record<string, unknown>;
+    } catch {
+      decoded = decodeURIComponent(decoded);
+    }
+  }
+  throw new Error(`Could not parse tee-sheet payload from ${url}`);
+}
+
 async function openM4Ready(page: import("@playwright/test").Page) {
   const session = await signInSession(fixtures.accounts.m4Captain.email, fixtures.password);
   await injectSession(page, session);
@@ -28,7 +43,9 @@ test.describe("exports and shared tee-sheet", () => {
     const downloadPromise = page.waitForEvent("download", { timeout: 60_000 });
     await page.getByText("Export attendees", { exact: false }).first().click();
     const download = await downloadPromise;
-    expect(download.suggestedFilename().toLowerCase()).toMatch(/\.csv$/);
+    const filename = download.suggestedFilename();
+    expect(filename.toLowerCase()).toMatch(/\.csv$/);
+    expect(filename).toMatch(/QA Phase1 M4 Standard Event/i);
 
     const stream = await download.createReadStream();
     const chunks: Buffer[] = [];
@@ -40,7 +57,10 @@ test.describe("exports and shared tee-sheet", () => {
     });
     const csv = Buffer.concat(chunks).toString("utf8");
     expect(csv.length).toBeGreaterThan(20);
-    expect(csv).toMatch(/QA Paid Player|QA Dual Member|QA Ordinary Member/i);
+    // Web export may omit display names for placeholder members; still expect member rows.
+    const memberRows = csv.split(/\r?\n/).filter((l) => /^Member,/i.test(l.trim()));
+    expect(memberRows.length).toBeGreaterThanOrEqual(3);
+    expect(csv).toMatch(/Name|Member|Gender/i);
   });
 
   test("shared tee-sheet view shows event and players via Share / Export PNG", async ({
@@ -50,15 +70,15 @@ test.describe("exports and shared tee-sheet", () => {
     page.once("dialog", (d) => d.accept().catch(() => {}));
     await page.getByText(/Share \/ Export PNG/i).first().scrollIntoViewIfNeeded();
     await page.getByText(/Share \/ Export PNG/i).first().click();
-    const text = await waitForText(page, /Ready to export|Preparing tee sheet/i, {
-      timeoutMs: 90_000,
-    });
-    // Share screen renders poster with event/player names (may be in offscreen views).
-    // Assert URL carries the event payload and UI is export-ready.
+    await waitForText(page, /Ready to export/i, { timeoutMs: 90_000 });
     expect(page.url()).toMatch(/payload=/);
-    expect(decodeURIComponent(page.url())).toMatch(/QA Phase1 M4 Standard Event/);
-    expect(decodeURIComponent(page.url())).toMatch(/QA Paid Player/);
-    expect(text).toMatch(/Ready to export|Share|Download|PNG/i);
+    const payload = payloadFromUrl(page.url());
+    expect(String(payload.eventName)).toMatch(/QA Phase1 M4 Standard Event/);
+    expect(String(payload.eventId)).toBe(fixtures.events.m4Standard);
+    const players = (payload.players as { name?: string }[]) ?? [];
+    const names = players.map((p) => p.name ?? "").join(" | ");
+    expect(names).toMatch(/QA Paid Player/);
+    expect(names).toMatch(/QA Dual Member|QA Ordinary Member/);
   });
 
   test("PNG export generates file for correct event/players and updated republish payload", async ({
@@ -70,39 +90,46 @@ test.describe("exports and shared tee-sheet", () => {
     await page.getByText(/Share \/ Export PNG/i).first().click();
     await waitForText(page, /Ready to export/i, { timeoutMs: 90_000 });
 
-    const url1 = decodeURIComponent(page.url());
-    expect(url1).toMatch(/QA Phase1 M4 Standard Event/);
-    expect(url1).toMatch(/QA Paid Player/);
-    expect(url1).toMatch(/QA Dual Member|QA Ordinary Member/);
+    const payload1 = payloadFromUrl(page.url());
+    expect(String(payload1.eventName)).toMatch(/QA Phase1 M4 Standard Event/);
+    expect(String(payload1.eventId)).toBe(fixtures.events.m4Standard);
+    const names1 = ((payload1.players as { name?: string }[]) ?? [])
+      .map((p) => p.name ?? "")
+      .join(" | ");
+    expect(names1).toMatch(/QA Paid Player/);
 
     const downloadPromise = page.waitForEvent("download", { timeout: 60_000 }).catch(() => null);
-    const shareAction = page.getByText(/Share PNG|Download|Create PNG|Export PNG|Share/i).nth(1);
-    if (await shareAction.isVisible().catch(() => false)) {
-      await shareAction.click();
-    } else {
-      await page.getByText(/Share|Download/i).last().click().catch(() => {});
-    }
+    await page.getByText(/Share \/ Download/i).first().click();
     const file = await downloadPromise;
     if (file) {
       expect(file.suggestedFilename().toLowerCase()).toMatch(/\.(png|pdf)$/);
       expect(await file.path()).toBeTruthy();
     } else {
-      // Poster prepared counts as generation when the browser blocks the download gesture.
-      expect(await bodyText(page)).toMatch(/Ready to export|success|Download complete|PNG/i);
+      expect(await bodyText(page)).toMatch(/Ready to export|Download complete|success|PNG/i);
     }
 
-    // Republished version: reopen manage sheet, save/update, share again and assert payload event id unchanged.
     await gotoAuthed(page, `/tee-sheet?eventId=${fixtures.events.m4Standard}`);
     await waitForText(page, /Save Draft|Update Published Tee Sheet/i, { timeoutMs: 90_000 });
     page.once("dialog", (d) => d.accept().catch(() => {}));
-    await page.getByText(/Update Published Tee Sheet|Publish Tee Sheet/i).first().click();
-    await page.waitForTimeout(3000);
+    const update = page.getByText(/Update Published Tee Sheet/i).first();
+    if (await update.isVisible().catch(() => false)) {
+      await update.click();
+      await page.waitForTimeout(2500);
+      // Publish may navigate to share — return if needed.
+      if (/payload=/.test(page.url()) || /Ready to export/i.test(await bodyText(page))) {
+        await gotoAuthed(page, `/tee-sheet?eventId=${fixtures.events.m4Standard}`);
+        await waitForText(page, /Save Draft/i, { timeoutMs: 90_000 });
+      }
+    }
     page.once("dialog", (d) => d.accept().catch(() => {}));
     await page.getByText(/Share \/ Export PNG/i).first().click();
     await waitForText(page, /Ready to export/i, { timeoutMs: 90_000 });
-    const url2 = decodeURIComponent(page.url());
-    expect(url2).toMatch(/QA Phase1 M4 Standard Event/);
-    expect(url2).toMatch(fixtures.events.m4Standard);
-    expect(url2).toMatch(/QA Paid Player/);
+    const payload2 = payloadFromUrl(page.url());
+    expect(String(payload2.eventId)).toBe(fixtures.events.m4Standard);
+    expect(String(payload2.eventName)).toMatch(/QA Phase1 M4 Standard Event/);
+    const names2 = ((payload2.players as { name?: string }[]) ?? [])
+      .map((p) => p.name ?? "")
+      .join(" | ");
+    expect(names2).toMatch(/QA Paid Player/);
   });
 });

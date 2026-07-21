@@ -102,8 +102,11 @@ test.describe("player pools", () => {
     await gotoAuthed(page, `/tee-sheet?eventId=${fixtures.events.m4Standard}`);
     await waitForText(page, /Save Draft/i, { timeoutMs: 90_000 });
     await page.getByText(/Edit Groups/i).first().click();
+    await page.waitForTimeout(1500);
     page.once("dialog", (d) => d.accept().catch(() => {}));
-    await page.getByText(/^Regenerate$/i).first().click();
+    const regen = page.getByText(/Regenerate/i).first();
+    await regen.scrollIntoViewIfNeeded().catch(() => {});
+    await regen.click({ timeout: 30_000 });
     await page.waitForTimeout(4000);
     const text = await waitForText(page, /QA Late Paid Player/i, { timeoutMs: 60_000 });
     expect(text).toMatch(/QA Late Paid Player/);
