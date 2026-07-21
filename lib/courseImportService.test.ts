@@ -2,6 +2,8 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 import type { GolfCourseApiCourse } from "@/types/course";
 import type { PersistedCourseImport } from "@/types/course";
 
+vi.stubGlobal("__DEV__", false);
+
 const { persistNormalizedCourseImport } = vi.hoisted(() => ({
   persistNormalizedCourseImport: vi.fn(),
 }));

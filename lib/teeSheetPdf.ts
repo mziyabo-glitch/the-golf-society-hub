@@ -51,6 +51,7 @@ export type TeeSheetData = {
   manCo: ManCoDetails;
 
   // Event details
+  eventId?: string | null;
   eventName: string;
   eventDate: string | null;
   courseName: string | null;

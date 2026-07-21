@@ -60,6 +60,7 @@ import { getEventGuests } from "@/lib/db_supabase/eventGuestRepo";
 import { invalidateCache, invalidateCachePrefix } from "@/lib/cache/clientCache";
 import { getPermissionsForMember } from "@/lib/rbac";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
+import { trackEvent } from "@/lib/analytics/trackEvent";
 import { buildSocietyIdToNameMap } from "@/lib/jointEventSocietyLabel";
 import { dedupeJointMembers, resolveJointCandidatePlayerIdsForActiveSociety } from "@/lib/jointPersonDedupe";
 import {
@@ -798,6 +799,14 @@ export default function EventPointsScreen() {
       console.error("[points] Save true failure — upsert or cache invalidation threw");
       return;
     }
+
+    trackEvent({
+      eventName: "oom_results_saved",
+      screen: "event-points",
+      relatedEventId: eventId,
+      societyId: societyId ?? undefined,
+      metadata: { result_count: dbOutcome.payloadCount },
+    });
 
     if (__DEV__) {
       console.log("[points] Save DB success", {

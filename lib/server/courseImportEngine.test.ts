@@ -274,7 +274,7 @@ describe("course import run mode", () => {
   });
 
   it("exposes seeding preset caps for ops ramp tuning", () => {
-    expect(COURSE_IMPORT_SEEDING_PRESET_CAPS.maxNewCourseImportAttempts).toBe(75);
+    expect(COURSE_IMPORT_SEEDING_PRESET_CAPS.maxNewCourseImportAttempts).toBe(100);
     expect(COURSE_IMPORT_SEEDING_PRESET_CAPS.maxStaleCatalogSweepCourses).toBe(0);
   });
 });

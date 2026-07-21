@@ -57,6 +57,8 @@ import {
   sortPastMostRecentFirst,
   sortUpcomingNearestFirst,
 } from "@/lib/eventListGrouping";
+import { CalendarSubscribeCard } from "@/components/calendar/CalendarSubscribeCard";
+import { useScreenView } from "@/lib/analytics/useScreenView";
 
 const UPCOMING_SECTION_TITLE = "Upcoming Events";
 const PAST_SECTION_TITLE = "Past Events";
@@ -105,6 +107,7 @@ type FormErrors = {
 };
 
 export default function EventsScreen() {
+  useScreenView("events", "/(app)/(tabs)/events");
   useSlowCommitLog("EventsScreen", 96);
   const router = useRouter();
   const params = useLocalSearchParams<{ create?: string; classification?: string }>();
@@ -1443,6 +1446,7 @@ export default function EventsScreen() {
             </PrimaryButton>
           )}
         </View>
+        <CalendarSubscribeCard compact />
         {refreshing ? (
           <AppText variant="small" color="tertiary" style={{ marginBottom: spacing.xs }}>
             Refreshing...

@@ -16,6 +16,7 @@ import { formatError, type FormattedError } from "@/lib/ui/formatError";
 import type { TeeSheetData } from "@/lib/teeSheetPdf";
 import { useBootstrap } from "@/lib/useBootstrap";
 import { showAlert } from "@/lib/ui/alert";
+import { trackExportCompleted } from "@/lib/analytics/trackEvent";
 import { buildTeeSheetPages } from "@/lib/teeSheet/buildTeeSheetPages";
 import { TeeSheetPoster, type PosterGroup } from "@/lib/teeSheet/TeeSheetPoster";
 import { resolveTeeSheetPosterLogos, type PosterLogo } from "@/lib/teeSheet/resolveTeeSheetPosterLogos";
@@ -123,6 +124,14 @@ export default function TeeSheetShareScreen() {
             : "Your tee sheet image was saved.",
         );
       }
+
+      trackExportCompleted("tee_sheet", {
+        screen: "tee-sheet-share",
+        societyId: payload.societyId ?? activeSocietyId ?? undefined,
+        relatedEventId: payload.eventId ?? undefined,
+        format: "png",
+        feature: "tee_sheet_share_export",
+      });
 
       setStatus("success");
       setTimeout(() => goBack(router, "/(app)/(tabs)"), 600);

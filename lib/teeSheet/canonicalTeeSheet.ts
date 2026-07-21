@@ -696,6 +696,7 @@ export function buildTeeSheetDataFromCanonical(
     logoUrl: opts.logoUrl,
     jointSocieties: opts.jointSocieties,
     manCo: opts.manCo,
+    eventId: canonical.eventId,
     eventName: ev.name || "Event",
     eventDate: ev.date || null,
     courseName: ev.courseName || null,

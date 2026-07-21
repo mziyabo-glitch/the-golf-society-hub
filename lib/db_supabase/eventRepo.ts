@@ -117,6 +117,8 @@ export type EventDoc = {
   scoringPublishedAt?: string | null;
   scoring_publish_version?: number;
   scoringPublishVersion?: number;
+  live_gross_scoring_enabled?: boolean;
+  liveGrossScoringEnabled?: boolean;
   [key: string]: unknown;
 };
 
@@ -177,6 +179,8 @@ function mapEvent(row: any): EventDoc {
     scoringPublishedAt: row.scoring_published_at ?? null,
     scoring_publish_version: row.scoring_publish_version ?? 0,
     scoringPublishVersion: row.scoring_publish_version ?? 0,
+    live_gross_scoring_enabled: row.live_gross_scoring_enabled ?? false,
+    liveGrossScoringEnabled: row.live_gross_scoring_enabled ?? false,
   };
 }
 

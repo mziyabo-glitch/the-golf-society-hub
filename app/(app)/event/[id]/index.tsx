@@ -33,6 +33,7 @@ import {
   isSecretary,
 } from "@/lib/rbac";
 import { isActiveSocietyParticipantForEvent, isJointEventFromMeta } from "@/lib/jointEventAccess";
+import { isLiveGrossScoringEnabledForEvent } from "@/lib/featureVisibility";
 import { getJointEventDetail, mapJointEventToEventDoc } from "@/lib/db_supabase/jointEventRepo";
 import { getCache, setCache } from "@/lib/cache/clientCache";
 import {
@@ -89,11 +90,6 @@ export default function EventOverviewScreen() {
   } = useBootstrap();
 
   const permissions = getPermissionsForMember(currentMember);
-  const canEnterGrossScores = useMemo(
-    () => permissions.canManageHandicaps || isSecretary(currentMember),
-    [currentMember, permissions.canManageHandicaps],
-  );
-  const canAccessScorecardUi = canEnterGrossScores;
   const canManagePayments = canManageEventPaymentsForSociety(memberships, societyId);
   const canManageRoster = canManageEventRosterForSociety(memberships, societyId);
   const canExportEventAttendees = canExportEventAttendeesForSociety(memberships, societyId);
@@ -105,6 +101,13 @@ export default function EventOverviewScreen() {
     canManageRoster;
 
   const [event, setEvent] = useState<EventDoc | null>(null);
+  const canEnterGrossScores = useMemo(
+    () =>
+      (permissions.canManageHandicaps || isSecretary(currentMember)) &&
+      isLiveGrossScoringEnabledForEvent(event),
+    [currentMember, permissions.canManageHandicaps, event],
+  );
+  const canAccessScorecardUi = canEnterGrossScores;
   const [participantSocietyIds, setParticipantSocietyIds] = useState<string[]>([]);
   const [registrations, setRegistrations] = useState<EventRegistration[]>([]);
   const [allEventRegistrations, setAllEventRegistrations] = useState<EventRegistration[]>([]);
