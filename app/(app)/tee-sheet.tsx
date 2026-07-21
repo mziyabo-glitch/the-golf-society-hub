@@ -791,9 +791,10 @@ export default function TeeSheetScreen() {
         manCo: manCoData,
       }, { ttlMs: 1000 * 60 * 5 });
 
-      // Prefer deep-link event, then keep selection, then nearest upcoming.
+      // Prefer deep-link event (even when not in this society's list — access gate
+      // shows Access Restricted). Then keep selection, then nearest upcoming.
       setSelectedEventId((prev) => {
-        if (routeEventId && mergedForList.some((e) => e.id === routeEventId)) return routeEventId;
+        if (routeEventId) return routeEventId;
         if (prev && mergedForList.some((e) => e.id === prev)) return prev;
         return upcomingSorted[0]?.id ?? mergedForList[0]?.id ?? null;
       });

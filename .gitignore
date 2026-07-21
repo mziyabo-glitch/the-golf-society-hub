@@ -5,8 +5,11 @@ node_modules/
 /.pnp
 .pnp.js
 
-# testing
-/coverage
+# Playwright
+/test-results/
+/playwright-report/
+/blob-report/
+/playwright/.cache/
 
 # expo
 .expo/
