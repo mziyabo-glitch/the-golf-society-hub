@@ -11,6 +11,10 @@
     "dev:web": "concurrently \"expo start --web\" \"npm run dev:api\"",
     "lint": "expo lint -- --cache --cache-location .cache/eslint/.eslintcache",
     "test": "vitest run",
+    "test:e2e:phase1": "playwright test --config playwright.config.ts",
+    "qa:phase1:seed": "node scripts/qa/apply-fixtures.mjs seed",
+    "qa:phase1:cleanup": "node scripts/qa/apply-fixtures.mjs cleanup",
+    "qa:phase1:fetch-fixtures": "node scripts/qa/fetch-fixtures.mjs",
     "course-import:e2e": "vitest run --config vitest.e2e.config.ts",
     "test:rsvp": "node scripts/rsvp-qa-smoke.cjs",
     "verify:invite-rsvp": "node scripts/verify-public-invite-rsvp-e2e.mjs",
@@ -95,6 +99,7 @@
     "xlsx": "^0.18.5"
   },
   "devDependencies": {
+    "@playwright/test": "^1.61.1",
     "@types/react": "~19.1.0",
     "concurrently": "^9.2.1",
     "eslint": "^9.25.0",
