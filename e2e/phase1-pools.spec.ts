@@ -12,37 +12,57 @@ import {
 
 const fixtures = loadFixtures();
 
+async function openReady(
+  page: import("@playwright/test").Page,
+  email: string,
+  eventId: string,
+  title: RegExp,
+) {
+  const session = await signInSession(email, fixtures.password);
+  await injectSession(page, session);
+  await gotoAuthed(page, `/tee-sheet?eventId=${eventId}`);
+  await waitForText(page, title, { timeoutMs: 90_000 });
+  await waitForText(page, /Save Draft/i, { timeoutMs: 90_000 });
+  return session;
+}
+
 test.describe("player pools", () => {
   test("standard-event paid-player pool includes paid and excludes unpaid", async ({ page }) => {
-    const session = await signInSession(fixtures.accounts.m4Captain.email, fixtures.password);
-    await injectSession(page, session);
-    await gotoAuthed(page, `/tee-sheet?eventId=${fixtures.events.m4Standard}`);
-    const text = await waitForText(page, /QA Paid Player|QA Dual Member/i);
+    await openReady(
+      page,
+      fixtures.accounts.m4Captain.email,
+      fixtures.events.m4Standard,
+      /Manage Tee Sheet — QA Phase1 M4 Standard Event/i,
+    );
+    const text = await bodyText(page);
     expect(text).toMatch(/QA Paid Player/);
     expect(text).toMatch(/QA Dual Member/);
     expect(text).toMatch(/QA Ordinary Member/);
-    // Unpaid / late-unpaid must not appear in eligible pool until marked paid.
     expect(text).not.toMatch(/QA Unpaid Player/);
     expect(text).not.toMatch(/QA Late Paid Player/);
   });
 
   test("joint M4/ZGS player pool includes both societies", async ({ page }) => {
-    const session = await signInSession(fixtures.accounts.m4Captain.email, fixtures.password);
-    await injectSession(page, session);
-    await gotoAuthed(page, `/tee-sheet?eventId=${fixtures.events.joint}`);
-    const text = await waitForText(page, /QA Phase1 Joint M4\/ZGS Event/i);
+    await openReady(
+      page,
+      fixtures.accounts.m4Captain.email,
+      fixtures.events.joint,
+      /Manage Tee Sheet — QA Phase1 Joint M4\/ZGS Event/i,
+    );
+    const text = await bodyText(page);
     expect(text).toMatch(/QA Paid Player/);
     expect(text).toMatch(/QA ZGS Paid Player/);
     expect(text).toMatch(/QA Dual Member/);
   });
 
   test("dual-member is deduplicated on joint sheet", async ({ page }) => {
-    const session = await signInSession(fixtures.accounts.m4Captain.email, fixtures.password);
-    await injectSession(page, session);
-    await gotoAuthed(page, `/tee-sheet?eventId=${fixtures.events.joint}`);
-    const text = await waitForText(page, /QA Dual Member/);
-    // Name may appear in pool + group sections; ensure it is not listed twice as separate pool rows
-    // by checking "available / eligible" density stays low (at most a few UI mentions).
+    await openReady(
+      page,
+      fixtures.accounts.m4Captain.email,
+      fixtures.events.joint,
+      /Manage Tee Sheet — QA Phase1 Joint M4\/ZGS Event/i,
+    );
+    const text = await bodyText(page);
     const mentions = countOccurrences(text, "QA Dual Member");
     expect(mentions).toBeGreaterThanOrEqual(1);
     expect(mentions).toBeLessThanOrEqual(4);
@@ -68,20 +88,26 @@ test.describe("player pools", () => {
     };
 
     await markPaid(false);
-
     await injectSession(page, session);
     await gotoAuthed(page, `/tee-sheet?eventId=${fixtures.events.m4Standard}`);
-    let text = await waitForText(page, /QA Paid Player/);
-    expect(text).not.toMatch(/QA Late Paid Player/);
+    await waitForText(page, /Manage Tee Sheet — QA Phase1 M4 Standard Event/i, {
+      timeoutMs: 90_000,
+    });
+    await waitForText(page, /Save Draft/i, { timeoutMs: 90_000 });
+    expect(await bodyText(page)).not.toMatch(/QA Late Paid Player/);
 
     await markPaid(true);
 
-    // Reload tee sheet to refresh eligibility pool.
+    // Reload editor, then regenerate from eligible pool so late-paid joins the sheet.
     await gotoAuthed(page, `/tee-sheet?eventId=${fixtures.events.m4Standard}`);
-    text = await waitForText(page, /QA Late Paid Player/);
+    await waitForText(page, /Save Draft/i, { timeoutMs: 90_000 });
+    await page.getByText(/Edit Groups/i).first().click();
+    page.once("dialog", (d) => d.accept().catch(() => {}));
+    await page.getByText(/^Regenerate$/i).first().click();
+    await page.waitForTimeout(4000);
+    const text = await waitForText(page, /QA Late Paid Player/i, { timeoutMs: 60_000 });
     expect(text).toMatch(/QA Late Paid Player/);
 
-    // Reset for idempotent re-runs.
     await markPaid(false);
   });
 });

@@ -27,7 +27,7 @@ export type Phase1Fixtures = {
 };
 
 export function loadFixtures(): Phase1Fixtures {
-  const file = path.join(__dirname, "fixtures", "phase1.json");
+  const file = path.join(__dirname, "..", "fixtures", "phase1.json");
   if (!fs.existsSync(file)) {
     throw new Error(
       `Missing ${file}. Run scripts/qa/fetch-fixtures.mjs after seeding (scripts/qa/seed-phase1-fixtures.sql).`,
