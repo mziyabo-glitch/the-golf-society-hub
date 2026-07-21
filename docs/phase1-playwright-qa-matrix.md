@@ -1,30 +1,34 @@
-# Phase 1 preview QA — automation matrix
+## Latest automated run
 
-Target: `PLAYWRIGHT_BASE_URL` (default production web: `https://the-golf-society-hub.vercel.app`) with isolated `QA Phase1 *` fixtures only.
+- **Date:** 2026-07-21
+- **Target:** `https://the-golf-society-hub.vercel.app`
+- **Result:** **32 passed / 0 failed** (Chromium desktop + Pixel 7 mobile)
+- **Artifacts:** `/opt/cursor/artifacts/phase1-playwright-run.log`, `phase1-playwright-results.json`, `phase1-playwright-report/`
+- **PR:** https://github.com/mziyabo-glitch/the-golf-society-hub/pull/177 (not merging PR #175)
 
 ## Tests Cursor completed automatically (Playwright)
 
 | Scenario | Spec | Notes |
 |----------|------|-------|
-| Platform-admin usage report access | `e2e/phase1-access.spec.ts` | Chromium + mobile |
-| Ordinary-member usage report rejection | `e2e/phase1-access.spec.ts` | |
-| M4 ManCo tee-sheet access | `e2e/phase1-access.spec.ts` | QA M4 society event |
-| ZGS ManCo tee-sheet access | `e2e/phase1-access.spec.ts` | QA ZGS society event |
-| Cross-society event access rejection | `e2e/phase1-access.spec.ts` | Asserts no other-society leak; Access Restricted after deep-link fix deploys |
-| Standard-event paid-player pool | `e2e/phase1-pools.spec.ts` | Paid in; unpaid/late excluded |
-| Joint M4/ZGS player pool | `e2e/phase1-pools.spec.ts` | |
-| Dual-member deduplication | `e2e/phase1-pools.spec.ts` | Bounded name mentions |
-| Late-paid player refresh | `e2e/phase1-pools.spec.ts` | Via `mark_event_paid` RPC + reload |
-| Save Draft | `e2e/phase1-lifecycle.spec.ts` | |
-| Leave and reopen | `e2e/phase1-lifecycle.spec.ts` | |
-| Publish / Update Published Tee Sheet | `e2e/phase1-lifecycle.spec.ts` | |
-| Nearest-to-pin persistence | `e2e/phase1-lifecycle.spec.ts` | DB + UI labels |
-| Longest-drive persistence | `e2e/phase1-lifecycle.spec.ts` | |
-| Attendee CSV export | `e2e/phase1-exports.spec.ts` | Download + row contents |
-| Shared tee-sheet view | `e2e/phase1-exports.spec.ts` | Payload route |
-| PNG/PDF generation checks | `e2e/phase1-exports.spec.ts` | File download when available; else poster DOM; republish version string |
+| Platform-admin usage report access | `e2e/phase1-access.spec.ts` | PASS (Chromium + mobile) |
+| Ordinary-member usage report rejection | `e2e/phase1-access.spec.ts` | PASS |
+| M4 ManCo tee-sheet access | `e2e/phase1-access.spec.ts` | PASS — QA M4 society event |
+| ZGS ManCo tee-sheet access | `e2e/phase1-access.spec.ts` | PASS — QA ZGS society event |
+| Cross-society event access rejection | `e2e/phase1-access.spec.ts` | PASS — no other-society data leak |
+| Standard-event paid-player pool | `e2e/phase1-pools.spec.ts` | PASS |
+| Joint M4/ZGS player pool | `e2e/phase1-pools.spec.ts` | PASS |
+| Dual-member deduplication | `e2e/phase1-pools.spec.ts` | PASS |
+| Late-paid player refresh | `e2e/phase1-pools.spec.ts` | PASS — `mark_event_paid` + Regenerate |
+| Save Draft | `e2e/phase1-lifecycle.spec.ts` | PASS |
+| Leave and reopen | `e2e/phase1-lifecycle.spec.ts` | PASS |
+| Publish / Update Published Tee Sheet | `e2e/phase1-lifecycle.spec.ts` | PASS |
+| Nearest-to-pin persistence | `e2e/phase1-lifecycle.spec.ts` | PASS |
+| Longest-drive persistence | `e2e/phase1-lifecycle.spec.ts` | PASS |
+| Attendee CSV export | `e2e/phase1-exports.spec.ts` | PASS — file + event name + member rows |
+| Shared tee-sheet view | `e2e/phase1-exports.spec.ts` | PASS — share payload event/players |
+| PNG generation / republish payload | `e2e/phase1-exports.spec.ts` | PASS — Share/Download + republished payload |
 
-Run artifacts: `test-results/phase1-playwright-results.json`, `playwright-report/`, failure screenshots/traces under `test-results/artifacts/`.
+Run: `PLAYWRIGHT_BASE_URL=… npm run test:e2e:phase1`
 
 ## Tests requiring an Android device
 
@@ -39,7 +43,7 @@ Run artifacts: `test-results/phase1-playwright-results.json`, `playwright-report
 | Scenario | Why not automated here |
 |----------|------------------------|
 | Native iOS tee-sheet editor layout / Safe Area | Needs iOS Simulator or device |
-| iOS share sheet / Files save for PNG/PDF | System UI |
+| iOS share sheet / Files save for PNG/PDF | System UI; share screen notes iPhone Safari requires a manual tap |
 | Safari PWA install / standalone chrome | Device-only |
 
 ## Tests requiring human visual judgement
