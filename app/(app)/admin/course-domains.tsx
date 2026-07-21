@@ -51,7 +51,7 @@ export default function CourseDomainsPage() {
   const [offset, setOffset] = useState(0);
   const [acting, setActing] = useState<string | null>(null);
 
-  useScreenView("admin-course-domains", "/(admin)/course-domains");
+  useScreenView("admin-course-domains", "/(app)/admin/course-domains");
 
   useEffect(() => {
     void isPlatformAdmin().then(setAllowed);

@@ -54,7 +54,7 @@ export default function AdminUsageReportPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  useScreenView("admin-usage-report", "/(admin)/usage-report");
+  useScreenView("admin-usage-report", "/(app)/admin/usage-report");
 
   useEffect(() => {
     void isPlatformAdmin().then(setAllowed);

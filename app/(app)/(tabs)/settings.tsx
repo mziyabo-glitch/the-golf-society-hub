@@ -973,7 +973,7 @@ export default function SettingsScreen() {
             <AppCard padding="sm">
               <Pressable
                 style={({ pressed }) => [styles.linkRow, { opacity: pressed ? 0.7 : 1 }]}
-                onPress={() => router.push("/(admin)/course-domains" as any)}
+                onPress={() => router.push("/(app)/admin/course-domains" as any)}
               >
                 <View style={[styles.linkIcon, { backgroundColor: colors.info + "20" }]}>
                   <Feather name="globe" size={16} color={colors.info} />
