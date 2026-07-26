@@ -108,6 +108,58 @@ export function isProductEventName(value: string): value is ProductEventName {
     value === "oom_results_saved" ||
     value === "export_completed" ||
     value === "feature_tapped" ||
-    value === "error_shown"
+    value === "error_shown" ||
+    value === "deprecated_route_opened" ||
+    value === "legacy_feature_used" ||
+    value === "redirect_triggered"
   );
+}
+
+/** Track opening a deprecated route and the redirect that follows (no PII). */
+export function trackDeprecatedRedirect(opts: {
+  feature: string;
+  oldRoute: string;
+  destinationRoute: string;
+  societyId?: string | null;
+  screen?: string;
+}): void {
+  const metadata = {
+    feature: opts.feature,
+    old_route: opts.oldRoute,
+    destination_route: opts.destinationRoute,
+  };
+  trackEvent({
+    eventName: "deprecated_route_opened",
+    feature: opts.feature,
+    screen: opts.screen ?? opts.oldRoute,
+    societyId: opts.societyId,
+    metadata,
+  });
+  trackEvent({
+    eventName: "redirect_triggered",
+    feature: opts.feature,
+    screen: opts.screen ?? opts.oldRoute,
+    societyId: opts.societyId,
+    metadata,
+  });
+}
+
+export function trackLegacyFeatureUsed(opts: {
+  feature: string;
+  oldRoute?: string;
+  societyId?: string | null;
+  screen?: string;
+  metadata?: Record<string, unknown>;
+}): void {
+  trackEvent({
+    eventName: "legacy_feature_used",
+    feature: opts.feature,
+    screen: opts.screen ?? opts.oldRoute ?? null,
+    societyId: opts.societyId,
+    metadata: {
+      feature: opts.feature,
+      ...(opts.oldRoute ? { old_route: opts.oldRoute } : {}),
+      ...(opts.metadata ?? {}),
+    },
+  });
 }

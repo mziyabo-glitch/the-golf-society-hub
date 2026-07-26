@@ -40,6 +40,7 @@ import {
   type EventGuest,
 } from "@/lib/db_supabase/eventGuestRepo";
 import { canManageEventRosterForSociety, getPermissionsForMember, isSecretary } from "@/lib/rbac";
+import { isLiveGrossScoringEnabledForEvent } from "@/lib/featureVisibility";
 import { getColors, spacing, radius, typography } from "@/lib/ui/theme";
 import { JOINT_EVENT_CHIP_LONG } from "@/lib/eventModuleUi";
 import { isJointEventFromMeta, isActiveSocietyParticipantForEvent } from "@/lib/jointEventAccess";
@@ -94,7 +95,8 @@ export default function EventPlayersScreen() {
 
   const canManageGuests = canManageEventRosterForSociety(memberships, societyId);
   const canEnterGrossScores =
-    getPermissionsForMember(currentMember).canManageHandicaps || isSecretary(currentMember);
+    (getPermissionsForMember(currentMember).canManageHandicaps || isSecretary(currentMember)) &&
+    isLiveGrossScoringEnabledForEvent(event);
 
   const jointSocietyIdToName = useMemo(
     () => buildSocietyIdToNameMap(jointParticipatingSocieties),

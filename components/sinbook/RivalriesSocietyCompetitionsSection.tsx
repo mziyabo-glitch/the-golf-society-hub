@@ -31,6 +31,7 @@ function ordinalLabel(rank: number | null): string {
 
 /**
  * Groups society-wide play (Birdies League) above head-to-head rivalries on the Rivalries tab.
+ * Phase 2: only mounted when `shouldShowBirdiesLeagueHomeCard` is true (feature flag + data).
  */
 export function RivalriesSocietyCompetitionsSection({
   colors,

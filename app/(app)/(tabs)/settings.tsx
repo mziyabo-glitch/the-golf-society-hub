@@ -966,45 +966,8 @@ export default function SettingsScreen() {
         </>
       )}
 
-      {(canRegenCode || permissions.canGenerateTeeSheet) && (
-        <>
-          <AppText variant="heading" style={styles.sectionTitle}>Admin tools</AppText>
-          {canRegenCode ? (
-            <AppCard padding="sm">
-              <Pressable
-                style={({ pressed }) => [styles.linkRow, { opacity: pressed ? 0.7 : 1 }]}
-                onPress={() => router.push("/(app)/admin/course-domains" as any)}
-              >
-                <View style={[styles.linkIcon, { backgroundColor: colors.info + "20" }]}>
-                  <Feather name="globe" size={16} color={colors.info} />
-                </View>
-                <View style={{ flex: 1 }}>
-                  <AppText variant="body">Club domain review</AppText>
-                  <AppText variant="small" color="secondary">Approve or reject club website candidates</AppText>
-                </View>
-                <Feather name="chevron-right" size={18} color={colors.textTertiary} />
-              </Pressable>
-            </AppCard>
-          ) : null}
-          {permissions.canGenerateTeeSheet ? (
-            <AppCard padding="sm" style={canRegenCode ? { marginTop: spacing.sm } : undefined}>
-              <Pressable
-                style={({ pressed }) => [styles.linkRow, { opacity: pressed ? 0.7 : 1 }]}
-                onPress={() => router.push("/(app)/tee-sheet")}
-              >
-                <View style={[styles.linkIcon, { backgroundColor: colors.warning + "20" }]}>
-                  <Feather name="file-text" size={16} color={colors.warning} />
-                </View>
-                <View style={{ flex: 1 }}>
-                  <AppText variant="body">Tee sheet generator</AppText>
-                  <AppText variant="small" color="secondary">Grouped tee sheets with WHS handicaps</AppText>
-                </View>
-                <Feather name="chevron-right" size={18} color={colors.textTertiary} />
-              </Pressable>
-            </AppCard>
-          ) : null}
-        </>
-      )}
+      {/* Phase 2: Club domain review is platform-admin only (More → Platform).
+          Tee sheet: Event → Manage → Manage Tee Sheet (no standalone generator). */}
 
       {/* Treasurer Tools - Only visible to Captain/Treasurer */}
       {permissions.canAccessFinance && (
@@ -1133,10 +1096,6 @@ export default function SettingsScreen() {
                   <Feather name="calendar" size={14} color={colors.primary} />
                   <AppText variant="small" color="primary">Events</AppText>
                 </Pressable>
-                <Pressable style={[styles.adminQuickBtn, { borderColor: colors.border }]} onPress={() => router.push("/(app)/tee-sheet")}>
-                  <Feather name="file-text" size={14} color={colors.primary} />
-                  <AppText variant="small" color="primary">Tee Sheet</AppText>
-                </Pressable>
               </View>
 
               {/* Re-appoint captain toggle */}
@@ -1225,7 +1184,7 @@ export default function SettingsScreen() {
 
         <Pressable
           style={({ pressed }) => [styles.linkRow, { opacity: pressed ? 0.7 : 1 }]}
-          onPress={() => router.push("/events")}
+          onPress={() => router.push("/(app)/(tabs)/events")}
         >
           <View style={[styles.linkIcon, { backgroundColor: colors.backgroundTertiary }]}>
             <Feather name="calendar" size={16} color={colors.primary} />
@@ -1242,17 +1201,6 @@ export default function SettingsScreen() {
             <Feather name="award" size={16} color={colors.primary} />
           </View>
           <AppText variant="body" style={{ flex: 1 }}>Order of Merit</AppText>
-          <Feather name="chevron-right" size={18} color={colors.textTertiary} />
-        </Pressable>
-
-        <Pressable
-          style={({ pressed }) => [styles.linkRow, { opacity: pressed ? 0.7 : 1 }]}
-          onPress={() => router.push("/(app)/birdies-league" as never)}
-        >
-          <View style={[styles.linkIcon, { backgroundColor: colors.backgroundTertiary }]}>
-            <Feather name="target" size={16} color={colors.primary} />
-          </View>
-          <AppText variant="body" style={{ flex: 1 }}>Birdies League</AppText>
           <Feather name="chevron-right" size={18} color={colors.textTertiary} />
         </Pressable>
       </AppCard>

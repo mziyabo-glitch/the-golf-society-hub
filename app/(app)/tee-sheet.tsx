@@ -1,12 +1,17 @@
 /**
- * ManCo Tee Sheet Screen
+ * ManCo Tee Sheet Screen (event-scoped editor)
+ *
+ * Primary journey: Event → Manage Event → Manage Tee Sheet
+ * (`/(app)/tee-sheet?eventId=...`). Opening this route without an eventId is
+ * deprecated — redirect to Events. Do not expose a standalone generator from
+ * More / Settings / quick actions.
  *
  * Allows ManCo to:
- * - Select an event
  * - Configure NTP/LD holes
  * - Set start time and interval
  * - Edit player groups (move players between groups)
  * - Generate grouped tee sheet PDF with gender-based tee settings
+ * - Save draft / publish
  */
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -113,8 +118,9 @@ import {
   type PlayerPoolFilterState,
 } from "@/lib/teeSheet/playerPoolFilters";
 import { loadTeeSheetPoolEligibilityForEvent } from "@/lib/teeSheet/refreshTeeSheetPoolEligibility";
-import { trackEvent, trackExportCompleted } from "@/lib/analytics/trackEvent";
+import { trackEvent, trackExportCompleted, trackDeprecatedRedirect } from "@/lib/analytics/trackEvent";
 import { useScreenView } from "@/lib/analytics/useScreenView";
+import { shouldRedirectBareTeeSheetRoute } from "@/lib/navigation/deprecatedRoute";
 import { showAlert } from "@/lib/ui/alert";
 import { expandJointTeeSheetReplaceRowsForParticipatingSocieties } from "@/lib/jointPersonDedupe";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
@@ -424,6 +430,7 @@ export default function TeeSheetScreen() {
     const raw = routeParams.eventId;
     return (Array.isArray(raw) ? raw[0] : raw)?.trim() || null;
   }, [routeParams.eventId]);
+  const bareTeeSheetRedirected = useRef(false);
   const navigation = useNavigation();
   const { societyId, society, member, memberships, userId, loading: bootstrapLoading } = useBootstrap();
   const { guardPaidAction, modalVisible, setModalVisible, societyId: guardSocietyId } = usePaidAccess();
@@ -510,6 +517,21 @@ export default function TeeSheetScreen() {
     () => canExportEventAttendeesForSociety(memberships, societyId),
     [memberships, societyId],
   );
+
+  // Phase 2: no standalone generator — require event context from Manage Event.
+  useEffect(() => {
+    if (!shouldRedirectBareTeeSheetRoute(routeParams.eventId)) return;
+    if (bareTeeSheetRedirected.current) return;
+    bareTeeSheetRedirected.current = true;
+    trackDeprecatedRedirect({
+      feature: "tee_sheet_generator",
+      oldRoute: "/(app)/tee-sheet",
+      destinationRoute: "/(app)/(tabs)/events",
+      societyId,
+      screen: "tee-sheet",
+    });
+    router.replace("/(app)/(tabs)/events" as never);
+  }, [routeParams.eventId, router, societyId]);
 
   const { upcomingEvents, pastEvents } = useMemo(() => {
     const { upcoming, past } = partitionUpcomingPast(events);
@@ -2548,6 +2570,14 @@ export default function TeeSheetScreen() {
     return (
       <Screen>
         <LoadingState message="Loading..." />
+      </Screen>
+    );
+  }
+
+  if (shouldRedirectBareTeeSheetRoute(routeParams.eventId)) {
+    return (
+      <Screen>
+        <LoadingState message="Open an event to manage its tee sheet…" />
       </Screen>
     );
   }

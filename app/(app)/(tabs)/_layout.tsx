@@ -36,7 +36,12 @@ export default function TabsLayout() {
           href: societyTabHref,
         }}
       />
-      {/* Temporarily hidden from navigation; screen remains routable for guarded direct access */}
+      {/*
+        Live gross Scorecard tab — DEPRECATED pending adoption.
+        Hidden from the tab bar (href: null). Direct opens redirect unless today's
+        event has live_gross_scoring_enabled. Do not re-enable without product sign-off.
+        Keep the route file and DB tables; do not drop scoring data in Phase 2.
+      */}
       <Tabs.Screen name="scorecard" options={{ href: null }} />
       <Tabs.Screen
         name="sinbook"

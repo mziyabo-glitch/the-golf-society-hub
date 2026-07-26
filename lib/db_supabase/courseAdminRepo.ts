@@ -301,6 +301,12 @@ async function latestImportJob(courseId: string, apiId: number | null): Promise<
   };
 }
 
+/**
+ * ManCo role check for course overrides historically.
+ * Phase 2: Course Data Editor UI is platform-admin only — use
+ * `isPlatformAdmin()` at the route gate. This helper remains for any
+ * non-UI callers that still need Captain/Secretary/Handicapper checks.
+ */
 export function canManageCourseDataUI(member: MemberLike | null | undefined): boolean {
   return hasRole(member, "CAPTAIN") || hasRole(member, "SECRETARY") || hasRole(member, "HANDICAPPER");
 }

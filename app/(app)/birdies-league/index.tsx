@@ -1,8 +1,12 @@
 /**
  * Birdies League — cumulative official birdies from the next unplayed event onward.
+ *
+ * DEPRECATED (Phase 2): UI is hidden via `isBirdiesLeagueUiEnabled()` until birdie
+ * recording ships and valid standings exist. Route retained for deep links; redirects
+ * when the flag is off. Do not drop `birdies_leagues` tables in this phase.
  */
 
-import { useCallback, useContext, useEffect, useMemo, useState } from "react";
+import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import {
   StyleSheet,
   View,
@@ -41,6 +45,8 @@ import type { BirdiesLeagueEventScope } from "@/lib/birdiesLeague/eventEligibili
 import { findNextUnplayedEligibleBirdiesEvent } from "@/lib/birdiesLeague/eventEligibility";
 import { formatEventDate } from "@/features/home/homeFormatters";
 import { showAlert } from "@/lib/ui/alert";
+import { isBirdiesLeagueUiEnabled } from "@/lib/featureVisibility";
+import { trackDeprecatedRedirect } from "@/lib/analytics";
 
 function ordinalRank(n: number): string {
   if (!Number.isFinite(n) || n <= 0) return "—";
@@ -59,6 +65,8 @@ export default function BirdiesLeagueScreen() {
   const colors = getColors();
   const tabBarHeight = useContext(BottomTabBarHeightContext) ?? 0;
   const canManage = getPermissionsForMember(member).canManageBirdiesLeague;
+  const uiEnabled = isBirdiesLeagueUiEnabled();
+  const redirectedRef = useRef(false);
 
   const [events, setEvents] = useState<EventDoc[]>([]);
   const [league, setLeague] = useState<BirdiesLeagueRow | null>(null);
@@ -69,6 +77,20 @@ export default function BirdiesLeagueScreen() {
   const [error, setError] = useState<string | null>(null);
   const [scopeDraft, setScopeDraft] = useState<BirdiesLeagueEventScope>("all_official");
 
+  useEffect(() => {
+    if (uiEnabled) return;
+    if (redirectedRef.current) return;
+    redirectedRef.current = true;
+    trackDeprecatedRedirect({
+      feature: "birdies_league",
+      oldRoute: "/(app)/birdies-league",
+      destinationRoute: "/(app)/(tabs)/sinbook",
+      societyId,
+      screen: "birdies-league",
+    });
+    router.replace("/(app)/(tabs)/sinbook" as never);
+  }, [uiEnabled, router, societyId]);
+
   const handleBack = () => {
     if (navigation.canGoBack()) {
       goBack(router, "/(app)/(tabs)/settings");
@@ -78,6 +100,10 @@ export default function BirdiesLeagueScreen() {
   };
 
   const loadData = useCallback(async () => {
+    if (!uiEnabled) {
+      setLoading(false);
+      return;
+    }
     if (!societyId) {
       setLoading(false);
       return;
@@ -100,7 +126,7 @@ export default function BirdiesLeagueScreen() {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [societyId]);
+  }, [societyId, uiEnabled]);
 
   useEffect(() => {
     void loadData();
@@ -108,9 +134,17 @@ export default function BirdiesLeagueScreen() {
 
   useFocusEffect(
     useCallback(() => {
-      if (societyId) void loadData();
-    }, [societyId, loadData]),
+      if (uiEnabled && societyId) void loadData();
+    }, [societyId, loadData, uiEnabled]),
   );
+
+  if (!uiEnabled) {
+    return (
+      <SafeAreaView style={[styles.safe, { backgroundColor: colors.background }]}>
+        <LoadingState message="Opening Rivalries…" />
+      </SafeAreaView>
+    );
+  }
 
   const nextStart = useMemo(
     () => findNextUnplayedEligibleBirdiesEvent(events, scopeDraft),

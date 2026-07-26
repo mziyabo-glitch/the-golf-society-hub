@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Pressable, RefreshControl, ScrollView, StyleSheet, View } from "react-native";
 import { useRouter } from "expo-router";
 import { Feather } from "@expo/vector-icons";
@@ -17,7 +17,6 @@ import { LicenceRequiredModal } from "@/components/LicenceRequiredModal";
 import { useBootstrap } from "@/lib/useBootstrap";
 import { usePaidAccess } from "@/lib/access/usePaidAccess";
 import {
-  canManageCourseDataUI,
   clearCourseManualOverrideByScope,
   getLatestCourseImportBatch,
   getTerritoryProgressSummary,
@@ -34,13 +33,20 @@ import {
 } from "@/lib/db_supabase/courseAdminRepo";
 import { isPlatformAdmin } from "@/lib/db_supabase/adminRepo";
 import { getColors, radius, spacing } from "@/lib/ui/theme";
+import { trackDeprecatedRedirect } from "@/lib/analytics";
+import { shouldRedirectCourseDataForNonPlatformAdmin } from "@/lib/navigation/deprecatedRoute";
 
+/**
+ * Course Data Review — platform administrators only (Phase 2).
+ * Automated imports and overrides remain; ManCo no longer sees this editor in nav.
+ */
 export default function CourseDataReviewScreen() {
   const router = useRouter();
   const colors = getColors();
-  const { member } = useBootstrap();
+  const { societyId: bootstrapSocietyId } = useBootstrap();
   const { guardPaidAction, modalVisible, setModalVisible, societyId } = usePaidAccess();
   const [loading, setLoading] = useState(true);
+  const [gateLoading, setGateLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
@@ -58,9 +64,10 @@ export default function CourseDataReviewScreen() {
   const [saving, setSaving] = useState(false);
   const [reimporting, setReimporting] = useState(false);
   const [platformAdmin, setPlatformAdmin] = useState(false);
+  const redirectedRef = useRef(false);
 
   const editableFields = getEditableCourseOverrideFields();
-  const adminAllowed = canManageCourseDataUI(member);
+  const adminAllowed = platformAdmin;
 
   const selectedCourse = useMemo(
     () => courses.find((course) => course.id === selectedCourseId) ?? null,
@@ -107,14 +114,18 @@ export default function CourseDataReviewScreen() {
   }, [query, selectedCourseId]);
 
   useEffect(() => {
+    if (!platformAdmin) return;
     void load();
-  }, [load]);
+  }, [load, platformAdmin]);
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
       const ok = await isPlatformAdmin();
-      if (!cancelled) setPlatformAdmin(ok);
+      if (!cancelled) {
+        setPlatformAdmin(ok);
+        setGateLoading(false);
+      }
     })();
     return () => {
       cancelled = true;
@@ -122,15 +133,38 @@ export default function CourseDataReviewScreen() {
   }, []);
 
   useEffect(() => {
+    if (gateLoading) return;
+    if (!shouldRedirectCourseDataForNonPlatformAdmin(platformAdmin)) return;
+    if (redirectedRef.current) return;
+    redirectedRef.current = true;
+    trackDeprecatedRedirect({
+      feature: "course_data_editor",
+      oldRoute: "/(app)/course-data",
+      destinationRoute: "/(app)/(tabs)/more",
+      societyId: bootstrapSocietyId ?? societyId,
+      screen: "course-data",
+    });
+    router.replace("/(app)/(tabs)/more" as never);
+  }, [gateLoading, platformAdmin, router, bootstrapSocietyId, societyId]);
+
+  useEffect(() => {
     if (!selectedCourse) return;
     if (selectedTeeId && selectedCourse.tees.some((tee) => tee.id === selectedTeeId)) return;
     setSelectedTeeId(selectedCourse.tees[0]?.id ?? null);
   }, [selectedCourse, selectedTeeId]);
 
+  if (gateLoading) {
+    return (
+      <Screen>
+        <LoadingState message="Checking access..." />
+      </Screen>
+    );
+  }
+
   if (!adminAllowed) {
     return (
       <Screen>
-        <EmptyState title="Admin access only" message="Captain, Secretary, or Handicapper access is required." />
+        <LoadingState message="Opening More…" />
       </Screen>
     );
   }
