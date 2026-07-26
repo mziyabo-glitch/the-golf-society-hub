@@ -149,7 +149,7 @@ describe("normalizeGolfCourseApiCourse", () => {
     expect(tee.holes.map((h) => h.strokeIndex)).toEqual([11, 1, 7, 15, 3, 13, 17, 5, 9, 4, 8, 14, 12, 10, 16, 2, 6, 18]);
   });
 
-  it("applies Upavon SI fallback when API holes omit SI", () => {
+  it("applies Upavon official scorecard when API holes omit stroke index", () => {
     const api: GolfCourseApiCourse = {
       id: 12241,
       name: "Upavon",
@@ -163,7 +163,7 @@ describe("normalizeGolfCourseApiCourse", () => {
             total_yards: 6402,
             holes: Array.from({ length: 18 }, (_, i) => ({
               hole_number: i + 1,
-              par: i === 5 || i === 7 || i === 11 || i === 13 || i === 17 ? 3 : 4,
+              par: [4, 4, 4, 4, 5, 3, 5, 3, 4, 4, 4, 3, 5, 3, 5, 4, 4, 3][i],
               yardage: 300 + i,
             })),
           },
@@ -171,12 +171,16 @@ describe("normalizeGolfCourseApiCourse", () => {
       },
     };
     const out = normalizeGolfCourseApiCourse(api);
-    const holes = out.tees[0]!.holes;
-    expect(holes).toHaveLength(18);
-    expect(holes[0]!.strokeIndex).toBe(13);
-    expect(holes[3]!.strokeIndex).toBe(1);
-    expect(holes[12]!.strokeIndex).toBe(2);
-    expect(holes[17]!.strokeIndex).toBe(10);
+    const tee = out.tees[0]!;
+    expect(tee.tee.courseRating).toBe(72);
+    expect(tee.tee.slopeRating).toBe(132);
+    expect(tee.tee.parTotal).toBe(71);
+    expect(tee.tee.totalYards).toBe(6437);
+    expect(tee.holes.map((h) => h.strokeIndex)).toEqual([
+      13, 9, 3, 1, 17, 5, 11, 7, 15, 4, 14, 18, 2, 8, 16, 6, 12, 10,
+    ]);
+    expect(tee.holes[0]!.yardage).toBe(303);
+    expect(tee.holes[12]!.yardage).toBe(604);
   });
 });
 
