@@ -1,9 +1,9 @@
 /**
- * More hub — secondary society features (members, rivalries), account,
- * finance (treasurer), and permission-gated admin tools.
+ * More hub — Phase 2 simplified sections:
+ * Society · Events and tools · ManCo · Platform administration
  */
 
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Pressable, ScrollView, StyleSheet, View } from "react-native";
 import { useRouter } from "expo-router";
 import { Feather } from "@expo/vector-icons";
@@ -66,6 +66,10 @@ function SectionTitle({ children }: { children: string }) {
   );
 }
 
+function Divider({ colors }: { colors: ReturnType<typeof getColors> }) {
+  return <View style={[styles.divider, { backgroundColor: colors.borderLight }]} />;
+}
+
 export default function MoreScreen() {
   const router = useRouter();
   const { member, activeSocietyId } = useBootstrap();
@@ -93,84 +97,11 @@ export default function MoreScreen() {
     [router],
   );
 
-  const financeEntries: { key: string; row: ReactNode }[] = [];
-  if (permissions.canAccessFinance) {
-    financeEntries.push(
-      {
-        key: "ledger",
-        row: (
-          <MenuRow
-            icon="book"
-            iconBg={`${colors.primary}18`}
-            title="Society ledger"
-            subtitle="Treasurer ledger and balances"
-            colors={colors}
-            onPress={() => push("/(app)/treasurer")}
-          />
-        ),
-      },
-      {
-        key: "fees",
-        row: (
-          <MenuRow
-            icon="percent"
-            iconBg={`${colors.success}20`}
-            title="Membership fees"
-            colors={colors}
-            onPress={() => push("/(app)/membership-fees")}
-          />
-        ),
-      },
-      {
-        key: "eventfin",
-        row: (
-          <MenuRow
-            icon="bar-chart-2"
-            iconBg={`${colors.info}20`}
-            title="Event finances"
-            colors={colors}
-            onPress={() => push("/(app)/event-finance")}
-          />
-        ),
-      },
-    );
-  }
-
-  const adminToolEntries: { key: string; row: ReactNode }[] = [];
-  if (captain) {
-    adminToolEntries.push(
-      {
-        key: "billing",
-        row: (
-          <MenuRow
-            icon="shopping-bag"
-            iconBg={`${colors.primary}16`}
-            title="Billing & licences"
-            subtitle="Purchase seats for your society"
-            colors={colors}
-            onPress={() => push("/(app)/billing")}
-          />
-        ),
-      },
-      {
-        key: "domains",
-        row: (
-          <MenuRow
-            icon="globe"
-            iconBg={`${colors.info}20`}
-            title="Club domain review"
-            subtitle="Approve club website candidates"
-            colors={colors}
-            onPress={() => push("/(app)/admin/course-domains" as any)}
-          />
-        ),
-      },
-    );
-  }
-
-  const showFinance = financeEntries.length > 0;
-  const showAdminTools = adminToolEntries.length > 0;
-  const isManCo = captain || secretary || permissions.canGenerateTeeSheet || permissions.canManageHandicaps;
+  const isManCo =
+    captain || secretary || permissions.canGenerateTeeSheet || permissions.canManageHandicaps;
+  const showManCo =
+    hasFullAccess &&
+    (isManCo || permissions.canAccessFinance || captain);
 
   return (
     <Screen scrollable={false} style={{ backgroundColor: colors.backgroundSecondary }}>
@@ -179,40 +110,21 @@ export default function MoreScreen() {
           More
         </AppText>
         <AppText variant="small" color="secondary" style={styles.pageSub}>
-          Members, settings, finance, and admin tools
+          Society settings, secondary tools, and administration
         </AppText>
-
-        {isManCo && hasFullAccess ? (
-          <>
-            <SectionTitle>Members</SectionTitle>
-            <AppCard style={styles.card}>
-              <MenuRow
-                icon="users"
-                iconBg={`${colors.primary}16`}
-                title="Members"
-                subtitle="Roster, roles, and member details"
-                colors={colors}
-                onPress={() => push("/(app)/(tabs)/members")}
-              />
-            </AppCard>
-          </>
-        ) : null}
 
         <SectionTitle>Society</SectionTitle>
         <AppCard style={styles.card}>
-          {!isManCo && hasFullAccess ? (
-            <>
-              <MenuRow
-                icon="users"
-                iconBg={`${colors.primary}16`}
-                title="Members"
-                subtitle="Roster, roles, and member details"
-                colors={colors}
-                onPress={() => push("/(app)/(tabs)/members")}
-              />
-              <View style={[styles.divider, { backgroundColor: colors.borderLight }]} />
-            </>
-          ) : !hasFullAccess ? (
+          {hasFullAccess ? (
+            <MenuRow
+              icon="users"
+              iconBg={`${colors.primary}16`}
+              title="Members"
+              subtitle="Roster, roles, and member details"
+              colors={colors}
+              onPress={() => push("/(app)/(tabs)/members")}
+            />
+          ) : (
             <View style={styles.mutedBlock}>
               <Feather name="info" size={16} color={colors.textTertiary} />
               <AppText variant="small" color="tertiary" style={{ flex: 1, marginLeft: spacing.sm }}>
@@ -221,58 +133,17 @@ export default function MoreScreen() {
                   : "Join a society with a seat to access the member directory."}
               </AppText>
             </View>
-          ) : null}
-          {hasSociety ? (
-            <MenuRow
-              icon="zap"
-              iconBg={`${colors.warning}20`}
-              title="Rivalries"
-              subtitle="Sinbook challenges and head-to-heads"
-              colors={colors}
-              onPress={() => push("/(app)/(tabs)/sinbook")}
-            />
-          ) : (
-            <View style={styles.mutedBlock}>
-              <Feather name="info" size={16} color={colors.textTertiary} />
-              <AppText variant="small" color="tertiary" style={{ flex: 1, marginLeft: spacing.sm }}>
-                Join a society to use rivalries.
-              </AppText>
-            </View>
           )}
-        </AppCard>
-
-        <SectionTitle>Free play</SectionTitle>
-        <AppCard style={styles.card}>
+          <Divider colors={colors} />
           <MenuRow
-            icon="edit-3"
-            iconBg={`${colors.primary}16`}
-            title="Free Play Scorecard"
-            subtitle="Verified courses, live leaderboard, members & guests"
+            icon="settings"
+            iconBg={colors.backgroundTertiary}
+            title="Society settings"
+            subtitle="Invites, privacy, text size, and society options"
             colors={colors}
-            onPress={() => push("/(app)/free-play")}
+            onPress={() => push("/(app)/(tabs)/settings")}
           />
-          <View style={[styles.divider, { backgroundColor: colors.borderLight }]} />
-          <MenuRow
-            icon="plus-circle"
-            iconBg={`${colors.success}18`}
-            title="Create new scorecard"
-            subtitle="Start a casual round for your society"
-            colors={colors}
-            onPress={() => push("/(app)/free-play")}
-          />
-          <View style={[styles.divider, { backgroundColor: colors.borderLight }]} />
-          <MenuRow
-            icon="activity"
-            iconBg={`${colors.info}18`}
-            title="My active scorecards"
-            subtitle="Draft and in-progress rounds"
-            colors={colors}
-            onPress={() => push("/(app)/free-play")}
-          />
-        </AppCard>
-
-        <SectionTitle>Account</SectionTitle>
-        <AppCard style={styles.card}>
+          <Divider colors={colors} />
           <MenuRow
             icon="user"
             iconBg={colors.backgroundTertiary}
@@ -281,65 +152,150 @@ export default function MoreScreen() {
             colors={colors}
             onPress={() => push("/(app)/my-profile")}
           />
-          <View style={[styles.divider, { backgroundColor: colors.borderLight }]} />
+          {hasSociety ? (
+            <>
+              <Divider colors={colors} />
+              <MenuRow
+                icon="zap"
+                iconBg={`${colors.warning}20`}
+                title="Rivalries"
+                subtitle="Sinbook challenges and head-to-heads"
+                colors={colors}
+                onPress={() => push("/(app)/(tabs)/sinbook")}
+              />
+            </>
+          ) : null}
+        </AppCard>
+
+        <SectionTitle>Events and tools</SectionTitle>
+        <AppCard style={styles.card}>
+          {hasSociety ? (
+            <MenuRow
+              icon="calendar"
+              iconBg={`${colors.info}18`}
+              title="Subscribe to calendar"
+              subtitle="Add society events to your calendar app"
+              colors={colors}
+              onPress={() => push("/(app)/(tabs)/settings")}
+            />
+          ) : (
+            <View style={styles.mutedBlock}>
+              <Feather name="info" size={16} color={colors.textTertiary} />
+              <AppText variant="small" color="tertiary" style={{ flex: 1, marginLeft: spacing.sm }}>
+                Join a society to subscribe to its calendar.
+              </AppText>
+            </View>
+          )}
+        </AppCard>
+
+        <SectionTitle>Other golf tools</SectionTitle>
+        <AppCard style={styles.card}>
           <MenuRow
-            icon="settings"
-            iconBg={colors.backgroundTertiary}
-            title="Settings"
-            subtitle="Society, invites, privacy, and text size"
+            icon="edit-3"
+            iconBg={`${colors.primary}16`}
+            title="Free Play"
+            subtitle="Casual rounds and historical scorecards"
             colors={colors}
-            onPress={() => push("/(app)/(tabs)/settings")}
+            onPress={() => push("/(app)/free-play")}
           />
         </AppCard>
 
-        {showFinance ? (
+        {showManCo ? (
           <>
-            <SectionTitle>Finance</SectionTitle>
+            <SectionTitle>ManCo</SectionTitle>
             <AppCard style={styles.card}>
-              {financeEntries.map((e, i) => (
-                <View key={e.key}>
-                  {i > 0 ? <View style={[styles.divider, { backgroundColor: colors.borderLight }]} /> : null}
-                  {e.row}
-                </View>
-              ))}
-            </AppCard>
-          </>
-        ) : null}
-
-        {showAdminTools ? (
-          <>
-            <SectionTitle>Admin tools</SectionTitle>
-            <AppCard style={styles.card}>
-              {adminToolEntries.map((e, i) => (
-                <View key={e.key}>
-                  {i > 0 ? <View style={[styles.divider, { backgroundColor: colors.borderLight }]} /> : null}
-                  {e.row}
-                </View>
-              ))}
+              <MenuRow
+                icon="calendar"
+                iconBg={`${colors.primary}16`}
+                title="Event administration"
+                subtitle="Open Events to manage days, payments, and tee sheets"
+                colors={colors}
+                onPress={() => push("/(app)/(tabs)/events")}
+              />
+              {permissions.canAccessFinance ? (
+                <>
+                  <Divider colors={colors} />
+                  <MenuRow
+                    icon="book"
+                    iconBg={`${colors.primary}18`}
+                    title="Society ledger"
+                    subtitle="Treasurer ledger and balances"
+                    colors={colors}
+                    onPress={() => push("/(app)/treasurer")}
+                  />
+                  <Divider colors={colors} />
+                  <MenuRow
+                    icon="percent"
+                    iconBg={`${colors.success}20`}
+                    title="Membership fees"
+                    colors={colors}
+                    onPress={() => push("/(app)/membership-fees")}
+                  />
+                  <Divider colors={colors} />
+                  <MenuRow
+                    icon="bar-chart-2"
+                    iconBg={`${colors.info}20`}
+                    title="Event finances"
+                    colors={colors}
+                    onPress={() => push("/(app)/event-finance")}
+                  />
+                </>
+              ) : null}
+              {captain ? (
+                <>
+                  <Divider colors={colors} />
+                  <MenuRow
+                    icon="shopping-bag"
+                    iconBg={`${colors.primary}16`}
+                    title="Billing & licences"
+                    subtitle="Purchase seats for your society"
+                    colors={colors}
+                    onPress={() => push("/(app)/billing")}
+                  />
+                </>
+              ) : null}
             </AppCard>
           </>
         ) : null}
 
         {isAdmin ? (
           <>
-            <SectionTitle>Platform</SectionTitle>
+            <SectionTitle>Platform administration</SectionTitle>
             <AppCard style={styles.card}>
               <MenuRow
-                icon="bar-chart"
-                iconBg={`${colors.info}18`}
+                icon="activity"
+                iconBg={`${colors.primary}16`}
                 title="Product usage report"
-                subtitle="Screen views, actions, and errors (7/30/90 days)"
+                subtitle="Screen views and product actions (no PII)"
                 colors={colors}
                 onPress={() => push("/(app)/admin/usage-report" as any)}
               />
-              <View style={[styles.divider, { backgroundColor: colors.borderLight }]} />
+              <Divider colors={colors} />
               <MenuRow
-                icon="shield"
-                iconBg={`${colors.error}18`}
-                title="Platform administration"
-                subtitle="Switch societies, support tools — opens Settings"
+                icon="globe"
+                iconBg={`${colors.info}20`}
+                title="Club domain review"
+                subtitle="Approve club website candidates"
                 colors={colors}
-                onPress={() => push("/(app)/(tabs)/settings")}
+                onPress={() => push("/(app)/admin/course-domains" as any)}
+              />
+              <Divider colors={colors} />
+              <MenuRow
+                icon="database"
+                iconBg={`${colors.warning}20`}
+                title="Course data administration"
+                subtitle="Import review and tee overrides"
+                colors={colors}
+                onPress={() => push("/(app)/course-data" as any)}
+              />
+              <Divider colors={colors} />
+              <MenuRow
+                icon="shopping-bag"
+                iconBg={`${colors.primary}16`}
+                title="Billing & licences"
+                subtitle="Platform access to billing tools"
+                colors={colors}
+                onPress={() => push("/(app)/billing")}
               />
             </AppCard>
           </>
@@ -355,45 +311,43 @@ const styles = StyleSheet.create({
   },
   pageTitle: {
     marginBottom: spacing.xs,
-    letterSpacing: -0.3,
   },
   pageSub: {
-    marginBottom: spacing.lg,
+    marginBottom: spacing.md,
   },
   sectionTitle: {
+    marginTop: spacing.md,
     marginBottom: spacing.sm,
-    marginTop: spacing.xs,
-    letterSpacing: 0.4,
     textTransform: "uppercase",
-    fontSize: 11,
+    letterSpacing: 0.6,
   },
   card: {
-    marginBottom: spacing.md,
     paddingVertical: spacing.xs,
-    paddingHorizontal: spacing.sm,
+    paddingHorizontal: 0,
+    overflow: "hidden",
   },
   row: {
     flexDirection: "row",
     alignItems: "center",
     gap: spacing.sm,
-    paddingVertical: spacing.sm,
-    minHeight: 48,
+    paddingVertical: spacing.md,
+    paddingHorizontal: spacing.md,
   },
   iconWrap: {
-    width: 40,
-    height: 40,
+    width: 36,
+    height: 36,
     borderRadius: radius.md,
     alignItems: "center",
     justifyContent: "center",
   },
   divider: {
     height: StyleSheet.hairlineWidth,
-    marginLeft: 48,
+    marginLeft: 36 + spacing.md + spacing.sm,
   },
   mutedBlock: {
     flexDirection: "row",
     alignItems: "flex-start",
-    paddingVertical: spacing.sm,
-    paddingHorizontal: spacing.xs,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.md,
   },
 });

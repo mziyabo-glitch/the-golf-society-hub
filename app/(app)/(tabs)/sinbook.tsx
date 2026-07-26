@@ -2,8 +2,10 @@
  * Sinbook Home Screen — Rivalry Hub
  *
  * Sections:
- *   1) Society competitions (e.g. Birdies League) — society-wide
+ *   1) Society competitions (Birdies League) — only when UI flag + valid data
  *   2) Your rivalries — summary strip, actions, invites, live/quiet lists
+ *
+ * Phase 2: Birdies League shortcuts are hidden until recording/results exist.
  */
 
 import { useCallback, useMemo, useState } from "react";
@@ -54,6 +56,7 @@ import {
 } from "@/lib/db_supabase/birdiesLeagueRepo";
 import { getMembersBySocietyId, type MemberDoc } from "@/lib/db_supabase/memberRepo";
 import { getPermissionsForMember } from "@/lib/rbac";
+import { isBirdiesLeagueUiEnabled, shouldShowBirdiesLeagueHomeCard } from "@/lib/featureVisibility";
 // ============================================================================
 // Helpers
 // ============================================================================
@@ -289,7 +292,7 @@ export default function SinbookHomeScreen() {
       setWinCounts(wins);
       setUnreadCount(unread);
 
-      if (societyId) {
+      if (societyId && isBirdiesLeagueUiEnabled()) {
         try {
           const league = await getActiveBirdiesLeague(societyId);
           setBirdiesLeague(league);
@@ -691,7 +694,7 @@ export default function SinbookHomeScreen() {
         <View>
           <AppText variant="title">Rivalries</AppText>
           <AppText variant="caption" color="secondary">
-            Society competitions first, then your head-to-head challenges — friendly tracking only, not staking.
+            Friendly head-to-head challenges — not staking.
           </AppText>
         </View>
         <Pressable onPress={openNotifications} style={styles.bellBtn}>
@@ -706,7 +709,11 @@ export default function SinbookHomeScreen() {
         </Pressable>
       </View>
 
-      {societyId ? (
+      {societyId &&
+      shouldShowBirdiesLeagueHomeCard(
+        birdiesLeague,
+        birdiesStandings.some((row) => (row.totalBirdies ?? 0) > 0),
+      ) ? (
         <RivalriesSocietyCompetitionsSection
           colors={colors}
           societyName={society?.name}

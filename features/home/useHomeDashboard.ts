@@ -61,7 +61,7 @@ import { useBootstrap } from "@/lib/useBootstrap";
 import { useReducedMotion } from "@/hooks/useReducedMotion";
 import { getSocietyLogoUrl } from "@/lib/societyLogo";
 import { measureAsync } from "@/lib/perf/perf";
-import { shouldShowBirdiesLeagueHomeCard } from "@/lib/featureVisibility";
+import { shouldShowBirdiesLeagueHomeCard, isBirdiesLeagueUiEnabled } from "@/lib/featureVisibility";
 import { trackEvent } from "@/lib/analytics/trackEvent";
 import { buildRecentActivityRows } from "./homeRecentActivityVm";
 import { resolveMemberIdForSocietyRsvp, submitMemberEventRsvp } from "@/lib/events/memberEventRsvp";
@@ -235,12 +235,18 @@ export function useHomeDashboard() {
       setMembers(membersData);
 
       try {
-        const bl = await getActiveBirdiesLeague(societyId);
-        setBirdiesLeague(bl);
-        if (bl) {
-          const st = await getBirdiesLeagueStandings(societyId, bl, eventsData);
-          setBirdiesStandings(st);
+        // Birdies League UI is feature-flagged off until recording/results exist.
+        if (isBirdiesLeagueUiEnabled()) {
+          const bl = await getActiveBirdiesLeague(societyId);
+          setBirdiesLeague(bl);
+          if (bl) {
+            const st = await getBirdiesLeagueStandings(societyId, bl, eventsData);
+            setBirdiesStandings(st);
+          } else {
+            setBirdiesStandings([]);
+          }
         } else {
+          setBirdiesLeague(null);
           setBirdiesStandings([]);
         }
       } catch (blErr) {

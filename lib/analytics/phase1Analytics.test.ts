@@ -79,10 +79,10 @@ describe("sanitizeAnalyticsMetadata", () => {
 });
 
 describe("featureVisibility", () => {
-  it("hides birdies card without league or data", () => {
+  it("hides birdies card while UI flag is off (even with league + data)", () => {
     expect(shouldShowBirdiesLeagueHomeCard(null, false)).toBe(false);
     expect(shouldShowBirdiesLeagueHomeCard({ id: "l1" } as any, false)).toBe(false);
-    expect(shouldShowBirdiesLeagueHomeCard({ id: "l1" } as any, true)).toBe(true);
+    expect(shouldShowBirdiesLeagueHomeCard({ id: "l1" } as any, true)).toBe(false);
   });
 
   it("gates gross scoring on event flag", () => {

@@ -9,6 +9,9 @@ export const PRODUCT_EVENT_NAMES = [
   "export_completed",
   "feature_tapped",
   "error_shown",
+  "deprecated_route_opened",
+  "legacy_feature_used",
+  "redirect_triggered",
 ] as const;
 
 export type ProductEventName = (typeof PRODUCT_EVENT_NAMES)[number];

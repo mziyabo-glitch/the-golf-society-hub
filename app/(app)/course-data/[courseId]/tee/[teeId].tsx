@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Pressable, ScrollView, StyleSheet, View } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { Feather } from "@expo/vector-icons";
@@ -16,34 +16,69 @@ import { LicenceRequiredModal } from "@/components/LicenceRequiredModal";
 import { useBootstrap } from "@/lib/useBootstrap";
 import { usePaidAccess } from "@/lib/access/usePaidAccess";
 import {
-  canManageCourseDataUI,
   clearCourseManualOverrideByScope,
   getTeeEditorBundle,
   saveCourseManualOverride,
   triggerCourseReimportPreservingManual,
   type TeeEditorBundle,
 } from "@/lib/db_supabase/courseAdminRepo";
+import { isPlatformAdmin } from "@/lib/db_supabase/adminRepo";
 import { getColors, radius, spacing } from "@/lib/ui/theme";
 import { goBack } from "@/lib/navigation";
+import { trackDeprecatedRedirect } from "@/lib/analytics";
+import { shouldRedirectCourseDataForNonPlatformAdmin } from "@/lib/navigation/deprecatedRoute";
 
 type EditedRow = { par: string; yardage: string; stroke_index: string };
 
+/** Tee editor — platform administrators only (Phase 2). */
 export default function CourseTeeEditorScreen() {
   const colors = getColors();
   const router = useRouter();
   const params = useLocalSearchParams<{ courseId?: string | string[]; teeId?: string | string[] }>();
   const courseId = (Array.isArray(params.courseId) ? params.courseId[0] : params.courseId) ?? "";
   const teeId = (Array.isArray(params.teeId) ? params.teeId[0] : params.teeId) ?? "";
-  const { member } = useBootstrap();
+  const { societyId: bootstrapSocietyId } = useBootstrap();
   const { guardPaidAction, modalVisible, setModalVisible, societyId } = usePaidAccess();
   const [loading, setLoading] = useState(true);
+  const [gateLoading, setGateLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [reimporting, setReimporting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [bundle, setBundle] = useState<TeeEditorBundle | null>(null);
   const [editRows, setEditRows] = useState<Record<number, EditedRow>>({});
+  const [platformAdmin, setPlatformAdmin] = useState(false);
+  const redirectedRef = useRef(false);
 
-  const adminAllowed = canManageCourseDataUI(member);
+  const adminAllowed = platformAdmin;
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const ok = await isPlatformAdmin();
+      if (!cancelled) {
+        setPlatformAdmin(ok);
+        setGateLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (gateLoading) return;
+    if (!shouldRedirectCourseDataForNonPlatformAdmin(platformAdmin)) return;
+    if (redirectedRef.current) return;
+    redirectedRef.current = true;
+    trackDeprecatedRedirect({
+      feature: "course_data_editor",
+      oldRoute: "/(app)/course-data/[courseId]/tee/[teeId]",
+      destinationRoute: "/(app)/(tabs)/more",
+      societyId: bootstrapSocietyId ?? societyId,
+      screen: "course-data-tee",
+    });
+    router.replace("/(app)/(tabs)/more" as never);
+  }, [gateLoading, platformAdmin, router, bootstrapSocietyId, societyId]);
 
   const load = useCallback(async () => {
     if (!courseId || !teeId) return;
@@ -68,12 +103,16 @@ export default function CourseTeeEditorScreen() {
   }, [courseId, teeId]);
 
   useEffect(() => {
+    if (gateLoading || !adminAllowed) {
+      setLoading(false);
+      return;
+    }
     if (!guardPaidAction()) {
       setLoading(false);
       return;
     }
     void load();
-  }, [guardPaidAction, load]);
+  }, [guardPaidAction, load, gateLoading, adminAllowed]);
 
   const overrideLookup = useMemo(() => {
     const map = new Map<string, boolean>();
@@ -84,10 +123,18 @@ export default function CourseTeeEditorScreen() {
     return map;
   }, [bundle?.activeOverrides]);
 
+  if (gateLoading) {
+    return (
+      <Screen>
+        <LoadingState message="Checking access..." />
+      </Screen>
+    );
+  }
+
   if (!adminAllowed) {
     return (
       <Screen>
-        <EmptyState title="Admin access only" message="Captain, Secretary, or Handicapper access is required." />
+        <LoadingState message="Opening More…" />
       </Screen>
     );
   }
