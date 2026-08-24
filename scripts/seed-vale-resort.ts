@@ -2,10 +2,9 @@ import dotenv from "dotenv";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import {
   VALE_LAKE_COURSE_NAME,
-  VALE_LAKE_TEE_RATINGS,
   VALE_WALES_NATIONAL_COURSE_NAME,
-  VALE_WALES_NATIONAL_TEE_RATINGS,
-  findValeTeeRating,
+  valeTeeDbName,
+  valeTeeRatingsForCourse,
   type ValeTeeRating,
 } from "../lib/course/valeResortTeeRatings";
 
@@ -194,10 +193,33 @@ const LAKE_RED_HOLES = makeHoles([
   [18, 436, 5, 6],
 ]);
 
-function teeSeed(name: string, holes: Hole[], courseKey: "wales-national" | "lake"): TeeSeed {
-  const rating = findValeTeeRating(courseKey, name);
-  if (!rating) throw new Error(`Missing canonical rating for ${courseKey} / ${name}`);
-  return { name, holes, rating };
+function teeSeedFromRating(
+  rating: ValeTeeRating,
+  holes: Hole[],
+): TeeSeed {
+  return { name: valeTeeDbName(rating), holes, rating };
+}
+
+function layoutForValeTee(courseKey: "wales-national" | "lake", baseTeeName: string): Hole[] {
+  if (courseKey === "wales-national") {
+    if (baseTeeName === "Blue") return cloneHoles(WALES_BLUE_HOLES);
+    if (baseTeeName === "White") return cloneHoles(WALES_WHITE_HOLES);
+    if (baseTeeName === "Yellow") return cloneHoles(WALES_YELLOW_HOLES);
+    if (baseTeeName === "Red") return cloneHoles(WALES_RED_HOLES);
+  } else {
+    if (baseTeeName === "White") return cloneHoles(LAKE_WHITE_HOLES);
+    if (baseTeeName === "Yellow") return cloneHoles(LAKE_YELLOW_HOLES);
+    if (baseTeeName === "Winter Yellow") return cloneHoles(LAKE_YELLOW_HOLES);
+    if (baseTeeName === "Winter Red") return cloneHoles(LAKE_RED_HOLES);
+    if (baseTeeName === "Red") return cloneHoles(LAKE_RED_HOLES);
+  }
+  throw new Error(`No hole layout for ${courseKey} / ${baseTeeName}`);
+}
+
+function buildTeesForCourse(courseKey: "wales-national" | "lake"): TeeSeed[] {
+  return valeTeeRatingsForCourse(courseKey).map((rating) =>
+    teeSeedFromRating(rating, layoutForValeTee(courseKey, rating.teeName)),
+  );
 }
 
 const COURSES: CourseSeed[] = [
@@ -205,29 +227,18 @@ const COURSES: CourseSeed[] = [
     course_name: VALE_LAKE_COURSE_NAME,
     club_name: "Vale Resort",
     courseKey: "lake",
-    tees: [
-      teeSeed("White", LAKE_WHITE_HOLES, "lake"),
-      teeSeed("Yellow", LAKE_YELLOW_HOLES, "lake"),
-      teeSeed("Winter Yellow", cloneHoles(LAKE_YELLOW_HOLES), "lake"),
-      teeSeed("Winter Red", cloneHoles(LAKE_RED_HOLES), "lake"),
-      teeSeed("Red", LAKE_RED_HOLES, "lake"),
-    ],
+    tees: buildTeesForCourse("lake"),
   },
   {
     course_name: VALE_WALES_NATIONAL_COURSE_NAME,
     club_name: "Vale Resort",
     courseKey: "wales-national",
-    tees: [
-      teeSeed("Blue", WALES_BLUE_HOLES, "wales-national"),
-      teeSeed("White", WALES_WHITE_HOLES, "wales-national"),
-      teeSeed("Yellow", WALES_YELLOW_HOLES, "wales-national"),
-      teeSeed("Red", WALES_RED_HOLES, "wales-national"),
-    ],
+    tees: buildTeesForCourse("wales-national"),
   },
 ];
 
 function validateSeedCourse(course: CourseSeed): void {
-  const expectedRatings = course.courseKey === "lake" ? VALE_LAKE_TEE_RATINGS : VALE_WALES_NATIONAL_TEE_RATINGS;
+  const expectedRatings = valeTeeRatingsForCourse(course.courseKey);
   if (course.tees.length !== expectedRatings.length) {
     throw new Error(`${course.course_name}: expected ${expectedRatings.length} tees`);
   }
