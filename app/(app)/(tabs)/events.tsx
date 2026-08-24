@@ -32,10 +32,13 @@ import { isJointEventFromMeta } from "@/lib/jointEventAccess";
 import { getMySocieties } from "@/lib/db_supabase/mySocietiesRepo";
 import { ParticipatingSocietiesSection } from "@/components/event/ParticipatingSocietiesSection";
 import type { EventSocietyInput } from "@/lib/db_supabase/jointEventTypes";
-import { type CourseTee, getCourseByApiId, getTeesByCourseId } from "@/lib/db_supabase/courseRepo";
+import { type CourseTee } from "@/lib/db_supabase/courseRepo";
 import { normalizeSlopeRating } from "@/lib/teeMetrics";
-import { searchCourses as searchCoursesApi, getCourseById, type ApiCourseSearchResult } from "@/lib/golfApi";
-import { importCourse, type ImportedCourse } from "@/lib/importCourse";
+import {
+  loadTeesForEventCourseHit,
+  searchCoursesForEvent,
+  type EventCourseSearchHit,
+} from "@/lib/course/eventCourseSearch";
 import { CourseTeeSelector } from "@/components/CourseTeeSelector";
 import {
   menAndLadiesTeeOptions,
@@ -137,7 +140,7 @@ export default function EventsScreen() {
 
   // Course / Tee: GolfCourseAPI search -> import -> select tee
   const [courseSearchQuery, setCourseSearchQuery] = useState("");
-  const [courseSearchResults, setCourseSearchResults] = useState<ApiCourseSearchResult[]>([]);
+  const [courseSearchResults, setCourseSearchResults] = useState<EventCourseSearchHit[]>([]);
   const [courseSearchError, setCourseSearchError] = useState<string | null>(null);
   const [courseSearching, setCourseSearching] = useState(false);
   const [selectedCourse, setSelectedCourse] = useState<{ id: string; name: string } | null>(null);
@@ -219,7 +222,7 @@ export default function EventsScreen() {
         setCourseSearching(true);
         setCourseSearchError(null);
         try {
-          const hits = await searchCoursesApi(q);
+          const hits = await searchCoursesForEvent(q);
           setCourseSearchResults(hits);
         } catch (e: any) {
           setCourseSearchError(e?.message || "Course search failed");
@@ -242,8 +245,8 @@ export default function EventsScreen() {
     return () => debouncedSearch.cancel();
   }, [courseSearchQuery, debouncedSearch]);
 
-  const handleSelectCourse = useCallback(async (hit: ApiCourseSearchResult) => {
-    console.log("[events] handleSelectCourse:", hit.id, hit.name);
+  const handleSelectCourse = useCallback(async (hit: EventCourseSearchHit) => {
+    console.log("[events] handleSelectCourse:", hit.source, hit.name);
     setCourseSearchResults([]);
     setCourseSearchQuery("");
     setSelectedTee(null);
@@ -254,46 +257,13 @@ export default function EventsScreen() {
     setShowManualTee(false);
     setFormErrors((prev) => ({ ...prev, course: undefined, courseTee: undefined, courseTeeLadies: undefined }));
     try {
-      // Step 1: Check DB cache first (avoids API call if already imported with tees)
-      const cached = await getCourseByApiId(hit.id);
-      if (cached && cached.tees.length > 0) {
-        console.log("[events] Loaded from cache:", cached.courseId, cached.tees.length, "tees");
-        setSelectedCourse({ id: cached.courseId, name: cached.courseName });
-        setTees(cached.tees);
-        setTeesLoading(false);
-        return;
-      }
-
-      // Step 2: Fetch from API and import â€” always sets course even if tees fail
-      const full = await getCourseById(hit.id);
-      console.log("[events] getCourseById done, importing...");
-      const result: ImportedCourse = await importCourse(full);
-      console.log("[events] importCourse done:", result.courseId, result.tees.length, "tees");
-      setSelectedCourse({ id: result.courseId, name: result.courseName });
-
-      // Step 3: Reload tees from DB if we have a real course ID; else use API tees
-      const freshTees = result.courseId.startsWith("api-course-")
-        ? []
-        : await getTeesByCourseId(result.courseId).catch(() => [] as CourseTee[]);
-      const teesList = freshTees.length > 0
-        ? freshTees
-        : result.tees.map((t) => ({
-            id: t.id,
-            course_id: result.courseId,
-            tee_name: t.teeName,
-            tee_color: null,
-            course_rating: t.courseRating ?? 0,
-            slope_rating: t.slopeRating ?? null,
-            par_total: t.parTotal ?? 0,
-            gender: t.gender ?? null,
-            yards: t.yards ?? null,
-          }));
-
+      const { courseId, courseName, tees: teesList } = await loadTeesForEventCourseHit(hit);
+      console.log("[events] course loaded:", courseId, teesList.length, "tees", "source=", hit.source);
+      setSelectedCourse({ id: courseId, name: courseName });
       setTees(teesList);
-      // Show manual entry if no tees found â€” but never dead-end
       if (teesList.length === 0) {
         setShowManualTee(true);
-        setTeesError("No tee data imported yet. Enter tee details manually below.");
+        setTeesError("No tee data found for this course. Enter tee details manually below.");
       }
     } catch (e: any) {
       console.error("[events] course import failed:", e?.message || e);
@@ -1121,7 +1091,7 @@ export default function EventsScreen() {
                     <View style={styles.searchResults}>
                       {courseSearchResults.slice(0, 8).map((c) => (
                         <Pressable
-                          key={c.id}
+                          key={c.key}
                           onPress={() => handleSelectCourse(c)}
                           style={({ pressed }) => [
                             styles.searchResultItem,
@@ -1129,13 +1099,11 @@ export default function EventsScreen() {
                           ]}
                         >
                           <AppText variant="body" numberOfLines={1}>{c.name}</AppText>
-                          {(c.club_name || (typeof c.location === "string" && c.location)) ? (
-                            <AppText variant="small" color="secondary" numberOfLines={1}>
-                              {[c.club_name, typeof c.location === "string" ? c.location : ""]
-                                .filter(Boolean)
-                                .join(" · ")}
-                            </AppText>
-                          ) : null}
+                          <AppText variant="small" color="secondary" numberOfLines={1}>
+                            {[c.source === "db" ? "Society course data" : "Golf directory", c.location]
+                              .filter(Boolean)
+                              .join(" · ")}
+                          </AppText>
                         </Pressable>
                       ))}
                     </View>
