@@ -36,14 +36,25 @@ describe("The Vale Resort — Lake course handicaps (HI 21.0)", () => {
 });
 
 describe("The Vale Resort — ladies tee handicaps (HI 21.0)", () => {
-  it("Wales National ladies Yellow", () => {
-    const tee = VALE_WALES_NATIONAL_TEE_RATINGS.find((t) => t.gender === "F" && t.teeName === "Yellow")!;
-    expect(calculateCourseHandicap(HI, tee.slopeRating, tee.courseRating, tee.whsPar)).toBe(32);
+  it("Wales National ladies tees", () => {
+    const byName = Object.fromEntries(
+      VALE_WALES_NATIONAL_TEE_RATINGS.filter((t) => t.gender === "F").map((t) => [t.teeName, t]),
+    );
+    expectCourseHandicap(byName.Blue, 38);
+    expectCourseHandicap(byName.White, 35);
+    expectCourseHandicap(byName.Yellow, 32);
+    expectCourseHandicap(byName.Red, 25);
   });
 
-  it("Lake ladies Yellow", () => {
-    const tee = VALE_LAKE_TEE_RATINGS.find((t) => t.gender === "F" && t.teeName === "Yellow")!;
-    expect(calculateCourseHandicap(HI, tee.slopeRating, tee.courseRating, tee.whsPar)).toBe(28);
+  it("Lake ladies tees", () => {
+    const byName = Object.fromEntries(
+      VALE_LAKE_TEE_RATINGS.filter((t) => t.gender === "F").map((t) => [t.teeName, t]),
+    );
+    expectCourseHandicap(byName.White, 30);
+    expectCourseHandicap(byName.Yellow, 28);
+    expectCourseHandicap(byName["Winter Yellow"], 26);
+    expectCourseHandicap(byName.Red, 26);
+    expectCourseHandicap(byName["Winter Red"], 25);
   });
 });
 

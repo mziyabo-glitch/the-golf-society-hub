@@ -46,9 +46,9 @@ export const VALE_LAKE_TEE_RATINGS: readonly ValeTeeRating[] = [
   { teeName: "Winter Yellow", gender: "M", courseRating: 68.6, slopeRating: 122, whsPar: 72 },
   { teeName: "Winter Red", gender: "M", courseRating: 67.8, slopeRating: 121, whsPar: 72 },
   { teeName: "Red", gender: "M", courseRating: 69.0, slopeRating: 120, whsPar: 72 },
-  { teeName: "White", gender: "F", courseRating: 78.7, slopeRating: 140, whsPar: 74 },
+  { teeName: "White", gender: "F", courseRating: 77.4, slopeRating: 137, whsPar: 73 },
   { teeName: "Yellow", gender: "F", courseRating: 76.6, slopeRating: 136, whsPar: 74 },
-  { teeName: "Winter Yellow", gender: "F", courseRating: 74.9, slopeRating: 135, whsPar: 74 },
+  { teeName: "Winter Yellow", gender: "F", courseRating: 75.1, slopeRating: 135, whsPar: 74 },
   { teeName: "Winter Red", gender: "F", courseRating: 74.2, slopeRating: 133, whsPar: 74 },
   { teeName: "Red", gender: "F", courseRating: 74.9, slopeRating: 134, whsPar: 74 },
 ] as const;
