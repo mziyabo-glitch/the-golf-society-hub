@@ -44,8 +44,13 @@ import { ParticipatingSocietiesSection } from "@/components/event/ParticipatingS
 import { ManageEventSection } from "@/components/event/ManageEventSection";
 import type { EventSocietyInput } from "@/lib/db_supabase/jointEventTypes";
 import type { JointEventEntry } from "@/lib/db_supabase/jointEventTypes";
-import { getTeesByCourseId, getCourseByApiId, getCourseMetaById, upsertTeesFromApi, type CourseTee } from "@/lib/db_supabase/courseRepo";
-import { searchCourses as searchCoursesApi, getCourseById, type ApiCourseSearchResult } from "@/lib/golfApi";
+import { getTeesByCourseId, getCourseMetaById, upsertTeesFromApi, type CourseTee } from "@/lib/db_supabase/courseRepo";
+import {
+  loadTeesForEventCourseHit,
+  searchCoursesForEvent,
+  type EventCourseSearchHit,
+} from "@/lib/course/eventCourseSearch";
+import { getCourseById } from "@/lib/golfApi";
 import { importCourse, type ImportedCourse } from "@/lib/importCourse";
 import { CourseTeeSelector } from "@/components/CourseTeeSelector";
 import { normalizeSlopeRating } from "@/lib/teeMetrics";
@@ -239,7 +244,7 @@ export default function ManageEventScreen() {
 
   // Course search (GolfCourseAPI) for edit mode
   const [courseSearchQuery, setCourseSearchQuery] = useState("");
-  const [courseSearchResults, setCourseSearchResults] = useState<ApiCourseSearchResult[]>([]);
+  const [courseSearchResults, setCourseSearchResults] = useState<EventCourseSearchHit[]>([]);
   const [courseSearching, setCourseSearching] = useState(false);
   const [courseSearchError, setCourseSearchError] = useState<string | null>(null);
   const [selectedCourseEdit, setSelectedCourseEdit] = useState<{ id: string; name: string } | null>(null);
@@ -1487,7 +1492,7 @@ export default function ManageEventScreen() {
         setCourseSearching(true);
         setCourseSearchError(null);
         try {
-          const hits = await searchCoursesApi(q);
+          const hits = await searchCoursesForEvent(q);
           setCourseSearchResults(hits);
         } catch (e: any) {
           setCourseSearchError(e?.message || "Search failed");
@@ -1511,7 +1516,7 @@ export default function ManageEventScreen() {
     return () => debouncedSearch.cancel();
   }, [courseSearchQuery, isEditing, debouncedSearch]);
 
-  const handleEditSelectCourse = useCallback(async (hit: ApiCourseSearchResult) => {
+  const handleEditSelectCourse = useCallback(async (hit: EventCourseSearchHit) => {
     setCourseSearchResults([]);
     setCourseSearchQuery("");
     setSelectedTee(null);
@@ -1522,49 +1527,18 @@ export default function ManageEventScreen() {
     setTeeStatusMessage(null);
     setShowManualTee(true);
     try {
-      const cached = await getCourseByApiId(hit.id);
-      if (cached && cached.tees.length > 0) {
-        setSelectedCourseEdit({ id: cached.courseId, name: cached.courseName });
-        setFormCourseName(cached.courseName);
-        setTees(cached.tees);
+      const { courseId, courseName, tees: teesList } = await loadTeesForEventCourseHit(hit);
+      setSelectedCourseEdit({ id: courseId, name: courseName });
+      setFormCourseName(courseName);
+      setTees(teesList);
+      if (teesList.length === 0) {
+        setTeeStatus("pending_sync");
+        setTeeStatusMessage("No tee data found for this course. You can select a tee manually below.");
+        setShowManualTee(true);
+      } else {
         setTeeStatus("synced");
         setTeeStatusMessage("Synced tee data loaded.");
-      } else {
-        const full = await getCourseById(hit.id);
-        const result: ImportedCourse = await importCourse(full);
-        setSelectedCourseEdit({ id: result.courseId, name: result.courseName });
-        setFormCourseName(result.courseName);
-
-        let teesList: CourseTee[];
-        if (result.tees.length > 0) {
-          teesList = result.tees.map((t) => ({
-            id: t.id,
-            course_id: result.courseId,
-            tee_name: t.teeName,
-            tee_color: null,
-            course_rating: t.courseRating ?? 0,
-            slope_rating: t.slopeRating ?? null,
-            par_total: t.parTotal ?? 0,
-          }));
-        } else {
-          const apiTees = full.tees;
-          if (apiTees) {
-            await upsertTeesFromApi(result.courseId, apiTees as any);
-            teesList = await getTeesByCourseId(result.courseId);
-          } else {
-            teesList = [];
-          }
-        }
-        setTees(teesList);
-        if (teesList.length === 0) {
-          setTeeStatus("pending_sync");
-          setTeeStatusMessage("Tee data is still syncing. You can select a tee manually below.");
-          setShowManualTee(true);
-        } else {
-          setTeeStatus("synced");
-          setTeeStatusMessage("Synced tee data loaded.");
-          setShowManualTee(false);
-        }
+        setShowManualTee(false);
       }
     } catch {
       setSelectedCourseEdit({ id: "", name: hit.name });
@@ -2308,7 +2282,7 @@ export default function ManageEventScreen() {
                     <View style={styles.searchResults}>
                       {courseSearchResults.slice(0, 8).map((hit) => (
                         <Pressable
-                          key={hit.id}
+                          key={hit.key}
                           onPress={() => handleEditSelectCourse(hit)}
                           style={({ pressed }) => [
                             styles.courseSearchResultRow,
@@ -2320,10 +2294,11 @@ export default function ManageEventScreen() {
                             },
                           ]}
                         >
-                          <AppText variant="body" numberOfLines={1}>{hit.club_name || hit.name}</AppText>
-                          {typeof hit.location === "string" && hit.location && (
-                            <AppText variant="small" color="muted">{hit.location}</AppText>
-                          )}
+                          <AppText variant="body" numberOfLines={1}>{hit.name}</AppText>
+                          <AppText variant="small" color="muted">
+                            {hit.source === "db" ? "Society course data" : "Golf directory"}
+                            {hit.location ? ` · ${hit.location}` : ""}
+                          </AppText>
                         </Pressable>
                       ))}
                     </View>

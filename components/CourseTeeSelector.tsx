@@ -40,12 +40,7 @@ export type CourseTeeSelectorProps = {
   sectionTitle?: string;
 };
 
-/**
- * Course handicap = handicap index × slope / 113 (rounded).
- */
-export function courseHandicapFromTee(handicapIndex: number, slopeRating: number): number {
-  return Math.round(handicapIndex * (slopeRating / 113));
-}
+import { calculateCourseHandicap } from "@/lib/scoring/handicap";
 
 export function CourseTeeSelector({
   tees,
@@ -75,8 +70,13 @@ export function CourseTeeSelector({
         const isSelected = selectedTee?.id === tee.id;
         const dotColor = getTeeColor(tee);
         const courseHcap =
-          handicapIndex != null && !isNaN(handicapIndex) && hasValidSlopeRating(tee.slope_rating)
-            ? courseHandicapFromTee(handicapIndex, tee.slope_rating!)
+          handicapIndex != null && !isNaN(handicapIndex) && hasValidSlopeRating(tee.slope_rating) && tee.course_rating > 0
+            ? calculateCourseHandicap(
+                handicapIndex,
+                tee.slope_rating!,
+                tee.course_rating,
+                tee.par_total,
+              )
             : null;
 
         return (
