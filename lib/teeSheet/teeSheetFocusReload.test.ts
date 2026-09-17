@@ -12,6 +12,28 @@ describe("teeSheet focus reload", () => {
     expect(shouldSkipTeeSheetFocusReload({ isDirty: false, saving: false, publishing: false })).toBe(false);
   });
 
+  it("skips reload while generating, regenerating, or a detail reload is in flight", () => {
+    expect(
+      shouldSkipTeeSheetFocusReload({ isDirty: false, saving: false, publishing: false, generating: true }),
+    ).toBe(true);
+    expect(
+      shouldSkipTeeSheetFocusReload({
+        isDirty: false,
+        saving: false,
+        publishing: false,
+        regeneratingFromPool: true,
+      }),
+    ).toBe(true);
+    expect(
+      shouldSkipTeeSheetFocusReload({
+        isDirty: false,
+        saving: false,
+        publishing: false,
+        eventDetailsRefreshing: true,
+      }),
+    ).toBe(true);
+  });
+
   it("documents regenerate confirmation copy", () => {
     expect(REGENERATE_TEE_SHEET_CONFIRM_MESSAGE).toMatch(/replace your saved tee sheet draft/i);
   });

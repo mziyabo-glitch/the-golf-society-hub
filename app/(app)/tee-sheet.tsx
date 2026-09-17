@@ -444,6 +444,7 @@ export default function TeeSheetScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [loadError, setLoadError] = useState<FormattedError | null>(null);
   const [generating, setGenerating] = useState(false);
+  const [regeneratingFromPool, setRegeneratingFromPool] = useState(false);
   const [saving, setSaving] = useState(false);
   const [publishing, setPublishing] = useState(false);
   const [notice, setNotice] = useState<{ type: "success" | "error" | "info"; message: string; detail?: string } | null>(null);
@@ -482,6 +483,14 @@ export default function TeeSheetScreen() {
   const savedSnapshotRef = React.useRef<TeeSheetEditorSnapshot | null>(null);
   const societyIdRef = React.useRef(societyId);
   societyIdRef.current = societyId;
+  const focusReloadGuardRef = React.useRef({
+    isDirty: false,
+    saving: false,
+    publishing: false,
+    generating: false,
+    regeneratingFromPool: false,
+    eventDetailsRefreshing: false,
+  });
   const editorStateRef = React.useRef({
     groups,
     selectedPlayerIds,
@@ -815,6 +824,7 @@ export default function TeeSheetScreen() {
 
       // Prefer deep-link event, then keep selection, then nearest upcoming.
       setSelectedEventId((prev) => {
+        if (focusReloadGuardRef.current.isDirty && prev) return prev;
         if (routeEventId && mergedForList.some((e) => e.id === routeEventId)) return routeEventId;
         if (prev && mergedForList.some((e) => e.id === prev)) return prev;
         return upcomingSorted[0]?.id ?? mergedForList[0]?.id ?? null;
@@ -1348,6 +1358,15 @@ export default function TeeSheetScreen() {
     return !teeSheetEditorSnapshotsEqual(currentEditorSnapshot, savedSnapshotRef.current);
   }, [currentEditorSnapshot]);
 
+  focusReloadGuardRef.current = {
+    isDirty,
+    saving,
+    publishing,
+    generating,
+    regeneratingFromPool,
+    eventDetailsRefreshing,
+  };
+
   useEffect(() => {
     if (!isDirty || saving || generating) return;
     const unsubscribe = navigation.addListener("beforeRemove", (e) => {
@@ -1366,23 +1385,23 @@ export default function TeeSheetScreen() {
     return unsubscribe;
   }, [navigation, isDirty, saving, generating]);
 
-  // Refresh on focus — always reload persisted draft from DB (same event id stays mounted in stack).
+  // Refresh on focus — reload persisted draft from DB when editor is clean (avoid clobbering mid-draw edits).
   useFocusEffect(
     useCallback(() => {
-      if (societyId) {
+      const guard = focusReloadGuardRef.current;
+      const skipReload = shouldSkipTeeSheetFocusReload(guard);
+      if (societyId && !skipReload) {
         loadData();
       }
       if (selectedEventId && canEditSelectedEventTeeSheet) {
         void refreshPoolEligibility();
       }
-      if (
-        selectedEventId &&
-        canEditSelectedEventTeeSheet &&
-        !shouldSkipTeeSheetFocusReload({ isDirty, saving, publishing })
-      ) {
+      if (selectedEventId && canEditSelectedEventTeeSheet && !skipReload) {
         void reloadSelectedEventDetails();
       }
-      setGenerating(false);
+      if (!guard.generating) {
+        setGenerating(false);
+      }
     }, [
       societyId,
       loadData,
@@ -1390,9 +1409,6 @@ export default function TeeSheetScreen() {
       refreshPoolEligibility,
       reloadSelectedEventDetails,
       canEditSelectedEventTeeSheet,
-      isDirty,
-      saving,
-      publishing,
     ]),
   );
 
@@ -1868,7 +1884,6 @@ export default function TeeSheetScreen() {
         await invalidateCache(`event:${eventId}:tee-sheet`);
         await invalidateCache(`event:${eventId}:detail`);
         if (editor.societyId) await invalidateCachePrefix(`society:${editor.societyId}:`);
-        await reloadSelectedEventDetails();
         return true;
       }
 
@@ -2005,7 +2020,6 @@ export default function TeeSheetScreen() {
       await invalidateCache(`event:${eventId}:detail`);
       if (editor.societyId) await invalidateCachePrefix(`society:${editor.societyId}:`);
       loadData();
-      await reloadSelectedEventDetails();
       return true;
     } catch (err: unknown) {
       console.error("[teesheet] persistTeeSheetDraft", err);
@@ -2493,6 +2507,8 @@ export default function TeeSheetScreen() {
 
   const executeRegenerateTeeSheetFromPool = async () => {
     if (!selectedEventId || !selectedEvent) return;
+    setRegeneratingFromPool(true);
+    try {
     if (isJointEventTeeSheet && jointTeeSheetData) {
       const eventId = selectedEventId;
       const participantSocietyIds =
@@ -2549,6 +2565,9 @@ export default function TeeSheetScreen() {
       eventMemberPool.length > 0 ? eventMemberPool : members,
       paidGuestList,
     );
+    } finally {
+      setRegeneratingFromPool(false);
+    }
   };
 
   const handleRegenerateTeeSheet = () => {

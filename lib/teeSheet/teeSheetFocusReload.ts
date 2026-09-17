@@ -4,8 +4,18 @@ export function shouldSkipTeeSheetFocusReload(input: {
   isDirty: boolean;
   saving: boolean;
   publishing: boolean;
+  generating?: boolean;
+  regeneratingFromPool?: boolean;
+  eventDetailsRefreshing?: boolean;
 }): boolean {
-  return input.isDirty || input.saving || input.publishing;
+  return (
+    input.isDirty ||
+    input.saving ||
+    input.publishing ||
+    input.generating === true ||
+    input.regeneratingFromPool === true ||
+    input.eventDetailsRefreshing === true
+  );
 }
 
 export const REGENERATE_TEE_SHEET_CONFIRM_MESSAGE =
