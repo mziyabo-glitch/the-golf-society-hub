@@ -41,7 +41,7 @@ export function resolveAttendeeDisplayName(
   const snap = snapshotName?.trim();
 
   const log = (resolvedName: string, source: AttendeeNameSource) => {
-    if (!__DEV__) return;
+    if (typeof __DEV__ === "undefined" || !__DEV__) return;
     console.log("[event-attendees] name resolution", {
       registrationId: registrationId ?? null,
       memberId: member?.id ?? memberId ?? null,
