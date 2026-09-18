@@ -164,3 +164,40 @@ describe("Meon Valley official scorecard fallback", () => {
     );
   });
 });
+
+describe("Upavon official scorecard fallback", () => {
+  it("matches Upavon by api id and name", () => {
+    expect(resolveOfficialCourseFallback({ apiId: 12241, courseName: "Upavon" })).not.toBeNull();
+    expect(resolveOfficialCourseFallback({ courseName: "Upavon Golf Club" })).not.toBeNull();
+  });
+
+  it("yellow tee June 2026 official ratings, yardages, and stroke indexes", () => {
+    const out = applyOfficialScorecardFallback({
+      apiId: 12241,
+      teeName: "Yellow",
+      holes: emptyHoles18(),
+      courseName: "Upavon",
+    });
+    expect(out.applied).toBe(true);
+    expect(out.teeMetrics?.courseRating).toBe(70.1);
+    expect(out.teeMetrics?.slopeRating).toBe(128);
+    expect(out.teeMetrics?.totalYards).toBe(6032);
+    expect(out.holes.map((h) => h.strokeIndex)).toEqual([
+      13, 9, 3, 1, 17, 5, 11, 7, 15, 4, 14, 18, 2, 8, 16, 6, 12, 10,
+    ]);
+    expect(out.holes[11]!.yardage).toBe(173);
+    expect(out.holes[16]!.yardage).toBe(350);
+  });
+
+  it("red ladies tee uses women's course rating", () => {
+    const out = applyOfficialScorecardFallback({
+      apiId: 12241,
+      teeName: "Red (Ladies)",
+      holes: emptyHoles18(),
+      courseName: "Upavon Golf Club",
+    });
+    expect(out.teeMetrics?.courseRating).toBe(76.3);
+    expect(out.teeMetrics?.slopeRating).toBe(134);
+    expect(out.teeMetrics?.totalYards).toBe(5459);
+  });
+});

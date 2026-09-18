@@ -6,7 +6,7 @@ export type OfficialFallbackTeeMetrics = {
   courseRating: number;
   parTotal: number;
   totalYards: number;
-  slopeRating: null;
+  slopeRating: number | null;
 };
 
 type OfficialFallbackHoleRow = {
@@ -25,7 +25,7 @@ type OfficialFallbackTeeSpec = {
 type OfficialCourseFallbackSpec = {
   apiIds: number[];
   aliasKeys: string[];
-  /** When false, only fill missing stroke indexes (legacy Upavon behaviour). */
+  /** When false, only fill missing stroke indexes (unused — all specs use fullOverride). */
   fullOverride: boolean;
   sourceType: OfficialScorecardSourceType;
   sourceUrl: string;
@@ -135,45 +135,62 @@ const MEON_VALLEY_MEON_COURSE: OfficialCourseFallbackSpec = {
   ],
 };
 
-const UPAVON_STROKE_INDEX: Record<number, number> = {
-  1: 13,
-  2: 9,
-  3: 3,
-  4: 1,
-  5: 17,
-  6: 5,
-  7: 11,
-  8: 7,
-  9: 15,
-  10: 4,
-  11: 14,
-  12: 18,
-  13: 2,
-  14: 8,
-  15: 16,
-  16: 6,
-  17: 12,
-  18: 10,
-};
+const UPAVON_PAR = [4, 4, 4, 4, 5, 3, 5, 3, 4, 4, 4, 3, 5, 3, 5, 4, 4, 3] as const;
+const UPAVON_SI = [13, 9, 3, 1, 17, 5, 11, 7, 15, 4, 14, 18, 2, 8, 16, 6, 12, 10] as const;
+
+function upavonHoles(yardages: readonly number[]): OfficialFallbackHoleRow[] {
+  return yardages.map((yardage, i) => ({
+    holeNumber: i + 1,
+    yardage,
+    par: UPAVON_PAR[i]!,
+    strokeIndex: UPAVON_SI[i]!,
+  }));
+}
 
 const UPAVON_FALLBACK: OfficialCourseFallbackSpec = {
   apiIds: [12241],
   aliasKeys: ["upavon golf club", "upavon"],
-  fullOverride: false,
+  fullOverride: true,
   sourceType: "official_scorecard_fallback",
-  sourceUrl: "https://18birdies.com/golf-courses/club/c695cb00-86ac-11e4-8c28-020000005b00/upavon-golf-club",
+  sourceUrl:
+    "https://www.upavongolfclub.co.uk/uploads/upavon/File/Upavon%20Scorecard%20June%202026.pdf",
   dataConfidence: "verified",
   golferDataStatus: "verified_manual",
   tees: [
     {
-      teeKeys: ["white", "yellow", "red"],
-      metrics: { courseRating: 0, parTotal: 0, totalYards: 0, slopeRating: null },
-      holes: Object.entries(UPAVON_STROKE_INDEX).map(([n, strokeIndex]) => ({
-        holeNumber: Number(n),
-        par: 4,
-        yardage: 0,
-        strokeIndex,
-      })),
+      teeKeys: ["black"],
+      metrics: { courseRating: 73.4, parTotal: 71, totalYards: 6722, slopeRating: 134 },
+      holes: upavonHoles([
+        303, 426, 375, 457, 482, 259, 510, 216, 371, 388, 325, 218, 647, 152, 498, 491, 404, 200,
+      ]),
+    },
+    {
+      teeKeys: ["white"],
+      metrics: { courseRating: 72.0, parTotal: 71, totalYards: 6437, slopeRating: 132 },
+      holes: upavonHoles([
+        303, 426, 390, 416, 482, 229, 499, 196, 354, 388, 311, 185, 604, 152, 498, 459, 378, 167,
+      ]),
+    },
+    {
+      teeKeys: ["yellow"],
+      metrics: { courseRating: 70.1, parTotal: 71, totalYards: 6032, slopeRating: 128 },
+      holes: upavonHoles([
+        295, 354, 389, 405, 480, 201, 476, 188, 311, 350, 304, 173, 562, 138, 487, 417, 350, 152,
+      ]),
+    },
+    {
+      teeKeys: ["red"],
+      metrics: { courseRating: 67.6, parTotal: 71, totalYards: 5459, slopeRating: 117 },
+      holes: upavonHoles([
+        286, 292, 367, 391, 437, 188, 439, 149, 303, 350, 266, 124, 494, 131, 430, 375, 301, 136,
+      ]),
+    },
+    {
+      teeKeys: ["red (ladies)"],
+      metrics: { courseRating: 76.3, parTotal: 71, totalYards: 5459, slopeRating: 134 },
+      holes: upavonHoles([
+        286, 292, 367, 391, 437, 188, 439, 149, 303, 350, 266, 124, 494, 131, 430, 375, 301, 136,
+      ]),
     },
   ],
 };
@@ -227,8 +244,13 @@ function normalizeTeeName(name: string): string {
 }
 
 function findOfficialTeeSpec(spec: OfficialCourseFallbackSpec, teeName: string): OfficialFallbackTeeSpec | null {
-  const key = normalizeTeeName(teeName);
-  return spec.tees.find((t) => t.teeKeys.includes(key)) ?? null;
+  const raw = teeName.trim().toLowerCase();
+  const stripped = normalizeTeeName(teeName);
+  return (
+    spec.tees.find((t) => t.teeKeys.some((k) => k === raw)) ??
+    spec.tees.find((t) => t.teeKeys.includes(stripped)) ??
+    null
+  );
 }
 
 function toNormalizedHoles(rows: OfficialFallbackHoleRow[]): NormalizedHole[] {
@@ -238,34 +260,6 @@ function toNormalizedHoles(rows: OfficialFallbackHoleRow[]): NormalizedHole[] {
     yardage: h.yardage,
     strokeIndex: h.strokeIndex,
   }));
-}
-
-function patchUpavonSiOnly(
-  spec: OfficialCourseFallbackSpec,
-  teeName: string,
-  holes: NormalizedHole[],
-): { holes: NormalizedHole[]; applied: boolean } {
-  const teeSpec = findOfficialTeeSpec(spec, teeName);
-  if (!teeSpec || holes.length !== 18) return { holes, applied: false };
-
-  const siByHole = new Map(teeSpec.holes.map((h) => [h.holeNumber, h.strokeIndex]));
-  const hasAllSi = holes.every(
-    (h) => Number.isFinite(Number(h.strokeIndex)) && Number(h.strokeIndex) >= 1 && Number(h.strokeIndex) <= 18,
-  );
-  if (hasAllSi) return { holes, applied: false };
-
-  const patched = holes.map((h) => {
-    const fallbackSi = siByHole.get(h.holeNumber);
-    const nextSi =
-      Number.isFinite(Number(h.strokeIndex)) && Number(h.strokeIndex) >= 1 && Number(h.strokeIndex) <= 18
-        ? h.strokeIndex
-        : Number.isFinite(Number(fallbackSi))
-          ? Number(fallbackSi)
-          : null;
-    return { ...h, strokeIndex: nextSi };
-  });
-
-  return { holes: patched, applied: true };
 }
 
 export function applyOfficialScorecardFallback(params: {
@@ -295,17 +289,6 @@ export function applyOfficialScorecardFallback(params: {
 
   const teeSpec = findOfficialTeeSpec(spec, params.teeName);
   if (!teeSpec) return { holes: params.holes, applied: false };
-
-  if (!spec.fullOverride) {
-    const partial = patchUpavonSiOnly(spec, params.teeName, params.holes);
-    if (!partial.applied) return { holes: params.holes, applied: false };
-    return {
-      holes: partial.holes,
-      applied: true,
-      sourceType: "trusted_third_party",
-      sourceUrl: spec.sourceUrl,
-    };
-  }
 
   return {
     holes: toNormalizedHoles(teeSpec.holes),

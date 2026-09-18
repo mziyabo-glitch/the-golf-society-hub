@@ -12,6 +12,7 @@ import {
   type EventScoringResultsStatus,
 } from "@/lib/scoring/eventScoringPublishStatus";
 import { buildEventResultInputsFromLeaderboard, validateScoringPublishReadiness } from "@/lib/scoring/publishFromLeaderboard";
+import type { PublishOomEligibilityResolver } from "@/lib/oomPublishEligibility";
 import type { EventDoc } from "@/lib/db_supabase/eventRepo";
 import type { EventResultInput } from "@/lib/db_supabase/resultsRepo";
 import type { LeaderboardRow } from "@/types/eventPlayerScoring";
@@ -23,6 +24,12 @@ export type PublishEventScoringDeps = {
   deleteEventResultsForSociety?: typeof import("@/lib/db_supabase/resultsRepo").deleteEventResultsForSociety;
   getEventScoringLeaderboard?: typeof getEventScoringLeaderboard;
   loadEventScoringContext?: typeof loadEventScoringContext;
+  /** When omitted, resolved via dynamic import of joint event + member repos (keeps Vitest mockable). */
+  resolvePublishOomEligible?: (
+    eventId: string,
+    societyId: string,
+    playerIds: string[],
+  ) => Promise<import("@/lib/oomPublishEligibility").PublishOomEligibilityResolver | undefined>;
 };
 
 export type PublishEventScoringSummary = {
@@ -55,6 +62,35 @@ async function defaultUpdateEvent(
 ): Promise<void> {
   const { updateEvent } = await import("@/lib/db_supabase/eventRepo");
   await updateEvent(eventId, updates);
+}
+
+async function defaultResolvePublishOomEligible(
+  eventId: string,
+  societyId: string,
+  playerIds: string[],
+): Promise<PublishOomEligibilityResolver | undefined> {
+  if (playerIds.length === 0) return undefined;
+  const { getJointEventDetail } = await import("@/lib/db_supabase/jointEventRepo");
+  const { getMembersByIds } = await import("@/lib/db_supabase/memberRepo");
+  const { buildPublishOomEligibilityResolver } = await import("@/lib/oomPublishEligibility");
+  const members = await getMembersByIds(playerIds);
+  const membersById = new Map(members.map((m) => [m.id, m]));
+  const jointDetail = await getJointEventDetail(eventId).catch(() => null);
+  return buildPublishOomEligibilityResolver({
+    activeSocietyId: societyId,
+    participatingSocieties: jointDetail?.participating_societies ?? [
+      {
+        event_society_id: "",
+        society_id: societyId,
+        society_name: "",
+        role: "host",
+        has_society_oom: true,
+        society_oom_name: "",
+      },
+    ],
+    jointEntries: jointDetail?.entries ?? [],
+    membersById,
+  });
 }
 
 /**
@@ -91,7 +127,24 @@ export async function publishEventScoringResults(
   }
 
   const isOom = Boolean(event.isOOM ?? event.classification === "oom");
-  const inputs = buildEventResultInputsFromLeaderboard(ctx.format, board, isOom);
+
+  const completePlayerIds = board.filter((r) => r.round_complete).map((r) => r.player_id);
+  const resolveOomEligible =
+    isOom && completePlayerIds.length > 0
+      ? await (deps.resolvePublishOomEligible ?? defaultResolvePublishOomEligible)(
+          eventId,
+          societyId,
+          completePlayerIds,
+        )
+      : undefined;
+
+  const inputs = buildEventResultInputsFromLeaderboard(
+    ctx.format,
+    board,
+    isOom,
+    resolveOomEligible,
+    isOom ? `publish:${eventId}:${societyId}` : undefined,
+  );
   if (inputs.length === 0) {
     throw new Error("publishEventScoringResults: no official rows to write.");
   }
