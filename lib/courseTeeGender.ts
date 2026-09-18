@@ -44,6 +44,36 @@ export function menAndLadiesTeeOptions(tees: CourseTee[]): {
   };
 }
 
+/** Try to match saved men's tee fields to a course_tees row (searches men's picker options only). */
+export function matchMenTeeFromEvent(
+  tees: CourseTee[],
+  opts: {
+    teeName?: string | null;
+    par?: number | null;
+    courseRating?: number | null;
+    slopeRating?: number | null;
+  },
+): CourseTee | null {
+  const { menOptions } = menAndLadiesTeeOptions(tees);
+  const name = (opts.teeName || "").trim().toLowerCase();
+  if (name) {
+    const byName = menOptions.find((t) => (t.tee_name || "").trim().toLowerCase() === name);
+    if (byName) return byName;
+  }
+  const p = opts.par;
+  const cr = opts.courseRating;
+  const sr = opts.slopeRating;
+  if (p == null && cr == null && sr == null) return null;
+  return (
+    menOptions.find(
+      (t) =>
+        (p == null || t.par_total === p) &&
+        (cr == null || Math.abs(t.course_rating - cr) < 0.05) &&
+        (sr == null || t.slope_rating === sr),
+    ) ?? null
+  );
+}
+
 /** Try to match saved ladies' numbers to a course_tees row. */
 export function matchLadiesTeeFromEvent(
   tees: CourseTee[],
