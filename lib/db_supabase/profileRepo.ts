@@ -3,6 +3,7 @@
 // NO .select().single() after upsert to avoid 406 errors
 
 import { supabase } from "@/lib/supabase";
+import { emailLocalPart } from "@/lib/rivalryPersonName";
 
 export type ProfileDoc = {
   id: string;
@@ -16,6 +17,25 @@ export type ProfileDoc = {
   created_at?: string;
   updated_at?: string;
 };
+
+function normalizeEmailInput(email: string | null | undefined): string | null {
+  if (email == null) return null;
+  const cleaned = email.trim().toLowerCase();
+  return cleaned.length > 0 ? cleaned : null;
+}
+
+function extractConstraintHint(
+  details: string | null | undefined,
+  message: string | null | undefined,
+): string | null {
+  const src = `${details ?? ""} ${message ?? ""}`.trim();
+  if (!src) return null;
+  const m =
+    src.match(/constraint\s+\"([^\"]+)\"/i) ??
+    src.match(/violates\s+([a-zA-Z0-9_]+)\s+constraint/i) ??
+    src.match(/on\s+table\s+\"([^\"]+)\"/i);
+  return m?.[1] ?? null;
+}
 
 /**
  * Ensure profile exists for user.
@@ -99,19 +119,33 @@ export async function updateProfile(
   userId: string,
   updates: Partial<Omit<ProfileDoc, "id">>
 ): Promise<void> {
-  console.log("[profileRepo] updateProfile:", userId, JSON.stringify(updates, null, 2));
+  const payload: Record<string, unknown> = {
+    ...updates,
+    updated_at: new Date().toISOString(),
+  };
+  if ("email" in payload) {
+    payload.email = normalizeEmailInput(payload.email as string | null | undefined);
+  }
+  console.log("[profileRepo] updateProfile payload:", {
+    userId,
+    payload,
+  });
 
   const { error } = await supabase
     .from("profiles")
-    .update({ ...updates, updated_at: new Date().toISOString() })
+    .update(payload)
     .eq("id", userId);
 
   if (error) {
+    const constraint = extractConstraintHint(error.details, error.message);
     console.error("[profileRepo] updateProfile failed:", {
+      userId,
+      payload,
       message: error.message,
       details: error.details,
       hint: error.hint,
       code: error.code,
+      constraint,
     });
     throw new Error(error.message || "Failed to update profile");
   }
@@ -126,20 +160,34 @@ export async function updateUserProfile(
   fields: { full_name: string; sex: string; whs_index: number | null }
 ): Promise<void> {
   const profileComplete = !!(fields.full_name?.trim() && fields.sex?.trim());
+  const payload = {
+    full_name: fields.full_name.trim(),
+    sex: fields.sex,
+    whs_index: fields.whs_index,
+    profile_complete: profileComplete,
+    updated_at: new Date().toISOString(),
+  };
+  console.log("[profileRepo] updateUserProfile payload:", {
+    userId,
+    payload,
+  });
 
   const { error } = await supabase
     .from("profiles")
-    .update({
-      full_name: fields.full_name.trim(),
-      sex: fields.sex,
-      whs_index: fields.whs_index,
-      profile_complete: profileComplete,
-      updated_at: new Date().toISOString(),
-    })
+    .update(payload)
     .eq("id", userId);
 
   if (error) {
-    console.error("[profileRepo] updateUserProfile failed:", error.message);
+    const constraint = extractConstraintHint(error.details, error.message);
+    console.error("[profileRepo] updateUserProfile failed:", {
+      userId,
+      payload,
+      message: error.message,
+      details: error.details,
+      hint: error.hint,
+      code: error.code,
+      constraint,
+    });
     throw new Error(error.message || "Failed to update profile");
   }
 }
@@ -168,4 +216,44 @@ export async function clearActiveSociety(userId: string): Promise<void> {
     active_society_id: null,
     active_member_id: null,
   });
+}
+
+function pickNameFromAuthMetadata(meta: Record<string, unknown> | null | undefined): string | null {
+  if (!meta || typeof meta !== "object") return null;
+  const full = meta.full_name;
+  const name = meta.name;
+  if (typeof full === "string" && full.trim()) return full.trim();
+  if (typeof name === "string" && name.trim()) return name.trim();
+  return null;
+}
+
+/**
+ * When `profiles.full_name` is empty (common after Apple sign-in), copy a usable name from
+ * member row, auth metadata, or email — helps the rest of the app and rivalry joins.
+ */
+export async function maybeBackfillProfileFullNameFromSignals(args: {
+  userId: string;
+  profile: { full_name?: string | null; email?: string | null } | null | undefined;
+  member: { name?: string | null; email?: string | null } | null | undefined;
+  authUser: { email?: string | null; user_metadata?: Record<string, unknown> | null };
+}): Promise<void> {
+  const { userId, profile, member, authUser } = args;
+  if (!userId) return;
+  if (profile?.full_name?.trim()) return;
+
+  const memName = member?.name?.trim();
+  const metaName = pickNameFromAuthMetadata(authUser.user_metadata ?? undefined);
+  const fromEmail =
+    emailLocalPart(member?.email) ??
+    emailLocalPart(profile?.email) ??
+    emailLocalPart(authUser.email);
+
+  const candidate = memName || metaName || fromEmail;
+  if (!candidate) return;
+
+  try {
+    await updateProfile(userId, { full_name: candidate });
+  } catch (e) {
+    console.warn("[profileRepo] maybeBackfillProfileFullNameFromSignals:", e);
+  }
 }

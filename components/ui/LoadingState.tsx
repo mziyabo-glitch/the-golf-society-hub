@@ -19,7 +19,7 @@ export function LoadingState({ message = "Loading...", style }: LoadingStateProp
     <View style={[styles.container, style]}>
       <ActivityIndicator size="large" color={colors.primary} />
       {message ? (
-        <AppText variant="caption" color="secondary" style={styles.message}>
+        <AppText variant="body" color="secondary" style={styles.message}>
           {message}
         </AppText>
       ) : null}
