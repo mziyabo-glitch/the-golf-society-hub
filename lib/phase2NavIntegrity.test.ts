@@ -82,3 +82,13 @@ describe("Phase 2 event tee-sheet journey still linked from manage", () => {
     expect(manage).toMatch(/eventId/);
   });
 });
+
+describe("Phase 7 production QA — hook safety", () => {
+  it("Birdies League computes useMemo before uiEnabled early return", () => {
+    const src = readAppSource("app/(app)/birdies-league/index.tsx");
+    const memoIdx = src.indexOf("const nextStart = useMemo");
+    const earlyReturnIdx = src.indexOf('if (!uiEnabled) {\n    return (\n      <SafeAreaView');
+    expect(memoIdx).toBeGreaterThan(-1);
+    expect(earlyReturnIdx).toBeGreaterThan(memoIdx);
+  });
+});

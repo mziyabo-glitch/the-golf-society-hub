@@ -283,12 +283,7 @@ export function HomeUnifiedNextEventPanel({
       ) : null}
 
       <View style={styles.actions}>
-        <PrimaryButton
-          onPress={onOpenEvent}
-          size="md"
-          style={styles.cta}
-          accessibilityLabel={ctaLabel}
-        >
+        <PrimaryButton onPress={onOpenEvent} size="md" style={styles.cta}>
           {ctaLabel}
         </PrimaryButton>
       </View>
