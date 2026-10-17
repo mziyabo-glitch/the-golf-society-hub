@@ -1,5 +1,4 @@
 import { StyleSheet, View } from "react-native";
-import { AppCard } from "@/components/ui/AppCard";
 import { AppText } from "@/components/ui/AppText";
 import { DashboardPlayabilityMiniCard } from "@/components/dashboard/DashboardPlayabilityMiniCard";
 import type { EventDoc } from "@/lib/db_supabase/eventRepo";
@@ -20,14 +19,7 @@ export function HomeWeatherSnapshotCard({
 }: Props) {
   const colors = getColors();
   if (!nextEvent) {
-    return (
-      <AppCard style={[styles.emptyCard, { borderColor: colors.borderLight }]}>
-        <AppText variant="bodyBold">Weather</AppText>
-        <AppText variant="small" color="secondary" style={{ marginTop: 4 }}>
-          Weather unavailable.
-        </AppText>
-      </AppCard>
-    );
+    return null;
   }
   return (
     <View>
@@ -38,7 +30,7 @@ export function HomeWeatherSnapshotCard({
         preferredTeeTimeLocal={preferredTeeTimeLocal}
       />
       <AppText variant="caption" color="tertiary" style={{ marginTop: 6, paddingHorizontal: 2 }}>
-        Powered by FairwayWeather. Tap for full detail, course switching, and the complete forecast.
+        FairwayWeather — tap for full forecast.
       </AppText>
     </View>
   );

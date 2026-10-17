@@ -27,19 +27,7 @@ export function HomePrizePoolCard({
   const colors = getColors();
 
   if (!eventId || !myMemberId) {
-    return (
-      <AppCard
-        style={[
-          styles.emptyCard,
-          { borderColor: colors.borderLight, backgroundColor: colors.backgroundTertiary },
-        ]}
-      >
-        <AppText variant="bodyBold">Prize Pools</AppText>
-        <AppText variant="small" color="secondary" style={{ marginTop: 4 }}>
-          No prize pools for this event.
-        </AppText>
-      </AppCard>
-    );
+    return null;
   }
 
   return (

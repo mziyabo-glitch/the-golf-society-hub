@@ -19,14 +19,7 @@ export function HomeLatestResultsCard({ snapshot, onOpenEvent }: Props) {
   const colors = getColors();
 
   if (!snapshot) {
-    return (
-      <AppCard style={[styles.card, { borderColor: colors.borderLight }]}>
-        <AppText variant="bodyBold">Latest Results</AppText>
-        <AppText variant="small" color="secondary" style={{ marginTop: 4 }}>
-          Results will appear here after the event.
-        </AppText>
-      </AppCard>
-    );
+    return null;
   }
 
   return (
