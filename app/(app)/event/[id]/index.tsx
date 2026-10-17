@@ -12,7 +12,7 @@ import { LoadingState } from "@/components/ui/LoadingState";
 import { RetryErrorBlock } from "@/components/ui/RetryErrorBlock";
 import { InlineNotice } from "@/components/ui/InlineNotice";
 import { ReliablePressable } from "@/components/ui/ReliablePressable";
-import { PrimaryButton, SecondaryButton } from "@/components/ui/Button";
+import { SecondaryButton } from "@/components/ui/Button";
 import { SocietyBadge } from "@/components/ui/SocietyHeader";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { scoringOfficialBadgeLabel, scoringOfficialUiKind } from "@/lib/scoring/scoringOfficialUi";
@@ -45,6 +45,17 @@ import { buildSocietyIdToNameMap } from "@/lib/jointEventSocietyLabel";
 import { exportEventAttendeesCsv } from "@/lib/eventAttendeeCsvExport";
 import { membersByIdFromLists } from "@/lib/eventAttendeeCsv";
 import { showAlert } from "@/lib/ui/alert";
+import {
+  buildEventDetailQuickActions,
+  shouldShowEntryFeeLine,
+  shouldShowJointAttendeeRoll,
+  shouldShowMemberPaymentStatus,
+  shouldShowSocietyAttendanceSummary,
+  splitQuickActionsForAudience,
+  quickActionCopy,
+  type EventDetailQuickActionId,
+} from "@/lib/events/eventDetailScreenModel";
+import { resolveHomePlayingStatus } from "@/lib/home/homeNextEventPanelModel";
 
 function formatEventDate(value?: string): string {
   if (!value?.trim()) return "Date TBD";
@@ -533,6 +544,72 @@ export default function EventOverviewScreen() {
     () => scoringOfficialUiKind(event?.scoring_results_status ?? event?.scoringResultsStatus),
     [event?.scoring_results_status, event?.scoringResultsStatus],
   );
+  const showAdminTools = canManageEvent;
+  const entryFeeDisplay = event?.entryFeeDisplay ?? (event as { entry_fee_display?: string })?.entry_fee_display;
+
+  const quickActionsPlan = useMemo(
+    () =>
+      buildEventDetailQuickActions({
+        canViewTeeSheet,
+        hasResults,
+        canManageHandicaps: permissions.canManageHandicaps,
+        canEnterGrossScores,
+        canAccessScorecardUi,
+        prizePoolEnabled: Boolean(event?.prizePoolEnabled),
+      }),
+    [
+      canViewTeeSheet,
+      hasResults,
+      permissions.canManageHandicaps,
+      canEnterGrossScores,
+      canAccessScorecardUi,
+      event?.prizePoolEnabled,
+    ],
+  );
+
+  const { member: memberQuickActions, admin: adminQuickActions } = useMemo(
+    () => splitQuickActionsForAudience(quickActionsPlan, showAdminTools),
+    [quickActionsPlan, showAdminTools],
+  );
+
+  const myPlayingStatus = useMemo(
+    () => resolveHomePlayingStatus(myRegistration),
+    [myRegistration],
+  );
+
+  const openQuickAction = useCallback(
+    (id: EventDetailQuickActionId) => {
+      if (!event?.id) return;
+      const base = { pathname: "" as const, params: { id: event.id } };
+      switch (id) {
+        case "players":
+          router.push({ ...base, pathname: "/(app)/event/[id]/players" } as never);
+          break;
+        case "tee_sheet":
+          router.push({ ...base, pathname: "/(app)/event/[id]/tee-sheet" } as never);
+          break;
+        case "results":
+          router.push({ ...base, pathname: "/(app)/event/[id]/points" } as never);
+          break;
+        case "prize_pool":
+          router.push({ ...base, pathname: "/(app)/event/[id]/prize-pools" } as never);
+          break;
+        case "scoring_leaderboard":
+          router.push({ ...base, pathname: "/(app)/event/[id]/gross-scores/leaderboard" } as never);
+          break;
+        case "gross_entry":
+          router.push({ ...base, pathname: "/(app)/event/[id]/gross-scores" } as never);
+          break;
+        case "publish_scoring":
+          router.push({ ...base, pathname: "/(app)/event/[id]/gross-scores/publish" } as never);
+          break;
+        default:
+          break;
+      }
+    },
+    [event?.id, router],
+  );
+
   const scoringOverviewLine = useMemo(() => {
     const isOom = Boolean(event?.isOOM ?? event?.classification === "oom");
     if (scoringOfficialKind === "published") {
@@ -654,85 +731,34 @@ export default function EventOverviewScreen() {
               {formatEventDate(event.date)}
             </AppText>
           </View>
-        </AppCard>
-
-        {canOpenWeatherFromEvent ? (
-          <AppCard style={{ borderRadius: radius.md }}>
-            <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm, marginBottom: spacing.xs }}>
-              <Feather name="cloud" size={20} color={colors.primary} />
-              <AppText variant="subheading">Playability</AppText>
+          {shouldShowEntryFeeLine(entryFeeDisplay) ? (
+            <View style={styles.metaRow}>
+              <Feather name="credit-card" size={16} color={colors.textSecondary} />
+              <AppText variant="body" color="secondary">
+                {String(entryFeeDisplay).trim()}
+              </AppText>
             </View>
-            <AppText variant="small" color="secondary" style={{ marginBottom: spacing.md }}>
-              Check the 5-day forecast and best playing windows.
-            </AppText>
-            <PrimaryButton onPress={openEventWeatherForecast}>View forecast</PrimaryButton>
-          </AppCard>
-        ) : null}
+          ) : null}
+        </AppCard>
 
         <AppCard>
           <AppText variant="subheading" style={styles.cardTitle}>
-            Your event status
+            Your RSVP
           </AppText>
-          <View style={styles.statusGrid}>
-            <View style={styles.statusItem}>
-              <AppText variant="caption" color="muted">
-                Playing
-              </AppText>
+          <View style={{ flexDirection: "row", flexWrap: "wrap", gap: spacing.sm, marginBottom: spacing.sm }}>
+            <StatusBadge label={myPlayingStatus.label} tone={myPlayingStatus.tone === "success" ? "success" : myPlayingStatus.tone === "neutral" ? "neutral" : "warning"} />
+            {shouldShowMemberPaymentStatus(myRegistration, entryFeeDisplay) ? (
               <StatusBadge
-                label={myRegistration?.status === "in" ? "Yes" : "No"}
-                tone={myRegistration?.status === "in" ? "success" : "warning"}
-              />
-            </View>
-            <View style={styles.statusItem}>
-              <AppText variant="caption" color="muted">
-                Payment
-              </AppText>
-              <StatusBadge
-                label={myRegistration?.paid ? "Paid" : "Unpaid"}
+                label={myRegistration?.paid ? "Paid" : "Fee outstanding"}
                 tone={myRegistration?.paid ? "success" : "warning"}
               />
-            </View>
-            <View style={styles.statusItem}>
-              <AppText variant="caption" color="muted">
-                Attendance
-              </AppText>
-              <AppText variant="bodyBold">
-                {attendanceSummary.inCount} in · {attendanceSummary.outCount} out
-              </AppText>
-            </View>
-            <View style={styles.statusItem}>
-              <AppText variant="caption" color="muted">
-                Paid players
-              </AppText>
-              <AppText variant="bodyBold">
-                {attendanceSummary.paidCount}
-              </AppText>
-            </View>
+            ) : null}
           </View>
-          {attendanceSummary.guestCount > 0 ? (
-            <AppText variant="small" color="muted" style={{ marginTop: spacing.sm }}>
-              {attendanceSummary.guestCount} guest{attendanceSummary.guestCount === 1 ? "" : "s"}
-              {detailIsJointEvent ? " across participating societies" : " currently linked to this event"}.
-            </AppText>
-          ) : null}
-
-          {canExportEventAttendees ? (
-            <SecondaryButton
-              size="sm"
-              onPress={() => void handleExportAttendeesCsv()}
-              loading={attendeesCsvBusy}
-              disabled={attendeesCsvBusy || attendeeRowsForExport.length === 0}
-              icon={<Feather name="download" size={iconSize.sm} color={colors.primary} />}
-              style={{ marginTop: spacing.md, alignSelf: "flex-start" }}
-            >
-              {Platform.OS === "web" ? "Export attendees" : "Export attendees (web)"}
-            </SecondaryButton>
-          ) : null}
 
           {societyId && userId ? (
             <>
-              <AppText variant="captionBold" color="muted" style={{ marginTop: spacing.md }}>
-                Update your RSVP
+              <AppText variant="captionBold" color="muted">
+                Are you playing?
               </AppText>
               <View
                 style={[
@@ -794,7 +820,92 @@ export default function EventOverviewScreen() {
           ) : null}
         </AppCard>
 
-        {detailIsJointEvent && jointEventAttendeeRows.length > 0 ? (
+        {memberQuickActions.length > 0 ? (
+          <AppCard>
+            <AppText variant="subheading" style={styles.cardTitle}>
+              Event links
+            </AppText>
+            <View style={styles.actionsStack}>
+              {memberQuickActions.map((action) => {
+                const config = quickActionCopy(action.id, {
+                  canManageHandicaps: permissions.canManageHandicaps,
+                  hasResults,
+                  poolCount,
+                });
+                const iconColor =
+                  config.iconColorKey === "success"
+                    ? colors.success
+                    : config.iconColorKey === "warning"
+                      ? colors.warning
+                      : colors.primary;
+                return (
+                  <Pressable
+                    key={action.id}
+                    style={styles.quickAction}
+                    onPress={() => openQuickAction(action.id)}
+                  >
+                    <View style={styles.quickActionLeft}>
+                      <Feather name={config.icon} size={18} color={iconColor} />
+                      <View>
+                        <AppText variant="bodyBold">{config.title}</AppText>
+                        <AppText variant="small" color="secondary">
+                          {config.subtitle}
+                        </AppText>
+                      </View>
+                    </View>
+                    <Feather name="chevron-right" size={18} color={colors.textTertiary} />
+                  </Pressable>
+                );
+              })}
+            </View>
+          </AppCard>
+        ) : null}
+
+        {shouldShowSocietyAttendanceSummary(showAdminTools) ? (
+          <AppCard>
+            <AppText variant="subheading" style={styles.cardTitle}>
+              Society attendance
+            </AppText>
+            <View style={styles.statusGrid}>
+              <View style={styles.statusItem}>
+                <AppText variant="caption" color="muted">
+                  Playing
+                </AppText>
+                <AppText variant="bodyBold">
+                  {attendanceSummary.inCount} in · {attendanceSummary.outCount} out
+                </AppText>
+              </View>
+              <View style={styles.statusItem}>
+                <AppText variant="caption" color="muted">
+                  Paid players
+                </AppText>
+                <AppText variant="bodyBold">{attendanceSummary.paidCount}</AppText>
+              </View>
+            </View>
+            {attendanceSummary.guestCount > 0 ? (
+              <AppText variant="small" color="muted" style={{ marginTop: spacing.sm }}>
+                {attendanceSummary.guestCount} guest{attendanceSummary.guestCount === 1 ? "" : "s"}
+                {detailIsJointEvent ? " across participating societies" : " linked to this event"}.
+              </AppText>
+            ) : null}
+            {canExportEventAttendees ? (
+              <SecondaryButton
+                size="sm"
+                onPress={() => void handleExportAttendeesCsv()}
+                loading={attendeesCsvBusy}
+                disabled={attendeesCsvBusy || attendeeRowsForExport.length === 0}
+                icon={<Feather name="download" size={iconSize.sm} color={colors.primary} />}
+                style={{ marginTop: spacing.md, alignSelf: "flex-start" }}
+              >
+                {Platform.OS === "web" ? "Export attendees" : "Export attendees (web)"}
+              </SecondaryButton>
+            ) : null}
+          </AppCard>
+        ) : null}
+
+        {detailIsJointEvent &&
+        jointEventAttendeeRows.length > 0 &&
+        shouldShowJointAttendeeRoll(showAdminTools, canExportEventAttendees) ? (
           <AppCard>
             <AppText variant="subheading" style={styles.cardTitle}>
               Registered attendees
@@ -848,181 +959,57 @@ export default function EventOverviewScreen() {
           </AppText>
         </AppCard>
 
-        <AppCard>
-          <AppText variant="subheading" style={styles.cardTitle}>
-            Quick actions
-          </AppText>
-          <View style={styles.actionsStack}>
-            <Pressable
-              style={styles.quickAction}
-              onPress={() =>
-                router.push({
-                  pathname: "/(app)/event/[id]/players",
-                  params: { id: event.id },
-                } as never)
-              }
-            >
-              <View style={styles.quickActionLeft}>
-                <Feather name="users" size={18} color={colors.primary} />
-                <View>
-                  <AppText variant="bodyBold">Players</AppText>
-                  <AppText variant="small" color="secondary">
-                    View player and attendee list
-                  </AppText>
-                </View>
-              </View>
-              <Feather name="chevron-right" size={18} color={colors.textTertiary} />
-            </Pressable>
-
-            {canAccessScorecardUi ? (
-              <Pressable
-                style={styles.quickAction}
-                onPress={() =>
-                  router.push({
-                    pathname: "/(app)/event/[id]/gross-scores/leaderboard",
-                    params: { id: event.id },
-                  } as never)
-                }
-              >
-                <View style={styles.quickActionLeft}>
-                  <Feather name="list" size={18} color={colors.primary} />
-                  <View>
-                    <AppText variant="bodyBold">Scoring leaderboard</AppText>
-                    <AppText variant="small" color="secondary">
-                      Gross-based order (Draft vs Official shown on screen)
-                    </AppText>
-                  </View>
-                </View>
-                <Feather name="chevron-right" size={18} color={colors.textTertiary} />
-              </Pressable>
-            ) : null}
-
-            {canEnterGrossScores ? (
-              <Pressable
-                style={styles.quickAction}
-                onPress={() =>
-                  router.push({
-                    pathname: "/(app)/event/[id]/gross-scores",
-                    params: { id: event.id },
-                  } as never)
-                }
-              >
-                <View style={styles.quickActionLeft}>
-                  <Feather name="edit-3" size={18} color={colors.success} />
-                  <View>
-                    <AppText variant="bodyBold">Gross score entry</AppText>
-                    <AppText variant="small" color="secondary">
-                      Enter or edit per-hole gross scores
-                    </AppText>
-                  </View>
-                </View>
-                <Feather name="chevron-right" size={18} color={colors.textTertiary} />
-              </Pressable>
-            ) : null}
-
-            {canEnterGrossScores ? (
-              <Pressable
-                style={styles.quickAction}
-                onPress={() =>
-                  router.push({
-                    pathname: "/(app)/event/[id]/gross-scores/publish",
-                    params: { id: event.id },
-                  } as never)
-                }
-              >
-                <View style={styles.quickActionLeft}>
-                  <Feather name="check-circle" size={18} color={colors.primary} />
-                  <View>
-                    <AppText variant="bodyBold">Publish scoring results</AppText>
-                    <AppText variant="small" color="secondary">
-                      Write official placings from the gross leaderboard
-                    </AppText>
-                  </View>
-                </View>
-                <Feather name="chevron-right" size={18} color={colors.textTertiary} />
-              </Pressable>
-            ) : null}
-
-            {canViewTeeSheet ? (
-              <Pressable
-                style={styles.quickAction}
-                onPress={() =>
-                  router.push({
-                    pathname: "/(app)/event/[id]/tee-sheet",
-                    params: { id: event.id },
-                  } as never)
-                }
-              >
-                <View style={styles.quickActionLeft}>
-                  <Feather name="flag" size={18} color={colors.success} />
-                  <View>
-                    <AppText variant="bodyBold">Tee Sheet</AppText>
-                    <AppText variant="small" color="secondary">
-                      Published tee sheet is available
-                    </AppText>
-                  </View>
-                </View>
-                <Feather name="chevron-right" size={18} color={colors.textTertiary} />
-              </Pressable>
-            ) : null}
-
-            {(hasResults || permissions.canManageHandicaps) ? (
-              <Pressable
-                style={styles.quickAction}
-                onPress={() =>
-                  router.push({
-                    pathname: "/(app)/event/[id]/points",
-                    params: { id: event.id },
-                  } as never)
-                }
-              >
-                <View style={styles.quickActionLeft}>
-                  <Feather name="bar-chart-2" size={18} color={colors.warning} />
-                  <View>
-                    <AppText variant="bodyBold">
-                      {permissions.canManageHandicaps ? "Enter Results" : "Event Results"}
-                    </AppText>
-                    <AppText variant="small" color="secondary">
-                      {permissions.canManageHandicaps
-                        ? "Manage official points and placements"
-                        : "View official scoring progress"}
-                    </AppText>
-                  </View>
-                </View>
-                <Feather name="chevron-right" size={18} color={colors.textTertiary} />
-              </Pressable>
-            ) : null}
-
-            {event.prizePoolEnabled ? (
-              <Pressable
-                style={styles.quickAction}
-                onPress={() =>
-                  router.push({
-                    pathname: "/(app)/event/[id]/prize-pools",
-                    params: { id: event.id },
-                  } as never)
-                }
-              >
-                <View style={styles.quickActionLeft}>
-                  <Feather name="award" size={18} color={colors.primary} />
-                  <View>
-                    <AppText variant="bodyBold">Prize Pool</AppText>
-                    <AppText variant="small" color="secondary">
-                      {poolCount > 0 ? `${poolCount} pool${poolCount === 1 ? "" : "s"} configured` : "Prize pools enabled"}
-                    </AppText>
-                  </View>
-                </View>
-                <Feather name="chevron-right" size={18} color={colors.textTertiary} />
-              </Pressable>
-            ) : null}
-          </View>
-        </AppCard>
-
-        {!canViewTeeSheet ? (
-          <AppCard style={styles.compactNotice}>
-            <AppText variant="small" color="secondary">
-              Tee sheet access appears here once it has been published for your society view.
+        {adminQuickActions.length > 0 ? (
+          <AppCard>
+            <AppText variant="subheading" style={styles.cardTitle}>
+              Captain & scoring tools
             </AppText>
+            <View style={styles.actionsStack}>
+              {adminQuickActions.map((action) => {
+                const config = quickActionCopy(action.id, {
+                  canManageHandicaps: permissions.canManageHandicaps,
+                  hasResults,
+                  poolCount,
+                });
+                const iconColor =
+                  config.iconColorKey === "success"
+                    ? colors.success
+                    : config.iconColorKey === "warning"
+                      ? colors.warning
+                      : colors.primary;
+                return (
+                  <Pressable
+                    key={action.id}
+                    style={styles.quickAction}
+                    onPress={() => openQuickAction(action.id)}
+                  >
+                    <View style={styles.quickActionLeft}>
+                      <Feather name={config.icon} size={18} color={iconColor} />
+                      <View>
+                        <AppText variant="bodyBold">{config.title}</AppText>
+                        <AppText variant="small" color="secondary">
+                          {config.subtitle}
+                        </AppText>
+                      </View>
+                    </View>
+                    <Feather name="chevron-right" size={18} color={colors.textTertiary} />
+                  </Pressable>
+                );
+              })}
+            </View>
+          </AppCard>
+        ) : null}
+
+        {canOpenWeatherFromEvent ? (
+          <AppCard style={{ borderRadius: radius.md }}>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm, marginBottom: spacing.xs }}>
+              <Feather name="cloud" size={20} color={colors.primary} />
+              <AppText variant="subheading">Playability</AppText>
+            </View>
+            <AppText variant="small" color="secondary" style={{ marginBottom: spacing.md }}>
+              5-day forecast for the course.
+            </AppText>
+            <SecondaryButton onPress={openEventWeatherForecast}>View forecast</SecondaryButton>
           </AppCard>
         ) : null}
       </ScrollView>

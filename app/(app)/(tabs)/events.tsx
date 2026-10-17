@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, memo } from "react";
 import debounce from "lodash.debounce";
-import { StyleSheet, View, Pressable, ScrollView, SectionList } from "react-native";
+import { StyleSheet, View, Pressable, ScrollView, FlatList } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
 import { Feather } from "@expo/vector-icons";
@@ -46,25 +46,24 @@ import {
 } from "@/lib/courseTeeGender";
 import { getPermissionsForMember } from "@/lib/rbac";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
-import { pressableSurfaceStyle, pressOpacityStyle } from "@/lib/ui/interaction";
-import { useReducedMotion } from "@/hooks/useReducedMotion";
+import { pressOpacityStyle } from "@/lib/ui/interaction";
 import { EventsListSkeleton } from "@/components/ui/Skeleton";
 import { formatError, type FormattedError } from "@/lib/ui/formatError";
-import { JOINT_EVENT_CHIP_LONG } from "@/lib/eventModuleUi";
 import { getCache, invalidateCachePrefix, setCache } from "@/lib/cache/clientCache";
 import { HeaderSettingsPill } from "@/components/navigation/HeaderSettingsPill";
 import { blurWebActiveElement } from "@/lib/ui/focus";
 import { measureAsync, useSlowCommitLog } from "@/lib/perf/perf";
-import {
-  partitionUpcomingPast,
-  sortPastMostRecentFirst,
-  sortUpcomingNearestFirst,
-} from "@/lib/eventListGrouping";
 import { CalendarSubscribeCard } from "@/components/calendar/CalendarSubscribeCard";
 import { useScreenView } from "@/lib/analytics/useScreenView";
-
-const UPCOMING_SECTION_TITLE = "Upcoming Events";
-const PAST_SECTION_TITLE = "Past Events";
+import { getMemberRegistrationsForSociety } from "@/lib/db_supabase/eventRegistrationRepo";
+import type { EventRegistration } from "@/lib/db_supabase/eventRegistrationRepo";
+import {
+  filterEventsForSegment,
+  indexRegistrationsByEventId,
+  type EventsListSegment,
+} from "@/lib/events/eventsListScreenModel";
+import { EventsSegmentTabs } from "@/features/events/components/EventsSegmentTabs";
+import { EventListRowCard } from "@/features/events/components/EventListRowCard";
 
 // Simple picker option component
 const PickerOption = memo(function PickerOption({
@@ -114,17 +113,19 @@ export default function EventsScreen() {
   useSlowCommitLog("EventsScreen", 96);
   const router = useRouter();
   const params = useLocalSearchParams<{ create?: string; classification?: string }>();
-  const { societyId, activeSocietyId, member, user, loading: bootstrapLoading } = useBootstrap();
+  const { societyId, activeSocietyId, member, user, memberships, loading: bootstrapLoading } =
+    useBootstrap();
   const { guardPaidAction, modalVisible, setModalVisible, societyId: guardSocietyId } = usePaidAccess();
   const colors = getColors();
   const tabBarHeight = useBottomTabBarHeight();
   const tabContentStyle = { paddingTop: 16, paddingBottom: tabBarHeight + 24 };
   const createAction = useAsyncAction();
-  const reduceMotion = useReducedMotion();
   const paramsHandledRef = useRef(false);
   const lastLoadAtRef = useRef(0);
 
   const [events, setEvents] = useState<EventDoc[]>([]);
+  const [listSegment, setListSegment] = useState<EventsListSegment>("upcoming");
+  const [memberRegistrations, setMemberRegistrations] = useState<EventRegistration[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [loadError, setLoadError] = useState<FormattedError | null>(null);
@@ -282,6 +283,23 @@ export default function EventsScreen() {
     return sid ? `society:${sid}:events` : null;
   }, [societyId, activeSocietyId]);
 
+  const activeMemberId = useMemo(() => {
+    const sid = societyId || activeSocietyId;
+    if (member?.id) return member.id;
+    if (!sid) return null;
+    return memberships.find((m) => String(m.societyId) === String(sid))?.memberId ?? null;
+  }, [member?.id, societyId, activeSocietyId, memberships]);
+
+  const loadMemberRegistrations = useCallback(async () => {
+    const sid = societyId || activeSocietyId;
+    if (!sid || !activeMemberId) {
+      setMemberRegistrations([]);
+      return;
+    }
+    const regs = await getMemberRegistrationsForSociety(sid, activeMemberId);
+    setMemberRegistrations(regs);
+  }, [societyId, activeSocietyId, activeMemberId]);
+
   const loadEvents = useCallback(async (opts?: { silent?: boolean }) => {
     const sid = societyId || activeSocietyId;
     if (!sid) {
@@ -316,6 +334,7 @@ export default function EventsScreen() {
       if (cacheKey) {
         await setCache(cacheKey, data, { ttlMs: 1000 * 60 * 5 });
       }
+      await loadMemberRegistrations();
     } catch (err: any) {
       console.error("[events] Failed to load events:", err?.message || err);
       const formatted = formatError(err);
@@ -325,7 +344,7 @@ export default function EventsScreen() {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [societyId, activeSocietyId, cacheKey]);
+  }, [societyId, activeSocietyId, cacheKey, loadMemberRegistrations]);
 
   const openSettings = useCallback(() => {
     try {
@@ -653,173 +672,27 @@ export default function EventsScreen() {
     router.push({ pathname: "/(app)/event/[id]", params: { id: event.id } });
   }, [router]);
 
-  const { upcoming: upcomingRaw, past: pastRaw } = useMemo(
-    () => partitionUpcomingPast(events),
-    [events],
-  );
-  const upcomingEvents = useMemo(
-    () => sortUpcomingNearestFirst(upcomingRaw),
-    [upcomingRaw],
-  );
-  const pastEvents = useMemo(() => sortPastMostRecentFirst(pastRaw), [pastRaw]);
-
-  const getStatusColor = useCallback((event: EventDoc) => {
-    if (event.isCompleted) return colors.success;
-    if (event.status === "cancelled") return colors.error;
-    return colors.primary;
-  }, [colors]);
-
-  const getStatusLabel = useCallback((event: EventDoc) => {
-    if (event.isCompleted) return "Completed";
-    if (event.status === "cancelled") return "Cancelled";
-    if (event.status === "in_progress") return "In Progress";
-    return "Scheduled";
-  }, []);
-
-  const eventSections = useMemo(() => {
-    if (events.length === 0) return [];
-    return [
-      { title: UPCOMING_SECTION_TITLE, data: upcomingEvents },
-      { title: PAST_SECTION_TITLE, data: pastEvents },
-    ];
-  }, [events.length, upcomingEvents, pastEvents]);
-
-  const renderSectionHeader = useCallback(
-    ({ section }: { section: { title: string; data: EventDoc[] } }) => (
-      <View style={styles.eventsSectionHeaderWrap}>
-        <AppText variant="h2" style={[styles.sectionTitle, styles.eventsSectionHeader]}>
-          {section.title}
-        </AppText>
-        <AppText variant="caption" color="muted">
-          {section.data.length} event{section.data.length !== 1 ? "s" : ""}
-        </AppText>
-      </View>
-    ),
-    [],
+  const regByEventId = useMemo(
+    () => indexRegistrationsByEventId(memberRegistrations),
+    [memberRegistrations],
   );
 
-  const renderSectionFooter = useCallback(
-    ({ section }: { section: { title: string; data: EventDoc[] } }) => {
-      if (section.data.length > 0) return null;
-      return (
-        <AppText variant="small" color="muted" style={styles.eventsSectionEmpty}>
-          {section.title === UPCOMING_SECTION_TITLE
-            ? "No upcoming events — create one or wait for the Captain to schedule."
-            : "No past events yet."}
-        </AppText>
-      );
-    },
-    [],
+  const filteredEvents = useMemo(
+    () => filterEventsForSegment(events, listSegment, regByEventId),
+    [events, listSegment, regByEventId],
   );
 
-  const renderEventCard = useCallback(
-    (event: EventDoc, opts?: { isHero?: boolean; isPast?: boolean }) => {
-      const isHero = opts?.isHero ?? false;
-      const isPast = opts?.isPast ?? false;
-      return (
-    <Pressable
-      onPress={() => handleOpenEvent(event)}
-      style={({ pressed }) => [pressableSurfaceStyle({ pressed }, { reduceMotion, scale: "card" })]}
-    >
-      <AppCard
-        style={[
-          styles.eventCard,
-          isHero && { borderWidth: 2, borderColor: colors.primary, backgroundColor: colors.primary + "0C" },
-          isPast && { opacity: 0.92, backgroundColor: colors.backgroundTertiary },
-        ]}
-      >
-        {isHero ? (
-          <View style={[styles.nextUpBadge, { backgroundColor: colors.primary + "22" }]}>
-            <Feather name="flag" size={12} color={colors.primary} />
-            <AppText variant="captionBold" color="primary" style={{ marginLeft: 4 }}>
-              Next up
-            </AppText>
-          </View>
-        ) : null}
-        <View style={styles.eventRow}>
-          <View
-            style={[
-              styles.dateBadge,
-              {
-                backgroundColor: isPast ? colors.borderLight : colors.backgroundTertiary,
-              },
-            ]}
-          >
-            {event.date ? (
-              <>
-                <AppText variant="captionBold" color={isPast ? "secondary" : "primary"}>
-                  {new Date(event.date).toLocaleDateString("en-GB", { day: "numeric" })}
-                </AppText>
-                <AppText variant="small" color="secondary">
-                  {new Date(event.date).toLocaleDateString("en-GB", { month: "short" })}
-                </AppText>
-              </>
-            ) : (
-              <AppText variant="caption" color="tertiary">TBD</AppText>
-            )}
-          </View>
-
-          <View style={styles.eventInfo}>
-            <AppText
-              variant="bodyBold"
-              numberOfLines={2}
-              style={[styles.eventTitle, isPast && { color: colors.textSecondary }]}
-            >
-              {event.name}
-            </AppText>
-            {event.courseName && (
-              <AppText variant="caption" color="secondary" numberOfLines={2} style={styles.eventCourse}>
-                {event.courseName}
-              </AppText>
-            )}
-            <View style={styles.eventMeta}>
-              <View style={[styles.statusBadge, { backgroundColor: getStatusColor(event) + "20" }]}>
-                <AppText variant="small" style={{ color: getStatusColor(event) }}>
-                  {getStatusLabel(event)}
-                </AppText>
-              </View>
-              {event.format && (
-                <AppText variant="small" color="tertiary">
-                  {EVENT_FORMATS.find((f) => f.value === event.format)?.label ?? event.format}
-                </AppText>
-              )}
-              {event.classification === "oom" && (
-                <View style={[styles.oomBadge, { backgroundColor: colors.warning + "20" }]}>
-                  <Feather name="award" size={10} color={colors.warning} />
-                  <AppText variant="small" style={{ color: colors.warning }}>OOM</AppText>
-                </View>
-              )}
-              {event.classification === "major" && (
-                <View style={[styles.oomBadge, { backgroundColor: colors.info + "20" }]}>
-                  <Feather name="star" size={10} color={colors.info} />
-                  <AppText variant="small" style={{ color: colors.info }}>Major</AppText>
-                </View>
-              )}
-              {event.is_joint_event === true && (
-                <View style={[styles.jointBadge, { backgroundColor: colors.info + "16", borderColor: colors.info + "40" }]}>
-                  <Feather name="link" size={10} color={colors.info} />
-                  <AppText
-                    variant="small"
-                    style={{ color: colors.info }}
-                    numberOfLines={1}
-                  >
-                    {JOINT_EVENT_CHIP_LONG}
-                  </AppText>
-                </View>
-              )}
-            </View>
-          </View>
-
-          <View style={styles.chevronWrap}>
-            <Feather name="chevron-right" size={20} color={colors.textTertiary} />
-          </View>
-        </View>
-      </AppCard>
-    </Pressable>
-      );
-    },
-    [colors, reduceMotion, handleOpenEvent, getStatusColor, getStatusLabel],
-  );
+  const listEmptyMessage = useMemo(() => {
+    if (listSegment === "upcoming") {
+      return permissions.canCreateEvents
+        ? "No upcoming events — create one or wait for the Captain to schedule."
+        : "No upcoming events yet.";
+    }
+    if (listSegment === "my_events") {
+      return "Events you mark as Playing appear here. Open an event and tap Playing to RSVP.";
+    }
+    return "Past events and results will appear here after event day.";
+  }, [listSegment, permissions.canCreateEvents]);
 
   if (bootstrapLoading && loading) {
     return (
@@ -1402,19 +1275,15 @@ export default function EventsScreen() {
       />
       <View style={{ flex: 1 }}>
         <View style={styles.header}>
-          <View>
-            <AppText variant="title">Events</AppText>
-            <AppText variant="caption" color="secondary">
-              {events.length} event{events.length !== 1 ? "s" : ""}
-            </AppText>
-          </View>
+          <AppText variant="title">Events</AppText>
           {permissions.canCreateEvents && (
             <PrimaryButton onPress={() => setShowCreateForm(true)} size="sm">
               Create Event
             </PrimaryButton>
           )}
         </View>
-        <CalendarSubscribeCard compact />
+        <EventsSegmentTabs value={listSegment} onChange={setListSegment} />
+        {listSegment === "upcoming" ? <CalendarSubscribeCard compact /> : null}
         {refreshing ? (
           <AppText variant="small" color="tertiary" style={{ marginBottom: spacing.xs }}>
             Refreshing...
@@ -1442,19 +1311,26 @@ export default function EventsScreen() {
               onPress: () => setShowCreateForm(true),
             } : undefined}
           />
-        ) : events.length > 0 ? (
-          <SectionList
+        ) : filteredEvents.length === 0 && !loadError ? (
+          <EmptyState
+            icon={<Feather name="calendar" size={24} color={colors.textTertiary} />}
+            title="Nothing here yet"
+            message={listEmptyMessage}
+          />
+        ) : filteredEvents.length > 0 ? (
+          <FlatList
             style={styles.eventsSectionList}
-            sections={eventSections}
+            data={filteredEvents}
             keyExtractor={(item) => item.id}
-            renderItem={({ item, index, section }) =>
-              renderEventCard(item, {
-                isHero: index === 0 && section.title === UPCOMING_SECTION_TITLE,
-                isPast: section.title === PAST_SECTION_TITLE,
-              })}
-            renderSectionHeader={renderSectionHeader}
-            renderSectionFooter={renderSectionFooter}
-            stickySectionHeadersEnabled={false}
+            renderItem={({ item, index }) => (
+              <EventListRowCard
+                event={item}
+                segment={listSegment}
+                registration={regByEventId.get(String(item.id)) ?? null}
+                isHero={index === 0 && listSegment === "upcoming"}
+                onPress={() => handleOpenEvent(item)}
+              />
+            )}
             initialNumToRender={10}
             maxToRenderPerBatch={10}
             windowSize={8}

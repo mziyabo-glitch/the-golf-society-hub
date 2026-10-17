@@ -48,6 +48,29 @@ export function isOperationalEventRegistration(r: EventRegistration | null | und
  * Fetch the current user's registration for a single event.
  * Returns null when no row exists (treat as "not registered / unpaid").
  */
+/**
+ * All operational registrations for one member in the active society (events list “My events”).
+ */
+export async function getMemberRegistrationsForSociety(
+  societyId: string,
+  memberId: string,
+): Promise<EventRegistration[]> {
+  if (!societyId?.trim() || !memberId?.trim()) return [];
+
+  const { data, error } = await supabase
+    .from("event_registrations")
+    .select("*")
+    .eq("society_id", societyId)
+    .eq("member_id", memberId)
+    .is("removed_from_event_at", null);
+
+  if (error) {
+    console.error("[eventRegRepo] getMemberRegistrationsForSociety:", error.message);
+    return [];
+  }
+  return ensureRegistrationArray(data ?? []);
+}
+
 export async function getMyRegistration(
   eventId: string,
   memberId: string,
