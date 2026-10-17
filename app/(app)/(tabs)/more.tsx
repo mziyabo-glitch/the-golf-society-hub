@@ -1,6 +1,6 @@
 /**
- * More hub — Phase 2 simplified sections:
- * Society · Events and tools · ManCo · Platform administration
+ * More hub — Phase 6 sections:
+ * My account · Golf tools · Society management · Platform administration
  */
 
 import { useCallback, useEffect, useState } from "react";
@@ -8,12 +8,13 @@ import { Pressable, ScrollView, StyleSheet, View } from "react-native";
 import { useRouter } from "expo-router";
 import { Feather } from "@expo/vector-icons";
 import { useBottomTabBarHeight } from "@react-navigation/bottom-tabs";
+import * as WebBrowser from "expo-web-browser";
 
 import { Screen } from "@/components/ui/Screen";
 import { AppText } from "@/components/ui/AppText";
 import { AppCard } from "@/components/ui/AppCard";
 import { useBootstrap } from "@/lib/useBootstrap";
-import { getPermissionsForMember, isCaptain, isSecretary } from "@/lib/rbac";
+import { getPermissionsForMember, isCaptain } from "@/lib/rbac";
 import { isPlatformAdmin } from "@/lib/db_supabase/adminRepo";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
 import { blurWebActiveElement } from "@/lib/ui/focus";
@@ -39,6 +40,7 @@ function MenuRow({ icon, iconBg, title, subtitle, onPress, colors }: RowProps) {
         onPress();
       }}
       style={({ pressed }) => [styles.row, { opacity: pressed ? 0.75 : 1 }]}
+      accessibilityRole="button"
     >
       <View style={[styles.iconWrap, { backgroundColor: iconBg }]}>
         <Feather name={icon} size={18} color={colors.primary} />
@@ -83,7 +85,6 @@ export default function MoreScreen() {
 
   const permissions = getPermissionsForMember(member);
   const captain = isCaptain(member as any);
-  const secretary = isSecretary(member as any);
   const [isAdmin, setIsAdmin] = useState(false);
 
   useEffect(() => {
@@ -97,11 +98,20 @@ export default function MoreScreen() {
     [router],
   );
 
-  const isManCo =
-    captain || secretary || permissions.canGenerateTeeSheet || permissions.canManageHandicaps;
-  const showManCo =
+  const openFairwayWeatherBrowser = useCallback(async () => {
+    await WebBrowser.openBrowserAsync("https://www.fairwayweather.com", {
+      showTitle: true,
+      controlsColor: colors.primary,
+      toolbarColor: colors.background,
+    });
+  }, [colors.background, colors.primary]);
+
+  const showSocietyManagement =
     hasFullAccess &&
-    (isManCo || permissions.canAccessFinance || captain);
+    (captain ||
+      permissions.canGenerateTeeSheet ||
+      permissions.canManageHandicaps ||
+      permissions.canAccessFinance);
 
   return (
     <Screen scrollable={false} style={{ backgroundColor: colors.backgroundSecondary }}>
@@ -110,40 +120,11 @@ export default function MoreScreen() {
           More
         </AppText>
         <AppText variant="small" color="secondary" style={styles.pageSub}>
-          Society settings, secondary tools, and administration
+          Account, golf tools, and society administration
         </AppText>
 
-        <SectionTitle>Society</SectionTitle>
+        <SectionTitle>My account</SectionTitle>
         <AppCard style={styles.card}>
-          {hasFullAccess ? (
-            <MenuRow
-              icon="users"
-              iconBg={`${colors.primary}16`}
-              title="Members"
-              subtitle="Roster, roles, and member details"
-              colors={colors}
-              onPress={() => push("/(app)/(tabs)/members")}
-            />
-          ) : (
-            <View style={styles.mutedBlock}>
-              <Feather name="info" size={16} color={colors.textTertiary} />
-              <AppText variant="small" color="tertiary" style={{ flex: 1, marginLeft: spacing.sm }}>
-                {hasSociety
-                  ? "A society seat is required for the member directory."
-                  : "Join a society with a seat to access the member directory."}
-              </AppText>
-            </View>
-          )}
-          <Divider colors={colors} />
-          <MenuRow
-            icon="settings"
-            iconBg={colors.backgroundTertiary}
-            title="Society settings"
-            subtitle="Invites, privacy, text size, and society options"
-            colors={colors}
-            onPress={() => push("/(app)/(tabs)/settings")}
-          />
-          <Divider colors={colors} />
           <MenuRow
             icon="user"
             iconBg={colors.backgroundTertiary}
@@ -152,44 +133,65 @@ export default function MoreScreen() {
             colors={colors}
             onPress={() => push("/(app)/my-profile")}
           />
+          <Divider colors={colors} />
+          <MenuRow
+            icon="settings"
+            iconBg={colors.backgroundTertiary}
+            title="Settings"
+            subtitle="Appearance, privacy, calendar feed, and session"
+            colors={colors}
+            onPress={() => push("/(app)/(tabs)/settings")}
+          />
           {hasSociety ? (
             <>
               <Divider colors={colors} />
               <MenuRow
-                icon="zap"
-                iconBg={`${colors.warning}20`}
-                title="Rivalries"
-                subtitle="Sinbook challenges and head-to-heads"
+                icon="users"
+                iconBg={`${colors.primary}16`}
+                title="Society membership"
+                subtitle={
+                  hasFullAccess
+                    ? "Your seat, invites, and society options"
+                    : "Upgrade or join with a society seat"
+                }
                 colors={colors}
-                onPress={() => push("/(app)/(tabs)/sinbook")}
+                onPress={() => push("/(app)/(tabs)/settings")}
               />
             </>
           ) : null}
         </AppCard>
 
-        <SectionTitle>Events and tools</SectionTitle>
+        <SectionTitle>Golf tools</SectionTitle>
         <AppCard style={styles.card}>
           {hasSociety ? (
-            <MenuRow
-              icon="calendar"
-              iconBg={`${colors.info}18`}
-              title="Subscribe to calendar"
-              subtitle="Add society events to your calendar app"
-              colors={colors}
-              onPress={() => push("/(app)/(tabs)/settings")}
-            />
+            <>
+              <MenuRow
+                icon="cloud"
+                iconBg={`${colors.info}18`}
+                title="Weather & playability"
+                subtitle="Next-event forecast, wind, and rain windows"
+                colors={colors}
+                onPress={() => push("/(app)/(tabs)/weather")}
+              />
+              <Divider colors={colors} />
+              <MenuRow
+                icon="navigation"
+                iconBg={`${colors.info}18`}
+                title="FairwayWeather"
+                subtitle="Wind caddie — full course forecast in your browser"
+                colors={colors}
+                onPress={() => void openFairwayWeatherBrowser()}
+              />
+              <Divider colors={colors} />
+            </>
           ) : (
             <View style={styles.mutedBlock}>
               <Feather name="info" size={16} color={colors.textTertiary} />
               <AppText variant="small" color="tertiary" style={{ flex: 1, marginLeft: spacing.sm }}>
-                Join a society to subscribe to its calendar.
+                Join a society to unlock in-app weather and playability for your schedule.
               </AppText>
             </View>
           )}
-        </AppCard>
-
-        <SectionTitle>Other golf tools</SectionTitle>
-        <AppCard style={styles.card}>
           <MenuRow
             icon="edit-3"
             iconBg={`${colors.primary}16`}
@@ -200,17 +202,17 @@ export default function MoreScreen() {
           />
         </AppCard>
 
-        {showManCo ? (
+        {showSocietyManagement ? (
           <>
-            <SectionTitle>ManCo</SectionTitle>
+            <SectionTitle>Society management</SectionTitle>
             <AppCard style={styles.card}>
               <MenuRow
-                icon="calendar"
+                icon="users"
                 iconBg={`${colors.primary}16`}
-                title="Event administration"
-                subtitle="Open Events to manage days, payments, and tee sheets"
+                title="Members"
+                subtitle="Roster, roles, and member details"
                 colors={colors}
-                onPress={() => push("/(app)/(tabs)/events")}
+                onPress={() => push("/(app)/(tabs)/members")}
               />
               {permissions.canAccessFinance ? (
                 <>
@@ -254,6 +256,18 @@ export default function MoreScreen() {
                   />
                 </>
               ) : null}
+            </AppCard>
+          </>
+        ) : hasSociety && !hasFullAccess ? (
+          <>
+            <SectionTitle>Society management</SectionTitle>
+            <AppCard style={styles.card}>
+              <View style={styles.mutedBlock}>
+                <Feather name="info" size={16} color={colors.textTertiary} />
+                <AppText variant="small" color="tertiary" style={{ flex: 1, marginLeft: spacing.sm }}>
+                  A society seat is required for the member directory and ManCo tools. Ask your captain for a licence.
+                </AppText>
+              </View>
             </AppCard>
           </>
         ) : null}
@@ -330,6 +344,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: spacing.sm,
+    minHeight: 48,
     paddingVertical: spacing.md,
     paddingHorizontal: spacing.md,
   },
@@ -349,5 +364,6 @@ const styles = StyleSheet.create({
     alignItems: "flex-start",
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.md,
+    minHeight: 48,
   },
 });

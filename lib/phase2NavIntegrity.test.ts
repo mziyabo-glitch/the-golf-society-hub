@@ -31,14 +31,25 @@ describe("Phase 2 route inventory", () => {
 });
 
 describe("Phase 2 More / Home / Settings link integrity", () => {
-  it("More keeps Free Play under Other golf tools and no tee-sheet generator", () => {
+  it("More keeps Free Play under Golf tools and no tee-sheet generator", () => {
     const more = readAppSource("app/(app)/(tabs)/more.tsx");
-    expect(more).toContain("Other golf tools");
+    expect(more).toContain("Golf tools");
     expect(more).toContain('push("/(app)/free-play")');
     expect(more).not.toContain("Tee sheet generator");
     expect(more).not.toContain("Birdies League");
     expect(more).toContain("Platform administration");
     expect(more).toContain("course-data");
+  });
+
+  it("Phase 6 More removes duplicate Events and Rivalries links", () => {
+    const more = readAppSource("app/(app)/(tabs)/more.tsx");
+    expect(more).toContain("My account");
+    expect(more).toContain("Society management");
+    expect(more).toContain('push("/(app)/(tabs)/weather")');
+    expect(more).not.toMatch(/Event administration/i);
+    expect(more).not.toMatch(/push\("\/\(app\)\/\(tabs\)\/events"\)/);
+    expect(more).not.toMatch(/push\("\/\(app\)\/\(tabs\)\/sinbook"\)/);
+    expect(more).not.toMatch(/Subscribe to calendar/i);
   });
 
   it("Settings no longer links to standalone tee-sheet generator or birdies", () => {
