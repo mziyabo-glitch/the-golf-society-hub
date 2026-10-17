@@ -25,10 +25,7 @@ export function HomeLatestResultsCard({ snapshot, onOpenEvent }: Props) {
   return (
     <Pressable onPress={() => onOpenEvent(snapshot.eventId)} style={({ pressed }) => ({ opacity: pressed ? 0.75 : 1 })}>
       <AppCard style={[styles.card, { borderColor: colors.borderLight }]}>
-        <AppText variant="bodyBold">Latest Results</AppText>
-        <AppText variant="caption" color="secondary" style={{ marginTop: 2 }}>
-          Event Results (All Players)
-        </AppText>
+        <AppText variant="bodyBold">Latest results</AppText>
         <AppText variant="small" color="secondary" numberOfLines={1} style={{ marginTop: spacing.xs }}>
           {snapshot.eventName}
         </AppText>

@@ -3,11 +3,17 @@ import { Feather } from "@expo/vector-icons";
 import { ReliablePressable } from "@/components/ui/ReliablePressable";
 import { AppCard } from "@/components/ui/AppCard";
 import { AppText } from "@/components/ui/AppText";
-import { PrimaryButton, SecondaryButton } from "@/components/ui/Button";
+import { PrimaryButton } from "@/components/ui/Button";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import type { EventDoc } from "@/lib/db_supabase/eventRepo";
 import type { EventRegistration } from "@/lib/db_supabase/eventRegistrationRepo";
 import { getColors, radius, spacing } from "@/lib/ui/theme";
+import {
+  hasBillableEventFee,
+  homeEventPrimaryCtaLabel,
+  resolveHomePlayingStatus,
+  shouldShowHomePaymentRow,
+} from "@/lib/home/homeNextEventPanelModel";
 
 type AttendanceSummary = {
   attendingCount: number;
@@ -33,20 +39,6 @@ type Props = {
   onToggleRegistration: (status: "in" | "out") => void;
   onMarkPaid: (paid: boolean) => void;
 };
-
-function playingBlock(
-  nextEventIsJoint: boolean,
-  myReg: EventRegistration | null,
-): { label: string; tone: "success" | "neutral" | "primary" } {
-  if (nextEventIsJoint) {
-    if (myReg?.status === "in") return { label: "Playing", tone: "success" };
-    if (myReg?.status === "out") return { label: "Not Playing", tone: "neutral" };
-    return { label: "Not Playing", tone: "primary" };
-  }
-  if (myReg?.status === "in") return { label: "Playing", tone: "success" };
-  if (myReg?.status === "out") return { label: "Not Playing", tone: "neutral" };
-  return { label: "Not Playing", tone: "primary" };
-}
 
 function StatPill({
   icon,
@@ -81,12 +73,9 @@ function StatPill({
 
 export function HomeUnifiedNextEventPanel({
   nextEvent,
-  nextEventIsJoint,
   myReg,
   nextEventAttendance,
   formatEventDate,
-  formatFormatLabel,
-  formatClassification,
   onOpenEvent,
   canManage,
   interactive,
@@ -113,13 +102,16 @@ export function HomeUnifiedNextEventPanel({
     );
   }
 
-  const playing = playingBlock(nextEventIsJoint, myReg);
-  const formatLabel = nextEvent.format ? formatFormatLabel(nextEvent.format) : "";
-  const classificationLabel = nextEvent.classification ? formatClassification(nextEvent.classification) : "";
+  const playing = resolveHomePlayingStatus(myReg);
   const fee = nextEvent.entryFeeDisplay?.trim();
   const venue = nextEvent.courseName ? String(nextEvent.courseName) : "";
   const playingActive = myReg?.status === "in";
   const notPlayingActive = myReg?.status === "out";
+  const showPaymentRow = interactive && shouldShowHomePaymentRow(myReg, fee);
+  const showReadOnlyFee = !interactive && hasBillableEventFee(fee);
+  const ctaLabel = homeEventPrimaryCtaLabel(canManage);
+  const playingBadgeTone =
+    playing.tone === "success" ? "success" : playing.tone === "neutral" ? "neutral" : "warning";
 
   return (
     <AppCard
@@ -152,66 +144,12 @@ export function HomeUnifiedNextEventPanel({
       </Pressable>
 
       <View style={styles.badgesRow}>
-        <StatusBadge
-          label={playing.label}
-          tone={playing.tone === "success" ? "success" : playing.tone === "neutral" ? "neutral" : "primary"}
-        />
-        {nextEvent.isOOM ? <StatusBadge label="OOM" tone="info" /> : null}
-        {formatLabel ? <StatusBadge label={formatLabel} tone="neutral" /> : null}
-        {classificationLabel && classificationLabel !== formatLabel ? (
-          <StatusBadge label={classificationLabel} tone="neutral" />
-        ) : null}
+        <StatusBadge label={playing.label} tone={playingBadgeTone} />
       </View>
 
       {interactive ? (
         <>
-          <View style={styles.statRow}>
-            <StatPill icon="user-check" label="Attending" value={String(nextEventAttendance.attendingCount)} colors={colors} />
-            <StatPill
-              icon="coffee"
-              label="Guests"
-              value={nextEventAttendance.guestCount > 0 ? String(nextEventAttendance.guestCount) : "—"}
-              colors={colors}
-            />
-          </View>
-
-          <View style={[styles.metaRow, { borderColor: colors.borderLight, backgroundColor: colors.backgroundSecondary }]}>
-            <Feather name="credit-card" size={16} color={colors.textSecondary} />
-            <View style={{ flex: 1, minWidth: 0 }}>
-              <AppText variant="captionBold" color="muted">
-                Event fee
-              </AppText>
-              <AppText variant="small" color="secondary" style={{ marginTop: 2 }} numberOfLines={2}>
-                {fee || "Not set"}
-              </AppText>
-            </View>
-            <View
-              style={[
-                styles.paymentPill,
-                {
-                  backgroundColor: myReg?.paid ? `${colors.success}18` : `${colors.warning}14`,
-                  borderColor: myReg?.paid ? `${colors.success}45` : `${colors.warning}40`,
-                },
-              ]}
-            >
-              <Feather
-                name={myReg?.paid ? "check-circle" : "alert-circle"}
-                size={14}
-                color={myReg?.paid ? colors.success : colors.warning}
-              />
-              <AppText
-                variant="captionBold"
-                style={{ marginLeft: 6, color: myReg?.paid ? colors.success : colors.warning }}
-              >
-                {myReg?.paid ? "Paid" : "Outstanding"}
-              </AppText>
-            </View>
-          </View>
-
-          <AppText variant="captionBold" color="muted" style={styles.rsvpLabel}>
-            Your attendance
-          </AppText>
-          <View style={[styles.segmentShell, { borderColor: colors.borderLight, backgroundColor: colors.backgroundSecondary }]}>
+          <View style={[styles.segmentShell, styles.rsvpFirst, { borderColor: colors.borderLight, backgroundColor: colors.backgroundSecondary }]}>
             <ReliablePressable
               onPress={() => onToggleRegistration("in")}
               disabled={regBusy}
@@ -249,6 +187,51 @@ export function HomeUnifiedNextEventPanel({
               </AppText>
             </ReliablePressable>
           </View>
+
+          <View style={styles.statRow}>
+            <StatPill icon="user-check" label="Attending" value={String(nextEventAttendance.attendingCount)} colors={colors} />
+            <StatPill
+              icon="coffee"
+              label="Guests"
+              value={nextEventAttendance.guestCount > 0 ? String(nextEventAttendance.guestCount) : "—"}
+              colors={colors}
+            />
+          </View>
+
+          {showPaymentRow ? (
+            <View style={[styles.metaRow, { borderColor: colors.borderLight, backgroundColor: colors.backgroundSecondary }]}>
+              <Feather name="credit-card" size={16} color={colors.textSecondary} />
+              <View style={{ flex: 1, minWidth: 0 }}>
+                <AppText variant="captionBold" color="muted">
+                  Event fee
+                </AppText>
+                <AppText variant="small" color="secondary" style={{ marginTop: 2 }} numberOfLines={2}>
+                  {fee}
+                </AppText>
+              </View>
+              <View
+                style={[
+                  styles.paymentPill,
+                  {
+                    backgroundColor: myReg?.paid ? `${colors.success}18` : `${colors.warning}14`,
+                    borderColor: myReg?.paid ? `${colors.success}45` : `${colors.warning}40`,
+                  },
+                ]}
+              >
+                <Feather
+                  name={myReg?.paid ? "check-circle" : "alert-circle"}
+                  size={14}
+                  color={myReg?.paid ? colors.success : colors.warning}
+                />
+                <AppText
+                  variant="captionBold"
+                  style={{ marginLeft: 6, color: myReg?.paid ? colors.success : colors.warning }}
+                >
+                  {myReg?.paid ? "Paid" : "Outstanding"}
+                </AppText>
+              </View>
+            </View>
+          ) : null}
 
           {canAdmin ? (
             <View style={{ marginTop: spacing.md }}>
@@ -290,7 +273,7 @@ export function HomeUnifiedNextEventPanel({
             </View>
           ) : null}
         </>
-      ) : fee ? (
+      ) : showReadOnlyFee ? (
         <View style={[styles.metaRow, { borderColor: colors.borderLight, backgroundColor: colors.backgroundSecondary, marginTop: spacing.md }]}>
           <Feather name="tag" size={16} color={colors.primary} />
           <AppText variant="small" color="secondary" style={{ flex: 1 }} numberOfLines={2}>
@@ -300,14 +283,14 @@ export function HomeUnifiedNextEventPanel({
       ) : null}
 
       <View style={styles.actions}>
-        <PrimaryButton onPress={onOpenEvent} size="md" style={styles.cta}>
-          View event
+        <PrimaryButton
+          onPress={onOpenEvent}
+          size="md"
+          style={styles.cta}
+          accessibilityLabel={ctaLabel}
+        >
+          {ctaLabel}
         </PrimaryButton>
-        {canManage ? (
-          <SecondaryButton size="md" onPress={onOpenEvent} style={styles.cta}>
-            Manage event
-          </SecondaryButton>
-        ) : null}
       </View>
     </AppCard>
   );
@@ -359,10 +342,13 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
     marginTop: spacing.md,
   },
+  rsvpFirst: {
+    marginTop: spacing.sm,
+  },
   statRow: {
     flexDirection: "row",
     gap: spacing.sm,
-    marginTop: spacing.md,
+    marginTop: spacing.sm,
   },
   statPill: {
     borderRadius: radius.md,
@@ -392,10 +378,6 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     borderRadius: radius.full,
     borderWidth: 1,
-  },
-  rsvpLabel: {
-    marginTop: spacing.md,
-    marginBottom: spacing.xs,
   },
   segmentShell: {
     flexDirection: "row",
