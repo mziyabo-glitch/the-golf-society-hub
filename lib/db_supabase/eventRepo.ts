@@ -274,8 +274,15 @@ export async function getEventsBySocietyId(societyId: string): Promise<EventDoc[
 /**
  * Host events + joint participant events for this society (raw rows, not joint-enriched).
  * On participant lookup failure, returns host-only rows (same behaviour as the events list).
+ *
+ * Participant rows are suppressed when the viewing society already hosts an event on the
+ * same date (duplicate society-facing cards for one fixture, e.g. ZGS OOM 10 + M4 OOM 6).
  */
-async function fetchEventsVisibleToSociety(societyId: string): Promise<EventDoc[]> {
+async function fetchEventsVisibleToSociety(
+  societyId: string,
+  opts?: { applyParticipantSuppression?: boolean },
+): Promise<EventDoc[]> {
+  const applyParticipantSuppression = opts?.applyParticipantSuppression ?? true;
   let hostMapped: EventDoc[];
   try {
     hostMapped = await fetchMappedEventsForSociety(societyId);
@@ -283,7 +290,9 @@ async function fetchEventsVisibleToSociety(societyId: string): Promise<EventDoc[
     throw e;
   }
   try {
-    const { getEventIdsWhereSocietyParticipates } = await import("@/lib/db_supabase/jointEventRepo");
+    const { getEventIdsWhereSocietyParticipates, getJointMetaForEventIds } = await import(
+      "@/lib/db_supabase/jointEventRepo"
+    );
     const participantEventIdList = await getEventIdsWhereSocietyParticipates(societyId);
     const hostIds = new Set(hostMapped.map((e) => e.id));
     const missingIds = participantEventIdList.filter((id) => !hostIds.has(id));
@@ -296,7 +305,27 @@ async function fetchEventsVisibleToSociety(societyId: string): Promise<EventDoc[
     const missingMapped = (await Promise.all(missingIds.map((id) => getEventMappedById(id)))).filter(
       (e): e is EventDoc => e != null,
     );
-    const combined = [...hostMapped, ...missingMapped];
+    let participantsToMerge = missingMapped;
+    if (applyParticipantSuppression && missingMapped.length > 0) {
+      const { filterParticipantEventsForSocietyList } = await import("@/lib/eventListSocietyScope");
+      const metaMap = await getJointMetaForEventIds(missingMapped.map((e) => e.id));
+      const participantSocietyIdsByEventId = new Map(
+        missingMapped.map((e) => [e.id, metaMap.get(e.id)?.participantSocietyIds ?? []]),
+      );
+      participantsToMerge = filterParticipantEventsForSocietyList(
+        societyId,
+        hostMapped,
+        missingMapped,
+        participantSocietyIdsByEventId,
+      );
+      if (__DEV__ && participantsToMerge.length !== missingMapped.length) {
+        const suppressedIds = missingMapped
+          .filter((e) => !participantsToMerge.some((p) => p.id === e.id))
+          .map((e) => e.id);
+        console.log("[eventRepo] suppressed duplicate participant events:", suppressedIds, "society:", societyId);
+      }
+    }
+    const combined = [...hostMapped, ...participantsToMerge];
     combined.sort((a, b) => (a.date ?? "").localeCompare(b.date ?? ""));
     return combined;
   } catch (err) {
