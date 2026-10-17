@@ -2,7 +2,7 @@ import { StyleSheet, View } from "react-native";
 import { AppText } from "@/components/ui/AppText";
 import { DashboardPlayabilityMiniCard } from "@/components/dashboard/DashboardPlayabilityMiniCard";
 import type { EventDoc } from "@/lib/db_supabase/eventRepo";
-import { getColors, radius, spacing } from "@/lib/ui/theme";
+import { getColors, spacing } from "@/lib/ui/theme";
 
 type Props = {
   nextEvent: EventDoc | null;
@@ -36,11 +36,4 @@ export function HomeWeatherSnapshotCard({
   );
 }
 
-const styles = StyleSheet.create({
-  emptyCard: {
-    borderRadius: radius.md,
-    borderWidth: 1,
-    padding: spacing.base,
-  },
-});
 

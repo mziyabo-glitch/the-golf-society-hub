@@ -1,9 +1,5 @@
-import { StyleSheet } from "react-native";
-import { AppCard } from "@/components/ui/AppCard";
-import { AppText } from "@/components/ui/AppText";
 import { DashboardPrizePoolHomeCard } from "@/components/dashboard/DashboardPrizePoolHomeCard";
 import type { HomePrizePoolRowVm } from "@/lib/event-prize-pools-types";
-import { getColors, radius, spacing } from "@/lib/ui/theme";
 
 type Props = {
   eventId: string | null;
@@ -24,8 +20,6 @@ export function HomePrizePoolCard({
   loading,
   onChanged,
 }: Props) {
-  const colors = getColors();
-
   if (!eventId || !myMemberId) {
     return null;
   }
@@ -42,11 +36,3 @@ export function HomePrizePoolCard({
     />
   );
 }
-
-const styles = StyleSheet.create({
-  emptyCard: {
-    borderRadius: radius.md,
-    borderWidth: 1,
-    padding: spacing.base,
-  },
-});
