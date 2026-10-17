@@ -9,7 +9,7 @@ import React, { forwardRef } from "react";
 import { View, Text, StyleSheet } from "react-native";
 import { SocietyLogoImage } from "@/components/ui/SocietyLogoImage";
 import { BrandingFooter } from "@/components/ui/BrandingFooter";
-import { typography } from "@/lib/ui/theme";
+import { colors, typography } from "@/lib/ui/theme";
 
 export type ResultRow = {
   memberName: string;
@@ -171,9 +171,6 @@ OOMResultsLogShareCard.displayName = "OOMResultsLogShareCard";
 
 export default OOMResultsLogShareCard;
 
-// Brand colors
-const BRAND_GREEN = "#0B6E4F";
-
 const styles = StyleSheet.create({
   container: {
     backgroundColor: "#FFFFFF",
@@ -195,7 +192,7 @@ const styles = StyleSheet.create({
     marginBottom: 20,
   },
   societyName: {
-    fontSize: typography.caption.fontSize,
+    fontSize: typography.caption.fontSize + 2,
     fontWeight: "500",
     color: "#6B7280",
     textTransform: "uppercase",
@@ -203,19 +200,19 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   title: {
-    fontSize: typography.display.fontSize,
+    fontSize: typography.display.fontSize + 4,
     fontWeight: "700",
-    color: BRAND_GREEN,
+    color: colors.light.primary,
     marginBottom: 2,
   },
   subtitle: {
-    fontSize: typography.body.fontSize,
+    fontSize: typography.body.fontSize + 2,
     fontWeight: "500",
     color: "#374151",
   },
   divider: {
     height: 3,
-    backgroundColor: BRAND_GREEN,
+    backgroundColor: colors.light.primary,
     marginBottom: 20,
     borderRadius: 2,
   },
@@ -232,7 +229,7 @@ const styles = StyleSheet.create({
     borderBottomColor: "#E5E7EB",
   },
   eventName: {
-    fontSize: typography.body.fontSize,
+    fontSize: typography.body.fontSize + 2,
     fontWeight: "600",
     color: "#111827",
     marginBottom: 4,
@@ -242,15 +239,15 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   eventDate: {
-    fontSize: typography.body.fontSize,
+    fontSize: typography.body.fontSize + 1,
     color: "#6B7280",
   },
   eventDateDot: {
-    fontSize: typography.body.fontSize,
+    fontSize: typography.body.fontSize + 1,
     color: "#9CA3AF",
   },
   eventFormat: {
-    fontSize: typography.body.fontSize,
+    fontSize: typography.body.fontSize + 1,
     color: "#6B7280",
   },
   table: {
@@ -260,10 +257,10 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     paddingVertical: 10,
     paddingHorizontal: 12,
-    backgroundColor: BRAND_GREEN,
+    backgroundColor: colors.light.primary,
   },
   headerCell: {
-    fontSize: typography.small.fontSize,
+    fontSize: typography.small.fontSize + 1,
     fontWeight: "600",
     color: "#FFFFFF",
     textTransform: "uppercase",
@@ -297,14 +294,14 @@ const styles = StyleSheet.create({
     backgroundColor: "#FAFAFA",
   },
   tableRowTop3: {
-    backgroundColor: "#FFFBEB",
+    backgroundColor: colors.light.highlightMuted,
   },
   tableRowLast: {
     borderBottomWidth: 0,
   },
   nameText: {
     flex: 1,
-    fontSize: typography.body.fontSize,
+    fontSize: typography.body.fontSize + 2,
     fontWeight: "500",
     color: "#111827",
   },
@@ -313,30 +310,30 @@ const styles = StyleSheet.create({
   },
   valueText: {
     width: 50,
-    fontSize: typography.body.fontSize,
+    fontSize: typography.body.fontSize + 1,
     color: "#6B7280",
     textAlign: "center",
   },
   posText: {
     width: 40,
-    fontSize: typography.body.fontSize,
+    fontSize: typography.body.fontSize + 1,
     fontWeight: "500",
     color: "#6B7280",
     textAlign: "center",
   },
   posTextTop3: {
     fontWeight: "600",
-    color: "#D97706",
+    color: colors.light.highlight,
   },
   oomText: {
     width: 50,
-    fontSize: typography.body.fontSize,
+    fontSize: typography.body.fontSize + 2,
     fontWeight: "600",
-    color: BRAND_GREEN,
+    color: colors.light.primary,
     textAlign: "right",
   },
   oomTextTop3: {
     fontWeight: "700",
-    fontSize: typography.caption.fontSize,
+    fontSize: typography.caption.fontSize + 2,
   },
 });

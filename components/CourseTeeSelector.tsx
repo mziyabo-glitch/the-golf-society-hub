@@ -7,6 +7,7 @@ import { StyleSheet, View, Pressable } from "react-native";
 import { AppText } from "@/components/ui/AppText";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
 import type { CourseTee } from "@/lib/db_supabase/courseRepo";
+import { formatSlopeRatingLabel, hasValidSlopeRating } from "@/lib/teeMetrics";
 
 const teeColors: Record<string, string> = {
   white: "#ffffff",
@@ -35,20 +36,18 @@ export type CourseTeeSelectorProps = {
   onSelectTee: (tee: CourseTee) => void;
   /** Optional: handicap index for course handicap display */
   handicapIndex?: number | null;
+  /** e.g. "Men's tee" / "Ladies' tee" */
+  sectionTitle?: string;
 };
 
-/**
- * Course handicap = handicap index × slope / 113 (rounded).
- */
-export function courseHandicapFromTee(handicapIndex: number, slopeRating: number): number {
-  return Math.round(handicapIndex * (slopeRating / 113));
-}
+import { calculateCourseHandicap } from "@/lib/scoring/handicap";
 
 export function CourseTeeSelector({
   tees,
   selectedTee,
   onSelectTee,
   handicapIndex,
+  sectionTitle = "Select tee",
 }: CourseTeeSelectorProps) {
   const colors = getColors();
 
@@ -65,14 +64,19 @@ export function CourseTeeSelector({
   return (
     <View style={styles.container}>
       <AppText variant="captionBold" style={styles.sectionLabel}>
-        Select Tee
+        {sectionTitle}
       </AppText>
       {tees.map((tee) => {
         const isSelected = selectedTee?.id === tee.id;
         const dotColor = getTeeColor(tee);
         const courseHcap =
-          handicapIndex != null && !isNaN(handicapIndex)
-            ? courseHandicapFromTee(handicapIndex, tee.slope_rating)
+          handicapIndex != null && !isNaN(handicapIndex) && hasValidSlopeRating(tee.slope_rating) && tee.course_rating > 0
+            ? calculateCourseHandicap(
+                handicapIndex,
+                tee.slope_rating!,
+                tee.course_rating,
+                tee.par_total,
+              )
             : null;
 
         return (
@@ -113,7 +117,7 @@ export function CourseTeeSelector({
             </View>
             <View style={styles.statsRow}>
               <AppText variant="caption" color="secondary">
-                CR {tee.course_rating} / SR {tee.slope_rating}
+                CR {tee.course_rating} / {formatSlopeRatingLabel(tee.slope_rating)}
               </AppText>
               <AppText variant="caption" color="secondary">
                 Par {tee.par_total}

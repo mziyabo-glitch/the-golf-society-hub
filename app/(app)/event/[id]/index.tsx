@@ -1,610 +1,648 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import debounce from "lodash.debounce";
-import { StyleSheet, View, Pressable, ScrollView } from "react-native";
-import { useLocalSearchParams, useRouter } from "expo-router";
-import { useFocusEffect } from "@react-navigation/native";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Platform, Pressable, RefreshControl, ScrollView, StyleSheet, View } from "react-native";
 import { Feather } from "@expo/vector-icons";
-import { goBack } from "@/lib/navigation";
+import { useFocusEffect, useNavigation } from "@react-navigation/native";
+import { useLocalSearchParams, useRouter } from "expo-router";
 
 import { Screen } from "@/components/ui/Screen";
-import { AppText } from "@/components/ui/AppText";
 import { AppCard } from "@/components/ui/AppCard";
-import { AppInput } from "@/components/ui/AppInput";
-import { PrimaryButton, SecondaryButton } from "@/components/ui/Button";
-import { LoadingState } from "@/components/ui/LoadingState";
+import { AppText } from "@/components/ui/AppText";
 import { EmptyState } from "@/components/ui/EmptyState";
+import { LoadingState } from "@/components/ui/LoadingState";
+import { RetryErrorBlock } from "@/components/ui/RetryErrorBlock";
+import { InlineNotice } from "@/components/ui/InlineNotice";
+import { ReliablePressable } from "@/components/ui/ReliablePressable";
+import { SecondaryButton } from "@/components/ui/Button";
 import { SocietyBadge } from "@/components/ui/SocietyHeader";
-import { LicenceRequiredModal } from "@/components/LicenceRequiredModal";
-import { useBootstrap } from "@/lib/useBootstrap";
-import { usePaidAccess } from "@/lib/access/usePaidAccess";
-import {
-  getEvent,
-  updateEvent,
-  deleteEvent,
-  type EventDoc,
-  type EventFormat,
-  type EventClassification,
-  EVENT_FORMATS,
-  EVENT_CLASSIFICATIONS,
-} from "@/lib/db_supabase/eventRepo";
-import { getTeesByCourseId, getCourseByApiId, getCourseMetaById, upsertTeesFromApi, type CourseTee } from "@/lib/db_supabase/courseRepo";
-import { searchCourses as searchCoursesApi, getCourseById, type ApiCourseSearchResult } from "@/lib/golfApi";
-import { importCourse, type ImportedCourse } from "@/lib/importCourse";
-import { CourseTeeSelector } from "@/components/CourseTeeSelector";
-import { getPermissionsForMember } from "@/lib/rbac";
-import {
-  getEventRegistrations,
-  markMePaid,
-  type EventRegistration,
-} from "@/lib/db_supabase/eventRegistrationRepo";
+import { StatusBadge } from "@/components/ui/StatusBadge";
+import { scoringOfficialBadgeLabel, scoringOfficialUiKind } from "@/lib/scoring/scoringOfficialUi";
+import { EVENT_CLASSIFICATIONS, EVENT_FORMATS, getEvent, type EventDoc } from "@/lib/db_supabase/eventRepo";
+import { getEventGuests } from "@/lib/db_supabase/eventGuestRepo";
+import { getEventRegistrations, getJointEventRegistrations, type EventRegistration } from "@/lib/db_supabase/eventRegistrationRepo";
 import { getMembersBySocietyId, type MemberDoc } from "@/lib/db_supabase/memberRepo";
-import { Toast } from "@/components/ui/Toast";
-import { getColors, spacing, radius, typography } from "@/lib/ui/theme";
-import { confirmDestructive, showAlert } from "@/lib/ui/alert";
-import { getSocietyLogoUrl } from "@/lib/societyLogo";
+import { submitMemberEventRsvp } from "@/lib/events/memberEventRsvp";
+import { listEventPrizePools } from "@/lib/db_supabase/eventPrizePoolRepo";
+import { getEventResultsForSociety } from "@/lib/db_supabase/resultsRepo";
+import { getColors, iconSize, radius, spacing } from "@/lib/ui/theme";
+import { useBootstrap } from "@/lib/useBootstrap";
+import {
+  canManageEventPaymentsForSociety,
+  canManageEventRosterForSociety,
+  canExportEventAttendeesForSociety,
+  getPermissionsForMember,
+  isSecretary,
+} from "@/lib/rbac";
+import { isActiveSocietyParticipantForEvent, isJointEventFromMeta } from "@/lib/jointEventAccess";
+import { isLiveGrossScoringEnabledForEvent } from "@/lib/featureVisibility";
+import { getJointEventDetail, mapJointEventToEventDoc } from "@/lib/db_supabase/jointEventRepo";
+import { getCache, setCache } from "@/lib/cache/clientCache";
+import {
+  resolveEventAttendeesForDisplay,
+  summarizeJointEventAttendees,
+  type JointEventAttendeeRow,
+} from "@/lib/jointEventAttendeeVisibility";
+import { buildSocietyIdToNameMap } from "@/lib/jointEventSocietyLabel";
+import { exportEventAttendeesCsv } from "@/lib/eventAttendeeCsvExport";
+import { membersByIdFromLists } from "@/lib/eventAttendeeCsv";
+import { showAlert } from "@/lib/ui/alert";
+import {
+  buildEventDetailQuickActions,
+  shouldShowEntryFeeLine,
+  shouldShowJointAttendeeRoll,
+  shouldShowMemberPaymentStatus,
+  shouldShowSocietyAttendanceSummary,
+  splitQuickActionsForAudience,
+  quickActionCopy,
+  type EventDetailQuickActionId,
+} from "@/lib/events/eventDetailScreenModel";
+import { resolveHomePlayingStatus } from "@/lib/home/homeNextEventPanelModel";
 
-// Picker option component
-function PickerOption({
-  label,
-  selected,
-  onPress,
-  colors,
-}: {
-  label: string;
-  selected: boolean;
-  onPress: () => void;
-  colors: ReturnType<typeof getColors>;
-}) {
-  return (
-    <Pressable
-      onPress={onPress}
-      style={[
-        styles.pickerOption,
-        {
-          backgroundColor: selected ? colors.primary : colors.backgroundSecondary,
-          borderColor: selected ? colors.primary : colors.border,
-        },
-      ]}
-    >
-      <AppText
-        variant="caption"
-        style={{ color: selected ? "#fff" : colors.text }}
-      >
-        {label}
-      </AppText>
-    </Pressable>
-  );
+function formatEventDate(value?: string): string {
+  if (!value?.trim()) return "Date TBD";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return value;
+  return parsed.toLocaleDateString("en-GB", {
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
 }
 
-export default function EventDetailScreen() {
+function getMemberRegistration(regs: EventRegistration[], memberId?: string | null) {
+  if (!memberId) return null;
+  return regs.find((r) => String(r.member_id) === String(memberId)) ?? null;
+}
+
+type EventOverviewCache = {
+  event: EventDoc;
+  participantSocietyIds: string[];
+  registrations: EventRegistration[];
+  allEventRegistrations: EventRegistration[];
+  allGuests: { id: string; society_id: string; name: string; paid: boolean }[];
+  guestCount: number;
+  hasResults: boolean;
+  poolCount: number;
+};
+
+export default function EventOverviewScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ id: string }>();
-  const { societyId, society, member: currentMember, loading: bootstrapLoading } = useBootstrap();
-  const { guardPaidAction, modalVisible, setModalVisible, societyId: guardSocietyId } = usePaidAccess();
-  const colors = getColors();
-
-  // Get logo URL from society
-  const logoUrl = getSocietyLogoUrl(society);
-
-  // Permissions
-  const permissions = getPermissionsForMember(currentMember as any);
-  const canEnterPoints = permissions.canManageHandicaps;
-  const canEditEvent = permissions.canCreateEvents;
-
-  // Safely extract eventId (could be string or array from URL params)
   const eventId = Array.isArray(params.id) ? params.id[0] : params.id;
+  const colors = getColors();
+  const navigation = useNavigation();
+  const {
+    loading: bootstrapLoading,
+    society,
+    societyId,
+    member: currentMember,
+    memberships,
+    userId,
+  } = useBootstrap();
+
+  const permissions = getPermissionsForMember(currentMember);
+  const canManagePayments = canManageEventPaymentsForSociety(memberships, societyId);
+  const canManageRoster = canManageEventRosterForSociety(memberships, societyId);
+  const canExportEventAttendees = canExportEventAttendeesForSociety(memberships, societyId);
+  const canManageEvent =
+    permissions.canCreateEvents ||
+    permissions.canManageHandicaps ||
+    permissions.canDeleteEvents ||
+    canManagePayments ||
+    canManageRoster;
 
   const [event, setEvent] = useState<EventDoc | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  // Edit mode state
-  const [isEditing, setIsEditing] = useState(false);
-  const [saving, setSaving] = useState(false);
-
-  // Form state for editing
-  const [formName, setFormName] = useState("");
-  const [formDate, setFormDate] = useState("");
-  const [formFormat, setFormFormat] = useState<EventFormat>("stableford");
-  const [formClassification, setFormClassification] = useState<EventClassification>("general");
-  const [formCourseName, setFormCourseName] = useState("");
-
-  // Course search (GolfCourseAPI) for edit mode
-  const [courseSearchQuery, setCourseSearchQuery] = useState("");
-  const [courseSearchResults, setCourseSearchResults] = useState<ApiCourseSearchResult[]>([]);
-  const [courseSearching, setCourseSearching] = useState(false);
-  const [courseSearchError, setCourseSearchError] = useState<string | null>(null);
-  const [selectedCourseEdit, setSelectedCourseEdit] = useState<{ id: string; name: string } | null>(null);
-
-  // Tee from course_tees (when event has course_id)
-  const [tees, setTees] = useState<CourseTee[]>([]);
-  const [teesLoading, setTeesLoading] = useState(false);
-  const [selectedTee, setSelectedTee] = useState<CourseTee | null>(null);
-  const [teeStatus, setTeeStatus] = useState<"synced" | "manual" | "import_failed" | "pending_sync" | null>(null);
-  const [teeStatusMessage, setTeeStatusMessage] = useState<string | null>(null);
-
-  // Manual tee entry (fallback when no tees from API)
-  const [manualTeeName, setManualTeeName] = useState("");
-  const [manualPar, setManualPar] = useState("");
-  const [manualCourseRating, setManualCourseRating] = useState("");
-  const [manualSlopeRating, setManualSlopeRating] = useState("");
-  const [manualLadiesTeeName, setManualLadiesTeeName] = useState("");
-  const [manualLadiesPar, setManualLadiesPar] = useState("");
-  const [manualLadiesCourseRating, setManualLadiesCourseRating] = useState("");
-  const [manualLadiesSlopeRating, setManualLadiesSlopeRating] = useState("");
-  const [showManualTee, setShowManualTee] = useState(false);
-
-  // Handicap allowance
-  const [formHandicapAllowance, setFormHandicapAllowance] = useState("95");
-
-  // Tee settings toggle
-  const [showTeeSettings, setShowTeeSettings] = useState(false);
-
-  const parseOptionalNumber = (value: string, round = false): number | undefined => {
-    const trimmed = value.trim();
-    if (!trimmed) return undefined;
-    const num = Number(trimmed);
-    if (!Number.isFinite(num)) return undefined;
-    return round ? Math.round(num) : num;
-  };
-
-  const loadEvent = useCallback(async () => {
-    if (!eventId || !societyId) {
-      setError("Missing event or society");
-      setLoading(false);
-      return;
-    }
-
-    try {
-      setLoading(true);
-      setError(null);
-      const data = await getEvent(eventId);
-      if (!data) {
-        setError("Event not found");
-      } else {
-        setEvent(data);
-      }
-    } catch (err: any) {
-      setError(err?.message ?? "Failed to load event");
-    } finally {
-      setLoading(false);
-    }
-  }, [eventId, societyId]);
-
-  useFocusEffect(
-    useCallback(() => {
-      loadEvent();
-    }, [loadEvent])
-  );
-
-  // ---- Paid Players dashboard ----
-  const canManagePayments = permissions.canManageEventPayments;
-  const [registrations, setRegistrations] = useState<EventRegistration[]>([]);
-  const [regMembers, setRegMembers] = useState<MemberDoc[]>([]);
-  const [payBusy, setPayBusy] = useState<string | null>(null);
-  const [payToast, setPayToast] = useState<{ visible: boolean; message: string; type: "success" | "error" }>({ visible: false, message: "", type: "success" });
-
-  const loadRegistrations = useCallback(async () => {
-    if (!eventId || !societyId) return;
-    try {
-      const [regs, mems] = await Promise.all([
-        getEventRegistrations(eventId),
-        getMembersBySocietyId(societyId),
-      ]);
-      setRegistrations(regs);
-      setRegMembers(mems);
-    } catch { /* non-critical */ }
-  }, [eventId, societyId]);
-
-  useEffect(() => {
-    if (eventId && societyId) loadRegistrations();
-  }, [eventId, societyId, loadRegistrations]);
-
-  const memberNameMap = useMemo(() => {
-    const map: Record<string, string> = {};
-    for (const m of regMembers) map[m.id] = m.name || m.display_name || m.displayName || "Member";
-    return map;
-  }, [regMembers]);
-
-  const paidCount = registrations.filter((r) => r.paid).length;
-  const inCount = registrations.filter((r) => r.status === "in").length;
-
-  const handleTogglePaid = async (reg: EventRegistration) => {
-    if (payBusy) return;
-    setPayBusy(reg.member_id);
-    try {
-      await markMePaid(reg.event_id, reg.member_id, !reg.paid);
-      setPayToast({ visible: true, message: reg.paid ? "Marked unpaid" : "Marked paid", type: "success" });
-      await loadRegistrations();
-    } catch (e: any) {
-      setPayToast({ visible: true, message: e?.message || "Failed", type: "error" });
-    } finally {
-      setPayBusy(null);
-    }
-  };
-
-  // Debounced course search (400ms - only fires after typing stops to avoid API quota burn)
-  const debouncedSearch = useMemo(
+  const canEnterGrossScores = useMemo(
     () =>
-      debounce(async (q: string) => {
-        setCourseSearching(true);
-        setCourseSearchError(null);
-        try {
-          const hits = await searchCoursesApi(q);
-          setCourseSearchResults(hits);
-        } catch (e: any) {
-          setCourseSearchError(e?.message || "Search failed");
-          setCourseSearchResults([]);
-        } finally {
-          setCourseSearching(false);
-        }
-      }, 400),
-    []
+      (permissions.canManageHandicaps || isSecretary(currentMember)) &&
+      isLiveGrossScoringEnabledForEvent(event),
+    [currentMember, permissions.canManageHandicaps, event],
   );
+  const canAccessScorecardUi = canEnterGrossScores;
+  const [participantSocietyIds, setParticipantSocietyIds] = useState<string[]>([]);
+  const [registrations, setRegistrations] = useState<EventRegistration[]>([]);
+  const [allEventRegistrations, setAllEventRegistrations] = useState<EventRegistration[]>([]);
+  const [allGuests, setAllGuests] = useState<{ id: string; society_id: string; name: string; paid: boolean }[]>([]);
+  const [guestCount, setGuestCount] = useState(0);
+  const [hasResults, setHasResults] = useState(false);
+  const [poolCount, setPoolCount] = useState(0);
+  /** Joint events: member rows from all participating societies (dual membership detection). */
+  const [jointParticipatingMembers, setJointParticipatingMembers] = useState<MemberDoc[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [refreshError, setRefreshError] = useState<string | null>(null);
+  const [rsvpBusy, setRsvpBusy] = useState(false);
+  const [rsvpError, setRsvpError] = useState<string | null>(null);
+  const [attendeesCsvBusy, setAttendeesCsvBusy] = useState(false);
+  const eventRef = useRef<EventDoc | null>(null);
+  eventRef.current = event;
 
-  useEffect(() => {
-    if (!isEditing) return;
-    const q = courseSearchQuery.trim();
-    if (!q || q.length < 2) {
-      setCourseSearchResults([]);
-      setCourseSearchError(null);
-      return;
-    }
-    debouncedSearch(q);
-    return () => debouncedSearch.cancel();
-  }, [courseSearchQuery, isEditing, debouncedSearch]);
+  const overviewCacheKey = eventId ? `event:${eventId}:overview` : null;
 
-  const handleEditSelectCourse = useCallback(async (hit: ApiCourseSearchResult) => {
-    setCourseSearchResults([]);
-    setCourseSearchQuery("");
-    setSelectedTee(null);
-    setTees([]);
-    setTeesLoading(true);
-    setTeeStatus(null);
-    setTeeStatusMessage(null);
-    setShowManualTee(true);
-    try {
-      const cached = await getCourseByApiId(hit.id);
-      if (cached && cached.tees.length > 0) {
-        setSelectedCourseEdit({ id: cached.courseId, name: cached.courseName });
-        setFormCourseName(cached.courseName);
-        setTees(cached.tees);
-        setTeeStatus("synced");
-        setTeeStatusMessage("Synced tee data loaded.");
-      } else {
-        const full = await getCourseById(hit.id);
-        const result: ImportedCourse = await importCourse(full);
-        setSelectedCourseEdit({ id: result.courseId, name: result.courseName });
-        setFormCourseName(result.courseName);
-
-        let teesList: CourseTee[];
-        if (result.tees.length > 0) {
-          teesList = result.tees.map((t) => ({
-            id: t.id,
-            course_id: result.courseId,
-            tee_name: t.teeName,
-            tee_color: null,
-            course_rating: t.courseRating ?? 0,
-            slope_rating: t.slopeRating ?? 0,
-            par_total: t.parTotal ?? 0,
-          }));
-        } else {
-          const apiTees = full.tees;
-          if (apiTees) {
-            await upsertTeesFromApi(result.courseId, apiTees as any);
-            teesList = await getTeesByCourseId(result.courseId);
-          } else {
-            teesList = [];
-          }
-        }
-        setTees(teesList);
-        if (teesList.length === 0) {
-          setTeeStatus("pending_sync");
-          setTeeStatusMessage("Tee data is still syncing. You can select a tee manually below.");
-          setShowManualTee(true);
-        } else {
-          setTeeStatus("synced");
-          setTeeStatusMessage("Synced tee data loaded.");
-          setShowManualTee(false);
-        }
-      }
-    } catch (e: any) {
-      setSelectedCourseEdit({ id: "", name: hit.name });
-      setFormCourseName(hit.name);
-      setTees([]);
-      setTeeStatus("import_failed");
-      setTeeStatusMessage("Import failed. You can still save manual tee details below.");
-      setShowManualTee(true);
-    } finally {
-      setTeesLoading(false);
-    }
+  const applyOverviewCache = useCallback((payload: EventOverviewCache) => {
+    setEvent(payload.event);
+    setParticipantSocietyIds(payload.participantSocietyIds ?? []);
+    setRegistrations(payload.registrations ?? []);
+    setAllEventRegistrations(payload.allEventRegistrations ?? payload.registrations ?? []);
+    setAllGuests(payload.allGuests ?? []);
+    setGuestCount(payload.guestCount ?? 0);
+    setHasResults(payload.hasResults ?? false);
+    setPoolCount(payload.poolCount ?? 0);
   }, []);
 
-  // Load tees when event has course_id
-  const loadTeesForEvent = useCallback(async (courseId: string | undefined, teeId: string | undefined, savedEvent?: EventDoc | null) => {
-    if (!courseId) {
-      setTees([]);
-      setSelectedTee(null);
-      setTeeStatus(null);
-      setTeeStatusMessage(null);
-      return;
-    }
-    setTeesLoading(true);
-    try {
-      const list = await getTeesByCourseId(courseId);
-      setTees(list);
-      const match = teeId ? list.find((t) => t.id === teeId) : null;
-      setSelectedTee(match ?? null);
-      if (list.length > 0) {
-        setTeeStatus("synced");
-        setTeeStatusMessage("Synced tee data loaded.");
-        if (match) {
-          setShowManualTee(false);
-        } else if (savedEvent?.teeName || savedEvent?.par != null || savedEvent?.courseRating != null || savedEvent?.slopeRating != null) {
-          setShowManualTee(true);
-          setTeeStatus("manual");
-          setTeeStatusMessage("Saved tee setup loaded from this event. You can edit it below.");
-        }
+  const loadEventOverview = useCallback(
+    async (opts?: { silent?: boolean }) => {
+      if (!eventId) {
+        setError("Missing event id.");
+        setLoading(false);
         return;
       }
 
-      setShowManualTee(true);
-      setTeeStatus("pending_sync");
-      setTeeStatusMessage("Tee data is still syncing. You can select a tee manually below.");
-
-      const meta = await getCourseMetaById(courseId);
-      if (!meta?.api_id) {
-        setTeeStatus(savedEvent?.teeName ? "manual" : "import_failed");
-        setTeeStatusMessage(savedEvent?.teeName
-          ? "Saved tee setup loaded from this event. You can edit it below."
-          : "No imported tees found yet. Enter tee details manually below.");
-        return;
+      const silent = !!opts?.silent;
+      if (silent) {
+        setRefreshing(true);
+        setRefreshError(null);
+      } else {
+        setLoading(true);
+        setError(null);
+        setRefreshError(null);
       }
 
       try {
-        const full = await getCourseById(meta.api_id);
-        const result = await importCourse(full);
-        const refreshed = await getTeesByCourseId(result.courseId);
-        setTees(refreshed);
-        const refreshedMatch = teeId ? refreshed.find((t) => t.id === teeId) : null;
-        setSelectedTee(refreshedMatch ?? null);
-        if (refreshed.length > 0) {
-          setTeeStatus("synced");
-          setTeeStatusMessage("Tee data synced.");
-          if (refreshedMatch) setShowManualTee(false);
-        } else {
-          setTeeStatus(savedEvent?.teeName ? "manual" : "pending_sync");
-          setTeeStatusMessage(savedEvent?.teeName
-            ? "Saved tee setup loaded from this event. You can edit it below."
-            : "No imported tees found yet. Enter tee details manually below.");
+        let detail = await getEvent(eventId);
+        let participants = (detail?.participant_society_ids ?? []).filter(Boolean);
+        if (!detail) {
+          const joint = await getJointEventDetail(eventId);
+          if (!joint) {
+            setError("Event not found.");
+            setEvent(null);
+            setLoading(false);
+            setRefreshing(false);
+            return;
+          }
+          detail = mapJointEventToEventDoc(joint.event) as EventDoc;
+          participants = joint.participating_societies.map((s) => s.society_id).filter(Boolean);
         }
-      } catch (syncErr: any) {
-        console.error("[event] background tee sync failed:", syncErr?.message || syncErr);
-        setTeeStatus(savedEvent?.teeName ? "manual" : "import_failed");
-        setTeeStatusMessage(savedEvent?.teeName
-          ? "Saved tee setup loaded from this event. You can edit it below."
-          : "Import failed. You can still save manual tee details below.");
+        setEvent(detail);
+        const participantsUnique = [...new Set(participants)];
+        setParticipantSocietyIds(participantsUnique);
+
+        const isJoint =
+          isJointEventFromMeta(participantsUnique, detail.linked_society_count) ||
+          detail.is_joint_event === true;
+
+        const participatingMemberListsPromise =
+          isJoint && participantsUnique.length >= 2
+            ? Promise.all(participantsUnique.map((id) => getMembersBySocietyId(id)))
+            : Promise.resolve([] as MemberDoc[][]);
+
+        const [allRegs, guests, pools, results, participatingMemberLists] = await Promise.all([
+          isJoint && participantsUnique.length >= 2
+            ? getJointEventRegistrations(eventId)
+            : getEventRegistrations(eventId),
+          getEventGuests(eventId),
+          listEventPrizePools(eventId).catch(() => []),
+          societyId ? getEventResultsForSociety(eventId, societyId).catch(() => []) : Promise.resolve([]),
+          participatingMemberListsPromise,
+        ]);
+
+        if (isJoint && participantsUnique.length >= 2) {
+          const byId = new Map<string, MemberDoc>();
+          for (const list of participatingMemberLists) {
+            for (const m of list) {
+              if (m?.id) byId.set(m.id, m);
+            }
+          }
+          setJointParticipatingMembers([...byId.values()]);
+        } else {
+          setJointParticipatingMembers([]);
+        }
+
+        const scopedRegs = societyId
+          ? allRegs.filter((r) => String(r.society_id) === String(societyId))
+          : allRegs;
+
+        setRegistrations(scopedRegs);
+        setAllEventRegistrations(allRegs);
+        const guestRows = guests.map((g) => ({
+          id: g.id,
+          society_id: g.society_id,
+          name: g.name,
+          paid: g.paid,
+        }));
+        setAllGuests(guestRows);
+        const scopedGuests = societyId
+          ? guestRows.filter((g) => String(g.society_id) === String(societyId))
+          : guestRows;
+        const nextGuestCount = isJoint ? guestRows.length : scopedGuests.length;
+        const nextPoolCount = pools.length;
+        const nextHasResults = results.length > 0;
+        setGuestCount(nextGuestCount);
+        setPoolCount(nextPoolCount);
+        setHasResults(nextHasResults);
+
+        const cachePayload: EventOverviewCache = {
+          event: detail,
+          participantSocietyIds: participantsUnique,
+          registrations: scopedRegs,
+          allEventRegistrations: allRegs,
+          allGuests: guestRows,
+          guestCount: nextGuestCount,
+          hasResults: nextHasResults,
+          poolCount: nextPoolCount,
+        };
+        if (overviewCacheKey) {
+          await setCache(overviewCacheKey, cachePayload, { ttlMs: 1000 * 60 * 30 });
+        }
+        setRefreshError(null);
+        setError(null);
+      } catch (e: any) {
+        const msg = e?.message ?? "Failed to load event overview.";
+        if (eventRef.current) {
+          setRefreshError(msg);
+        } else {
+          setError(msg);
+        }
+      } finally {
+        setLoading(false);
+        setRefreshing(false);
       }
-    } catch {
-      setTees([]);
-      setSelectedTee(null);
-      setShowManualTee(true);
-      setTeeStatus(savedEvent?.teeName ? "manual" : "import_failed");
-      setTeeStatusMessage(savedEvent?.teeName
-        ? "Saved tee setup loaded from this event. You can edit it below."
-        : "Import failed. You can still save manual tee details below.");
-    } finally {
-      setTeesLoading(false);
-    }
-  }, []);
+    },
+    [eventId, societyId, overviewCacheKey],
+  );
 
-  // Populate form when entering edit mode
-  const startEditing = () => {
-    if (!event) return;
-    setFormName(event.name || "");
-    setFormDate(event.date || "");
-    setFormFormat(event.format || "stableford");
-    setFormClassification(event.classification || "general");
-    setFormCourseName(event.courseName || "");
+  useFocusEffect(
+    useCallback(() => {
+      let cancelled = false;
+      void (async () => {
+        if (!eventId) return;
+        if (overviewCacheKey) {
+          const cached = await getCache<EventOverviewCache>(overviewCacheKey, { maxAgeMs: 1000 * 60 * 60 * 24 });
+          if (cancelled) return;
+          if (cached?.value?.event) {
+            applyOverviewCache(cached.value);
+            setLoading(false);
+            await loadEventOverview({ silent: true });
+            return;
+          }
+        }
+        if (cancelled) return;
+        await loadEventOverview({ silent: false });
+      })();
+      return () => {
+        cancelled = true;
+      };
+    }, [eventId, overviewCacheKey, applyOverviewCache, loadEventOverview]),
+  );
 
-    // Handicap allowance
-    setFormHandicapAllowance(
-      event.handicapAllowance != null
-        ? String(Math.round(event.handicapAllowance * 100))
-        : "95"
-    );
+  useEffect(() => {
+    if (!event?.name) return;
+    navigation.setOptions({ title: event.name });
+  }, [event?.name, navigation]);
 
-    // Manual tee fields (pre-fill from existing event data)
-    setManualTeeName(event.teeName || "");
-    setManualPar(event.par != null ? String(event.par) : "");
-    setManualCourseRating(event.courseRating != null ? String(event.courseRating) : "");
-    setManualSlopeRating(event.slopeRating != null ? String(event.slopeRating) : "");
-    setManualLadiesTeeName(event.ladiesTeeName || "");
-    setManualLadiesPar(event.ladiesPar != null ? String(event.ladiesPar) : "");
-    setManualLadiesCourseRating(event.ladiesCourseRating != null ? String(event.ladiesCourseRating) : "");
-    setManualLadiesSlopeRating(event.ladiesSlopeRating != null ? String(event.ladiesSlopeRating) : "");
+  const activeMembershipMemberId = useMemo(
+    () =>
+      societyId
+        ? memberships.find((m) => String(m.societyId) === String(societyId))?.memberId ?? null
+        : null,
+    [memberships, societyId],
+  );
 
-    const hasTeeSettings =
-      event.teeName != null || event.par != null || event.slopeRating != null ||
-      event.courseName != null;
-    setShowTeeSettings(!!hasTeeSettings);
+  const effectiveMemberId = currentMember?.id ?? activeMembershipMemberId ?? null;
 
-    // Course search state
-    setCourseSearchQuery("");
-    setCourseSearchResults([]);
-    setSelectedCourseEdit(event.course_id ? { id: event.course_id, name: event.courseName || "" } : null);
-    setTeeStatus(event.teeSource === "imported" ? "synced" : event.teeSource === "manual" ? "manual" : null);
-    setTeeStatusMessage(
-      event.teeName || event.par != null || event.courseRating != null || event.slopeRating != null
-        ? "Saved tee setup loaded from this event."
-        : null
-    );
+  const myRegistration = useMemo(
+    () => getMemberRegistration(registrations, effectiveMemberId),
+    [registrations, effectiveMemberId],
+  );
 
-    const hasSavedTeeData = !!(event.teeName || event.par != null || event.courseRating != null || event.slopeRating != null);
-    if (event.course_id) {
-      setShowManualTee(!!(event.teeName || event.par != null || event.courseRating != null || event.slopeRating != null));
-      loadTeesForEvent(event.course_id, event.tee_id ?? undefined, event);
-    } else {
-      setTees([]);
-      setSelectedTee(null);
-      setTeeStatus(event.teeName ? "manual" : null);
-      setTeeStatusMessage(event.teeName ? "Saved tee setup loaded from this event." : null);
-      setShowManualTee(!!(event.teeName || event.par != null));
-    }
-
-    setIsEditing(true);
-  };
-
-  const cancelEditing = () => {
-    setIsEditing(false);
-  };
-
-  const handleSaveEvent = async () => {
-    if (!guardPaidAction()) return;
-    if (!eventId) return;
-
-    if (!formName.trim()) {
-      showAlert("Missing Name", "Please enter an event name.");
-      return;
-    }
-
-    // Validate date format if provided
-    if (formDate.trim()) {
-      const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
-      if (!dateRegex.test(formDate.trim())) {
-        showAlert("Invalid Date", "Please enter date in YYYY-MM-DD format.");
+  const toggleEventRsvp = useCallback(
+    async (newStatus: "in" | "out") => {
+      if (rsvpBusy || !event?.id || !societyId) {
+        if (!rsvpBusy && (!event?.id || !societyId)) {
+          setRsvpError("Your society is still loading. Wait a moment and try again.");
+        }
         return;
       }
-    }
-
-    const handicapAllowance = formHandicapAllowance.trim()
-      ? parseFloat(formHandicapAllowance.trim()) / 100
-      : 0.95;
-
-    // Determine tee values: selected from DB or manual entry
-    let courseId = (selectedCourseEdit?.id) ?? event?.course_id ?? undefined;
-    const courseChanged = courseId && event?.course_id && courseId !== event.course_id;
-    let teeId: string | null | undefined = selectedTee
-      ? selectedTee.id
-      : showManualTee
-        ? null
-        : courseChanged
-          ? null
-          : event?.tee_id ?? undefined;
-
-    // Validate tee_id: must exist in loaded tees for current course (events.tee_id FK → course_tees.id)
-    let teeValidationMessage: string | null = null;
-    if (teeId && courseId && tees.length > 0) {
-      const teeExists = tees.some((t) => t.id === teeId);
-      if (!teeExists) {
-        console.warn("[event] tee_id not in loaded tees, saving null:", {
-          teeId,
-          courseId,
-          loadedTeeIds: tees.map((t) => t.id),
-          selectedTee: selectedTee ? { id: selectedTee.id, tee_name: selectedTee.tee_name } : null,
+      setRsvpBusy(true);
+      setRsvpError(null);
+      try {
+        const { registration, resolvedMemberId } = await submitMemberEventRsvp({
+          eventId: event.id,
+          societyId,
+          status: newStatus,
+          userId,
+          bootstrapMemberId: currentMember?.id ?? null,
+          membershipMemberId: activeMembershipMemberId,
+          source: "event_detail_rsvp",
         });
-        teeId = null;
-        setSelectedTee(null);
-        teeValidationMessage = "Selected tee no longer available for this course. Saving without tee selection.";
+        setRegistrations((prev) => {
+          const without = prev.filter((r) => String(r.member_id) !== String(resolvedMemberId));
+          return registration ? [...without, registration] : without;
+        });
+      } catch (e: unknown) {
+        setRsvpError(e instanceof Error ? e.message : "Could not update RSVP. Please try again.");
+      } finally {
+        setRsvpBusy(false);
       }
-    }
-    if (teeId && courseId && tees.length === 0) {
-      teeId = null;
-    }
+    },
+    [
+      rsvpBusy,
+      event?.id,
+      societyId,
+      userId,
+      currentMember?.id,
+      activeMembershipMemberId,
+    ],
+  );
 
-    // API-only IDs (api-course-*, api-tee-*) are not real DB UUIDs — don't save as FK
-    if (courseId?.startsWith("api-course-")) courseId = undefined;
-    if (teeId?.startsWith?.("api-tee-")) teeId = null;
+  const detailIsJointEvent = useMemo(
+    () =>
+      isJointEventFromMeta(participantSocietyIds, event?.linked_society_count) ||
+      event?.is_joint_event === true,
+    [participantSocietyIds, event?.linked_society_count, event?.is_joint_event],
+  );
 
-    const teeName = selectedTee?.tee_name ?? (manualTeeName.trim() || event?.teeName || undefined);
-    const par = selectedTee?.par_total ?? parseOptionalNumber(manualPar, true) ?? event?.par ?? undefined;
-    const courseRating = selectedTee?.course_rating ?? parseOptionalNumber(manualCourseRating) ?? event?.courseRating ?? undefined;
-    const slopeRating = selectedTee?.slope_rating ?? parseOptionalNumber(manualSlopeRating, true) ?? event?.slopeRating ?? undefined;
-    const ladiesTeeName = manualLadiesTeeName.trim() || undefined;
-    const ladiesPar = parseOptionalNumber(manualLadiesPar, true);
-    const ladiesCourseRating = parseOptionalNumber(manualLadiesCourseRating);
-    const ladiesSlopeRating = parseOptionalNumber(manualLadiesSlopeRating, true);
-    const teeSource = selectedTee
-      ? "imported"
-      : teeName || par != null || courseRating != null || slopeRating != null
-        ? "manual"
-        : event?.teeSource ?? undefined;
+  const jointSocietyIdToName = useMemo(
+    () =>
+      buildSocietyIdToNameMap(
+        participantSocietyIds.map((id) => ({
+          society_id: id,
+          society_name: id === societyId ? (society?.name ?? id) : id,
+        })),
+      ),
+    [participantSocietyIds, societyId, society?.name],
+  );
 
-    console.log("[event] handleSaveEvent before update:", {
-      course_id: courseId,
-      tee_id: teeId,
-      selectedTeeId: selectedTee?.id ?? null,
-      selectedTee: selectedTee ? { id: selectedTee.id, tee_name: selectedTee.tee_name } : null,
-      loadedTeeIds: tees.map((t) => t.id),
+  const attendeeRowsForExport = useMemo((): JointEventAttendeeRow[] => {
+    if (!societyId) return [];
+    const isJoint = detailIsJointEvent && participantSocietyIds.length >= 2;
+    return resolveEventAttendeesForDisplay({
+      isJoint,
+      regs: allEventRegistrations,
+      guests: allGuests,
+      activeSocietyId: societyId,
+      participantSocietyIds: isJoint ? participantSocietyIds : [societyId],
+      societyIdToName: jointSocietyIdToName,
+      participatingMembers: jointParticipatingMembers,
+      attendingMembersOnly: true,
     });
+  }, [
+    societyId,
+    detailIsJointEvent,
+    participantSocietyIds,
+    allEventRegistrations,
+    allGuests,
+    jointSocietyIdToName,
+    jointParticipatingMembers,
+  ]);
 
-    setSaving(true);
-    try {
-      await updateEvent(eventId, {
-        name: formName.trim(),
-        date: formDate.trim() || undefined,
-        format: formFormat,
-        classification: formClassification,
-        courseName: formCourseName.trim() || undefined,
-        courseId: courseId || undefined,
-        teeId,
-        teeName,
-        par,
-        courseRating,
-        slopeRating,
-        ladiesTeeName,
-        ladiesPar,
-        ladiesCourseRating,
-        ladiesSlopeRating,
-        handicapAllowance,
-        teeSource,
+  const exportMembersById = useMemo(() => {
+    const m = membersByIdFromLists(jointParticipatingMembers);
+    for (const r of allEventRegistrations) {
+      const mid = String(r.member_id);
+      if (!mid || m.has(mid)) continue;
+      const row = r as EventRegistration & {
+        member_email?: string | null;
+        member_name?: string | null;
+        member_display_name?: string | null;
+      };
+      m.set(mid, {
+        id: mid,
+        society_id: String(r.society_id),
+        email: row.member_email ?? undefined,
+        name: row.member_name ?? undefined,
+        display_name: row.member_display_name ?? undefined,
+        displayName: row.member_display_name ?? row.member_name ?? undefined,
       });
-
-      setIsEditing(false);
-      loadEvent(); // Reload to get updated data
-      showAlert("Saved", teeValidationMessage ?? "Event updated successfully.");
-    } catch (e: any) {
-      showAlert("Error", e?.message || "Failed to update event.");
-    } finally {
-      setSaving(false);
     }
-  };
+    return m;
+  }, [jointParticipatingMembers, allEventRegistrations]);
 
-  const handleDeleteEvent = () => {
-    if (saving) return;
-    confirmDestructive(
-      "Delete Event",
-      `Are you sure you want to delete "${event?.name}"? This cannot be undone.`,
-      "Delete",
-      async () => {
-        if (!eventId) return;
-        setSaving(true);
-        try {
-          await deleteEvent(eventId);
-          router.replace("/(app)/(tabs)/events");
-        } catch (e: any) {
-          setSaving(false);
-          showAlert("Error", e?.message || "Failed to delete event.");
-        }
-      },
+  const handleExportAttendeesCsv = useCallback(async () => {
+    if (!event?.id || !societyId) return;
+    if (Platform.OS !== "web") {
+      showAlert("Export unavailable", "Attendee CSV export is available on web.");
+      return;
+    }
+    setAttendeesCsvBusy(true);
+    try {
+      await exportEventAttendeesCsv({
+        eventId: event.id,
+        eventName: event.name ?? "Event",
+        eventDate: event.date ?? null,
+        attendeeRows: attendeeRowsForExport,
+        membersById: exportMembersById,
+        guests: allGuests.map((g) => ({
+          id: g.id,
+          society_id: g.society_id,
+          event_id: event.id,
+          name: g.name,
+          attendee_type: "guest" as const,
+          sex: null,
+          handicap_index: null,
+          paid: g.paid,
+          created_at: "",
+          updated_at: "",
+        })),
+        loadTeeSheetOverlay: true,
+      });
+    } catch (e: unknown) {
+      showAlert("Could not export CSV", e instanceof Error ? e.message : "Try again.");
+    } finally {
+      setAttendeesCsvBusy(false);
+    }
+  }, [event, societyId, attendeeRowsForExport, exportMembersById, allGuests]);
+
+  const jointEventAttendeeRows = useMemo((): JointEventAttendeeRow[] => {
+    if (!detailIsJointEvent || participantSocietyIds.length < 2 || !societyId) return [];
+    return resolveEventAttendeesForDisplay({
+      isJoint: true,
+      regs: allEventRegistrations,
+      guests: allGuests,
+      activeSocietyId: societyId,
+      participantSocietyIds,
+      societyIdToName: jointSocietyIdToName,
+      participatingMembers: jointParticipatingMembers,
+      attendingMembersOnly: true,
+    });
+  }, [
+    detailIsJointEvent,
+    participantSocietyIds,
+    societyId,
+    allEventRegistrations,
+    allGuests,
+    jointSocietyIdToName,
+    jointParticipatingMembers,
+  ]);
+
+  const attendanceSummary = useMemo(() => {
+    if (detailIsJointEvent && participantSocietyIds.length >= 2) {
+      const summary = summarizeJointEventAttendees(jointEventAttendeeRows);
+      return {
+        inCount: summary.memberCount,
+        outCount: 0,
+        paidCount: summary.paidCount,
+        guestCount: summary.guestCount,
+      };
+    }
+    const inCount = registrations.filter((r) => r.status === "in").length;
+    const outCount = registrations.filter((r) => r.status === "out").length;
+    const paidCount = registrations.filter((r) => r.paid).length;
+    return { inCount, outCount, paidCount, guestCount };
+  }, [detailIsJointEvent, participantSocietyIds, jointEventAttendeeRows, registrations, guestCount]);
+
+  const canViewTeeSheet = useMemo(() => {
+    if (!event?.teeTimePublishedAt || !event.society_id || !societyId) return false;
+    return isActiveSocietyParticipantForEvent(
+      societyId,
+      event.society_id,
+      participantSocietyIds,
     );
-  };
+  }, [event?.teeTimePublishedAt, event?.society_id, participantSocietyIds, societyId]);
 
-  if (bootstrapLoading || loading) {
+  const canOpenWeatherFromEvent = useMemo(() => {
+    if (!event?.society_id || !societyId) return false;
+    return isActiveSocietyParticipantForEvent(
+      societyId,
+      event.society_id,
+      participantSocietyIds,
+    );
+  }, [event?.society_id, participantSocietyIds, societyId]);
+
+  const openEventWeatherForecast = useCallback(() => {
+    if (!event) return;
+    const courseId = (event.courseId ?? event.course_id ?? null) as string | null | undefined;
+    const rawApi = (event as { api_course_id?: string | number | null }).api_course_id;
+    const apiCourseId =
+      typeof rawApi === "number" && Number.isFinite(rawApi)
+        ? String(rawApi)
+        : typeof rawApi === "string" && /^\d+$/.test(rawApi.trim())
+          ? rawApi.trim()
+          : undefined;
+    const eventDate = event.date?.trim();
+    const courseName = event.courseName?.trim();
+    router.push({
+      pathname: "/(app)/(tabs)/weather",
+      params: {
+        ...(courseId ? { courseId: String(courseId) } : {}),
+        ...(apiCourseId && !courseId ? { apiCourseId } : {}),
+        ...(eventDate && /^\d{4}-\d{2}-\d{2}$/.test(eventDate) ? { eventDate } : {}),
+        ...(courseName ? { courseName } : {}),
+      },
+    } as never);
+  }, [event, router]);
+
+  const formatLabel =
+    EVENT_FORMATS.find((f) => f.value === event?.format)?.label ?? event?.format ?? "Format TBD";
+  const classificationLabel =
+    EVENT_CLASSIFICATIONS.find((c) => c.value === event?.classification)?.label ??
+    event?.classification ??
+    "General";
+
+  const scoringOfficialKind = useMemo(
+    () => scoringOfficialUiKind(event?.scoring_results_status ?? event?.scoringResultsStatus),
+    [event?.scoring_results_status, event?.scoringResultsStatus],
+  );
+  const showAdminTools = canManageEvent;
+  const entryFeeDisplay = event?.entryFeeDisplay ?? (event as { entry_fee_display?: string })?.entry_fee_display;
+
+  const quickActionsPlan = useMemo(
+    () =>
+      buildEventDetailQuickActions({
+        canViewTeeSheet,
+        hasResults,
+        canManageHandicaps: permissions.canManageHandicaps,
+        canEnterGrossScores,
+        canAccessScorecardUi,
+        prizePoolEnabled: Boolean(event?.prizePoolEnabled),
+      }),
+    [
+      canViewTeeSheet,
+      hasResults,
+      permissions.canManageHandicaps,
+      canEnterGrossScores,
+      canAccessScorecardUi,
+      event?.prizePoolEnabled,
+    ],
+  );
+
+  const { member: memberQuickActions, admin: adminQuickActions } = useMemo(
+    () => splitQuickActionsForAudience(quickActionsPlan, showAdminTools),
+    [quickActionsPlan, showAdminTools],
+  );
+
+  const myPlayingStatus = useMemo(
+    () => resolveHomePlayingStatus(myRegistration),
+    [myRegistration],
+  );
+
+  const openQuickAction = useCallback(
+    (id: EventDetailQuickActionId) => {
+      if (!event?.id) return;
+      const base = { pathname: "" as const, params: { id: event.id } };
+      switch (id) {
+        case "players":
+          router.push({ ...base, pathname: "/(app)/event/[id]/players" } as never);
+          break;
+        case "tee_sheet":
+          router.push({ ...base, pathname: "/(app)/event/[id]/tee-sheet" } as never);
+          break;
+        case "results":
+          router.push({ ...base, pathname: "/(app)/event/[id]/points" } as never);
+          break;
+        case "prize_pool":
+          router.push({ ...base, pathname: "/(app)/event/[id]/prize-pools" } as never);
+          break;
+        case "scoring_leaderboard":
+          router.push({ ...base, pathname: "/(app)/event/[id]/gross-scores/leaderboard" } as never);
+          break;
+        case "gross_entry":
+          router.push({ ...base, pathname: "/(app)/event/[id]/gross-scores" } as never);
+          break;
+        case "publish_scoring":
+          router.push({ ...base, pathname: "/(app)/event/[id]/gross-scores/publish" } as never);
+          break;
+        default:
+          break;
+      }
+    },
+    [event?.id, router],
+  );
+
+  const scoringOverviewLine = useMemo(() => {
+    const isOom = Boolean(event?.isOOM ?? event?.classification === "oom");
+    if (scoringOfficialKind === "published") {
+      return isOom
+        ? "Gross-based results are official for your society on this event. Order of Merit includes this round."
+        : "Gross-based results are official for your society on this event.";
+    }
+    if (scoringOfficialKind === "reopened") {
+      return "Scoring is draft again (reopened). Official rows for your society were cleared; republish when the card is correct.";
+    }
+    return "Gross leaderboard is draft until Captain / Secretary / Handicapper publishes official results.";
+  }, [event, scoringOfficialKind]);
+
+  if ((bootstrapLoading || loading) && !event) {
     return (
       <Screen>
-        <LoadingState message="Loading event..." />
+        <LoadingState message="Loading event overview..." />
       </Screen>
     );
   }
 
-  if (error) {
+  if (!event && error) {
     return (
       <Screen>
-        <SecondaryButton onPress={() => goBack(router, "/(app)/(tabs)/events")} size="sm">
-          <Feather name="arrow-left" size={16} color={colors.text} /> Back
-        </SecondaryButton>
-        <EmptyState title="Error" message={error} />
+        <RetryErrorBlock
+          title="Unable to load event"
+          message={error}
+          onRetry={() => {
+            setError(null);
+            void loadEventOverview({ silent: false });
+          }}
+          retrying={loading || refreshing}
+        />
       </Screen>
     );
   }
@@ -612,754 +650,462 @@ export default function EventDetailScreen() {
   if (!event) {
     return (
       <Screen>
-        <EmptyState title="Not found" message="Event not available." />
-      </Screen>
-    );
-  }
-
-  const formatLabel =
-    EVENT_FORMATS.find((f) => f.value === event.format)?.label ??
-    event.format;
-
-  const classificationLabel =
-    EVENT_CLASSIFICATIONS.find((c) => c.value === event.classification)
-      ?.label ?? event.classification;
-
-  const handleOpenPoints = () => {
-    if (!eventId) {
-      console.error("[EventDetail] Cannot open points: eventId is undefined");
-      return;
-    }
-    console.log("[EventDetail] opening points for event:", eventId);
-    router.push({ pathname: "/(app)/event/[id]/points", params: { id: eventId } });
-  };
-
-  // Edit mode view
-  if (isEditing) {
-    return (
-      <Screen>
-        <View style={styles.formHeader}>
-          <SecondaryButton onPress={cancelEditing} size="sm">
-            Cancel
-          </SecondaryButton>
-          <AppText variant="h2">Edit Event</AppText>
-          <View style={{ width: 60 }} />
-        </View>
-
-        <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
-          <AppCard>
-            <View style={styles.formField}>
-              <AppText variant="captionBold" style={styles.label}>Event Name</AppText>
-              <AppInput
-                placeholder="e.g. Monthly Medal"
-                value={formName}
-                onChangeText={setFormName}
-                autoCapitalize="words"
-              />
-            </View>
-
-            <View style={styles.formField}>
-              <AppText variant="captionBold" style={styles.label}>Date (YYYY-MM-DD)</AppText>
-              <AppInput
-                placeholder="e.g. 2025-02-15"
-                value={formDate}
-                onChangeText={setFormDate}
-                keyboardType="numbers-and-punctuation"
-                autoCapitalize="none"
-              />
-            </View>
-
-            <View style={styles.formField}>
-              <AppText variant="captionBold" style={styles.label}>Format</AppText>
-              <View style={styles.pickerRow}>
-                {EVENT_FORMATS.map((f) => (
-                  <PickerOption
-                    key={f.value}
-                    label={f.label}
-                    selected={formFormat === f.value}
-                    onPress={() => setFormFormat(f.value)}
-                    colors={colors}
-                  />
-                ))}
-              </View>
-            </View>
-
-            <View style={styles.formField}>
-              <AppText variant="captionBold" style={styles.label}>Classification</AppText>
-              <View style={styles.pickerRow}>
-                {EVENT_CLASSIFICATIONS.map((c) => (
-                  <PickerOption
-                    key={c.value}
-                    label={c.label}
-                    selected={formClassification === c.value}
-                    onPress={() => setFormClassification(c.value)}
-                    colors={colors}
-                  />
-                ))}
-              </View>
-            </View>
-
-            {/* Course / Tee Setup Toggle */}
-            <Pressable
-              onPress={() => setShowTeeSettings(!showTeeSettings)}
-              style={styles.teeSettingsToggle}
-            >
-              <View style={{ flex: 1 }}>
-                <AppText variant="captionBold">Course / Tee Setup</AppText>
-                <AppText variant="small" color="secondary">
-                  For WHS handicap calculations
-                </AppText>
-              </View>
-              <Feather
-                name={showTeeSettings ? "chevron-up" : "chevron-down"}
-                size={20}
-                color={colors.textTertiary}
-              />
-            </Pressable>
-
-            {/* Course / Tee Setup body */}
-            {showTeeSettings && (
-              <View style={styles.teeSettingsContainer}>
-                {/* Course search */}
-                <View style={styles.formField}>
-                  <AppText variant="caption" style={styles.label}>Search Course</AppText>
-                  <AppInput
-                    placeholder="Search courses…"
-                    value={courseSearchQuery}
-                    onChangeText={setCourseSearchQuery}
-                    autoCapitalize="none"
-                  />
-                  {courseSearching && (
-                    <AppText variant="small" color="tertiary" style={{ marginTop: 4 }}>Searching…</AppText>
-                  )}
-                  {courseSearchError && (
-                    <AppText variant="small" style={{ color: colors.error, marginTop: 4 }}>{courseSearchError}</AppText>
-                  )}
-                  {courseSearchResults.length > 0 && (
-                    <View style={styles.searchResults}>
-                      {courseSearchResults.slice(0, 8).map((hit) => (
-                        <Pressable
-                          key={hit.id}
-                          onPress={() => handleEditSelectCourse(hit)}
-                          style={({ pressed }) => [styles.searchResultItem, { backgroundColor: pressed ? colors.backgroundSecondary : "transparent" }]}
-                        >
-                          <AppText variant="body" numberOfLines={1}>{hit.club_name || hit.name}</AppText>
-                          {typeof hit.location === "string" && hit.location && (
-                            <AppText variant="small" color="tertiary">{hit.location}</AppText>
-                          )}
-                        </Pressable>
-                      ))}
-                    </View>
-                  )}
-                </View>
-
-                {/* Selected course name (editable) */}
-                <View style={styles.formField}>
-                  <AppText variant="caption" style={styles.label}>Course Name</AppText>
-                  <AppInput
-                    placeholder="e.g. Forest of Arden"
-                    value={formCourseName}
-                    onChangeText={setFormCourseName}
-                    autoCapitalize="words"
-                  />
-                </View>
-
-                {/* Tee selector from imported tees */}
-                {(selectedCourseEdit?.id || event.course_id) && (
-                  <View style={styles.formField}>
-                    <AppText variant="captionBold" style={styles.label}>Select Tee</AppText>
-                    {teesLoading ? (
-                      <AppText variant="small" color="tertiary">Importing course and tees…</AppText>
-                    ) : tees.length > 0 ? (
-                      <CourseTeeSelector
-                        tees={tees}
-                        selectedTee={selectedTee}
-                        onSelectTee={(tee) => { setSelectedTee(tee); setShowManualTee(false); }}
-                      />
-                    ) : (
-                      <AppText variant="small" color="tertiary" style={{ marginBottom: spacing.xs }}>
-                        No tees found for this course.
-                      </AppText>
-                    )}
-                    {tees.length === 0 && !teesLoading && !showManualTee && (
-                      <Pressable onPress={() => setShowManualTee(true)}>
-                        <AppText variant="caption" color="primary" style={{ marginTop: spacing.xs }}>
-                          + Enter tee details manually
-                        </AppText>
-                      </Pressable>
-                    )}
-                  </View>
-                )}
-
-                {/* Manual tee link when no course selected at all */}
-                {!selectedCourseEdit?.id && !event.course_id && !showManualTee && (
-                  <Pressable onPress={() => setShowManualTee(true)} style={{ marginBottom: spacing.base }}>
-                    <AppText variant="caption" color="primary">
-                      + Enter tee details manually
-                    </AppText>
-                  </Pressable>
-                )}
-
-                {/* Manual tee entry fallback */}
-                {showManualTee && (
-                  <View style={styles.manualTeeContainer}>
-                    <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: spacing.sm }}>
-                      <AppText variant="captionBold">Manual Tee Entry</AppText>
-                      {selectedTee && (
-                        <Pressable onPress={() => setShowManualTee(false)}>
-                          <AppText variant="small" color="primary">Use selected tee instead</AppText>
-                        </Pressable>
-                      )}
-                    </View>
-
-                    <AppText variant="captionBold" color="secondary" style={{ marginBottom: spacing.xs }}>Male Tee</AppText>
-                    <View style={styles.formField}>
-                      <AppText variant="caption" style={styles.label}>Tee Name</AppText>
-                      <AppInput
-                        placeholder="e.g. Yellow"
-                        value={manualTeeName}
-                        onChangeText={(v) => { setManualTeeName(v); setSelectedTee(null); }}
-                        autoCapitalize="words"
-                      />
-                    </View>
-                    <View style={styles.formField}>
-                      <AppText variant="caption" style={styles.label}>Par</AppText>
-                      <AppInput
-                        placeholder="e.g. 72"
-                        value={manualPar}
-                        onChangeText={(v) => { setManualPar(v); setSelectedTee(null); }}
-                        keyboardType="number-pad"
-                      />
-                    </View>
-                    <View style={styles.formField}>
-                      <AppText variant="caption" style={styles.label}>Course Rating</AppText>
-                      <AppInput
-                        placeholder="e.g. 70.1"
-                        value={manualCourseRating}
-                        onChangeText={(v) => { setManualCourseRating(v); setSelectedTee(null); }}
-                        keyboardType="decimal-pad"
-                      />
-                    </View>
-                    <View style={styles.formField}>
-                      <AppText variant="caption" style={styles.label}>Slope Rating</AppText>
-                      <AppInput
-                        placeholder="e.g. 128"
-                        value={manualSlopeRating}
-                        onChangeText={(v) => { setManualSlopeRating(v); setSelectedTee(null); }}
-                        keyboardType="number-pad"
-                      />
-                    </View>
-
-                    <AppText variant="captionBold" color="secondary" style={{ marginTop: spacing.sm, marginBottom: spacing.xs }}>Female Tee</AppText>
-                    <View style={styles.formField}>
-                      <AppText variant="caption" style={styles.label}>Tee Name</AppText>
-                      <AppInput
-                        placeholder="e.g. Red"
-                        value={manualLadiesTeeName}
-                        onChangeText={setManualLadiesTeeName}
-                        autoCapitalize="words"
-                      />
-                    </View>
-                    <View style={styles.formField}>
-                      <AppText variant="caption" style={styles.label}>Par</AppText>
-                      <AppInput
-                        placeholder="e.g. 72"
-                        value={manualLadiesPar}
-                        onChangeText={setManualLadiesPar}
-                        keyboardType="number-pad"
-                      />
-                    </View>
-                    <View style={styles.formField}>
-                      <AppText variant="caption" style={styles.label}>Course Rating</AppText>
-                      <AppInput
-                        placeholder="e.g. 68.4"
-                        value={manualLadiesCourseRating}
-                        onChangeText={setManualLadiesCourseRating}
-                        keyboardType="decimal-pad"
-                      />
-                    </View>
-                    <View style={styles.formField}>
-                      <AppText variant="caption" style={styles.label}>Slope Rating</AppText>
-                      <AppInput
-                        placeholder="e.g. 120"
-                        value={manualLadiesSlopeRating}
-                        onChangeText={setManualLadiesSlopeRating}
-                        keyboardType="number-pad"
-                      />
-                    </View>
-                  </View>
-                )}
-
-                <View style={styles.formField}>
-                  <AppText variant="caption" style={styles.label}>
-                    Handicap Allowance (%)
-                  </AppText>
-                  <AppInput
-                    placeholder="95"
-                    value={formHandicapAllowance}
-                    onChangeText={setFormHandicapAllowance}
-                    keyboardType="number-pad"
-                  />
-                  <AppText variant="small" color="tertiary" style={{ marginTop: 4 }}>
-                    Default 95% for individual stroke play
-                  </AppText>
-                </View>
-              </View>
-            )}
-
-            <PrimaryButton
-              onPress={handleSaveEvent}
-              loading={saving}
-              style={{ marginTop: spacing.sm }}
-            >
-              Save Changes
-            </PrimaryButton>
-
-            {permissions.canDeleteEvents && (
-              <SecondaryButton
-                onPress={handleDeleteEvent}
-                loading={saving}
-                style={{ marginTop: spacing.sm }}
-              >
-                <Feather name="trash-2" size={16} color={colors.error} />
-                <AppText style={{ color: colors.error, marginLeft: spacing.xs }}>Delete Event</AppText>
-              </SecondaryButton>
-            )}
-          </AppCard>
-        </ScrollView>
+        <EmptyState title="Event not found" message="This event is no longer available." />
       </Screen>
     );
   }
 
   return (
     <Screen>
-      {/* Header with Back, Edit, and Society Badge */}
-      <View style={styles.header}>
-        <SecondaryButton onPress={() => goBack(router, "/(app)/(tabs)/events")} size="sm">
-          <Feather name="arrow-left" size={16} color={colors.text} /> Back
-        </SecondaryButton>
-        <View style={styles.headerRight}>
-          {canEditEvent && (
-            <SecondaryButton onPress={startEditing} size="sm">
-              <Feather name="edit-2" size={14} color={colors.text} /> Edit
-            </SecondaryButton>
-          )}
-          <SocietyBadge
-            societyName={society?.name || "Golf Society"}
-            logoUrl={logoUrl}
-            size="md"
-            showName={false}
+      <ScrollView
+        contentContainerStyle={styles.content}
+        keyboardShouldPersistTaps="handled"
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={() => {
+              void loadEventOverview({ silent: true });
+            }}
           />
-        </View>
-      </View>
-
-      {/* Title */}
-      <AppText variant="title" style={{ marginBottom: spacing.sm }}>
-        {event.name}
-      </AppText>
-
-      {/* Details */}
-      <AppCard style={styles.card}>
-        <Row icon="calendar" label="Date" value={event.date ?? "TBC"} />
-        <Row icon="map-pin" label="Course" value={event.courseName ?? "TBC"} />
-        <Row icon="target" label="Format" value={formatLabel} />
-        <Row icon="tag" label="Classification" value={classificationLabel} />
-      </AppCard>
-
-      {/* Tee Settings - only show if configured */}
-      {(event.teeName || event.par != null || event.slopeRating != null ||
-        event.ladiesTeeName || event.ladiesPar != null || event.ladiesSlopeRating != null) && (
-        <AppCard style={styles.card}>
-          <AppText variant="captionBold" color="secondary" style={{ marginBottom: spacing.sm }}>
-            Course / Tee Setup
-          </AppText>
-          {(event.teeName || event.par != null || event.courseRating != null || event.slopeRating != null) && (
-            <>
-              <AppText variant="caption" color="tertiary" style={{ marginBottom: spacing.xs }}>Male Tee</AppText>
-              {event.teeName && <Row icon="flag" label="Tee" value={event.teeName} />}
-              {event.par != null && <Row icon="hash" label="Par" value={String(event.par)} />}
-              {event.courseRating != null && (
-                <Row icon="activity" label="Course Rating" value={String(event.courseRating)} />
-              )}
-              {event.slopeRating != null && (
-                <Row icon="trending-up" label="Slope Rating" value={String(event.slopeRating)} />
-              )}
-            </>
-          )}
-          {(event.ladiesTeeName || event.ladiesPar != null || event.ladiesCourseRating != null || event.ladiesSlopeRating != null) && (
-            <>
-              <AppText variant="caption" color="tertiary" style={{ marginTop: spacing.sm, marginBottom: spacing.xs }}>Female Tee</AppText>
-              {event.ladiesTeeName && <Row icon="flag" label="Tee" value={event.ladiesTeeName} />}
-              {event.ladiesPar != null && <Row icon="hash" label="Par" value={String(event.ladiesPar)} />}
-              {event.ladiesCourseRating != null && (
-                <Row icon="activity" label="Course Rating" value={String(event.ladiesCourseRating)} />
-              )}
-              {event.ladiesSlopeRating != null && (
-                <Row icon="trending-up" label="Slope Rating" value={String(event.ladiesSlopeRating)} />
-              )}
-            </>
-          )}
-          {event.handicapAllowance != null && (
-            <Row
-              icon="percent"
-              label="Handicap Allowance"
-              value={`${Math.round(event.handicapAllowance * 100)}%`}
-            />
-          )}
-        </AppCard>
-      )}
-
-      {/* Players link */}
-      <Pressable
-        onPress={() =>
-          router.push({
-            pathname: "/(app)/event/[id]/players",
-            params: { id: eventId },
-          })
         }
+        showsVerticalScrollIndicator={false}
       >
-        <AppCard style={styles.actionCard}>
-          <ActionRow
-            icon="users"
-            title="Players"
-            subtitle={`${paidCount} paid · ${inCount} confirmed`}
+        {refreshError ? (
+          <RetryErrorBlock
+            title="Could not refresh"
+            message={refreshError}
+            staleHint="Showing the last loaded details below."
+            onRetry={() => void loadEventOverview({ silent: true })}
+            retrying={refreshing}
+            style={{ marginBottom: spacing.md }}
           />
-        </AppCard>
-      </Pressable>
+        ) : null}
+        <View style={styles.topActions}>
+          <SecondaryButton
+            size="sm"
+            onPress={() => router.push("/(app)/(tabs)/events")}
+            icon={<Feather name="arrow-left" size={iconSize.sm} color={colors.primary} />}
+          >
+            Events
+          </SecondaryButton>
+          {canManageEvent ? (
+            <SecondaryButton
+              size="sm"
+              onPress={() =>
+                router.push({
+                  pathname: "/(app)/event/[id]/manage",
+                  params: { id: event.id },
+                } as never)
+              }
+              icon={<Feather name="settings" size={iconSize.sm} color={colors.primary} />}
+            >
+              Manage Event
+            </SecondaryButton>
+          ) : null}
+        </View>
 
-      {/* View Tee Sheet — when tee times published */}
-      {event.teeTimePublishedAt && (
-        <Pressable
-          onPress={() =>
-            router.push({
-              pathname: "/(app)/event/[id]/tee-sheet",
-              params: { id: eventId },
-            })
-          }
-        >
-          <AppCard style={styles.actionCard}>
-            <View style={styles.actionRow}>
-              <View style={[styles.iconContainer, { backgroundColor: colors.success + "20" }]}>
-                <Feather name="flag" size={18} color={colors.success} />
-              </View>
-              <View style={styles.actionContent}>
-                <AppText variant="bodyBold">View Tee Sheet</AppText>
-                <AppText variant="caption" color="secondary">
-                  Your tee time and full tee sheet
-                </AppText>
-              </View>
-              <Feather name="chevron-right" size={20} color={colors.textTertiary} />
-            </View>
-          </AppCard>
-        </Pressable>
-      )}
-
-      {/* Paid Players dashboard */}
-      {registrations.length > 0 && (
-        <AppCard style={styles.card}>
-          <View style={styles.paidHeader}>
-            <View style={{ flex: 1 }}>
-              <AppText variant="h2">Paid Players</AppText>
-              <AppText variant="small" color="secondary">
-                {paidCount} of {inCount} paid
-              </AppText>
-            </View>
-            <View style={[styles.paidSummaryPill, { backgroundColor: paidCount === inCount && inCount > 0 ? colors.success + "14" : colors.warning + "14" }]}>
-              <Feather
-                name={paidCount === inCount && inCount > 0 ? "check-circle" : "alert-circle"}
-                size={14}
-                color={paidCount === inCount && inCount > 0 ? colors.success : colors.warning}
-              />
-              <AppText variant="small" style={{ color: paidCount === inCount && inCount > 0 ? colors.success : colors.warning, fontWeight: "700" }}>
-                {paidCount === inCount && inCount > 0 ? "All paid" : `${inCount - paidCount} unpaid`}
-              </AppText>
+        <AppCard style={styles.headerCard}>
+          <View style={styles.headerTop}>
+            <SocietyBadge
+              societyName={String(society?.name ?? "Golf Society")}
+              logoUrl={(society?.logo_url as string | null | undefined) ?? null}
+              size="sm"
+            />
+            <View style={styles.badges}>
+              <StatusBadge label={formatLabel} tone="info" />
+              <StatusBadge label={classificationLabel} tone="neutral" />
             </View>
           </View>
-
-          {registrations
-            .filter((r) => r.status === "in")
-            .map((reg) => (
-            <View key={reg.id} style={styles.paidRow}>
-              <AppText variant="body" numberOfLines={1} style={{ flex: 1 }}>
-                {memberNameMap[reg.member_id] ?? "Member"}
+          <AppText variant="h1" style={styles.eventTitle}>
+            {event.name}
+          </AppText>
+          <View style={styles.metaRow}>
+            <Feather name="map-pin" size={16} color={colors.textSecondary} />
+            <AppText variant="body" color="secondary">
+              {event.courseName?.trim() || "Course TBD"}
+            </AppText>
+          </View>
+          <View style={styles.metaRow}>
+            <Feather name="calendar" size={16} color={colors.textSecondary} />
+            <AppText variant="body" color="secondary">
+              {formatEventDate(event.date)}
+            </AppText>
+          </View>
+          {shouldShowEntryFeeLine(entryFeeDisplay) ? (
+            <View style={styles.metaRow}>
+              <Feather name="credit-card" size={16} color={colors.textSecondary} />
+              <AppText variant="body" color="secondary">
+                {String(entryFeeDisplay).trim()}
               </AppText>
-              <View style={[styles.paidPill, { backgroundColor: reg.paid ? colors.success : colors.error }]}>
-                <AppText style={styles.paidPillText}>{reg.paid ? "PAID" : "UNPAID"}</AppText>
-              </View>
-              {canManagePayments && (
-                <Pressable
-                  disabled={payBusy === reg.member_id}
-                  onPress={() => handleTogglePaid(reg)}
-                  hitSlop={8}
-                  style={({ pressed }) => [styles.paidToggleBtn, { borderColor: colors.border, opacity: pressed ? 0.6 : payBusy === reg.member_id ? 0.4 : 1 }]}
-                >
-                  <AppText variant="small" color="primary" style={{ fontWeight: "600" }}>
-                    {reg.paid ? "Undo" : "Confirm"}
-                  </AppText>
-                </Pressable>
-              )}
             </View>
-          ))}
-
-          {registrations.filter((r) => r.status === "out").length > 0 && (
-            <View style={{ marginTop: spacing.sm, paddingTop: spacing.sm, borderTopWidth: 1, borderTopColor: "#F3F4F6" }}>
-              <AppText variant="captionBold" color="tertiary" style={{ marginBottom: spacing.xs }}>Not playing</AppText>
-              {registrations.filter((r) => r.status === "out").map((reg) => (
-                <AppText key={reg.id} variant="small" color="tertiary" style={{ paddingVertical: 2 }}>
-                  {memberNameMap[reg.member_id] ?? "Member"}
-                </AppText>
-              ))}
-            </View>
-          )}
+          ) : null}
         </AppCard>
-      )}
 
-      {/* Enter Points Section - Captain/Handicapper only */}
-      {canEnterPoints && (
-        <Pressable
-          onPress={handleOpenPoints}
-          style={({ pressed }) => ({ opacity: pressed ? 0.8 : 1 })}
-        >
-          <AppCard style={styles.actionCard}>
-            <View style={styles.actionRow}>
-              <View style={[styles.iconContainer, { backgroundColor: colors.warning + "20" }]}>
-                <Feather name="edit-3" size={18} color={colors.warning} />
+        <AppCard>
+          <AppText variant="subheading" style={styles.cardTitle}>
+            Your RSVP
+          </AppText>
+          <View style={{ flexDirection: "row", flexWrap: "wrap", gap: spacing.sm, marginBottom: spacing.sm }}>
+            <StatusBadge label={myPlayingStatus.label} tone={myPlayingStatus.tone === "success" ? "success" : myPlayingStatus.tone === "neutral" ? "neutral" : "warning"} />
+            {shouldShowMemberPaymentStatus(myRegistration, entryFeeDisplay) ? (
+              <StatusBadge
+                label={myRegistration?.paid ? "Paid" : "Fee outstanding"}
+                tone={myRegistration?.paid ? "success" : "warning"}
+              />
+            ) : null}
+          </View>
+
+          {societyId && userId ? (
+            <>
+              <AppText variant="captionBold" color="muted">
+                Are you playing?
+              </AppText>
+              <View
+                style={[
+                  styles.rsvpSegmentShell,
+                  { borderColor: colors.borderLight, backgroundColor: colors.backgroundSecondary },
+                ]}
+              >
+                <ReliablePressable
+                  onPress={() => void toggleEventRsvp("in")}
+                  disabled={rsvpBusy}
+                  hitSlop={8}
+                  accessibilityLabel="Mark as playing"
+                  style={[
+                    styles.rsvpSegmentBtn,
+                    {
+                      backgroundColor: myRegistration?.status === "in" ? colors.primary : "transparent",
+                      borderColor: myRegistration?.status === "in" ? colors.primary : "transparent",
+                    },
+                  ]}
+                >
+                  <AppText
+                    variant="bodyBold"
+                    style={{
+                      color: myRegistration?.status === "in" ? colors.textInverse : colors.text,
+                    }}
+                  >
+                    Playing
+                  </AppText>
+                </ReliablePressable>
+                <ReliablePressable
+                  onPress={() => void toggleEventRsvp("out")}
+                  disabled={rsvpBusy}
+                  hitSlop={8}
+                  accessibilityLabel="Mark as not playing"
+                  style={[
+                    styles.rsvpSegmentBtn,
+                    {
+                      backgroundColor:
+                        myRegistration?.status === "out" ? colors.textSecondary : "transparent",
+                      borderColor:
+                        myRegistration?.status === "out" ? colors.textSecondary : "transparent",
+                    },
+                  ]}
+                >
+                  <AppText
+                    variant="bodyBold"
+                    style={{
+                      color: myRegistration?.status === "out" ? colors.textInverse : colors.text,
+                    }}
+                  >
+                    Not playing
+                  </AppText>
+                </ReliablePressable>
               </View>
-              <View style={styles.actionContent}>
-                <AppText variant="bodyBold">Enter Points</AppText>
-                <AppText variant="caption" color="secondary">
-                  Add Order of Merit points for players
-                </AppText>
-              </View>
-              <Feather name="chevron-right" size={20} color={colors.textTertiary} />
+              {rsvpError ? (
+                <InlineNotice variant="error" message={rsvpError} style={{ marginTop: spacing.sm }} />
+              ) : null}
+            </>
+          ) : null}
+        </AppCard>
+
+        {memberQuickActions.length > 0 ? (
+          <AppCard>
+            <AppText variant="subheading" style={styles.cardTitle}>
+              Event links
+            </AppText>
+            <View style={styles.actionsStack}>
+              {memberQuickActions.map((action) => {
+                const config = quickActionCopy(action.id, {
+                  canManageHandicaps: permissions.canManageHandicaps,
+                  hasResults,
+                  poolCount,
+                });
+                const iconColor =
+                  config.iconColorKey === "success"
+                    ? colors.success
+                    : config.iconColorKey === "warning"
+                      ? colors.warning
+                      : colors.primary;
+                return (
+                  <Pressable
+                    key={action.id}
+                    style={styles.quickAction}
+                    onPress={() => openQuickAction(action.id)}
+                  >
+                    <View style={styles.quickActionLeft}>
+                      <Feather name={config.icon} size={18} color={iconColor} />
+                      <View>
+                        <AppText variant="bodyBold">{config.title}</AppText>
+                        <AppText variant="small" color="secondary">
+                          {config.subtitle}
+                        </AppText>
+                      </View>
+                    </View>
+                    <Feather name="chevron-right" size={18} color={colors.textTertiary} />
+                  </Pressable>
+                );
+              })}
             </View>
           </AppCard>
-        </Pressable>
-      )}
+        ) : null}
 
-      {/* Delete Event - Captain/Secretary/Treasurer */}
-      {permissions.canDeleteEvents && (
-        <SecondaryButton
-          onPress={handleDeleteEvent}
-          loading={saving}
-          style={{ marginTop: spacing.sm }}
-        >
-          <Feather name="trash-2" size={16} color={colors.error} />
-          <AppText style={{ color: colors.error, marginLeft: spacing.xs }}>Delete Event</AppText>
-        </SecondaryButton>
-      )}
+        {shouldShowSocietyAttendanceSummary(showAdminTools) ? (
+          <AppCard>
+            <AppText variant="subheading" style={styles.cardTitle}>
+              Society attendance
+            </AppText>
+            <View style={styles.statusGrid}>
+              <View style={styles.statusItem}>
+                <AppText variant="caption" color="muted">
+                  Playing
+                </AppText>
+                <AppText variant="bodyBold">
+                  {attendanceSummary.inCount} in · {attendanceSummary.outCount} out
+                </AppText>
+              </View>
+              <View style={styles.statusItem}>
+                <AppText variant="caption" color="muted">
+                  Paid players
+                </AppText>
+                <AppText variant="bodyBold">{attendanceSummary.paidCount}</AppText>
+              </View>
+            </View>
+            {attendanceSummary.guestCount > 0 ? (
+              <AppText variant="small" color="muted" style={{ marginTop: spacing.sm }}>
+                {attendanceSummary.guestCount} guest{attendanceSummary.guestCount === 1 ? "" : "s"}
+                {detailIsJointEvent ? " across participating societies" : " linked to this event"}.
+              </AppText>
+            ) : null}
+            {canExportEventAttendees ? (
+              <SecondaryButton
+                size="sm"
+                onPress={() => void handleExportAttendeesCsv()}
+                loading={attendeesCsvBusy}
+                disabled={attendeesCsvBusy || attendeeRowsForExport.length === 0}
+                icon={<Feather name="download" size={iconSize.sm} color={colors.primary} />}
+                style={{ marginTop: spacing.md, alignSelf: "flex-start" }}
+              >
+                {Platform.OS === "web" ? "Export attendees" : "Export attendees (web)"}
+              </SecondaryButton>
+            ) : null}
+          </AppCard>
+        ) : null}
 
-      {/* Created info */}
-      {event.created_at && (
-        <AppText variant="small" color="tertiary" style={styles.createdText}>
-          Created {new Date(event.created_at).toLocaleDateString("en-GB")}
-        </AppText>
-      )}
-      <LicenceRequiredModal visible={modalVisible} onClose={() => setModalVisible(false)} societyId={guardSocietyId} />
-      <Toast visible={payToast.visible} message={payToast.message} type={payToast.type} onHide={() => setPayToast((t) => ({ ...t, visible: false }))} />
+        {detailIsJointEvent &&
+        jointEventAttendeeRows.length > 0 &&
+        shouldShowJointAttendeeRoll(showAdminTools, canExportEventAttendees) ? (
+          <AppCard>
+            <AppText variant="subheading" style={styles.cardTitle}>
+              Registered attendees
+            </AppText>
+            <AppText variant="small" color="secondary" style={{ marginBottom: spacing.sm }}>
+              All participating societies — payment is recorded per society.
+            </AppText>
+            {jointEventAttendeeRows.map((row) => (
+              <View
+                key={row.key}
+                style={{
+                  flexDirection: "row",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: spacing.sm,
+                  paddingVertical: spacing.xs,
+                  borderBottomWidth: StyleSheet.hairlineWidth,
+                  borderBottomColor: colors.borderLight,
+                }}
+              >
+                <AppText variant="body" style={{ flex: 1 }} numberOfLines={2}>
+                  {row.displayName}
+                </AppText>
+                <View style={{ alignItems: "flex-end", gap: spacing.xs }}>
+                  <StatusBadge
+                    label={row.paymentLabel}
+                    tone={row.sources.every((s) => s.paid) ? "success" : "warning"}
+                  />
+                  <StatusBadge
+                    label={row.sourceLabel}
+                    tone={row.societyBadge === "Dual" ? "info" : "neutral"}
+                  />
+                </View>
+              </View>
+            ))}
+          </AppCard>
+        ) : null}
+
+        <AppCard>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm, flexWrap: "wrap", marginBottom: spacing.xs }}>
+            <AppText variant="subheading" style={{ marginBottom: 0 }}>
+              Scoring status
+            </AppText>
+            <StatusBadge
+              label={scoringOfficialBadgeLabel(scoringOfficialKind)}
+              tone={scoringOfficialKind === "published" ? "success" : "warning"}
+            />
+          </View>
+          <AppText variant="small" color="secondary">
+            {scoringOverviewLine}
+          </AppText>
+        </AppCard>
+
+        {adminQuickActions.length > 0 ? (
+          <AppCard>
+            <AppText variant="subheading" style={styles.cardTitle}>
+              Captain & scoring tools
+            </AppText>
+            <View style={styles.actionsStack}>
+              {adminQuickActions.map((action) => {
+                const config = quickActionCopy(action.id, {
+                  canManageHandicaps: permissions.canManageHandicaps,
+                  hasResults,
+                  poolCount,
+                });
+                const iconColor =
+                  config.iconColorKey === "success"
+                    ? colors.success
+                    : config.iconColorKey === "warning"
+                      ? colors.warning
+                      : colors.primary;
+                return (
+                  <Pressable
+                    key={action.id}
+                    style={styles.quickAction}
+                    onPress={() => openQuickAction(action.id)}
+                  >
+                    <View style={styles.quickActionLeft}>
+                      <Feather name={config.icon} size={18} color={iconColor} />
+                      <View>
+                        <AppText variant="bodyBold">{config.title}</AppText>
+                        <AppText variant="small" color="secondary">
+                          {config.subtitle}
+                        </AppText>
+                      </View>
+                    </View>
+                    <Feather name="chevron-right" size={18} color={colors.textTertiary} />
+                  </Pressable>
+                );
+              })}
+            </View>
+          </AppCard>
+        ) : null}
+
+        {canOpenWeatherFromEvent ? (
+          <AppCard style={{ borderRadius: radius.md }}>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm, marginBottom: spacing.xs }}>
+              <Feather name="cloud" size={20} color={colors.primary} />
+              <AppText variant="subheading">Playability</AppText>
+            </View>
+            <AppText variant="small" color="secondary" style={{ marginBottom: spacing.md }}>
+              5-day forecast for the course.
+            </AppText>
+            <SecondaryButton onPress={openEventWeatherForecast}>View forecast</SecondaryButton>
+          </AppCard>
+        ) : null}
+      </ScrollView>
     </Screen>
   );
 }
 
-/* ---------- Helpers ---------- */
-
-function safeValue(v: unknown): string {
-  if (v == null) return "";
-  if (typeof v === "string" || typeof v === "number") return String(v);
-  if (typeof v === "object" && "address" in (v as object)) {
-    const o = v as { address?: string; city?: string; country?: string };
-    return [o.address, o.city, o.country].filter(Boolean).join(", ") || "";
-  }
-  return String(v);
-}
-
-function Row({
-  icon,
-  label,
-  value,
-}: {
-  icon: any;
-  label: string;
-  value: string | unknown;
-}) {
-  const colors = getColors();
-  return (
-    <View style={styles.row}>
-      <Feather name={icon} size={16} color={colors.primary} />
-      <View style={{ marginLeft: spacing.sm }}>
-        <AppText variant="caption">{label}</AppText>
-        <AppText>{safeValue(value)}</AppText>
-      </View>
-    </View>
-  );
-}
-
-function ActionRow({
-  icon,
-  title,
-  subtitle,
-}: {
-  icon: any;
-  title: string;
-  subtitle: string;
-}) {
-  const colors = getColors();
-  return (
-    <View style={styles.actionRow}>
-      <Feather name={icon} size={18} color={colors.primary} />
-      <View style={{ flex: 1, marginLeft: spacing.sm }}>
-        <AppText variant="bodyBold">{title}</AppText>
-        <AppText variant="caption">{subtitle}</AppText>
-      </View>
-      <Feather name="chevron-right" size={18} color={colors.textTertiary} />
-    </View>
-  );
-}
-
-/* ---------- Styles ---------- */
-
 const styles = StyleSheet.create({
-  header: {
+  content: {
+    gap: spacing.base,
+    paddingBottom: spacing.xl,
+  },
+  topActions: {
     flexDirection: "row",
     justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: spacing.lg,
-  },
-  headerRight: {
-    flexDirection: "row",
     alignItems: "center",
     gap: spacing.sm,
   },
-  card: {
-    marginBottom: spacing.lg,
+  headerCard: {
+    gap: spacing.sm,
   },
-  row: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginBottom: spacing.md,
-  },
-  actionCard: {
-    marginBottom: spacing.sm,
-  },
-  actionRow: {
-    flexDirection: "row",
-    alignItems: "center",
-  },
-  iconContainer: {
-    width: 36,
-    height: 36,
-    borderRadius: radius.sm,
-    alignItems: "center",
-    justifyContent: "center",
-    marginRight: spacing.sm,
-  },
-  actionContent: {
-    flex: 1,
-  },
-  paidHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginBottom: spacing.sm,
-  },
-  paidSummaryPill: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 4,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 4,
-    borderRadius: radius.full,
-  },
-  paidRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing.xs,
-    paddingVertical: spacing.sm,
-    borderBottomWidth: 1,
-    borderBottomColor: "#F3F4F6",
-  },
-  paidPill: {
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 2,
-    borderRadius: radius.full,
-  },
-  paidPillText: {
-    color: "#FFFFFF",
-    fontWeight: "700",
-    fontSize: typography.small.fontSize,
-  },
-  paidToggleBtn: {
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 4,
-    borderWidth: 1,
-    borderRadius: radius.sm,
-    marginLeft: spacing.xs,
-  },
-  createdText: {
-    marginTop: spacing.lg,
-    textAlign: "center",
-  },
-  // Form styles
-  formHeader: {
+  headerTop: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    marginBottom: spacing.lg,
+    gap: spacing.sm,
   },
-  formField: {
-    marginBottom: spacing.base,
-  },
-  label: {
-    marginBottom: spacing.xs,
-  },
-  pickerRow: {
+  badges: {
     flexDirection: "row",
     flexWrap: "wrap",
+    justifyContent: "flex-end",
     gap: spacing.xs,
   },
-  pickerOption: {
-    paddingHorizontal: spacing.sm,
-    paddingVertical: spacing.xs,
-    borderRadius: radius.sm,
-    borderWidth: 1,
+  eventTitle: {
+    marginTop: spacing.xs,
   },
-  teeSettingsToggle: {
+  metaRow: {
     flexDirection: "row",
     alignItems: "center",
-    paddingVertical: spacing.sm,
-    borderTopWidth: 1,
-    borderTopColor: "rgba(0,0,0,0.06)",
-    marginTop: spacing.sm,
+    gap: spacing.xs,
   },
-  teeSettingsContainer: {
-    paddingTop: spacing.sm,
-    borderTopWidth: 1,
-    borderTopColor: "rgba(0,0,0,0.04)",
+  cardTitle: {
+    marginBottom: spacing.sm,
   },
-  readOnlyTee: {
-    padding: spacing.sm,
-    borderRadius: radius.sm,
-    backgroundColor: "rgba(0,0,0,0.04)",
-    gap: 2,
+  statusGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: spacing.sm,
   },
-  searchResults: {
-    marginTop: spacing.xs,
+  statusItem: {
+    minWidth: "46%",
+    flex: 1,
     borderWidth: 1,
+    borderRadius: radius.md,
     borderColor: "rgba(0,0,0,0.08)",
-    borderRadius: radius.sm,
-    maxHeight: 240,
-  },
-  searchResultItem: {
-    paddingHorizontal: spacing.sm,
-    paddingVertical: spacing.sm,
-    borderBottomWidth: 1,
-    borderBottomColor: "rgba(0,0,0,0.06)",
-  },
-  manualTeeContainer: {
     padding: spacing.sm,
-    borderRadius: radius.sm,
-    backgroundColor: "rgba(0,0,0,0.02)",
+    gap: spacing.xs,
+  },
+  rsvpSegmentShell: {
+    flexDirection: "row",
+    borderRadius: radius.md,
     borderWidth: 1,
-    borderColor: "rgba(0,0,0,0.06)",
-    marginBottom: spacing.base,
+    padding: 4,
+    gap: 4,
+    marginTop: spacing.xs,
+  },
+  rsvpSegmentBtn: {
+    flex: 1,
+    minHeight: 48,
+    borderRadius: radius.sm,
+    borderWidth: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.xs,
+  },
+  actionsStack: {
+    gap: spacing.sm,
+  },
+  quickAction: {
+    borderWidth: 1,
+    borderRadius: radius.md,
+    borderColor: "rgba(0,0,0,0.08)",
+    padding: spacing.sm,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: spacing.sm,
+  },
+  quickActionLeft: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+    flex: 1,
+  },
+  compactNotice: {
+    borderStyle: "dashed",
   },
 });

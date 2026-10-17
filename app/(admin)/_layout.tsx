@@ -1,5 +1,6 @@
 import { Stack } from "expo-router";
 
-export default function AdminLayout() {
-  return <Stack screenOptions={{ headerShown: true, headerBackTitle: "Back" }} />;
+/** Legacy admin group — screens redirect into /(app)/admin/*. */
+export default function LegacyAdminLayout() {
+  return <Stack screenOptions={{ headerShown: false }} />;
 }
