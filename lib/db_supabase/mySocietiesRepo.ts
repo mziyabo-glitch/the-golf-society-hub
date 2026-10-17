@@ -13,6 +13,43 @@ export type MySocietyMembership = {
   joinedAt: string;
 };
 
+/** Raw `members` rows for the signed-in user (debug: linkage, duplicates). */
+export type MemberRowForAuthUser = {
+  memberId: string;
+  societyId: string;
+  userId: string;
+  createdAt: string | null;
+};
+
+/**
+ * All `members` rows for the current auth user (`user_id` linkage).
+ * Used to verify ZGS (or any society) membership vs `profiles.active_society_id`.
+ */
+export async function fetchMemberRowsForAuthUser(): Promise<MemberRowForAuthUser[]> {
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
+  if (!session?.user?.id) return [];
+
+  const { data, error } = await supabase
+    .from("members")
+    .select("id, society_id, user_id, created_at")
+    .eq("user_id", session.user.id)
+    .order("created_at", { ascending: false });
+
+  if (error) {
+    console.warn("[mySocietiesRepo] fetchMemberRowsForAuthUser:", error.message);
+    return [];
+  }
+
+  return (data ?? []).map((row: any) => ({
+    memberId: String(row.id ?? ""),
+    societyId: String(row.society_id ?? ""),
+    userId: String(row.user_id ?? ""),
+    createdAt: row.created_at != null ? String(row.created_at) : null,
+  }));
+}
+
 /**
  * Fetch every society the current auth user belongs to,
  * joined with the society row for name/country/logo.
@@ -44,6 +81,58 @@ export async function getMySocieties(): Promise<MySocietyMembership[]> {
       joinedAt: row.created_at,
     };
   });
+}
+
+/**
+ * Same as {@link getMySocieties}, but when `profiles.active_society_id` already points at a society,
+ * retries briefly if that society is missing from the membership list.
+ *
+ * Post-join, `getMySocieties()` can briefly omit the new row (client/storage timing on iOS). Bootstrap
+ * used to treat that as “stale active” and self-heal back to `memberships[0]` — the wrong society.
+ */
+export async function getMySocietiesEnsuringActive(
+  profileActiveSocietyId: string | null | undefined,
+): Promise<MySocietyMembership[]> {
+  let list = await getMySocieties();
+  const want = typeof profileActiveSocietyId === "string" ? profileActiveSocietyId.trim() : "";
+  if (!want) return list;
+
+  const contains = () => list.some((m) => m.societyId === want);
+  if (contains()) return list;
+
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
+  const uid = session?.user?.id;
+  if (!uid) return list;
+
+  const delaysMs = [0, 80, 160, 240, 320, 450];
+  for (const d of delaysMs) {
+    if (d > 0) {
+      await new Promise((r) => setTimeout(r, d));
+    }
+    list = await getMySocieties();
+    if (contains()) return list;
+  }
+
+  const { data: direct, error: directErr } = await supabase
+    .from("members")
+    .select("id")
+    .eq("user_id", uid)
+    .eq("society_id", want)
+    .maybeSingle();
+
+  if (directErr || !direct) {
+    return list;
+  }
+
+  console.log("[mySocietiesRepo] getMySocietiesEnsuringActive: member row exists for active society but list still missing it — final refetch", {
+    profileActiveSocietyId: want,
+    listedCount: list.length,
+  });
+  await new Promise((r) => setTimeout(r, 350));
+  list = await getMySocieties();
+  return list;
 }
 
 /**

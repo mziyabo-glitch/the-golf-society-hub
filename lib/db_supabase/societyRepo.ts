@@ -1,6 +1,7 @@
 // lib/db_supabase/societyRepo.ts
 import { supabase } from "@/lib/supabase";
 import { SOCIETY_LOGO_BUCKET, clearSocietyLogoCache } from "@/lib/societyLogo";
+import type { MemberDoc } from "@/lib/db_supabase/memberRepo";
 
 export type SocietyDoc = {
   id: string;
@@ -259,6 +260,32 @@ export async function lookupSocietyByJoinCode(
   });
 
   return { ok: true, society: row as SocietyDoc };
+}
+
+/**
+ * Join a society by join code. Single canonical RPC — always sends all 5 params
+ * to avoid ambiguous overload resolution (migration 061 removes legacy 3-param overload).
+ */
+export type JoinSocietyParams = {
+  p_join_code: string;
+  p_name: string;
+  p_email: string | null;
+  p_handicap_index: number | null;
+  p_emergency_contact: string | null;
+};
+
+export async function joinSociety(params: JoinSocietyParams): Promise<{ data: MemberDoc | null; error: { message: string } | null }> {
+  const { p_join_code, p_name, p_email, p_handicap_index, p_emergency_contact } = params;
+  const { data, error } = await supabase.rpc("join_society", {
+    p_join_code,
+    p_name,
+    p_email: p_email ?? null,
+    p_handicap_index: p_handicap_index ?? null,
+    p_emergency_contact: p_emergency_contact ?? null,
+  });
+  if (error) return { data: null, error: { message: error.message } };
+  const row = Array.isArray(data) ? data[0] : data;
+  return { data: (row as MemberDoc) ?? null, error: null };
 }
 
 /**

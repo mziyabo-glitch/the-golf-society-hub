@@ -1,4 +1,6 @@
-﻿import { supabase } from "@/lib/supabase";
+import { supabase } from "@/lib/supabase";
+import { fetchEventIdsWithAnyPlayerRound } from "@/lib/db_supabase/eventPlayerScoringRepo";
+import { buildOomEligibleEventIdSet } from "@/lib/scoring/oomAggregateEligibility";
 import { getMembersBySocietyId } from "./memberRepo";
 
 export type OomRow = {
@@ -12,7 +14,7 @@ export type OomRow = {
 export async function getOomLeaderboard(societyId: string): Promise<OomRow[]> {
   const { data: events, error: eventsError } = await supabase
     .from("events")
-    .select("id")
+    .select("id, scoring_results_status")
     .eq("society_id", societyId)
     .eq("classification", "oom");
 
@@ -20,11 +22,14 @@ export async function getOomLeaderboard(societyId: string): Promise<OomRow[]> {
   if (!events || events.length === 0) return [];
 
   const eventIds = events.map((e) => e.id);
+  const grossRoundEventIds = await fetchEventIdsWithAnyPlayerRound(supabase, eventIds);
+  const oomEligibleEventIds = buildOomEligibleEventIdSet(events, grossRoundEventIds);
 
   const { data: results, error: resultsError } = await supabase
     .from("event_results")
-    .select("member_id, points")
-    .in("event_id", eventIds);
+    .select("event_id, member_id, points")
+    .in("event_id", eventIds)
+    .eq("society_id", societyId);
 
   if (resultsError) throw resultsError;
   if (!results || results.length === 0) return [];
@@ -35,10 +40,13 @@ export async function getOomLeaderboard(societyId: string): Promise<OomRow[]> {
   const totals = new Map<string, { totalPoints: number; eventsPlayed: number }>();
 
   for (const r of results) {
-    if (!totals.has(r.member_id)) {
-      totals.set(r.member_id, { totalPoints: 0, eventsPlayed: 0 });
+    if (!oomEligibleEventIds.has(String(r.event_id))) continue;
+    if (r.member_id == null || String(r.member_id).length === 0) continue;
+    const mid = String(r.member_id);
+    if (!totals.has(mid)) {
+      totals.set(mid, { totalPoints: 0, eventsPlayed: 0 });
     }
-    const row = totals.get(r.member_id)!;
+    const row = totals.get(mid)!;
     row.totalPoints += r.points ?? 0;
     row.eventsPlayed += 1;
   }

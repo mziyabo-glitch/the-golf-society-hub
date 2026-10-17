@@ -1,5 +1,5 @@
 import { Pressable, StyleSheet, Text, View, ViewStyle } from "react-native";
-import { typography } from "@/lib/ui/theme";
+import { colors, typography } from "@/lib/ui/theme";
 
 type InfoCardProps = {
   title: string;
@@ -94,7 +94,7 @@ const styles = StyleSheet.create({
   ctaText: {
     fontSize: typography.body.fontSize,
     fontWeight: "600",
-    color: "#0B6E4F",
+    color: colors.light.primary,
   },
   emptyContent: {
     alignItems: "center",

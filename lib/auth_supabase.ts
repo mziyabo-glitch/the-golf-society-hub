@@ -3,10 +3,162 @@
 // All auth uses supabase-js, no manual fetch calls
 // NO .select().single() after upsert to avoid 406 errors
 
+import * as AuthSession from "expo-auth-session";
+import * as QueryParams from "expo-auth-session/build/QueryParams";
+import * as WebBrowser from "expo-web-browser";
+import { Linking, Platform } from "react-native";
+
 import { supabase } from "@/lib/supabase";
+import { getPublicWebBaseUrl } from "@/lib/appConfig";
 import type { User, Session } from "@supabase/supabase-js";
 
-const WEB_BASE_URL = "https://the-golf-society-hub.vercel.app";
+WebBrowser.maybeCompleteAuthSession();
+
+const NATIVE_AUTH_SCHEME = "thegolfsocietyhub";
+const NATIVE_AUTH_CALLBACK_PATH = "auth/callback";
+const NATIVE_OAUTH_DISMISS_FALLBACK_WAIT_MS = 2500;
+
+/** OAuth / magic-link redirect: native uses app scheme; web uses current origin when available. */
+export function getAuthRedirectUri(): string {
+  if (Platform.OS === "web") {
+    if (typeof window !== "undefined" && window.location?.origin) {
+      return `${window.location.origin}${window.location.pathname || "/"}`;
+    }
+    return getPublicWebBaseUrl();
+  }
+  // Expected native callback format:
+  // thegolfsocietyhub://auth/callback
+  return AuthSession.makeRedirectUri({
+    scheme: NATIVE_AUTH_SCHEME,
+    path: NATIVE_AUTH_CALLBACK_PATH,
+  });
+}
+
+function normalizeUrlForPrefixMatch(url: string): string {
+  return url.trim().toLowerCase();
+}
+
+async function openNativeOAuthSession(
+  authUrl: string,
+  redirectTo: string
+): Promise<{ callbackUrl: string | null; browserType: string }> {
+  const redirectPrefix = normalizeUrlForPrefixMatch(redirectTo);
+  let linkedCallbackUrl: string | null = null;
+  let callbackResolver: ((url: string) => void) | null = null;
+  let callbackTimeout: ReturnType<typeof setTimeout> | null = null;
+
+  const callbackPromise = new Promise<string>((resolve, reject) => {
+    callbackResolver = resolve;
+    callbackTimeout = setTimeout(() => {
+      reject(new Error("Timed out waiting for native OAuth callback URL"));
+    }, NATIVE_OAUTH_DISMISS_FALLBACK_WAIT_MS);
+  });
+
+  const linkSub = Linking.addEventListener("url", ({ url }) => {
+    const normalizedUrl = normalizeUrlForPrefixMatch(url ?? "");
+    const isMatchingCallback = normalizedUrl.startsWith(redirectPrefix);
+    console.log("[auth][oauth] linking callback event", {
+      url,
+      redirectTo,
+      isMatchingCallback,
+    });
+    if (!isMatchingCallback || !url) return;
+    linkedCallbackUrl = url;
+    if (callbackResolver) callbackResolver(url);
+  });
+
+  try {
+    const browserResult = await WebBrowser.openAuthSessionAsync(authUrl, redirectTo);
+    const browserUrl = "url" in browserResult ? browserResult.url ?? null : null;
+    console.log("[auth][oauth] openAuthSessionAsync result", {
+      type: browserResult.type,
+      url: browserUrl,
+    });
+
+    if (browserUrl) {
+      return { callbackUrl: browserUrl, browserType: browserResult.type };
+    }
+
+    if (browserResult.type === "dismiss" && linkedCallbackUrl) {
+      return { callbackUrl: linkedCallbackUrl, browserType: browserResult.type };
+    }
+
+    if (browserResult.type === "dismiss") {
+      try {
+        const lateCallbackUrl = await callbackPromise;
+        return { callbackUrl: lateCallbackUrl, browserType: browserResult.type };
+      } catch {
+        return { callbackUrl: null, browserType: browserResult.type };
+      }
+    }
+
+    return { callbackUrl: linkedCallbackUrl, browserType: browserResult.type };
+  } finally {
+    if (callbackTimeout) clearTimeout(callbackTimeout);
+    linkSub.remove();
+  }
+}
+
+async function createSupabaseSessionFromOAuthRedirectUrl(
+  url: string,
+): Promise<{ session: Session | null; error: Error | null }> {
+  const { params, errorCode } = QueryParams.getQueryParams(url);
+  const hasCode = typeof params.code === "string" && params.code.length > 0;
+  const hasAccessToken =
+    typeof params.access_token === "string" && params.access_token.length > 0;
+  const hasRefreshToken =
+    typeof params.refresh_token === "string" && params.refresh_token.length > 0;
+
+  console.log("[auth][oauth] callback params", {
+    hasCode,
+    hasAccessToken,
+    hasRefreshToken,
+    hasError: !!params.error || !!errorCode,
+  });
+
+  if (errorCode) {
+    return { session: null, error: new Error(String(errorCode)) };
+  }
+
+  const oauthError = params.error;
+  if (oauthError) {
+    const desc = params.error_description
+      ? decodeURIComponent(String(params.error_description).replace(/\+/g, " "))
+      : oauthError;
+    return { session: null, error: new Error(String(desc)) };
+  }
+
+  const code = typeof params.code === "string" ? params.code : undefined;
+  if (code) {
+    console.log("[auth][oauth] completion branch=exchangeCodeForSession");
+    const { data, error } = await supabase.auth.exchangeCodeForSession(code);
+    if (error) return { session: null, error };
+    if (!data.session) {
+      return { session: null, error: new Error("No session after code exchange") };
+    }
+    return { session: data.session, error: null };
+  }
+
+  const access_token =
+    typeof params.access_token === "string" ? params.access_token : undefined;
+  const refresh_token =
+    typeof params.refresh_token === "string" ? params.refresh_token : undefined;
+
+  if (access_token && refresh_token) {
+    console.log("[auth][oauth] completion branch=setSession");
+    const { data, error } = await supabase.auth.setSession({
+      access_token,
+      refresh_token,
+    });
+    if (error) return { session: null, error };
+    return { session: data.session ?? null, error: null };
+  }
+
+  return {
+    session: null,
+    error: new Error("Missing auth tokens in OAuth redirect URL"),
+  };
+}
 
 // ============================================================================
 // Session Management
@@ -151,18 +303,17 @@ export async function signUpWithEmail(email: string, password: string): Promise<
  * Uses the stable production URL so the redirect always matches the
  * Supabase allowlist (preview URLs change per Vercel deployment).
  */
-const RESET_REDIRECT_URL = `${WEB_BASE_URL}/reset-password`;
-
 export async function resetPassword(email: string): Promise<void> {
   const cleanEmail = email.trim().toLowerCase();
+  const resetRedirectUrl = `${getPublicWebBaseUrl()}/reset-password`;
 
   console.log("[auth] resetPassword", {
     email: cleanEmail,
-    redirectTo: RESET_REDIRECT_URL,           // beta: verify correct URL
+    redirectTo: resetRedirectUrl,
   });
 
   const { error } = await supabase.auth.resetPasswordForEmail(cleanEmail, {
-    redirectTo: RESET_REDIRECT_URL,
+    redirectTo: resetRedirectUrl,
   });
 
   if (error) {
@@ -204,15 +355,24 @@ export async function ensureSignedIn(): Promise<User> {
 export async function signInWithGoogle(): Promise<SignInResult> {
   console.log("[auth] signInWithGoogle");
 
-  const redirectTo =
-    typeof window !== "undefined"
-      ? `${window.location.origin}${window.location.pathname || "/"}`
-      : WEB_BASE_URL;
+  const redirectTo = getAuthRedirectUri();
+  if (Platform.OS !== "web") {
+    console.log("[auth][oauth] native redirect uri", {
+      redirectTo,
+      scheme: NATIVE_AUTH_SCHEME,
+      callbackPath: NATIVE_AUTH_CALLBACK_PATH,
+    });
+  }
+
+  // Web: let Supabase perform redirect (same as skipBrowserRedirect: false default) so we stay
+  // aligned with the hosted OAuth flow. Native keeps skipBrowserRedirect so we can complete in-app.
+  const skipBrowserRedirect = Platform.OS !== "web";
 
   const { data, error } = await supabase.auth.signInWithOAuth({
     provider: "google",
     options: {
       redirectTo,
+      skipBrowserRedirect,
       queryParams: {
         access_type: "offline",
         prompt: "consent",
@@ -225,14 +385,73 @@ export async function signInWithGoogle(): Promise<SignInResult> {
     return { data: null, error };
   }
 
-  // On web, signInWithOAuth redirects automatically; no session yet.
-  // Session will appear after redirect when detectSessionInUrl parses the hash.
-  if (data?.url && typeof window !== "undefined") {
-    window.location.href = data.url;
-    return { data: null, error: null }; // Caller won't see this; page is navigating
+  const authUrl = data?.url;
+  if (!authUrl) {
+    return { data: null, error: new Error("OAuth redirect URL not returned") };
+  }
+  console.log("[auth][oauth] start", {
+    provider: "google",
+    redirectTo,
+    authUrlPresent: true,
+    skipBrowserRedirect,
+  });
+
+  if (Platform.OS === "web") {
+    if (typeof window === "undefined" || !window.location?.assign) {
+      return { data: null, error: new Error("Cannot start OAuth on this web environment") };
+    }
+    // When skipBrowserRedirect is false, GoTrueClient already called location.assign inside signInWithOAuth.
+    if (skipBrowserRedirect) {
+      window.location.assign(authUrl);
+    }
+    return { data: null, error: null };
   }
 
-  return { data: null, error: new Error("OAuth redirect URL not returned") };
+  const { callbackUrl, browserType } = await openNativeOAuthSession(authUrl, redirectTo);
+  if (browserType === "cancel") {
+    return { data: null, error: new Error("Sign in cancelled") };
+  }
+
+  if (!callbackUrl) {
+    // Android can occasionally report "dismiss" despite successful deep-link return.
+    // Check existing session before failing so we don't drop a successful sign-in.
+    const { data: latestSessionData, error: latestSessionError } = await supabase.auth.getSession();
+    if (latestSessionError) {
+      console.warn("[auth][oauth] fallback getSession error:", latestSessionError.message);
+    }
+    if (latestSessionData.session?.user) {
+      console.log("[auth][oauth] fallback session detected after dismiss", {
+        userId: latestSessionData.session.user.id,
+      });
+      return {
+        data: {
+          user: latestSessionData.session.user,
+          session: latestSessionData.session,
+        },
+        error: null,
+      };
+    }
+    return { data: null, error: new Error("OAuth callback URL not received on native") };
+  }
+  console.log("[auth][oauth] callback URL received", { callbackUrl });
+
+  const { session, error: sessionErr } = await createSupabaseSessionFromOAuthRedirectUrl(
+    callbackUrl,
+  );
+  console.log("[auth][oauth] session exchange result", {
+    hasSession: !!session,
+    userId: session?.user?.id ?? null,
+    error: sessionErr?.message ?? null,
+  });
+
+  if (sessionErr || !session?.user) {
+    return {
+      data: null,
+      error: sessionErr ?? new Error("Failed to complete Google sign in"),
+    };
+  }
+
+  return { data: { user: session.user, session }, error: null };
 }
 
 /**
@@ -247,10 +466,7 @@ export async function signInWithMagicLink(email: string): Promise<{ error: Error
 
   console.log("[auth] signInWithMagicLink", cleanEmail);
 
-  const redirectTo =
-    typeof window !== "undefined"
-      ? `${window.location.origin}${window.location.pathname || "/"}`
-      : WEB_BASE_URL;
+  const redirectTo = getAuthRedirectUri();
 
   const { error } = await supabase.auth.signInWithOtp({
     email: cleanEmail,
