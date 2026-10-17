@@ -138,6 +138,16 @@ export default function BirdiesLeagueScreen() {
     }, [societyId, loadData, uiEnabled]),
   );
 
+  const nextStart = useMemo(
+    () => (uiEnabled ? findNextUnplayedEligibleBirdiesEvent(events, scopeDraft) : null),
+    [events, scopeDraft, uiEnabled],
+  );
+
+  const startSummary = useMemo(() => {
+    if (!uiEnabled || !league) return null;
+    return describeBirdiesLeagueStart(league, events);
+  }, [league, events, uiEnabled]);
+
   if (!uiEnabled) {
     return (
       <SafeAreaView style={[styles.safe, { backgroundColor: colors.background }]}>
@@ -145,16 +155,6 @@ export default function BirdiesLeagueScreen() {
       </SafeAreaView>
     );
   }
-
-  const nextStart = useMemo(
-    () => findNextUnplayedEligibleBirdiesEvent(events, scopeDraft),
-    [events, scopeDraft],
-  );
-
-  const startSummary = useMemo(() => {
-    if (!league) return null;
-    return describeBirdiesLeagueStart(league, events);
-  }, [league, events]);
 
   const handleCreate = async () => {
     if (!societyId || creating) return;
