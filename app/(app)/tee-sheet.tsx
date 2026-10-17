@@ -158,6 +158,9 @@ import {
   sortPastMostRecentFirst,
   sortUpcomingNearestFirst,
 } from "@/lib/eventListGrouping";
+import { computeTeeSheetManageOverview } from "@/lib/teeSheet/teeSheetManageOverview";
+import { TeeSheetManageOverviewCard } from "@/features/teeSheet/components/TeeSheetManageOverviewCard";
+import { TeeSheetManageCollapsibleSection } from "@/features/teeSheet/components/TeeSheetManageCollapsibleSection";
 
 const UPCOMING_EVENTS_TITLE = "Upcoming Events";
 const PAST_EVENTS_TITLE = "Past Events";
@@ -447,7 +450,11 @@ export default function TeeSheetScreen() {
   const [regeneratingFromPool, setRegeneratingFromPool] = useState(false);
   const [saving, setSaving] = useState(false);
   const [publishing, setPublishing] = useState(false);
-  const [notice, setNotice] = useState<{ type: "success" | "error" | "info"; message: string; detail?: string } | null>(null);
+  const [notice, setNotice] = useState<{
+    type: "success" | "error" | "info" | "warning";
+    message: string;
+    detail?: string;
+  } | null>(null);
   const [toast, setToast] = useState<{ visible: boolean; message: string; type: "success" | "error" | "info" }>({ visible: false, message: "", type: "success" });
 
   // Form state
@@ -632,7 +639,7 @@ export default function TeeSheetScreen() {
         ]);
         const jointMeta = jointMetaMap.get(selectedEventId);
         const participantIds =
-          jointMeta?.participant_society_ids ??
+          jointMeta?.participantSocietyIds ??
           eventRow?.participant_society_ids ??
           [];
         const access = resolveTeeSheetManageAccess({
@@ -747,6 +754,11 @@ export default function TeeSheetScreen() {
   const filteredPlayerPoolItems = useMemo(
     () => filterPlayerPoolItems(availablePlayerPoolItems, playerPoolFilters),
     [availablePlayerPoolItems, playerPoolFilters],
+  );
+
+  const paidAttendeeCount = useMemo(
+    () => playerPoolItemsAll.filter((item) => item.paid).length,
+    [playerPoolItemsAll],
   );
 
   const handleExportAttendeesCsv = useCallback(async () => {
@@ -1208,7 +1220,9 @@ export default function TeeSheetScreen() {
         : null;
     const allowance = event.handicapAllowance ?? DEFAULT_ALLOWANCE;
 
-    const guestByPlayerId = new Map(guests.map((g) => [`guest-${g.id}`, g] as const));
+    const guestByPlayerId = new Map<string, EventGuest>(
+      guests.map((g) => [`guest-${g.id}`, g]),
+    );
     const memberById = buildMemberByPlayerIdMap(membersList, societyIdToName);
 
     return normalizeGroups(
@@ -1216,7 +1230,7 @@ export default function TeeSheetScreen() {
         groupNumber: g.groupNumber,
         players: g.players.map((p) => {
           const member = memberDocForPlayerId(p.id, membersList, memberById, societyIdToName);
-          const guest = guestByPlayerId.get(p.id);
+          const guest = guestByPlayerId.get(String(p.id));
           const persisted = persistedPolicy?.get(String(p.id));
           const manualGender = (persisted?.manual_gender ?? null) as Gender;
           const manualTeeOverride = (persisted?.manual_tee_override ?? null) as "men" | "ladies" | null;
@@ -1357,6 +1371,31 @@ export default function TeeSheetScreen() {
     }
     return !teeSheetEditorSnapshotsEqual(currentEditorSnapshot, savedSnapshotRef.current);
   }, [currentEditorSnapshot]);
+
+  const manageOverviewStats = useMemo(() => {
+    if (!selectedEvent) return null;
+    return computeTeeSheetManageOverview({
+      registeredCount: poolAttendeeRows.length,
+      paidAttendeeCount,
+      groups,
+      poolRemainingCount: availablePlayerPoolItems.filter((item) => item.paid).length,
+      isDirty,
+      lastSavedAt,
+      teeTimePublishedAt: selectedEvent.teeTimePublishedAt,
+      saving,
+      publishing,
+    });
+  }, [
+    selectedEvent,
+    poolAttendeeRows.length,
+    paidAttendeeCount,
+    groups,
+    availablePlayerPoolItems,
+    isDirty,
+    lastSavedAt,
+    saving,
+    publishing,
+  ]);
 
   focusReloadGuardRef.current = {
     isDirty,
@@ -2728,11 +2767,11 @@ export default function TeeSheetScreen() {
         />
       ) : (
         <ScrollView showsVerticalScrollIndicator={false}>
-          {/* Event Selection */}
-          <AppText variant="heading" style={styles.sectionTitle}>Select event</AppText>
-          <AppText variant="small" color="muted" style={{ marginBottom: spacing.sm }}>
-            Upcoming events are for generation and publishing. Past events are read-only here unless a tee sheet was published.
-          </AppText>
+          <TeeSheetManageCollapsibleSection
+            title="Select event"
+            description="Upcoming events are for editing; past events are read-only unless a tee sheet was published."
+            defaultExpanded={!routeEventId}
+          >
 
           <AppText variant="subheading" color="primary" style={styles.eventGroupHeading}>
             {UPCOMING_EVENTS_TITLE}
@@ -2855,6 +2894,7 @@ export default function TeeSheetScreen() {
               })}
             </View>
           )}
+          </TeeSheetManageCollapsibleSection>
 
           {selectedEventId && eventDetailsError ? (
             <RetryErrorBlock
@@ -2937,8 +2977,20 @@ export default function TeeSheetScreen() {
                 </AppCard>
               )}
 
+              {manageOverviewStats ? (
+                <TeeSheetManageOverviewCard
+                  stats={manageOverviewStats}
+                  publishedAt={selectedEvent.teeTimePublishedAt}
+                />
+              ) : null}
+
+              <TeeSheetManageCollapsibleSection
+                title="Tee sheet"
+                description="Start times, intervals, and group assignments."
+                defaultExpanded
+              >
               {/* Tee Time Settings */}
-              <AppText variant="heading" style={styles.sectionTitle}>Tee Times</AppText>
+              <AppText variant="subheading" style={styles.sectionTitle}>Tee times</AppText>
               <AppCard>
                 <View style={styles.formRow}>
                   <View style={{ flex: 1 }}>
@@ -2967,7 +3019,7 @@ export default function TeeSheetScreen() {
 
               {/* Group Editor Toggle */}
               <View style={styles.sectionHeader}>
-                <AppText variant="heading">Player Groups</AppText>
+                <AppText variant="subheading">Groups</AppText>
                 <SecondaryButton
                   size="sm"
                   onPress={() => setShowGroupEditor(!showGroupEditor)}
@@ -2978,7 +3030,6 @@ export default function TeeSheetScreen() {
               </View>
 
               {showGroupEditor ? (
-                /* Editable Group View */
                 <View style={styles.groupEditor}>
                   <SecondaryButton size="sm" onPress={resetToProfileDefaults}>
                     <Feather name="rotate-ccw" size={12} color={colors.text} /> Reset to profile defaults
@@ -2992,7 +3043,7 @@ export default function TeeSheetScreen() {
                   ) : null}
                   <AppCard>
                     <AppText variant="captionBold" color="primary">
-                      ✔ Player pool
+                      Player pool
                     </AppText>
                     <AppText variant="small" color="secondary" style={{ marginTop: 4 }}>
                       Filter and add players from event societies, or remove from groups below.
@@ -3259,9 +3310,70 @@ export default function TeeSheetScreen() {
                   ))}
                 </View>
               )}
+              </TeeSheetManageCollapsibleSection>
 
+              <TeeSheetManageCollapsibleSection
+                title="Publish & share"
+                description="Save draft, publish tee times for members, or export a PNG."
+                defaultExpanded
+              >
+              <View style={{ marginTop: spacing.sm, marginBottom: spacing.sm }}>
+                <AppText variant="small" color={isDirty ? "warning" : "muted"}>
+                  {manageOverviewStats?.draftLabel ??
+                    (isDirty ? "Unsaved changes — save draft before leaving" : "Ready to save or publish")}
+                </AppText>
+              </View>
+              <View style={{ flexDirection: "row", gap: spacing.sm, marginBottom: spacing.sm }}>
+                <SecondaryButton
+                  onPress={handleSaveTeeSheet}
+                  loading={saving}
+                  disabled={selectedPlayerCount === 0 || isPastEventSelected || publishing}
+                  style={{ flex: 1 }}
+                >
+                  <Feather name="save" size={18} color={colors.primary} />
+                  {saving ? " Saving..." : " Save Draft"}
+                </SecondaryButton>
+                <PrimaryButton
+                  onPress={handleGenerateTeeSheet}
+                  loading={publishing}
+                  disabled={selectedPlayerCount === 0 || isPastEventSelected || saving}
+                  style={{ flex: 1 }}
+                >
+                  <Feather name="upload-cloud" size={18} color={colors.textInverse} />
+                  {publishing ? " Publishing..." : ` ${publishButtonLabel}`}
+                </PrimaryButton>
+              </View>
+              <SecondaryButton
+                onPress={handleShareExport}
+                loading={generating && !publishing}
+                disabled={selectedPlayerCount === 0 || isPastEventSelected || saving || publishing}
+                style={{ marginBottom: spacing.sm }}
+              >
+                <Feather name="share-2" size={18} color={colors.primary} />
+                {" Share / Export PNG"}
+              </SecondaryButton>
+              {!!selectedEvent?.teeTimePublishedAt && (
+                <SecondaryButton
+                  onPress={handleUnpublishTeeTimesOnly}
+                  loading={saving}
+                  disabled={!selectedEventId}
+                  style={{ marginBottom: spacing.sm, borderColor: colors.warning + "99" }}
+                >
+                  <Feather name="eye-off" size={16} color={colors.warning} />
+                  <AppText style={{ color: colors.warning, marginLeft: spacing.xs, fontWeight: "600" }}>
+                    Unpublish tee times
+                  </AppText>
+                </SecondaryButton>
+              )}
+              </TeeSheetManageCollapsibleSection>
+
+              <TeeSheetManageCollapsibleSection
+                title="Advanced options"
+                description="Competition holes, course handicaps, and destructive actions."
+                defaultExpanded={false}
+              >
               {/* Competition Holes */}
-              <AppText variant="heading" style={styles.sectionTitle}>Competition Holes</AppText>
+              <AppText variant="subheading" style={styles.sectionTitle}>Competition holes</AppText>
               <AppCard>
                 <View style={styles.formField}>
                   <AppText variant="caption" style={styles.label}>
@@ -3366,65 +3478,6 @@ export default function TeeSheetScreen() {
                 </View>
               )}
 
-              <View style={{ marginTop: spacing.lg, marginBottom: spacing.sm }}>
-                <AppText variant="small" color={isDirty ? "warning" : "muted"}>
-                  {saving
-                    ? "Saving draft..."
-                    : publishing
-                      ? "Publishing..."
-                      : generating
-                        ? "Preparing export..."
-                        : isDirty
-                          ? "Unsaved changes — save draft before leaving"
-                          : lastSavedAt
-                            ? `Draft saved · Last saved at ${lastSavedAt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`
-                            : selectedEvent?.teeTimePublishedAt
-                              ? "Published — members see tee times"
-                              : "No draft saved yet"}
-                </AppText>
-              </View>
-              <View style={{ flexDirection: "row", gap: spacing.sm, marginBottom: spacing.sm }}>
-                <SecondaryButton
-                  onPress={handleSaveTeeSheet}
-                  loading={saving}
-                  disabled={selectedPlayerCount === 0 || isPastEventSelected || publishing}
-                  style={{ flex: 1 }}
-                >
-                  <Feather name="save" size={18} color={colors.primary} />
-                  {saving ? " Saving..." : " Save Draft"}
-                </SecondaryButton>
-                <PrimaryButton
-                  onPress={handleGenerateTeeSheet}
-                  loading={publishing}
-                  disabled={selectedPlayerCount === 0 || isPastEventSelected || saving}
-                  style={{ flex: 1 }}
-                >
-                  <Feather name="upload-cloud" size={18} color={colors.textInverse} />
-                  {publishing ? " Publishing..." : ` ${publishButtonLabel}`}
-                </PrimaryButton>
-              </View>
-              <SecondaryButton
-                onPress={handleShareExport}
-                loading={generating && !publishing}
-                disabled={selectedPlayerCount === 0 || isPastEventSelected || saving || publishing}
-                style={{ marginBottom: spacing.sm }}
-              >
-                <Feather name="share-2" size={18} color={colors.primary} />
-                {" Share / Export PNG"}
-              </SecondaryButton>
-              {!!selectedEvent?.teeTimePublishedAt && (
-                <SecondaryButton
-                  onPress={handleUnpublishTeeTimesOnly}
-                  loading={saving}
-                  disabled={!selectedEventId}
-                  style={{ marginBottom: spacing.sm, borderColor: colors.warning + "99" }}
-                >
-                  <Feather name="eye-off" size={16} color={colors.warning} />
-                  <AppText style={{ color: colors.warning, marginLeft: spacing.xs, fontWeight: "600" }}>
-                    Unpublish tee times
-                  </AppText>
-                </SecondaryButton>
-              )}
               <SecondaryButton
                 onPress={handleClearTeeSheet}
                 loading={saving}
@@ -3436,6 +3489,7 @@ export default function TeeSheetScreen() {
                   Clear tee sheet
                 </AppText>
               </SecondaryButton>
+              </TeeSheetManageCollapsibleSection>
 
             </>
           ))}

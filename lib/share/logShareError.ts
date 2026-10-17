@@ -2,7 +2,7 @@ import { Platform } from "react-native";
 
 export type ShareErrorContext = {
   eventId?: string | null;
-  action: "share" | "export" | "publish" | "save_draft";
+  action: "share" | "export" | "publish" | "save_draft" | "publish_share";
   screen?: string;
 };
 

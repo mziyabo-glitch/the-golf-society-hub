@@ -133,7 +133,7 @@ export async function getJointEventRegistrations(
         "[eventRegRepo] get_joint_event_registrations RPC unavailable; falling back to society-scoped SELECT (joint tee sheet may miss co-participant paid players until migration 167 is applied):",
         error.message,
       );
-      return getEventRegistrations(eventId, opts) as JointEventRegistrationRow[];
+      return (await getEventRegistrations(eventId, opts)) as JointEventRegistrationRow[];
     }
 
     let rows = (data ?? []).map((row: Record<string, unknown>) => ({
@@ -165,7 +165,7 @@ export async function getJointEventRegistrations(
     }
     return rows;
   } catch {
-    return getEventRegistrations(eventId, opts) as JointEventRegistrationRow[];
+    return (await getEventRegistrations(eventId, opts)) as JointEventRegistrationRow[];
   }
 }
 
