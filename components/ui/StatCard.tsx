@@ -4,19 +4,21 @@
 
 import { StyleSheet, View, Pressable, type PressableStateCallbackType } from "react-native";
 import { Feather } from "@expo/vector-icons";
-import { AppText } from "./AppText";
+import { AppText, type TextColorRole } from "./AppText";
 import { Card } from "./Card";
-import { getColors, spacing } from "@/lib/ui/theme";
+import { getColors, spacing, iconSize } from "@/lib/ui/theme";
 
 type StatCardProps = {
   icon: keyof typeof Feather.glyphMap;
   label: string;
   value: string;
+  /** Emphasise the value (e.g. positive/negative balance). */
+  valueColor?: TextColorRole;
   detail?: string;
   onPress?: () => void;
 };
 
-export function StatCard({ icon, label, value, detail, onPress }: StatCardProps) {
+export function StatCard({ icon, label, value, valueColor = "default", detail, onPress }: StatCardProps) {
   const colors = getColors();
   const pressStyle = ({ pressed }: PressableStateCallbackType) => [
     styles.pressable,
@@ -24,18 +26,18 @@ export function StatCard({ icon, label, value, detail, onPress }: StatCardProps)
   ];
 
   const content = (
-    <Card style={styles.card} padding={spacing.md}>
+    <Card variant="elevated" style={styles.card} padding={spacing.md}>
       <View style={[styles.iconCircle, { backgroundColor: colors.primary + "14" }]}>
-        <Feather name={icon} size={16} color={colors.primary} />
+        <Feather name={icon} size={iconSize.sm} color={colors.primary} />
       </View>
       <AppText variant="small" color="secondary" numberOfLines={1}>
         {label}
       </AppText>
-      <AppText variant="h2" style={styles.value}>
+      <AppText variant="heading" color={valueColor} style={styles.value}>
         {value}
       </AppText>
       {detail && (
-        <AppText variant="small" color="tertiary" numberOfLines={1}>
+        <AppText variant="small" color="muted" numberOfLines={1}>
           {detail}
         </AppText>
       )}

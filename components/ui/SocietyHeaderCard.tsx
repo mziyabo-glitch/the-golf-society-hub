@@ -6,7 +6,7 @@ import { StyleSheet, View } from "react-native";
 import { AppText } from "./AppText";
 import { Card } from "./Card";
 import { SocietyLogoImage } from "./SocietyLogoImage";
-import { getColors, spacing } from "@/lib/ui/theme";
+import { spacing } from "@/lib/ui/theme";
 
 type SocietyHeaderCardProps = {
   logoUrl: string | null;
@@ -21,10 +21,8 @@ export function SocietyHeaderCard({
   subtitle,
   getInitials,
 }: SocietyHeaderCardProps) {
-  const colors = getColors();
-
   return (
-    <Card style={styles.card} padding={spacing.md}>
+    <Card variant="elevated" style={styles.card} padding={spacing.md}>
       <SocietyLogoImage
         logoUrl={logoUrl}
         size="hero"

@@ -39,6 +39,10 @@ export function SocietySwitcherPill() {
   if (!society && memberships.length === 0) return null;
 
   const multi = memberships.length > 1;
+  const currentSocietyName =
+    memberships.find((m) => m.societyId === activeSocietyId)?.societyName ??
+    society?.name ??
+    "Society";
 
   const handleSelect = async (m: MySocietyMembership) => {
     setOpen(false);
@@ -58,7 +62,7 @@ export function SocietySwitcherPill() {
         onPress={() => setOpen(true)}
         hitSlop={6}
         accessibilityRole="button"
-        accessibilityLabel={multi ? "Switch society" : "Society options"}
+        accessibilityLabel={multi ? `Current society ${currentSocietyName}. Switch society.` : `Current society ${currentSocietyName}.`}
         style={({ pressed }) => [
           styles.pill,
           {
@@ -74,8 +78,15 @@ export function SocietySwitcherPill() {
           numberOfLines={1}
           style={[styles.pillText, { color: colors.primary }]}
         >
-          {society?.name ?? "Society"}
+          {multi ? `Viewing: ${currentSocietyName}` : `Current: ${currentSocietyName}`}
         </AppText>
+        {multi ? (
+          <View style={[styles.switchBadge, { backgroundColor: colors.primary + "16" }]}>
+            <AppText variant="caption" style={{ color: colors.primary }}>
+              Switch
+            </AppText>
+          </View>
+        ) : null}
         <Feather name="chevron-down" size={13} color={colors.primary} />
       </Pressable>
 
@@ -147,6 +158,105 @@ export function SocietySwitcherPill() {
   );
 }
 
+/**
+ * Explicit home header block:
+ * - Always shows current society
+ * - Shows clear "Switch Society" action only for multi-society users
+ */
+export function HomeCurrentSocietySwitcherCard() {
+  const { society, memberships, activeSocietyId, switchSociety } = useBootstrap();
+  const router = useRouter();
+  const colors = getColors();
+  const [open, setOpen] = useState(false);
+
+  if (!society && memberships.length === 0) return null;
+  const multi = memberships.length > 1;
+  const currentSocietyName =
+    memberships.find((m) => m.societyId === activeSocietyId)?.societyName ??
+    society?.name ??
+    "Society";
+
+  const onSelect = async (m: MySocietyMembership) => {
+    setOpen(false);
+    if (m.societyId === activeSocietyId) return;
+    await switchSociety(m.societyId);
+    router.replace("/(app)/(tabs)");
+  };
+
+  return (
+    <>
+      <AppCard style={[styles.currentCard, { borderColor: colors.borderLight, backgroundColor: colors.surface }]}>
+        <AppText variant="captionBold" color="secondary">
+          Current Society
+        </AppText>
+        <View style={styles.currentRow}>
+          <AppText variant="bodyBold" numberOfLines={1} style={{ flex: 1 }}>
+            {currentSocietyName}
+          </AppText>
+          {multi ? (
+            <Pressable
+              onPress={() => setOpen(true)}
+              style={({ pressed }) => [
+                styles.switchBtn,
+                { borderColor: colors.primary + "44", backgroundColor: colors.primary + "12" },
+                pressed && { opacity: 0.78 },
+              ]}
+            >
+              <AppText variant="small" style={{ color: colors.primary, fontWeight: "700" }}>
+                Switch Society
+              </AppText>
+            </Pressable>
+          ) : null}
+        </View>
+        {multi ? (
+          <AppText variant="small" color="tertiary" style={{ marginTop: spacing.xs }}>
+            Viewing: {currentSocietyName}
+          </AppText>
+        ) : null}
+      </AppCard>
+
+      <Modal visible={open} transparent animationType="fade" onRequestClose={() => setOpen(false)}>
+        <Pressable style={styles.backdrop} onPress={() => setOpen(false)}>
+          <View style={styles.modalWrap} onStartShouldSetResponder={() => true}>
+            <AppCard style={[styles.modalCard, { backgroundColor: colors.background }]}>
+              <AppText variant="h2" style={styles.modalTitle}>
+                Switch Society
+              </AppText>
+              {memberships.map((m) => {
+                const active = m.societyId === activeSocietyId;
+                return (
+                  <Pressable
+                    key={m.memberId}
+                    onPress={() => onSelect(m)}
+                    style={({ pressed }) => [
+                      styles.row,
+                      { borderColor: colors.borderLight },
+                      active && { backgroundColor: colors.primary + "10" },
+                      pressed && { opacity: 0.7 },
+                    ]}
+                  >
+                    <View style={{ flex: 1 }}>
+                      <AppText variant="bodyBold">{m.societyName}</AppText>
+                      <AppText variant="small" color="secondary">
+                        {formatRole(m.role)}
+                        {m.country ? ` · ${m.country}` : ""}
+                      </AppText>
+                    </View>
+                    {active && <Feather name="check" size={18} color={colors.primary} />}
+                  </Pressable>
+                );
+              })}
+              <Pressable onPress={() => setOpen(false)} style={styles.closeBtn}>
+                <AppText variant="small" color="secondary">Close</AppText>
+              </Pressable>
+            </AppCard>
+          </View>
+        </Pressable>
+      </Modal>
+    </>
+  );
+}
+
 const styles = StyleSheet.create({
   pill: {
     flexDirection: "row",
@@ -156,12 +266,33 @@ const styles = StyleSheet.create({
     paddingVertical: 5,
     borderRadius: radius.full,
     borderWidth: 1,
-    maxWidth: 200,
+    maxWidth: 280,
   },
   pillText: {
     fontWeight: "700",
     flexShrink: 1,
     fontSize: typography.small.fontSize,
+  },
+  switchBadge: {
+    borderRadius: radius.full,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+  },
+  currentCard: {
+    borderWidth: 1,
+    marginBottom: spacing.sm,
+  },
+  currentRow: {
+    marginTop: spacing.xs,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+  },
+  switchBtn: {
+    borderWidth: 1,
+    borderRadius: radius.full,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 6,
   },
   backdrop: {
     flex: 1,

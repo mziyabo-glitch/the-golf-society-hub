@@ -1,5 +1,19 @@
 // lib/db_supabase/eventRepo.ts
-import { supabase } from "@/lib/supabase";
+import type { SupabaseClient } from "@supabase/supabase-js";
+import { supabase as defaultSupabase } from "@/lib/supabase";
+import { normalizeSlopeRating } from "@/lib/teeMetrics";
+import { formatEventUpdatePermissionError, isSupabaseRlsError } from "./eventSocietiesUtils";
+
+let eventSupabase: SupabaseClient = defaultSupabase;
+
+/** Pair with {@link resetEventRepoSupabaseClient} after integration / E2E runs. */
+export function setEventRepoSupabaseClient(client: SupabaseClient): void {
+  eventSupabase = client;
+}
+
+export function resetEventRepoSupabaseClient(): void {
+  eventSupabase = defaultSupabase;
+}
 
 // Event format types - simplified to core formats
 // 'medal' kept as alias for backwards compatibility with existing data
@@ -77,6 +91,34 @@ export type EventDoc = {
   teeTimePublishedAt?: string | null;
   /** Source of tee data: 'imported' | 'manual' */
   teeSource?: "imported" | "manual" | null;
+  /** Optional label e.g. £45 or £55 incl. food */
+  entryFeeDisplay?: string | null;
+  /** When set, public invite link stops accepting new RSVPs after this instant (timestamptz). */
+  rsvp_deadline_at?: string | null;
+  rsvpDeadlineAt?: string | null;
+  /** Optional society prize pool alongside the main event (member opt-in is separate from main fees). */
+  prize_pool_enabled?: boolean;
+  prizePoolEnabled?: boolean;
+  prize_pool_payment_instructions?: string | null;
+  prizePoolPaymentInstructions?: string | null;
+  /**
+   * Canonical joint flag: true when `event_societies` has 2+ distinct society_id values
+   * (same rule as `get_joint_event_detail` / `isEventJoint`). Set by repo when loading lists or `getEvent`.
+   */
+  is_joint_event?: boolean;
+  /** Distinct societies linked in `event_societies` for this event (0 if none). */
+  linked_society_count?: number;
+  /** society_id values from event_societies (set by enrichEventsWithJointClassification). */
+  participant_society_ids?: string[];
+  /** Gross scoring publish lifecycle (migration 120). */
+  scoring_results_status?: string;
+  scoringResultsStatus?: "draft" | "published" | "reopened";
+  scoring_published_at?: string | null;
+  scoringPublishedAt?: string | null;
+  scoring_publish_version?: number;
+  scoringPublishVersion?: number;
+  live_gross_scoring_enabled?: boolean;
+  liveGrossScoringEnabled?: boolean;
   [key: string]: unknown;
 };
 
@@ -105,13 +147,13 @@ function mapEvent(row: any): EventDoc {
     teeName: row.tee_name ?? null,
     par: row.par ?? null,
     courseRating: row.course_rating ?? null,
-    slopeRating: row.slope_rating ?? null,
+    slopeRating: normalizeSlopeRating(row.slope_rating),
     handicapAllowance: row.handicap_allowance ?? null,
     // Map Ladies' tee settings from snake_case
     ladiesTeeName: row.ladies_tee_name ?? null,
     ladiesPar: row.ladies_par ?? null,
     ladiesCourseRating: row.ladies_course_rating ?? null,
-    ladiesSlopeRating: row.ladies_slope_rating ?? null,
+    ladiesSlopeRating: normalizeSlopeRating(row.ladies_slope_rating),
     // Map competition holes
     nearestPinHoles: row.nearest_pin_holes ?? null,
     longestDriveHoles: row.longest_drive_holes ?? null,
@@ -124,22 +166,74 @@ function mapEvent(row: any): EventDoc {
     teeTimePublishedAt: row.tee_time_published_at ?? null,
     tee_id: row.tee_id ?? null,
     teeSource: row.tee_source ?? null,
+    entryFeeDisplay: row.entry_fee_display?.trim() || null,
+    rsvp_deadline_at: row.rsvp_deadline_at ?? null,
+    rsvpDeadlineAt: row.rsvp_deadline_at ?? null,
+    prize_pool_enabled: row.prize_pool_enabled ?? false,
+    prizePoolEnabled: row.prize_pool_enabled ?? false,
+    prize_pool_payment_instructions: row.prize_pool_payment_instructions?.trim() || null,
+    prizePoolPaymentInstructions: row.prize_pool_payment_instructions?.trim() || null,
+    scoring_results_status: row.scoring_results_status ?? "draft",
+    scoringResultsStatus: (row.scoring_results_status ?? "draft") as EventDoc["scoringResultsStatus"],
+    scoring_published_at: row.scoring_published_at ?? null,
+    scoringPublishedAt: row.scoring_published_at ?? null,
+    scoring_publish_version: row.scoring_publish_version ?? 0,
+    scoringPublishVersion: row.scoring_publish_version ?? 0,
+    live_gross_scoring_enabled: row.live_gross_scoring_enabled ?? false,
+    liveGrossScoringEnabled: row.live_gross_scoring_enabled ?? false,
   };
 }
 
+function logJointClassificationDev(event: EventDoc, linkedSocietyCount: number, is_joint_event: boolean) {
+  if (!__DEV__) return;
+  console.log("[events] joint classification", {
+    eventId: event.id,
+    title: event.name,
+    hostSocietyId: event.society_id,
+    /** Distinct `society_id` values in `event_societies` for this event. Joint = this count >= 2. */
+    distinctParticipatingSocieties: linkedSocietyCount,
+    is_joint_event,
+    ...(linkedSocietyCount === 1
+      ? {
+          note: "One row in event_societies — not joint until a second participating society is linked.",
+        }
+      : {}),
+  });
+}
+
 /**
- * Get events for a society (one-time fetch)
+ * Attach `is_joint_event` and `linked_society_count` from `event_societies` for each event.
  */
-export async function getEventsBySocietyId(societyId: string): Promise<EventDoc[]> {
-  console.log("[eventRepo] getEventsBySocietyId called with:", societyId);
-  const { data, error } = await supabase
+export async function enrichEventsWithJointClassification(events: EventDoc[]): Promise<EventDoc[]> {
+  if (events.length === 0) return events;
+  const { getJointMetaForEventIds } = await import("@/lib/db_supabase/jointEventRepo");
+  const metaMap = await getJointMetaForEventIds(events.map((e) => e.id));
+  return events.map((e) => {
+    const m = metaMap.get(e.id) ?? {
+      is_joint_event: false,
+      linkedSocietyCount: 0,
+      participantSocietyIds: [] as string[],
+    };
+    logJointClassificationDev(e, m.linkedSocietyCount, m.is_joint_event);
+    return {
+      ...e,
+      is_joint_event: m.is_joint_event,
+      linked_society_count: m.linkedSocietyCount,
+      participant_society_ids: m.participantSocietyIds,
+    };
+  });
+}
+
+/** Raw `events` rows for a society, mapped to EventDoc without joint enrichment. */
+async function fetchMappedEventsForSociety(societyId: string): Promise<EventDoc[]> {
+  const { data, error } = await eventSupabase
     .from("events")
     .select("*")
     .eq("society_id", societyId)
     .order("date", { ascending: true });
 
   if (error) {
-    console.error("[eventRepo] getEventsBySocietyId failed:", {
+    console.error("[eventRepo] fetchMappedEventsForSociety failed:", {
       message: error.message,
       details: error.details,
       hint: error.hint,
@@ -148,17 +242,93 @@ export async function getEventsBySocietyId(societyId: string): Promise<EventDoc[
     throw new Error(error.message || "Failed to load events");
   }
 
-  console.log("[eventRepo] getEventsBySocietyId returned", (data ?? []).length, "events for society:", societyId);
   return (data ?? []).map(mapEvent);
+}
+
+/** Single event by id, mapped only (no joint enrichment). */
+async function getEventMappedById(eventId: string): Promise<EventDoc | null> {
+  const { data, error } = await eventSupabase
+    .from("events")
+    .select("*")
+    .eq("id", eventId)
+    .maybeSingle();
+
+  if (error) {
+    console.error("[eventRepo] getEventMappedById failed:", error.message);
+    return null;
+  }
+  return data ? mapEvent(data) : null;
+}
+
+/**
+ * Get events for a society (one-time fetch)
+ */
+export async function getEventsBySocietyId(societyId: string): Promise<EventDoc[]> {
+  if (__DEV__) {
+    console.log("[eventRepo] getEventsBySocietyId:", societyId);
+  }
+  const mapped = await fetchMappedEventsForSociety(societyId);
+  return enrichEventsWithJointClassification(mapped);
+}
+
+/**
+ * Host events + joint participant events for this society (raw rows, not joint-enriched).
+ * On participant lookup failure, returns host-only rows (same behaviour as the events list).
+ */
+async function fetchEventsVisibleToSociety(societyId: string): Promise<EventDoc[]> {
+  let hostMapped: EventDoc[];
+  try {
+    hostMapped = await fetchMappedEventsForSociety(societyId);
+  } catch (e) {
+    throw e;
+  }
+  try {
+    const { getEventIdsWhereSocietyParticipates } = await import("@/lib/db_supabase/jointEventRepo");
+    const participantEventIdList = await getEventIdsWhereSocietyParticipates(societyId);
+    const hostIds = new Set(hostMapped.map((e) => e.id));
+    const missingIds = participantEventIdList.filter((id) => !hostIds.has(id));
+    if (missingIds.length === 0) {
+      return hostMapped;
+    }
+    if (__DEV__) {
+      console.log("[eventRepo] merge participant events:", missingIds.length, "society:", societyId);
+    }
+    const missingMapped = (await Promise.all(missingIds.map((id) => getEventMappedById(id)))).filter(
+      (e): e is EventDoc => e != null,
+    );
+    const combined = [...hostMapped, ...missingMapped];
+    combined.sort((a, b) => (a.date ?? "").localeCompare(b.date ?? ""));
+    return combined;
+  } catch (err) {
+    console.warn("[eventRepo] fetchEventsVisibleToSociety: participant merge failed, host-only:", err);
+    return hostMapped;
+  }
+}
+
+/**
+ * Get all events visible to a society: host events + joint events where society participates.
+ * Use this for the main events list so participant societies see joint events too.
+ */
+export async function getEventsForSociety(societyId: string): Promise<EventDoc[]> {
+  const merged = await fetchEventsVisibleToSociety(societyId);
+  return enrichEventsWithJointClassification(merged);
+}
+
+/**
+ * Get events available for the tee sheet screen: host events plus joint events where society participates.
+ * Use this so joint events appear in the tee sheet event dropdown for participant societies.
+ * Uses the same merge + fallback rules as {@link getEventsForSociety}.
+ */
+export async function getEventsForTeeSheet(societyId: string): Promise<EventDoc[]> {
+  const merged = await fetchEventsVisibleToSociety(societyId);
+  return enrichEventsWithJointClassification(merged);
 }
 
 /**
  * Get a single event by ID
  */
 export async function getEvent(eventId: string): Promise<EventDoc | null> {
-  console.log("[eventRepo] getEvent called with id:", eventId);
-
-  const { data, error } = await supabase
+  const { data, error } = await eventSupabase
     .from("events")
     .select("*")
     .eq("id", eventId)
@@ -195,15 +365,17 @@ export async function createEvent(
     teeName?: string;
     par?: number;
     courseRating?: number;
-    slopeRating?: number;
+    slopeRating?: number | null;
     handicapAllowance?: number;
     // Ladies' tee settings
     ladiesTeeName?: string;
     ladiesPar?: number;
     ladiesCourseRating?: number;
-    ladiesSlopeRating?: number;
+    ladiesSlopeRating?: number | null;
     /** 'imported' when from course_tees, 'manual' when user-entered */
     teeSource?: "imported" | "manual";
+    /** Optional display e.g. £45 incl. food */
+    entryFeeDisplay?: string | null;
   }
 ): Promise<EventDoc> {
   const classification = data.classification ?? 'general';
@@ -221,6 +393,11 @@ export async function createEvent(
     is_completed: false,
   };
 
+  if (data.entryFeeDisplay !== undefined) {
+    const t = typeof data.entryFeeDisplay === "string" ? data.entryFeeDisplay.trim() : "";
+    payload.entry_fee_display = t.length > 0 ? t : null;
+  }
+
   // Only add created_by if provided
   if (data.createdBy) {
     payload.created_by = data.createdBy;
@@ -230,19 +407,19 @@ export async function createEvent(
   if (data.teeName !== undefined) payload.tee_name = data.teeName;
   if (data.par !== undefined) payload.par = data.par;
   if (data.courseRating !== undefined) payload.course_rating = data.courseRating;
-  if (data.slopeRating !== undefined) payload.slope_rating = data.slopeRating;
+  if (data.slopeRating !== undefined) payload.slope_rating = normalizeSlopeRating(data.slopeRating);
   if (data.handicapAllowance !== undefined) payload.handicap_allowance = data.handicapAllowance;
 
   // Add Ladies' tee settings if provided
   if (data.ladiesTeeName !== undefined) payload.ladies_tee_name = data.ladiesTeeName;
   if (data.ladiesPar !== undefined) payload.ladies_par = data.ladiesPar;
   if (data.ladiesCourseRating !== undefined) payload.ladies_course_rating = data.ladiesCourseRating;
-  if (data.ladiesSlopeRating !== undefined) payload.ladies_slope_rating = data.ladiesSlopeRating;
+  if (data.ladiesSlopeRating !== undefined) payload.ladies_slope_rating = normalizeSlopeRating(data.ladiesSlopeRating);
   if (data.teeSource !== undefined) payload.tee_source = data.teeSource;
 
   // Server-side: ensure tee_id exists in course_tees (FK events_tee_id_fkey)
   if (payload.tee_id != null && payload.tee_id !== "") {
-    const { data: teeRow } = await supabase
+    const { data: teeRow } = await eventSupabase
       .from("course_tees")
       .select("id")
       .eq("id", payload.tee_id)
@@ -255,7 +432,7 @@ export async function createEvent(
 
   console.log("[eventRepo] createEvent payload:", JSON.stringify(payload, null, 2));
 
-  let { data: row, error } = await supabase
+  let { data: row, error } = await eventSupabase
     .from("events")
     .insert(payload)
     .select()
@@ -265,7 +442,7 @@ export async function createEvent(
     if ((error as any).code === "23503" && payload.tee_id != null) {
       console.warn("[eventRepo] createEvent: FK violation on tee_id, retrying with tee_id=null:", payload.tee_id);
       payload.tee_id = null;
-      const retry = await supabase.from("events").insert(payload).select().single();
+      const retry = await eventSupabase.from("events").insert(payload).select().single();
       if (retry.error) {
         console.error("[eventRepo] createEvent retry failed:", retry.error.message);
         throw new Error(retry.error.message || "Failed to create event");
@@ -282,7 +459,9 @@ export async function createEvent(
     }
   }
 
-  return mapEvent(row);
+  const created = mapEvent(row);
+  const [enriched] = await enrichEventsWithJointClassification([created]);
+  return enriched ?? created;
 }
 
 /**
@@ -310,17 +489,22 @@ export async function updateEvent(
     teeName: string;
     par: number;
     courseRating: number;
-    slopeRating: number;
+    slopeRating: number | null;
     handicapAllowance: number;
     // Ladies' tee settings
     ladiesTeeName: string;
     ladiesPar: number;
     ladiesCourseRating: number;
-    ladiesSlopeRating: number;
+    ladiesSlopeRating: number | null;
     teeSource: "imported" | "manual";
     // Competition holes
     nearestPinHoles: number[];
     longestDriveHoles: number[];
+    entryFeeDisplay: string | null;
+    rsvpDeadlineAt: string | null;
+    scoringResultsStatus: "draft" | "published" | "reopened";
+    scoringPublishedAt: string | null;
+    scoringPublishVersion: number;
   }>
 ): Promise<void> {
   const payload: Record<string, unknown> = {};
@@ -347,23 +531,39 @@ export async function updateEvent(
   if (updates.teeName !== undefined) payload.tee_name = updates.teeName;
   if (updates.par !== undefined) payload.par = updates.par;
   if (updates.courseRating !== undefined) payload.course_rating = updates.courseRating;
-  if (updates.slopeRating !== undefined) payload.slope_rating = updates.slopeRating;
+  if (updates.slopeRating !== undefined) payload.slope_rating = normalizeSlopeRating(updates.slopeRating);
   if (updates.handicapAllowance !== undefined) payload.handicap_allowance = updates.handicapAllowance;
 
   // Ladies' tee settings
   if (updates.ladiesTeeName !== undefined) payload.ladies_tee_name = updates.ladiesTeeName;
   if (updates.ladiesPar !== undefined) payload.ladies_par = updates.ladiesPar;
   if (updates.ladiesCourseRating !== undefined) payload.ladies_course_rating = updates.ladiesCourseRating;
-  if (updates.ladiesSlopeRating !== undefined) payload.ladies_slope_rating = updates.ladiesSlopeRating;
+  if (updates.ladiesSlopeRating !== undefined) payload.ladies_slope_rating = normalizeSlopeRating(updates.ladiesSlopeRating);
   if (updates.teeSource !== undefined) payload.tee_source = updates.teeSource;
 
   // Competition holes
   if (updates.nearestPinHoles !== undefined) payload.nearest_pin_holes = updates.nearestPinHoles;
   if (updates.longestDriveHoles !== undefined) payload.longest_drive_holes = updates.longestDriveHoles;
+  if (updates.entryFeeDisplay !== undefined) {
+    const t = updates.entryFeeDisplay?.trim() ?? "";
+    payload.entry_fee_display = t.length > 0 ? t : null;
+  }
+  if (updates.rsvpDeadlineAt !== undefined) {
+    payload.rsvp_deadline_at = updates.rsvpDeadlineAt;
+  }
+  if (updates.scoringResultsStatus !== undefined) {
+    payload.scoring_results_status = updates.scoringResultsStatus;
+  }
+  if (updates.scoringPublishedAt !== undefined) {
+    payload.scoring_published_at = updates.scoringPublishedAt;
+  }
+  if (updates.scoringPublishVersion !== undefined) {
+    payload.scoring_publish_version = updates.scoringPublishVersion;
+  }
 
   // Server-side: ensure tee_id exists in course_tees (FK events_tee_id_fkey)
   if (payload.tee_id != null && payload.tee_id !== "") {
-    const { data: teeRow } = await supabase
+    const { data: teeRow } = await eventSupabase
       .from("course_tees")
       .select("id")
       .eq("id", payload.tee_id)
@@ -376,7 +576,7 @@ export async function updateEvent(
 
   console.log("[eventRepo] updateEvent:", { eventId, payload });
 
-  let { data, error } = await supabase
+  let { data, error } = await eventSupabase
     .from("events")
     .update(payload)
     .eq("id", eventId)
@@ -386,7 +586,7 @@ export async function updateEvent(
     if ((error as any).code === "23503" && payload.tee_id != null) {
       console.warn("[eventRepo] updateEvent: FK violation on tee_id, retrying with tee_id=null:", payload.tee_id);
       payload.tee_id = null;
-      const retry = await supabase
+      const retry = await eventSupabase
         .from("events")
         .update(payload)
         .eq("id", eventId)
@@ -403,13 +603,16 @@ export async function updateEvent(
         hint: error.hint,
         code: error.code,
       });
+      if (isSupabaseRlsError(error)) {
+        throw new Error(formatEventUpdatePermissionError());
+      }
       throw new Error(error.message || "Failed to update event");
     }
   }
 
   if (!data || (Array.isArray(data) && data.length === 0)) {
     console.error("[eventRepo] updateEvent: 0 rows updated (RLS may have blocked)");
-    throw new Error("Event could not be updated. You may not have permission to edit this event.");
+    throw new Error(formatEventUpdatePermissionError());
   }
 
   const row = Array.isArray(data) ? data[0] : data;
@@ -420,7 +623,7 @@ export async function updateEvent(
  * Delete an event
  */
 export async function deleteEvent(eventId: string): Promise<void> {
-  const { error } = await supabase.from("events").delete().eq("id", eventId);
+  const { error } = await eventSupabase.from("events").delete().eq("id", eventId);
 
   if (error) {
     console.error("[eventRepo] deleteEvent failed:", {
@@ -471,20 +674,24 @@ export async function publishTeeTime(
     throw new Error(`Invalid tee time format: ${start}. Expected HH:MM:SS`);
   }
 
-  // Try RPC first (migrations 038/039)
-  const { error: rpcError } = await supabase.rpc("publish_tee_times", {
-    p_event_id: eventId,
-    p_start: start,
-    p_interval: interval,
-  });
+  // Try RPC — migration 160 uses p_start_time; older migrations use p_start.
+  const rpcAttempts: Record<string, string | number>[] = [
+    { p_event_id: eventId, p_start_time: start, p_interval: interval },
+    { p_event_id: eventId, p_start: start, p_interval: interval },
+  ];
 
-  if (!rpcError) {
-    return getEvent(eventId);
+  let rpcError: { message: string } | null = null;
+  for (const args of rpcAttempts) {
+    const { error } = await eventSupabase.rpc("publish_tee_times", args);
+    if (!error) {
+      return getEvent(eventId);
+    }
+    rpcError = error;
   }
 
-  // Fallback: direct UPDATE (works when RPC doesn't exist)
-  console.warn("[eventRepo] publishTeeTime RPC failed, trying direct update:", rpcError.message);
-  const { error: updateError } = await supabase
+  // Fallback: direct UPDATE (works when the RPC is missing entirely).
+  console.warn("[eventRepo] publishTeeTime RPC failed, trying direct update:", rpcError?.message);
+  const { data: updatedRows, error: updateError } = await eventSupabase
     .from("events")
     .update({
       tee_time_start: start,
@@ -492,14 +699,52 @@ export async function publishTeeTime(
       tee_time_published_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     })
-    .eq("id", eventId);
+    .eq("id", eventId)
+    .select("id");
 
   if (updateError) {
     console.error("[eventRepo] publishTeeTime direct update failed:", updateError.message);
-    throw new Error(updateError.message || "Failed to publish tee times");
+    throw new Error(updateError.message || rpcError?.message || "Failed to publish tee times");
+  }
+
+  // An events UPDATE blocked by RLS silently affects 0 rows (no error). Surface it as a real
+  // failure instead of reporting a false success that never persisted published_at.
+  if (!updatedRows || updatedRows.length === 0) {
+    throw new Error(
+      rpcError?.message ||
+        "Publish failed — you don't have permission to publish tee times for this event.",
+    );
   }
 
   return getEvent(eventId);
+}
+
+/**
+ * Clear published tee times so members no longer see them.
+ * Uses RPC (joint events: participant ManCo cannot UPDATE events row via RLS).
+ */
+export async function unpublishTeeTimes(eventId: string): Promise<void> {
+  if (!eventId) throw new Error("unpublishTeeTimes: missing eventId");
+
+  const { error: rpcError } = await eventSupabase.rpc("unpublish_tee_times", {
+    p_event_id: eventId,
+  });
+
+  if (!rpcError) return;
+
+  console.warn("[eventRepo] unpublishTeeTimes RPC failed, trying direct update:", rpcError.message);
+  const { error: updateError } = await eventSupabase
+    .from("events")
+    .update({
+      tee_time_published_at: null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", eventId);
+
+  if (updateError) {
+    console.error("[eventRepo] unpublishTeeTimes direct update failed:", updateError.message);
+    throw new Error(updateError.message || "Failed to unpublish tee times");
+  }
 }
 
 // =====================================================
@@ -529,7 +774,7 @@ export async function updateEventFinance(
     costs_pence: costsPence,
   };
 
-  const { error } = await supabase
+  const { error } = await eventSupabase
     .from("events")
     .update(payload)
     .eq("id", eventId);
@@ -587,7 +832,7 @@ export async function getEventsFinanceSummary(societyId: string): Promise<{
 }> {
   console.log("[eventRepo] getEventsFinanceSummary:", societyId);
 
-  const { data, error } = await supabase
+  const { data, error } = await eventSupabase
     .from("events")
     .select("id, name, date, income_pence, costs_pence")
     .eq("society_id", societyId)

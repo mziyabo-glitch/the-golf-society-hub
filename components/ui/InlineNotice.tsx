@@ -5,7 +5,7 @@ import { Feather } from "@expo/vector-icons";
 import { AppText } from "./AppText";
 import { getColors, radius, spacing } from "@/lib/ui/theme";
 
-type InlineNoticeVariant = "success" | "error" | "info";
+type InlineNoticeVariant = "success" | "error" | "info" | "warning";
 
 type InlineNoticeProps = {
   message: string;
@@ -42,6 +42,12 @@ export function InlineNotice({
       bg: colors.info + "10",
       border: colors.info + "28",
       text: colors.info,
+    },
+    warning: {
+      iconName: "alert-triangle" as const,
+      bg: colors.warning + "14",
+      border: colors.warning + "35",
+      text: colors.warning,
     },
   }[variant];
 

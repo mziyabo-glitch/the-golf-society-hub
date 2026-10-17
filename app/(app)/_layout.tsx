@@ -4,6 +4,12 @@ import { View, StyleSheet } from "react-native";
 import { useSocietyMembershipGuard } from "@/lib/access/useSocietyMembershipGuard";
 import { LoadingState } from "@/components/ui/LoadingState";
 import { getColors, spacing } from "@/lib/ui/theme";
+import { useAnalyticsContext } from "@/lib/analytics/useAnalyticsContext";
+
+function AnalyticsContextBridge() {
+  useAnalyticsContext();
+  return null;
+}
 
 export default function AppLayout() {
   const { loading, isMember, redirecting } = useSocietyMembershipGuard();
@@ -34,7 +40,12 @@ export default function AppLayout() {
   }
 
   // Render Stack for both Personal Mode (no society) and Society Mode.
-  return <Stack screenOptions={{ headerShown: false }} />;
+  return (
+    <>
+      <AnalyticsContextBridge />
+      <Stack screenOptions={{ headerShown: false }} />
+    </>
+  );
 }
 
 const styles = StyleSheet.create({

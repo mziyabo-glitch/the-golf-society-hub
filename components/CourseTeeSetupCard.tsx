@@ -8,7 +8,6 @@
  * Local-first: shows saved tee data immediately, never dead-ends.
  */
 import { StyleSheet, View, Pressable } from "react-native";
-import { Feather } from "@expo/vector-icons";
 import { AppText } from "@/components/ui/AppText";
 import { AppInput } from "@/components/ui/AppInput";
 import { AppCard } from "@/components/ui/AppCard";

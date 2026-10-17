@@ -1,29 +1,44 @@
-import * as Print from "expo-print";
-import * as Sharing from "expo-sharing";
+/**
+ * Order of Merit PDF exports — standalone HTML → PDF file (expo-print on native; jsPDF on web).
+ */
 
-import { getOrderOfMeritTotals, getOrderOfMeritLog } from "@/lib/db_supabase/resultsRepo";
+import {
+  getOrderOfMeritLog,
+  getOrderOfMeritFullFieldExport,
+  type OomFullFieldStandingRow,
+  type OomLeaderPodiumSlot,
+} from "@/lib/db_supabase/resultsRepo";
 import { getSociety } from "@/lib/db_supabase/societyRepo";
-import { getMembersBySocietyId } from "@/lib/db_supabase/memberRepo";
 import { assertNoPrintAsync, validateInputs } from "./exportContract";
 import { getSocietyLogoDataUri, getSocietyLogoUrl } from "@/lib/societyLogo";
+import {
+  buildPdfDocumentShell,
+  buildPremiumPdfCss,
+  buildPdfLogoImg,
+  escapePdfHtml,
+  formatPdfGenerationTimestamp,
+  formatPdfNumber,
+  formatPdfDateShort,
+} from "./pdfExportTheme";
+import { printHtmlToPdfFileAsync } from "./printHtmlToPdfFile";
+import { sharePdfAsync } from "./sharePdf";
 
-type OomPdfRow = {
-  position: number;
-  memberName: string;
-  handicapLabel: string | null;
-  points: number;
-  wins: number;
-  played: number;
-};
+// --- Public payload types -------------------------------------------------
 
-type OomPdfOptions = {
+export type OrderOfMeritPdfPayload = {
   societyName: string;
   logoUrl: string | null;
   seasonYear: number;
-  rows: OomPdfRow[];
+  seasonSubtitle: string;
+  oomEventCount: number;
+  leadersTop3: OomLeaderPodiumSlot[];
+  standings: OomFullFieldStandingRow[];
+  generatedAt: string;
+  totalMembers: number;
+  membersWithPoints: number;
 };
 
-type OomLogEvent = {
+export type OomMatrixEventBlock = {
   eventId: string;
   eventName: string;
   eventDate: string | null;
@@ -36,301 +51,337 @@ type OomLogEvent = {
   }>;
 };
 
+export type OomMatrixPdfPayload = {
+  societyName: string;
+  logoUrl: string | null;
+  seasonYear: number;
+  seasonSubtitle: string;
+  events: OomMatrixEventBlock[];
+  generatedAt: string;
+};
+
 /**
- * Build clean HTML for OOM PDF export.
- * Layout: centered logo, title "Order of Merit", subtitle "<SocietyName> – <SeasonYear>",
- * then a table with columns: Pos | Member | Points | Wins | Played
+ * Order of Merit PDF — strict print mode: minimal header, dense table, natural page breaks.
+ * No logo, cards, or decorative chrome. `seasonSubtitle` already includes season + event count;
+ * do not append `oomEventCount` again (avoids "1 event · 1 event").
  */
-export function buildOomPdfHtml(options: OomPdfOptions): string {
-  const { societyName, logoUrl, seasonYear, rows } = options;
+export function buildOrderOfMeritPdfHtml(p: OrderOfMeritPdfPayload): string {
+  const uniqueRows = p.standings.filter((row, idx, arr) => {
+    const id = String(row.memberId);
+    return arr.findIndex((item) => String(item.memberId) === id) === idx;
+  });
 
-  const rowHtml = rows
+  const css = `
+@page {
+  size: A4 portrait;
+  margin: 7mm 9mm;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html, body {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  max-width: 100%;
+}
+
+body {
+  font-family: Arial, Helvetica, sans-serif;
+  font-size: 10px;
+  line-height: 1.2;
+  color: #111;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+
+.pdf-root.doc {
+  width: 100%;
+  max-width: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+.print-header {
+  margin: 0 0 4px 0;
+  padding: 0;
+}
+
+.print-header .title {
+  font-size: 13px;
+  font-weight: 700;
+  margin: 0;
+  line-height: 1.2;
+  color: #111;
+}
+
+.print-header .meta {
+  font-size: 9px;
+  color: #555;
+  margin: 0;
+  line-height: 1.2;
+}
+
+.print-header .meta + .meta {
+  margin-top: 1px;
+}
+
+.standings {
+  width: 100%;
+  max-width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+  font-size: 10px;
+  line-height: 1.2;
+}
+
+.standings thead {
+  display: table-header-group;
+}
+
+.standings tbody tr {
+  page-break-inside: auto;
+  break-inside: auto;
+}
+
+.standings th,
+.standings td {
+  min-width: 0;
+  padding: 3px;
+  border-bottom: 1px solid #ccc;
+  vertical-align: middle;
+  line-height: 1.2;
+}
+
+.standings thead th {
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: uppercase;
+  color: #444;
+  border-bottom: 1px solid #999;
+}
+
+.standings .c-pos {
+  width: 10%;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.standings .c-player {
+  width: 58%;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.standings .c-ev {
+  width: 12%;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.standings .c-pts {
+  width: 20%;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.standings tbody td.c-pts.muted {
+  color: #666;
+}
+
+.footer {
+  margin-top: 4px;
+  font-size: 9px;
+  color: #666;
+  line-height: 1.2;
+}
+`;
+
+  const line2 = `${escapePdfHtml(p.societyName)} · ${p.seasonYear}`;
+  const line3 = `${escapePdfHtml(p.seasonSubtitle)} · Generated ${escapePdfHtml(p.generatedAt)}`;
+
+  const footerLine = `${p.totalMembers} members · ${p.membersWithPoints} with OOM points · Generated ${escapePdfHtml(p.generatedAt)}`;
+  const rowsHtml = uniqueRows
     .map((row) => {
-      const memberLabel = row.handicapLabel
-        ? `${escapeHtml(row.memberName)} (HCP: ${escapeHtml(row.handicapLabel)})`
-        : escapeHtml(row.memberName);
-
-      // Medal emoji for top 3, plain number for rest
-      const posDisplay =
-        row.position === 1
-          ? '<span class="medal">&#x1F947;</span>'
-          : row.position === 2
-            ? '<span class="medal">&#x1F948;</span>'
-            : row.position === 3
-              ? '<span class="medal">&#x1F949;</span>'
-              : `${row.position}`;
-
-      const top3Class = row.position <= 3 ? " top3" : "";
-
-      return `
-        <tr class="${top3Class}">
-          <td class="num">${posDisplay}</td>
-          <td class="member">${memberLabel}</td>
-          <td class="num bold">${formatPoints(row.points)}</td>
-          <td class="num">${row.wins}</td>
-          <td class="num">${row.played}</td>
-        </tr>`;
+      const pos = row.rank;
+      const pts =
+        row.totalPoints > 0 || row.hasOomPoints
+          ? formatPdfNumber(row.totalPoints)
+          : "—";
+      const ptsClass =
+        !row.hasOomPoints && row.totalPoints === 0 ? "c-pts muted" : "c-pts";
+      return `<tr>
+        <td class="c-pos">${pos}</td>
+        <td class="c-player">${escapePdfHtml(row.memberName)}</td>
+        <td class="c-ev">${row.eventsPlayed}</td>
+        <td class="${ptsClass}">${pts}</td>
+      </tr>`;
     })
     .join("");
 
-  const logoHtml = logoUrl
-    ? `<img class="logo" src="${escapeAttribute(logoUrl)}" />`
-    : "";
+  const inner = `
+<div class="print-header">
+  <div class="title">Order of Merit</div>
+  <div class="meta">${line2}</div>
+  <div class="meta">${line3}</div>
+</div>
+<table class="standings">
+  <thead>
+    <tr>
+      <th class="c-pos" style="width:10%">Pos</th>
+      <th class="c-player" style="width:58%">Player</th>
+      <th class="c-ev" style="width:12%">Ev</th>
+      <th class="c-pts" style="width:20%">Pts</th>
+    </tr>
+  </thead>
+  <tbody>${rowsHtml}</tbody>
+</table>
+<p class="footer">${footerLine}</p>`;
 
-  return `<!doctype html>
-<html>
-<head>
-<meta charset="utf-8" />
-<style>
-  body { font-family: Arial, sans-serif; padding: 24px; color:#111; }
-  .wrap { max-width: 720px; margin: 0 auto; }
-  .logo { width: 72px; height: 72px; object-fit: contain; object-position: center; display: block; margin: 0 auto 12px; }
-  h1 { text-align:center; margin: 6px 0 2px; font-size: 20px; }
-  .sub { text-align:center; color:#444; margin: 0 0 16px; font-size: 12px; }
-  table { width:100%; border-collapse: collapse; font-size: 12px; }
-  th { background:#0f6b4a; color:#fff; text-align:left; padding:8px; border:1px solid #0b4f37; }
-  th.num { text-align:center; }
-  td { padding:8px; border:1px solid #d6d6d6; vertical-align: top; }
-  .num { text-align:center; width:64px; }
-  .bold { font-weight:700; }
-  .member { width:auto; }
-  .medal { font-size:18px; }
-  tr.top3 { background:#FFFBEB; }
-  tr.top3 td.member { font-weight:600; }
-  .footer { text-align:center; margin-top: 24px; padding-top: 12px; border-top:1px solid #e5e7eb; font-size: 11px; color:#9ca3af; font-style:italic; }
-</style>
-</head>
-<body>
-  <div class="wrap">
-    ${logoHtml}
-    <h1>Order of Merit</h1>
-    <div class="sub">${escapeHtml(societyName)} – ${seasonYear}</div>
-
-    <table>
-      <thead>
-        <tr>
-          <th class="num">Pos</th>
-          <th class="member">Member</th>
-          <th class="num">Points</th>
-          <th class="num">Wins</th>
-          <th class="num">Played</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${rowHtml}
-      </tbody>
-    </table>
-
-    <div class="footer">Produced by The Golf Society Hub</div>
-  </div>
-</body>
-</html>`;
+  return buildPdfDocumentShell({
+    title: `Order of Merit — ${p.societyName}`,
+    css,
+    bodyInnerHtml: inner,
+  });
 }
 
-/**
- * Export OOM leaderboard as a clean PDF.
- * Uses expo-print HTML -> Print.printToFileAsync and Sharing.shareAsync.
- * PDF contains only the document (no tabs, no app chrome).
- */
+/** Per-event matrix (results log) — premium layout. */
+export function buildOomMatrixPdfHtml(p: OomMatrixPdfPayload): string {
+  const css = buildPremiumPdfCss(`
+    .matrix-event { page-break-inside: avoid; break-inside: avoid; margin-bottom: 18px; border: 1px solid #e2e8f0; border-radius: 8px; overflow: visible; }
+    .matrix-event-head { padding: 10px 12px; background: #f8fafc; border-bottom: 1px solid #e2e8f0; }
+    .matrix-event-title { font-weight: 700; font-size: 14px; color: #0f172a; }
+    .matrix-event-meta { font-size: 11px; color: #475569; margin-top: 4px; }
+  `);
+
+  const logo = buildPdfLogoImg(p.logoUrl, p.societyName);
+  const blocks =
+    p.events.length === 0
+      ? `<div class="empty-msg">No saved results yet.</div>`
+      : p.events
+          .map((ev) => {
+            const dateStr = ev.eventDate ? formatPdfDateShort(ev.eventDate) : "Date TBC";
+            const fmt = ev.format
+              ? ev.format.charAt(0).toUpperCase() + ev.format.slice(1).replace(/_/g, " ")
+              : "";
+            const body = ev.results
+              .map((row) => {
+                const posDisp =
+                  row.position === 1
+                    ? "🥇"
+                    : row.position === 2
+                      ? "🥈"
+                      : row.position === 3
+                        ? "🥉"
+                        : row.position != null
+                          ? String(row.position)
+                          : "–";
+                const scr =
+                  row.dayValue != null && row.dayValue !== ("" as unknown)
+                    ? String(row.dayValue)
+                    : "–";
+                return `<tr>
+              <td class="num">${posDisp}</td>
+              <td>${escapePdfHtml(row.memberName)}</td>
+              <td class="num">${scr}</td>
+              <td class="num rt">${formatPdfNumber(row.points)}</td>
+            </tr>`;
+              })
+              .join("");
+            return `<div class="matrix-event">
+            <div class="matrix-event-head">
+              <div class="matrix-event-title">${escapePdfHtml(ev.eventName)}</div>
+              <div class="matrix-event-meta">${escapePdfHtml(dateStr)}${fmt ? ` · ${escapePdfHtml(fmt)}` : ""}</div>
+            </div>
+            <table class="sheet"><thead><tr>
+              <th class="num">Pos</th><th>Player</th><th class="num">Score</th><th class="num rt">OOM</th>
+            </tr></thead><tbody>${body}</tbody></table>
+          </div>`;
+          })
+          .join("");
+
+  const inner = `
+  <header class="doc-header block-avoid">
+    ${logo ? `<div class="doc-logo-wrap">${logo}</div>` : ""}
+    <div class="doc-header-main">
+      <div class="doc-brand-kicker">Produced by The Golf Society Hub</div>
+      <h1 class="doc-title">Order of Merit</h1>
+      <p class="doc-subtitle">Results matrix · ${escapePdfHtml(p.societyName)} · ${p.seasonYear}</p>
+      <p class="doc-meta">${escapePdfHtml(p.seasonSubtitle)} · Generated ${escapePdfHtml(p.generatedAt)}</p>
+    </div>
+  </header>
+  <p class="doc-meta" style="margin:0 0 12px;">Per-event scores and OOM points for your society.</p>
+  ${blocks}
+  <footer class="doc-footer">
+    <span class="brand">The Golf Society Hub</span><br />
+    ${escapePdfHtml(p.generatedAt)}
+  </footer>`;
+
+  return buildPdfDocumentShell({
+    title: `OOM Results — ${p.societyName}`,
+    css,
+    bodyInnerHtml: inner,
+  });
+}
+
 export async function exportOomPdf(societyId: string): Promise<void> {
   assertNoPrintAsync();
   validateInputs({ societyId });
 
-  const [society, totals, log, members] = await Promise.all([
+  const [society, fullField, log] = await Promise.all([
     getSociety(societyId),
-    getOrderOfMeritTotals(societyId),
+    getOrderOfMeritFullFieldExport(societyId),
     getOrderOfMeritLog(societyId),
-    getMembersBySocietyId(societyId),
   ]);
 
-  const memberMap = new Map(members.map((m) => [m.id, m]));
-  const winsMap = buildWinsMap(log);
-  const playedMap = buildPlayedMap(log);
-
-  // Filter to members with >0 points
-  const filtered = totals.filter((entry) => entry.totalPoints > 0);
-
-  // Sort by Points desc, then Wins desc, then name asc
-  const sorted = filtered.sort((a, b) => {
-    if (b.totalPoints !== a.totalPoints) return b.totalPoints - a.totalPoints;
-    const winsA = winsMap.get(a.memberId) || 0;
-    const winsB = winsMap.get(b.memberId) || 0;
-    if (winsB !== winsA) return winsB - winsA;
-    return a.memberName.localeCompare(b.memberName);
-  });
-
-  // Assign positions with tie handling (same points = same position)
-  let currentPos = 1;
-  let lastPoints: number | null = null;
-
-  const rows: OomPdfRow[] = sorted.map((entry, index) => {
-    if (lastPoints !== null && entry.totalPoints < lastPoints) {
-      currentPos = index + 1;
-    }
-    lastPoints = entry.totalPoints;
-
-    const member = memberMap.get(entry.memberId);
-    // Use playing_handicap or handicap_index (whichever exists)
-    const handicapValue =
-      (member as any)?.playing_handicap ??
-      member?.handicapIndex ??
-      member?.handicap_index ??
-      null;
-    const handicapLabel =
-      handicapValue != null ? Number(handicapValue).toFixed(1) : null;
-
-    return {
-      position: currentPos,
-      memberName: entry.memberName,
-      handicapLabel,
-      points: entry.totalPoints,
-      wins: winsMap.get(entry.memberId) || 0,
-      played: playedMap.get(entry.memberId) || 0,
-    };
-  });
-
-  // Convert remote logo URL to base64 data URI so expo-print can embed it
   const rawLogoUrl = getSocietyLogoUrl(society);
   const logoDataUri = rawLogoUrl
     ? await getSocietyLogoDataUri(societyId, { logoUrl: rawLogoUrl })
     : null;
   const logoSrc = logoDataUri ?? rawLogoUrl;
 
-  const html = buildOomPdfHtml({
+  const year = new Date().getFullYear();
+  const eventCount = new Set(log.map((e) => e.eventId)).size;
+  const seasonSubtitle = `${year} Season${eventCount ? ` · ${eventCount} event${eventCount !== 1 ? "s" : ""}` : ""}`;
+
+  const membersWithPoints = fullField.standings.filter((s) => s.hasOomPoints).length;
+
+  const html = buildOrderOfMeritPdfHtml({
     societyName: society?.name || "Golf Society",
     logoUrl: logoSrc,
-    seasonYear: new Date().getFullYear(),
-    rows,
+    seasonYear: year,
+    seasonSubtitle,
+    oomEventCount: fullField.oomEventCount,
+    leadersTop3: fullField.leadersTop3,
+    standings: fullField.standings,
+    generatedAt: formatPdfGenerationTimestamp(),
+    totalMembers: fullField.standings.length,
+    membersWithPoints,
   });
 
-  const { uri } = await Print.printToFileAsync({ html });
-  const canShare = await Sharing.isAvailableAsync();
-  if (!canShare) {
-    throw new Error("Sharing is not available on this device.");
-  }
-
-  await Sharing.shareAsync(uri, {
+  const { uri } = await printHtmlToPdfFileAsync({ html, base64: false });
+  await sharePdfAsync({
+    uri,
     mimeType: "application/pdf",
     dialogTitle: "Order of Merit",
+    filename: "order-of-merit",
   });
 }
 
-/**
- * Build HTML for the OOM Results Log PDF export.
- */
-export function buildOomResultsLogHtml(options: {
-  societyName: string;
-  logoUrl: string | null;
-  seasonYear: number;
-  events: OomLogEvent[];
-}): string {
-  const { societyName, logoUrl, seasonYear, events } = options;
-
-  const logoHtml = logoUrl
-    ? `<img class="logo" src="${escapeAttribute(logoUrl)}" />`
-    : "";
-
-  const eventBlocks = events
-    .map((event) => {
-      const rows = event.results
-        .map((row) => {
-          const posDisplay = row.position ?? "–";
-          const scoreDisplay = row.dayValue ?? "–";
-          return `
-            <tr>
-              <td class="num">${posDisplay}</td>
-              <td>${escapeHtml(row.memberName)}</td>
-              <td class="num">${scoreDisplay}</td>
-              <td class="num bold">${formatPoints(row.points)}</td>
-            </tr>
-          `;
-        })
-        .join("");
-
-      const dateLabel = event.eventDate
-        ? new Date(event.eventDate).toLocaleDateString("en-GB", {
-            day: "numeric",
-            month: "short",
-            year: "numeric",
-          })
-        : "Date TBC";
-
-      const formatLabel = event.format
-        ? event.format.charAt(0).toUpperCase() + event.format.slice(1).replace(/_/g, " ")
-        : "";
-
-      return `
-        <div class="event-block">
-          <div class="event-header">
-            <div class="event-title">${escapeHtml(event.eventName)}</div>
-            <div class="event-meta">${dateLabel}${formatLabel ? ` • ${escapeHtml(formatLabel)}` : ""}</div>
-          </div>
-          <table>
-            <thead>
-              <tr>
-                <th class="num">Pos</th>
-                <th>Player</th>
-                <th class="num">Score</th>
-                <th class="num">OOM</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${rows}
-            </tbody>
-          </table>
-        </div>
-      `;
-    })
-    .join("");
-
-  return `<!doctype html>
-<html>
-<head>
-<meta charset="utf-8" />
-<style>
-  body { font-family: Arial, sans-serif; padding: 24px; color:#111; }
-  .wrap { max-width: 720px; margin: 0 auto; }
-  .logo { width: 72px; height: 72px; object-fit: contain; object-position: center; display: block; margin: 0 auto 12px; }
-  h1 { text-align:center; margin: 6px 0 2px; font-size: 20px; }
-  .sub { text-align:center; color:#444; margin: 0 0 16px; font-size: 12px; }
-  .event-block { margin-bottom: 18px; border:1px solid #e5e7eb; border-radius: 8px; overflow: hidden; }
-  .event-header { padding: 10px 12px; background:#f9fafb; border-bottom:1px solid #e5e7eb; }
-  .event-title { font-weight: 700; font-size: 13px; }
-  .event-meta { font-size: 11px; color:#6b7280; margin-top: 2px; }
-  table { width:100%; border-collapse: collapse; font-size: 12px; }
-  th { background:#0f6b4a; color:#fff; text-align:left; padding:8px; border:1px solid #0b4f37; }
-  th.num { text-align:center; width:64px; }
-  td { padding:8px; border:1px solid #e5e7eb; }
-  td.num { text-align:center; width:64px; }
-  .bold { font-weight:700; }
-  .footer { text-align:center; margin-top: 24px; padding-top: 12px; border-top:1px solid #e5e7eb; font-size: 11px; color:#9ca3af; font-style:italic; }
-</style>
-</head>
-<body>
-  <div class="wrap">
-    ${logoHtml}
-    <h1>Order of Merit — Results Log</h1>
-    <div class="sub">${escapeHtml(societyName)} – ${seasonYear}</div>
-    ${eventBlocks || `<div style="text-align:center; color:#6b7280; padding: 24px;">No results yet.</div>`}
-    <div class="footer">Produced by The Golf Society Hub</div>
-  </div>
-</body>
-</html>`;
-}
-
-/**
- * Export OOM results log as a clean PDF.
- */
 export async function exportOomResultsLogPdf(societyId: string): Promise<void> {
   assertNoPrintAsync();
   validateInputs({ societyId });
 
-  const [society, log] = await Promise.all([
-    getSociety(societyId),
-    getOrderOfMeritLog(societyId),
-  ]);
+  const [society, log] = await Promise.all([getSociety(societyId), getOrderOfMeritLog(societyId)]);
 
-  const grouped: OomLogEvent[] = [];
+  const grouped: OomMatrixEventBlock[] = [];
   let currentEventId: string | null = null;
 
   for (const entry of log) {
@@ -358,110 +409,66 @@ export async function exportOomResultsLogPdf(societyId: string): Promise<void> {
     : null;
   const logoSrc = logoDataUri ?? rawLogoUrl;
 
-  const html = buildOomResultsLogHtml({
+  const year = new Date().getFullYear();
+  const eventCount = grouped.length;
+  const seasonSubtitle = `${year} Season${eventCount ? ` · ${eventCount} event${eventCount !== 1 ? "s" : ""} with results` : ""}`;
+
+  const html = buildOomMatrixPdfHtml({
     societyName: society?.name || "Golf Society",
     logoUrl: logoSrc,
-    seasonYear: new Date().getFullYear(),
+    seasonYear: year,
+    seasonSubtitle,
     events: grouped,
+    generatedAt: formatPdfGenerationTimestamp(),
   });
 
-  const { uri } = await Print.printToFileAsync({ html });
-  const canShare = await Sharing.isAvailableAsync();
-  if (!canShare) {
-    throw new Error("Sharing is not available on this device.");
-  }
-
-  await Sharing.shareAsync(uri, {
+  const { uri } = await printHtmlToPdfFileAsync({ html, base64: false });
+  await sharePdfAsync({
+    uri,
     mimeType: "application/pdf",
-    dialogTitle: "Order of Merit Results Log",
+    dialogTitle: "Order of Merit — Results matrix",
+    filename: "oom-results-matrix",
   });
 }
 
-/**
- * Build a map of memberId -> number of wins.
- * A "win" is when a player finished position 1 or had the highest points in an event.
- */
-export function buildWinsMap(log: Array<{
-  eventId: string;
-  memberId: string;
-  points: number;
-  position: number | null;
-}>): Map<string, number> {
+/** @deprecated Prefer server-shaped log entries; kept for any legacy callers building win counts. */
+export function buildWinsMap(
+  log: Array<{ eventId: string; memberId: string; points: number; position: number | null }>,
+): Map<string, number> {
   const wins = new Map<string, number>();
   const grouped = new Map<string, typeof log>();
-
   for (const entry of log) {
     if (!grouped.has(entry.eventId)) grouped.set(entry.eventId, []);
     grouped.get(entry.eventId)!.push(entry);
   }
-
   grouped.forEach((entries) => {
     if (entries.length === 0) return;
     const hasPositions = entries.some((e) => e.position === 1);
     let winners: typeof entries = [];
-
-    if (hasPositions) {
-      winners = entries.filter((e) => e.position === 1);
-    } else {
+    if (hasPositions) winners = entries.filter((e) => e.position === 1);
+    else {
       const maxPoints = Math.max(...entries.map((e) => e.points || 0));
       winners = entries.filter((e) => e.points === maxPoints);
     }
-
     winners.forEach((entry) => {
       wins.set(entry.memberId, (wins.get(entry.memberId) || 0) + 1);
     });
   });
-
   return wins;
 }
 
-/**
- * Build a map of memberId -> number of events played.
- * Only counts events where the player has OOM points > 0.
- */
-export function buildPlayedMap(log: Array<{
-  eventId: string;
-  memberId: string;
-  points: number;
-}>): Map<string, number> {
+export function buildPlayedMap(
+  log: Array<{ eventId: string; memberId: string; points: number }>,
+): Map<string, number> {
   const played = new Map<string, Set<string>>();
-
   for (const entry of log) {
     if (entry.points <= 0) continue;
     if (!played.has(entry.memberId)) played.set(entry.memberId, new Set());
     played.get(entry.memberId)!.add(entry.eventId);
   }
-
   const counts = new Map<string, number>();
   played.forEach((set, memberId) => {
     counts.set(memberId, set.size);
   });
   return counts;
-}
-
-/**
- * Format points for display - show decimal only if not a whole number.
- */
-function formatPoints(points: number): string {
-  if (points === Math.floor(points)) return points.toString();
-  return points.toFixed(1);
-}
-
-/**
- * Escape HTML special characters to prevent XSS.
- */
-function escapeHtml(input: string): string {
-  return input
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
-
-/**
- * Escape string for use in HTML attributes.
- */
-function escapeAttribute(input: string): string {
-  return escapeHtml(input).replace(/"/g, "&quot;");
 }
