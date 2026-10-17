@@ -1,0 +1,83 @@
+{
+  "run": "phase1-20260721171921",
+  "events": {
+    "joint": "d3fa3608-27ce-431f-b550-4404fb717733",
+    "other": "7a25a6c2-3235-410a-a59f-c81f0907e511",
+    "m4Standard": "612d214f-abb5-46f3-a830-e4465ab317ab",
+    "zgsStandard": "be9b3b71-aa6a-408a-9338-a940c16675ae"
+  },
+  "players": {
+    "late": {
+      "id": "179a8e99-3c2c-4b6e-a288-17001edbc6a2",
+      "name": "QA Late Paid Player"
+    },
+    "paid": {
+      "id": "f6e6352d-e3c8-4ea5-8c55-16ee1254fe4e",
+      "name": "QA Paid Player"
+    },
+    "dualM4": {
+      "id": "9eabb43c-f8dd-4a40-bcfc-b5d82bed9baa",
+      "name": "QA Dual Member"
+    },
+    "unpaid": {
+      "id": "6b052f95-144b-4e7e-b40b-3cb05b293200",
+      "name": "QA Unpaid Player"
+    },
+    "dualZgs": {
+      "id": "8e6f82c3-45cc-40db-9194-ef88748a5574",
+      "name": "QA Dual Member"
+    },
+    "zgsPaid": {
+      "id": "6b8b8da7-db20-4cda-9f18-ef8da4af547f",
+      "name": "QA ZGS Paid Player"
+    },
+    "ordinary": {
+      "id": "39318d2b-0720-4f76-a094-63ece20fae88",
+      "name": "QA Ordinary Member"
+    }
+  },
+  "accounts": {
+    "dual": {
+      "email": "qa.phase1.dual@gsh-qa.test",
+      "userId": "85a06926-8a39-4ae6-bf20-b87a2d050330",
+      "societyId": "16aaf60a-8360-402c-8ddd-cc6e4ac2f287",
+      "m4MemberId": "9eabb43c-f8dd-4a40-bcfc-b5d82bed9baa",
+      "zgsMemberId": "8e6f82c3-45cc-40db-9194-ef88748a5574"
+    },
+    "m4Captain": {
+      "email": "qa.phase1.m4captain@gsh-qa.test",
+      "userId": "ac59422d-c8e2-4481-bd54-a8fc89b8772c",
+      "memberId": "4eecb8f3-51a8-493f-818f-9cf87d2d0940",
+      "societyId": "16aaf60a-8360-402c-8ddd-cc6e4ac2f287"
+    },
+    "zgsCaptain": {
+      "email": "qa.phase1.zgscaptain@gsh-qa.test",
+      "userId": "b4d0c165-5b83-40dd-89df-399e85017872",
+      "memberId": "2fa67537-9d99-4d89-af2b-672447776211",
+      "societyId": "139e228e-2fee-4423-a138-817730bcc527"
+    },
+    "otherCaptain": {
+      "email": "qa.phase1.othercaptain@gsh-qa.test",
+      "userId": "ec487301-e8ec-4d8d-b68a-675e4a4426fb",
+      "memberId": "898bf1f9-b81d-4416-86c5-e7c6348fb96d",
+      "societyId": "5355ca0a-46e1-48b7-a649-93cd7cd8dfe6"
+    },
+    "platformAdmin": {
+      "email": "qa.phase1.platformadmin@gsh-qa.test",
+      "userId": "a7ed5ba7-3c23-46d1-aa31-a1907a951f74"
+    },
+    "ordinaryMember": {
+      "email": "qa.phase1.member@gsh-qa.test",
+      "userId": "b44a2c5e-9aa6-4952-83ef-c48656f7e556",
+      "memberId": "39318d2b-0720-4f76-a094-63ece20fae88",
+      "societyId": "16aaf60a-8360-402c-8ddd-cc6e4ac2f287"
+    }
+  },
+  "password": "QaPhase1Test!2026",
+  "societies": {
+    "m4": "16aaf60a-8360-402c-8ddd-cc6e4ac2f287",
+    "zgs": "139e228e-2fee-4423-a138-817730bcc527",
+    "other": "5355ca0a-46e1-48b7-a649-93cd7cd8dfe6"
+  },
+  "baseUrlHint": "https://the-golf-society-hub.vercel.app"
+}
