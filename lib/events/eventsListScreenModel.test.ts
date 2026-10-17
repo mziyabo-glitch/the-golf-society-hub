@@ -1,3 +1,4 @@
+import { describe, expect, it } from "vitest";
 import type { EventDoc } from "@/lib/db_supabase/eventRepo";
 import type { EventRegistration } from "@/lib/db_supabase/eventRegistrationRepo";
 import {
