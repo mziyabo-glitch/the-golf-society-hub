@@ -139,7 +139,7 @@ function mapEvent(row: any): EventDoc {
     format: row.format ?? 'stableford',
     classification: row.classification ?? 'general',
     isCompleted: row.is_completed ?? false,
-    isOOM: row.is_oom ?? (row.classification === 'oom'),
+    isOOM: row.is_oom ?? (row.classification === 'oom' || row.classification === 'major'),
     winnerName: row.winner_name,
     playerIds: row.player_ids ?? [],
     results: row.results ?? {},
@@ -389,7 +389,7 @@ export async function createEvent(
     tee_id: data.teeId ?? null,
     format: data.format,
     classification: classification,
-    is_oom: classification === 'oom',
+    is_oom: classification === 'oom' || classification === 'major',
     is_completed: false,
   };
 
@@ -517,7 +517,7 @@ export async function updateEvent(
   if (updates.format !== undefined) payload.format = updates.format;
   if (updates.classification !== undefined) {
     payload.classification = updates.classification;
-    payload.is_oom = updates.classification === 'oom';
+    payload.is_oom = updates.classification === 'oom' || updates.classification === 'major';
   }
   if (updates.status !== undefined) payload.status = updates.status;
   if (updates.isCompleted !== undefined) payload.is_completed = updates.isCompleted;
