@@ -107,6 +107,19 @@ describe("calculateFieldPositionsAndMemberOomPoints (strokeplay / low_wins)", ()
     expect(out.find((p) => p.memberId === "guest-g1")!.oomPoints).toBe(0);
     expect(out.find((p) => p.memberId === "m1")!.oomPoints).toBe(25);
   });
+
+  it("cross-society member at 73 gets field position 2 but 0 M4 OOM points", () => {
+    const out = calculateFieldPositionsAndMemberOomPoints(
+      [
+        { memberId: "m4-1", memberName: "M4 Winner", dayPoints: "70", isOomEligible: true },
+        { memberId: "zgs-1", memberName: "ZGS Second", dayPoints: "73", isOomEligible: false },
+        { memberId: "m4-2", memberName: "M4 Tied", dayPoints: "73", isOomEligible: true },
+      ],
+      "low_wins",
+    );
+    expect(out.find((p) => p.memberId === "zgs-1")!.oomPoints).toBe(0);
+    expect(out.find((p) => p.memberId === "m4-2")!.oomPoints).toBe(18);
+  });
 });
 
 describe("getOOMPointsForPosition", () => {

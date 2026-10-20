@@ -16,7 +16,7 @@ export async function getOomLeaderboard(societyId: string): Promise<OomRow[]> {
     .from("events")
     .select("id, scoring_results_status")
     .eq("society_id", societyId)
-    .eq("classification", "oom");
+    .in("classification", ["oom", "major"]);
 
   if (eventsError) throw eventsError;
   if (!events || events.length === 0) return [];

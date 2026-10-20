@@ -10,6 +10,11 @@
 import type { MemberDoc } from "@/lib/db_supabase/memberRepo";
 import type { GroupedPlayer } from "@/lib/teeSheetGrouping";
 import { resolveAttendeeDisplayName } from "@/lib/eventAttendeeName";
+import {
+  jointPersonNameTokenKey,
+  jointPersonNamesEquivalent,
+  normalizeJointPersonName,
+} from "@/lib/jointPersonNameMatch";
 
 /** Stable key for grouping; two rows with the same key are treated as one person. */
 export function canonicalJointPersonKey(member: MemberDoc | null | undefined): string {
@@ -33,9 +38,25 @@ function normalizeEmailForJointMerge(member: MemberDoc): string {
   return e;
 }
 
+function memberNameCandidatesForJointMerge(member: MemberDoc): string[] {
+  const m = member as MemberDoc & { first_name?: string | null; last_name?: string | null };
+  const combined = [m.first_name, m.last_name]
+    .map((x) => (typeof x === "string" ? x.trim() : ""))
+    .filter(Boolean)
+    .join(" ")
+    .trim();
+  const raw = [m.name, m.display_name, m.displayName, combined];
+  const out = new Set<string>();
+  for (const r of raw) {
+    const t = String(r ?? "").trim();
+    if (t) out.add(t);
+  }
+  return [...out];
+}
+
 function normalizeNameForJointMerge(member: MemberDoc): string {
-  const raw = (member.displayName || member.display_name || member.name || "").trim().toLowerCase();
-  return raw.replace(/\s+/g, " ");
+  const primary = memberNameCandidatesForJointMerge(member)[0] ?? "";
+  return primary.trim().toLowerCase().replace(/\s+/g, " ");
 }
 
 function shouldMergeJointMemberPair(a: MemberDoc, b: MemberDoc): boolean {
@@ -53,10 +74,29 @@ function shouldMergeJointMemberPair(a: MemberDoc, b: MemberDoc): boolean {
 
   const socA = a.society_id?.trim();
   const socB = b.society_id?.trim();
+
+  for (const nameA of memberNameCandidatesForJointMerge(a)) {
+    for (const nameB of memberNameCandidatesForJointMerge(b)) {
+      if (!jointPersonNamesEquivalent(nameA, nameB)) continue;
+
+      if (!socA || !socB || socA === socB) return true;
+
+      const linkedA = Boolean(uidA);
+      const linkedB = Boolean(uidB);
+      if (linkedA && linkedB && uidA === uidB) return true;
+      if (linkedA !== linkedB) return true;
+
+      const na = normalizeJointPersonName(nameA);
+      const nb = normalizeJointPersonName(nameB);
+      if (na === nb) return true;
+      if (jointPersonNameTokenKey(nameA) === jointPersonNameTokenKey(nameB)) return true;
+    }
+  }
+
   if (socA && socB && socA !== socB) {
-    const nameA = normalizeNameForJointMerge(a);
-    const nameB = normalizeNameForJointMerge(b);
-    if (nameA.length >= 3 && nameA === nameB) {
+    const normA = normalizeNameForJointMerge(a);
+    const normB = normalizeNameForJointMerge(b);
+    if (normA.length >= 3 && normA === normB) {
       const linkedA = Boolean(uidA);
       const linkedB = Boolean(uidB);
       if (linkedA !== linkedB) return true;
