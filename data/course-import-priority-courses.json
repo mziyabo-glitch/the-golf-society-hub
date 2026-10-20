@@ -63,11 +63,12 @@
     },
     {
       "courseName": "Upavon Golf Club",
-      "officialScorecardUrl": "https://www.upavongolfclub.co.uk/scorecard",
-      "sourceType": "html",
-      "notes": "Use official scorecard page first, then follow embedded scorecard links.",
+      "officialScorecardUrl": "https://www.upavongolfclub.co.uk/uploads/upavon/File/Upavon%20Scorecard%20June%202026.pdf",
+      "sourceType": "pdf",
+      "notes": "Official June 2026 scorecard PDF — Black/White/Yellow/Red tees with CR, slope, SI.",
       "officialUrls": [
         "https://www.upavongolfclub.co.uk/scorecard",
+        "https://www.upavongolfclub.co.uk/uploads/upavon/File/Upavon%20Scorecard%20June%202026.pdf",
         "https://upavongolfclub.co.uk/",
         "https://www.upavongolfclub.co.uk/"
       ]

@@ -30,6 +30,20 @@ export function isGuestEntrantKey(memberId: string): boolean {
   return String(memberId).startsWith("guest-");
 }
 
+/** Guests are never OOM-eligible; members are unless explicitly marked ineligible. */
+export function resolveOomPointEligible(memberId: string, isOomEligible?: boolean): boolean {
+  if (isOomEligible === false) return false;
+  if (isOomEligible === true) return true;
+  return !isGuestEntrantKey(memberId);
+}
+
+export type OomScoringEntrant = {
+  memberId: string;
+  dayPoints: string;
+  /** When false, included in field position but excluded from OOM point slots (guests, other society, ineligible). */
+  isOomEligible?: boolean;
+};
+
 function hasValidDayPoints(dayPoints: string): boolean {
   const t = dayPoints.trim();
   if (t === "") return false;
@@ -50,7 +64,9 @@ function compareDayValue(a: string, b: string, sortOrder: OomFieldSortOrder): nu
  * - `position`: finishing place in the **full field** (members + guests), ties share start rank.
  * - `oomPoints`: F1 OOM points from **member-only** ranking (guests always 0).
  */
-export function calculateFieldPositionsAndMemberOomPoints<T extends { memberId: string; dayPoints: string }>(
+export function calculateFieldPositionsAndMemberOomPoints<
+  T extends OomScoringEntrant & Record<string, unknown>,
+>(
   playerList: T[],
   sortOrder: OomFieldSortOrder,
 ): Array<T & { position: number | null; oomPoints: number }> {
@@ -93,22 +109,24 @@ export function calculateFieldPositionsAndMemberOomPoints<T extends { memberId: 
     i += tieCount;
   }
 
-  const membersInFieldOrder = positioned.filter((p) => !isGuestEntrantKey(p.memberId));
+  const oomEligibleInFieldOrder = positioned.filter((p) =>
+    resolveOomPointEligible(p.memberId, p.isOomEligible),
+  );
   const oomByMemberId = new Map<string, number>();
   let memberRank = 1;
   let mi = 0;
-  while (mi < membersInFieldOrder.length) {
-    const currentDayValue = parseInt(membersInFieldOrder[mi]!.dayPoints.trim(), 10);
+  while (mi < oomEligibleInFieldOrder.length) {
+    const currentDayValue = parseInt(oomEligibleInFieldOrder[mi]!.dayPoints.trim(), 10);
     let tieCount = 1;
     while (
-      mi + tieCount < membersInFieldOrder.length &&
-      parseInt(membersInFieldOrder[mi + tieCount]!.dayPoints.trim(), 10) === currentDayValue
+      mi + tieCount < oomEligibleInFieldOrder.length &&
+      parseInt(oomEligibleInFieldOrder[mi + tieCount]!.dayPoints.trim(), 10) === currentDayValue
     ) {
       tieCount++;
     }
     const averaged = getAveragedOOMPoints(memberRank, tieCount);
     for (let j = 0; j < tieCount; j++) {
-      oomByMemberId.set(membersInFieldOrder[mi + j]!.memberId, averaged);
+      oomByMemberId.set(oomEligibleInFieldOrder[mi + j]!.memberId, averaged);
     }
     memberRank += tieCount;
     mi += tieCount;
@@ -116,7 +134,9 @@ export function calculateFieldPositionsAndMemberOomPoints<T extends { memberId: 
 
   const merged: Array<T & { position: number | null; oomPoints: number }> = positioned.map((p) => ({
     ...p,
-    oomPoints: isGuestEntrantKey(p.memberId) ? 0 : (oomByMemberId.get(p.memberId) ?? 0),
+    oomPoints: resolveOomPointEligible(p.memberId, p.isOomEligible)
+      ? (oomByMemberId.get(p.memberId) ?? 0)
+      : 0,
   }));
 
   const tail = withoutPoints.map((p) => ({

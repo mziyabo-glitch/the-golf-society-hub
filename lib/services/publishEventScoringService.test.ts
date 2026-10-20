@@ -1,7 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 import type { EventDoc } from "@/lib/db_supabase/eventRepo";
 import type { EventScoringContext } from "@/lib/scoring/eventScoringTypes";
-import { buildEventResultInputsFromLeaderboard, validateScoringPublishReadiness } from "@/lib/scoring/publishFromLeaderboard";
+import { getAveragedOOMPoints } from "@/lib/oomMemberOnlyScoring";
+import {
+  buildEventResultInputsFromLeaderboard,
+  validateScoringPublishReadiness,
+} from "@/lib/scoring/publishFromLeaderboard";
 import { publishEventScoringResults, reopenEventScoringResults } from "@/lib/services/publishEventScoringService";
 import type { LeaderboardRow } from "@/types/eventPlayerScoring";
 
@@ -50,7 +54,21 @@ describe("validateScoringPublishReadiness", () => {
 });
 
 describe("buildEventResultInputsFromLeaderboard", () => {
-  it("uses shared rank and averaged OOM points for ties (OOM event)", () => {
+  it("uses shared rank for field position but member-only OOM when guest leads (OOM event)", () => {
+    const rows: LeaderboardRow[] = [
+      row({ player_id: "guest-g1", rank: 1, tie_size: 1, stableford_points: 40, net_total: 68 }),
+      row({ player_id: "a", rank: 2, tie_size: 2, stableford_points: 36, net_total: 72 }),
+      row({ player_id: "b", rank: 2, tie_size: 2, stableford_points: 36, net_total: 72 }),
+      row({ player_id: "c", rank: 4, tie_size: 1, stableford_points: 30, net_total: 75 }),
+    ];
+    const out = buildEventResultInputsFromLeaderboard("stableford", rows, true);
+    expect(out.find((r) => r.member_id === "guest-g1")!.points).toBe(0);
+    expect(out.find((r) => r.member_id === "a")!.points).toBeCloseTo(getAveragedOOMPoints(1, 2));
+    expect(out.find((r) => r.member_id === "b")!.points).toBeCloseTo(getAveragedOOMPoints(1, 2));
+    expect(out.find((r) => r.member_id === "c")!.points).toBe(15);
+  });
+
+  it("uses shared rank and averaged OOM points for ties among all members (OOM event)", () => {
     const rows: LeaderboardRow[] = [
       row({ player_id: "a", rank: 1, tie_size: 2, stableford_points: 10 }),
       row({ player_id: "b", rank: 1, tie_size: 2, stableford_points: 10 }),
@@ -140,6 +158,7 @@ describe("publishEventScoringResults", () => {
       updateEvent,
       getEventScoringLeaderboard: async () => board,
       loadEventScoringContext: async () => ctx(),
+      resolvePublishOomEligible: async () => () => true,
     });
 
     expect(upsert).toHaveBeenCalledTimes(1);
@@ -220,6 +239,7 @@ describe("republish after reopen", () => {
       updateEvent,
       getEventScoringLeaderboard: async () => [row({ player_id: "m1" })],
       loadEventScoringContext: async () => ctx(),
+      resolvePublishOomEligible: async () => () => true,
     });
 
     expect(upsert).toHaveBeenCalled();
