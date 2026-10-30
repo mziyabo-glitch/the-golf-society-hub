@@ -102,10 +102,12 @@
   },
   "devDependencies": {
     "@playwright/test": "^1.61.1",
+    "@types/pg": "^8.23.1",
     "@types/react": "~19.1.0",
     "concurrently": "^9.2.1",
     "eslint": "^9.25.0",
     "eslint-config-expo": "~10.0.0",
+    "pg": "^8.23.1",
     "serve": "^14.2.5",
     "tsx": "^4.21.0",
     "typescript": "~5.9.2",

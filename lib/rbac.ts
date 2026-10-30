@@ -162,6 +162,37 @@ export function canManageEventPaymentsForSociety(
   );
 }
 
+/** Captain and Treasurer can read the Stripe ledger. Secretary and Handicapper cannot. */
+export function canViewEventPaymentLedgerForSociety(
+  memberships: { societyId: string; role: string }[] | null | undefined,
+  activeSocietyId: string | null | undefined,
+): boolean {
+  if (!activeSocietyId || !memberships?.length) return false;
+  const m = memberships.find((x) => x.societyId === activeSocietyId);
+  if (!m) return false;
+  const r = String(m.role || "").toUpperCase();
+  return r === "CAPTAIN" || r === "TREASURER";
+}
+
+/** Treasurer only. Refunds are not part of attendance administration. */
+export function canRefundEventPaymentsForSociety(
+  memberships: { societyId: string; role: string }[] | null | undefined,
+  activeSocietyId: string | null | undefined,
+): boolean {
+  if (!activeSocietyId || !memberships?.length) return false;
+  const m = memberships.find((x) => x.societyId === activeSocietyId);
+  if (!m) return false;
+  return String(m.role || "").toUpperCase() === "TREASURER";
+}
+
+/** Captain or Treasurer may pass an explicit correction over a completed Stripe payment. */
+export function canAuthoriseStripePaymentCorrectionForSociety(
+  memberships: { societyId: string; role: string }[] | null | undefined,
+  activeSocietyId: string | null | undefined,
+): boolean {
+  return canViewEventPaymentLedgerForSociety(memberships, activeSocietyId);
+}
+
 /** Captain / Treasurer / Secretary in the active society — payment share / PDF only. */
 export function canShareEventPaymentListsForSociety(
   memberships: { societyId: string; role: string }[] | null | undefined,

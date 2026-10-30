@@ -1,76 +1,199 @@
 import Stripe from "stripe";
 import { getServiceRoleSupabase } from "@/lib/server/supabaseServiceRole";
 import {
-  buildApplyPaymentPayload,
-  isDuplicateStripeEventError,
-} from "@/lib/payments/webhookProcessor";
+  paymentApplyFailureStatus,
+  stripeEventDisposition,
+  verifyPaidCheckout,
+  type PaymentIntentCheck,
+  type PaymentTransactionCheck,
+} from "@/lib/payments/webhookVerification";
 
 export type WebhookHandlerResult = { status: number; body: { received?: boolean; error?: string } };
+
+type ApplyPayment = {
+  paymentTransactionId: string;
+  stripeEventId: string;
+  sessionId: string;
+  paymentIntentId: string;
+  amountPence: number;
+  currency: "gbp";
+  connectAccountId: string;
+  eventId: string;
+  beneficiarySocietyId: string;
+  receiptUrl: string | null;
+};
+
+export type StripeWebhookDeps = {
+  constructEvent: (rawBody: string, signature: string, secret: string) => Stripe.Event;
+  loadTransaction: (id: string) => Promise<PaymentTransactionCheck | null>;
+  loadBeneficiaryConnectAccount: (societyId: string) => Promise<string | null>;
+  retrievePaymentIntent: (id: string) => Promise<PaymentIntentCheck | null>;
+  applyPayment: (payment: ApplyPayment) => Promise<void>;
+  syncConnectAccount: (account: {
+    id: string;
+    chargesEnabled: boolean;
+    detailsSubmitted: boolean;
+  }) => Promise<void>;
+};
 
 function getStripe(): Stripe {
   const key = process.env.STRIPE_SECRET_KEY?.trim();
   if (!key) throw new Error("STRIPE_SECRET_KEY is not configured");
-  return new Stripe(key, { apiVersion: "2025-02-24.acacia" });
+  return new Stripe(key);
 }
 
-export async function handleStripeWebhook(input: {
-  rawBody: string;
-  signatureHeader: string | null | undefined;
-}): Promise<WebhookHandlerResult> {
+function destinationAccountId(intent: Stripe.PaymentIntent): string | null {
+  const destination = intent.transfer_data?.destination;
+  if (!destination) return null;
+  return typeof destination === "string" ? destination : destination.id;
+}
+
+function receiptUrl(intent: Stripe.PaymentIntent): string | null {
+  const charge = intent.latest_charge;
+  if (!charge || typeof charge === "string") return null;
+  return charge.receipt_url ?? null;
+}
+
+function defaultDeps(): StripeWebhookDeps {
+  const stripe = getStripe();
+  const admin = getServiceRoleSupabase();
+  return {
+    constructEvent: (rawBody, signature, secret) => stripe.webhooks.constructEvent(rawBody, signature, secret),
+    async loadTransaction(id) {
+      const { data, error } = await admin
+        .from("payment_transactions")
+        .select(
+          "id, status, amount_pence, currency, event_id, society_id, beneficiary_society_id, payer_type, member_id, guest_id, stripe_checkout_session_id, stripe_payment_intent_id, stripe_connect_account_id",
+        )
+        .eq("id", id)
+        .maybeSingle();
+      if (error) throw new Error(error.message);
+      return (data as PaymentTransactionCheck | null) ?? null;
+    },
+    async loadBeneficiaryConnectAccount(societyId) {
+      const { data, error } = await admin
+        .from("societies")
+        .select("stripe_connect_account_id")
+        .eq("id", societyId)
+        .maybeSingle();
+      if (error) throw new Error(error.message);
+      return (data?.stripe_connect_account_id as string | null) ?? null;
+    },
+    async retrievePaymentIntent(id) {
+      const intent = await stripe.paymentIntents.retrieve(id, { expand: ["latest_charge"] });
+      return {
+        id: intent.id,
+        amount: intent.amount,
+        currency: intent.currency,
+        status: intent.status,
+        destinationAccountId: destinationAccountId(intent),
+        receiptUrl: receiptUrl(intent),
+      };
+    },
+    async applyPayment(payment) {
+      const { error } = await admin.rpc("apply_event_stripe_payment", {
+        p_payment_transaction_id: payment.paymentTransactionId,
+        p_stripe_event_id: payment.stripeEventId,
+        p_stripe_session_id: payment.sessionId,
+        p_stripe_payment_intent: payment.paymentIntentId,
+        p_amount_pence: payment.amountPence,
+        p_currency: payment.currency,
+        p_connect_account_id: payment.connectAccountId,
+        p_event_id: payment.eventId,
+        p_beneficiary_society_id: payment.beneficiarySocietyId,
+        p_receipt_url: payment.receiptUrl,
+      });
+      if (error) throw new Error(error.message);
+    },
+    async syncConnectAccount(account) {
+      const { error } = await admin
+        .from("societies")
+        .update({
+          stripe_connect_charges_enabled: account.chargesEnabled,
+          stripe_connect_details_submitted: account.detailsSubmitted,
+        })
+        .eq("stripe_connect_account_id", account.id);
+      if (error) throw new Error(error.message);
+    },
+  };
+}
+
+function sessionPaymentIntentId(session: Stripe.Checkout.Session): string | null {
+  if (!session.payment_intent) return null;
+  return typeof session.payment_intent === "string" ? session.payment_intent : session.payment_intent.id;
+}
+
+export async function handleStripeWebhook(
+  input: { rawBody: string; signatureHeader: string | null | undefined },
+  deps?: StripeWebhookDeps,
+): Promise<WebhookHandlerResult> {
   const secret = process.env.STRIPE_WEBHOOK_SECRET?.trim();
   if (!secret) return { status: 500, body: { error: "Webhook secret not configured" } };
   if (!input.signatureHeader) return { status: 400, body: { error: "Missing Stripe signature" } };
 
+  const runtime = deps ?? defaultDeps();
   let event: Stripe.Event;
   try {
-    event = getStripe().webhooks.constructEvent(input.rawBody, input.signatureHeader, secret);
+    event = runtime.constructEvent(input.rawBody, input.signatureHeader, secret);
   } catch (err) {
     console.warn("[stripe webhook] signature failed:", (err as Error).message);
     return { status: 400, body: { error: "Invalid signature" } };
   }
 
-  if (event.type !== "checkout.session.completed") {
+  const disposition = stripeEventDisposition(event.type);
+  if (disposition === "ignore") return { status: 200, body: { received: true } };
+
+  if (disposition === "connect") {
+    const account = event.data.object as Stripe.Account;
+    if (!account.id) return { status: 422, body: { error: "Connect account id missing" } };
+    try {
+      await runtime.syncConnectAccount({
+        id: account.id,
+        chargesEnabled: account.charges_enabled === true,
+        detailsSubmitted: account.details_submitted === true,
+      });
+    } catch (err) {
+      console.error("[stripe webhook] connect sync:", (err as Error).message);
+      return { status: 500, body: { error: "Failed to sync Connect account" } };
+    }
     return { status: 200, body: { received: true } };
   }
 
   const session = event.data.object as Stripe.Checkout.Session;
-  const amountTotalPence = session.amount_total ?? 0;
-  const payload = buildApplyPaymentPayload({
-    metadata: (session.metadata ?? {}) as Record<string, string | undefined>,
-    stripeEventId: event.id,
-    sessionId: session.id,
-    paymentIntentId:
-      typeof session.payment_intent === "string"
-        ? session.payment_intent
-        : session.payment_intent?.id ?? null,
-    amountTotalPence,
-  });
+  const transactionId = session.metadata?.payment_transaction_id?.trim() || "";
+  if (!transactionId) return { status: 422, body: { error: "Checkout session is not an event payment" } };
 
-  if (!payload) {
-    console.warn("[stripe webhook] missing metadata on session", session.id);
+  try {
+    const transaction = await runtime.loadTransaction(transactionId);
+    const beneficiaryId = transaction?.beneficiary_society_id ?? "";
+    const beneficiaryConnectAccount = beneficiaryId
+      ? await runtime.loadBeneficiaryConnectAccount(beneficiaryId)
+      : null;
+    const paymentIntentId = sessionPaymentIntentId(session);
+    const paymentIntent = paymentIntentId ? await runtime.retrievePaymentIntent(paymentIntentId) : null;
+    const verified = verifyPaidCheckout({
+      stripeEventId: event.id,
+      session: {
+        id: session.id,
+        mode: session.mode,
+        status: session.status,
+        payment_status: session.payment_status,
+        currency: session.currency,
+        amount_total: session.amount_total,
+        payment_intent_id: paymentIntentId,
+        metadata: (session.metadata ?? {}) as Record<string, string | undefined>,
+      },
+      paymentIntent,
+      transaction,
+      beneficiaryConnectAccountId: beneficiaryConnectAccount,
+    });
+    if (!verified.ok) return { status: verified.status, body: { error: verified.error } };
+    await runtime.applyPayment(verified.payment);
     return { status: 200, body: { received: true } };
+  } catch (err) {
+    const message = (err as Error).message || "Failed to apply payment";
+    console.error("[stripe webhook]", message);
+    const mapped = paymentApplyFailureStatus(message);
+    return { status: mapped.status, body: { error: mapped.error } };
   }
-
-  const admin = getServiceRoleSupabase();
-  const { error } = await admin.rpc("apply_event_stripe_payment", {
-    p_payment_transaction_id: payload.paymentTransactionId,
-    p_stripe_event_id: payload.stripeEventId,
-    p_stripe_session_id: payload.sessionId,
-    p_stripe_payment_intent: payload.paymentIntentId,
-    p_amount_pence: payload.amountTotalPence,
-  });
-
-  if (error) {
-    if (isDuplicateStripeEventError(error.message)) {
-      return { status: 200, body: { received: true } };
-    }
-    if (error.message.includes("payment_amount_mismatch")) {
-      console.error("[stripe webhook] amount mismatch", payload);
-      return { status: 422, body: { error: "Amount mismatch" } };
-    }
-    console.error("[stripe webhook] apply_event_stripe_payment:", error.message);
-    return { status: 500, body: { error: "Failed to apply payment" } };
-  }
-
-  return { status: 200, body: { received: true } };
 }

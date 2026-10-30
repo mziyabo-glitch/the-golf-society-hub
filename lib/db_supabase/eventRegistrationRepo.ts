@@ -400,13 +400,15 @@ export async function markMePaid(
   memberId: string,
   paid: boolean,
   societyId: string,
+  opts?: { authorisedCorrection?: boolean; amountPence?: number },
 ): Promise<void> {
   const { error } = await supabase.rpc("mark_event_paid", {
     p_event_id: eventId,
     p_society_id: societyId,
     p_target_member_id: memberId,
     p_paid: paid,
-    p_amount_pence: 0,
+    p_amount_pence: opts?.amountPence ?? 0,
+    p_authorised_correction: opts?.authorisedCorrection === true,
   });
 
   if (error) {
@@ -423,6 +425,11 @@ export async function markMePaid(
     ) {
       throw new Error(
         "Could not record payment for this member. Ensure the player belongs to your active society, or apply the latest mark_event_paid migration (see supabase/README_MARK_EVENT_PAID.md).",
+      );
+    }
+    if (msg.includes("stripe_payment_locked")) {
+      throw new Error(
+        "This player was paid by Stripe. A Captain or Treasurer must record an authorised correction before changing it.",
       );
     }
     if (msg.includes("function public.mark_event_paid") && msg.includes("does not exist")) {

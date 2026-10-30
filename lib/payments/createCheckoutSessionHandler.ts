@@ -8,6 +8,13 @@ import {
   type CheckoutRequestBody,
 } from "@/lib/payments/checkoutValidation";
 import { resolveGuestCheckoutAmountPence, resolveMemberCheckoutAmountPence } from "@/lib/payments/eventPricing";
+import {
+  buildCheckoutReturnUrls,
+  checkoutBelongsToPayer,
+  selectParticipantCheckout,
+  serverAppBaseUrl,
+  type OpenPaymentRow,
+} from "@/lib/payments/checkoutAttempt";
 
 export type CreateCheckoutResult =
   | { status: number; body: { url: string; sessionId: string; transactionId: string } }
@@ -46,6 +53,23 @@ async function resolveBeneficiarySocietyId(
   return hostSocietyId;
 }
 
+async function loadParticipantPayments(
+  admin: ReturnType<typeof getServiceRoleSupabase>,
+  eventId: string,
+  payerType: "member" | "guest",
+  payerId: string,
+): Promise<OpenPaymentRow[]> {
+  const column = payerType === "member" ? "member_id" : "guest_id";
+  const { data, error } = await admin
+    .from("payment_transactions")
+    .select("id, status, stripe_checkout_session_id, member_id, guest_id, idempotency_key")
+    .eq("event_id", eventId)
+    .eq(column, payerId)
+    .in("status", ["pending", "succeeded"]);
+  if (error) throw new Error(error.message);
+  return (data ?? []) as OpenPaymentRow[];
+}
+
 export async function handleCreateEventCheckoutSession(input: {
   authorizationHeader: string | null | undefined;
   idempotencyKey: string | null | undefined;
@@ -76,32 +100,10 @@ export async function handleCreateEventCheckoutSession(input: {
     if (userErr || !userData.user) return { status: 401, body: { error: "Invalid session" } };
 
     const admin = getServiceRoleSupabase();
-
-    const { data: existingTx } = await admin
-      .from("payment_transactions")
-      .select("id, stripe_checkout_session_id, status")
-      .eq("idempotency_key", idempotencyKey)
-      .maybeSingle();
-
-    if (existingTx?.stripe_checkout_session_id && existingTx.status === "pending") {
-      const stripe = getStripe();
-      const session = await stripe.checkout.sessions.retrieve(existingTx.stripe_checkout_session_id);
-      if (session.url) {
-        return {
-          status: 200,
-          body: {
-            url: session.url,
-            sessionId: session.id,
-            transactionId: existingTx.id as string,
-          },
-        };
-      }
-    }
-
     const { data: event, error: eventErr } = await admin
       .from("events")
       .select(
-        "id, society_id, name, member_entry_fee_pence, guest_entry_fee_pence, joint_participant_entry_fee_pence",
+        "id, society_id, name, date, member_entry_fee_pence, guest_entry_fee_pence, joint_participant_entry_fee_pence",
       )
       .eq("id", body.eventId)
       .maybeSingle();
@@ -118,7 +120,6 @@ export async function handleCreateEventCheckoutSession(input: {
           .eq("society_id", body.societyId)
           .maybeSingle()
       ).data != null;
-
     if (!eventAllowed) return { status: 403, body: { error: "Society is not part of this event" } };
 
     const { data: society, error: socErr } = await admin
@@ -139,13 +140,11 @@ export async function handleCreateEventCheckoutSession(input: {
       body.societyId,
       hostSocietyId,
     );
-
     const { data: beneficiary } = await admin
       .from("societies")
-      .select("stripe_connect_account_id, stripe_connect_charges_enabled")
+      .select("id, name, stripe_connect_account_id, stripe_connect_charges_enabled")
       .eq("id", beneficiarySocietyId)
       .maybeSingle();
-
     if (!beneficiary?.stripe_connect_account_id || !beneficiary.stripe_connect_charges_enabled) {
       return { status: 403, body: { error: "Payment beneficiary Connect account is not ready" } };
     }
@@ -155,28 +154,30 @@ export async function handleCreateEventCheckoutSession(input: {
     let amountPence: number | null = null;
     let memberId: string | null = null;
     let guestId: string | null = null;
+    let payerDisplayName = "Member";
+
+    const { data: callerMember } = await admin
+      .from("members")
+      .select("id, display_name")
+      .eq("society_id", body.societyId)
+      .eq("user_id", userData.user.id)
+      .maybeSingle();
+    if (!callerMember?.id) return { status: 403, body: { error: "Not a member of this society" } };
 
     if (payerType === "member") {
       amountPence = resolveMemberCheckoutAmountPence(event, {
         isJointParticipantSociety: isJointParticipant,
       });
-      const { data: member } = await admin
-        .from("members")
-        .select("id")
-        .eq("society_id", body.societyId)
-        .eq("user_id", userData.user.id)
-        .maybeSingle();
-      if (!member?.id) return { status: 403, body: { error: "Not a member of this society" } };
-      memberId = member.id as string;
-
+      memberId = callerMember.id as string;
+      payerDisplayName = String(callerMember.display_name || "Member");
       const { data: reg } = await admin
         .from("event_registrations")
-        .select("status, paid")
+        .select("status, paid, removed_from_event_at")
         .eq("event_id", body.eventId)
         .eq("member_id", memberId)
         .maybeSingle();
       if (reg?.paid) return { status: 409, body: { error: "Already paid" } };
-      if (reg && reg.status !== "in") {
+      if (reg?.removed_from_event_at || (reg && reg.status !== "in")) {
         return { status: 400, body: { error: "RSVP as playing before paying" } };
       }
     } else {
@@ -185,99 +186,131 @@ export async function handleCreateEventCheckoutSession(input: {
       amountPence = resolveGuestCheckoutAmountPence(event);
       const { data: guest } = await admin
         .from("event_guests")
-        .select("id, paid, society_id, event_id")
+        .select("id, paid, society_id, event_id, name")
         .eq("id", guestId)
         .maybeSingle();
       if (!guest || guest.event_id !== body.eventId) return { status: 404, body: { error: "Guest not found" } };
       if (guest.society_id !== body.societyId) return { status: 403, body: { error: "Guest belongs to another society" } };
       if (guest.paid) return { status: 409, body: { error: "Already paid" } };
+      payerDisplayName = String(guest.name || "Guest");
     }
 
     if (amountPence == null || amountPence <= 0) {
       return { status: 400, body: { error: "Event fee is not configured for online payment" } };
     }
 
-    const { data: txRow, error: txErr } = await admin
+    const payer = { payerType, memberId, guestId };
+    const { data: keyed } = await admin
       .from("payment_transactions")
-      .insert({
-        society_id: body.societyId,
-        beneficiary_society_id: beneficiarySocietyId,
-        event_id: body.eventId,
-        payer_type: payerType,
-        member_id: memberId,
-        guest_id: guestId,
-        amount_pence: amountPence,
-        currency: "gbp",
-        status: "pending",
-        payment_method: "stripe",
-        idempotency_key: idempotencyKey,
-      })
-      .select("id")
-      .single();
-
-    if (txErr) {
-      if (txErr.code === "23505") {
-        return { status: 409, body: { error: "Duplicate idempotency key" } };
-      }
-      console.error("[checkout] insert tx:", txErr.message);
-      return { status: 500, body: { error: "Could not create payment record" } };
+      .select("id, status, stripe_checkout_session_id, member_id, guest_id, idempotency_key")
+      .eq("idempotency_key", idempotencyKey)
+      .maybeSingle();
+    if (keyed && !checkoutBelongsToPayer(keyed, payer)) {
+      return { status: 409, body: { error: "Idempotency key belongs to another payer" } };
     }
 
-    const transactionId = txRow.id as string;
+    const participantRows = await loadParticipantPayments(
+      admin,
+      body.eventId,
+      payerType,
+      (payerType === "member" ? memberId : guestId) as string,
+    );
+    const attempt = selectParticipantCheckout(keyed ? [keyed as OpenPaymentRow, ...participantRows] : participantRows);
+    if (attempt.action === "already_paid") return { status: 409, body: { error: "Already paid" } };
+
     const stripe = getStripe();
-    const baseUrl =
-      body.successUrl?.trim() ||
-      process.env.EXPO_PUBLIC_WEB_APP_URL?.trim() ||
-      "http://localhost:8081";
-    const successUrl = `${baseUrl.replace(/\/$/, "")}/event/${body.eventId}?payment=success`;
-    const cancelUrl =
-      body.cancelUrl?.trim() || `${baseUrl.replace(/\/$/, "")}/event/${body.eventId}?payment=canceled`;
+    const urls = buildCheckoutReturnUrls(body.eventId, serverAppBaseUrl(process.env.EXPO_PUBLIC_WEB_APP_URL));
+    let transactionId = attempt.action === "reuse" ? attempt.transactionId : "";
+
+    let replacingSession = false;
+    if (attempt.action === "reuse" && attempt.sessionId) {
+      const existingSession = await stripe.checkout.sessions.retrieve(attempt.sessionId);
+      if (existingSession.payment_status === "paid") return { status: 409, body: { error: "Already paid" } };
+      if (existingSession.status === "open" && existingSession.url) {
+        return {
+          status: 200,
+          body: { url: existingSession.url, sessionId: existingSession.id, transactionId: attempt.transactionId },
+        };
+      }
+      replacingSession = true;
+    }
+
+    if (!transactionId) {
+      const { data: txRow, error: txErr } = await admin
+        .from("payment_transactions")
+        .insert({
+          society_id: body.societyId,
+          beneficiary_society_id: beneficiarySocietyId,
+          event_id: body.eventId,
+          payer_type: payerType,
+          member_id: memberId,
+          guest_id: guestId,
+          society_name: String(society.name || "Society"),
+          beneficiary_society_name: String(beneficiary.name || society.name || "Society"),
+          event_name: String(event.name || "Golf event"),
+          event_date_snapshot: event.date ? String(event.date) : null,
+          payer_display_name: payerDisplayName,
+          amount_pence: amountPence,
+          currency: "gbp",
+          status: "pending",
+          payment_method: "stripe",
+          idempotency_key: idempotencyKey,
+          stripe_connect_account_id: beneficiary.stripe_connect_account_id,
+        })
+        .select("id")
+        .single();
+      if (txErr) {
+        if (txErr.code === "23505") return { status: 409, body: { error: "A payment is already in progress" } };
+        console.error("[checkout] insert tx:", txErr.message);
+        return { status: 500, body: { error: "Could not create payment record" } };
+      }
+      transactionId = txRow.id as string;
+    }
 
     const session = await stripe.checkout.sessions.create(
       {
         mode: "payment",
-        success_url: successUrl,
-        cancel_url: cancelUrl,
+        success_url: urls.successUrl,
+        cancel_url: urls.cancelUrl,
+        client_reference_id: transactionId,
         line_items: [
           {
             quantity: 1,
             price_data: {
               currency: "gbp",
               unit_amount: amountPence,
-              product_data: {
-                name: `Event entry — ${(event.name as string) || "Golf event"}`,
-              },
+              product_data: { name: `Event entry - ${String(event.name || "Golf event")}` },
             },
           },
         ],
         payment_intent_data: {
-          transfer_data: {
-            destination: beneficiary.stripe_connect_account_id as string,
-          },
+          transfer_data: { destination: beneficiary.stripe_connect_account_id as string },
         },
         metadata: {
           payment_transaction_id: transactionId,
           event_id: body.eventId,
           society_id: body.societyId,
+          beneficiary_society_id: beneficiarySocietyId,
           payer_type: payerType,
           member_id: memberId ?? "",
           guest_id: guestId ?? "",
         },
       },
-      { idempotencyKey: `checkout_${idempotencyKey}` },
+      { idempotencyKey: replacingSession ? `checkout_${transactionId}_retry` : `checkout_${transactionId}` },
     );
 
-    await admin
+    const { error: sessionSaveErr } = await admin
       .from("payment_transactions")
       .update({ stripe_checkout_session_id: session.id })
-      .eq("id", transactionId);
-
+      .eq("id", transactionId)
+      .eq("status", "pending");
+    if (sessionSaveErr) {
+      console.error("[checkout] save session:", sessionSaveErr.message);
+      return { status: 500, body: { error: "Could not store Checkout session" } };
+    }
     if (!session.url) return { status: 500, body: { error: "Stripe session missing url" } };
 
-    return {
-      status: 200,
-      body: { url: session.url, sessionId: session.id, transactionId },
-    };
+    return { status: 200, body: { url: session.url, sessionId: session.id, transactionId } };
   } catch (err) {
     console.error("[checkout] unexpected:", err);
     return { status: 500, body: { error: "Checkout failed" } };

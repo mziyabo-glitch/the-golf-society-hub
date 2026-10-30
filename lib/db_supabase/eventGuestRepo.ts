@@ -72,19 +72,31 @@ export async function addEventGuest(opts: {
   return data ? normalizeGuestRow(data) : null;
 }
 
-/** Mark a guest paid/unpaid for event admin/payment workflows. */
-export async function setEventGuestPaid(guestId: string, paid: boolean): Promise<EventGuest | null> {
-  const { data, error } = await supabase
-    .from("event_guests")
-    .update({ paid })
-    .eq("id", guestId)
-    .select()
-    .single();
+/** Mark a guest paid/unpaid. Payment columns are writable only through this RPC. */
+export async function setEventGuestPaid(
+  guestId: string,
+  paid: boolean,
+  opts?: { authorisedCorrection?: boolean; amountPence?: number },
+): Promise<EventGuest | null> {
+  const { error } = await supabase.rpc("mark_event_guest_paid", {
+    p_guest_id: guestId,
+    p_paid: paid,
+    p_amount_pence: opts?.amountPence ?? 0,
+    p_authorised_correction: opts?.authorisedCorrection === true,
+  });
 
   if (error) {
     console.error("[eventGuestRepo] setEventGuestPaid:", error.message);
+    if (error.message.includes("stripe_payment_locked")) {
+      throw new Error(
+        "This guest was paid by Stripe. A Captain or Treasurer must record an authorised correction before changing it.",
+      );
+    }
     throw new Error(error.message || "Failed to update guest payment status");
   }
+
+  const { data, error: readError } = await supabase.from("event_guests").select("*").eq("id", guestId).maybeSingle();
+  if (readError) throw new Error(readError.message || "Failed to load guest payment status");
   return data ? normalizeGuestRow(data) : null;
 }
 

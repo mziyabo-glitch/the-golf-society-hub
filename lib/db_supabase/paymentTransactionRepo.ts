@@ -13,6 +13,10 @@ export type PaymentTransactionRow = {
   status: "pending" | "succeeded" | "failed" | "canceled" | "refunded";
   payment_method: "stripe" | "manual" | "bank_transfer";
   stripe_checkout_session_id: string | null;
+  stripe_receipt_url: string | null;
+  payer_display_name: string | null;
+  event_name: string | null;
+  resolution_required: boolean;
   completed_at: string | null;
   created_at: string;
 };
@@ -25,7 +29,7 @@ export async function getRecentPaymentTransactionsForSociety(
   const { data, error } = await supabase
     .from("payment_transactions")
     .select(
-      "id, society_id, beneficiary_society_id, event_id, payer_type, member_id, guest_id, amount_pence, currency, status, payment_method, stripe_checkout_session_id, completed_at, created_at",
+      "id, society_id, beneficiary_society_id, event_id, payer_type, member_id, guest_id, amount_pence, currency, status, payment_method, stripe_checkout_session_id, stripe_receipt_url, payer_display_name, event_name, resolution_required, completed_at, created_at",
     )
     .eq("society_id", societyId)
     .order("created_at", { ascending: false })

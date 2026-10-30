@@ -170,6 +170,45 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (pathname === "/api/stripe/connect-onboarding" && req.method === "POST") {
+    try {
+      const { handleConnectOnboarding } = await import("../lib/payments/connectOnboarding");
+      const rawBody = await readJsonBody(req);
+      const result = await handleConnectOnboarding({
+        authorizationHeader: req.headers.authorization,
+        rawBody,
+      });
+      res.writeHead(result.status, { ...corsHeaders, "Content-Type": "application/json" });
+      res.end(JSON.stringify(result.body));
+    } catch (err) {
+      console.error("[dev-api-server] Stripe Connect error:", err);
+      res.writeHead(500, { ...corsHeaders, "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "Connect onboarding failed" }));
+    }
+    return;
+  }
+
+  if (pathname === "/api/stripe/refund" && req.method === "POST") {
+    try {
+      const { handleRefundEventPayment } = await import("../lib/payments/refundEventPayment");
+      const rawBody = await readJsonBody(req);
+      const result = await handleRefundEventPayment({
+        authorizationHeader: req.headers.authorization,
+        idempotencyKey: Array.isArray(req.headers["idempotency-key"])
+          ? req.headers["idempotency-key"][0]
+          : req.headers["idempotency-key"],
+        rawBody,
+      });
+      res.writeHead(result.status, { ...corsHeaders, "Content-Type": "application/json" });
+      res.end(JSON.stringify(result.body));
+    } catch (err) {
+      console.error("[dev-api-server] Stripe refund error:", err);
+      res.writeHead(500, { ...corsHeaders, "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "Refund failed" }));
+    }
+    return;
+  }
+
   if (pathname === "/api/stripe/webhook" && req.method === "POST") {
     try {
       const { handleStripeWebhook } = await import("../lib/payments/stripeWebhookHandler");

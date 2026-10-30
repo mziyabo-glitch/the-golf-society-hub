@@ -499,11 +499,18 @@ export default function TreasurerScreen() {
               >
                 <View style={{ flex: 1, minWidth: 0, paddingRight: spacing.sm }}>
                   <AppText variant="captionBold" numberOfLines={1}>
-                    {tx.payer_type === "guest" ? "Guest" : "Member"} · {tx.status}
+                    {tx.payer_display_name || (tx.payer_type === "guest" ? "Guest" : "Member")} · {tx.status}
+                    {tx.resolution_required ? " · needs resolution" : ""}
                   </AppText>
                   <AppText variant="caption" color="muted" numberOfLines={1}>
+                    {tx.event_name ? `${tx.event_name} · ` : ""}
                     {new Date(tx.completed_at ?? tx.created_at).toLocaleDateString("en-GB")}
                   </AppText>
+                  {tx.stripe_receipt_url ? (
+                    <AppText variant="caption" color="muted" numberOfLines={1}>
+                      {tx.stripe_receipt_url}
+                    </AppText>
+                  ) : null}
                 </View>
                 <AppText variant="bodyBold">{formatPenceToGBP(tx.amount_pence)}</AppText>
               </View>
