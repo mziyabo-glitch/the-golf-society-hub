@@ -9,7 +9,6 @@ import { goBack } from "@/lib/navigation";
 
 import { Screen } from "@/components/ui/Screen";
 import { AppText } from "@/components/ui/AppText";
-import { AppCard } from "@/components/ui/AppCard";
 import { PrimaryButton, SecondaryButton } from "@/components/ui/Button";
 import { LoadingState } from "@/components/ui/LoadingState";
 import { Toast } from "@/components/ui/Toast";

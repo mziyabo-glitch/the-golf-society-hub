@@ -5,6 +5,7 @@
 // annual_fee_paid, annual_fee_paid_at, annual_fee_note, has_seat
 
 import { supabase } from "@/lib/supabase";
+import { normalizeMemberDocId } from "@/lib/memberDocUtils";
 
 export type Gender = "male" | "female" | null;
 
@@ -12,7 +13,12 @@ export type MemberDoc = {
   id: string;
   society_id: string;
   user_id?: string | null;
+  /** Rare: global person key if present in DB (joint dedupe). */
+  person_id?: string | null;
   name?: string;
+  /** Optional split name fields if present in DB */
+  first_name?: string | null;
+  last_name?: string | null;
   display_name?: string;
   displayName?: string; // alias for name (camelCase for app compatibility)
   email?: string;
@@ -49,9 +55,17 @@ export type MemberDoc = {
   emergency_contact?: string | null;
 };
 
+export { memberDocFromRegistrationRow, normalizeMemberDocId } from "@/lib/memberDocUtils";
+
+function mapJointVisibilityMember(row: Record<string, unknown>): MemberDoc {
+  const id = String(row.member_id ?? row.id ?? "").trim();
+  return mapMember({ ...row, id });
+}
+
 function mapMember(row: any): MemberDoc {
   return {
     ...row,
+    id: normalizeMemberDocId(row),
     displayName: row.name || row.display_name,
     roles: row.role ? [row.role] : ["member"],
     whsNumber: row.whs_number ?? null,
@@ -224,19 +238,87 @@ export async function getMember(memberId: string): Promise<MemberDoc | null> {
   return data ? mapMember(data) : null;
 }
 
+const MEMBERS_BY_IDS_CHUNK = 120;
+
 /**
- * Get members for a society
+ * Load many members by id (e.g. registrations include players from other societies on joint events).
+ * RLS may omit rows the user cannot see; callers should still handle missing ids.
+ */
+export async function getMembersByIds(memberIds: string[]): Promise<MemberDoc[]> {
+  const ids = [...new Set(memberIds.map((id) => id?.trim()).filter(Boolean) as string[])];
+  if (ids.length === 0) return [];
+
+  const all: MemberDoc[] = [];
+  for (let i = 0; i < ids.length; i += MEMBERS_BY_IDS_CHUNK) {
+    const slice = ids.slice(i, i + MEMBERS_BY_IDS_CHUNK);
+    const { data, error } = await supabase.from("members").select("*").in("id", slice);
+    if (error) {
+      console.error("[memberRepo] getMembersByIds failed:", error.message);
+      continue;
+    }
+    all.push(...(data ?? []).map(mapMember));
+  }
+  return all;
+}
+
+/**
+ * Members visible to the current user in any of the given societies, restricted to the given user_ids.
+ * Used to enrich rivalry participant names when co-members share a society.
+ */
+export async function getMembersByUserIdsInSocieties(
+  userIds: string[],
+  societyIds: string[],
+): Promise<MemberDoc[]> {
+  const uids = [...new Set(userIds.map((id) => id?.trim()).filter(Boolean) as string[])];
+  const sids = [...new Set(societyIds.map((id) => id?.trim()).filter(Boolean) as string[])];
+  if (uids.length === 0 || sids.length === 0) return [];
+
+  const { data, error } = await supabase
+    .from("members")
+    .select("*")
+    .in("society_id", sids)
+    .in("user_id", uids);
+
+  if (error) {
+    console.error("[memberRepo] getMembersByUserIdsInSocieties failed:", error.message);
+    return [];
+  }
+  return (data ?? []).map(mapMember);
+}
+
+/**
+ * Get members for a society (RLS: rows visible if society is in the user's memberships
+ * `my_society_ids()` or the row is `user_id = auth.uid()`). Querying a society the user
+ * does not belong to returns **zero rows** — unlike bootstrap, which selects **your** row
+ * by `society_id` + `user_id` for the active society.
  */
 export async function getMembersBySocietyId(
   societyId: string
 ): Promise<MemberDoc[]> {
+  const queryFilters = { society_id: societyId, order: "created_at desc" };
   const { data, error } = await supabase
     .from("members")
     .select("*")
     .eq("society_id", societyId)
     .order("created_at", { ascending: false });
 
+  let userId: string | null = null;
+  if (__DEV__) {
+    const { data: authData } = await supabase.auth.getUser();
+    userId = authData?.user?.id ?? null;
+  }
+
   if (error) {
+    if (__DEV__) {
+      console.log("[joint-member-query]", {
+        societyId,
+        userId,
+        queryFilters,
+        rowCount: 0,
+        firstRow: null,
+        error: error.message,
+      });
+    }
     console.error("[memberRepo] getMembersBySocietyId failed:", {
       message: error.message,
       details: error.details,
@@ -247,8 +329,41 @@ export async function getMembersBySocietyId(
   }
 
   const members = (data ?? []).map(mapMember);
-  console.log("[memberRepo] getMembersBySocietyId:", members.length, "members, first handicapIndex:", members[0]?.handicapIndex);
+  if (__DEV__) {
+    console.log("[joint-member-query]", {
+      societyId,
+      userId,
+      queryFilters,
+      rowCount: members.length,
+      firstRow: data?.[0] ?? null,
+      error: null,
+    });
+  }
   return members;
+}
+
+/**
+ * Joint-event scoped member visibility for tee-sheet hydration.
+ * Uses SECURITY DEFINER RPC to avoid cross-society members RLS recursion.
+ */
+export async function getJointEventMemberVisibility(
+  eventId: string,
+): Promise<MemberDoc[]> {
+  if (!eventId?.trim()) return [];
+  const { data, error } = await supabase.rpc("get_joint_event_member_visibility", {
+    p_event_id: eventId,
+  });
+  if (error) {
+    console.error("[memberRepo] getJointEventMemberVisibility failed:", {
+      eventId,
+      message: error.message,
+      code: error.code,
+      details: error.details,
+      hint: error.hint,
+    });
+    throw new Error(error.message || "Failed to load joint event members");
+  }
+  return (data ?? []).map(mapJointVisibilityMember);
 }
 
 /**
@@ -305,6 +420,34 @@ export async function updateMemberDoc(
 }
 
 /**
+ * Mirror `profiles.full_name` onto the active society `members.name` after the user saves "My Profile".
+ * Event/tee/RSVP UIs resolve display names from `members` first; without this, those surfaces stay stale.
+ */
+export async function syncMemberIdentityFromProfile(opts: {
+  societyId: string;
+  memberId: string;
+  fullName: string;
+}): Promise<void> {
+  const name = opts.fullName.trim();
+  if (!name) return;
+  await updateMemberDoc(opts.societyId, opts.memberId, { name });
+}
+
+/**
+ * Server-side sync path: mirror `profiles.full_name` to ALL `members.name` rows for auth.uid().
+ * Returns number of member rows updated.
+ */
+export async function syncMyMembershipNamesFromProfile(): Promise<number> {
+  const { data, error } = await supabase.rpc("sync_my_membership_names_from_profile");
+  if (error) {
+    console.error("[memberRepo] syncMyMembershipNamesFromProfile RPC:", error.message);
+    throw new Error(error.message || "Failed to sync membership names");
+  }
+  const n = typeof data === "number" ? data : Number(data ?? 0);
+  return Number.isFinite(n) ? n : 0;
+}
+
+/**
  * Delete a member
  */
 export async function deleteMember(memberId: string): Promise<void> {
@@ -327,8 +470,8 @@ export async function deleteMember(memberId: string): Promise<void> {
  * Add a member as Captain (uses RPC to bypass RLS)
  *
  * This function calls the `add_member_as_captain` Supabase RPC which:
- * - Validates the caller is a captain of the society
- * - Inserts a new member with user_id = NULL
+ * - Validates the caller is ManCo (captain, secretary, handicapper, or treasurer)
+ * - Inserts a new member with user_id = NULL (placeholder until they join the app)
  * - Returns the inserted member
  *
  * @param societyId - The society to add the member to
@@ -369,8 +512,8 @@ export async function addMemberAsCaptain(
     });
 
     // Provide user-friendly error messages
-    if (error.message?.includes("Only Captains")) {
-      throw new Error("Only Captains can add members to the society.");
+    if (error.message?.includes("Permission denied") || error.message?.includes("Only")) {
+      throw new Error("Only ManCo (captain, treasurer, secretary, or handicapper) can add members.");
     }
     if (error.message?.includes("Not authenticated")) {
       throw new Error("Please sign in to add members.");
@@ -774,13 +917,16 @@ export async function resetAllMemberFees(societyId: string): Promise<void> {
  */
 export async function claimCaptainAddedMember(
   societyId: string,
-  name: string
+  name: string,
+  /** If ManCo stored this on the placeholder row, matching is safer than name-only. */
+  email?: string | null,
 ): Promise<MemberDoc | null> {
-  console.log("[memberRepo] claimCaptainAddedMember:", { societyId, name });
+  console.log("[memberRepo] claimCaptainAddedMember:", { societyId, name, hasEmail: !!email?.trim() });
 
   const { data, error } = await supabase.rpc("claim_captain_added_member", {
     p_society_id: societyId,
     p_name: name.trim(),
+    p_email: email?.trim() || null,
   });
 
   if (error) {

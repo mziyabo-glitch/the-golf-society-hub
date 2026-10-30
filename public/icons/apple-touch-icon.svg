@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="180" height="180" viewBox="0 0 180 180">
+  <rect width="180" height="180" rx="38" fill="#166534"/>
+  <circle cx="90" cy="90" r="52" fill="#f8faf8"/>
+  <path d="M90 56a34 34 0 1 0 34 34H110a20 20 0 1 1-20-20V56z" fill="#166534"/>
+  <text x="90" y="158" text-anchor="middle" font-family="Arial, sans-serif" font-size="18" font-weight="700" fill="#f8faf8">GSH</text>
+</svg>

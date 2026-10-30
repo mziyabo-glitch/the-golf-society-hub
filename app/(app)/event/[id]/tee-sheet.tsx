@@ -3,9 +3,11 @@
  *
  * When tee times are published, members can view their personal tee time
  * and the full tee sheet. Sticky "Your Tee Time" card at top, full sheet below.
+ *
+ * Data source: `loadCanonicalTeeSheet` (joint entries, tee_groups snapshot, or computed fallback).
  */
 
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { StyleSheet, View, ScrollView } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { Feather } from "@expo/vector-icons";
@@ -17,21 +19,63 @@ import { AppCard } from "@/components/ui/AppCard";
 import { SecondaryButton } from "@/components/ui/Button";
 import { LoadingState } from "@/components/ui/LoadingState";
 import { useBootstrap } from "@/lib/useBootstrap";
-import { getEvent, type EventDoc } from "@/lib/db_supabase/eventRepo";
-import { getMembersBySocietyId, type MemberDoc } from "@/lib/db_supabase/memberRepo";
-import { getEventRegistrations } from "@/lib/db_supabase/eventRegistrationRepo";
-import { getEventGuests } from "@/lib/db_supabase/eventGuestRepo";
-import { getTeeGroups, getTeeGroupPlayers, teeTimeToDisplay } from "@/lib/db_supabase/teeGroupsRepo";
-import { findMemberGroup, findMemberGroupFromTeeSheet } from "@/lib/findMemberGroup";
-import { groupPlayers, assignTeeTimes, type PlayerGroup } from "@/lib/teeSheetGrouping";
+import { fetchMemberRowsForAuthUser } from "@/lib/db_supabase/mySocietiesRepo";
+import {
+  getJointEventDetail,
+  getJointEventTeeSheet,
+  getJointMetaForEventIds,
+  mapJointEventToEventDoc,
+} from "@/lib/db_supabase/jointEventRepo";
+import { buildSocietyIdToNameMap } from "@/lib/jointEventSocietyLabel";
+import {
+  getJointEventMemberVisibility,
+  getMembersBySocietyId,
+  getMembersByIds,
+  type MemberDoc,
+} from "@/lib/db_supabase/memberRepo";
+import {
+  loadCanonicalTeeSheet,
+  findMemberGroupInfoFromCanonical,
+  type CanonicalTeeSheetResult,
+} from "@/lib/teeSheet/canonicalTeeSheet";
+import type { GroupedPlayer, PlayerGroup } from "@/lib/teeSheetGrouping";
 import { formatHandicap } from "@/lib/whs";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
 import { formatError, type FormattedError } from "@/lib/ui/formatError";
-
-const DEFAULT_START = "08:00";
-const DEFAULT_INTERVAL = 10;
+import { JOINT_EVENT_CHIP_LONG } from "@/lib/eventModuleUi";
+import {
+  isActiveSocietyParticipantForEvent,
+  pickPreferredMembershipSocietyForJointEvent,
+} from "@/lib/jointEventAccess";
 
 type GroupWithTime = PlayerGroup & { teeTime: string };
+
+/** Metro / some device consoles only show the first console.log argument — log tag + JSON as one string. */
+function logJointGateLine(tag: string, payload: unknown) {
+  console.log(`${tag} ${JSON.stringify(payload)}`);
+}
+
+const jointGateInstrumentation =
+  (typeof __DEV__ !== "undefined" && __DEV__) ||
+  process.env.EXPO_PUBLIC_DEBUG_JOINT_GATE === "1";
+
+function canonicalToGroupsWithTime(canonical: CanonicalTeeSheetResult): GroupWithTime[] {
+  return canonical.groups.map((g) => ({
+    groupNumber: g.groupNumber,
+    teeTime: g.teeTime,
+    players: g.players.map(
+      (p) =>
+        ({
+          id: p.id,
+          name: p.name,
+          handicapIndex: p.handicapIndex,
+          courseHandicap: null as number | null,
+          playingHandicap: null as number | null,
+          societyLabel: p.societyLabel ?? undefined,
+        }) satisfies GroupedPlayer,
+    ),
+  }));
+}
 
 const MemberGroupCard = React.memo(function MemberGroupCard({
   group,
@@ -57,10 +101,17 @@ const MemberGroupCard = React.memo(function MemberGroupCard({
       </View>
       {group.players.map((player) => (
         <View key={player.id} style={styles.tableRow}>
-          <AppText variant="body" numberOfLines={1} style={styles.nameCol}>
-            {player.name}
-            {player.id === memberId ? " (You)" : ""}
-          </AppText>
+          <View style={styles.nameCol}>
+            <AppText variant="body" numberOfLines={2}>
+              {player.name}
+              {player.id === memberId ? " (You)" : ""}
+            </AppText>
+            {player.societyLabel ? (
+              <AppText variant="caption" color="secondary" numberOfLines={2} style={{ marginTop: 2 }}>
+                {player.societyLabel}
+              </AppText>
+            ) : null}
+          </View>
           <AppText variant="body" color="secondary" style={styles.hiCol}>
             {formatHandicap(player.handicapIndex, 1)}
           </AppText>
@@ -70,135 +121,593 @@ const MemberGroupCard = React.memo(function MemberGroupCard({
   );
 });
 
-function buildGroupsWithTimes(
-  event: EventDoc,
-  members: MemberDoc[],
-  registrationMemberIds: string[] = [],
-  guests: { id: string; name: string; sex: "male" | "female"; handicap_index: number | null }[] = [],
-): GroupWithTime[] {
-  const playerIds =
-    event.playerIds?.length
-      ? event.playerIds
-      : registrationMemberIds;
-
-  const eventMembers = members
-    .filter((m) => playerIds.includes(m.id))
-    .map((m) => ({
-      id: m.id,
-      name: m.name || m.displayName || "Member",
-      handicapIndex: m.handicapIndex ?? m.handicap_index ?? null,
-      courseHandicap: null as number | null,
-      playingHandicap: null as number | null,
-    }));
-
-  const guestPlayers = guests.map((g) => ({
-    id: `guest-${g.id}`,
-    name: g.name,
-    handicapIndex: g.handicap_index ?? null,
-    courseHandicap: null as number | null,
-    playingHandicap: null as number | null,
-  }));
-
-  const allPlayers = [...eventMembers, ...guestPlayers];
-  if (allPlayers.length === 0) return [];
-
-  const groups = groupPlayers(allPlayers, true);
-  const start = event.teeTimeStart ?? DEFAULT_START;
-  const interval =
-    Number.isFinite(event.teeTimeInterval) && (event.teeTimeInterval ?? 0) > 0
-      ? Number(event.teeTimeInterval)
-      : DEFAULT_INTERVAL;
-
-  return assignTeeTimes(groups, start, interval) as GroupWithTime[];
-}
-
-function buildGroupsWithTimesFromDb(
-  teeGroups: { group_number: number; tee_time: string | null }[],
-  teeGroupPlayers: { player_id: string; group_number: number; position: number }[],
-  members: MemberDoc[],
-  guests: { id: string; name: string; sex: "male" | "female"; handicap_index: number | null }[]
-): GroupWithTime[] {
-  const lookup = (playerId: string) => {
-    if (playerId.startsWith("guest-")) {
-      const g = guests.find((x) => x.id === playerId.slice(6));
-      return g ? { id: playerId, name: g.name, handicapIndex: g.handicap_index ?? null } : null;
-    }
-    const m = members.find((x) => x.id === playerId);
-    return m ? { id: m.id, name: m.name || m.displayName || "Member", handicapIndex: m.handicapIndex ?? m.handicap_index ?? null } : null;
-  };
-
-  const byGroup = new Map<number, { teeTime: string; players: { player_id: string; position: number }[] }>();
-  for (const g of teeGroups) {
-    byGroup.set(g.group_number, { teeTime: g.tee_time ? teeTimeToDisplay(g.tee_time) : "08:00", players: [] });
+function duplicateMemberRowsBySociety(
+  rows: { societyId: string }[],
+): { societyId: string; rowCount: number }[] {
+  const m = new Map<string, number>();
+  for (const r of rows) {
+    if (!r.societyId) continue;
+    m.set(r.societyId, (m.get(r.societyId) ?? 0) + 1);
   }
-  for (const p of teeGroupPlayers) {
-    const data = byGroup.get(p.group_number);
-    if (data) data.players.push({ player_id: p.player_id, position: p.position });
-  }
-  for (const [, data] of byGroup) {
-    data.players.sort((a, b) => a.position - b.position);
-  }
-
-  return [...byGroup.keys()].sort((a, b) => a - b).map((groupNumber) => {
-    const data = byGroup.get(groupNumber)!;
-    const players = data.players
-      .map(({ player_id }) => lookup(player_id))
-      .filter(Boolean) as { id: string; name: string; handicapIndex: number | null }[];
-    return {
-      groupNumber,
-      players: players.map((p) => ({ ...p, courseHandicap: null, playingHandicap: null })),
-      teeTime: data.teeTime,
-    } as GroupWithTime;
-  });
+  return [...m.entries()].filter(([, n]) => n > 1).map(([societyId, rowCount]) => ({ societyId, rowCount }));
 }
 
 export default function EventTeeSheetScreen() {
   const router = useRouter();
   const { id: eventId } = useLocalSearchParams<{ id: string }>();
-  const { societyId, member } = useBootstrap();
+  const { societyId, member, userId, memberships, profile, switchSociety } = useBootstrap();
   const colors = getColors();
 
-  const [event, setEvent] = useState<EventDoc | null>(null);
+  const [canonical, setCanonical] = useState<CanonicalTeeSheetResult | null>(null);
   const [members, setMembers] = useState<MemberDoc[]>([]);
-  const [registrationMemberIds, setRegistrationMemberIds] = useState<string[]>([]);
-  const [guests, setGuests] = useState<{ id: string; name: string; sex: "male" | "female"; handicap_index: number | null }[]>([]);
-  const [teeGroups, setTeeGroups] = useState<{ group_number: number; tee_time: string | null }[]>([]);
-  const [teeGroupPlayers, setTeeGroupPlayers] = useState<{ player_id: string; group_number: number; position: number }[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<FormattedError | null>(null);
+  const loadRunCountRef = React.useRef(0);
+  const pendingSwitchSocietyIdRef = React.useRef<string | null>(null);
+  const loadInFlightRef = React.useRef(false);
+  const lastLoadKeyRef = React.useRef<string | null>(null);
+  const lastLoadAtRef = React.useRef(0);
 
   const loadData = useCallback(async () => {
-    if (!eventId || !societyId) return;
+    const membershipKey = memberships
+      .map((m) => `${String(m.societyId)}:${String(m.memberId)}`)
+      .sort()
+      .join(",");
+    const loadKey = [
+      String(eventId ?? ""),
+      String(societyId ?? ""),
+      String(userId ?? ""),
+      String(profile?.active_society_id ?? ""),
+      membershipKey,
+    ].join("|");
+    if (loadInFlightRef.current) {
+      if (__DEV__) {
+        console.log("[tee-loop-debug]", {
+          eventId: eventId ?? null,
+          effectRunCount: loadRunCountRef.current,
+          activeSocietyId: societyId ?? null,
+          derivedIsJoint: null,
+          sourceUsed: "skipped_in_flight",
+          canonicalSource: null,
+          groupCount: 0,
+          playerCount: 0,
+        });
+      }
+      return;
+    }
+    if (lastLoadKeyRef.current === loadKey && Date.now() - lastLoadAtRef.current < 4000) {
+      if (__DEV__) {
+        console.log("[tee-loop-debug]", {
+          eventId: eventId ?? null,
+          effectRunCount: loadRunCountRef.current,
+          activeSocietyId: societyId ?? null,
+          derivedIsJoint: null,
+          sourceUsed: "skipped_duplicate_key",
+          canonicalSource: null,
+          groupCount: 0,
+          playerCount: 0,
+        });
+      }
+      return;
+    }
+    loadInFlightRef.current = true;
+
+    if (!eventId || !societyId) {
+      if (__DEV__) {
+        console.log("[joint-access-user]", {
+          phase: "blocked_missing_event_or_society",
+          eventId: eventId ?? null,
+          userId: userId ?? null,
+          activeSocietyId: societyId ?? null,
+          profileActiveSocietyId: profile?.active_society_id ?? null,
+          bootstrapMembershipSocietyIds: memberships.map((m) => m.societyId).sort(),
+          userSocietyIds: [],
+          memberRowsFresh: [],
+          duplicateMemberRowsBySociety: [],
+          participantSocietyIdsMismatchBootstrapVsFresh: null,
+          hostSocietyId: null,
+          participantSocietyIds: [],
+          participantMatch: null,
+          derivedIsJoint: false,
+          isActiveSocietyParticipantForEvent_inputs: null,
+          canView: false,
+        });
+        console.log("[joint-access] final gate", {
+          eventId: eventId ?? null,
+          activeSocietyId: societyId ?? null,
+          hostSocietyId: null,
+          participantSocietyIds: [],
+          derivedIsJoint: false,
+          canView: false,
+        });
+      }
+      return;
+    }
 
     setLoading(true);
     setError(null);
     try {
-      const [eventData, membersData, registrations, guestList, groupsData, playersData] = await Promise.all([
-        getEvent(eventId),
-        getMembersBySocietyId(societyId),
-        getEventRegistrations(eventId),
-        getEventGuests(eventId),
-        getTeeGroups(eventId),
-        getTeeGroupPlayers(eventId),
-      ]);
-      setEvent(eventData ?? null);
-      setMembers(membersData);
-      setRegistrationMemberIds(
-        registrations.filter((r) => r.status === "in").map((r) => r.member_id),
+      const memberRowsFresh = await fetchMemberRowsForAuthUser();
+      const userSocietyIds = [...new Set(memberRowsFresh.map((r) => r.societyId).filter(Boolean))].sort();
+      const bootstrapIds = [...new Set(memberships.map((m) => m.societyId))].sort();
+      const participantSocietyIdsMismatchBootstrapVsFresh =
+        bootstrapIds.join(",") !== userSocietyIds.join(",")
+          ? { bootstrap: bootstrapIds, fresh: userSocietyIds }
+          : null;
+
+      const c = await loadCanonicalTeeSheet(eventId);
+      if (!c) {
+        if (__DEV__) {
+          console.log("[joint-access-user]", {
+            phase: "blocked_canonical_null",
+            eventId,
+            userId: userId ?? null,
+            activeSocietyId: societyId,
+            profileActiveSocietyId: profile?.active_society_id ?? null,
+            bootstrapMembershipSocietyIds: bootstrapIds,
+            userSocietyIds,
+            memberRowsFresh: memberRowsFresh.map((r) => ({
+              memberId: r.memberId,
+              societyId: r.societyId,
+              userId: r.userId,
+              createdAt: r.createdAt,
+            })),
+            duplicateMemberRowsBySociety: duplicateMemberRowsBySociety(memberRowsFresh),
+            participantSocietyIdsMismatchBootstrapVsFresh,
+            hostSocietyId: null,
+            participantSocietyIds: [],
+            participantMatch: null,
+            derivedIsJoint: false,
+            isActiveSocietyParticipantForEvent_inputs: null,
+            canView: false,
+          });
+          console.log("[tee-debug] loadCanonicalTeeSheet returned null — member tee sheet cannot render (often events RLS for participant societies).", {
+            eventId,
+            activeSocietyId: societyId,
+          });
+          console.log("[joint-access] final gate", {
+            eventId,
+            activeSocietyId: societyId,
+            hostSocietyId: null,
+            participantSocietyIds: [],
+            derivedIsJoint: false,
+            canView: false,
+          });
+        }
+        setCanonical(null);
+        setError(formatError(new Error("Event not found")));
+        return;
+      }
+
+      const hostSid = c.event.society_id ?? "";
+      const fromCanon = (c.jointParticipatingSocieties ?? []).map((s) => s.society_id).filter(Boolean);
+      const jointMetaForGate = await getJointMetaForEventIds([eventId]);
+      const gateMeta = jointMetaForGate.get(eventId);
+      const fromEventSocieties = gateMeta?.participantSocietyIds ?? [];
+      const linkedSocietyCountGate = gateMeta?.linkedSocietyCount ?? 0;
+      const detail = await getJointEventDetail(eventId);
+      const fromDetail = detail?.participating_societies?.map((s) => s.society_id) ?? [];
+      const derivedIsJoint =
+        !!detail?.event?.is_joint_event ||
+        fromDetail.length > 1 ||
+        c.isJoint ||
+        fromEventSocieties.length > 1 ||
+        fromCanon.length > 1 ||
+        linkedSocietyCountGate >= 2;
+      /** Full participant set for joint: detail RPC ∪ event_societies ∪ canonical ∪ host — strongest joint signal wins over broken meta. */
+      const gateParticipants: string[] = derivedIsJoint
+        ? [...new Set([hostSid, ...fromDetail, ...fromEventSocieties, ...fromCanon].filter(Boolean))]
+        : [hostSid].filter(Boolean);
+      const legacyGateParticipants =
+        c.isJoint && c.jointParticipatingSocieties?.length
+          ? c.jointParticipatingSocieties.map((s) => s.society_id).filter(Boolean)
+          : [hostSid].filter(Boolean);
+
+      if (derivedIsJoint && memberships.length > 0) {
+        const pref = pickPreferredMembershipSocietyForJointEvent(
+          memberships,
+          gateParticipants,
+          hostSid,
+        );
+        const activeOkForEvent = isActiveSocietyParticipantForEvent(
+          societyId,
+          hostSid,
+          gateParticipants,
+        );
+        if (
+          pref &&
+          String(pref.societyId) !== String(societyId) &&
+          !activeOkForEvent
+        ) {
+          if (pendingSwitchSocietyIdRef.current === String(pref.societyId)) {
+            return;
+          }
+          pendingSwitchSocietyIdRef.current = String(pref.societyId);
+          if (__DEV__) {
+            console.log("[joint-society-context]", {
+              userId: userId ?? null,
+              profileActiveSocietyId: profile?.active_society_id ?? null,
+              resolvedMembershipSocietyIds: memberships.map((m) => m.societyId).sort(),
+              chosenActiveSocietyId: pref.societyId,
+              reason: "tee_sheet_switch_to_first_membership_in_joint_participants",
+              eventId,
+              hostSocietyId: hostSid,
+              gateParticipantIds: gateParticipants,
+            });
+          }
+          await switchSociety(pref.societyId);
+          return;
+        }
+      }
+      pendingSwitchSocietyIdRef.current = null;
+
+      const participantMatch = gateParticipants.some((id) => String(id) === String(societyId));
+      const helperInputs = {
+        activeSocietyId: societyId,
+        hostSocietyId: hostSid,
+        participantSocietyIds: gateParticipants,
+      };
+      // Access uses participant/host membership only — not getMembersBySocietyId row count
+      // (that query is often host-scoped; ZGS-only users see 0 rows for the host society).
+      if (__DEV__) {
+        console.log("[joint-access-user]", {
+          phase: "before_canView",
+          eventId,
+          userId: userId ?? null,
+          activeSocietyId: societyId,
+          profileActiveSocietyId: profile?.active_society_id ?? null,
+          activeEqualsProfileSociety:
+            societyId != null && profile?.active_society_id != null
+              ? String(societyId) === String(profile.active_society_id)
+              : null,
+          bootstrapMembershipSocietyIds: bootstrapIds,
+          userSocietyIds,
+          memberRowsFresh: memberRowsFresh.map((r) => ({
+            memberId: r.memberId,
+            societyId: r.societyId,
+            userId: r.userId,
+            createdAt: r.createdAt,
+          })),
+          duplicateMemberRowsBySociety: duplicateMemberRowsBySociety(memberRowsFresh),
+          participantSocietyIdsMismatchBootstrapVsFresh,
+          hostSocietyId: hostSid,
+          participantSocietyIds: gateParticipants,
+          participantMatch,
+          derivedIsJoint,
+          isActiveSocietyParticipantForEvent_inputs: helperInputs,
+          canView: null,
+        });
+      }
+      const canView = isActiveSocietyParticipantForEvent(
+        societyId,
+        c.event.society_id,
+        gateParticipants,
       );
-      setGuests(guestList);
-      setTeeGroups(groupsData);
-      setTeeGroupPlayers(playersData);
+      if (jointGateInstrumentation) {
+        const metaEntry = jointMetaForGate.get(eventId) ?? null;
+
+        logJointGateLine("[joint-gate-flat]", {
+          eventId,
+          activeSocietyId: societyId,
+          hostSocietyId: c.event.society_id,
+          canonicalIsJoint: c.isJoint,
+          derivedIsJoint,
+          fromDetail,
+          fromJointParticipatingSocieties: (c.jointParticipatingSocieties ?? []).map((s) => ({
+            society_id: s.society_id,
+            society_name: s.society_name ?? null,
+          })),
+          fromEventSocietiesMeta: fromEventSocieties,
+          fromCanon,
+          gateParticipants,
+          canView,
+          activeInGate: gateParticipants.includes(societyId),
+          denyDespiteActiveInGate: gateParticipants.includes(societyId) && !canView,
+          published: !!c.event.tee_time_published_at,
+        });
+
+        logJointGateLine("[joint-gate-meta]", {
+          eventId,
+          metaEntry,
+        });
+
+        logJointGateLine("[joint-gate-detail]", {
+          eventId,
+          detailIsNull: !detail,
+          detailIsJoint: detail?.event?.is_joint_event ?? null,
+          participatingSocietyIds: detail?.participating_societies?.map((s) => s.society_id) ?? [],
+        });
+
+        const activeInGate = gateParticipants.some((id) => String(id) === String(societyId));
+        const denyDespiteActiveInGate = activeInGate && !canView;
+        const fromJointParticipatingSocieties = (c.jointParticipatingSocieties ?? []).map((s) => ({
+          society_id: s.society_id,
+          society_name: s.society_name ?? null,
+        }));
+        const fromEventSocietiesMeta = [...fromEventSocieties];
+
+        logJointGateLine("[joint-gate-debug:flat]", {
+          eventId,
+          activeSocietyId: societyId,
+          hostSocietyId: c.event.society_id,
+          canonicalIsJoint: c.isJoint,
+          derivedIsJoint,
+          fromDetail,
+          fromJointParticipatingSocieties,
+          fromEventSocietiesMeta,
+          fromCanon,
+          gateParticipants,
+          canView,
+          activeInGate,
+          denyDespiteActiveInGate,
+        });
+
+        logJointGateLine("[joint-gate-debug:meta]", {
+          eventId,
+          metaEntry,
+        });
+
+        logJointGateLine("[joint-gate-debug:detail]", {
+          eventId,
+          detailIsNull: !detail,
+          detailIsJoint: detail?.event?.is_joint_event ?? null,
+          participatingSocietyIds: detail?.participating_societies?.map((s) => s.society_id) ?? [],
+        });
+
+        const legacyCanView = isActiveSocietyParticipantForEvent(
+          societyId,
+          c.event.society_id,
+          legacyGateParticipants,
+        );
+        const nm = (s: string) => (s || "").toLowerCase();
+        const isDualMember = userSocietyIds.length >= 2;
+        const isZgsMember = memberships.some((m) => nm(m.societyName).includes("zgs"));
+        const isM4Member = memberships.some(
+          (m) => /\bm4\b/i.test(m.societyName) || nm(m.societyName).includes("m4"),
+        );
+        const roleForActiveSociety =
+          memberships.find((m) => String(m.societyId) === String(societyId))?.role ??
+          member?.role ??
+          null;
+        let reason: string;
+        if (canView) {
+          if (!legacyCanView) {
+            reason = "allowed_fixed_by_event_societies_meta_union";
+          } else if (societyId && hostSid && String(societyId) === String(hostSid)) {
+            reason = "allowed_host_match";
+          } else {
+            reason = "allowed_participant_match";
+          }
+        } else if (!societyId || !hostSid) {
+          reason = "deny_missing_active_or_host";
+        } else {
+          reason = "deny_active_not_in_host_or_event_societies_union";
+        }
+        console.log("[joint-zgs-debug]", {
+          eventId,
+          userId: userId ?? null,
+          activeSocietyId: societyId,
+          userSocietyIds,
+          resolvedMembershipRows: memberRowsFresh.map((r) => ({
+            memberId: r.memberId,
+            societyId: r.societyId,
+          })),
+          participantSocietyIds: gateParticipants,
+          fromEventSocietiesRowCount: fromEventSocieties.length,
+          fromCanonRowCount: fromCanon.length,
+          legacyGateParticipantIds: legacyGateParticipants,
+          legacyCanView,
+          fixedByEventSocietiesMetaUnion: !legacyCanView && canView,
+          derivedIsJoint,
+          canView,
+          isDualMember,
+          isZgsMember,
+          isM4Member,
+          roleForActiveSociety,
+          reason,
+        });
+      }
+      if (__DEV__) {
+        console.log("[joint-access-user]", {
+          phase: canView ? "access_allowed" : "blocked_canView_false",
+          eventId,
+          userId: userId ?? null,
+          activeSocietyId: societyId,
+          profileActiveSocietyId: profile?.active_society_id ?? null,
+          activeEqualsProfileSociety:
+            societyId != null && profile?.active_society_id != null
+              ? String(societyId) === String(profile.active_society_id)
+              : null,
+          bootstrapMembershipSocietyIds: bootstrapIds,
+          userSocietyIds,
+          memberRowsFresh: memberRowsFresh.map((r) => ({
+            memberId: r.memberId,
+            societyId: r.societyId,
+            userId: r.userId,
+            createdAt: r.createdAt,
+          })),
+          duplicateMemberRowsBySociety: duplicateMemberRowsBySociety(memberRowsFresh),
+          participantSocietyIdsMismatchBootstrapVsFresh,
+          hostSocietyId: hostSid,
+          participantSocietyIds: gateParticipants,
+          participantMatch,
+          derivedIsJoint,
+          isActiveSocietyParticipantForEvent_inputs: helperInputs,
+          canView,
+        });
+      }
+      if (!canView) {
+        if (__DEV__) {
+          console.log("[joint-access] final gate", {
+            eventId,
+            activeSocietyId: societyId,
+            hostSocietyId: c.event.society_id,
+            participantSocietyIds: gateParticipants,
+            derivedIsJoint,
+            canView: false,
+          });
+        }
+        setCanonical(null);
+        setMembers([]);
+        setError(formatError(new Error("You don't have access to this tee sheet.")));
+        return;
+      }
+
+      let renderedCanonical = c;
+      let sourceUsed: "canonical" | "joint_tee_sheet_override" = "canonical";
+      if (derivedIsJoint) {
+        const jointTee = await getJointEventTeeSheet(eventId, detail ?? undefined);
+        if (jointTee && (jointTee.groups?.length ?? 0) > 0) {
+          renderedCanonical = {
+            ...c,
+            isJoint: true,
+            source: "joint_entries",
+            event: mapJointEventToEventDoc(jointTee.event) as typeof c.event,
+            jointParticipatingSocieties: (jointTee.participating_societies ?? []).map((s) => ({
+              society_id: s.society_id,
+              society_name: s.society_name ?? null,
+            })),
+            groups: (jointTee.groups ?? []).map((g) => ({
+              groupNumber: g.group_number,
+              teeTime: g.tee_time ? String(g.tee_time).slice(0, 5) : "08:00",
+              players: (g.entries ?? []).map((e) => ({
+                id: String(e.player_id),
+                name: e.player_name || `Member ${String(e.player_id).slice(0, 8)}...`,
+                handicapIndex: e.handicap_index ?? null,
+                societyLabel:
+                  (e.society_memberships?.length ?? 0) > 1
+                    ? e.society_memberships.join(" & ")
+                    : e.primary_display_society ?? e.society_memberships?.[0] ?? undefined,
+              })),
+            })),
+          };
+          sourceUsed = "joint_tee_sheet_override";
+        }
+      }
+
+      setCanonical(renderedCanonical);
+
+      const eventData = renderedCanonical.event;
+      const hostId = eventData.society_id ?? societyId;
+      const participantSocietyIdsForPool =
+        derivedIsJoint && gateParticipants.length > 0 ? gateParticipants : [];
+
+      let membersMerged: MemberDoc[] = [];
+      if (derivedIsJoint && participantSocietyIdsForPool.length > 0) {
+        membersMerged = await getJointEventMemberVisibility(eventId);
+        if (__DEV__) {
+          console.log("[joint-hi] source=rpc count=", membersMerged.length);
+        }
+      } else {
+        membersMerged = await getMembersBySocietyId(hostId);
+      }
+
+      const byId = new Map<string, MemberDoc>();
+      for (const m of membersMerged) byId.set(m.id, m);
+      const flatIds = renderedCanonical.groups.flatMap((g) => g.players.map((p) => p.id));
+      const memberIds = flatIds.filter((id) => id && !String(id).startsWith("guest-"));
+      const missing = memberIds.filter((id) => id && !byId.has(id));
+      if (missing.length > 0) {
+        const extra = await getMembersByIds(missing);
+        for (const m of extra) {
+          if (m?.id && !byId.has(m.id)) byId.set(m.id, m);
+        }
+        const stillMissing = missing.filter((id) => id && !byId.has(id));
+        if (__DEV__ && stillMissing.length > 0) {
+          console.log("[joint-hi] missing member ids", stillMissing);
+          for (const memberId of stillMissing) {
+            console.log("[HI-visibility] blocked_by_rls", {
+              memberId,
+              societyId: null,
+              viewerSocietyId: societyId ?? null,
+            });
+          }
+        }
+      }
+      setMembers(Array.from(byId.values()));
+
+      if (__DEV__) {
+        const effectRunCount = ++loadRunCountRef.current;
+        const playerCount = renderedCanonical.groups.flatMap((g) => g.players).length;
+        console.log("[tee-loop-debug]", {
+          eventId,
+          effectRunCount,
+          activeSocietyId: societyId,
+          derivedIsJoint,
+          sourceUsed,
+          canonicalSource: renderedCanonical.source,
+          groupCount: renderedCanonical.groups.length,
+          playerCount,
+        });
+        console.log("[joint-render-source]", {
+          eventId,
+          derivedIsJoint,
+          canonicalSource: c.source,
+          renderedGroupCount: renderedCanonical.groups.length,
+          renderedPlayerCount: renderedCanonical.groups.flatMap((g) => g.players).length,
+          sourceUsed,
+        });
+      }
+
+      if (__DEV__) {
+        console.log("[joint-access] final gate", {
+          eventId,
+          activeSocietyId: societyId,
+          hostSocietyId: renderedCanonical.event.society_id,
+          participantSocietyIds: gateParticipants,
+          derivedIsJoint,
+          canView: true,
+          published: !!renderedCanonical.event.teeTimePublishedAt,
+          groupCount: renderedCanonical.groups.length,
+          source: renderedCanonical.source,
+        });
+      }
     } catch (err) {
+      if (__DEV__) {
+        console.log("[joint-access-user]", {
+          phase: "blocked_load_error",
+          eventId: eventId ?? null,
+          userId: userId ?? null,
+          activeSocietyId: societyId ?? null,
+          profileActiveSocietyId: profile?.active_society_id ?? null,
+          bootstrapMembershipSocietyIds: memberships.map((m) => m.societyId).sort(),
+          userSocietyIds: [],
+          memberRowsFresh: [],
+          duplicateMemberRowsBySociety: [],
+          participantSocietyIdsMismatchBootstrapVsFresh: null,
+          hostSocietyId: null,
+          participantSocietyIds: [],
+          participantMatch: null,
+          derivedIsJoint: false,
+          isActiveSocietyParticipantForEvent_inputs: null,
+          canView: false,
+          errorMessage: err instanceof Error ? err.message : String(err),
+        });
+      }
       setError(formatError(err));
+      setCanonical(null);
     } finally {
+      lastLoadKeyRef.current = loadKey;
+      lastLoadAtRef.current = Date.now();
+      loadInFlightRef.current = false;
       setLoading(false);
     }
-  }, [eventId, societyId]);
+  }, [eventId, societyId, userId, profile, memberships, switchSociety, member]);
 
   useEffect(() => {
     loadData();
-  }, [loadData]);
+    // Prevent reload loops from unstable object identities (memberships/profile objects).
+    // We intentionally trigger by stable primitives only.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [eventId, societyId, userId, profile?.active_society_id, memberships.length]);
+
+  const jointSocietyIdToName = useMemo(
+    () =>
+      canonical?.jointParticipatingSocieties?.length
+        ? buildSocietyIdToNameMap(canonical.jointParticipatingSocieties)
+        : undefined,
+    [canonical?.jointParticipatingSocieties],
+  );
 
   if (loading) {
     return (
@@ -208,7 +717,7 @@ export default function EventTeeSheetScreen() {
     );
   }
 
-  if (!event || error) {
+  if (!canonical || error) {
     return (
       <Screen>
         <View style={styles.header}>
@@ -223,23 +732,14 @@ export default function EventTeeSheetScreen() {
     );
   }
 
+  const event = canonical.event;
   const memberId = member?.id;
-  const usePersistedTeeSheet = teeGroups.length > 0 && teeGroupPlayers.length > 0;
-  const eventWithPlayers = {
-    ...event,
-    playerIds:
-      event.playerIds?.length
-        ? event.playerIds
-        : registrationMemberIds,
-  };
+  const isJointEvent = canonical.isJoint === true;
+
   const myGroup = memberId
-    ? (usePersistedTeeSheet
-        ? findMemberGroupFromTeeSheet(memberId, teeGroups, teeGroupPlayers, members)
-        : findMemberGroup(memberId, eventWithPlayers, members))
+    ? findMemberGroupInfoFromCanonical(memberId, canonical, members, jointSocietyIdToName)
     : null;
-  const groupsWithTimes = usePersistedTeeSheet
-    ? buildGroupsWithTimesFromDb(teeGroups, teeGroupPlayers, members, guests)
-    : buildGroupsWithTimes(event, members, registrationMemberIds, guests);
+  const groupsWithTimes = canonicalToGroupsWithTime(canonical);
 
   const hasTeeTimes = !!event.teeTimePublishedAt;
 
@@ -254,7 +754,7 @@ export default function EventTeeSheetScreen() {
       <AppText variant="title" style={styles.title}>
         Tee Sheet
       </AppText>
-      <AppText variant="body" color="secondary" style={{ marginBottom: spacing.lg }}>
+      <AppText variant="body" color="secondary" style={{ marginBottom: spacing.sm }}>
         {event.name}
         {event.date
           ? ` • ${new Date(event.date).toLocaleDateString("en-GB", {
@@ -264,6 +764,20 @@ export default function EventTeeSheetScreen() {
             })}`
           : ""}
       </AppText>
+
+      {isJointEvent && (
+        <View
+          style={[
+            styles.jointTeeBanner,
+            { borderColor: colors.info + "44", backgroundColor: colors.info + "0A" },
+          ]}
+        >
+          <Feather name="link" size={16} color={colors.info} />
+          <AppText variant="caption" color="secondary" style={{ flex: 1 }}>
+            {JOINT_EVENT_CHIP_LONG} — mixed societies; each player appears once.
+          </AppText>
+        </View>
+      )}
 
       {!hasTeeTimes ? (
         <AppCard>
@@ -304,7 +818,7 @@ export default function EventTeeSheetScreen() {
           )}
 
           {/* Full tee sheet */}
-          <AppText variant="h2" style={styles.sectionTitle}>
+          <AppText variant="heading" style={styles.sectionTitle}>
             Full Tee Sheet
           </AppText>
           {groupsWithTimes.length === 0 ? (
@@ -330,6 +844,15 @@ const styles = StyleSheet.create({
   },
   title: {
     marginBottom: spacing.xs,
+  },
+  jointTeeBanner: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: spacing.sm,
+    padding: spacing.sm,
+    borderRadius: radius.sm,
+    borderWidth: 1,
+    marginBottom: spacing.lg,
   },
   stickyCard: {
     marginBottom: spacing.lg,

@@ -12,6 +12,8 @@
 import { groupPlayers, type GroupedPlayer } from "./teeSheetGrouping";
 import { computeTeeTime } from "./computeTeeTime";
 import { teeTimeToDisplay } from "./db_supabase/teeGroupsRepo";
+import type { MemberDoc } from "./db_supabase/memberRepo";
+import { dedupeJointMembers, representativeMemberIdForJoint } from "./jointPersonDedupe";
 
 export type MemberGroupInfo = {
   groupIndex: number;
@@ -30,7 +32,23 @@ type MemberLike = {
   handicapIndex?: number | null;
   handicap_index?: number | null;
   gender?: "male" | "female" | null;
+  /** Home society for this membership row (joint tee sheet / playing-with labels). */
+  society_id?: string | null;
+  /** After joint dedupe: merged society labels for dual membership. */
+  joint_society_label?: string | null;
 };
+
+function maybeDedupeMembersForJoint(
+  members: MemberLike[],
+  societyIdToName?: Map<string, string>,
+): MemberLike[] {
+  if (!societyIdToName || societyIdToName.size === 0) return members;
+  const deduped = dedupeJointMembers(members as MemberDoc[], societyIdToName);
+  return deduped.map((d) => ({
+    ...d.representative,
+    joint_society_label: d.societyLabelMerged,
+  })) as MemberLike[];
+}
 
 type EventLike = {
   playerIds?: string[] | null;
@@ -38,10 +56,23 @@ type EventLike = {
   teeTimeInterval?: number | null;
 };
 
+function formatMateLine(m: MemberLike, societyIdToName?: Map<string, string>): string {
+  const name = m.name || m.displayName || "Member";
+  const jl = m.joint_society_label?.trim();
+  if (jl) return `${name} · ${jl}`;
+  const sid = m.society_id;
+  if (societyIdToName && sid) {
+    const soc = societyIdToName.get(sid) ?? sid;
+    return `${name} · ${soc}`;
+  }
+  return name;
+}
+
 export function findMemberGroup(
   memberId: string,
   event: EventLike,
-  members: MemberLike[]
+  members: MemberLike[],
+  societyIdToName?: Map<string, string>,
 ): MemberGroupInfo | null {
   if (!memberId || !event) return null;
 
@@ -77,7 +108,12 @@ export function findMemberGroup(
     if (found) {
       const groupMates = group.players
         .filter((p) => p.id !== memberId)
-        .map((p) => p.name)
+        .map((p) => {
+          const mate = eventMembers.find((em) => em.id === p.id);
+          return mate
+            ? formatMateLine(mate, societyIdToName)
+            : p.name;
+        })
         .filter(Boolean);
 
       const teeTime = computeTeeTime(start, interval, i);
@@ -105,21 +141,52 @@ export function findMemberGroupFromTeeSheet(
   memberId: string,
   teeGroups: TeeGroupRow[],
   teeGroupPlayers: TeeGroupPlayerRow[],
-  members: MemberLike[]
+  members: MemberLike[],
+  societyIdToName?: Map<string, string>,
 ): MemberGroupInfo | null {
   if (!memberId || !teeGroups?.length || !teeGroupPlayers?.length) return null;
 
-  const assignment = teeGroupPlayers.find((p) => p.player_id === memberId);
+  const repId =
+    societyIdToName && societyIdToName.size > 0
+      ? representativeMemberIdForJoint(memberId, members as MemberDoc[], societyIdToName)
+      : memberId;
+
+  let assignment = teeGroupPlayers.find((p) => p.player_id === memberId);
+  if (!assignment && repId !== memberId) {
+    assignment = teeGroupPlayers.find((p) => p.player_id === repId);
+  }
   if (!assignment) return null;
 
   const grp = teeGroups.find((g) => g.group_number === assignment.group_number);
   const teeTime = grp?.tee_time ? teeTimeToDisplay(grp.tee_time) : "08:00";
 
-  const groupMates = teeGroupPlayers
-    .filter((p) => p.group_number === assignment.group_number && p.player_id !== memberId)
-    .sort((a, b) => a.position - b.position)
-    .map((p) => members.find((m) => m.id === p.player_id)?.name || members.find((m) => m.id === p.player_id)?.displayName)
-    .filter(Boolean) as string[];
+  const mateSlots = teeGroupPlayers
+    .filter(
+      (p) =>
+        p.group_number === assignment.group_number &&
+        p.player_id !== memberId &&
+        p.player_id !== repId,
+    )
+    .sort((a, b) => a.position - b.position);
+
+  const seenRep = new Set<string>();
+  const groupMates: string[] = [];
+  const map =
+    societyIdToName && societyIdToName.size > 0 ? societyIdToName : new Map<string, string>();
+
+  for (const p of mateSlots) {
+    const mateRep =
+      map.size > 0
+        ? representativeMemberIdForJoint(p.player_id, members as MemberDoc[], map)
+        : p.player_id;
+    if (seenRep.has(mateRep)) continue;
+    seenRep.add(mateRep);
+
+    const rawMate = members.find((m) => m.id === mateRep) ?? members.find((m) => m.id === p.player_id);
+    if (!rawMate) continue;
+    const [deduped] = maybeDedupeMembersForJoint([rawMate], societyIdToName);
+    groupMates.push(formatMateLine(deduped ?? rawMate, societyIdToName));
+  }
 
   return {
     groupIndex: assignment.group_number - 1,

@@ -1,43 +1,29 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
-import { StyleSheet, View, Text } from "react-native";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Platform, StyleSheet, View } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { goBack } from "@/lib/navigation";
 
 import { Screen } from "@/components/ui/Screen";
-import { SocietyLogoImage } from "@/components/ui/SocietyLogoImage";
 import { AppCard } from "@/components/ui/AppCard";
 import { InlineNotice } from "@/components/ui/InlineNotice";
 import { LoadingState } from "@/components/ui/LoadingState";
 import { PrimaryButton, SecondaryButton } from "@/components/ui/Button";
-import { spacing, typography } from "@/lib/ui/theme";
+import { spacing } from "@/lib/ui/theme";
 import { captureAndShareMultiple, type ShareTarget } from "@/lib/share/captureAndShare";
 import { assertPngExportOnly } from "@/lib/share/pngExportGuard";
-import { getSocietyLogoDataUri } from "@/lib/societyLogo";
+import { logShareError } from "@/lib/share/logShareError";
 import { formatError, type FormattedError } from "@/lib/ui/formatError";
-import {
-  calcCourseHandicap,
-  calcPlayingHandicap,
-  formatHandicap,
-  selectTeeByGender,
-  DEFAULT_ALLOWANCE,
-} from "@/lib/whs";
-import {
-  groupPlayers,
-  formatHoleNumbers,
-  type GroupedPlayer,
-  type PlayerGroup,
-} from "@/lib/teeSheetGrouping";
 import type { TeeSheetData } from "@/lib/teeSheetPdf";
 import { useBootstrap } from "@/lib/useBootstrap";
+import { showAlert } from "@/lib/ui/alert";
+import { trackExportCompleted } from "@/lib/analytics/trackEvent";
+import { buildTeeSheetPages } from "@/lib/teeSheet/buildTeeSheetPages";
+import { TeeSheetPoster, type PosterGroup } from "@/lib/teeSheet/TeeSheetPoster";
+import { resolveTeeSheetPosterLogos, type PosterLogo } from "@/lib/teeSheet/resolveTeeSheetPosterLogos";
 
-type ExportStatus = "loading" | "ready" | "error" | "success";
+type ExportStatus = "loading" | "ready" | "sharing" | "error" | "success";
 
-type PlayerWithCalcs = GroupedPlayer & {
-  gender: "male" | "female" | null;
-  playingHandicap: number | null;
-};
-
-type GroupWithTime = PlayerGroup & { teeTime: string };
+type GroupWithTime = PosterGroup;
 
 export default function TeeSheetShareScreen() {
   const router = useRouter();
@@ -46,10 +32,9 @@ export default function TeeSheetShareScreen() {
 
   const [status, setStatus] = useState<ExportStatus>("loading");
   const [error, setError] = useState<FormattedError | null>(null);
-  const [retryKey, setRetryKey] = useState(0);
 
-  const [logoSrc, setLogoSrc] = useState<string | null>(null);
   const [pages, setPages] = useState<GroupWithTime[][]>([]);
+  const [posterLogos, setPosterLogos] = useState<PosterLogo[]>([]);
 
   const pageRefs = useRef<React.RefObject<View>[]>([]);
 
@@ -68,82 +53,137 @@ export default function TeeSheetShareScreen() {
     }
   }, [params.payload, activeSocietyId]);
 
-  useEffect(() => {
+  const prepareExport = useCallback(async () => {
     if (!payload) {
       setStatus("error");
       setError({ message: "Tee sheet unavailable", detail: "Missing export data." });
       return;
     }
 
-    let mounted = true;
+    setStatus("loading");
+    setError(null);
 
-    (async () => {
-      setStatus("loading");
-      setError(null);
+    try {
+      assertPngExportOnly("Tee Sheet export");
 
-      try {
-        assertPngExportOnly("Tee Sheet export");
-
-        const computedPages = buildTeeSheetPages(payload);
-        if (computedPages.length === 0) {
-          throw new Error("No player groups to share.");
-        }
-
-        const refs = computedPages.map(
-          (_, index) => pageRefs.current[index] ?? React.createRef<View>()
-        );
-        pageRefs.current = refs;
-        setPages(computedPages);
-
-        const logoDataUri = payload.societyId
-          ? await getSocietyLogoDataUri(payload.societyId, { logoUrl: payload.logoUrl ?? null })
-          : null;
-        setLogoSrc(logoDataUri);
-
-        setStatus("ready");
-
-        // Give layout a moment before capture
-        await new Promise((resolve) => setTimeout(resolve, 200));
-        if (!mounted) return;
-
-        const targets: ShareTarget[] = refs.map((ref, index) => ({
-          ref,
-          title: `Tee Sheet ${index + 1}`,
-          width: PAGE_WIDTH * 3,
-          height: PAGE_HEIGHT * 3,
-        }));
-
-        await captureAndShareMultiple(targets, {
-          dialogTitle: `Tee Sheet - ${payload.eventName || "Event"}`,
-        });
-
-        if (!mounted) return;
-        setStatus("success");
-        setTimeout(() => goBack(router, "/(app)/(tabs)"), 400);
-      } catch (err) {
-        if (!mounted) return;
-        setError(formatError(err, "Couldn't generate tee sheet."));
-        setStatus("error");
+      const computedPages = buildTeeSheetPages(payload);
+      if (computedPages.length === 0) {
+        throw new Error("No player groups to share.");
       }
-    })();
 
-    return () => {
-      mounted = false;
-    };
-  }, [payload, retryKey, router]);
+      const logos = await resolveTeeSheetPosterLogos(payload);
+      setPosterLogos(logos);
 
-  const shouldRenderPages = status === "ready" || status === "loading";
+      const refs = computedPages.map(
+        (_, index) => pageRefs.current[index] ?? React.createRef<View>(),
+      );
+      pageRefs.current = refs;
+      setPages(computedPages);
+
+      setStatus("ready");
+    } catch (err) {
+      logShareError(err, {
+        action: "export",
+        screen: "tee-sheet-share",
+        eventId: payload.eventName ?? null,
+      });
+      setError(formatError(err, "Couldn't prepare tee sheet for export."));
+      setStatus("error");
+    }
+  }, [payload]);
+
+  useEffect(() => {
+    void prepareExport();
+  }, [prepareExport]);
+
+  const runShare = async () => {
+    if (!payload || pages.length === 0) return;
+
+    setStatus("sharing");
+    setError(null);
+
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 200));
+
+      const targets: ShareTarget[] = pageRefs.current.map((ref, index) => ({
+        ref,
+        title: `Tee Sheet ${index + 1}`,
+        width: PAGE_WIDTH * 3,
+        height: PAGE_HEIGHT * 3,
+      }));
+
+      const shareResult = await captureAndShareMultiple(targets, {
+        dialogTitle: `Tee Sheet - ${payload.eventName || "Event"}`,
+      });
+
+      if (shareResult.completedVia === "download") {
+        showAlert(
+          "Download complete",
+          Platform.OS === "web"
+            ? "On iPhone Safari, use this download or tap Share again after the file saves. If sharing was blocked, attach the downloaded PNG manually."
+            : "Your tee sheet image was saved.",
+        );
+      }
+
+      trackExportCompleted("tee_sheet", {
+        screen: "tee-sheet-share",
+        societyId: payload.societyId ?? activeSocietyId ?? undefined,
+        relatedEventId: payload.eventId ?? undefined,
+        format: "png",
+        feature: "tee_sheet_share_export",
+      });
+
+      setStatus("success");
+      setTimeout(() => goBack(router, "/(app)/(tabs)"), 600);
+    } catch (err) {
+      logShareError(err, {
+        action: "share",
+        screen: "tee-sheet-share",
+        eventId: payload.eventName ?? null,
+      });
+      setError(formatError(err, "Couldn't export tee sheet. Try again or use Download on the next screen."));
+      setStatus("error");
+    }
+  };
+
+  const shouldRenderPages = status === "ready" || status === "sharing" || status === "loading";
 
   return (
     <Screen scrollable={false}>
       <View style={styles.centered}>
         {status === "loading" && (
-          <LoadingState message="Generating tee sheet..." />
+          <LoadingState message="Preparing tee sheet..." />
+        )}
+
+        {status === "ready" && (
+          <AppCard style={styles.noticeCard}>
+            <InlineNotice
+              variant="info"
+              message="Ready to export"
+              detail={
+                pages.length > 1
+                  ? `This tee sheet spans ${pages.length} images (12 tee times per page). Tap below to share or save. On iPhone Safari this must be a tap (not automatic).`
+                  : "Tap below to create a PNG you can share or save. On iPhone Safari this must be a tap (not automatic)."
+              }
+            />
+            <View style={styles.noticeActions}>
+              <SecondaryButton onPress={() => goBack(router, "/(app)/(tabs)")} style={{ flex: 1 }}>
+                Cancel
+              </SecondaryButton>
+              <PrimaryButton onPress={() => void runShare()} style={{ flex: 1 }}>
+                Share / Download
+              </PrimaryButton>
+            </View>
+          </AppCard>
+        )}
+
+        {status === "sharing" && (
+          <LoadingState message="Generating image..." />
         )}
 
         {status === "success" && (
           <AppCard style={styles.noticeCard}>
-            <InlineNotice variant="success" message="Tee sheet shared" />
+            <InlineNotice variant="success" message="Tee sheet exported" />
           </AppCard>
         )}
 
@@ -151,7 +191,7 @@ export default function TeeSheetShareScreen() {
           <AppCard style={styles.noticeCard}>
             <InlineNotice
               variant="error"
-              message={error?.message ?? "Couldn't generate tee sheet."}
+              message={error?.message ?? "Couldn't export tee sheet."}
               detail={error?.detail}
               style={{ marginBottom: spacing.sm }}
             />
@@ -160,7 +200,7 @@ export default function TeeSheetShareScreen() {
                 Close
               </SecondaryButton>
               {payload ? (
-                <PrimaryButton onPress={() => setRetryKey((k) => k + 1)} style={{ flex: 1 }}>
+                <PrimaryButton onPress={() => void prepareExport()} style={{ flex: 1 }}>
                   Try Again
                 </PrimaryButton>
               ) : null}
@@ -170,7 +210,7 @@ export default function TeeSheetShareScreen() {
       </View>
 
       {shouldRenderPages && payload ? (
-        <View style={styles.captureRoot} pointerEvents="none">
+        <View style={styles.captureRoot} pointerEvents="none" data-testid="share-target">
           {pages.map((groups, pageIndex) => (
             <TeeSheetPage
               key={`page-${pageIndex}`}
@@ -179,7 +219,7 @@ export default function TeeSheetShareScreen() {
               groups={groups}
               pageIndex={pageIndex}
               pageCount={pages.length}
-              logoSrc={logoSrc}
+              logos={posterLogos}
             />
           ))}
         </View>
@@ -193,238 +233,19 @@ const TeeSheetPage = React.forwardRef<View, {
   groups: GroupWithTime[];
   pageIndex: number;
   pageCount: number;
-  logoSrc: string | null;
-}>(({ data, groups, pageIndex, pageCount, logoSrc }, ref) => {
-  const leftGroups = groups.slice(0, 6);
-  const rightGroups = groups.slice(6, 12);
-
-  const allowance = data.handicapAllowance ?? DEFAULT_ALLOWANCE;
-  const dateStr = data.eventDate
-    ? new Date(data.eventDate).toLocaleDateString("en-GB", {
-        weekday: "long",
-        day: "numeric",
-        month: "long",
-        year: "numeric",
-      })
-    : "Date TBC";
-  const formatLabel = data.format
-    ? data.format.charAt(0).toUpperCase() + data.format.slice(1).replace(/_/g, " ")
-    : "";
-
-  const hasCompetitions =
-    (data.nearestPinHoles && data.nearestPinHoles.length > 0) ||
-    (data.longestDriveHoles && data.longestDriveHoles.length > 0);
-
-  const competitionsText = [
-    data.nearestPinHoles && data.nearestPinHoles.length > 0
-      ? `Nearest the Pin: Hole${data.nearestPinHoles.length > 1 ? "s" : ""} ${formatHoleNumbers(data.nearestPinHoles)}`
-      : null,
-    data.longestDriveHoles && data.longestDriveHoles.length > 0
-      ? `Longest Drive: Hole${data.longestDriveHoles.length > 1 ? "s" : ""} ${formatHoleNumbers(data.longestDriveHoles)}`
-      : null,
-  ]
-    .filter(Boolean)
-    .join(" | ");
-
-  const teeInfoLines = [
-    data.teeSettings
-      ? `Male (${data.teeName || "Men's"}): Par ${data.teeSettings.par} | SR ${data.teeSettings.slopeRating} | CR ${data.teeSettings.courseRating}`
-      : "Male: tee info not set",
-    data.ladiesTeeSettings
-      ? `Female (${data.ladiesTeeName || "Ladies'"}): Par ${data.ladiesTeeSettings.par} | SR ${data.ladiesTeeSettings.slopeRating} | CR ${data.ladiesTeeSettings.courseRating}`
-      : "Female: tee info not set",
-    `Allowance: ${Math.round(allowance * 100)}%`,
-  ];
-
-  return (
-    <View ref={ref} style={styles.page} collapsable={false}>
-      <View style={styles.headerRow}>
-        <View style={styles.headerLeft}>
-          <SocietyLogoImage
-            logoUrl={logoSrc}
-            size="medium"
-            variant="hero"
-            placeholderText={getInitials(data.societyName)}
-          />
-          <View>
-            <Text style={styles.societyName}>{data.societyName}</Text>
-            <Text style={styles.headerSubtitle}>Tee Sheet</Text>
-          </View>
-        </View>
-        <View style={styles.headerCenter}>
-          <Text style={styles.eventTitle}>{data.eventName}</Text>
-          <Text style={styles.eventMeta}>
-            {dateStr}
-            {data.courseName ? ` | ${data.courseName}` : ""}
-            {formatLabel ? ` | ${formatLabel}` : ""}
-          </Text>
-        </View>
-        <View style={styles.headerRight}>
-          <View style={styles.teeBox}>
-            <Text style={styles.teeTitle}>Tee Information</Text>
-            {teeInfoLines.map((line) => (
-              <Text key={line} style={styles.teeLine}>{line}</Text>
-            ))}
-          </View>
-        </View>
-      </View>
-
-      <View style={styles.grid}>
-        <View style={styles.column}>
-          {leftGroups.length > 0 ? leftGroups.map((group) => (
-            <GroupTable key={`left-${group.groupNumber}`} group={group} />
-          )) : (
-            <Text style={styles.emptyColumn}>No groups</Text>
-          )}
-        </View>
-        <View style={styles.column}>
-          {rightGroups.length > 0 ? rightGroups.map((group) => (
-            <GroupTable key={`right-${group.groupNumber}`} group={group} />
-          )) : (
-            <Text style={styles.emptyColumn}> </Text>
-          )}
-        </View>
-      </View>
-
-      <View style={styles.specialInfo}>
-        <Text style={styles.specialTitle}>Special Information</Text>
-        <Text style={styles.specialBody}>
-          {hasCompetitions ? competitionsText : "No competition holes set."}
-        </Text>
-      </View>
-
-      <View style={styles.footer}>
-        <Text style={styles.footerText}>Produced by The Golf Society Hub</Text>
-        <Text style={styles.footerText}>Page {pageIndex + 1} of {pageCount}</Text>
-      </View>
-    </View>
-  );
-});
+  logos: PosterLogo[];
+}>(({ data, groups, pageIndex, pageCount, logos }, ref) => (
+  <TeeSheetPoster
+    ref={ref}
+    data={data}
+    groups={groups}
+    pageIndex={pageIndex}
+    pageCount={pageCount}
+    logos={logos}
+  />
+));
 
 TeeSheetPage.displayName = "TeeSheetPage";
-
-const GroupTable = React.memo(function GroupTable({ group }: { group: GroupWithTime }) {
-  return (
-    <View style={styles.groupTable}>
-      <View style={styles.timeCell}>
-        <Text style={styles.timeText}>{group.teeTime}</Text>
-      </View>
-      <View style={styles.groupBody}>
-        <View style={styles.groupHeaderRow}>
-          <Text style={[styles.groupHeaderCell, styles.nameCol]}>Name</Text>
-          <Text style={[styles.groupHeaderCell, styles.hiCol]}>HI</Text>
-          <Text style={[styles.groupHeaderCell, styles.phCol]}>PH</Text>
-        </View>
-        {Array.from({ length: 4 }).map((_, idx) => {
-          const player = group.players[idx];
-          return (
-            <View key={`${group.groupNumber}-${idx}`} style={styles.groupRow}>
-              <Text style={[styles.groupCell, styles.nameCol]} numberOfLines={1}>
-                {player?.name || "\u00A0"}
-              </Text>
-              <Text style={[styles.groupCell, styles.hiCol]}>
-                {player ? formatHandicap(player.handicapIndex, 1) : "\u00A0"}
-              </Text>
-              <Text style={[styles.groupCell, styles.phCol]}>
-                {player ? formatHandicap(player.playingHandicap) : "\u00A0"}
-              </Text>
-            </View>
-          );
-        })}
-      </View>
-    </View>
-  );
-});
-
-function buildTeeSheetPages(data: TeeSheetData): GroupWithTime[][] {
-  const allowance = data.handicapAllowance ?? DEFAULT_ALLOWANCE;
-
-  const playersWithHandicaps: PlayerWithCalcs[] = data.players.map((player, idx) => {
-    const gender = player.gender ?? null;
-    const playerTee = selectTeeByGender(gender, data.teeSettings, data.ladiesTeeSettings);
-    const courseHandicap = calcCourseHandicap(player.handicapIndex, playerTee);
-    const playingHandicap = calcPlayingHandicap(courseHandicap, allowance);
-
-    return {
-      id: player.id || String(idx),
-      name: player.name,
-      handicapIndex: player.handicapIndex ?? null,
-      courseHandicap,
-      playingHandicap,
-      gender,
-    };
-  });
-
-  let groups: PlayerGroup[];
-  if (data.preGrouped) {
-    const groupMap = new Map<number, PlayerWithCalcs[]>();
-    data.players.forEach((player, idx) => {
-      const groupNum = player.group ?? 1;
-      const playerWithCalcs = playersWithHandicaps[idx];
-      if (!groupMap.has(groupNum)) groupMap.set(groupNum, []);
-      groupMap.get(groupNum)!.push(playerWithCalcs);
-    });
-
-    groups = Array.from(groupMap.entries())
-      .sort((a, b) => a[0] - b[0])
-      .map(([groupNumber, groupPlayers]) => ({
-        groupNumber,
-        players: groupPlayers,
-        teeTime: undefined,
-      }));
-  } else {
-    groups = groupPlayers(playersWithHandicaps, true);
-  }
-
-  const baseStartTime = isValidTime(data.startTime) ? data.startTime! : "08:00";
-  const intervalMinutes =
-    Number.isFinite(data.teeTimeInterval) && data.teeTimeInterval! > 0
-      ? data.teeTimeInterval!
-      : 8;
-
-  // Cap to 12 groups per page; pad to exactly 12 for consistent PNG dimensions.
-  const capped = groups.slice(0, 12);
-  const groupsWithTimes: GroupWithTime[] = capped.map((group, index) => ({
-    ...group,
-    teeTime: buildTeeTime(baseStartTime, intervalMinutes, index),
-  }));
-
-  while (groupsWithTimes.length < 12) {
-    const idx = groupsWithTimes.length;
-    groupsWithTimes.push({
-      groupNumber: idx + 1,
-      players: [],
-      teeTime: buildTeeTime(baseStartTime, intervalMinutes, idx),
-    });
-  }
-
-  return [groupsWithTimes];
-}
-
-function isValidTime(value: string | null | undefined): value is string {
-  if (!value) return false;
-  const [hoursStr, minutesStr] = value.split(":");
-  const hours = Number(hoursStr);
-  const minutes = Number(minutesStr);
-  return Number.isFinite(hours) && Number.isFinite(minutes);
-}
-
-function buildTeeTime(startTime: string, intervalMinutes: number, index: number): string {
-  const [hoursStr, minutesStr] = startTime.split(":");
-  const hours = Number(hoursStr);
-  const minutes = Number(minutesStr);
-  const baseMinutes = hours * 60 + minutes + intervalMinutes * index;
-  const teeHours = Math.floor(baseMinutes / 60) % 24;
-  const teeMins = baseMinutes % 60;
-  return `${String(teeHours).padStart(2, "0")}:${String(teeMins).padStart(2, "0")}`;
-}
-
-function getInitials(name: string): string {
-  if (!name) return "GS";
-  const words = name.trim().split(/\s+/);
-  if (words.length === 1) return name.substring(0, 2).toUpperCase();
-  return words.slice(0, 2).map((w) => w[0]).join("").toUpperCase();
-}
 
 const PAGE_WIDTH = 900;
 const PAGE_HEIGHT = 792;
@@ -434,6 +255,7 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: "center",
     alignItems: "center",
+    padding: spacing.md,
   },
   noticeCard: {
     width: "100%",
@@ -442,196 +264,11 @@ const styles = StyleSheet.create({
   noticeActions: {
     flexDirection: "row",
     gap: spacing.sm,
+    marginTop: spacing.sm,
   },
   captureRoot: {
     position: "absolute",
     left: -10000,
     top: 0,
-  },
-  page: {
-    width: PAGE_WIDTH,
-    minHeight: PAGE_HEIGHT,
-    backgroundColor: "#FFFFFF",
-    borderWidth: 1,
-    borderColor: "#E5E7EB",
-    padding: 18,
-    marginBottom: 14,
-  },
-  headerRow: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    gap: 12,
-    marginBottom: 10,
-  },
-  headerLeft: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    width: 260,
-  },
-  societyName: {
-    fontSize: typography.captionBold.fontSize,
-    textTransform: "uppercase",
-    letterSpacing: 1,
-    color: "#0f172a",
-    fontWeight: "700",
-  },
-  headerSubtitle: {
-    fontSize: typography.small.fontSize,
-    color: "#0f172a",
-  },
-  headerCenter: {
-    flex: 1,
-    alignItems: "center",
-  },
-  eventTitle: {
-    fontSize: typography.display.fontSize,
-    fontWeight: "800",
-    color: "#0f172a",
-    marginBottom: 2,
-  },
-  eventMeta: {
-    fontSize: typography.body.fontSize,
-    color: "#0f172a",
-  },
-  headerRight: {
-    width: 320,
-  },
-  teeBox: {
-    borderWidth: 1,
-    borderColor: "#E5E7EB",
-    padding: 8,
-    borderRadius: 6,
-  },
-  teeTitle: {
-    fontSize: typography.small.fontSize,
-    textTransform: "uppercase",
-    letterSpacing: 0.6,
-    color: "#0f172a",
-    marginBottom: 4,
-    fontWeight: "700",
-  },
-  teeLine: {
-    fontSize: typography.small.fontSize,
-    color: "#0f172a",
-    marginBottom: 2,
-  },
-  grid: {
-    flexDirection: "row",
-    gap: 10,
-    marginBottom: 10,
-  },
-  column: {
-    flex: 1,
-    gap: 8,
-  },
-  emptyColumn: {
-    fontSize: typography.small.fontSize,
-    color: "#0f172a",
-  },
-  groupTable: {
-    flexDirection: "row",
-    borderWidth: 1,
-    borderColor: "#E5E7EB",
-    marginBottom: 14,
-    paddingBottom: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: "#EEEEEE",
-  },
-  timeCell: {
-    width: 60,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "#F3F4F6",
-    borderRightWidth: 1,
-    borderRightColor: "#E5E7EB",
-    paddingVertical: 8,
-  },
-  timeText: {
-    fontSize: 16,
-    fontWeight: "600",
-    color: "#0B6E4F",
-    marginBottom: 8,
-  },
-  groupBody: {
-    flex: 1,
-  },
-  groupHeaderRow: {
-    flexDirection: "row",
-    backgroundColor: "#F9FAFB",
-    borderBottomWidth: 1,
-    borderBottomColor: "#F3F4F6",
-    paddingVertical: 10,
-    paddingHorizontal: 8,
-  },
-  groupHeaderCell: {
-    fontSize: typography.small.fontSize,
-    textTransform: "uppercase",
-    letterSpacing: 0.4,
-    color: "#0f172a",
-    fontWeight: "600",
-  },
-  groupRow: {
-    flexDirection: "row",
-    paddingVertical: 14,
-    paddingHorizontal: 8,
-    borderBottomWidth: 1,
-    borderBottomColor: "#F3F4F6",
-    minHeight: 28,
-  },
-  groupCell: {
-    fontSize: typography.body.fontSize,
-    color: "#0f172a",
-    lineHeight: 22,
-  },
-  nameCol: {
-    flex: 1.8,
-    fontSize: typography.body.fontSize,
-    fontWeight: "500",
-  },
-  hiCol: {
-    flex: 0.6,
-    textAlign: "center",
-    fontFamily: "monospace",
-    fontSize: typography.body.fontSize,
-    fontWeight: "600",
-  },
-  phCol: {
-    flex: 0.6,
-    textAlign: "center",
-    fontFamily: "monospace",
-    fontWeight: "700",
-    fontSize: typography.body.fontSize,
-    color: "#0B6E4F",
-  },
-  specialInfo: {
-    borderTopWidth: 1,
-    borderTopColor: "#E5E7EB",
-    paddingTop: 6,
-    marginTop: 6,
-  },
-  specialTitle: {
-    fontSize: typography.small.fontSize,
-    textTransform: "uppercase",
-    letterSpacing: 0.6,
-    color: "#0f172a",
-    fontWeight: "700",
-    marginBottom: 2,
-  },
-  specialBody: {
-    fontSize: typography.small.fontSize,
-    color: "#0f172a",
-  },
-  footer: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    borderTopWidth: 1,
-    borderTopColor: "#E5E7EB",
-    paddingTop: 6,
-    marginTop: 8,
-  },
-  footerText: {
-    fontSize: typography.small.fontSize,
-    color: "#0f172a",
   },
 });

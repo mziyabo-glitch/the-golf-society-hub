@@ -11,9 +11,10 @@ import { InlineNotice } from "@/components/ui/InlineNotice";
 import { Toast } from "@/components/ui/Toast";
 import { PrimaryButton, SecondaryButton } from "@/components/ui/Button";
 import { LoadingState } from "@/components/ui/LoadingState";
-import { useBootstrap } from "@/lib/useBootstrap";
+import { invalidateCache } from "@/lib/cache/clientCache";
+import { useBootstrap, ACTIVE_SOCIETY_CLIENT_CACHE_KEY } from "@/lib/useBootstrap";
 import { ensureSignedIn } from "@/lib/auth_supabase";
-import { createSociety } from "@/lib/db_supabase/societyRepo";
+import { createSociety, joinSociety, normalizeJoinCode } from "@/lib/db_supabase/societyRepo";
 import { createMember } from "@/lib/db_supabase/memberRepo";
 import { setActiveSocietyAndMember } from "@/lib/db_supabase/profileRepo";
 import { supabase } from "@/lib/supabase";
@@ -52,8 +53,9 @@ export default function OnboardingScreen() {
     activeSocietyId,
     member,
     membershipLoading,
-    setActiveSocietyId,
+    setActiveSociety,
     setMember,
+    refreshMemberships,
     refresh,
   } = useBootstrap();
   const colors = getColors();
@@ -133,7 +135,9 @@ export default function OnboardingScreen() {
       router.replace(SOCIETY_HOME_ROUTE);
       setTimeout(() => {
         const afterPath =
-          typeof window !== "undefined" ? window.location.pathname : pathname;
+          typeof window !== "undefined" && window.location?.pathname
+            ? window.location.pathname
+            : pathname;
         console.log("[join] after nav pathname", afterPath);
       }, 0);
       setPendingJoinNavigation(null);
@@ -171,8 +175,10 @@ export default function OnboardingScreen() {
     router.replace(SOCIETY_HOME_ROUTE);
     setTimeout(() => {
       const afterPath =
-        typeof window !== "undefined" ? window.location.pathname : pathname;
-      console.log("[join] after nav pathname", afterPath);
+        typeof window !== "undefined" && window.location?.pathname
+          ? window.location.pathname
+          : pathname;
+        console.log("[join] after nav pathname", afterPath);
     }, 0);
     setPendingJoinNavigation(null);
     joinNavRetryCount.current = 0;
@@ -253,7 +259,7 @@ export default function OnboardingScreen() {
     if (joinLoading) return;
     setJoinError(null);
 
-    const code = joinCode.trim().toUpperCase();
+    const code = normalizeJoinCode(joinCode);
     const nameInput = displayName.trim();
 
     if (!code) {
@@ -295,7 +301,7 @@ export default function OnboardingScreen() {
         return;
       }
 
-      const { data: rpcMember, error } = await supabase.rpc("join_society", {
+      const { data: joinedPayload, error } = await joinSociety({
         p_join_code: code,
         p_name: nameInput,
         p_email: authUser.email ?? null,
@@ -309,7 +315,6 @@ export default function OnboardingScreen() {
         return;
       }
 
-      const joinedPayload = Array.isArray(rpcMember) ? rpcMember[0] : rpcMember;
       if (!joinedPayload || typeof joinedPayload !== "object") {
         showJoinFailure("Failed to join society. Please try again.");
         return;
@@ -364,23 +369,63 @@ export default function OnboardingScreen() {
         }
       }
 
-      // Persist profile pointers to DB (defense-in-depth: the RPC also
-      // writes these, but an explicit client-side write guarantees the
-      // profile is correct before bootstrap re-reads it).
-      try {
-        await setActiveSocietyAndMember(uid, joinedSocietyId, joinedMemberId);
-      } catch (profileErr) {
-        console.warn("[join] setActiveSocietyAndMember failed (RPC already wrote it):", profileErr);
+      // Persist profile pointers deterministically. Do not continue if we cannot
+      // commit active society/member in DB + local state.
+      let pointerCommitted = false;
+      for (let attempt = 1; attempt <= 3; attempt += 1) {
+        try {
+          await setActiveSocietyAndMember(uid, joinedSocietyId, joinedMemberId);
+          pointerCommitted = true;
+          break;
+        } catch (profileErr) {
+          console.warn("[join] setActiveSocietyAndMember retry", { attempt, profileErr });
+          if (attempt < 3) {
+            await new Promise((r) => setTimeout(r, 120 * attempt));
+          }
+        }
+      }
+      if (!pointerCommitted) {
+        showJoinFailure("Joined society, but could not switch active society. Please try again.");
+        return;
       }
 
-      // Set local state so the UI can react immediately.
-      setActiveSocietyId(joinedSocietyId);
+      // Local + DB active society should now be in sync.
+      await setActiveSociety(joinedSocietyId, joinedMemberId);
       setMember(joinedMemberRecord as any);
-      refresh();
+      await invalidateCache(ACTIVE_SOCIETY_CLIENT_CACHE_KEY);
+
+      // Fetch memberships from source-of-truth before leaving join flow.
+      const refreshedMemberships = await refreshMemberships({ preferSocietyId: joinedSocietyId });
+      const joinedPresent = refreshedMemberships.some((m) => m.societyId === joinedSocietyId);
+      const joinedMembership =
+        refreshedMemberships.find((m) => m.societyId === joinedSocietyId) ?? null;
+      if (!joinedPresent) {
+        // One final short retry for eventual consistency on mobile.
+        await new Promise((r) => setTimeout(r, 250));
+        const retryMemberships = await refreshMemberships({ preferSocietyId: joinedSocietyId });
+        if (!retryMemberships.some((m) => m.societyId === joinedSocietyId)) {
+          showJoinFailure("Joined society, but membership sync is delayed. Please reopen the app.");
+          return;
+        }
+      }
+
+      console.log("[join] active_society_change", {
+        source: "join-flow",
+        nextSocietyId: joinedSocietyId,
+        nextMemberId: joinedMemberId,
+        membershipCount: refreshedMemberships.length,
+      });
+
       setToast({ visible: true, message: "Joined society ✅", type: "success" });
-      setPendingJoinNavigation({
-        societyId: joinedSocietyId,
-        memberId: joinedMemberId,
+      // Navigate only after pointer + membership refresh are complete.
+      blurWebActiveElement();
+      router.replace({
+        pathname: SOCIETY_HOME_ROUTE,
+        params: {
+          joined: "1",
+          joinedSocietyId: joinedSocietyId,
+          joinedSocietyName: joinedMembership?.societyName ?? "Society",
+        },
       });
     } catch (e: any) {
       const msg = e?.message || "Something went wrong. Please try again.";
@@ -449,13 +494,29 @@ export default function OnboardingScreen() {
       await setActiveSocietyAndMember(uid, society.id, memberId);
       console.log("[onboarding] updateProfile success");
 
+      await setActiveSociety(society.id, memberId);
+      await invalidateCache(ACTIVE_SOCIETY_CLIENT_CACHE_KEY);
+      await refreshMemberships({ preferSocietyId: society.id });
+      console.log("[onboarding] active_society_change", {
+        source: "create-society-flow",
+        nextSocietyId: society.id,
+        nextMemberId: memberId,
+      });
+
       // Refresh bootstrap state to pick up the new active society
       refresh();
 
       // Step 5: Navigate to app home
       console.log("[onboarding] === CREATE SOCIETY COMPLETE ===");
       blurWebActiveElement();
-      router.replace("/(app)/(tabs)");
+      router.replace({
+        pathname: "/(app)/(tabs)",
+        params: {
+          joined: "1",
+          joinedSocietyId: society.id,
+          joinedSocietyName: society.name ?? "Society",
+        },
+      });
     } catch (e: any) {
       console.error("[onboarding] Create society error:", e);
       showRlsError(e);
@@ -502,6 +563,11 @@ export default function OnboardingScreen() {
               {joinError && (
                 <InlineNotice variant="error" message={joinError} style={styles.errorNotice} />
               )}
+              <InlineNotice
+                variant="info"
+                message="Already on the society list? Use the same name your captain entered, or sign up with the same email they saved — we link your account to that member so your history stays together."
+                style={styles.errorNotice}
+              />
               <View style={styles.formField}>
                 <AppText variant="captionBold" style={styles.label}>Join Code</AppText>
                 <AppInput
@@ -509,7 +575,7 @@ export default function OnboardingScreen() {
                   value={joinCode}
                   editable={!joinLoading}
                   onChangeText={(text) => {
-                    setJoinCode(text.toUpperCase().replace(/\s/g, ""));
+                    setJoinCode(normalizeJoinCode(text));
                     setJoinError(null);
                   }}
                   autoCapitalize="characters"

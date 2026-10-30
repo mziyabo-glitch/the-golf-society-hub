@@ -5,6 +5,7 @@
 import "react-native-url-polyfill/auto";
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
 import { supabaseStorage } from "@/lib/supabaseStorage";
+import { AppState, Platform } from "react-native";
 
 const supabaseUrl =
   process.env.EXPO_PUBLIC_SUPABASE_URL ||
@@ -23,24 +24,54 @@ if (!supabaseUrl || !supabaseAnonKey) {
 
 // Singleton instance
 let supabaseInstance: SupabaseClient | null = null;
+export const SUPABASE_AUTH_CONFIG = {
+  persistSession: true,
+  autoRefreshToken: true,
+  detectSessionInUrl: Platform.OS === "web" ? true : false,
+  storageKey: "supabase-auth",
+} as const;
+
+let appStateSubscription: { remove: () => void } | null = null;
+
+function setupNativeTokenAutoRefresh(client: SupabaseClient): void {
+  if (Platform.OS === "web" || appStateSubscription) return;
+
+  // RN does not expose browser visibility events. Tie token refresh lifecycle
+  // to app foreground/background to keep sessions healthy across restarts.
+  client.auth.startAutoRefresh();
+  appStateSubscription = AppState.addEventListener("change", (state) => {
+    if (state === "active") client.auth.startAutoRefresh();
+    else client.auth.stopAutoRefresh();
+  });
+}
 
 function getSupabaseClient(): SupabaseClient {
   if (supabaseInstance) {
     return supabaseInstance;
   }
 
+  console.log("[auth-client] creating singleton Supabase client", {
+    platform: Platform.OS,
+    storage: Platform.OS === "web" ? "localStorage (gsh: prefix)" : "AsyncStorage (gsh: prefix)",
+    persistSession: SUPABASE_AUTH_CONFIG.persistSession,
+    autoRefreshToken: SUPABASE_AUTH_CONFIG.autoRefreshToken,
+    detectSessionInUrl: SUPABASE_AUTH_CONFIG.detectSessionInUrl,
+    storageKey: SUPABASE_AUTH_CONFIG.storageKey,
+  });
+
   // On web, detect OAuth/magic-link session from URL hash after redirect
-  const isWeb = typeof window !== "undefined" && typeof document !== "undefined";
   supabaseInstance = createClient(supabaseUrl!, supabaseAnonKey!, {
     auth: {
       // AsyncStorage on native, localStorage on web (via supabaseStorage)
       storage: supabaseStorage,
-      persistSession: true,
-      autoRefreshToken: true,
-      detectSessionInUrl: isWeb,
-      storageKey: "supabase-auth",
+      persistSession: SUPABASE_AUTH_CONFIG.persistSession,
+      autoRefreshToken: SUPABASE_AUTH_CONFIG.autoRefreshToken,
+      detectSessionInUrl: SUPABASE_AUTH_CONFIG.detectSessionInUrl,
+      storageKey: SUPABASE_AUTH_CONFIG.storageKey,
     },
   });
+
+  setupNativeTokenAutoRefresh(supabaseInstance);
 
   return supabaseInstance;
 }

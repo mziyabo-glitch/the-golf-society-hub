@@ -2,7 +2,7 @@
   "expo": {
     "name": "The Golf Society Hub",
     "slug": "the-golf-society-hub",
-    "version": "1.0.6",
+    "version": "1.0.12",
     "description": "Everything Golf Society",
     "orientation": "portrait",
     "icon": "./assets/images/app-icon.png",
@@ -14,7 +14,22 @@
     },
     "android": {
       "package": "com.godskid.golfsocietyhub",
-      "versionCode": 6,
+      "androidStatusBar": {
+        "barStyle": "dark-content",
+        "backgroundColor": "#F8FAF8",
+        "translucent": true
+      },
+      "androidNavigationBar": {
+        "barStyle": "dark-content",
+        "backgroundColor": "#F8FAF8"
+      },
+      "intentFilters": [
+        {
+          "action": "VIEW",
+          "category": ["BROWSABLE", "DEFAULT"],
+          "data": [{ "scheme": "thegolfsocietyhub" }]
+        }
+      ],
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/app-icon.png",
         "backgroundColor": "#FFFFFF"
@@ -24,7 +39,16 @@
     },
     "web": {
       "output": "single",
-      "favicon": "./assets/images/app-icon.png"
+      "bundler": "metro",
+      "favicon": "./public/pwa-icon.png",
+      "name": "The Golf Society Hub",
+      "shortName": "GSH",
+      "lang": "en",
+      "description": "Everything Golf Society",
+      "backgroundColor": "#F8FAF8",
+      "themeColor": "#166534",
+      "display": "standalone",
+      "orientation": "portrait"
     },
     "plugins": [
       "expo-router",
@@ -34,10 +58,18 @@
           "image": "./assets/images/app-icon.png",
           "imageWidth": 200,
           "resizeMode": "contain",
-          "backgroundColor": "#0E1A2B",
+          "backgroundColor": "#F8FAF8",
           "dark": {
-            "backgroundColor": "#0E1A2B"
+            "backgroundColor": "#F8FAF8"
           }
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Allow $(PRODUCT_NAME) to access your photos to upload a society logo.",
+          "cameraPermission": false,
+          "microphonePermission": false
         }
       ],
       "expo-secure-store"

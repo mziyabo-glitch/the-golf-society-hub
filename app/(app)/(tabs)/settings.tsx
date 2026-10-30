@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { StyleSheet, View, Pressable, Image, Platform, Share } from "react-native";
+import { StyleSheet, View, Pressable, Platform, Share, Modal, ScrollView } from "react-native";
 import * as Clipboard from "expo-clipboard";
 import { useRouter } from "expo-router";
 import { Feather } from "@expo/vector-icons";
@@ -19,7 +19,9 @@ import { supabase } from "@/lib/supabase";
 import { clearActiveSociety } from "@/lib/db_supabase/profileRepo";
 import { regenerateJoinCode, uploadSocietyLogo, removeSocietyLogo, resetSocietyData } from "@/lib/db_supabase/societyRepo";
 import { isCaptain, getPermissionsForMember } from "@/lib/rbac";
-import { getSocietyInviteUrl, getSocietyInviteMessage } from "@/lib/appConfig";
+import { getSocietyInviteUrl, getSocietyInviteMessage, getCalendarSubscribeUrl } from "@/lib/appConfig";
+import { ensureCalendarFeedToken, rotateCalendarFeedToken } from "@/lib/db_supabase/calendarFeedRepo";
+import { explainCalendarFeedRpcError } from "@/lib/calendarFeedErrors";
 import {
   getSocietyLogoUrl,
   getSocietyLogoDataUri,
@@ -28,18 +30,25 @@ import {
   type LogoDiagnostics,
 } from "@/lib/societyLogo";
 import { getColors, spacing, radius, typography } from "@/lib/ui/theme";
+import { TextSizeSettingsSection } from "@/components/ui/TextSizeSettingsSection";
+import { ThemeSettingsSection } from "@/components/ui/ThemeSettingsSection";
 import { confirmDestructive, showAlert } from "@/lib/ui/alert";
 import { getSupabaseEnv, getSupabaseProjectRefSuffix } from "@/lib/supabaseEnv";
 import { isPlatformAdmin, listSocieties, reappointCaptain, type AdminSocietyRow } from "@/lib/db_supabase/adminRepo";
 import { getMembersBySocietyId, type MemberDoc } from "@/lib/db_supabase/memberRepo";
 import { Toast } from "@/components/ui/Toast";
+import {
+  getInAppBrowserInfo,
+  isDomNotAllowedError,
+  webPermissionBlockedMessage,
+} from "@/lib/web/browserEnvironment";
 
 export default function SettingsScreen() {
   const router = useRouter();
   const { user, society, member, loading, refresh, signOut } = useBootstrap();
   const colors = getColors();
   const tabBarHeight = useBottomTabBarHeight();
-  const tabContentStyle = { paddingTop: 16, paddingBottom: tabBarHeight + 24 };
+  const tabContentStyle = { paddingTop: spacing.lg, paddingBottom: tabBarHeight + spacing.lg };
 
   const [signingOut, setSigningOut] = useState(false);
   const [leaving, setLeaving] = useState(false);
@@ -51,7 +60,7 @@ export default function SettingsScreen() {
   const [logoDiagnosticsLoading, setLogoDiagnosticsLoading] = useState(false);
   const [logoDiagnosticsError, setLogoDiagnosticsError] = useState<string | null>(null);
 
-  const permissions = getPermissionsForMember(member as any);
+  const permissions = getPermissionsForMember(member);
   const canRegenCode = isCaptain(member as any);
   const canManageLogo = permissions.canManageSocietyLogo;
 
@@ -68,10 +77,39 @@ export default function SettingsScreen() {
   const [adminToast, setAdminToast] = useState<{ visible: boolean; message: string; type: "success" | "error" | "info" }>({ visible: false, message: "", type: "success" });
   const [inviteLinkToast, setInviteLinkToast] = useState(false);
   const [codeCopyToast, setCodeCopyToast] = useState(false);
+  const [calendarModalVisible, setCalendarModalVisible] = useState(false);
+  const [calendarUrl, setCalendarUrl] = useState<string | null>(null);
+  const [calendarLoading, setCalendarLoading] = useState(false);
+  const [calendarError, setCalendarError] = useState<string | null>(null);
+  const [calendarCopiedToast, setCalendarCopiedToast] = useState(false);
+  const [calendarRotating, setCalendarRotating] = useState(false);
+  const [calendarResetToast, setCalendarResetToast] = useState(false);
 
   useEffect(() => {
     isPlatformAdmin().then(setIsAdmin);
   }, []);
+
+  const openCalendarSubscribeModal = useCallback(async () => {
+    if (!society?.id) return;
+    setCalendarModalVisible(true);
+    setCalendarUrl(null);
+    setCalendarError(null);
+    if (!member?.id) {
+      setCalendarError(
+        "You need an active member profile in this society to create a calendar link (switch society or finish joining).",
+      );
+      return;
+    }
+    setCalendarLoading(true);
+    try {
+      const token = await ensureCalendarFeedToken(society.id, member.id);
+      setCalendarUrl(getCalendarSubscribeUrl(token));
+    } catch (e: unknown) {
+      setCalendarError(explainCalendarFeedRpcError(e, "Could not create calendar link"));
+    } finally {
+      setCalendarLoading(false);
+    }
+  }, [society?.id, member?.id]);
 
   const handleAdminSearch = useCallback(async (term: string) => {
     setAdminSearch(term);
@@ -357,8 +395,14 @@ export default function SettingsScreen() {
     return (
       <Screen contentStyle={tabContentStyle}>
         <AppText variant="title" style={styles.title}>Settings</AppText>
+        <AppText variant="subheading" color="muted" style={styles.settingsTagline}>
+          Your account, society, and preferences
+        </AppText>
+        <AppText variant="small" color="secondary" style={styles.settingsIntro}>
+          Manage membership, appearance, legal, and session options.
+        </AppText>
 
-        <AppText variant="h2" style={styles.sectionTitle}>Account</AppText>
+        <AppText variant="heading" style={[styles.sectionTitle, styles.sectionTitleFirst]}>Profile</AppText>
         <AppCard padding="sm">
           <Pressable
             style={({ pressed }) => [styles.linkRow, { opacity: pressed ? 0.7 : 1 }]}
@@ -375,7 +419,7 @@ export default function SettingsScreen() {
           </Pressable>
         </AppCard>
 
-        <AppText variant="h2" style={styles.sectionTitle}>Society</AppText>
+        <AppText variant="heading" style={styles.sectionTitle}>Society settings</AppText>
         <AppCard padding="sm">
           <Pressable
             style={({ pressed }) => [styles.linkRow, { opacity: pressed ? 0.7 : 1 }]}
@@ -406,7 +450,25 @@ export default function SettingsScreen() {
           </Pressable>
         </AppCard>
 
-        <AppText variant="h2" style={styles.sectionTitle}>Account</AppText>
+        <AppText variant="heading" style={styles.sectionTitle}>App settings</AppText>
+        <TextSizeSettingsSection />
+        <AppCard padding="sm" style={{ marginTop: spacing.sm }}>
+          <Pressable
+            style={({ pressed }) => [styles.linkRow, { opacity: pressed ? 0.7 : 1 }]}
+            onPress={() => router.push("/privacy-policy")}
+          >
+            <View style={[styles.linkIcon, { backgroundColor: colors.backgroundTertiary }]}>
+              <Feather name="shield" size={16} color={colors.primary} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <AppText variant="body">Privacy Policy</AppText>
+              <AppText variant="small" color="secondary">How we collect and use your data</AppText>
+            </View>
+            <Feather name="chevron-right" size={18} color={colors.textTertiary} />
+          </Pressable>
+        </AppCard>
+
+        <AppText variant="heading" style={styles.sectionTitle}>Session</AppText>
         <AppCard>
           <AppText variant="body" color="secondary" style={{ marginBottom: spacing.base }}>
             Sign out of your account on this device.
@@ -417,7 +479,7 @@ export default function SettingsScreen() {
         </AppCard>
 
         <View style={styles.footer}>
-          <AppText variant="caption" color="tertiary" style={{ textAlign: "center" }}>
+          <AppText variant="caption" color="muted" style={{ textAlign: "center" }}>
             Golf Society Hub v1.0.0
           </AppText>
         </View>
@@ -427,13 +489,32 @@ export default function SettingsScreen() {
 
   // Get logo URL from society (single source of truth)
   const logoUrl = getSocietyLogoUrl(society);
+  const webInAppBrowser = Platform.OS === "web" ? getInAppBrowserInfo() : null;
 
   return (
     <Screen contentStyle={tabContentStyle}>
       <AppText variant="title" style={styles.title}>Settings</AppText>
+      <AppText variant="subheading" color="muted" style={styles.settingsTagline}>
+        Your account, society, and preferences
+      </AppText>
+      <AppText variant="small" color="secondary" style={styles.settingsIntro}>
+        Manage membership, appearance, legal, and session options.
+      </AppText>
 
-      {/* Your Profile */}
-      <AppText variant="h2" style={styles.sectionTitle}>Your Profile</AppText>
+      {webInAppBrowser?.inApp && (
+        <InlineNotice
+          variant="info"
+          message="Open in Safari for sharing and copy"
+          detail={
+            webInAppBrowser.label
+              ? `The ${webInAppBrowser.label} browser often blocks the share sheet and clipboard. Use ⋯ or Share, then “Open in Safari”.`
+              : "This in-app browser often blocks sharing and clipboard. Open the site in Safari instead."
+          }
+          style={{ marginBottom: spacing.base }}
+        />
+      )}
+
+      <AppText variant="heading" style={[styles.sectionTitle, styles.sectionTitleFirst]}>Profile</AppText>
       <AppCard padding="sm">
         <Pressable
           style={({ pressed }) => [styles.linkRow, { opacity: pressed ? 0.7 : 1 }]}
@@ -458,8 +539,28 @@ export default function SettingsScreen() {
         </Pressable>
       </AppCard>
 
+      <ThemeSettingsSection />
+      <TextSizeSettingsSection />
+
+      <AppText variant="heading" style={styles.sectionTitle}>Legal</AppText>
+      <AppCard padding="sm">
+        <Pressable
+          style={({ pressed }) => [styles.linkRow, { opacity: pressed ? 0.7 : 1 }]}
+          onPress={() => router.push("/privacy-policy")}
+        >
+          <View style={[styles.linkIcon, { backgroundColor: colors.backgroundTertiary }]}>
+            <Feather name="shield" size={16} color={colors.primary} />
+          </View>
+          <View style={{ flex: 1 }}>
+            <AppText variant="body">Privacy Policy</AppText>
+            <AppText variant="small" color="secondary">How we collect and use your data</AppText>
+          </View>
+          <Feather name="chevron-right" size={18} color={colors.textTertiary} />
+        </Pressable>
+      </AppCard>
+
       {/* Society Info */}
-      <AppText variant="h2" style={styles.sectionTitle}>Society</AppText>
+      <AppText variant="heading" style={styles.sectionTitle}>Society</AppText>
       <AppCard>
         <View style={styles.settingRow}>
           <View style={[styles.settingIcon, { backgroundColor: colors.backgroundTertiary }]}>
@@ -482,8 +583,23 @@ export default function SettingsScreen() {
                 {canRegenCode ? (
                   <Pressable
                     onPress={async () => {
-                      await Clipboard.setStringAsync(society.joinCode!);
-                      setCodeCopyToast(true);
+                      try {
+                        const ok = await Clipboard.setStringAsync(society.joinCode!);
+                        if (Platform.OS === "web" && ok === false) {
+                          showAlert("Could not copy", webPermissionBlockedMessage());
+                          return;
+                        }
+                        setCodeCopyToast(true);
+                      } catch (e: unknown) {
+                        if (Platform.OS === "web" && isDomNotAllowedError(e)) {
+                          showAlert("Could not copy", webPermissionBlockedMessage());
+                          return;
+                        }
+                        showAlert(
+                          "Could not copy",
+                          e instanceof Error ? e.message : "Please try again.",
+                        );
+                      }
                     }}
                     style={({ pressed }) => ({ opacity: pressed ? 0.7 : 1 })}
                   >
@@ -508,8 +624,23 @@ export default function SettingsScreen() {
                 <Pressable
                   onPress={async () => {
                     const url = getSocietyInviteUrl(society.joinCode!);
-                    await Clipboard.setStringAsync(url);
-                    setInviteLinkToast(true);
+                    try {
+                      const ok = await Clipboard.setStringAsync(url);
+                      if (Platform.OS === "web" && ok === false) {
+                        showAlert("Could not copy", webPermissionBlockedMessage());
+                        return;
+                      }
+                      setInviteLinkToast(true);
+                    } catch (e: unknown) {
+                      if (Platform.OS === "web" && isDomNotAllowedError(e)) {
+                        showAlert("Could not copy", webPermissionBlockedMessage());
+                        return;
+                      }
+                      showAlert(
+                        "Could not copy",
+                        e instanceof Error ? e.message : "Please try again.",
+                      );
+                    }
                   }}
                   style={({ pressed }) => [styles.linkRow, { opacity: pressed ? 0.7 : 1, marginTop: spacing.sm }]}
                 >
@@ -531,12 +662,25 @@ export default function SettingsScreen() {
                           text: message,
                         });
                       } else if (Platform.OS === "web") {
-                        await Clipboard.setStringAsync(message);
+                        const ok = await Clipboard.setStringAsync(message);
+                        if (!ok) {
+                          showAlert("Could not copy", webPermissionBlockedMessage());
+                          return;
+                        }
                         setInviteLinkToast(true);
                       } else {
                         await Share.share({ message });
                       }
-                    } catch { /* cancelled or unsupported */ }
+                    } catch (e: unknown) {
+                      if (Platform.OS === "web" && isDomNotAllowedError(e)) {
+                        const ok = await Clipboard.setStringAsync(message);
+                        if (ok) {
+                          setInviteLinkToast(true);
+                        } else {
+                          showAlert("Sharing blocked", webPermissionBlockedMessage());
+                        }
+                      }
+                    }
                   }}
                   style={({ pressed }) => [styles.linkRow, { opacity: pressed ? 0.7 : 1, marginTop: spacing.xs }]}
                 >
@@ -552,12 +696,147 @@ export default function SettingsScreen() {
             )}
           </>
         )}
+
+        <Pressable
+          onPress={openCalendarSubscribeModal}
+          style={({ pressed }) => [styles.linkRow, { opacity: pressed ? 0.7 : 1, marginTop: spacing.sm }]}
+        >
+          <View style={[styles.linkIcon, { backgroundColor: colors.primary + "14" }]}>
+            <Feather name="calendar" size={18} color={colors.primary} />
+          </View>
+          <View style={styles.settingInfo}>
+            <AppText variant="bodyBold">Subscribe to calendar</AppText>
+            <AppText variant="small" color="secondary">
+              iPhone or Google Calendar — events where your RSVP is In
+            </AppText>
+          </View>
+        </Pressable>
       </AppCard>
+
+      <Modal
+        visible={calendarModalVisible}
+        animationType="slide"
+        transparent
+        onRequestClose={() => setCalendarModalVisible(false)}
+      >
+        <Pressable
+          style={[styles.calendarModalOverlay, { backgroundColor: "rgba(0,0,0,0.45)" }]}
+          onPress={() => setCalendarModalVisible(false)}
+        >
+          <View style={[styles.calendarModalCard, { backgroundColor: colors.background }]}>
+            <AppText variant="title" style={{ marginBottom: spacing.sm }}>
+              Subscribe to calendar
+            </AppText>
+            <AppText variant="small" color="secondary" style={{ marginBottom: spacing.base }}>
+              Subscribe using your app’s “from URL” option (not a one-off file import) so the list can update. Apple,
+              Google, and Outlook all refresh subscribed calendars on their own timing — often every few hours, not
+              instantly.
+            </AppText>
+
+            {calendarLoading ? (
+              <LoadingState message="Preparing link…" />
+            ) : calendarError ? (
+              <InlineNotice variant="error" message={calendarError} style={{ marginBottom: spacing.sm }} />
+            ) : calendarUrl ? (
+              <>
+                <SecondaryButton
+                  onPress={async () => {
+                    try {
+                      const ok = await Clipboard.setStringAsync(calendarUrl);
+                      if (Platform.OS === "web" && ok === false) {
+                        showAlert("Could not copy", webPermissionBlockedMessage());
+                        return;
+                      }
+                      setCalendarCopiedToast(true);
+                    } catch (e: unknown) {
+                      if (Platform.OS === "web" && isDomNotAllowedError(e)) {
+                        showAlert("Could not copy", webPermissionBlockedMessage());
+                        return;
+                      }
+                      showAlert(
+                        "Could not copy",
+                        e instanceof Error ? e.message : "Please try again.",
+                      );
+                    }
+                  }}
+                  style={{ marginBottom: spacing.base }}
+                >
+                  Copy calendar URL
+                </SecondaryButton>
+                <AppText variant="caption" color="muted" selectable style={{ marginBottom: spacing.base }}>
+                  {calendarUrl}
+                </AppText>
+                <DestructiveButton
+                  loading={calendarRotating}
+                  disabled={calendarRotating || calendarLoading || !society?.id}
+                  onPress={() => {
+                    if (!society?.id || !member?.id) return;
+                    const societyId = society.id;
+                    const memberId = member.id;
+                    confirmDestructive(
+                      "Reset calendar link?",
+                      "The old link stops working immediately. If you already added this calendar, remove it in your calendar app, then subscribe again with the new link.",
+                      "Reset",
+                      async () => {
+                        setCalendarRotating(true);
+                        setCalendarError(null);
+                        try {
+                          const token = await rotateCalendarFeedToken(societyId, memberId);
+                          setCalendarUrl(getCalendarSubscribeUrl(token));
+                          setCalendarResetToast(true);
+                        } catch (e: unknown) {
+                          setCalendarError(explainCalendarFeedRpcError(e, "Could not reset link"));
+                        } finally {
+                          setCalendarRotating(false);
+                        }
+                      },
+                    );
+                  }}
+                  style={{ marginBottom: spacing.base }}
+                >
+                  Reset calendar link
+                </DestructiveButton>
+              </>
+            ) : null}
+
+            <ScrollView style={{ maxHeight: 280 }} showsVerticalScrollIndicator={false}>
+              <AppText variant="heading" style={{ marginBottom: spacing.xs }}>
+                iPhone / iPad
+              </AppText>
+              <AppText variant="small" color="secondary" style={{ marginBottom: spacing.base }}>
+                Settings → Calendar → Accounts → Add Subscribed Calendar → paste the URL → Save.
+              </AppText>
+              <AppText variant="heading" style={{ marginBottom: spacing.xs }}>
+                Google Calendar (web)
+              </AppText>
+              <AppText variant="small" color="secondary" style={{ marginBottom: spacing.base }}>
+                Google Calendar → Settings (gear) → Add calendar → From URL → paste the link → Add calendar.
+              </AppText>
+              <AppText variant="heading" style={{ marginBottom: spacing.xs }}>
+                Google Calendar (Android)
+              </AppText>
+              <AppText variant="small" color="secondary" style={{ marginBottom: spacing.base }}>
+                Add the calendar from the Google Calendar website using “From URL”, then ensure sync is on for that
+                account on your phone.
+              </AppText>
+              <AppText variant="heading" style={{ marginBottom: spacing.xs }}>
+                Outlook
+              </AppText>
+              <AppText variant="small" color="secondary" style={{ marginBottom: spacing.lg }}>
+                Outlook on the web: Add calendar → Subscribe from web → paste the link. Desktop Outlook: Internet
+                Calendars in account settings.
+              </AppText>
+            </ScrollView>
+
+            <SecondaryButton onPress={() => setCalendarModalVisible(false)}>Close</SecondaryButton>
+          </View>
+        </Pressable>
+      </Modal>
 
       {/* Society Logo - Captain/Secretary only */}
       {canManageLogo && (
         <>
-          <AppText variant="h2" style={styles.sectionTitle}>Society Logo</AppText>
+          <AppText variant="heading" style={styles.sectionTitle}>Society Logo</AppText>
           <AppCard>
             <View style={styles.logoSection}>
               {/* Logo Preview */}
@@ -567,7 +846,7 @@ export default function SettingsScreen() {
                 ) : (
                   <View style={[styles.logoPlaceholder, { backgroundColor: colors.backgroundTertiary }]}>
                     <Feather name="image" size={32} color={colors.textTertiary} />
-                    <AppText variant="caption" color="tertiary" style={{ marginTop: spacing.xs }}>
+                    <AppText variant="caption" color="muted" style={{ marginTop: spacing.xs }}>
                       No logo
                     </AppText>
                   </View>
@@ -600,7 +879,7 @@ export default function SettingsScreen() {
                 )}
               </View>
 
-              <AppText variant="small" color="tertiary" style={{ marginTop: spacing.sm }}>
+              <AppText variant="small" color="muted" style={{ marginTop: spacing.sm }}>
                 Recommended: Square image, max 2MB (JPEG, PNG, GIF, WebP)
               </AppText>
 
@@ -649,13 +928,13 @@ export default function SettingsScreen() {
                       </AppText>
                     ) : null}
                     {logoDiagnostics.error ? (
-                      <AppText variant="small" style={{ color: colors.error }}>
+                      <AppText variant="small" color="danger">
                         Error: {logoDiagnostics.error}
                       </AppText>
                     ) : null}
                   </View>
                 ) : (
-                  <AppText variant="small" color="tertiary" style={{ marginTop: spacing.xs }}>
+                  <AppText variant="small" color="muted" style={{ marginTop: spacing.xs }}>
                     No diagnostics yet.
                   </AppText>
                 )}
@@ -668,7 +947,7 @@ export default function SettingsScreen() {
       {/* Billing & Licences - Captain only */}
       {canRegenCode && (
         <>
-          <AppText variant="h2" style={styles.sectionTitle}>Billing</AppText>
+          <AppText variant="heading" style={styles.sectionTitle}>Payments & billing</AppText>
           <AppCard padding="sm">
             <Pressable
               style={({ pressed }) => [styles.linkRow, { opacity: pressed ? 0.7 : 1 }]}
@@ -687,54 +966,13 @@ export default function SettingsScreen() {
         </>
       )}
 
-      {/* Club Domain Review - Captain only (platform admin) */}
-      {canRegenCode && (
-        <>
-          <AppText variant="h2" style={styles.sectionTitle}>Club Domains</AppText>
-          <AppCard padding="sm">
-            <Pressable
-              style={({ pressed }) => [styles.linkRow, { opacity: pressed ? 0.7 : 1 }]}
-              onPress={() => router.push("/(admin)/course-domains" as any)}
-            >
-              <View style={[styles.linkIcon, { backgroundColor: colors.info + "20" }]}>
-                <Feather name="globe" size={16} color={colors.info} />
-              </View>
-              <View style={{ flex: 1 }}>
-                <AppText variant="body">Domain Review</AppText>
-                <AppText variant="small" color="secondary">Approve/reject club website candidates</AppText>
-              </View>
-              <Feather name="chevron-right" size={18} color={colors.textTertiary} />
-            </Pressable>
-          </AppCard>
-        </>
-      )}
-
-      {/* ManCo Tools - Only visible to ManCo members */}
-      {permissions.canGenerateTeeSheet && (
-        <>
-          <AppText variant="h2" style={styles.sectionTitle}>ManCo Tools</AppText>
-          <AppCard padding="sm">
-            <Pressable
-              style={({ pressed }) => [styles.linkRow, { opacity: pressed ? 0.7 : 1 }]}
-              onPress={() => router.push("/(app)/tee-sheet")}
-            >
-              <View style={[styles.linkIcon, { backgroundColor: colors.warning + "20" }]}>
-                <Feather name="file-text" size={16} color={colors.warning} />
-              </View>
-              <View style={{ flex: 1 }}>
-                <AppText variant="body">Tee Sheet Generator</AppText>
-                <AppText variant="small" color="secondary">Grouped tee sheets with WHS handicaps</AppText>
-              </View>
-              <Feather name="chevron-right" size={18} color={colors.textTertiary} />
-            </Pressable>
-          </AppCard>
-        </>
-      )}
+      {/* Phase 2: Club domain review is platform-admin only (More → Platform).
+          Tee sheet: Event → Manage → Manage Tee Sheet (no standalone generator). */}
 
       {/* Treasurer Tools - Only visible to Captain/Treasurer */}
       {permissions.canAccessFinance && (
         <>
-          <AppText variant="h2" style={styles.sectionTitle}>Treasurer</AppText>
+          <AppText variant="heading" style={styles.sectionTitle}>Treasurer</AppText>
           <AppCard padding="sm">
             <Pressable
               style={({ pressed }) => [styles.linkRow, { opacity: pressed ? 0.7 : 1 }]}
@@ -784,8 +1022,8 @@ export default function SettingsScreen() {
       {/* Platform Admin */}
       {isAdmin && (
         <>
-          <AppText variant="h2" style={styles.sectionTitle}>
-            <Feather name="shield" size={16} color={colors.error} /> Platform Admin
+          <AppText variant="heading" style={styles.sectionTitle}>
+            <Feather name="shield" size={16} color={colors.error} /> Platform admin
           </AppText>
 
           {/* Search societies */}
@@ -796,7 +1034,7 @@ export default function SettingsScreen() {
               onChangeText={handleAdminSearch}
               autoCapitalize="none"
             />
-            {adminSearching && <AppText variant="small" color="tertiary" style={{ marginTop: spacing.xs }}>Searching\u2026</AppText>}
+            {adminSearching && <AppText variant="small" color="muted" style={{ marginTop: spacing.xs }}>Searching\u2026</AppText>}
             {adminSocieties.map((row) => {
               const isActive = row.id === society?.id;
               return (
@@ -858,10 +1096,6 @@ export default function SettingsScreen() {
                   <Feather name="calendar" size={14} color={colors.primary} />
                   <AppText variant="small" color="primary">Events</AppText>
                 </Pressable>
-                <Pressable style={[styles.adminQuickBtn, { borderColor: colors.border }]} onPress={() => router.push("/(app)/tee-sheet")}>
-                  <Feather name="file-text" size={14} color={colors.primary} />
-                  <AppText variant="small" color="primary">Tee Sheet</AppText>
-                </Pressable>
               </View>
 
               {/* Re-appoint captain toggle */}
@@ -921,9 +1155,21 @@ export default function SettingsScreen() {
 
       <Toast visible={inviteLinkToast} message="Invite link copied to clipboard" type="success" onHide={() => setInviteLinkToast(false)} />
       <Toast visible={codeCopyToast} message="Join code copied" type="success" onHide={() => setCodeCopyToast(false)} />
+      <Toast
+        visible={calendarCopiedToast}
+        message="Calendar URL copied"
+        type="success"
+        onHide={() => setCalendarCopiedToast(false)}
+      />
+      <Toast
+        visible={calendarResetToast}
+        message="Calendar link reset — use the new URL"
+        type="success"
+        onHide={() => setCalendarResetToast(false)}
+      />
 
       {/* Quick Links */}
-      <AppText variant="h2" style={styles.sectionTitle}>Quick Actions</AppText>
+      <AppText variant="heading" style={styles.sectionTitle}>Quick Actions</AppText>
       <AppCard padding="sm">
         <Pressable
           style={({ pressed }) => [styles.linkRow, { opacity: pressed ? 0.7 : 1 }]}
@@ -938,7 +1184,7 @@ export default function SettingsScreen() {
 
         <Pressable
           style={({ pressed }) => [styles.linkRow, { opacity: pressed ? 0.7 : 1 }]}
-          onPress={() => router.push("/events")}
+          onPress={() => router.push("/(app)/(tabs)/events")}
         >
           <View style={[styles.linkIcon, { backgroundColor: colors.backgroundTertiary }]}>
             <Feather name="calendar" size={16} color={colors.primary} />
@@ -959,8 +1205,27 @@ export default function SettingsScreen() {
         </Pressable>
       </AppCard>
 
+      <AppText variant="heading" style={styles.sectionTitle}>App settings</AppText>
+      <ThemeSettingsSection />
+      <TextSizeSettingsSection />
+      <AppCard padding="sm" style={{ marginTop: spacing.sm }}>
+        <Pressable
+          style={({ pressed }) => [styles.linkRow, { opacity: pressed ? 0.7 : 1 }]}
+          onPress={() => router.push("/privacy-policy")}
+        >
+          <View style={[styles.linkIcon, { backgroundColor: colors.backgroundTertiary }]}>
+            <Feather name="shield" size={16} color={colors.primary} />
+          </View>
+          <View style={{ flex: 1 }}>
+            <AppText variant="body">Privacy Policy</AppText>
+            <AppText variant="small" color="secondary">How we collect and use your data</AppText>
+          </View>
+          <Feather name="chevron-right" size={18} color={colors.textTertiary} />
+        </Pressable>
+      </AppCard>
+
       {/* Danger Zone */}
-      <AppText variant="h2" style={styles.sectionTitle}>Danger Zone</AppText>
+      <AppText variant="heading" style={styles.sectionTitle}>Danger Zone</AppText>
       <AppCard>
         {permissions.canResetSociety && (
           <>
@@ -988,10 +1253,10 @@ export default function SettingsScreen() {
 
       {/* App Info */}
       <View style={styles.footer}>
-        <AppText variant="caption" color="tertiary" style={{ textAlign: "center" }}>
+        <AppText variant="caption" color="muted" style={{ textAlign: "center" }}>
           Golf Society Hub v1.0.0
         </AppText>
-        <AppText variant="small" color="tertiary" style={{ textAlign: "center", marginTop: 4 }}>
+        <AppText variant="small" color="muted" style={{ textAlign: "center", marginTop: 4 }}>
           Environment: {getSupabaseEnv().toUpperCase()} · Backend: …{getSupabaseProjectRefSuffix()}
         </AppText>
       </View>
@@ -1019,11 +1284,21 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   title: {
+    marginBottom: spacing.sm,
+  },
+  settingsTagline: {
+    marginBottom: spacing.xs,
+  },
+  settingsIntro: {
     marginBottom: spacing.lg,
+    lineHeight: 22,
   },
   sectionTitle: {
     marginBottom: spacing.sm,
-    marginTop: spacing.base,
+    marginTop: spacing.lg,
+  },
+  sectionTitleFirst: {
+    marginTop: spacing.md,
   },
   profileRow: {
     flexDirection: "row",
@@ -1065,6 +1340,18 @@ const styles = StyleSheet.create({
   },
   settingInfo: {
     flex: 1,
+  },
+  calendarModalOverlay: {
+    flex: 1,
+    justifyContent: "center",
+    padding: spacing.lg,
+  },
+  calendarModalCard: {
+    borderRadius: radius.lg,
+    padding: spacing.lg,
+    maxWidth: 520,
+    width: "100%",
+    alignSelf: "center",
   },
   logoSection: {
     alignItems: "center",

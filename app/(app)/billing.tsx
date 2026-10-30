@@ -20,7 +20,7 @@ import { useBootstrap } from "@/lib/useBootstrap";
 import { isCaptain } from "@/lib/rbac";
 import { supabase } from "@/lib/supabase";
 import { purchaseService } from "@/lib/billing/purchaseService";
-import { getColors, spacing, radius, typography, shadows } from "@/lib/ui/theme";
+import { getColors, spacing, radius, iconSize } from "@/lib/ui/theme";
 import { showAlert } from "@/lib/ui/alert";
 
 // ---------------------------------------------------------------------------
@@ -41,7 +41,6 @@ const MIN_QTY = 1;
 const MAX_QTY = 100;
 
 const TERMS_URL = "https://thegolfsocietyhub.com/terms";
-const PRIVACY_URL = "https://thegolfsocietyhub.com/privacy";
 
 // ---------------------------------------------------------------------------
 // Component
@@ -199,7 +198,7 @@ export default function BillingScreen() {
       <Screen>
         <View style={styles.headerRow}>
           <Pressable onPress={() => goBack(router, "/(app)/(tabs)/settings")} hitSlop={12}>
-            <Feather name="arrow-left" size={24} color={colors.text} />
+            <Feather name="arrow-left" size={iconSize.lg} color={colors.text} />
           </Pressable>
           <AppText variant="title" style={styles.headerTitle}>Billing & Licences</AppText>
           <View style={{ width: 24 }} />
@@ -207,7 +206,7 @@ export default function BillingScreen() {
 
         <View style={[styles.centered, { marginTop: spacing["3xl"] }]}>
           <View style={[styles.lockIcon, { backgroundColor: colors.backgroundTertiary }]}>
-            <Feather name="lock" size={32} color={colors.textTertiary} />
+            <Feather name="lock" size={iconSize.xl} color={colors.textTertiary} />
           </View>
           <AppText variant="h2" style={{ marginTop: spacing.lg, textAlign: "center" }}>
             Captain Only
@@ -249,7 +248,7 @@ export default function BillingScreen() {
       {/* Header */}
       <View style={styles.headerRow}>
         <Pressable onPress={() => goBack(router, "/(app)/(tabs)/settings")} hitSlop={12}>
-          <Feather name="arrow-left" size={24} color={colors.text} />
+          <Feather name="arrow-left" size={iconSize.lg} color={colors.text} />
         </Pressable>
         <AppText variant="title" style={styles.headerTitle}>Billing & Licences</AppText>
         <View style={{ width: 24 }} />
@@ -258,7 +257,7 @@ export default function BillingScreen() {
       {/* Product Card */}
       <AppCard style={[styles.productCard, { borderColor: colors.primary + "30" }]}>
         <View style={[styles.productBadge, { backgroundColor: colors.primary + "14" }]}>
-          <Feather name="shield" size={16} color={colors.primary} />
+          <Feather name="shield" size={iconSize.sm} color={colors.primary} />
           <AppText variant="captionBold" style={{ color: colors.primary, marginLeft: spacing.xs }}>
             Premium
           </AppText>
@@ -326,13 +325,13 @@ export default function BillingScreen() {
           onPress={() => router.push("/(app)/licences")}
         >
           <View style={[styles.manageLicencesIcon, { backgroundColor: colors.info + "14" }]}>
-            <Feather name="users" size={18} color={colors.info} />
+            <Feather name="users" size={iconSize.md} color={colors.info} />
           </View>
           <View style={{ flex: 1 }}>
             <AppText variant="bodyBold">Manage Licences</AppText>
             <AppText variant="small" color="secondary">Assign or remove seats for members</AppText>
           </View>
-          <Feather name="chevron-right" size={18} color={colors.textTertiary} />
+          <Feather name="chevron-right" size={iconSize.md} color={colors.textTertiary} />
         </Pressable>
       )}
 
@@ -346,13 +345,13 @@ export default function BillingScreen() {
           onPress={() => router.push("/(app)/licence-requests")}
         >
           <View style={[styles.manageLicencesIcon, { backgroundColor: colors.warning + "18" }]}>
-            <Feather name="inbox" size={18} color={colors.warning} />
+            <Feather name="inbox" size={iconSize.md} color={colors.warning} />
           </View>
           <View style={{ flex: 1 }}>
             <AppText variant="bodyBold">Licence Requests</AppText>
             <AppText variant="small" color="secondary">Review access requests from members</AppText>
           </View>
-          <Feather name="chevron-right" size={18} color={colors.textTertiary} />
+          <Feather name="chevron-right" size={iconSize.md} color={colors.textTertiary} />
         </Pressable>
       )}
 
@@ -375,7 +374,7 @@ export default function BillingScreen() {
               },
             ]}
           >
-            <Feather name="minus" size={20} color={quantity <= MIN_QTY ? colors.textTertiary : colors.text} />
+            <Feather name="minus" size={iconSize.md} color={quantity <= MIN_QTY ? colors.textTertiary : colors.text} />
           </Pressable>
 
           <View style={[styles.stepperValue, { borderColor: colors.border }]}>
@@ -393,7 +392,7 @@ export default function BillingScreen() {
               },
             ]}
           >
-            <Feather name="plus" size={20} color={quantity >= MAX_QTY ? colors.textTertiary : colors.text} />
+            <Feather name="plus" size={iconSize.md} color={quantity >= MAX_QTY ? colors.textTertiary : colors.text} />
           </Pressable>
         </View>
 
@@ -436,7 +435,7 @@ export default function BillingScreen() {
           onPress={handleRestore}
           loading={restoring}
           disabled={purchasing || restoring}
-          icon={<Feather name="refresh-cw" size={16} color={colors.primary} />}
+          icon={<Feather name="refresh-cw" size={iconSize.sm} color={colors.primary} />}
         >
           Restore Purchases
         </SecondaryButton>
@@ -447,8 +446,8 @@ export default function BillingScreen() {
               Terms of Service
             </AppText>
           </Pressable>
-          <AppText variant="small" color="tertiary"> | </AppText>
-          <Pressable onPress={() => Linking.openURL(PRIVACY_URL)}>
+          <AppText variant="small" color="muted"> | </AppText>
+          <Pressable onPress={() => router.push("/privacy-policy")}>
             <AppText variant="small" color="secondary" style={styles.legalLink}>
               Privacy Policy
             </AppText>
@@ -482,7 +481,7 @@ function SeatStat({
   return (
     <View style={seatStyles.stat}>
       <View style={[seatStyles.iconCircle, { backgroundColor: bgColor }]}>
-        <Feather name={icon} size={18} color={color} />
+        <Feather name={icon} size={iconSize.md} color={color} />
       </View>
       <AppText variant="h1" style={{ marginTop: spacing.xs }}>{value}</AppText>
       <AppText variant="small" color="secondary">{label}</AppText>

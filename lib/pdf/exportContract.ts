@@ -11,8 +11,8 @@ export type ExportFailure = {
 };
 
 export function assertNoPrintAsync(): void {
-  // Guardrail: exports must use Print.printToFileAsync + Sharing.shareAsync.
-  // This is a placeholder to make intent explicit at call sites.
+  // Guardrail: exports must use printHtmlToPdfFileAsync + sharePdfAsync (native: expo-print;
+  // web: jsPDF — expo-print web wrongly calls window.print on the app tab).
 }
 
 export function validateInputs(context: ExportContext): void {

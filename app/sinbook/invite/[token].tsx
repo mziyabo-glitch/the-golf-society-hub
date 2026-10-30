@@ -30,12 +30,13 @@ import {
   storePendingInviteToken,
 } from "@/lib/sinbookInviteToken";
 import { getColors, spacing } from "@/lib/ui/theme";
+import { joinRivalrySelfDisplayName, resolvePersonDisplayName } from "@/lib/rivalryPersonName";
 
 export default function SinbookInviteScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ token: string }>();
   const token = Array.isArray(params.token) ? params.token[0] : params.token;
-  const { loading: bootstrapLoading, isSignedIn, activeSocietyId, member } = useBootstrap();
+  const { loading: bootstrapLoading, isSignedIn, activeSocietyId, member, profile, session } = useBootstrap();
   const colors = getColors();
 
   const [status, setStatus] = useState<"loading" | "preview" | "accepting" | "done" | "error">("loading");
@@ -80,7 +81,13 @@ export default function SinbookInviteScreen() {
   const handleAccept = async () => {
     setStatus("accepting");
     try {
-      const displayName = member?.displayName || member?.name || "Player";
+      const displayName = joinRivalrySelfDisplayName({
+        memberDisplayName: member?.displayName,
+        memberName: member?.name,
+        profileFullName: profile?.full_name,
+        authEmail: session?.user?.email,
+        authMetadata: session?.user?.user_metadata,
+      });
       await acceptInviteByLink(token, displayName);
       setStatus("done");
       setTimeout(() => {
@@ -116,7 +123,7 @@ export default function SinbookInviteScreen() {
           icon={<Feather name="alert-circle" size={24} color={colors.error} />}
           title="Couldn't Join"
           message={errorMsg}
-          action={{ label: "Go to Sidebets", onPress: () => router.replace("/(app)/(tabs)/sinbook") }}
+          action={{ label: "Go to Rivalries", onPress: () => router.replace("/(app)/(tabs)/sinbook") }}
         />
       </Screen>
     );
@@ -148,6 +155,13 @@ export default function SinbookInviteScreen() {
 
   // Preview / Accept prompt
   const creator = sinbook?.participants.find((p) => p.user_id === sinbook?.created_by);
+  const creatorLine =
+    creator && sinbook
+      ? resolvePersonDisplayName({
+          ...sinbook.rivalryNameHintsByUserId?.[creator.user_id],
+          participantDisplayName: creator.display_name,
+        }).name
+      : null;
 
   return (
     <Screen>
@@ -163,15 +177,15 @@ export default function SinbookInviteScreen() {
         <AppCard style={{ marginTop: spacing.lg, width: "100%" }}>
           {sinbook ? (
             <>
-              <AppText variant="h2">{sinbook.title?.trim() || "Sidebet"}</AppText>
-              {creator && (
+              <AppText variant="h2">{sinbook.title?.trim() || "Rivalry"}</AppText>
+              {creatorLine && (
                 <AppText variant="caption" color="secondary" style={{ marginTop: 2 }}>
-                  Created by {creator.display_name}
+                  Created by {creatorLine}
                 </AppText>
               )}
               {sinbook.stake && (
                 <AppText variant="body" color="secondary" style={{ marginTop: spacing.xs }}>
-                  Stake: {sinbook.stake}
+                  Optional friendly forfeit: {sinbook.stake}
                 </AppText>
               )}
             </>

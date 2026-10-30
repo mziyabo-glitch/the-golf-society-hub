@@ -1,0 +1,90 @@
+{
+  "courses": [
+    {
+      "courseName": "The Vale Resort",
+      "subCourseName": "Wales National Course",
+      "courseAlias": ["The Wales National Course", "Wales National", "The Vale Resort - Wales National Course"],
+      "officialScorecardUrl": "https://www.valeresort.com/wp-content/uploads/2024/09/wales-national-scorecard-2020.pdf",
+      "sourceType": "pdf",
+      "notes": "Vale sub-course override: Wales National only.",
+      "officialUrls": [
+        "https://www.valeresort.com/vale-golf/the-wales-national-course/",
+        "https://www.valeresort.com/wp-content/uploads/2024/09/wales-national-scorecard-2020.pdf"
+      ],
+      "expectedIdentityTerms": [
+        "Vale Resort",
+        "Wales National",
+        "Hensol",
+        "Vale of Glamorgan",
+        "Wales"
+      ],
+      "excludedIdentityTerms": [
+        "Union Vale",
+        "Links At Union Vale"
+      ],
+      "expectedCountry": "Wales",
+      "expectedRegion": "Vale of Glamorgan",
+      "allowOfficialOnlyPromotion": true
+    },
+    {
+      "courseName": "The Vale Resort",
+      "subCourseName": "Lake Course",
+      "courseAlias": ["The Lake Course", "Lake", "The Vale Resort - Lake Course"],
+      "officialScorecardUrl": "https://www.valeresort.com/wp-content/uploads/2026/03/Lake-scorecard-Final-2025.pdf",
+      "sourceType": "pdf",
+      "notes": "Vale sub-course override: Lake only.",
+      "officialUrls": [
+        "https://www.valeresort.com/vale-golf/the-lake-course/",
+        "https://www.valeresort.com/wp-content/uploads/2026/03/Lake-scorecard-Final-2025.pdf"
+      ],
+      "expectedIdentityTerms": [
+        "Vale Resort",
+        "Lake Course",
+        "Hensol",
+        "Vale of Glamorgan",
+        "Wales"
+      ],
+      "excludedIdentityTerms": [
+        "Union Vale",
+        "Links At Union Vale"
+      ],
+      "expectedCountry": "Wales",
+      "expectedRegion": "Vale of Glamorgan",
+      "allowOfficialOnlyPromotion": true
+    },
+    {
+      "name": "Wycombe Heights Golf Centre",
+      "officialScorecardUrl": "https://www.wycombeheightsgc.co.uk/",
+      "sourceType": "html",
+      "notes": "Club site page first, then discovered scorecard links.",
+      "officialUrls": [
+        "https://www.wycombeheightsgc.co.uk/"
+      ]
+    },
+    {
+      "courseName": "Upavon Golf Club",
+      "officialScorecardUrl": "https://www.upavongolfclub.co.uk/scorecard",
+      "sourceType": "html",
+      "notes": "Use official scorecard page first, then follow embedded scorecard links.",
+      "officialUrls": [
+        "https://www.upavongolfclub.co.uk/scorecard",
+        "https://upavongolfclub.co.uk/",
+        "https://www.upavongolfclub.co.uk/"
+      ]
+    },
+    {
+      "name": "Shrivenham Park Golf Club",
+      "officialScorecardUrl": "https://www.shrivenhampark.co.uk/",
+      "sourceType": "html",
+      "notes": "Priority course override for official-source confirmation using curated Summer scorecard seed.",
+      "courseAlias": [
+        "Shrivenham Park GC Summer",
+        "Shrivenham Park Summer"
+      ],
+      "officialUrls": [
+        "https://www.shrivenhampark.co.uk/"
+      ],
+      "allowOfficialOnlyPromotion": true
+    }
+  ]
+}

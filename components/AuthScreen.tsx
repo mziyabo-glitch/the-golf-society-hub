@@ -2,8 +2,7 @@
  * AuthScreen — email / password sign-in, sign-up, and forgot password.
  * Rendered by the root layout when no session exists.
  *
- * "Remember me" controls whether the session is persisted in storage.
- * When unchecked the session lives only in memory and is lost on reload.
+ * "Remember me" is web-only. Native always persists auth until explicit sign-out.
  */
 
 import { useCallback, useState } from "react";
@@ -16,9 +15,6 @@ import {
   Pressable,
 } from "react-native";
 import { Feather } from "@expo/vector-icons";
-
-const masterLogo = require("@/assets/images/master-logo.png");
-
 import { Screen } from "@/components/ui/Screen";
 import { AppText } from "@/components/ui/AppText";
 import { AppCard } from "@/components/ui/AppCard";
@@ -33,17 +29,36 @@ import {
   signInWithMagicLink,
 } from "@/lib/auth_supabase";
 import { setRememberMe } from "@/lib/supabaseStorage";
+import {
+  consumePendingPostAuthRedirect,
+  storePendingPostAuthRedirect,
+} from "@/lib/pendingPostAuthRedirect";
 import { useBootstrap } from "@/lib/useBootstrap";
 import { useRouter } from "expo-router";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
 import { blurWebActiveElement } from "@/lib/ui/focus";
+import {
+  getInAppBrowserInfo,
+  isDomNotAllowedError,
+  webPermissionBlockedMessage,
+} from "@/lib/web/browserEnvironment";
+
+const masterLogo = require("@/assets/images/master-logo.png");
 
 type Mode = "signIn" | "signUp" | "forgotPassword" | "magicLink";
 
-export function AuthScreen() {
+export type AuthScreenProps = {
+  /** In-app path after successful email/password sign-in (e.g. `/invite/{eventUuid}`). */
+  redirectAfterSignIn?: string | null;
+};
+
+export function AuthScreen({ redirectAfterSignIn = null }: AuthScreenProps) {
   const colors = getColors();
   const { refresh } = useBootstrap();
   const router = useRouter();
+
+  const inAppBrowser =
+    Platform.OS === "web" ? getInAppBrowserInfo() : { inApp: false as const, label: null as string | null };
 
   const [mode, setMode] = useState<Mode>("signIn");
   const [email, setEmail] = useState("");
@@ -100,7 +115,14 @@ export function AuthScreen() {
       setError(null);
       setSuccess(null);
 
+      if (Platform.OS === "web") {
+        setRememberMe(rememberMe);
+      }
+
       try {
+        if (redirectAfterSignIn && redirectAfterSignIn.startsWith("/")) {
+          await storePendingPostAuthRedirect(redirectAfterSignIn);
+        }
         const { error } = await signInWithMagicLink(submitEmail);
         if (error) {
           setError(error.message || "Failed to send magic link.");
@@ -120,9 +142,10 @@ export function AuthScreen() {
     setError(null);
     setSuccess(null);
 
-    // Persist the remember-me preference BEFORE signing in so the
-    // storage adapter knows whether to actually write the session.
-    setRememberMe(rememberMe);
+    // Remember-me semantics are web-only; native always persists session.
+    if (Platform.OS === "web") {
+      setRememberMe(rememberMe);
+    }
 
     let skipLoadingReset = false;
 
@@ -136,7 +159,12 @@ export function AuthScreen() {
         if (data?.session) {
           refresh();
           blurWebActiveElement();
-          router.replace("/(app)/(tabs)");
+          const pending = await consumePendingPostAuthRedirect();
+          const dest =
+            (pending && pending.startsWith("/") ? pending : null) ??
+            (redirectAfterSignIn && redirectAfterSignIn.startsWith("/") ? redirectAfterSignIn : null) ??
+            "/(app)/(tabs)";
+          router.replace(dest as never);
           skipLoadingReset = true;
           return;
         }
@@ -180,7 +208,7 @@ export function AuthScreen() {
               Sign in with magic link
             </AppText>
             <AppText variant="body" color="secondary" style={styles.brandSubtitle}>
-              Enter your email and we'll send you a sign-in link.
+              Enter your email and we’ll send you a sign-in link.
             </AppText>
           </View>
 
@@ -190,6 +218,18 @@ export function AuthScreen() {
             )}
             {success && (
               <InlineNotice variant="success" message={success} style={styles.notice} />
+            )}
+            {Platform.OS === "web" && inAppBrowser.inApp && (
+              <InlineNotice
+                variant="info"
+                message="Open in Safari for best results"
+                detail={
+                  inAppBrowser.label
+                    ? `The ${inAppBrowser.label} browser often blocks sign-in. Use the menu (⋯ or Share) and choose “Open in Safari” or “Open in Browser”.`
+                    : "In-app browsers often block sign-in. Open this link in Safari instead."
+                }
+                style={styles.notice}
+              />
             )}
 
             <View style={styles.field}>
@@ -244,7 +284,7 @@ export function AuthScreen() {
               Reset Password
             </AppText>
             <AppText variant="body" color="secondary" style={styles.brandSubtitle}>
-              Enter your email and we'll send you a reset link.
+              Enter your email and we’ll send you a reset link.
             </AppText>
           </View>
 
@@ -254,6 +294,18 @@ export function AuthScreen() {
             )}
             {success && (
               <InlineNotice variant="success" message={success} style={styles.notice} />
+            )}
+            {Platform.OS === "web" && inAppBrowser.inApp && (
+              <InlineNotice
+                variant="info"
+                message="Open in Safari for best results"
+                detail={
+                  inAppBrowser.label
+                    ? `The ${inAppBrowser.label} browser often blocks sign-in. Use the menu (⋯ or Share) and choose “Open in Safari” or “Open in Browser”.`
+                    : "In-app browsers often block sign-in. Open this link in Safari instead."
+                }
+                style={styles.notice}
+              />
             )}
 
             <View style={styles.field}>
@@ -317,6 +369,18 @@ export function AuthScreen() {
           {success && (
             <InlineNotice variant="success" message={success} style={styles.notice} />
           )}
+          {Platform.OS === "web" && inAppBrowser.inApp && (
+            <InlineNotice
+              variant="info"
+              message="Open in Safari for best results"
+              detail={
+                inAppBrowser.label
+                  ? `The ${inAppBrowser.label} browser often blocks sign-in. Use the menu (⋯ or Share) and choose “Open in Safari” or “Open in Browser”.`
+                  : "In-app browsers often block sign-in. Open this link in Safari instead."
+              }
+              style={styles.notice}
+            />
+          )}
 
           <View style={styles.field}>
             <AppText variant="captionBold" style={styles.label}>Email</AppText>
@@ -346,8 +410,8 @@ export function AuthScreen() {
             />
           </View>
 
-          {/* Remember me + Forgot password row */}
-          {isSignIn && (
+          {/* Remember me (web-only) + Forgot password row */}
+          {isSignIn && Platform.OS === "web" && (
             <View style={styles.optionsRow}>
               <Pressable
                 style={styles.rememberRow}
@@ -390,6 +454,20 @@ export function AuthScreen() {
             {isSignIn ? "Sign In" : "Create Account"}
           </PrimaryButton>
 
+          {!isSignIn && (
+            <AppText variant="small" color="secondary" style={styles.consentText}>
+              By creating an account, you agree to our{" "}
+              <AppText
+                variant="small"
+                style={[styles.inlineLink, { color: colors.primary }]}
+                onPress={() => router.push("/privacy-policy")}
+              >
+                Privacy Policy
+              </AppText>
+              .
+            </AppText>
+          )}
+
           {isSignIn && (
             <>
               <View style={styles.dividerRow}>
@@ -403,11 +481,29 @@ export function AuthScreen() {
                   if (loading) return;
                   setLoading(true);
                   setError(null);
+                  if (Platform.OS === "web") {
+                    setRememberMe(rememberMe);
+                  }
                   try {
+                    if (redirectAfterSignIn && redirectAfterSignIn.startsWith("/")) {
+                      await storePendingPostAuthRedirect(redirectAfterSignIn);
+                    }
                     const { error } = await signInWithGoogle();
-                    if (error) setError(error.message || "Google sign-in failed.");
-                  } catch (e: any) {
-                    setError(e?.message || "Something went wrong.");
+                    if (error) {
+                      setError(
+                        Platform.OS === "web" && isDomNotAllowedError(error)
+                          ? webPermissionBlockedMessage()
+                          : error.message || "Google sign-in failed.",
+                      );
+                    }
+                  } catch (e: unknown) {
+                    setError(
+                      Platform.OS === "web" && isDomNotAllowedError(e)
+                        ? webPermissionBlockedMessage()
+                        : e instanceof Error
+                          ? e.message
+                          : "Something went wrong.",
+                    );
                   } finally {
                     setLoading(false);
                   }
@@ -535,5 +631,14 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     marginTop: spacing.sm,
     paddingVertical: spacing.xs,
+  },
+  consentText: {
+    textAlign: "center",
+    marginTop: spacing.base,
+    lineHeight: 20,
+  },
+  inlineLink: {
+    textDecorationLine: "underline",
+    fontWeight: "600",
   },
 });

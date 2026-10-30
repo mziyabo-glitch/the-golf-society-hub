@@ -12,6 +12,14 @@ import type { Router } from "expo-router";
  * no browser history (deep link, refresh, bookmark on mobile Safari).
  */
 export function goBack(router: Router, fallback: string = "/(app)/(tabs)") {
+  const canGoBack =
+    typeof (router as { canGoBack?: () => boolean }).canGoBack === "function"
+      ? !!(router as { canGoBack: () => boolean }).canGoBack()
+      : true;
+  if (!canGoBack) {
+    router.replace(fallback as any);
+    return;
+  }
   if (Platform.OS === "web" && typeof window !== "undefined" && window.history.length <= 1) {
     router.replace(fallback as any);
   } else {

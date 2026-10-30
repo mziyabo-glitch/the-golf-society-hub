@@ -8,7 +8,15 @@
 
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Alert, Modal, Pressable, ScrollView, StyleSheet, View } from "react-native";
+import { buildSocietyIdToNameMap, societyLabelFromMember } from "@/lib/jointEventSocietyLabel";
+import {
+  dedupeJointMembers,
+  memberIdForActiveSocietyInJointDedupe,
+  normalizeJointSelectedMemberIds,
+  representativeMemberIdForJoint,
+  expandJointRepresentativesToParticipatingMemberIds,
+} from "@/lib/jointPersonDedupe";
+import { Alert, Modal, Platform, Pressable, ScrollView, StyleSheet, View } from "react-native";
 import { Feather } from "@expo/vector-icons";
 import { goBack } from "@/lib/navigation";
 
@@ -22,19 +30,34 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { useBootstrap } from "@/lib/useBootstrap";
 import { getEvent, updateEvent, type EventDoc } from "@/lib/db_supabase/eventRepo";
 import { getMembersBySocietyId, type MemberDoc } from "@/lib/db_supabase/memberRepo";
+import { resolveAttendeeDisplayName } from "@/lib/eventAttendeeName";
+import { getJointMetaForEventIds, getJointEventDetail, syncJointEventEntries } from "@/lib/db_supabase/jointEventRepo";
 import {
   getEventGuests,
   addEventGuest,
-  deleteEventGuest,
+  removeEventGuestFromEvent,
+  updateEventGuest,
   type EventGuest,
 } from "@/lib/db_supabase/eventGuestRepo";
-import { getPermissionsForMember } from "@/lib/rbac";
+import { canManageEventRosterForSociety, getPermissionsForMember, isSecretary } from "@/lib/rbac";
+import { isLiveGrossScoringEnabledForEvent } from "@/lib/featureVisibility";
 import { getColors, spacing, radius, typography } from "@/lib/ui/theme";
+import { JOINT_EVENT_CHIP_LONG } from "@/lib/eventModuleUi";
+import { isJointEventFromMeta, isActiveSocietyParticipantForEvent } from "@/lib/jointEventAccess";
+import { removeEventParticipant, getJointEventRegistrations } from "@/lib/db_supabase/eventRegistrationRepo";
+import {
+  logJointPlayableConsistencyDev,
+  formatJointPlayableGapWarning,
+  findEligibleRegistrationsMissingPlayableEntry,
+} from "@/lib/jointEventPlayableConsistency";
+import { InlineNotice } from "@/components/ui/InlineNotice";
+import { invalidateCache, invalidateCachePrefix } from "@/lib/cache/clientCache";
+import { confirmDestructive } from "@/lib/ui/alert";
 
 export default function EventPlayersScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ id: string }>();
-  const { societyId, member, loading: bootstrapLoading } = useBootstrap();
+  const { societyId, memberships, member: currentMember, loading: bootstrapLoading } = useBootstrap();
   const colors = getColors();
 
   const eventId = useMemo(() => {
@@ -49,15 +72,46 @@ export default function EventPlayersScreen() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [participatingSocietyIds, setParticipatingSocietyIds] = useState<string[]>([]);
+  const [jointParticipatingSocieties, setJointParticipatingSocieties] = useState<
+    { society_id: string; society_name?: string | null }[]
+  >([]);
+  /** Joint: paid + RSVP-in registration with no `event_entries.player_id` for that society member id. */
+  const [playableGapWarning, setPlayableGapWarning] = useState<string | null>(null);
 
   // Add guest modal
   const [showAddGuest, setShowAddGuest] = useState(false);
   const [guestName, setGuestName] = useState("");
-  const [guestSex, setGuestSex] = useState<"male" | "female">("male");
+  const [guestSex, setGuestSex] = useState<"male" | "female" | null>(null);
   const [guestHandicap, setGuestHandicap] = useState("");
   const [addingGuest, setAddingGuest] = useState(false);
+  const [showEditGuest, setShowEditGuest] = useState(false);
+  const [editingGuest, setEditingGuest] = useState<EventGuest | null>(null);
+  const [editGuestName, setEditGuestName] = useState("");
+  const [editGuestSex, setEditGuestSex] = useState<"male" | "female" | null>(null);
+  const [editGuestHandicap, setEditGuestHandicap] = useState("");
+  const [savingGuestEdit, setSavingGuestEdit] = useState(false);
+  const [reloadTick, setReloadTick] = useState(0);
 
-  const permissions = getPermissionsForMember(member as any);
+  const canManageGuests = canManageEventRosterForSociety(memberships, societyId);
+  const canEnterGrossScores =
+    (getPermissionsForMember(currentMember).canManageHandicaps || isSecretary(currentMember)) &&
+    isLiveGrossScoringEnabledForEvent(event);
+
+  const jointSocietyIdToName = useMemo(
+    () => buildSocietyIdToNameMap(jointParticipatingSocieties),
+    [jointParticipatingSocieties],
+  );
+
+  const derivedIsJointEvent = useMemo(
+    () => isJointEventFromMeta(participatingSocietyIds, participatingSocietyIds.length),
+    [participatingSocietyIds],
+  );
+
+  const dedupedJointMembers = useMemo(() => {
+    if (!derivedIsJointEvent || members.length === 0) return [];
+    return dedupeJointMembers(members, jointSocietyIdToName);
+  }, [derivedIsJointEvent, members, jointSocietyIdToName]);
 
   const loadGuests = useCallback(async () => {
     if (!eventId) return [];
@@ -65,6 +119,13 @@ export default function EventPlayersScreen() {
     setGuests(list);
     return list;
   }, [eventId]);
+
+  const refreshGuestDependentViews = useCallback(async () => {
+    if (!eventId || !societyId) return;
+    await invalidateCache(`event:${eventId}:detail`);
+    await invalidateCache(`event:${eventId}:registrations`);
+    await invalidateCachePrefix(`society:${societyId}:`);
+  }, [eventId, societyId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -90,28 +151,105 @@ export default function EventPlayersScreen() {
       try {
         console.log("[players] loading event + members + guests", { eventId, societyId });
 
-        const [evt, mems, guestList] = await Promise.all([
-          getEvent(eventId),
-          getMembersBySocietyId(societyId),
-          getEventGuests(eventId),
-        ]);
+        const jointMeta = await getJointMetaForEventIds([eventId]);
+        const metaRow = jointMeta.get(eventId);
+        const loadAsJoint = isJointEventFromMeta(metaRow?.participantSocietyIds, metaRow?.linkedSocietyCount);
 
-        if (cancelled) return;
+        if (loadAsJoint) {
+          const [jointPayload, guestList, registrations] = await Promise.all([
+            getJointEventDetail(eventId),
+            getEventGuests(eventId),
+            getJointEventRegistrations(eventId),
+          ]);
+          if (cancelled) return;
+          const evt = jointPayload ? await getEvent(eventId) : null;
+          setEvent(evt);
+          setGuests(guestList ?? []);
 
-        console.log("[players] loaded event:", {
-          id: evt?.id,
-          playerIds: evt?.playerIds,
-          guests: guestList.length,
-        });
+          if (jointPayload) {
+            const societies = jointPayload.participating_societies ?? [];
+            setJointParticipatingSocieties(
+              societies.map((s) => ({ society_id: s.society_id, society_name: s.society_name })),
+            );
+            const societyIds = societies.map((s) => s.society_id).filter(Boolean);
+            setParticipatingSocietyIds(societyIds);
 
-        setEvent(evt);
-        setMembers(mems);
-        setGuests(guestList);
+            const allMembers: MemberDoc[] = [];
+            for (const sid of societyIds) {
+              const m = await getMembersBySocietyId(sid);
+              allMembers.push(...m);
+            }
+            setMembers(allMembers);
 
-        // Use playerIds (camelCase) as returned by mapEvent
-        const existing = evt?.playerIds ?? [];
-        console.log("[players] initializing selection from:", existing);
-        setSelectedPlayerIds(new Set(existing.map(String)));
+            const entryPlayerIds = (jointPayload.entries ?? []).map((e) => e.player_id).filter(Boolean);
+            const legacyPlayerIds = evt?.playerIds ?? [];
+            const mergedIds = new Set([
+              ...entryPlayerIds.map(String),
+              ...legacyPlayerIds.map(String),
+            ]);
+            const map = buildSocietyIdToNameMap(
+              societies.map((s) => ({ society_id: s.society_id, society_name: s.society_name })),
+            );
+            setSelectedPlayerIds(normalizeJointSelectedMemberIds(mergedIds, allMembers, map));
+
+            const gaps = findEligibleRegistrationsMissingPlayableEntry(
+              registrations,
+              jointPayload.entries ?? [],
+              societyIds,
+            );
+            setPlayableGapWarning(formatJointPlayableGapWarning(gaps));
+            logJointPlayableConsistencyDev({
+              eventId,
+              registrations,
+              entries: jointPayload.entries ?? [],
+              participatingSocietyIds: societyIds,
+            });
+
+            if (__DEV__) {
+              console.log("[players] attendee confirmation restore:", {
+                eventId,
+                societyId,
+                isJointEvent: true,
+                persistedFromEntries: entryPlayerIds.length,
+                persistedFromEventPlayerIds: legacyPlayerIds.length,
+                mergedCount: mergedIds.size,
+              });
+            }
+          } else {
+            setMembers([]);
+            setParticipatingSocietyIds([]);
+            setJointParticipatingSocieties([]);
+            setSelectedPlayerIds(new Set());
+            setPlayableGapWarning(null);
+          }
+        } else {
+          const [evt, guestList] = await Promise.all([
+            getEvent(eventId),
+            getEventGuests(eventId),
+          ]);
+          if (cancelled) return;
+
+          const hostSocietyId = evt?.society_id ?? societyId;
+          const mems = await getMembersBySocietyId(hostSocietyId);
+
+          setEvent(evt);
+          setMembers(mems);
+          setGuests(guestList);
+          setParticipatingSocietyIds([]);
+          setJointParticipatingSocieties([]);
+          setPlayableGapWarning(null);
+
+          const existing = evt?.playerIds ?? [];
+          setSelectedPlayerIds(new Set(existing.map(String)));
+          if (__DEV__) {
+            console.log("[players] attendee confirmation restore:", {
+              eventId,
+              societyId,
+              isJointEvent: false,
+              persistedFromEventPlayerIds: existing.length,
+            });
+          }
+        }
       } catch (e: any) {
         console.error("[players] load FAILED", e);
         if (!cancelled) {
@@ -126,39 +264,87 @@ export default function EventPlayersScreen() {
     return () => {
       cancelled = true;
     };
-  }, [bootstrapLoading, societyId, eventId]);
+  }, [bootstrapLoading, societyId, eventId, reloadTick]);
+
+  useEffect(() => {
+    if (!__DEV__ || !eventId || !societyId || members.length === 0) return;
+    const sample = members.slice(0, 5).map((m) => ({
+      memberId: String(m.id),
+      renderedTick: selectedPlayerIds.has(String(m.id)),
+    }));
+    console.log("[players] tick status sample:", { eventId, societyId, memberCount: members.length, selectedCount: selectedPlayerIds.size, sample });
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- dev-only: avoid members/Set identity churn spam
+  }, [eventId, societyId, members.length, selectedPlayerIds.size]);
+
+  useEffect(() => {
+    if (!eventId || !societyId || !event || !__DEV__) return;
+    const host = event.society_id;
+    const participantSocietyIds =
+      participatingSocietyIds.length > 0 ? participatingSocietyIds : [host].filter(Boolean);
+    const canView = isActiveSocietyParticipantForEvent(societyId, host, participantSocietyIds);
+    console.log("[joint-access] final gate", {
+      eventId,
+      activeSocietyId: societyId,
+      hostSocietyId: host,
+      participantSocietyIds,
+      derivedIsJoint: derivedIsJointEvent,
+      canView,
+    });
+  }, [eventId, societyId, event, participatingSocietyIds, derivedIsJointEvent]);
 
   function togglePlayer(id: string) {
+    const effectiveId = derivedIsJointEvent
+      ? representativeMemberIdForJoint(id, members, jointSocietyIdToName)
+      : id;
     setSelectedPlayerIds((prev) => {
       const next = new Set(prev);
-      if (next.has(id)) { next.delete(id); } else { next.add(id); }
+      if (next.has(effectiveId)) {
+        next.delete(effectiveId);
+      } else {
+        next.add(effectiveId);
+      }
       return next;
     });
   }
 
   async function save() {
+    if (!event?.id) return;
     try {
       setSaving(true);
 
       const ids = Array.from(selectedPlayerIds);
       console.log("[players] saving", {
-        eventId: event?.id,
-        societyId,
-        playerIds: ids,
+        eventId: event.id,
+        isJointEvent: derivedIsJointEvent,
+        playerIds: ids.length,
       });
 
-      await updateEvent(event!.id, { playerIds: ids });
-
-      console.log("[players] save OK, refetching to confirm...");
-
-      // Refetch to confirm persistence
-      const refreshed = await getEvent(event!.id);
-      if (refreshed) {
-        const reloaded = refreshed.playerIds ?? [];
-        console.log("[players] confirmed playerIds:", reloaded);
+      if (derivedIsJointEvent && participatingSocietyIds.length >= 2) {
+        const expandedIds = expandJointRepresentativesToParticipatingMemberIds(
+          ids,
+          members,
+          jointSocietyIdToName,
+          participatingSocietyIds,
+        );
+        if (__DEV__) {
+          console.log("[players] joint sync: representative ids → expanded for event_entries", {
+            eventId: event.id,
+            before: ids.length,
+            after: expandedIds.length,
+          });
+        }
+        await syncJointEventEntries(event.id, expandedIds, participatingSocietyIds);
+        console.log("[players] joint save OK, synced entries");
+      } else {
+        await updateEvent(event.id, { playerIds: ids });
+        console.log("[players] save OK, refetching to confirm...");
+        const refreshed = await getEvent(event.id);
+        if (refreshed) {
+          const reloaded = refreshed.playerIds ?? [];
+          console.log("[players] confirmed playerIds:", reloaded.length);
+        }
       }
 
-      // Navigate back - Event Detail will refetch via useFocusEffect
       goBack(router, "/(app)/(tabs)/events");
     } catch (e: any) {
       console.error("[players] save FAILED", e);
@@ -187,9 +373,10 @@ export default function EventPlayersScreen() {
         handicapIndex: handicap != null && !isNaN(handicap) ? handicap : null,
       });
       await loadGuests();
+      await refreshGuestDependentViews();
       setShowAddGuest(false);
       setGuestName("");
-      setGuestSex("male");
+      setGuestSex(null);
       setGuestHandicap("");
     } catch (e: any) {
       Alert.alert("Failed", e?.message ?? "Could not add guest.");
@@ -199,25 +386,96 @@ export default function EventPlayersScreen() {
   }
 
   async function handleDeleteGuest(g: EventGuest) {
-    Alert.alert(
-      "Remove Guest",
-      `Remove ${g.name} from this event?`,
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Remove",
-          style: "destructive",
-          onPress: async () => {
-            try {
-              await deleteEventGuest(g.id);
-              await loadGuests();
-            } catch (e: any) {
-              Alert.alert("Failed", e?.message ?? "Could not remove guest.");
-            }
-          },
+    if (!eventId || !societyId) return;
+    const runDelete = async () => {
+      try {
+        await removeEventGuestFromEvent({ eventId, societyId, guestId: g.id });
+        await loadGuests();
+        await refreshGuestDependentViews();
+      } catch (e: any) {
+        Alert.alert("Failed", e?.message ?? "Could not remove guest.");
+      }
+    };
+
+    const msg = `Remove ${g.name} from this event?`;
+    if (Platform.OS === "web") {
+      const ok =
+        typeof globalThis !== "undefined" &&
+        typeof (globalThis as unknown as { confirm?: (s: string) => boolean }).confirm === "function" &&
+        (globalThis as unknown as { confirm: (s: string) => boolean }).confirm(msg);
+      if (ok) await runDelete();
+      return;
+    }
+
+    Alert.alert("Remove Guest", msg, [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Remove",
+        style: "destructive",
+        onPress: () => {
+          void runDelete();
         },
-      ]
-    );
+      },
+    ]);
+  }
+
+  function handleRemoveMemberFromEventPlayers(memberId: string, displayName: string) {
+    if (!event?.id || !societyId) return;
+    const msg = `Remove ${displayName} from this event for your society? They disappear from players, payments, and tee workflows. The registration row stays for audit.`;
+    const runRemove = async () => {
+      try {
+        await removeEventParticipant({ eventId: event.id, societyId, targetMemberId: memberId });
+        await refreshGuestDependentViews();
+        setReloadTick((x) => x + 1);
+      } catch (e: any) {
+        Alert.alert("Failed", e?.message ?? "Could not remove member.");
+      }
+    };
+    if (Platform.OS === "web") {
+      const ok =
+        typeof globalThis !== "undefined" &&
+        typeof (globalThis as unknown as { confirm?: (s: string) => boolean }).confirm === "function" &&
+        (globalThis as unknown as { confirm: (s: string) => boolean }).confirm(`Remove from event\n\n${msg}`);
+      if (ok) void runRemove();
+      return;
+    }
+    confirmDestructive("Remove from event", msg, "Remove", () => {
+      void runRemove();
+    });
+  }
+
+  function openEditGuest(g: EventGuest) {
+    setEditingGuest(g);
+    setEditGuestName(g.name ?? "");
+    setEditGuestSex(g.sex ?? null);
+    setEditGuestHandicap(g.handicap_index != null ? String(g.handicap_index) : "");
+    setShowEditGuest(true);
+  }
+
+  async function handleSaveGuestEdit() {
+    if (!editingGuest) return;
+    const name = editGuestName.trim();
+    if (!name) {
+      Alert.alert("Name required", "Please enter the guest's name.");
+      return;
+    }
+    setSavingGuestEdit(true);
+    try {
+      const handicap = editGuestHandicap.trim() ? Number(editGuestHandicap.trim()) : null;
+      await updateEventGuest(editingGuest.id, {
+        name,
+        sex: editGuestSex,
+        handicapIndex: handicap != null && Number.isFinite(handicap) ? handicap : null,
+      });
+      await loadGuests();
+      await refreshGuestDependentViews();
+      setShowEditGuest(false);
+      setEditingGuest(null);
+    } catch (e: any) {
+      Alert.alert("Failed", e?.message ?? "Could not update guest.");
+    } finally {
+      setSavingGuestEdit(false);
+    }
   }
 
   if (bootstrapLoading || loading) {
@@ -234,7 +492,7 @@ export default function EventPlayersScreen() {
         <EmptyState
           title="Error"
           message={error}
-          action={{ label: "Go Back", onPress: () => router.replace({ pathname: "/event/[id]", params: { id: eventId, refresh: Date.now().toString() } }) }}
+          action={{ label: "Go Back", onPress: () => router.replace({ pathname: "/(app)/event/[id]", params: { id: eventId, refresh: Date.now().toString() } }) }}
         />
       </Screen>
     );
@@ -246,7 +504,7 @@ export default function EventPlayersScreen() {
         <EmptyState
           title="Not found"
           message="Event not found."
-          action={{ label: "Go Back", onPress: () => router.replace({ pathname: "/event/[id]", params: { id: eventId, refresh: Date.now().toString() } }) }}
+          action={{ label: "Go Back", onPress: () => router.replace({ pathname: "/(app)/event/[id]", params: { id: eventId, refresh: Date.now().toString() } }) }}
         />
       </Screen>
     );
@@ -266,7 +524,7 @@ export default function EventPlayersScreen() {
 
         <PrimaryButton
           onPress={save}
-          disabled={saving || !permissions?.canEditEvents}
+          disabled={saving || !canManageGuests}
           size="sm"
         >
           {saving ? "Saving..." : "Save"}
@@ -282,6 +540,44 @@ export default function EventPlayersScreen() {
         </View>
       </View>
 
+      {derivedIsJointEvent && (
+        <AppCard
+          style={{
+            marginBottom: spacing.md,
+            padding: spacing.md,
+            borderWidth: 1,
+            borderColor: colors.info + "50",
+            backgroundColor: colors.info + "0C",
+          }}
+        >
+          <View style={{ flexDirection: "row", alignItems: "flex-start", gap: spacing.sm }}>
+            <Feather name="link" size={20} color={colors.info} />
+            <View style={{ flex: 1, minWidth: 0 }}>
+              <AppText variant="captionBold" style={{ color: colors.info }}>
+                {JOINT_EVENT_CHIP_LONG}
+              </AppText>
+              <AppText variant="small" color="secondary" style={{ marginTop: 4 }}>
+                {jointParticipatingSocieties.length > 0
+                  ? jointParticipatingSocieties
+                      .map((s) => s.society_name?.trim() || s.society_id)
+                      .filter(Boolean)
+                      .join(" · ")
+                  : "Multiple societies — attendance is shared."}
+              </AppText>
+            </View>
+          </View>
+        </AppCard>
+      )}
+
+      {derivedIsJointEvent && canManageGuests && playableGapWarning ? (
+        <InlineNotice
+          variant="info"
+          message="Playable entries out of sync with confirmations"
+          detail={playableGapWarning}
+          style={{ marginBottom: spacing.md }}
+        />
+      ) : null}
+
       <ScrollView contentContainerStyle={{ paddingBottom: spacing.xl }}>
         {/* Members */}
         <AppText variant="captionBold" color="secondary" style={{ marginBottom: spacing.sm }}>
@@ -291,39 +587,140 @@ export default function EventPlayersScreen() {
           <EmptyState
             title="No members"
             message="Add members first, then you can select players."
-            action={{ label: "Go Back", onPress: () => router.replace({ pathname: "/event/[id]", params: { id: eventId, refresh: Date.now().toString() } }) }}
+            action={{ label: "Go Back", onPress: () => router.replace({ pathname: "/(app)/event/[id]", params: { id: eventId, refresh: Date.now().toString() } }) }}
           />
         ) : (
           <View style={{ gap: spacing.md, marginBottom: spacing.xl }}>
-            {members.map((m) => {
-              const id = String(m.id);
-              const selected = selectedPlayerIds.has(id);
-              const handicap = m.handicapIndex ?? (m as any).handicap_index;
+            {derivedIsJointEvent
+              ? dedupedJointMembers.map((d) => {
+                  const id = String(d.representative.id);
+                  const selected = selectedPlayerIds.has(id);
+                  const handicap =
+                    d.representative.handicapIndex ?? (d.representative as any).handicap_index;
+                  const societyLine =
+                    d.mergedMemberIds.length > 1
+                      ? d.societyLabelMerged
+                      : societyLabelFromMember(d.representative, jointSocietyIdToName) ??
+                        d.representative.society_id;
+                  return (
+                    <AppCard key={d.key} style={selected ? { ...styles.row, ...styles.rowSelected } : styles.row}>
+                      <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+                        <Pressable style={{ flex: 1, flexDirection: "row", alignItems: "center" }} onPress={() => togglePlayer(id)}>
+                          <View style={{ flex: 1 }}>
+                            <AppText style={styles.name}>
+                              {resolveAttendeeDisplayName(d.representative, { memberId: d.representative.id }).name}
+                            </AppText>
+                            <AppText variant="caption" color="secondary" style={{ marginTop: 4 }}>
+                              {societyLine}
+                              {d.mergedMemberIds.length > 1 ? " · Dual membership" : ""}
+                            </AppText>
 
-              return (
-                <Pressable key={id} onPress={() => togglePlayer(id)}>
-                  <AppCard style={selected ? { ...styles.row, ...styles.rowSelected } : styles.row}>
-                    <View style={{ flex: 1 }}>
-                      <AppText style={styles.name}>
-                        {m.name || m.displayName || "Member"}
-                      </AppText>
+                            {handicap != null && (
+                              <AppText style={styles.subtle}>
+                                HCP: {handicap}
+                              </AppText>
+                            )}
+                          </View>
 
-                      {handicap != null && (
-                        <AppText style={styles.subtle}>
-                          HCP: {handicap}
-                        </AppText>
-                      )}
-                    </View>
+                          <Feather
+                            name={selected ? "check-circle" : "circle"}
+                            size={22}
+                            color={selected ? colors.primary : colors.textTertiary}
+                          />
+                        </Pressable>
+                        {canEnterGrossScores && eventId ? (
+                          <Pressable
+                            accessibilityLabel="Enter gross scores"
+                            hitSlop={10}
+                            onPress={() =>
+                              router.push({
+                                pathname: "/(app)/event/[id]/gross-scores/[playerId]",
+                                params: { id: eventId, playerId: id },
+                              } as never)
+                            }
+                          >
+                            <Feather name="edit-3" size={20} color={colors.primary} />
+                          </Pressable>
+                        ) : null}
+                        {canManageGuests && societyId ? (
+                          <Pressable
+                            accessibilityLabel="Remove member from event"
+                            hitSlop={10}
+                            onPress={() =>
+                              handleRemoveMemberFromEventPlayers(
+                                memberIdForActiveSocietyInJointDedupe(d, members, societyId),
+                                resolveAttendeeDisplayName(d.representative, {
+                                  memberId: d.representative.id,
+                                }).name,
+                              )
+                            }
+                          >
+                            <Feather name="user-x" size={20} color={colors.error} />
+                          </Pressable>
+                        ) : null}
+                      </View>
+                    </AppCard>
+                  );
+                })
+              : members.map((m) => {
+                  const id = String(m.id);
+                  const selected = selectedPlayerIds.has(id);
+                  const handicap = m.handicapIndex ?? (m as any).handicap_index;
 
-                    <Feather
-                      name={selected ? "check-circle" : "circle"}
-                      size={22}
-                      color={selected ? colors.primary : colors.textTertiary}
-                    />
-                  </AppCard>
-                </Pressable>
-              );
-            })}
+                  return (
+                    <AppCard key={id} style={selected ? { ...styles.row, ...styles.rowSelected } : styles.row}>
+                      <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+                        <Pressable style={{ flex: 1, flexDirection: "row", alignItems: "center" }} onPress={() => togglePlayer(id)}>
+                          <View style={{ flex: 1 }}>
+                            <AppText style={styles.name}>
+                              {resolveAttendeeDisplayName(m, { memberId: m.id }).name}
+                            </AppText>
+
+                            {handicap != null && (
+                              <AppText style={styles.subtle}>
+                                HCP: {handicap}
+                              </AppText>
+                            )}
+                          </View>
+
+                          <Feather
+                            name={selected ? "check-circle" : "circle"}
+                            size={22}
+                            color={selected ? colors.primary : colors.textTertiary}
+                          />
+                        </Pressable>
+                        {canEnterGrossScores && eventId ? (
+                          <Pressable
+                            accessibilityLabel="Enter gross scores"
+                            hitSlop={10}
+                            onPress={() =>
+                              router.push({
+                                pathname: "/(app)/event/[id]/gross-scores/[playerId]",
+                                params: { id: eventId, playerId: id },
+                              } as never)
+                            }
+                          >
+                            <Feather name="edit-3" size={20} color={colors.primary} />
+                          </Pressable>
+                        ) : null}
+                        {canManageGuests && societyId ? (
+                          <Pressable
+                            accessibilityLabel="Remove member from event"
+                            hitSlop={10}
+                            onPress={() =>
+                              handleRemoveMemberFromEventPlayers(
+                                id,
+                                resolveAttendeeDisplayName(m, { memberId: m.id }).name,
+                              )
+                            }
+                          >
+                            <Feather name="user-x" size={20} color={colors.error} />
+                          </Pressable>
+                        ) : null}
+                      </View>
+                    </AppCard>
+                  );
+                })}
           </View>
         )}
 
@@ -334,7 +731,7 @@ export default function EventPlayersScreen() {
         <AppText variant="small" color="tertiary" style={{ marginBottom: spacing.sm }}>
           Add guests to include them in the tee sheet. They will appear alongside members.
         </AppText>
-        {permissions?.canEditEvents && (
+        {canManageGuests && (
           <SecondaryButton
             onPress={() => setShowAddGuest(true)}
             size="sm"
@@ -352,15 +749,30 @@ export default function EventPlayersScreen() {
           <View style={{ gap: spacing.sm }}>
             {guests.map((g) => (
               <AppCard key={g.id} style={styles.row}>
-                <View style={{ flex: 1 }}>
+                <Pressable
+                  style={{ flex: 1 }}
+                  onPress={() => canManageGuests && openEditGuest(g)}
+                >
                   <AppText style={styles.name}>{g.name}</AppText>
                   <AppText style={styles.subtle}>
-                    {g.sex === "male" ? "Male" : "Female"}
-                    {g.handicap_index != null ? ` · HI ${g.handicap_index}` : ""}
+                    {g.sex === "male" ? "Male" : g.sex === "female" ? "Female" : "Sex not set"}
+                    {" · "}
+                    {g.handicap_index != null ? `HI ${g.handicap_index}` : "HI not set"}
                   </AppText>
-                </View>
-                {permissions?.canEditEvents && (
-                  <Pressable onPress={() => handleDeleteGuest(g)} hitSlop={8}>
+                  {canManageGuests ? (
+                    <AppText variant="small" color="tertiary" style={{ marginTop: 2 }}>
+                      Tap to edit guest
+                    </AppText>
+                  ) : null}
+                </Pressable>
+                {canManageGuests && (
+                  <Pressable
+                    onPress={() => {
+                      void handleDeleteGuest(g);
+                    }}
+                    hitSlop={10}
+                    style={{ marginLeft: spacing.sm, padding: 4 }}
+                  >
                     <Feather name="trash-2" size={18} color={colors.error} />
                   </Pressable>
                 )}
@@ -390,6 +802,16 @@ export default function EventPlayersScreen() {
             <View style={styles.formField}>
               <AppText variant="caption" style={styles.label}>Sex</AppText>
               <View style={styles.sexRow}>
+                <Pressable
+                  onPress={() => setGuestSex(null)}
+                  style={[
+                    styles.sexOption,
+                    { borderColor: guestSex == null ? colors.primary : colors.border },
+                    guestSex == null && { backgroundColor: colors.primary + "14" },
+                  ]}
+                >
+                  <AppText style={guestSex == null ? { color: colors.primary, fontWeight: "600" } : {}}>Not set</AppText>
+                </Pressable>
                 <Pressable
                   onPress={() => setGuestSex("male")}
                   style={[
@@ -427,6 +849,79 @@ export default function EventPlayersScreen() {
               </SecondaryButton>
               <PrimaryButton onPress={handleAddGuest} loading={addingGuest} style={{ flex: 1 }}>
                 Add
+              </PrimaryButton>
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      {/* Edit Guest Modal */}
+      <Modal visible={showEditGuest} transparent animationType="fade">
+        <Pressable
+          style={styles.modalOverlay}
+          onPress={() => !savingGuestEdit && setShowEditGuest(false)}
+        >
+          <Pressable style={[styles.modalContent, { backgroundColor: colors.surface }]} onPress={(e) => e.stopPropagation()}>
+            <AppText variant="h2" style={{ marginBottom: spacing.md }}>Edit Guest</AppText>
+            <View style={styles.formField}>
+              <AppText variant="caption" style={styles.label}>Name</AppText>
+              <AppInput
+                placeholder="Guest name"
+                value={editGuestName}
+                onChangeText={setEditGuestName}
+                autoCapitalize="words"
+              />
+            </View>
+            <View style={styles.formField}>
+              <AppText variant="caption" style={styles.label}>Sex</AppText>
+              <View style={styles.sexRow}>
+                <Pressable
+                  onPress={() => setEditGuestSex(null)}
+                  style={[
+                    styles.sexOption,
+                    { borderColor: editGuestSex == null ? colors.primary : colors.border },
+                    editGuestSex == null && { backgroundColor: colors.primary + "14" },
+                  ]}
+                >
+                  <AppText style={editGuestSex == null ? { color: colors.primary, fontWeight: "600" } : {}}>Not set</AppText>
+                </Pressable>
+                <Pressable
+                  onPress={() => setEditGuestSex("male")}
+                  style={[
+                    styles.sexOption,
+                    { borderColor: editGuestSex === "male" ? colors.primary : colors.border },
+                    editGuestSex === "male" && { backgroundColor: colors.primary + "14" },
+                  ]}
+                >
+                  <AppText style={editGuestSex === "male" ? { color: colors.primary, fontWeight: "600" } : {}}>Male</AppText>
+                </Pressable>
+                <Pressable
+                  onPress={() => setEditGuestSex("female")}
+                  style={[
+                    styles.sexOption,
+                    { borderColor: editGuestSex === "female" ? colors.primary : colors.border },
+                    editGuestSex === "female" && { backgroundColor: colors.primary + "14" },
+                  ]}
+                >
+                  <AppText style={editGuestSex === "female" ? { color: colors.primary, fontWeight: "600" } : {}}>Female</AppText>
+                </Pressable>
+              </View>
+            </View>
+            <View style={styles.formField}>
+              <AppText variant="caption" style={styles.label}>Handicap Index</AppText>
+              <AppInput
+                placeholder="e.g. 18.5"
+                value={editGuestHandicap}
+                onChangeText={setEditGuestHandicap}
+                keyboardType="decimal-pad"
+              />
+            </View>
+            <View style={{ flexDirection: "row", gap: spacing.sm, marginTop: spacing.md }}>
+              <SecondaryButton onPress={() => setShowEditGuest(false)} disabled={savingGuestEdit} style={{ flex: 1 }}>
+                Cancel
+              </SecondaryButton>
+              <PrimaryButton onPress={handleSaveGuestEdit} loading={savingGuestEdit} style={{ flex: 1 }}>
+                Save
               </PrimaryButton>
             </View>
           </Pressable>
@@ -499,3 +994,4 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
 });
+

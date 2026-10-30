@@ -11,7 +11,7 @@ import { StyleSheet, View, ViewStyle } from "react-native";
 import { AppText } from "./AppText";
 import { AppCard } from "./AppCard";
 import { SocietyLogoImage } from "./SocietyLogoImage";
-import { getColors, spacing, radius } from "@/lib/ui/theme";
+import { spacing } from "@/lib/ui/theme";
 
 // ============================================================================
 // SocietyHeader - Full card version
@@ -25,7 +25,6 @@ type SocietyHeaderProps = {
 };
 
 export function SocietyHeader({ societyName, logoUrl, subtitle, style }: SocietyHeaderProps) {
-  const colors = getColors();
   const initials = getInitials(societyName);
 
   return (
@@ -70,12 +69,6 @@ const BADGE_SIZES = {
   lg: 80,
 };
 
-const BADGE_FONT_SIZES = {
-  sm: 13,
-  md: 17,
-  lg: 20,
-};
-
 export function SocietyBadge({
   societyName,
   logoUrl,
@@ -83,10 +76,8 @@ export function SocietyBadge({
   showName = true,
   style,
 }: SocietyBadgeProps) {
-  const colors = getColors();
   const initials = getInitials(societyName);
   const badgeSize = BADGE_SIZES[size];
-  const fontSize = BADGE_FONT_SIZES[size];
 
   return (
     <View style={[styles.badgeContainer, style]}>

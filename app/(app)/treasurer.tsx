@@ -24,9 +24,6 @@ import {
 import { useRouter } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
 import { Feather } from "@expo/vector-icons";
-import * as Print from "expo-print";
-import * as Sharing from "expo-sharing";
-
 import { Screen } from "@/components/ui/Screen";
 import { AppText } from "@/components/ui/AppText";
 import { AppCard } from "@/components/ui/AppCard";
@@ -40,9 +37,11 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { useBootstrap } from "@/lib/useBootstrap";
 import { useAsyncAction } from "@/lib/hooks/useAsyncAction";
 import { getPermissionsForMember } from "@/lib/rbac";
-import { getColors, spacing, radius, typography } from "@/lib/ui/theme";
+import { getColors, spacing, radius, iconSize } from "@/lib/ui/theme";
 import { formatError } from "@/lib/ui/formatError";
 import { assertNoPrintAsync, wrapExportErrors } from "@/lib/pdf/exportContract";
+import { printHtmlToPdfFileAsync } from "@/lib/pdf/printHtmlToPdfFile";
+import { sharePdfAsync } from "@/lib/pdf/sharePdf";
 import { getSocietyLogoDataUri, getSocietyLogoUrl } from "@/lib/societyLogo";
 import { goBack } from "@/lib/navigation";
 
@@ -64,6 +63,10 @@ import {
   type FinanceEntryType,
   type FinanceSummary,
 } from "@/lib/db_supabase/financeRepo";
+import {
+  getRecentPaymentTransactionsForSociety,
+  type PaymentTransactionRow,
+} from "@/lib/db_supabase/paymentTransactionRepo";
 
 type EntryWithBalance = FinanceEntryDoc & { runningBalancePence: number };
 
@@ -104,6 +107,7 @@ export default function TreasurerScreen() {
   const [summary, setSummary] = useState<FinanceSummary | null>(null);
   const [entriesWithBalance, setEntriesWithBalance] = useState<EntryWithBalance[]>([]);
   const [loading, setLoading] = useState(true);
+  const [onlinePayments, setOnlinePayments] = useState<PaymentTransactionRow[]>([]);
 
   // Modal state
   const [showOpeningBalanceModal, setShowOpeningBalanceModal] = useState(false);
@@ -122,7 +126,7 @@ export default function TreasurerScreen() {
   // Toast state
   const [toast, setToast] = useState<{ visible: boolean; message: string; type: "success" | "error" | "info" }>({ visible: false, message: "", type: "success" });
 
-  const permissions = getPermissionsForMember(member as any);
+  const permissions = getPermissionsForMember(member);
   const canManageFinance = permissions.canAccessFinance;
 
   // Entries sorted newest first for display
@@ -143,6 +147,8 @@ export default function TreasurerScreen() {
 
       const withBalances = calculateRunningBalances(data.entries, openingBalance);
       setEntriesWithBalance(withBalances);
+      const txRows = await getRecentPaymentTransactionsForSociety(societyId, 25);
+      setOnlinePayments(txRows);
     } catch (err: any) {
       console.error("[Treasurer] loadData error:", err);
       Alert.alert("Error", err?.message || "Failed to load data.");
@@ -345,18 +351,14 @@ export default function TreasurerScreen() {
         currentBalancePence: summary.currentBalancePence,
       });
 
-      const { uri } = await Print.printToFileAsync({ html, base64: false });
-      const canShare = await Sharing.isAvailableAsync();
-      if (canShare) {
-        await Sharing.shareAsync(uri, {
-          mimeType: "application/pdf",
-          dialogTitle: "Society Financial Ledger",
-          UTI: "com.adobe.pdf",
-        });
-        return true;
-      }
-
-      throw new Error("Sharing is not available on this device.");
+      const { uri } = await printHtmlToPdfFileAsync({ html, base64: false });
+      await sharePdfAsync({
+        uri,
+        mimeType: "application/pdf",
+        dialogTitle: "Society Financial Ledger",
+        filename: "society-financial-ledger",
+      });
+      return true;
     });
 
     if (!exported) {
@@ -420,7 +422,7 @@ export default function TreasurerScreen() {
         >
           <Feather name="arrow-left" size={20} color={colors.text} />
         </Pressable>
-        <AppText variant="h1" style={styles.title}>Treasurer</AppText>
+        <AppText variant="title" style={styles.title}>Treasurer</AppText>
         <Pressable
           style={({ pressed }) => [
             styles.exportButton,
@@ -434,7 +436,7 @@ export default function TreasurerScreen() {
           ) : (
             <Feather name="download" size={18} color={colors.primary} />
           )}
-          <AppText variant="small" style={{ color: colors.primary, marginLeft: 4 }}>
+          <AppText variant="small" color="primary" style={{ marginLeft: 4 }}>
             {exportAction.loading ? "Exporting..." : "PDF"}
           </AppText>
         </Pressable>
@@ -472,12 +474,46 @@ export default function TreasurerScreen() {
             icon="dollar-sign"
             label="Current Balance"
             value={formatPenceToGBP(currentBalance)}
+            valueColor={balanceVariant === "success" ? "success" : balanceVariant === "error" ? "danger" : "muted"}
           />
         </View>
 
+        {onlinePayments.length > 0 ? (
+          <AppCard style={{ marginBottom: spacing.md }}>
+            <AppText variant="heading" style={{ marginBottom: spacing.sm }}>
+              Online event payments
+            </AppText>
+            <AppText variant="small" color="secondary" style={{ marginBottom: spacing.sm }}>
+              Stripe Checkout (test mode) — reconcile against your bank / Connect payouts.
+            </AppText>
+            {onlinePayments.slice(0, 8).map((tx) => (
+              <View
+                key={tx.id}
+                style={{
+                  flexDirection: "row",
+                  justifyContent: "space-between",
+                  paddingVertical: spacing.xs,
+                  borderBottomWidth: StyleSheet.hairlineWidth,
+                  borderBottomColor: colors.borderLight,
+                }}
+              >
+                <View style={{ flex: 1, minWidth: 0, paddingRight: spacing.sm }}>
+                  <AppText variant="captionBold" numberOfLines={1}>
+                    {tx.payer_type === "guest" ? "Guest" : "Member"} · {tx.status}
+                  </AppText>
+                  <AppText variant="caption" color="muted" numberOfLines={1}>
+                    {new Date(tx.completed_at ?? tx.created_at).toLocaleDateString("en-GB")}
+                  </AppText>
+                </View>
+                <AppText variant="bodyBold">{formatPenceToGBP(tx.amount_pence)}</AppText>
+              </View>
+            ))}
+          </AppCard>
+        ) : null}
+
         {/* Add Entry Button */}
         <View style={styles.sectionHeader}>
-          <AppText variant="h2">Transactions</AppText>
+          <AppText variant="heading">Transactions</AppText>
           <PrimaryButton onPress={handleOpenAddEntry} size="sm" disabled={saving}>
             <Feather name="plus" size={16} color="#fff" /> Add
           </PrimaryButton>
@@ -493,7 +529,7 @@ export default function TreasurerScreen() {
               <AppText variant="body" color="secondary" style={styles.emptyText}>
                 No entries yet
               </AppText>
-              <AppText variant="small" color="tertiary" style={styles.emptyHint}>
+              <AppText variant="small" color="muted" style={styles.emptyHint}>
                 Add your first income or cost to get started
               </AppText>
               <PrimaryButton onPress={handleOpenAddEntry} size="sm" style={{ marginTop: spacing.base }}>
@@ -519,14 +555,14 @@ export default function TreasurerScreen() {
               >
                 {/* Date Column */}
                 <View style={styles.dateCol}>
-                  <AppText variant="small" color="tertiary">
+                  <AppText variant="small" color="muted">
                     {formatShortDate(entry.entry_date)}
                   </AppText>
                 </View>
 
                 {/* Description & Type */}
                 <View style={styles.descCol}>
-                  <AppText variant="bodyBold" numberOfLines={1} style={{ color: colors.text }}>
+                  <AppText variant="bodyBold" numberOfLines={1}>
                     {entry.description}
                   </AppText>
                   <View style={styles.typeBadgeRow}>
@@ -540,11 +576,8 @@ export default function TreasurerScreen() {
                       ]}
                     >
                       <AppText
-                        variant="small"
-                        style={{
-                          color: entry.entry_type === "income" ? colors.success : colors.error,
-                          fontWeight: "600",
-                        }}
+                        variant="captionBold"
+                        color={entry.entry_type === "income" ? "success" : "danger"}
                       >
                         {entry.entry_type === "income" ? "Income" : "Cost"}
                       </AppText>
@@ -556,8 +589,8 @@ export default function TreasurerScreen() {
                 <View style={styles.amountCol}>
                   <AppText
                     variant="bodyBold"
+                    color={entry.entry_type === "income" ? "success" : "danger"}
                     style={{
-                      color: entry.entry_type === "income" ? colors.success : colors.error,
                       textAlign: "right",
                     }}
                   >
@@ -565,7 +598,7 @@ export default function TreasurerScreen() {
                     {formatPenceToGBP(entry.amount_pence)}
                   </AppText>
                   {typeof entry.runningBalancePence === "number" && (
-                    <AppText variant="small" color="tertiary" style={styles.balanceText}>
+                    <AppText variant="small" color="muted" style={styles.balanceText}>
                       Bal {formatPenceToGBP(entry.runningBalancePence)}
                     </AppText>
                   )}
@@ -588,7 +621,7 @@ export default function TreasurerScreen() {
         <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={styles.modalOverlay}>
           <Pressable style={styles.modalBackdrop} onPress={() => setShowOpeningBalanceModal(false)} />
           <View style={[styles.modalContent, { backgroundColor: colors.surface }]}>
-            <AppText variant="h2" style={styles.modalTitle}>Opening Balance</AppText>
+            <AppText variant="heading" style={styles.modalTitle}>Opening Balance</AppText>
             <AppText variant="body" color="secondary" style={styles.modalSubtitle}>
               Set the starting balance for your ledger
             </AppText>
@@ -603,7 +636,7 @@ export default function TreasurerScreen() {
             ) : null}
 
             <View style={styles.amountInputRow}>
-              <AppText variant="h1" style={{ color: colors.textTertiary }}>£</AppText>
+              <AppText variant="heading" color="muted">£</AppText>
               <AppInput
                 placeholder="0.00"
                 value={openingBalanceInput}
@@ -639,7 +672,7 @@ export default function TreasurerScreen() {
         <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={styles.modalOverlay}>
           <Pressable style={styles.modalBackdrop} onPress={() => setShowEntryModal(false)} />
           <View style={[styles.modalContent, styles.entryModal, { backgroundColor: colors.surface }]}>
-            <AppText variant="h2" style={styles.modalTitle}>
+            <AppText variant="heading" style={styles.modalTitle}>
               {editingEntry ? "Edit Entry" : "Add Entry"}
             </AppText>
 
@@ -654,7 +687,7 @@ export default function TreasurerScreen() {
 
             {/* Type Selector */}
             <View style={styles.formGroup}>
-              <AppText variant="caption" color="secondary" style={styles.formLabel}>Type</AppText>
+              <AppText variant="label" color="secondary" style={styles.formLabel}>Type</AppText>
               <View style={[styles.segmentedControl, { borderColor: colors.border }]}>
                 <Pressable
                   style={[
@@ -669,13 +702,13 @@ export default function TreasurerScreen() {
                 >
                   <Feather
                     name="trending-up"
-                    size={14}
-                    color={entryForm.entryType === "income" ? "#fff" : colors.text}
+                    size={iconSize.xs}
+                    color={entryForm.entryType === "income" ? colors.textInverse : colors.text}
                     style={{ marginRight: 4 }}
                   />
                   <AppText
                     variant="bodyBold"
-                    style={{ color: entryForm.entryType === "income" ? "#fff" : colors.text }}
+                    color={entryForm.entryType === "income" ? "inverse" : "default"}
                   >
                     Income
                   </AppText>
@@ -693,20 +726,20 @@ export default function TreasurerScreen() {
                 >
                   <Feather
                     name="trending-down"
-                    size={14}
-                    color={entryForm.entryType === "cost" ? "#fff" : colors.text}
+                    size={iconSize.xs}
+                    color={entryForm.entryType === "cost" ? colors.textInverse : colors.text}
                     style={{ marginRight: 4 }}
                   />
                   <AppText
                     variant="bodyBold"
-                    style={{ color: entryForm.entryType === "cost" ? "#fff" : colors.text }}
+                    color={entryForm.entryType === "cost" ? "inverse" : "default"}
                   >
                     Expense
                   </AppText>
                 </Pressable>
               </View>
               {formErrors.entryType && (
-                <AppText variant="small" style={{ color: colors.error, marginTop: 4 }}>
+                <AppText variant="small" color="danger" style={{ marginTop: 4 }}>
                   {formErrors.entryType}
                 </AppText>
               )}
@@ -714,7 +747,7 @@ export default function TreasurerScreen() {
 
             {/* Date with Quick Chips */}
             <View style={styles.formGroup}>
-              <AppText variant="caption" color="secondary" style={styles.formLabel}>Date</AppText>
+              <AppText variant="label" color="secondary" style={styles.formLabel}>Date</AppText>
               <View style={styles.dateChips}>
                 <Pressable
                   style={[
@@ -726,8 +759,8 @@ export default function TreasurerScreen() {
                   onPress={() => setEntryForm({ ...entryForm, entryDate: getToday() })}
                 >
                   <AppText
-                    variant="small"
-                    style={{ color: entryForm.entryDate === getToday() ? "#fff" : colors.text, fontWeight: "600" }}
+                    variant="captionBold"
+                    color={entryForm.entryDate === getToday() ? "inverse" : "default"}
                   >
                     Today
                   </AppText>
@@ -742,8 +775,8 @@ export default function TreasurerScreen() {
                   onPress={() => setEntryForm({ ...entryForm, entryDate: getYesterday() })}
                 >
                   <AppText
-                    variant="small"
-                    style={{ color: entryForm.entryDate === getYesterday() ? "#fff" : colors.text, fontWeight: "600" }}
+                    variant="captionBold"
+                    color={entryForm.entryDate === getYesterday() ? "inverse" : "default"}
                   >
                     Yesterday
                   </AppText>
@@ -760,7 +793,7 @@ export default function TreasurerScreen() {
                 style={[styles.input, formErrors.date && { borderColor: colors.error }]}
               />
               {formErrors.date && (
-                <AppText variant="small" style={{ color: colors.error, marginTop: 4 }}>
+                <AppText variant="small" color="danger" style={{ marginTop: 4 }}>
                   {formErrors.date}
                 </AppText>
               )}
@@ -768,7 +801,7 @@ export default function TreasurerScreen() {
 
             {/* Amount */}
             <View style={styles.formGroup}>
-              <AppText variant="caption" color="secondary" style={styles.formLabel}>Amount</AppText>
+              <AppText variant="label" color="secondary" style={styles.formLabel}>Amount</AppText>
               <View style={[styles.amountInputRow, formErrors.amount && { borderColor: colors.error }]}>
                 <AppText variant="h2" style={{ color: colors.textTertiary }}>£</AppText>
                 <AppInput
@@ -784,7 +817,7 @@ export default function TreasurerScreen() {
                 />
               </View>
               {formErrors.amount && (
-                <AppText variant="small" style={{ color: colors.error, marginTop: 4 }}>
+                <AppText variant="small" color="danger" style={{ marginTop: 4 }}>
                   {formErrors.amount}
                 </AppText>
               )}
@@ -792,7 +825,7 @@ export default function TreasurerScreen() {
 
             {/* Description */}
             <View style={styles.formGroup}>
-              <AppText variant="caption" color="secondary" style={styles.formLabel}>Description</AppText>
+              <AppText variant="label" color="secondary" style={styles.formLabel}>Description</AppText>
               <AppInput
                 placeholder="e.g., Annual membership fees"
                 value={entryForm.description}
@@ -804,7 +837,7 @@ export default function TreasurerScreen() {
                 style={[styles.input, formErrors.description && { borderColor: colors.error }]}
               />
               {formErrors.description && (
-                <AppText variant="small" style={{ color: colors.error, marginTop: 4 }}>
+                <AppText variant="small" color="danger" style={{ marginTop: 4 }}>
                   {formErrors.description}
                 </AppText>
               )}
@@ -906,15 +939,21 @@ function generateLedgerPdfHtml(data: LedgerPdfData): string {
       <head>
         <meta charset="utf-8">
         <title>Financial Ledger - ${societyName}</title>
+      </head>
+      <body>
+        <div class="pdf-root doc">
         <style>
           * { box-sizing: border-box; margin: 0; padding: 0; }
-          body {
+          html, body { margin: 0; padding: 0; height: auto; min-height: 0; overflow: visible; }
+          .pdf-root {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
             padding: 24px;
             color: #111827;
             background: #fff;
             font-size: 12px;
             line-height: 1.4;
+            max-width: 210mm;
+            margin: 0 auto;
           }
           .container { max-width: 800px; margin: 0 auto; }
           .header {
@@ -922,13 +961,13 @@ function generateLedgerPdfHtml(data: LedgerPdfData): string {
             align-items: center;
             margin-bottom: 24px;
             padding-bottom: 16px;
-            border-bottom: 2px solid #0B6E4F;
+            border-bottom: 2px solid #166534;
           }
           .header-text { flex: 1; }
           .society-name {
             font-size: 14px;
             font-weight: 600;
-            color: #0B6E4F;
+            color: #166534;
             text-transform: uppercase;
             letter-spacing: 0.5px;
             margin-bottom: 4px;
@@ -944,7 +983,7 @@ function generateLedgerPdfHtml(data: LedgerPdfData): string {
             padding: 12px;
             text-align: center;
           }
-          .summary-card.highlight { background: #0B6E4F; border-color: #0B6E4F; }
+          .summary-card.highlight { background: #166534; border-color: #166534; }
           .summary-card.highlight .summary-label, .summary-card.highlight .summary-value { color: #fff; }
           .summary-label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; color: #6B7280; margin-bottom: 4px; }
           .summary-value { font-size: 18px; font-weight: 700; color: #111827; font-family: 'SF Mono', Consolas, monospace; }
@@ -956,8 +995,6 @@ function generateLedgerPdfHtml(data: LedgerPdfData): string {
           th:nth-child(4), th:nth-child(5) { text-align: right; }
           .footer { margin-top: 24px; padding-top: 16px; border-top: 1px solid #E5E7EB; text-align: center; font-size: 11px; color: #9CA3AF; }
         </style>
-      </head>
-      <body>
         <div class="container">
           <div class="header">
             ${logoHtml}
@@ -1012,6 +1049,7 @@ function generateLedgerPdfHtml(data: LedgerPdfData): string {
             ${entries.length} transaction${entries.length !== 1 ? "s" : ""} recorded<br/>
             Produced by The Golf Society Hub
           </div>
+        </div>
         </div>
       </body>
     </html>
@@ -1153,7 +1191,6 @@ const styles = StyleSheet.create({
   formLabel: {
     textTransform: "uppercase",
     letterSpacing: 0.5,
-    fontSize: typography.small.fontSize,
     marginBottom: spacing.xs,
   },
   input: {

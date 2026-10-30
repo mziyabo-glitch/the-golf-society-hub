@@ -1,7 +1,7 @@
-import { useEffect, useRef } from "react";
+import "@/lib/ui/themeSplash";
+import { useEffect, useRef, useState } from "react";
 import { Stack, usePathname, useRouter, useSegments } from "expo-router";
 import { StyleSheet, View } from "react-native";
-import { supabase } from "@/lib/supabase";
 import { BootstrapProvider, useBootstrap } from "@/lib/useBootstrap";
 import { LoadingState } from "@/components/ui/LoadingState";
 import { AuthScreen } from "@/components/AuthScreen";
@@ -9,16 +9,29 @@ import { AppCard } from "@/components/ui/AppCard";
 import { AppText } from "@/components/ui/AppText";
 import { PrimaryButton } from "@/components/ui/Button";
 import { getColors, spacing } from "@/lib/ui/theme";
+import { ThemeProvider, useTheme } from "@/lib/ui/themeContext";
+import { FontScaleProvider } from "@/lib/ui/fontScaleContext";
 import { consumePendingInviteToken } from "@/lib/sinbookInviteToken";
 import { consumePendingRivalryJoinCode } from "@/lib/pendingRivalryJoinCode";
 import { consumePendingSocietyJoinCode } from "@/lib/pendingSocietyJoinCode";
+import { consumePendingPostAuthRedirect } from "@/lib/pendingPostAuthRedirect";
 import { blurWebActiveElement } from "@/lib/ui/focus";
+import { isEventRsvpInvitePath } from "@/lib/eventInviteLink";
+import { SafeAreaProvider, initialWindowMetrics } from "react-native-safe-area-context";
+import { NativeAppChrome } from "@/lib/ui/NativeAppChrome";
+import { NetworkProvider } from "@/lib/network/NetworkContext";
+import { OfflineNetworkBanner } from "@/components/network/OfflineNetworkBanner";
+import { PwaInstallNotice } from "@/components/pwa/PwaInstallNotice";
+import { isWebRuntime } from "@/lib/pwa/runtime";
+import { registerAppServiceWorker } from "@/lib/pwa/serviceWorkerRegistration";
+import { isAdminRoute, isToolRoute } from "@/lib/rootRouteExemptions";
 
 const APP_TABS = "/(app)/(tabs)";
 const JOIN_FLOW_SEGMENTS = new Set(["onboarding", "join", "join-society", "invite"]);
 const JOIN_RIVALRY_SEGMENT = "join-rivalry";
 
 function isJoinFlowRoute(pathname?: string, seg0?: string): boolean {
+  if (isEventRsvpInvitePath(pathname)) return false;
   if (typeof seg0 === "string" && (JOIN_FLOW_SEGMENTS.has(seg0) || seg0 === JOIN_RIVALRY_SEGMENT)) return true;
   if (typeof pathname !== "string") return false;
   return (
@@ -32,25 +45,19 @@ function isJoinFlowRoute(pathname?: string, seg0?: string): boolean {
   );
 }
 
-/** Routes that must never be redirected away from by any guard. */
-function isToolRoute(pathname?: string, seg0?: string): boolean {
-  if (seg0 === "(share)") return true;
-  if (typeof pathname !== "string") return false;
-  return (
-    pathname.startsWith("/(share)") ||
-    pathname.startsWith("/tee-sheet") ||
-    pathname.startsWith("/(app)/tee-sheet")
-  );
-}
-
 function RootNavigator() {
-  const { loading, error, isSignedIn, activeSocietyId, profile, refresh } = useBootstrap();
+  const { loading, authRestoring, error, isSignedIn, activeSocietyId, profile, refresh } = useBootstrap();
+  const { ready: themeReady } = useTheme();
   const segments = useSegments();
   const pathname = usePathname();
   const router = useRouter();
   const colors = getColors();
 
-  const isPublicPath = pathname === "/reset-password";
+  const isPublicPath =
+    pathname === "/reset-password" ||
+    pathname === "/privacy-policy" ||
+    pathname === "/sign-in" ||
+    (typeof pathname === "string" && pathname.startsWith("/sign-in"));
 
   // Track if we've already routed to prevent loops
   const hasRouted = useRef(false);
@@ -59,71 +66,29 @@ function RootNavigator() {
   // Timestamp of last time activeSocietyId was truthy — used to debounce
   // transient null→true→null flickers during post-join bootstrap.
   const lastHadSocietyAt = useRef<number>(0);
+  const [dismissedInstallNotice, setDismissedInstallNotice] = useState(false);
 
   if (activeSocietyId) {
     lastHadSocietyAt.current = Date.now();
   }
 
-  // Global auth gate: getSession on mount + onAuthStateChange
-  // Redirects immediately when session appears (avoids staying on sign-in)
-  const pathnameRef = useRef(pathname);
-  const segmentsRef = useRef(segments);
-  pathnameRef.current = pathname;
-  segmentsRef.current = segments;
+  useEffect(() => {
+    if (!isWebRuntime()) return;
+    try {
+      const saved = window.localStorage.getItem("gsh:pwa-install-notice:dismissed");
+      if (saved === "1") setDismissedInstallNotice(true);
+    } catch {
+      // Ignore storage errors.
+    }
+  }, []);
 
   useEffect(() => {
-    let mounted = true;
-
-    const applyAuthRedirect = async (session: { user: { id: string } } | null) => {
-      if (!mounted) return;
-      const seg0 = segmentsRef.current[0];
-      const p = pathnameRef.current;
-      const inApp = seg0 === "(app)" || (typeof p === "string" && p?.startsWith("/(app)"));
-      const inPublic = p === "/reset-password" || seg0 === "reset-password";
-      const inJoinFlow = isJoinFlowRoute(p, seg0);
-      if (inPublic || inJoinFlow || isToolRoute(p, seg0)) return;
-
-      if (session && !inApp) {
-        const pendingRivalryCode = await consumePendingRivalryJoinCode();
-        if (!mounted) return;
-        if (pendingRivalryCode) {
-          console.log("[_layout] Auth gate: resuming rivalry join with code");
-          blurWebActiveElement();
-          router.replace({ pathname: "/join-rivalry", params: { code: pendingRivalryCode } });
-          return;
-        }
-        const pendingSocietyCode = await consumePendingSocietyJoinCode();
-        if (!mounted) return;
-        if (pendingSocietyCode) {
-          console.log("[_layout] Auth gate: resuming society join with code");
-          blurWebActiveElement();
-          router.replace({ pathname: "/onboarding", params: { mode: "join", code: pendingSocietyCode, invite: "1" } });
-          return;
-        }
-        console.log("[_layout] Auth gate: session present, redirecting to", APP_TABS);
-        blurWebActiveElement();
-        router.replace(APP_TABS);
-      }
-    };
-
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      void applyAuthRedirect(session);
-    });
-
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
-      console.log("[_layout] Auth state change:", event, session ? "has session" : "no session");
-      void applyAuthRedirect(session);
-    });
-
-    return () => {
-      mounted = false;
-      subscription.unsubscribe();
-    };
-  }, [router]);
+    void registerAppServiceWorker();
+  }, []);
 
   useEffect(() => {
-    // Don't route while loading or not signed in
-    if (loading || !isSignedIn) {
+    // Route as soon as auth is known; profile/membership loading can continue in-app.
+    if (authRestoring || !isSignedIn) {
       return;
     }
 
@@ -134,7 +99,12 @@ function RootNavigator() {
 
     const inOnboarding = segments[0] === "onboarding" || segments[0] === "join" || segments[0] === "join-society";
     const inSinbookInvite = segments[0] === "sinbook";
-    const inPublicRoute = isPublicPath || segments[0] === "reset-password";
+    const inPublicRoute =
+      isPublicPath ||
+      segments[0] === "reset-password" ||
+      segments[0] === "privacy-policy" ||
+      segments[0] === "sign-in" ||
+      isEventRsvpInvitePath(pathname);
     const inJoinFlow = isJoinFlowRoute(pathname, segments[0]);
     const inMyProfile = pathname === "/(app)/my-profile";
     const hasSociety = !!activeSocietyId;
@@ -152,7 +122,7 @@ function RootNavigator() {
 
     if (stateKey !== lastState.current) {
       lastState.current = stateKey;
-      console.log("[_layout] Route guard:", {
+      console.log("[_layout:redirect] route-guard state", {
         hasSociety,
         activeSocietyId,
         inJoinFlow,
@@ -162,7 +132,12 @@ function RootNavigator() {
     }
 
     // Exempt routes that handle their own flow
-    if (inSinbookInvite || inPublicRoute || isToolRoute(pathname, segments[0])) {
+    if (
+      inSinbookInvite ||
+      inPublicRoute ||
+      isToolRoute(pathname, segments[0]) ||
+      isAdminRoute(pathname, segments[0])
+    ) {
       return;
     }
     if (pathname === "/join-rivalry" || (typeof pathname === "string" && pathname.startsWith("/join-rivalry"))) {
@@ -179,7 +154,7 @@ function RootNavigator() {
 
     // Force profile completion before anything else
     if (needsProfileCompletion && !inMyProfile && hasSociety) {
-      console.log("[_layout] Profile incomplete, redirecting to /my-profile");
+      console.log("[_layout:redirect] decision=profile_incomplete → /(app)/my-profile");
       hasRouted.current = true;
       blurWebActiveElement();
       router.replace("/(app)/my-profile");
@@ -192,21 +167,22 @@ function RootNavigator() {
     }
 
     if (hasSociety && inJoinFlow) {
-      console.log("[_layout] Has society + in join flow, redirecting to dashboard");
+      console.log("[_layout:redirect] decision=has_society_in_join_flow → dashboard or pending deep link");
       hasRouted.current = true;
       consumePendingRivalryJoinCode().then((code) => {
         if (code) {
-          console.log("[_layout] Resuming rivalry join with code");
+          console.log("[_layout:redirect] decision=resume_pending_rivalry_code_in_join_flow");
           blurWebActiveElement();
           router.replace({ pathname: "/join-rivalry", params: { code } });
           return;
         }
         consumePendingInviteToken().then((token) => {
           if (token) {
-            console.log("[_layout] Resuming sinbook invite:", token);
+            console.log("[_layout:redirect] decision=resume_pending_sinbook_invite_in_join_flow", { token });
             blurWebActiveElement();
             router.replace({ pathname: "/sinbook/invite/[token]", params: { token } });
           } else {
+            console.log("[_layout:redirect] decision=join_flow_default_to_tabs");
             blurWebActiveElement();
             router.replace(APP_TABS);
           }
@@ -214,40 +190,123 @@ function RootNavigator() {
       });
     }
     // No society + not on onboarding = Personal Mode — let (app) handle it
-  }, [loading, isSignedIn, activeSocietyId, profile, segments, pathname, router, isPublicPath]);
+  }, [authRestoring, isSignedIn, activeSocietyId, profile, segments, pathname, router, isPublicPath]);
 
   // Reset hasRouted only on sign-out, not on every bootstrap refresh.
   // This prevents the guard from re-routing after each refresh cycle.
   useEffect(() => {
-    if (loading && !isSignedIn) {
+    if ((loading || authRestoring) && !isSignedIn) {
       hasRouted.current = false;
       lastState.current = "";
     }
-  }, [loading, isSignedIn]);
+  }, [loading, authRestoring, isSignedIn]);
 
-  // Auth-aware redirect: when session appears, ensure we're in the app (avoids staying on sign-in)
+  // Auth-aware redirect: once hydrated and signed in, enter correct flow.
   useEffect(() => {
-    if (loading || !isSignedIn || isPublicPath) return;
-    const seg0 = segments[0];
-    const inJoinFlow = isJoinFlowRoute(pathname, seg0);
-    if (inJoinFlow || isToolRoute(pathname, seg0)) return;
-    const inApp = seg0 === "(app)" || (typeof pathname === "string" && pathname.startsWith("/(app)"));
-    if (inApp) return;
-    console.log("[_layout] Session present but not in app, redirecting");
-    blurWebActiveElement();
-    router.replace(APP_TABS);
-  }, [loading, isSignedIn, isPublicPath, segments, pathname, router]);
+    if (authRestoring || !isSignedIn) return;
+    if (pathname === "/reset-password" || pathname === "/privacy-policy") return;
+    let active = true;
+
+    const routeSignedInUser = async () => {
+      const pendingPostAuth = await consumePendingPostAuthRedirect();
+      if (!active) return;
+      if (pendingPostAuth && pendingPostAuth.startsWith("/")) {
+        console.log("[_layout:redirect] decision=pending_post_auth_redirect", { pendingPostAuth });
+        blurWebActiveElement();
+        router.replace(pendingPostAuth as never);
+        return;
+      }
+
+      const seg0 = segments[0];
+      const inJoinFlow = isJoinFlowRoute(pathname, seg0);
+      const onSignIn = pathname === "/sign-in" || (typeof pathname === "string" && pathname.startsWith("/sign-in"));
+      if (
+        inJoinFlow ||
+        isToolRoute(pathname, seg0) ||
+        isAdminRoute(pathname, seg0) ||
+        isEventRsvpInvitePath(pathname) ||
+        onSignIn
+      ) {
+        return;
+      }
+      const inApp = seg0 === "(app)" || (typeof pathname === "string" && pathname.startsWith("/(app)"));
+      if (inApp) return;
+
+      const pendingRivalryCode = await consumePendingRivalryJoinCode();
+      if (!active) return;
+      if (pendingRivalryCode) {
+        console.log("[_layout:redirect] decision=pending_rivalry_code → /join-rivalry");
+        blurWebActiveElement();
+        router.replace({ pathname: "/join-rivalry", params: { code: pendingRivalryCode } });
+        return;
+      }
+
+      const pendingSocietyCode = await consumePendingSocietyJoinCode();
+      if (!active) return;
+      if (pendingSocietyCode) {
+        console.log("[_layout:redirect] decision=pending_society_code → /onboarding join");
+        blurWebActiveElement();
+        router.replace({ pathname: "/onboarding", params: { mode: "join", code: pendingSocietyCode, invite: "1" } });
+        return;
+      }
+
+      console.log("[_layout:redirect] decision=signed_in_default → /(app)/(tabs)");
+      blurWebActiveElement();
+      router.replace(APP_TABS);
+    };
+
+    void routeSignedInUser();
+    return () => {
+      active = false;
+    };
+  }, [authRestoring, isSignedIn, segments, pathname, router]);
 
   // Determine which overlay to show (if any).
   // The Stack ALWAYS renders so expo-router can match child routes.
   // Public routes are accessible without sign-in (OAuth callback, password reset).
-  const isPublicRoute = isPublicPath || segments[0] === "reset-password";
-  const showLoading = loading;
-  const showAuth = !loading && !isSignedIn && !isPublicRoute;
-  const showError = !loading && !showAuth && !!error;
+  const isPublicRoute =
+    isPublicPath ||
+    segments[0] === "reset-password" ||
+    segments[0] === "privacy-policy" ||
+    segments[0] === "sign-in" ||
+    isEventRsvpInvitePath(pathname);
+  // Keep auth gate blocked only while auth session is unknown; once known,
+  // the app can render immediately while profile/membership continues loading.
+  const showLoading = authRestoring || !themeReady;
+  const showAuth = !authRestoring && !isSignedIn && !isPublicRoute;
+  const showError = !authRestoring && !showAuth && !!error;
+
+  useEffect(() => {
+    console.log("[_layout:redirect] guard inputs", {
+      authRestoring,
+      loading,
+      isSignedIn,
+      activeSocietyId,
+      hasProfile: !!profile,
+      pathname,
+      segments: segments.join("/"),
+      isPublicRoute,
+      showLoading,
+      showAuth,
+      showError,
+    });
+  }, [authRestoring, loading, isSignedIn, activeSocietyId, profile, pathname, segments, isPublicRoute, showLoading, showAuth, showError]);
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>
+      <OfflineNetworkBanner />
+      <PwaInstallNotice
+        dismissed={dismissedInstallNotice}
+        onDismiss={() => {
+          setDismissedInstallNotice(true);
+          if (!isWebRuntime()) return;
+          try {
+            window.localStorage.setItem("gsh:pwa-install-notice:dismissed", "1");
+          } catch {
+            // Ignore storage errors.
+          }
+        }}
+      />
       {/* Always render the navigator so expo-router can resolve all routes */}
       <Stack screenOptions={{ headerShown: false }} />
 
@@ -281,8 +340,17 @@ function RootNavigator() {
 
 export default function RootLayout() {
   return (
-    <BootstrapProvider>
-      <RootNavigator />
-    </BootstrapProvider>
+    <SafeAreaProvider initialMetrics={initialWindowMetrics}>
+      <NetworkProvider>
+        <ThemeProvider>
+          <FontScaleProvider>
+            <NativeAppChrome />
+            <BootstrapProvider>
+              <RootNavigator />
+            </BootstrapProvider>
+          </FontScaleProvider>
+        </ThemeProvider>
+      </NetworkProvider>
+    </SafeAreaProvider>
   );
 }

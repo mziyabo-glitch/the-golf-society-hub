@@ -3,82 +3,120 @@
  * Light and dark theme support with consistent spacing, typography, and colors
  */
 
-export type ThemeMode = "light" | "dark";
+import type { TextStyle } from "react-native";
+import { Appearance } from "react-native";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 
+/** Stored user choice — may follow the OS when `system`. */
+export type ThemePreference = "light" | "dark" | "system";
+
+/** Keys into `colors` (resolved palette). */
+export type ThemePaletteMode = "light" | "dark";
+
+/** @deprecated Use `ThemePreference` — kept for older call sites. */
+export type ThemeMode = ThemePreference;
+
+const THEME_STORAGE_KEY = "@golf_society_hub_theme_preference";
+
+export const DEFAULT_THEME_PREFERENCE: ThemePreference = "light";
+
+/** Validate a stored string; returns null if unknown. */
+export function parseThemePreference(raw: string | null | undefined): ThemePreference | null {
+  if (raw === "light" || raw === "dark" || raw === "system") return raw;
+  return null;
+}
+
+/**
+ * Web: read the same `localStorage` key `@react-native-async-storage/async-storage` uses on web,
+ * synchronously before the first paint. Removes light→dark flash on reload when a theme is saved.
+ * Native: returns null (AsyncStorage has no sync API — use native splash hold instead).
+ */
+export function peekStoredThemePreferenceSync(): ThemePreference | null {
+  if (typeof globalThis === "undefined") return null;
+  const win = globalThis as { window?: { localStorage?: Storage } };
+  if (typeof win.window === "undefined" || !win.window?.localStorage) return null;
+  try {
+    return parseThemePreference(win.window.localStorage.getItem(THEME_STORAGE_KEY));
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Light premium golf palette:
+ * - Soft off-white: app chrome / backgrounds (fairway-adjacent, not corporate)
+ * - White cards with subtle shadow
+ * - Deep green: primary actions & brand accents
+ * - Muted gold: highlights only (podium, top ranks)
+ */
 export const colors = {
   light: {
-    // Primary brand color (golf green)
-    primary: "#0B6E4F",
-    primaryDark: "#094937",
-    primaryLight: "#0FA578",
-    
-    // Semantic colors
+    primary: "#166534",
+    primaryDark: "#14532D",
+    primaryLight: "#15803D",
+
+    /** Muted gold — leaderboard top positions, premium emphasis only */
+    highlight: "#D4AF37",
+    highlightMuted: "rgba(212, 175, 55, 0.16)",
+
     success: "#10B981",
     error: "#EF4444",
     warning: "#F59E0B",
     info: "#3B82F6",
-    
-    // Backgrounds
-    background: "#FFFFFF",
-    backgroundSecondary: "#F7F8FA",
-    backgroundTertiary: "#F3F4F6",
-    
-    // Surfaces (cards, inputs)
+
+    background: "#F8FAF8",
+    backgroundSecondary: "#EFF3EF",
+    backgroundTertiary: "#E6EDE6",
+
     surface: "#FFFFFF",
     surfaceElevated: "#FFFFFF",
-    surfaceDisabled: "#F3F4F6",
-    
-    // Text (slate palette: 900 / 600 / 500)
-    text: "#0F172A",
-    textSecondary: "#475569",
-    textTertiary: "#64748B",
+    surfaceDisabled: "#E3EBE3",
+
+    text: "#15251A",
+    textSecondary: "#3D5344",
+    textTertiary: "#5C6B5F",
     textInverse: "#FFFFFF",
-    
-    // Borders
-    border: "#E6E8EC",
-    borderLight: "#E6E8EC",
-    divider: "#E5E7EB",
-    
-    // Interactive
-    pressOverlay: "rgba(0, 0, 0, 0.05)",
-    overlay: "rgba(0, 0, 0, 0.5)",
+
+    border: "#D4DED4",
+    borderLight: "#E2EBE2",
+    divider: "#C9D4C9",
+
+    pressOverlay: "rgba(22, 101, 52, 0.08)",
+    overlay: "rgba(0, 0, 0, 0.45)",
   },
+  /** Mirrors light — bright golf UI; no navy / dark chrome */
   dark: {
-    // Primary brand color (slightly lighter for dark mode)
-    primary: "#0FA578",
-    primaryDark: "#0B6E4F",
-    primaryLight: "#14D99F",
-    
-    // Semantic colors
+    primary: "#166534",
+    primaryDark: "#14532D",
+    primaryLight: "#16A34A",
+
+    highlight: "#D4AF37",
+    highlightMuted: "rgba(212, 175, 55, 0.18)",
+
     success: "#10B981",
     error: "#EF4444",
     warning: "#F59E0B",
     info: "#3B82F6",
-    
-    // Backgrounds
-    background: "#111827",
-    backgroundSecondary: "#1F2937",
-    backgroundTertiary: "#374151",
-    
-    // Surfaces (cards, inputs)
-    surface: "#1F2937",
-    surfaceElevated: "#374151",
-    surfaceDisabled: "#374151",
-    
-    // Text
-    text: "#F9FAFB",
-    textSecondary: "#D1D5DB",
-    textTertiary: "#9CA3AF",
-    textInverse: "#111827",
-    
-    // Borders
-    border: "#374151",
-    borderLight: "#4B5563",
-    divider: "#374151",
-    
-    // Interactive
-    pressOverlay: "rgba(255, 255, 255, 0.1)",
-    overlay: "rgba(0, 0, 0, 0.7)",
+
+    background: "#F8FAF8",
+    backgroundSecondary: "#EFF3EF",
+    backgroundTertiary: "#E6EDE6",
+
+    surface: "#FFFFFF",
+    surfaceElevated: "#FFFFFF",
+    surfaceDisabled: "#E3EBE3",
+
+    text: "#15251A",
+    textSecondary: "#3D5344",
+    textTertiary: "#5C6B5F",
+    textInverse: "#FFFFFF",
+
+    border: "#D4DED4",
+    borderLight: "#E2EBE2",
+    divider: "#C9D4C9",
+
+    pressOverlay: "rgba(22, 101, 52, 0.08)",
+    overlay: "rgba(0, 0, 0, 0.45)",
   },
 } as const;
 
@@ -103,101 +141,166 @@ export const radius = {
   full: 9999,
 } as const;
 
-// Premium design tokens
+// Premium design tokens (light golf surfaces) — prefer `getColors()` for borders/text; shadows are shared
 export const premiumTokens = {
-  background: "#F7F8FA",
-  cardBorder: "#E6E8EC",
-  textPrimary: "#0F172A",
-  textSecondary: "#475569",
+  background: "#F8FAF8",
+  cardBorder: "#D4DED4",
+  textPrimary: "#15251A",
+  textSecondary: "#3D5344",
   cardShadow: {
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.04,
-    shadowRadius: 4,
-    elevation: 2,
+    shadowColor: "#0F172A",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.06,
+    shadowRadius: 8,
+    elevation: 3,
   },
 } as const;
 
-// Typography — increased for 40+ readability, mobile-first premium scale
-// ~12–15% larger than previous; line heights ~1.4x for comfortable reading
+/** Standard border widths */
+export const borderWidth = {
+  hairline: 1,
+} as const;
+
+/** Icon sizes for list rows, buttons, empty states */
+export const iconSize = {
+  xs: 14,
+  sm: 16,
+  md: 20,
+  lg: 24,
+  xl: 32,
+} as const;
+
+/** Card elevation presets (compose with theme surfaces in Card) */
+export const cardElevation = {
+  /** Matches legacy premium card chrome */
+  premium: premiumTokens.cardShadow,
+  /** Slightly stronger — leaderboards, modals */
+  raised: {
+    shadowColor: "#0F172A",
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.09,
+    shadowRadius: 12,
+    elevation: 5,
+  },
+} as const;
+
+// Typography — tuned for 45+ / 50+ readability; line heights ~1.45× font size
+// Optional extra scale via Settings → Text size (fontScaleContext)
 export const typography = {
-  // pageTitle: hero headings, event names (was 20 → 24)
   title: {
-    fontSize: 24,
-    fontWeight: "700" as const,
-    lineHeight: 30,
-    letterSpacing: -0.2,
-  },
-  // h1: large section headings (was 18 → 22)
-  h1: {
-    fontSize: 22,
-    fontWeight: "700" as const,
-    lineHeight: 28,
-    letterSpacing: -0.15,
-  },
-  // h2 / sectionTitle: card headers, section labels (was 15 → 18)
-  h2: {
-    fontSize: 18,
-    fontWeight: "700" as const,
-    lineHeight: 24,
-    letterSpacing: -0.08,
-  },
-  // body: primary readable text (was 13 → 16)
-  body: {
-    fontSize: 16,
-    fontWeight: "500" as const,
-    lineHeight: 24,
-    letterSpacing: 0,
-  },
-  // bodyBold: emphasized body, member names (was 14 → 17)
-  bodyBold: {
-    fontSize: 17,
-    fontWeight: "700" as const,
-    lineHeight: 24,
-    letterSpacing: 0,
-  },
-  // caption: secondary info lines (was 12.5 → 15)
-  caption: {
-    fontSize: 15,
-    fontWeight: "500" as const,
-    lineHeight: 21,
-    letterSpacing: 0,
-  },
-  // captionBold: labels, card sub-headers (was 12.5 → 15)
-  captionBold: {
-    fontSize: 15,
-    fontWeight: "700" as const,
-    lineHeight: 21,
-    letterSpacing: 0,
-  },
-  // small / meta: helper text, timestamps, badges (was 12 → 14)
-  small: {
-    fontSize: 14,
-    fontWeight: "500" as const,
-    lineHeight: 20,
-    letterSpacing: 0,
-  },
-  // display: key numbers (tee times, OOM points) — 800 weight
-  display: {
     fontSize: 26,
-    fontWeight: "800" as const,
+    fontWeight: "700" as const,
     lineHeight: 32,
     letterSpacing: -0.2,
   },
-  // button (was 14 → 16)
-  button: {
-    fontSize: 16,
+  h1: {
+    fontSize: 24,
+    fontWeight: "700" as const,
+    lineHeight: 30,
+    letterSpacing: -0.15,
+  },
+  h2: {
+    fontSize: 19,
+    fontWeight: "700" as const,
+    lineHeight: 26,
+    letterSpacing: -0.08,
+  },
+  /** Section / screen headings — same rhythm as h2; use semantic name in AppText */
+  heading: {
+    fontSize: 19,
+    fontWeight: "700" as const,
+    lineHeight: 26,
+    letterSpacing: -0.08,
+  },
+  /** Between title and body — supporting headlines */
+  subheading: {
+    fontSize: 17,
     fontWeight: "600" as const,
+    lineHeight: 24,
+    letterSpacing: -0.05,
+  },
+  body: {
+    fontSize: 17,
+    fontWeight: "500" as const,
+    lineHeight: 25,
+    letterSpacing: 0,
+  },
+  bodyBold: {
+    fontSize: 18,
+    fontWeight: "700" as const,
+    lineHeight: 26,
+    letterSpacing: 0,
+  },
+  caption: {
+    fontSize: 16,
+    fontWeight: "500" as const,
+    lineHeight: 23,
+    letterSpacing: 0,
+  },
+  captionBold: {
+    fontSize: 16,
+    fontWeight: "700" as const,
+    lineHeight: 23,
+    letterSpacing: 0,
+  },
+  small: {
+    fontSize: 15,
+    fontWeight: "500" as const,
     lineHeight: 22,
     letterSpacing: 0,
   },
-  buttonLarge: {
-    fontSize: 18,
-    fontWeight: "700" as const,
+  /** Dense body — meta, secondary lines */
+  bodySmall: {
+    fontSize: 15,
+    fontWeight: "500" as const,
+    lineHeight: 22,
+    letterSpacing: 0,
+  },
+  /** Uppercase labels, form field labels */
+  label: {
+    fontSize: 15,
+    fontWeight: "600" as const,
+    lineHeight: 21,
+    letterSpacing: 0.02,
+  },
+  display: {
+    fontSize: 28,
+    fontWeight: "800" as const,
+    lineHeight: 34,
+    letterSpacing: -0.2,
+  },
+  button: {
+    fontSize: 17,
+    fontWeight: "600" as const,
     lineHeight: 24,
     letterSpacing: 0,
   },
+  buttonLarge: {
+    fontSize: 19,
+    fontWeight: "700" as const,
+    lineHeight: 26,
+    letterSpacing: 0,
+  },
 } as const;
+
+export type TypographyTokens = typeof typography;
+export type TypographyVariant = keyof TypographyTokens;
+
+/** Scales font sizes and line heights for accessibility (Settings → Text size). */
+export function scaleTypography(multiplier: number): TypographyTokens {
+  if (multiplier === 1) return typography;
+  const keys = Object.keys(typography) as TypographyVariant[];
+  const out = {} as Record<TypographyVariant, TextStyle>;
+  for (const key of keys) {
+    const t = typography[key];
+    out[key] = {
+      ...t,
+      fontSize: Math.round(t.fontSize * multiplier * 10) / 10,
+      lineHeight: Math.round(t.lineHeight * multiplier * 10) / 10,
+    };
+  }
+  return out as TypographyTokens;
+}
 
 // Shadows (iOS-style elevation)
 export const shadows = {
@@ -231,49 +334,173 @@ export const buttonHeights = {
   lg: 52,
 } as const;
 
-// Default theme (can be changed by user preference)
-let currentTheme: ThemeMode = "light";
+// ---------------------------------------------------------------------------
+// Runtime preference + persistence (AsyncStorage, same pattern as text size)
+// ---------------------------------------------------------------------------
+
+let themePreference: ThemePreference = DEFAULT_THEME_PREFERENCE;
 
 /**
- * Get current theme mode
+ * Apply preference from `peekStoredThemePreferenceSync` without notifying subscribers, so the first
+ * `getColors()` matches storage. Call once during `ThemeProvider` mount (before paint).
  */
-export function getThemeMode(): ThemeMode {
-  return currentTheme;
+export function runSyncThemeHydration(): ThemePreference | null {
+  const peeked = peekStoredThemePreferenceSync();
+  if (peeked) {
+    themePreference = peeked;
+  }
+  return peeked;
+}
+
+const themePreferenceListeners = new Set<() => void>();
+
+export function subscribeThemePreference(listener: () => void): () => void {
+  themePreferenceListeners.add(listener);
+  return () => {
+    themePreferenceListeners.delete(listener);
+  };
+}
+
+function notifyThemePreferenceListeners(): void {
+  themePreferenceListeners.forEach((fn) => {
+    try {
+      fn();
+    } catch {
+      /* ignore subscriber errors */
+    }
+  });
+}
+
+function getSystemColorScheme(): ThemePaletteMode {
+  const s = Appearance.getColorScheme();
+  return s === "dark" ? "dark" : "light";
 }
 
 /**
- * Set theme mode (does not persist - use storage for persistence)
+ * Map preference (+ optional explicit system scheme) to a palette mode.
  */
-export function setThemeMode(mode: ThemeMode): void {
-  currentTheme = mode;
+export function resolvePaletteMode(
+  preference: ThemePreference,
+  systemScheme: ThemePaletteMode = getSystemColorScheme(),
+): ThemePaletteMode {
+  if (preference === "system") return systemScheme;
+  return preference;
+}
+
+/** Current in-memory preference (light / dark / system). */
+export function getThemePreference(): ThemePreference {
+  return themePreference;
+}
+
+/** Resolved `light` | `dark` for tokens and `getColors()`. */
+export function getResolvedPaletteMode(): ThemePaletteMode {
+  return resolvePaletteMode(themePreference);
+}
+
+function applyInMemoryThemePreference(next: ThemePreference): void {
+  themePreference = next;
+  notifyThemePreferenceListeners();
 }
 
 /**
- * Get colors for current theme
+ * Update preference in memory only (no storage). Triggers UI subscribers.
+ * Prefer `setStoredTheme` from settings / bootstrap.
+ */
+export function setThemePreference(next: ThemePreference): void {
+  const p = parseThemePreference(next);
+  if (!p) return;
+  applyInMemoryThemePreference(p);
+}
+
+/**
+ * Read validated preference from storage without changing in-memory state.
+ * On failure or invalid value, returns `DEFAULT_THEME_PREFERENCE`.
+ */
+export async function getStoredTheme(): Promise<ThemePreference> {
+  try {
+    const raw = await AsyncStorage.getItem(THEME_STORAGE_KEY);
+    const parsed = parseThemePreference(raw);
+    if (parsed) return parsed;
+  } catch {
+    /* ignore */
+  }
+  return DEFAULT_THEME_PREFERENCE;
+}
+
+/**
+ * Apply preference from storage and notify listeners. Call once at startup (see `ThemeProvider`).
+ */
+export async function resolveInitialTheme(): Promise<{
+  preference: ThemePreference;
+  resolved: ThemePaletteMode;
+}> {
+  try {
+    const preference = await getStoredTheme();
+    applyInMemoryThemePreference(preference);
+    return { preference, resolved: getResolvedPaletteMode() };
+  } catch {
+    applyInMemoryThemePreference(DEFAULT_THEME_PREFERENCE);
+    return {
+      preference: DEFAULT_THEME_PREFERENCE,
+      resolved: getResolvedPaletteMode(),
+    };
+  }
+}
+
+/**
+ * Apply immediately, then persist asynchronously (memory first for snappy UI).
+ */
+export async function setStoredTheme(next: ThemePreference): Promise<void> {
+  const p = parseThemePreference(next);
+  if (!p) return;
+  applyInMemoryThemePreference(p);
+  try {
+    await AsyncStorage.setItem(THEME_STORAGE_KEY, next);
+  } catch {
+    /* keep in-memory value; persistence best-effort */
+  }
+}
+
+/**
+ * @deprecated Use `getThemePreference()` for the full choice, or `getResolvedPaletteMode()` for palette keys.
+ */
+export function getThemeMode(): ThemePreference {
+  return getThemePreference();
+}
+
+/**
+ * @deprecated Use `setThemePreference` (memory) or `setStoredTheme` (persist).
+ */
+export function setThemeMode(mode: ThemePreference): void {
+  setThemePreference(mode);
+}
+
+/**
+ * Get colors for the resolved palette (light or dark).
  */
 export function getColors() {
-  return colors[currentTheme];
+  return colors[getResolvedPaletteMode()];
 }
 
 /**
- * Get color value by key for current theme
+ * Get color value by key for the resolved palette.
  */
 export function getColor(key: keyof typeof colors.light): string {
-  return colors[currentTheme][key];
+  return colors[getResolvedPaletteMode()][key];
 }
 
 /**
- * Load theme from storage (use in screens with useFocusEffect)
+ * Load theme from storage into memory (startup / focus refresh).
  */
-export async function loadThemeFromStorage(): Promise<ThemeMode> {
-  setThemeMode("light");
-  return "light";
+export async function loadThemeFromStorage(): Promise<ThemePreference> {
+  const { preference } = await resolveInitialTheme();
+  return preference;
 }
 
 /**
- * Save theme to storage
+ * Persist theme and apply in memory.
  */
-export async function saveThemeToStorage(mode: ThemeMode): Promise<void> {
-  setThemeMode(mode);
+export async function saveThemeToStorage(mode: ThemePreference): Promise<void> {
+  await setStoredTheme(mode);
 }
 

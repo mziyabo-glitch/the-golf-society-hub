@@ -4,8 +4,8 @@
  * Both participants have full edit rights.
  */
 
-import { useCallback, useState } from "react";
-import { Pressable, Share, StyleSheet, View } from "react-native";
+import { useCallback, useMemo, useState } from "react";
+import { ActionSheetIOS, Alert, Platform, Pressable, Share, StyleSheet, View } from "react-native";
 import * as Clipboard from "expo-clipboard";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
@@ -28,15 +28,18 @@ import {
   deleteEntry,
   deleteSinbook,
   resetSinbook,
+  canEditSinbookAsUser,
   type SinbookWithParticipants,
   type SinbookEntry,
-  type SinbookParticipant,
 } from "@/lib/db_supabase/sinbookRepo";
 import { getColors, spacing, radius } from "@/lib/ui/theme";
 import { formatError, type FormattedError } from "@/lib/ui/formatError";
-import { confirmDestructive, showAlert } from "@/lib/ui/alert";
+import { showAlert } from "@/lib/ui/alert";
 import { Toast } from "@/components/ui/Toast";
+import { useDestructiveConfirm } from "@/components/ui/DestructiveConfirmModal";
+import { EditRivalryModal } from "@/components/sinbook/EditRivalryModal";
 import { getRivalryInviteMessage } from "@/lib/appConfig";
+import { createRivalryParticipantDisplayResolver, resolvePersonDisplayName } from "@/lib/rivalryPersonName";
 
 export default function RivalryDetailScreen() {
   const router = useRouter();
@@ -44,6 +47,7 @@ export default function RivalryDetailScreen() {
   const sinbookId = Array.isArray(params.id) ? params.id[0] : params.id;
   const { userId } = useBootstrap();
   const colors = getColors();
+  const { destructiveConfirmModal, askConfirm } = useDestructiveConfirm();
 
   const [sinbook, setSinbook] = useState<SinbookWithParticipants | null>(null);
   const [entries, setEntries] = useState<SinbookEntry[]>([]);
@@ -79,11 +83,14 @@ export default function RivalryDetailScreen() {
 
   useFocusEffect(useCallback(() => { loadData(); }, [loadData]));
 
-  // Derived data — map ALL participants by user_id for name resolution
+  // Derived data
   const allParticipants = sinbook?.participants ?? [];
   const acceptedParticipants = allParticipants.filter((p) => p.status === "accepted");
-  const participantMap = new Map<string, SinbookParticipant>();
-  for (const p of allParticipants) participantMap.set(p.user_id, p);
+
+  const displayForParticipant = useMemo(() => {
+    if (!sinbook) return (_uid: string | null | undefined) => "—";
+    return createRivalryParticipantDisplayResolver(sinbook, userId ?? null);
+  }, [sinbook, userId]);
 
   // Standings: count wins per participant
   const standings = new Map<string, number>();
@@ -135,15 +142,19 @@ export default function RivalryDetailScreen() {
     }
   };
 
-  const handleDeleteEntry = (entry: SinbookEntry) => {
-    confirmDestructive("Delete Entry", "Remove this entry?", "Delete", async () => {
-      try {
-        await deleteEntry(entry.id, sinbookId, sinbook?.title ?? "");
-        loadData();
-      } catch (err: any) {
-        showAlert("Error", err?.message || "Failed to delete.");
-      }
-    });
+  const handleDeleteEntry = async (entry: SinbookEntry) => {
+    const ok = await askConfirm(
+      "Remove entry?",
+      "This removes this result from your rivalry timeline. Standings update automatically.",
+      "Remove",
+    );
+    if (!ok) return;
+    try {
+      await deleteEntry(entry.id, sinbookId, sinbook?.title ?? "");
+      loadData();
+    } catch (err: any) {
+      showAlert("Error", err?.message || "Failed to remove entry.");
+    }
   };
 
   const startEdit = (entry: SinbookEntry) => {
@@ -166,7 +177,22 @@ export default function RivalryDetailScreen() {
       setToast({ visible: true, message: "Invite code not ready yet. Please try again in a moment.", type: "info" });
       return;
     }
-    const message = getRivalryInviteMessage(sinbook?.title?.trim() || "Sidebet", code.toUpperCase());
+    const meP = sinbook?.participants.find((p) => p.user_id === userId);
+    const sharerName =
+      userId && sinbook
+        ? resolvePersonDisplayName(
+            {
+              ...sinbook.rivalryNameHintsByUserId?.[userId],
+              participantDisplayName: meP?.display_name,
+            },
+            { lastResort: "Your rival" },
+          ).name
+        : undefined;
+    const message = getRivalryInviteMessage(
+      sinbook?.title?.trim() || "Rivalry",
+      code.toUpperCase(),
+      sharerName,
+    );
     try {
       await Share.share({ message });
     } catch { /* cancelled */ }
@@ -174,6 +200,7 @@ export default function RivalryDetailScreen() {
 
   const [actionBusy, setActionBusy] = useState(false);
   const [toast, setToast] = useState({ visible: false, message: "", type: "success" as "success" | "error" | "info" });
+  const [editRivalryOpen, setEditRivalryOpen] = useState(false);
 
   const handleCopyCode = async () => {
     const code = sinbook?.join_code?.trim();
@@ -182,7 +209,14 @@ export default function RivalryDetailScreen() {
       return;
     }
     try {
-      await Clipboard.setStringAsync(code.toUpperCase());
+      const ok = await Clipboard.setStringAsync(code.toUpperCase());
+      if (Platform.OS === "web" && ok === false) {
+        showAlert(
+          "Copy blocked",
+          "Clipboard access is blocked in this browser. Please open in Safari and try again.",
+        );
+        return;
+      }
       setToast({ visible: true, message: "Join code copied", type: "success" });
     } catch {
       showAlert("Copy failed", "Could not copy to clipboard.");
@@ -190,41 +224,63 @@ export default function RivalryDetailScreen() {
   };
 
 
-  const handleDeleteSinbook = () => {
+  const handleDeleteSinbook = async () => {
     if (actionBusy) return;
-    confirmDestructive("Delete Rivalry?", "This will permanently delete the rivalry, all entries, and participants.", "Delete", async () => {
-      setActionBusy(true);
-      try {
-        await deleteSinbook(sinbookId);
-        router.replace("/(app)/(tabs)/sinbook");
-      } catch (err: any) {
-        setActionBusy(false);
-        showAlert("Error", err?.message || "Failed to delete rivalry.");
-      }
-    });
+    const ok = await askConfirm(
+      "Delete this rivalry?",
+      "This permanently deletes the rivalry, all participants, and timeline entries.",
+      "Delete",
+    );
+    if (!ok) return;
+    setActionBusy(true);
+    try {
+      await deleteSinbook(sinbookId);
+      router.replace("/(app)/(tabs)/sinbook");
+    } catch (err: any) {
+      setActionBusy(false);
+      showAlert("Error", err?.message || "Failed to delete rivalry.");
+    }
   };
 
-  const handleResetSinbook = () => {
-    if (actionBusy) return;
-    confirmDestructive("Reset all results?", "This will clear all entries and standings. Participants and settings are kept.", "Reset", async () => {
-      setActionBusy(true);
-      try {
-        await resetSinbook(sinbookId);
-        await loadData();
-      } catch (err: any) {
-        showAlert("Error", err?.message || "Failed to reset rivalry.");
-      } finally {
-        setActionBusy(false);
-      }
-    });
+  const openDeleteOverflow = () => {
+    const label = sinbook?.title?.trim() || "Rivalry";
+    if (Platform.OS === "ios") {
+      ActionSheetIOS.showActionSheetWithOptions(
+        {
+          title: label,
+          options: ["Delete Rivalry", "Cancel"],
+          destructiveButtonIndex: 0,
+          cancelButtonIndex: 1,
+        },
+        (buttonIndex) => {
+          if (buttonIndex === 0) void handleDeleteSinbook();
+        },
+      );
+    } else {
+      Alert.alert(label, undefined, [
+        { text: "Delete Rivalry", style: "destructive", onPress: () => void handleDeleteSinbook() },
+        { text: "Cancel", style: "cancel" },
+      ]);
+    }
   };
 
-  const getName = (uid: string | null): string => {
-    if (!uid) return "No winner";
-    const p = participantMap.get(uid);
-    const name = p?.display_name?.trim();
-    if (name && name !== "Player") return name;
-    return uid === userId ? "You" : "Opponent";
+  const handleResetSinbook = async () => {
+    if (actionBusy) return;
+    const ok = await askConfirm(
+      "Reset all results?",
+      "This clears timeline entries and standings. Participants and settings stay.",
+      "Reset",
+    );
+    if (!ok) return;
+    setActionBusy(true);
+    try {
+      await resetSinbook(sinbookId);
+      await loadData();
+    } catch (err: any) {
+      showAlert("Error", err?.message || "Failed to reset rivalry.");
+    } finally {
+      setActionBusy(false);
+    }
   };
 
   const formatDate = (dateStr: string) => {
@@ -260,13 +316,15 @@ export default function RivalryDetailScreen() {
     );
   }
 
+  const canManageRivalry = canEditSinbookAsUser(sinbook, userId ?? undefined);
+
   // Entry form (add or edit)
   if (showAddEntry) {
     return (
       <Screen>
         <View style={styles.header}>
           <SecondaryButton onPress={cancelForm} size="sm">Cancel</SecondaryButton>
-          <AppText variant="h2">{editingEntry ? "Edit Entry" : "Add Entry"}</AppText>
+          <AppText variant="heading">{editingEntry ? "Edit Entry" : "Add Entry"}</AppText>
           <View style={{ width: 60 }} />
         </View>
 
@@ -312,7 +370,7 @@ export default function RivalryDetailScreen() {
                   ]}
                 >
                   <AppText variant="caption" style={{ color: entryWinner === p.user_id ? colors.primary : colors.text }}>
-                    {getName(p.user_id)}
+                    {displayForParticipant(p.user_id)}
                   </AppText>
                 </Pressable>
               ))}
@@ -338,27 +396,51 @@ export default function RivalryDetailScreen() {
         <SecondaryButton onPress={() => goBack(router, "/(app)/(tabs)/sinbook")} size="sm">
           <Feather name="arrow-left" size={16} color={colors.text} /> Back
         </SecondaryButton>
-        <View style={{ flexDirection: "row", gap: spacing.xs }}>
+        <View style={{ flexDirection: "row", gap: spacing.xs, alignItems: "center" }}>
           <Pressable onPress={handleShare} style={styles.iconBtn}>
             <Feather name="share-2" size={20} color={colors.primary} />
           </Pressable>
           {sinbook.created_by === userId && (
-            <Pressable onPress={handleResetSinbook} style={styles.iconBtn} disabled={actionBusy}>
+            <Pressable onPress={() => void handleResetSinbook()} style={styles.iconBtn} disabled={actionBusy}>
               <Feather name="rotate-ccw" size={20} color={actionBusy ? colors.textTertiary : colors.text} />
             </Pressable>
           )}
-          <Pressable onPress={handleDeleteSinbook} style={styles.iconBtn} disabled={actionBusy}>
-            <Feather name="trash-2" size={20} color={actionBusy ? colors.textTertiary : colors.error} />
-          </Pressable>
+          {canManageRivalry ? (
+            <Pressable onPress={() => setEditRivalryOpen(true)} style={styles.iconBtn} accessibilityLabel="Edit rivalry">
+              <Feather name="edit-3" size={20} color={colors.primary} />
+            </Pressable>
+          ) : null}
+          {canManageRivalry ? (
+            <Pressable onPress={openDeleteOverflow} style={styles.iconBtn} disabled={actionBusy} accessibilityLabel="More options">
+              <Feather name="more-horizontal" size={20} color={actionBusy ? colors.textTertiary : colors.textSecondary} />
+            </Pressable>
+          ) : null}
         </View>
       </View>
 
       {/* Title */}
-      <AppText variant="title" style={{ marginBottom: 2 }}>{sinbook.title?.trim() || "Sidebet"}</AppText>
-      {sinbook.stake && (
-        <AppText variant="caption" color="secondary" style={{ marginBottom: spacing.sm }}>
-          {sinbook.stake}
+      <AppText variant="title" style={{ marginBottom: 2 }}>{sinbook.title?.trim() || "Rivalry"}</AppText>
+      {sinbook.stake ? (
+        <AppText variant="caption" color="secondary" style={{ marginBottom: 4 }}>
+          Friendly forfeit / treat: {sinbook.stake}
         </AppText>
+      ) : null}
+      {sinbook.scoring_format?.trim() || sinbook.ends_on ? (
+        <AppText variant="caption" color="muted" style={{ marginBottom: 4 }}>
+          {[
+            sinbook.scoring_format?.trim(),
+            sinbook.ends_on ? `Ends ${String(sinbook.ends_on).slice(0, 10)}` : null,
+          ]
+            .filter(Boolean)
+            .join(" · ")}
+        </AppText>
+      ) : null}
+      {sinbook.description?.trim() ? (
+        <AppText variant="small" color="secondary" style={{ marginBottom: spacing.sm }}>
+          {sinbook.description.trim()}
+        </AppText>
+      ) : (
+        <View style={{ height: spacing.sm }} />
       )}
 
       {/* Join Code Card — always show when rivalry is inviteable or user is owner */}
@@ -392,7 +474,7 @@ export default function RivalryDetailScreen() {
                   </Pressable>
                 </View>
               </View>
-              <AppText variant="small" color="tertiary" style={{ marginTop: spacing.xs }}>
+              <AppText variant="small" color="muted" style={{ marginTop: spacing.xs }}>
                 Share this code or the invite link so others can join the rivalry.
               </AppText>
             </>
@@ -427,7 +509,7 @@ export default function RivalryDetailScreen() {
                     {wins}
                   </AppText>
                   <AppText variant="bodyBold" numberOfLines={1}>
-                    {getName(p.user_id)}
+                    {displayForParticipant(p.user_id)}
                   </AppText>
                 </View>
               );
@@ -466,7 +548,7 @@ export default function RivalryDetailScreen() {
         </AppCard>
       ) : (
         <View style={{ marginTop: spacing.sm }}>
-          <AppText variant="h2" style={{ marginBottom: spacing.sm }}>
+          <AppText variant="heading" style={{ marginBottom: spacing.sm }}>
             Timeline ({entries.length})
           </AppText>
           {entries.map((entry) => (
@@ -484,7 +566,7 @@ export default function RivalryDetailScreen() {
                       </AppText>
                       {entry.winner_id && (
                         <AppText variant="small" color="primary" style={{ fontWeight: "600" }}>
-                          Won by {getName(entry.winner_id)}
+                          Won by {displayForParticipant(entry.winner_id)}
                         </AppText>
                       )}
                     </View>
@@ -493,7 +575,12 @@ export default function RivalryDetailScreen() {
                     <Pressable onPress={() => startEdit(entry)} hitSlop={8}>
                       <Feather name="edit-2" size={16} color={colors.textTertiary} />
                     </Pressable>
-                    <Pressable onPress={() => handleDeleteEntry(entry)} hitSlop={8}>
+                    <Pressable
+                      onPress={() => void handleDeleteEntry(entry)}
+                      hitSlop={8}
+                      accessibilityRole="button"
+                      accessibilityLabel="Remove rivalry timeline entry"
+                    >
                       <Feather name="trash-2" size={16} color={colors.textTertiary} />
                     </Pressable>
                   </View>
@@ -503,6 +590,18 @@ export default function RivalryDetailScreen() {
           ))}
         </View>
       )}
+
+      <EditRivalryModal
+        visible={editRivalryOpen && !!sinbook}
+        sinbook={sinbook}
+        onClose={() => setEditRivalryOpen(false)}
+        onSaved={() => {
+          setEditRivalryOpen(false);
+          void loadData();
+        }}
+      />
+
+      {destructiveConfirmModal}
 
       <View style={{ height: spacing["2xl"] }} />
     </Screen>

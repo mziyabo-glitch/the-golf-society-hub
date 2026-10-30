@@ -1,12 +1,14 @@
 // lib/supabaseStorage.ts
 // Cross-platform storage adapter for Supabase auth
 // - Web: uses localStorage with "gsh:" prefix
-// - Native (iOS/Android): uses AsyncStorage for reliable session persistence
+// - Native (iOS/Android): uses AsyncStorage for the full Supabase session JSON.
+//   (expo-secure-store is unsuitable as the default: single-key size limits are far
+//   below a typical JWT pair; encrypting the blob is a separate hardening step.)
 //
-// "Remember me" toggle:
-//   When rememberMe is false the adapter silently no-ops writes.
-//   The session lives only in Supabase's in-memory state and is lost on
-//   page reload / app restart.
+// "Remember me" (web only):
+//   When rememberMe is false, writes are skipped and any stored session is cleared
+//   so the next visit is not auto-signed-in. Native apps always persist the session
+//   to disk (store policy); users sign out only via explicit sign-out.
 
 import { Platform } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
@@ -17,14 +19,28 @@ const STORAGE_PREFIX = "gsh:";
 // The AuthScreen flips this BEFORE calling signIn so the adapter
 // knows whether to actually write the token to disk.
 let _rememberMe = true;
+export const hasSupabaseStorageAdapter = true;
 
-/** Call before signIn to control session persistence. */
+function inspectTokenPayload(value: string | null): { hasAccessToken: boolean; hasRefreshToken: boolean } {
+  if (!value) return { hasAccessToken: false, hasRefreshToken: false };
+  try {
+    const parsed = JSON.parse(value) as { access_token?: unknown; refresh_token?: unknown } | null;
+    return {
+      hasAccessToken: typeof parsed?.access_token === "string" && parsed.access_token.length > 0,
+      hasRefreshToken: typeof parsed?.refresh_token === "string" && parsed.refresh_token.length > 0,
+    };
+  } catch {
+    return { hasAccessToken: false, hasRefreshToken: false };
+  }
+}
+
+/** Call before signIn to control session persistence (web only for clearing). */
 export function setRememberMe(value: boolean): void {
   _rememberMe = value;
 
-  // If the user unchecks "remember me", clear any previously stored
-  // session so a stale token doesn't auto-sign them in next time.
-  if (!value) {
+  // Native: never strip persisted tokens here — that caused "logged out on reopen"
+  // when the toggle was off. Clear stored session on web only.
+  if (!value && Platform.OS === "web") {
     supabaseStorage.removeItem("supabase-auth").catch(() => {});
   }
 }
@@ -45,13 +61,37 @@ export const supabaseStorage = {
 
     if (Platform.OS === "web") {
       if (typeof window !== "undefined" && window.localStorage) {
-        return window.localStorage.getItem(prefixedKey);
+        const value = window.localStorage.getItem(prefixedKey);
+        if (key === "supabase-auth") {
+          const flags = inspectTokenPayload(value);
+          console.log("[auth-persist-storage] read", {
+            platform: Platform.OS,
+            key,
+            found: !!value,
+            result: value ? "present" : "empty",
+            medium: "localStorage",
+            refreshTokenPresent: flags.hasRefreshToken,
+          });
+        }
+        return value;
       }
       return null;
     }
 
     try {
-      return await AsyncStorage.getItem(prefixedKey);
+      const value = await AsyncStorage.getItem(prefixedKey);
+      if (key === "supabase-auth") {
+        const flags = inspectTokenPayload(value);
+        console.log("[auth-persist-storage] read", {
+          platform: Platform.OS,
+          key,
+          found: !!value,
+          result: value ? "present" : "empty",
+          medium: "AsyncStorage",
+          refreshTokenPresent: flags.hasRefreshToken,
+        });
+      }
+      return value;
     } catch (error) {
       console.warn("[supabaseStorage] getItem error:", error);
       return null;
@@ -59,20 +99,39 @@ export const supabaseStorage = {
   },
 
   async setItem(key: string, value: string): Promise<void> {
-    // When "remember me" is off, skip persisting the session token.
-    if (!_rememberMe) return;
+    // Web: optional non-persistent sign-in when "remember me" is off.
+    // Native: always persist (Play/App Store expectation; toggle is web-only semantics).
+    if (Platform.OS === "web" && !_rememberMe) return;
 
     const prefixedKey = STORAGE_PREFIX + key;
 
     if (Platform.OS === "web") {
       if (typeof window !== "undefined" && window.localStorage) {
         window.localStorage.setItem(prefixedKey, value);
+        if (key === "supabase-auth") {
+          const flags = inspectTokenPayload(value);
+          console.log("[auth-persist-storage] write", {
+            platform: Platform.OS,
+            key,
+            accessTokenPresent: flags.hasAccessToken,
+            refreshTokenPresent: flags.hasRefreshToken,
+          });
+        }
       }
       return;
     }
 
     try {
       await AsyncStorage.setItem(prefixedKey, value);
+      if (key === "supabase-auth") {
+        const flags = inspectTokenPayload(value);
+        console.log("[auth-persist-storage] write", {
+          platform: Platform.OS,
+          key,
+          accessTokenPresent: flags.hasAccessToken,
+          refreshTokenPresent: flags.hasRefreshToken,
+        });
+      }
     } catch (error) {
       console.warn("[supabaseStorage] setItem error:", error);
     }
@@ -84,12 +143,24 @@ export const supabaseStorage = {
     if (Platform.OS === "web") {
       if (typeof window !== "undefined" && window.localStorage) {
         window.localStorage.removeItem(prefixedKey);
+        if (key === "supabase-auth") {
+          console.log("[auth-persist-storage] remove", {
+            platform: Platform.OS,
+            key,
+          });
+        }
       }
       return;
     }
 
     try {
       await AsyncStorage.removeItem(prefixedKey);
+      if (key === "supabase-auth") {
+        console.log("[auth-persist-storage] remove", {
+          platform: Platform.OS,
+          key,
+        });
+      }
     } catch (error) {
       console.warn("[supabaseStorage] removeItem error:", error);
     }

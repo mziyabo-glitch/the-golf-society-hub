@@ -7,7 +7,7 @@
  */
 
 import { useEffect, useState } from "react";
-import { StyleSheet, View } from "react-native";
+import { Platform, StyleSheet, View } from "react-native";
 import { usePathname, useRouter, Stack } from "expo-router";
 import { Feather } from "@expo/vector-icons";
 
@@ -15,7 +15,7 @@ import { Screen } from "@/components/ui/Screen";
 import { AppText } from "@/components/ui/AppText";
 import { AppCard } from "@/components/ui/AppCard";
 import { AppInput } from "@/components/ui/AppInput";
-import { PrimaryButton, SecondaryButton } from "@/components/ui/Button";
+import { PrimaryButton } from "@/components/ui/Button";
 import { InlineNotice } from "@/components/ui/InlineNotice";
 import { LoadingState } from "@/components/ui/LoadingState";
 import { supabase } from "@/lib/supabase";
@@ -45,7 +45,7 @@ export default function NotFoundScreen() {
               Page Not Found
             </AppText>
             <AppText variant="body" color="secondary" style={styles.brandSubtitle}>
-              The page you're looking for doesn't exist.
+              The page you’re looking for doesn’t exist.
             </AppText>
           </View>
           <PrimaryButton onPress={() => router.replace("/")}>
@@ -120,7 +120,12 @@ function ResetPasswordFallback() {
 
         console.log("[ResetPassword] session established from recovery token");
 
-        if (typeof window !== "undefined") {
+        if (
+          Platform.OS === "web" &&
+          typeof window !== "undefined" &&
+          window.location?.pathname &&
+          window.history?.replaceState
+        ) {
           window.history.replaceState(null, "", window.location.pathname);
         }
 

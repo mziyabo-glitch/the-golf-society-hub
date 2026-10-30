@@ -21,6 +21,8 @@ import { AppInput } from "@/components/ui/AppInput";
 import { PrimaryButton, SecondaryButton } from "@/components/ui/Button";
 import { LoadingState } from "@/components/ui/LoadingState";
 import { EmptyState } from "@/components/ui/EmptyState";
+import { RetryErrorBlock } from "@/components/ui/RetryErrorBlock";
+import { getCache, setCache } from "@/lib/cache/clientCache";
 import { useBootstrap } from "@/lib/useBootstrap";
 import {
   getEventsFinanceSummary,
@@ -28,7 +30,7 @@ import {
   type EventFinanceSummary,
 } from "@/lib/db_supabase/eventRepo";
 import { getPermissionsForMember } from "@/lib/rbac";
-import { getColors, spacing } from "@/lib/ui/theme";
+import { getColors, iconSize, spacing } from "@/lib/ui/theme";
 import { guard } from "@/lib/guards";
 
 // Format pence to pounds string (e.g., 5000 -> "£50.00")
@@ -59,6 +61,13 @@ type EditingEvent = {
   costsInput: string;
 };
 
+type EventFinanceCache = {
+  events: EventFinanceSummary[];
+  totalIncome: number;
+  totalCosts: number;
+  totalNet: number;
+};
+
 export default function EventFinanceScreen() {
   const router = useRouter();
   const { societyId, member, loading: bootstrapLoading } = useBootstrap();
@@ -69,40 +78,83 @@ export default function EventFinanceScreen() {
   const [totalCosts, setTotalCosts] = useState(0);
   const [totalNet, setTotalNet] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [listRefreshing, setListRefreshing] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [editing, setEditing] = useState<EditingEvent | null>(null);
   const [saving, setSaving] = useState(false);
 
-  const permissions = getPermissionsForMember(member as any);
+  const permissions = getPermissionsForMember(member);
   const canManageFinance = permissions.canAccessFinance;
 
-  // Load events finance data
-  const loadData = useCallback(async () => {
-    if (!societyId) return;
+  const financeCacheKey = societyId ? `society:${societyId}:event-finance` : null;
 
-    setLoading(true);
-    try {
-      const summary = await getEventsFinanceSummary(societyId);
-      setEvents(summary.events);
-      setTotalIncome(summary.totalIncomePence);
-      setTotalCosts(summary.totalCostsPence);
-      setTotalNet(summary.totalNetPence);
-    } catch (err: any) {
-      console.error("[EventFinance] loadData error:", err);
-      Alert.alert("Error", err?.message || "Failed to load data.");
-    } finally {
-      setLoading(false);
-    }
-  }, [societyId]);
+  const loadData = useCallback(
+    async (opts?: { silent?: boolean }) => {
+      if (!societyId) return;
+
+      const silent = !!opts?.silent;
+      if (silent) {
+        setListRefreshing(true);
+      } else {
+        setLoading(true);
+      }
+      setLoadError(null);
+      try {
+        const summary = await getEventsFinanceSummary(societyId);
+        setEvents(summary.events);
+        setTotalIncome(summary.totalIncomePence);
+        setTotalCosts(summary.totalCostsPence);
+        setTotalNet(summary.totalNetPence);
+        const payload: EventFinanceCache = {
+          events: summary.events,
+          totalIncome: summary.totalIncomePence,
+          totalCosts: summary.totalCostsPence,
+          totalNet: summary.totalNetPence,
+        };
+        if (financeCacheKey) {
+          await setCache(financeCacheKey, payload, { ttlMs: 1000 * 60 * 15 });
+        }
+      } catch (err: any) {
+        console.error("[EventFinance] loadData error:", err);
+        setLoadError(err?.message || "Failed to load data.");
+      } finally {
+        setLoading(false);
+        setListRefreshing(false);
+      }
+    },
+    [societyId, financeCacheKey],
+  );
 
   useEffect(() => {
-    loadData();
-  }, [loadData]);
+    let cancelled = false;
+    void (async () => {
+      if (!societyId) return;
+      if (financeCacheKey) {
+        const cached = await getCache<EventFinanceCache>(financeCacheKey, { maxAgeMs: 1000 * 60 * 60 * 24 });
+        if (cancelled) return;
+        if (cached?.value?.events) {
+          setEvents(cached.value.events);
+          setTotalIncome(cached.value.totalIncome);
+          setTotalCosts(cached.value.totalCosts);
+          setTotalNet(cached.value.totalNet);
+          setLoading(false);
+          await loadData({ silent: true });
+          return;
+        }
+      }
+      if (cancelled) return;
+      await loadData({ silent: false });
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [societyId, financeCacheKey, loadData]);
 
   // Refresh on focus
   useFocusEffect(
     useCallback(() => {
-      if (societyId) loadData();
-    }, [societyId, loadData])
+      if (societyId) void loadData({ silent: true });
+    }, [societyId, loadData]),
   );
 
   // Start editing an event
@@ -150,7 +202,7 @@ export default function EventFinanceScreen() {
     }
   };
 
-  if (bootstrapLoading || loading) {
+  if ((bootstrapLoading || loading) && events.length === 0) {
     return (
       <Screen scrollable={false}>
         <View style={styles.centered}>
@@ -160,16 +212,34 @@ export default function EventFinanceScreen() {
     );
   }
 
+  if (loadError && events.length === 0 && !loading && !bootstrapLoading) {
+    return (
+      <Screen>
+        <View style={styles.header}>
+          <SecondaryButton onPress={() => goBack(router, "/(app)/(tabs)/settings")} size="sm">
+            <Feather name="arrow-left" size={iconSize.sm} color={colors.text} /> Back
+          </SecondaryButton>
+        </View>
+        <RetryErrorBlock
+          title="Could not load finances"
+          message={loadError}
+          onRetry={() => void loadData({ silent: false })}
+          retrying={loading || listRefreshing}
+        />
+      </Screen>
+    );
+  }
+
   if (!canManageFinance) {
     return (
       <Screen>
         <View style={styles.header}>
           <SecondaryButton onPress={() => goBack(router, "/(app)/(tabs)/settings")} size="sm">
-            <Feather name="arrow-left" size={16} color={colors.text} /> Back
+            <Feather name="arrow-left" size={iconSize.sm} color={colors.text} /> Back
           </SecondaryButton>
         </View>
         <EmptyState
-          icon={<Feather name="lock" size={32} color={colors.textTertiary} />}
+          icon={<Feather name="lock" size={iconSize.xl} color={colors.textTertiary} />}
           title="Access Restricted"
           message="Only Captain or Treasurer can manage event finances."
         />
@@ -182,18 +252,34 @@ export default function EventFinanceScreen() {
       {/* Header */}
       <View style={styles.header}>
         <SecondaryButton onPress={() => goBack(router, "/(app)/(tabs)/settings")} size="sm">
-          <Feather name="arrow-left" size={16} color={colors.text} /> Back
+          <Feather name="arrow-left" size={iconSize.sm} color={colors.text} /> Back
         </SecondaryButton>
       </View>
 
       <AppText variant="title" style={styles.title}>
-        <Feather name="bar-chart-2" size={24} color={colors.primary} /> Event Finances
+        <Feather name="bar-chart-2" size={iconSize.lg} color={colors.primary} /> Event Finances
       </AppText>
+
+      {loadError ? (
+        <RetryErrorBlock
+          title="Could not refresh"
+          message={loadError}
+          onRetry={() => void loadData({ silent: true })}
+          retrying={listRefreshing}
+          staleHint={events.length > 0 ? "Totals and events below are from your last successful load." : undefined}
+          style={{ marginBottom: spacing.md }}
+        />
+      ) : null}
+      {listRefreshing ? (
+        <AppText variant="small" color="muted" style={{ marginBottom: spacing.sm }}>
+          Updating…
+        </AppText>
+      ) : null}
 
       <ScrollView showsVerticalScrollIndicator={false}>
         {/* Totals Summary */}
         <AppCard style={styles.summaryCard}>
-          <AppText variant="h2" style={{ marginBottom: spacing.sm }}>
+          <AppText variant="heading" style={{ marginBottom: spacing.sm }}>
             Overall Summary
           </AppText>
           <View style={styles.summaryGrid}>
@@ -201,7 +287,7 @@ export default function EventFinanceScreen() {
               <AppText variant="caption" color="secondary">
                 Total Income
               </AppText>
-              <AppText variant="h1" style={{ color: colors.success }}>
+              <AppText variant="h1" color="success">
                 {formatPence(totalIncome)}
               </AppText>
             </View>
@@ -209,7 +295,7 @@ export default function EventFinanceScreen() {
               <AppText variant="caption" color="secondary">
                 Total Costs
               </AppText>
-              <AppText variant="h1" style={{ color: colors.error }}>
+              <AppText variant="h1" color="danger">
                 {formatPence(totalCosts)}
               </AppText>
             </View>
@@ -217,10 +303,7 @@ export default function EventFinanceScreen() {
               <AppText variant="caption" color="secondary">
                 Net
               </AppText>
-              <AppText
-                variant="h1"
-                style={{ color: totalNet >= 0 ? colors.success : colors.error }}
-              >
+              <AppText variant="h1" color={totalNet >= 0 ? "success" : "danger"}>
                 {formatPenceWithSign(totalNet)}
               </AppText>
             </View>
@@ -229,7 +312,7 @@ export default function EventFinanceScreen() {
 
         {/* Events List */}
         <View style={styles.eventsHeader}>
-          <AppText variant="h2">Events</AppText>
+          <AppText variant="heading">Events</AppText>
           <AppText variant="caption" color="secondary">
             {events.length} event{events.length !== 1 ? "s" : ""}
           </AppText>
@@ -267,13 +350,13 @@ export default function EventFinanceScreen() {
                   </View>
                   {!isEditing && (
                     <SecondaryButton onPress={() => handleEdit(event)} size="sm">
-                      <Feather name="edit-2" size={14} color={colors.text} />
+                      <Feather name="edit-2" size={iconSize.xs} color={colors.text} />
                     </SecondaryButton>
                   )}
                 </View>
 
                 {isEditing ? (
-                  <View style={styles.editForm}>
+                  <View style={[styles.editForm, { borderTopColor: colors.borderLight }]}>
                     <View style={styles.inputRow}>
                       <View style={styles.inputGroup}>
                         <AppText variant="caption" color="secondary">
@@ -331,12 +414,12 @@ export default function EventFinanceScreen() {
                     </View>
                   </View>
                 ) : (
-                  <View style={styles.financeRow}>
+                  <View style={[styles.financeRow, { borderTopColor: colors.borderLight }]}>
                     <View style={styles.financeItem}>
                       <AppText variant="small" color="secondary">
                         Income
                       </AppText>
-                      <AppText variant="body" style={{ color: colors.success }}>
+                      <AppText variant="body" color={hasFinance ? "success" : "muted"}>
                         {hasFinance ? formatPence(event.incomePence) : "-"}
                       </AppText>
                     </View>
@@ -345,7 +428,7 @@ export default function EventFinanceScreen() {
                       <AppText variant="small" color="secondary">
                         Costs
                       </AppText>
-                      <AppText variant="body" style={{ color: colors.error }}>
+                      <AppText variant="body" color={hasFinance ? "danger" : "muted"}>
                         {hasFinance ? formatPence(event.costsPence) : "-"}
                       </AppText>
                     </View>
@@ -356,13 +439,13 @@ export default function EventFinanceScreen() {
                       </AppText>
                       <AppText
                         variant="bodyBold"
-                        style={{
-                          color: hasFinance
-                            ? net >= 0
-                              ? colors.success
-                              : colors.error
-                            : colors.textTertiary,
-                        }}
+                        color={
+                          !hasFinance
+                            ? "muted"
+                            : net >= 0
+                              ? "success"
+                              : "danger"
+                        }
                       >
                         {hasFinance ? formatPenceWithSign(net) : "-"}
                       </AppText>
@@ -425,7 +508,6 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     paddingTop: spacing.sm,
     borderTopWidth: 1,
-    borderTopColor: "#F3F4F6",
   },
   financeItem: {
     flex: 1,
@@ -434,7 +516,6 @@ const styles = StyleSheet.create({
   editForm: {
     paddingTop: spacing.sm,
     borderTopWidth: 1,
-    borderTopColor: "#F3F4F6",
   },
   inputRow: {
     flexDirection: "row",

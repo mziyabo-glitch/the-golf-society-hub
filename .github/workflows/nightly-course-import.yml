@@ -1,0 +1,198 @@
+name: Nightly Course Import
+
+# Opt into Node 24 for JavaScript-based actions (GitHub Actions platform migration away from Node 20).
+# See: https://github.com/actions/runner/pull/3948
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Run without writing course/tee/hole rows"
+        required: false
+        default: "false"
+      phase:
+        description: "Override phase (england_wales|scotland|ireland)"
+        required: false
+        default: ""
+      territory:
+        description: "Override territory code"
+        required: false
+        default: "uk"
+      max_new_seeds:
+        description: "Max new seeds in this run"
+        required: false
+        default: ""
+      max_retries:
+        description: "Max retries in this run"
+        required: false
+        default: ""
+      max_refreshes:
+        description: "Max refreshes in this run"
+        required: false
+        default: ""
+      max_priority:
+        description: "Max priority courses in this run"
+        required: false
+        default: ""
+      force_catalog_full_refresh:
+        description: "If true, always run post-batch stale catalog sweep (same as CLI --force-catalog-full-refresh)"
+        required: false
+        default: "false"
+      run_mode:
+        description: "seeding (default) | maintenance — use seeding to maximize growth API budget and suppress sweep; maintenance for steady-state"
+        required: false
+        default: "seeding"
+      active_phase:
+        description: "Optional COURSE_IMPORT_ACTIVE_PHASE override (england_wales|scotland|ireland). Empty = auto-pick first phase with queued/failed backlog, else england_wales."
+        required: false
+        default: ""
+  schedule:
+    - cron: "15 2 * * *"
+
+jobs:
+  import-courses:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    # Importer env (scripts/nightly-course-import.ts → lib/server/courseImportEngine.ts):
+    # - requireEnv("NEXT_PUBLIC_SUPABASE_URL") — same project URL as lib/supabase.ts (also accepts EXPO_PUBLIC there).
+    # - requireEnv("SUPABASE_SERVICE_ROLE_KEY")
+    # - golfApiGet: GOLFCOURSE_API_KEY | EXPO_PUBLIC_GOLFCOURSE_API_KEY | NEXT_PUBLIC_GOLF_API_KEY
+    env:
+      RAPIDAPI_KEY: ${{ secrets.RAPIDAPI_KEY }}
+      UK_GOLF_API_BASE_URL: https://uk-golf-course-data-api.p.rapidapi.com
+      UK_GOLF_API_HOST: uk-golf-course-data-api.p.rapidapi.com
+      UK_GOLF_API_DELAY_MS: 7000
+      UK_GOLF_API_JITTER_MS: 1000
+      UK_GOLF_API_MAX_QUEUE_ITEMS_PER_RUN: 25
+      UK_GOLF_API_MAX_REQUESTS_PER_RUN: 150
+      # Refill uk_golf_api_seed_queue from datasets/osm/gb.json (GB course name list)
+      UK_GOLF_API_OSM_SEED_MAX_NEW: "400"
+      UK_GOLF_API_ALLOW_STAGING_WRITES: "true"
+      UK_GOLF_DRY_DELAY_MS: 6000
+      NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL || secrets.EXPO_PUBLIC_SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      GOLFCOURSE_API_KEY: ${{ secrets.GOLFCOURSE_API_KEY || secrets.EXPO_PUBLIC_GOLFCOURSE_API_KEY || secrets.NEXT_PUBLIC_GOLF_API_KEY }}
+      # schedule/cron uses seeding to burn down large GB queues; override via workflow_dispatch run_mode.
+      COURSE_IMPORT_RUN_MODE: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.run_mode || 'seeding' }}
+      # Seeding cap for new course import attempts per run (see lib/server/courseImportEngine.ts getTerritoryImportCaps)
+      COURSE_IMPORT_MAX_NEW_COURSE_IMPORT_ATTEMPTS: "100"
+      # many unresolved fuzzy matches in one batch; engine default is 100 in seeding — set explicitly for visibility with older checkouts
+      COURSE_IMPORT_EXIT_OK_MAX_UNRESOLVED: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.run_mode == 'maintenance' && '5' || '100' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          # Job runtime: keep Node 20 for stability with tsx / Expo toolchain (engines allow >=18).
+          # Bump to 22 LTS when you want a supported upgrade path before Node 24 for app code.
+          node-version: 20
+          cache: npm
+
+      - name: Validate required import environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          missing=0
+          if [[ -z "${NEXT_PUBLIC_SUPABASE_URL:-}" ]]; then
+            echo "::error::Missing NEXT_PUBLIC_SUPABASE_URL (or EXPO_PUBLIC_SUPABASE_URL secret)."
+            missing=1
+          fi
+          if [[ -z "${SUPABASE_SERVICE_ROLE_KEY:-}" ]]; then
+            echo "::error::Missing SUPABASE_SERVICE_ROLE_KEY secret."
+            missing=1
+          fi
+          provider_key="${RAPIDAPI_KEY:-}"
+          if [[ -z "$provider_key" ]]; then
+            provider_key="${GOLFCOURSE_API_KEY:-}"
+          fi
+          if [[ -z "$provider_key" ]]; then
+            provider_key="${EXPO_PUBLIC_GOLFCOURSE_API_KEY:-}"
+          fi
+          if [[ -z "$provider_key" ]]; then
+            provider_key="${NEXT_PUBLIC_GOLF_API_KEY:-}"
+          fi
+          if [[ -z "$provider_key" ]]; then
+            echo "::warning::No course provider key configured (RAPIDAPI_KEY/GOLFCOURSE_API_KEY/EXPO_PUBLIC_GOLFCOURSE_API_KEY/NEXT_PUBLIC_GOLF_API_KEY). Workflow will continue; UK provider import should skip gracefully."
+          fi
+          if [[ "$missing" -ne 0 ]]; then
+            echo "::error::Nightly course import aborted due to missing required environment variables."
+            exit 1
+          fi
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Apply curated Shrivenham Park GC Summer seed
+        shell: bash
+        run: |
+          set -euo pipefail
+          SEED_ARGS=""
+          if [[ "${{ github.event.inputs.dry_run || '' }}" == "true" ]]; then
+            SEED_ARGS="$SEED_ARGS --dry-run"
+          fi
+          npm run course-import:seed-shrivenham-summer -- $SEED_ARGS
+
+      - name: Seed candidate queue from GB dataset
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! -f "gb.json" ]]; then
+            echo "gb.json not found in repository root; cannot seed nightly candidates from GB dataset."
+            exit 1
+          fi
+          SEED_ARGS="--input=gb.json"
+          if [[ "${{ github.event.inputs.dry_run || '' }}" == "true" ]]; then
+            SEED_ARGS="$SEED_ARGS --dry-run"
+          fi
+          npm run course-import:seed-gb -- $SEED_ARGS
+
+      - name: Run nightly import
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -n "${{ github.event.inputs.active_phase || '' }}" ]]; then
+            export COURSE_IMPORT_ACTIVE_PHASE="${{ github.event.inputs.active_phase }}"
+          fi
+          ARGS=""
+          if [[ "${{ github.event.inputs.dry_run || '' }}" == "true" ]]; then
+            ARGS="$ARGS --dry-run"
+          fi
+          if [[ -n "${{ github.event.inputs.phase || '' }}" ]]; then
+            ARGS="$ARGS --phase=${{ github.event.inputs.phase }}"
+          fi
+          if [[ -n "${{ github.event.inputs.territory || '' }}" ]]; then
+            ARGS="$ARGS --territory=${{ github.event.inputs.territory }}"
+          fi
+          if [[ -n "${{ github.event.inputs.max_new_seeds || '' }}" ]]; then
+            ARGS="$ARGS --max-new-seeds=${{ github.event.inputs.max_new_seeds }}"
+          fi
+          if [[ -n "${{ github.event.inputs.max_retries || '' }}" ]]; then
+            ARGS="$ARGS --max-retries=${{ github.event.inputs.max_retries }}"
+          fi
+          if [[ -n "${{ github.event.inputs.max_refreshes || '' }}" ]]; then
+            ARGS="$ARGS --max-refreshes=${{ github.event.inputs.max_refreshes }}"
+          fi
+          if [[ -n "${{ github.event.inputs.max_priority || '' }}" ]]; then
+            ARGS="$ARGS --max-priority=${{ github.event.inputs.max_priority }}"
+          fi
+          if [[ "${{ github.event.inputs.force_catalog_full_refresh || '' }}" == "true" ]]; then
+            ARGS="$ARGS --force-catalog-full-refresh"
+          fi
+          if [[ -n "${COURSE_IMPORT_RUN_MODE:-}" ]]; then
+            ARGS="$ARGS --mode=${COURSE_IMPORT_RUN_MODE}"
+          fi
+          mkdir -p reports/nightly-course-import
+          npm run course-import:nightly -- $ARGS
+
+      - name: Upload morning report artifact
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: nightly-course-import-report-${{ github.run_id }}
+          # Stable names written by scripts/nightly-course-import.ts (nightly-summary.json, nightly-summary.md)
+          path: reports/nightly-course-import/*
+          if-no-files-found: warn
