@@ -1,6 +1,7 @@
 import Stripe from "stripe";
 import { getServiceRoleSupabase } from "@/lib/server/supabaseServiceRole";
 import { assertUuid, validateSocietyPaymentsReady } from "@/lib/payments/checkoutValidation";
+import { paymentBeneficiaryError } from "@/lib/payments/paymentBeneficiary";
 import { resolveGuestCheckoutAmountPence } from "@/lib/payments/eventPricing";
 import {
   assertStripeTestMode,
@@ -59,6 +60,7 @@ type GuestCheckoutContext = {
     stripe_connect_charges_enabled: boolean | null;
   } | null;
   beneficiary: { id: string; name: string | null; stripe_connect_account_id: string | null; stripe_connect_charges_enabled: boolean | null } | null;
+  participatingSocietyIds: string[];
   rows: OpenPaymentRow[];
   keyed: OpenPaymentRow | null;
 };
@@ -117,14 +119,16 @@ function buildDefaultGuestCheckoutDeps(stripeKey: string): GuestCheckoutDeps {
         : { data: null };
       const hostSocietyId = (event?.society_id as string | undefined) ?? societyId;
       let beneficiaryId = hostSocietyId ?? null;
-      if (societyId && eventId) {
-        const { data: link } = await admin
+      let participatingSocietyIds: string[] = [];
+      if (eventId) {
+        const { data: links, error: linkErr } = await admin
           .from("event_societies")
-          .select("payment_beneficiary_society_id")
-          .eq("event_id", eventId)
-          .eq("society_id", societyId)
-          .maybeSingle();
-        if (link?.payment_beneficiary_society_id) beneficiaryId = link.payment_beneficiary_society_id as string;
+          .select("society_id, payment_beneficiary_society_id")
+          .eq("event_id", eventId);
+        if (linkErr) throw new Error(linkErr.message);
+        participatingSocietyIds = (links ?? []).map((link) => String(link.society_id));
+        const own = societyId ? (links ?? []).find((link) => String(link.society_id) === societyId) : null;
+        if (own?.payment_beneficiary_society_id) beneficiaryId = String(own.payment_beneficiary_society_id);
       }
       const { data: beneficiary } = beneficiaryId
         ? await admin
@@ -191,6 +195,7 @@ function buildDefaultGuestCheckoutDeps(stripeKey: string): GuestCheckoutDeps {
               stripe_connect_charges_enabled: beneficiary.stripe_connect_charges_enabled === true,
             }
           : null,
+        participatingSocietyIds,
         rows: (rows ?? []) as OpenPaymentRow[],
         keyed: (keyed as OpenPaymentRow | null) ?? null,
       };
@@ -249,6 +254,14 @@ export async function handleCreateGuestCheckoutSession(
     if (societyError) return { status: 403, body: { error: societyError } };
     if (!context.beneficiary?.stripe_connect_account_id || !context.beneficiary.stripe_connect_charges_enabled) {
       return { status: 403, body: { error: "Payment beneficiary Connect account is not ready" } };
+    }
+    if (context.event) {
+      const routeError = paymentBeneficiaryError({
+        beneficiarySocietyId: context.beneficiary.id,
+        hostSocietyId: context.event.society_id,
+        participatingSocietyIds: context.participatingSocietyIds,
+      });
+      if (routeError) return { status: 403, body: { error: routeError } };
     }
     if (context.keyed && context.keyed.guest_id !== guest.id) {
       return { status: 409, body: { error: "Idempotency key belongs to another payer" } };

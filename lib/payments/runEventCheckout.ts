@@ -99,6 +99,35 @@ export function stripeCheckoutAdapter(stripe: Stripe): CheckoutStripe {
   };
 }
 
+const SESSION_UNKNOWN_ERROR =
+  "Stripe checkout status is temporarily unavailable. Try again once the existing session can be confirmed.";
+
+/**
+ * A timeout, 5xx, or network failure is not proof the Checkout session is gone.
+ * Only Stripe's resource_missing (or HTTP 404) means the session is missing.
+ */
+export function classifyCheckoutRetrievalError(err: unknown): "missing" | "unknown" {
+  const error = err as { statusCode?: number; code?: string; message?: string };
+  const code = String(error?.code ?? "").toLowerCase();
+  const message = String(error?.message ?? "").toLowerCase();
+  if (code === "resource_missing" || error?.statusCode === 404 || message.includes("no such checkout.session")) {
+    return "missing";
+  }
+  return "unknown";
+}
+
+type SessionUsability = "open" | "paid" | "unusable" | "unknown";
+
+function sessionUsability(session: CheckoutSessionSnapshot): SessionUsability {
+  const status = (session.status ?? "").toLowerCase();
+  const payment = (session.payment_status ?? "").toLowerCase();
+  if (payment === "paid") return "paid";
+  if (status === "open") return "open";
+  if (status === "expired" || status === "canceled" || status === "cancelled") return "unusable";
+  if (status === "complete") return "unusable";
+  return "unknown";
+}
+
 function sessionParams(input: RunCheckoutInput, transactionId: string): Stripe.Checkout.SessionCreateParams {
   return {
     mode: "payment",
@@ -141,32 +170,43 @@ export async function runEventCheckout(input: RunCheckoutInput): Promise<CreateC
   let replacedSessionId: string | null = null;
 
   if (plan.action === "reuse" || plan.action === "supersede") {
-    let session: CheckoutSessionSnapshot | null = null;
+    let found: CheckoutSessionSnapshot | null = null;
+    let usability: SessionUsability | "missing" | "none" = "none";
     if (plan.sessionId) {
       try {
-        session = await input.stripe.retrieveSession(plan.sessionId);
+        found = await input.stripe.retrieveSession(plan.sessionId);
+        usability = sessionUsability(found);
       } catch (err) {
-        console.error("[checkout] retrieve session:", (err as Error).message);
-        session = null;
+        if (classifyCheckoutRetrievalError(err) === "missing") {
+          usability = "missing";
+        } else {
+          console.error("[checkout] retrieve session:", (err as Error).message);
+          return { status: 503, body: { error: SESSION_UNKNOWN_ERROR } };
+        }
       }
     }
-    if (session?.payment_status === "paid") return { status: 409, body: { error: "Already paid" } };
+    if (usability === "paid") return { status: 409, body: { error: "Already paid" } };
 
-    const openUrl = session?.status === "open" && session.url ? session.url : null;
-    const stripeAmountMismatch = session?.amount_total != null && session.amount_total !== input.amountPence;
+    const stripeAmountMismatch = found?.amount_total != null && found.amount_total !== input.amountPence;
     const supersede = plan.action === "supersede" || stripeAmountMismatch;
 
-    if (!supersede && openUrl && session) {
-      return {
-        status: 200,
-        body: { url: openUrl, sessionId: session.id, transactionId: plan.transactionId },
-      };
+    if (!supersede && usability === "open" && found) {
+      if (found.url) {
+        return {
+          status: 200,
+          body: { url: found.url, sessionId: found.id, transactionId: plan.transactionId },
+        };
+      }
+      return { status: 503, body: { error: "The existing checkout is still open. Try again shortly." } };
     }
 
     if (supersede) {
-      if (session?.status === "open") {
+      if (usability === "unknown") {
+        return { status: 503, body: { error: SESSION_UNKNOWN_ERROR } };
+      }
+      if (usability === "open" && found) {
         try {
-          await input.stripe.expireSession(session.id);
+          await input.stripe.expireSession(found.id);
         } catch (err) {
           console.error("[checkout] expire session:", (err as Error).message);
           return { status: 409, body: { error: "The previous checkout could not be replaced yet" } };
@@ -190,9 +230,11 @@ export async function runEventCheckout(input: RunCheckoutInput): Promise<CreateC
         stripeConnectAccountId: input.connectAccountId,
       });
       replacedSessionId = null;
-    } else {
+    } else if (usability === "unusable" || usability === "missing" || usability === "none") {
       transactionId = plan.transactionId;
       replacedSessionId = plan.sessionId;
+    } else {
+      return { status: 503, body: { error: SESSION_UNKNOWN_ERROR } };
     }
   }
 

@@ -58,6 +58,7 @@ import {
 import { resolveHomePlayingStatus } from "@/lib/home/homeNextEventPanelModel";
 import { resolveMemberCheckoutAmountPence } from "@/lib/payments/eventPricing";
 import { MemberEventPaymentSection } from "@/components/event-payments/MemberEventPaymentSection";
+import { assessMemberCheckoutEligibility } from "@/lib/payments/memberCheckoutEligibility";
 
 function formatEventDate(value?: string): string {
   if (!value?.trim()) return "Date TBD";
@@ -831,7 +832,21 @@ export default function EventOverviewScreen() {
                   societyId={societyId}
                   society={society as never}
                   amountPence={memberCheckoutPence}
-                  playing={myRegistration?.status === "in"}
+                  playing={
+                    effectiveMemberId
+                      ? assessMemberCheckoutEligibility({
+                          memberId: effectiveMemberId,
+                          registration: myRegistration
+                            ? {
+                                status: myRegistration.status,
+                                removed_from_event_at: myRegistration.removed_from_event_at ?? null,
+                              }
+                            : null,
+                          playerIds: event?.playerIds,
+                          rsvpDeadlineAt: event?.rsvpDeadlineAt ?? event?.rsvp_deadline_at ?? null,
+                        }).ok
+                      : false
+                  }
                   paid={myRegistration?.paid === true}
                 />
               ) : null}

@@ -22,7 +22,9 @@ import { handleRefundEventPayment } from "@/lib/payments/refundEventPayment";
 import { handleCreateEventCheckoutSession } from "@/lib/payments/createCheckoutSessionHandler";
 import { handleCreateGuestCheckoutSession } from "@/lib/payments/guestCheckout";
 import { planParticipantCheckout, stripeCheckoutIdempotencyKey } from "@/lib/payments/checkoutAttempt";
-import { runEventCheckout, type CheckoutStore } from "@/lib/payments/runEventCheckout";
+import { CheckoutConflictError, classifyCheckoutRetrievalError, runEventCheckout, type CheckoutStore } from "@/lib/payments/runEventCheckout";
+import { assessMemberCheckoutEligibility } from "@/lib/payments/memberCheckoutEligibility";
+import { paymentBeneficiaryError } from "@/lib/payments/paymentBeneficiary";
 import { assessGuestCheckoutClaim, hashGuestPaymentToken } from "@/lib/payments/guestPaymentToken";
 import { refundRecordStatus, verifyStripeRefund } from "@/lib/payments/webhookVerification";
 import {
@@ -101,6 +103,15 @@ describe("stripe payment foundation", () => {
       expect(sql).toContain("ON DELETE SET NULL");
       expect(sql).not.toContain("gsh.payment_write");
     }
+    const destinationSql = readFileSync(
+      path.join(root, "supabase/migrations/20261030260000_payment_destination_and_checkout_eligibility.sql"),
+      "utf8",
+    );
+    expect(destinationSql.includes("```")).toBe(false);
+    expect(destinationSql).not.toMatch(/[\u2014\u2018\u2019\u201c\u201d\u00a0]/);
+    expect(destinationSql).toContain("payment_beneficiary_unauthorised");
+    expect(destinationSql).toContain("guard_event_payment_beneficiary");
+    expect(destinationSql).not.toContain("GRANT UPDATE (payment_beneficiary_society_id)");
   });
 
   it("keeps online pay now off unless Connect is ready and the player is playing and unpaid", () => {
@@ -443,6 +454,7 @@ describe("stripe payment foundation", () => {
           stripe_connect_account_id: "acct_test",
           stripe_connect_charges_enabled: true,
         },
+        participatingSocietyIds: [societyId, beneficiaryId],
         rows: [] as { id: string; status: string; amount_pence: number; stripe_checkout_session_id: string | null; guest_id: string }[],
         keyed: null,
       }),
@@ -490,6 +502,7 @@ describe("stripe payment foundation", () => {
         stripe_connect_account_id: "acct_test",
         stripe_connect_charges_enabled: true,
       },
+      participatingSocietyIds: [societyId, beneficiaryId],
       rows: [] as { id: string; status: string; amount_pence: number; stripe_checkout_session_id: string | null; guest_id: string }[],
       keyed: null,
     };
@@ -631,5 +644,316 @@ describe("stripe payment foundation", () => {
     expect(webhook.status).toBe(200);
     expect(recorded.at(-1)).toEqual({ id: "re_pend", status: "webhook:succeeded" });
     expect(stripeEventDisposition("refund.updated")).toBe("refund");
+  });
+
+  it("lets confirmed and legacy players pay, and blocks unregistered, withdrawn, closed, and full events", () => {
+    const now = new Date("2026-06-01T12:00:00.000Z");
+    const closed = "2026-05-01T00:00:00.000Z";
+    expect(assessMemberCheckoutEligibility({
+      memberId,
+      registration: { status: "in", removed_from_event_at: null },
+      playerIds: [],
+      rsvpDeadlineAt: closed,
+      now,
+      attendingCount: 20,
+      maxAttendees: 20,
+    })).toEqual({ ok: true, via: "confirmed" });
+    expect(assessMemberCheckoutEligibility({
+      memberId,
+      registration: null,
+      playerIds: [memberId],
+      rsvpDeadlineAt: closed,
+      now,
+      attendingCount: 20,
+      maxAttendees: 20,
+    })).toEqual({ ok: true, via: "legacy_roster" });
+    expect(assessMemberCheckoutEligibility({
+      memberId,
+      registration: null,
+      playerIds: [],
+      eventEntryStatus: "confirmed",
+      now,
+    })).toEqual({ ok: true, via: "legacy_roster" });
+    expect(assessMemberCheckoutEligibility({
+      memberId,
+      registration: null,
+      playerIds: [],
+      now,
+    }).ok).toBe(false);
+    expect(assessMemberCheckoutEligibility({
+      memberId,
+      registration: { status: "out" },
+      playerIds: [memberId],
+      now,
+    })).toMatchObject({ ok: false, error: "RSVP as playing before paying" });
+    expect(assessMemberCheckoutEligibility({
+      memberId,
+      registration: { status: "in", removed_from_event_at: "2026-05-02T00:00:00.000Z" },
+      now,
+    })).toMatchObject({ ok: false });
+    expect(assessMemberCheckoutEligibility({
+      memberId,
+      registration: null,
+      playerIds: [],
+      rsvpDeadlineAt: closed,
+      now,
+      maxAttendees: 30,
+      attendingCount: 1,
+    })).toMatchObject({ error: "RSVP is closed" });
+    expect(assessMemberCheckoutEligibility({
+      memberId,
+      registration: null,
+      playerIds: [],
+      now,
+      maxAttendees: 4,
+      attendingCount: 4,
+    })).toMatchObject({ error: "This event is full" });
+    expect(assessMemberCheckoutEligibility({
+      memberId,
+      registration: null,
+      eventEntryStatus: "withdrawn",
+      playerIds: [],
+      now,
+    })).toMatchObject({ error: "RSVP as playing before paying" });
+    expect(paymentBeneficiaryError({
+      beneficiarySocietyId: beneficiaryId,
+      hostSocietyId: societyId,
+      participatingSocietyIds: [societyId],
+    })).toMatch(/not part of this event/i);
+    expect(paymentBeneficiaryError({
+      beneficiarySocietyId: beneficiaryId,
+      hostSocietyId: societyId,
+      participatingSocietyIds: [societyId, beneficiaryId],
+    })).toBeNull();
+  });
+
+  it("does not replace or cancel a live Checkout when Stripe cannot be reached", async () => {
+    expect(classifyCheckoutRetrievalError(Object.assign(new Error("timeout"), { code: "ETIMEDOUT" }))).toBe("unknown");
+    expect(classifyCheckoutRetrievalError(Object.assign(new Error("unavailable"), { statusCode: 503, type: "StripeAPIError" }))).toBe("unknown");
+    expect(classifyCheckoutRetrievalError(Object.assign(new Error("missing"), { statusCode: 404, code: "resource_missing" }))).toBe("missing");
+
+    const pending = {
+      id: txId,
+      status: "pending",
+      amount_pence: 4500,
+      stripe_checkout_session_id: "cs_live",
+      member_id: memberId,
+    };
+    const calls = { create: 0, expire: 0, cancel: 0, save: 0 };
+    const store: CheckoutStore = {
+      cancelPending: async () => {
+        calls.cancel += 1;
+      },
+      insertPending: async () => {
+        throw new Error("should not insert");
+      },
+      saveSessionId: async () => {
+        calls.save += 1;
+      },
+    };
+    const base = {
+      amountPence: 4500,
+      idempotencyKey: "client-key-1234",
+      payerType: "member" as const,
+      memberId,
+      guestId: null,
+      eventId,
+      societyId,
+      beneficiarySocietyId: beneficiaryId,
+      societyName: "M4",
+      beneficiarySocietyName: "M4",
+      eventName: "Spring",
+      eventDateSnapshot: null,
+      payerDisplayName: "Player",
+      connectAccountId: "acct_test",
+      successUrl: "https://app.example/success",
+      cancelUrl: "https://app.example/cancel",
+      rows: [pending],
+      keyed: null,
+      store,
+    };
+    const unknownStripe = {
+      retrieveSession: async () => {
+        throw Object.assign(new Error("connect ETIMEDOUT"), { code: "ETIMEDOUT" });
+      },
+      expireSession: async () => {
+        calls.expire += 1;
+      },
+      createSession: async () => {
+        calls.create += 1;
+        return { id: "cs_new", url: "https://pay.new" };
+      },
+    };
+    const [first, second] = await Promise.all([
+      runEventCheckout({ ...base, stripe: unknownStripe }),
+      runEventCheckout({ ...base, stripe: unknownStripe }),
+    ]);
+    expect(first.status).toBe(503);
+    expect(second.status).toBe(503);
+    expect(calls).toEqual({ create: 0, expire: 0, cancel: 0, save: 0 });
+
+    const apiError = await runEventCheckout({
+      ...base,
+      stripe: {
+        retrieveSession: async () => {
+          throw Object.assign(new Error("Internal Server Error"), { statusCode: 500, type: "StripeAPIError" });
+        },
+        expireSession: async () => {
+          calls.expire += 1;
+        },
+        createSession: async () => {
+          calls.create += 1;
+          return { id: "cs_new", url: "https://pay.new" };
+        },
+      },
+    });
+    expect(apiError.status).toBe(503);
+    expect(calls.create).toBe(0);
+    expect(calls.expire).toBe(0);
+
+    const replaced: string[] = [];
+    const missing = await runEventCheckout({
+      ...base,
+      stripe: {
+        retrieveSession: async () => {
+          throw Object.assign(new Error("No such checkout.session"), { statusCode: 404, code: "resource_missing" });
+        },
+        expireSession: async () => {
+          calls.expire += 1;
+        },
+        createSession: async (_params, key) => {
+          replaced.push(key);
+          return { id: "cs_after_missing", url: "https://pay.after" };
+        },
+      },
+    });
+    expect(missing.status).toBe(200);
+    expect(calls.expire).toBe(0);
+    expect(calls.cancel).toBe(0);
+    expect(replaced).toEqual([`checkout_${txId}_cs_live`]);
+
+    const canceled = await runEventCheckout({
+      ...base,
+      rows: [{ ...pending, stripe_checkout_session_id: "cs_canceled" }],
+      stripe: {
+        retrieveSession: async () => ({ id: "cs_canceled", url: null, status: "canceled", payment_status: "unpaid", amount_total: 4500 }),
+        expireSession: async () => {
+          calls.expire += 1;
+        },
+        createSession: async () => ({ id: "cs_after_cancel", url: "https://pay.cancel" }),
+      },
+    });
+    expect(canceled.status).toBe(200);
+    expect(calls.expire).toBe(0);
+    expect("sessionId" in canceled.body ? canceled.body.sessionId : "").toBe("cs_after_cancel");
+
+    let inserts = 0;
+    let creates = 0;
+    const concurrentStore: CheckoutStore = {
+      cancelPending: async () => undefined,
+      insertPending: async () => {
+        if (inserts > 0) throw new CheckoutConflictError("A payment is already in progress");
+        inserts += 1;
+        return txId;
+      },
+      saveSessionId: async () => undefined,
+    };
+    const concurrent = await Promise.allSettled([
+      runEventCheckout({
+        ...base,
+        rows: [],
+        store: concurrentStore,
+        stripe: {
+          retrieveSession: async () => {
+            throw new Error("should not retrieve");
+          },
+          expireSession: async () => undefined,
+          createSession: async () => {
+            creates += 1;
+            return { id: "cs_once", url: "https://pay.once" };
+          },
+        },
+      }),
+      runEventCheckout({
+        ...base,
+        rows: [],
+        store: concurrentStore,
+        stripe: {
+          retrieveSession: async () => {
+            throw new Error("should not retrieve");
+          },
+          expireSession: async () => undefined,
+          createSession: async () => {
+            creates += 1;
+            return { id: "cs_twice", url: "https://pay.twice" };
+          },
+        },
+      }),
+    ]);
+    expect(inserts).toBe(1);
+    expect(creates).toBe(1);
+    expect(concurrent.filter((row) => row.status === "fulfilled")).toHaveLength(1);
+    expect(concurrent.filter((row) => row.status === "rejected")).toHaveLength(1);
+
+    process.env.STRIPE_WEBHOOK_SECRET = "whsec_test_secret";
+    const appliedSessions: string[] = [];
+    const paidEvent = {
+      id: "evt_late",
+      type: "checkout.session.completed",
+      data: {
+        object: {
+          id: "cs_live",
+          mode: "payment",
+          status: "complete",
+          payment_status: "paid",
+          currency: "gbp",
+          amount_total: 4500,
+          payment_intent: "pi_test",
+          metadata: {
+            payment_transaction_id: txId,
+            event_id: eventId,
+            society_id: societyId,
+            beneficiary_society_id: beneficiaryId,
+            payer_type: "member",
+            member_id: memberId,
+            guest_id: "",
+          },
+        },
+      },
+    };
+    const webhookDeps = {
+      constructEvent: () => paidEvent as never,
+      loadTransaction: async () => pendingTx({ stripe_checkout_session_id: "cs_live" }),
+      loadBeneficiaryConnectAccount: async () => "acct_test",
+      retrievePaymentIntent: async () => intent,
+      applyPayment: async (payment: { sessionId: string }) => {
+        appliedSessions.push(payment.sessionId);
+      },
+      syncConnectAccount: async () => undefined,
+    };
+    const late = await handleStripeWebhook({ rawBody: "{}", signatureHeader: "t=1,v1=ok" }, webhookDeps);
+    const duplicate = await handleStripeWebhook({ rawBody: "{}", signatureHeader: "t=1,v1=ok" }, {
+      ...webhookDeps,
+      constructEvent: () => ({ ...paidEvent, id: "evt_late_2" }) as never,
+      applyPayment: async () => {
+        throw new Error("payment_already_applied");
+      },
+    });
+    const unpaid = await handleStripeWebhook({ rawBody: "{}", signatureHeader: "t=1,v1=ok" }, {
+      ...webhookDeps,
+      constructEvent: () => ({
+        ...paidEvent,
+        id: "evt_unpaid",
+        data: { object: { ...paidEvent.data.object, payment_status: "unpaid", status: "complete" } },
+      }) as never,
+      applyPayment: async () => {
+        appliedSessions.push("unpaid");
+      },
+    });
+    expect(late.status).toBe(200);
+    expect(appliedSessions).toEqual(["cs_live"]);
+    expect(duplicate.status).toBe(409);
+    expect(unpaid.status).toBe(422);
+    expect(stripeEventDisposition("checkout.session.expired")).toBe("ignore");
   });
 });

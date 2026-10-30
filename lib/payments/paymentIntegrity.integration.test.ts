@@ -19,6 +19,10 @@ const guestInviteSql = readFileSync(
   path.join(root, "supabase/migrations/20261030250000_guest_payment_invitations.sql"),
   "utf8",
 );
+const destinationSql = readFileSync(
+  path.join(root, "supabase/migrations/20261030260000_payment_destination_and_checkout_eligibility.sql"),
+  "utf8",
+);
 
 const M4 = "10000000-0000-4000-8000-000000000001";
 const JOINT = "10000000-0000-4000-8000-000000000002";
@@ -881,5 +885,209 @@ it("issues a hashed guest invitation and does not let authenticated read it", as
     expect(guestInviteSql).not.toContain("DROP FUNCTION IF EXISTS public.submit_public_event_rsvp_guest");
   } finally {
     await guestDb.end();
+  }
+}, 60000);
+
+it("stops unauthorised users redirecting a joint payment and blocks ineligible checkout targets", async () => {
+  const db = await recreate("gsh_pay_destination_d748");
+  const OUTSIDER = "10000000-0000-4000-8000-000000000099";
+  const SECRETARY_USER = "10000000-0000-4000-8000-000000000016";
+  const SECRETARY_MEMBER = "10000000-0000-4000-8000-000000000030";
+  const LEGACY = "10000000-0000-4000-8000-000000000028";
+  const UNREGISTERED = "10000000-0000-4000-8000-000000000029";
+  try {
+    await db.query(fixtureSql);
+    await db.query(`ALTER TABLE public.events ADD COLUMN player_ids uuid[] DEFAULT '{}'`);
+    await db.query(foundationSql);
+    await db.query(repairSql);
+    await db.query(guestInviteSql);
+    await db.query(destinationSql);
+    await db.query(`GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role`);
+    await db.query(`GRANT SELECT ON public.event_societies, public.events, public.members TO authenticated`);
+    await db.query(`GRANT UPDATE ON public.events TO authenticated`);
+    await db.query(`GRANT DELETE ON public.event_societies TO authenticated`);
+    await db.query(
+      `INSERT INTO public.societies (id, name) VALUES ($1, 'M4'), ($2, 'ZGS'), ($3, 'Outsider')`,
+      [M4, JOINT, OUTSIDER],
+    );
+    await db.query(
+      `UPDATE public.societies SET stripe_connect_account_id = 'acct_m4', stripe_connect_charges_enabled = true WHERE id = $1`,
+      [M4],
+    );
+    await db.query(
+      `INSERT INTO public.members (id, society_id, user_id, role, display_name) VALUES
+        ($1, $2, $3, 'CAPTAIN', 'Captain'),
+        ($4, $2, $5, 'TREASURER', 'Treasurer'),
+        ($6, $2, $7, 'SECRETARY', 'Secretary'),
+        ($8, $2, $9, 'HANDICAPPER', 'Handicapper'),
+        ($10, $2, $11, 'MEMBER', 'Playing Member'),
+        ($12, $2, $11, 'MEMBER', 'Legacy Roster'),
+        ($13, $2, $11, 'MEMBER', 'Unregistered'),
+        ($14, $2, NULL, 'MEMBER', 'Withdrawn'),
+        ($15, $16, $17, 'TREASURER', 'ZGS Treasurer'),
+        ($18, $16, $17, 'MEMBER', 'ZGS Player')`,
+      [
+        "10000000-0000-4000-8000-000000000027", M4, CAPTAIN_USER,
+        TREASURER_MEMBER, TREASURER_USER,
+        SECRETARY_MEMBER, SECRETARY_USER,
+        HANDICAPPER_MEMBER, HANDICAPPER_USER,
+        PLAYER, PLAYER_USER,
+        LEGACY,
+        UNREGISTERED,
+        WITHDRAWN,
+        JOINT_TREASURER, JOINT, JOINT_TREASURER_USER,
+        JOINT_PLAYER,
+      ],
+    );
+    await db.query(
+      `INSERT INTO public.events (id, society_id, name, date, player_ids, member_entry_fee_pence, joint_participant_entry_fee_pence)
+       VALUES ($1, $2, 'M4 v ZGS', '2026-06-01', $3, 2500, 2500)`,
+      [EVENT, M4, [LEGACY]],
+    );
+    await db.query(
+      `INSERT INTO public.event_societies (event_id, society_id, role) VALUES ($1, $2, 'host'), ($1, $3, 'participant')`,
+      [EVENT, M4, JOINT],
+    );
+    await db.query(
+      `INSERT INTO public.event_registrations (society_id, event_id, member_id, status) VALUES ($1, $2, $3, 'in'), ($1, $2, $4, 'out')`,
+      [M4, EVENT, PLAYER, WITHDRAWN],
+    );
+    await db.query(`UPDATE public.event_registrations SET removed_from_event_at = now() WHERE member_id = $1`, [WITHDRAWN]);
+
+    const redirect = `UPDATE public.event_societies SET payment_beneficiary_society_id = $1 WHERE event_id = $2 AND society_id = $3`;
+    await expectUserError(db, SECRETARY_USER, redirect, [OUTSIDER, EVENT, M4], /permission denied|payment_beneficiary_unauthorised/);
+    await expectUserError(db, HANDICAPPER_USER, redirect, [JOINT, EVENT, M4], /permission denied|payment_beneficiary_unauthorised/);
+    await expectUserError(db, PLAYER_USER, redirect, [OUTSIDER, EVENT, M4], /permission denied|payment_beneficiary_unauthorised/);
+    await expectUserError(db, CAPTAIN_USER, redirect, [JOINT, EVENT, M4], /permission denied/);
+    await expectRoleError(db, "service_role", redirect, [OUTSIDER, EVENT, M4], /payment_beneficiary_unauthorised/);
+
+    await asUser(db, SECRETARY_USER, `UPDATE public.event_societies SET role = 'host' WHERE event_id = $1 AND society_id = $2`, [EVENT, M4]);
+    await asUser(db, SECRETARY_USER, `UPDATE public.events SET name = 'Renamed by secretary' WHERE id = $1`, [EVENT]);
+    const unchanged = await db.query(
+      `SELECT payment_beneficiary_society_id FROM public.event_societies WHERE event_id = $1 AND society_id = $2`,
+      [EVENT, M4],
+    );
+    expect(unchanged.rows[0].payment_beneficiary_society_id).toBeNull();
+
+    await expectUserError(
+      db,
+      CAPTAIN_USER,
+      `SELECT public.set_event_payment_beneficiary($1, $2, $3)`,
+      [EVENT, M4, OUTSIDER],
+      /payment_beneficiary_not_on_event/,
+    );
+    await expectUserError(
+      db,
+      SECRETARY_USER,
+      `SELECT public.set_event_payment_beneficiary($1, $2, $3)`,
+      [EVENT, M4, JOINT],
+      /payment_beneficiary_unauthorised/,
+    );
+    await expectUserError(
+      db,
+      HANDICAPPER_USER,
+      `SELECT public.set_event_payment_beneficiary($1, $2, $3)`,
+      [EVENT, M4, JOINT],
+      /payment_beneficiary_unauthorised/,
+    );
+    await expectUserError(
+      db,
+      PLAYER_USER,
+      `SELECT public.set_event_payment_beneficiary($1, $2, $3)`,
+      [EVENT, M4, JOINT],
+      /payment_beneficiary_unauthorised/,
+    );
+
+    await asUser(db, CAPTAIN_USER, `SELECT public.set_event_payment_beneficiary($1, $2, $3)`, [EVENT, M4, JOINT]);
+    await asUser(db, TREASURER_USER, `SELECT public.set_event_payment_beneficiary($1, $2, $3)`, [EVENT, JOINT, M4]);
+    const routed = await db.query(
+      `SELECT society_id, payment_beneficiary_society_id FROM public.event_societies WHERE event_id = $1 ORDER BY society_id`,
+      [EVENT],
+    );
+    expect(routed.rows).toEqual([
+      { society_id: M4, payment_beneficiary_society_id: JOINT },
+      { society_id: JOINT, payment_beneficiary_society_id: M4 },
+    ]);
+
+    await asUser(db, SECRETARY_USER, `DELETE FROM public.event_societies WHERE event_id = $1 AND society_id = $2`, [EVENT, M4]);
+    await asUser(
+      db,
+      SECRETARY_USER,
+      `INSERT INTO public.event_societies (event_id, society_id, role) VALUES ($1, $2, 'host')`,
+      [EVENT, M4],
+    );
+    const restored = await db.query(
+      `SELECT payment_beneficiary_society_id FROM public.event_societies WHERE event_id = $1 AND society_id = $2`,
+      [EVENT, M4],
+    );
+    expect(restored.rows[0].payment_beneficiary_society_id).toBe(JOINT);
+
+    await asUser(
+      db,
+      JOINT_TREASURER_USER,
+      `SELECT public.mark_event_paid($1, $2, $3, true, 2500, false)`,
+      [EVENT, JOINT, JOINT_PLAYER],
+    );
+    const manual = await db.query(
+      `SELECT paid, payment_method, status, amount_paid_pence FROM public.event_registrations WHERE member_id = $1`,
+      [JOINT_PLAYER],
+    );
+    expect(manual.rows[0]).toMatchObject({ paid: true, payment_method: "manual", status: "in", amount_paid_pence: 2500 });
+
+    async function pendingTx(id: string, memberId: string, key: string) {
+      await db.query(
+        `INSERT INTO public.payment_transactions (
+          id, society_id, beneficiary_society_id, event_id, payer_type, member_id,
+          society_name, beneficiary_society_name, event_name, payer_display_name,
+          amount_pence, currency, status, payment_method, idempotency_key, stripe_connect_account_id
+        ) VALUES ($1, $2, $2, $3, 'member', $4, 'M4', 'M4', 'M4 v ZGS', 'Player', 2500, 'gbp', 'pending', 'stripe', $5, 'acct_m4')`,
+        [id, M4, EVENT, memberId, key],
+      );
+    }
+    const TX_UNREG = "10000000-0000-4000-8000-000000000091";
+    const TX_LEGACY = "10000000-0000-4000-8000-000000000092";
+    const TX_OUT = "10000000-0000-4000-8000-000000000093";
+    await pendingTx(TX_UNREG, UNREGISTERED, "unreg");
+    await pendingTx(TX_LEGACY, LEGACY, "legacy");
+    await pendingTx(TX_OUT, WITHDRAWN, "withdrawn-pay");
+    const apply = `SELECT public.apply_event_stripe_payment($1, $2, $3, $4, 2500, 'gbp', 'acct_m4', $5, $6, NULL)`;
+    await asRole(db, "service_role", apply, [TX_UNREG, "evt_unreg", "cs_unreg", "pi_unreg", EVENT, M4]);
+    await asRole(db, "service_role", apply, [TX_LEGACY, "evt_legacy", "cs_legacy", "pi_legacy", EVENT, M4]);
+    await asRole(db, "service_role", apply, [TX_OUT, "evt_out", "cs_out", "pi_out", EVENT, M4]);
+    await asRole(db, "service_role", apply, [TX_LEGACY, "evt_legacy", "cs_legacy", "pi_legacy", EVENT, M4]);
+
+    const unreg = await db.query(
+      `SELECT t.resolution_required, t.status,
+              (SELECT count(*)::int FROM public.event_registrations r WHERE r.member_id = $2) AS regs
+         FROM public.payment_transactions t WHERE t.id = $1`,
+      [TX_UNREG, UNREGISTERED],
+    );
+    expect(unreg.rows[0]).toMatchObject({ resolution_required: true, status: "succeeded", regs: 0 });
+    const legacy = await db.query(
+      `SELECT r.status, r.paid, r.payment_method, t.resolution_required
+         FROM public.event_registrations r
+         JOIN public.payment_transactions t ON t.id = $2
+        WHERE r.member_id = $1`,
+      [LEGACY, TX_LEGACY],
+    );
+    expect(legacy.rows[0]).toMatchObject({ status: "in", paid: true, payment_method: "stripe", resolution_required: false });
+    const withdrawn = await db.query(
+      `SELECT r.status, r.paid, r.removed_from_event_at IS NOT NULL AS removed, r.payment_resolution_required, t.resolution_required
+         FROM public.event_registrations r
+         JOIN public.payment_transactions t ON t.id = $2
+        WHERE r.member_id = $1`,
+      [WITHDRAWN, TX_OUT],
+    );
+    expect(withdrawn.rows[0]).toMatchObject({
+      status: "out",
+      paid: true,
+      removed: true,
+      payment_resolution_required: true,
+      resolution_required: true,
+    });
+    const ledgerCount = await db.query(`SELECT count(*)::int AS n FROM public.payment_transactions WHERE member_id = $1`, [LEGACY]);
+    expect(ledgerCount.rows[0].n).toBe(1);
+  } finally {
+    await db.end();
   }
 }, 60000);

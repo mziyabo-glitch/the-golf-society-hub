@@ -15,6 +15,8 @@ import {
   serverAppBaseUrl,
   type OpenPaymentRow,
 } from "@/lib/payments/checkoutAttempt";
+import { assessMemberCheckoutEligibility } from "@/lib/payments/memberCheckoutEligibility";
+import { paymentBeneficiaryError } from "@/lib/payments/paymentBeneficiary";
 import {
   CheckoutConflictError,
   runEventCheckout,
@@ -37,21 +39,14 @@ function getUserSupabase(accessToken: string) {
   });
 }
 
-async function resolveBeneficiarySocietyId(
-  admin: ReturnType<typeof getServiceRoleSupabase>,
-  eventId: string,
-  registrationSocietyId: string,
+function chosenBeneficiarySocietyId(
+  links: { society_id?: string | null; payment_beneficiary_society_id?: string | null }[],
+  payerSocietyId: string,
   hostSocietyId: string,
-): Promise<string> {
-  const { data: link } = await admin
-    .from("event_societies")
-    .select("payment_beneficiary_society_id")
-    .eq("event_id", eventId)
-    .eq("society_id", registrationSocietyId)
-    .maybeSingle();
-  const beneficiary = link?.payment_beneficiary_society_id as string | null | undefined;
-  if (beneficiary) return beneficiary;
-  return hostSocietyId;
+): string {
+  const own = links.find((link) => String(link.society_id) === payerSocietyId);
+  const chosen = own?.payment_beneficiary_society_id ? String(own.payment_beneficiary_society_id) : hostSocietyId;
+  return chosen;
 }
 
 const paymentSelect =
@@ -135,22 +130,19 @@ function buildDefaultMemberCheckoutDeps(stripeKey: string): MemberCheckoutDeps {
 
       const { data: event, error: eventErr } = await admin
         .from("events")
-        .select("id, society_id, name, date, member_entry_fee_pence, guest_entry_fee_pence, joint_participant_entry_fee_pence")
+        .select("id, society_id, name, date, member_entry_fee_pence, guest_entry_fee_pence, joint_participant_entry_fee_pence, rsvp_deadline_at, player_ids")
         .eq("id", body.eventId)
         .maybeSingle();
       if (eventErr || !event) return { ok: false, result: { status: 404, body: { error: "Event not found" } } };
 
       const hostSocietyId = String(event.society_id);
-      const eventAllowed =
-        body.societyId === hostSocietyId ||
-        (
-          await admin
-            .from("event_societies")
-            .select("society_id")
-            .eq("event_id", body.eventId)
-            .eq("society_id", body.societyId)
-            .maybeSingle()
-        ).data != null;
+      const { data: links, error: linkErr } = await admin
+        .from("event_societies")
+        .select("society_id, payment_beneficiary_society_id")
+        .eq("event_id", body.eventId);
+      if (linkErr) throw new Error(linkErr.message);
+      const participatingSocietyIds = (links ?? []).map((link) => String(link.society_id));
+      const eventAllowed = body.societyId === hostSocietyId || participatingSocietyIds.includes(body.societyId);
       if (!eventAllowed) return { ok: false, result: { status: 403, body: { error: "Society is not part of this event" } } };
 
       const { data: society, error: socErr } = await admin
@@ -163,7 +155,13 @@ function buildDefaultMemberCheckoutDeps(stripeKey: string): MemberCheckoutDeps {
       const societyReadyErr = validateSocietyPaymentsReady(society);
       if (societyReadyErr) return { ok: false, result: { status: 403, body: { error: societyReadyErr } } };
 
-      const beneficiarySocietyId = await resolveBeneficiarySocietyId(admin, body.eventId, body.societyId, hostSocietyId);
+      const beneficiarySocietyId = chosenBeneficiarySocietyId(links ?? [], body.societyId, hostSocietyId);
+      const beneficiaryRouteError = paymentBeneficiaryError({
+        beneficiarySocietyId,
+        hostSocietyId,
+        participatingSocietyIds,
+      });
+      if (beneficiaryRouteError) return { ok: false, result: { status: 403, body: { error: beneficiaryRouteError } } };
       const { data: beneficiary } = await admin
         .from("societies")
         .select("id, name, stripe_connect_account_id, stripe_connect_charges_enabled")
@@ -192,9 +190,32 @@ function buildDefaultMemberCheckoutDeps(stripeKey: string): MemberCheckoutDeps {
         .eq("member_id", memberId)
         .maybeSingle();
       if (reg?.paid) return { ok: false, result: { status: 409, body: { error: "Already paid" } } };
-      if (reg?.removed_from_event_at || (reg && reg.status !== "in")) {
-        return { ok: false, result: { status: 400, body: { error: "RSVP as playing before paying" } } };
+      const entryResult = await admin
+        .from("event_entries")
+        .select("status")
+        .eq("event_id", body.eventId)
+        .eq("player_id", memberId)
+        .maybeSingle();
+      if (
+        entryResult.error &&
+        !/event_entries|schema cache|does not exist|could not find/i.test(entryResult.error.message)
+      ) {
+        throw new Error(entryResult.error.message);
       }
+      const playerIds = Array.isArray(event.player_ids) ? (event.player_ids as string[]) : [];
+      const eligibility = assessMemberCheckoutEligibility({
+        memberId,
+        registration: reg
+          ? {
+              status: String(reg.status),
+              removed_from_event_at: (reg.removed_from_event_at as string | null) ?? null,
+            }
+          : null,
+        playerIds,
+        eventEntryStatus: entryResult.error ? null : ((entryResult.data?.status as string | null) ?? null),
+        rsvpDeadlineAt: (event.rsvp_deadline_at as string | null) ?? null,
+      });
+      if (!eligibility.ok) return { ok: false, result: { status: eligibility.status, body: { error: eligibility.error } } };
       if (amountPence == null || amountPence <= 0) {
         return { ok: false, result: { status: 400, body: { error: "Event fee is not configured for online payment" } } };
       }
