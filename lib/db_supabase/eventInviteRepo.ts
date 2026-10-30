@@ -109,12 +109,58 @@ export async function fetchPublicEventInviteSummary(
   };
 }
 
-export async function submitPublicGuestRsvp(eventId: string, name: string): Promise<void> {
-  const { error } = await supabase.rpc("submit_public_event_rsvp_guest", {
+export type PublicGuestRsvpResult = {
+  guestId: string | null;
+  societyId: string | null;
+  paymentToken: string | null;
+  amountPence: number | null;
+  onlinePaymentsEnabled: boolean;
+};
+
+function missingPaymentInviteRpc(error: { code?: string; message?: string }): boolean {
+  const message = error.message ?? "";
+  return (
+    error.code === "PGRST202" ||
+    (/submit_public_guest_rsvp_with_payment_token/i.test(message) &&
+      /does not exist|schema cache|could not find/i.test(message))
+  );
+}
+
+export async function submitPublicGuestRsvp(eventId: string, name: string): Promise<PublicGuestRsvpResult> {
+  const trimmed = name.trim();
+  const invited = await supabase.rpc("submit_public_guest_rsvp_with_payment_token", {
     p_event_id: eventId,
-    p_name: name.trim(),
+    p_name: trimmed,
   });
-  if (error) throw new Error(mapPublicRsvpError(error.message || ""));
+  if (invited.error && missingPaymentInviteRpc(invited.error)) {
+    const { error } = await supabase.rpc("submit_public_event_rsvp_guest", {
+      p_event_id: eventId,
+      p_name: trimmed,
+    });
+    if (error) throw new Error(mapPublicRsvpError(error.message || ""));
+    return {
+      guestId: null,
+      societyId: null,
+      paymentToken: null,
+      amountPence: null,
+      onlinePaymentsEnabled: false,
+    };
+  }
+  if (invited.error) throw new Error(mapPublicRsvpError(invited.error.message || ""));
+  const row = firstRpcRow<{
+    guest_id?: string | null;
+    society_id?: string | null;
+    payment_token?: string | null;
+    amount_pence?: number | null;
+    online_payments_enabled?: boolean | null;
+  }>(invited.data);
+  return {
+    guestId: row?.guest_id ? String(row.guest_id) : null,
+    societyId: row?.society_id ? String(row.society_id) : null,
+    paymentToken: row?.payment_token ? String(row.payment_token) : null,
+    amountPence: row?.amount_pence != null ? Number(row.amount_pence) : null,
+    onlinePaymentsEnabled: row?.online_payments_enabled === true,
+  };
 }
 
 /**

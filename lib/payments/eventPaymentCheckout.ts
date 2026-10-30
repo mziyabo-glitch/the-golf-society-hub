@@ -41,25 +41,26 @@ export async function startMemberEventCheckout(opts: {
   return { url: body.url };
 }
 
-export async function startGuestEventCheckout(opts: {
+export async function startGuestInvitationCheckout(opts: {
+  paymentToken: string;
   eventId: string;
   societyId: string;
   guestId: string;
+  amountPence: number;
 }): Promise<{ url: string }> {
-  const token = await getAccessToken();
   const idempotencyKey = Crypto.randomUUID();
-  const res = await fetch(`${checkoutApiBase()}/api/stripe/create-checkout-session`, {
+  const res = await fetch(`${checkoutApiBase()}/api/stripe/guest-checkout`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${token}`,
       "Idempotency-Key": idempotencyKey,
     },
     body: JSON.stringify({
+      paymentToken: opts.paymentToken,
       eventId: opts.eventId,
       societyId: opts.societyId,
-      payerType: "guest",
       guestId: opts.guestId,
+      amountPence: opts.amountPence,
     }),
   });
   const body = (await res.json()) as { url?: string; error?: string };
