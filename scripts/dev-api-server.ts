@@ -115,9 +115,27 @@ const routes: Record<string, (url: URL, pathname?: string) => Promise<{ status: 
 
 const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "GET, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type",
+  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+  "Access-Control-Allow-Headers": "Content-Type, Authorization, Idempotency-Key, Stripe-Signature",
 };
+
+async function readJsonBody(req: http.IncomingMessage): Promise<unknown> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of req) {
+    chunks.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
+  }
+  const text = Buffer.concat(chunks).toString("utf8");
+  if (!text.trim()) return {};
+  return JSON.parse(text) as unknown;
+}
+
+async function readRawBody(req: http.IncomingMessage): Promise<string> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of req) {
+    chunks.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
+  }
+  return Buffer.concat(chunks).toString("utf8");
+}
 
 const server = http.createServer(async (req, res) => {
   if (req.method === "OPTIONS") {
@@ -128,6 +146,47 @@ const server = http.createServer(async (req, res) => {
 
   const url = new URL(req.url || "/", `http://localhost:${PORT}`);
   const pathname = url.pathname;
+
+  if (pathname === "/api/stripe/create-checkout-session" && req.method === "POST") {
+    try {
+      const { handleCreateEventCheckoutSession } = await import(
+        "../lib/payments/createCheckoutSessionHandler"
+      );
+      const rawBody = await readJsonBody(req);
+      const result = await handleCreateEventCheckoutSession({
+        authorizationHeader: req.headers.authorization,
+        idempotencyKey: Array.isArray(req.headers["idempotency-key"])
+          ? req.headers["idempotency-key"][0]
+          : req.headers["idempotency-key"],
+        rawBody,
+      });
+      res.writeHead(result.status, { ...corsHeaders, "Content-Type": "application/json" });
+      res.end(JSON.stringify(result.body));
+    } catch (err) {
+      console.error("[dev-api-server] Stripe checkout error:", err);
+      res.writeHead(500, { ...corsHeaders, "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "Checkout failed" }));
+    }
+    return;
+  }
+
+  if (pathname === "/api/stripe/webhook" && req.method === "POST") {
+    try {
+      const { handleStripeWebhook } = await import("../lib/payments/stripeWebhookHandler");
+      const rawBody = await readRawBody(req);
+      const sig = Array.isArray(req.headers["stripe-signature"])
+        ? req.headers["stripe-signature"][0]
+        : req.headers["stripe-signature"];
+      const result = await handleStripeWebhook({ rawBody, signatureHeader: sig });
+      res.writeHead(result.status, { ...corsHeaders, "Content-Type": "application/json" });
+      res.end(JSON.stringify(result.body));
+    } catch (err) {
+      console.error("[dev-api-server] Stripe webhook error:", err);
+      res.writeHead(500, { ...corsHeaders, "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "Webhook failed" }));
+    }
+    return;
+  }
 
   if (pathname.startsWith("/api/calendar/") && pathname.endsWith(".ics")) {
     if (req.method !== "GET") {

@@ -63,6 +63,10 @@ import {
   type FinanceEntryType,
   type FinanceSummary,
 } from "@/lib/db_supabase/financeRepo";
+import {
+  getRecentPaymentTransactionsForSociety,
+  type PaymentTransactionRow,
+} from "@/lib/db_supabase/paymentTransactionRepo";
 
 type EntryWithBalance = FinanceEntryDoc & { runningBalancePence: number };
 
@@ -103,6 +107,7 @@ export default function TreasurerScreen() {
   const [summary, setSummary] = useState<FinanceSummary | null>(null);
   const [entriesWithBalance, setEntriesWithBalance] = useState<EntryWithBalance[]>([]);
   const [loading, setLoading] = useState(true);
+  const [onlinePayments, setOnlinePayments] = useState<PaymentTransactionRow[]>([]);
 
   // Modal state
   const [showOpeningBalanceModal, setShowOpeningBalanceModal] = useState(false);
@@ -142,6 +147,8 @@ export default function TreasurerScreen() {
 
       const withBalances = calculateRunningBalances(data.entries, openingBalance);
       setEntriesWithBalance(withBalances);
+      const txRows = await getRecentPaymentTransactionsForSociety(societyId, 25);
+      setOnlinePayments(txRows);
     } catch (err: any) {
       console.error("[Treasurer] loadData error:", err);
       Alert.alert("Error", err?.message || "Failed to load data.");
@@ -470,6 +477,39 @@ export default function TreasurerScreen() {
             valueColor={balanceVariant === "success" ? "success" : balanceVariant === "error" ? "danger" : "muted"}
           />
         </View>
+
+        {onlinePayments.length > 0 ? (
+          <AppCard style={{ marginBottom: spacing.md }}>
+            <AppText variant="heading" style={{ marginBottom: spacing.sm }}>
+              Online event payments
+            </AppText>
+            <AppText variant="small" color="secondary" style={{ marginBottom: spacing.sm }}>
+              Stripe Checkout (test mode) — reconcile against your bank / Connect payouts.
+            </AppText>
+            {onlinePayments.slice(0, 8).map((tx) => (
+              <View
+                key={tx.id}
+                style={{
+                  flexDirection: "row",
+                  justifyContent: "space-between",
+                  paddingVertical: spacing.xs,
+                  borderBottomWidth: StyleSheet.hairlineWidth,
+                  borderBottomColor: colors.borderLight,
+                }}
+              >
+                <View style={{ flex: 1, minWidth: 0, paddingRight: spacing.sm }}>
+                  <AppText variant="captionBold" numberOfLines={1}>
+                    {tx.payer_type === "guest" ? "Guest" : "Member"} · {tx.status}
+                  </AppText>
+                  <AppText variant="caption" color="muted" numberOfLines={1}>
+                    {new Date(tx.completed_at ?? tx.created_at).toLocaleDateString("en-GB")}
+                  </AppText>
+                </View>
+                <AppText variant="bodyBold">{formatPenceToGBP(tx.amount_pence)}</AppText>
+              </View>
+            ))}
+          </AppCard>
+        ) : null}
 
         {/* Add Entry Button */}
         <View style={styles.sectionHeader}>

@@ -41,6 +41,9 @@ describe("eventDetailScreenModel", () => {
         "£45",
       ),
     ).toBe(true);
+    expect(
+      shouldShowMemberPaymentStatus({ status: "in", paid: false } as never, null, 4500),
+    ).toBe(true);
     expect(shouldShowMemberPaymentStatus({ status: "out", paid: false } as never, "£45")).toBe(false);
   });
 });

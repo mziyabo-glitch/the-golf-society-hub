@@ -31,6 +31,9 @@ export type EventRegistration = {
   amount_paid_pence: number;
   paid_at: string | null;
   marked_by_member_id: string | null;
+  payment_method?: "stripe" | "manual" | "bank_transfer" | null;
+  payment_transaction_id?: string | null;
+  stripe_checkout_session_id?: string | null;
   created_at: string;
   updated_at: string;
   /** ManCo soft-remove: row kept for audit, hidden from operational UIs when set. */

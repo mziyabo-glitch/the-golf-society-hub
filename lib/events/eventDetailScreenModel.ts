@@ -1,5 +1,6 @@
 import type { EventRegistration } from "@/lib/db_supabase/eventRegistrationRepo";
-import { hasBillableEventFee, shouldShowHomePaymentRow } from "@/lib/home/homeNextEventPanelModel";
+import { shouldShowHomePaymentRow } from "@/lib/home/homeNextEventPanelModel";
+import { shouldShowEventPaymentRow } from "@/lib/payments/eventPricing";
 
 export type EventDetailQuickActionId =
   | "players"
@@ -64,7 +65,18 @@ export function splitQuickActionsForAudience(
 export function shouldShowMemberPaymentStatus(
   myRegistration: EventRegistration | null | undefined,
   entryFeeDisplay: string | null | undefined,
+  memberFeePence?: number | null,
 ): boolean {
+  if (
+    shouldShowEventPaymentRow({
+      playing: myRegistration?.status === "in",
+      paid: myRegistration?.paid === true,
+      entryFeeDisplay,
+      memberFeePence,
+    })
+  ) {
+    return true;
+  }
   return shouldShowHomePaymentRow(myRegistration ?? null, entryFeeDisplay);
 }
 

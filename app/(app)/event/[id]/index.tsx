@@ -56,6 +56,8 @@ import {
   type EventDetailQuickActionId,
 } from "@/lib/events/eventDetailScreenModel";
 import { resolveHomePlayingStatus } from "@/lib/home/homeNextEventPanelModel";
+import { resolveMemberCheckoutAmountPence } from "@/lib/payments/eventPricing";
+import { MemberEventPaymentSection } from "@/components/event-payments/MemberEventPaymentSection";
 
 function formatEventDate(value?: string): string {
   if (!value?.trim()) return "Date TBD";
@@ -546,6 +548,13 @@ export default function EventOverviewScreen() {
   );
   const showAdminTools = canManageEvent;
   const entryFeeDisplay = event?.entryFeeDisplay ?? (event as { entry_fee_display?: string })?.entry_fee_display;
+  const memberCheckoutPence = useMemo(() => {
+    if (!event || !societyId) return null;
+    const hostId = event.society_id ?? (event as { societyId?: string }).societyId;
+    return resolveMemberCheckoutAmountPence(event, {
+      isJointParticipantSociety: Boolean(hostId && societyId !== hostId),
+    });
+  }, [event, societyId]);
 
   const quickActionsPlan = useMemo(
     () =>
@@ -747,7 +756,7 @@ export default function EventOverviewScreen() {
           </AppText>
           <View style={{ flexDirection: "row", flexWrap: "wrap", gap: spacing.sm, marginBottom: spacing.sm }}>
             <StatusBadge label={myPlayingStatus.label} tone={myPlayingStatus.tone === "success" ? "success" : myPlayingStatus.tone === "neutral" ? "neutral" : "warning"} />
-            {shouldShowMemberPaymentStatus(myRegistration, entryFeeDisplay) ? (
+            {shouldShowMemberPaymentStatus(myRegistration, entryFeeDisplay, memberCheckoutPence) ? (
               <StatusBadge
                 label={myRegistration?.paid ? "Paid" : "Fee outstanding"}
                 tone={myRegistration?.paid ? "success" : "warning"}
@@ -815,6 +824,16 @@ export default function EventOverviewScreen() {
               </View>
               {rsvpError ? (
                 <InlineNotice variant="error" message={rsvpError} style={{ marginTop: spacing.sm }} />
+              ) : null}
+              {societyId && event?.id ? (
+                <MemberEventPaymentSection
+                  eventId={event.id}
+                  societyId={societyId}
+                  society={society as never}
+                  amountPence={memberCheckoutPence}
+                  playing={myRegistration?.status === "in"}
+                  paid={myRegistration?.paid === true}
+                />
               ) : null}
             </>
           ) : null}

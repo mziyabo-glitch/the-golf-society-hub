@@ -24,6 +24,10 @@ export type SocietyDoc = {
   seats_total?: number;
   seats_used?: number;
   licence_expires_at?: string | null;
+  online_payments_enabled?: boolean;
+  stripe_connect_account_id?: string | null;
+  stripe_connect_charges_enabled?: boolean;
+  event_bank_transfer_instructions?: string | null;
 };
 
 type SocietyInput = {
