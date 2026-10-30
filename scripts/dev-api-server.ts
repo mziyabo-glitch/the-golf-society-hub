@@ -147,6 +147,26 @@ const server = http.createServer(async (req, res) => {
   const url = new URL(req.url || "/", `http://localhost:${PORT}`);
   const pathname = url.pathname;
 
+  if (pathname === "/api/stripe/guest-checkout" && req.method === "POST") {
+    try {
+      const { handleCreateGuestCheckoutSession } = await import("../lib/payments/guestCheckout");
+      const rawBody = await readJsonBody(req);
+      const result = await handleCreateGuestCheckoutSession({
+        idempotencyKey: Array.isArray(req.headers["idempotency-key"])
+          ? req.headers["idempotency-key"][0]
+          : req.headers["idempotency-key"],
+        rawBody,
+      });
+      res.writeHead(result.status, { ...corsHeaders, "Content-Type": "application/json" });
+      res.end(JSON.stringify(result.body));
+    } catch (err) {
+      console.error("[dev-api-server] Stripe guest checkout error:", err);
+      res.writeHead(500, { ...corsHeaders, "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "Checkout failed" }));
+    }
+    return;
+  }
+
   if (pathname === "/api/stripe/create-checkout-session" && req.method === "POST") {
     try {
       const { handleCreateEventCheckoutSession } = await import(

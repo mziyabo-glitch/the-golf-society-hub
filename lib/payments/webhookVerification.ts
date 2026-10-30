@@ -51,12 +51,51 @@ export type PaymentVerification =
   | { ok: true; payment: VerifiedStripePayment }
   | { ok: false; status: number; error: string; code: string };
 
-export function stripeEventDisposition(eventType: string): "apply" | "connect" | "ignore" {
+export function stripeEventDisposition(eventType: string): "apply" | "connect" | "refund" | "ignore" {
   if (eventType === "checkout.session.completed" || eventType === "checkout.session.async_payment_succeeded") {
     return "apply";
   }
   if (eventType === "account.updated") return "connect";
+  if (eventType === "refund.created" || eventType === "refund.updated") return "refund";
   return "ignore";
+}
+
+export type StripeRefundCheck = {
+  id: string;
+  status: string;
+  amount: number;
+  currency: string;
+  paymentIntentId: string | null;
+};
+
+export type RefundRecordStatus = "pending" | "succeeded" | "failed";
+
+export function refundRecordStatus(stripeStatus: string): RefundRecordStatus | null {
+  const status = stripeStatus.toLowerCase();
+  if (status === "succeeded") return "succeeded";
+  if (status === "pending" || status === "requires_action") return "pending";
+  if (status === "failed" || status === "canceled" || status === "cancelled") return "failed";
+  return null;
+}
+
+export function verifyStripeRefund(input: {
+  refund: StripeRefundCheck;
+  transaction: { stripe_payment_intent_id: string | null; amount_pence: number; currency: string };
+}): { ok: true; recordStatus: RefundRecordStatus } | { ok: false; error: string } {
+  const refund = input.refund;
+  if (!refund.id || !refund.paymentIntentId) return { ok: false, error: "Stripe refund is incomplete" };
+  if (refund.paymentIntentId !== input.transaction.stripe_payment_intent_id) {
+    return { ok: false, error: "Stripe refund does not match this payment" };
+  }
+  if (refund.currency.toLowerCase() !== "gbp" || input.transaction.currency.toLowerCase() !== "gbp") {
+    return { ok: false, error: "Stripe refund currency does not match" };
+  }
+  if (refund.amount !== input.transaction.amount_pence) {
+    return { ok: false, error: "Stripe refund amount does not match" };
+  }
+  const recordStatus = refundRecordStatus(refund.status);
+  if (!recordStatus) return { ok: false, error: "Stripe refund status cannot be recorded" };
+  return { ok: true, recordStatus };
 }
 
 function meta(session: CheckoutSessionCheck, key: string): string {

@@ -4,8 +4,10 @@ import {
   paymentApplyFailureStatus,
   stripeEventDisposition,
   verifyPaidCheckout,
+  verifyStripeRefund,
   type PaymentIntentCheck,
   type PaymentTransactionCheck,
+  type StripeRefundCheck,
 } from "@/lib/payments/webhookVerification";
 
 export type WebhookHandlerResult = { status: number; body: { received?: boolean; error?: string } };
@@ -34,6 +36,10 @@ export type StripeWebhookDeps = {
     chargesEnabled: boolean;
     detailsSubmitted: boolean;
   }) => Promise<void>;
+  loadTransactionByPaymentIntent?: (paymentIntentId: string) => Promise<PaymentTransactionCheck | null>;
+  retrieveRefund?: (refundId: string) => Promise<StripeRefundCheck | null>;
+  recordRefund?: (transactionId: string, refundId: string, status: "pending" | "succeeded" | "failed") => Promise<void>;
+  consumeGuestInvitation?: (guestId: string) => Promise<void>;
 };
 
 function getStripe(): Stripe {
@@ -52,6 +58,17 @@ function receiptUrl(intent: Stripe.PaymentIntent): string | null {
   const charge = intent.latest_charge;
   if (!charge || typeof charge === "string") return null;
   return charge.receipt_url ?? null;
+}
+
+function mapRefund(refund: Stripe.Refund): StripeRefundCheck {
+  const paymentIntent = refund.payment_intent;
+  return {
+    id: refund.id,
+    status: refund.status ?? "",
+    amount: refund.amount,
+    currency: refund.currency,
+    paymentIntentId: typeof paymentIntent === "string" ? paymentIntent : paymentIntent?.id ?? null,
+  };
 }
 
 function defaultDeps(): StripeWebhookDeps {
@@ -115,6 +132,36 @@ function defaultDeps(): StripeWebhookDeps {
         .eq("stripe_connect_account_id", account.id);
       if (error) throw new Error(error.message);
     },
+    async loadTransactionByPaymentIntent(paymentIntentId) {
+      const { data, error } = await admin
+        .from("payment_transactions")
+        .select(
+          "id, status, amount_pence, currency, event_id, society_id, beneficiary_society_id, payer_type, member_id, guest_id, stripe_checkout_session_id, stripe_payment_intent_id, stripe_connect_account_id",
+        )
+        .eq("stripe_payment_intent_id", paymentIntentId)
+        .maybeSingle();
+      if (error) throw new Error(error.message);
+      return (data as PaymentTransactionCheck | null) ?? null;
+    },
+    async retrieveRefund(refundId) {
+      return mapRefund(await stripe.refunds.retrieve(refundId));
+    },
+    async recordRefund(transactionId, refundId, status) {
+      const { error } = await admin.rpc("record_event_stripe_refund", {
+        p_payment_transaction_id: transactionId,
+        p_stripe_refund_id: refundId,
+        p_refund_status: status,
+      });
+      if (error) throw new Error(error.message);
+    },
+    async consumeGuestInvitation(guestId) {
+      const { error } = await admin
+        .from("event_guest_payment_invitations")
+        .update({ consumed_at: new Date().toISOString() })
+        .eq("guest_id", guestId)
+        .is("consumed_at", null);
+      if (error) throw new Error(error.message);
+    },
   };
 }
 
@@ -159,6 +206,28 @@ export async function handleStripeWebhook(
     return { status: 200, body: { received: true } };
   }
 
+  if (disposition === "refund") {
+    const hinted = event.data.object as { id?: string };
+    if (!hinted.id || !runtime.retrieveRefund || !runtime.loadTransactionByPaymentIntent || !runtime.recordRefund) {
+      return { status: 500, body: { error: "Refund recording is not configured" } };
+    }
+    try {
+      const refund = await runtime.retrieveRefund(hinted.id);
+      if (!refund || refund.id !== hinted.id || !refund.paymentIntentId) {
+        return { status: 422, body: { error: "Stripe refund could not be confirmed" } };
+      }
+      const transaction = await runtime.loadTransactionByPaymentIntent(refund.paymentIntentId);
+      if (!transaction) return { status: 422, body: { error: "Payment transaction was not found" } };
+      const verified = verifyStripeRefund({ refund, transaction });
+      if (!verified.ok) return { status: 422, body: { error: verified.error } };
+      await runtime.recordRefund(transaction.id, refund.id, verified.recordStatus);
+      return { status: 200, body: { received: true } };
+    } catch (err) {
+      console.error("[stripe webhook] refund:", (err as Error).message);
+      return { status: 500, body: { error: "Failed to record refund" } };
+    }
+  }
+
   const session = event.data.object as Stripe.Checkout.Session;
   const transactionId = session.metadata?.payment_transaction_id?.trim() || "";
   if (!transactionId) return { status: 422, body: { error: "Checkout session is not an event payment" } };
@@ -189,6 +258,13 @@ export async function handleStripeWebhook(
     });
     if (!verified.ok) return { status: verified.status, body: { error: verified.error } };
     await runtime.applyPayment(verified.payment);
+    if (transaction?.payer_type === "guest" && transaction.guest_id && runtime.consumeGuestInvitation) {
+      try {
+        await runtime.consumeGuestInvitation(transaction.guest_id);
+      } catch (err) {
+        console.error("[stripe webhook] guest invitation:", (err as Error).message);
+      }
+    }
     return { status: 200, body: { received: true } };
   } catch (err) {
     const message = (err as Error).message || "Failed to apply payment";

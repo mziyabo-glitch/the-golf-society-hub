@@ -15,6 +15,10 @@ const repairSql = readFileSync(
   path.join(root, "supabase/migrations/20261030240000_stripe_payment_integrity.sql"),
   "utf8",
 );
+const guestInviteSql = readFileSync(
+  path.join(root, "supabase/migrations/20261030250000_guest_payment_invitations.sql"),
+  "utf8",
+);
 
 const M4 = "10000000-0000-4000-8000-000000000001";
 const JOINT = "10000000-0000-4000-8000-000000000002";
@@ -140,6 +144,32 @@ async function asUser(client: Client, userId: string, sql: string, params: unkno
   }
 }
 
+async function asRole(client: Client, role: "authenticated" | "service_role" | "anon", sql: string, params: unknown[] = []) {
+  await client.query("BEGIN");
+  await client.query(`SET LOCAL ROLE ${role}`);
+  try {
+    const result = await client.query(sql, params);
+    await client.query("COMMIT");
+    return result;
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  }
+}
+
+async function expectRoleError(
+  client: Client,
+  role: "authenticated" | "service_role" | "anon",
+  sql: string,
+  params: unknown[],
+  pattern: RegExp,
+) {
+  await client.query("BEGIN");
+  await client.query(`SET LOCAL ROLE ${role}`);
+  await expect(client.query(sql, params)).rejects.toThrow(pattern);
+  await client.query("ROLLBACK");
+}
+
 async function expectUserError(client: Client, userId: string, sql: string, params: unknown[], pattern: RegExp) {
   await client.query("BEGIN");
   await client.query("SELECT set_config('request.jwt.claim.sub', $1, true)", [userId]);
@@ -155,7 +185,7 @@ beforeAll(async () => {
   await client.query(fixtureSql);
   await client.query(foundationSql);
   await client.query(`
-    GRANT USAGE ON SCHEMA public TO authenticated, anon;
+    GRANT USAGE ON SCHEMA public TO authenticated, anon, service_role;
     GRANT SELECT, INSERT, UPDATE ON public.event_registrations TO authenticated;
     GRANT SELECT, INSERT, UPDATE ON public.event_guests TO authenticated;
     GRANT SELECT ON public.members, public.societies, public.events, public.event_societies TO authenticated;
@@ -373,27 +403,169 @@ it("stops a Handicapper overwriting Stripe and allows a Treasurer correction", a
   expect(ledger.rows[0].status).toBe("succeeded");
 });
 
-it("hides the ledger from a Handicapper and limits refunds to the Treasurer", async () => {
+it("hides the ledger from a Handicapper and records refunds only as service_role", async () => {
   const handicapper = await asUser(client, HANDICAPPER_USER, `SELECT id FROM public.payment_transactions`);
   expect(handicapper.rows).toHaveLength(0);
   const treasurer = await asUser(client, TREASURER_USER, `SELECT id FROM public.payment_transactions WHERE id = $1`, [TX]);
   expect(treasurer.rows).toHaveLength(1);
-  await expectUserError(
+  const privileges = await client.query(
+    `SELECT
+       has_function_privilege('authenticated', 'public.record_event_stripe_refund(uuid,text,text)', 'EXECUTE') AS authenticated,
+       has_function_privilege('anon', 'public.record_event_stripe_refund(uuid,text,text)', 'EXECUTE') AS anon,
+       has_function_privilege('public', 'public.record_event_stripe_refund(uuid,text,text)', 'EXECUTE') AS public,
+       has_function_privilege('service_role', 'public.record_event_stripe_refund(uuid,text,text)', 'EXECUTE') AS service_role`,
+  );
+  expect(privileges.rows[0]).toMatchObject({ authenticated: false, anon: false, public: false, service_role: true });
+  const statusCheck = await client.query(
+    `SELECT pg_get_constraintdef(oid) AS def FROM pg_constraint WHERE conname = 'payment_transactions_status_check'`,
+  );
+  expect(statusCheck.rows[0].def).toContain("refund_pending");
+  await expectRoleError(
     client,
-    CAPTAIN_USER,
-    `SELECT public.record_event_stripe_refund($1, 're_captain')`,
+    "authenticated",
+    `SELECT public.record_event_stripe_refund($1, 're_invented', 'succeeded')`,
     [TX],
-    /refund_forbidden/,
+    /permission denied/,
   );
   await asUser(client, TREASURER_USER, `SELECT public.mark_event_paid($1, $2, $3, true, 4500, true)`, [EVENT, M4, PLAYER]);
   await client.query(`UPDATE public.event_registrations SET payment_transaction_id = $1, payment_method = 'stripe', paid = true WHERE member_id = $2`, [TX, PLAYER]);
-  await asUser(client, TREASURER_USER, `SELECT public.record_event_stripe_refund($1, 're_treasurer')`, [TX]);
+  await asRole(client, "service_role", `SELECT public.record_event_stripe_refund($1, 're_treasurer', 'succeeded')`, [TX]);
   const refunded = await client.query(
-    `SELECT t.status, t.stripe_refund_id, r.paid FROM public.payment_transactions t
+    `SELECT t.status, t.stripe_refund_id, t.stripe_refund_status, r.paid FROM public.payment_transactions t
       JOIN public.event_registrations r ON r.member_id = $2 WHERE t.id = $1`,
     [TX, PLAYER],
   );
-  expect(refunded.rows[0]).toMatchObject({ status: "refunded", stripe_refund_id: "re_treasurer", paid: false });
+  expect(refunded.rows[0]).toMatchObject({
+    status: "refunded",
+    stripe_refund_id: "re_treasurer",
+    stripe_refund_status: "succeeded",
+    paid: false,
+  });
+  const before = await client.query(`SELECT count(*)::int AS n FROM public.payment_transactions`);
+  await asRole(client, "service_role", `SELECT public.record_event_stripe_refund($1, 're_treasurer', 'succeeded')`, [TX]);
+  const after = await client.query(`SELECT count(*)::int AS n FROM public.payment_transactions`);
+  expect(after.rows[0].n).toBe(before.rows[0].n);
+});
+
+it("keeps one ledger row across pending, failed, and deleted payment targets", async () => {
+  const lifeEvent = "10000000-0000-4000-8000-0000000000b1";
+  const failEvent = "10000000-0000-4000-8000-0000000000b2";
+  const goneMember = "10000000-0000-4000-8000-0000000000c1";
+  const goneGuest = "10000000-0000-4000-8000-0000000000c2";
+  const goneEvent = "10000000-0000-4000-8000-0000000000b3";
+  const guestEvent = "10000000-0000-4000-8000-0000000000b4";
+  const txLife = "10000000-0000-4000-8000-0000000000d1";
+  const txFail = "10000000-0000-4000-8000-0000000000d2";
+  const txMember = "10000000-0000-4000-8000-0000000000d3";
+  const txGuest = "10000000-0000-4000-8000-0000000000d4";
+  const txEvent = "10000000-0000-4000-8000-0000000000d5";
+
+  async function succeededPayment(id: string, eventId: string, memberId: string | null, guestId: string | null, payer: "member" | "guest") {
+    await client.query(
+      `INSERT INTO public.payment_transactions (
+        id, society_id, beneficiary_society_id, event_id, payer_type, member_id, guest_id,
+        society_name, beneficiary_society_name, event_name, payer_display_name,
+        amount_pence, currency, status, payment_method, idempotency_key, stripe_connect_account_id, stripe_payment_intent_id
+      ) VALUES (
+        $1, $2, $2, $3, $4, $5, $6,
+        'M4', 'M4', 'Refund event', 'Payer',
+        4500, 'gbp', 'succeeded', 'stripe', $7, 'acct_m4', $8
+      )`,
+      [id, M4, eventId, payer, memberId, guestId, `idem-${id}`, `pi-${id}`],
+    );
+  }
+
+  await client.query(`INSERT INTO public.events (id, society_id, name) VALUES ($1, $2, 'Life'), ($3, $2, 'Fail'), ($4, $2, 'Gone'), ($5, $2, 'Guest fee')`, [lifeEvent, M4, failEvent, goneEvent, guestEvent]);
+  await client.query(
+    `INSERT INTO public.event_registrations (society_id, event_id, member_id, status, paid, payment_method, amount_paid_pence)
+     VALUES ($1, $2, $3, 'in', true, 'stripe', 4500), ($1, $2, $4, 'in', true, 'manual', 4500)`,
+    [M4, lifeEvent, PLAYER, HANDICAPPER_MEMBER],
+  );
+  await succeededPayment(txLife, lifeEvent, PLAYER, null, "member");
+  await client.query(`UPDATE public.event_registrations SET payment_transaction_id = $1 WHERE event_id = $2 AND member_id = $3`, [txLife, lifeEvent, PLAYER]);
+
+  const before = await client.query(`SELECT count(*)::int AS n FROM public.payment_transactions`);
+  await asRole(client, "service_role", `SELECT public.record_event_stripe_refund($1, 're_pending', 'pending')`, [txLife]);
+  const pending = await client.query(
+    `SELECT t.status, t.stripe_refund_status, r.paid
+       FROM public.payment_transactions t
+       JOIN public.event_registrations r ON r.payment_transaction_id = t.id
+      WHERE t.id = $1`,
+    [txLife],
+  );
+  expect(pending.rows[0]).toMatchObject({ status: "refund_pending", stripe_refund_status: "pending", paid: true });
+  await asRole(client, "service_role", `SELECT public.record_event_stripe_refund($1, 're_pending', 'succeeded')`, [txLife]);
+  await asRole(client, "service_role", `SELECT public.record_event_stripe_refund($1, 're_pending', 'succeeded')`, [txLife]);
+  const done = await client.query(
+    `SELECT t.status, r.paid AS player_paid,
+            (SELECT paid FROM public.event_registrations WHERE event_id = $2 AND member_id = $3) AS other_paid
+       FROM public.payment_transactions t
+       JOIN public.event_registrations r ON r.member_id = $4 AND r.event_id = $2
+      WHERE t.id = $1`,
+    [txLife, lifeEvent, HANDICAPPER_MEMBER, PLAYER],
+  );
+  expect(done.rows[0]).toMatchObject({ status: "refunded", player_paid: false, other_paid: true });
+  const after = await client.query(`SELECT count(*)::int AS n FROM public.payment_transactions`);
+  expect(after.rows[0].n).toBe(before.rows[0].n);
+
+  await client.query(
+    `INSERT INTO public.event_registrations (society_id, event_id, member_id, status, paid, payment_method)
+     VALUES ($1, $2, $3, 'in', true, 'stripe')`,
+    [M4, failEvent, PLAYER],
+  );
+  await succeededPayment(txFail, failEvent, PLAYER, null, "member");
+  await client.query(`UPDATE public.event_registrations SET payment_transaction_id = $1 WHERE event_id = $2 AND member_id = $3`, [txFail, failEvent, PLAYER]);
+  await asRole(client, "service_role", `SELECT public.record_event_stripe_refund($1, 're_failed', 'failed')`, [txFail]);
+  await asRole(client, "service_role", `SELECT public.record_event_stripe_refund($1, 're_failed', 'failed')`, [txFail]);
+  const failed = await client.query(
+    `SELECT t.status, t.stripe_refund_status, r.paid
+       FROM public.payment_transactions t
+       JOIN public.event_registrations r ON r.payment_transaction_id = t.id
+      WHERE t.id = $1`,
+    [txFail],
+  );
+  expect(failed.rows[0]).toMatchObject({ status: "succeeded", stripe_refund_status: "failed", paid: true });
+
+  await client.query(
+    `INSERT INTO public.members (id, society_id, user_id, role, display_name) VALUES ($1, $2, $3, 'MEMBER', 'Departed')`,
+    [goneMember, M4, "10000000-0000-4000-8000-0000000000c9"],
+  );
+  await client.query(`INSERT INTO public.event_registrations (society_id, event_id, member_id, status, paid) VALUES ($1, $2, $3, 'in', true)`, [M4, goneEvent, goneMember]);
+  await succeededPayment(txMember, goneEvent, goneMember, null, "member");
+  await client.query(`UPDATE public.event_registrations SET payment_transaction_id = $1 WHERE member_id = $2`, [txMember, goneMember]);
+  await client.query(`DELETE FROM public.members WHERE id = $1`, [goneMember]);
+  await asRole(client, "service_role", `SELECT public.record_event_stripe_refund($1, 're_member_gone', 'succeeded')`, [txMember]);
+  const memberGone = await client.query(`SELECT status, member_id, event_name FROM public.payment_transactions WHERE id = $1`, [txMember]);
+  expect(memberGone.rows).toHaveLength(1);
+  expect(memberGone.rows[0]).toMatchObject({ status: "refunded", member_id: null, event_name: "Refund event" });
+
+  await client.query(`INSERT INTO public.event_guests (id, society_id, event_id, name, sex, paid) VALUES ($1, $2, $3, 'Visitor', 'male', true)`, [goneGuest, M4, guestEvent]);
+  await succeededPayment(txGuest, guestEvent, null, goneGuest, "guest");
+  await client.query(`UPDATE public.event_guests SET payment_transaction_id = $1, paid = true WHERE id = $2`, [txGuest, goneGuest]);
+  const linkedGuest = await client.query(`SELECT paid FROM public.event_guests WHERE id = $1`, [goneGuest]);
+  expect(linkedGuest.rows[0].paid).toBe(true);
+  await asRole(client, "service_role", `SELECT public.record_event_stripe_refund($1, 're_guest_here', 'succeeded')`, [txGuest]);
+  const guestUpdated = await client.query(`SELECT paid FROM public.event_guests WHERE id = $1`, [goneGuest]);
+  expect(guestUpdated.rows[0].paid).toBe(false);
+  await client.query(`UPDATE public.payment_transactions SET status = 'succeeded', stripe_refund_status = NULL, stripe_refund_id = NULL WHERE id = $1`, [txGuest]);
+  await client.query(`UPDATE public.event_guests SET paid = true, payment_transaction_id = $1 WHERE id = $2`, [txGuest, goneGuest]);
+  await client.query(`DELETE FROM public.event_guests WHERE id = $1`, [goneGuest]);
+  await asRole(client, "service_role", `SELECT public.record_event_stripe_refund($1, 're_guest_gone', 'succeeded')`, [txGuest]);
+  const guestGone = await client.query(`SELECT status, guest_id FROM public.payment_transactions WHERE id = $1`, [txGuest]);
+  expect(guestGone.rows).toHaveLength(1);
+  expect(guestGone.rows[0]).toMatchObject({ status: "refunded", guest_id: null });
+
+  await client.query(
+    `INSERT INTO public.event_registrations (society_id, event_id, member_id, status, paid) VALUES ($1, $2, $3, 'in', true)`,
+    [M4, guestEvent, PLAYER],
+  );
+  await succeededPayment(txEvent, guestEvent, PLAYER, null, "member");
+  await client.query(`UPDATE public.event_registrations SET payment_transaction_id = $1 WHERE event_id = $2 AND member_id = $3`, [txEvent, guestEvent, PLAYER]);
+  await client.query(`DELETE FROM public.events WHERE id = $1`, [guestEvent]);
+  await asRole(client, "service_role", `SELECT public.record_event_stripe_refund($1, 're_event_gone', 'succeeded')`, [txEvent]);
+  const eventGone = await client.query(`SELECT status, event_id, event_name FROM public.payment_transactions WHERE id = $1`, [txEvent]);
+  expect(eventGone.rows).toHaveLength(1);
+  expect(eventGone.rows[0]).toMatchObject({ status: "refunded", event_id: null, event_name: "Refund event" });
 });
 
 it("keeps the ledger row when the event is deleted", async () => {
@@ -600,12 +772,114 @@ it("repairs an older cascading ledger without dropping history", async () => {
       [M4, EVENT, PLAYER],
     );
     await repairDb.query(repairSql);
+    await repairDb.query(`GRANT USAGE ON SCHEMA public TO authenticated, anon, service_role`);
+    await repairDb.query(`UPDATE public.payment_transactions SET status = 'succeeded', payment_method = 'stripe' WHERE idempotency_key = 'old-idem'`);
     await repairDb.query(`DELETE FROM public.events WHERE id = $1`, [EVENT]);
     const kept = await repairDb.query(
-      `SELECT event_id, event_name, amount_pence FROM public.payment_transactions WHERE idempotency_key = 'old-idem'`,
+      `SELECT id, event_id, event_name, amount_pence FROM public.payment_transactions WHERE idempotency_key = 'old-idem'`,
     );
     expect(kept.rows[0]).toMatchObject({ event_id: null, event_name: "Unknown event", amount_pence: 2000 });
+    const repairedCheck = await repairDb.query(
+      `SELECT pg_get_constraintdef(oid) AS def FROM pg_constraint WHERE conname = 'payment_transactions_status_check'`,
+    );
+    expect(repairedCheck.rows[0].def).toContain("refund_pending");
+    await expectRoleError(
+      repairDb,
+      "authenticated",
+      `SELECT public.record_event_stripe_refund($1, 're_draft', 'succeeded')`,
+      [kept.rows[0].id],
+      /permission denied/,
+    );
+    const before = await repairDb.query(`SELECT count(*)::int AS n FROM public.payment_transactions`);
+    await asRole(repairDb, "service_role", `SELECT public.record_event_stripe_refund($1, 're_draft', 'succeeded')`, [kept.rows[0].id]);
+    const after = await repairDb.query(
+      `SELECT status, event_id, count(*) OVER ()::int AS n FROM public.payment_transactions WHERE idempotency_key = 'old-idem'`,
+    );
+    expect(after.rows).toHaveLength(1);
+    expect(after.rows[0]).toMatchObject({ status: "refunded", event_id: null, n: 1 });
+    expect(before.rows[0].n).toBe(1);
   } finally {
     await repairDb.end();
+  }
+}, 60000);
+
+it("applies the repair after the corrected foundation without changing the ledger rules", async () => {
+  const both = await recreate("gsh_payment_integrity_both");
+  try {
+    await both.query(fixtureSql);
+    await both.query(foundationSql);
+    await both.query(repairSql);
+    await both.query(`GRANT USAGE ON SCHEMA public TO authenticated, anon, service_role`);
+    await both.query(`INSERT INTO public.societies (id, name) VALUES ($1, 'M4')`, [M4]);
+    await both.query(`INSERT INTO public.events (id, society_id, name) VALUES ($1, $2, 'Kept')`, [EVENT, M4]);
+    await both.query(
+      `INSERT INTO public.members (id, society_id, user_id, role, display_name) VALUES ($1, $2, $3, 'MEMBER', 'Player')`,
+      [PLAYER, M4, PLAYER_USER],
+    );
+    await both.query(
+      `INSERT INTO public.payment_transactions (
+        society_id, beneficiary_society_id, event_id, payer_type, member_id,
+        society_name, beneficiary_society_name, event_name, payer_display_name,
+        amount_pence, currency, status, payment_method, idempotency_key, stripe_connect_account_id
+      ) VALUES ($1, $1, $2, 'member', $3, 'M4', 'M4', 'Kept', 'Player', 4500, 'gbp', 'succeeded', 'stripe', 'both-idem', 'acct_m4')`,
+      [M4, EVENT, PLAYER],
+    );
+    await both.query(`DELETE FROM public.events WHERE id = $1`, [EVENT]);
+    const kept = await both.query(`SELECT id, event_id, event_name FROM public.payment_transactions WHERE idempotency_key = 'both-idem'`);
+    expect(kept.rows[0]).toMatchObject({ event_id: null, event_name: "Kept" });
+    await expectRoleError(both, "authenticated", `SELECT public.record_event_stripe_refund($1, 're_both', 'succeeded')`, [kept.rows[0].id], /permission denied/);
+    await asRole(both, "service_role", `SELECT public.record_event_stripe_refund($1, 're_both', 'succeeded')`, [kept.rows[0].id]);
+    const refunded = await both.query(`SELECT status FROM public.payment_transactions WHERE idempotency_key = 'both-idem'`);
+    expect(refunded.rows[0].status).toBe("refunded");
+    const check = await both.query(`SELECT pg_get_constraintdef(oid) AS def FROM pg_constraint WHERE conname = 'payment_transactions_status_check'`);
+    expect(check.rows[0].def).toContain("refund_pending");
+  } finally {
+    await both.end();
+  }
+}, 60000);
+
+it("issues a hashed guest invitation and does not let authenticated read it", async () => {
+  const guestDb = await recreate("gsh_guest_payment_invite");
+  try {
+    await guestDb.query(fixtureSql);
+    await guestDb.query(foundationSql);
+    await guestDb.query(guestInviteSql);
+    await guestDb.query(`GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role`);
+    await guestDb.query(`INSERT INTO public.societies (id, name) VALUES ($1, 'M4')`, [M4]);
+    await guestDb.query(
+      `UPDATE public.societies
+          SET online_payments_enabled = true,
+              stripe_connect_charges_enabled = true,
+              stripe_connect_account_id = 'acct_m4'
+        WHERE id = $1`,
+      [M4],
+    );
+    await guestDb.query(
+      `INSERT INTO public.events (id, society_id, name, date, guest_entry_fee_pence) VALUES ($1, $2, 'Guest day', '2026-12-01', 5500)`,
+      [EVENT, M4],
+    );
+    const issued = await asRole(
+      guestDb,
+      "anon",
+      `SELECT guest_id, society_id, payment_token, amount_pence, online_payments_enabled
+         FROM public.submit_public_guest_rsvp_with_payment_token($1, 'Guest Golfer')`,
+      [EVENT],
+    );
+    const token = issued.rows[0].payment_token as string;
+    expect(token).toMatch(/^[0-9a-f]{64}$/);
+    expect(issued.rows[0]).toMatchObject({ society_id: M4, amount_pence: 5500, online_payments_enabled: true });
+    const stored = await guestDb.query(
+      `SELECT token_hash, event_id, guest_id, consumed_at IS NULL AS open
+         FROM public.event_guest_payment_invitations WHERE guest_id = $1`,
+      [issued.rows[0].guest_id],
+    );
+    const { createHash } = await import("node:crypto");
+    expect(stored.rows[0].token_hash).toBe(createHash("sha256").update(token, "utf8").digest("hex"));
+    expect(stored.rows[0]).toMatchObject({ event_id: EVENT, open: true });
+    expect(JSON.stringify(stored.rows)).not.toContain(token);
+    await expectRoleError(guestDb, "authenticated", `SELECT token_hash FROM public.event_guest_payment_invitations`, [], /permission denied/);
+    expect(guestInviteSql).not.toContain("DROP FUNCTION IF EXISTS public.submit_public_event_rsvp_guest");
+  } finally {
+    await guestDb.end();
   }
 }, 60000);

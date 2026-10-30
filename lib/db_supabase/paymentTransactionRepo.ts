@@ -10,7 +10,8 @@ export type PaymentTransactionRow = {
   guest_id: string | null;
   amount_pence: number;
   currency: string;
-  status: "pending" | "succeeded" | "failed" | "canceled" | "refunded";
+  status: "pending" | "succeeded" | "failed" | "canceled" | "refunded" | "refund_pending";
+  stripe_refund_status?: "pending" | "succeeded" | "failed" | null;
   payment_method: "stripe" | "manual" | "bank_transfer";
   stripe_checkout_session_id: string | null;
   stripe_receipt_url: string | null;

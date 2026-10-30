@@ -1,5 +1,5 @@
 import type { EventRegistration } from "@/lib/db_supabase/eventRegistrationRepo";
-import { shouldShowHomePaymentRow } from "@/lib/home/homeNextEventPanelModel";
+import { hasBillableEventFee, shouldShowHomePaymentRow } from "@/lib/home/homeNextEventPanelModel";
 import { shouldShowEventPaymentRow } from "@/lib/payments/eventPricing";
 
 export type EventDetailQuickActionId =

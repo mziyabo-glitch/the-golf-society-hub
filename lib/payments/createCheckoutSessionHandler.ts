@@ -7,24 +7,25 @@ import {
   assertUuid,
   type CheckoutRequestBody,
 } from "@/lib/payments/checkoutValidation";
-import { resolveGuestCheckoutAmountPence, resolveMemberCheckoutAmountPence } from "@/lib/payments/eventPricing";
+import { resolveMemberCheckoutAmountPence } from "@/lib/payments/eventPricing";
 import {
+  assertStripeTestMode,
   buildCheckoutReturnUrls,
   checkoutBelongsToPayer,
-  selectParticipantCheckout,
   serverAppBaseUrl,
   type OpenPaymentRow,
 } from "@/lib/payments/checkoutAttempt";
+import {
+  CheckoutConflictError,
+  runEventCheckout,
+  stripeCheckoutAdapter,
+  type CheckoutStore,
+  type CreateCheckoutResult,
+  type PendingPaymentInsert,
+  type RunCheckoutInput,
+} from "@/lib/payments/runEventCheckout";
 
-export type CreateCheckoutResult =
-  | { status: number; body: { url: string; sessionId: string; transactionId: string } }
-  | { status: number; body: { error: string } };
-
-function getStripe(): Stripe {
-  const key = process.env.STRIPE_SECRET_KEY?.trim();
-  if (!key) throw new Error("STRIPE_SECRET_KEY is not configured");
-  return new Stripe(key);
-}
+export type { CreateCheckoutResult };
 
 function getUserSupabase(accessToken: string) {
   const url = process.env.EXPO_PUBLIC_SUPABASE_URL?.trim() || process.env.SUPABASE_URL?.trim();
@@ -53,265 +54,235 @@ async function resolveBeneficiarySocietyId(
   return hostSocietyId;
 }
 
-async function loadParticipantPayments(
-  admin: ReturnType<typeof getServiceRoleSupabase>,
-  eventId: string,
-  payerType: "member" | "guest",
-  payerId: string,
-): Promise<OpenPaymentRow[]> {
-  const column = payerType === "member" ? "member_id" : "guest_id";
-  const { data, error } = await admin
-    .from("payment_transactions")
-    .select("id, status, stripe_checkout_session_id, member_id, guest_id, idempotency_key")
-    .eq("event_id", eventId)
-    .eq(column, payerId)
-    .in("status", ["pending", "succeeded"]);
-  if (error) throw new Error(error.message);
-  return (data ?? []) as OpenPaymentRow[];
+const paymentSelect =
+  "id, status, amount_pence, stripe_checkout_session_id, member_id, guest_id, idempotency_key";
+
+export function createPaymentCheckoutStore(admin: ReturnType<typeof getServiceRoleSupabase>): CheckoutStore {
+  return {
+    async cancelPending(id, reason) {
+      const { data, error } = await admin
+        .from("payment_transactions")
+        .update({ status: "canceled", failure_reason: reason })
+        .eq("id", id)
+        .eq("status", "pending")
+        .select("id");
+      if (error) throw new Error(error.message);
+      if (!data?.length) throw new CheckoutConflictError("A payment is already in progress");
+    },
+    async insertPending(row: PendingPaymentInsert) {
+      const { data, error } = await admin
+        .from("payment_transactions")
+        .insert({
+          society_id: row.societyId,
+          beneficiary_society_id: row.beneficiarySocietyId,
+          event_id: row.eventId,
+          payer_type: row.payerType,
+          member_id: row.memberId,
+          guest_id: row.guestId,
+          society_name: row.societyName,
+          beneficiary_society_name: row.beneficiarySocietyName,
+          event_name: row.eventName,
+          event_date_snapshot: row.eventDateSnapshot,
+          payer_display_name: row.payerDisplayName,
+          amount_pence: row.amountPence,
+          currency: "gbp",
+          status: "pending",
+          payment_method: "stripe",
+          idempotency_key: row.idempotencyKey,
+          stripe_connect_account_id: row.stripeConnectAccountId,
+        })
+        .select("id")
+        .single();
+      if (error) {
+        if (error.code === "23505") throw new CheckoutConflictError("A payment is already in progress");
+        throw new Error(error.message);
+      }
+      return data.id as string;
+    },
+    async saveSessionId(id, sessionId) {
+      const { error } = await admin
+        .from("payment_transactions")
+        .update({ stripe_checkout_session_id: sessionId })
+        .eq("id", id)
+        .eq("status", "pending");
+      if (error) throw new Error(error.message);
+    },
+  };
 }
 
-export async function handleCreateEventCheckoutSession(input: {
-  authorizationHeader: string | null | undefined;
-  idempotencyKey: string | null | undefined;
-  rawBody: unknown;
-}): Promise<CreateCheckoutResult> {
-  try {
-    const token = input.authorizationHeader?.replace(/^Bearer\s+/i, "").trim();
-    if (!token) return { status: 401, body: { error: "Missing authorization" } };
+export type MemberCheckoutDeps = {
+  stripeKey: string;
+  prepare: (input: {
+    accessToken: string;
+    idempotencyKey: string;
+    body: CheckoutRequestBody;
+  }) => Promise<{ ok: false; result: CreateCheckoutResult } | { ok: true; checkout: Omit<RunCheckoutInput, "stripe" | "store"> }>;
+  stripe: RunCheckoutInput["stripe"];
+  store: CheckoutStore;
+};
 
-    const body = parseCheckoutRequestBody(input.rawBody);
-    if (!body) return { status: 400, body: { error: "Invalid request body" } };
+function buildDefaultMemberCheckoutDeps(stripeKey: string): MemberCheckoutDeps {
+  const stripe = new Stripe(stripeKey);
+  const admin = getServiceRoleSupabase();
+  return {
+    stripeKey,
+    stripe: stripeCheckoutAdapter(stripe),
+    store: createPaymentCheckoutStore(admin),
+    async prepare({ accessToken, idempotencyKey, body }) {
+      const userClient = getUserSupabase(accessToken);
+      const { data: userData, error: userErr } = await userClient.auth.getUser(accessToken);
+      if (userErr || !userData.user) return { ok: false, result: { status: 401, body: { error: "Invalid session" } } };
 
-    try {
-      assertUuid(body.eventId, "eventId");
-      assertUuid(body.societyId, "societyId");
-      if (body.guestId) assertUuid(body.guestId, "guestId");
-    } catch (e) {
-      return { status: 400, body: { error: (e as Error).message } };
-    }
+      const { data: event, error: eventErr } = await admin
+        .from("events")
+        .select("id, society_id, name, date, member_entry_fee_pence, guest_entry_fee_pence, joint_participant_entry_fee_pence")
+        .eq("id", body.eventId)
+        .maybeSingle();
+      if (eventErr || !event) return { ok: false, result: { status: 404, body: { error: "Event not found" } } };
 
-    const idempotencyKey = input.idempotencyKey?.trim();
-    if (!idempotencyKey || idempotencyKey.length < 8) {
-      return { status: 400, body: { error: "Missing Idempotency-Key header" } };
-    }
+      const hostSocietyId = String(event.society_id);
+      const eventAllowed =
+        body.societyId === hostSocietyId ||
+        (
+          await admin
+            .from("event_societies")
+            .select("society_id")
+            .eq("event_id", body.eventId)
+            .eq("society_id", body.societyId)
+            .maybeSingle()
+        ).data != null;
+      if (!eventAllowed) return { ok: false, result: { status: 403, body: { error: "Society is not part of this event" } } };
 
-    const userClient = getUserSupabase(token);
-    const { data: userData, error: userErr } = await userClient.auth.getUser(token);
-    if (userErr || !userData.user) return { status: 401, body: { error: "Invalid session" } };
+      const { data: society, error: socErr } = await admin
+        .from("societies")
+        .select("id, name, online_payments_enabled, stripe_connect_account_id, stripe_connect_charges_enabled, event_bank_transfer_instructions")
+        .eq("id", body.societyId)
+        .maybeSingle();
+      if (socErr || !society) return { ok: false, result: { status: 404, body: { error: "Society not found" } } };
 
-    const admin = getServiceRoleSupabase();
-    const { data: event, error: eventErr } = await admin
-      .from("events")
-      .select(
-        "id, society_id, name, date, member_entry_fee_pence, guest_entry_fee_pence, joint_participant_entry_fee_pence",
-      )
-      .eq("id", body.eventId)
-      .maybeSingle();
-    if (eventErr || !event) return { status: 404, body: { error: "Event not found" } };
+      const societyReadyErr = validateSocietyPaymentsReady(society);
+      if (societyReadyErr) return { ok: false, result: { status: 403, body: { error: societyReadyErr } } };
 
-    const hostSocietyId = String(event.society_id);
-    const eventAllowed =
-      body.societyId === hostSocietyId ||
-      (
-        await admin
-          .from("event_societies")
-          .select("society_id")
-          .eq("event_id", body.eventId)
-          .eq("society_id", body.societyId)
-          .maybeSingle()
-      ).data != null;
-    if (!eventAllowed) return { status: 403, body: { error: "Society is not part of this event" } };
+      const beneficiarySocietyId = await resolveBeneficiarySocietyId(admin, body.eventId, body.societyId, hostSocietyId);
+      const { data: beneficiary } = await admin
+        .from("societies")
+        .select("id, name, stripe_connect_account_id, stripe_connect_charges_enabled")
+        .eq("id", beneficiarySocietyId)
+        .maybeSingle();
+      if (!beneficiary?.stripe_connect_account_id || !beneficiary.stripe_connect_charges_enabled) {
+        return { ok: false, result: { status: 403, body: { error: "Payment beneficiary Connect account is not ready" } } };
+      }
 
-    const { data: society, error: socErr } = await admin
-      .from("societies")
-      .select(
-        "id, name, online_payments_enabled, stripe_connect_account_id, stripe_connect_charges_enabled, event_bank_transfer_instructions",
-      )
-      .eq("id", body.societyId)
-      .maybeSingle();
-    if (socErr || !society) return { status: 404, body: { error: "Society not found" } };
+      const { data: callerMember } = await admin
+        .from("members")
+        .select("id, display_name")
+        .eq("society_id", body.societyId)
+        .eq("user_id", userData.user.id)
+        .maybeSingle();
+      if (!callerMember?.id) return { ok: false, result: { status: 403, body: { error: "Not a member of this society" } } };
 
-    const societyReadyErr = validateSocietyPaymentsReady(society);
-    if (societyReadyErr) return { status: 403, body: { error: societyReadyErr } };
-
-    const beneficiarySocietyId = await resolveBeneficiarySocietyId(
-      admin,
-      body.eventId,
-      body.societyId,
-      hostSocietyId,
-    );
-    const { data: beneficiary } = await admin
-      .from("societies")
-      .select("id, name, stripe_connect_account_id, stripe_connect_charges_enabled")
-      .eq("id", beneficiarySocietyId)
-      .maybeSingle();
-    if (!beneficiary?.stripe_connect_account_id || !beneficiary.stripe_connect_charges_enabled) {
-      return { status: 403, body: { error: "Payment beneficiary Connect account is not ready" } };
-    }
-
-    const isJointParticipant = body.societyId !== hostSocietyId;
-    const payerType = body.payerType ?? "member";
-    let amountPence: number | null = null;
-    let memberId: string | null = null;
-    let guestId: string | null = null;
-    let payerDisplayName = "Member";
-
-    const { data: callerMember } = await admin
-      .from("members")
-      .select("id, display_name")
-      .eq("society_id", body.societyId)
-      .eq("user_id", userData.user.id)
-      .maybeSingle();
-    if (!callerMember?.id) return { status: 403, body: { error: "Not a member of this society" } };
-
-    if (payerType === "member") {
-      amountPence = resolveMemberCheckoutAmountPence(event, {
-        isJointParticipantSociety: isJointParticipant,
+      const amountPence = resolveMemberCheckoutAmountPence(event, {
+        isJointParticipantSociety: body.societyId !== hostSocietyId,
       });
-      memberId = callerMember.id as string;
-      payerDisplayName = String(callerMember.display_name || "Member");
+      const memberId = callerMember.id as string;
       const { data: reg } = await admin
         .from("event_registrations")
         .select("status, paid, removed_from_event_at")
         .eq("event_id", body.eventId)
         .eq("member_id", memberId)
         .maybeSingle();
-      if (reg?.paid) return { status: 409, body: { error: "Already paid" } };
+      if (reg?.paid) return { ok: false, result: { status: 409, body: { error: "Already paid" } } };
       if (reg?.removed_from_event_at || (reg && reg.status !== "in")) {
-        return { status: 400, body: { error: "RSVP as playing before paying" } };
+        return { ok: false, result: { status: 400, body: { error: "RSVP as playing before paying" } } };
       }
-    } else {
-      if (!body.guestId) return { status: 400, body: { error: "guestId required" } };
-      guestId = body.guestId;
-      amountPence = resolveGuestCheckoutAmountPence(event);
-      const { data: guest } = await admin
-        .from("event_guests")
-        .select("id, paid, society_id, event_id, name")
-        .eq("id", guestId)
-        .maybeSingle();
-      if (!guest || guest.event_id !== body.eventId) return { status: 404, body: { error: "Guest not found" } };
-      if (guest.society_id !== body.societyId) return { status: 403, body: { error: "Guest belongs to another society" } };
-      if (guest.paid) return { status: 409, body: { error: "Already paid" } };
-      payerDisplayName = String(guest.name || "Guest");
-    }
-
-    if (amountPence == null || amountPence <= 0) {
-      return { status: 400, body: { error: "Event fee is not configured for online payment" } };
-    }
-
-    const payer = { payerType, memberId, guestId };
-    const { data: keyed } = await admin
-      .from("payment_transactions")
-      .select("id, status, stripe_checkout_session_id, member_id, guest_id, idempotency_key")
-      .eq("idempotency_key", idempotencyKey)
-      .maybeSingle();
-    if (keyed && !checkoutBelongsToPayer(keyed, payer)) {
-      return { status: 409, body: { error: "Idempotency key belongs to another payer" } };
-    }
-
-    const participantRows = await loadParticipantPayments(
-      admin,
-      body.eventId,
-      payerType,
-      (payerType === "member" ? memberId : guestId) as string,
-    );
-    const attempt = selectParticipantCheckout(keyed ? [keyed as OpenPaymentRow, ...participantRows] : participantRows);
-    if (attempt.action === "already_paid") return { status: 409, body: { error: "Already paid" } };
-
-    const stripe = getStripe();
-    const urls = buildCheckoutReturnUrls(body.eventId, serverAppBaseUrl(process.env.EXPO_PUBLIC_WEB_APP_URL));
-    let transactionId = attempt.action === "reuse" ? attempt.transactionId : "";
-
-    let replacingSession = false;
-    if (attempt.action === "reuse" && attempt.sessionId) {
-      const existingSession = await stripe.checkout.sessions.retrieve(attempt.sessionId);
-      if (existingSession.payment_status === "paid") return { status: 409, body: { error: "Already paid" } };
-      if (existingSession.status === "open" && existingSession.url) {
-        return {
-          status: 200,
-          body: { url: existingSession.url, sessionId: existingSession.id, transactionId: attempt.transactionId },
-        };
+      if (amountPence == null || amountPence <= 0) {
+        return { ok: false, result: { status: 400, body: { error: "Event fee is not configured for online payment" } } };
       }
-      replacingSession = true;
-    }
 
-    if (!transactionId) {
-      const { data: txRow, error: txErr } = await admin
+      const { data: keyed } = await admin
         .from("payment_transactions")
-        .insert({
-          society_id: body.societyId,
-          beneficiary_society_id: beneficiarySocietyId,
-          event_id: body.eventId,
-          payer_type: payerType,
-          member_id: memberId,
-          guest_id: guestId,
-          society_name: String(society.name || "Society"),
-          beneficiary_society_name: String(beneficiary.name || society.name || "Society"),
-          event_name: String(event.name || "Golf event"),
-          event_date_snapshot: event.date ? String(event.date) : null,
-          payer_display_name: payerDisplayName,
-          amount_pence: amountPence,
-          currency: "gbp",
-          status: "pending",
-          payment_method: "stripe",
-          idempotency_key: idempotencyKey,
-          stripe_connect_account_id: beneficiary.stripe_connect_account_id,
-        })
-        .select("id")
-        .single();
-      if (txErr) {
-        if (txErr.code === "23505") return { status: 409, body: { error: "A payment is already in progress" } };
-        console.error("[checkout] insert tx:", txErr.message);
-        return { status: 500, body: { error: "Could not create payment record" } };
+        .select(paymentSelect)
+        .eq("idempotency_key", idempotencyKey)
+        .maybeSingle();
+      if (keyed && !checkoutBelongsToPayer(keyed, { payerType: "member", memberId, guestId: null })) {
+        return { ok: false, result: { status: 409, body: { error: "Idempotency key belongs to another payer" } } };
       }
-      transactionId = txRow.id as string;
+
+      const { data: participantRows, error: rowsErr } = await admin
+        .from("payment_transactions")
+        .select(paymentSelect)
+        .eq("event_id", body.eventId)
+        .eq("member_id", memberId)
+        .in("status", ["pending", "succeeded", "refund_pending"]);
+      if (rowsErr) throw new Error(rowsErr.message);
+
+      const urls = buildCheckoutReturnUrls(body.eventId, serverAppBaseUrl(process.env.EXPO_PUBLIC_WEB_APP_URL));
+      return {
+        ok: true,
+        checkout: {
+          amountPence,
+          idempotencyKey,
+          payerType: "member",
+          memberId,
+          guestId: null,
+          eventId: body.eventId,
+          societyId: body.societyId,
+          beneficiarySocietyId,
+          societyName: String(society.name || "Society"),
+          beneficiarySocietyName: String(beneficiary.name || society.name || "Society"),
+          eventName: String(event.name || "Golf event"),
+          eventDateSnapshot: event.date ? String(event.date) : null,
+          payerDisplayName: String(callerMember.display_name || "Member"),
+          connectAccountId: beneficiary.stripe_connect_account_id as string,
+          successUrl: urls.successUrl,
+          cancelUrl: urls.cancelUrl,
+          rows: (participantRows ?? []) as OpenPaymentRow[],
+          keyed: (keyed as OpenPaymentRow | null) ?? null,
+        },
+      };
+    },
+  };
+}
+
+export async function handleCreateEventCheckoutSession(
+  input: {
+    authorizationHeader: string | null | undefined;
+    idempotencyKey: string | null | undefined;
+    rawBody: unknown;
+  },
+  deps?: MemberCheckoutDeps,
+): Promise<CreateCheckoutResult> {
+  try {
+    const body = parseCheckoutRequestBody(input.rawBody);
+    if (!body) return { status: 400, body: { error: "Invalid request body" } };
+    if (body.payerType === "guest" || body.guestId) {
+      return { status: 400, body: { error: "Guest payments require an invitation token" } };
     }
 
-    const session = await stripe.checkout.sessions.create(
-      {
-        mode: "payment",
-        success_url: urls.successUrl,
-        cancel_url: urls.cancelUrl,
-        client_reference_id: transactionId,
-        line_items: [
-          {
-            quantity: 1,
-            price_data: {
-              currency: "gbp",
-              unit_amount: amountPence,
-              product_data: { name: `Event entry - ${String(event.name || "Golf event")}` },
-            },
-          },
-        ],
-        payment_intent_data: {
-          transfer_data: { destination: beneficiary.stripe_connect_account_id as string },
-        },
-        metadata: {
-          payment_transaction_id: transactionId,
-          event_id: body.eventId,
-          society_id: body.societyId,
-          beneficiary_society_id: beneficiarySocietyId,
-          payer_type: payerType,
-          member_id: memberId ?? "",
-          guest_id: guestId ?? "",
-        },
-      },
-      { idempotencyKey: replacingSession ? `checkout_${transactionId}_retry` : `checkout_${transactionId}` },
-    );
-
-    const { error: sessionSaveErr } = await admin
-      .from("payment_transactions")
-      .update({ stripe_checkout_session_id: session.id })
-      .eq("id", transactionId)
-      .eq("status", "pending");
-    if (sessionSaveErr) {
-      console.error("[checkout] save session:", sessionSaveErr.message);
-      return { status: 500, body: { error: "Could not store Checkout session" } };
+    try {
+      assertUuid(body.eventId, "eventId");
+      assertUuid(body.societyId, "societyId");
+    } catch (e) {
+      return { status: 400, body: { error: (e as Error).message } };
     }
-    if (!session.url) return { status: 500, body: { error: "Stripe session missing url" } };
 
-    return { status: 200, body: { url: session.url, sessionId: session.id, transactionId } };
+    const stripeKey = deps?.stripeKey ?? process.env.STRIPE_SECRET_KEY;
+    const testModeError = assertStripeTestMode(stripeKey);
+    if (testModeError) return { status: 403, body: { error: testModeError } };
+
+    const token = input.authorizationHeader?.replace(/^Bearer\s+/i, "").trim();
+    if (!token) return { status: 401, body: { error: "Missing authorization" } };
+    const idempotencyKey = input.idempotencyKey?.trim();
+    if (!idempotencyKey || idempotencyKey.length < 8) {
+      return { status: 400, body: { error: "Missing Idempotency-Key header" } };
+    }
+
+    const runtime = deps ?? buildDefaultMemberCheckoutDeps(stripeKey as string);
+    const prepared = await runtime.prepare({ accessToken: token, idempotencyKey, body });
+    if (!prepared.ok) return prepared.result;
+    return await runEventCheckout({ ...prepared.checkout, stripe: runtime.stripe, store: runtime.store });
   } catch (err) {
+    if (err instanceof CheckoutConflictError) return { status: 409, body: { error: err.message } };
     console.error("[checkout] unexpected:", err);
     return { status: 500, body: { error: "Checkout failed" } };
   }

@@ -3,24 +3,44 @@ import { createClient } from "@supabase/supabase-js";
 import { getServiceRoleSupabase } from "@/lib/server/supabaseServiceRole";
 import { assertStripeTestMode } from "@/lib/payments/checkoutAttempt";
 import { assertUuid } from "@/lib/payments/checkoutValidation";
+import { verifyStripeRefund, type RefundRecordStatus, type StripeRefundCheck } from "@/lib/payments/webhookVerification";
 
-export type RefundResult = { status: number; body: { refundId?: string; error?: string } };
+export type RefundResult = {
+  status: number;
+  body: { refundId?: string; refundStatus?: RefundRecordStatus; error?: string };
+};
+
+type RefundTransaction = {
+  id: string;
+  society_id: string | null;
+  status: string;
+  payment_method: string;
+  stripe_payment_intent_id: string | null;
+  stripe_refund_id: string | null;
+  amount_pence: number;
+  currency: string;
+};
 
 type RefundDeps = {
   stripeKey: string;
   getUserId: (accessToken: string) => Promise<string | null>;
   loadCallerRole: (userId: string, societyId: string) => Promise<string | null>;
-  loadTransaction: (id: string) => Promise<{
-    id: string;
-    society_id: string | null;
-    status: string;
-    payment_method: string;
-    stripe_payment_intent_id: string | null;
-    amount_pence: number;
-  } | null>;
-  createRefund: (paymentIntentId: string, idempotencyKey: string) => Promise<string>;
-  recordRefund: (userAccessToken: string, transactionId: string, refundId: string) => Promise<void>;
+  loadTransaction: (id: string) => Promise<RefundTransaction | null>;
+  createRefund: (paymentIntentId: string, idempotencyKey: string) => Promise<StripeRefundCheck>;
+  retrieveRefund: (refundId: string) => Promise<StripeRefundCheck | null>;
+  recordRefund: (transactionId: string, refundId: string, status: RefundRecordStatus) => Promise<void>;
 };
+
+function mapRefund(refund: Stripe.Refund): StripeRefundCheck {
+  const paymentIntent = refund.payment_intent;
+  return {
+    id: refund.id,
+    status: refund.status ?? "",
+    amount: refund.amount,
+    currency: refund.currency,
+    paymentIntentId: typeof paymentIntent === "string" ? paymentIntent : paymentIntent?.id ?? null,
+  };
+}
 
 function userClient(accessToken: string) {
   const url = process.env.EXPO_PUBLIC_SUPABASE_URL?.trim() || process.env.SUPABASE_URL?.trim();
@@ -51,10 +71,10 @@ function defaultDeps(): RefundDeps {
     async loadTransaction(id) {
       const { data } = await admin
         .from("payment_transactions")
-        .select("id, society_id, status, payment_method, stripe_payment_intent_id, amount_pence")
+        .select("id, society_id, status, payment_method, stripe_payment_intent_id, stripe_refund_id, amount_pence, currency")
         .eq("id", id)
         .maybeSingle();
-      return data ?? null;
+      return (data as RefundTransaction | null) ?? null;
     },
     async createRefund(paymentIntentId, idempotencyKey) {
       if (!stripe) throw new Error("STRIPE_SECRET_KEY is not configured");
@@ -62,17 +82,32 @@ function defaultDeps(): RefundDeps {
         { payment_intent: paymentIntentId, reverse_transfer: true },
         { idempotencyKey },
       );
-      return refund.id;
+      return mapRefund(refund);
     },
-    async recordRefund(userAccessToken, transactionId, refundId) {
-      const client = userClient(userAccessToken);
-      const { error } = await client.rpc("record_event_stripe_refund", {
+    async retrieveRefund(refundId) {
+      if (!stripe) throw new Error("STRIPE_SECRET_KEY is not configured");
+      return mapRefund(await stripe.refunds.retrieve(refundId));
+    },
+    async recordRefund(transactionId, refundId, status) {
+      const { error } = await admin.rpc("record_event_stripe_refund", {
         p_payment_transaction_id: transactionId,
         p_stripe_refund_id: refundId,
+        p_refund_status: status,
       });
       if (error) throw new Error(error.message);
     },
   };
+}
+
+async function recordVerifiedRefund(
+  runtime: RefundDeps,
+  transaction: RefundTransaction,
+  refund: StripeRefundCheck,
+): Promise<RefundResult> {
+  const verified = verifyStripeRefund({ refund, transaction });
+  if (!verified.ok) return { status: 422, body: { error: verified.error } };
+  await runtime.recordRefund(transaction.id, refund.id, verified.recordStatus);
+  return { status: 200, body: { refundId: refund.id, refundStatus: verified.recordStatus } };
 }
 
 export async function handleRefundEventPayment(
@@ -104,7 +139,7 @@ export async function handleRefundEventPayment(
   if (!userId) return { status: 401, body: { error: "Invalid session" } };
   const transaction = await runtime.loadTransaction(transactionId);
   if (!transaction?.society_id) return { status: 404, body: { error: "Payment not found" } };
-  if (transaction.status !== "succeeded" || transaction.payment_method !== "stripe" || !transaction.stripe_payment_intent_id) {
+  if (transaction.payment_method !== "stripe" || !transaction.stripe_payment_intent_id) {
     return { status: 409, body: { error: "Only a succeeded Stripe payment can be refunded" } };
   }
 
@@ -112,9 +147,24 @@ export async function handleRefundEventPayment(
   if (role !== "TREASURER") return { status: 403, body: { error: "Only a Treasurer can refund event payments" } };
 
   try {
-    const refundId = await runtime.createRefund(transaction.stripe_payment_intent_id, `refund_${idempotencyKey}`);
-    await runtime.recordRefund(token, transactionId, refundId);
-    return { status: 200, body: { refundId } };
+    if (transaction.status === "refunded" && transaction.stripe_refund_id) {
+      return { status: 200, body: { refundId: transaction.stripe_refund_id, refundStatus: "succeeded" } };
+    }
+    if (transaction.status === "refund_pending" && transaction.stripe_refund_id) {
+      const existing = await runtime.retrieveRefund(transaction.stripe_refund_id);
+      if (!existing) return { status: 422, body: { error: "Stripe refund could not be confirmed" } };
+      return await recordVerifiedRefund(runtime, transaction, existing);
+    }
+    if (transaction.status !== "succeeded") {
+      return { status: 409, body: { error: "Only a succeeded Stripe payment can be refunded" } };
+    }
+
+    const created = await runtime.createRefund(transaction.stripe_payment_intent_id, `refund_${idempotencyKey}`);
+    const confirmed = await runtime.retrieveRefund(created.id);
+    if (!confirmed || confirmed.id !== created.id) {
+      return { status: 422, body: { error: "Stripe refund could not be confirmed" } };
+    }
+    return await recordVerifiedRefund(runtime, transaction, confirmed);
   } catch (err) {
     console.error("[stripe refund]", (err as Error).message);
     return { status: 500, body: { error: "Refund could not be recorded" } };

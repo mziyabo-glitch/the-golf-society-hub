@@ -30,6 +30,7 @@ ALTER TABLE public.payment_transactions
   ADD COLUMN IF NOT EXISTS stripe_connect_account_id text,
   ADD COLUMN IF NOT EXISTS stripe_receipt_url text,
   ADD COLUMN IF NOT EXISTS stripe_refund_id text,
+  ADD COLUMN IF NOT EXISTS stripe_refund_status text,
   ADD COLUMN IF NOT EXISTS resolution_required boolean NOT NULL DEFAULT false;
 
 UPDATE public.payment_transactions
@@ -96,20 +97,32 @@ ALTER TABLE public.payment_transactions DROP CONSTRAINT IF EXISTS payment_transa
 ALTER TABLE public.payment_transactions
   ADD CONSTRAINT payment_transactions_currency_check CHECK (currency = 'gbp');
 
+ALTER TABLE public.payment_transactions DROP CONSTRAINT IF EXISTS payment_transactions_status_check;
+ALTER TABLE public.payment_transactions
+  ADD CONSTRAINT payment_transactions_status_check
+  CHECK (status IN ('pending', 'succeeded', 'failed', 'canceled', 'refunded', 'refund_pending'));
+
+ALTER TABLE public.payment_transactions DROP CONSTRAINT IF EXISTS payment_transactions_stripe_refund_status_check;
+ALTER TABLE public.payment_transactions
+  ADD CONSTRAINT payment_transactions_stripe_refund_status_check
+  CHECK (stripe_refund_status IS NULL OR stripe_refund_status IN ('pending', 'succeeded', 'failed'));
+
 ALTER TABLE public.payment_transactions DROP CONSTRAINT IF EXISTS payment_transactions_payment_intent_uq;
 ALTER TABLE public.payment_transactions
   ADD CONSTRAINT payment_transactions_payment_intent_uq UNIQUE (stripe_payment_intent_id);
 
-CREATE UNIQUE INDEX IF NOT EXISTS payment_transactions_open_member_uq
+DROP INDEX IF EXISTS public.payment_transactions_open_member_uq;
+CREATE UNIQUE INDEX payment_transactions_open_member_uq
   ON public.payment_transactions (event_id, member_id)
-  WHERE status IN ('pending', 'succeeded')
+  WHERE status IN ('pending', 'succeeded', 'refund_pending')
     AND payer_type = 'member'
     AND event_id IS NOT NULL
     AND member_id IS NOT NULL;
 
-CREATE UNIQUE INDEX IF NOT EXISTS payment_transactions_open_guest_uq
+DROP INDEX IF EXISTS public.payment_transactions_open_guest_uq;
+CREATE UNIQUE INDEX payment_transactions_open_guest_uq
   ON public.payment_transactions (event_id, guest_id)
-  WHERE status IN ('pending', 'succeeded')
+  WHERE status IN ('pending', 'succeeded', 'refund_pending')
     AND payer_type = 'guest'
     AND event_id IS NOT NULL
     AND guest_id IS NOT NULL;
@@ -660,27 +673,32 @@ GRANT EXECUTE ON FUNCTION public.apply_event_stripe_payment(uuid, text, text, te
   TO service_role;
 
 -- ---------------------------------------------------------------------------
--- Treasurer refund record. Does not delete the ledger row.
+-- Refund record. service_role only, after the server has verified the
+-- Treasurer and the Stripe refund. Updates the existing ledger row.
+-- A missing member, guest, or event does not block the ledger update.
 -- ---------------------------------------------------------------------------
-CREATE OR REPLACE FUNCTION public.record_event_stripe_refund(
+DROP FUNCTION IF EXISTS public.record_event_stripe_refund(uuid, text);
+DROP FUNCTION IF EXISTS public.record_event_stripe_refund(uuid, text, text);
+
+CREATE FUNCTION public.record_event_stripe_refund(
   p_payment_transaction_id uuid,
-  p_stripe_refund_id text
+  p_stripe_refund_id text,
+  p_refund_status text
 ) RETURNS void
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = public
 AS $rf$
 DECLARE
-  v_uid uuid := auth.uid();
   v_tx public.payment_transactions%ROWTYPE;
-  v_caller_role text;
-  v_rows integer := 0;
+  v_status text := lower(trim(coalesce(p_refund_status, '')));
+  v_refund_id text := trim(coalesce(p_stripe_refund_id, ''));
 BEGIN
-  IF v_uid IS NULL THEN
-    RAISE EXCEPTION 'Not authenticated';
-  END IF;
-  IF p_stripe_refund_id IS NULL OR length(trim(p_stripe_refund_id)) = 0 THEN
+  IF v_refund_id = '' THEN
     RAISE EXCEPTION 'refund_id_missing';
+  END IF;
+  IF v_status NOT IN ('pending', 'succeeded', 'failed') THEN
+    RAISE EXCEPTION 'refund_status_invalid';
   END IF;
 
   SELECT * INTO v_tx
@@ -690,66 +708,82 @@ BEGIN
   IF NOT FOUND THEN
     RAISE EXCEPTION 'payment_transaction_not_found';
   END IF;
-  IF v_tx.society_id IS NULL THEN
-    RAISE EXCEPTION 'refund_society_missing';
-  END IF;
-  IF v_tx.status = 'refunded' AND v_tx.stripe_refund_id IS NOT DISTINCT FROM p_stripe_refund_id THEN
-    RETURN;
-  END IF;
-  IF v_tx.status <> 'succeeded' OR v_tx.payment_method <> 'stripe' THEN
+  IF v_tx.payment_method <> 'stripe' THEN
     RAISE EXCEPTION 'refund_not_allowed';
   END IF;
 
-  SELECT m.role
-    INTO v_caller_role
-    FROM public.members m
-   WHERE m.user_id = v_uid
-     AND m.society_id = v_tx.society_id
-   LIMIT 1;
-
-  IF upper(coalesce(v_caller_role, '')) <> 'TREASURER' THEN
-    RAISE EXCEPTION 'refund_forbidden';
+  IF v_tx.stripe_refund_id IS NOT DISTINCT FROM v_refund_id AND v_tx.status = 'refunded' THEN
+    RETURN;
+  END IF;
+  IF v_tx.stripe_refund_id IS NOT DISTINCT FROM v_refund_id
+     AND v_status = 'pending'
+     AND v_tx.status = 'refund_pending' THEN
+    RETURN;
+  END IF;
+  IF v_tx.stripe_refund_id IS NOT DISTINCT FROM v_refund_id
+     AND v_status = 'failed'
+     AND v_tx.status = 'succeeded'
+     AND v_tx.stripe_refund_status = 'failed' THEN
+    RETURN;
   END IF;
 
-  IF v_tx.payer_type = 'member' AND v_tx.member_id IS NOT NULL AND v_tx.event_id IS NOT NULL THEN
-    UPDATE public.event_registrations r
-       SET paid = false,
-           amount_paid_pence = 0,
-           paid_at = NULL,
-           payment_resolution_required = true
-     WHERE r.event_id = v_tx.event_id
-       AND r.member_id = v_tx.member_id
-       AND r.payment_transaction_id = v_tx.id;
-    GET DIAGNOSTICS v_rows = ROW_COUNT;
-    IF v_rows <> 1 THEN
-      RAISE EXCEPTION 'payment_target_missing';
-    END IF;
-  ELSIF v_tx.payer_type = 'guest' AND v_tx.guest_id IS NOT NULL AND v_tx.event_id IS NOT NULL THEN
-    UPDATE public.event_guests g
-       SET paid = false,
-           amount_paid_pence = 0,
-           payment_resolution_required = true
-     WHERE g.id = v_tx.guest_id
-       AND g.event_id = v_tx.event_id
-       AND g.payment_transaction_id = v_tx.id;
-    GET DIAGNOSTICS v_rows = ROW_COUNT;
-    IF v_rows <> 1 THEN
-      RAISE EXCEPTION 'payment_target_missing';
-    END IF;
-  ELSE
-    RAISE EXCEPTION 'payment_target_missing';
+  IF v_tx.status = 'refunded' THEN
+    RAISE EXCEPTION 'refund_not_allowed';
   END IF;
+  IF v_tx.status = 'refund_pending' AND v_tx.stripe_refund_id IS DISTINCT FROM v_refund_id THEN
+    RAISE EXCEPTION 'refund_not_allowed';
+  END IF;
+  IF v_tx.status NOT IN ('succeeded', 'refund_pending') THEN
+    RAISE EXCEPTION 'refund_not_allowed';
+  END IF;
+
+  IF v_status = 'pending' THEN
+    UPDATE public.payment_transactions
+       SET status = 'refund_pending',
+           stripe_refund_id = v_refund_id,
+           stripe_refund_status = 'pending',
+           resolution_required = true
+     WHERE id = p_payment_transaction_id;
+    RETURN;
+  END IF;
+
+  IF v_status = 'failed' THEN
+    UPDATE public.payment_transactions
+       SET status = 'succeeded',
+           stripe_refund_id = v_refund_id,
+           stripe_refund_status = 'failed',
+           resolution_required = false
+     WHERE id = p_payment_transaction_id;
+    RETURN;
+  END IF;
+
+  UPDATE public.event_registrations r
+     SET paid = false,
+         amount_paid_pence = 0,
+         paid_at = NULL,
+         payment_resolution_required = true
+   WHERE r.payment_transaction_id = p_payment_transaction_id;
+
+  UPDATE public.event_guests g
+     SET paid = false,
+         amount_paid_pence = 0,
+         payment_resolution_required = true
+   WHERE g.payment_transaction_id = p_payment_transaction_id;
 
   UPDATE public.payment_transactions
      SET status = 'refunded',
          resolution_required = true,
-         stripe_refund_id = p_stripe_refund_id
+         stripe_refund_id = v_refund_id,
+         stripe_refund_status = 'succeeded'
    WHERE id = p_payment_transaction_id;
 END;
 $rf$;
 
-REVOKE ALL ON FUNCTION public.record_event_stripe_refund(uuid, text) FROM PUBLIC, anon;
-GRANT EXECUTE ON FUNCTION public.record_event_stripe_refund(uuid, text) TO authenticated;
+REVOKE ALL ON FUNCTION public.record_event_stripe_refund(uuid, text, text) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.record_event_stripe_refund(uuid, text, text) TO service_role;
+
+COMMENT ON FUNCTION public.record_event_stripe_refund(uuid, text, text) IS
+  'Records a verified Stripe refund on the existing ledger row. service_role only.';
 
 REVOKE ALL ON FUNCTION public.payment_mutation_from_end_user() FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.payment_mutation_from_end_user() TO anon, authenticated, service_role;
