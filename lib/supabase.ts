@@ -5,6 +5,7 @@
 import "react-native-url-polyfill/auto";
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
 import { supabaseStorage } from "@/lib/supabaseStorage";
+import { paymentStagingEnvError } from "@/lib/payments/stagingGuard";
 import { AppState, Platform } from "react-native";
 
 const supabaseUrl =
@@ -20,6 +21,11 @@ if (!supabaseUrl || !supabaseAnonKey) {
   throw new Error(
     "Supabase env vars missing. Set EXPO_PUBLIC_SUPABASE_* or NEXT_PUBLIC_SUPABASE_*"
   );
+}
+
+const stagingProblem = paymentStagingEnvError();
+if (stagingProblem) {
+  throw new Error(stagingProblem);
 }
 
 // Singleton instance

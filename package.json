@@ -9,6 +9,7 @@
     "web": "expo start --web",
     "dev:api": "tsx scripts/dev-api-server.ts",
     "dev:web": "concurrently \"expo start --web\" \"npm run dev:api\"",
+    "staging:payments": "bash scripts/payments/local-staging.sh",
     "lint": "expo lint -- --cache --cache-location .cache/eslint/.eslintcache",
     "test": "vitest run",
     "test:e2e:phase1": "playwright test --config playwright.config.ts",

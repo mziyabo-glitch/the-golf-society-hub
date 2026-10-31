@@ -1,13 +1,46 @@
 -- Synthetic Staging M4 / Staging ZGS payment fixture.
--- Safe only on an empty staging database after the payment migrations.
--- Aborts when any other society already exists. Do not run against production
--- project eaenzjwecrrbhibrvgsb. Online payments stay off. No Stripe secret.
+-- Safe only on an empty local database after the payment migrations.
+-- Aborts when any other society already exists, when the target is production
+-- project eaenzjwecrrbhibrvgsb, or when the database host is not local.
+-- Online payments stay off. No Stripe secret and no account password.
+--
+-- Required psql variables, supplied by scripts/payments/local-staging.sh:
+--   staging_password, staging_db_host, staging_project_ref
+
+\if :{?staging_password}
+\else
+\echo 'staging_seed_refused_missing_password: run scripts/payments/local-staging.sh setup'
+DO $$ BEGIN RAISE EXCEPTION 'staging_seed_refused_missing_password'; END $$;
+\quit
+\endif
+
+\if :{?staging_db_host}
+\else
+\echo 'staging_seed_refused_missing_host: run scripts/payments/local-staging.sh setup'
+DO $$ BEGIN RAISE EXCEPTION 'staging_seed_refused_non_local_host'; END $$;
+\quit
+\endif
+
+\if :{?staging_project_ref}
+\else
+\echo 'staging_seed_refused_missing_project_ref'
+DO $$ BEGIN RAISE EXCEPTION 'staging_seed_refused_production_target'; END $$;
+\quit
+\endif
 
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
+SELECT
+  set_config('gsh.staging_password', :'staging_password', false) AS staging_password_set,
+  set_config('gsh.staging_db_host', :'staging_db_host', false) AS staging_db_host_set,
+  set_config('gsh.staging_project_ref', :'staging_project_ref', false) AS staging_project_ref_set
+\gset
+
 DO $seed$
 DECLARE
-  v_password text := crypt('StagingPayTest!2026', gen_salt('bf'));
+  v_password text;
+  v_host text := coalesce(current_setting('gsh.staging_db_host', true), '');
+  v_ref text := coalesce(current_setting('gsh.staging_project_ref', true), '');
   v_instance uuid := '00000000-0000-0000-0000-000000000000';
   u_captain uuid := '21000000-0000-4000-8000-000000000001';
   u_treasurer uuid := '21000000-0000-4000-8000-000000000002';
@@ -29,12 +62,38 @@ DECLARE
   m_zgs_player uuid := '23000000-0000-4000-8000-000000000010';
   e_joint uuid := '24000000-0000-4000-8000-000000000001';
 BEGIN
+  IF coalesce(length(current_setting('gsh.staging_password', true)), 0) < 16 THEN
+    RAISE EXCEPTION 'staging_seed_refused_missing_password';
+  END IF;
+  IF v_ref ILIKE '%eaenzjwecrrbhibrvgsb%'
+     OR v_host ILIKE '%eaenzjwecrrbhibrvgsb%'
+     OR v_host ILIKE '%.supabase.co'
+     OR v_host ILIKE '%.supabase.com' THEN
+    RAISE EXCEPTION 'staging_seed_refused_production_target';
+  END IF;
+  IF v_host NOT IN ('127.0.0.1', 'localhost', '::1') THEN
+    RAISE EXCEPTION 'staging_seed_refused_non_local_host';
+  END IF;
+  IF inet_server_addr() IS NOT NULL
+     AND NOT (
+       inet_server_addr() << '127.0.0.0/8'::inet
+       OR inet_server_addr() = '::1'::inet
+       OR inet_server_addr() << '10.0.0.0/8'::inet
+       OR inet_server_addr() << '172.16.0.0/12'::inet
+       OR inet_server_addr() << '192.168.0.0/16'::inet
+       OR inet_server_addr() << 'fc00::/7'::inet
+       OR inet_server_addr() << 'fe80::/10'::inet
+     ) THEN
+    RAISE EXCEPTION 'staging_seed_refused_non_local_host';
+  END IF;
   IF EXISTS (
     SELECT 1 FROM public.societies
      WHERE id NOT IN (s_m4, s_zgs)
   ) THEN
     RAISE EXCEPTION 'staging_seed_refused_non_empty_database';
   END IF;
+
+  v_password := crypt(current_setting('gsh.staging_password'), gen_salt('bf'));
 
   INSERT INTO auth.users (
     instance_id, id, aud, role, email, encrypted_password, email_confirmed_at,
@@ -60,7 +119,10 @@ BEGIN
     (v_instance, u_zgs, 'authenticated', 'authenticated', 'staging.zgs.treasurer@gsh-staging.test', v_password, now(),
      '{"provider":"email","providers":["email"]}'::jsonb, '{"full_name":"Staging ZGS Treasurer"}'::jsonb, now(), now(),
      '', '', '', '', '', '', false, false)
-  ON CONFLICT (id) DO NOTHING;
+  ON CONFLICT (id) DO UPDATE SET
+    encrypted_password = EXCLUDED.encrypted_password,
+    email = EXCLUDED.email,
+    updated_at = now();
 
   INSERT INTO auth.identities (id, user_id, identity_data, provider, provider_id, last_sign_in_at, created_at, updated_at)
   SELECT gen_random_uuid(), id,
@@ -144,3 +206,5 @@ BEGIN
      AND removed_from_event_at IS NULL;
 END
 $seed$;
+
+SELECT set_config('gsh.staging_password', '', false) AS staging_password_cleared \gset

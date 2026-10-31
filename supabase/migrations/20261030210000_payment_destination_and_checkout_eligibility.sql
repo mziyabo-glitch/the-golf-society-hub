@@ -1,5 +1,7 @@
 -- Payment destination and checkout eligibility.
--- Apply after 20261030250000_guest_payment_invitations.sql.
+-- Apply after 20261030200000_guest_payment_invitations.sql.
+-- Renamed from 20261030260000 (hour 26 is not a valid timestamp).
+-- This version was not applied to production eaenzjwecrrbhibrvgsb.
 -- Fresh databases: foundation, then integrity repair, then guest invitations, then this file.
 -- Production project eaenzjwecrrbhibrvgsb already has the draft foundation.
 -- Do not re-apply the foundation file there. This migration is the next step

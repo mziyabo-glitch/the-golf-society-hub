@@ -7,7 +7,15 @@
  */
 import "dotenv/config";
 import http from "node:http";
+import { Client } from "pg";
 import { getCalendarIcsForToken } from "../lib/calendarIcsFeed";
+import { isPaymentStaging, paymentStagingEnvError } from "../lib/payments/stagingGuard";
+
+const stagingProblem = paymentStagingEnvError();
+if (stagingProblem) {
+  console.error(`[dev-api-server] ${stagingProblem}`);
+  process.exit(1);
+}
 
 const PORT = 3001;
 const apiKey = process.env.GOLF_API_KEY ?? process.env.NEXT_PUBLIC_GOLF_API_KEY;
@@ -119,6 +127,57 @@ const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Headers": "Content-Type, Authorization, Idempotency-Key, Stripe-Signature",
 };
 
+async function stagingDatabaseStatus(): Promise<{
+  ok: boolean;
+  database: "reachable" | "unreachable" | "not_configured";
+  via: "postgres" | "supabase" | null;
+  stripeCheckoutCreated: false;
+}> {
+  const connectionString = process.env.STAGING_DATABASE_URL?.trim();
+  if (connectionString) {
+    if (connectionString.toLowerCase().includes("eaenzjwecrrbhibrvgsb")) {
+      return { ok: false, database: "unreachable", via: null, stripeCheckoutCreated: false };
+    }
+    const client = new Client({ connectionString });
+    try {
+      await client.connect();
+      const result = await client.query("select 1 as ok");
+      const reachable = result.rows[0]?.ok === 1;
+      return {
+        ok: reachable,
+        database: reachable ? "reachable" : "unreachable",
+        via: "postgres",
+        stripeCheckoutCreated: false,
+      };
+    } catch {
+      console.error("[dev-api-server] staging database check failed");
+      return { ok: false, database: "unreachable", via: "postgres", stripeCheckoutCreated: false };
+    } finally {
+      await client.end().catch(() => undefined);
+    }
+  }
+
+  const hasSupabase =
+    Boolean(process.env.SUPABASE_SERVICE_ROLE_KEY?.trim()) &&
+    Boolean(process.env.EXPO_PUBLIC_SUPABASE_URL?.trim() || process.env.SUPABASE_URL?.trim());
+  if (!hasSupabase) {
+    return { ok: false, database: "not_configured", via: null, stripeCheckoutCreated: false };
+  }
+  try {
+    const { getServiceRoleSupabase } = await import("../lib/server/supabaseServiceRole");
+    const supabase = getServiceRoleSupabase();
+    const { error } = await supabase.from("societies").select("id").limit(1);
+    if (error) {
+      console.error("[dev-api-server] staging supabase check failed");
+      return { ok: false, database: "unreachable", via: "supabase", stripeCheckoutCreated: false };
+    }
+    return { ok: true, database: "reachable", via: "supabase", stripeCheckoutCreated: false };
+  } catch {
+    console.error("[dev-api-server] staging supabase check failed");
+    return { ok: false, database: "unreachable", via: "supabase", stripeCheckoutCreated: false };
+  }
+}
+
 async function readJsonBody(req: http.IncomingMessage): Promise<unknown> {
   const chunks: Buffer[] = [];
   for await (const chunk of req) {
@@ -146,6 +205,18 @@ const server = http.createServer(async (req, res) => {
 
   const url = new URL(req.url || "/", `http://localhost:${PORT}`);
   const pathname = url.pathname;
+
+  if (pathname === "/api/health/db" && req.method === "GET") {
+    if (!isPaymentStaging()) {
+      res.writeHead(404, { ...corsHeaders, "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "Not found" }));
+      return;
+    }
+    const status = await stagingDatabaseStatus();
+    res.writeHead(status.ok ? 200 : 503, { ...corsHeaders, "Content-Type": "application/json" });
+    res.end(JSON.stringify(status));
+    return;
+  }
 
   if (pathname === "/api/stripe/guest-checkout" && req.method === "POST") {
     try {

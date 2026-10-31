@@ -12,15 +12,15 @@ const foundationSql = readFileSync(
   "utf8",
 );
 const repairSql = readFileSync(
-  path.join(root, "supabase/migrations/20261030240000_stripe_payment_integrity.sql"),
+  path.join(root, "supabase/migrations/20261030190000_stripe_payment_integrity.sql"),
   "utf8",
 );
 const guestInviteSql = readFileSync(
-  path.join(root, "supabase/migrations/20261030250000_guest_payment_invitations.sql"),
+  path.join(root, "supabase/migrations/20261030200000_guest_payment_invitations.sql"),
   "utf8",
 );
 const destinationSql = readFileSync(
-  path.join(root, "supabase/migrations/20261030260000_payment_destination_and_checkout_eligibility.sql"),
+  path.join(root, "supabase/migrations/20261030210000_payment_destination_and_checkout_eligibility.sql"),
   "utf8",
 );
 

@@ -1,6 +1,8 @@
 -- Repairs databases that already applied the first Stripe payments draft.
 -- Safe to run after the corrected foundation migration as well.
 -- Does not enable online payments.
+-- Renamed from 20261030240000 (hour 24 is not a valid timestamp).
+-- This version was not applied to production eaenzjwecrrbhibrvgsb.
 
 ALTER TABLE public.societies
   ADD COLUMN IF NOT EXISTS online_payments_enabled boolean NOT NULL DEFAULT false,

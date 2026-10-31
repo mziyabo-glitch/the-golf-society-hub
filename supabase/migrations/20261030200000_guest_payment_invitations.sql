@@ -1,4 +1,6 @@
 -- Public guest entry fees are paid with a single-purpose invitation token.
+-- Renamed from 20261030250000 (hour 25 is not a valid timestamp).
+-- This version was not applied to production eaenzjwecrrbhibrvgsb.
 -- The raw token is returned once to the guest. Only its hash is stored.
 -- Existing public RSVP via submit_public_event_rsvp_guest is unchanged.
 

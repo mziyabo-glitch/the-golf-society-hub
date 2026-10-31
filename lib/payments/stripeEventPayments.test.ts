@@ -94,7 +94,7 @@ describe("stripe payment foundation", () => {
   it("migration files are plain SQL", () => {
     for (const file of [
       "supabase/migrations/20261030180000_stripe_event_payments_foundation.sql",
-      "supabase/migrations/20261030240000_stripe_payment_integrity.sql",
+      "supabase/migrations/20261030190000_stripe_payment_integrity.sql",
     ]) {
       const sql = readFileSync(path.join(root, file), "utf8");
       expect(sql.includes("```")).toBe(false);
@@ -104,7 +104,7 @@ describe("stripe payment foundation", () => {
       expect(sql).not.toContain("gsh.payment_write");
     }
     const destinationSql = readFileSync(
-      path.join(root, "supabase/migrations/20261030260000_payment_destination_and_checkout_eligibility.sql"),
+      path.join(root, "supabase/migrations/20261030210000_payment_destination_and_checkout_eligibility.sql"),
       "utf8",
     );
     expect(destinationSql.includes("```")).toBe(false);
@@ -112,6 +112,21 @@ describe("stripe payment foundation", () => {
     expect(destinationSql).toContain("payment_beneficiary_unauthorised");
     expect(destinationSql).toContain("guard_event_payment_beneficiary");
     expect(destinationSql).not.toContain("GRANT UPDATE (payment_beneficiary_society_id)");
+    for (const file of [
+      "supabase/migrations/20261030180000_stripe_event_payments_foundation.sql",
+      "supabase/migrations/20261030190000_stripe_payment_integrity.sql",
+      "supabase/migrations/20261030200000_guest_payment_invitations.sql",
+      "supabase/migrations/20261030210000_payment_destination_and_checkout_eligibility.sql",
+    ]) {
+      const version = path.basename(file).slice(0, 14);
+      const hour = Number(version.slice(8, 10));
+      const minute = Number(version.slice(10, 12));
+      const second = Number(version.slice(12, 14));
+      expect(hour).toBeGreaterThanOrEqual(0);
+      expect(hour).toBeLessThanOrEqual(23);
+      expect(minute).toBeLessThanOrEqual(59);
+      expect(second).toBeLessThanOrEqual(59);
+    }
   });
 
   it("keeps online pay now off unless Connect is ready and the player is playing and unpaid", () => {

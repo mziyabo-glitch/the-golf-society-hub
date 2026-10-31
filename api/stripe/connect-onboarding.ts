@@ -1,6 +1,9 @@
 import { handleConnectOnboarding } from "@/lib/payments/connectOnboarding";
+import { stagingRefusalResponse } from "@/lib/payments/stagingGuard";
 
 export async function POST(req: Request) {
+  const refused = stagingRefusalResponse();
+  if (refused) return refused;
   let rawBody: unknown = {};
   try {
     rawBody = await req.json();
