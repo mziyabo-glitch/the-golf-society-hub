@@ -25,7 +25,14 @@ bash scripts/payments/local-staging.sh check
 
 Read the password from `.env.staging.local` on that machine. Do not commit the file and do not paste the password into a pull request, issue, or screenshot.
 
-`setup` prefers `supabase start` and `supabase db reset --local --yes --no-seed` when Docker is running. The local API is `http://127.0.0.1:54321`. Without Docker it drops and recreates local database `gsh_payment_staging`, then applies migrations with:
+`setup` prefers `supabase start` and `supabase db reset --local --yes --no-seed` when Docker is running. The local API is `http://127.0.0.1:54321`. Without Docker, and only when `SUPABASE_EXPERIMENTAL_STACK=1 supabase start --help` lists `--runtime native`, `setup` runs:
+
+```bash
+SUPABASE_EXPERIMENTAL_STACK=1 supabase start --runtime native --eager \
+  --exclude studio,mail,analytics,realtime,storage,functions,pooler --yes
+```
+
+That flag is absent from `supabase start --help` until the experimental stack is turned on for the process. This repo does not set `[experimental] stack = true`, because that switches every `supabase start` onto the experimental engine and the fixed ports in `supabase/config.toml` become exact requests. If the CLI has no native runtime flag and Docker is absent, `setup` falls back to local database `gsh_payment_staging` and says that path has no Auth and no REST API. It applies migrations with:
 
 ```bash
 supabase db reset --db-url 'postgresql://ubuntu@localhost/gsh_payment_staging?host=/var/run/postgresql' --yes --no-seed
@@ -71,20 +78,80 @@ bash scripts/payments/local-staging.sh validate-migrations
 
 That drops and recreates local database `gsh_migration_validate` only. It does not take `--linked` and it has no project ref.
 
-Historical files in this repo are incremental patches. Checked on 30 October 2026 with Supabase CLI 2.122.0:
+## Why `002_rls_policies.sql` fails
+
+The first file in `supabase/migrations` is `002_rls_policies.sql`. There is no `001`. Its header says to run it in the Supabase SQL Editor. The first statement is `ALTER TABLE public.societies ENABLE ROW LEVEL SECURITY`. The same file then alters `public.profiles`, `public.members`, and `public.events`. None of those tables are created earlier in the migration list.
+
+`public.societies` and `public.members` are never created by any committed migration. `git log -S 'CREATE TABLE public.societies'` finds that statement only in the payment vitest fixture, not in a migration. `public.events` is created later by `005_fix_members_events_complete.sql`. `public.profiles` is created later by `031_user_profile_fields.sql`. `supabase/config.toml` has `schema_paths = []`. There is no `schema.sql`, no generated Database type, and no declarative schema directory.
+
+Checked on 31 October 2026 with Supabase CLI 2.122.0. `docker` and `podman` are not installed. `bash scripts/payments/local-staging.sh validate-migrations` still stops at `002_rls_policies.sql` with `relation "public.societies" does not exist`. The CLI labels any `--db-url` target "remote" even when the URL is a local socket. The script refuses that URL unless the host is loopback or a Unix socket, and it never passes `--linked` or project `eaenzjwecrrbhibrvgsb`.
+
+The original core tables were created outside this repository, in the Supabase SQL editor, before these files were saved as migrations. Later files are patches on that dashboard schema. A one-line `CREATE TABLE societies` is not the missing baseline: `002` also requires `profiles`, `members`, and `events`, and later files assume columns that were never added by a `CREATE TABLE` (`societies.join_code`, `societies.country`, `societies.created_by`, `societies.logo_url`, `members.name`, `members.role`, `members.paid`, `members.amount_paid_pence`).
+
+A fresh replay of the committed files is not achievable even after those four tables are created from the columns the later files assume. A local Postgres 16 probe (not committed, not pointed at production) applied 174 of 187 files and then hit historical migrations that do not replay onto an empty database:
+
+- `007_event_results_table.sql` and `008_fix_event_results_rls.sql` read `members.roles`. `009_fix_event_results_rls_v2.sql` says that column does not exist and that `members.role` is the real column. The migration runner stops at `007`, so `009` never runs.
+- `048_course_tees_and_event_tee_id.sql` adds `events.tee_id` referencing `public.course_tees` before `049_golf_api_course_import.sql` creates that table. The file's own comment says `049` creates it. Filename order runs `048` first.
+- `082_restore_david_nyoni_m4_membership.sql` raises `M4 society not found` unless a society whose name matches `%m4%` already exists. If one does, the file inserts a member named David Nyoni. That is a production data repair, not schema, and it must not be replayed onto staging.
+- `099_event_prize_pool_opt_in_and_manager.sql` creates a SQL function that reads `event_prize_pool_managers` before that table is created later in the same file.
+- `160_tee_sheet_draft_manco_rls.sql` and `173_fix_publish_tee_times_time_cast.sql` use `CREATE OR REPLACE FUNCTION` in a way Postgres rejects when the existing function's argument name `p_start` would change.
+
+Editing those files would change the checksum of migrations already applied on production. They were left unchanged. Payment vitest still applies the four payment files on its own fixture. No local database was loaded with the current application schema.
+
+## Staging baseline that still needs approval
+
+Do not run a schema export until the project owner approves a read-only, schema-only copy. Do not execute this from the agent environment. Do not use `supabase db dump` or `supabase link` against `eaenzjwecrrbhibrvgsb`.
+
+Approval required before any connection:
+
+1. The connection is read-only: a read replica, or a session with `default_transaction_read_only = on`. Not the migration role and not a write on the primary.
+2. The command is schema-only. No table data, no `COPY`, no `auth.users`, no passwords, no Stripe Connect account ids, no storage objects.
+3. A person reviews the file before it is kept, and it is not committed if it contains secrets.
 
 ```bash
-supabase start
-# failed: docker: command not found (podman also not found)
-
-bash scripts/payments/local-staging.sh validate-migrations
-# supabase db reset --db-url 'postgresql://ubuntu@localhost/gsh_migration_validate?host=/var/run/postgresql' --yes --no-seed
-# failed at 002_rls_policies.sql: relation "public.societies" does not exist
+pg_dump \
+  --schema-only \
+  --no-owner \
+  --no-privileges \
+  --schema=public \
+  --schema=storage \
+  --dbname="$READ_ONLY_REPLICA_URL" \
+  --file=/tmp/gsh-schema-only.sql
 ```
 
-The CLI labels any `--db-url` target "remote" even when the URL is a local socket. The script refuses that URL unless the host is loopback or a Unix socket, and it never passes `--linked` or project `eaenzjwecrrbhibrvgsb`. An empty database cannot finish the historical migrations until the original `public.societies` baseline exists. Payment vitest applies the four payment files on its own fixture.
+`$READ_ONLY_REPLICA_URL` is a read-only role. Do not put the URL in git, the pull request, or `.env.staging.local` if it contains a password for `eaenzjwecrrbhibrvgsb`.
 
-With Docker absent, the web app was not opened: there is no local Auth service and the schema reset stops at `002_rls_policies.sql`. The payment API did start. `GET http://127.0.0.1:3001/api/health/db` returned `{"ok":true,"database":"reachable","via":"postgres","stripeCheckoutCreated":false}` against local `gsh_payment_staging`. No Stripe request was made.
+After that file is approved and loaded into an empty local Supabase database:
+
+1. Insert the production `supabase_migrations.schema_migrations` versions as already applied, including `20261030180000`. Do not run that file again. Do not rename it.
+2. Apply only the three files that are not on production, in this order: `20261030190000_stripe_payment_integrity.sql`, `20261030200000_guest_payment_invitations.sql`, `20261030210000_payment_destination_and_checkout_eligibility.sql`.
+3. Run `bash scripts/payments/local-staging.sh seed` against that local database. The seed still aborts on production hosts, project ref `eaenzjwecrrbhibrvgsb`, and any society other than Staging M4 and Staging ZGS.
+
+## Native Supabase runtime
+
+CLI `2.122.0` on Linux x86_64, glibc 2.39. `supabase start --help` with no experimental setting does not list a runtime flag. Its description is "Start containers for Supabase local development" and its only flags are `--exclude` and `--ignore-health-check`.
+
+With `SUPABASE_EXPERIMENTAL_STACK=1`, `supabase stack --help` starts with "Manage an experimental, unstable local Supabase stack", and `supabase start --help` adds:
+
+```text
+--runtime choice    Runtime to use for a new stack. auto selects Docker, then Podman, then native, based on what is available. (choices: auto, docker, podman, native)
+--eager             Activate all enabled capabilities before returning and disable automatic idle stops.
+```
+
+`supabase start --runtime native --eager --exclude studio,mail,analytics,realtime,storage,functions,pooler --yes` was run on 31 October 2026.
+
+With migrations left enabled, the native stack seeded its own roles and then exited 1 at `002_rls_policies.sql`: `relation "public.societies" does not exist`. Auth and PostgREST were not left running. That is the same schema gap as the socket reset. It is not a missing Docker daemon and not an unsupported OS.
+
+A second start, with `[db.migrations] enabled` set to false only for that process and then restored to true, reached "Stack is ready" with `"runtime":"native"`. API `http://127.0.0.1:54321`. Database `127.0.0.1:54322`. That config change was not committed.
+
+On that temporary stack:
+
+- `POST /auth/v1/signup` for `staging.native.probe@gsh-staging.test` returned HTTP 200 and a session.
+- `POST /auth/v1/token?grant_type=password` for the same address returned HTTP 200.
+- `GET /rest/v1/` returned HTTP 200 and a PostgREST OpenAPI document (PostgREST 16.5).
+- `GET /rest/v1/societies?select=id&limit=1` returned HTTP 404 `PGRST205` (`Could not find the table 'public.societies' in the schema cache`).
+
+The password stayed in a mode 600 file under `/tmp` and was deleted. The diagnostic stack was destroyed with `supabase stack destroy --yes`. No screenshot was taken: the Expo app was not started, because there is no M4 event schema to sign into. Pay now, the guest invite, and the Treasurer screen were not opened.
 
 ## Server environment
 
@@ -114,18 +181,28 @@ Put the CLI's `whsec_` value in `STRIPE_WEBHOOK_SECRET` inside `.env.staging.loc
 
 ## External Stripe test-mode checks
 
-Use card `4242 4242 4242 4242`, any future expiry, and any CVC. No real money. Do this only on the empty local staging database, after `online_payments_enabled` is turned on for Staging M4 only.
+No Stripe API call was made from this environment. There is no `sk_test_` key here. Do not treat the steps below as a passed integration test.
 
-1. M4 Stripe Connect Express onboarding completes. Sign in as `staging.m4.treasurer@gsh-staging.test` with `STAGING_ACCOUNT_PASSWORD` from `.env.staging.local` and `POST /api/stripe/connect-onboarding` with the Staging M4 society id. Finish Express in Stripe test mode and confirm charges are enabled.
+Do this only after the approved schema-only baseline is loaded, the three unapplied payment migrations have run, and `bash scripts/payments/local-staging.sh seed` has created Staging M4 and Staging ZGS. `online_payments_enabled` stays false until a person turns it on for Staging M4 only. Card `4242 4242 4242 4242`, any future expiry, any CVC. No real money.
+
+Put `STRIPE_SECRET_KEY=sk_test_...` in `.env.staging.local` only. Then, in another terminal:
+
+```bash
+stripe listen --forward-to http://127.0.0.1:3001/api/stripe/webhook
+```
+
+Copy that command's `whsec_` into `STRIPE_WEBHOOK_SECRET` in the same gitignored file and run `bash scripts/payments/local-staging.sh start` again.
+
+1. Test-mode Express connected account. Sign in as `staging.m4.treasurer@gsh-staging.test` with `STAGING_ACCOUNT_PASSWORD` from `.env.staging.local`. Call `POST http://127.0.0.1:3001/api/stripe/connect-onboarding` with `Authorization: Bearer <access_token>` and body `{"societyId":"22000000-0000-4000-8000-000000000001"}`. Open the returned Account Link, finish Express in Stripe test mode, and confirm `societies.stripe_connect_charges_enabled` is true for Staging M4. The account id must be a new test-mode `acct_` created by that call, not a production Connect account.
 2. Online payments remain hidden while the flag is disabled. Leave `online_payments_enabled` false and open the joint event. Pay now is absent. Bank-transfer copy can still show.
 3. Only authorised members see Pay now after activation. Set `online_payments_enabled` true for Staging M4 only. A playing member sees Pay now. A withdrawn member and a member with no RSVP and no playing-list entry do not.
-4. A successful £25 card payment appears exactly once in the ledger. `member_entry_fee_pence` and `joint_participant_entry_fee_pence` are 2500. One `payment_transactions` row is `succeeded` for 2500.
+4. A successful £25 member payment appears exactly once in the ledger. Sign in as `staging.m4.player@gsh-staging.test`. `POST http://127.0.0.1:3001/api/stripe/create-checkout-session` with `Authorization: Bearer <access_token>`, header `Idempotency-Key` of at least 8 characters, and body `{"eventId":"24000000-0000-4000-8000-000000000001","societyId":"22000000-0000-4000-8000-000000000001","payerType":"member"}`. Pay the Checkout for 2500 pence. `member_entry_fee_pence` and `joint_participant_entry_fee_pence` are 2500. One `payment_transactions` row is `succeeded` for 2500.
 5. The player becomes paid and tee-sheet eligible. The registration is status `in`, `paid` true, payment method `stripe`.
 6. Duplicate webhooks do not duplicate payment records. Deliver `checkout.session.completed` twice. The ledger still has one row.
 7. Canceled and failed Checkouts do not mark players paid. Cancel returns to `/event/{id}?payment=canceled`. A failed or unpaid session leaves the registration unpaid.
-8. A guest can pay through the public invite without creating an account. Open `/invite/{eventUuid}`, submit a name, and Pay now with the returned token at `POST /api/stripe/guest-checkout`. A raw guest UUID is rejected.
-9. M4/ZGS joint payment routing is correct. Only a Captain or Treasurer can call `set_event_payment_beneficiary`. The beneficiary must be M4 or ZGS. Checkout uses that society's Connect account. A Secretary or Handicapper update of the event does not change it.
-10. The Treasurer can issue a test refund. `POST /api/stripe/refund` with a Bearer token, an `Idempotency-Key`, and `{ "transactionId" }`.
+8. A guest can pay through the public invite without creating an account. Open `http://127.0.0.1:8081/invite/24000000-0000-4000-8000-000000000001`, submit a name, and use the returned `paymentToken`. `POST http://127.0.0.1:3001/api/stripe/guest-checkout` with header `Idempotency-Key` and body `{"paymentToken":"<token>","eventId":"24000000-0000-4000-8000-000000000001","societyId":"22000000-0000-4000-8000-000000000001","guestId":"<guest uuid>"}`. A raw guest UUID without that token is rejected.
+9. Joint-event payout routing. As the M4 captain or treasurer, `select public.set_event_payment_beneficiary('24000000-0000-4000-8000-000000000001', '22000000-0000-4000-8000-000000000001', '22000000-0000-4000-8000-000000000002')` routes the £25 charge to Staging ZGS. The beneficiary must be Staging M4 (`22000000-0000-4000-8000-000000000001`) or Staging ZGS (`22000000-0000-4000-8000-000000000002`). Checkout uses that society's test-mode Connect account. A Secretary or Handicapper update of the event does not change it.
+10. Refund. As `staging.m4.treasurer@gsh-staging.test`, `POST http://127.0.0.1:3001/api/stripe/refund` with `Authorization: Bearer <access_token>`, header `Idempotency-Key`, and body `{"transactionId":"<payment_transactions.id>"}`. `stripe listen` must forward `charge.refunded` and `refund.updated` before the ledger matches Stripe.
 11. Pending, failed, and successful refunds are represented accurately. `succeeded` marks that same row `refunded` and the linked player unpaid. `pending` sets `refund_pending` and leaves the player paid until `refund.updated`. `failed` leaves the original payment `succeeded`.
 12. Expired sessions, Stripe API timeouts, and late webhooks recover safely. An expired or complete-unpaid session can be replaced. A timeout or HTTP 5xx returns 503 and does not expire or replace the open session. A later `checkout.session.completed` for the original session id still credits that one row.
 13. Existing manual bank transfers continue working. With online payments off, a Captain or Treasurer can still mark a joint-event player paid. That row uses payment method `manual` and does not create a Stripe ledger charge.
@@ -135,7 +212,7 @@ Use card `4242 4242 4242 4242`, any future expiry, and any CVC. No real money. D
 Do not create this from the agent environment. Do not call Supabase project creation. Do not deploy Vercel. Do not copy production credentials, Connect account ids, or society ids from `eaenzjwecrrbhibrvgsb`.
 
 1. Create a new empty Supabase project that is not `eaenzjwecrrbhibrvgsb`.
-2. Apply migrations in the order above. Do not link the CLI at the production ref. `supabase link` and `supabase db push` against `eaenzjwecrrbhibrvgsb` are not valid staging commands.
+2. Load the approved schema-only baseline, mark the production migration versions applied, then apply only `20261030190000`, `20261030200000`, and `20261030210000`. Do not replay `002_rls_policies.sql` onto an empty database and do not run `20261030180000` again. Do not link the CLI at the production ref. `supabase link` and `supabase db push` against `eaenzjwecrrbhibrvgsb` are not valid staging commands.
 3. The committed seed refuses any non-local host, including a hosted Supabase database. Keep using `bash scripts/payments/local-staging.sh seed` only against local Postgres. Do not weaken that guard to reach production.
 4. Vercel preview environment, with Deployment Protection enabled so the preview is not public:
    - `EXPO_PUBLIC_SUPABASE_URL` = `https://<new-project-ref>.supabase.co`

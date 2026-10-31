@@ -24,6 +24,10 @@ Usage: scripts/payments/local-staging.sh <command>
   validate-migrations   Apply all migrations to a fresh local database and exit
 
 Online payments stay disabled. Do not point this at production.
+setup uses Docker when the daemon is running. Otherwise, if
+"supabase start --help" lists --runtime native after
+SUPABASE_EXPERIMENTAL_STACK=1, it starts that native stack. A local
+Postgres socket is not treated as Supabase Auth.
 EOF
 }
 
@@ -250,20 +254,19 @@ cmd_validate_migrations() {
   supabase db reset --db-url "$url" --yes --no-seed
 }
 
-cmd_setup() {
-  ensure_env_file
-  load_env
-  refuse_committed_env_files
-  if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1 && command -v supabase >/dev/null 2>&1; then
-    if [[ ! -f "$ROOT/supabase/config.toml" ]]; then
-      supabase init
-    fi
-    supabase start
-    local status_file
-    status_file="$(mktemp)"
-    chmod 600 "$status_file"
-    supabase status -o env >"$status_file"
-    python3 - "$ENV_FILE" "$status_file" <<'PY'
+docker_daemon_running() {
+  command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1
+}
+
+# --runtime native exists only after the experimental stack is enabled.
+# Without SUPABASE_EXPERIMENTAL_STACK=1, `supabase start --help` does not list it.
+native_runtime_supported() {
+  SUPABASE_EXPERIMENTAL_STACK=1 supabase start --help 2>&1 | grep -q -- '--runtime'
+}
+
+merge_supabase_status() {
+  local status_file="$1"
+  python3 - "$ENV_FILE" "$status_file" <<'PY'
 import pathlib, sys
 env_path, status_path = map(pathlib.Path, sys.argv[1:3])
 status = {}
@@ -272,6 +275,10 @@ for line in status_path.read_text().splitlines():
         continue
     key, value = line.split("=", 1)
     status[key] = value.strip().strip('"')
+if "ANON_KEY" not in status and status.get("PUBLISHABLE_KEY"):
+    status["ANON_KEY"] = status["PUBLISHABLE_KEY"]
+if "SERVICE_ROLE_KEY" not in status and status.get("SECRET_KEY"):
+    status["SERVICE_ROLE_KEY"] = status["SECRET_KEY"]
 mapping = {
     "API_URL": ("EXPO_PUBLIC_SUPABASE_URL", "SUPABASE_URL"),
     "ANON_KEY": ("EXPO_PUBLIC_SUPABASE_ANON_KEY",),
@@ -289,7 +296,7 @@ for line in text:
         order.append(key)
     vals[key] = value
 for source, targets in mapping.items():
-    if source not in status:
+    if source not in status or status[source] == "":
         continue
     if "eaenzjwecrrbhibrvgsb" in status[source].lower():
         sys.exit("Refusing staging: supabase status returned the production project")
@@ -303,14 +310,51 @@ for key in order:
 env_path.write_text("\n".join(lines) + "\n")
 env_path.chmod(0o600)
 PY
-    rm -f "$status_file"
-    supabase db reset --local --yes --no-seed
+}
+
+start_supabase_and_reset() {
+  local status_file
+  status_file="$(mktemp)"
+  chmod 600 "$status_file"
+  if [[ "${SUPABASE_EXPERIMENTAL_STACK:-}" == "1" ]]; then
+    supabase status --env --output-format text >"$status_file"
   else
-    echo "Docker is not running. Skipping supabase start."
-    echo "Applying migrations to local database gsh_payment_staging only. Not production."
-    if [[ ! -f "$ROOT/supabase/config.toml" ]]; then
-      supabase init
+    supabase status -o env >"$status_file"
+  fi
+  merge_supabase_status "$status_file"
+  rm -f "$status_file"
+  supabase db reset --local --yes --no-seed
+}
+
+cmd_setup() {
+  ensure_env_file
+  load_env
+  refuse_committed_env_files
+  if [[ ! -f "$ROOT/supabase/config.toml" ]]; then
+    supabase init
+  fi
+  if docker_daemon_running && command -v supabase >/dev/null 2>&1; then
+    echo "Starting Supabase with Docker."
+    supabase start
+    start_supabase_and_reset
+  elif command -v supabase >/dev/null 2>&1 && native_runtime_supported; then
+    # Do not set [experimental] stack = true in config.toml. That would switch
+    # every supabase start in this repo onto the experimental engine.
+    export SUPABASE_EXPERIMENTAL_STACK=1
+    echo "Docker is not running. Starting the Supabase native runtime."
+    echo "CLI $(supabase --version). Migrations stay enabled. Online payments stay off."
+    if ! supabase start --runtime native --eager --exclude studio,mail,analytics,realtime,storage,functions,pooler --yes; then
+      echo "Native Supabase did not become ready." >&2
+      echo "supabase start --help lists --runtime native only when SUPABASE_EXPERIMENTAL_STACK=1." >&2
+      echo "A start on this tree stops in supabase/migrations/002_rls_policies.sql because public.societies was never created by a committed migration." >&2
+      echo "A Unix-socket Postgres database is not a substitute for Auth and PostgREST." >&2
+      exit 1
     fi
+    start_supabase_and_reset
+  else
+    echo "Docker is not running and this Supabase CLI does not offer --runtime native."
+    echo "Applying migrations to local database gsh_payment_staging only. Not production."
+    echo "This path has no Supabase Auth and no REST API."
     assert_database_name "gsh_payment_staging"
     psql -d postgres -v ON_ERROR_STOP=1 -q -c "DROP DATABASE IF EXISTS gsh_payment_staging;"
     psql -d postgres -v ON_ERROR_STOP=1 -q -c "CREATE DATABASE gsh_payment_staging;"
