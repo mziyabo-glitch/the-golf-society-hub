@@ -1,13 +1,16 @@
 #!/usr/bin/env bash
 # Local Stripe payment staging for Golf Society Hub.
 # Refuses production project eaenzjwecrrbhibrvgsb and live Stripe keys.
-# The generated account password stays in gitignored .env.staging.local.
+# The generated account password stays in gitignored staging.local.env.
+# That name does not start with ".env". Expo's web bundle loads every
+# project-root file matching /^\.\/\.env/ and fails if one of them is not a
+# standard Expo env file.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
 
-ENV_FILE="${STAGING_ENV_FILE:-$ROOT/.env.staging.local}"
+ENV_FILE="${STAGING_ENV_FILE:-$ROOT/staging.local.env}"
 SEED_FILE="$ROOT/supabase/seeds/staging_m4_zgs_payments.sql"
 PRODUCTION_REF="eaenzjwecrrbhibrvgsb"
 VALIDATE_DB="${STAGING_VALIDATE_DB:-gsh_migration_validate}"
@@ -16,7 +19,7 @@ usage() {
   cat <<'EOF'
 Usage: scripts/payments/local-staging.sh <command>
 
-  setup                 Generate .env.staging.local, apply local migrations, seed
+  setup                 Generate staging.local.env, apply local migrations, seed
   seed                  Seed Staging M4 / Staging ZGS on the local database
   start                 Start Expo web and the payment API with staging env
   check                 Ask the payment API whether it can query the local database
@@ -123,6 +126,15 @@ PY
 }
 
 load_env() {
+  local legacy="$ROOT/.env.staging.local"
+  if [[ -f "$legacy" && "$ENV_FILE" == "$ROOT/staging.local.env" && ! -f "$ENV_FILE" ]]; then
+    mv "$legacy" "$ENV_FILE"
+    chmod 600 "$ENV_FILE"
+  fi
+  if [[ -f "$legacy" ]]; then
+    echo "Refusing staging: remove .env.staging.local. Expo bundles every project-root .env* file and cannot parse this one. Use staging.local.env." >&2
+    exit 1
+  fi
   if [[ ! -f "$ENV_FILE" ]]; then
     ensure_env_file
   fi

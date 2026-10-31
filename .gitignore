@@ -26,6 +26,7 @@ yarn-error.log*
 .env
 .env.local
 .env.*.local
+staging.local.env
 # Android upload keystore / EAS local credentials (never commit)
 credentials.json
 *.jks
