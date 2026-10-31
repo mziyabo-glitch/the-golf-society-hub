@@ -14,7 +14,7 @@ bash scripts/payments/local-staging.sh start
 bash scripts/payments/local-staging.sh check
 ```
 
-`setup` writes `.env.staging.local` (mode 600, already covered by `.env.*.local`). `STAGING_ACCOUNT_PASSWORD` is `openssl`-equivalent `secrets.token_hex(24)`. The script does not print the password. Sign in with:
+`setup` writes `staging.local.env` (mode 600, gitignored). The name does not start with `.env`. Expo's web bundle loads every project-root file matching `/^\.\/\.env/` and fails on a file that is not `.env`, `.env.local`, `.env.development`, or `.env.development.local`. `STAGING_ACCOUNT_PASSWORD` is `openssl`-equivalent `secrets.token_hex(24)`. The script does not print the password. Sign in with:
 
 - `staging.m4.captain@gsh-staging.test`
 - `staging.m4.treasurer@gsh-staging.test`
@@ -23,7 +23,7 @@ bash scripts/payments/local-staging.sh check
 - `staging.m4.player@gsh-staging.test`
 - `staging.zgs.treasurer@gsh-staging.test`
 
-Read the password from `.env.staging.local` on that machine. Do not commit the file and do not paste the password into a pull request, issue, or screenshot.
+Read the password from `staging.local.env` on that machine. Do not commit the file and do not paste the password into a pull request, issue, or screenshot. If an older `.env.staging.local` is still in the project root, `scripts/payments/local-staging.sh` moves it to `staging.local.env` when that file is missing, and refuses to start while `.env.staging.local` remains.
 
 `setup` prefers `supabase start` and `supabase db reset --local --yes --no-seed` when Docker is running. The local API is `http://127.0.0.1:54321`. Without Docker, and only when `SUPABASE_EXPERIMENTAL_STACK=1 supabase start --help` lists `--runtime native`, `setup` runs:
 
@@ -96,36 +96,41 @@ A fresh replay of the committed files is not achievable even after those four ta
 - `099_event_prize_pool_opt_in_and_manager.sql` creates a SQL function that reads `event_prize_pool_managers` before that table is created later in the same file.
 - `160_tee_sheet_draft_manco_rls.sql` and `173_fix_publish_tee_times_time_cast.sql` use `CREATE OR REPLACE FUNCTION` in a way Postgres rejects when the existing function's argument name `p_start` would change.
 
-Editing those files would change the checksum of migrations already applied on production. They were left unchanged. Payment vitest still applies the four payment files on its own fixture. No local database was loaded with the current application schema.
+Editing those files would change the checksum of migrations already applied on production. They were left unchanged. Payment vitest still applies the four payment files on its own fixture. A fresh replay of `supabase/migrations` is still not the way to build staging. The local database that is running now was loaded from a schema-only copy of production, then the three unapplied payment files, as described below.
 
-## Staging baseline that still needs approval
+## Schema-only export
 
-Do not run a schema export until the project owner approves a read-only, schema-only copy. Do not execute this from the agent environment. Do not use `supabase db dump` or `supabase link` against `eaenzjwecrrbhibrvgsb`.
+On 31 October 2026 Brian approved a read-only, schema-only export from production project `eaenzjwecrrbhibrvgsb`. `pg_dump` and `supabase db dump` did not run. A dry-run of `supabase db dump --schema public,storage --project-ref eaenzjwecrrbhibrvgsb` returned `AccessTokenRequiredError`. These names were unset: `SUPABASE_ACCESS_TOKEN`, `SUPABASE_DB_PASSWORD`, `DATABASE_URL`, `SUPABASE_DB_URL`, `POSTGRES_PASSWORD`, `PGPASSWORD`, `DB_PASSWORD`. There was no `supabase login` session. The service role key was not used as a database password.
 
-Approval required before any connection:
+The DDL was reconstructed from read-only catalog `SELECT`s (columns, constraints, functions, policies, indexes, triggers, grants) for schemas `public` and `storage`. Production received no `INSERT`, `UPDATE`, `DELETE`, or DDL. No migration was applied there. `online_payments_enabled` was not changed.
 
-1. The connection is read-only: a read replica, or a session with `default_transaction_read_only = on`. Not the migration role and not a write on the primary.
-2. The command is schema-only. No table data, no `COPY`, no `auth.users`, no passwords, no Stripe Connect account ids, no storage objects.
-3. A person reviews the file before it is kept, and it is not committed if it contains secrets.
+The SQL is under `/tmp/gsh-schema` on that machine and is not in git. A review of it found top-level DDL only (`CREATE`, `ALTER`, `COMMENT`, `GRANT`, policies, indexes, triggers). It has no `COPY`, no row inserts into data tables, no `auth.users` rows, no password hashes, no member emails, and no `acct_` Connect ids. Function bodies contain the word `INSERT` as their own SQL source. `auth.users` appears only as a foreign-key target. PostGIS objects owned by the extension were omitted; the local database needs `CREATE EXTENSION postgis WITH SCHEMA public` before the table DDL. The `auth` schema was not exported. Storage tables, functions, and policies were included. `storage.objects` and `storage.buckets` were created empty.
 
-```bash
-pg_dump \
-  --schema-only \
-  --no-owner \
-  --no-privileges \
-  --schema=public \
-  --schema=storage \
-  --dbname="$READ_ONLY_REPLICA_URL" \
-  --file=/tmp/gsh-schema-only.sql
-```
+## Local baseline
 
-`$READ_ONLY_REPLICA_URL` is a read-only role. Do not put the URL in git, the pull request, or `.env.staging.local` if it contains a password for `eaenzjwecrrbhibrvgsb`.
+`[db.migrations] enabled` was set false only so `supabase start --runtime native` could boot, then restored to true. That config change is not committed. The ready stack is runtime `native`, API `http://127.0.0.1:54321`, database `127.0.0.1:54322`. The storage, realtime, functions, and pooler services were excluded from the start. Storage DDL is in the database; the Storage HTTP service is not running.
 
-After that file is approved and loaded into an empty local Supabase database:
+The empty local `public` schema was loaded from the DDL as `supabase_admin`. Production migration versions were inserted into `supabase_migrations.schema_migrations` and were not executed again. Production's foundation version is `20261030223626` (`stripe_event_payments_foundation`), not `20261030180000`. Both versions were marked applied. `20261030180000_stripe_event_payments_foundation.sql` was not executed and was not renamed. Production follow-ups `20261030223700` and `20261030223732` were marked applied and not executed. Do not run `supabase db reset` or `supabase migration up` on this database. Other local filenames are absent from that history and a reset would try to replay them.
 
-1. Insert the production `supabase_migrations.schema_migrations` versions as already applied, including `20261030180000`. Do not run that file again. Do not rename it.
-2. Apply only the three files that are not on production, in this order: `20261030190000_stripe_payment_integrity.sql`, `20261030200000_guest_payment_invitations.sql`, `20261030210000_payment_destination_and_checkout_eligibility.sql`.
-3. Run `bash scripts/payments/local-staging.sh seed` against that local database. The seed still aborts on production hosts, project ref `eaenzjwecrrbhibrvgsb`, and any society other than Staging M4 and Staging ZGS.
+These three files were applied next, in order, each with exit 0:
+
+1. `supabase/migrations/20261030190000_stripe_payment_integrity.sql`
+2. `supabase/migrations/20261030200000_guest_payment_invitations.sql`
+3. `supabase/migrations/20261030210000_payment_destination_and_checkout_eligibility.sql`
+
+`bash scripts/payments/local-staging.sh seed` then exited 0 against `127.0.0.1:54322`. The societies table holds Staging M4 (`22000000-0000-4000-8000-000000000001`) and Staging ZGS (`22000000-0000-4000-8000-000000000002`). `online_payments_enabled` is false on both. `payment_transactions` has no rows. The seed still aborts on a non-local host, on project ref `eaenzjwecrrbhibrvgsb`, and when any society other than those two already exists. An empty societies table is allowed. The guard was not changed.
+
+Auth and REST, local only:
+
+- `POST /auth/v1/token?grant_type=password` for `staging.m4.treasurer@gsh-staging.test` returned HTTP 200 and a session. `GET /auth/v1/user` returned that address.
+- `GET /rest/v1/societies?select=id,name,online_payments_enabled` with the local anon key returned HTTP 200 and an empty array. That is row-level security, not `PGRST205`.
+- The same query with the treasurer access token returned HTTP 200 for Staging M4 and Staging ZGS, both with `online_payments_enabled` false.
+
+`bash scripts/payments/local-staging.sh start` then served the web app at `http://127.0.0.1:8081` and the payment API at `http://127.0.0.1:3001`. `GET /api/health/db` returned `{"ok":true,"database":"reachable","via":"postgres","stripeCheckoutCreated":false}`.
+
+Signed in through the web UI as `staging.m4.player@gsh-staging.test` and opened `/event/24000000-0000-4000-8000-000000000001`. The player is Playing, the fee is outstanding, and Pay now is absent. `/invite/24000000-0000-4000-8000-000000000001` shows the public RSVP choice (member or guest) and no Pay now. Signed in as `staging.m4.treasurer@gsh-staging.test`, `/treasurer` shows Opening Balance, Total Income, Total Costs, and Current Balance at £0.00, with no ledger entries.
+
+No Stripe API call was made. No `sk_test_` key is configured. No Checkout was created.
 
 ## Native Supabase runtime
 
@@ -151,7 +156,7 @@ On that temporary stack:
 - `GET /rest/v1/` returned HTTP 200 and a PostgREST OpenAPI document (PostgREST 16.5).
 - `GET /rest/v1/societies?select=id&limit=1` returned HTTP 404 `PGRST205` (`Could not find the table 'public.societies' in the schema cache`).
 
-The password stayed in a mode 600 file under `/tmp` and was deleted. The diagnostic stack was destroyed with `supabase stack destroy --yes`. No screenshot was taken: the Expo app was not started, because there is no M4 event schema to sign into. Pay now, the guest invite, and the Treasurer screen were not opened.
+The password for that probe stayed in a mode 600 file under `/tmp` and was deleted. That diagnostic stack was destroyed with `supabase stack destroy --yes`. It did not have the application schema, so the Expo app was not opened against it. A later native start, described in "Local baseline", loaded the schema and is the stack the app uses.
 
 ## Server environment
 
@@ -177,15 +182,15 @@ Forward test webhooks:
 stripe listen --forward-to http://127.0.0.1:3001/api/stripe/webhook
 ```
 
-Put the CLI's `whsec_` value in `STRIPE_WEBHOOK_SECRET` inside `.env.staging.local`, then start again. Do not call Stripe, and do not invent a successful charge, when the test secret is absent. `GET /api/health/db` returns `stripeCheckoutCreated: false`.
+Put the CLI's `whsec_` value in `STRIPE_WEBHOOK_SECRET` inside `staging.local.env`, then start again. Do not call Stripe, and do not invent a successful charge, when the test secret is absent. `GET /api/health/db` returns `stripeCheckoutCreated: false`.
 
 ## External Stripe test-mode checks
 
 No Stripe API call was made from this environment. There is no `sk_test_` key here. Do not treat the steps below as a passed integration test.
 
-Do this only after the approved schema-only baseline is loaded, the three unapplied payment migrations have run, and `bash scripts/payments/local-staging.sh seed` has created Staging M4 and Staging ZGS. `online_payments_enabled` stays false until a person turns it on for Staging M4 only. Card `4242 4242 4242 4242`, any future expiry, any CVC. No real money.
+The local schema baseline, the three payment migrations, and the Staging M4 / Staging ZGS seed are done. The checks below are not. No Stripe call has been made. `online_payments_enabled` stays false until a person turns it on for Staging M4 only. Card `4242 4242 4242 4242`, any future expiry, any CVC. No real money.
 
-Put `STRIPE_SECRET_KEY=sk_test_...` in `.env.staging.local` only. Then, in another terminal:
+Put `STRIPE_SECRET_KEY=sk_test_...` in `staging.local.env` only. Then, in another terminal:
 
 ```bash
 stripe listen --forward-to http://127.0.0.1:3001/api/stripe/webhook
@@ -193,8 +198,8 @@ stripe listen --forward-to http://127.0.0.1:3001/api/stripe/webhook
 
 Copy that command's `whsec_` into `STRIPE_WEBHOOK_SECRET` in the same gitignored file and run `bash scripts/payments/local-staging.sh start` again.
 
-1. Test-mode Express connected account. Sign in as `staging.m4.treasurer@gsh-staging.test` with `STAGING_ACCOUNT_PASSWORD` from `.env.staging.local`. Call `POST http://127.0.0.1:3001/api/stripe/connect-onboarding` with `Authorization: Bearer <access_token>` and body `{"societyId":"22000000-0000-4000-8000-000000000001"}`. Open the returned Account Link, finish Express in Stripe test mode, and confirm `societies.stripe_connect_charges_enabled` is true for Staging M4. The account id must be a new test-mode `acct_` created by that call, not a production Connect account.
-2. Online payments remain hidden while the flag is disabled. Leave `online_payments_enabled` false and open the joint event. Pay now is absent. Bank-transfer copy can still show.
+1. Test-mode Express connected account. Sign in as `staging.m4.treasurer@gsh-staging.test` with `STAGING_ACCOUNT_PASSWORD` from `staging.local.env`. Call `POST http://127.0.0.1:3001/api/stripe/connect-onboarding` with `Authorization: Bearer <access_token>` and body `{"societyId":"22000000-0000-4000-8000-000000000001"}`. Open the returned Account Link, finish Express in Stripe test mode, and confirm `societies.stripe_connect_charges_enabled` is true for Staging M4. The account id must be a new test-mode `acct_` created by that call, not a production Connect account. This step has not been run.
+2. Online payments remain hidden while the flag is disabled. This was checked on the local stack: `online_payments_enabled` is false, the joint event shows Fee outstanding for the playing member, and Pay now is absent. Bank-transfer copy can still show when the society has instructions. Staging M4 has none, so the payment section stays hidden.
 3. Only authorised members see Pay now after activation. Set `online_payments_enabled` true for Staging M4 only. A playing member sees Pay now. A withdrawn member and a member with no RSVP and no playing-list entry do not.
 4. A successful £25 member payment appears exactly once in the ledger. Sign in as `staging.m4.player@gsh-staging.test`. `POST http://127.0.0.1:3001/api/stripe/create-checkout-session` with `Authorization: Bearer <access_token>`, header `Idempotency-Key` of at least 8 characters, and body `{"eventId":"24000000-0000-4000-8000-000000000001","societyId":"22000000-0000-4000-8000-000000000001","payerType":"member"}`. Pay the Checkout for 2500 pence. `member_entry_fee_pence` and `joint_participant_entry_fee_pence` are 2500. One `payment_transactions` row is `succeeded` for 2500.
 5. The player becomes paid and tee-sheet eligible. The registration is status `in`, `paid` true, payment method `stripe`.
